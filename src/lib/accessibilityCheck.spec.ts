@@ -441,3 +441,43 @@ describe("issue ordering", () => {
     expect(blocks).toEqual(blocks.slice().sort((a, b) => a - b));
   });
 });
+
+// SPEC-074 AC-27 — text on a shaded paragraph is read ON the shading, so
+// that, not the page, is what its contrast is measured against. AC-17's
+// inheritance applies here too: a paragraph whose fill comes from its style
+// is just as shaded as one that set the fill itself.
+describe("SPEC-074 AC-27 — paragraph shading is the contrast surface", () => {
+  it("measures against the paragraph's own fill, not the page", () => {
+    const callout = paragraph(["dark callout"]);
+    callout.formatting = { shadingFill: "#1f1f1f" };
+    const shaded = doc(callout);
+    // Default black text is perfectly readable on the page and unreadable on
+    // a near-black fill — so the issue only appears if the fill was used.
+    expect(withKind(checkAccessibility(doc(paragraph(["dark callout"]))), "low-contrast")).toHaveLength(0);
+    expect(withKind(checkAccessibility(shaded), "low-contrast")).toHaveLength(1);
+  });
+
+  it("measures against a fill the paragraph inherits from its style (AC-17)", () => {
+    const callout = paragraph(["dark callout"]);
+    callout.styleId = "Callout";
+    const model = doc(callout);
+    model.styles = [
+      { id: "Normal", name: "Normal" },
+      { id: "Callout", name: "Callout", basedOn: "Normal", paragraphFormatting: { shadingFill: "#1f1f1f" } },
+    ];
+    expect(withKind(checkAccessibility(model), "low-contrast")).toHaveLength(1);
+  });
+
+  it("measures against Normal's fill for a paragraph that names no style (AC-17)", () => {
+    const model = doc(paragraph(["dark callout"]));
+    model.styles = [{ id: "Normal", name: "Normal", paragraphFormatting: { shadingFill: "#1f1f1f" } }];
+    expect(withKind(checkAccessibility(model), "low-contrast")).toHaveLength(1);
+  });
+
+  it("lets a run's own shading win over the paragraph's", () => {
+    const callout = paragraph(["readable", { shadingFill: "#ffffff" }]);
+    callout.formatting = { shadingFill: "#1f1f1f" };
+    const model = doc(callout);
+    expect(withKind(checkAccessibility(model), "low-contrast")).toHaveLength(0);
+  });
+});

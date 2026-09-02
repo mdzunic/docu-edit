@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ALL_EDGES } from "./paragraphBorders";
 import {
   displayParagraphFormatting,
   pageBorderStyle,
@@ -600,5 +601,42 @@ describe("paragraphStyle borders (SPEC-074 AC-13)", () => {
     const style = paragraphStyle({ type: "paragraph", runs: [], formatting: { alignment: "center" } });
     expect(style.borderTop).toBeUndefined();
     expect(style.paddingTop).toBeUndefined();
+  });
+});
+
+describe("paragraphStyle with style-inherited borders (SPEC-074 AC-17)", () => {
+  const plain = { type: "paragraph" as const, runs: [] };
+  const inherited = { borders: { top: { style: "single" as const, widthPt: 1, color: "#000000" } } };
+
+  it("paints the style's box on a paragraph that carries none of its own", () => {
+    expect(paragraphStyle(plain).borderTop).toBeUndefined();
+    expect(paragraphStyle(plain, [], "all", ALL_EDGES, inherited).borderTop).toBe("1pt solid #000000");
+  });
+
+  it("lets the paragraph's own borders win", () => {
+    const own = {
+      type: "paragraph" as const,
+      runs: [],
+      formatting: { borders: { top: { style: "dotted" as const, widthPt: 2, color: "#c00000" } } },
+    };
+    expect(paragraphStyle(own, [], "all", ALL_EDGES, inherited).borderTop).toBe("2pt dotted #c00000");
+  });
+
+  it("paints only the edges this fragment takes, inherited or not (AC-14..16)", () => {
+    const boxed = {
+      borders: {
+        top: { style: "single" as const, widthPt: 1, color: "#000000" },
+        bottom: { style: "single" as const, widthPt: 1, color: "#000000" },
+      },
+    };
+    const style = paragraphStyle(
+      plain,
+      [],
+      "all",
+      { ...ALL_EDGES, top: false },
+      boxed,
+    );
+    expect(style.borderTop).toBe("none");
+    expect(style.borderBottom).toBe("1pt solid #000000");
   });
 });

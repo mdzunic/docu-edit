@@ -22,7 +22,12 @@ import { type ListDefinition } from "./core/lists";
 import { borderSideCss } from "./core/borders";
 import type { Margins } from "./core/pageSetup";
 import { CM_PER_INCH, POINTS_PER_INCH } from "./core/units";
-import { ALL_EDGES, paragraphBorderStyle, type BorderPaintEdges } from "./paragraphBorders";
+import {
+  ALL_EDGES,
+  paragraphBorderStyle,
+  withInheritedPaint,
+  type BorderPaintEdges,
+} from "./paragraphBorders";
 import { listIndentCm } from "./core/lists";
 import { definedTextIndentCm } from "./core/listDefinitions";
 import { authorColor } from "./trackChangesIdentity";
@@ -145,14 +150,26 @@ export function displayParagraphFormatting(
  * *fragment* paints — the paginated canvas passes the run/page-break-aware
  * set (see paragraphBorders.fragmentEdges); every other render path (a shape's
  * text frame, a table cell, the outline preview) takes the default, which
- * paints each edge the paragraph sets, once. */
+ * paints each edge the paragraph sets, once.
+ *
+ * `inheritedPaint` is what the paragraph's *style* contributes to its borders
+ * and shading (SPEC-074 AC-17, `styles.paragraphPaintResolver`). It layers
+ * underneath the paragraph's own, and only the caller that has the style
+ * catalogue can supply it — this module stays free of it so `styles.ts` can
+ * keep importing `runStyle` from here. */
 export function paragraphStyle(
   paragraph: Paragraph,
   listDefinitions: readonly ListDefinition[] = [],
   displayMode: TrackChangesDisplayMode = "all",
   edges: BorderPaintEdges = ALL_EDGES,
+  inheritedPaint?: ParagraphFormatting,
 ): Record<string, string> {
-  const formatting = displayParagraphFormatting(paragraph, displayMode);
+  // What this paragraph renders from: the display mode's formatting (SPEC-039
+  // AC-9) with whatever its style contributes to its borders and shading
+  // layered underneath (SPEC-074 AC-17). Resolved here, above the
+  // no-formatting bail below, because a paragraph carrying no formatting at
+  // all is exactly the one whose box comes entirely from its style.
+  const formatting = withInheritedPaint(displayParagraphFormatting(paragraph, displayMode), inheritedPaint);
   const style: Record<string, string> = { whiteSpace: "pre-wrap" };
   // A list item's text sits at the level's indent (SPEC-018 AC-5's per-level
   // indents); the marker itself hangs before it via the canvas's ::before

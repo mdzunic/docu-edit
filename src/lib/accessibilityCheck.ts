@@ -28,7 +28,13 @@ import {
   type Table,
 } from "./documentModel";
 import { blockText, compareCaret, type CaretPosition, type ParagraphAddress } from "./textEditing";
-import { NORMAL_STYLE_ID, namedStyleIdFor, resolveNamedStyle, type ResolvedNamedStyle } from "./styles";
+import {
+  NORMAL_STYLE_ID,
+  namedStyleIdFor,
+  paintedParagraphFormatting,
+  resolveNamedStyle,
+  type ResolvedNamedStyle,
+} from "./styles";
 import { LINK_COLOR } from "./renderFormatting";
 import { HIGHLIGHT_HEX } from "./core/colors";
 
@@ -408,8 +414,10 @@ function checkParagraphContrastAndColour(
   const resolvedStyle = resolveNamedStyle(model, paragraph.styleId);
   // SPEC-074 AC-27: the paragraph's own shading, else the one its style sets
   // (AC-17's inheritance) — the surface this paragraph's text is read on.
-  const paragraphShadingFill =
-    paragraph.formatting?.shadingFill ?? resolvedStyle.paragraphFormatting.shadingFill;
+  // Resolved through `paintedParagraphFormatting` rather than `resolvedStyle`
+  // so the checker reads the very fill the renderer painted, including for a
+  // paragraph that names no style and inherits Normal's.
+  const paragraphShadingFill = paintedParagraphFormatting(model, paragraph)?.shadingFill;
 
   // Contrast (AC-11, AC-13..19): every run with visible text against its
   // own resolved background.

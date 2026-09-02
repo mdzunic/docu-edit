@@ -65,7 +65,13 @@ import {
 import { effectiveLanguage } from "../../lib/core/language";
 import { markSegments, tabOnlySegments, type MarkSegment } from "../../lib/core/marks";
 import type { ParagraphTabLayout } from "../../lib/tabLayout";
-import { borderRuns, fragmentEdges, type BorderRunFlags } from "../../lib/paragraphBorders";
+import {
+  borderRuns,
+  fragmentEdges,
+  type BorderRunFlags,
+  type InheritedPaintOf,
+} from "../../lib/paragraphBorders";
+import { paragraphPaintResolver } from "../../lib/styles";
 import { splitRuns } from "../../lib/textEditing";
 import type { CaretPosition } from "../../lib/textEditing";
 import { tocHeadingsStale, tocPageNumbersStale } from "../../lib/toc";
@@ -278,16 +284,32 @@ function annotateTabSegments(
  * (SPEC-074 AC-12). Every command clones the containers it edits, so a
  * section whose blocks array is unchanged genuinely has unchanged runs — the
  * same identity rule `v-memo` relies on. A WeakMap so a replaced section is
- * collected with its entry. */
-const borderRunCache = new WeakMap<readonly Block[], BorderRunFlags[]>();
+ * collected with its entry.
+ *
+ * The runs also depend on the style catalogue, because a paragraph can
+ * inherit its box from its style (AC-17) without carrying anything of its
+ * own — and editing a style leaves every blocks array untouched. So the
+ * entry records the catalogue it was computed against (a fresh array on
+ * every style edit, see commands.customStyles.modifyStyle) and is recomputed
+ * when that changes. */
+interface CachedBorderRuns {
+  styles: DocumentModel["styles"];
+  runs: BorderRunFlags[];
+}
 
-function sectionBorderRuns(blocks: readonly Block[]): BorderRunFlags[] {
+const borderRunCache = new WeakMap<readonly Block[], CachedBorderRuns>();
+
+function sectionBorderRuns(
+  model: DocumentModel,
+  blocks: readonly Block[],
+  inheritedPaintOf: InheritedPaintOf,
+): BorderRunFlags[] {
   const cached = borderRunCache.get(blocks);
-  if (cached) {
-    return cached;
+  if (cached && cached.styles === model.styles) {
+    return cached.runs;
   }
-  const runs = borderRuns(blocks);
-  borderRunCache.set(blocks, runs);
+  const runs = borderRuns(blocks, inheritedPaintOf);
+  borderRunCache.set(blocks, { styles: model.styles, runs });
   return runs;
 }
 
@@ -348,6 +370,7 @@ function renderEntryFor(
   marks: boolean,
   deps: PaginationViewDeps,
   fieldCaret: CaretPosition | null,
+  inheritedPaintOf: InheritedPaintOf,
 ): RenderEntry | null {
   const block = flatEntry.block;
   const column = item.columnIndex;
@@ -499,11 +522,13 @@ function renderEntryFor(
       model.listDefinitions ?? [],
       deps.trackChangesDisplayMode.value,
       fragmentEdges(
-        sectionBorderRuns(model.sections[flatEntry.section].blocks),
+        sectionBorderRuns(model, model.sections[flatEntry.section].blocks, inheritedPaintOf),
         flatEntry.blockIndex,
         !continuation,
         sliceEnd === undefined,
       ),
+      // What the paragraph's style contributes (AC-17); its own wins.
+      inheritedPaintOf(paragraph),
     ),
   };
   if (continuation) {
@@ -1171,6 +1196,9 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     const numbers = deps.pageNumbers.value;
     const totalPages = deps.pagination.pages.value.length;
     const pageNoteAreas = deps.pagination.noteAreas.value;
+    // Borders and shading a paragraph inherits from its style (SPEC-074
+    // AC-17). One resolver per pass, memoised per style id inside.
+    const inheritedPaintOf = paragraphPaintResolver(model);
     // Each page's ordinal within its own section — what a page border's
     // "first page"/"all but the first" restriction is measured against
     // (SPEC-074 AC-22).
@@ -1215,7 +1243,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         if (!flatEntry) {
           continue;
         }
-        const entry = renderEntryFor(model, flatEntry, item, marks, deps, fieldCaretNow);
+        const entry = renderEntryFor(model, flatEntry, item, marks, deps, fieldCaretNow, inheritedPaintOf);
         if (!entry) {
           continue;
         }

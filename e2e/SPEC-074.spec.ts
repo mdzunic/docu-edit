@@ -460,3 +460,69 @@ test("reopening Borders and shading after only moving the caret prefills from th
   expect(await styleOf(plain, "background-color")).not.toBe("rgba(0, 0, 0, 0)");
   expect(await styleOf(boxed, "border-left-style")).toBe("solid");
 });
+
+test("a paragraph inherits its style borders and shading until it sets its own (AC-17, AC-18)", async ({
+  page,
+}) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      consoleErrors.push(message.text());
+    }
+  });
+
+  await createDocument(page);
+  const editor = content(page);
+  await editor.click();
+  await page.keyboard.type("Inherits the paragraph style box");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Sets its own box");
+
+  const inherits = paragraphStarting(page, "Inherits the paragraph style box");
+  const own = paragraphStarting(page, "Sets its own box");
+
+  // The second paragraph gets a box of its own first, so the inherited one
+  // below cannot be confused for it.
+  await own.click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await page.getByTestId("borders-preset-topAndBottom").click();
+  await page.getByTestId("borders-style-top").selectOption("dotted");
+  await page.getByTestId("borders-apply").click();
+  await waitForPagination(page);
+  expect(await styleOf(inherits, "border-top-style")).toBe("none");
+
+  // AC-18: set Normal's own borders and shading through the style editor.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-styles-pane").click();
+  await expect(page.getByTestId("styles-pane")).toBeVisible();
+  await page.getByTestId("style-modify-Normal").click();
+  await expect(page.getByTestId("style-editor-dialog")).toBeVisible();
+  await page.getByTestId("style-borders-button").click();
+  await expect(page.getByTestId("borders-shading-dialog")).toBeVisible();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-shading-color").fill("#fff2cc");
+  await page.getByTestId("borders-apply").click();
+  await page.getByTestId("style-editor-save").click();
+  await expect(page.getByTestId("style-editor-dialog")).not.toBeVisible();
+  await waitForPagination(page);
+
+  // AC-17: the paragraph that set nothing of its own now paints Normal's box
+  // and fill — this is a paragraph with no styleId at all, the implicit
+  // Normal every blank document's paragraphs carry.
+  expect(await styleOf(inherits, "border-top-style")).toBe("solid");
+  expect(await styleOf(inherits, "border-left-style")).toBe("solid");
+  expect(await styleOf(inherits, "background-color")).toBe("rgb(255, 242, 204)");
+
+  // ...and the paragraph that set its own keeps them: direct formatting wins.
+  expect(await styleOf(own, "border-top-style")).toBe("dotted");
+  expect(await styleOf(own, "border-left-style")).toBe("none");
+  // Shading is a separate property, so it still inherits the style's fill.
+  expect(await styleOf(own, "background-color")).toBe("rgb(255, 242, 204)");
+
+  // Saving a style with borders used to put a Vue reactive proxy into the
+  // document model, which the live word-count worker could not clone.
+  expect(consoleErrors.join("\n")).not.toContain("DataCloneError");
+  expect(consoleErrors).toEqual([]);
+});

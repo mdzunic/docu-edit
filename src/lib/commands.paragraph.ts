@@ -10,7 +10,7 @@ import {
   type ParagraphDirection,
   type ParagraphFormatting,
 } from "./documentModel";
-import { normaliseParagraphBorders } from "./paragraphBorders";
+import { normaliseParagraphBorders, snapParagraphBorders } from "./paragraphBorders";
 import {
   paragraphAt,
   paragraphSlicesInRange,
@@ -253,7 +253,8 @@ export function applyParagraphBorders(
   return updateTouchedParagraphs(model, selection, (formatting) => {
     const next: ParagraphFormatting = { ...formatting };
     if (patch.borders !== undefined) {
-      const normalised = patch.borders === null ? undefined : normaliseParagraphBorders(snapBorders(patch.borders));
+      const normalised =
+        patch.borders === null ? undefined : normaliseParagraphBorders(snapParagraphBorders(patch.borders));
       if (normalised === undefined) {
         delete next.borders;
       } else {
@@ -269,30 +270,6 @@ export function applyParagraphBorders(
     }
     return next;
   });
-}
-
-/** Border widths and paddings on the grid both formats carry exactly:
- * eighths of a point for the width (`@w:sz`), whole points for the padding
- * (`@w:space`). */
-function snapBorders(borders: ParagraphBorders): ParagraphBorders {
-  const snapped: ParagraphBorders = {};
-  for (const edge of ["top", "bottom", "left", "right", "between"] as const) {
-    const side = borders[edge];
-    if (side) {
-      snapped[edge] = { ...side, widthPt: Math.round(side.widthPt * 8) / 8 };
-    }
-  }
-  if (borders.paddingPt) {
-    const padding: { top?: number; bottom?: number; left?: number; right?: number } = {};
-    for (const edge of ["top", "bottom", "left", "right"] as const) {
-      const value = borders.paddingPt[edge];
-      if (value !== undefined) {
-        padding[edge] = Math.min(31, Math.max(0, Math.round(value)));
-      }
-    }
-    snapped.paddingPt = padding;
-  }
-  return snapped;
 }
 
 /** Sets the alignment of every touched paragraph (AC-2). */

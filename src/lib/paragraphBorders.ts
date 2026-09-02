@@ -110,13 +110,50 @@ const NO_PAINT: BorderRunFlags = {
   continuesBelow: false,
 };
 
+/** The formatting a paragraph paints its borders and shading from (SPEC-074
+ * AC-17): its own values where it sets them, its paragraph style's
+ * underneath. Only the two fields this spec adds inherit here — the rest of
+ * ParagraphFormatting is already baked onto the paragraph when a style is
+ * applied — so `inherited` is expected to carry nothing else.
+ *
+ * Returns `own` itself when the style contributes nothing, so the ordinary
+ * document allocates nothing per repaint and the renderer's object
+ * identities stay stable. `styles.paragraphPaintResolver` supplies
+ * `inherited`; this half stays here because it is pure and knows nothing
+ * about the style catalogue. */
+export function withInheritedPaint(
+  own: ParagraphFormatting | undefined,
+  inherited: ParagraphFormatting | undefined,
+): ParagraphFormatting | undefined {
+  if (inherited === undefined || (inherited.borders === undefined && inherited.shadingFill === undefined)) {
+    return own;
+  }
+  const painted: ParagraphFormatting = { ...own };
+  if (painted.borders === undefined && inherited.borders !== undefined) {
+    painted.borders = inherited.borders;
+  }
+  if (painted.shadingFill === undefined && inherited.shadingFill !== undefined) {
+    painted.shadingFill = inherited.shadingFill;
+  }
+  return painted;
+}
+
+/** What a paragraph's style contributes to its borders and shading, for the
+ * callers that resolve inheritance (AC-17). `undefined` — the default
+ * everywhere — is "no style layer", i.e. the paragraph's own formatting is
+ * everything it paints. */
+export type InheritedPaintOf = (paragraph: Paragraph) => ParagraphFormatting | undefined;
+
 /** Whether two consecutive paragraphs merge into one bordered block: both
  * paint something, their borders are structurally equal, their shading is
  * equal, and their indents agree (SPEC-074 "Merging" — a different indent
- * breaks the run because the two boxes would not line up). */
-function mergesWith(previous: Paragraph, next: Paragraph): boolean {
-  const a = previous.formatting;
-  const b = next.formatting;
+ * breaks the run because the two boxes would not line up). Both sides are
+ * *painted* formatting, so two paragraphs that inherit the same box from
+ * their style merge exactly as two that set it directly do. */
+function mergesWith(
+  a: ParagraphFormatting | undefined,
+  b: ParagraphFormatting | undefined,
+): boolean {
   if (!hasBorderPaint(a) || !hasBorderPaint(b)) {
     return false;
   }
@@ -138,29 +175,33 @@ function mergesWith(previous: Paragraph, next: Paragraph): boolean {
  * sides draw down every member, and the `between` edge draws at each
  * internal boundary. A non-paragraph block, or a paragraph that paints
  * nothing, gets all-false and breaks any run in progress. */
-export function borderRuns(blocks: readonly Block[]): BorderRunFlags[] {
+export function borderRuns(
+  blocks: readonly Block[],
+  inheritedPaintOf?: InheritedPaintOf,
+): BorderRunFlags[] {
+  // Resolve every block's painted formatting once: a non-paragraph has none,
+  // which is also what breaks a run in progress (AC-12).
+  const paints = blocks.map((block) =>
+    isParagraph(block) ? withInheritedPaint(block.formatting, inheritedPaintOf?.(block)) : undefined,
+  );
   const flags: BorderRunFlags[] = blocks.map(() => NO_PAINT);
   let index = 0;
   while (index < blocks.length) {
-    const block = blocks[index];
-    if (!isParagraph(block) || !hasBorderPaint(block.formatting)) {
+    const borders = paints[index]?.borders;
+    if (!hasBorderPaint(paints[index])) {
       index += 1;
       continue;
     }
     // Extend the run as far as consecutive identical paragraphs allow.
     let end = index;
-    while (end + 1 < blocks.length) {
-      const next = blocks[end + 1];
-      if (!isParagraph(next) || !mergesWith(blocks[end] as Paragraph, next)) {
-        break;
-      }
+    while (end + 1 < blocks.length && mergesWith(paints[end], paints[end + 1])) {
       end += 1;
     }
-    const between = borderSideVisible(block.formatting?.borders?.between);
+    const between = borderSideVisible(borders?.between);
     for (let i = index; i <= end; i++) {
       flags[i] = {
-        top: i === index && borderSideVisible(block.formatting?.borders?.top),
-        bottom: i === end && borderSideVisible(block.formatting?.borders?.bottom),
+        top: i === index && borderSideVisible(borders?.top),
+        bottom: i === end && borderSideVisible(borders?.bottom),
         sides: true,
         between: i < end && between,
         continuesBelow: i < end,
@@ -611,6 +652,44 @@ export function normaliseParagraphBorders(borders: ParagraphBorders | undefined)
     borderSideVisible(borders.right) ||
     borderSideVisible(borders.between);
   return painted ? borders : undefined;
+}
+
+/** Rebuilds a `ParagraphBorders` on the grid both formats carry exactly —
+ * eighths of a point for a width (`@w:sz`), whole points for a padding
+ * (`@w:space`, clamped to OOXML's 0..31pt range) — so an edit survives a
+ * save and re-open unchanged.
+ *
+ * It is also the gate every border crosses on its way into the document
+ * model, and rebuilding rather than spreading is load-bearing for that: the
+ * dialogs hand their drafts over through Vue's reactivity, and a reactive
+ * *proxy* stored in the model cannot be structured-cloned — which is how the
+ * model reaches IndexedDB (documentStore) and the word-count worker
+ * (workers/workerRpc). Copying each field by value leaves the model holding
+ * nothing but plain objects and primitives. */
+export function snapParagraphBorders(borders: ParagraphBorders): ParagraphBorders {
+  const snapped: ParagraphBorders = {};
+  for (const edge of BORDER_DRAFT_EDGES) {
+    const side = borders[edge];
+    if (side) {
+      snapped[edge] = {
+        style: side.style,
+        widthPt: Math.round(side.widthPt * 8) / 8,
+        color: side.color,
+      };
+    }
+  }
+  const padding = borders.paddingPt;
+  if (padding) {
+    const snappedPadding: { top?: number; bottom?: number; left?: number; right?: number } = {};
+    for (const edge of BORDER_PADDING_EDGES) {
+      const value = padding[edge];
+      if (value !== undefined) {
+        snappedPadding[edge] = Math.min(31, Math.max(0, Math.round(value)));
+      }
+    }
+    snapped.paddingPt = snappedPadding;
+  }
+  return snapped;
 }
 
 /** Typed `undefined` seed for a `ParagraphBorders` field in an espree-parsed

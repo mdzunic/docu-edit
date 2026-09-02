@@ -5,7 +5,10 @@ import {
   diffParagraphFormatting,
   diffRunFormatting,
   headingStyleId,
+  inheritedParagraphPaint,
   namedStyleIdFor,
+  paintedParagraphFormatting,
+  paragraphPaintResolver,
   NORMAL_STYLE_ID,
   paragraphStyleBase,
   resolveNamedStyle,
@@ -260,5 +263,84 @@ describe("SPEC-019 — chain membership and style bases (AC-13)", () => {
       paragraphStyleBase(model, { type: "paragraph", runs: [], styleId: "P1" }).runFormatting,
     ).toEqual({ italic: true });
     expect(paragraphStyleBase(model, { type: "paragraph", runs: [] }).runFormatting).toEqual({});
+  });
+});
+
+// SPEC-074 AC-17 — borders and shading are inherited from the paragraph style
+// until the paragraph sets its own. Unlike the rest of ParagraphFormatting,
+// they are not baked onto the paragraph: they resolve here, which is the only
+// way a paragraph that names NO style (the implicit Normal every blank
+// document's paragraphs have) can inherit anything at all.
+
+const STYLE_BOX = { top: { style: "single" as const, widthPt: 1, color: "#000000" } };
+const OWN_BOX = { bottom: { style: "thick" as const, widthPt: 3, color: "#c00000" } };
+
+function normalWith(paragraphFormatting: Record<string, unknown>): DocumentModel {
+  return modelWith([
+    { id: NORMAL_STYLE_ID, name: "Normal", paragraphFormatting },
+    { id: "Callout", name: "Callout", basedOn: NORMAL_STYLE_ID },
+  ] as NamedStyle[]);
+}
+
+function plainParagraph(styleId?: string): Paragraph {
+  return { type: "paragraph", runs: [{ text: "x", formatting: {} }], ...(styleId ? { styleId } : {}) };
+}
+
+describe("SPEC-074 AC-17 — borders and shading inherited from the style", () => {
+  it("resolves an absent styleId through Normal", () => {
+    const model = normalWith({ borders: STYLE_BOX, shadingFill: "#eeeeee" });
+    expect(inheritedParagraphPaint(model, undefined)).toEqual({
+      borders: STYLE_BOX,
+      shadingFill: "#eeeeee",
+    });
+  });
+
+  it("carries only borders and shading over — the rest is already baked", () => {
+    const model = normalWith({ borders: STYLE_BOX, spaceBeforePt: 18, alignment: "center" });
+    expect(inheritedParagraphPaint(model, NORMAL_STYLE_ID)).toEqual({ borders: STYLE_BOX });
+  });
+
+  it("follows the basedOn chain", () => {
+    const model = normalWith({ shadingFill: "#fff2cc" });
+    expect(inheritedParagraphPaint(model, "Callout").shadingFill).toBe("#fff2cc");
+  });
+
+  it("paints a paragraph that names no style with Normal's box — the QA case", () => {
+    const model = normalWith({ borders: STYLE_BOX });
+    expect(paintedParagraphFormatting(model, plainParagraph())?.borders).toEqual(STYLE_BOX);
+  });
+
+  it("lets the paragraph's own borders win over the style's", () => {
+    const model = normalWith({ borders: STYLE_BOX, shadingFill: "#eeeeee" });
+    const paragraph = plainParagraph();
+    paragraph.formatting = { borders: OWN_BOX };
+    const painted = paintedParagraphFormatting(model, paragraph);
+    expect(painted?.borders).toEqual(OWN_BOX);
+    // Shading is a separate property: the paragraph set no fill, so it still
+    // takes the style's.
+    expect(painted?.shadingFill).toBe("#eeeeee");
+  });
+
+  it("says nothing about a document whose styles carry no borders", () => {
+    const model = modelWith();
+    const paragraph = plainParagraph();
+    paragraph.formatting = { alignment: "center" };
+    expect(paintedParagraphFormatting(model, paragraph)).toBe(paragraph.formatting);
+  });
+
+  it("memoises the resolver per style id and answers each paragraph in kind", () => {
+    const model = normalWith({ borders: STYLE_BOX });
+    (model.styles as NamedStyle[]).push({
+      id: "Bare",
+      name: "Bare",
+      paragraphFormatting: { spaceBeforePt: 12 },
+    });
+    const resolve = paragraphPaintResolver(model);
+    expect(resolve(plainParagraph())).toEqual({ borders: STYLE_BOX });
+    expect(resolve(plainParagraph("Callout"))).toEqual({ borders: STYLE_BOX });
+    // A style with a parent of its own, not based on Normal, inherits nothing.
+    expect(resolve(plainParagraph("Bare"))).toEqual({});
+    // Same id, same object: the chain is walked once.
+    expect(resolve(plainParagraph())).toBe(resolve(plainParagraph()));
   });
 });

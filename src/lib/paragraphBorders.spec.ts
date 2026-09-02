@@ -13,6 +13,8 @@ import {
   paragraphBordersEqual,
   paragraphMarkColorStyle,
   paragraphPaddingPt,
+  snapParagraphBorders,
+  withInheritedPaint,
 } from "./paragraphBorders";
 import type { BorderSide } from "./core/borders";
 import type { Block, Paragraph, ParagraphBorders, ParagraphFormatting } from "./documentModel";
@@ -399,5 +401,100 @@ describe("formatting marks on a shaded paragraph (AC-26)", () => {
     expect(isDarkFill("#ffff00")).toBe(false);
     expect(isDarkFill("#0000ff")).toBe(true);
     expect(isDarkFill("not-a-colour")).toBe(false);
+  });
+});
+
+describe("withInheritedPaint — a style's borders under the paragraph's (AC-17)", () => {
+  const styleBox: ParagraphFormatting = { borders: { top: LINE }, shadingFill: "#eeeeee" };
+
+  it("hands back the paragraph's own formatting when the style contributes nothing", () => {
+    const own: ParagraphFormatting = { alignment: "center" };
+    expect(withInheritedPaint(own, undefined)).toBe(own);
+    expect(withInheritedPaint(own, {})).toBe(own);
+    expect(withInheritedPaint(undefined, {})).toBeUndefined();
+  });
+
+  it("fills in what the paragraph does not set", () => {
+    expect(withInheritedPaint(undefined, styleBox)).toEqual(styleBox);
+    expect(withInheritedPaint({ alignment: "center" }, styleBox)).toEqual({
+      alignment: "center",
+      borders: { top: LINE },
+      shadingFill: "#eeeeee",
+    });
+  });
+
+  it("never overrides what the paragraph does set", () => {
+    const painted = withInheritedPaint({ borders: { bottom: THICK }, shadingFill: "#ffffff" }, styleBox);
+    expect(painted?.borders).toEqual({ bottom: THICK });
+    expect(painted?.shadingFill).toBe("#ffffff");
+  });
+
+  it("inherits the two fields independently", () => {
+    // A paragraph that set only its own box still takes the style's fill.
+    const painted = withInheritedPaint({ borders: { bottom: THICK } }, styleBox);
+    expect(painted?.borders).toEqual({ bottom: THICK });
+    expect(painted?.shadingFill).toBe("#eeeeee");
+  });
+});
+
+describe("borderRuns with style-inherited borders (AC-12, AC-17)", () => {
+  const inherited: ParagraphFormatting = { borders: { top: LINE, bottom: LINE, left: LINE, right: LINE } };
+
+  it("boxes a paragraph that carries nothing of its own", () => {
+    const blocks: Block[] = [para()];
+    expect(borderRuns(blocks)[0].sides).toBe(false);
+    expect(borderRuns(blocks, () => inherited)[0]).toEqual({
+      top: true,
+      bottom: true,
+      sides: true,
+      between: false,
+      continuesBelow: false,
+    });
+  });
+
+  it("merges consecutive paragraphs that inherit the same box (AC-12)", () => {
+    const flags = borderRuns([para(), para(), para()], () => inherited);
+    expect(flags.map((flag) => flag.top)).toEqual([true, false, false]);
+    expect(flags.map((flag) => flag.bottom)).toEqual([false, false, true]);
+    expect(flags.map((flag) => flag.sides)).toEqual([true, true, true]);
+    expect(flags.map((flag) => flag.continuesBelow)).toEqual([true, true, false]);
+  });
+
+  it("breaks the run where a paragraph overrides the inherited box", () => {
+    const blocks: Block[] = [para(), para({ borders: { bottom: THICK } }), para()];
+    const flags = borderRuns(blocks, () => inherited);
+    expect(flags[0].bottom).toBe(true);
+    expect(flags[1].bottom).toBe(true);
+    expect(flags[2].top).toBe(true);
+  });
+
+  it("only inherits per paragraph, so a differently-styled neighbour breaks the run", () => {
+    const styled = para();
+    styled.styleId = "Callout";
+    const flags = borderRuns([para(), styled], (paragraph) =>
+      paragraph.styleId === undefined ? inherited : {},
+    );
+    expect(flags[0]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(flags[1].sides).toBe(false);
+  });
+});
+
+describe("snapParagraphBorders", () => {
+  it("snaps a width to eighths of a point and a padding to whole clamped points", () => {
+    const snapped = snapParagraphBorders({
+      top: { style: "double", widthPt: 1.03, color: "#c00000" },
+      paddingPt: { top: 4.4, bottom: -3, left: 99 },
+    });
+    expect(snapped.top).toEqual({ style: "double", widthPt: 1, color: "#c00000" });
+    expect(snapped.paddingPt).toEqual({ top: 4, bottom: 0, left: 31 });
+  });
+
+  it("rebuilds every object, so nothing foreign reaches the model", () => {
+    const side: BorderSide = { style: "single", widthPt: 1, color: "#000000" };
+    const padding = { top: 8 };
+    const snapped = snapParagraphBorders({ between: side, paddingPt: padding });
+    expect(snapped.between).toEqual(side);
+    expect(snapped.between).not.toBe(side);
+    expect(snapped.paddingPt).not.toBe(padding);
   });
 });
