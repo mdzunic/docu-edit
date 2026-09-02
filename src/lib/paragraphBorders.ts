@@ -180,8 +180,9 @@ const NO_PAINT: BorderRunFlags = {
  * AC-17): its own values where it sets them, its paragraph style's
  * underneath. "Where it sets them" is presence, not visibility: a paragraph
  * carrying the explicit no-borders/no-fill override above has set them, and
- * the style's box stops there. Only the two fields this spec adds inherit
- * here — the rest of
+ * the style's box stops there.
+ *
+ * Only the two fields this spec adds inherit here — the rest of
  * ParagraphFormatting is already baked onto the paragraph when a style is
  * applied — so `inherited` is expected to carry nothing else.
  *
