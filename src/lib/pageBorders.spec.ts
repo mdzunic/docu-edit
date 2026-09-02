@@ -51,6 +51,15 @@ describe("pageBorderDraftFrom (SPEC-074 AC-19..AC-23)", () => {
     expect(set.backgroundOn).toBe(true);
     expect(set.background).toBe("#ffffff");
   });
+
+  it("reads an empty string as no background, not as a colour (AC-23)", () => {
+    // "" is not a colour: were it read as one, the switch would come up on
+    // and OK would commit "" as the section's fill — which no format can
+    // write (see odf/writer's fo:background-color).
+    const draft = pageBorderDraftFrom(undefined, "");
+    expect(draft.backgroundOn).toBe(false);
+    expect(pageBackgroundFromDraft(draft)).toBeNull();
+  });
 });
 
 describe("pageBordersFromDraft", () => {

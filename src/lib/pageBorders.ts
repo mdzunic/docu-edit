@@ -45,6 +45,11 @@ export function pageBorderDraftFrom(
   background: string | undefined,
 ): PageBorderDraft {
   const line = PAGE_BORDER_EDGES.map((edge) => borders?.[edge]).find((side) => borderSideVisible(side));
+  // An empty string is not a colour, so it reads as "no background" exactly
+  // like `undefined` does: the switch stays off and OK cannot commit `""` as
+  // a section's fill (which no format can express — see writer.ts's
+  // fo:background-color).
+  const fill = typeof background === "string" && background !== "" ? background : undefined;
   return {
     top: borderSideVisible(borders?.top),
     bottom: borderSideVisible(borders?.bottom),
@@ -56,8 +61,8 @@ export function pageBorderDraftFrom(
     offsetPt: borders?.offsetPt ?? DEFAULT_PAGE_BORDER_OFFSET_PT,
     measureFrom: borders?.measureFrom ?? "page",
     appliesTo: borders?.appliesTo ?? "allPages",
-    backgroundOn: typeof background === "string",
-    background: typeof background === "string" ? background : "#fdf6e3",
+    backgroundOn: fill !== undefined,
+    background: fill ?? "#fdf6e3",
   };
 }
 
