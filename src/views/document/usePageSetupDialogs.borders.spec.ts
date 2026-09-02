@@ -57,7 +57,7 @@ describe("Page setup ↔ Borders tab wiring (SPEC-074 AC-19..AC-23)", () => {
   });
 
   it("OK leaves an untouched document with no page background at all (not \"\")", async () => {
-    const { api, doc, applyEdit } = harness();
+    const { api, applyEdit } = harness();
     const wrapper = openDialog(api);
     // A plain margin change: the user never visits the Borders tab.
     await wrapper.get('[data-testid="page-setup-margin-top"]').setValue("3");
