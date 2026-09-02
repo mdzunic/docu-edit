@@ -363,27 +363,27 @@ function apply() {
 .presets {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
 .preset-buttons {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .preset-button {
-  padding: 4px 10px;
-  border: 1px solid var(--border-subtle, #dadce0);
-  border-radius: 4px;
-  background: var(--surface-1, #fff);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-base);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .preset-button.active {
-  border-color: var(--accent, #1a73e8);
-  background: var(--surface-accent-subtle, #e8f0fe);
+  border-color: var(--accent);
+  background: var(--accent-subtle);
 }
 
 .preset-button:disabled {
@@ -394,12 +394,12 @@ function apply() {
 .edge-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .edge-table th,
 .edge-table td {
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-2);
   text-align: left;
   font-weight: normal;
 }
@@ -407,17 +407,17 @@ function apply() {
 .edge-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   white-space: nowrap;
 }
 
 .field-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 6px;
-  border: 1px solid var(--border-subtle, #dadce0);
-  border-radius: 4px;
-  background: var(--surface-1, #fff);
+  padding: var(--space-2) var(--space-2);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-base);
   color: inherit;
   font: inherit;
 }
@@ -430,55 +430,55 @@ function apply() {
   width: 40px;
   height: 26px;
   padding: 0;
-  border: 1px solid var(--border-subtle, #dadce0);
-  border-radius: 4px;
-  background: var(--surface-1, #fff);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-base);
 }
 
 .padding-group,
 .shading-group {
-  margin-top: 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-subtle, #dadce0);
-  border-radius: 4px;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
 }
 
 .padding-group {
   display: flex;
-  gap: 10px;
+  gap: var(--space-4);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   flex: 1;
 }
 
 .field-label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-transform: capitalize;
-  color: var(--text-secondary, #5f6368);
+  color: var(--text-secondary);
 }
 
 .shading-group {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
 .shading-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--space-3);
+  font-size: var(--text-md);
 }
 
 .hint {
   margin: 0;
   flex-basis: 100%;
-  font-size: 12px;
-  color: var(--text-secondary, #5f6368);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 </style>

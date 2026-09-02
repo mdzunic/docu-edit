@@ -173,9 +173,9 @@ function handleBackgroundToggle(event = new Event("change")) {
 .panel-option {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 10px 0 0;
-  font-size: 13px;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-md);
 }
 
 /* Docked to the top-right of the canvas so the paginated pages stay

@@ -425,10 +425,10 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
 
 <style scoped>
 .borders-button {
-  padding: 4px 8px;
-  border: 1px solid var(--border-subtle, #dadce0);
-  border-radius: 4px;
-  background: var(--surface-1, #fff);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-base);
   color: inherit;
   cursor: pointer;
   font: inherit;

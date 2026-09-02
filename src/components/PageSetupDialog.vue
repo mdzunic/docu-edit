@@ -592,15 +592,15 @@ function apply() {
 <style scoped>
 .tabs {
   display: flex;
-  gap: 4px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--border-subtle, #dadce0);
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  border-bottom: var(--border-width) solid var(--border-subtle);
 }
 
 .tab {
-  padding: 6px 12px;
+  padding: var(--space-3) var(--space-4);
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: var(--space-1) solid transparent;
   background: none;
   color: inherit;
   cursor: pointer;
@@ -608,14 +608,14 @@ function apply() {
 }
 
 .tab.active {
-  border-bottom-color: var(--accent, #1a73e8);
-  color: var(--accent, #1a73e8);
+  border-bottom-color: var(--accent);
+  color: var(--accent);
 }
 
 .edge-toggle {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   white-space: nowrap;
 }
 
@@ -626,9 +626,9 @@ function apply() {
 }
 
 .hint {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: var(--text-secondary, #5f6368);
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
 }
 
 /* This dialog's body is tall, so the panel keeps its own scroll cap (the
