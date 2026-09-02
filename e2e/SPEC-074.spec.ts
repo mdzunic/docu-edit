@@ -1,5 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Download, type Page } from "@playwright/test";
 import { MOD } from "./keys";
+import { readFileSync } from "node:fs";
+import { inflateRawSync } from "node:zlib";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,6 +51,97 @@ async function styleOf(locator: ReturnType<typeof paragraphStarting>, property: 
     (el, prop) => globalThis.getComputedStyle(el).getPropertyValue(prop),
     property,
   );
+}
+
+async function waitForSaved(page: Page): Promise<void> {
+  await expect(page.getByTestId("save-state")).toHaveText("All changes saved", { timeout: 15_000 });
+}
+
+/** File → Export → the chosen format, returning the download. */
+async function exportAs(page: Page, format: "docx" | "odt"): Promise<Download> {
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
+  const pending = page.waitForEvent("download");
+  await page.getByTestId(`download-${format}`).click();
+  return pending;
+}
+
+/** Minimal central-directory walk over a downloaded archive, so a test can
+ * read the OOXML/ODF it just wrote (same shape as e2e/SPEC-008.spec.ts). */
+function unzipParts(buffer: Buffer): Map<string, string> {
+  let eocd = buffer.length - 22;
+  while (eocd >= 0 && buffer.readUInt32LE(eocd) !== 0x06054b50) {
+    eocd--;
+  }
+  expect(eocd, "end-of-central-directory record should exist").toBeGreaterThanOrEqual(0);
+  const totalEntries = buffer.readUInt16LE(eocd + 10);
+  let offset = buffer.readUInt32LE(eocd + 16);
+  const parts = new Map<string, string>();
+  for (let i = 0; i < totalEntries; i++) {
+    const method = buffer.readUInt16LE(offset + 10);
+    const compressedSize = buffer.readUInt32LE(offset + 20);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const extraLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
+    const name = buffer.toString("utf8", offset + 46, offset + 46 + nameLength);
+    const localNameLength = buffer.readUInt16LE(localOffset + 26);
+    const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+    const data = buffer.subarray(dataStart, dataStart + compressedSize);
+    parts.set(name, (method === 8 ? inflateRawSync(data) : Buffer.from(data)).toString("utf8"));
+    offset += 46 + nameLength + extraLength + commentLength;
+  }
+  return parts;
+}
+
+async function partsOf(download: Download): Promise<Map<string, string>> {
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  return unzipParts(readFileSync(path!));
+}
+
+/** Every block's painted borders, shading, padding and indent, plus the page
+ * decoration — the observable stand-in for `equalStructural` (AC-33). */
+async function paintSnapshot(page: Page): Promise<{ blocks: string[]; page: string }> {
+  return page.evaluate(() => {
+    const host = document.querySelector('[data-testid="document-content"]')!;
+    const blocks = Array.from(host.querySelectorAll("p, h1, h2, h3")).map((block) => {
+      const style = globalThis.getComputedStyle(block);
+      return [
+        (block.textContent ?? "").slice(0, 20),
+        [style.borderTopStyle, style.borderRightStyle, style.borderBottomStyle, style.borderLeftStyle].join(),
+        [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].join(),
+        [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor].join(),
+        style.backgroundColor,
+        [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].join(),
+        style.marginInlineStart,
+      ].join(" | ");
+    });
+    const background = document.querySelector('[data-testid="page-background"]');
+    const border = document.querySelector('[data-testid="page-border"]');
+    const borderStyle = border && globalThis.getComputedStyle(border);
+    return {
+      blocks,
+      page: [
+        background ? globalThis.getComputedStyle(background).backgroundColor : "no background",
+        borderStyle
+          ? [borderStyle.borderTopStyle, borderStyle.borderTopWidth, borderStyle.borderTopColor, borderStyle.top].join()
+          : "no border",
+      ].join(" | "),
+    };
+  });
+}
+
+/** Reopen a file the app just wrote, from the library's file input. */
+async function reopen(page: Page, download: Download): Promise<void> {
+  const path = await download.path();
+  expect(path).toBeTruthy();
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(path!);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page).locator("p, h1").first()).toBeVisible();
+  await waitForPagination(page);
 }
 
 test("a bordered, shaded paragraph paints its edges and fill in the canvas (AC-13)", async ({ page }) => {
@@ -592,8 +685,10 @@ test("a paragraph can switch its style's box and fill back off (AC-17)", async (
   await page.getByTestId("borders-cancel").click();
 
   // ...and the override survives the trip through storage, so it is a real
-  // value in the model rather than a transient render decision.
-  await page.waitForTimeout(300);
+  // value in the model rather than a transient render decision. Wait for the
+  // save indicator rather than a wall-clock sleep: the debounce is what this
+  // reload has to land after, and the indicator is what reports it.
+  await waitForSaved(page);
   await page.reload();
   await expect(content(page).locator("p").first()).toBeVisible();
   await waitForPagination(page);
@@ -604,4 +699,372 @@ test("a paragraph can switch its style's box and fill back off (AC-17)", async (
   expect(await styleOf(paragraphStarting(page, "Keeps the inherited box"), "border-left-style")).toBe(
     "solid",
   );
+});
+
+test("paragraph and page borders round-trip through .docx (AC-28, AC-30, AC-33)", async ({ page }) => {
+  await openFixture(page, "word-borders.docx");
+  await waitForPagination(page);
+  const before = await paintSnapshot(page);
+  // The fixture really does carry all five elements this AC names.
+  expect(before.blocks).toHaveLength(9);
+  expect(before.page).toContain("rgb(253, 246, 227)");
+
+  const saved = await exportAs(page, "docx");
+  const xml = (await partsOf(saved)).get("word/document.xml") ?? "";
+
+  // AC-28: w:pBdr with the five edges, @w:val, @w:sz in EIGHTHS of a point,
+  // @w:space in POINTS and @w:color; w:shd carrying @w:fill.
+  expect(xml).toContain('<w:top w:val="single" w:sz="8" w:space="4" w:color="7F7F7F"/>');
+  expect(xml).toContain('<w:left w:val="single" w:sz="8" w:space="4" w:color="7F7F7F"/>');
+  expect(xml).toContain('<w:bottom w:val="single" w:sz="8" w:space="4" w:color="7F7F7F"/>');
+  expect(xml).toContain('<w:right w:val="single" w:sz="8" w:space="4" w:color="7F7F7F"/>');
+  expect(xml).toContain('<w:between w:val="dotted" w:sz="4" w:space="0" w:color="7F7F7F"/>');
+  expect(xml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="FFF2CC"/>');
+  // sz=8 eighths is the 1px/1pt edge the note paints; sz=24 the 3pt heading rule.
+  expect(xml).toContain('<w:bottom w:val="double" w:sz="24" w:space="2" w:color="C00000"/>');
+
+  // AC-30: w:pgBorders inside w:sectPr, w:background on the document.
+  expect(xml).toMatch(
+    /<w:sectPr[ >][\s\S]*<w:pgBorders w:offsetFrom="page">[\s\S]*<\/w:pgBorders>[\s\S]*<\/w:sectPr>/,
+  );
+  expect(xml).toContain('<w:background w:color="FDF6E3"/>');
+
+  // AC-33: reopening renders identically, block for block.
+  await reopen(page, saved);
+  expect(await paintSnapshot(page)).toEqual(before);
+});
+
+test("paragraph and page borders round-trip through .odt (AC-29, AC-31, AC-33)", async ({ page }) => {
+  await openFixture(page, "word-borders.docx");
+  await waitForPagination(page);
+  const before = await paintSnapshot(page);
+
+  const saved = await exportAs(page, "odt");
+  const parts = await partsOf(saved);
+  const content = parts.get("content.xml") ?? "";
+  const styles = parts.get("styles.xml") ?? "";
+
+  // AC-29: fo:border*, fo:padding*, fo:background-color and style:join-border.
+  expect(content).toContain('fo:border-top="1pt solid #7f7f7f"');
+  expect(content).toContain('fo:padding-top="4pt"');
+  expect(content).toContain('fo:background-color="#fff2cc"');
+  expect(content).toContain('style:join-border="true"');
+  // ODF has no between edge, so it is preserved rather than dropped.
+  expect(content).toContain('de:border-between="0.5pt dotted #7f7f7f"');
+
+  // AC-31: the page border and background live on the page layout the master
+  // page points at.
+  expect(styles).toContain('fo:border-top="3pt double #1f4e79"');
+  expect(styles).toContain('fo:background-color="#fdf6e3"');
+  expect(styles).toMatch(/<style:master-page style:name="Standard" style:page-layout-name="pm1"\/>/);
+
+  // AC-33: and it comes back looking the same.
+  await reopen(page, saved);
+  expect(await paintSnapshot(page)).toEqual(before);
+});
+
+test("a dash-dot border saved as .odt maps to its nearest equivalent and is reported (AC-32)", async ({ page }) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("A dash-dot ruled paragraph");
+
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await page.getByTestId("borders-style-top").selectOption("dashDot");
+  await page.getByTestId("borders-apply").click();
+  await waitForPagination(page);
+
+  const saved = await exportAs(page, "odt");
+  // ODF's keyword set has no dash-dot, so the writer picks the nearest one...
+  expect((await partsOf(saved)).get("content.xml") ?? "").toContain('fo:border-top="1pt dashed #000000"');
+  // ...and says so, rather than silently changing the document (DropRecord).
+  const report = page.getByTestId("conversion-report");
+  await expect(report).toBeVisible();
+  await expect(report).toContainText("Paragraph formatting");
+  await expect(report).toContainText("nearest equivalent, dashed");
+
+  // The .docx writer, which HAS the style, keeps it: dash-dot is w:val="dotDash".
+  await page.getByTestId("conversion-report-close").click();
+  expect((await partsOf(await exportAs(page, "docx"))).get("word/document.xml") ?? "").toContain(
+    'w:val="dotDash"',
+  );
+});
+
+test("formatting marks and the accessibility checker read the shading, not the page (AC-26, AC-27)", async ({
+  page,
+}) => {
+  await openFixture(page, "word-borders.docx");
+  await waitForPagination(page);
+  const note = paragraphStarting(page, "Note: this paragraph is boxed");
+  const plain = paragraphStarting(page, "An ordinary paragraph");
+
+  // AC-26: with marks on, only a shaded paragraph gets a mark colour of its
+  // own, and that colour is computed from ITS fill.
+  await page.keyboard.press(`${MOD}+Shift+p`);
+  await expect(content(page)).toHaveClass(/marks-on/);
+  const markColor = (locator: ReturnType<typeof paragraphStarting>) =>
+    locator.evaluate((el) => globalThis.getComputedStyle(el).getPropertyValue("--mark-color").trim());
+  expect(await markColor(plain)).toBe("");
+  const lightFillMark = await markColor(note);
+  expect(lightFillMark).not.toBe("");
+
+  // Flip the fill to near-black: the marks must flip to a light colour, which
+  // they can only do by measuring against the shading.
+  await note.click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await page.getByTestId("borders-shading-color").fill("#1f1f1f");
+  await page.getByTestId("borders-apply").click();
+  await waitForPagination(page);
+  expect(await styleOf(note, "background-color")).toBe("rgb(31, 31, 31)");
+  const darkFillMark = await markColor(note);
+  expect(darkFillMark).not.toBe(lightFillMark);
+  const luminance = (hex: string) => parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16);
+  expect(luminance(darkFillMark)).toBeGreaterThan(luminance(lightFillMark));
+
+  // AC-27: the checker measures the text against that same near-black fill —
+  // against the cream page it would be ~16:1 and clean.
+  await page.getByTestId("menu-title-tools").click();
+  await page.getByTestId("tools-menu-accessibility").click();
+  await expect(page.getByTestId("accessibility-pane")).toBeVisible();
+  await expect(page.getByTestId("accessibility-summary")).toHaveText(/1 issue/);
+  await expect(page.getByTestId("accessibility-group-error")).toContainText("Low contrast text");
+
+  // Negative control: put the light fill back and the report clears.
+  await page.getByTestId("accessibility-pane-close").click();
+  await note.click();
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(async () => {
+    expect(await styleOf(note, "background-color")).toBe("rgb(255, 242, 204)");
+  }).toPass();
+  await page.getByTestId("menu-title-tools").click();
+  await page.getByTestId("tools-menu-accessibility").click();
+  await expect(page.getByTestId("accessibility-summary")).toHaveText("No accessibility issues found");
+});
+
+test("every edge takes its own style, width and colour, in the document's unit (AC-3, AC-7, AC-8, AC-9, AC-10)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Four different edges");
+  const target = paragraphStarting(page, "Four different edges");
+
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  const dialog = page.getByTestId("borders-shading-dialog");
+  await expect(dialog).toBeVisible();
+
+  // AC-3: the three line styles this spec adds are offered on every edge.
+  for (const edge of ["top", "bottom", "left", "right", "between"]) {
+    const values = await page
+      .getByTestId(`borders-style-${edge}`)
+      .evaluate((el) => Array.from((el as HTMLSelectElement).options).map((option) => option.value));
+    expect(values).toEqual(["none", "single", "thick", "double", "dashed", "dotted", "dashDot", "dashDotDot"]);
+  }
+
+  // AC-9: padding is per edge and defaults to 4pt — 0.14cm in the cm document.
+  await expect(dialog).toContainText("Padding (cm)");
+  for (const edge of ["top", "bottom", "left", "right"]) {
+    await expect(page.getByTestId(`borders-padding-${edge}`)).toHaveValue("0.14");
+  }
+
+  // AC-7: four edges, four different styles, widths and colours.
+  const edges = [
+    { edge: "top", style: "thick", width: "3", color: "#ff0000" },
+    { edge: "bottom", style: "dashDotDot", width: "2", color: "#0000ff" },
+    { edge: "left", style: "dashDot", width: "1", color: "#00aa00" },
+    { edge: "right", style: "double", width: "4", color: "#ff00ff" },
+  ];
+  for (const { edge, style, width, color } of edges) {
+    await page.getByTestId(`borders-style-${edge}`).selectOption(style);
+    await page.getByTestId(`borders-width-${edge}`).fill(width);
+    await page.getByTestId(`borders-color-${edge}`).fill(color);
+  }
+  // AC-8: the edges no longer match any preset, so "Custom" takes over.
+  await expect(page.getByTestId("borders-preset-custom")).toHaveAttribute("aria-pressed", "true");
+  for (const preset of ["none", "box", "all", "topAndBottom"]) {
+    await expect(page.getByTestId(`borders-preset-${preset}`)).toHaveAttribute("aria-pressed", "false");
+  }
+
+  // AC-9: a padding set on one edge only.
+  await page.getByTestId("borders-padding-top").fill("0.5");
+  // AC-10: a white fill — a real colour, not "no fill".
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-shading-color").fill("#ffffff");
+  await page.getByTestId("borders-apply").click();
+  await expect(dialog).toBeHidden();
+  await waitForPagination(page);
+
+  expect(await styleOf(target, "border-top-color")).toBe("rgb(255, 0, 0)");
+  expect(await styleOf(target, "border-bottom-color")).toBe("rgb(0, 0, 255)");
+  expect(await styleOf(target, "border-left-color")).toBe("rgb(0, 170, 0)");
+  expect(await styleOf(target, "border-right-color")).toBe("rgb(255, 0, 255)");
+  expect(await styleOf(target, "border-right-style")).toBe("double");
+  expect(await styleOf(target, "border-left-width")).toBe("1px");
+  expect(await styleOf(target, "border-bottom-width")).toBe("2px");
+  // 0.5cm = 14pt on top; the untouched edges keep the 4pt default.
+  expect(await styleOf(target, "padding-top")).toBe("18.6667px");
+  expect(await styleOf(target, "padding-left")).toBe("5.33333px");
+  expect(await styleOf(target, "background-color")).toBe("rgb(255, 255, 255)");
+
+  // AC-9: switch the document's unit and the padding fields follow it — the
+  // same 4pt default, now stated in points.
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("page-setup-button").click();
+  await page.getByTestId("page-setup-unit").selectOption("pt");
+  await page.getByTestId("page-setup-apply").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeHidden();
+
+  await target.click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await expect(dialog).toContainText("Padding (pt)");
+  await expect(page.getByTestId("borders-padding-top")).toHaveValue("14");
+  await expect(page.getByTestId("borders-padding-left")).toHaveValue("4");
+
+  // AC-10: clearing the checkbox is a THIRD state, distinct from white.
+  await page.getByTestId("borders-shading-on").uncheck();
+  await page.getByTestId("borders-apply").click();
+  await expect(dialog).toBeHidden();
+  expect(await styleOf(target, "background-color")).toBe("rgba(0, 0, 0, 0)");
+  // ...and it did not take the borders with it.
+  expect(await styleOf(target, "border-top-color")).toBe("rgb(255, 0, 0)");
+});
+
+test("page borders choose their edges and measure from the page or the text (AC-20, AC-21)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("A certificate");
+
+  const openBordersTab = async () => {
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("page-setup-button").click();
+    await expect(page.getByTestId("page-setup-dialog")).toBeVisible();
+    await page.getByTestId("page-setup-tab-borders").click();
+  };
+  const border = page.getByTestId("page-border").first();
+  const insetOf = () =>
+    border.evaluate((el) => {
+      const style = globalThis.getComputedStyle(el);
+      return { top: style.top, left: style.left, edges: [style.borderTopStyle, style.borderRightStyle, style.borderBottomStyle, style.borderLeftStyle].join() };
+    });
+
+  await openBordersTab();
+  for (const edge of ["top", "bottom", "left", "right"]) {
+    await page.getByTestId(`page-border-edge-${edge}`).check();
+  }
+  await page.getByTestId("page-border-style").selectOption("dashed");
+  await page.getByTestId("page-border-measure-from").selectOption("page");
+  await page.getByTestId("page-setup-apply").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeHidden();
+  await expect(border).toBeAttached();
+
+  // Measured from the page edge: the offset is all that separates them.
+  const fromPage = await insetOf();
+  expect(fromPage.edges).toBe("dashed,dashed,dashed,dashed");
+  expect(fromPage.top).toBe("32px");
+
+  // AC-21: measured from the text, the border moves in to the text area —
+  // the margin (72pt) less the offset (24pt).
+  await openBordersTab();
+  await page.getByTestId("page-border-measure-from").selectOption("text");
+  await page.getByTestId("page-setup-apply").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeHidden();
+  await expect(async () => {
+    expect((await insetOf()).top).toBe("64px");
+  }).toPass();
+
+  // AC-20: the edge checkboxes decide which sides are drawn at all.
+  await openBordersTab();
+  await page.getByTestId("page-border-edge-left").uncheck();
+  await page.getByTestId("page-border-edge-right").uncheck();
+  await page.getByTestId("page-setup-apply").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeHidden();
+  await expect(async () => {
+    expect((await insetOf()).edges).toBe("dashed,none,dashed,none");
+  }).toPass();
+});
+
+test("switching an inherited box off survives both file formats, and a plain document brings back no husks (AC-17)", async ({
+  page,
+}) => {
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Turns the box off");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Keeps the inherited box");
+
+  // Normal draws a box and a fill; every paragraph inherits both.
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-styles-pane").click();
+  await page.getByTestId("style-modify-Normal").click();
+  await page.getByTestId("style-borders-button").click();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-shading-on").check();
+  await page.getByTestId("borders-shading-color").fill("#ffd9d9");
+  await page.getByTestId("borders-apply").click();
+  await page.getByTestId("style-editor-save").click();
+  await waitForPagination(page);
+
+  // One paragraph switches both back off.
+  await paragraphStarting(page, "Turns the box off").click();
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-borders").click();
+  await page.getByTestId("borders-preset-none").click();
+  await page.getByTestId("borders-shading-on").uncheck();
+  await page.getByTestId("borders-apply").click();
+  await waitForPagination(page);
+
+  const assertOverrideHeld = async () => {
+    const off = paragraphStarting(page, "Turns the box off");
+    const kept = paragraphStarting(page, "Keeps the inherited box");
+    for (const edge of ["top", "bottom", "left", "right"]) {
+      expect(await styleOf(off, `border-${edge}-style`)).toBe("none");
+    }
+    expect(await styleOf(off, "background-color")).toBe("rgba(0, 0, 0, 0)");
+    expect(await styleOf(kept, "border-left-style")).toBe("solid");
+    expect(await styleOf(kept, "background-color")).toBe("rgb(255, 217, 217)");
+  };
+  await assertOverrideHeld();
+
+  // The "off" is a value in the file, not a render-time decision: .docx says
+  // so with an all-nil w:pBdr and a fill-less w:shd.
+  const asDocx = await exportAs(page, "docx");
+  const docxXml = (await partsOf(asDocx)).get("word/document.xml") ?? "";
+  expect(docxXml).toContain('<w:top w:val="nil" w:sz="0" w:space="0" w:color="auto"/>');
+  expect(docxXml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="auto"/>');
+  await reopen(page, asDocx);
+  await assertOverrideHeld();
+
+  const asOdt = await exportAs(page, "odt");
+  await reopen(page, asOdt);
+  await assertOverrideHeld();
+
+  // The other half of the same judgement: a document that never had borders
+  // must not come back carrying "off" husks, or it could never pick a style's
+  // box up afterwards.
+  await createDocument(page);
+  await content(page).click();
+  await page.keyboard.type("Plain before the round trip");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("Plain after it too");
+  const plainSave = await exportAs(page, "docx");
+  expect((await partsOf(plainSave)).get("word/document.xml") ?? "").not.toContain("<w:pBdr>");
+
+  await reopen(page, plainSave);
+  await page.getByTestId("menu-title-view").click();
+  await page.getByTestId("view-menu-styles-pane").click();
+  await page.getByTestId("style-modify-Normal").click();
+  await page.getByTestId("style-borders-button").click();
+  await page.getByTestId("borders-preset-box").click();
+  await page.getByTestId("borders-apply").click();
+  await page.getByTestId("style-editor-save").click();
+  await waitForPagination(page);
+  expect(await styleOf(paragraphStarting(page, "Plain before the round trip"), "border-left-style")).toBe(
+    "solid",
+  );
+  expect(await styleOf(paragraphStarting(page, "Plain after it too"), "border-left-style")).toBe("solid");
 });
