@@ -50,8 +50,14 @@ function previewTable(entry = entries.value[0]) {
     copy.styleId = entry.id;
     copy.look = { ...entry.look };
   }
-  // Previews stay small: at most the first four rows of the real table.
+  // Previews stay small: at most the first four rows of the real table, and
+  // the tile's width rather than the table's own — absolute column widths
+  // become proportional percentages, so a wide table can never push the
+  // grid past the dialog and take tiles out of the viewport (AC-31). The
+  // proportions, content and look are still the real table's (AC-32).
   copy.rows = copy.rows.slice(0, 4);
+  copy.widthMode = "percent";
+  copy.widthPercent = 100;
   return copy;
 }
 
@@ -126,13 +132,17 @@ function lookOn(key = "firstRow") {
 </template>
 
 <style scoped>
+/* minmax(0, 1fr) tracks and min-width: 0 tiles: a tile's content can shrink
+   but never widen the grid, so every tile stays inside the dialog — and the
+   dialog inside the viewport — whatever table it previews (AC-31). */
 .gallery {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
 }
 
 .gallery-tile {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);

@@ -420,17 +420,14 @@ export function tableCellStyle(cell: TableCell): Record<string, string> {
   return style;
 }
 
-/** A cell's inline style (AC-15) with any explicit shading dropped while it
- * is part of an active range selection — the canvas's `.cell-selected`
- * class highlight would otherwise lose to the cell's own `style` attribute,
- * which always wins over a class rule regardless of shading. */
-export function tableCellDisplayStyle(cell: TableCell, selected: boolean): Record<string, string> {
-  const style = tableCellStyle(cell);
-  if (selected) {
-    delete style.backgroundColor;
-  }
-  return style;
-}
+/** The cell-range selection highlight as a stacked layer (SPEC-023 AC-15,
+ * SPEC-076 AC-29): the same translucent blue `.cell-selected` paints, but as
+ * a `background-image` gradient laid OVER the cell's `background-color`
+ * rather than instead of it. Selection is transient UI state; the computed
+ * `background-color` is also the PDF export's only source for cell shading
+ * (lib/pdf/domExtract.ts), so the highlight must never displace it. */
+export const CELL_SELECTION_OVERLAY =
+  "linear-gradient(rgb(66 133 244 / 0.22), rgb(66 133 244 / 0.22))";
 
 /** A cell's inline style with the table style's banding resolved in
  * (SPEC-076 AC-24, AC-29). Everything that is not shading/borders — padding,
@@ -458,8 +455,12 @@ export function tableCellBandedStyle(
   if (resolved.bold) {
     style.fontWeight = "bold";
   }
-  if (selected) {
-    delete style.backgroundColor;
+  if (selected && style.backgroundColor !== undefined) {
+    // A shaded cell keeps its opaque background-color — the export reads it
+    // from the computed style, selected or not — and shows the highlight
+    // tinted over it. An unshaded cell has no inline background at all, so
+    // the `.cell-selected` class rule paints it exactly as before.
+    style.backgroundImage = CELL_SELECTION_OVERLAY;
   }
   return style;
 }

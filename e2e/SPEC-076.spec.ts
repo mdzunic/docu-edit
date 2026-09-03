@@ -146,11 +146,9 @@ test.describe("SPEC-076 the table style gallery", () => {
     await clickCell(page, 1, 0);
 
     await tableMenu(page, "table-menu-styles");
-    // The Accent tile sits in the gallery's third column, whose live table
-    // preview can push it past the e2e viewport's right edge; tile
-    // clickability is the gallery test's concern, this test's is the export,
-    // so the click is dispatched rather than positional.
-    await page.getByTestId("table-style-TableStyleAccent").dispatchEvent("click");
+    // A real positional click: every tile — the third column included — fits
+    // inside the dialog now that previews render at tile width (AC-31).
+    await page.getByTestId("table-style-TableStyleAccent").click();
     await page.getByTestId("table-style-close").click();
     await waitForPagination(page);
     // The look landed before we export: the header row carries Accent's
@@ -185,6 +183,66 @@ test.describe("SPEC-076 the table style gallery", () => {
     // …plus Accent's black grid borders as black-filled strips — `rg`
     // followed by a moveto is a path fill state, not a text colour.
     expect(pdf).toMatch(/q 0 0 0 rg [\d.]+ [\d.]+ m\n/);
+
+    const bandFills = (bytes: string) => bytes.split("0.85 0.89 0.95 rg").length - 1;
+    const headerFills = (bytes: string) => bytes.split("0.18 0.33 0.59 rg").length - 1;
+
+    // An active cell-range selection is transient UI state: exporting while
+    // shaded cells are drag-selected must carry exactly the same fills —
+    // the highlight is an overlay on the shading, never a replacement.
+    const from = (await content(page).getByTestId("table-cell-1-0").boundingBox())!;
+    const to = (await content(page).getByTestId("table-cell-2-1").boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+    await page.mouse.up();
+    await expect(content(page).locator("td.cell-selected")).toHaveCount(4);
+    // The selected banded cell still reports its opaque resolved shading.
+    await expect
+      .poll(async () =>
+        content(page)
+          .getByTestId("table-cell-1-0")
+          .evaluate((el) => globalThis.getComputedStyle(el).backgroundColor),
+      )
+      .toBe("rgb(217, 226, 243)");
+
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
+    const [selectedDownload] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByTestId("download-pdf").click(),
+    ]);
+    const selectedPdf = readFileSync((await selectedDownload.path())!).toString("latin1");
+    expect(bandFills(selectedPdf)).toBe(bandFills(pdf));
+    expect(headerFills(selectedPdf)).toBe(headerFills(pdf));
+    expect(bandFills(pdf)).toBeGreaterThan(0);
+  });
+
+  test("every gallery tile is inside the viewport and really clickable (AC-31)", async ({ page }) => {
+    await openFixture(page, "tables-sorted.docx");
+    await waitForPagination(page);
+    await clickCell(page, 1, 0);
+    await tableMenu(page, "table-menu-styles");
+
+    const viewport = page.viewportSize()!;
+    for (const id of [
+      "none",
+      "TableStylePlain",
+      "TableStyleGrid",
+      "TableStyleBandedRows",
+      "TableStyleHeader",
+      "TableStyleAccent",
+    ]) {
+      const tile = page.getByTestId(`table-style-${id}`);
+      await expect(tile).toBeVisible();
+      const box = (await tile.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+    }
+    // A real positional click on a third-column tile — the exact click that
+    // used to time out when the previews forced the grid past the viewport.
+    await page.getByTestId("table-style-TableStyleGrid").click();
+    await expect(page.getByTestId("table-style-TableStyleGrid")).toHaveAttribute("aria-selected", "true");
   });
 });
 

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cellBorderItems,
+  edgePaintItems,
   filledRectItem,
   parseCssColor,
   parseCssPaint,
@@ -114,5 +115,67 @@ describe("cellBorderItems", () => {
       bottom: { widthPt: 1, color: grey },
     });
     expect(items.map((item) => item.fill)).toEqual([black, grey]);
+  });
+});
+
+describe("edgePaintItems — non-solid border styles (AC-29)", () => {
+  const black: [number, number, number] = [0, 0, 0];
+  // A horizontal top strip as cellBorderItems would build it: 60 wide, 3 thick.
+  const strip: PdfRect = { xPt: 100, yPt: 198.5, widthPt: 60, heightPt: 3 };
+
+  it("a dashed edge strokes the strip's centre line with a 3-on/3-off dash", () => {
+    const items = edgePaintItems(strip, { widthPt: 3, color: black, style: "dashed" });
+    expect(items).toHaveLength(1);
+    expect(items[0].fill).toBeUndefined();
+    expect(items[0].stroke).toEqual({ color: black, widthPt: 3, dashPt: [9, 9] });
+    expect(items[0].subpaths[0].start).toEqual({ xPt: 100, yPt: 200 });
+    expect(items[0].subpaths[0].segments[0]).toMatchObject({ toXPt: 160, toYPt: 200 });
+  });
+
+  it("a dotted edge uses width-sized dots", () => {
+    const [item] = edgePaintItems(strip, { widthPt: 3, color: black, style: "dotted" });
+    expect(item.stroke?.dashPt).toEqual([3, 3]);
+  });
+
+  it("a vertical dashed edge strokes vertically", () => {
+    const vertical: PdfRect = { xPt: 158.5, yPt: 200, widthPt: 3, heightPt: 40 };
+    const [item] = edgePaintItems(vertical, { widthPt: 3, color: black, style: "dashed" });
+    expect(item.subpaths[0].start).toEqual({ xPt: 160, yPt: 200 });
+    expect(item.subpaths[0].segments[0]).toMatchObject({ toXPt: 160, toYPt: 240 });
+  });
+
+  it("a double edge paints two strips of a third of the width, at the strip's faces", () => {
+    const items = edgePaintItems(strip, { widthPt: 3, color: black, style: "double" });
+    expect(items).toHaveLength(2);
+    expect(items[0].subpaths[0].start).toEqual({ xPt: 100, yPt: 198.5 });
+    expect(items[0].subpaths[0].segments[1]).toMatchObject({ toXPt: 160, toYPt: 199.5 });
+    expect(items[1].subpaths[0].start).toEqual({ xPt: 100, yPt: 200.5 });
+    expect(items[1].subpaths[0].segments[1]).toMatchObject({ toXPt: 160, toYPt: 201.5 });
+  });
+
+  it("a double edge too thin for its gap falls back to the solid strip, as the browser does", () => {
+    const thin: PdfRect = { xPt: 100, yPt: 199.5, widthPt: 60, heightPt: 1 };
+    const items = edgePaintItems(thin, { widthPt: 1, color: black, style: "double" });
+    expect(items).toHaveLength(1);
+    expect(items[0].fill).toEqual(black);
+  });
+
+  it("a solid or unknown style stays the filled strip", () => {
+    for (const style of ["solid", "groove", undefined]) {
+      const items = edgePaintItems(strip, { widthPt: 3, color: black, style });
+      expect(items).toHaveLength(1);
+      expect(items[0].fill).toEqual(black);
+      expect(items[0].stroke).toBeUndefined();
+    }
+  });
+
+  it("cellBorderItems routes each edge's style through", () => {
+    const box: PdfRect = { xPt: 100, yPt: 200, widthPt: 60, heightPt: 40 };
+    const items = cellBorderItems(box, {
+      top: { widthPt: 2, color: black, style: "dashed" },
+      bottom: { widthPt: 2, color: black },
+    });
+    expect(items[0].stroke?.dashPt).toEqual([6, 6]);
+    expect(items[1].fill).toEqual(black);
   });
 });

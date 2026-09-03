@@ -104,10 +104,13 @@ export interface PdfRect {
   heightPt: number;
 }
 
-/** One paintable border edge of a table cell. */
+/** One paintable border edge of a table cell. `style` is the computed CSS
+ * border-style; dashed, dotted and double get their own geometry below, and
+ * anything else paints the plain solid strip. */
 export interface CellEdgePaint {
   widthPt: number;
   color: [number, number, number];
+  style?: string;
 }
 
 /** A rectangle as a closed, filled path item — the shape both a cell's
@@ -151,28 +154,72 @@ export function cellBorderItems(
   const height = rect.heightPt + half(edges.top) + half(edges.bottom);
   const items: PdfPathItem[] = [];
   if (edges.top) {
-    items.push(filledRectItem({ xPt: x0, yPt: y0, widthPt: width, heightPt: edges.top.widthPt }, edges.top.color));
+    items.push(...edgePaintItems({ xPt: x0, yPt: y0, widthPt: width, heightPt: edges.top.widthPt }, edges.top));
   }
   if (edges.bottom) {
     items.push(
-      filledRectItem(
+      ...edgePaintItems(
         { xPt: x0, yPt: rect.yPt + rect.heightPt - half(edges.bottom), widthPt: width, heightPt: edges.bottom.widthPt },
-        edges.bottom.color,
+        edges.bottom,
       ),
     );
   }
   if (edges.left) {
-    items.push(filledRectItem({ xPt: x0, yPt: y0, widthPt: edges.left.widthPt, heightPt: height }, edges.left.color));
+    items.push(...edgePaintItems({ xPt: x0, yPt: y0, widthPt: edges.left.widthPt, heightPt: height }, edges.left));
   }
   if (edges.right) {
     items.push(
-      filledRectItem(
+      ...edgePaintItems(
         { xPt: rect.xPt + rect.widthPt - half(edges.right), yPt: y0, widthPt: edges.right.widthPt, heightPt: height },
-        edges.right.color,
+        edges.right,
       ),
     );
   }
   return items;
+}
+
+/** One border edge's strip as path items honouring its computed style
+ * (SPEC-076 AC-29): the screen paints dashed, dotted and double borders via
+ * CSS, so a solid strip in the export would not look the same. A dashed or
+ * dotted edge becomes a stroked centre line with a dash pattern; a double
+ * edge two strips of a third of the width each, CSS's own geometry; anything
+ * else is the plain filled strip. The strip rect is already corner-extended
+ * by the caller. */
+export function edgePaintItems(strip: PdfRect, edge: CellEdgePaint): PdfPathItem[] {
+  const horizontal = strip.widthPt >= strip.heightPt;
+  const thickness = horizontal ? strip.heightPt : strip.widthPt;
+  // Below 3px (2.25pt) a double border has no room for its gap and the
+  // browser paints it as one line — so does the fallthrough strip.
+  if (edge.style === "double" && thickness >= 2.25) {
+    const line = thickness / 3;
+    return horizontal
+      ? [
+          filledRectItem({ ...strip, heightPt: line }, edge.color),
+          filledRectItem({ ...strip, yPt: strip.yPt + thickness - line, heightPt: line }, edge.color),
+        ]
+      : [
+          filledRectItem({ ...strip, widthPt: line }, edge.color),
+          filledRectItem({ ...strip, xPt: strip.xPt + thickness - line, widthPt: line }, edge.color),
+        ];
+  }
+  if (edge.style === "dashed" || edge.style === "dotted") {
+    // Butt-capped dashes: 3×width on / 3×width off for dashed, square
+    // width-sized dots for dotted — the proportions CSS borders use.
+    const on = edge.style === "dashed" ? thickness * 3 : thickness;
+    const start = horizontal
+      ? { xPt: strip.xPt, yPt: strip.yPt + thickness / 2 }
+      : { xPt: strip.xPt + thickness / 2, yPt: strip.yPt };
+    const end = horizontal
+      ? { toXPt: strip.xPt + strip.widthPt, toYPt: strip.yPt + thickness / 2 }
+      : { toXPt: strip.xPt + thickness / 2, toYPt: strip.yPt + strip.heightPt };
+    return [
+      {
+        subpaths: [{ start, segments: [end] }],
+        stroke: { color: edge.color, widthPt: thickness, dashPt: [on, on] },
+      },
+    ];
+  }
+  return [filledRectItem(strip, edge.color)];
 }
 
 /** SVG stroke cap/join names to PDF's `J`/`j` operand codes. Both default
@@ -456,7 +503,7 @@ export function extractPageContent(
       if (!Number.isFinite(widthPx) || widthPx <= 0 || !color) {
         return undefined;
       }
-      return { widthPt: widthPx * layoutScale * scale, color };
+      return { widthPt: widthPx * layoutScale * scale, color, style: borderStyle };
     };
     cellBorders.push(
       ...cellBorderItems(box, {
