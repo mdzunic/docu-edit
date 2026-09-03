@@ -117,6 +117,16 @@ export function odpThemeBlockXml(theme: DocumentTheme): string {
  * block plus the paragraph and table-cell carrier styles the word processor's
  * shading references parent. */
 export function odtThemeBlockXml(theme: DocumentTheme): string {
+  // The deck block relies on the odp styles.xml root declaring xmlns:draw;
+  // the TEXT product's styles.xml root deliberately does not (the odf
+  // writer declares namespaces locally per feature so featureless documents
+  // keep their bytes — see writer.ts's DOCUMENT_XMLNS), and a foreign
+  // preserved styles.xml the block is spliced into may not either. So the
+  // draw prefix is declared locally on each graphic carrier here.
+  const deckBlock = odpThemeBlockXml(theme).replace(
+    /<style:graphic-properties draw:/g,
+    `<style:graphic-properties xmlns:draw="${DRAW_NAMESPACE}" draw:`,
+  );
   const carriers = THEME_COLOR_SLOTS.map((slot) => {
     const hex = theme.colors[slot];
     const label = escapeXmlAttribute(themeSlotLabel(slot));
@@ -127,7 +137,7 @@ export function odtThemeBlockXml(theme: DocumentTheme): string {
       `<style:table-cell-properties fo:background-color="${hex}"/></style:style>`
     );
   }).join("");
-  return odpThemeBlockXml(theme) + carriers;
+  return deckBlock + carriers;
 }
 
 const THEME_STYLE_RE =

@@ -32,6 +32,7 @@ import type {
   RunFormatting,
   RunTrackedChanges,
   Section,
+  Shape,
   SourceXml,
   Table,
   TableCell,
@@ -82,8 +83,8 @@ import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "../core/odfMeta";
-import { DEFAULT_THEME } from "../core/theme";
-import { readThemeStyles } from "../core/themeOdf";
+import { DEFAULT_THEME, type ModelColor } from "../core/theme";
+import { readThemeStyles, themeParentSlot } from "../core/themeOdf";
 import {
   DC_NAMESPACE,
   DRAW_NAMESPACE,
@@ -1036,6 +1037,33 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   return paragraph;
 }
 
+/** SPEC-077 AC-40: a shape's graphic automatic style parented on
+ * `de-theme-{slot}` carries a solid-fill colour REFERENCE — the
+ * draw:fill-color it also declares is the resolved literal the writer put
+ * beside the link for other readers (the reference replaces the writer's
+ * boilerplate "Graphics" parent, see writer.ts's withShapeThemeParent).
+ * Mutates the parsed shape's fill in place; a shape with no such parent (or
+ * a non-solid fill) is left exactly as parsed. */
+function recoverShapeThemeFill(el: Element, contentDoc: Document, shape: Shape): void {
+  if (shape.fill?.kind !== "solid" || typeof shape.fill.color !== "string") {
+    return;
+  }
+  const styleName = el.getAttributeNS(DRAW_NAMESPACE, "style-name");
+  if (!styleName) {
+    return;
+  }
+  for (const styleEl of Array.from(contentDoc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
+    if (styleEl.getAttributeNS(STYLE_NAMESPACE, "name") !== styleName) {
+      continue;
+    }
+    const slot = themeParentSlot(styleEl.getAttributeNS(STYLE_NAMESPACE, "parent-style-name") ?? undefined);
+    if (slot) {
+      shape.fill = { ...shape.fill, color: { theme: slot } };
+    }
+    return;
+  }
+}
+
 /** Context a body-level text-block parse needs to resolve a `draw:frame`
  * into actual image bytes (SPEC-024). */
 export interface OdfDrawingContext {
@@ -1397,6 +1425,7 @@ function parseBodyTextBlockOrSplit(
         const parsedShape = parseShapeElement(frameEl, ctx.contentDoc, ctx.stylesDoc, shapeTextCtx);
         if (parsedShape) {
           flush();
+          recoverShapeThemeFill(frameEl, ctx.contentDoc, parsedShape.shape);
           blocks.push(parsedShape.shape);
           stampOdfConnectorTargetId(frameEl, parsedShape.shape);
           continue;
@@ -1828,7 +1857,9 @@ function repeatCount(el: Element, attr: string): number | null {
  * alignment. */
 interface ParsedCellStyle {
   borders?: CellBorders;
-  shadingFill?: string;
+  /** A literal, or a theme reference recovered from the style's
+   * `de-theme-cell-{slot}` parent (SPEC-077 AC-40). */
+  shadingFill?: ModelColor;
   paddingCm?: number;
   verticalAlign?: CellVerticalAlign;
 }
@@ -1906,7 +1937,15 @@ function collectTableCellStyles(contentDoc: Document, stylesDoc: Document | unde
       const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
       const props = firstChildElement(el, STYLE_NAMESPACE, "table-cell-properties");
       if (name && props) {
-        styles.set(name, parseCellStyleProperties(props));
+        const parsed = parseCellStyleProperties(props);
+        // SPEC-077 AC-40: a cell style parented on `de-theme-cell-{slot}`
+        // carries a shading REFERENCE — the fo:background-color it also
+        // declares is the resolved literal beside the link.
+        const slot = themeParentSlot(el.getAttributeNS(STYLE_NAMESPACE, "parent-style-name") ?? undefined);
+        if (slot && parsed.shadingFill !== undefined) {
+          parsed.shadingFill = { theme: slot };
+        }
+        styles.set(name, parsed);
       }
     }
   };
