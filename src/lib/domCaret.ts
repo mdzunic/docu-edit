@@ -7,10 +7,14 @@
 // sharing one address, each carrying `data-slice-start` — the character
 // offset its own text begins at — so both directions of the mapping add or
 // subtract that base. Framework-free on purpose: it needs a DOM, but no Vue.
+import { REPEATED_HEADER_ATTRIBUTE } from "./core/pageMetrics";
 import type { CaretPosition } from "./textEditing";
 
 /** Selects the canvas's paragraph elements (shared with caretGeometry). */
 export const BLOCK_SELECTOR = "[data-section][data-block]";
+
+/** Selects a repeated table header row (SPEC-076 AC-7). */
+const REPEATED_HEADER_SELECTOR = `[${REPEATED_HEADER_ATTRIBUTE}]`;
 
 /** Marks a rendered inline element as a caret atom (SPEC-031's note
  * reference marks): its rendered text may be any length (a note number like
@@ -273,9 +277,39 @@ export function caretFromDomPoint(
   node: Node,
   offset: number,
 ): CaretPosition | null {
+  return caretFromDomPointIn(root, node, offset, false);
+}
+
+/** The model caret a point inside a REPEATED table header row maps to
+ * (SPEC-076 AC-8), or null for a point that is not inside one.
+ *
+ * The repeat is a pixel-exact copy of the real header row carrying the same
+ * `data-section`/`data-block`/`data-row`/`data-col`, so the corresponding
+ * real cell and the offset nearest the click fall straight out of the copy's
+ * own DOM — the resolution is the ordinary one, with only the
+ * `data-canvas-ignore` gate lifted (that gate is what keeps every other walk,
+ * from find to the caret's own arrow keys, out of the repeat — AC-9, AC-10). */
+export function caretFromRepeatedHeaderPoint(
+  root: Element,
+  node: Node,
+  offset: number,
+): CaretPosition | null {
+  const element = node instanceof Element ? node : node.parentElement;
+  if (!element?.closest(REPEATED_HEADER_SELECTOR)) {
+    return null;
+  }
+  return caretFromDomPointIn(root, node, offset, true);
+}
+
+function caretFromDomPointIn(
+  root: Element,
+  node: Node,
+  offset: number,
+  allowIgnored: boolean,
+): CaretPosition | null {
   const element = node instanceof Element ? node : node.parentElement;
   const paragraph = element?.closest(BLOCK_SELECTOR);
-  if (!paragraph || !root.contains(paragraph) || inIgnoredSubtree(root, paragraph)) {
+  if (!paragraph || !root.contains(paragraph) || (!allowIgnored && inIgnoredSubtree(root, paragraph))) {
     return null;
   }
   const section = Number(paragraph.getAttribute("data-section"));
@@ -363,10 +397,18 @@ export function domPointForCaret(
   let paragraph: Element | null;
   let atomOffset: number | undefined;
   if (caret.cell) {
-    paragraph = root.querySelector(
-      `${address}[data-row="${caret.cell.row}"][data-col="${caret.cell.col}"]` +
-        `[data-cell-block="${caret.cell.block}"]`,
-    );
+    // A repeated header row (SPEC-076) copies the real row's whole address,
+    // so a plain querySelector could land the caret in a copy — one that is
+    // contenteditable=false and unselectable — whenever the real row's own
+    // page is virtualized away. The ignore filter is what keeps caret
+    // navigation out of the repeat (AC-9).
+    paragraph =
+      Array.from(
+        root.querySelectorAll(
+          `${address}[data-row="${caret.cell.row}"][data-col="${caret.cell.col}"]` +
+            `[data-cell-block="${caret.cell.block}"]`,
+        ),
+      ).find((el) => !inIgnoredSubtree(root, el)) ?? null;
   } else {
     // Cell paragraphs carry their table's section/block address too, so a
     // top-level lookup must exclude them. When the address itself is a

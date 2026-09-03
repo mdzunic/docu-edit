@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { ALL_EDGES } from "./paragraphBorders";
 import {
+  CELL_SELECTION_OVERLAY,
   displayParagraphFormatting,
   pageBorderStyle,
   displayRunFormatting,
@@ -12,6 +13,7 @@ import {
   runStyle,
   shapeDisplayStyle,
   shapeTextRectStyle,
+  tableCellBandedStyle,
   tableCellStyle,
   tableColumnWidth,
   tableRowStyle,
@@ -228,6 +230,39 @@ describe("tableCellStyle (SPEC-023 AC-10..17)", () => {
 
   it("returns an empty style for a plain cell", () => {
     expect(tableCellStyle({ blocks: [] }, DEFAULT_THEME)).toEqual({});
+  });
+});
+
+describe("tableCellBandedStyle — selection is an overlay, not a substitution (SPEC-076 AC-29)", () => {
+  const shadedTable: Table = {
+    type: "table",
+    rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [] }], shadingFill: "#d9e2f3" }] }],
+    columnWidthsCm: [4],
+  };
+
+  it("keeps a selected cell's opaque background-color and adds the highlight as a gradient", () => {
+    const style = tableCellBandedStyle(shadedTable, [], 0, 0, true, DEFAULT_THEME);
+    // The PDF export reads computed background-color off this DOM
+    // (lib/pdf/domExtract.ts) — a selection must never blank it.
+    expect(style.backgroundColor).toBe("#d9e2f3");
+    expect(style.backgroundImage).toBe(CELL_SELECTION_OVERLAY);
+  });
+
+  it("leaves an unshaded selected cell to the .cell-selected class rule", () => {
+    const bare: Table = {
+      type: "table",
+      rows: [{ cells: [{ blocks: [{ type: "paragraph", runs: [] }] }] }],
+      columnWidthsCm: [4],
+    };
+    const style = tableCellBandedStyle(bare, [], 0, 0, true, DEFAULT_THEME);
+    expect(style.backgroundColor).toBeUndefined();
+    expect(style.backgroundImage).toBeUndefined();
+  });
+
+  it("adds no overlay when the cell is not selected", () => {
+    const style = tableCellBandedStyle(shadedTable, [], 0, 0, false, DEFAULT_THEME);
+    expect(style.backgroundColor).toBe("#d9e2f3");
+    expect(style.backgroundImage).toBeUndefined();
   });
 });
 

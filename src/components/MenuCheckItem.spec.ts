@@ -23,4 +23,27 @@ describe("MenuCheckItem", () => {
     await wrapper.get("button").trigger("click");
     expect(wrapper.emitted("select")).toHaveLength(1);
   });
+
+  // SPEC-076 AC-18: a disabled toggle states why, exactly as MenuItem does —
+  // a check item is never silently greyed out.
+  it("states the reason it is disabled, in the item and as a title", () => {
+    const wrapper = mount(MenuCheckItem, {
+      props: {
+        label: "Repeat header row",
+        disabled: true,
+        reason: "the caret is not in a table",
+      },
+    });
+    expect(wrapper.get("[data-testid='menu-item-reason']").text()).toBe("the caret is not in a table");
+    expect(wrapper.get("button").attributes("title")).toBe("the caret is not in a table");
+  });
+
+  it("states nothing while it is enabled", () => {
+    const wrapper = mount(MenuCheckItem, {
+      props: { label: "Repeat header row", reason: "the caret is not in a table", shortcut: "Ctrl+R" },
+    });
+    expect(wrapper.find("[data-testid='menu-item-reason']").exists()).toBe(false);
+    expect(wrapper.get("button").attributes("title")).toBeUndefined();
+    expect(wrapper.get(".menu-shortcut").text()).toBe("Ctrl+R");
+  });
 });

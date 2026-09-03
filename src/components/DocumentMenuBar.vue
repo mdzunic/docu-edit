@@ -27,6 +27,7 @@ import ShapeGallery from "./ShapeGallery.vue";
 import ChartGallery from "./ChartGallery.vue";
 import { GALLERY_PRESETS as MULTILEVEL_PRESETS } from "../lib/core/listDefinitions";
 import { PICKER_MAX_ROWS, PICKER_MAX_COLS } from "../lib/core/tables";
+import { asTableMenuState, noTableMenuState } from "../lib/tables";
 import { ACCEPTED_IMAGE_ACCEPT_ATTR } from "../lib/core/media";
 import { shortcutLabel } from "../lib/shortcuts";
 import { ZOOM_PRESETS } from "../lib/zoom";
@@ -69,6 +70,10 @@ const props = defineProps({
   resolvedTheme: { type: String, default: "light" },
   /** Whether the dim-page opt-in is on (SPEC-059 AC-13/14). */
   dimPage: { type: Boolean, default: false },
+  /** The Table menu's state (SPEC-076): useTableTools' `menuState` — whether
+   * the caret is in a table, whether its row repeats, and the reasons the
+   * disabled items state. */
+  tableState: { type: Object, default: () => noTableMenuState() },
   /** Whether "Insert -> Chart from table" applies (a table holds the active
    * cell-range selection) — computed by the view, which owns the model. */
   tableSelectedForChart: { type: Boolean, default: false },
@@ -167,8 +172,16 @@ const MENUS = [
   { id: "view", label: "View" },
   { id: "insert", label: "Insert" },
   { id: "format", label: "Format" },
+  // SPEC-076 AC-16: between Format and Tools, LibreOffice Writer's ordering.
+  { id: "table", label: "Table" },
   { id: "tools", label: "Tools" },
 ];
+
+// SPEC-076: the Table menu's items are disabled — never hidden, per
+// SPEC-049 — with a stated reason whenever the caret is not in a table
+// (AC-18). `tableState` comes from useTableTools; the default keeps the bar
+// mountable without it.
+const table = computed(() => asTableMenuState(props.tableState));
 
 // The Insert menu's "Image…" command drives the same hidden file picker the
 // old toolbar button did (SPEC-024).
@@ -985,6 +998,47 @@ function chooseTableGrid(rows = 0, cols = 0) {
         testid="format-menu-highlight"
         :disabled="!editable"
         @select="emit('command', 'format.highlight')"
+      />
+    </template>
+
+    <template #table>
+      <MenuCheckItem
+        label="Repeat header row"
+        testid="table-menu-repeat-header"
+        :checked="table.rowIsHeader"
+        :disabled="!editable || !table.inTable"
+        :reason="table.inTable ? '' : table.reason"
+        @select="emit('command', 'table.repeat-header-row')"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Table styles…"
+        testid="table-menu-styles"
+        :disabled="!editable || !table.inTable"
+        :reason="table.inTable ? '' : table.reason"
+        @select="emit('command', 'table.style-gallery')"
+      />
+      <MenuItem
+        label="Sort…"
+        testid="table-menu-sort"
+        :disabled="!editable || !table.inTable"
+        :reason="table.inTable ? '' : table.reason"
+        @select="emit('command', 'table.sort')"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Convert text to table…"
+        testid="table-menu-text-to-table"
+        :disabled="!editable || !table.canConvertText"
+        :reason="table.canConvertText ? '' : table.convertTextReason"
+        @select="emit('command', 'table.convert-text-to-table')"
+      />
+      <MenuItem
+        label="Convert table to text…"
+        testid="table-menu-table-to-text"
+        :disabled="!editable || !table.inTable"
+        :reason="table.inTable ? '' : table.reason"
+        @select="emit('command', 'table.convert-table-to-text')"
       />
     </template>
 

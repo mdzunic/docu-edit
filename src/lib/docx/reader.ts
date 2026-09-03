@@ -105,6 +105,7 @@ import { parseVmlPicture } from "./vml";
 import { parseConnectorDrawing, resolveDocxConnectorAttachments, stampConnectorTargetId } from "./connector";
 import { parseChartDrawing } from "./chart";
 import { catalogToNamedStyles, parseStylesCatalog, resolveStyle, type StyleCatalog } from "./styles";
+import { parseTableLook } from "./tableBanding";
 import {
   EMPTY_NUMBERING_CATALOG,
   NUMBERING_RELATIONSHIP,
@@ -1998,6 +1999,18 @@ function parseTable(
   const alignment = parseTableAlignment(tblPrEl);
   if (alignment !== undefined) {
     table.alignment = alignment;
+  }
+  // SPEC-076 AC-67: the style reference and w:tblLook, the inverse of the
+  // writer's emission. Absent w:tblLook leaves `look` unset, which is "no
+  // banding at all" rather than "every flag off" (AC-23).
+  const tblStyleEl = tblPrEl ? firstChildElement(tblPrEl, WORD_NAMESPACE, "tblStyle") : undefined;
+  const tableStyleId = tblStyleEl ? (wordAttr(tblStyleEl, "val") ?? undefined) : undefined;
+  if (tableStyleId !== undefined) {
+    table.styleId = tableStyleId;
+  }
+  const look = parseTableLook(tblPrEl);
+  if (look !== undefined) {
+    table.look = look;
   }
   // Tracked table property change (SPEC-039 AC-15): w:tblPr/w:tblPrChange,
   // with an optional nested w:tblGrid for a column-widths edit (see

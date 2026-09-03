@@ -118,21 +118,155 @@ export function asTable(value: unknown): Table {
   return value as Table;
 }
 
-/** One row's real (non-covered) cells, each carrying its own grid column
- * index — a merged cell's covered neighbours (SPEC-023) render nothing of
- * their own; the spanning cell's own colspan/rowspan covers their space.
- * Lives here (rather than as a .vue-local helper) so the canvas's template
- * gets a properly typed `TableCell`/`colIndex` pair back regardless of how
- * loosely its own runtime-declared props are typed — see asTable. */
+/** One `<td>` a rendered row draws: the model cell, its grid column index
+ * and the spans to render. A merged cell's covered neighbours (SPEC-023)
+ * contribute no entry of their own — the spanning cell's colspan/rowspan
+ * covers their space. Lives here (rather than as a .vue-local helper) so the
+ * canvas's template gets a properly typed `TableCell`/`colIndex` pair back
+ * regardless of how loosely its own runtime-declared props are typed — see
+ * asTable. */
 export interface VisibleCellEntry {
   cell: TableCell;
   colIndex: number;
+  /** The colspan to draw: the owning cell's own. */
+  colSpan: number;
+  /** The rowspan to draw, clipped to the last row of the slice this entry
+   * belongs to — a page never renders a span reaching into rows it does not
+   * hold, which would make it taller than it measured (SPEC-076). */
+  rowSpan: number;
+  /** True for a slot whose owning cell a previous page slice drew: an empty
+   * stand-in that keeps this continuation's columns aligned with the header
+   * above it and with the colgroup. Renders no content and takes no cell
+   * selection. */
+  orphaned: boolean;
 }
 
-export function visibleRowCells(row: TableRow): VisibleCellEntry[] {
-  return row.cells
-    .map((cell, colIndex) => ({ cell, colIndex }))
-    .filter((entry) => !entry.cell.covered);
+/** The cells row `rowIndex` draws within the window `[windowStart,
+ * windowEnd)` — the rows one page slice holds. */
+function sliceRowCells(
+  table: Table,
+  grid: CellOwner[][],
+  rowIndex: number,
+  windowStart: number,
+  windowEnd: number,
+): VisibleCellEntry[] {
+  const entries: VisibleCellEntry[] = [];
+  const cells = table.rows[rowIndex].cells;
+  for (let colIndex = 0; colIndex < table.columnWidthsCm.length; colIndex += 1) {
+    const owner = grid[rowIndex]?.[colIndex];
+    if (!owner || owner.originCol !== colIndex) {
+      continue; // covered from the left: the owner's colspan already spans it
+    }
+    const rowSpan = Math.max(1, Math.min(owner.originRow + owner.rowSpan, windowEnd) - rowIndex);
+    if (owner.originRow === rowIndex) {
+      entries.push({
+        cell: cells[colIndex] ?? { blocks: [] },
+        colIndex,
+        colSpan: owner.colSpan,
+        rowSpan,
+        orphaned: false,
+      });
+    } else if (rowIndex === windowStart) {
+      // The vertical merge began above this slice, so its owning cell is not
+      // drawn here. The pagination engine does not split inside a merge
+      // (core/tables.verticalMergeCrossings), so this only arises for a
+      // caller windowing the table itself; stand in for the owner rather
+      // than shifting every later cell of the row a column left.
+      entries.push({ cell: { blocks: [] }, colIndex, colSpan: owner.colSpan, rowSpan, orphaned: true });
+    }
+  }
+  return entries;
+}
+
+/** One rendered row of a table's page slice: the model row, the model index
+ * it keeps (so its cells' `data-row` always names the real row), whether
+ * this is the leading header run redrawn at the top of a continuation, and
+ * the `<td>`s it draws. */
+export interface TableSliceRow {
+  row: TableRow;
+  rowIndex: number;
+  repeated: boolean;
+  cells: VisibleCellEntry[];
+}
+
+/** The rows one page slice of a table draws (SPEC-076 AC-1, AC-4, AC-6).
+ *
+ * `rowStart`/`rowEnd` are the model row window the pagination engine placed
+ * on this page — a table that fits on one page passes the whole range. A
+ * continuation (`rowStart > 0`) is prefixed by the table's leading contiguous
+ * `isHeader` run, marked `repeated`: the same rows, in model order, above the
+ * continuation's first body row. The model is untouched — the repeat exists
+ * only in this list (AC-3).
+ *
+ * A table whose first row is not `isHeader` prefixes nothing, even when a
+ * later row carries the flag (AC-5), because the run is defined as leading
+ * and contiguous. */
+export function tableSliceRows(table: Table, rowStart = 0, rowEnd = -1): TableSliceRow[] {
+  const end = rowEnd < 0 ? table.rows.length : Math.min(rowEnd, table.rows.length);
+  const start = Math.max(0, Math.min(rowStart, end));
+  const grid = computeOwnerGrid(table);
+  const slice: TableSliceRow[] = [];
+  if (start > 0) {
+    // Guard the degenerate case of a continuation starting inside the run
+    // itself: a row is drawn once, never as its own repeat.
+    let headerEnd = 0;
+    while (headerEnd < start && table.rows[headerEnd].isHeader) {
+      headerEnd += 1;
+    }
+    for (let index = 0; index < headerEnd; index += 1) {
+      slice.push({
+        row: table.rows[index],
+        rowIndex: index,
+        repeated: true,
+        // The redrawn run is its own window: a header cell merged downward
+        // into the body clips at the run, not at the continuation's rows.
+        cells: sliceRowCells(table, grid, index, 0, headerEnd),
+      });
+    }
+  }
+  for (let index = start; index < end; index += 1) {
+    slice.push({
+      row: table.rows[index],
+      rowIndex: index,
+      repeated: false,
+      cells: sliceRowCells(table, grid, index, start, end),
+    });
+  }
+  return slice;
+}
+
+/** What the Table menu needs to draw itself (SPEC-076 AC-16..AC-18): which
+ * of its commands apply right now and, for each that does not, the reason
+ * the disabled item states. Built by useTableTools; declared here so the
+ * espree-parsed menu bar gets it properly typed through `asTableMenuState`. */
+export interface TableMenuState {
+  /** Whether the caret is in a table — the condition for every item but
+   * "Convert text to table…". */
+  inTable: boolean;
+  /** Whether the caret's row is a header row (the check item's state). */
+  rowIsHeader: boolean;
+  /** Shown by every item disabled because the caret is not in a table. */
+  reason: string;
+  canConvertText: boolean;
+  convertTextReason: string;
+}
+
+/** The neutral state a menu bar mounted without a document shows: nothing
+ * applies, and the reason is the ordinary one. */
+export function noTableMenuState(): TableMenuState {
+  return {
+    inTable: false,
+    rowIsHeader: false,
+    reason: "the caret is not in a table",
+    canConvertText: false,
+    convertTextReason: "select one or more paragraphs",
+  };
+}
+
+/** Typed pass-through for the state arriving as a `.vue` template's plain
+ * `Object` prop (espree bars the annotation there — same idiom as asTable). */
+export function asTableMenuState(value: unknown): TableMenuState {
+  return (value ?? noTableMenuState()) as TableMenuState;
 }
 
 /** Whether the caret sits inside a table cell — the predicate the editor's
@@ -158,6 +292,7 @@ export function insertTable(
   selection: ModelSelection,
   rows: number,
   cols: number,
+  headerRow = false,
 ): CommandResult {
   const next = cloneContainers(model);
   const at = clampCaret(next, selection.focus);
@@ -171,6 +306,12 @@ export function insertTable(
     rows: Array.from({ length: rows }, () => emptyRow(cols)),
     columnWidthsCm: tableColumnWidthsCm(next, at.section, cols),
   };
+  // SPEC-076 AC-20: the "First row is a header row" option. Off by default so
+  // the Insert menu's grid quick-pick, which has no dialog, is unchanged
+  // (AC-21).
+  if (headerRow) {
+    table.rows[0].isHeader = true;
+  }
   if (isTable(target) || isImage(target) || isShape(target) || isChart(target) || isConnector(target) || isBreak(target) || isToc(target) || isTof(target)) {
     return { model: next, selection: caretSelection(at) };
   }

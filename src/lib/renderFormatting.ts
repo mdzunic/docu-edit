@@ -7,6 +7,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   type Chart,
   type Image,
+  type NamedStyle,
   type PageBorders,
   type Paragraph,
   type ParagraphFormatting,
@@ -18,6 +19,8 @@ import {
   type TableRow,
   type TrackChangesDisplayMode,
 } from "./documentModel";
+// SPEC-076: banding resolves at paint time, never onto the cell.
+import { resolveCellFormatting, tableStyleFor } from "./tableStyles";
 import { type ListDefinition } from "./core/lists";
 import { borderSideCss } from "./core/borders";
 import type { Margins } from "./core/pageSetup";
@@ -425,14 +428,53 @@ export function tableCellStyle(cell: TableCell, theme: DocumentTheme): Record<st
   return style;
 }
 
-/** A cell's inline style (AC-15) with any explicit shading dropped while it
- * is part of an active range selection — the canvas's `.cell-selected`
- * class highlight would otherwise lose to the cell's own `style` attribute,
- * which always wins over a class rule regardless of shading. */
-export function tableCellDisplayStyle(cell: TableCell, selected: boolean, theme: DocumentTheme): Record<string, string> {
-  const style = tableCellStyle(cell, theme);
-  if (selected) {
-    delete style.backgroundColor;
+/** The cell-range selection highlight as a stacked layer (SPEC-023 AC-15,
+ * SPEC-076 AC-29): the same translucent blue `.cell-selected` paints, but as
+ * a `background-image` gradient laid OVER the cell's `background-color`
+ * rather than instead of it. Selection is transient UI state; the computed
+ * `background-color` is also the PDF export's only source for cell shading
+ * (lib/pdf/domExtract.ts), so the highlight must never displace it. */
+export const CELL_SELECTION_OVERLAY =
+  "linear-gradient(rgb(66 133 244 / 0.22), rgb(66 133 244 / 0.22))";
+
+/** A cell's inline style with the table style's banding resolved in
+ * (SPEC-076 AC-24, AC-29). Everything that is not shading/borders — padding,
+ * vertical alignment — still comes from the cell itself; shading and borders
+ * come from lib/tableStyles.ts's four-level resolution, so the same paint
+ * lands on screen, in print preview and in the PDF export (all three render
+ * this same DOM).
+ *
+ * `styles` is the document's catalogue; a table with no `styleId`, or a
+ * document with no catalogue, resolves to exactly the cell's own formatting —
+ * i.e. today's rendering, unchanged (D-10).
+ *
+ * The four levels resolve to a `ModelColor`, which may still be a theme
+ * reference from the style or the cell (SPEC-077); `tableCellStyle` is the
+ * single point that turns it into a CSS colour, so banding inherits theme
+ * awareness without a second resolution site. */
+export function tableCellBandedStyle(
+  table: Table,
+  styles: NamedStyle[] | undefined,
+  rowIndex: number,
+  colIndex: number,
+  selected: boolean,
+  theme: DocumentTheme,
+): Record<string, string> {
+  const cell = table.rows[rowIndex]?.cells[colIndex];
+  if (!cell) {
+    return {};
+  }
+  const resolved = resolveCellFormatting(table, tableStyleFor(styles, table), rowIndex, colIndex);
+  const style = tableCellStyle({ ...cell, borders: resolved.borders, shadingFill: resolved.shadingFill }, theme);
+  if (resolved.bold) {
+    style.fontWeight = "bold";
+  }
+  if (selected && style.backgroundColor !== undefined) {
+    // A shaded cell keeps its opaque background-color — the export reads it
+    // from the computed style, selected or not — and shows the highlight
+    // tinted over it. An unshaded cell has no inline background at all, so
+    // the `.cell-selected` class rule paints it exactly as before.
+    style.backgroundImage = CELL_SELECTION_OVERLAY;
   }
   return style;
 }

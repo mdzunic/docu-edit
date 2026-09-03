@@ -3,18 +3,56 @@
 // formatting — this is what lets built-in heading styles (AC-25) render at
 // their defined size and weight even when a paragraph carries no direct
 // formatting of its own.
-import type { NamedStyle, ParagraphFormatting, RunFormatting, StyleType } from "../documentModel";
+import type { NamedStyle, ParagraphFormatting, RunFormatting, StyleType, TableStyleBanding } from "../documentModel";
+import type { CellBorders } from "../core/tables";
+import { parseBorderElement } from "./borders";
+import { parseTableStyleBanding } from "./tableBanding";
+import { ooxmlColorToCss } from "../core/colors";
 import { mergeParagraphFormatting, mergeRunFormatting } from "../documentModel";
 import { wordAttr as attr, WORD_NAMESPACE } from "./xml";
 import { childElements, firstChildElement, serializeElement } from "../core/xml";
 import { parseOutlineLevel, parseParagraphProperties, parseRunProperties } from "./properties";
 
-/** `w:type` values SPEC-042 fully models — `"paragraph"` (SPEC-019) and
- * `"character"` (`w:rStyle`). `"table"`/`"numbering"` styles, and any
- * `"paragraph"`/`"character"` style carrying a child the reader does not
- * recognise (e.g. `w:tblStylePr` banding regions), come through as
- * `unmodeled` instead — see `parseStylesCatalog`. */
+/** `w:type` values fully modelled without further inspection — `"paragraph"`
+ * (SPEC-019) and `"character"` (`w:rStyle`). `"table"` joins them per
+ * SPEC-076 when its conditional formatting fits inside `TableStyleBanding`
+ * (AC-71); a table style with a region outside the six modelled ones, and the
+ * legacy `"numbering"` family, still come through `unmodeled` and are
+ * re-emitted verbatim — see `parseStylesCatalog`. */
 const MODELED_TYPES = new Set(["paragraph", "character"]);
+
+/** A table style's base `w:tcPr/w:tcBorders` (SPEC-042's cellBorders). */
+function parseStyleCellBorders(tcPr: Element): CellBorders | undefined {
+  const el = firstChildElement(tcPr, WORD_NAMESPACE, "tcBorders");
+  if (!el) {
+    return undefined;
+  }
+  const borders: CellBorders = {};
+  // Left/right are written as w:start/w:end (see writer.ts's cellBordersXml);
+  // either spelling reads, since table RTL is out of scope.
+  const sides: { key: keyof CellBorders; names: string[] }[] = [
+    { key: "top", names: ["top"] },
+    { key: "left", names: ["start", "left"] },
+    { key: "bottom", names: ["bottom"] },
+    { key: "right", names: ["end", "right"] },
+  ];
+  for (const side of sides) {
+    const found = side.names
+      .map((name) => firstChildElement(el, WORD_NAMESPACE, name))
+      .find((candidate) => candidate !== undefined);
+    const parsed = parseBorderElement(found, attr);
+    if (parsed) {
+      borders[side.key] = parsed;
+    }
+  }
+  return Object.keys(borders).length > 0 ? borders : undefined;
+}
+
+/** A table style's base `w:tcPr/w:shd` fill (SPEC-042's cellShadingFill). */
+function parseStyleCellShading(tcPr: Element): string | undefined {
+  const shd = firstChildElement(tcPr, WORD_NAMESPACE, "shd");
+  return shd ? ooxmlColorToCss(attr(shd, "fill")) : undefined;
+}
 
 interface StyleDefinition {
   id: string;
@@ -30,6 +68,11 @@ interface StyleDefinition {
   headingLevel?: number;
   unmodeled?: boolean;
   rawXml?: string;
+  /** Table styles only (SPEC-076): the base cell paint and the six
+   * conditional regions, when the whole style is expressible (AC-71). */
+  cellBorders?: CellBorders;
+  cellShadingFill?: string;
+  banding?: TableStyleBanding;
 }
 
 function modelStyleType(rawType: string): StyleType {
@@ -123,6 +166,38 @@ export function parseStylesCatalog(stylesDoc: Document | undefined): StyleCatalo
     // SPEC-042: only paragraph and character styles are modeled — table
     // banding and legacy "numbering" styles are listed/preserved verbatim
     // instead (AC-15..18), never resolved or edited.
+    // SPEC-076 AC-71: a table style whose conditional formatting is fully
+    // expressible as TableStyleBanding is modelled — banding, base cell
+    // paint and all — and Modify works on it. Anything else stays verbatim.
+    if (rawType === "table") {
+      const parsed = parseTableStyleBanding(styleEl);
+      const tblPr = firstChildElement(styleEl, WORD_NAMESPACE, "tblPr");
+      const tcPr = firstChildElement(styleEl, WORD_NAMESPACE, "tcPr");
+      // A style-level w:tblPr carrying anything beyond the two band sizes is
+      // outside the model (borders, layout, indent…), so keep it verbatim.
+      const tblPrModelled =
+        !tblPr ||
+        Array.from(tblPr.children).every(
+          (child) =>
+            child.namespaceURI === WORD_NAMESPACE &&
+            (child.localName === "tblStyleRowBandSize" || child.localName === "tblStyleColBandSize"),
+        );
+      if (parsed.modelled && tblPrModelled) {
+        catalog.styles.set(id, {
+          id,
+          name,
+          type: rawType,
+          basedOn,
+          next,
+          paragraphFormatting: {},
+          runFormatting: parseRunProperties(firstChildElement(styleEl, WORD_NAMESPACE, "rPr")),
+          cellBorders: tcPr ? parseStyleCellBorders(tcPr) : undefined,
+          cellShadingFill: tcPr ? parseStyleCellShading(tcPr) : undefined,
+          banding: parsed.banding,
+        });
+        continue;
+      }
+    }
     if (!MODELED_TYPES.has(rawType)) {
       catalog.styles.set(id, {
         id,
@@ -190,6 +265,16 @@ export function catalogToNamedStyles(catalog: StyleCatalog): NamedStyle[] {
     }
     if (definition.headingLevel !== undefined) {
       style.headingLevel = definition.headingLevel;
+    }
+    // SPEC-076: a modelled table style's base cell paint and banding.
+    if (definition.cellBorders !== undefined) {
+      style.cellBorders = definition.cellBorders;
+    }
+    if (definition.cellShadingFill !== undefined) {
+      style.cellShadingFill = definition.cellShadingFill;
+    }
+    if (definition.banding !== undefined) {
+      style.banding = definition.banding;
     }
     styles.push(style);
   }

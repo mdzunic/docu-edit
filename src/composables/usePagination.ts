@@ -49,6 +49,7 @@ import {
   combineSliceMetrics,
   lineStartOffsets,
   measureBlockElement,
+  measureTableElement,
 } from "../lib/core/pageMetrics";
 import {
   createCanvasTextMeasurer,
@@ -239,6 +240,8 @@ export function usePagination(
   // assigns new pages (the only time the rendered slice set can change);
   // within a pass the DOM is stable, so one walk serves every block.
   let sliceIndex: Map<string, Element[]> | null = null;
+  /** SPEC-076: the same index for table blocks, keyed by their own attrs. */
+  let tableIndex: Map<string, Element[]> | null = null;
   // Measurement cursor into `pending` between re-layouts: measuring does
   // not need a fresh layout every frame (elements are found in whatever is
   // currently rendered), so mid-pass re-layouts are throttled — they are
@@ -433,6 +436,7 @@ export function usePagination(
     ) {
       pages.value = reconciled;
       sliceIndex = null; // The rendered slice set is about to change.
+      tableIndex = null;
     }
     return { unresolved: pending.length + offsets.missing, resolved: offsets.resolved };
   }
@@ -462,6 +466,12 @@ export function usePagination(
         }
         const block = model.sections[item.sectionIndex]?.blocks[item.blockIndex];
         if (!block) {
+          continue;
+        }
+        if (isTable(block)) {
+          // A table splits at rows, not characters (SPEC-076): there are no
+          // line-start offsets to resolve, and Range hit-testing a whole
+          // table would be pure cost.
           continue;
         }
         const entry = cache.get(block);
@@ -549,6 +559,34 @@ export function usePagination(
     return sliceIndex.get(`${section}:${block}`) ?? [];
   }
 
+  /** The rendered `<table>` elements of one table block, in page order
+   * (SPEC-076). A table carries no `data-section`/`data-block` of its own —
+   * those live on its cell paragraphs, which `sliceElements` deliberately
+   * excludes — so it is indexed by its own pair of attributes. One entry per
+   * page the table runs onto, which `combineSliceMetrics` concatenates into
+   * the whole table's row list. */
+  function tableElements(root: HTMLElement, section: number, block: number): Element[] {
+    if (tableIndex === null) {
+      const index = new Map<string, Element[]>();
+      for (const el of Array.from(root.querySelectorAll("[data-table-section][data-table-block]"))) {
+        const address = `${el.getAttribute("data-table-section")}:${el.getAttribute("data-table-block")}`;
+        const group = index.get(address);
+        if (group) {
+          group.push(el);
+        } else {
+          index.set(address, [el]);
+        }
+      }
+      for (const group of index.values()) {
+        group.sort(
+          (a, b) => Number(a.getAttribute("data-row-start") ?? 0) - Number(b.getAttribute("data-row-start") ?? 0),
+        );
+      }
+      tableIndex = index;
+    }
+    return tableIndex.get(`${section}:${block}`) ?? [];
+  }
+
   function isParagraphBlock(block: Block): block is Paragraph {
     return !isTable(block) && !isImage(block) && !isBreak(block) && !isToc(block) && !isTof(block);
   }
@@ -559,6 +597,20 @@ export function usePagination(
       return true; // the model moved on; the new layout re-listed what matters
     }
     const width = sectionColumnFlowWidthPx(model, target.section);
+    if (isTable(block)) {
+      // SPEC-076: a table measures one line box per MODEL row, so the engine
+      // splits it at row boundaries and can redraw its header run on every
+      // continuation. Repeated header rows are excluded from the measurement,
+      // so the run costs one measurement per table, not one per page (AC-11).
+      const tables = tableElements(root, target.section, target.block);
+      if (tables.length === 0) {
+        return false; // not realized yet; the estimate stands
+      }
+      cache.set(block, {
+        metrics: combineSliceMetrics(tables.map((element) => measureTableElement(element, width))),
+      });
+      return true;
+    }
     const elements = sliceElements(root, target.section, target.block);
     if (elements.length > 0) {
       const splittable = isParagraphBlock(block);

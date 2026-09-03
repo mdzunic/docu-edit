@@ -41,6 +41,7 @@ import {
   type StyleType,
   type Table,
   type TableCell,
+  type TableStyleBanding,
 } from "./documentModel";
 import {
   allStyles,
@@ -292,6 +293,10 @@ export interface StyleFormInput {
   /** Table styles only. */
   cellBorders?: CellBorders;
   cellShadingFill?: string;
+  /** Table styles only (SPEC-076 AC-37): the style's conditional formatting.
+   * Undefined leaves it absent; a style whose banding was cleared in the
+   * dialog therefore loses it, which is what clearing means. */
+  banding?: TableStyleBanding;
 }
 
 /** Typed empty seed for a `.vue` view's default parameter value (espree
@@ -346,6 +351,9 @@ export function createStyle(
     }
     if (input.cellShadingFill) {
       entry.cellShadingFill = input.cellShadingFill;
+    }
+    if (input.banding) {
+      entry.banding = input.banding;
     }
     if (input.runFormatting && Object.keys(input.runFormatting).length > 0) {
       entry.runFormatting = input.runFormatting;
@@ -475,6 +483,13 @@ export function modifyStyle(
     }
     if (input.cellShadingFill) {
       updated.cellShadingFill = input.cellShadingFill;
+    }
+    // SPEC-076 AC-37: saving the dialog re-renders every table using this
+    // style — banding resolves at paint time, so replacing the catalogue
+    // entry IS the re-render (the applyTableStyleCore pass below re-bakes the
+    // style's BASE borders/shading, which SPEC-042 owns).
+    if (input.banding) {
+      updated.banding = input.banding;
     }
     if (input.runFormatting && Object.keys(input.runFormatting).length > 0) {
       updated.runFormatting = input.runFormatting;

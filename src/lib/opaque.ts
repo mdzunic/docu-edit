@@ -18,6 +18,7 @@ import {
   isToc,
   isTof,
   mergeRunFormatting,
+  tableLookIsEmpty,
   type Connector,
   type DocumentFormat,
   type DocumentModel,
@@ -44,6 +45,7 @@ import {
 } from "./styles";
 import { paragraphHasTrackedChange } from "./renderFormatting";
 import { equalColumnWidthsCm } from "./tables";
+import { styleHasBanding, tableStyleFor } from "./tableStyles";
 
 // --- base64 ----------------------------------------------------------------
 //
@@ -613,7 +615,11 @@ function tableHasUnsupportedStyling(model: DocumentModel, table: Table): boolean
     (table.alignment !== undefined && table.alignment !== "left") ||
     (table.widthMode !== undefined && table.widthMode !== "fixed") ||
     table.widthPercent !== undefined ||
-    table.styleId !== undefined;
+    table.styleId !== undefined ||
+    // SPEC-076 AC-74: a look flag, or a style carrying banding, is table
+    // styling GFM has no way to carry.
+    !tableLookIsEmpty(table.look) ||
+    styleHasBanding(tableStyleFor(model.styles, table));
   // GFM tables carry no column-width info at all — a Markdown save always
   // reflows to an equal split of the text area, so any table whose widths
   // are not *already* that equal split loses them for real (a table
@@ -803,6 +809,8 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
     // the bar tabs above: a modelled feature the target format lacks, so
     // every save to .odt reports it regardless of source.
     dropped.push(...collectBorderStyleDropRecords(model));
+    // SPEC-076 AC-14, AC-70: header rows and band sizes ODF cannot carry.
+    dropped.push(...collectOdfTableDropRecords(model));
     // The document theme (SPEC-077 AC-42): ODF has no theme part, so any
     // save to .odt of a document carrying at least one theme reference
     // reports the one theme record. A Markdown save reports no such kind —
@@ -857,6 +865,62 @@ export function collectBorderStyleDropRecords(model: DocumentModel): DropRecord[
       dropped.push({ kind: "pageSetup", location: `section ${sectionIndex + 1} page border`, reason });
     }
   });
+  return dropped;
+}
+
+/** What an ODF save cannot carry from SPEC-076's table model, reported under
+ * the existing "tableStyling" kind:
+ *
+ * - an `isHeader` row OUTSIDE the leading run (AC-14). ODF's
+ *   `table:table-header-rows` is a structural wrapper, so only a leading run
+ *   is representable; a later header row writes as a plain row.
+ * - a band size other than 1 (AC-70). ODF's table template has odd/even row
+ *   and column entries and no band-size attribute at all, so the banding
+ *   writes as size-1 and the declared size is lost.
+ *
+ * Exported so a same-format `.odt` save reports them too: ODF's vocabulary is
+ * the limit, not the conversion. */
+export function collectOdfTableDropRecords(model: DocumentModel): DropRecord[] {
+  const dropped: DropRecord[] = [];
+  let paragraphOffset = 0;
+  for (const section of model.sections) {
+    section.blocks.forEach((block, index) => {
+      if (block.type !== "table") {
+        return;
+      }
+      const location = `table at paragraph ${paragraphOffset + index + 1}`;
+      let leading = 0;
+      while (leading < block.rows.length && block.rows[leading].isHeader) {
+        leading += 1;
+      }
+      block.rows.forEach((row, rowIndex) => {
+        if (row.isHeader && rowIndex >= leading) {
+          dropped.push({
+            kind: "tableStyling",
+            location: `${location}, row ${rowIndex + 1}`,
+            reason:
+              "Not preserved when saving as OpenDocument Text: ODF wraps only a leading run of " +
+              "header rows, so this row is written as an ordinary row.",
+          });
+        }
+      });
+    });
+    paragraphOffset += section.blocks.length;
+  }
+  for (const style of model.styles ?? []) {
+    for (const axis of ["bandedRows", "bandedColumns"] as const) {
+      const band = style.banding?.[axis];
+      if (band !== undefined && band.size !== 1) {
+        dropped.push({
+          kind: "tableStyling",
+          location: `table style "${style.name ?? style.id}" (${axis === "bandedRows" ? "row" : "column"} band size ${band.size})`,
+          reason:
+            "Not preserved when saving as OpenDocument Text: ODF's table template bands alternate " +
+            "row by row and column by column, so the band size is written as 1.",
+        });
+      }
+    }
+  }
   return dropped;
 }
 

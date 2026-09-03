@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { applyParagraphStyle, caretSelection, updateStyleFromSelection } from "../commands";
-import { asParagraph, createDocument, type DocumentModel } from "../documentModel";
+import { asParagraph, createDocument, type DocumentModel, type NamedStyle } from "../documentModel";
 import { equalBytes } from "../core/equality";
+import { parseXml } from "../core/xml";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
+import { catalogToNamedStyles, parseStylesCatalog } from "./styles";
 import { buildStylesXml, patchStylesXml, writeDocx } from "./writer";
 import { unzip } from "../core/zip";
 import { WORD_NAMESPACE } from "./xml";
@@ -191,6 +193,51 @@ describe("patchStylesXml", () => {
     // The untouched Normal definition stays as it was.
     expect(patched).toContain('<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>');
   });
+
+  // SPEC-076 AC-71 — a table style is now modelled, so the attribute/child
+  // merge branch runs for it. The original's w:tblPr and w:tblStylePr are
+  // regenerated from the model, never copied in alongside the fresh ones
+  // (CT_Style allows at most one w:tblPr).
+  it("modifying a modelled table style regenerates w:tblPr and w:tblStylePr without duplicating them", () => {
+    const banded: NamedStyle = {
+      id: "TableStyleAccent",
+      name: "Accent",
+      type: "table",
+      banding: {
+        firstRow: { shading: "#2f5496", bold: true },
+        bandedRows: { size: 1, shading: "#d9e2f3" },
+      },
+    };
+    const openedModel = typedModel();
+    openedModel.styles = [banded];
+    // The part a previous save of this app wrote — reopening classifies the
+    // style as modelled, which is what makes the merge branch reachable.
+    const originalPart = buildStylesXml(openedModel);
+
+    const modified = typedModel();
+    modified.styles = [
+      {
+        ...banded,
+        banding: {
+          firstRow: { shading: "#2f5496", bold: true },
+          bandedRows: { size: 1, shading: "#ffe599" },
+        },
+      },
+    ];
+    const patched = patchStylesXml(modified, originalPart)!;
+
+    const styleXml = patched.slice(patched.indexOf('w:styleId="TableStyleAccent"'));
+    expect((styleXml.match(/<w:tblPr>/g) ?? []).length).toBe(1);
+    expect((styleXml.match(/<w:tblStylePr /g) ?? []).length).toBe(2);
+    expect((styleXml.match(/w:type="firstRow"/g) ?? []).length).toBe(1);
+    expect((styleXml.match(/w:type="band1Horz"/g) ?? []).length).toBe(1);
+
+    // The patched part reparses as the modified style, still modelled.
+    const reread = catalogToNamedStyles(parseStylesCatalog(parseXml(patched)));
+    const accent = reread.find((style) => style.id === "TableStyleAccent")!;
+    expect(accent.unmodeled).toBeUndefined();
+    expect(accent.banding).toEqual(modified.styles[0].banding);
+  });
 });
 
 // SPEC-042 — character styles (w:rStyle), w:next, and table styles the
@@ -243,25 +290,45 @@ describe("writeDocx — w:next round trip (SPEC-042 AC-3, AC-4, AC-13)", () => {
 });
 
 describe("writeDocx — unmodeled styles round trip verbatim (SPEC-042 AC-15..18)", () => {
-  it("a table-type style read from a source document is preserved and written back unchanged", async () => {
+  // SPEC-076 AC-71 narrows which table styles are unmodeled: the six
+  // w:tblStylePr regions it models (firstRow/lastRow/firstCol/lastCol/
+  // band1Horz/band1Vert) now come back as NamedStyle.banding and are
+  // editable. A region outside those six still keeps the whole style
+  // verbatim, which is what SPEC-042 AC-18 guarantees and what this test —
+  // rewritten from a firstRow example to an nwCell one — still asserts.
+  it("a table-type style with an unmodelled region is preserved and written back unchanged", async () => {
     const source = await writeDocx(typedModel());
     const doc = await parseDocx(source.bytes);
-    // Simulate a foreign document declaring a real (banded) table style —
-    // parseDocx always marks non-paragraph/character styles unmodeled.
     const model = modelFrom(doc);
     const raw =
       '<w:style xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
       'w:type="table" w:styleId="GridTable1"><w:name w:val="Grid Table 1"/>' +
-      '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
+      '<w:tblStylePr w:type="nwCell"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
     model.styles = [...(model.styles ?? []), { id: "GridTable1", name: "Grid Table 1", type: "table", unmodeled: true, rawXml: raw }];
     const { bytes } = await writeDocx(model);
     const stylesXml = await partText(bytes, "word/styles.xml");
     expect(stylesXml).toContain("w:tblStylePr");
-    expect(stylesXml).toContain('w:type="firstRow"');
+    expect(stylesXml).toContain('w:type="nwCell"');
 
     const reopened = await parseDocx(bytes);
     const style = reopened.styles.find((s) => s.id === "GridTable1");
     expect(style?.unmodeled).toBe(true);
     expect(style?.name).toBe("Grid Table 1");
+  });
+
+  it("a table style whose conditional formatting is all banding is modelled, not verbatim (SPEC-076 AC-71)", async () => {
+    const source = await writeDocx(typedModel());
+    const doc = await parseDocx(source.bytes);
+    const model = modelFrom(doc);
+    const raw =
+      '<w:style xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+      'w:type="table" w:styleId="BandedOnly"><w:name w:val="Banded Only"/>' +
+      '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
+    model.styles = [...(model.styles ?? []), { id: "BandedOnly", name: "Banded Only", type: "table", unmodeled: true, rawXml: raw }];
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    const style = reopened.styles.find((s) => s.id === "BandedOnly");
+    expect(style?.unmodeled).toBeUndefined();
+    expect(style?.banding?.firstRow).toEqual({ bold: true });
   });
 });

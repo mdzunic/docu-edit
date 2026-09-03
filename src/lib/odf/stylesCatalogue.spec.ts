@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyParagraphStyle, caretSelection, updateStyleFromSelection } from "../commands";
-import { asParagraph, createDocument, type DocumentModel } from "../documentModel";
+import { asParagraph, createDocument, type DocumentModel, type NamedStyle } from "../documentModel";
 import { equalBytes } from "../core/equality";
 import { parseXml } from "../core/xml";
 import { unzip } from "../core/zip";
@@ -190,6 +190,60 @@ describe("patchOdtStylesXml", () => {
     // Untouched definitions keep their original serialization.
     expect(patched).toContain('style:display-name="Heading 1"');
     expect(patched).toContain('fo:font-size="130%"');
+  });
+
+  // SPEC-076 AC-68/AC-69 — the patch path (a document opened from an
+  // existing .odt) must carry a banded table style's whole element group,
+  // not just the style:style: the table:table-template and the generated
+  // table-cell styles are siblings under office:styles.
+  const BANDED_TABLE_STYLE: NamedStyle = {
+    id: "TableStyleAccent",
+    name: "Accent",
+    type: "table",
+    banding: {
+      firstRow: { shading: "#2f5496", bold: true },
+      bandedRows: { size: 1, shading: "#d9e2f3" },
+    },
+  };
+
+  it("upserting a banded table style writes its table-template and generated cell styles (SPEC-076 AC-68)", () => {
+    const model = typedModel();
+    model.styles = [BANDED_TABLE_STYLE];
+    const patched = patchOdtStylesXml(model, SAMPLE_STYLES, EMPTY_CONTENT)!;
+    expect(patched).toContain('table:name="TableStyleAccent"');
+    expect(patched).toContain('style:name="TableStyleAccent.first-row"');
+    expect(patched).toContain('style:name="TableStyleAccent.odd-rows"');
+    // Reopening the patched part must find the banding again (AC-69) — the
+    // loss mode was a template-name reference with no template behind it.
+    const reread = catalogToNamedStyles(parseOdfStyleCatalog(parseXml(EMPTY_CONTENT), parseXml(patched)));
+    const accent = reread.find((style) => style.id === "TableStyleAccent")!;
+    expect(accent.unmodeled).toBeUndefined();
+    expect(accent.banding).toEqual(BANDED_TABLE_STYLE.banding);
+  });
+
+  it("re-upserting a banded table style replaces its artefacts; clearing banding removes them", () => {
+    const model = typedModel();
+    model.styles = [BANDED_TABLE_STYLE];
+    const firstSave = patchOdtStylesXml(model, SAMPLE_STYLES, EMPTY_CONTENT)!;
+
+    // Recolour the row band and drop the firstRow region: exactly one
+    // template survives and the removed region's cell style goes with it.
+    const recoloured = typedModel();
+    recoloured.styles = [
+      { ...BANDED_TABLE_STYLE, banding: { bandedRows: { size: 1, shading: "#ffe599" } } },
+    ];
+    const secondSave = patchOdtStylesXml(recoloured, firstSave, EMPTY_CONTENT)!;
+    expect((secondSave.match(/<table:table-template/g) ?? []).length).toBe(1);
+    expect(secondSave).toContain("#ffe599");
+    expect(secondSave).not.toContain("#d9e2f3");
+    expect(secondSave).not.toContain("TableStyleAccent.first-row");
+
+    // A cleared banding must not resurrect from a stale template on reopen.
+    const cleared = typedModel();
+    cleared.styles = [{ id: "TableStyleAccent", name: "Accent", type: "table" }];
+    const thirdSave = patchOdtStylesXml(cleared, secondSave, EMPTY_CONTENT)!;
+    expect(thirdSave).not.toContain("table-template");
+    expect(thirdSave).not.toContain("TableStyleAccent.odd-rows");
   });
 });
 

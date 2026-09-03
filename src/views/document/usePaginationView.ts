@@ -397,12 +397,20 @@ function renderEntryFor(
     } as RenderEntry;
   }
   if (flatEntry.isTable || flatEntry.isImage || flatEntry.isShape || flatEntry.isChart) {
+    // SPEC-076: a table splits at row boundaries, so its "lines" are its
+    // model rows and a page slice is the row window [startLine, endLine).
+    // Only the first slice may render before the table has been measured —
+    // a continuation with no metrics would repeat rows already drawn.
+    const tableRowStart = flatEntry.isTable ? item.startLine ?? 0 : 0;
+    const tableRowEnd = flatEntry.isTable && item.endLine !== undefined ? item.endLine : -1;
     return {
-      key: flatEntry.key,
+      key: tableRowStart > 0 ? `${flatEntry.key}@${tableRowStart}` : flatEntry.key,
       memo: [
         block,
         flatEntry.section,
         flatEntry.blockIndex,
+        tableRowStart,
+        tableRowEnd,
         flatEntry.marker,
         flatEntry.cellSel,
         flatEntry.imgSel,
@@ -419,6 +427,13 @@ function renderEntryFor(
       sectionProp: flatEntry.section,
       blockIndexProp: flatEntry.blockIndex,
       listDefinitions: flatEntry.isTable || flatEntry.isShape ? model.listDefinitions ?? [] : undefined,
+      // SPEC-076: the catalogue a banded table resolves its style through,
+      // and the row window this page slice draws.
+      styles: flatEntry.isTable ? model.styles ?? [] : undefined,
+      rowStart: flatEntry.isTable ? tableRowStart : undefined,
+      rowEnd: flatEntry.isTable ? tableRowEnd : undefined,
+      dataTableSection: flatEntry.isTable ? flatEntry.section : undefined,
+      dataTableBlock: flatEntry.isTable ? flatEntry.blockIndex : undefined,
       // SPEC-047: resolve the image's data URI here — only realized pages
       // reach renderEntryFor, so a still-deferred part is force-encoded (via
       // mediaSrc -> mediaDataUri) just for the images actually painting, not

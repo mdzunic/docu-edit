@@ -62,7 +62,7 @@ export interface CaptionsDeps extends EditorContext, HeaderFooterBridge {
   handleImageDelete: () => void;
   handleChartDelete: () => void;
   insertImageFromFile: (file?: File) => Promise<void>;
-  handleInsertTable: (size?: { rows: number; cols: number }) => void;
+  handleInsertTable: (size?: { rows: number; cols: number; headerRow?: boolean }) => void;
 }
 
 export function useCaptions(deps: CaptionsDeps) {

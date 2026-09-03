@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { asDocumentTheme, asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
+import { asDocumentTheme, asNamedStyles, asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
 import { chipLabel } from "../lib/mergeChips";
 import { cachedFieldText, isReadOnlyFieldTitle } from "../lib/fields";
@@ -10,7 +10,7 @@ import {
   paragraphStyle,
   runKey,
   runStyle,
-  tableCellDisplayStyle,
+  tableCellBandedStyle,
   tableColumnWidth,
   tableRowStyle,
   tableStyle,
@@ -18,8 +18,9 @@ import {
   trackChangeRunHidden,
   trackChangeRunStyle,
 } from "../lib/renderFormatting";
-import { asTable, visibleRowCells } from "../lib/tables";
+import { asTable, tableSliceRows } from "../lib/tables";
 import { asCellRange, isCellInRange } from "../lib/core/tables";
+import { REPEATED_HEADER_ATTRIBUTE } from "../lib/core/pageMetrics";
 
 // One table block on the canvas (SPEC-022; formatting and merged cells
 // SPEC-023). Cell paragraphs render exactly like top-level ones (same
@@ -38,9 +39,20 @@ const props = defineProps({
   /** The model's multilevel list definitions (SPEC-032) — cell paragraphs
    * derive defined-list markers and indents from them. */
   listDefinitions: { type: Array, default: () => [] },
+  /** The model's style catalogue (documentModel.NamedStyle[]) — the table
+   * style `block.styleId` names supplies the banding this component resolves
+   * at paint time (SPEC-076 AC-24, AC-29). Empty for a table with no style,
+   * which resolves to exactly the cell's own formatting. */
+  styles: { type: Array, default: () => [] },
   /** The review pane's display mode (SPEC-039 AC-9) — drives whether cell
    * runs show inline tracked-change markup. */
   displayMode: { type: String, default: "all" },
+  /** The model row window this page slice draws (SPEC-076): a table split
+   * across pages renders one instance per slice. `rowEnd` -1 means "to the
+   * last row"; the defaults render the whole table, which is what every
+   * caller that does not paginate (print preview's own pass, tests) wants. */
+  rowStart: { type: Number, default: 0 },
+  rowEnd: { type: Number, default: -1 },
   /** The document's theme (SPEC-077) — cell shading, paragraph paint and run
    * colours/fonts resolve theme references against it. */
   theme: { type: Object, default: null },
@@ -68,25 +80,44 @@ function spanAttr(span = 1) {
       >
     </colgroup>
     <tbody>
+      <!-- SPEC-076: the rows THIS page slice draws. A continuation is
+           prefixed by the table's leading header run, redrawn as a layout
+           artefact: aria-hidden and uneditable, inside a data-canvas-ignore
+           subtree so every model walk (find, spell-check, word count, the
+           accessibility checker, caret resolution) passes it by (AC-3,
+           AC-7, AC-9, AC-10). Its cells keep the REAL row's data-row, so a
+           click on one still names the header cell it copies (AC-8). -->
       <tr
-        v-for="(row, rowIndex) in block.rows"
-        v-show="!trackChangeBlockHidden(row.changes, asTrackChangesDisplayMode(displayMode))"
-        :key="rowIndex"
-        :style="tableRowStyle(row)"
+        v-for="slice in tableSliceRows(asTable(block), rowStart, rowEnd)"
+        v-show="!trackChangeBlockHidden(slice.row.changes, asTrackChangesDisplayMode(displayMode))"
+        :key="slice.repeated ? `repeat-${slice.rowIndex}` : slice.rowIndex"
+        :class="{ 'doc-table-row-repeated': slice.repeated }"
+        :style="tableRowStyle(slice.row)"
+        :[REPEATED_HEADER_ATTRIBUTE]="slice.repeated ? 'true' : undefined"
+        :data-canvas-ignore="slice.repeated ? 'repeated-header' : undefined"
+        :aria-hidden="slice.repeated ? 'true' : undefined"
+        :contenteditable="slice.repeated ? 'false' : undefined"
       >
+        <!-- The slice's cells, not the row's: a cell's rowspan is clipped to
+             the rows this page draws, and a slot whose owner a previous page
+             drew stands in as an empty cell, so the grid stays aligned with
+             the colgroup however the table is windowed (SPEC-076). -->
         <td
-          v-for="entry in visibleRowCells(row)"
+          v-for="entry in slice.cells"
           :key="entry.colIndex"
           class="doc-table-cell"
           :class="{
-            'cell-selected': isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex),
+            'cell-selected': !slice.repeated && !entry.orphaned && isCellInRange(asCellRange(cellRange), section, blockIndex, slice.rowIndex, entry.colIndex),
           }"
-          :style="tableCellDisplayStyle(entry.cell, isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex), asDocumentTheme(theme))"
-          :colspan="spanAttr(entry.cell.colSpan)"
-          :rowspan="spanAttr(entry.cell.rowSpan)"
-          :data-row="rowIndex"
-          :data-col="entry.colIndex"
-          :data-testid="`table-cell-${rowIndex}-${entry.colIndex}`"
+          :style="tableCellBandedStyle(asTable(block), asNamedStyles(styles), slice.rowIndex, entry.colIndex, !slice.repeated && !entry.orphaned && isCellInRange(asCellRange(cellRange), section, blockIndex, slice.rowIndex, entry.colIndex), asDocumentTheme(theme))"
+          :colspan="spanAttr(entry.colSpan)"
+          :rowspan="spanAttr(entry.rowSpan)"
+          :data-row="entry.orphaned ? undefined : slice.rowIndex"
+          :data-col="entry.orphaned ? undefined : entry.colIndex"
+          :data-canvas-ignore="entry.orphaned ? 'merged-continuation' : undefined"
+          :aria-hidden="entry.orphaned ? 'true' : undefined"
+          :contenteditable="entry.orphaned ? 'false' : undefined"
+          :data-testid="entry.orphaned ? `merged-continuation-cell-${slice.rowIndex}-${entry.colIndex}` : slice.repeated ? `repeated-header-cell-${slice.rowIndex}-${entry.colIndex}` : `table-cell-${slice.rowIndex}-${entry.colIndex}`"
         >
           <component
             :is="headingTag(paragraph.headingLevel)"
@@ -96,7 +127,7 @@ function spanAttr(span = 1) {
             :style="paragraphStyle(paragraph, asDocumentTheme(theme), asListDefinitions(listDefinitions), asTrackChangesDisplayMode(displayMode))"
             :data-section="section"
             :data-block="blockIndex"
-            :data-row="rowIndex"
+            :data-row="slice.rowIndex"
             :data-col="entry.colIndex"
             :data-cell-block="cellBlockIndex"
             :data-list-marker="markersForBlocks(entry.cell.blocks, asListDefinitions(listDefinitions))[cellBlockIndex] || undefined"
@@ -181,6 +212,14 @@ function spanAttr(span = 1) {
 
 .doc-table-cell.cell-selected {
   background: rgb(66 133 244 / 0.22);
+}
+
+/* A repeated header row (SPEC-076 AC-7) is a layout artefact: it paints
+   exactly like its original (AC-2 — no rule here changes its appearance) but
+   holds no selection of its own. A drag that starts on it selects nothing;
+   a click on it is redirected to the real header cell by useTableTools. */
+.doc-table-row-repeated {
+  user-select: none;
 }
 
 /* The same marker rule as the canvas's top-level paragraphs (SPEC-018) —

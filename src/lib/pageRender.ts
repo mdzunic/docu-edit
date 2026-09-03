@@ -3,7 +3,7 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type DocumentModel, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type DocumentModel, type EquationSpec, type NamedStyle, type Shape, type TrackChangesDisplayMode } from "./documentModel";
 import { isFloatingDrawing, resolveAnchorBlockIndex } from "./drawingAnchors";
 import { type ListDefinition } from "./core/lists";
 import { DEFAULT_THEME, type DocumentTheme } from "./core/theme";
@@ -91,6 +91,21 @@ export interface RenderEntry {
    * paragraphs (or, for a shape entry, its text frame's list paragraphs)
    * derive defined-list markers/indents from. */
   listDefinitions?: ListDefinition[];
+  /** The model's style catalogue (SPEC-076) a table entry resolves its
+   * style's banding from at paint time. */
+  styles?: NamedStyle[];
+  /** The model row window a table entry draws (SPEC-076): a table split
+   * across pages renders one entry per page slice. Absent means the whole
+   * table. `rowEnd` is exclusive; -1 means "to the last row". */
+  rowStart?: number;
+  rowEnd?: number;
+  /** A table's own block address, as `data-table-section`/`data-table-block`
+   * on the rendered `<table>` (SPEC-076). A table cannot use the ordinary
+   * `data-section`/`data-block` pair — those live on its CELL paragraphs and
+   * the measurement walk excludes anything carrying `data-row` — so the
+   * pagination engine finds a table's rendered slices through these. */
+  dataTableSection?: number;
+  dataTableBlock?: number;
   imageSrc?: string;
   imageSelected?: boolean;
   /** Index into the document-order drawing list (SPEC-051): the `<index>`

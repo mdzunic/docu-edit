@@ -15,6 +15,9 @@ const props = defineProps({
   /** True when the right-click landed inside a table cell — shows the
    * row/column section (SPEC-022 AC-17..19). */
   tableActions: { type: Boolean, default: false },
+  /** Whether the RIGHT-CLICKED row is a header row (SPEC-076 AC-19) — the
+   * "Repeat header row" check item's state. */
+  rowIsHeader: { type: Boolean, default: false },
   /** True when the active cell-range selection spans more than one cell —
    * shows "Merge cells" (SPEC-023 AC-6). */
   canMergeCells: { type: Boolean, default: false },
@@ -288,6 +291,22 @@ onBeforeUnmount(() => {
         class="context-menu-separator"
         role="separator"
       />
+      <!-- SPEC-076 AC-19: the same check item the Table menu offers, acting
+           on the row that was right-clicked rather than the caret's. -->
+      <button
+        type="button"
+        class="context-menu-item"
+        role="menuitemcheckbox"
+        :aria-checked="rowIsHeader ? 'true' : 'false'"
+        data-testid="context-menu-repeat-header-row"
+        @click="emit('table-action', 'repeat-header-row')"
+      >
+        <span
+          class="context-menu-check"
+          aria-hidden="true"
+        >{{ rowIsHeader ? "✓" : "" }}</span>
+        <span>Repeat header row</span>
+      </button>
       <button
         v-for="action in TABLE_ACTIONS"
         :key="action.key"
@@ -329,16 +348,30 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* The check gutter of the one menuitemcheckbox in this menu (SPEC-076
+   AC-19), sized so its label lines up with the plain items' labels. */
+.context-menu-check {
+  display: inline-block;
+  width: 1em;
+}
+
 .context-menu {
   position: fixed;
   z-index: 40;
   min-width: 12rem;
+  /* Never taller than the screen: the placement clamp above can only SHIFT a
+     menu that fits, so a menu with every section present needs a ceiling of
+     its own. It is a safety net — the density rule below is what keeps the
+     table section inside a short viewport without scrolling at all. */
+  max-height: calc(100vh - var(--space-5));
+  overflow-y: auto;
   padding: var(--space-1);
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
 }
+
 
 /* min-height, not vertical padding, sets the 32px hit target (AC-48): it keeps
    each row exactly one --height-control tall, so a menu with every section
@@ -375,5 +408,18 @@ onBeforeUnmount(() => {
   height: 1px;
   margin: var(--space-1) 0;
   background: var(--border-subtle);
+}
+
+/* SPEC-076 adds a "Repeat header row" item to the table section, and fifteen
+   32px hit targets already fill a 500px-tall viewport. On a short window the
+   rows tighten by one spacing step so the whole menu still lands inside it
+   without scrolling (SPEC-023's Table-properties reachability test). Stated
+   against the token rather than as a literal, so a coarse pointer — where
+   --height-control is 44px because the finger needs it — tightens to 38px
+   rather than to a mouse-sized target. */
+@media (max-height: 640px) {
+  .context-menu-item {
+    min-height: calc(var(--height-control) - var(--space-2));
+  }
 }
 </style>

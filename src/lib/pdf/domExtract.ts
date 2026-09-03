@@ -78,6 +78,150 @@ export function parseCssPaint(paint: string): [number, number, number] | null {
   return parseCssColor(value);
 }
 
+/** A computed colour as 0..1 rgb only when it is fully opaque, else null.
+ * Distinct from parseCssPaint, which admits any non-zero alpha: a table
+ * cell's model shading is always an opaque hex, and the one translucent
+ * background the canvas paints — the cell-range selection highlight — is
+ * screen chrome that must not reach the PDF (SPEC-076 AC-29). */
+export function parseOpaqueCssColor(value: string): [number, number, number] | null {
+  const trimmed = value.trim();
+  if (!/^rgba?\(/.test(trimmed)) {
+    return null;
+  }
+  const alpha = /^rgba\(\s*\d+[,\s]+\d+[,\s]+\d+[,\s/]+([\d.]+)\s*\)$/.exec(trimmed);
+  if (alpha && Number(alpha[1]) < 1) {
+    return null;
+  }
+  return parseCssColor(trimmed);
+}
+
+/** A rectangle in PDF points, measured from the page's top-left like every
+ * other extracted item. */
+export interface PdfRect {
+  xPt: number;
+  yPt: number;
+  widthPt: number;
+  heightPt: number;
+}
+
+/** One paintable border edge of a table cell. `style` is the computed CSS
+ * border-style; dashed, dotted and double get their own geometry below, and
+ * anything else paints the plain solid strip. */
+export interface CellEdgePaint {
+  widthPt: number;
+  color: [number, number, number];
+  style?: string;
+}
+
+/** A rectangle as a closed, filled path item — the shape both a cell's
+ * shading and each of its border strips reduce to. */
+export function filledRectItem(rect: PdfRect, fill: [number, number, number]): PdfPathItem {
+  return {
+    subpaths: [
+      {
+        start: { xPt: rect.xPt, yPt: rect.yPt },
+        segments: [
+          { toXPt: rect.xPt + rect.widthPt, toYPt: rect.yPt },
+          { toXPt: rect.xPt + rect.widthPt, toYPt: rect.yPt + rect.heightPt },
+          { toXPt: rect.xPt, toYPt: rect.yPt + rect.heightPt },
+        ],
+        closed: true,
+      },
+    ],
+    fill,
+  };
+}
+
+/** A cell's painted border edges as filled strips (SPEC-076 AC-29). Each
+ * strip is centred on the cell-rect edge: under border-collapse the painted
+ * border straddles the grid line the neighbouring cell rects share, so two
+ * adjacent cells overlap-paint the same strip instead of doubling it. Each
+ * strip is extended by the perpendicular edges' half-widths so corners
+ * close. */
+export function cellBorderItems(
+  rect: PdfRect,
+  edges: {
+    top?: CellEdgePaint;
+    right?: CellEdgePaint;
+    bottom?: CellEdgePaint;
+    left?: CellEdgePaint;
+  },
+): PdfPathItem[] {
+  const half = (edge?: CellEdgePaint) => (edge ? edge.widthPt / 2 : 0);
+  const x0 = rect.xPt - half(edges.left);
+  const y0 = rect.yPt - half(edges.top);
+  const width = rect.widthPt + half(edges.left) + half(edges.right);
+  const height = rect.heightPt + half(edges.top) + half(edges.bottom);
+  const items: PdfPathItem[] = [];
+  if (edges.top) {
+    items.push(...edgePaintItems({ xPt: x0, yPt: y0, widthPt: width, heightPt: edges.top.widthPt }, edges.top));
+  }
+  if (edges.bottom) {
+    items.push(
+      ...edgePaintItems(
+        { xPt: x0, yPt: rect.yPt + rect.heightPt - half(edges.bottom), widthPt: width, heightPt: edges.bottom.widthPt },
+        edges.bottom,
+      ),
+    );
+  }
+  if (edges.left) {
+    items.push(...edgePaintItems({ xPt: x0, yPt: y0, widthPt: edges.left.widthPt, heightPt: height }, edges.left));
+  }
+  if (edges.right) {
+    items.push(
+      ...edgePaintItems(
+        { xPt: rect.xPt + rect.widthPt - half(edges.right), yPt: y0, widthPt: edges.right.widthPt, heightPt: height },
+        edges.right,
+      ),
+    );
+  }
+  return items;
+}
+
+/** One border edge's strip as path items honouring its computed style
+ * (SPEC-076 AC-29): the screen paints dashed, dotted and double borders via
+ * CSS, so a solid strip in the export would not look the same. A dashed or
+ * dotted edge becomes a stroked centre line with a dash pattern; a double
+ * edge two strips of a third of the width each, CSS's own geometry; anything
+ * else is the plain filled strip. The strip rect is already corner-extended
+ * by the caller. */
+export function edgePaintItems(strip: PdfRect, edge: CellEdgePaint): PdfPathItem[] {
+  const horizontal = strip.widthPt >= strip.heightPt;
+  const thickness = horizontal ? strip.heightPt : strip.widthPt;
+  // Below 3px (2.25pt) a double border has no room for its gap and the
+  // browser paints it as one line — so does the fallthrough strip.
+  if (edge.style === "double" && thickness >= 2.25) {
+    const line = thickness / 3;
+    return horizontal
+      ? [
+          filledRectItem({ ...strip, heightPt: line }, edge.color),
+          filledRectItem({ ...strip, yPt: strip.yPt + thickness - line, heightPt: line }, edge.color),
+        ]
+      : [
+          filledRectItem({ ...strip, widthPt: line }, edge.color),
+          filledRectItem({ ...strip, xPt: strip.xPt + thickness - line, widthPt: line }, edge.color),
+        ];
+  }
+  if (edge.style === "dashed" || edge.style === "dotted") {
+    // Butt-capped dashes: 3×width on / 3×width off for dashed, square
+    // width-sized dots for dotted — the proportions CSS borders use.
+    const on = edge.style === "dashed" ? thickness * 3 : thickness;
+    const start = horizontal
+      ? { xPt: strip.xPt, yPt: strip.yPt + thickness / 2 }
+      : { xPt: strip.xPt + thickness / 2, yPt: strip.yPt };
+    const end = horizontal
+      ? { toXPt: strip.xPt + strip.widthPt, toYPt: strip.yPt + thickness / 2 }
+      : { toXPt: strip.xPt + thickness / 2, toYPt: strip.yPt + strip.heightPt };
+    return [
+      {
+        subpaths: [{ start, segments: [end] }],
+        stroke: { color: edge.color, widthPt: thickness, dashPt: [on, on] },
+      },
+    ];
+  }
+  return [filledRectItem(strip, edge.color)];
+}
+
 /** SVG stroke cap/join names to PDF's `J`/`j` operand codes. Both default
  * the same way in SVG and PDF (butt, miter), so an unknown value maps to 0. */
 const LINE_CAPS: Record<string, 0 | 1 | 2> = { butt: 0, round: 1, square: 2 };
@@ -317,6 +461,61 @@ export function extractPageContent(
   // the rest of this function measures in (they differ under a zoom
   // transform), and `scale` then converts to points.
   const layoutScale = pageEl.offsetWidth > 0 ? pageRect.width / pageEl.offsetWidth : 1;
+
+  // Table cell chrome (SPEC-076 AC-29): the resolved shading and borders the
+  // canvas paints as CSS on each cell — tableCellBandedStyle's inline style
+  // plus the component's default border — are invisible to a text extractor,
+  // so they are re-read from the computed style here and emitted as filled
+  // rectangles under the text. All backgrounds first, then all border
+  // strips, so no cell's fill can cover a neighbour's border half; pushed
+  // before the connector paths so connectors stay painted above tables.
+  const cellFills: PdfPathItem[] = [];
+  const cellBorders: PdfPathItem[] = [];
+  for (const element of Array.from(pageEl.querySelectorAll("td.doc-table-cell"))) {
+    if (element.closest(EXCLUDED_SELECTOR)) {
+      continue;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0.1 || rect.height <= 0.1) {
+      continue;
+    }
+    const style = view.getComputedStyle(element);
+    const box: PdfRect = {
+      xPt: (rect.left - pageRect.left) * scale,
+      yPt: (rect.top - pageRect.top) * scale,
+      widthPt: rect.width * scale,
+      heightPt: rect.height * scale,
+    };
+    const fill = parseOpaqueCssColor(style.backgroundColor);
+    if (fill) {
+      cellFills.push(filledRectItem(box, fill));
+    }
+    const edge = (
+      borderStyle: string,
+      widthValue: string,
+      colorValue: string,
+    ): CellEdgePaint | undefined => {
+      if (borderStyle === "none" || borderStyle === "hidden") {
+        return undefined;
+      }
+      const widthPx = Number.parseFloat(widthValue);
+      const color = parseOpaqueCssColor(colorValue);
+      if (!Number.isFinite(widthPx) || widthPx <= 0 || !color) {
+        return undefined;
+      }
+      return { widthPt: widthPx * layoutScale * scale, color, style: borderStyle };
+    };
+    cellBorders.push(
+      ...cellBorderItems(box, {
+        top: edge(style.borderTopStyle, style.borderTopWidth, style.borderTopColor),
+        right: edge(style.borderRightStyle, style.borderRightWidth, style.borderRightColor),
+        bottom: edge(style.borderBottomStyle, style.borderBottomWidth, style.borderBottomColor),
+        left: edge(style.borderLeftStyle, style.borderLeftWidth, style.borderLeftColor),
+      }),
+    );
+  }
+  paths.push(...cellFills, ...cellBorders);
+
   for (const layer of Array.from(pageEl.querySelectorAll("svg.doc-connector-layer"))) {
     if (layer.closest(EXCLUDED_SELECTOR)) {
       continue;

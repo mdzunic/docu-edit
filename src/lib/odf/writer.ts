@@ -137,6 +137,7 @@ import { formulaFrameAltText, planOdfFormulaWrite, type OdfFormulaWritePlan } fr
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
+import { tableTemplateXml, tableUseStyleAttrs, templateCellStyleNames } from "./tableTemplate";
 import {
   DRAW_NAMESPACE,
   FO_NAMESPACE,
@@ -179,6 +180,8 @@ const DOCUMENT_XMLNS =
 // document root, so content.xml's bytes are unchanged for documents without
 // tables (SPEC-022).
 const TABLE_XMLNS = ` xmlns:table="${TABLE_NAMESPACE}"`;
+// SPEC-076: the banding half of the table model (table:table-template and the
+// table:use-*-styles attributes) lives in odf/tableTemplate.ts.
 
 // Declared once on each link-carrying paragraph (SPEC-025) — the TABLE_XMLNS
 // pattern, so content.xml is unchanged for documents without hyperlinks —
@@ -2068,9 +2071,16 @@ function cellChangeMarkerXml(cell: TableCell): string {
 function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean): string {
   const names = styles.tableNamesFor(table, includeOpaque);
   const alignAttr = table.alignment !== undefined ? ` table:align="${table.alignment}"` : "";
+  // SPEC-076 AC-68: the banding style the table points at, and which of its
+  // regions this table uses. `table:style-name` already carries the
+  // width-bearing automatic style, so the NAMED style rides on
+  // table:template-name — which is also what makes it come back on read.
+  const templateAttr =
+    table.styleId !== undefined ? ` table:template-name="${escapeXml(table.styleId)}"` : "";
   let xml =
     `<table:table${TABLE_XMLNS} table:name="${escapeXml(names.name)}"` +
-    ` table:style-name="${escapeXml(names.styleName)}"${alignAttr}>`;
+    ` table:style-name="${escapeXml(names.styleName)}"${alignAttr}${templateAttr}` +
+    `${tableUseStyleAttrs(table.look)}>`;
   for (const columnName of names.columnStyleNames) {
     xml += `<table:table-column table:style-name="${escapeXml(columnName)}"/>`;
   }
@@ -2529,9 +2539,16 @@ function namedStyleDefinitionXml(definition: NamedStyle): string {
       fill !== undefined
         ? `<style:table-properties fo:background-color="${escapeXml(resolveColor(fill, odtWriteTheme))}"/>`
         : "";
-    return properties.length > 0
-      ? `<style:style ${attrs}>${properties}</style:style>`
-      : `<style:style ${attrs}/>`;
+    // SPEC-076 AC-68: the style's banding becomes a table:table-template plus
+    // the generated table-cell styles its regions reference — siblings of the
+    // style itself under office:styles. ODF has no theme part, so a region's
+    // colour resolves to a literal here (SPEC-077 AC-37).
+    const banding = tableTemplateXml(definition, odtWriteTheme);
+    const self =
+      properties.length > 0
+        ? `<style:style ${attrs}>${properties}</style:style>`
+        : `<style:style ${attrs}/>`;
+    return self + banding.cellStyles + banding.template;
   }
   const properties =
     (family === "paragraph" ? paragraphPropertiesXml(definition.paragraphFormatting ?? {}) : "") +
@@ -3340,7 +3357,32 @@ export function patchOdtStylesXml(
     const wrapper = parseXml(
       `<office:document-styles${DOCUMENT_XMLNS}>${namedStyleDefinitionXml(definition)}</office:document-styles>`,
     );
-    const imported = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    // A banded table style is several siblings — the style itself, its
+    // generated table-cell styles and the table:table-template (SPEC-076
+    // AC-68) — so import every element, not just the first.
+    const imported = Array.from(wrapper.documentElement.children).map(
+      (el) => stylesDoc.importNode(el, true) as Element,
+    );
+    if (definition.type === "table" && !definition.unmodeled) {
+      // Clear the artefacts a previous save generated for this style before
+      // re-emitting: a since-removed region's cell style must not linger,
+      // and a cleared banding must not resurrect from a stale template.
+      const generatedNames = new Set(templateCellStyleNames(definition.id));
+      for (const el of Array.from(officeStyles.children)) {
+        const staleTemplate =
+          el.namespaceURI === TABLE_NAMESPACE &&
+          el.localName === "table-template" &&
+          el.getAttributeNS(TABLE_NAMESPACE, "name") === definition.id;
+        const staleCellStyle =
+          el.namespaceURI === STYLE_NAMESPACE &&
+          el.localName === "style" &&
+          el.getAttributeNS(STYLE_NAMESPACE, "family") === "table-cell" &&
+          generatedNames.has(el.getAttributeNS(STYLE_NAMESPACE, "name") ?? "");
+        if (staleTemplate || staleCellStyle) {
+          officeStyles.removeChild(el);
+        }
+      }
+    }
     // Matched by name alone (SPEC-042): a style's family no longer maps 1:1
     // onto "paragraph", and a style:name is unique across families in one
     // styles.xml the same way a .docx styleId is.
@@ -3350,10 +3392,16 @@ export function patchOdtStylesXml(
         el.localName === "style" &&
         el.getAttributeNS(STYLE_NAMESPACE, "name") === definition.id,
     );
+    const [self, ...siblings] = imported;
     if (existing) {
-      officeStyles.replaceChild(imported, existing);
+      officeStyles.replaceChild(self, existing);
     } else {
-      officeStyles.appendChild(imported);
+      officeStyles.appendChild(self);
+    }
+    let anchor = self;
+    for (const sibling of siblings) {
+      officeStyles.insertBefore(sibling, anchor.nextSibling);
+      anchor = sibling;
     }
   }
   return `${XML_DECLARATION}${serializeElement(root)}`;

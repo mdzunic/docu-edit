@@ -13,6 +13,11 @@ const emit = defineEmits(["apply", "cancel"]);
 
 const rows = ref("3");
 const cols = ref("3");
+// SPEC-076 AC-20: checked by default — SPEC-043's accessibility checker
+// flags a table with no header row, so a table made here passes that check
+// unless the author says otherwise. The Insert menu's grid quick-pick has no
+// dialog and is unchanged: it still creates no header row (AC-21).
+const headerRow = ref(true);
 
 const rowsInput = useTemplateRef("rowsInput");
 
@@ -43,7 +48,7 @@ function apply() {
   if (error.value) {
     return;
   }
-  emit("apply", { rows: Number(rows.value), cols: Number(cols.value) });
+  emit("apply", { rows: Number(rows.value), cols: Number(cols.value), headerRow: headerRow.value });
 }
 </script>
 
@@ -84,6 +89,14 @@ function apply() {
         >
       </label>
     </div>
+    <label class="field-check">
+      <input
+        v-model="headerRow"
+        type="checkbox"
+        data-testid="insert-table-header-row"
+      >
+      <span>First row is a header row</span>
+    </label>
     <p
       v-if="error"
       class="dialog-error"
@@ -138,6 +151,14 @@ function apply() {
   border: var(--border-width) solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface-base);
+}
+
+.field-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  color: var(--text-primary);
 }
 
 .dialog-error {

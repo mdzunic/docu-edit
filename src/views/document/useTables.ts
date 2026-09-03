@@ -608,7 +608,9 @@ export function useTables(deps: TablesDeps) {
 
   /** The toolbar's grid picker or the dialog (AC-1..4): inserts at the caret
    * and focuses the first cell. Inside a table the insert is refused. */
-  function handleInsertTable(size = { rows: 0, cols: 0 }) {
+  function handleInsertTable(
+    size: { rows: number; cols: number; headerRow?: boolean } = { rows: 0, cols: 0 },
+  ) {
     insertTableDialogOpen.value = false;
     const active = activeHeaderFooter.value;
     const model = doc.value;
@@ -625,7 +627,7 @@ export function useTables(deps: TablesDeps) {
         return;
       }
       const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
-      const result = insertTable(synthetic, selection, size.rows, size.cols);
+      const result = insertTable(synthetic, selection, size.rows, size.cols, size.headerRow);
       applyHeaderFooterEdit(result.model, result.selection, "insert table");
       hfRootEl()?.focus();
       return;
@@ -640,7 +642,7 @@ export function useTables(deps: TablesDeps) {
       root.focus();
       return;
     }
-    applyEdit(insertTable(model, selection, size.rows, size.cols), selection, "insert table");
+    applyEdit(insertTable(model, selection, size.rows, size.cols, size.headerRow), selection, "insert table");
     root.focus();
   }
 

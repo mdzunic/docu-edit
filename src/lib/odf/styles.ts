@@ -9,6 +9,7 @@ import type {
   ParagraphFormatting,
   RunFormatting,
   SectionColumns,
+  TableStyleBanding,
 } from "../documentModel";
 import type { ListDefinition, ListMarkerStyle, ListType } from "../core/lists";
 import type { Margins, PageSize } from "../core/pageSetup";
@@ -32,6 +33,11 @@ import {
   type OdfTextProperties,
 } from "./properties";
 import { odfColorToCss, odfLengthToCm, odfLengthToPt } from "./units";
+import { parseTableTemplates } from "./tableTemplate";
+
+/** The XSL-FO compatible namespace — `foAttr` reads it, but a style
+ * element's own attribute needs the URI directly (SPEC-076). */
+const FO_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 import { DE_BORDER_NAMESPACE, parseBorderShorthand } from "./borders";
 import { borderSideVisible } from "../core/borders";
 
@@ -150,6 +156,14 @@ export interface OdfOtherStyle {
   parentName?: string;
   nextStyleName?: string;
   rawXml: string;
+  /** SPEC-076 AC-69: the banding a `table:table-template` of this name
+   * declares. A table style carrying one is fully modelled — banding is the
+   * only conditional formatting the model has — so it is NOT re-emitted
+   * verbatim and Modify works on it (AC-71's ODF half). */
+  banding?: TableStyleBanding;
+  /** The style's own `style:table-properties/fo:background-color` — the base
+   * cell shading SPEC-042 already round-trips. */
+  cellShadingFill?: string;
 }
 
 export interface OdfStyleCatalog {
@@ -664,9 +678,13 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
       // SPEC-042 AC-15..18: named styles of every other family ("table",
       // "graphic", …) are listed/preserved verbatim rather than resolved —
       // this app has no formatting model for them (out of scope: banding).
+      const tableTemplates = parseTableTemplates(officeStyles);
       for (const styleEl of childElements(officeStyles, STYLE_NAMESPACE, "style")) {
         const family = styleAttr(styleEl, "family");
-        if (family === "paragraph" || family === "text" || !family) {
+        // A generated table-cell style belongs to a template, not to the
+        // catalogue — parseTableTemplates already folded it into the banding
+        // it describes (SPEC-076 AC-68).
+        if (family === "paragraph" || family === "text" || family === "table-cell" || !family) {
           continue;
         }
         const name = styleAttr(styleEl, "name");
@@ -674,6 +692,16 @@ export function parseOdfStyleCatalog(contentDoc: Document, stylesDoc: Document |
           continue;
         }
         const other: OdfOtherStyle = { name, rawXml: serializeElement(styleEl) };
+        // SPEC-076: the table:table-template of the same name, if any.
+        const banding = tableTemplates.get(name);
+        if (family === "table" && banding !== undefined) {
+          other.banding = banding;
+          const tableProps = firstChildElement(styleEl, STYLE_NAMESPACE, "table-properties");
+          const fill = tableProps?.getAttributeNS(FO_NAMESPACE, "background-color") ?? undefined;
+          if (fill) {
+            other.cellShadingFill = fill;
+          }
+        }
         const displayName = styleAttr(styleEl, "display-name");
         if (displayName) {
           other.displayName = displayName;
@@ -911,9 +939,18 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
       id: other.name,
       name: other.displayName ?? decodeStyleName(other.name),
       type: "table",
-      unmodeled: true,
-      rawXml: other.rawXml,
     };
+    // SPEC-076 AC-69, AC-71: a style whose conditional formatting is banding
+    // is modelled; anything else stays verbatim, as SPEC-042 left it.
+    if (other.banding !== undefined) {
+      style.banding = other.banding;
+      if (other.cellShadingFill !== undefined) {
+        style.cellShadingFill = other.cellShadingFill;
+      }
+    } else {
+      style.unmodeled = true;
+      style.rawXml = other.rawXml;
+    }
     if (other.parentName !== undefined) {
       style.basedOn = other.parentName;
     }
