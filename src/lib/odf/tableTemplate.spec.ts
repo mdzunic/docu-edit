@@ -74,6 +74,33 @@ describe("writeOdt / parseOdt — table:use-*-styles and table:table-template (A
     expect(style?.unmodeled).toBeUndefined();
   });
 
+  it("round-trips a band region's bold and borders through the template (AC-37)", async () => {
+    const model = bandedModel();
+    model.styles = [
+      {
+        ...BANDED_STYLE,
+        banding: {
+          ...BANDED_STYLE.banding,
+          bandedRows: {
+            size: 1,
+            shading: "#d9e2f3",
+            bold: true,
+            borders: {
+              top: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+              bottom: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+              left: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+              right: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+            },
+          },
+        },
+      },
+    ];
+    const reopened = await roundTrip(model);
+    const style = (reopened.styles ?? []).find((entry) => entry.id === "TableStyleAccent");
+    expect(style?.banding?.bandedRows).toEqual(model.styles[0].banding?.bandedRows);
+    expect(style?.unmodeled).toBeUndefined();
+  });
+
   it("leaves `look` unset for a table declaring no table:use-* attributes (AC-23)", async () => {
     const model = bandedModel();
     const table = model.sections[0].blocks[1] as Table;

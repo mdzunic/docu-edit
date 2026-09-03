@@ -90,19 +90,6 @@ export function parseTableUseStyles(tableEl: Element): TableLook | undefined {
   return sawAny ? look : undefined;
 }
 
-function conditionalOf(
-  banding: TableStyleBanding,
-  key: keyof TableStyleBanding,
-): TableConditionalFormat | undefined {
-  const value = banding[key];
-  if (!value) {
-    return undefined;
-  }
-  return key === "bandedRows" || key === "bandedColumns"
-    ? { shading: (value as { shading: string }).shading }
-    : (value as TableConditionalFormat);
-}
-
 /** The generated `table-cell` styles a template's regions reference, plus the
  * `table:table-template` itself (AC-68) — returned together because both go
  * into `office:styles` and neither is meaningful without the other. */
@@ -114,7 +101,9 @@ export function tableTemplateXml(style: NamedStyle): { cellStyles: string; templ
   let cellStyles = "";
   let children = "";
   for (const region of REGIONS) {
-    const format = conditionalOf(banding, region.band);
+    // Every region — band or edge — is a full conditional format (AC-37);
+    // the band size cannot cross into ODF at all (AC-70's drop record).
+    const format: TableConditionalFormat | undefined = banding[region.band];
     if (!format) {
       continue;
     }
@@ -208,9 +197,7 @@ export function parseTableTemplates(officeStyles: Element | undefined): Map<stri
         continue;
       }
       if (region.band === "bandedRows" || region.band === "bandedColumns") {
-        if (format.shading !== undefined) {
-          banding[region.band] = { size: 1, shading: format.shading };
-        }
+        banding[region.band] = { size: 1, ...format };
       } else {
         banding[region.band] = format;
       }

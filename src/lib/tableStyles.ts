@@ -130,14 +130,16 @@ export function resolveCellFormatting(
     const colEnd = look.lastColumn ? Math.max(colStart, colCount - 1) : colCount;
 
     // Level 2 — banding, columns first so the row band wins where both apply.
+    // A band is a full conditional format (AC-37): shading, bold and borders
+    // all land, through the same application the edge regions use.
     if (look.bandedColumns && banding.bandedColumns) {
       if (inOddBand(colIndex, colStart, colEnd, bandSize(banding.bandedColumns.size))) {
-        resolved.shadingFill = banding.bandedColumns.shading;
+        applyConditional(resolved, banding.bandedColumns);
       }
     }
     if (look.bandedRows && banding.bandedRows) {
       if (inOddBand(rowIndex, rowStart, rowEnd, bandSize(banding.bandedRows.size))) {
-        resolved.shadingFill = banding.bandedRows.shading;
+        applyConditional(resolved, banding.bandedRows);
       }
     }
 
@@ -333,13 +335,10 @@ export function bandingDraftFrom(banding: TableStyleBanding | undefined): TableB
     rowBandSize: banding?.bandedRows?.size ?? 1,
     columnBandSize: banding?.bandedColumns?.size ?? 1,
     regions: BANDING_REGIONS.map((region) => {
-      const value = banding?.[region.key];
-      const format: TableConditionalFormat | undefined =
-        region.key === "bandedRows" || region.key === "bandedColumns"
-          ? value
-            ? { shading: (value as { shading: string }).shading }
-            : undefined
-          : (value as TableConditionalFormat | undefined);
+      // Every region — the two bands included (AC-37) — is a full
+      // conditional format; the bands' `size` rides above in the two
+      // band-size fields.
+      const format: TableConditionalFormat | undefined = banding?.[region.key];
       return {
         key: region.key,
         label: region.label,
@@ -366,14 +365,6 @@ export function bandingFromDraft(
   const banding: TableStyleBanding = {};
   for (const region of draft.regions) {
     const shading = region.shading.trim();
-    if (region.key === "bandedRows" || region.key === "bandedColumns") {
-      if (shading.length === 0) {
-        continue;
-      }
-      const size = region.key === "bandedRows" ? draft.rowBandSize : draft.columnBandSize;
-      banding[region.key] = { size: size >= 1 ? Math.floor(size) : 1, shading };
-      continue;
-    }
     const format: TableConditionalFormat = {};
     if (shading.length > 0) {
       format.shading = shading;
@@ -389,7 +380,15 @@ export function bandingFromDraft(
       };
       format.borders = { top: { ...side }, bottom: { ...side }, left: { ...side }, right: { ...side } };
     }
-    if (Object.keys(format).length > 0) {
+    if (Object.keys(format).length === 0) {
+      continue;
+    }
+    // The two band regions carry the same three fields plus their size
+    // (AC-37) — one code path for all six, so no control can be inert.
+    if (region.key === "bandedRows" || region.key === "bandedColumns") {
+      const size = region.key === "bandedRows" ? draft.rowBandSize : draft.columnBandSize;
+      banding[region.key] = { size: size >= 1 ? Math.floor(size) : 1, ...format };
+    } else {
       banding[region.key as "firstRow" | "lastRow" | "firstColumn" | "lastColumn"] = format;
     }
   }

@@ -143,16 +143,9 @@ export function tableStylePrXml(banding: TableStyleBanding | undefined): string 
     return "";
   }
   return REGION_TYPES.map((region) => {
-    const value = banding[region.key];
-    if (!value) {
-      return "";
-    }
-    // The two band entries carry only a shading; the four edge regions are
-    // full conditional formats.
-    const format: TableConditionalFormat =
-      region.key === "bandedRows" || region.key === "bandedColumns"
-        ? { shading: (value as { shading: string }).shading }
-        : (value as TableConditionalFormat);
+    // Every region — band or edge — is a full conditional format (AC-37);
+    // a band's `size` is not here but in tableStyleBandSizesXml.
+    const format: TableConditionalFormat | undefined = banding[region.key];
     const body = conditionalXml(format);
     return body.length > 0 ? `<w:tblStylePr w:type="${region.wire}">${body}</w:tblStylePr>` : "";
   }).join("");
@@ -223,14 +216,11 @@ export function parseTableStyleBanding(styleEl: Element): {
       continue;
     }
     if (region.key === "bandedRows" || region.key === "bandedColumns") {
-      // A band carries only a shading; a band region declaring borders or
-      // bold is beyond the model, so the style stays verbatim.
-      if (format.shading === undefined || format.bold !== undefined || format.borders !== undefined) {
-        modelled = false;
-        continue;
-      }
+      // A band is a full conditional format plus its size (AC-37) — bold and
+      // borders on a band region are modelled since SPEC-076's style editor
+      // edits them, so they no longer force the style verbatim.
       const size = bandSize(styleEl, region.key === "bandedRows" ? "tblStyleRowBandSize" : "tblStyleColBandSize");
-      banding[region.key] = { size, shading: format.shading };
+      banding[region.key] = { size, ...format };
     } else {
       banding[region.key] = format;
     }

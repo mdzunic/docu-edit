@@ -60,6 +60,28 @@ describe("resolveCellFormatting — the four-level resolution order (AC-24, AC-2
     expect(resolveCellFormatting(table, style, 2, 0).shadingFill).toBe("#222222");
   });
 
+  it("level 2 applies a band's bold and borders too, not just its shading (AC-37)", () => {
+    const banded: NamedStyle = {
+      id: "B",
+      type: "table",
+      banding: {
+        bandedRows: { size: 1, shading: "#222222", bold: true, borders: { top: side("#444444") } },
+      },
+    };
+    const table = grid(3, 2);
+    table.styleId = "B";
+    table.look = { bandedRows: true };
+    const inBand = resolveCellFormatting(table, banded, 0, 0);
+    expect(inBand.shadingFill).toBe("#222222");
+    expect(inBand.bold).toBe(true);
+    expect(inBand.borders?.top?.color).toBe("#444444");
+    // The even band gets none of it.
+    const offBand = resolveCellFormatting(table, banded, 1, 0);
+    expect(offBand.shadingFill).toBeUndefined();
+    expect(offBand.bold).toBeUndefined();
+    expect(offBand.borders).toBeUndefined();
+  });
+
   it("level 3 overrides level 2: firstRow wins over the row band at row 0", () => {
     const table = grid(3, 2);
     table.styleId = "S";

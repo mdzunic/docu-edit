@@ -100,6 +100,36 @@ describe("parseDocx — the inverse (SPEC-076 AC-67)", () => {
     expect(style?.cellBorders).toEqual(BANDED_STYLE.cellBorders);
   });
 
+  it("round-trips a band region's bold and borders, and the style stays modelled (AC-37, AC-71)", async () => {
+    const model = bandedModel();
+    model.styles = [
+      {
+        ...BANDED_STYLE,
+        banding: {
+          ...BANDED_STYLE.banding,
+          bandedRows: {
+            size: 2,
+            shading: "#d9e2f3",
+            bold: true,
+            borders: {
+              top: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+              bottom: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+              left: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+              right: { style: "dashed" as const, widthPt: 1.5, color: "#ff0000" },
+            },
+          },
+        },
+      },
+    ];
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    const style = reopened.styles.find((entry) => entry.id === "TableStyleAccent");
+    expect(style?.banding?.bandedRows).toEqual(model.styles[0].banding?.bandedRows);
+    // Bold/borders on a band are within the model now, so Modify stays
+    // available (AC-71's second sentence).
+    expect(style?.unmodeled).toBeUndefined();
+  });
+
   it("keeps a band size other than 1 (AC-66)", async () => {
     const model = bandedModel();
     model.styles = [

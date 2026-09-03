@@ -76,6 +76,29 @@ describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
     expect(back?.firstRow?.borders?.right).toEqual({ style: "double", widthPt: 2.25, color: "#ff0000" });
   });
 
+  it("round-trips a band region's bold and borders (AC-37)", () => {
+    const draft = bandingDraftFrom(undefined);
+    const bandedRows = draft.regions.find((region) => region.key === "bandedRows");
+    const bandedColumns = draft.regions.find((region) => region.key === "bandedColumns");
+    bandedRows!.bold = true;
+    bandedRows!.borderStyle = "dashed";
+    bandedColumns!.bold = true;
+    const back = bandingFromDraft(draft, 1.5, "#00ff00");
+    expect(back?.bandedRows?.size).toBe(1);
+    expect(back?.bandedRows?.bold).toBe(true);
+    expect(back?.bandedRows?.borders?.top).toEqual({ style: "dashed", widthPt: 1.5, color: "#00ff00" });
+    // A band with bold alone and no shading is still a band (AC-22's
+    // "independently settable").
+    expect(back?.bandedColumns).toEqual({ size: 1, bold: true });
+    // And the edit survives a second pass through the dialog.
+    const again = bandingDraftFrom(back);
+    expect(again.regions.find((region) => region.key === "bandedRows")).toMatchObject({
+      bold: true,
+      borderStyle: "dashed",
+    });
+    expect(again.regions.find((region) => region.key === "bandedColumns")).toMatchObject({ bold: true });
+  });
+
   it("returns undefined when no region sets anything", () => {
     expect(bandingFromDraft(bandingDraftFrom(undefined), 1, "#000000")).toBeUndefined();
   });

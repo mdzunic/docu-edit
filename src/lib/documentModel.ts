@@ -620,16 +620,24 @@ export interface TableConditionalFormat {
   borders?: CellBorders;
 }
 
+/** A band region's conditional formatting (SPEC-076 AC-22, AC-37): the same
+ * shading/bold/borders every other region carries, plus how many rows or
+ * columns one band spans (1 = every other). The two band regions are NOT a
+ * narrower type than the four edge regions — the style editor exposes the
+ * same three controls for all six, so all six must store them. */
+export interface TableBandFormat extends TableConditionalFormat {
+  size: number;
+}
+
 /** A table style's conditional formatting (SPEC-076) — the model of .docx's
  * `w:tblStylePr` regions plus `w:tblStyleRowBandSize`/`w:tblStyleColBandSize`,
  * and of ODF's `table:table-template` children. Every region is
  * independently settable and independently absent. Which regions a given
  * table actually uses is the table's own `look`, not this. */
 export interface TableStyleBanding {
-  /** Shading applied to alternate row bands; `size` is how many rows one
-   * band spans (1 = every other row). */
-  bandedRows?: { size: number; shading: string };
-  bandedColumns?: { size: number; shading: string };
+  /** Formatting applied to alternate row/column bands. */
+  bandedRows?: TableBandFormat;
+  bandedColumns?: TableBandFormat;
   firstRow?: TableConditionalFormat;
   lastRow?: TableConditionalFormat;
   firstColumn?: TableConditionalFormat;
