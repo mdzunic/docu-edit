@@ -62,4 +62,11 @@ describe("TablePropertiesDialog — shading theme swatches (SPEC-077 AC-22/AC-23
     await wrapper.get('[data-testid="table-props-apply"]').trigger("click");
     expect(applied(wrapper).shadingFill).toEqual({ theme: "accent6" });
   });
+
+  it("OK emits a plain object, never the draft's reactive proxy (AC-22: the model must survive the word-count worker's and IndexedDB's structured clone)", async () => {
+    const wrapper = open({ shadingFill: { theme: "accent6" } }, DEFAULT_THEME);
+    await wrapper.get('[data-testid="table-props-apply"]').trigger("click");
+    // toEqual sees through a Proxy; structured clone throws on one.
+    expect(() => structuredClone(applied(wrapper))).not.toThrow();
+  });
 });

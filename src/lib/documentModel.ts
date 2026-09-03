@@ -1967,6 +1967,16 @@ export function asDocumentTheme(value: unknown): DocumentTheme {
   return (value ?? DEFAULT_THEME) as DocumentTheme;
 }
 
+/** A `ModelColor` detached from any reactive dialog draft that held it. A
+ * theme reference stored into a Vue `ref` draft comes back as a reactive
+ * Proxy, and a Proxy cannot pass the structured-clone boundaries the model
+ * must cross (the word-count worker's postMessage, IndexedDB persistence) —
+ * every draft→model conversion routes its colour values through here so the
+ * model only ever holds plain objects (SPEC-077 AC-22). */
+export function plainModelColor<T extends ModelColor | null | undefined>(color: T): T {
+  return (typeof color === "object" && color !== null ? { ...color } : color) as T;
+}
+
 /** The root of the document tree. */
 export interface DocumentModel {
   id: string;

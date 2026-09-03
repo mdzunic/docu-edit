@@ -17,6 +17,7 @@ import {
 import {
   DEFAULT_PARAGRAPH_BORDER_PADDING_PT,
   isParagraph,
+  plainModelColor,
   type Block,
   type Paragraph,
   type ParagraphBorders,
@@ -612,7 +613,9 @@ export function bordersFromDraft(draft: BorderDraft): ParagraphBorders | undefin
   for (const edge of BORDER_DRAFT_EDGES) {
     const state = draft[edge];
     if (state.on) {
-      borders[edge] = { style: state.style, widthPt: state.widthPt, color: state.color };
+      // plainModelColor: a theme reference seeded from the model comes back
+      // out of the dialog's reactive draft as a Proxy — see documentModel.ts.
+      borders[edge] = { style: state.style, widthPt: state.widthPt, color: plainModelColor(state.color) };
     }
   }
   const padding = draft.paddingPt;

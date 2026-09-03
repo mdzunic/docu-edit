@@ -193,4 +193,14 @@ describe("BordersShadingDialog — theme swatch row (SPEC-077 AC-22/AC-23)", () 
     await wrapper.get('[data-testid="borders-apply"]').trigger("click");
     expect(applied(wrapper).shadingFill).toEqual({ theme: "accent3" });
   });
+
+  it("apply emits plain objects, never the draft's reactive proxies (AC-22: the model must survive the word-count worker's and IndexedDB's structured clone)", async () => {
+    const wrapper = openThemed({
+      shadingFill: { theme: "accent3" },
+      borders: { top: { style: "single", widthPt: 1, color: { theme: "accent4" } } },
+    });
+    await wrapper.get('[data-testid="borders-apply"]').trigger("click");
+    // toEqual sees through a Proxy; structured clone throws on one.
+    expect(() => structuredClone(applied(wrapper))).not.toThrow();
+  });
 });

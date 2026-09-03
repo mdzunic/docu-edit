@@ -32,7 +32,7 @@ import {
   setDraftEdgeStyle,
   setDraftEdgeWidth,
 } from "../lib/paragraphBorders";
-import { asDocumentTheme, asParagraphBorders } from "../lib/documentModel";
+import { asDocumentTheme, asParagraphBorders, plainModelColor } from "../lib/documentModel";
 import { isThemeColor, resolveColor } from "../lib/core/theme";
 import { BORDER_LINE_STYLES } from "../lib/core/borders";
 import ThemeSwatchRow from "./ThemeSwatchRow.vue";
@@ -211,8 +211,10 @@ function apply() {
   };
   emit("apply", {
     borders: bordersFromDraft(resolved) ?? null,
-    // A stored theme reference wins over the hex it displays as (SPEC-077).
-    shadingFill: shadingOn.value ? (shadingRef.value ?? shadingFill.value) : null,
+    // A stored theme reference wins over the hex it displays as (SPEC-077);
+    // plainModelColor detaches it from this ref's reactive wrapper so the
+    // model never holds a Proxy (see documentModel.ts).
+    shadingFill: shadingOn.value ? (plainModelColor(shadingRef.value) ?? shadingFill.value) : null,
   });
 }
 </script>

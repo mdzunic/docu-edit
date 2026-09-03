@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { asMeasurementUnit, formatLength, parseLengthToCm } from "../lib/core/units";
 import { isThemeColor, resolveColor } from "../lib/core/theme";
-import { asDocumentTheme } from "../lib/documentModel";
+import { asDocumentTheme, plainModelColor } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
 import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 import UiButton from "./ui/UiButton.vue";
@@ -125,8 +125,10 @@ function apply() {
     borderStyle: borderStyle.value,
     borderWidthPt: Number(borderWidthPt.value),
     borderColor: borderColor.value,
-    // A stored theme reference wins over the hex it displays as (SPEC-077).
-    shadingFill: shadingEnabled.value ? (shadingRef.value ?? shadingFill.value) : "",
+    // A stored theme reference wins over the hex it displays as (SPEC-077);
+    // plainModelColor detaches it from this ref's reactive wrapper so the
+    // model never holds a Proxy (see documentModel.ts).
+    shadingFill: shadingEnabled.value ? (plainModelColor(shadingRef.value) ?? shadingFill.value) : "",
     paddingCm: parseLengthToCm(paddingText.value, measurementUnit.value) ?? 0,
     verticalAlign: verticalAlign.value,
     alignment: alignment.value,

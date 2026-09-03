@@ -295,6 +295,19 @@ describe("PageSetupDialog — page background theme swatches (SPEC-077 AC-22/AC-
     expect(backgroundOf(wrapper)).toEqual({ theme: "accent1", lumMod: 0.2, lumOff: 0.8 });
   });
 
+  it("OK emits plain objects, never the draft's reactive proxies (AC-22: the model must survive the word-count worker's and IndexedDB's structured clone)", async () => {
+    const wrapper = openThemed({
+      ...A4_INITIAL,
+      pageBackground: { theme: "accent1", lumMod: 0.2, lumOff: 0.8 },
+      pageBorders: { top: { style: "single", widthPt: 1, color: { theme: "accent2" } } },
+    });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    // toEqual sees through a Proxy; structured clone — the boundary the
+    // model actually crosses on every word-count tick and persist — throws.
+    expect(() => structuredClone(wrapper.emitted("apply")![0][0])).not.toThrow();
+  });
+
   it("hand-editing the colour input replaces the reference with a literal", async () => {
     const wrapper = openThemed({ ...A4_INITIAL, pageBackground: { theme: "accent2" } });
     await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");

@@ -4,7 +4,7 @@
 // annotations, and a pure draft is testable without mounting a dialog.
 import { borderSideVisible, type BorderLineStyle, type BorderSide } from "./core/borders";
 import type { ModelColor } from "./core/theme";
-import type { PageBorderAppliesTo, PageBorderMeasureFrom, PageBorders } from "./documentModel";
+import { plainModelColor, type PageBorderAppliesTo, type PageBorderMeasureFrom, type PageBorders } from "./documentModel";
 
 /** The four edges a page border can draw on — art borders are out of scope
  * (SPEC-074), so there is no fifth. */
@@ -74,7 +74,9 @@ export function pageBorderDraftFrom(
 /** The draft as a `PageBorders`, or null when no edge is chosen — the
  * `null`-removes value setPageBorders takes. */
 export function pageBordersFromDraft(draft: PageBorderDraft): PageBorders | null {
-  const line: BorderSide = { style: draft.style, widthPt: draft.widthPt, color: draft.color };
+  // plainModelColor: a theme reference seeded from the model comes back out
+  // of the dialog's reactive draft as a Proxy — see documentModel.ts.
+  const line: BorderSide = { style: draft.style, widthPt: draft.widthPt, color: plainModelColor(draft.color) };
   const borders: PageBorders = {};
   let any = false;
   for (const edge of PAGE_BORDER_EDGES) {
@@ -94,9 +96,11 @@ export function pageBordersFromDraft(draft: PageBorderDraft): PageBorders | null
   return borders;
 }
 
-/** The draft's page background, or null for paper white (AC-23). */
+/** The draft's page background, or null for paper white (AC-23). A theme
+ * reference is detached from the reactive draft (see plainModelColor) so the
+ * section never stores a Proxy the word-count worker cannot clone. */
 export function pageBackgroundFromDraft(draft: PageBorderDraft): ModelColor | null {
-  return draft.backgroundOn ? draft.background : null;
+  return draft.backgroundOn ? plainModelColor(draft.background) : null;
 }
 
 /** Typed empty seed for a `.vue` ref holding the draft. */
