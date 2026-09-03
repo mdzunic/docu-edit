@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import BordersShadingDialog from "./BordersShadingDialog.vue";
+import { DEFAULT_THEME } from "../lib/core/theme";
 
 const LINE = { style: "single", widthPt: 1, color: "#000000" };
 
@@ -147,5 +148,59 @@ describe("BordersShadingDialog (SPEC-074 AC-6..AC-10)", () => {
     await wrapper.get('[data-testid="borders-cancel"]').trigger("click");
     expect(wrapper.emitted("apply")).toBeUndefined();
     expect(wrapper.emitted("cancel")).toHaveLength(1);
+  });
+});
+
+describe("BordersShadingDialog — theme swatch row (SPEC-077 AC-22/AC-23)", () => {
+  function openThemed(initial: Record<string, unknown> = {}) {
+    return mount(BordersShadingDialog, { props: { initial, unit: "cm", theme: DEFAULT_THEME } });
+  }
+
+  function swatchFor(wrapper: ReturnType<typeof openThemed>, slot: string) {
+    // The first matching swatch is the base row's (no lumMod/lumOff variant).
+    return wrapper.findAll('[data-testid="borders-shading-theme-swatch"]').find(
+      (s) => s.attributes("data-theme-slot") === slot,
+    )!;
+  }
+
+  it("renders no theme row without a theme (AC-21: existing mounts unchanged)", () => {
+    expect(open().find('[data-testid="borders-shading-theme-row"]').exists()).toBe(false);
+  });
+
+  it("a swatch stores the ThemeColorRef on apply, not the hex it displays (AC-23)", async () => {
+    const wrapper = openThemed();
+    await swatchFor(wrapper, "accent1").trigger("click");
+    // The swatch turns the Fill on and the colour input shows the resolved hex...
+    expect((wrapper.get('[data-testid="borders-shading-on"]').element as HTMLInputElement).checked).toBe(true);
+    expect((wrapper.get('[data-testid="borders-shading-color"]').element as HTMLInputElement).value).toBe("#4472c4");
+    await wrapper.get('[data-testid="borders-apply"]').trigger("click");
+    // ...but the payload carries the reference itself.
+    expect(applied(wrapper).shadingFill).toEqual({ theme: "accent1" });
+  });
+
+  it("hand-editing the colour input after a swatch reverts to a literal", async () => {
+    const wrapper = openThemed();
+    await swatchFor(wrapper, "accent2").trigger("click");
+    await wrapper.get('[data-testid="borders-shading-color"]').setValue("#123456");
+    await wrapper.get('[data-testid="borders-apply"]').trigger("click");
+    expect(applied(wrapper).shadingFill).toBe("#123456");
+  });
+
+  it("a seeded ThemeColorRef displays resolved but survives an untouched OK as the reference", async () => {
+    const wrapper = openThemed({ shadingFill: { theme: "accent3" } });
+    expect((wrapper.get('[data-testid="borders-shading-on"]').element as HTMLInputElement).checked).toBe(true);
+    expect((wrapper.get('[data-testid="borders-shading-color"]').element as HTMLInputElement).value).toBe("#a5a5a5");
+    await wrapper.get('[data-testid="borders-apply"]').trigger("click");
+    expect(applied(wrapper).shadingFill).toEqual({ theme: "accent3" });
+  });
+
+  it("apply emits plain objects, never the draft's reactive proxies (AC-22: the model must survive the word-count worker's and IndexedDB's structured clone)", async () => {
+    const wrapper = openThemed({
+      shadingFill: { theme: "accent3" },
+      borders: { top: { style: "single", widthPt: 1, color: { theme: "accent4" } } },
+    });
+    await wrapper.get('[data-testid="borders-apply"]').trigger("click");
+    // toEqual sees through a Proxy; structured clone throws on one.
+    expect(() => structuredClone(applied(wrapper))).not.toThrow();
   });
 });

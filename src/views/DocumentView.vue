@@ -42,6 +42,7 @@ import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import BordersShadingDialog from "../components/BordersShadingDialog.vue";
+import ThemeGalleryDialog from "../components/ThemeGalleryDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
 import TrackChangesPane from "../components/TrackChangesPane.vue";
 import AccessibilityPane from "../components/AccessibilityPane.vue";
@@ -133,6 +134,7 @@ import { useSidePanel } from "./document/useSidePanel";
 import { useMergeFields } from "./document/useMergeFields";
 import { useInsertBreaks } from "./document/useInsertBreaks";
 import { useBordersShading } from "./document/useBordersShading";
+import { useThemeGallery } from "./document/useThemeGallery";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
 import { useZoomView } from "./document/useZoomView";
@@ -161,6 +163,7 @@ import {
   asParagraphBlock,
   createDocument,
   createEmptyHeaderFooterContent,
+  documentThemeOf,
   isBreak,
   isImage,
   isShape,
@@ -2932,6 +2935,7 @@ const {
   closeBordersDialog,
   applyBordersShading,
 } = useBordersShading({ ...editorContext, paragraphSelection });
+const themeGallery = useThemeGallery(editorContext); // Format → Theme… gallery (SPEC-077); wiring in useThemeGallery.
 
 // --- mail-merge fields (SPEC-046) -------------------------------------------
 // The attached data source, the field picker / merge-run dialogs' state and
@@ -3183,8 +3187,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
   ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
-  // Format → Borders and shading… (SPEC-074 AC-6).
-  ["format.borders", openBordersDialog],
+  // Format → Borders and shading… (SPEC-074 AC-6); Theme… (SPEC-077 AC-9).
+  ["format.borders", openBordersDialog], ["format.theme", themeGallery.openThemeGallery],
   // Drawing align/distribute (SPEC-072); wiring in useDrawingArrange.
   ...drawingArrange.commands,
   // Format → Drawing → Position and size… (SPEC-072 AC-35).
@@ -3242,28 +3246,18 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["format.tabs", openTabsDialog],
   // Ctrl/Cmd+Shift+P (AC-12).
   ["view.formattingMarks", toggleFormattingMarks],
-  // Ctrl/Cmd+B/I/U (AC-3, AC-4, AC-5).
-  ["format.bold", () => { toggleCharacterFormat("bold"); }],
-  ["format.italic", () => { toggleCharacterFormat("italic"); }],
-  ["format.underline", () => { toggleCharacterFormat("underline"); }],
-  // Ctrl/Cmd+Shift+X: strikethrough (AC-6).
-  ["format.strikethrough", () => { toggleCharacterFormat("strikethrough"); }],
-  // Ctrl/Cmd+, and Ctrl/Cmd+. : subscript / superscript (SPEC-013).
-  ["format.subscript", () => { toggleCharacterFormat("subscript"); }],
-  ["format.superscript", () => { toggleCharacterFormat("superscript"); }],
+  // Ctrl/Cmd+B/I/U (AC-3..5); Shift+X strikethrough (AC-6); Ctrl/Cmd+,/. sub/superscript (SPEC-013).
+  ["format.bold", () => { toggleCharacterFormat("bold"); }], ["format.italic", () => { toggleCharacterFormat("italic"); }],
+  ["format.underline", () => { toggleCharacterFormat("underline"); }], ["format.strikethrough", () => { toggleCharacterFormat("strikethrough"); }],
+  ["format.subscript", () => { toggleCharacterFormat("subscript"); }], ["format.superscript", () => { toggleCharacterFormat("superscript"); }],
   // Ctrl/Cmd+L/E/R/J: alignment (SPEC-014 AC-3).
-  ["paragraph.alignLeft", () => { handleAlign("left"); }],
-  ["paragraph.alignCenter", () => { handleAlign("center"); }],
-  ["paragraph.alignRight", () => { handleAlign("right"); }],
-  ["paragraph.alignJustify", () => { handleAlign("justify"); }],
+  ["paragraph.alignLeft", () => { handleAlign("left"); }], ["paragraph.alignCenter", () => { handleAlign("center"); }],
+  ["paragraph.alignRight", () => { handleAlign("right"); }], ["paragraph.alignJustify", () => { handleAlign("justify"); }],
   // Ctrl/Cmd+Alt+1..6 apply Heading 1-6, Ctrl/Cmd+Alt+0 Normal
   // (SPEC-019 AC-5, AC-6).
-  ["style.normal", () => { handleApplyStyle(NORMAL_STYLE_ID); }],
-  ["style.heading1", () => { handleApplyStyle(headingStyleId(1)); }],
-  ["style.heading2", () => { handleApplyStyle(headingStyleId(2)); }],
-  ["style.heading3", () => { handleApplyStyle(headingStyleId(3)); }],
-  ["style.heading4", () => { handleApplyStyle(headingStyleId(4)); }],
-  ["style.heading5", () => { handleApplyStyle(headingStyleId(5)); }],
+  ["style.normal", () => { handleApplyStyle(NORMAL_STYLE_ID); }], ["style.heading1", () => { handleApplyStyle(headingStyleId(1)); }],
+  ["style.heading2", () => { handleApplyStyle(headingStyleId(2)); }], ["style.heading3", () => { handleApplyStyle(headingStyleId(3)); }],
+  ["style.heading4", () => { handleApplyStyle(headingStyleId(4)); }], ["style.heading5", () => { handleApplyStyle(headingStyleId(5)); }],
   ["style.heading6", () => { handleApplyStyle(headingStyleId(6)); }],
 ]);
 
@@ -3369,7 +3363,7 @@ function handleMenuCommand(id = "") {
       />
     </template>
     <template #toolbar>
-      <DocumentToolbar
+      <DocumentToolbar :theme="documentThemeOf(doc)"
         v-if="editable"
         ref="documentToolbarRef"
         :reserved-right="toolbarReservedRight"
@@ -3579,7 +3573,7 @@ function handleMenuCommand(id = "") {
             />
             <ConnectorToolbar
               v-if="connectors.selectedConnector.value"
-              :connector="connectors.selectedConnector.value"
+              v-bind="connectors.connectorToolbarProps.value"
               :style="connectors.connectorToolbarStyle.value"
               @set-kind="connectors.setKind"
               @set-outline="connectors.setOutline"
@@ -3640,6 +3634,7 @@ function handleMenuCommand(id = "") {
                 :columns="pageView.columns"
                 :virtual="pageView.virtual"
                 :cell-range="cellSelection || undefined"
+                :theme="documentThemeOf(doc)"
                 :dimmed="pageView.dimmed"
                 :header-style="pageView.headerStyle ?? undefined"
                 :footer-style="pageView.footerStyle ?? undefined"
@@ -4024,6 +4019,7 @@ function handleMenuCommand(id = "") {
       :box="shapeToolbarStyle()"
       :state="shapeToolbarState()"
       :format-dialog-open="shapeFormatOpen"
+      :theme="documentThemeOf(doc)"
       :can-align="!drawingArrange.alignDisabledReason.value"
       :can-distribute="!drawingArrange.distributeDisabledReason.value"
       v-on="shapeToolbarOn"
@@ -4108,14 +4104,14 @@ function handleMenuCommand(id = "") {
       @apply="handleSplitCellApply"
       @cancel="splitCellDialogOpen = false"
     />
-    <TablePropertiesDialog
+    <TablePropertiesDialog :theme="documentThemeOf(doc)"
       v-if="tablePropertiesOpen"
       :initial="tablePropertiesInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="handleTablePropertiesApply"
       @cancel="tablePropertiesOpen = false"
     />
-    <PageSetupDialog
+    <PageSetupDialog :theme="documentThemeOf(doc)"
       v-if="pageSetupOpen"
       :initial="pageSetupInitial"
       @apply="handlePageSetupApply"
@@ -4128,12 +4124,19 @@ function handleMenuCommand(id = "") {
       @apply="handleColumnsApply"
       @cancel="columnsDialogOpen = false"
     />
-    <BordersShadingDialog
+    <BordersShadingDialog :theme="documentThemeOf(doc)"
       v-if="bordersDialogOpen"
       :initial="bordersDialogInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="applyBordersShading"
       @cancel="closeBordersDialog"
+    />
+    <ThemeGalleryDialog
+      v-if="themeGallery.open.value"
+      :current-theme="themeGallery.currentTheme.value"
+      :preview-paragraphs="themeGallery.previewParagraphs.value"
+      @apply="themeGallery.applyTheme"
+      @cancel="themeGallery.closeThemeGallery"
     />
     <InsertTableDialog
       v-if="insertTableDialogOpen"
@@ -4293,7 +4296,7 @@ function handleMenuCommand(id = "") {
       @apply="({ categories, series }) => { applyChartData(categories, series); editingChartData = false; }"
       @cancel="editingChartData = false"
     />
-    <ChartOptionsDialog
+    <ChartOptionsDialog :theme="documentThemeOf(doc)"
       v-if="editingChartOptions"
       :initial="chartOptionsInitial"
       @apply="(options) => { applyChartOptions(options); editingChartOptions = false; }"

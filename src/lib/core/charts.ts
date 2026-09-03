@@ -5,6 +5,7 @@
 // places the same charts on a slide instead of anchoring them to a
 // paragraph. The document-specific half (anchoring, wrap, the editing
 // commands) stays in lib/charts.ts and lib/documentModel.ts.
+import type { ModelColor, ThemeColorRef } from "./theme";
 
 /** The closed set of chart types the editor renders, inserts and can
  * regenerate — see "Chart catalogue" in specs/052-charts.md. Everything else
@@ -28,8 +29,8 @@ export type ChartType =
 export interface ChartSeries {
   name: string;
   values: (number | null)[];
-  /** "#rrggbb". */
-  color: string;
+  /** A literal "#rrggbb" or a theme colour reference (SPEC-077). */
+  color: ModelColor;
 }
 
 /** The chart options panel's settings (SPEC-052 AC-14..AC-20). */
@@ -70,9 +71,18 @@ export const CHART_CATALOGUE: { chartType: ChartType; label: string }[] = [
  * catalogue"). */
 export const SINGLE_SERIES_CHART_TYPES: ReadonlySet<ChartType> = new Set(["pie", "doughnut"]);
 
-/** A default palette for newly created/inserted series — this spec's own,
- * deliberately not inherited from the document theme (SPEC-052 "Out of
- * scope"). */
+/** A newly created/inserted series' colour (SPEC-077 AC-46): the theme's six
+ * accents, cycling — `{ theme: "accent1" }` … `{ theme: "accent6" }` — so a
+ * theme change recolours a fresh chart. A series read from a file with a
+ * literal colour keeps it. */
+export function chartAccentRef(index: number): ThemeColorRef {
+  const slot = `accent${(index % 6) + 1}`;
+  return { theme: slot as ThemeColorRef["theme"] };
+}
+
+/** The read-side fallback palette for a source chart series that carries no
+ * colour of its own — literals, so opening a document never invents theme
+ * references (SPEC-077 AC-48). */
 export const DEFAULT_CHART_COLORS: readonly string[] = [
   "#4e79a7",
   "#f28e2b",
@@ -119,8 +129,8 @@ export function sampleChartCategories(): string[] {
 }
 export function sampleChartSeries(): ChartSeries[] {
   return [
-    { name: "Series 1", values: [4.3, 2.5, 3.5], color: DEFAULT_CHART_COLORS[0] },
-    { name: "Series 2", values: [2.4, 4.4, 1.8], color: DEFAULT_CHART_COLORS[1] },
+    { name: "Series 1", values: [4.3, 2.5, 3.5], color: chartAccentRef(0) },
+    { name: "Series 2", values: [2.4, 4.4, 1.8], color: chartAccentRef(1) },
   ];
 }
 
@@ -236,7 +246,7 @@ export function chartDataFromTableCells(cellText: string[][]): ChartFromTableRes
   const series: ChartSeries[] = Array.from({ length: seriesCount }, (_, i) => ({
     name: (firstRowIsHeader ? first[i + 1]?.trim() : "") || `Series ${i + 1}`,
     values: [],
-    color: DEFAULT_CHART_COLORS[i % DEFAULT_CHART_COLORS.length],
+    color: chartAccentRef(i),
   }));
   const categories: string[] = [];
   for (let r = firstRowIsHeader ? 1 : 0; r < cellText.length; r++) {

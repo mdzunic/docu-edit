@@ -4,6 +4,7 @@
 // drawing.ts's own split (parse.../...Xml) so the two modules read side by
 // side; this one never touches Image, drawing.ts never touches Shape.
 import type { Block, ImageWrapMode, Paragraph, Shape } from "../documentModel";
+import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "../core/theme";
 import type {
   ArrowheadKind,
   ArrowheadSize,
@@ -869,6 +870,10 @@ export interface OdfShapeStyleWriteContext {
   hrefForMedia?: (mediaId: string) => string | undefined;
   /** Default true. */
   includePreserved?: boolean;
+  /** The document theme colour references resolve against (SPEC-077 —
+   * ODF graphic attributes carry literals; the reference itself rides on
+   * the automatic style's parent, see themeOdf.ts). */
+  theme?: DocumentTheme;
 }
 
 /** An opacity percentage attribute value ("40%") for a 0..1 alpha. */
@@ -876,14 +881,19 @@ function alphaPct(alpha: number): string {
   return `${Math.round(alpha * 100)}%`;
 }
 
-function fillStyleAttrs(shape: Shape, defs: OdfDrawingDefs, hrefForMedia?: (mediaId: string) => string | undefined): string {
+function fillStyleAttrs(
+  shape: Shape,
+  defs: OdfDrawingDefs,
+  hrefForMedia?: (mediaId: string) => string | undefined,
+  theme: DocumentTheme = DEFAULT_THEME,
+): string {
   const fill = shape.fill;
   if (!fill || fill.kind === "none") {
     return ' draw:fill="none"';
   }
   const alphaAttr = "alpha" in fill && fill.alpha !== undefined && fill.alpha < 1 ? ` draw:opacity="${alphaPct(fill.alpha)}"` : "";
   if (fill.kind === "solid") {
-    return ` draw:fill="solid" draw:fill-color="${escapeXmlAttribute(fill.color)}"${alphaAttr}`;
+    return ` draw:fill="solid" draw:fill-color="${escapeXmlAttribute(resolveColor(fill.color, theme))}"${alphaAttr}`;
   }
   if (fill.kind === "gradient") {
     const name = defs.gradientNameFor(fill.gradient);
@@ -917,11 +927,11 @@ function fillStyleAttrs(shape: Shape, defs: OdfDrawingDefs, hrefForMedia?: (medi
  * connector graphic styles so the two vocabularies cannot drift. The
  * `compound` member has no ODF vocabulary and writes as a single line (the
  * drop is reported centrally in opaque.ts). */
-export function outlineStyleAttrs(outline: ShapeOutline, defs: OdfDrawingDefs): string {
+export function outlineStyleAttrs(outline: ShapeOutline, defs: OdfDrawingDefs, theme: DocumentTheme = DEFAULT_THEME): string {
   const widthCm = (outline.widthPt / 72) * 2.54;
   let attrs =
     ` draw:stroke="${outline.dash === "solid" ? "solid" : "dash"}"` +
-    ` svg:stroke-color="${escapeXmlAttribute(outline.color)}"` +
+    ` svg:stroke-color="${escapeXmlAttribute(resolveColor(outline.color, theme))}"` +
     ` svg:stroke-width="${cmToOdfLength(widthCm)}"`;
   if (outline.dash !== "solid") {
     attrs += ` draw:stroke-dash="${defs.strokeDashNameFor(outline.dash)}"`;
@@ -1160,8 +1170,8 @@ function graphicPropertiesXml(shape: Shape, ctx: OdfShapeStyleWriteContext): str
   // A fill the reader could not model left its draw:fill attrs in the
   // preserved set (AC-35) — the writer must then not fight them with its own.
   const preservedHasFill = preserved !== undefined && preserved.hasAttributeNS(DRAW_NAMESPACE, "fill");
-  const fillAttrs = preservedHasFill ? "" : fillStyleAttrs(shape, defs, ctx.hrefForMedia);
-  const strokeAttrs = shape.outline ? outlineStyleAttrs(shape.outline, defs) : ' draw:stroke="none"';
+  const fillAttrs = preservedHasFill ? "" : fillStyleAttrs(shape, defs, ctx.hrefForMedia, ctx.theme);
+  const strokeAttrs = shape.outline ? outlineStyleAttrs(shape.outline, defs, ctx.theme) : ' draw:stroke="none"';
   const markerAttrs = shapeMarkerAttrs(shape.outline, defs);
   const shadowAttrs = shape.shadow ? shadowStyleAttrs(shape.shadow) : "";
   const deXmlns = shadowAttrs ? ` xmlns:de="${DE_NAMESPACE}"` : "";

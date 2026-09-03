@@ -11,6 +11,7 @@ import type {
   CommentMessage,
   CommentThread,
   DefaultStyles,
+  DocTheme,
   DocumentProperties,
   FieldKind,
   FieldSpec,
@@ -31,6 +32,7 @@ import type {
   RunFormatting,
   RunTrackedChanges,
   Section,
+  Shape,
   SourceXml,
   Table,
   TableCell,
@@ -81,6 +83,8 @@ import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "../core/odfMeta";
+import { DEFAULT_THEME, type ModelColor } from "../core/theme";
+import { readThemeStyles, themeParentSlot } from "../core/themeOdf";
 import {
   DC_NAMESPACE,
   DRAW_NAMESPACE,
@@ -147,6 +151,9 @@ export interface ParsedOdtDocument {
   /** Footnote/endnote contents (SPEC-031) the body's reference marks link
    * to; empty when the document holds no text:note elements. */
   notes: NoteContent[];
+  /** The document theme (SPEC-077 AC-40) recovered from the de-theme-*
+   * styles, its partName recording styles.xml; absent when there are none. */
+  theme?: DocTheme;
   /** Footnote numbering settings from styles.xml's notes-configuration. */
   footnoteSettings?: NoteSettings;
   /** Endnote numbering settings from styles.xml's notes-configuration. */
@@ -1030,6 +1037,33 @@ function parseTextBlock(el: Element, catalog: OdfStyleCatalog, isHeading: boolea
   return paragraph;
 }
 
+/** SPEC-077 AC-40: a shape's graphic automatic style parented on
+ * `de-theme-{slot}` carries a solid-fill colour REFERENCE — the
+ * draw:fill-color it also declares is the resolved literal the writer put
+ * beside the link for other readers (the reference replaces the writer's
+ * boilerplate "Graphics" parent, see writer.ts's withShapeThemeParent).
+ * Mutates the parsed shape's fill in place; a shape with no such parent (or
+ * a non-solid fill) is left exactly as parsed. */
+function recoverShapeThemeFill(el: Element, contentDoc: Document, shape: Shape): void {
+  if (shape.fill?.kind !== "solid" || typeof shape.fill.color !== "string") {
+    return;
+  }
+  const styleName = el.getAttributeNS(DRAW_NAMESPACE, "style-name");
+  if (!styleName) {
+    return;
+  }
+  for (const styleEl of Array.from(contentDoc.getElementsByTagNameNS(STYLE_NAMESPACE, "style"))) {
+    if (styleEl.getAttributeNS(STYLE_NAMESPACE, "name") !== styleName) {
+      continue;
+    }
+    const slot = themeParentSlot(styleEl.getAttributeNS(STYLE_NAMESPACE, "parent-style-name") ?? undefined);
+    if (slot) {
+      shape.fill = { ...shape.fill, color: { theme: slot } };
+    }
+    return;
+  }
+}
+
 /** Context a body-level text-block parse needs to resolve a `draw:frame`
  * into actual image bytes (SPEC-024). */
 export interface OdfDrawingContext {
@@ -1046,6 +1080,35 @@ export interface OdfDrawingContext {
    * DrawingContext.groupOrdinals, seeded above every `de:group` already in
    * `content.xml` for the same reason. */
   groupOrdinals?: { next: number };
+  /** How many times each graphic automatic style was consumed into a
+   * MODELLED shape/connector (by `draw:style-name`). A consumed style is
+   * regenerated from the model on save, so preserving its definition
+   * verbatim would orphan one stale copy per open → save cycle and a no-edit
+   * save could never be byte-identical (SPEC-077 AC-53) — parseOdt drops a
+   * definition all of whose references were consumed. */
+  consumedGraphicStyles?: Map<string, number>;
+}
+
+/** Counts a modelled drawable's `draw:style-name` toward
+ * `consumedGraphicStyles` — see the field's doc comment. */
+function recordConsumedGraphicStyle(ctx: OdfDrawingContext, el: Element): void {
+  const name = el.getAttributeNS(DRAW_NAMESPACE, "style-name");
+  if (ctx.consumedGraphicStyles && name) {
+    ctx.consumedGraphicStyles.set(name, (ctx.consumedGraphicStyles.get(name) ?? 0) + 1);
+  }
+}
+
+/** How many elements anywhere in the document reference the named style via
+ * `draw:style-name` — compared against the consumed count so a style SHARED
+ * with unmodelled (preserved-opaque) markup is never dropped. */
+function countDrawStyleReferences(doc: Document, styleName: string): number {
+  let count = 0;
+  for (const el of Array.from(doc.getElementsByTagName("*"))) {
+    if (el.getAttributeNS(DRAW_NAMESPACE, "style-name") === styleName) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 /** collectInline run over a detached clone of `nodes` — reused so a
@@ -1391,8 +1454,10 @@ function parseBodyTextBlockOrSplit(
         const parsedShape = parseShapeElement(frameEl, ctx.contentDoc, ctx.stylesDoc, shapeTextCtx);
         if (parsedShape) {
           flush();
+          recoverShapeThemeFill(frameEl, ctx.contentDoc, parsedShape.shape);
           blocks.push(parsedShape.shape);
           stampOdfConnectorTargetId(frameEl, parsedShape.shape);
+          recordConsumedGraphicStyle(ctx, frameEl);
           continue;
         }
       }
@@ -1402,6 +1467,7 @@ function parseBodyTextBlockOrSplit(
           flush();
           blocks.push(parsedConnector.connector);
           stampOdfConnectorTargetId(frameEl, parsedConnector.connector);
+          recordConsumedGraphicStyle(ctx, frameEl);
           continue;
         }
       }
@@ -1822,7 +1888,9 @@ function repeatCount(el: Element, attr: string): number | null {
  * alignment. */
 interface ParsedCellStyle {
   borders?: CellBorders;
-  shadingFill?: string;
+  /** A literal, or a theme reference recovered from the style's
+   * `de-theme-cell-{slot}` parent (SPEC-077 AC-40). */
+  shadingFill?: ModelColor;
   paddingCm?: number;
   verticalAlign?: CellVerticalAlign;
 }
@@ -1900,7 +1968,15 @@ function collectTableCellStyles(contentDoc: Document, stylesDoc: Document | unde
       const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
       const props = firstChildElement(el, STYLE_NAMESPACE, "table-cell-properties");
       if (name && props) {
-        styles.set(name, parseCellStyleProperties(props));
+        const parsed = parseCellStyleProperties(props);
+        // SPEC-077 AC-40: a cell style parented on `de-theme-cell-{slot}`
+        // carries a shading REFERENCE — the fo:background-color it also
+        // declares is the resolved literal beside the link.
+        const slot = themeParentSlot(el.getAttributeNS(STYLE_NAMESPACE, "parent-style-name") ?? undefined);
+        if (slot && parsed.shadingFill !== undefined) {
+          parsed.shadingFill = { theme: slot };
+        }
+        styles.set(name, parsed);
       }
     }
   };
@@ -2457,7 +2533,13 @@ export async function parseOdt(
   const contentDoc = parsePart(decodeUtf8(contentBytes));
 
   const stylesBytes = parts.get("styles.xml");
-  const stylesDoc = stylesBytes ? parsePart(decodeUtf8(stylesBytes)) : undefined;
+  const stylesXmlText = stylesBytes ? decodeUtf8(stylesBytes) : undefined;
+  const stylesDoc = stylesXmlText !== undefined ? parsePart(stylesXmlText) : undefined;
+  // The document theme (SPEC-077 AC-40): recovered from the de-theme-*
+  // styles this product's writer stores under office:styles; an .odt
+  // without them opens with no model.theme (product default at resolve
+  // time) and every colour literal, exactly as before.
+  const docTheme = stylesXmlText !== undefined ? readThemeStyles(stylesXmlText, DEFAULT_THEME) : undefined;
 
   const catalog = parseOdfStyleCatalog(contentDoc, stylesDoc);
   // SPEC-032: the list-instance mint and definition registry the body's
@@ -2492,6 +2574,7 @@ export async function parseOdt(
     stylesDoc,
     anchorOrdinals: { next: 1 },
     groupOrdinals: { next: firstFreeOdfGroupOrdinal(contentDoc.documentElement) },
+    consumedGraphicStyles: new Map(),
   };
   const mediaById = new Map<string, MediaPart>();
   const sections: Section[] = [];
@@ -2768,9 +2851,22 @@ export async function parseOdt(
         def.namespaceURI === STYLE_NAMESPACE && def.localName === "style"
           ? def.getAttributeNS(STYLE_NAMESPACE, "family")
           : null;
-      if (family !== "paragraph" && family !== "text") {
-        kept.push(serializeElement(def));
+      if (family === "paragraph" || family === "text") {
+        continue;
       }
+      // A graphic style every reference of which was consumed into a
+      // modelled shape/connector is regenerated from the model on save;
+      // keeping the definition would orphan one stale copy per open → save
+      // cycle, so a no-edit save could never be byte-identical (SPEC-077
+      // AC-53). A style any unmodelled markup still references is kept.
+      if (family === "graphic") {
+        const name = def.getAttributeNS(STYLE_NAMESPACE, "name");
+        const consumed = name ? (drawingCtx.consumedGraphicStyles?.get(name) ?? 0) : 0;
+        if (name && consumed > 0 && consumed >= countDrawStyleReferences(contentDoc, name)) {
+          continue;
+        }
+      }
+      kept.push(serializeElement(def));
     }
     if (kept.length > 0) {
       sourceXml.odtAutomaticStyles = kept;
@@ -2818,6 +2914,9 @@ export async function parseOdt(
     trackChangesRecording,
     properties,
   };
+  if (docTheme) {
+    result.theme = docTheme;
+  }
   const footnoteSettings = parseOdtNoteSettings(stylesDoc, "footnote");
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;

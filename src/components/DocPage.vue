@@ -41,6 +41,9 @@ const props = defineProps({
    * its blocks off-DOM instead. */
   virtual: { type: Boolean, default: false },
   cellRange: { type: Object, default: null },
+  /** The document's theme (SPEC-077), forwarded to the block renderers so
+   * table/shape/chart blocks resolve theme colour/font references. */
+  theme: { type: Object, default: null },
   /** The section's page border box (SPEC-074 AC-22), or null. Absolutely
    * positioned inside the page at its own offset, independent of the
    * margins, and inert — it is decoration, never a hit target. */
@@ -179,7 +182,10 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
       @compositionstart.stop="headerEditable ? $emit('hf-compositionstart') : undefined"
       @compositionend.stop="headerEditable ? $emit('hf-compositionend', $event) : undefined"
     >
-      <DocBlockEntries :entries="headerEntries" />
+      <DocBlockEntries
+        :entries="headerEntries"
+        :theme="theme"
+      />
     </div>
     <div
       class="page-content"
@@ -211,6 +217,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               :key="entry.key"
               :entry="entry"
               :cell-range="cellRange"
+              :theme="theme"
               @image-select="(section, blockIndex) => $emit('image-select', section, blockIndex)"
               @shape-select="(section, blockIndex, shiftKey) => $emit('shape-select', section, blockIndex, shiftKey)"
               @shape-edit-text="(section, blockIndex) => $emit('shape-edit-text', section, blockIndex)"
@@ -238,6 +245,7 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
           <DocBlockEntries
             :entries="entries"
             :cell-range="cellRange"
+            :theme="theme"
             @image-select="(section, block) => $emit('image-select', section, block)"
             @shape-select="(section, block, shiftKey) => $emit('shape-select', section, block, shiftKey)"
             @shape-edit-text="(section, block) => $emit('shape-edit-text', section, block)"
@@ -294,7 +302,10 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
               @compositionstart.stop="note.editable ? $emit('note-compositionstart') : undefined"
               @compositionend.stop="note.editable ? $emit('note-compositionend', $event) : undefined"
             >
-              <DocBlockEntries :entries="note.entries" />
+              <DocBlockEntries
+                :entries="note.entries"
+                :theme="theme"
+              />
             </div>
           </div>
         </div>
@@ -344,7 +355,10 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
           @compositionstart.stop="note.editable ? $emit('note-compositionstart') : undefined"
           @compositionend.stop="note.editable ? $emit('note-compositionend', $event) : undefined"
         >
-          <DocBlockEntries :entries="note.entries" />
+          <DocBlockEntries
+            :entries="note.entries"
+            :theme="theme"
+          />
         </div>
       </div>
     </div>
@@ -362,7 +376,10 @@ const hasColumns = computed(() => columnBoxes.value.length > 0);
       @compositionstart.stop="footerEditable ? $emit('hf-compositionstart') : undefined"
       @compositionend.stop="footerEditable ? $emit('hf-compositionend', $event) : undefined"
     >
-      <DocBlockEntries :entries="footerEntries" />
+      <DocBlockEntries
+        :entries="footerEntries"
+        :theme="theme"
+      />
     </div>
     <ConnectorPaintLayer :renders="connectors" />
   </div>

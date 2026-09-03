@@ -8,6 +8,7 @@
 // array rather than diffing models.
 import {
   createDefaultStyles,
+  documentThemeOf,
   isBreak,
   isChart,
   isConnector,
@@ -27,6 +28,7 @@ import {
   type Table,
 } from "./documentModel";
 import { parseXml, XmlParseError } from "./core/xml";
+import { isThemeColor, isThemeFont, type ModelColor, type ModelFont } from "./core/theme";
 import type { BorderSide } from "./core/borders";
 import { PATTERN_PRESET_TO_ODF_HATCH } from "./core/drawingMl";
 // The chart-feature marker tables moved to core/chartFeatures.ts (SPEC-092)
@@ -99,7 +101,13 @@ export type DropKind =
   | "runFormatting"
   | "paragraphFormatting"
   | "tableStyling"
-  | "trackedChange";
+  | "trackedChange"
+  // SPEC-077: the document theme on a save to .odt (AC-41/AC-42) — ODF has
+  // no theme part, so colour/font references are written as their resolved
+  // values (untransformed colour refs survive via the de-theme-* style
+  // convention only this product reads back). One record per save of a
+  // document carrying at least one reference, naming the theme.
+  | "theme";
 
 /** One item a writer could not represent in its target format. */
 export interface DropRecord {
@@ -155,6 +163,7 @@ export const DROP_KIND_LABELS: Record<DropKind, string> = {
   paragraphFormatting: "Paragraph formatting",
   tableStyling: "Table styling",
   trackedChange: "Tracked change",
+  theme: "Document theme",
 };
 
 /** DROP_KIND_LABELS behind a plain-string lookup, for the dialog template
@@ -283,6 +292,8 @@ const REASONS: Record<DropKind, string> = {
   paragraphFormatting: "Markdown has no alignment, indent or spacing properties",
   tableStyling: "Markdown tables cannot merge cells or carry table styling",
   trackedChange: "Markdown cannot track pending changes — the change is kept applied but no longer tracked",
+  theme:
+    "OpenDocument Text has no theme part — theme colours and fonts are saved as their current values, so transformed colour references and theme fonts will no longer follow a theme change",
 };
 
 const FORMAT_LABELS: Record<DocumentFormat, string> = {
@@ -792,6 +803,11 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
     // the bar tabs above: a modelled feature the target format lacks, so
     // every save to .odt reports it regardless of source.
     dropped.push(...collectBorderStyleDropRecords(model));
+    // The document theme (SPEC-077 AC-42): ODF has no theme part, so any
+    // save to .odt of a document carrying at least one theme reference
+    // reports the one theme record. A Markdown save reports no such kind —
+    // its losses are the content-level records below.
+    dropped.push(...collectThemeDropRecords(model));
   }
   if (target === "docx") {
     dropped.push(...collectPageBackgroundDropRecords(model));
@@ -867,6 +883,78 @@ export function collectPageBackgroundDropRecords(model: DocumentModel): DropReco
         "document, so the first section's colour is written and the others are lost.",
     },
   ];
+}
+
+/** Whether any run/paragraph/cell/shape/chart in the model carries a theme
+ * colour or font REFERENCE (an isThemeColor/isThemeFont value) — the scan
+ * behind the single SPEC-077 AC-42 theme drop record. Literals never count:
+ * a document that merely HAS a theme but references nothing loses nothing.
+ * Exported for the `.odt` writer, which must emit the `de-theme-*` carrier
+ * block whenever a reference exists — even on a themeless document (a shape
+ * preset or theme swatch on a blank document stores a reference without
+ * setting model.theme), else the automatic styles would carry
+ * `style:parent-style-name="de-theme-…"` parents no style defines. */
+export function modelHasThemeReference(model: DocumentModel): boolean {
+  const colorRef = (value: ModelColor | false | undefined): boolean => value !== false && isThemeColor(value);
+  const fontRef = (value: ModelFont | undefined): boolean => isThemeFont(value);
+  const paragraphHasRef = (paragraph: Paragraph): boolean =>
+    colorRef(paragraph.formatting?.shadingFill) ||
+    paragraph.runs.some(
+      (run) =>
+        colorRef(run.formatting.color) ||
+        colorRef(run.formatting.shadingFill) ||
+        colorRef(run.formatting.highlight) ||
+        fontRef(run.formatting.fontFamily),
+    );
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      if (isTable(block)) {
+        for (const row of block.rows) {
+          for (const cell of row.cells) {
+            if (colorRef(cell.shadingFill) || cell.blocks.some(paragraphHasRef)) {
+              return true;
+            }
+          }
+        }
+        continue;
+      }
+      if (isShape(block)) {
+        if ((block.fill?.kind === "solid" && colorRef(block.fill.color)) || colorRef(block.outline?.color)) {
+          return true;
+        }
+        continue;
+      }
+      if (isConnector(block)) {
+        if (colorRef(block.outline?.color)) {
+          return true;
+        }
+        continue;
+      }
+      if (isChart(block)) {
+        if (block.series.some((series) => colorRef(series.color))) {
+          return true;
+        }
+        continue;
+      }
+      if (block.type === "paragraph" && paragraphHasRef(block)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** The single SPEC-077 AC-42 "theme" DropRecord for a save to `.odt`, or
+ * nothing when the document carries no theme reference at all. Exported so
+ * the same-format `.odt` save reports it too — ODF's lack of a theme part is
+ * the limit, not the conversion (the same convention the bar-tab and border
+ * records above follow). Named after the theme in the location field so the
+ * report tells the user WHICH scheme stops following along. */
+export function collectThemeDropRecords(model: DocumentModel): DropRecord[] {
+  if (!modelHasThemeReference(model)) {
+    return [];
+  }
+  return [record("theme", `theme "${documentThemeOf(model).name}"`, "odt")];
 }
 
 /** One `tabStop` DropRecord per bar tab stop in the model (SPEC-054 AC-38),

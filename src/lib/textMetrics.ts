@@ -16,6 +16,7 @@
 // null where the environment cannot measure text (jsdom), in which case
 // callers keep their estimates and the DOM path.
 import type { Paragraph, RunFormatting, TabStop } from "./documentModel";
+import { DEFAULT_THEME, resolveFont, type DocumentTheme } from "./core/theme";
 import { fontStack } from "./fonts/substitution";
 import { listIndentCm } from "./core/lists";
 import { type BlockMetrics, type LineBox } from "./core/pageMetrics";
@@ -88,7 +89,7 @@ export interface TabLayoutConfig {
 /** Builds the paragraph's font-boundary spans without vertical geometry —
  * enough for measureRange, which only reads font/start/end. Shared by the
  * wrap predictor and the standalone tab-layout helper. */
-function fontSpansOf(paragraph: Paragraph, base: BaseFont): { text: string; spans: FontSpan[] } {
+function fontSpansOf(paragraph: Paragraph, base: BaseFont, theme: DocumentTheme): { text: string; spans: FontSpan[] } {
   const text = paragraph.runs.map((run) => run.text).join("");
   const spans: FontSpan[] = [];
   let offset = 0;
@@ -97,7 +98,7 @@ function fontSpansOf(paragraph: Paragraph, base: BaseFont): { text: string; span
       continue;
     }
     spans.push({
-      font: resolveRunFont(run.formatting, base),
+      font: resolveRunFont(run.formatting, base, theme),
       start: offset,
       end: offset + run.text.length,
       advancePx: 0,
@@ -116,8 +117,9 @@ export function paragraphTabLayout(
   config: TabLayoutConfig,
   base: BaseFont,
   measurer: TextMeasurer,
+  theme: DocumentTheme = DEFAULT_THEME,
 ): ParagraphTabLayout {
-  const { text, spans } = fontSpansOf(paragraph, base);
+  const { text, spans } = fontSpansOf(paragraph, base, theme);
   return layoutParagraphTabs(
     text,
     stopsToPx(config.stops),
@@ -127,7 +129,7 @@ export function paragraphTabLayout(
   );
 }
 
-function resolveRunFont(formatting: RunFormatting, base: BaseFont): ResolvedFont {
+function resolveRunFont(formatting: RunFormatting, base: BaseFont, theme: DocumentTheme): ResolvedFont {
   let sizePx = formatting.fontSizePt ? formatting.fontSizePt * PX_PER_PT : base.sizePx;
   if (formatting.vertAlign) {
     // runStyle renders sub/superscript at 0.65 of the run's size (or 0.65em
@@ -137,9 +139,11 @@ function resolveRunFont(formatting: RunFormatting, base: BaseFont): ResolvedFont
   return {
     // Measure with the same metric-twin stack renderFormatting paints with
     // (SPEC-048), so the canvas/DOM measurer and the screen agree on widths
-    // and line-height for a substituted font. An unset family keeps the
-    // inherited base (already the computed CSS the run renders in).
-    family: formatting.fontFamily ? fontStack(formatting.fontFamily) : base.family,
+    // and line-height for a substituted font. A theme font reference resolves
+    // against the same document theme the painter uses (SPEC-077) — callers
+    // pass documentThemeOf(model) so measure and paint agree. An unset family
+    // keeps the inherited base (already the computed CSS the run renders in).
+    family: formatting.fontFamily ? fontStack(resolveFont(formatting.fontFamily, theme)) : base.family,
     sizePx,
     bold: formatting.bold === true,
     italic: formatting.italic === true,
@@ -222,6 +226,7 @@ export function measureParagraphText(
   marksOn: boolean,
   measurer: TextMeasurer,
   tabConfig?: TabLayoutConfig,
+  theme: DocumentTheme = DEFAULT_THEME,
 ): MeasuredParagraph | null {
   const formatting = paragraph.formatting;
   const baseFont: ResolvedFont = { family: base.family, sizePx: base.sizePx, bold: false, italic: false };
@@ -254,7 +259,7 @@ export function measureParagraphText(
     if (run.text.length === 0) {
       continue;
     }
-    const font = resolveRunFont(run.formatting, base);
+    const font = resolveRunFont(run.formatting, base, theme);
     const geometry = measurer.normalGeometryOf(font);
     if (!geometry) {
       return null;

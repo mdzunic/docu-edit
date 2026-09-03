@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createDocument } from "../documentModel";
+import { DEFAULT_THEME } from "../core/theme";
 import { documentStats, emptyCountStats } from "../wordCount";
 import { computeDocumentStats, projectModelForCounting } from "./wordCountClient";
 
@@ -97,5 +98,30 @@ describe("projectModelForCounting", () => {
     ];
     const projected = projectModelForCounting(doc);
     expect(documentStats(projected, { includeNotes: false })).toEqual(documentStats(doc, { includeNotes: false }));
+  });
+
+  // SPEC-077 AC-22: counting reads no colour, and either field can hold a
+  // ThemeColorRef object — one that leaked out of a reactive dialog draft as
+  // a Proxy would make postMessage's structured clone throw DataCloneError
+  // and silently freeze the live count.
+  it("drops the theme and each section's pageBackground", () => {
+    const doc = createDocument();
+    doc.sections[0].blocks = [{ type: "paragraph", runs: [{ text: "body", formatting: {} }] }];
+    doc.theme = { ...DEFAULT_THEME };
+    doc.sections[0].pageBackground = { theme: "accent2", lumMod: 0.2, lumOff: 0.8 };
+    const projected = projectModelForCounting(doc);
+    expect(projected.theme).toBeUndefined();
+    expect(projected.sections[0].pageBackground).toBeUndefined();
+    expect(documentStats(projected, { includeNotes: false })).toEqual(documentStats(doc, { includeNotes: false }));
+  });
+
+  it("output survives structured clone even when the model holds Proxy-wrapped colour objects", () => {
+    const doc = createDocument();
+    doc.sections[0].blocks = [{ type: "paragraph", runs: [{ text: "body", formatting: {} }] }];
+    doc.theme = new Proxy({ ...DEFAULT_THEME }, {});
+    doc.sections[0].pageBackground = new Proxy({ theme: "accent2" } as const, {});
+    // The hazard is real: the unprojected model cannot cross postMessage.
+    expect(() => structuredClone(doc)).toThrow();
+    expect(() => structuredClone(projectModelForCounting(doc))).not.toThrow();
   });
 });

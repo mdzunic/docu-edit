@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import PageSetupDialog from "./PageSetupDialog.vue";
+import { DEFAULT_THEME } from "../lib/core/theme";
 
 /** A form control's current value — test-utils types get() by selector as a
  * plain Element, so the read goes through one cast here. */
@@ -253,5 +254,65 @@ describe("PageSetupDialog (SPEC-027 AC-1..9)", () => {
     const emitted = wrapper.emitted("apply")![0][0] as { pageSize: { widthCm: number; heightCm: number } };
     expect(emitted.pageSize.widthCm).toBeCloseTo(21.59, 5);
     expect(emitted.pageSize.heightCm).toBeCloseTo(27.94, 5);
+  });
+});
+
+describe("PageSetupDialog — page background theme swatches (SPEC-077 AC-22/AC-23)", () => {
+  function openThemed(initial: Record<string, unknown> = A4_INITIAL) {
+    return mount(PageSetupDialog, { props: { initial, theme: DEFAULT_THEME } });
+  }
+
+  function backgroundOf(wrapper: VueWrapper): unknown {
+    return (wrapper.emitted("apply")![0][0] as { pageBackground: unknown }).pageBackground;
+  }
+
+  it("renders no theme row without a theme (AC-21: existing mounts unchanged)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    expect(wrapper.find('[data-testid="page-background-theme-row"]').exists()).toBe(false);
+  });
+
+  it("a swatch stores the ThemeColorRef on OK, not the hex it displays (AC-23)", async () => {
+    const wrapper = openThemed();
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    const swatch = wrapper
+      .findAll('[data-testid="page-background-theme-swatch"]')
+      .find((s) => s.attributes("data-theme-slot") === "accent5")!;
+    await swatch.trigger("click");
+    // The swatch switches the background on and the input shows the resolved hex...
+    expect((wrapper.get('[data-testid="page-background-on"]').element as HTMLInputElement).checked).toBe(true);
+    expect(fieldValue(wrapper, '[data-testid="page-background-color"]')).toBe("#5b9bd5");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    // ...but OK carries the reference itself.
+    expect(backgroundOf(wrapper)).toEqual({ theme: "accent5" });
+  });
+
+  it("a seeded ThemeColorRef displays resolved but survives an untouched OK as the reference", async () => {
+    const wrapper = openThemed({ ...A4_INITIAL, pageBackground: { theme: "accent1", lumMod: 0.2, lumOff: 0.8 } });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    expect((wrapper.get('[data-testid="page-background-on"]').element as HTMLInputElement).checked).toBe(true);
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    expect(backgroundOf(wrapper)).toEqual({ theme: "accent1", lumMod: 0.2, lumOff: 0.8 });
+  });
+
+  it("OK emits plain objects, never the draft's reactive proxies (AC-22: the model must survive the word-count worker's and IndexedDB's structured clone)", async () => {
+    const wrapper = openThemed({
+      ...A4_INITIAL,
+      pageBackground: { theme: "accent1", lumMod: 0.2, lumOff: 0.8 },
+      pageBorders: { top: { style: "single", widthPt: 1, color: { theme: "accent2" } } },
+    });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    // toEqual sees through a Proxy; structured clone — the boundary the
+    // model actually crosses on every word-count tick and persist — throws.
+    expect(() => structuredClone(wrapper.emitted("apply")![0][0])).not.toThrow();
+  });
+
+  it("hand-editing the colour input replaces the reference with a literal", async () => {
+    const wrapper = openThemed({ ...A4_INITIAL, pageBackground: { theme: "accent2" } });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    await wrapper.get('[data-testid="page-background-color"]').setValue("#123456");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    expect(backgroundOf(wrapper)).toBe("#123456");
   });
 });

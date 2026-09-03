@@ -1,5 +1,6 @@
 // --- paragraph formatting (SPEC-014) ----------------------------------------
 import { orderedRange, type CommandResult, type ModelSelection } from "./commands.editing";
+import type { ModelColor } from "./core/theme";
 import { cmToTwips, twipsToCm } from "./core/units";
 import {
   cloneContainers,
@@ -249,7 +250,9 @@ export function applyParagraphFormat(
  * not the same as unset: see applyParagraphBorders. */
 export interface ParagraphBorderPatch {
   borders?: ParagraphBorders | null;
-  shadingFill?: string | null;
+  /** A literal "#rrggbb" or a theme reference (SPEC-077) — stored verbatim so
+   * the paragraph's fill follows the document theme. */
+  shadingFill?: ModelColor | null;
 }
 
 /** Applies borders and/or shading to every paragraph the selection touches

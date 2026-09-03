@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { markersForBlocks } from "../lib/lists";
-import { asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
+import { asDocumentTheme, asTrackChangesDisplayMode, isMergeChipField } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
 import { chipLabel } from "../lib/mergeChips";
 import { cachedFieldText, isReadOnlyFieldTitle } from "../lib/fields";
@@ -41,6 +41,9 @@ const props = defineProps({
   /** The review pane's display mode (SPEC-039 AC-9) — drives whether cell
    * runs show inline tracked-change markup. */
   displayMode: { type: String, default: "all" },
+  /** The document's theme (SPEC-077) — cell shading, paragraph paint and run
+   * colours/fonts resolve theme references against it. */
+  theme: { type: Object, default: null },
 });
 
 /** A cell's colspan/rowspan attribute value: undefined (the HTML default,
@@ -78,7 +81,7 @@ function spanAttr(span = 1) {
           :class="{
             'cell-selected': isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex),
           }"
-          :style="tableCellDisplayStyle(entry.cell, isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex))"
+          :style="tableCellDisplayStyle(entry.cell, isCellInRange(asCellRange(cellRange), section, blockIndex, Number(rowIndex), entry.colIndex), asDocumentTheme(theme))"
           :colspan="spanAttr(entry.cell.colSpan)"
           :rowspan="spanAttr(entry.cell.rowSpan)"
           :data-row="rowIndex"
@@ -90,7 +93,7 @@ function spanAttr(span = 1) {
             v-for="(paragraph, cellBlockIndex) in entry.cell.blocks"
             :key="cellBlockIndex"
             class="doc-paragraph"
-            :style="paragraphStyle(paragraph, asListDefinitions(listDefinitions), asTrackChangesDisplayMode(displayMode))"
+            :style="paragraphStyle(paragraph, asDocumentTheme(theme), asListDefinitions(listDefinitions), asTrackChangesDisplayMode(displayMode))"
             :data-section="section"
             :data-block="blockIndex"
             :data-row="rowIndex"
@@ -116,7 +119,7 @@ function spanAttr(span = 1) {
                   contenteditable="false"
                   data-testid="merge-chip"
                   :data-caret-atom="run.text"
-                  :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                  :style="[runStyle(run.formatting, asDocumentTheme(theme)), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
                 >{{ chipLabel(run.field) }}</span>
                 <!-- A SPEC-053 field in a table cell (AC-33): a caret atom
                      showing its saved value. A field is never recomputed on
@@ -128,7 +131,7 @@ function spanAttr(span = 1) {
                   data-testid="field"
                   :data-caret-atom="run.text"
                   :title="isReadOnlyFieldTitle(run.field) || undefined"
-                  :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                  :style="[runStyle(run.formatting, asDocumentTheme(theme)), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
                 >{{ cachedFieldText(run.field) }}</span>
                 <!-- SPEC-039 AC-9: a run hidden by the current display mode
                      (a pending deletion in "No markup", a pending insertion
@@ -139,11 +142,11 @@ function spanAttr(span = 1) {
                   v-else-if="trackChangeRunHidden(run, asTrackChangesDisplayMode(displayMode))"
                   contenteditable="false"
                   :data-caret-atom="run.text"
-                  :style="[runStyle(run.formatting), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                  :style="[runStyle(run.formatting, asDocumentTheme(theme)), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
                 />
                 <span
                   v-else
-                  :style="[runStyle(displayRunFormatting(run, asTrackChangesDisplayMode(displayMode))), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
+                  :style="[runStyle(displayRunFormatting(run, asTrackChangesDisplayMode(displayMode)), asDocumentTheme(theme)), trackChangeRunStyle(run, asTrackChangesDisplayMode(displayMode))]"
                 >{{ run.text }}</span>
               </template>
             </template>

@@ -2,7 +2,8 @@
 // controls. Framework-free (no Vue imports) per the src/lib convention.
 // The standard catalogue lives in core/fonts.ts (product-neutral).
 import { isBreak, isChart, isConnector, isImage, isShape, isToc,
-  isTof, type DocumentModel } from "./documentModel";
+  isTof, documentThemeOf, type DocumentModel } from "./documentModel";
+import { resolveFont } from "./core/theme";
 
 /** The families the open document actually uses, for the "Fonts in this
  * document" group (SPEC-013 AC): the document default plus every family a
@@ -10,6 +11,7 @@ import { isBreak, isChart, isConnector, isImage, isShape, isToc,
  * the model, never from local font detection. Alphabetical, de-duplicated
  * case-insensitively (first spelling wins). */
 export function documentFontFamilies(model: DocumentModel): string[] {
+  const theme = documentThemeOf(model);
   const families = new Map<string, string>();
   const add = (family: string) => {
     const key = family.toLowerCase();
@@ -17,7 +19,7 @@ export function documentFontFamilies(model: DocumentModel): string[] {
       families.set(key, family);
     }
   };
-  add(model.defaultStyles.fontFamily);
+  add(resolveFont(model.defaultStyles.fontFamily, theme));
   for (const section of model.sections) {
     for (const block of section.blocks) {
       if (isImage(block) || isShape(block) || isChart(block) || isConnector(block) || isBreak(block) || isToc(block) || isTof(block)) {
@@ -30,7 +32,7 @@ export function documentFontFamilies(model: DocumentModel): string[] {
       for (const paragraph of paragraphs) {
         for (const run of paragraph.runs) {
           if (run.formatting.fontFamily) {
-            add(run.formatting.fontFamily);
+            add(resolveFont(run.formatting.fontFamily, theme));
           }
         }
       }

@@ -19,6 +19,7 @@ import {
   mergeRunFormatting,
 } from "../documentModel";
 import { childElements, firstChildElement, serializeElement } from "../core/xml";
+import { isThemeCarrierStyleName, themeParentSlot } from "../core/themeOdf";
 import { bulletStyleForChar, clampListLevel, defaultMarkerStyle } from "../core/lists";
 import { foAttr, styleAttr, svgAttr, OFFICE_NAMESPACE, STYLE_NAMESPACE, TEXT_NAMESPACE, textAttr } from "../core/odfXml";
 import {
@@ -797,6 +798,15 @@ export function resolveParagraphStyle(
     }
   }
 
+  // SPEC-077 AC-40: an automatic style parented on `de-theme-paragraph-{slot}`
+  // carries a shading REFERENCE — the fo:background-color it also declares is
+  // the resolved literal the writer put beside the link for other readers.
+  const automatic = styleName ? catalog.paragraphStyles.automatic.get(styleName) : undefined;
+  const slot = themeParentSlot(automatic?.parentName);
+  if (slot && automatic?.paragraphFormatting.shadingFill !== undefined) {
+    paragraphFormatting = { ...paragraphFormatting, shadingFill: { theme: slot } };
+  }
+
   return { paragraphFormatting, runFormatting, headingLevel };
 }
 
@@ -820,6 +830,13 @@ function decodeStyleName(name: string): string {
 export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
   const styles: NamedStyle[] = [];
   for (const definition of catalog.paragraphStyles.named.values()) {
+    // The de-theme-* carrier styles (SPEC-077) are the theme's wire form,
+    // recovered separately into model.theme by readThemeStyles — never part
+    // of the document's own style catalogue (the writers regenerate the
+    // block from model.theme, so listing them would double-write it).
+    if (isThemeCarrierStyleName(definition.name)) {
+      continue;
+    }
     const style: NamedStyle = {
       id: definition.name,
       name: definition.displayName ?? decodeStyleName(definition.name),
@@ -865,6 +882,9 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
   // formatting already carried the resolved effect and nothing referenced
   // the style by id.
   for (const definition of catalog.textStyles.named.values()) {
+    if (isThemeCarrierStyleName(definition.name)) {
+      continue; // A de-theme-* carrier — see the paragraph loop above.
+    }
     const style: NamedStyle = {
       id: definition.name,
       name: definition.displayName ?? decodeStyleName(definition.name),
@@ -884,6 +904,9 @@ export function catalogToNamedStyles(catalog: OdfStyleCatalog): NamedStyle[] {
   // SPEC-042 AC-15..18: styles of every other family, listed/preserved
   // verbatim — see OdfOtherStyle.
   for (const other of catalog.otherStyles.values()) {
+    if (isThemeCarrierStyleName(other.name)) {
+      continue; // A de-theme-* carrier — see the paragraph loop above.
+    }
     const style: NamedStyle = {
       id: other.name,
       name: other.displayName ?? decodeStyleName(other.name),
@@ -945,6 +968,14 @@ export function resolveTextStyle(
   let formatting = inherited;
   for (const style of styleChain(catalog.textStyles, styleName)) {
     formatting = applyTextProperties(formatting, style.textProperties);
+  }
+  // SPEC-077 AC-40: an automatic style parented on `de-theme-text-{slot}`
+  // carries a colour REFERENCE — the fo:color it also declares is the
+  // resolved literal the writer put beside the link for other readers.
+  const automatic = styleName ? catalog.textStyles.automatic.get(styleName) : undefined;
+  const slot = themeParentSlot(automatic?.parentName);
+  if (slot && automatic?.textProperties.formatting.color !== undefined) {
+    formatting = { ...formatting, color: { theme: slot } };
   }
   return formatting;
 }

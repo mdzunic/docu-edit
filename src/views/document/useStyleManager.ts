@@ -43,6 +43,8 @@ import {
 } from "../../lib/styles";
 import { paragraphAtCaret } from "../../lib/textEditing";
 import { normaliseParagraphBorders, paintedShadingFill } from "../../lib/paragraphBorders";
+import { resolveColor, resolveFont, type ModelColor } from "../../lib/core/theme";
+import { documentThemeOf } from "../../lib/documentModel";
 import type { ModelSelection, ParagraphCommand, StyleFormInput } from "../../lib/commands";
 import type { PendingFormat } from "../../lib/documentModel";
 import type { CaretPosition } from "../../lib/textEditing";
@@ -189,6 +191,11 @@ export function useStyleManager(deps: StyleManagerDeps) {
    * the caret's own formatting via styleEditorInitialProps below). */
   const styleEditorInitialProps = computed(() => {
     const model = doc.value;
+    // SPEC-077 AC-7: the editor's inputs are plain strings, so a theme
+    // reference resolves to its literal for display (resolveColor/resolveFont
+    // are the only resolution path).
+    const display = (color: ModelColor | undefined): string | undefined =>
+      color === undefined ? undefined : resolveColor(color, documentThemeOf(model));
     if (styleEditorMode.value === "modify") {
       const target = model ? styleById(model, styleEditorTargetId.value) : undefined;
       const border = target?.cellBorders?.top;
@@ -197,18 +204,19 @@ export function useStyleManager(deps: StyleManagerDeps) {
         initialType: target ? styleTypeOf(target) : "paragraph",
         initialBasedOn: target?.basedOn ?? "",
         initialNext: target?.next ?? "",
-        initialFontFamily: target?.runFormatting?.fontFamily ?? "",
+        initialFontFamily:
+          target?.runFormatting?.fontFamily === undefined ? "" : resolveFont(target.runFormatting.fontFamily, documentThemeOf(model)),
         initialFontSizePt: target?.runFormatting?.fontSizePt,
         initialBold: target?.runFormatting?.bold === true,
         initialItalic: target?.runFormatting?.italic === true,
         initialUnderline: target?.runFormatting?.underline === true,
-        initialColor: target?.runFormatting?.color ?? "",
+        initialColor: display(target?.runFormatting?.color) ?? "",
         initialAlignment: target?.paragraphFormatting?.alignment ?? "",
         initialListPresetKey: "decimal",
-        initialCellShadingFill: target?.cellShadingFill ?? "",
+        initialCellShadingFill: display(target?.cellShadingFill) ?? "",
         initialCellBorderStyle: border?.style ?? "",
         initialCellBorderWidthPt: border?.widthPt ?? 1,
-        initialCellBorderColor: border?.color ?? "#000000",
+        initialCellBorderColor: display(border?.color) ?? "#000000",
         // SPEC-074 AC-18: the style's own paragraph borders and shading.
         // Seeded through the paint helpers, so a value that is present but
         // paints nothing — AC-17's explicit "off", which a .docx style can
@@ -216,7 +224,7 @@ export function useStyleManager(deps: StyleManagerDeps) {
         // plain "no borders"/"no fill" rather than as a keyword in a colour
         // input. The editor has no separate control for overriding a parent.
         initialBorders: normaliseParagraphBorders(target?.paragraphFormatting?.borders),
-        initialShadingFill: paintedShadingFill(target?.paragraphFormatting) ?? "",
+        initialShadingFill: display(paintedShadingFill(target?.paragraphFormatting)) ?? "",
       };
     }
     const caretNow = getCaretPosition();
@@ -227,12 +235,12 @@ export function useStyleManager(deps: StyleManagerDeps) {
       initialType: styleEditorType.value,
       initialBasedOn: caretParagraph?.styleId ?? "",
       initialNext: "",
-      initialFontFamily: caretRun.fontFamily ?? "",
+      initialFontFamily: caretRun.fontFamily === undefined ? "" : resolveFont(caretRun.fontFamily, documentThemeOf(model)),
       initialFontSizePt: caretRun.fontSizePt,
       initialBold: caretRun.bold === true,
       initialItalic: caretRun.italic === true,
       initialUnderline: caretRun.underline === true,
-      initialColor: caretRun.color ?? "",
+      initialColor: display(caretRun.color) ?? "",
       initialAlignment: caretParagraph?.formatting?.alignment ?? "",
       initialListPresetKey: "decimal",
       initialCellShadingFill: "",
@@ -244,7 +252,7 @@ export function useStyleManager(deps: StyleManagerDeps) {
       // a paragraph carrying AC-17's explicit "off" seeds the style with no
       // borders and no fill rather than with the override itself.
       initialBorders: normaliseParagraphBorders(caretParagraph?.formatting?.borders),
-      initialShadingFill: paintedShadingFill(caretParagraph?.formatting) ?? "",
+      initialShadingFill: display(paintedShadingFill(caretParagraph?.formatting)) ?? "",
     };
   });
 

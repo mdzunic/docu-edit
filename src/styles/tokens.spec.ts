@@ -461,6 +461,123 @@ describe("every declared palette exists in tokens.css with consistent blocks", (
   }
 });
 
+// ---------------------------------------------------------------------------
+// SPEC-077 AC-50 — the mirror of the token guard above: the DOCUMENT theme
+// (resolveColor/resolveFont/documentThemeOf over the model's DocumentTheme)
+// styles document content only; app chrome themes exclusively through the
+// design tokens. Mechanically: no UI-layer file (src/components, src/views,
+// src/composables — .vue and .ts alike; src/lib is the model/serialisation
+// layer where resolving IS the job, exactly as it is out of scope above) may
+// call `resolveColor(` / `resolveFont(` / `documentThemeOf(` unless its role
+// is rendering the user's document or offering document-colour swatches:
+//
+//   1. EXEMPT_FILES — the document-content / canvas-painter set above.
+//   2. The editor feature layers `views/document/**` and
+//      `views/presentation/**`: their composables compute the styles of the
+//      document being edited (pagination run styles, table handles, style
+//      previews), never chrome.
+//   3. `views/DocumentView.vue` — the wiring hub fetches documentThemeOf(doc)
+//      only to pass it as a prop to document-content children.
+//   4. The painter companions of exempted components:
+//      components/presentation/slideRender.ts / slideTextDom.ts (the .ts
+//      halves of SlideFrameView), and components/library/SlideMiniature.vue
+//      (paints the user's slide as a library preview — document content, not
+//      library chrome).
+//   5. Theme-feature swatch UI by role: colour/highlight/style pickers,
+//      swatch rows, style panels/popovers and the theme gallery render
+//      document-colour swatches and previews (TextColorPicker,
+//      HighlightPicker, StylePicker, ThemeSwatchRow, ShapeStylePanel,
+//      FrameStylePopover, ThemeGalleryDialog, useThemeGallery, …). Pickers of
+//      non-colour things (MergeFieldPickerDialog, CommandPalette) stay in
+//      the scan.
+//   6. The four AC-22 formatting dialogs that embed a ThemeSwatchRow —
+//      BordersShadingDialog, PageSetupDialog, TablePropertiesDialog,
+//      ChartOptionsDialog: they resolve a document colour reference only to
+//      display it (seeding an <input type=color> or a shading preview with
+//      the resolved hex), the same document-colour role as the pickers —
+//      never to style their own chrome.
+//
+// Chrome — MenuBar, StatusBar, toolbars, HomeView, the library list, the
+// Preferences dialog — matches none of these and must never appear.
+const DOC_THEME_CALL = /\b(resolveColor|resolveFont|documentThemeOf)\s*\(/;
+
+const DOC_THEME_EXEMPT: RegExp[] = [
+  /^views\/document\//,
+  /^views\/presentation\//,
+  /^views\/DocumentView\.vue$/,
+  /^components\/presentation\/(slideRender|slideTextDom)\.ts$/,
+  /^components\/library\/SlideMiniature\.vue$/,
+  /(ColorPicker|HighlightPicker|StylePicker|StylePopover|StylePanel|ThemeGallery|ThemeSwatch)[^/]*\.(vue|ts)$/,
+  /^components\/(BordersShadingDialog|PageSetupDialog|TablePropertiesDialog|ChartOptionsDialog)\.vue$/,
+];
+
+function docThemeExempt(rel: string): boolean {
+  return EXEMPT_FILES.has(rel) || DOC_THEME_EXEMPT.some((re) => re.test(rel));
+}
+
+function uiSourceFiles(): string[] {
+  const acc: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (
+        (entry.name.endsWith(".vue") || entry.name.endsWith(".ts")) &&
+        !entry.name.endsWith(".spec.ts") &&
+        !entry.name.endsWith(".d.ts")
+      ) {
+        acc.push(full);
+      }
+    }
+  };
+  for (const sub of ["components", "views", "composables"]) {
+    walk(join(SRC, sub));
+  }
+  return acc;
+}
+
+describe("app chrome never resolves a document theme colour (SPEC-077 AC-50)", () => {
+  it("no non-exempt UI file calls resolveColor/resolveFont/documentThemeOf", () => {
+    const bad: string[] = [];
+    for (const file of uiSourceFiles()) {
+      const rel = relative(SRC, file).replace(/\\/g, "/");
+      if (docThemeExempt(rel)) {
+        continue;
+      }
+      const source = readFileSync(file, "utf8");
+      const clean = stripComments(source).replace(/(^|[^:"'])\/\/[^\n]*/g, (m, lead: string) => lead);
+      clean.split("\n").forEach((line, i) => {
+        if (DOC_THEME_CALL.test(line)) {
+          bad.push(`  ${rel} line ${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(
+      bad,
+      `app chrome resolving document theme colours (style chrome with tokens.css vars instead):\n${bad.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  // Self-tests: the exemption net is role-shaped, not everything-shaped, and
+  // the detector actually fires.
+  it("keeps chrome surfaces inside the scan", () => {
+    for (const chrome of [
+      "components/DocumentMenuBar.vue",
+      "components/PreferencesDialog.vue",
+      "views/HomeView.vue",
+      "components/library/LibraryList.vue",
+    ]) {
+      expect(docThemeExempt(chrome), `${chrome} must not be exempt`).toBe(false);
+    }
+  });
+
+  it("detects a resolveColor call in a scanned line", () => {
+    expect(DOC_THEME_CALL.test(`const c = resolveColor(run.color, documentThemeOf(model));`)).toBe(true);
+    expect(DOC_THEME_CALL.test(`import { resolveColor } from "../lib/core/theme";`)).toBe(false);
+  });
+});
+
 for (const [id, blocks] of Object.entries(paletteVariants())) {
   const base = palettes();
   const variant = {

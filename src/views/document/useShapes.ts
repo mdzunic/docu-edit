@@ -108,7 +108,8 @@ import {
 } from "../../lib/core/pointEdit";
 import type { Point } from "../../lib/core/shapeGeometry";
 import { resolveAnchorBlockIndex } from "../../lib/drawingAnchors";
-import { asImageWrapMode, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
+import { asImageWrapMode, documentThemeOf, isShape, type DocumentModel, type Shape } from "../../lib/documentModel";
+import { resolveColor } from "../../lib/core/theme";
 import {
   LINE_GEOMETRIES,
   SHAPE_STYLE_PRESETS,
@@ -1185,9 +1186,14 @@ export function useShapes(deps: ShapesDeps) {
     const model = doc.value;
     const location = shapeSelection.value;
     const shape = model && location ? shapeAt(model, location) : null;
+    // The quick controls are native colour inputs, so a theme reference
+    // resolves to its hex here (SPEC-077 AC-7) — editing through them writes
+    // a literal; the reference-preserving editor is ShapeStylePanel.
+    const theme = documentThemeOf(model);
+    const fillBase = shapeFillBaseColor(shape?.fill);
     return {
-      fill: shapeFillBaseColor(shape?.fill) || "",
-      outlineColor: shape?.outline?.color || "",
+      fill: fillBase ? resolveColor(fillBase, theme) : "",
+      outlineColor: shape?.outline?.color ? resolveColor(shape.outline.color, theme) : "",
       outlineWidthPt: shape?.outline?.widthPt ?? 1,
       outlineDash: shape?.outline?.dash || "solid",
       rotationDeg: shape?.rotationDeg ?? 0,

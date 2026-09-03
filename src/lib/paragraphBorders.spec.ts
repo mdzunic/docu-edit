@@ -21,6 +21,7 @@ import {
   snapParagraphBorders,
   withInheritedPaint,
 } from "./paragraphBorders";
+import { DEFAULT_THEME } from "./core/theme";
 import type { BorderSide } from "./core/borders";
 import type { Block, Paragraph, ParagraphBorders, ParagraphFormatting } from "./documentModel";
 
@@ -93,14 +94,14 @@ describe("the explicit 'off' overrides (AC-17)", () => {
     );
     expect(painted?.borders).toEqual({});
     expect(painted?.shadingFill).toBe(NO_SHADING_FILL);
-    expect(paragraphBorderStyle(painted)).toEqual({});
+    expect(paragraphBorderStyle(painted, DEFAULT_THEME)).toEqual({});
   });
 
   it("paints no background beside borders the paragraph does keep", () => {
     const painted = withInheritedPaint({ borders: { top: THICK }, shadingFill: NO_SHADING_FILL }, {
       shadingFill: "#eeeeee",
     });
-    const style = paragraphBorderStyle(painted);
+    const style = paragraphBorderStyle(painted, DEFAULT_THEME);
     expect(style.borderTop).toContain("3pt");
     expect(style.backgroundColor).toBeUndefined();
     // The mark colour is a property of the shading, so an unshaded paragraph
@@ -288,12 +289,12 @@ describe("fragmentEdges (AC-14..16)", () => {
 
 describe("paragraphBorderStyle (AC-13..16)", () => {
   it("returns nothing for a paragraph that paints nothing", () => {
-    expect(paragraphBorderStyle(undefined)).toEqual({});
-    expect(paragraphBorderStyle({ alignment: "center" })).toEqual({});
+    expect(paragraphBorderStyle(undefined, DEFAULT_THEME)).toEqual({});
+    expect(paragraphBorderStyle({ alignment: "center" }, DEFAULT_THEME)).toEqual({});
   });
 
   it("paints every set edge with its padding for a standalone paragraph", () => {
-    const style = paragraphBorderStyle(boxed(), ALL_EDGES);
+    const style = paragraphBorderStyle(boxed(), DEFAULT_THEME, ALL_EDGES);
     expect(style.borderTop).toBe("1pt solid #000000");
     expect(style.borderBottom).toBe("1pt solid #000000");
     expect(style.borderLeft).toBe("1pt solid #000000");
@@ -303,7 +304,7 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
   });
 
   it("keeps a bottom-rule heading free of padding on the three edges it has no rule on", () => {
-    const style = paragraphBorderStyle({ borders: { bottom: LINE } }, ALL_EDGES);
+    const style = paragraphBorderStyle({ borders: { bottom: LINE } }, DEFAULT_THEME, ALL_EDGES);
     expect(style.borderBottom).toBe("1pt solid #000000");
     expect(style.borderTop).toBe("none");
     expect(style.paddingTop).toBe("0");
@@ -312,7 +313,7 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
   });
 
   it("fills the padding box with the shading, so it spans the content width (AC-13)", () => {
-    const style = paragraphBorderStyle(boxed({ shadingFill: "#eeeeee" }), ALL_EDGES);
+    const style = paragraphBorderStyle(boxed({ shadingFill: "#eeeeee" }), DEFAULT_THEME, ALL_EDGES);
     expect(style.backgroundColor).toBe("#eeeeee");
     expect(style.paddingLeft).toBe("4pt");
   });
@@ -321,7 +322,7 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
     const formatting: ParagraphFormatting = {
       borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: THICK },
     };
-    const style = paragraphBorderStyle(formatting, {
+    const style = paragraphBorderStyle(formatting, DEFAULT_THEME, {
       top: true,
       bottom: false,
       sides: true,
@@ -338,7 +339,7 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
     const formatting: ParagraphFormatting = {
       borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: LINE },
     };
-    const style = paragraphBorderStyle(formatting, {
+    const style = paragraphBorderStyle(formatting, DEFAULT_THEME, {
       top: false,
       bottom: true,
       sides: true,
@@ -353,7 +354,7 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
   });
 
   it("leaves a mid-paragraph page fragment with sides only and no vertical padding", () => {
-    const style = paragraphBorderStyle(boxed(), {
+    const style = paragraphBorderStyle(boxed(), DEFAULT_THEME, {
       top: false,
       bottom: false,
       sides: true,
@@ -378,9 +379,9 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
     const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
     const runs = borderRuns([para({ ...spaced }), para({ ...spaced }), para({ ...spaced })]);
 
-    const first = paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, true));
-    const middle = paragraphBorderStyle(spaced, fragmentEdges(runs, 1, true, true));
-    const last = paragraphBorderStyle(spaced, fragmentEdges(runs, 2, true, true));
+    const first = paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 0, true, true));
+    const middle = paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 1, true, true));
+    const last = paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 2, true, true));
 
     // No internal rule anywhere — this is a plain box, not "All".
     expect([first, middle, last].map((s) => s.borderBottom)).toEqual([
@@ -402,7 +403,7 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
   it("keeps a lone bordered paragraph's own space before and after", () => {
     const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
     const runs = borderRuns([para(spaced)]);
-    const style = paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, true));
+    const style = paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 0, true, true));
     expect(style.marginTop).toBeUndefined();
     expect(style.marginBottom).toBeUndefined();
   });
@@ -411,8 +412,8 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
     const a = boxed({ spaceAfterPt: 8 });
     const b = boxed({ spaceBeforePt: 8, shadingFill: "#eeeeee" });
     const runs = borderRuns([para(a), para(b)]);
-    expect(paragraphBorderStyle(a, fragmentEdges(runs, 0, true, true)).marginBottom).toBeUndefined();
-    expect(paragraphBorderStyle(b, fragmentEdges(runs, 1, true, true)).marginTop).toBeUndefined();
+    expect(paragraphBorderStyle(a, DEFAULT_THEME, fragmentEdges(runs, 0, true, true)).marginBottom).toBeUndefined();
+    expect(paragraphBorderStyle(b, DEFAULT_THEME, fragmentEdges(runs, 1, true, true)).marginTop).toBeUndefined();
   });
 
   it("leaves a page-split seam alone — only the run's own boundaries collapse", () => {
@@ -420,12 +421,12 @@ describe("paragraphBorderStyle (AC-13..16)", () => {
     const runs = borderRuns([para({ ...spaced }), para({ ...spaced })]);
     // The first paragraph continues onto the next page: its opening fragment
     // is not at the run's internal boundary, its closing fragment is.
-    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, false)).marginBottom).toBeUndefined();
-    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 0, false, true)).marginBottom).toBe("0");
+    expect(paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 0, true, false)).marginBottom).toBeUndefined();
+    expect(paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 0, false, true)).marginBottom).toBe("0");
     // ...and the second paragraph's continuation fragment is below a page
     // break, not below the paragraph it merged with.
-    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 1, true, true)).marginTop).toBe("0");
-    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 1, false, true)).marginTop).toBeUndefined();
+    expect(paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 1, true, true)).marginTop).toBe("0");
+    expect(paragraphBorderStyle(spaced, DEFAULT_THEME, fragmentEdges(runs, 1, false, true)).marginTop).toBeUndefined();
   });
 });
 
@@ -477,22 +478,22 @@ describe("normaliseParagraphBorders", () => {
 
 describe("formatting marks on a shaded paragraph (AC-26)", () => {
   it("says nothing about a paragraph with no shading", () => {
-    expect(paragraphMarkColorStyle(undefined)).toEqual({});
-    expect(paragraphMarkColorStyle({ borders: { top: LINE } })).toEqual({});
+    expect(paragraphMarkColorStyle(undefined, DEFAULT_THEME)).toEqual({});
+    expect(paragraphMarkColorStyle({ borders: { top: LINE } }, DEFAULT_THEME)).toEqual({});
   });
 
   it("keeps the default grey on a light fill", () => {
-    expect(paragraphMarkColorStyle({ shadingFill: "#f5f5f5" })["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
-    expect(paragraphMarkColorStyle({ shadingFill: "#fff2cc" })["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
+    expect(paragraphMarkColorStyle({ shadingFill: "#f5f5f5" }, DEFAULT_THEME)["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
+    expect(paragraphMarkColorStyle({ shadingFill: "#fff2cc" }, DEFAULT_THEME)["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
   });
 
   it("flips to a light grey on a dark fill, so the pilcrow stays visible", () => {
-    expect(paragraphMarkColorStyle({ shadingFill: "#1f1f1f" })["--mark-color"]).toBe("#d0d3d6");
-    expect(paragraphMarkColorStyle({ shadingFill: "#20365c" })["--mark-color"]).toBe("#d0d3d6");
+    expect(paragraphMarkColorStyle({ shadingFill: "#1f1f1f" }, DEFAULT_THEME)["--mark-color"]).toBe("#d0d3d6");
+    expect(paragraphMarkColorStyle({ shadingFill: "#20365c" }, DEFAULT_THEME)["--mark-color"]).toBe("#d0d3d6");
   });
 
   it("rides on the paragraph's own style object, beside the shading", () => {
-    const style = paragraphBorderStyle({ shadingFill: "#1f1f1f" }, ALL_EDGES);
+    const style = paragraphBorderStyle({ shadingFill: "#1f1f1f" }, DEFAULT_THEME, ALL_EDGES);
     expect(style.backgroundColor).toBe("#1f1f1f");
     expect(style["--mark-color"]).toBe("#d0d3d6");
   });

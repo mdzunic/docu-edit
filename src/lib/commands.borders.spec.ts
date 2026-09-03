@@ -65,6 +65,15 @@ describe("applyParagraphBorders — setting borders and shading (AC-11)", () => 
     expect(formattingOf(next, 1)?.shadingFill).toBe("#fff2cc");
     expect(formattingOf(next, 2)).toBeUndefined();
   });
+
+  it("stores a theme-referenced shading fill verbatim (SPEC-077 AC-23)", () => {
+    const model = fixture(undefined, "One");
+    const reference = { theme: "accent1", lumMod: 0.2, lumOff: 0.8 } as const;
+    const { model: next } = applyParagraphBorders(model, range(caret(0, 0), caret(0, 1)), {
+      shadingFill: reference,
+    });
+    expect(formattingOf(next, 0)?.shadingFill).toEqual(reference);
+  });
 });
 
 describe("applyParagraphBorders — switching off with nothing to override (AC-17)", () => {

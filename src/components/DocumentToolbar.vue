@@ -36,6 +36,9 @@ const props = defineProps({
   formatValues: { type: Object, required: true },
   documentFonts: { type: Array, default: () => [] },
   recentColors: { type: Array, default: () => [] },
+  /** The document theme (SPEC-077 AC-20/22): both colour pickers render the
+   * theme swatch row when present. */
+  theme: { type: Object, default: null },
   formatStates: { type: Object, required: true },
   /** paragraphState: { alignment, spaceBefore, direction }. */
   paragraphState: { type: Object, required: true },
@@ -543,12 +546,14 @@ onBeforeUnmount(() => {
           :value="formatValues.color"
           :mixed="formatValues.colorMixed"
           :recent="recentColors"
+          :theme="theme"
           @select="emit('text-color-select', $event)"
         />
         <HighlightPicker
           ref="highlightPicker"
           :value="formatValues.highlight"
           :mixed="formatValues.highlightMixed"
+          :theme="theme"
           @select="emit('highlight-select', $event)"
         />
       </Teleport>

@@ -8,6 +8,7 @@
 import {
   DEFAULT_TITLE,
   type CommentThread,
+  type DocTheme,
   type DocumentFormat,
   type DocumentModel,
   type DocumentProperties,
@@ -117,6 +118,8 @@ export function assembleDocumentModel(
     /** A `.md` source's verbatim front matter (SPEC-050); never set by a
      * `.docx`/`.odt` parse. */
     frontMatter?: string;
+    /** The document's theme (SPEC-077); `dirty` stays unset on open. */
+    theme?: DocTheme;
   },
 ): DocumentModel {
   const model: DocumentModel = {
@@ -128,6 +131,9 @@ export function assembleDocumentModel(
   };
   if (parsed.frontMatter !== undefined) {
     model.frontMatter = parsed.frontMatter;
+  }
+  if (parsed.theme !== undefined) {
+    model.theme = parsed.theme;
   }
   // The document's own style catalogue (SPEC-019): what the picker lists
   // and the writers re-declare on save.

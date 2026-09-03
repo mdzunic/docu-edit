@@ -20,6 +20,7 @@ import {
 } from "./connectors";
 import type { Point } from "./shapeGeometry";
 import type { ArrowheadKind, ShapeOutline } from "./shapes";
+import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "./theme";
 
 /** The stroke a connector falls back to when it carries no outline — the
  * same dark blue `DEFAULT_CONNECTOR_OUTLINE` gives a freshly drawn one. */
@@ -72,6 +73,9 @@ export interface ConnectorPaintOptions {
   outline?: ShapeOutline;
   startArrow?: ArrowheadKind;
   endArrow?: ArrowheadKind;
+  /** The document theme an outline colour reference resolves against
+   * (SPEC-077); absent resolves against the product default. */
+  theme?: DocumentTheme;
 }
 
 /** Turns a routed path plus its formatting into paint data. The arrowheads
@@ -99,7 +103,9 @@ export function buildConnectorPaint(
   return {
     key,
     d: routedPathToSvg(path),
-    color: options.outline?.color || DEFAULT_CONNECTOR_STROKE,
+    color: options.outline
+      ? resolveColor(options.outline.color, options.theme ?? DEFAULT_THEME) || DEFAULT_CONNECTOR_STROKE
+      : DEFAULT_CONNECTOR_STROKE,
     widthPx,
     dash: connectorDashArray(options.outline?.dash),
     heads,

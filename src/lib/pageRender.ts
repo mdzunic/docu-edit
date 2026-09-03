@@ -6,6 +6,7 @@
 import { isTable, type Block, type DocumentModel, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
 import { isFloatingDrawing, resolveAnchorBlockIndex } from "./drawingAnchors";
 import { type ListDefinition } from "./core/lists";
+import { DEFAULT_THEME, type DocumentTheme } from "./core/theme";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
 import { markersForBlocks } from "./lists";
 import { cachedFieldText, isReadOnlyFieldTitle } from "./fields";
@@ -250,7 +251,11 @@ export function hoistFloatingDrawingEntries(entries: RenderEntry[], model: Docum
  * see the implement summary). Framework-free like the rest of this module,
  * so DocShapeBlock.vue and its own tests share one source of truth for what
  * a shape's text looks like. */
-export function shapeTextRenderEntries(shape: Shape, listDefinitions: readonly ListDefinition[] = []): RenderEntry[] {
+export function shapeTextRenderEntries(
+  shape: Shape,
+  listDefinitions: readonly ListDefinition[] = [],
+  theme: DocumentTheme = DEFAULT_THEME,
+): RenderEntry[] {
   const blocks = shape.text?.blocks ?? [];
   const markers = markersForBlocks(blocks, listDefinitions);
   const entries: RenderEntry[] = [];
@@ -268,7 +273,7 @@ export function shapeTextRenderEntries(shape: Shape, listDefinitions: readonly L
       return;
     }
     const paragraph = block.type === "paragraph" ? block : { type: "paragraph" as const, runs: [] };
-    const styleObj = { ...paragraphStyle(paragraph, listDefinitions) };
+    const styleObj = { ...paragraphStyle(paragraph, theme, listDefinitions) };
     const renderRuns: RenderRun[] = paragraph.runs.map((run, runIndex) => {
       // A SPEC-053 field in a shape text box (AC-34): a caret atom showing its
       // saved value, the same substitution the body/cell paths apply.
@@ -277,7 +282,7 @@ export function shapeTextRenderEntries(shape: Shape, listDefinitions: readonly L
         return {
           key: runKey(run, runIndex),
           href: "",
-          styleObj: runStyle(run.formatting),
+          styleObj: runStyle(run.formatting, theme),
           text: cachedFieldText(run.field),
           segments: null,
           atomText: run.text,
@@ -289,7 +294,7 @@ export function shapeTextRenderEntries(shape: Shape, listDefinitions: readonly L
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: runStyle(run.formatting),
+        styleObj: runStyle(run.formatting, theme),
         text: run.text,
         segments: null,
         lang: run.formatting.lang ?? "",
