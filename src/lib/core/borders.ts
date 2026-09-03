@@ -5,6 +5,8 @@
 // working (AC-2). Nothing here knows about a document model, a table or a
 // paragraph: a border is a style, a width and a colour, whatever it is drawn
 // around.
+import { resolveColor, sameModelColor } from "./theme";
+import type { DocumentTheme, ModelColor } from "./theme";
 
 /** A border line's rendering: the standard presets plus width and colour.
  * `"none"` paints nothing, distinct from an absent `BorderSide` (unset —
@@ -36,22 +38,24 @@ export const BORDER_LINE_STYLES: readonly BorderLineStyle[] = [
 ];
 
 /** One edge's border (SPEC-023 AC-10..12, SPEC-074): style, width in points
- * and a CSS-ready colour ("#rrggbb", or "auto" for the source's automatic
- * colour). */
+ * and a colour — CSS-ready ("#rrggbb", or "auto" for the source's automatic
+ * colour) or a theme reference (SPEC-077). */
 export interface BorderSide {
   style: BorderLineStyle;
   widthPt: number;
-  color: string;
+  color: ModelColor;
 }
 
 /** What `"auto"` paints as — both formats' automatic border colour is black
  * in every consumer that matters, and the renderer needs a real CSS value. */
 export const AUTO_BORDER_COLOR = "#000000";
 
-/** A border side's CSS colour: `"auto"` resolves to black, anything else is
- * already CSS-ready. */
-export function borderColorCss(color: string): string {
-  return color === "auto" ? AUTO_BORDER_COLOR : color;
+/** A border side's CSS colour: a theme reference resolves against the
+ * document's theme, `"auto"` resolves to black, anything else is already
+ * CSS-ready. */
+export function borderColorCss(color: ModelColor, theme: DocumentTheme): string {
+  const literal = resolveColor(color, theme);
+  return literal === "auto" ? AUTO_BORDER_COLOR : literal;
 }
 
 /** The CSS `border-style` keyword for a model line style. CSS has no
@@ -78,11 +82,11 @@ export function borderStyleCss(style: BorderLineStyle): string {
 /** A border side as a CSS shorthand ("1pt solid #000000"), or `"none"` for
  * an unset or explicitly-none edge. Shared by every renderer that paints a
  * border into a style object. */
-export function borderSideCss(side: BorderSide | undefined): string {
+export function borderSideCss(side: BorderSide | undefined, theme: DocumentTheme): string {
   if (!side || side.style === "none" || side.widthPt <= 0) {
     return "none";
   }
-  return `${roundWidthPt(side.widthPt)}pt ${borderStyleCss(side.style)} ${borderColorCss(side.color)}`;
+  return `${roundWidthPt(side.widthPt)}pt ${borderStyleCss(side.style)} ${borderColorCss(side.color, theme)}`;
 }
 
 /** Border widths are held as points with sub-point precision from both
@@ -106,7 +110,7 @@ export function borderSidesEqual(a: BorderSide | undefined, b: BorderSide | unde
   if (a === undefined || b === undefined) {
     return a === b;
   }
-  return a.style === b.style && roundWidthPt(a.widthPt) === roundWidthPt(b.widthPt) && a.color === b.color;
+  return a.style === b.style && roundWidthPt(a.widthPt) === roundWidthPt(b.widthPt) && sameModelColor(a.color, b.color);
 }
 
 /** Typed pass-through for a border line style coming from a `.vue`

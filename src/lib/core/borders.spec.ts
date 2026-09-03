@@ -9,6 +9,7 @@ import {
   type BorderLineStyle,
   type BorderSide,
 } from "./borders";
+import { DEFAULT_THEME } from "./theme";
 import type { BorderLineStyle as ReExportedStyle, BorderSide as ReExportedSide } from "./tables";
 
 function side(style: BorderLineStyle, widthPt = 1, color = "#000000"): BorderSide {
@@ -57,24 +58,24 @@ describe("borderStyleCss", () => {
 
 describe("borderSideCss", () => {
   it("paints an unset, none or zero-width edge as none", () => {
-    expect(borderSideCss(undefined)).toBe("none");
-    expect(borderSideCss(side("none", 1))).toBe("none");
-    expect(borderSideCss(side("single", 0))).toBe("none");
+    expect(borderSideCss(undefined, DEFAULT_THEME)).toBe("none");
+    expect(borderSideCss(side("none", 1), DEFAULT_THEME)).toBe("none");
+    expect(borderSideCss(side("single", 0), DEFAULT_THEME)).toBe("none");
   });
 
   it("emits a CSS shorthand with the width in points", () => {
-    expect(borderSideCss(side("single", 1.5, "#ff0000"))).toBe("1.5pt solid #ff0000");
+    expect(borderSideCss(side("single", 1.5, "#ff0000"), DEFAULT_THEME)).toBe("1.5pt solid #ff0000");
   });
 
   it("resolves the automatic colour to black", () => {
-    expect(borderSideCss(side("single", 1, "auto"))).toBe("1pt solid #000000");
-    expect(borderColorCss("auto")).toBe("#000000");
-    expect(borderColorCss("#123456")).toBe("#123456");
+    expect(borderSideCss(side("single", 1, "auto"), DEFAULT_THEME)).toBe("1pt solid #000000");
+    expect(borderColorCss("auto", DEFAULT_THEME)).toBe("#000000");
+    expect(borderColorCss("#123456", DEFAULT_THEME)).toBe("#123456");
   });
 
   it("emits the model's own width unchanged — SPEC-023's cell rules depend on it", () => {
-    expect(borderSideCss(side("double", 1.5, "#00ff00"))).toBe("1.5pt double #00ff00");
-    expect(borderSideCss(side("dashDot", 2))).toBe("2pt dashed #000000");
+    expect(borderSideCss(side("double", 1.5, "#00ff00"), DEFAULT_THEME)).toBe("1.5pt double #00ff00");
+    expect(borderSideCss(side("dashDot", 2), DEFAULT_THEME)).toBe("2pt dashed #000000");
   });
 });
 

@@ -20,6 +20,7 @@ import {
   trackChangeRunHidden,
   trackChangeRunStyle,
 } from "./renderFormatting";
+import { DEFAULT_THEME } from "./core/theme";
 import type { Paragraph, Run, Shape, Table, TableCell, TableRow } from "./documentModel";
 
 function paragraph(runs: Run[]): Paragraph {
@@ -631,6 +632,7 @@ describe("paragraphStyle with style-inherited borders (SPEC-074 AC-17)", () => {
     };
     const style = paragraphStyle(
       plain,
+      DEFAULT_THEME,
       [],
       "all",
       { ...ALL_EDGES, top: false },

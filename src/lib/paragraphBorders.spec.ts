@@ -21,6 +21,7 @@ import {
   snapParagraphBorders,
   withInheritedPaint,
 } from "./paragraphBorders";
+import { DEFAULT_THEME } from "./core/theme";
 import type { BorderSide } from "./core/borders";
 import type { Block, Paragraph, ParagraphBorders, ParagraphFormatting } from "./documentModel";
 

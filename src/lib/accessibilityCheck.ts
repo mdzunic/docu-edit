@@ -17,6 +17,7 @@ import {
   isImage,
   isShape,
   isTable,
+  documentThemeOf,
   isToc,
   isTof,
   type Chart,
@@ -38,6 +39,8 @@ import {
 import { LINK_COLOR } from "./renderFormatting";
 import { paintedShadingFill } from "./paragraphBorders";
 import { HIGHLIGHT_HEX } from "./core/colors";
+import { resolveColor } from "./core/theme";
+import type { DocumentTheme, ModelColor } from "./core/theme";
 
 // --- issue shape (AC-2, AC-3) ------------------------------------------
 
@@ -142,8 +145,11 @@ export function isLargeText(effectiveFontSizePt: number, bold: boolean): boolean
  * named style's, else `#000000` — `DefaultStyles` has no colour field of
  * its own to fall back to, so that step of the documented chain is vacuous
  * on the current model. */
-function effectiveForegroundColor(resolvedStyle: ResolvedNamedStyle, run: Run): string {
-  return run.formatting.color ?? resolvedStyle.runFormatting.color ?? "#000000";
+function effectiveForegroundColor(resolvedStyle: ResolvedNamedStyle, run: Run, theme: DocumentTheme): string {
+  // Contrast is computed on the RESOLVED colour (SPEC-077 AC-47): a theme
+  // change can turn a passing document into a failing one, and the checker
+  // must see the very colour the renderer paints.
+  return resolveColor(run.formatting.color ?? resolvedStyle.runFormatting.color ?? "#000000", theme);
 }
 
 /** Background resolution (AC-18, AC-19; SPEC-074 AC-27): the run's highlight
@@ -157,20 +163,22 @@ function effectiveForegroundColor(resolvedStyle: ResolvedNamedStyle, run: Run): 
  * is actually read on. */
 function effectiveBackgroundColor(
   run: Run,
-  paragraphShadingFill: string | undefined,
-  cellShadingFill: string | undefined,
+  paragraphShadingFill: ModelColor | undefined,
+  cellShadingFill: ModelColor | undefined,
+  theme: DocumentTheme,
 ): string {
   if (run.formatting.highlight) {
-    return HIGHLIGHT_HEX[run.formatting.highlight] ?? run.formatting.highlight;
+    const highlight = resolveColor(run.formatting.highlight, theme);
+    return HIGHLIGHT_HEX[highlight] ?? highlight;
   }
   if (run.formatting.shadingFill !== undefined) {
-    return run.formatting.shadingFill;
+    return resolveColor(run.formatting.shadingFill, theme);
   }
   if (paragraphShadingFill !== undefined) {
-    return paragraphShadingFill;
+    return resolveColor(paragraphShadingFill, theme);
   }
   if (cellShadingFill !== undefined) {
-    return cellShadingFill;
+    return resolveColor(cellShadingFill, theme);
   }
   return "#ffffff";
 }
@@ -184,14 +192,14 @@ function effectiveFontSizePt(model: DocumentModel, resolvedStyle: ResolvedNamedS
  * this also falls back to the renderer's link-blue default (SPEC-025) so an
  * unstyled hyperlink is compared against the surrounding text's colour
  * rather than invisibly matching it. */
-function paintedColor(resolvedStyle: ResolvedNamedStyle, run: Run): string {
+function paintedColor(resolvedStyle: ResolvedNamedStyle, run: Run, theme: DocumentTheme): string {
   if (run.formatting.color) {
-    return run.formatting.color;
+    return resolveColor(run.formatting.color, theme);
   }
   if (run.formatting.linkHref !== undefined || run.formatting.linkAnchor !== undefined) {
     return LINK_COLOR;
   }
-  return resolvedStyle.runFormatting.color ?? "#000000";
+  return resolveColor(resolvedStyle.runFormatting.color ?? "#000000", theme);
 }
 
 // --- addressing helpers ---------------------------------------------------
@@ -289,7 +297,7 @@ function paragraphRunColourInfos(
         run,
         startOffset: offset,
         length: run.text.length,
-        color: paintedColor(resolvedStyle, run),
+        color: paintedColor(resolvedStyle, run, documentThemeOf(model)),
         fontSizePt: effectiveFontSizePt(model, resolvedStyle, run),
         styleId: run.styleId,
       });
@@ -409,10 +417,11 @@ function checkParagraphContrastAndColour(
   model: DocumentModel,
   paragraph: Paragraph,
   address: ParagraphAddress,
-  cellShadingFill: string | undefined,
+  cellShadingFill: ModelColor | undefined,
   issues: AccessibilityIssue[],
 ): void {
   const resolvedStyle = resolveNamedStyle(model, paragraph.styleId);
+  const theme = documentThemeOf(model);
   // SPEC-074 AC-27: the paragraph's own shading, else the one its style sets
   // (AC-17's inheritance) — the surface this paragraph's text is read on.
   // Resolved through `paintedParagraphFormatting` rather than `resolvedStyle`
@@ -427,8 +436,8 @@ function checkParagraphContrastAndColour(
   let offset = 0;
   for (const run of paragraph.runs) {
     if (run.text.trim().length > 0) {
-      const foreground = effectiveForegroundColor(resolvedStyle, run);
-      const background = effectiveBackgroundColor(run, paragraphShadingFill, cellShadingFill);
+      const foreground = effectiveForegroundColor(resolvedStyle, run, theme);
+      const background = effectiveBackgroundColor(run, paragraphShadingFill, cellShadingFill, theme);
       const ratio = contrastRatio(foreground, background);
       const fontSizePt = effectiveFontSizePt(model, resolvedStyle, run);
       const large = isLargeText(fontSizePt, run.formatting.bold === true);
@@ -534,7 +543,7 @@ function checkVisualHeading(
 // --- scan targets and state (chunking support) ----------------------------
 
 export type AccessibilityScanTarget =
-  | { kind: "paragraph"; address: ParagraphAddress; paragraph: Paragraph; topLevelNext?: Paragraph; cellShadingFill?: string }
+  | { kind: "paragraph"; address: ParagraphAddress; paragraph: Paragraph; topLevelNext?: Paragraph; cellShadingFill?: ModelColor }
   | { kind: "table"; address: BlockAddress; table: Table }
   | { kind: "image"; address: BlockAddress; image: Image }
   | { kind: "shape"; address: BlockAddress; shape: Shape }

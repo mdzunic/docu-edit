@@ -9,6 +9,8 @@
 // array (never mutated in place). The renderer relies on this — `v-memo`
 // compares block object identity to skip re-rendering untouched paragraphs,
 // which is what keeps typing responsive on very large documents.
+import { sameModelColor } from "./core/theme";
+import type { ModelColor } from "./core/theme";
 import {
   isBreak,
   isChart,
@@ -289,7 +291,18 @@ function sameFormatting(a: Run["formatting"], b: Run["formatting"]): boolean {
   const keysA = Object.keys(a) as Array<keyof Run["formatting"]>;
   const keysB = Object.keys(b) as Array<keyof Run["formatting"]>;
   return (
-    keysA.length === keysB.length && keysA.every((key) => a[key] === b[key])
+    keysA.length === keysB.length &&
+    keysA.every((key) => {
+      const left = a[key];
+      const right = b[key];
+      // Theme colour/font references (SPEC-077 AC-8) are objects: they
+      // compare structurally through sameModelColor so runs sharing a
+      // reference still coalesce, and a reference never equals a literal.
+      if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) {
+        return sameModelColor(left as ModelColor, right as ModelColor);
+      }
+      return left === right;
+    })
   );
 }
 

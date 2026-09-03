@@ -19,6 +19,9 @@
 //  - Child elements inside w:pPr/w:rPr/w:sectPr are emitted in the schema's
 //    sequence order (see validate.ts), which is what Word's strict reader
 //    checks before offering to "repair" a file.
+import { DEFAULT_THEME, isThemeFont, resolveColor, resolveFont } from "../core/theme";
+import type { DocumentTheme, ModelColor } from "../core/theme";
+import { themeAttrsXml } from "./theme";
 import type {
   Block,
   Chart,
@@ -63,6 +66,7 @@ import { borderElementXml } from "./borders";
 import { paragraphPaddingPt, NO_SHADING_FILL, type BorderEdge } from "../paragraphBorders";
 import {
   DEFAULT_TITLE,
+  documentThemeOf,
   isEvaluatedField,
   isFieldLocked,
   isMergeChipField,
@@ -181,6 +185,7 @@ function trackedChangeAttrs(id: number, author: string, date: string): string {
  * under a fresh numeric id from `ctx.changeIds`. */
 function runPropertiesXml(
   formatting: RunFormatting,
+  theme: DocumentTheme,
   styleId?: string,
   formatChange?: RunFormatChange,
   ctx?: InlineWriteContext,
@@ -195,8 +200,14 @@ function runPropertiesXml(
     parts.push(`<w:rStyle w:val="${escapeXml(styleId)}"/>`);
   }
   if (formatting.fontFamily !== undefined) {
-    const family = escapeXml(formatting.fontFamily);
-    parts.push(`<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>`);
+    // A theme font reference writes @w:asciiTheme/@w:hAnsiTheme beside the
+    // resolved family (SPEC-077 AC-28's inverse).
+    const fontValue = formatting.fontFamily;
+    const family = escapeXml(resolveFont(fontValue, theme));
+    const fontThemeAttrs = isThemeFont(fontValue)
+      ? ` w:asciiTheme="${fontValue.theme}HAnsi" w:hAnsiTheme="${fontValue.theme}HAnsi"`
+      : "";
+    parts.push(`<w:rFonts w:ascii="${family}" w:hAnsi="${family}"${fontThemeAttrs}/>`);
   }
   if (formatting.bold !== undefined) {
     parts.push(formatting.bold ? "<w:b/>" : '<w:b w:val="0"/>');
@@ -211,9 +222,16 @@ function runPropertiesXml(
   if (formatting.noProof !== undefined) {
     parts.push(formatting.noProof ? "<w:noProof/>" : '<w:noProof w:val="0"/>');
   }
-  const color = cssColorToOoxml(formatting.color);
-  if (color !== undefined) {
-    parts.push(`<w:color w:val="${color}"/>`);
+  if (formatting.color !== undefined) {
+    // A theme reference writes @w:themeColor (+tint/shade) beside the
+    // resolved literal (SPEC-077 AC-30); a lumMod/lumOff reference has no
+    // WordprocessingML spelling and writes the literal alone (AC-32).
+    const color = cssColorToOoxml(resolveColor(formatting.color, theme));
+    if (color !== undefined) {
+      const colorThemeAttrs =
+        typeof formatting.color === "object" ? (themeAttrsXml(formatting.color, "themeColor") ?? "") : "";
+      parts.push(`<w:color w:val="${color}"${colorThemeAttrs}/>`);
+    }
   }
   if (formatting.fontSizePt !== undefined) {
     parts.push(`<w:sz w:val="${ptToHalfPoints(formatting.fontSizePt)}"/>`);
@@ -223,10 +241,6 @@ function runPropertiesXml(
   // colour has no ST_HighlightColor encoding and degrades to run shading.
   // The readers normalise palette-coloured fills back to names, so a bare
   // "#rrggbb" here is guaranteed to be outside the palette.
-  const highlightHex =
-    typeof formatting.highlight === "string" && formatting.highlight.startsWith("#")
-      ? cssColorToOoxml(formatting.highlight)
-      : undefined;
   if (formatting.highlight === false) {
     parts.push('<w:highlight w:val="none"/>');
   } else if (
@@ -242,9 +256,22 @@ function runPropertiesXml(
   // preserved source shading (kept beside a palette highlight) is
   // re-emitted. When an edit leaves both (the user picked a custom
   // highlight on a run that carried shading), the visible highlight wins.
-  const shadingHex = highlightHex ?? cssColorToOoxml(formatting.shadingFill);
-  if (shadingHex !== undefined) {
-    parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shadingHex}"/>`);
+  // A custom-hex or theme-reference highlight claims the slot (it has no
+  // ST_HighlightColor encoding); a theme reference carries @w:themeFill
+  // attributes beside the resolved fill (SPEC-077 AC-27's inverse).
+  const shadingSource =
+    typeof formatting.highlight === "object" && formatting.highlight !== null
+      ? formatting.highlight
+      : typeof formatting.highlight === "string" && formatting.highlight.startsWith("#")
+        ? formatting.highlight
+        : formatting.shadingFill;
+  if (shadingSource !== undefined) {
+    const shadingHex = cssColorToOoxml(resolveColor(shadingSource, theme));
+    if (shadingHex !== undefined) {
+      const shadingThemeAttrs =
+        typeof shadingSource === "object" ? (themeAttrsXml(shadingSource, "themeFill") ?? "") : "";
+      parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shadingHex}"${shadingThemeAttrs}/>`);
+    }
   }
   if (formatting.vertAlign !== undefined) {
     parts.push(`<w:vertAlign w:val="${formatting.vertAlign}"/>`);
@@ -258,7 +285,7 @@ function runPropertiesXml(
   }
   if (formatChange && ctx) {
     const id = changeNumericId(ctx, formatChange.changeId);
-    const previous = runPropertiesXml(formatChange.previous, undefined);
+    const previous = runPropertiesXml(formatChange.previous, theme, undefined);
     parts.push(`<w:rPrChange${trackedChangeAttrs(id, formatChange.author, formatChange.date)}>${previous}</w:rPrChange>`);
   }
   return parts.length > 0 ? `<w:rPr>${parts.join("")}</w:rPr>` : "";
@@ -386,7 +413,7 @@ function fieldInstr(field: FieldSpec): string {
  * and a tracked deletion's text is `w:delText`, never `w:t`. Field/note
  * runs are never wrapped: their content is a computed placeholder, not
  * text a tracked edit could sensibly mark. */
-function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContext): string {
+function runXml(run: Run, ctx: InlineWriteContext, noteIds?: Map<string, number>): string {
   if (run.equation) {
     // An inline (`m:oMath`) or display (`m:oMathPara`) equation (SPEC-056),
     // emitted directly inside the `w:p` with no drawing wrapper.
@@ -398,12 +425,12 @@ function runXml(run: Run, noteIds?: Map<string, number>, ctx?: InlineWriteContex
       return "";
     }
     const tag = run.note.kind === "footnote" ? "footnoteReference" : "endnoteReference";
-    return `<w:r>${runPropertiesXml(run.formatting, run.styleId)}<w:${tag} w:id="${id}"/></w:r>`;
+    return `<w:r>${runPropertiesXml(run.formatting, ctx.theme, run.styleId)}<w:${tag} w:id="${id}"/></w:r>`;
   }
   const deleted = run.changes?.delete;
   const inserted = run.changes?.insert;
   const formatChange = run.changes?.formatChange;
-  const rPr = runPropertiesXml(run.formatting, run.styleId, formatChange, ctx);
+  const rPr = runPropertiesXml(run.formatting, ctx.theme, run.styleId, formatChange, ctx);
   if (run.field) {
     // The cached run carries the canonical chip text (not the model's
     // one-character placeholder) for a merge chip, so a consumer that does
@@ -446,12 +473,12 @@ const TAB_LEADER_VALUES: Record<string, string> = {
 /** The pPr children a bare ParagraphFormatting produces — the shared tail
  * of a paragraph's own w:pPr and a style definition's (SPEC-019), in CT_PPr
  * sequence order: tabs, bidi, spacing, ind, jc. */
-function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
+function paragraphFormattingParts(formatting: ParagraphFormatting, theme: DocumentTheme): string[] {
   const parts: string[] = [];
 
   // Paragraph borders and shading (SPEC-074 AC-28) — first, per CT_PPrBase's
   // sequence (pBdr and shd precede tabs).
-  const pBdr = paragraphBordersXml(formatting.borders);
+  const pBdr = paragraphBordersXml(formatting.borders, theme);
   if (pBdr !== "") {
     parts.push(pBdr);
   }
@@ -460,10 +487,12 @@ function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   // painting nothing (SPEC-074 AC-17).
   if (formatting.shadingFill === NO_SHADING_FILL) {
     parts.push('<w:shd w:val="clear" w:color="auto" w:fill="auto"/>');
-  } else {
-    const shd = cssColorToOoxml(formatting.shadingFill);
+  } else if (formatting.shadingFill !== undefined) {
+    const shd = cssColorToOoxml(resolveColor(formatting.shadingFill, theme));
     if (shd !== undefined) {
-      parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shd}"/>`);
+      const shdThemeAttrs =
+        typeof formatting.shadingFill === "object" ? (themeAttrsXml(formatting.shadingFill, "themeFill") ?? "") : "";
+      parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shd}"${shdThemeAttrs}/>`);
     }
   }
 
@@ -575,7 +604,7 @@ function paragraphPropertiesXml(
     );
   }
 
-  parts.push(...paragraphFormattingParts(formatting));
+  parts.push(...paragraphFormattingParts(formatting, ctx?.theme ?? DEFAULT_THEME));
   if (paragraph.headingLevel !== undefined) {
     parts.push(`<w:outlineLvl w:val="${paragraph.headingLevel - 1}"/>`);
   }
@@ -603,7 +632,7 @@ function paragraphPropertiesXml(
   if (formatChange && ctx) {
     const id = changeNumericId(ctx, formatChange.changeId);
     const previousFormatting = formatChange.previous ?? {};
-    const previous = `<w:pPr>${paragraphFormattingParts(previousFormatting).join("")}</w:pPr>`;
+    const previous = `<w:pPr>${paragraphFormattingParts(previousFormatting, ctx.theme).join("")}</w:pPr>`;
     parts.push(`<w:pPrChange${trackedChangeAttrs(id, formatChange.author, formatChange.date)}>${previous}</w:pPrChange>`);
   }
 
@@ -713,6 +742,8 @@ function bookmarkIdsFor(model: DocumentModel): Map<string, number> {
 }
 
 interface InlineWriteContext {
+  /** The document's theme, for resolving colour/font references (SPEC-077). */
+  theme: DocumentTheme;
   hyperlinkPlan: HyperlinkWritePlan;
   bookmarkIds: Map<string, number>;
   /** Numeric footnotes.xml/endnotes.xml ids by model noteId (SPEC-031);
@@ -759,7 +790,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
   const hasBookmarks = (paragraph.bookmarks ?? []).length > 0;
   const hasComments = (paragraph.commentAnchors ?? []).length > 0;
   if (opaque.length === 0 && !hasLinks && !hasBookmarks && !hasComments) {
-    return paragraph.runs.map((run) => runXml(run, ctx.noteIds, ctx)).join("");
+    return paragraph.runs.map((run) => runXml(run, ctx, ctx.noteIds)).join("");
   }
   const { runs, bookmarksAtBoundary, commentStartsAtBoundary, commentEndsAtBoundary, boundaryFor } =
     inlineWriteLayout(paragraph);
@@ -824,7 +855,7 @@ function inlineContentXml(paragraph: Paragraph, includeOpaque: boolean, ctx: Inl
           : `<w:hyperlink w:anchor="${escapeXml(target.anchor ?? "")}">`;
       openTarget = target;
     }
-    xml += runXml(run, ctx.noteIds, ctx);
+    xml += runXml(run, ctx, ctx.noteIds);
   }
   closeHyperlink();
   return xml;
@@ -947,15 +978,15 @@ const GENERATED_TABLE_BORDERS =
   '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
   "</w:tblBorders>";
 
-function borderSideXml(tag: string, side: BorderSide): string {
-  return borderElementXml(tag, side);
+function borderSideXml(tag: string, side: BorderSide, theme: DocumentTheme): string {
+  return borderElementXml(tag, side, theme);
 }
 
 /** A paragraph's `w:pBdr` (SPEC-074 AC-28), in CT_PBdr's element order:
  * top, left, bottom, right, between. Each edge carries its own `@w:space` —
  * the border-to-text padding in whole points, the 4pt default when the
  * paragraph sets none (AC-9). */
-function paragraphBordersXml(borders: ParagraphBorders | undefined): string {
+function paragraphBordersXml(borders: ParagraphBorders | undefined, theme: DocumentTheme): string {
   if (!borders) {
     return "";
   }
@@ -968,11 +999,11 @@ function paragraphBordersXml(borders: ParagraphBorders | undefined): string {
   ] as Array<[string, BorderEdge]>) {
     const side = borders[edge];
     if (side) {
-      parts.push(borderElementXml(tag, side, paragraphPaddingPt(borders, edge)));
+      parts.push(borderElementXml(tag, side, theme, paragraphPaddingPt(borders, edge)));
     }
   }
   if (borders.between) {
-    parts.push(borderElementXml("between", borders.between));
+    parts.push(borderElementXml("between", borders.between, theme));
   }
   if (parts.length > 0) {
     return `<w:pBdr>${parts.join("")}</w:pBdr>`;
@@ -995,7 +1026,7 @@ const NIL_BORDER_EDGES = ["top", "left", "bottom", "right"] as const;
  * order: top, left, bottom, right. `@w:offsetFrom` is the reference edge
  * (AC-21) and `@w:display` which pages take it; each edge's `@w:space`
  * carries the offset (AC-19, AC-20). */
-function pageBordersXml(borders: PageBorders | undefined): string {
+function pageBordersXml(borders: PageBorders | undefined, theme: DocumentTheme): string {
   if (!borders) {
     return "";
   }
@@ -1009,7 +1040,7 @@ function pageBordersXml(borders: PageBorders | undefined): string {
   ] as Array<[string, "top" | "left" | "bottom" | "right"]>) {
     const side = borders[edge];
     if (side) {
-      parts.push(borderElementXml(tag, side, offsetPt));
+      parts.push(borderElementXml(tag, side, theme, offsetPt));
     }
   }
   if (parts.length === 0) {
@@ -1028,30 +1059,38 @@ function pageBordersXml(borders: PageBorders | undefined): string {
 /** A cell's `w:tcBorders` (SPEC-023 AC-10..12, AC-25): only the edges the
  * cell explicitly sets — an unset edge falls back to the table's own
  * `w:tblBorders` default, the normal OOXML precedence. */
-function cellBordersXml(borders: CellBorders | undefined): string {
+function cellBordersXml(borders: CellBorders | undefined, theme: DocumentTheme): string {
   if (!borders) {
     return "";
   }
   const parts: string[] = [];
   if (borders.top) {
-    parts.push(borderSideXml("top", borders.top));
+    parts.push(borderSideXml("top", borders.top, theme));
   }
   if (borders.bottom) {
-    parts.push(borderSideXml("bottom", borders.bottom));
+    parts.push(borderSideXml("bottom", borders.bottom, theme));
   }
   if (borders.left) {
-    parts.push(borderSideXml("start", borders.left));
+    parts.push(borderSideXml("start", borders.left, theme));
   }
   if (borders.right) {
-    parts.push(borderSideXml("end", borders.right));
+    parts.push(borderSideXml("end", borders.right, theme));
   }
   return parts.length > 0 ? `<w:tcBorders>${parts.join("")}</w:tcBorders>` : "";
 }
 
-/** A cell's `w:shd` fill (SPEC-023 AC-15, AC-26). */
-function cellShadingXml(fill: string | undefined): string {
-  const hex = cssColorToOoxml(fill);
-  return hex !== undefined ? `<w:shd w:val="clear" w:color="auto" w:fill="${hex}"/>` : "";
+/** A cell's `w:shd` fill (SPEC-023 AC-15, AC-26). A theme reference writes
+ * @w:themeFill beside the resolved literal (SPEC-077 AC-30). */
+function cellShadingXml(fill: ModelColor | undefined, theme: DocumentTheme): string {
+  if (fill === undefined) {
+    return "";
+  }
+  const hex = cssColorToOoxml(resolveColor(fill, theme));
+  if (hex === undefined) {
+    return "";
+  }
+  const fillThemeAttrs = typeof fill === "object" ? (themeAttrsXml(fill, "themeFill") ?? "") : "";
+  return `<w:shd w:val="clear" w:color="auto" w:fill="${hex}"${fillThemeAttrs}/>`;
 }
 
 /** A cell's `w:tcMar` (SPEC-023 AC-16): the model holds one uniform padding,
@@ -1112,11 +1151,11 @@ function cellPropertyChangeXml(cell: TableCell, ctx: InlineWriteContext): string
   if (prev.colSpan !== undefined && prev.colSpan > 1) {
     parts.push(`<w:gridSpan w:val="${prev.colSpan}"/>`);
   }
-  const borders = cellBordersXml(prev.borders);
+  const borders = cellBordersXml(prev.borders, ctx.theme);
   if (borders) {
     parts.push(borders);
   }
-  const shading = cellShadingXml(prev.shadingFill);
+  const shading = cellShadingXml(prev.shadingFill, ctx.theme);
   if (shading) {
     parts.push(shading);
   }
@@ -1153,11 +1192,11 @@ function generatedTcPrXml(
   if (vMergeRestart) {
     parts.push('<w:vMerge w:val="restart"/>');
   }
-  const borders = cellBordersXml(cell.borders);
+  const borders = cellBordersXml(cell.borders, ctx?.theme ?? DEFAULT_THEME);
   if (borders) {
     parts.push(borders);
   }
-  const shading = cellShadingXml(cell.shadingFill);
+  const shading = cellShadingXml(cell.shadingFill, ctx?.theme ?? DEFAULT_THEME);
   if (shading) {
     parts.push(shading);
   }
@@ -1655,8 +1694,9 @@ function headerFooterPartXml(
   rootTag: "hdr" | "ftr",
   includeOpaque: boolean,
   plan: HeaderFooterPartPlan,
+  theme: DocumentTheme,
 ): string {
-  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map(), changeIds: new Map() };
+  const inlineCtx: InlineWriteContext = { theme, hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map(), changeIds: new Map() };
   let docPrId = 1;
   const body = plan.blocks
     .map((block) => {
@@ -1794,11 +1834,11 @@ export function planNotesWrite(
  * per-block serialisation. The note's first paragraph opens with a fresh
  * superscript `w:footnoteRef`/`w:endnoteRef` marker run — Word's own shape,
  * and the element the reader drops on open, so the round trip is stable. */
-function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<string, number>): string {
+function notesPartXml(plan: NotesPartPlan, includeOpaque: boolean, noteIds: Map<string, number>, theme: DocumentTheme): string {
   const tag = plan.kind === "footnote" ? "footnote" : "endnote";
   const rootTag = plan.kind === "footnote" ? "footnotes" : "endnotes";
   const refTag = plan.kind === "footnote" ? "footnoteRef" : "endnoteRef";
-  const inlineCtx: InlineWriteContext = { hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map(), changeIds: new Map() };
+  const inlineCtx: InlineWriteContext = { theme, hyperlinkPlan: plan.hyperlinkPlan, bookmarkIds: new Map(), changeIds: new Map() };
   const markerRun = `<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:${refTag}/></w:r>`;
   const noteXml = plan.notes
     .map((note) => {
@@ -2064,6 +2104,7 @@ function sectionPropertiesXml(
   columns?: SectionColumns,
   notesPr = "",
   pageBorders?: PageBorders,
+  theme: DocumentTheme = DEFAULT_THEME,
 ): string {
   const width = cmToTwips(pageSize.widthCm);
   const height = cmToTwips(pageSize.heightCm);
@@ -2098,7 +2139,7 @@ function sectionPropertiesXml(
     ` w:header="${HEADER_FOOTER_TWIPS}" w:footer="${HEADER_FOOTER_TWIPS}" w:gutter="0"/>` +
     // CT_SectPr sequence: pgBorders follows pgMar (and paperSrc) and
     // precedes lnNumType/pgNumType.
-    pageBordersXml(pageBorders) +
+    pageBordersXml(pageBorders, theme) +
     pgNumType +
     cols +
     titlePg +
@@ -2171,6 +2212,7 @@ function* documentBlockXml(
 ): Generator<string> {
   const includeOpaque = model.format === "docx";
   const inlineCtx: InlineWriteContext = {
+    theme: documentThemeOf(model),
     hyperlinkPlan,
     bookmarkIds: bookmarkIdsFor(model),
     noteIds: notesPlan.noteIds,
@@ -2355,14 +2397,22 @@ function documentXmlFromBlocks(
  * loss when the sections disagree (AC-32). Emitted as `w:document`'s first
  * child, where the schema puts it. */
 function documentBackgroundXml(model: DocumentModel): string {
-  const hex = cssColorToOoxml(firstPageBackground(model));
-  return hex !== undefined ? `<w:background w:color="${hex}"/>` : "";
+  const background = firstPageBackground(model);
+  if (background === undefined) {
+    return "";
+  }
+  const hex = cssColorToOoxml(resolveColor(background, documentThemeOf(model)));
+  if (hex === undefined) {
+    return "";
+  }
+  const bgThemeAttrs = typeof background === "object" ? (themeAttrsXml(background, "themeColor") ?? "") : "";
+  return `<w:background w:color="${hex}"${bgThemeAttrs}/>`;
 }
 
 /** The page background a `.docx` save writes: the first section that sets
  * one. Shared with the drop-record walk, so the report and the file always
  * agree on which value survived. */
-export function firstPageBackground(model: DocumentModel): string | undefined {
+export function firstPageBackground(model: DocumentModel): ModelColor | undefined {
   return model.sections.find((section) => section.pageBackground !== undefined)?.pageBackground;
 }
 
@@ -2479,7 +2529,7 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
  * carries its merged result as direct formatting: the reader resolves the
  * style first and merges the (complete) direct formatting over it, which
  * reproduces the identical model. */
-function stylePropertiesXml(definition: NamedStyle): string {
+function stylePropertiesXml(definition: NamedStyle, theme: DocumentTheme): string {
   if (definition.type === "table") {
     // Table styles (SPEC-042): the resolved border/shading set bakes onto
     // every cell at apply time (commands.ts's applyTableStyle) — this
@@ -2487,19 +2537,19 @@ function stylePropertiesXml(definition: NamedStyle): string {
     // Word open still sees a valid table style), never re-parsed by this
     // app's own reader (table styles always come back `unmodeled`, see
     // docx/styles.ts — banding regions are out of scope, SPEC-042).
-    const tcPrParts = [cellBordersXml(definition.cellBorders), cellShadingXml(definition.cellShadingFill)].filter(
+    const tcPrParts = [cellBordersXml(definition.cellBorders, theme), cellShadingXml(definition.cellShadingFill, theme)].filter(
       (part) => part.length > 0,
     );
     const tcPr = tcPrParts.length > 0 ? `<w:tcPr>${tcPrParts.join("")}</w:tcPr>` : "";
-    return runPropertiesXml(definition.runFormatting ?? {}, undefined) + tcPr;
+    return runPropertiesXml(definition.runFormatting ?? {}, theme, undefined) + tcPr;
   }
-  const pPrParts = paragraphFormattingParts(definition.paragraphFormatting ?? {});
+  const pPrParts = paragraphFormattingParts(definition.paragraphFormatting ?? {}, theme);
   if (definition.headingLevel !== undefined) {
     pPrParts.push(`<w:outlineLvl w:val="${definition.headingLevel - 1}"/>`);
   }
   const pPr =
     definition.type !== "character" && pPrParts.length > 0 ? `<w:pPr>${pPrParts.join("")}</w:pPr>` : "";
-  return pPr + runPropertiesXml(definition.runFormatting ?? {}, undefined);
+  return pPr + runPropertiesXml(definition.runFormatting ?? {}, theme, undefined);
 }
 
 /** The `w:type` a catalogue entry declares (SPEC-042): "list" has no OOXML
@@ -2546,7 +2596,7 @@ function unmodeledStyleXml(definition: NamedStyle): string {
 /** One w:style element for a defined style (SPEC-019 paragraph styles;
  * SPEC-042 widens this to character/list/table styles and to styles the
  * editor cannot fully model, which are re-emitted verbatim instead). */
-function styleDefinitionXml(definition: NamedStyle, isDefault: boolean): string {
+function styleDefinitionXml(definition: NamedStyle, isDefault: boolean, theme: DocumentTheme): string {
   if (definition.unmodeled) {
     return unmodeledStyleXml(definition);
   }
@@ -2561,7 +2611,7 @@ function styleDefinitionXml(definition: NamedStyle, isDefault: boolean): string 
     `<w:name w:val="${escapeXml(definition.name ?? definition.id)}"/>` +
     basedOn +
     next +
-    stylePropertiesXml(definition) +
+    stylePropertiesXml(definition, theme) +
     "</w:style>"
   );
 }
@@ -2573,7 +2623,13 @@ function styleDefinitionXml(definition: NamedStyle, isDefault: boolean): string 
  * built-in set for ids applied in the editor), name-only otherwise. */
 export function buildStylesXml(model: DocumentModel): string {
   const { fontFamily, fontSizePt, language } = model.defaultStyles;
-  const family = escapeXml(fontFamily);
+  const theme = documentThemeOf(model);
+  const family = escapeXml(resolveFont(fontFamily, theme));
+  // A theme font reference in the document default writes its theme
+  // attributes beside the resolved family (SPEC-077 AC-6/AC-28).
+  const defaultFontThemeAttrs = isThemeFont(fontFamily)
+    ? ` w:asciiTheme="${fontFamily.theme}HAnsi" w:hAnsiTheme="${fontFamily.theme}HAnsi"`
+    : "";
 
   // Definitions come from the model's catalogue alone — never the built-in
   // set: a style applied in the editor is materialized into the catalogue
@@ -2605,12 +2661,12 @@ export function buildStylesXml(model: DocumentModel): string {
   let styles =
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">' +
     '<w:name w:val="Normal"/>' +
-    (normal ? stylePropertiesXml(normal) : "") +
+    (normal ? stylePropertiesXml(normal, theme) : "") +
     "</w:style>";
   for (const id of declared) {
     const definition = catalogueById.get(id);
     if (definition) {
-      styles += styleDefinitionXml(definition, false);
+      styles += styleDefinitionXml(definition, false, theme);
     } else {
       styles +=
         `<w:style w:type="paragraph" w:styleId="${escapeXml(id)}">` +
@@ -2622,7 +2678,7 @@ export function buildStylesXml(model: DocumentModel): string {
   return (
     `${XML_DECLARATION}<w:styles xmlns:w="${WORD_NAMESPACE}">` +
     "<w:docDefaults><w:rPrDefault><w:rPr>" +
-    `<w:rFonts w:ascii="${family}" w:hAnsi="${family}"/>` +
+    `<w:rFonts w:ascii="${family}" w:hAnsi="${family}"${defaultFontThemeAttrs}/>` +
     `<w:sz w:val="${ptToHalfPoints(fontSizePt)}"/>` +
     (language !== undefined ? `<w:lang w:val="${escapeXml(language)}"/>` : "") +
     "</w:rPr></w:rPrDefault></w:docDefaults>" +
@@ -2667,7 +2723,7 @@ export function patchStylesXml(model: DocumentModel, originalXml: string): strin
   const root = doc.documentElement;
   const importStyleElement = (definition: NamedStyle): Element => {
     const wrapper = parseXml(
-      `<w:styles xmlns:w="${WORD_NAMESPACE}">${styleDefinitionXml(definition, false)}</w:styles>`,
+      `<w:styles xmlns:w="${WORD_NAMESPACE}">${styleDefinitionXml(definition, false, documentThemeOf(model))}</w:styles>`,
     );
     return doc.importNode(wrapper.documentElement.firstElementChild!, true) as Element;
   };
@@ -3088,7 +3144,7 @@ export async function writeDocx(
       const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";
       entries.push({
         name: partPlan.partName,
-        data: encoder.encode(headerFooterPartXml(rootTag, model.format === "docx", partPlan)),
+        data: encoder.encode(headerFooterPartXml(rootTag, model.format === "docx", partPlan, documentThemeOf(model))),
       });
       entries.push(...partPlan.mediaPlan.zipEntries);
       const relsXml = headerFooterPartRelsXml(partPlan);
@@ -3099,7 +3155,7 @@ export async function writeDocx(
     for (const notesPart of notesPlan.parts) {
       entries.push({
         name: notesPart.partName,
-        data: encoder.encode(notesPartXml(notesPart, model.format === "docx", notesPlan.noteIds)),
+        data: encoder.encode(notesPartXml(notesPart, model.format === "docx", notesPlan.noteIds, documentThemeOf(model))),
       });
       const relsXml = notesPartRelsXml(notesPart);
       if (relsXml !== null) {
@@ -3438,7 +3494,7 @@ export async function writeDocx(
     const rootTag = partPlan.partName.includes("/header") ? "hdr" : "ftr";
     entries.push({
       name: partPlan.partName,
-      data: encoder.encode(headerFooterPartXml(rootTag, model.format === "docx", partPlan)),
+      data: encoder.encode(headerFooterPartXml(rootTag, model.format === "docx", partPlan, documentThemeOf(model))),
     });
     entries.push(...partPlan.mediaPlan.zipEntries);
     const relsXml = headerFooterPartRelsXml(partPlan);
@@ -3449,7 +3505,7 @@ export async function writeDocx(
   for (const notesPart of notesPlan.parts) {
     entries.push({
       name: notesPart.partName,
-      data: encoder.encode(notesPartXml(notesPart, model.format === "docx", notesPlan.noteIds)),
+      data: encoder.encode(notesPartXml(notesPart, model.format === "docx", notesPlan.noteIds, documentThemeOf(model))),
     });
     const relsXml = notesPartRelsXml(notesPart);
     if (relsXml !== null) {
