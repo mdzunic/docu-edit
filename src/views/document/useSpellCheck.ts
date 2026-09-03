@@ -13,6 +13,8 @@
 // summary rather than a partial/half-built attempt at covering them).
 import { shallowRef, watch } from "vue";
 import type { DocumentModel, Paragraph } from "../../lib/documentModel";
+import { documentThemeOf } from "../../lib/documentModel";
+import { resolveFont } from "../../lib/core/theme";
 import type { EditorContext } from "./context";
 import { effectiveLanguage, isDictionaryAvailable, normalizeLanguageTag } from "../../lib/core/language";
 import { loadDictionary } from "../../lib/spellcheck/dictionaries";
@@ -229,7 +231,7 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     for (const [runIndex, run] of paragraph.runs.entries()) {
       runStarts[runIndex] = offset;
       offset += run.text.length;
-      if (!run.text || run.formatting.noProof || run.changes?.delete || isCodeStyledFont(run.formatting.fontFamily)) {
+      if (!run.text || run.formatting.noProof || run.changes?.delete || isCodeStyledFont(run.formatting.fontFamily === undefined ? undefined : resolveFont(run.formatting.fontFamily, documentThemeOf(model)))) {
         continue;
       }
       const lang = effectiveLanguage(run.formatting.lang, model.defaultStyles.language);

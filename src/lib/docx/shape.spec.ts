@@ -1,6 +1,7 @@
 // SPEC-051: the DrawingML shape reader/writer. Mirrors docx/drawing.spec.ts's
 // own fixture conventions (a `drawingElement` wrapper supplying the ambient
 // `xmlns:w` a real word/document.xml would already declare).
+import { DEFAULT_THEME } from "../core/theme";
 import { describe, it, expect } from "vitest";
 import { parseShapeDrawing, shapeDrawingXml, type ShapeTextContext, type ShapeTextWriteContext } from "./shape";
 import { parseXml } from "../core/xml";
@@ -40,6 +41,7 @@ const readCtx: ShapeTextContext = {
 
 const writeCtx: ShapeTextWriteContext = {
   paragraphXml: (paragraph: Paragraph): string => {
+      theme: DEFAULT_THEME,
     const text = paragraph.runs.map((r) => r.text).join("");
     return `<w:p><w:r><w:t xml:space="preserve">${escapeXmlText(text)}</w:t></w:r></w:p>`;
   },

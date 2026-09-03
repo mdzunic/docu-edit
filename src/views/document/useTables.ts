@@ -519,8 +519,10 @@ export function useTables(deps: TablesDeps) {
     tablePropertiesInitial.value = {
       borderStyle: firstBorder?.style ?? "single",
       borderWidthPt: firstBorder?.widthPt ?? 1,
-      borderColor: firstBorder && firstBorder.color !== "auto" ? firstBorder.color : "#000000",
-      shadingFill: cell?.shadingFill ?? "",
+      // SPEC-077: the dialog edits a literal draft; a theme reference resolves for display.
+      borderColor:
+        firstBorder && firstBorder.color !== "auto" ? resolveColor(firstBorder.color, documentThemeOf(model)) : "#000000",
+      shadingFill: cell?.shadingFill === undefined ? "" : resolveColor(cell.shadingFill, documentThemeOf(model)),
       paddingCm: cell?.paddingCm ?? 0.19,
       verticalAlign: cell?.verticalAlign ?? "top",
       alignment: table.alignment ?? "left",

@@ -58,7 +58,9 @@ export function useBordersShading(deps: BordersShadingDeps) {
     const root = contentRoot.value as HTMLElement | null;
     const paragraph = firstTouchedParagraph(model, deps.paragraphSelection(root));
     const formatting = paragraph ? paintedParagraphFormatting(model, paragraph) : undefined;
-    return { borders: formatting?.borders, shadingFill: paintedShadingFill(formatting) };
+    // SPEC-077: the dialog edits a literal draft; a theme reference resolves for display.
+    const fill = paintedShadingFill(formatting);
+    return { borders: formatting?.borders, shadingFill: fill === undefined ? undefined : resolveColor(fill, documentThemeOf(model)) };
   }
 
   function openBordersDialog(): void {
