@@ -120,18 +120,25 @@ function onOutlineColorInput(event = new Event("input")) {
   }
 }
 
+/** The outline colour a width/dash edit re-emits: the model's own value from
+ * `styling` (a theme reference stays a reference — SPEC-077 AC-18), not the
+ * resolved hex the colour input displays. */
+function storedOutlineColor() {
+  return (props.styling.outline && props.styling.outline.color) || props.outlineColor || "#000000";
+}
+
 function onOutlineWidthInput(event = new Event("input")) {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
     const widthPt = Number(target.value) || 0;
-    emit("outline", { color: props.outlineColor || "#000000", widthPt, dash: props.outlineDash });
+    emit("outline", { color: storedOutlineColor(), widthPt, dash: props.outlineDash });
   }
 }
 
 function onOutlineDashChange(event = new Event("change")) {
   const target = event.target;
   if (target instanceof HTMLSelectElement) {
-    emit("outline", { color: props.outlineColor || "#000000", widthPt: props.outlineWidthPt, dash: target.value });
+    emit("outline", { color: storedOutlineColor(), widthPt: props.outlineWidthPt, dash: target.value });
   }
 }
 

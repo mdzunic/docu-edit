@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START, MOD } from "./keys";
+import { LINE_END, LINE_START, MOD } from "./keys";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUILT_IN_THEMES, resolveColor } from "../src/lib/core/theme";
@@ -131,6 +131,13 @@ test("the AC-54 journey: gallery, one-apply recolour, an accent swatch that surv
   await expect(cell).toHaveCSS("background-color", rgb(resolveColor(TABLE_SHADING_REF, FIXTURE_THEME)));
   expectPixel(await shapeCentrePixel(page), FIXTURE_THEME.colors.accent4);
 
+  // AC-7: selecting the theme-filled shape shows the RESOLVED hex in the
+  // quick toolbar's fill input — not a stringified object rendered black.
+  await content(page).locator('[data-testid^="drawing-"]').first().click();
+  await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+  await expect(page.getByTestId("shape-fill-color")).toHaveValue(FIXTURE_THEME.colors.accent4);
+  await textOf(page, BODY).click();
+
   // Format → Theme…: the document's CURRENT theme leads the gallery, marked.
   await page.getByTestId("menu-title-format").click();
   await page.getByTestId("format-menu-theme").click();
@@ -180,4 +187,29 @@ test("the AC-54 journey: gallery, one-apply recolour, an accent swatch that surv
   await page.keyboard.press(`${MOD}+y`);
   await expect(textOf(page, "Body")).toHaveCSS("color", rgb(office.colors.accent1));
   await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(office.colors.accent2));
+});
+
+test("a theme page background never freezes the live word count (AC-22)", async ({ page }) => {
+  test.setTimeout(60_000);
+  await openFixture(page, "word-theme.docx");
+
+  // Store a ThemeColorRef as the section's page background through Page
+  // setup → Borders — the object-valued field the word-count projection must
+  // keep away from postMessage's structured clone.
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("page-setup-button").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeVisible();
+  await page.getByTestId("page-setup-tab-borders").click();
+  await page.getByTestId("page-setup-dialog").getByLabel("Accent 2", { exact: true }).click();
+  await page.getByTestId("page-setup-apply").click();
+  await expect(page.getByTestId("page-setup-dialog")).toBeHidden();
+
+  // Typing must still advance the live count (it froze with DataCloneError
+  // when the reference reached the worker as a reactive Proxy).
+  const count = page.getByTestId("word-count-button");
+  const before = (await count.textContent()) ?? "";
+  await textOf(page, BODY).click();
+  await page.keyboard.press(LINE_END);
+  await page.keyboard.type(" zeta eta theta");
+  await expect(count).not.toHaveText(before, { timeout: 10_000 });
 });

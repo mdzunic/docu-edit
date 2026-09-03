@@ -3573,7 +3573,7 @@ function handleMenuCommand(id = "") {
             />
             <ConnectorToolbar
               v-if="connectors.selectedConnector.value"
-              :connector="connectors.selectedConnector.value"
+              v-bind="connectors.connectorToolbarProps.value"
               :style="connectors.connectorToolbarStyle.value"
               @set-kind="connectors.setKind"
               @set-outline="connectors.setOutline"

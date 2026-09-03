@@ -13,6 +13,7 @@ import { computed, ref, shallowRef, type Ref } from "vue";
 import type { EditorContext } from "./context";
 import {
   asConnectorKind,
+  documentThemeOf,
   isChart,
   isConnector,
   isImage,
@@ -21,6 +22,7 @@ import {
   type ConnectorKind,
   type DocumentModel,
 } from "../../lib/documentModel";
+import { resolveColor } from "../../lib/core/theme";
 import type { ArrowheadKind, ArrowheadSize, ShapeOutline } from "../../lib/core/shapes";
 import {
   clampSite,
@@ -554,6 +556,22 @@ export function useConnectors(deps: ConnectorsDeps) {
     return model && selected.value ? connectorAt(model, selected.value) : null;
   });
 
+  /** ConnectorToolbar's display props: the model connector plus its line
+   * colour resolved to a hex for the native colour input (SPEC-077 AC-7) —
+   * the stored value, reference or literal, is what setOutline's spread
+   * re-emits, so a width/dash edit never flattens a theme reference. */
+  const connectorToolbarProps = computed((): Record<string, unknown> => {
+    const connector = selectedConnector.value;
+    if (!connector) {
+      return {}; // never rendered: DocumentView's v-if guards on selectedConnector
+    }
+    const color = connector.outline?.color;
+    return {
+      connector,
+      lineColorHex: color ? resolveColor(color, documentThemeOf(doc.value)) : "",
+    };
+  });
+
   function selectConnector(location: ConnectorLocation) {
     selected.value = location;
     remeasureConnectors();
@@ -816,6 +834,7 @@ export function useConnectors(deps: ConnectorsDeps) {
     // selection + handles
     selected,
     selectedConnector,
+    connectorToolbarProps,
     selectConnector,
     clearConnectorSelection,
     startEndpointDrag,
