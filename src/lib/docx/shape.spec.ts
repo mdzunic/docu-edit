@@ -40,8 +40,8 @@ const readCtx: ShapeTextContext = {
 };
 
 const writeCtx: ShapeTextWriteContext = {
+  theme: DEFAULT_THEME,
   paragraphXml: (paragraph: Paragraph): string => {
-      theme: DEFAULT_THEME,
     const text = paragraph.runs.map((r) => r.text).join("");
     return `<w:p><w:r><w:t xml:space="preserve">${escapeXmlText(text)}</w:t></w:r></w:p>`;
   },

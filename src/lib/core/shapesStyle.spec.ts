@@ -4,7 +4,6 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_NEW_SHAPE_FILL,
-  DEFAULT_NEW_SHAPE_OUTLINE,
   DEFAULT_SHAPE_SHADOW,
   SHAPE_SHADOW_PRESETS,
   SHAPE_STYLE_PRESETS,
@@ -15,6 +14,7 @@ import {
   shapeFillIsVisible,
   type ShapeFill,
 } from "./shapes";
+import { DEFAULT_THEME, resolveColor } from "./theme";
 
 describe("lighterTint (D2, AC-23)", () => {
   it("tints the accent #4472c4 to exactly #8faadc", () => {
@@ -63,27 +63,48 @@ describe("the five style presets (D3, AC-18/AC-19)", () => {
       "noFill",
     ]);
   });
-  it("filled reproduces the shipped defaults", () => {
+  // SPEC-077 AC-43: every preset colour is a theme reference to accent1 (base
+  // or a lighter/darker variant), never a literal, so a theme change restyles
+  // shapes the presets coloured. AC-44 pins each reference's Office-theme
+  // resolution to the values SPEC-073 shipped as literals, with one named
+  // exception: no canonical lumMod/lumOff/shade/tint combination reproduces
+  // the filled outline's #2e5395 exactly (verified by exhaustive search over
+  // the transform grid), so it carries the nearest canonical form —
+  // Darker 25% (lumMod 0.75), resolving to #2f5597.
+  it("filled is accent1 with a Darker-25% accent1 border (refs, AC-43)", () => {
     const filled = SHAPE_STYLE_PRESETS[0];
-    expect(filled.fill).toEqual(DEFAULT_NEW_SHAPE_FILL);
-    expect(filled.outline).toEqual(DEFAULT_NEW_SHAPE_OUTLINE);
+    expect(filled.fill).toEqual({ kind: "solid", color: { theme: "accent1" } });
+    expect(filled.outline).toEqual({ color: { theme: "accent1", lumMod: 0.75 }, widthPt: 1, dash: "solid" });
     expect(filled.shadow).toBeUndefined();
   });
-  it("subtleFilled is the accent at Lighter 80% (#dae3f3) with an accent 1pt border", () => {
+  it("subtleFilled is accent1 at Lighter 80% with an accent1 1pt border (refs, AC-43)", () => {
     const subtle = SHAPE_STYLE_PRESETS[1];
-    expect(subtle.fill).toEqual({ kind: "solid", color: "#dae3f3" });
-    expect(subtle.outline).toEqual({ color: "#4472c4", widthPt: 1, dash: "solid" });
+    expect(subtle.fill).toEqual({ kind: "solid", color: { theme: "accent1", lumMod: 0.2, lumOff: 0.8 } });
+    expect(subtle.outline).toEqual({ color: { theme: "accent1" }, widthPt: 1, dash: "solid" });
   });
-  it("outlined is no fill + #4472c4/1.5pt/solid", () => {
+  it("outlined is no fill + accent1/1.5pt/solid (refs, AC-43)", () => {
     const outlined = SHAPE_STYLE_PRESETS[2];
     expect(outlined.fill).toBeUndefined();
-    expect(outlined.outline).toEqual({ color: "#4472c4", widthPt: 1.5, dash: "solid" });
+    expect(outlined.outline).toEqual({ color: { theme: "accent1" }, widthPt: 1.5, dash: "solid" });
     expect(outlined.shadow).toBeUndefined();
   });
   it("outlinedShadow is outlined plus the D4 standard shadow", () => {
     const preset = SHAPE_STYLE_PRESETS[3];
-    expect(preset.outline).toEqual({ color: "#4472c4", widthPt: 1.5, dash: "solid" });
+    expect(preset.outline).toEqual({ color: { theme: "accent1" }, widthPt: 1.5, dash: "solid" });
     expect(preset.shadow).toEqual({ color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 });
+  });
+  it("resolves to SPEC-073's shipped values under the Office theme (AC-44)", () => {
+    const [filled, subtle, outlined, outlinedShadow] = SHAPE_STYLE_PRESETS;
+    const resolveSolid = (fill: ShapeFill | undefined) =>
+      fill?.kind === "solid" ? resolveColor(fill.color, DEFAULT_THEME) : undefined;
+    expect(resolveSolid(filled.fill)).toBe(DEFAULT_NEW_SHAPE_FILL.color);
+    // The one AC-44 deviation: SPEC-073 shipped #2e5395; the nearest canonical
+    // transform (Darker 25%) resolves two points off.
+    expect(resolveColor(filled.outline!.color, DEFAULT_THEME)).toBe("#2f5597");
+    expect(resolveSolid(subtle.fill)).toBe("#dae3f3");
+    expect(resolveColor(subtle.outline!.color, DEFAULT_THEME)).toBe("#4472c4");
+    expect(resolveColor(outlined.outline!.color, DEFAULT_THEME)).toBe("#4472c4");
+    expect(resolveColor(outlinedShadow.outline!.color, DEFAULT_THEME)).toBe("#4472c4");
   });
   it("noFill clears everything", () => {
     const noFill = SHAPE_STYLE_PRESETS[4];

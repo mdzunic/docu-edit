@@ -222,9 +222,11 @@ describe("chartDataFromTableCells (AC-21, AC-22)", () => {
     ];
     const result = chartDataFromTableCells(cells);
     expect(result.categories).toEqual(["Q1", "Q2"]);
+    // SPEC-077 AC-46: a new chart's series are seeded with theme accent
+    // references, not literals, so a theme change recolours the chart.
     expect(result.series).toEqual([
-      { name: "Revenue", values: [10, 20], color: expect.any(String) },
-      { name: "Cost", values: [5, 8], color: expect.any(String) },
+      { name: "Revenue", values: [10, 20], color: { theme: "accent1" } },
+      { name: "Cost", values: [5, 8], color: { theme: "accent2" } },
     ]);
     expect(result.unparsable).toEqual([]);
   });

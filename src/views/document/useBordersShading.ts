@@ -9,7 +9,8 @@
 import { ref } from "vue";
 import { applyParagraphBorders, type ModelSelection } from "../../lib/commands";
 import { firstTouchedParagraph } from "../../lib/commands.paragraph";
-import type { ParagraphBorders } from "../../lib/documentModel";
+import { documentThemeOf, type ParagraphBorders } from "../../lib/documentModel";
+import { resolveColor } from "../../lib/core/theme";
 import { paintedShadingFill } from "../../lib/paragraphBorders";
 import { paintedParagraphFormatting } from "../../lib/styles";
 import type { EditorContext } from "./context";

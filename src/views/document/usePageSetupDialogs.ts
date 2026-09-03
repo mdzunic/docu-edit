@@ -127,7 +127,7 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
         geometry.selection,
         {
           pageBorders: payload.pageBorders ?? null,
-          pageBackground: payload.pageBackground == null ? null : resolveColor(payload.pageBackground, documentThemeOf(geometry.model)),
+          pageBackground: payload.pageBackground ?? null,
         },
         scope,
       ),

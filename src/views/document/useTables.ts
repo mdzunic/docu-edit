@@ -41,6 +41,8 @@ import {
 } from "../../lib/tableResize";
 import { previewColumnWidths, previewRowHeight, tableRowElement } from "../../lib/core/tables";
 import { CM_PER_PX } from "../../lib/core/units";
+import { resolveColor } from "../../lib/core/theme";
+import { documentThemeOf } from "../../lib/documentModel";
 import { caretSelection, noCommandResult } from "../../lib/commands";
 import { withHeaderFooterModel } from "../../lib/commands";
 import {
