@@ -608,6 +608,62 @@ export function asTabStopAlignment(value: string): TabStopAlignment {
  * it was. */
 export type StyleType = "paragraph" | "character" | "list" | "table";
 
+/** One region's conditional formatting inside a table style (SPEC-076): what
+ * a banded row, a banded column or one of the four edge regions overrides on
+ * the cells it covers. Deliberately just shading, weight and borders —
+ * `w:tblStylePr` can carry far more, and a style whose regions need more than
+ * this stays `unmodeled` and round-trips verbatim (AC-71). */
+export interface TableConditionalFormat {
+  /** Background as a CSS-ready "#rrggbb". */
+  shading?: string;
+  bold?: boolean;
+  borders?: CellBorders;
+}
+
+/** A table style's conditional formatting (SPEC-076) — the model of .docx's
+ * `w:tblStylePr` regions plus `w:tblStyleRowBandSize`/`w:tblStyleColBandSize`,
+ * and of ODF's `table:table-template` children. Every region is
+ * independently settable and independently absent. Which regions a given
+ * table actually uses is the table's own `look`, not this. */
+export interface TableStyleBanding {
+  /** Shading applied to alternate row bands; `size` is how many rows one
+   * band spans (1 = every other row). */
+  bandedRows?: { size: number; shading: string };
+  bandedColumns?: { size: number; shading: string };
+  firstRow?: TableConditionalFormat;
+  lastRow?: TableConditionalFormat;
+  firstColumn?: TableConditionalFormat;
+  lastColumn?: TableConditionalFormat;
+}
+
+/** Which parts of its style's banding a table uses (SPEC-076) — the direct
+ * model of `w:tblLook`, and of ODF's `table:use-*-styles` attributes. It is a
+ * separate object from the style on purpose: the style says what a banded row
+ * looks like, the table says whether to use it. Absent, or present with every
+ * flag false, applies no banding at all (AC-23). */
+export interface TableLook {
+  firstRow?: boolean;
+  lastRow?: boolean;
+  firstColumn?: boolean;
+  lastColumn?: boolean;
+  bandedRows?: boolean;
+  bandedColumns?: boolean;
+}
+
+/** Whether a look enables at least one region (AC-23's "present with every
+ * flag false applies no banding"). */
+export function tableLookIsEmpty(look: TableLook | undefined): boolean {
+  return (
+    !look ||
+    (!look.firstRow &&
+      !look.lastRow &&
+      !look.firstColumn &&
+      !look.lastColumn &&
+      !look.bandedRows &&
+      !look.bandedColumns)
+  );
+}
+
 /** One style of the document's style catalogue (SPEC-019 paragraph styles;
  * SPEC-042 widens the catalogue to character/list/table styles too): its
  * *own* (non-inherited) formatting plus the parent link resolution follows
@@ -664,6 +720,12 @@ export interface NamedStyle {
   /** Table-type styles only (SPEC-042): default cell background a table
    * using this style bakes onto cells that carry no shading of their own. */
   cellShadingFill?: string;
+  /** Table-type styles only (SPEC-076): the style's conditional formatting —
+   * row/column banding and the four edge regions. Resolved at render time by
+   * lib/tableStyles.ts against the table's own `look`; never baked onto
+   * cells, which is what makes toggling a band off restore the cell's own
+   * shading by construction (AC-26). */
+  banding?: TableStyleBanding;
   /** True for a style read from a source document the editor cannot fully
    * model (SPEC-042 AC-15..18) — a real table style with banding regions, a
    * `w:type="numbering"` entry, or any style carrying structure the reader
@@ -1392,6 +1454,9 @@ export interface Table {
    * onto the table's cells and records the reference here for in-use
    * tracking and re-bake on Modify. */
   styleId?: string;
+  /** Which of the style's banding regions this table uses (SPEC-076) —
+   * `w:tblLook` / ODF's `table:use-*-styles`. Absent applies no banding. */
+  look?: TableLook;
   /** Per-column `table:style-name`s of the source .odt table's
    * `table:table-column` elements; entries may be undefined for columns
    * inserted in the editor (the writer generates a style for those). */
