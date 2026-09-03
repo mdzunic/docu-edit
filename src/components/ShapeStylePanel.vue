@@ -11,6 +11,7 @@ import {
 } from "../lib/core/shapes";
 import { resolveColor } from "../lib/core/theme";
 import { asDocumentTheme } from "../lib/documentModel";
+import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 
 // The full shape styling picker (SPEC-073 AC-16): style presets, the fill
 // kind picker with its gradient editor and transparency slider, the widened
@@ -153,6 +154,18 @@ function onSolidColor(event = new Event("input")) {
       alpha === undefined ? { kind: "solid", color: target.value } : { kind: "solid", color: target.value, alpha },
     );
   }
+}
+
+/** A theme swatch for the solid fill (SPEC-077 AC-22): the model stores the
+ * ThemeColorRef itself (alpha preserved, like onSolidColor); the colour
+ * input keeps showing the resolved hex via solidColorHex. */
+function onFillThemeSwatch(reference = Object()) {
+  const value = fill.value;
+  const alpha = value && value.kind === "solid" ? value.alpha : undefined;
+  emit(
+    "fill",
+    alpha === undefined ? { kind: "solid", color: reference } : { kind: "solid", color: reference, alpha },
+  );
 }
 
 // --- gradient editor (AC-16) ------------------------------------------------
@@ -314,11 +327,23 @@ function emitOutline(patch = {}) {
   emit("outline", { ...baseOutline(), ...patch });
 }
 
+// SPEC-077: the outline colour input needs a concrete hex — a theme
+// reference resolves for display only; applying keeps the model value.
+const outlineColorHex = computed(() =>
+  resolveColor(outline.value ? outline.value.color : "#2e5395", asDocumentTheme(props.theme)),
+);
+
 function onOutlineColor(event = new Event("input")) {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
     emitOutline({ color: target.value });
   }
+}
+
+/** A theme swatch for the outline (SPEC-077 AC-22): the model stores the
+ * ThemeColorRef itself; the colour input shows its resolved hex. */
+function onOutlineThemeSwatch(reference = Object()) {
+  emitOutline({ color: reference });
 }
 
 function onOutlineWidth(event = new Event("change")) {
@@ -500,6 +525,12 @@ function onShadowPreset(id = "none") {
           @input="onSolidColor"
         >
       </label>
+      <ThemeSwatchRow
+        v-if="fillKind === 'solid'"
+        :theme="theme"
+        testid="shape-fill-theme"
+        @select="onFillThemeSwatch"
+      />
 
       <div
         v-if="gradient"
@@ -656,11 +687,16 @@ function onShadowPreset(id = "none") {
         <input
           type="color"
           data-testid="shape-style-outline-color"
-          :value="outline ? outline.color : '#2e5395'"
+          :value="outlineColorHex"
           aria-label="Outline colour"
           @input="onOutlineColor"
         >
       </label>
+      <ThemeSwatchRow
+        :theme="theme"
+        testid="shape-outline-theme"
+        @select="onOutlineThemeSwatch"
+      />
       <label class="inline-field">
         Width
         <input

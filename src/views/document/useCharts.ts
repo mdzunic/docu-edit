@@ -28,6 +28,7 @@ import { chartDataFromTableCells, SINGLE_SERIES_CHART_TYPES, type ChartFromTable
 import { isChart, type DocumentModel, type ImageWrapMode } from "../../lib/documentModel";
 import { asChartType, type ChartOptions, type ChartSeries, type ChartType } from "../../lib/core/charts";
 import { type CellRange } from "../../lib/core/tables";
+import type { ModelColor } from "../../lib/core/theme";
 import { blockText, type CaretPosition } from "../../lib/textEditing";
 import type { Ref } from "vue";
 import type { EditorContext } from "./context";
@@ -288,7 +289,9 @@ export function useCharts(deps: ChartsDeps) {
     applyChartMutate((model, selection, location) => setChartOptions(model, selection, location, options), "edit chart options");
   }
 
-  function applyChartSeriesColor(seriesIndex: number, color: string) {
+  /** A literal hex or the ThemeColorRef a theme swatch chose (SPEC-077) —
+   * passed to the command verbatim so the series stores the reference. */
+  function applyChartSeriesColor(seriesIndex: number, color: ModelColor) {
     applyChartMutate(
       (model, selection, location) => setChartSeriesColor(model, selection, location, seriesIndex, color),
       "set chart series colour",

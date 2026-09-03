@@ -41,7 +41,7 @@ import {
 } from "../../lib/tableResize";
 import { previewColumnWidths, previewRowHeight, tableRowElement } from "../../lib/core/tables";
 import { CM_PER_PX } from "../../lib/core/units";
-import { resolveColor } from "../../lib/core/theme";
+import { resolveColor, type ModelColor } from "../../lib/core/theme";
 import { documentThemeOf } from "../../lib/documentModel";
 import { caretSelection, noCommandResult } from "../../lib/commands";
 import { withHeaderFooterModel } from "../../lib/commands";
@@ -536,9 +536,23 @@ export function useTables(deps: TablesDeps) {
   }
 
   /** OK in the table properties dialog: every field chained through the model
-   * as one combined edit — a single undo step (AC-34). */
+   * as one combined edit — a single undo step (AC-34). `shadingFill` may be a
+   * literal hex, "" for none, or the ThemeColorRef a theme swatch chose
+   * (SPEC-077) — passed to setCellShading verbatim so the cells store the
+   * reference. */
   function handleTablePropertiesApply(
-    payload = {
+    payload: {
+      borderPreset: string;
+      borderStyle: string;
+      borderWidthPt: number;
+      borderColor: string;
+      shadingFill: ModelColor;
+      paddingCm: number;
+      verticalAlign: string;
+      alignment: string;
+      widthMode: string;
+      widthPercent: number;
+    } = {
       borderPreset: "",
       borderStyle: "single",
       borderWidthPt: 1,

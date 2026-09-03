@@ -9,6 +9,7 @@
 // (SPEC-052 AC-24 "for free") — see that module's own comment.
 import { cloneContainers, isChart, splitParagraphAt, type Chart, type DocumentModel, type ImageWrapMode } from "./documentModel";
 import { type ChartOptions, type ChartSeries, type ChartType } from "./core/charts";
+import type { ModelColor } from "./core/theme";
 import { blockLength, clampCaret, type CaretPosition } from "./textEditing";
 import { caretSelection, type CommandResult, type ModelSelection } from "./commands";
 import {
@@ -195,13 +196,15 @@ export function setChartOptions(
 
 /** Sets a per-series colour (AC-19) — a thin wrapper over setChartOptions'
  * sibling for the series list, since colour lives on `Chart.series`, not
- * `Chart.options`. */
+ * `Chart.options`. `color` is a literal hex or a theme reference (SPEC-077),
+ * stored verbatim; only the indexed series is rewritten, so every other
+ * series keeps its own value — literal or reference — untouched. */
 export function setChartSeriesColor(
   model: DocumentModel,
   selection: ModelSelection,
   location: ChartLocation,
   seriesIndex: number,
-  color: string,
+  color: ModelColor,
 ): CommandResult {
   const next = cloneContainers(model);
   const chart = chartAt(next, location);

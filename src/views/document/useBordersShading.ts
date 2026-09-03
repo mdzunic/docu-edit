@@ -10,7 +10,7 @@ import { ref } from "vue";
 import { applyParagraphBorders, type ModelSelection } from "../../lib/commands";
 import { firstTouchedParagraph } from "../../lib/commands.paragraph";
 import { documentThemeOf, type ParagraphBorders } from "../../lib/documentModel";
-import { resolveColor } from "../../lib/core/theme";
+import { resolveColor, type ModelColor } from "../../lib/core/theme";
 import { paintedShadingFill } from "../../lib/paragraphBorders";
 import { paintedParagraphFormatting } from "../../lib/styles";
 import type { EditorContext } from "./context";
@@ -18,7 +18,9 @@ import type { EditorContext } from "./context";
 /** What the dialog emits on OK — the `null`-removes shape the command takes. */
 export interface BordersShadingResult {
   borders: ParagraphBorders | null;
-  shadingFill: string | null;
+  /** A literal hex, or the ThemeColorRef a theme swatch chose (SPEC-077) —
+   * passed to the command unchanged so the model stores the reference. */
+  shadingFill: ModelColor | null;
 }
 
 export interface BordersShadingDeps extends EditorContext {

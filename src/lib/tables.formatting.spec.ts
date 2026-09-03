@@ -285,6 +285,14 @@ describe("setCellShading, setCellPadding, setCellVerticalAlign (AC-15..17)", () 
     expect(t.rows[0].cells[1].shadingFill).toBe("#ffcc00");
   });
 
+  it("stores a ThemeColorRef verbatim (SPEC-077 AC-23)", () => {
+    const model = doc(grid([["A1", "B1"]]));
+    const reference = { theme: "accent2", lumMod: 0.4, lumOff: 0.6 } as const;
+    const { model: next } = setCellShading(model, someSelection(), fullTableRange(model, loc(0, 0))!, reference);
+    expect(table(next).rows[0].cells[0].shadingFill).toEqual(reference);
+    expect(table(next).rows[0].cells[1].shadingFill).toEqual(reference);
+  });
+
   it("clears shading when given undefined", () => {
     const model = doc(grid([["A1"]]));
     const shaded = setCellShading(model, someSelection(), range({ row: 0, col: 0 }, { row: 0, col: 0 }), "#ffcc00").model;

@@ -32,8 +32,10 @@ import {
   setDraftEdgeStyle,
   setDraftEdgeWidth,
 } from "../lib/paragraphBorders";
-import { asParagraphBorders } from "../lib/documentModel";
+import { asDocumentTheme, asParagraphBorders } from "../lib/documentModel";
+import { isThemeColor, resolveColor } from "../lib/core/theme";
 import { BORDER_LINE_STYLES } from "../lib/core/borders";
+import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 import {
   asMeasurementUnit,
   formatLength,
@@ -53,6 +55,11 @@ const props = defineProps({
   unit: { type: String, default: "cm" },
   /** Dialog title — the style editor says whose borders these are. */
   title: { type: String, default: "Borders and shading" },
+  /** The DocumentTheme (SPEC-077 AC-22): when present, a theme swatch row
+   * renders beside the shading colour input; picking a swatch makes OK carry
+   * the ThemeColorRef itself, not the hex it displays as. Null (the default)
+   * renders no row — existing mounts are unchanged. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
@@ -97,12 +104,27 @@ for (const edge of BORDER_PADDING_EDGES) {
   paddingDrafts.value[edge] = formatLength(ptToCm(draft.value.paddingPt[edge]), measurementUnit.value);
 }
 
-const shadingOn = ref(typeof props.initial.shadingFill === "string");
+const shadingOn = ref(typeof props.initial.shadingFill === "string" || isThemeColor(props.initial.shadingFill));
+// SPEC-077 AC-22/23: a theme swatch stores the reference here so OK carries
+// it to the model; any manual edit of the colour input clears it back to a
+// literal. The colour input itself only ever displays a resolved hex.
+const shadingRef = ref(isThemeColor(props.initial.shadingFill) ? props.initial.shadingFill : null);
 // "No fill" is distinct from white (AC-10): the checkbox is the distinction,
 // so the colour input can hold #ffffff and still mean "white", not "none".
 const shadingFill = ref(
-  typeof props.initial.shadingFill === "string" ? props.initial.shadingFill : "#fff2cc",
+  typeof props.initial.shadingFill === "string"
+    ? props.initial.shadingFill
+    : isThemeColor(props.initial.shadingFill)
+      ? resolveColor(props.initial.shadingFill, asDocumentTheme(props.theme))
+      : "#fff2cc",
 );
+
+/** A theme swatch (SPEC-077): store the reference, show its resolved hex. */
+function onShadingSwatch(reference = Object()) {
+  shadingRef.value = reference;
+  shadingOn.value = true;
+  shadingFill.value = resolveColor(reference, asDocumentTheme(props.theme));
+}
 
 /** The preset row reflects what the edges actually are, so hand-editing one
  * edge after picking "Box" moves the selection to "Custom" (AC-8). */
@@ -189,7 +211,8 @@ function apply() {
   };
   emit("apply", {
     borders: bordersFromDraft(resolved) ?? null,
-    shadingFill: shadingOn.value ? shadingFill.value : null,
+    // A stored theme reference wins over the hex it displays as (SPEC-077).
+    shadingFill: shadingOn.value ? (shadingRef.value ?? shadingFill.value) : null,
   });
 }
 </script>
@@ -334,7 +357,13 @@ function apply() {
         :disabled="!shadingOn"
         data-testid="borders-shading-color"
         aria-label="Shading colour"
+        @input="shadingRef = null"
       >
+      <ThemeSwatchRow
+        :theme="theme"
+        testid="borders-shading-theme"
+        @select="onShadingSwatch"
+      />
       <p class="hint">
         Clear "Fill" for no fill — distinct from a white fill.
       </p>

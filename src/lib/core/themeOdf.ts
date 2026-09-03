@@ -18,8 +18,8 @@
 // block (odpThemeBlockXml) and the document block (odtThemeBlockXml) differ
 // only in the extra paragraph/cell carrier families the text product needs.
 import { parseXml, XmlParseError, escapeXmlAttribute } from "./xml";
-import { THEME_COLOR_SLOTS, themeSlotLabel } from "./theme";
-import type { DocumentTheme, ThemeColorSlot } from "./theme";
+import { THEME_COLOR_SLOTS, isThemeColor, themeSlotLabel } from "./theme";
+import type { DocumentTheme, ModelColor, ThemeColorSlot } from "./theme";
 
 const STYLE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const OFFICE_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
@@ -38,6 +38,29 @@ export function themeParentSlot(parent: string | undefined): ThemeColorSlot | un
   }
   const slot = match[1];
   return (THEME_COLOR_SLOTS as string[]).includes(slot) ? (slot as ThemeColorSlot) : undefined;
+}
+
+/** The slot of an UNTRANSFORMED colour reference (no lumMod/lumOff/shade/
+ * tint) — the only kind `style:parent-style-name` can carry faithfully
+ * (SPEC-077 AC-38). A literal or a transformed reference returns undefined:
+ * the writer then emits the resolved literal alone, the stated loss
+ * (AC-39). */
+export function untransformedThemeSlot(color: ModelColor | undefined): ThemeColorSlot | undefined {
+  if (!isThemeColor(color)) {
+    return undefined;
+  }
+  return color.lumMod === undefined && color.lumOff === undefined && color.shade === undefined && color.tint === undefined
+    ? color.theme
+    : undefined;
+}
+
+/** Whether a style name belongs to the minted `de-theme-*` carrier block —
+ * the styles readThemeStyles recovers into `model.theme` and the writers'
+ * splice regenerates (THEME_STYLE_RE strips the same prefix). Carrier styles
+ * are the theme's wire form, not part of the document's own style catalogue,
+ * so the odf reader skips them when building `model.styles`. */
+export function isThemeCarrierStyleName(name: string): boolean {
+  return name === "de-theme" || name.startsWith("de-theme-");
 }
 
 /** The parent style name an untransformed colour ref writes on a graphic

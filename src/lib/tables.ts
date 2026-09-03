@@ -35,6 +35,7 @@ import {
   type TableAlignment,
   type TableWidthMode,
 } from "./core/tables";
+import type { ModelColor } from "./core/theme";
 import { cmToTwips, twipsToCm } from "./core/units";
 import {
   blockLength,
@@ -962,12 +963,14 @@ export function applyBorderPreset(
 
 /** A table properties dialog's shading section (AC-15), over `range` (the
  * whole table or a selected range, same convention as applyBorderPreset).
- * `fill` undefined clears the cells' shading back to none. */
+ * `fill` undefined clears the cells' shading back to none. A literal hex or
+ * a theme reference (SPEC-077) — stored verbatim either way, so a
+ * theme-referenced fill follows the document theme. */
 export function setCellShading(
   model: DocumentModel,
   selection: ModelSelection,
   range: CellRange,
-  fill: string | undefined,
+  fill: ModelColor | undefined,
 ): CommandResult {
   const next = cloneContainers(model);
   const table = tableAt(next, range.section, range.block);
