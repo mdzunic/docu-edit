@@ -8,8 +8,10 @@ import { test, expect, type Page } from "@playwright/test";
 // items show SPEC-021 shortcut labels, disable (never hide) inapplicable
 // commands, and render toggles as checked items reflecting live state.
 
-const MENU_ORDER = ["file", "edit", "view", "insert", "format", "tools"] as const;
-const MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Tools"];
+// SPEC-076 AC-16 adds a seventh top-level menu, Table, between Format and
+// Tools — so the bar this spec pins is now seven menus wide.
+const MENU_ORDER = ["file", "edit", "view", "insert", "format", "table", "tools"] as const;
+const MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Table", "Tools"];
 
 async function createDocument(page: Page): Promise<void> {
   await page.goto("/");
@@ -240,12 +242,12 @@ test.describe("SPEC-049 menu bar and toolbar consolidation", () => {
     await closeMenus(page);
   });
 
-  // AC-12: at 1024px all six menus show without scrolling; toolbar still usable.
-  test("AC-12 all six menus visible at 1024px, toolbar usable", async ({ page }) => {
+  // AC-12: at 1024px every menu shows without scrolling; toolbar still usable.
+  test("AC-12 all seven menus visible at 1024px, toolbar usable", async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 900 });
     const bar = page.getByTestId("menu-bar");
     const titles = bar.locator("[data-menu-title]");
-    await expect(titles).toHaveCount(6);
+    await expect(titles).toHaveCount(MENU_ORDER.length);
     for (const id of MENU_ORDER) {
       await expect(title(page, id)).toBeInViewport();
     }
