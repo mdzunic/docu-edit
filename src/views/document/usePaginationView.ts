@@ -424,6 +424,8 @@ function renderEntryFor(
       styles: flatEntry.isTable ? model.styles ?? [] : undefined,
       rowStart: flatEntry.isTable ? tableRowStart : undefined,
       rowEnd: flatEntry.isTable ? tableRowEnd : undefined,
+      dataTableSection: flatEntry.isTable ? flatEntry.section : undefined,
+      dataTableBlock: flatEntry.isTable ? flatEntry.blockIndex : undefined,
       // SPEC-047: resolve the image's data URI here — only realized pages
       // reach renderEntryFor, so a still-deferred part is force-encoded (via
       // mediaSrc -> mediaDataUri) just for the images actually painting, not

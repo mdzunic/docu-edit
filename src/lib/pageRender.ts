@@ -98,6 +98,13 @@ export interface RenderEntry {
    * table. `rowEnd` is exclusive; -1 means "to the last row". */
   rowStart?: number;
   rowEnd?: number;
+  /** A table's own block address, as `data-table-section`/`data-table-block`
+   * on the rendered `<table>` (SPEC-076). A table cannot use the ordinary
+   * `data-section`/`data-block` pair — those live on its CELL paragraphs and
+   * the measurement walk excludes anything carrying `data-row` — so the
+   * pagination engine finds a table's rendered slices through these. */
+  dataTableSection?: number;
+  dataTableBlock?: number;
   imageSrc?: string;
   imageSelected?: boolean;
   /** Index into the document-order drawing list (SPEC-051): the `<index>`
