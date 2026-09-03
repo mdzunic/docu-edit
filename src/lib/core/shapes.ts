@@ -378,17 +378,23 @@ export interface ShapeStylePreset {
   shadow?: ShapeShadow;
 }
 
-/** The exactly-five preset gallery (AC-18/AC-19), each colour a theme
- * reference to accent1 (SPEC-077 AC-43) so applying a preset stores
+/** The exactly-five preset gallery (AC-18/AC-19). The colours SPEC-073 drew
+ * from the accent — the base `#4472c4` and its lighter variants — are theme
+ * references to accent1 (SPEC-077 AC-43), so applying a preset stores
  * references and a theme change restyles those shapes. With the Office
- * theme's accent1 (`#4472c4`) the references resolve to D3's table:
- * subtleFilled's fill is the accent at Lighter 80% (`#dae3f3`). */
+ * theme's accent1 the references resolve to exactly D3's table (AC-44):
+ * subtleFilled's fill is the accent at Lighter 80% (`#dae3f3`). The one
+ * colour that stays literal is the filled preset's `#2e5395` border: it was
+ * never the accent or a lighter variant of it, and no canonical
+ * lumMod/lumOff/shade/tint combination reproduces it from accent1 (the
+ * nearest, Darker 25%, resolves to #2f5597), so a reference there would
+ * break AC-44's byte-exact resolution pin. */
 export const SHAPE_STYLE_PRESETS: ShapeStylePreset[] = [
   {
     id: "filled",
     label: "Filled",
     fill: { kind: "solid", color: { theme: "accent1" } },
-    outline: { color: { theme: "accent1", lumMod: 0.75 }, widthPt: 1, dash: "solid" },
+    outline: { ...DEFAULT_NEW_SHAPE_OUTLINE },
   },
   {
     id: "subtleFilled",

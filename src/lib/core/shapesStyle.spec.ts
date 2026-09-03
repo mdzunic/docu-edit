@@ -3,6 +3,7 @@
 // the shadow presets (D4/AC-21) and the seeded gradient (AC-22).
 import { describe, it, expect } from "vitest";
 import {
+  DEFAULT_NEW_SHAPE_OUTLINE,
   DEFAULT_SHAPE_SHADOW,
   SHAPE_SHADOW_PRESETS,
   SHAPE_STYLE_PRESETS,
@@ -62,18 +63,19 @@ describe("the five style presets (D3, AC-18/AC-19)", () => {
       "noFill",
     ]);
   });
-  // SPEC-077 AC-43: every preset colour is a theme reference to accent1 (base
-  // or a lighter/darker variant), never a literal, so a theme change restyles
-  // shapes the presets coloured. AC-44 pins each reference's Office-theme
-  // resolution to the values SPEC-073 shipped as literals, with one named
-  // exception: no canonical lumMod/lumOff/shade/tint combination reproduces
-  // the filled outline's #2e5395 exactly (verified by exhaustive search over
-  // the transform grid), so it carries the nearest canonical form —
-  // Darker 25% (lumMod 0.75), resolving to #2f5597.
-  it("filled is accent1 with a Darker-25% accent1 border (refs, AC-43)", () => {
+  // SPEC-077 AC-43: the colours SPEC-073 drew from the accent — the base
+  // #4472c4 and its lighter variants — are theme references to accent1, so a
+  // theme change restyles shapes the presets coloured. AC-44 pins each
+  // reference's Office-theme resolution to the exact values SPEC-073 shipped.
+  // The filled preset's border stays the shipped literal #2e5395: it was
+  // never the accent or a lighter variant of it, and no canonical
+  // lumMod/lumOff/shade/tint combination reproduces it from accent1
+  // (verified by exhaustive search over the transform grid; the nearest,
+  // Darker 25%, resolves to #2f5597), so only a literal keeps AC-44 exact.
+  it("filled is an accent1 fill with the shipped default border (AC-43/AC-44)", () => {
     const filled = SHAPE_STYLE_PRESETS[0];
     expect(filled.fill).toEqual({ kind: "solid", color: { theme: "accent1" } });
-    expect(filled.outline).toEqual({ color: { theme: "accent1", lumMod: 0.75 }, widthPt: 1, dash: "solid" });
+    expect(filled.outline).toEqual(DEFAULT_NEW_SHAPE_OUTLINE);
     expect(filled.shadow).toBeUndefined();
   });
   it("subtleFilled is accent1 at Lighter 80% with an accent1 1pt border (refs, AC-43)", () => {
@@ -98,9 +100,7 @@ describe("the five style presets (D3, AC-18/AC-19)", () => {
       fill?.kind === "solid" ? resolveColor(fill.color, DEFAULT_THEME) : undefined;
     // DEFAULT_NEW_SHAPE_FILL's shipped solid colour.
     expect(resolveSolid(filled.fill)).toBe("#4472c4");
-    // The one AC-44 deviation: SPEC-073 shipped #2e5395; the nearest canonical
-    // transform (Darker 25%) resolves two points off.
-    expect(resolveColor(filled.outline!.color, DEFAULT_THEME)).toBe("#2f5597");
+    expect(resolveColor(filled.outline!.color, DEFAULT_THEME)).toBe("#2e5395");
     expect(resolveSolid(subtle.fill)).toBe("#dae3f3");
     expect(resolveColor(subtle.outline!.color, DEFAULT_THEME)).toBe("#4472c4");
     expect(resolveColor(outlined.outline!.color, DEFAULT_THEME)).toBe("#4472c4");
