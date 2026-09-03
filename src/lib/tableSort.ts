@@ -40,9 +40,19 @@ function leadingHeaderRows(table: Table): number {
 
 /** The first row index the sort may move (AC-41): every row after the
  * leading `isHeader` run when the dialog's header toggle is on, and row 0
- * when it is off. */
+ * when it is off.
+ *
+ * The toggle only *defaults* to the table's own `isHeader` (AC-40) — it is
+ * the user's answer to "does this table have a header row", not a read of the
+ * flag. So a table whose first row carries no `isHeader` still holds row 0
+ * back when the toggle is on: pasted data usually has a heading row and no
+ * flag, and sorting that heading into the middle of the data is the one
+ * outcome nobody wants. */
 export function sortRangeStart(table: Table, hasHeader: boolean): number {
-  return hasHeader ? leadingHeaderRows(table) : 0;
+  if (!hasHeader) {
+    return 0;
+  }
+  return Math.min(Math.max(1, leadingHeaderRows(table)), table.rows.length);
 }
 
 /** How many rows the sort range holds — fewer than two is "there is nothing

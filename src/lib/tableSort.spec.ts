@@ -48,6 +48,16 @@ describe("sortTableRows — the sort range (AC-41)", () => {
     expect(column(sorted, 0)).toEqual(["alpha", "Charlie", "Name"]);
   });
 
+  it("holds row 0 back when the toggle is on but no row carries isHeader", () => {
+    // The dialog's toggle is the user's answer, not a read of the flag: a
+    // pasted table has a heading row and no isHeader, and turning the toggle
+    // on must keep that heading at the top (AC-40, AC-41).
+    const table = grid([["Name"], ["Charlie"], ["alpha"]]);
+    expect(sortRangeStart(table, true)).toBe(1);
+    expect(sortRangeRowCount(table, true)).toBe(2);
+    expect(column(sortTableRows(table, [key(0)], true), 0)).toEqual(["Name", "alpha", "Charlie"]);
+  });
+
   it("skips a multi-row header run", () => {
     const table = grid([["H1"], ["H2"], ["b"], ["a"]]);
     table.rows[0].isHeader = true;
