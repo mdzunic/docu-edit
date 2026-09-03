@@ -77,7 +77,7 @@ describe("writeDocx — w:tblLook and w:tblStylePr (SPEC-076 AC-66)", () => {
     expect(xml).toContain('<w:tblStylePr w:type="firstRow">');
     expect(xml).toContain('<w:tblStylePr w:type="band1Horz">');
     expect(xml).toContain('<w:tblStyleRowBandSize w:val="2"/>');
-    // A column band the style does not declare emits nothing.
+    // A column band the style does not declare emits nothing at all.
     expect(xml).not.toContain("band1Vert");
     expect(xml).not.toContain("tblStyleColBandSize");
   });

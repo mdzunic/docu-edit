@@ -123,15 +123,16 @@ function conditionalXml(format: TableConditionalFormat | undefined): string {
   return rPr + (tcPr.length > 0 ? `<w:tcPr>${tcPr}</w:tcPr>` : "");
 }
 
-/** The band sizes for a table style's own `w:tblPr` (AC-66). Emitted only
- * when a band declares a size other than the default 1, so an ordinary
- * alternating style writes nothing extra. */
+/** The band sizes for a table style's own `w:tblPr` (AC-66) — one element per
+ * band the style declares, size 1 included. Writing the default explicitly
+ * costs nothing and keeps the style self-describing for a consumer that does
+ * not know OOXML's default. */
 export function tableStyleBandSizesXml(banding: TableStyleBanding | undefined): string {
   const rowSize = banding?.bandedRows?.size;
   const colSize = banding?.bandedColumns?.size;
   return (
-    (rowSize !== undefined && rowSize !== 1 ? `<w:tblStyleRowBandSize w:val="${Math.floor(rowSize)}"/>` : "") +
-    (colSize !== undefined && colSize !== 1 ? `<w:tblStyleColBandSize w:val="${Math.floor(colSize)}"/>` : "")
+    (rowSize !== undefined ? `<w:tblStyleRowBandSize w:val="${Math.max(1, Math.floor(rowSize))}"/>` : "") +
+    (colSize !== undefined ? `<w:tblStyleColBandSize w:val="${Math.max(1, Math.floor(colSize))}"/>` : "")
   );
 }
 
