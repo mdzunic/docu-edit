@@ -3364,6 +3364,7 @@ function handleMenuCommand(id = "") {
     </template>
     <template #toolbar>
       <DocumentToolbar
+        :theme="documentThemeOf(doc)"
         v-if="editable"
         ref="documentToolbarRef"
         :reserved-right="toolbarReservedRight"
@@ -4105,6 +4106,7 @@ function handleMenuCommand(id = "") {
       @cancel="splitCellDialogOpen = false"
     />
     <TablePropertiesDialog
+      :theme="documentThemeOf(doc)"
       v-if="tablePropertiesOpen"
       :initial="tablePropertiesInitial"
       :unit="doc?.measurementUnit || 'cm'"
@@ -4112,6 +4114,7 @@ function handleMenuCommand(id = "") {
       @cancel="tablePropertiesOpen = false"
     />
     <PageSetupDialog
+      :theme="documentThemeOf(doc)"
       v-if="pageSetupOpen"
       :initial="pageSetupInitial"
       @apply="handlePageSetupApply"
@@ -4125,6 +4128,7 @@ function handleMenuCommand(id = "") {
       @cancel="columnsDialogOpen = false"
     />
     <BordersShadingDialog
+      :theme="documentThemeOf(doc)"
       v-if="bordersDialogOpen"
       :initial="bordersDialogInitial"
       :unit="doc?.measurementUnit || 'cm'"
@@ -4297,6 +4301,7 @@ function handleMenuCommand(id = "") {
       @cancel="editingChartData = false"
     />
     <ChartOptionsDialog
+      :theme="documentThemeOf(doc)"
       v-if="editingChartOptions"
       :initial="chartOptionsInitial"
       @apply="(options) => { applyChartOptions(options); editingChartOptions = false; }"
