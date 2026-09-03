@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, useTemplateRef } from "vue";
 import { asStringArray, asStyleOptions, noStyleOptions, styleFormInputFromDraft } from "../lib/styles";
 import { asParagraphBorders } from "../lib/documentModel";
+import { asTableBandingDraft } from "../lib/tableStyles";
 import { detectBorderPreset, noParagraphBorders, noShadingFill } from "../lib/paragraphBorders";
 import BaseDialog from "./BaseDialog.vue";
 import BordersShadingDialog from "./BordersShadingDialog.vue";
@@ -40,6 +41,9 @@ const props = defineProps({
   initialCellBorderStyle: { type: String, default: "" }, // "" | none | single | double | dashed | dotted
   initialCellBorderWidthPt: { type: Number, default: 1 },
   initialCellBorderColor: { type: String, default: "#000000" },
+  /** The table style's banding as an editor draft (SPEC-076 AC-37) —
+   * lib/tableStyles.bandingDraftFrom builds it from the style. */
+  initialBanding: { type: Object, default: undefined },
   /** The style's own paragraph borders and shading (SPEC-074 AC-18). */
   initialBorders: { type: Object, default: undefined },
   initialShadingFill: { type: String, default: "" },
@@ -84,6 +88,8 @@ const draft = reactive({
   // so a style's border controls are literally a paragraph's.
   borders: asParagraphBorders(props.initialBorders),
   shadingFill: props.initialShadingFill,
+  // SPEC-076 AC-37: the two band sizes and the six regions.
+  banding: asTableBandingDraft(props.initialBanding),
 });
 
 /** The nested Borders and shading dialog (AC-18) — the same component the
@@ -395,6 +401,75 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
       </label>
     </fieldset>
 
+    <!-- SPEC-076 AC-37: the style's conditional formatting. Each region's
+         shading, bold and border style; the border width and colour above
+         are shared, so a style describes its borders once. -->
+    <fieldset
+      v-if="draft.type === 'table'"
+      class="field-group"
+    >
+      <legend>Banding</legend>
+      <div class="band-sizes">
+        <label class="field">
+          <span>Row band size</span>
+          <input
+            v-model.number="draft.banding.rowBandSize"
+            type="number"
+            min="1"
+            step="1"
+            data-testid="style-row-band-size"
+          >
+        </label>
+        <label class="field">
+          <span>Column band size</span>
+          <input
+            v-model.number="draft.banding.columnBandSize"
+            type="number"
+            min="1"
+            step="1"
+            data-testid="style-column-band-size"
+          >
+        </label>
+      </div>
+      <div
+        v-for="region in draft.banding.regions"
+        :key="region.key"
+        class="band-region"
+      >
+        <span class="band-region-label">{{ region.label }}</span>
+        <input
+          v-model="region.shading"
+          placeholder="#eeeeee"
+          :aria-label="`${region.label} shading`"
+          :data-testid="`style-banding-shading-${region.key}`"
+        >
+        <label class="band-region-bold">
+          <input
+            v-model="region.bold"
+            type="checkbox"
+            :data-testid="`style-banding-bold-${region.key}`"
+          >
+          <span>Bold</span>
+        </label>
+        <select
+          v-model="region.borderStyle"
+          :aria-label="`${region.label} border style`"
+          :data-testid="`style-banding-border-${region.key}`"
+        >
+          <option value="">
+            (no border)
+          </option>
+          <option
+            v-for="style in BORDER_STYLES"
+            :key="style"
+            :value="style"
+          >
+            {{ style }}
+          </option>
+        </select>
+      </div>
+    </fieldset>
+
     <template #actions>
       <button
         type="button"
@@ -424,6 +499,34 @@ const nextList = computed(() => asStyleOptions(props.nextOptions));
 </template>
 
 <style scoped>
+/* The banding grid (SPEC-076 AC-37): one row per region — label, shading,
+   bold, border style — under the two band-size fields. */
+.band-sizes {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.band-region {
+  display: grid;
+  grid-template-columns: 8rem 1fr auto 8rem;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.band-region-label {
+  font-size: var(--text-md);
+  color: var(--text-primary);
+}
+
+.band-region-bold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-md);
+  color: var(--text-primary);
+}
+
 .borders-button {
   padding: var(--space-2) var(--space-3);
   border: var(--border-width) solid var(--border-subtle);

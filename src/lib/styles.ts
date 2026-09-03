@@ -24,6 +24,7 @@ import {
   type TabStop,
 } from "./documentModel";
 import { type BorderLineStyle, type CellBorders } from "./core/tables";
+import { bandingFromDraft, type TableBandingDraft } from "./tableStyles";
 import { runStyle } from "./renderFormatting";
 import {
   paragraphBordersEqual,
@@ -744,6 +745,9 @@ export interface StyleEditorDraft {
    * a style and a paragraph can never disagree about what a border is. */
   borders?: ParagraphBorders;
   shadingFill?: string;
+  /** Table styles only (SPEC-076 AC-37): the two band sizes and the six
+   * regions' shading, bold and border style. */
+  banding?: TableBandingDraft;
 }
 
 /** The paragraph formatting a paragraph style's draft carries: its
@@ -817,6 +821,12 @@ export function styleFormInputFromDraft(draft: StyleEditorDraft) {
     cellShadingFill:
       draft.type === "table" && draft.cellShadingFill.trim() ? draft.cellShadingFill.trim() : undefined,
     cellBorders,
+    // SPEC-076 AC-37: the style's conditional formatting. The regions' border
+    // width and colour are the style's own — one description, six users.
+    banding:
+      draft.type === "table" && draft.banding
+        ? bandingFromDraft(draft.banding, draft.cellBorderWidthPt, draft.cellBorderColor)
+        : undefined,
   };
 }
 

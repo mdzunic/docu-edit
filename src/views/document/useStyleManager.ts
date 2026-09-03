@@ -43,6 +43,7 @@ import {
 } from "../../lib/styles";
 import { paragraphAtCaret } from "../../lib/textEditing";
 import { normaliseParagraphBorders, paintedShadingFill } from "../../lib/paragraphBorders";
+import { bandingDraftFrom } from "../../lib/tableStyles";
 import type { ModelSelection, ParagraphCommand, StyleFormInput } from "../../lib/commands";
 import type { PendingFormat } from "../../lib/documentModel";
 import type { CaretPosition } from "../../lib/textEditing";
@@ -209,6 +210,8 @@ export function useStyleManager(deps: StyleManagerDeps) {
         initialCellBorderStyle: border?.style ?? "",
         initialCellBorderWidthPt: border?.widthPt ?? 1,
         initialCellBorderColor: border?.color ?? "#000000",
+        // SPEC-076 AC-37: the table style's banding as the editor's draft.
+        initialBanding: bandingDraftFrom(target?.banding),
         // SPEC-074 AC-18: the style's own paragraph borders and shading.
         // Seeded through the paint helpers, so a value that is present but
         // paints nothing — AC-17's explicit "off", which a .docx style can
@@ -239,6 +242,9 @@ export function useStyleManager(deps: StyleManagerDeps) {
       initialCellBorderStyle: "",
       initialCellBorderWidthPt: 1,
       initialCellBorderColor: "#000000",
+      // A new table style starts with no banding at all (AC-22's
+      // "independently absent").
+      initialBanding: bandingDraftFrom(undefined),
       // A new style is seeded from the caret's paragraph, like every other
       // field above (SPEC-074 AC-18) — and through the same paint helpers, so
       // a paragraph carrying AC-17's explicit "off" seeds the style with no

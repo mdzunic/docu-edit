@@ -16,7 +16,7 @@
 // simply means levels 1 and 4 agree for such a table, and the resolver stays
 // correct for a table that got its style from `w:tblStyle` on import and was
 // never baked.
-import type { NamedStyle, Table, TableConditionalFormat, TableLook } from "./documentModel";
+import type { NamedStyle, Table, TableConditionalFormat, TableLook, TableStyleBanding } from "./documentModel";
 import type { CellBorders } from "./core/tables";
 
 /** A cell's effective paint, resolved from the table, its style and the
@@ -293,4 +293,111 @@ export const TABLE_LOOK_FLAGS: { key: keyof TableLook; label: string }[] = [
  * core/tables.ts's asBorderLineStyle). */
 export function asTableLookKey(value: string): keyof TableLook {
   return value as keyof TableLook;
+}
+
+// --- the style editor's banding draft (AC-37) -------------------------------
+
+/** One row of the style editor's banding grid: a region, and the three things
+ * the dialog lets an author set on it. Strings and booleans only, because the
+ * espree-parsed `.vue` script binds them straight to inputs. */
+export interface TableBandingRegionDraft {
+  key: string;
+  label: string;
+  shading: string;
+  bold: boolean;
+  borderStyle: string;
+}
+
+/** The whole banding draft: the two band sizes plus the six regions. */
+export interface TableBandingDraft {
+  rowBandSize: number;
+  columnBandSize: number;
+  regions: TableBandingRegionDraft[];
+}
+
+/** The six regions in the order the dialog lists them, with the labels it
+ * shows. The keys are `TableStyleBanding`'s own field names. */
+const BANDING_REGIONS: { key: keyof TableStyleBanding; label: string }[] = [
+  { key: "firstRow", label: "Header row" },
+  { key: "lastRow", label: "Total row" },
+  { key: "firstColumn", label: "First column" },
+  { key: "lastColumn", label: "Last column" },
+  { key: "bandedRows", label: "Banded rows" },
+  { key: "bandedColumns", label: "Banded columns" },
+];
+
+/** A style's banding as the editor's draft (AC-37). An absent region reads
+ * as an empty row, which `bandingFromDraft` turns back into absence. */
+export function bandingDraftFrom(banding: TableStyleBanding | undefined): TableBandingDraft {
+  return {
+    rowBandSize: banding?.bandedRows?.size ?? 1,
+    columnBandSize: banding?.bandedColumns?.size ?? 1,
+    regions: BANDING_REGIONS.map((region) => {
+      const value = banding?.[region.key];
+      const format: TableConditionalFormat | undefined =
+        region.key === "bandedRows" || region.key === "bandedColumns"
+          ? value
+            ? { shading: (value as { shading: string }).shading }
+            : undefined
+          : (value as TableConditionalFormat | undefined);
+      return {
+        key: region.key,
+        label: region.label,
+        shading: format?.shading ?? "",
+        bold: format?.bold ?? false,
+        // One border style per region; the width and colour come from the
+        // style's own border controls, so a style's borders are described in
+        // one place rather than six.
+        borderStyle: format?.borders?.top?.style ?? "",
+      };
+    }),
+  };
+}
+
+/** The draft back as banding, or undefined when no region sets anything —
+ * so a table style with an untouched banding section carries no `banding`
+ * field at all rather than six empty objects (AC-22's "independently
+ * absent"). */
+export function bandingFromDraft(
+  draft: TableBandingDraft,
+  borderWidthPt: number,
+  borderColor: string,
+): TableStyleBanding | undefined {
+  const banding: TableStyleBanding = {};
+  for (const region of draft.regions) {
+    const shading = region.shading.trim();
+    if (region.key === "bandedRows" || region.key === "bandedColumns") {
+      if (shading.length === 0) {
+        continue;
+      }
+      const size = region.key === "bandedRows" ? draft.rowBandSize : draft.columnBandSize;
+      banding[region.key] = { size: size >= 1 ? Math.floor(size) : 1, shading };
+      continue;
+    }
+    const format: TableConditionalFormat = {};
+    if (shading.length > 0) {
+      format.shading = shading;
+    }
+    if (region.bold) {
+      format.bold = true;
+    }
+    if (region.borderStyle) {
+      const side = {
+        style: region.borderStyle as NonNullable<CellBorders["top"]>["style"],
+        widthPt: borderWidthPt,
+        color: borderColor,
+      };
+      format.borders = { top: { ...side }, bottom: { ...side }, left: { ...side }, right: { ...side } };
+    }
+    if (Object.keys(format).length > 0) {
+      banding[region.key as "firstRow" | "lastRow" | "firstColumn" | "lastColumn"] = format;
+    }
+  }
+  return Object.keys(banding).length > 0 ? banding : undefined;
+}
+
+/** Typed pass-through for the draft arriving as a `.vue` template's plain
+ * `Object` prop (espree bars the annotation there). */
+export function asTableBandingDraft(value: unknown): TableBandingDraft {
+  return (value ?? bandingDraftFrom(undefined)) as TableBandingDraft;
 }
