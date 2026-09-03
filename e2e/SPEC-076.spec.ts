@@ -146,9 +146,22 @@ test.describe("SPEC-076 the table style gallery", () => {
     await clickCell(page, 1, 0);
 
     await tableMenu(page, "table-menu-styles");
-    await page.getByTestId("table-style-TableStyleAccent").click();
+    // The Accent tile sits in the gallery's third column, whose live table
+    // preview can push it past the e2e viewport's right edge; tile
+    // clickability is the gallery test's concern, this test's is the export,
+    // so the click is dispatched rather than positional.
+    await page.getByTestId("table-style-TableStyleAccent").dispatchEvent("click");
     await page.getByTestId("table-style-close").click();
     await waitForPagination(page);
+    // The look landed before we export: the header row carries Accent's
+    // first-row shading.
+    await expect
+      .poll(async () =>
+        content(page)
+          .getByTestId("table-cell-0-0")
+          .evaluate((el) => globalThis.getComputedStyle(el).backgroundColor),
+      )
+      .toBe("rgb(47, 84, 150)");
 
     // Export the PDF and inspect its bytes: the builder writes content
     // streams uncompressed, so the resolved cell paint must show up as
