@@ -21,7 +21,8 @@
 //    checks before offering to "repair" a file.
 import { DEFAULT_THEME, isThemeFont, resolveColor, resolveFont } from "../core/theme";
 import type { DocumentTheme, ModelColor } from "../core/theme";
-import { themeAttrsXml } from "./theme";
+import { spliceDocxThemeXml, themeAttrsXml, THEME_CONTENT_TYPE, THEME_RELATIONSHIP } from "./theme";
+import { DOCX_THEME_SOURCE } from "./themeGolden";
 import type {
   Block,
   Chart,
@@ -3080,6 +3081,34 @@ export async function writeDocx(
       new Set(),
       true,
     );
+    // The theme part (SPEC-077 AC-36): a fresh build has no preserved part to
+    // splice, so a model carrying a theme (applied or customised on a new or
+    // cross-format document) gets word/theme/theme1.xml built from the golden
+    // template with its scheme spliced in, declared in the content types and
+    // the main part's rels. A model with no theme emits nothing — today's
+    // packages stay byte-identical.
+    const themeRelId =
+      model.theme !== undefined
+        ? nextFreeRelId(
+            new Set([
+              ...baseTaken,
+              ...hyperlinkPlan.relIds,
+              ...mediaPlan.relIds,
+              ...notesPlan.relIds,
+              ...commentsPlan.relIds,
+              ...headerFooterPlan.relIds,
+              ...chartPlan.relIds,
+            ]),
+          )
+        : undefined;
+    const themeOverride =
+      model.theme !== undefined
+        ? `<Override PartName="/word/theme/theme1.xml" ContentType="${THEME_CONTENT_TYPE}"/>`
+        : "";
+    const themeRelationshipXml =
+      themeRelId !== undefined
+        ? `<Relationship Id="${themeRelId}" Type="${THEME_RELATIONSHIP}" Target="theme/theme1.xml"/>`
+        : "";
     const defaultTabTwips =
       model.defaultStyles.defaultTabStopCm !== undefined
         ? cmToTwips(model.defaultStyles.defaultTabStopCm)
@@ -3095,7 +3124,7 @@ export async function writeDocx(
         : "";
     const contentTypesXml = buildContentTypesXml(!plan.isEmpty, mediaPlan.extensions).replace(
       /<\/Types>\s*$/,
-      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${chartPlan.contentTypesXml}${settingsOverride}${customPropsOverride}</Types>`,
+      `${notesPlan.contentTypesXml}${commentsPlan.contentTypesXml}${headerFooterPlan.contentTypesXml}${chartPlan.contentTypesXml}${themeOverride}${settingsOverride}${customPropsOverride}</Types>`,
     );
     const customPropsRel =
       customPropsXml !== undefined
@@ -3123,7 +3152,8 @@ export async function writeDocx(
               notesPlan.relationshipsXml +
               commentsPlan.relationshipsXml +
               chartPlan.relationshipsXml +
-              headerFooterPlan.relationshipsXml,
+              headerFooterPlan.relationshipsXml +
+              themeRelationshipXml,
           ),
         ),
       },
@@ -3139,6 +3169,12 @@ export async function writeDocx(
       entries.splice(5, 0, {
         name: "word/numbering.xml",
         data: encoder.encode(buildNumberingXml(plan)),
+      });
+    }
+    if (model.theme !== undefined) {
+      entries.push({
+        name: "word/theme/theme1.xml",
+        data: encoder.encode(spliceDocxThemeXml(DOCX_THEME_SOURCE, model.theme)),
       });
     }
     if (needsSettingsPart) {
@@ -3356,6 +3392,48 @@ export async function writeDocx(
   const addSettingsPart =
     !preservedSettings &&
     (headerFooterPlan.evenAndOddHeaders || trackChangesRecording || defaultTabTwips !== undefined);
+  const settingsRelId = addSettingsPart
+    ? nextFreeRelId(
+        new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds, ...commentsPlan.relIds]),
+      )
+    : undefined;
+
+  // The theme part (SPEC-077 AC-33/34/36). Untouched (`dirty` unset), it is
+  // simply one more preserved opaque part — copied byte-identical by the loop
+  // below, never regenerated (AC-33). Edited (`dirty`), its preserved bytes
+  // are replaced with a byte-conservative splice of the new scheme (AC-34).
+  // A package that never had a theme part gains word/theme/theme1.xml built
+  // from the golden template only when the theme was actually touched, with
+  // its content-type override and main-part relationship declared (AC-36).
+  const themeRel = mainRelsText
+    ? Array.from(parseRelationships(mainRelsText).values()).find((rel) => rel.type === THEME_RELATIONSHIP)
+    : undefined;
+  const themePartName = themeRel
+    ? resolvePartPath(mainPartName, themeRel.target)
+    : (model.theme?.partName ?? `${mainDir}theme/theme1.xml`);
+  const preservedTheme = preservedParts.get(themePartName);
+  const themeOut =
+    model.theme?.dirty
+      ? spliceDocxThemeXml(preservedTheme ? decoder.decode(preservedTheme) : DOCX_THEME_SOURCE, model.theme)
+      : null;
+  const addThemeDecls = themeOut !== null && !themeRel;
+  const themeRelId = addThemeDecls
+    ? nextFreeRelId(
+        new Set([
+          ...mainRelsTaken,
+          ...hyperlinkPlan.relIds,
+          ...mediaPlan.relIds,
+          ...notesPlan.relIds,
+          ...commentsPlan.relIds,
+          ...headerFooterPlan.relIds,
+          ...chartPlan.relIds,
+          ...(settingsRelId !== undefined ? [settingsRelId] : []),
+        ]),
+      )
+    : undefined;
+  // The relationship target, relative to the main part's directory (the form
+  // every other appended relationship uses).
+  const themeTarget = themePartName.startsWith(mainDir) ? themePartName.slice(mainDir.length) : `/${themePartName}`;
 
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
@@ -3374,6 +3452,8 @@ export async function writeDocx(
       entries.push({ name, data: encoder.encode(patchedStyles) });
     } else if (patchedSettings !== null && name === settingsPartName) {
       entries.push({ name, data: encoder.encode(patchedSettings) });
+    } else if (themeOut !== null && name === themePartName) {
+      entries.push({ name, data: encoder.encode(themeOut) });
     } else if (chartPlan.regeneratedPartXml.has(name)) {
       entries.push({ name, data: encoder.encode(chartPlan.regeneratedPartXml.get(name)!) });
     } else if (
@@ -3385,7 +3465,8 @@ export async function writeDocx(
         addHeaderFooterDecls ||
         addChartDecls ||
         chartPlan.orphanedPartNames.size > 0 ||
-        addSettingsPart) &&
+        addSettingsPart ||
+        addThemeDecls) &&
       name === mainRelsName
     ) {
       let rels = mainRelsText!;
@@ -3419,7 +3500,13 @@ export async function writeDocx(
       if (addSettingsPart) {
         rels = withMediaRelationships(
           rels,
-          `<Relationship Id="${nextFreeRelId(new Set([...mainRelsTaken, ...hyperlinkPlan.relIds, ...mediaPlan.relIds, ...notesPlan.relIds, ...commentsPlan.relIds]))}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
+          `<Relationship Id="${settingsRelId}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
+        );
+      }
+      if (addThemeDecls) {
+        rels = withMediaRelationships(
+          rels,
+          `<Relationship Id="${themeRelId}" Type="${THEME_RELATIONSHIP}" Target="${themeTarget}"/>`,
         );
       }
       entries.push({ name, data: encoder.encode(rels) });
@@ -3445,6 +3532,7 @@ export async function writeDocx(
         addHeaderFooterDecls ||
         chartPlan.contentTypesXml.length > 0 ||
         addSettingsPart ||
+        addThemeDecls ||
         addCustomPropsDecls ||
         removeCustomPropsDecls)
     ) {
@@ -3482,6 +3570,12 @@ export async function writeDocx(
           `<Override PartName="/word/settings.xml" ContentType="${SETTINGS_CONTENT_TYPE}"/></Types>`,
         );
       }
+      if (addThemeDecls) {
+        contentTypes = contentTypes.replace(
+          /<\/Types>\s*$/,
+          `<Override PartName="/${themePartName}" ContentType="${THEME_CONTENT_TYPE}"/></Types>`,
+        );
+      }
       entries.push({ name, data: encoder.encode(contentTypes) });
     } else {
       entries.push({ name, data });
@@ -3489,6 +3583,9 @@ export async function writeDocx(
   }
   if (numberingOut !== null && !preservedNumbering) {
     entries.push({ name: numberingPartName, data: encoder.encode(numberingOut) });
+  }
+  if (themeOut !== null && !preservedTheme) {
+    entries.push({ name: themePartName, data: encoder.encode(themeOut) });
   }
   entries.push(...chartPlan.zipEntries);
   if (addSettingsPart) {
