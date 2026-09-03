@@ -50,9 +50,11 @@ function bandedModel(): DocumentModel {
   return model;
 }
 
+/** Save and reopen, restamping the id/title/format the app layer owns so the
+ * result is a full DocumentModel again. */
 async function roundTrip(model: DocumentModel): Promise<DocumentModel> {
   const { bytes } = await writeOdt(model);
-  return parseOdt(bytes);
+  return { id: model.id, title: model.title, format: "odt", ...(await parseOdt(bytes)) } as DocumentModel;
 }
 
 describe("writeOdt / parseOdt — table:use-*-styles and table:table-template (AC-68, AC-69)", () => {
@@ -64,7 +66,7 @@ describe("writeOdt / parseOdt — table:use-*-styles and table:table-template (A
     }
     expect(table.styleId).toBe("TableStyleAccent");
     expect(table.look).toEqual({ firstRow: true, bandedRows: true });
-    const style = reopened.styles.find((entry) => entry.id === "TableStyleAccent");
+    const style = (reopened.styles ?? []).find((entry) => entry.id === "TableStyleAccent");
     expect(style?.banding?.firstRow).toEqual({ shading: "#2f5496", bold: true });
     expect(style?.banding?.bandedRows).toEqual({ size: 1, shading: "#d9e2f3" });
     // A style whose conditional formatting is all banding is modelled, so
@@ -124,7 +126,7 @@ describe("collectOdfTableDropRecords (AC-14, AC-70)", () => {
 
     // …and the .odt itself carries size-1 banding, not the declared size.
     const reopened = await roundTrip(model);
-    const style = reopened.styles.find((entry) => entry.id === "TableStyleAccent");
+    const style = (reopened.styles ?? []).find((entry) => entry.id === "TableStyleAccent");
     expect(style?.banding?.bandedRows).toEqual({ size: 1, shading: "#d9e2f3" });
   });
 });
