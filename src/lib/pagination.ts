@@ -237,6 +237,23 @@ function frameItem(
   return item;
 }
 
+/** The leading contiguous run of `isHeader` rows a table repeats at the top
+ * of every continuation (SPEC-076 AC-1, AC-4, AC-5). Zero for anything that
+ * is not a table, and for a table whose first row is not a header — even
+ * when a later row carries the flag. */
+function repeatingHeaderRows(block: Block): number {
+  if (!isTable(block)) {
+    return 0;
+  }
+  let count = 0;
+  while (count < block.rows.length && block.rows[count].isHeader) {
+    count += 1;
+  }
+  // A table that is nothing but header rows repeats nothing: there would be
+  // no body row for the repeat to sit above.
+  return count >= block.rows.length ? 0 : count;
+}
+
 function placeWhole(frame: Frame, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {
   const gap = frame.count === 0 ? m.marginTopPx : Math.max(frame.pendingMargin, m.marginTopPx);
   frame.page.items.push(frameItem(frame, sectionIndex, blockIndex));
@@ -252,12 +269,13 @@ function placeSlice(
   m: BlockMetrics,
   startLine: number,
   endLine: number,
+  extraHeight = 0,
 ): void {
   // A continuation slice renders with its top margin stripped.
   const marginTop = startLine === 0 ? m.marginTopPx : 0;
   const gap = frame.count === 0 ? marginTop : Math.max(frame.pendingMargin, marginTop);
   frame.page.items.push(frameItem(frame, sectionIndex, blockIndex, startLine, endLine));
-  frame.cursor += gap + sliceHeight(m, startLine, endLine);
+  frame.cursor += gap + extraHeight + sliceHeight(m, startLine, endLine);
   frame.pendingMargin = endLine >= m.lines.length ? m.marginBottomPx : 0;
   frame.count += 1;
 }
@@ -419,7 +437,15 @@ export function paginate(
     const m = metrics.metricsFor(sectionIndex, blockIndex, block, frame.flowWidthPx);
     const paragraph = paragraphOf(block);
     const formatting = paragraph?.formatting;
-    const widow = formatting?.widowControl !== false;
+    // Widow/orphan control is a paragraph rule about stranded LINES. A
+    // table's "lines" are its rows (SPEC-076), where the rule does not
+    // apply — a one-row continuation is a normal, wanted split.
+    const widow = paragraph !== null && formatting?.widowControl !== false;
+    // SPEC-076: a table's leading header run is redrawn at the top of every
+    // continuation, so a continuation slice costs that run's height on top
+    // of its own rows, and a split may never fall inside the run itself.
+    const headerRows = repeatingHeaderRows(block);
+    const headerHeight = headerRows > 0 ? sliceHeight(m, 0, headerRows) : 0;
 
     if (formatting?.pageBreakBefore && frame.count > 0) {
       frame = breakPage(sectionIndex);
@@ -440,14 +466,16 @@ export function paginate(
       const empty = frame.count === 0;
       const marginTop = startLine === 0 ? m.marginTopPx : 0;
       const top = frame.cursor + (empty ? marginTop : Math.max(frame.pendingMargin, marginTop));
-      const available = frame.heightPx - top;
+      // The repeated header run eats into what a continuation can hold.
+      const repeat = startLine > 0 ? headerHeight : 0;
+      const available = frame.heightPx - top - repeat;
       const remaining = startLine === 0 ? m.heightPx : sliceHeight(m, startLine, lineCount);
 
       if (remaining <= available + EPS) {
         if (startLine === 0) {
           placeWhole(frame, sectionIndex, blockIndex, m);
         } else {
-          placeSlice(frame, sectionIndex, blockIndex, m, startLine, lineCount);
+          placeSlice(frame, sectionIndex, blockIndex, m, startLine, lineCount, repeat);
         }
         return;
       }
@@ -455,6 +483,12 @@ export function paginate(
       // Does not fit. Decide how many lines stay in this column.
       const cannotSplit = lineCount <= 1 || formatting?.keepLines === true;
       let fit = cannotSplit ? 0 : linesFitting(m, startLine, available);
+      // Never break inside the header run: a page holding only the headings
+      // of a table whose body starts overleaf is worse than moving the whole
+      // table down (AC-1's "above the continuation's first body row").
+      if (startLine === 0 && fit > 0 && fit <= headerRows) {
+        fit = 0;
+      }
       if (!cannotSplit && widow) {
         if (lineCount - startLine - fit === 1 && fit > 0) {
           fit -= 1; // never strand a single last line in the next column (widow)
@@ -473,8 +507,11 @@ export function paginate(
             placeWhole(frame, sectionIndex, blockIndex, m);
             return;
           }
-          fit = Math.max(1, linesFitting(m, startLine, available));
-          placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit);
+          // A table's first slice must carry at least one body row past its
+          // header run, or the next slice would repeat rows already drawn.
+          const floor = startLine === 0 ? headerRows + 1 : 1;
+          fit = Math.max(floor, linesFitting(m, startLine, available));
+          placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit, repeat);
           startLine += fit;
           frame = advanceFrame();
           continue;
@@ -484,7 +521,7 @@ export function paginate(
         continue;
       }
 
-      placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit);
+      placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit, repeat);
       startLine += fit;
       frame = advanceFrame();
     }

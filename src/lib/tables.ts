@@ -134,6 +134,47 @@ export function visibleRowCells(row: TableRow): VisibleCellEntry[] {
     .filter((entry) => !entry.cell.covered);
 }
 
+/** One rendered row of a table's page slice: the model row, the model index
+ * it keeps (so its cells' `data-row` always names the real row) and whether
+ * this is the leading header run redrawn at the top of a continuation. */
+export interface TableSliceRow {
+  row: TableRow;
+  rowIndex: number;
+  repeated: boolean;
+}
+
+/** The rows one page slice of a table draws (SPEC-076 AC-1, AC-4, AC-6).
+ *
+ * `rowStart`/`rowEnd` are the model row window the pagination engine placed
+ * on this page — a table that fits on one page passes the whole range. A
+ * continuation (`rowStart > 0`) is prefixed by the table's leading contiguous
+ * `isHeader` run, marked `repeated`: the same rows, in model order, above the
+ * continuation's first body row. The model is untouched — the repeat exists
+ * only in this list (AC-3).
+ *
+ * A table whose first row is not `isHeader` prefixes nothing, even when a
+ * later row carries the flag (AC-5), because the run is defined as leading
+ * and contiguous. */
+export function tableSliceRows(table: Table, rowStart = 0, rowEnd = -1): TableSliceRow[] {
+  const end = rowEnd < 0 ? table.rows.length : Math.min(rowEnd, table.rows.length);
+  const start = Math.max(0, Math.min(rowStart, end));
+  const slice: TableSliceRow[] = [];
+  if (start > 0) {
+    for (let index = 0; index < table.rows.length && table.rows[index].isHeader; index += 1) {
+      // Guard the degenerate case of a continuation starting inside the run
+      // itself: a row is drawn once, never as its own repeat.
+      if (index >= start) {
+        break;
+      }
+      slice.push({ row: table.rows[index], rowIndex: index, repeated: true });
+    }
+  }
+  for (let index = start; index < end; index += 1) {
+    slice.push({ row: table.rows[index], rowIndex: index, repeated: false });
+  }
+  return slice;
+}
+
 /** Whether the caret sits inside a table cell — the predicate the editor's
  * Tab/arrow handling branches on (usable from espree-parsed `.vue`
  * scripts). */

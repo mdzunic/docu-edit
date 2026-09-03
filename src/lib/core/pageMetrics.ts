@@ -87,6 +87,47 @@ export function measureBlockElement(
   };
 }
 
+/** Marks a rendered table row as a repeat of the table's header run rather
+ * than a row of its own (SPEC-076 AC-7). Every consumer that walks the
+ * canvas — measurement here, the model-text mapping in domCaret — skips such
+ * a row, because the repeat is a layout artefact with no model presence. */
+export const REPEATED_HEADER_ATTRIBUTE = "data-repeated-header";
+
+/** Measures a rendered table as one line box per MODEL row (SPEC-076): the
+ * unit a table splits at across pages is a row, exactly as a paragraph's is
+ * a line, so the pagination engine needs no table-specific arithmetic.
+ *
+ * Repeated header rows are skipped and the remaining rows are re-based to
+ * start at 0, so a table rendered as several page slices combines through
+ * `combineSliceMetrics` without double-counting the header run each
+ * continuation redraws (AC-11: the header run is measured once per table,
+ * never once per page).
+ *
+ * Degrades in jsdom exactly as `measureBlockElement` does: unmeasurable rows
+ * read as zero-height boxes, which collapses the table onto one page.
+ */
+export function measureTableElement(element: Element, contentWidthPx: number): BlockMetrics {
+  const view = element.ownerDocument.defaultView;
+  const style = view ? view.getComputedStyle(element) : null;
+  const rows = Array.from(element.querySelectorAll(":scope > tbody > tr")).filter(
+    (row) => !row.hasAttribute(REPEATED_HEADER_ATTRIBUTE),
+  );
+  const lines: LineBox[] = [];
+  let height = 0;
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    lines.push({ top: height, height: rect.height });
+    height += rect.height;
+  }
+  return {
+    contentWidthPx,
+    heightPx: height,
+    marginTopPx: style ? Number.parseFloat(style.marginTop) || 0 : 0,
+    marginBottomPx: style ? Number.parseFloat(style.marginBottom) || 0 : 0,
+    lines,
+  };
+}
+
 /** A paragraph rendered as several page slices measures as the
  * concatenation of its slices: line boxes stack in order (slice boundaries
  * are line boundaries by construction), margins come from the outer

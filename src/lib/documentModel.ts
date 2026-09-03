@@ -745,6 +745,13 @@ export function noNamedStyles(): NamedStyle[] {
   return [];
 }
 
+/** Typed pass-through for a style catalogue arriving as a `.vue` template's
+ * plain `Array` prop (espree bars the annotation there — same idiom as
+ * core/lists.ts's asListDefinitions). */
+export function asNamedStyles(value: unknown): NamedStyle[] {
+  return (value ?? []) as NamedStyle[];
+}
+
 /** An inline XML element the reader does not model (SPEC-008) — e.g. a
  * `w:drawing`-carrying run or an ODF `draw:frame` — held verbatim and
  * anchored to its position between the paragraph's runs so the writer can

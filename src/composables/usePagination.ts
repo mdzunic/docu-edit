@@ -49,6 +49,7 @@ import {
   combineSliceMetrics,
   lineStartOffsets,
   measureBlockElement,
+  measureTableElement,
 } from "../lib/core/pageMetrics";
 import {
   createCanvasTextMeasurer,
@@ -464,6 +465,12 @@ export function usePagination(
         if (!block) {
           continue;
         }
+        if (isTable(block)) {
+          // A table splits at rows, not characters (SPEC-076): there are no
+          // line-start offsets to resolve, and Range hit-testing a whole
+          // table would be pure cost.
+          continue;
+        }
         const entry = cache.get(block);
         if (!entry || entry.lineOffsets) {
           continue;
@@ -562,8 +569,16 @@ export function usePagination(
     const elements = sliceElements(root, target.section, target.block);
     if (elements.length > 0) {
       const splittable = isParagraphBlock(block);
+      // SPEC-076: a table measures one line box per model row, so the engine
+      // splits it at row boundaries and can redraw its header run on every
+      // continuation. Repeated header rows are excluded from the measurement,
+      // so the run costs one measurement per table, not one per page (AC-11).
       const metrics = combineSliceMetrics(
-        elements.map((element) => measureBlockElement(element, width, splittable)),
+        elements.map((element) =>
+          isTable(block)
+            ? measureTableElement(element, width)
+            : measureBlockElement(element, width, splittable),
+        ),
       );
       cache.set(block, { metrics });
       return true;

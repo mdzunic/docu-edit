@@ -243,7 +243,6 @@ import { ceilingWarningMessage, checkSupportedCeiling, withinCeiling } from "../
 import {
   BLOCK_SELECTOR,
   canvasModelText,
-  caretFromDomPoint,
   domPointForCaret,
   extendDomSelection,
   modelRangeFromSelection,

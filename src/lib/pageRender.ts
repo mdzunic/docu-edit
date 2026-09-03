@@ -3,7 +3,7 @@
 // renders them. Kept in a lib so the espree-parsed `.vue` scripts share the
 // types through a typed default seed (see styles.noStyleEntries for the
 // same pattern).
-import { isTable, type Block, type DocumentModel, type EquationSpec, type Shape, type TrackChangesDisplayMode } from "./documentModel";
+import { isTable, type Block, type DocumentModel, type EquationSpec, type NamedStyle, type Shape, type TrackChangesDisplayMode } from "./documentModel";
 import { isFloatingDrawing, resolveAnchorBlockIndex } from "./drawingAnchors";
 import { type ListDefinition } from "./core/lists";
 import { headingTag, paragraphClassName, paragraphStyle, runKey, runStyle } from "./renderFormatting";
@@ -90,6 +90,14 @@ export interface RenderEntry {
    * paragraphs (or, for a shape entry, its text frame's list paragraphs)
    * derive defined-list markers/indents from. */
   listDefinitions?: ListDefinition[];
+  /** The model's style catalogue (SPEC-076) a table entry resolves its
+   * style's banding from at paint time. */
+  styles?: NamedStyle[];
+  /** The model row window a table entry draws (SPEC-076): a table split
+   * across pages renders one entry per page slice. Absent means the whole
+   * table. `rowEnd` is exclusive; -1 means "to the last row". */
+  rowStart?: number;
+  rowEnd?: number;
   imageSrc?: string;
   imageSelected?: boolean;
   /** Index into the document-order drawing list (SPEC-051): the `<index>`

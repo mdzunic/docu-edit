@@ -7,6 +7,7 @@ import {
   HORIZONTAL_RULE_STYLE_ID,
   type Chart,
   type Image,
+  type NamedStyle,
   type PageBorders,
   type Paragraph,
   type ParagraphFormatting,
@@ -18,6 +19,8 @@ import {
   type TableRow,
   type TrackChangesDisplayMode,
 } from "./documentModel";
+// SPEC-076: banding resolves at paint time, never onto the cell.
+import { resolveCellFormatting, tableStyleFor } from "./tableStyles";
 import { type ListDefinition } from "./core/lists";
 import { borderSideCss } from "./core/borders";
 import type { Margins } from "./core/pageSetup";
@@ -423,6 +426,38 @@ export function tableCellStyle(cell: TableCell): Record<string, string> {
  * which always wins over a class rule regardless of shading. */
 export function tableCellDisplayStyle(cell: TableCell, selected: boolean): Record<string, string> {
   const style = tableCellStyle(cell);
+  if (selected) {
+    delete style.backgroundColor;
+  }
+  return style;
+}
+
+/** A cell's inline style with the table style's banding resolved in
+ * (SPEC-076 AC-24, AC-29). Everything that is not shading/borders — padding,
+ * vertical alignment — still comes from the cell itself; shading and borders
+ * come from lib/tableStyles.ts's four-level resolution, so the same paint
+ * lands on screen, in print preview and in the PDF export (all three render
+ * this same DOM).
+ *
+ * `styles` is the document's catalogue; a table with no `styleId`, or a
+ * document with no catalogue, resolves to exactly the cell's own formatting —
+ * i.e. today's rendering, unchanged (D-10). */
+export function tableCellBandedStyle(
+  table: Table,
+  styles: NamedStyle[] | undefined,
+  rowIndex: number,
+  colIndex: number,
+  selected: boolean,
+): Record<string, string> {
+  const cell = table.rows[rowIndex]?.cells[colIndex];
+  if (!cell) {
+    return {};
+  }
+  const resolved = resolveCellFormatting(table, tableStyleFor(styles, table), rowIndex, colIndex);
+  const style = tableCellStyle({ ...cell, borders: resolved.borders, shadingFill: resolved.shadingFill });
+  if (resolved.bold) {
+    style.fontWeight = "bold";
+  }
   if (selected) {
     delete style.backgroundColor;
   }
