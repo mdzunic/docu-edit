@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { MOD } from "./keys";
+import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -137,6 +138,40 @@ test.describe("SPEC-076 the table style gallery", () => {
     await expect
       .poll(async () => bandedCell.evaluate((el) => globalThis.getComputedStyle(el).backgroundColor))
       .toBe(banded);
+  });
+
+  test("a banded table's shading and borders reach the exported PDF (AC-29)", async ({ page }) => {
+    await openFixture(page, "tables-sorted.docx");
+    await waitForPagination(page);
+    await clickCell(page, 1, 0);
+
+    await tableMenu(page, "table-menu-styles");
+    await page.getByTestId("table-style-TableStyleAccent").click();
+    await page.getByTestId("table-style-close").click();
+    await waitForPagination(page);
+
+    // Export the PDF and inspect its bytes: the builder writes content
+    // streams uncompressed, so the resolved cell paint must show up as
+    // filled paths in the exact colours the screen resolves.
+    await page.getByTestId("menu-title-file").click();
+    await page.getByTestId("file-menu-export").click();
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.getByTestId("download-pdf").click(),
+    ]);
+    const path = await download.path();
+    expect(path).toBeTruthy();
+    const pdf = readFileSync(path!).toString("latin1");
+
+    // Filled closed paths exist at all (before this spec, a table exported
+    // as bare text — not one fill or stroke operator in the stream)…
+    expect(pdf).toMatch(/h\nf Q/);
+    // …in Accent's band shading (#d9e2f3) and first-row (#2f5496) colours,
+    expect(pdf).toContain("0.85 0.89 0.95 rg");
+    expect(pdf).toContain("0.18 0.33 0.59 rg");
+    // …plus Accent's black grid borders as black-filled strips — `rg`
+    // followed by a moveto is a path fill state, not a text colour.
+    expect(pdf).toMatch(/q 0 0 0 rg [\d.]+ [\d.]+ m\n/);
   });
 });
 
