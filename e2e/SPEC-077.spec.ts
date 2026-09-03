@@ -1,0 +1,171 @@
+import { test, expect, type Page } from "@playwright/test";
+import { LINE_START } from "./keys";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { BUILT_IN_THEMES, resolveColor } from "../src/lib/core/theme";
+import { FIXTURE_THEME, TABLE_SHADING_REF } from "../src/lib/fixtures.theme";
+
+// SPEC-077 — document themes, the AC-54 journey. The unit suites pin the
+// model, both round trips and every picker in isolation; this file drives
+// the seams only a browser confirms: Format → Theme… with the current card
+// marked, one apply recolouring every theme-referencing surface on the page
+// (heading run, table shading, shape-canvas fill) while an explicit colour
+// stands still, a theme swatch storing a reference that SURVIVES a save →
+// reopen — proven by a second theme moving that run again.
+
+const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+
+const content = (page: Page) => page.getByTestId("document-content");
+
+const facet = BUILT_IN_THEMES.find((theme) => theme.name === "Facet")!;
+const office = BUILT_IN_THEMES.find((theme) => theme.name === "Office")!;
+
+/** "#rrggbb" as the "rgb(r, g, b)" string computed styles report. */
+function rgb(hex: string): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 0xff}, ${(n >> 8) & 0xff}, ${n & 0xff})`;
+}
+
+async function openFixture(page: Page, name: string): Promise<void> {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(join(fixturesDir, name));
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page).locator("p, h1, h2").first()).toBeVisible();
+  await waitForPagination(page);
+}
+
+async function waitForPagination(page: Page, timeout = 30_000): Promise<void> {
+  await expect(page.getByTestId("document-pages")).toHaveAttribute("data-pagination-state", "clean", {
+    timeout,
+  });
+}
+
+async function waitForSaved(page: Page): Promise<void> {
+  await expect(page.getByTestId("save-state")).toHaveText("All changes saved", { timeout: 15_000 });
+}
+
+/** The rendered element carrying the given fixture text. */
+function textOf(page: Page, text: string) {
+  return content(page).getByText(text, { exact: true }).first();
+}
+
+async function colorOf(page: Page, text: string): Promise<string> {
+  return textOf(page, text).evaluate((el) => globalThis.getComputedStyle(el).color);
+}
+
+/** The shape canvas's centre pixel as [r, g, b] — the fixture shape carries
+ * no rotation or shadow, so the canvas centre is solid fill. */
+async function shapeCentrePixel(page: Page): Promise<number[]> {
+  return content(page)
+    .locator("canvas.doc-shape-canvas")
+    .first()
+    .evaluate((el) => {
+      const canvas = el as HTMLCanvasElement;
+      const ctx = canvas.getContext("2d")!;
+      const data = ctx.getImageData(Math.floor(canvas.width / 2), Math.floor(canvas.height / 2), 1, 1).data;
+      return [data[0], data[1], data[2]];
+    });
+}
+
+function expectPixel(pixel: number[], hex: string): void {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const expected = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+  for (let channel = 0; channel < 3; channel++) {
+    expect(Math.abs(pixel[channel] - expected[channel]), `channel ${channel} of ${hex}`).toBeLessThanOrEqual(3);
+  }
+}
+
+/** Format → Theme… → click the named built-in's card. */
+async function applyTheme(page: Page, name: string): Promise<void> {
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-theme").click();
+  await expect(page.getByTestId("theme-gallery-dialog")).toBeVisible();
+  await page.locator(`[data-testid="theme-card"][data-theme-name="${name}"]`).click();
+  await expect(page.getByTestId("theme-gallery-dialog")).toBeHidden();
+}
+
+/** Selects the first `length` characters of the paragraph holding `text`. */
+async function selectStartOf(page: Page, text: string, length: number): Promise<void> {
+  await textOf(page, text).click();
+  await page.keyboard.press(LINE_START);
+  await page.keyboard.down("Shift");
+  for (let i = 0; i < length; i++) {
+    await page.keyboard.press("ArrowRight");
+  }
+  await page.keyboard.up("Shift");
+}
+
+/** File → Export → the chosen format, returning the download's file path. */
+async function download(page: Page, format: "docx" | "odt"): Promise<string> {
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
+  const file = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByTestId(`download-${format}`).click(),
+  ]).then(([d]) => d);
+  const path = await file.path();
+  expect(path).toBeTruthy();
+  return path!;
+}
+
+async function reopen(page: Page, path: string): Promise<void> {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(path);
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(content(page).locator("p, h1, h2").first()).toBeVisible();
+  await waitForPagination(page);
+}
+
+const HEADING = "Quarterly review";
+const EXPLICIT = "This run is explicitly dark red and stays put.";
+const BODY = "Body copy between the themed pieces, unformatted.";
+
+test("the AC-54 journey: gallery, one-apply recolour, an accent swatch that survives save → reopen", async ({ page }) => {
+  test.setTimeout(120_000);
+  await openFixture(page, "word-theme.docx");
+
+  // The fixture opens resolving against ITS OWN theme, not a built-in.
+  await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(FIXTURE_THEME.colors.accent2));
+  await expect(textOf(page, EXPLICIT)).toHaveCSS("color", rgb("#c00000"));
+  const cell = content(page).locator("td").filter({ hasText: "Region" }).first();
+  await expect(cell).toHaveCSS("background-color", rgb(resolveColor(TABLE_SHADING_REF, FIXTURE_THEME)));
+  expectPixel(await shapeCentrePixel(page), FIXTURE_THEME.colors.accent4);
+
+  // Format → Theme…: the document's CURRENT theme leads the gallery, marked.
+  await page.getByTestId("menu-title-format").click();
+  await page.getByTestId("format-menu-theme").click();
+  await expect(page.getByTestId("theme-gallery-dialog")).toBeVisible();
+  const current = page.getByTestId("theme-card-current");
+  await expect(current).toHaveAttribute("data-theme-name", FIXTURE_THEME.name);
+  await expect(current.getByTestId("theme-current-badge")).toBeVisible();
+
+  // Apply Facet: every theme-referencing surface moves at once — heading
+  // run, table shading, shape fill — while the explicit run stands still.
+  await page.locator('[data-testid="theme-card"][data-theme-name="Facet"]').click();
+  await expect(page.getByTestId("theme-gallery-dialog")).toBeHidden();
+  await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(facet.colors.accent2));
+  await expect(cell).toHaveCSS("background-color", rgb(resolveColor(TABLE_SHADING_REF, facet)));
+  await expect(textOf(page, EXPLICIT)).toHaveCSS("color", rgb("#c00000"));
+  expectPixel(await shapeCentrePixel(page), facet.colors.accent4);
+
+  // Pick the base Accent 1 swatch for a run of body text: the run shows
+  // Facet's accent1 because it stores the REFERENCE, not the hex.
+  await selectStartOf(page, BODY, 4);
+  await page.getByTestId("text-color-button").click();
+  await expect(page.getByTestId("text-color-menu")).toBeVisible();
+  await page.getByTestId("text-color-menu").getByLabel("Accent 1", { exact: true }).click();
+  await expect(textOf(page, "Body")).toHaveCSS("color", rgb(facet.colors.accent1));
+  await waitForSaved(page);
+
+  // Save → reopen: the accent run still TRACKS the accent…
+  const saved = await download(page, "docx");
+  await reopen(page, saved);
+  await expect(textOf(page, "Body")).toHaveCSS("color", rgb(facet.colors.accent1));
+
+  // …proven by a second theme moving it again, and the literal run never moves.
+  await applyTheme(page, "Office");
+  await expect(textOf(page, "Body")).toHaveCSS("color", rgb(office.colors.accent1));
+  await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(office.colors.accent2));
+  await expect(textOf(page, EXPLICIT)).toHaveCSS("color", rgb("#c00000"));
+  expectPixel(await shapeCentrePixel(page), office.colors.accent4);
+});

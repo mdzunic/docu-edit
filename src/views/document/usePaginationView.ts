@@ -376,6 +376,11 @@ function renderEntryFor(
 ): RenderEntry | null {
   const block = flatEntry.block;
   const column = item.columnIndex;
+  // The document theme joins every colour-bearing entry's v-memo signature
+  // (SPEC-077 AC-15): applying a theme replaces model.theme but deliberately
+  // keeps every block's identity (commands.theme.ts), so without this key
+  // v-memo would skip the repaint that re-resolves the references.
+  const themeSig = documentThemeOf(model);
   if (isBreak(block)) {
     return {
       key: flatEntry.key,
@@ -407,6 +412,7 @@ function renderEntryFor(
         column,
         model.listDefinitions,
         deps.trackChangesDisplayMode.value,
+        themeSig,
       ],
       kind: flatEntry.isTable ? "table" : flatEntry.isImage ? "image" : flatEntry.isShape ? "shape" : "chart",
       blockProp: block,
@@ -735,6 +741,7 @@ function renderEntryFor(
       // AC-12), so a paragraph must repaint when the run it belongs to
       // changes shape even though its own block object did not.
       borderSig,
+      themeSig,
     ],
     kind: "paragraph",
     tag: headingTag(paragraph.headingLevel),
@@ -774,7 +781,7 @@ function headerFooterRenderEntries(
     if (isTable(block)) {
       entries.push({
         key: `hf:${blockIndex}`,
-        memo: [block, blockIndex, marks],
+        memo: [block, blockIndex, marks, documentThemeOf(model)],
         kind: "table",
         blockProp: block,
         sectionProp: 0,
@@ -849,7 +856,7 @@ function headerFooterRenderEntries(
       : "";
     entries.push({
       key: `hf:${blockIndex}`,
-      memo: [block, blockIndex, pageNumber, totalPages, marks, deps.hfRemountEpoch.value, hfFieldShadeSig],
+      memo: [block, blockIndex, pageNumber, totalPages, marks, deps.hfRemountEpoch.value, hfFieldShadeSig, documentThemeOf(model)],
       kind: "paragraph",
       tag: headingTag(paragraph.headingLevel),
       className: paragraphClassName(paragraph),
