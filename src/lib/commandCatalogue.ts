@@ -151,6 +151,13 @@ export const COMMANDS: CommandMeta[] = [
   { id: "style.heading5", label: "Apply Heading 5", path: ["Format", "Styles"], scope: "document" },
   { id: "style.heading6", label: "Apply Heading 6", path: ["Format", "Styles"], scope: "document" },
 
+  // --- Table (SPEC-076) -----------------------------------------------------
+  { id: "table.repeat-header-row", label: "Repeat header row", path: ["Table"], scope: "document", aliases: ["header row", "repeat heading", "table header"] },
+  { id: "table.style-gallery", label: "Table styles…", path: ["Table"], scope: "document", aliases: ["banding", "banded rows", "table look"] },
+  { id: "table.sort", label: "Sort…", path: ["Table"], scope: "document", aliases: ["sort rows", "order rows", "ascending", "descending"] },
+  { id: "table.convert-text-to-table", label: "Convert text to table…", path: ["Table"], scope: "document", aliases: ["text to table", "split", "csv"] },
+  { id: "table.convert-table-to-text", label: "Convert table to text…", path: ["Table"], scope: "document", aliases: ["table to text", "flatten"] },
+
   // --- Tools ----------------------------------------------------------------
   { id: "tools.word-count", label: "Word count", path: ["Tools"], scope: "document", aliases: ["statistics"] },
   { id: "tools.dictionary", label: "Custom dictionary", path: ["Tools"], scope: "document", aliases: ["spell"] },

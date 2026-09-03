@@ -175,6 +175,40 @@ export function tableSliceRows(table: Table, rowStart = 0, rowEnd = -1): TableSl
   return slice;
 }
 
+/** What the Table menu needs to draw itself (SPEC-076 AC-16..AC-18): which
+ * of its commands apply right now and, for each that does not, the reason
+ * the disabled item states. Built by useTableTools; declared here so the
+ * espree-parsed menu bar gets it properly typed through `asTableMenuState`. */
+export interface TableMenuState {
+  /** Whether the caret is in a table — the condition for every item but
+   * "Convert text to table…". */
+  inTable: boolean;
+  /** Whether the caret's row is a header row (the check item's state). */
+  rowIsHeader: boolean;
+  /** Shown by every item disabled because the caret is not in a table. */
+  reason: string;
+  canConvertText: boolean;
+  convertTextReason: string;
+}
+
+/** The neutral state a menu bar mounted without a document shows: nothing
+ * applies, and the reason is the ordinary one. */
+export function noTableMenuState(): TableMenuState {
+  return {
+    inTable: false,
+    rowIsHeader: false,
+    reason: "the caret is not in a table",
+    canConvertText: false,
+    convertTextReason: "select one or more paragraphs",
+  };
+}
+
+/** Typed pass-through for the state arriving as a `.vue` template's plain
+ * `Object` prop (espree bars the annotation there — same idiom as asTable). */
+export function asTableMenuState(value: unknown): TableMenuState {
+  return (value ?? noTableMenuState()) as TableMenuState;
+}
+
 /** Whether the caret sits inside a table cell — the predicate the editor's
  * Tab/arrow handling branches on (usable from espree-parsed `.vue`
  * scripts). */
@@ -198,6 +232,7 @@ export function insertTable(
   selection: ModelSelection,
   rows: number,
   cols: number,
+  headerRow = false,
 ): CommandResult {
   const next = cloneContainers(model);
   const at = clampCaret(next, selection.focus);
@@ -211,6 +246,12 @@ export function insertTable(
     rows: Array.from({ length: rows }, () => emptyRow(cols)),
     columnWidthsCm: tableColumnWidthsCm(next, at.section, cols),
   };
+  // SPEC-076 AC-20: the "First row is a header row" option. Off by default so
+  // the Insert menu's grid quick-pick, which has no dialog, is unchanged
+  // (AC-21).
+  if (headerRow) {
+    table.rows[0].isHeader = true;
+  }
   if (isTable(target) || isImage(target) || isShape(target) || isChart(target) || isConnector(target) || isBreak(target) || isToc(target) || isTof(target)) {
     return { model: next, selection: caretSelection(at) };
   }

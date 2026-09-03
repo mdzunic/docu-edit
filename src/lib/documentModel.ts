@@ -1488,6 +1488,12 @@ export function asParagraphBlock(value: Block): Paragraph {
   return value as Paragraph;
 }
 
+/** The same pass-through for a whole run of paragraphs arriving as a `.vue`
+ * template's plain `Array` prop (SPEC-076's conversion dialog). */
+export function asParagraphBlocks(value: unknown): Paragraph[] {
+  return (value ?? []) as Paragraph[];
+}
+
 /** The block as a paragraph, throwing on anything else — the narrowing for
  * call sites that know the block kind by construction (tests and fixture
  * builders), where silently reading a table as a paragraph would hide a

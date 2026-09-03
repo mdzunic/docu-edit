@@ -222,6 +222,20 @@ export const BUILT_IN_TABLE_STYLES: BuiltInTableStyle[] = [
   { id: "TableStyleAccent", name: "Accent", look: { firstRow: true, bandedRows: true } },
 ];
 
+/** One gallery row: the five built-ins preceded by the "None" entry that
+ * clears both `styleId` and `look` (AC-34). `id` null IS "None" — a distinct
+ * type from a built-in's string id, which is why the list is built here
+ * rather than spelled out in the espree-parsed dialog. */
+export interface TableGalleryEntry {
+  id: string | null;
+  name: string;
+  look: TableLook;
+}
+
+export function tableStyleGalleryEntries(): TableGalleryEntry[] {
+  return [{ id: null, name: "None", look: {} }, ...BUILT_IN_TABLE_STYLES];
+}
+
 /** The catalogue entry for a built-in id, freshly built so the caller can
  * push it straight into `DocumentModel.styles` without aliasing. Returns
  * undefined for an id that is not a built-in. */

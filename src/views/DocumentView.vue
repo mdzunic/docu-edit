@@ -40,6 +40,7 @@ import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
+import TableToolsDialogs from "../components/TableToolsDialogs.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
 import BordersShadingDialog from "../components/BordersShadingDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
@@ -106,6 +107,7 @@ import { useTextSelectionToolbar } from "./document/useTextSelectionToolbar";
 import { useNotes } from "./document/useNotes";
 import { useFormattingSurfaces } from "./document/useFormattingSurfaces";
 import { noTablePropertiesInitial, useTables } from "./document/useTables";
+import { useTableTools } from "./document/useTableTools";
 import { usePaginationEngine } from "./document/usePaginationEngine";
 import { useThemeControls } from "./document/useThemeControls";
 import { useCommandPalette } from "./document/useCommandPalette";
@@ -1797,24 +1799,7 @@ const {
 // Row/column insert-delete, merge/split, the properties dialog, and live column
 // /row resize live in useTables; the hover handles' geometry and the cell-range
 // drag selection live in useCanvasGestures' canvas event hub, wired below.
-const {
-  applyTableAction,
-  handleTableHandle,
-  startColumnResize,
-  handleColumnResizeMove,
-  finishColumnResize,
-  startRowResize,
-  handleRowResizeMove,
-  finishRowResize,
-  handleContextMenuTableAction,
-  handleMergeCells,
-  openSplitCellDialog,
-  handleSplitCellApply,
-  openTableProperties,
-  handleTablePropertiesApply,
-  handleInsertTable,
-  confirmRepeatRow,
-} = useTables({
+const tables = useTables({
   ...editorContext,
   paragraphSelection,
   activeHeaderFooter,
@@ -1841,6 +1826,16 @@ const {
   // from useCaptions, wired after useLinks below — invoked only at
   // delete-table time, never during this deps object's evaluation.
   requestObjectDelete: (object, kind, perform) => requestObjectDelete(object, kind, perform),
+});
+
+// --- the Table menu (SPEC-076) ----------------------------------------------
+// Header-row repetition, the style gallery, sorting and both conversions.
+const tableTools = useTableTools({
+  ...editorContext,
+  caretPosition,
+  paragraphSelection,
+  getContextMenuTableCell: () => contextMenuTableCell,
+  closeContextMenu: () => closeContextMenu(),
 });
 
 /** The selection paragraph commands target: the live/tracked selection, or
@@ -2390,6 +2385,7 @@ const {
   handlePageMouseDown,
 } = useCanvasGestures({
   ...editorContext,
+  redirectRepeatedHeaderClick: tableTools.redirectRepeatedHeaderClick,
   cellSelection,
   tableHover,
   drawGeometry, startShapeDraw, drawFreeformTool, startFreeformGesture, pointEditActive: pointEdit.active, exitPointEdit: pointEdit.exit,
@@ -3037,7 +3033,7 @@ const {
   jumpToAnchor,
   handleImageDelete,
   handleChartDelete,
-  insertImageFromFile, handleInsertTable,
+  insertImageFromFile, handleInsertTable: tables.handleInsertTable,
 });
 
 /** The registry shortcuts that act regardless of where focus sits in the
@@ -3152,6 +3148,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   ["view.track-changes-pane", () => toggleSidePane("trackChanges")],
   // Insert
   ["insert.table-dialog", () => { insertTableDialogOpen.value = true; }],
+  // Table (SPEC-076 AC-80): the five ids useTableTools owns.
+  ...tableTools.commands,
   ["insert.textbox", insertTextBoxAction],
   ["insert.chart-from-table", () => { handleChartFromTable(); }],
   ["insert.header", () => { openInsertHeaderFooter("header"); }],
@@ -3324,6 +3322,7 @@ function handleMenuCommand(id = "") {
     </template>
     <template #menubar>
       <DocumentMenuBar
+        :table-state="tableTools.menuState.value"
         :editable="editable"
         :undo-redo="undoRedoState"
         :autocorrect-smart-quotes="autocorrectSettings.smartQuotes"
@@ -3527,9 +3526,9 @@ function handleMenuCommand(id = "") {
             <TableHandlesOverlay
               v-if="tableHover"
               :geometry="tableHover"
-              @handle="handleTableHandle"
-              @column-resize="startColumnResize"
-              @row-resize="startRowResize"
+              @handle="tables.handleTableHandle"
+              @column-resize="tables.startColumnResize"
+              @row-resize="tables.startRowResize"
             />
             <div
               v-if="imageHandles"
@@ -3927,7 +3926,7 @@ function handleMenuCommand(id = "") {
       v-if="repeatRowDialogOpen"
       heading="Repeat row for each…"
       :fields="repeatRowFieldOptions"
-      @insert="confirmRepeatRow"
+      @insert="tables.confirmRepeatRow"
       @cancel="repeatRowDialogOpen = false"
     />
     <MergeRunDialog
@@ -4063,6 +4062,7 @@ function handleMenuCommand(id = "") {
       :left="contextMenu.left"
       :top="contextMenu.top"
       :table-actions="!!contextMenuTableCell"
+      :row-is-header="tableTools.contextRowIsHeader()"
       :can-merge-cells="canMergeCells"
       :list-actions="!!contextMenuListTarget"
       :field-actions="contextMenuOnField"
@@ -4073,7 +4073,7 @@ function handleMenuCommand(id = "") {
       @cut="contextMenuCut"
       @copy="contextMenuCopy"
       @paste="contextMenuPaste"
-      @table-action="handleContextMenuTableAction"
+      @table-action="(id = '') => id === 'repeat-header-row' ? tableTools.toggleContextRepeatHeaderRow() : tables.handleContextMenuTableAction(id)"
       @list-action="handleContextMenuListAction"
       @field-action="handleFieldAction"
       @caption-action="() => { closeContextMenu(); openCaptionDialog(); }"
@@ -4104,14 +4104,14 @@ function handleMenuCommand(id = "") {
     />
     <SplitCellDialog
       v-if="splitCellDialogOpen"
-      @apply="handleSplitCellApply"
+      @apply="tables.handleSplitCellApply"
       @cancel="splitCellDialogOpen = false"
     />
     <TablePropertiesDialog
       v-if="tablePropertiesOpen"
       :initial="tablePropertiesInitial"
       :unit="doc?.measurementUnit || 'cm'"
-      @apply="handleTablePropertiesApply"
+      @apply="tables.handleTablePropertiesApply"
       @cancel="tablePropertiesOpen = false"
     />
     <PageSetupDialog
@@ -4134,9 +4134,10 @@ function handleMenuCommand(id = "") {
       @apply="applyBordersShading"
       @cancel="closeBordersDialog"
     />
+    <TableToolsDialogs :tools="tableTools" />
     <InsertTableDialog
       v-if="insertTableDialogOpen"
-      @apply="handleInsertTable"
+      @apply="tables.handleInsertTable"
       @cancel="insertTableDialogOpen = false"
     />
     <PageNumberDialog

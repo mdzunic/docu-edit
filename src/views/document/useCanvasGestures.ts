@@ -96,6 +96,11 @@ export interface CanvasGesturesDeps extends EditorContext {
   openLinkTarget: (target?: LinkTarget | null) => void;
   // --- from useFormatPainter (SPEC-020) -------------------------------------
   maybeApplyPainter: () => void;
+  // --- from useTableTools (SPEC-076) ----------------------------------------
+  /** Consumes a mousedown that landed on a REPEATED table header row,
+     placing the caret in the real header cell it copies (AC-8); returns
+     true when it handled the event. */
+  redirectRepeatedHeaderClick: (event: MouseEvent) => boolean;
 }
 
 export function useCanvasGestures(deps: CanvasGesturesDeps) {
@@ -244,6 +249,12 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
     // kind, so this mousedown places an endpoint. Takes precedence over every
     // other canvas behaviour, like shape draw mode below.
     if (handleConnectorMouseDown(event)) {
+      return;
+    }
+    // SPEC-076 AC-8: a repeated header row is uneditable, so the browser
+    // would drop the caret at whatever editable position lies next to it.
+    // Redirect to the real header cell the repeat copies instead.
+    if (deps.redirectRepeatedHeaderClick(event)) {
       return;
     }
     // A plain canvas click (not on the connector overlay, which stops

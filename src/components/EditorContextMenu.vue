@@ -15,6 +15,9 @@ const props = defineProps({
   /** True when the right-click landed inside a table cell — shows the
    * row/column section (SPEC-022 AC-17..19). */
   tableActions: { type: Boolean, default: false },
+  /** Whether the RIGHT-CLICKED row is a header row (SPEC-076 AC-19) — the
+   * "Repeat header row" check item's state. */
+  rowIsHeader: { type: Boolean, default: false },
   /** True when the active cell-range selection spans more than one cell —
    * shows "Merge cells" (SPEC-023 AC-6). */
   canMergeCells: { type: Boolean, default: false },
@@ -288,6 +291,19 @@ onBeforeUnmount(() => {
         class="context-menu-separator"
         role="separator"
       />
+      <!-- SPEC-076 AC-19: the same check item the Table menu offers, acting
+           on the row that was right-clicked rather than the caret's. -->
+      <button
+        type="button"
+        class="context-menu-item"
+        role="menuitemcheckbox"
+        :aria-checked="rowIsHeader ? 'true' : 'false'"
+        data-testid="context-menu-repeat-header-row"
+        @click="emit('table-action', 'repeat-header-row')"
+      >
+        <span class="context-menu-check" aria-hidden="true">{{ rowIsHeader ? "✓" : "" }}</span>
+        <span>Repeat header row</span>
+      </button>
       <button
         v-for="action in TABLE_ACTIONS"
         :key="action.key"
@@ -329,6 +345,13 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* The check gutter of the one menuitemcheckbox in this menu (SPEC-076
+   AC-19), sized so its label lines up with the plain items' labels. */
+.context-menu-check {
+  display: inline-block;
+  width: 1em;
+}
+
 .context-menu {
   position: fixed;
   z-index: 40;

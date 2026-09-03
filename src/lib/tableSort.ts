@@ -22,6 +22,13 @@ export function noSortKeys(): SortKey[] {
   return [];
 }
 
+/** Typed pass-through for keys arriving from a `.vue` template's plain
+ * `Array` prop or from its own untyped draft state (espree bars both the
+ * annotation and the cast there). */
+export function asSortKeys(value: unknown): SortKey[] {
+  return (value ?? []) as SortKey[];
+}
+
 /** How many leading rows the table's contiguous `isHeader` run covers. */
 function leadingHeaderRows(table: Table): number {
   let count = 0;

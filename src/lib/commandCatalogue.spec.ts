@@ -42,6 +42,7 @@ function liveRegistryIds(): string[] {
   const fileActions = readFileSync(join(here, "../views/document/useFileActions.ts"), "utf8");
   const pageSetup = readFileSync(join(here, "../views/document/usePageSetupDialogs.ts"), "utf8");
   const drawingArrange = readFileSync(join(here, "../views/document/useDrawingArrange.ts"), "utf8");
+  const tableTools = readFileSync(join(here, "../views/document/useTableTools.ts"), "utf8");
   const inline = tupleKeysInBlock(view, "const editorCommands = new Map([");
   const themeBlock = theme.slice(theme.indexOf("themeCommands"));
   const themeIds = [...themeBlock.matchAll(/\[\s*"([a-zA-Z][\w.-]*)"\s*,/g)].map((m) => m[1]);
@@ -49,7 +50,9 @@ function liveRegistryIds(): string[] {
   const rulerIds = tupleKeysInBlock(pageSetup, COMMAND_LIST_MARKER);
   // SPEC-072 drawing align/distribute command ids (useDrawingArrange).
   const arrangeIds = tupleKeysInBlock(drawingArrange, COMMAND_LIST_MARKER);
-  return [...new Set([...inline, ...themeIds, ...exportIds, ...rulerIds, ...arrangeIds])];
+  // SPEC-076 Table menu command ids (useTableTools).
+  const tableIds = tupleKeysInBlock(tableTools, COMMAND_LIST_MARKER);
+  return [...new Set([...inline, ...themeIds, ...exportIds, ...rulerIds, ...arrangeIds, ...tableIds])];
 }
 
 describe("COMMANDS completeness (SPEC-062 AC-31, AC-32)", () => {
