@@ -3,7 +3,6 @@
 // the shadow presets (D4/AC-21) and the seeded gradient (AC-22).
 import { describe, it, expect } from "vitest";
 import {
-  DEFAULT_NEW_SHAPE_FILL,
   DEFAULT_SHAPE_SHADOW,
   SHAPE_SHADOW_PRESETS,
   SHAPE_STYLE_PRESETS,
@@ -97,7 +96,8 @@ describe("the five style presets (D3, AC-18/AC-19)", () => {
     const [filled, subtle, outlined, outlinedShadow] = SHAPE_STYLE_PRESETS;
     const resolveSolid = (fill: ShapeFill | undefined) =>
       fill?.kind === "solid" ? resolveColor(fill.color, DEFAULT_THEME) : undefined;
-    expect(resolveSolid(filled.fill)).toBe(DEFAULT_NEW_SHAPE_FILL.color);
+    // DEFAULT_NEW_SHAPE_FILL's shipped solid colour.
+    expect(resolveSolid(filled.fill)).toBe("#4472c4");
     // The one AC-44 deviation: SPEC-073 shipped #2e5395; the nearest canonical
     // transform (Darker 25%) resolves two points off.
     expect(resolveColor(filled.outline!.color, DEFAULT_THEME)).toBe("#2f5597");
