@@ -115,6 +115,7 @@ export const COMMANDS: CommandMeta[] = [
   { id: "format.tabs", label: "Tabs…", path: ["Format"], scope: "document" },
   // SPEC-074 AC-6.
   { id: "format.borders", label: "Borders and shading…", path: ["Format"], scope: "document" },
+  { id: "format.theme", label: "Theme…", path: ["Format"], scope: "document", aliases: ["document theme", "colour scheme", "color scheme", "theme colours", "theme fonts"] },
   { id: "format.columns", label: "Columns", path: ["Format"], scope: "document" },
   { id: "format.edit-points", label: "Edit points", path: ["Format"], scope: "document" },
   // Drawing align/distribute (SPEC-072). Path names the Format → Drawing menu
