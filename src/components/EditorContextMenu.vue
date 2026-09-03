@@ -301,7 +301,10 @@ onBeforeUnmount(() => {
         data-testid="context-menu-repeat-header-row"
         @click="emit('table-action', 'repeat-header-row')"
       >
-        <span class="context-menu-check" aria-hidden="true">{{ rowIsHeader ? "✓" : "" }}</span>
+        <span
+          class="context-menu-check"
+          aria-hidden="true"
+        >{{ rowIsHeader ? "✓" : "" }}</span>
         <span>Repeat header row</span>
       </button>
       <button
