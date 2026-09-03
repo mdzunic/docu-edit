@@ -22,6 +22,7 @@ import { BUILT_IN_TABLE_STYLES, leadingHeaderRowCount } from "../../lib/tableSty
 import { noSortKeys, sortRangeHasMergedRows, sortRangeRowCount, type SortKey } from "../../lib/tableSort";
 import { separatorCharacter, type ConvertSeparatorId } from "../../lib/tableConvert";
 import { caretFromRepeatedHeaderPoint } from "../../lib/domCaret";
+import { REPEATED_HEADER_ATTRIBUTE } from "../../lib/core/pageMetrics";
 import { DEFAULT_LANGUAGE } from "../../lib/core/language";
 import { caretSelection, type ModelSelection } from "../../lib/commands";
 import type { Ref } from "vue";
@@ -322,17 +323,29 @@ export function useTableTools(deps: TableToolsDeps) {
    * next to an uneditable row. */
   function redirectRepeatedHeaderClick(event: MouseEvent): boolean {
     const root = contentRoot.value as HTMLElement | null;
-    if (!root || !(event.target instanceof Node)) {
+    const target = event.target;
+    const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+    const repeat = element?.closest(`[${REPEATED_HEADER_ATTRIBUTE}]`);
+    if (!root || !repeat || !root.contains(repeat)) {
       return false;
     }
     // The repeat's own DOM carries the real cell's address, so the nearest
-    // text position inside the copy resolves straight to the original.
+    // text position inside the copy resolves straight to the original. The
+    // copy is unselectable, so the browser's own hit test can decline to
+    // land inside it — the clicked cell's first paragraph is then the
+    // fallback, which is still the right CELL, just at its start.
     const point = caretPointFromClick(root, event);
-    const caret = point ? caretFromRepeatedHeaderPoint(root, point.node, point.offset) : null;
+    const fallback = element?.closest("td")?.querySelector("[data-section][data-block]") ?? null;
+    const caret =
+      (point ? caretFromRepeatedHeaderPoint(root, point.node, point.offset) : null) ??
+      (fallback ? caretFromRepeatedHeaderPoint(root, fallback, 0) : null);
     if (!caret) {
       return false;
     }
     event.preventDefault();
+    // preventDefault also stops the browser moving focus into the canvas, so
+    // the caret this places would have nowhere to receive keystrokes.
+    root.focus();
     applyCaretMove(caret);
     return true;
   }

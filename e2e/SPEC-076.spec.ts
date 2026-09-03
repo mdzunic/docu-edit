@@ -72,6 +72,27 @@ test.describe("SPEC-076 repeating header rows", () => {
     await expect(content(page).getByTestId("table-cell-0-0")).toHaveCount(1);
   });
 
+  test("clicking a repeated header cell puts the caret in the real header cell (AC-8)", async ({ page }) => {
+    await openFixture(page, "tables-repeating-header.docx");
+    await waitForPagination(page);
+    const repeatCell = content(page).getByTestId("repeated-header-cell-0-0").first();
+    await expect(repeatCell).toBeVisible();
+    // Click near the end of "Item", then type: the character must land in the
+    // REAL header cell, at the offset nearest the click — the repeat itself
+    // is uneditable and holds no model text of its own.
+    // The repeat lives on a later page: scroll it into view so the synthetic
+    // click lands on it rather than on whatever the viewport currently holds.
+    await repeatCell.scrollIntoViewIfNeeded();
+    await waitForPagination(page);
+    const box = await repeatCell.boundingBox();
+    await page.mouse.click(box!.x + box!.width - 4, box!.y + box!.height / 2);
+    await page.keyboard.type("!");
+    await waitForPagination(page);
+    await expect(content(page).getByTestId("table-cell-0-0")).toContainText("Item!");
+    // …and the repeat, being a copy of that row, shows the edit too.
+    await expect(content(page).getByTestId("repeated-header-cell-0-0").first()).toContainText("Item!");
+  });
+
   test("the word count is unaffected by the repeat (AC-10)", async ({ page }) => {
     await openFixture(page, "tables-repeating-header.docx");
     await waitForPagination(page);
