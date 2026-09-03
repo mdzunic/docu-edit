@@ -12,6 +12,12 @@ import {
   type ChartType,
   type ChartVisual,
 } from "./charts";
+import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "./theme";
+
+/** A series with its `ModelColor` already resolved to a literal for painting —
+ * resolution happens once at `paintChart`'s entry (through `resolveColor`,
+ * SPEC-077 AC-7); every helper below paints literals only. */
+type PaintedSeries = Omit<ChartSeries, "color"> & { color: string };
 
 /** The chart's chrome colours — axis lines, gridlines and tick/label text.
  * These are NOT document data (series colours are, SPEC-052); they are the
@@ -69,11 +75,12 @@ interface Layout {
   plotH: number;
 }
 
-function seriesToPlot(chart: ChartVisual): ChartSeries[] {
-  return SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
+function seriesToPlot(chart: ChartVisual, theme: DocumentTheme): PaintedSeries[] {
+  const series = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
+  return series.map((s) => ({ ...s, color: resolveColor(s.color, theme) }));
 }
 
-function valueExtent(chart: ChartVisual, series: ChartSeries[]): { min: number; max: number } {
+function valueExtent(chart: ChartVisual, series: PaintedSeries[]): { min: number; max: number } {
   const isStacked = chart.chartType === "columnStacked";
   let min = 0;
   let max = 0;
@@ -137,7 +144,7 @@ function niceNumber(x: number, round: boolean): number {
  * 1000, 1500 rather than 0, 312.63, 625.25, 937.88, 1250.5), with the ticks
  * themselves. An explicit option minimum/maximum is kept exactly as set; the
  * ticks then fall on the round steps inside it. */
-function axisScale(chart: ChartVisual, series: ChartSeries[]): { min: number; max: number; ticks: number[] } {
+function axisScale(chart: ChartVisual, series: PaintedSeries[]): { min: number; max: number; ticks: number[] } {
   const extent = valueExtent(chart, series);
   const range = niceNumber(extent.max - extent.min, false);
   const step = niceNumber(range / 4, true);
@@ -155,7 +162,7 @@ function axisScale(chart: ChartVisual, series: ChartSeries[]): { min: number; ma
 function paintLegend(
   ctx: CanvasRenderingContext2D,
   chart: ChartVisual,
-  series: ChartSeries[],
+  series: PaintedSeries[],
   widthPx: number,
   heightPx: number,
   titleH: number,
@@ -217,7 +224,7 @@ function paintLegend(
 function computeLayout(
   ctx: CanvasRenderingContext2D,
   chart: ChartVisual,
-  series: ChartSeries[],
+  series: PaintedSeries[],
   widthPx: number,
   heightPx: number,
 ): Layout {
@@ -258,7 +265,7 @@ function computeLayout(
 function paintLegendReserveOnly(
   ctx: CanvasRenderingContext2D,
   chart: ChartVisual,
-  series: ChartSeries[],
+  series: PaintedSeries[],
   widthPx: number,
 ): { reservedLeft: number; reservedRight: number; reservedTop: number; reservedBottom: number } {
   const pos = chart.options.legend;
@@ -369,7 +376,7 @@ function paintDataLabel(ctx: CanvasRenderingContext2D, text: string, x: number, 
   ctx.fillText(text, x, y - 2);
 }
 
-function paintBarLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout, min: number, max: number): void {
+function paintBarLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: PaintedSeries[], layout: Layout, min: number, max: number): void {
   const { plotX, plotY, plotW, plotH } = layout;
   const n = chart.categories.length;
   if (n === 0) {
@@ -464,7 +471,7 @@ function pointsFor(chart: ChartVisual, s: ChartSeries, layout: Layout, min: numb
   });
 }
 
-function paintLineOrArea(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout, min: number, max: number): void {
+function paintLineOrArea(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: PaintedSeries[], layout: Layout, min: number, max: number): void {
   const isArea = chart.chartType === "area";
   const showMarkers = chart.chartType === "lineMarkers";
   for (const s of series) {
@@ -532,7 +539,7 @@ function paintLineOrArea(ctx: CanvasRenderingContext2D, chart: ChartVisual, seri
   }
 }
 
-function paintScatter(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout, min: number, max: number): void {
+function paintScatter(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: PaintedSeries[], layout: Layout, min: number, max: number): void {
   const { plotX, plotY, plotW, plotH } = layout;
   const xs = chart.categories.map((c) => Number(c)).map((n) => (Number.isFinite(n) ? n : NaN));
   const validXs = xs.filter((n) => Number.isFinite(n));
@@ -557,7 +564,7 @@ function paintScatter(ctx: CanvasRenderingContext2D, chart: ChartVisual, series:
   }
 }
 
-function paintPieLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: ChartSeries[], layout: Layout): void {
+function paintPieLike(ctx: CanvasRenderingContext2D, chart: ChartVisual, series: PaintedSeries[], layout: Layout): void {
   const s = series[0];
   if (!s) {
     return;
@@ -613,6 +620,7 @@ export function paintChart(
   widthPx: number,
   heightPx: number,
   chrome: ChartChrome = DEFAULT_CHART_CHROME,
+  theme: DocumentTheme = DEFAULT_THEME,
 ): void {
   // Reset the active chrome for this paint from the caller's values, each
   // falling back to the product-neutral default if the caller passed an empty
@@ -638,7 +646,7 @@ export function paintChart(
     return;
   }
 
-  const series = seriesToPlot(chart);
+  const series = seriesToPlot(chart, theme);
   // Painted top-to-bottom in the same order computeLayout reserves space
   // for (title, then a top legend if any) so the two never overlap — see
   // paintLegend's own "top" branch, which takes this same titleH.
@@ -683,6 +691,7 @@ export function paintChartIntoCanvas(
   chart: ChartVisual,
   widthPx: number,
   heightPx: number,
+  theme: DocumentTheme = DEFAULT_THEME,
 ): void {
   const surfaceW = Math.max(1, Math.ceil(widthPx));
   const surfaceH = Math.max(1, Math.ceil(heightPx));
@@ -697,5 +706,5 @@ export function paintChartIntoCanvas(
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, surfaceW, surfaceH);
-  paintChart(ctx, chart, surfaceW, surfaceH);
+  paintChart(ctx, chart, surfaceW, surfaceH, DEFAULT_CHART_CHROME, theme);
 }

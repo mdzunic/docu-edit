@@ -9,6 +9,8 @@ import {
   seededGradient,
   shapeFillBaseColor,
 } from "../lib/core/shapes";
+import { resolveColor } from "../lib/core/theme";
+import { asDocumentTheme } from "../lib/documentModel";
 
 // The full shape styling picker (SPEC-073 AC-16): style presets, the fill
 // kind picker with its gradient editor and transparency slider, the widened
@@ -26,6 +28,10 @@ const props = defineProps({
    * isConnector, isContainer } — fill/outline/shadow are the model values
    * (or undefined), the flags choose which sections show. */
   styling: { type: Object, required: true },
+  /** The document's theme (SPEC-077) — a theme-referenced fill colour
+   * resolves against it for the swatch and the gradient seed; applying
+   * always re-emits the stored model value untouched. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits([
@@ -61,6 +67,9 @@ const ARROW_SIZES = ["small", "medium", "large"];
 
 const fillKind = computed(() => (fill.value ? fill.value.kind : "none"));
 const solidColor = computed(() => shapeFillBaseColor(fill.value) || "#4472c4");
+// SPEC-077: the swatch input and the gradient seed need a concrete hex — a
+// theme reference resolves for display only; applying keeps the model value.
+const solidColorHex = computed(() => resolveColor(solidColor.value, asDocumentTheme(props.theme)));
 
 /** The 0-100 transparency the slider shows (D5: transparency = 1 - alpha). */
 function transparencyOf(alpha = 1) {
@@ -94,7 +103,7 @@ function onFillKind(kind = "") {
     emit("fill", { kind: "solid", color: solidColor.value });
   } else if (kind === "gradient") {
     // AC-22: seed from the current solid colour (or the accent) at 90°.
-    emit("fill", { kind: "gradient", gradient: seededGradient(solidColor.value) });
+    emit("fill", { kind: "gradient", gradient: seededGradient(solidColorHex.value) });
   } else if (kind === "picture") {
     emit("pick-picture");
   } else if (kind === "pattern") {
@@ -486,7 +495,7 @@ function onShadowPreset(id = "none") {
         <input
           type="color"
           data-testid="shape-fill-solid-color"
-          :value="solidColor"
+          :value="solidColorHex"
           aria-label="Fill colour"
           @input="onSolidColor"
         >

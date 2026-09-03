@@ -18,6 +18,8 @@ import type { ChartOptions, ChartSeries, ChartType, ChartVisual } from "./charts
 import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "./charts";
 import { childElements, escapeXmlText, firstChildElement, parseXml, XmlParseError } from "./xml";
 import { cssColorToOoxml } from "./colors";
+import { isThemeColor, type ModelColor } from "./theme";
+import { schemeClrXmlFor } from "./themeDrawingMl";
 
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
 export const C_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -350,7 +352,12 @@ function txXml(name: string, colLetter: string): string {
   );
 }
 
-function serFillXml(color: string): string {
+function serFillXml(color: ModelColor): string {
+  // A theme reference writes `a:schemeClr` (SPEC-077 AC-31); a literal keeps
+  // the `a:srgbClr` form byte-for-byte.
+  if (isThemeColor(color)) {
+    return `<c:spPr><a:solidFill>${schemeClrXmlFor(color)}</a:solidFill></c:spPr>`;
+  }
   const hex = cssColorToOoxml(color);
   return hex ? `<c:spPr><a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></c:spPr>` : "";
 }

@@ -25,6 +25,8 @@ const props = defineProps({
   /** SPEC-073: the full styling snapshot ShapeStylePanel renders — { fill,
    * outline, shadow, isLine, isConnector }. */
   styling: { type: Object, default: () => ({}) },
+  /** The document's theme (SPEC-077), forwarded to ShapeStylePanel. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits([
@@ -203,6 +205,7 @@ function onZOrderChange(event = new Event("change")) {
       >
         <ShapeStylePanel
           :styling="styling"
+          :theme="theme"
           @fill="(value) => emit('fill', value)"
           @outline="(value) => emit('outline', value)"
           @shadow="(value) => emit('shadow', value)"

@@ -62,11 +62,15 @@ import type {
   TrackedChangeInfo,
 } from "../documentModel";
 import type { ListDefinition } from "../core/lists";
+import { DEFAULT_THEME, resolveColor, resolveFont } from "../core/theme";
+import { odtThemeBlockXml, spliceThemeStyles } from "../core/themeOdf";
+import type { DocumentTheme, ModelColor } from "../core/theme";
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderSide } from "../core/tables";
 import { borderShorthand as odfBorderShorthand, DE_BORDER_NAMESPACE } from "./borders";
 import { paragraphPaddingPt } from "../paragraphBorders";
 import {
+  documentThemeOf,
   FIELD_PLACEHOLDER_TEXT,
   isEvaluatedField,
   isMergeChipField,
@@ -178,6 +182,13 @@ const LINK_XMLNS = ` xmlns:xlink="${XLINK_NAMESPACE}"`;
 export const UNTITLED_ODT_TITLE = "Document 1";
 
 /** The suggested download file name: `<title>.odt` (AC-2). */
+// The theme colour/font references resolve against while a write is being
+// built (SPEC-077). Set from the model at each exported entry point, the
+// same synchronous module-context pattern odtNotesContext uses — ODF
+// attributes carry resolved literals (the reference itself rides on
+// `style:parent-style-name`, AC-38; transforms resolve outright, AC-39).
+let odtWriteTheme: DocumentTheme = DEFAULT_THEME;
+
 export function odtFileName(title: string): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : UNTITLED_ODT_TITLE}.odt`;
@@ -208,7 +219,7 @@ function highlightToOdfColor(highlight: string | false | undefined): string | un
 function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number): string {
   const attrs: string[] = [];
   if (formatting.fontFamily !== undefined) {
-    attrs.push(`fo:font-family="${escapeXml(formatting.fontFamily)}"`);
+    attrs.push(`fo:font-family="${escapeXml(resolveFont(formatting.fontFamily, odtWriteTheme))}"`);
   }
   if (formatting.fontSizePt !== undefined) {
     attrs.push(`fo:font-size="${ptToOdfLength(formatting.fontSizePt)}"`);
@@ -228,9 +239,11 @@ function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number):
     attrs.push(`style:text-line-through-style="${formatting.strikethrough ? "solid" : "none"}"`);
   }
   if (formatting.color !== undefined) {
-    attrs.push(`fo:color="${escapeXml(formatting.color)}"`);
+    attrs.push(`fo:color="${escapeXml(resolveColor(formatting.color, odtWriteTheme))}"`);
   }
-  const background = highlightToOdfColor(formatting.highlight);
+  const background = highlightToOdfColor(
+    typeof formatting.highlight === "object" ? resolveColor(formatting.highlight, odtWriteTheme) : formatting.highlight,
+  );
   if (background !== undefined) {
     attrs.push(`fo:background-color="${escapeXml(background)}"`);
   }
@@ -304,7 +317,7 @@ function paragraphBorderAttrs(formatting: ParagraphFormatting): string[] {
     }
   }
   if (formatting.shadingFill !== undefined) {
-    attrs.push(`fo:background-color="${escapeXml(formatting.shadingFill)}"`);
+    attrs.push(`fo:background-color="${escapeXml(resolveColor(formatting.shadingFill, odtWriteTheme))}"`);
   }
   return attrs;
 }
@@ -2075,6 +2088,7 @@ export function buildContentXml(
   drawingDefs: OdfDrawingDefs = createOdfDrawingDefs(),
 ): string {
   const includeOpaque = model.format === "odt";
+  odtWriteTheme = documentThemeOf(model);
   // SPEC-073: shape/connector graphic styles reference shared drawing
   // definitions (gradients, hatches, fill images, markers, dash patterns)
   // through this registry; the caller (writeOdt) reads the collected
@@ -2086,6 +2100,7 @@ export function buildContentXml(
     defs: drawingDefs,
     hrefForMedia: (mediaId) => mediaPlan.hrefFor(mediaId) || undefined,
     includePreserved: includeOpaque,
+    theme: documentThemeOf(model),
   };
   const styles = createAutomaticStyles(model, shapeStyleCtx);
   const blockXml: string[] = [];
@@ -2451,8 +2466,11 @@ function namedStyleDefinitionXml(definition: NamedStyle): string {
     // per-cell) — only background shading round-trips here; see
     // NamedStyle.cellBorders's doc comment for the docx side, which does
     // support it. Table style banding is out of scope either way.
-    const hex = definition.cellShadingFill;
-    const properties = hex !== undefined ? `<style:table-properties fo:background-color="${escapeXml(hex)}"/>` : "";
+    const fill = definition.cellShadingFill;
+    const properties =
+      fill !== undefined
+        ? `<style:table-properties fo:background-color="${escapeXml(resolveColor(fill, odtWriteTheme))}"/>`
+        : "";
     return properties.length > 0
       ? `<style:style ${attrs}>${properties}</style:style>`
       : `<style:style ${attrs}/>`;
@@ -2795,7 +2813,7 @@ function headerFooterMasterContent(
  * for *which* edge the offset measures from, nor for restricting the border
  * to (or from) the first page, so those two ride in the extension namespace
  * like the paragraph `between` edge does. */
-function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: string): string {
+function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: ModelColor): string {
   const attrs: string[] = [];
   if (pageBorders) {
     const offsetPt = pageBorders.offsetPt ?? 24;
@@ -2817,7 +2835,7 @@ function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: strin
     }
   }
   if (pageBackground !== undefined) {
-    attrs.push(`fo:background-color="${escapeXml(pageBackground)}"`);
+    attrs.push(`fo:background-color="${escapeXml(resolveColor(pageBackground, odtWriteTheme))}"`);
   }
   return attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
 }
@@ -2828,7 +2846,7 @@ function pageLayoutXml(
   margins: Margins,
   columns?: SectionColumns,
   pageBorders?: PageBorders,
-  pageBackground?: string,
+  pageBackground?: ModelColor,
 ): string {
   // ODF stores landscape pages with width/height already swapped; the
   // orientation attribute just marks them, mirroring the .docx writer's
@@ -3122,6 +3140,7 @@ export function patchOdtShapeDefs(originalStylesXml: string, drawingDefsXml: str
 }
 
 export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): string {
+  odtWriteTheme = documentThemeOf(model);
   const { fontFamily, fontSizePt, language, defaultTabStopCm } = model.defaultStyles;
   // The document's default tab interval (SPEC-054): style:tab-stop-distance on
   // the default paragraph style. Omitted when the model carries no explicit
@@ -3169,9 +3188,12 @@ export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): strin
     "<office:styles>" +
     '<style:default-style style:family="paragraph">' +
     defaultTabProps +
-    `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
+    `<style:text-properties fo:font-family="${escapeXml(resolveFont(fontFamily, odtWriteTheme))}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
     "</style:default-style>" +
     namedStyles +
+    // The document theme as named de-theme-* styles (SPEC-077 AC-37) —
+    // the SPEC-094 mapping, shared through core/themeOdf.
+    (model.theme !== undefined ? odtThemeBlockXml(documentThemeOf(model)) : "") +
     notesConfigurationXml("footnote", model.footnoteSettings) +
     notesConfigurationXml("endnote", model.endnoteSettings) +
     // SPEC-073: the shared drawing definitions (draw:gradient/draw:hatch/
@@ -3206,6 +3228,7 @@ export function patchOdtStylesXml(
   if (!model.styles) {
     return null;
   }
+  odtWriteTheme = documentThemeOf(model);
   let stylesDoc: Document;
   let contentDoc: Document;
   try {
@@ -3281,6 +3304,7 @@ export function patchOdtSectionMasterPages(
   if (model.sections.length <= 1) {
     return null;
   }
+  odtWriteTheme = documentThemeOf(model);
   let stylesDoc: Document;
   try {
     stylesDoc = parseXml(originalStylesXml);
@@ -3691,6 +3715,16 @@ export async function writeOdt(
     // previous save are replaced by the set this content build collected.
     patchedStyles =
       patchOdtShapeDefs(patchedStyles ?? originalStyles, drawingDefs.defsXml()) ?? patchedStyles;
+    // The document theme block (SPEC-077 AC-37): rewritten in place only
+    // when the model carries a theme — an unedited themeless save stays
+    // byte-identical.
+    if (model.theme !== undefined) {
+      const base = patchedStyles ?? originalStyles;
+      const spliced = spliceThemeStyles(base, odtThemeBlockXml(documentThemeOf(model)));
+      if (spliced !== base) {
+        patchedStyles = spliced;
+      }
+    }
   }
 
   const entries: ZipEntryInput[] = [

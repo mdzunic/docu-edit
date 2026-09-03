@@ -19,6 +19,8 @@ import { firstChildElement } from "../core/xml";
 import { ooxmlColorToCss } from "../core/colors";
 import { halfPointsToPt, twentiethsOfPointToPt, twipsToCm } from "../core/units";
 import { parseBorderElement } from "./borders";
+import { fontThemeFromAttr, themeRefFromAttrs } from "./theme";
+import type { ModelColor } from "../core/theme";
 import { explicitNoBorders, normaliseParagraphBorders, NO_SHADING_FILL } from "../paragraphBorders";
 
 const FALSE_VALUES = new Set(["0", "false", "off"]);
@@ -66,8 +68,15 @@ export function parseRunProperties(rPr: Element | undefined): RunFormatting {
 
   const rFonts = firstChildElement(rPr, WORD_NAMESPACE, "rFonts");
   if (rFonts) {
+    // @w:asciiTheme/@w:hAnsiTheme of the major/minor latin slots become a
+    // font reference (SPEC-077 AC-28); any other value (minorEastAsia,
+    // majorBidi, ...) is not modelled and the run keeps the literal family.
+    const fontTheme =
+      fontThemeFromAttr(attr(rFonts, "asciiTheme")) ?? fontThemeFromAttr(attr(rFonts, "hAnsiTheme"));
     const family = attr(rFonts, "ascii") ?? attr(rFonts, "hAnsi") ?? attr(rFonts, "cs");
-    if (family) {
+    if (fontTheme !== undefined) {
+      formatting.fontFamily = { theme: fontTheme };
+    } else if (family) {
       formatting.fontFamily = family;
     }
   }
@@ -82,10 +91,19 @@ export function parseRunProperties(rPr: Element | undefined): RunFormatting {
   }
 
   const color = firstChildElement(rPr, WORD_NAMESPACE, "color");
-  const colorVal = color ? attr(color, "val") : null;
-  const css = ooxmlColorToCss(colorVal);
-  if (css) {
-    formatting.color = css;
+  // @w:themeColor (+tint/shade) wins over the literal in @w:val — Word keeps
+  // the literal only as the resolved snapshot (SPEC-077 AC-27).
+  const colorRef = color
+    ? themeRefFromAttrs(attr(color, "themeColor"), attr(color, "themeTint"), attr(color, "themeShade"))
+    : undefined;
+  if (colorRef !== undefined) {
+    formatting.color = colorRef;
+  } else {
+    const colorVal = color ? attr(color, "val") : null;
+    const css = ooxmlColorToCss(colorVal);
+    if (css) {
+      formatting.color = css;
+    }
   }
 
   const highlight = firstChildElement(rPr, WORD_NAMESPACE, "highlight");
@@ -102,8 +120,19 @@ export function parseRunProperties(rPr: Element | undefined): RunFormatting {
   // so it becomes the highlight, normalised to the palette name when the
   // fill matches one (SPEC-013).
   const shd = firstChildElement(rPr, WORD_NAMESPACE, "shd");
+  // @w:themeFill (+fillTint/fillShade) becomes a reference (SPEC-077 AC-27),
+  // taking the same highlight-wins slotting the literal fill takes.
+  const shdRef = shd
+    ? themeRefFromAttrs(attr(shd, "themeFill"), attr(shd, "themeFillTint"), attr(shd, "themeFillShade"))
+    : undefined;
   const fill = shd ? attr(shd, "fill") : null;
-  if (fill && /^[0-9a-f]{6}$/i.test(fill)) {
+  if (shdRef !== undefined) {
+    if (formatting.highlight !== undefined) {
+      formatting.shadingFill = shdRef;
+    } else {
+      formatting.highlight = shdRef;
+    }
+  } else if (fill && /^[0-9a-f]{6}$/i.test(fill)) {
     const hex = `#${fill.toLowerCase()}`;
     if (formatting.highlight !== undefined) {
       formatting.shadingFill = hex;
@@ -390,9 +419,17 @@ function parseParagraphBorders(pPr: Element): ParagraphBorders | undefined {
  * fill (`w:val="clear" w:fill="auto"`) is Word's "no fill", and reads as the
  * explicit no-fill override rather than as absent — the element's presence
  * is the paragraph overriding its style's shading (AC-17). */
-function parseParagraphShading(pPr: Element): string | undefined {
+function parseParagraphShading(pPr: Element): ModelColor | undefined {
   const shd = firstChildElement(pPr, WORD_NAMESPACE, "shd");
-  return shd ? (ooxmlColorToCss(attr(shd, "fill")) ?? NO_SHADING_FILL) : undefined;
+  if (!shd) {
+    return undefined;
+  }
+  // @w:themeFill becomes a reference (SPEC-077 AC-27), same as run shading.
+  const ref = themeRefFromAttrs(attr(shd, "themeFill"), attr(shd, "themeFillTint"), attr(shd, "themeFillShade"));
+  if (ref !== undefined) {
+    return ref;
+  }
+  return ooxmlColorToCss(attr(shd, "fill")) ?? NO_SHADING_FILL;
 }
 
 /** `w:pPr/w:outlineLvl` is 0-based in OOXML; the document model's

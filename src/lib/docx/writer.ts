@@ -903,6 +903,7 @@ function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWrit
   const drawing = shapeDrawingXml(shape, docPrId, {
     paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, ctx),
     relIdForMedia: ctx.mediaRelIdFor,
+    theme: ctx.theme,
   });
   return `<w:p><w:r>${drawing}</w:r></w:p>`;
 }
@@ -2266,6 +2267,7 @@ function* documentBlockXml(
           const drawingContent = shapeDrawingXml(drawing, docPrId++, {
             paragraphXml: (paragraph) => paragraphXml(paragraph, includeOpaque, inlineCtx),
             relIdForMedia: inlineCtx.mediaRelIdFor,
+            theme: inlineCtx.theme,
           });
           return `<w:r>${drawingContent}</w:r>`;
         }
@@ -2275,7 +2277,7 @@ function* documentBlockXml(
         }
         if (drawing.type === "connector") {
           const ids = connectorTargetIds(sectionIndex, drawing, docPrIdByBlock);
-          return `<w:r>${connectorDrawingXml(drawing, docPrId++, ids)}</w:r>`;
+          return `<w:r>${connectorDrawingXml(drawing, docPrId++, ids, inlineCtx.theme)}</w:r>`;
         }
         if (drawing.type === "image") {
           // A floating picture absorbs into its anchor paragraph like every
@@ -2319,7 +2321,12 @@ function* documentBlockXml(
         } else if (block.type === "shape") {
           yield shapeParagraphXml(block, includeOpaque, inlineCtx, docPrId++);
         } else if (block.type === "connector") {
-          yield connectorParagraphXml(block, docPrId++, connectorTargetIds(sectionIndex, block, docPrIdByBlock));
+          yield connectorParagraphXml(
+            block,
+            docPrId++,
+            connectorTargetIds(sectionIndex, block, docPrIdByBlock),
+            inlineCtx.theme,
+          );
         } else if (block.type === "chart") {
           yield chartParagraphXml(block, chartPlan, sectionIndex, i, docPrId++);
         } else if (block.type === "break") {

@@ -1959,6 +1959,14 @@ export function documentThemeOf(model: { theme?: DocumentTheme } | null | undefi
   return model?.theme ?? DEFAULT_THEME;
 }
 
+/** Typed pass-through for a theme prop arriving through a runtime-declared
+ * Object (espree bars the annotation in `.vue` scripts — see asRenderEntries
+ * for the same pattern). A missing/null prop falls back to the product
+ * default theme. */
+export function asDocumentTheme(value: unknown): DocumentTheme {
+  return (value ?? DEFAULT_THEME) as DocumentTheme;
+}
+
 /** The root of the document tree. */
 export interface DocumentModel {
   id: string;

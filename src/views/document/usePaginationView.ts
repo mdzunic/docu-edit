@@ -16,6 +16,7 @@ import {
   asToc,
   asTof,
   createEmptyHeaderFooterContent,
+  documentThemeOf,
   isBreak,
   isChart,
   isConnector,
@@ -34,6 +35,7 @@ import {
   type Run,
   type TrackChangesDisplayMode,
 } from "../../lib/documentModel";
+import { resolveColor } from "../../lib/core/theme";
 import { chipLabel } from "../../lib/mergeChips";
 import {
   sectionColumnFlowWidthPx,
@@ -334,12 +336,12 @@ function pageBorderStyleFor(
   page: PageLayout,
   pageIndexInSection: number,
 ): Record<string, string> | null {
-  return pageBorderStyle(model.sections[page.sectionIndex]?.pageBorders, page.margins, pageIndexInSection ?? 0);
+  return pageBorderStyle(model.sections[page.sectionIndex]?.pageBorders, page.margins, pageIndexInSection ?? 0, documentThemeOf(model));
 }
 
 function pageBackgroundStyleFor(model: DocumentModel, page: PageLayout): Record<string, string> | null {
   const fill = model.sections[page.sectionIndex]?.pageBackground;
-  return fill === undefined ? null : { backgroundColor: fill };
+  return fill === undefined ? null : { backgroundColor: resolveColor(fill, documentThemeOf(model)) };
 }
 
 /** Every key paragraphBorderStyle can emit (SPEC-074). They go into the
@@ -519,6 +521,7 @@ function renderEntryFor(
   const styleObj = {
     ...paragraphStyle(
       paragraph,
+      documentThemeOf(model),
       model.listDefinitions ?? [],
       deps.trackChangesDisplayMode.value,
       fragmentEdges(
@@ -594,7 +597,7 @@ function renderEntryFor(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        styleObj: { ...runStyle(run.formatting, documentThemeOf(model)), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
         text: "",
         segments: null,
         atomText: run.text,
@@ -611,7 +614,7 @@ function renderEntryFor(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        styleObj: { ...runStyle(run.formatting, documentThemeOf(model)), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
         text: label,
         segments: null,
         atomText: run.text,
@@ -629,7 +632,7 @@ function renderEntryFor(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        styleObj: { ...runStyle(run.formatting, documentThemeOf(model)), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
         text: label,
         segments: null,
         atomText: run.text,
@@ -649,7 +652,7 @@ function renderEntryFor(
         run,
         runIndex,
         { ...fieldCtx, here: { section: flatEntry.section, block: flatEntry.blockIndex, offset: start } },
-        { ...runStyle(run.formatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+        { ...runStyle(run.formatting, documentThemeOf(model)), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
         effectiveLanguage(run.formatting.lang, model.defaultStyles.language),
         caretOnField,
         deps.fieldShadingOn.value,
@@ -683,7 +686,7 @@ function renderEntryFor(
       href: href || "",
       target: external ? "_blank" : undefined,
       rel: external ? "noopener noreferrer" : undefined,
-      styleObj: { ...runStyle(displayFormatting), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
+      styleObj: { ...runStyle(displayFormatting, documentThemeOf(model)), ...trackChangeRunStyle(run, deps.trackChangesDisplayMode.value) },
       text: hidden ? "" : run.text,
       segments: marked ? segments : null,
       caretAtom: hidden ? run.text : undefined,
@@ -793,7 +796,7 @@ function headerFooterRenderEntries(
       return;
     }
     const paragraph = asParagraphBlock(block);
-    const styleObj = { ...paragraphStyle(paragraph) };
+    const styleObj = { ...paragraphStyle(paragraph, documentThemeOf(model)) };
     const renderRuns = paragraph.runs.map((run, runIndex) => {
       if (run.field && isMergeChipField(run.field)) {
         // A merge chip in a header/footer (SPEC-046): resolution happens on
@@ -804,7 +807,7 @@ function headerFooterRenderEntries(
         return {
           key: runKey(run, runIndex),
           href: "",
-          styleObj: runStyle(run.formatting),
+          styleObj: runStyle(run.formatting, documentThemeOf(model)),
           text: label,
           segments: null,
           atomText: run.text,
@@ -821,7 +824,7 @@ function headerFooterRenderEntries(
           run,
           runIndex,
           { model, now: now(), fileName: model.title ?? "", pageNumber, totalPages, pageOfBookmark: (name) => deps.tocPageNumberFor(model, name) },
-          runStyle(run.formatting),
+          runStyle(run.formatting, documentThemeOf(model)),
           effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
           false,
           deps.fieldShadingOn.value,
@@ -833,7 +836,7 @@ function headerFooterRenderEntries(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: runStyle(run.formatting),
+        styleObj: runStyle(run.formatting, documentThemeOf(model)),
         text,
         segments: marked ? segments : null,
         lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
@@ -939,7 +942,7 @@ function noteBlocksEntries(
         return {
           key: runKey(run, runIndex),
           href: "",
-          styleObj: runStyle(run.formatting),
+          styleObj: runStyle(run.formatting, documentThemeOf(model)),
           text: chipLabel(run.field),
           segments: null,
           atomText: run.text,
@@ -959,7 +962,7 @@ function noteBlocksEntries(
           run,
           runIndex,
           { model, now: now(), fileName: model.title ?? "", pageNumber, totalPages, pageOfBookmark: (name) => deps.tocPageNumberFor(model, name) },
-          runStyle(run.formatting),
+          runStyle(run.formatting, documentThemeOf(model)),
           effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
           false,
           deps.fieldShadingOn.value,
@@ -970,7 +973,7 @@ function noteBlocksEntries(
       return {
         key: runKey(run, runIndex),
         href: "",
-        styleObj: runStyle(run.formatting),
+        styleObj: runStyle(run.formatting, documentThemeOf(model)),
         text: run.text,
         segments: marked ? segments : null,
         lang: effectiveLanguage(run.formatting.lang, model?.defaultStyles.language),
@@ -994,7 +997,7 @@ function noteBlocksEntries(
       kind: "paragraph",
       tag: headingTag(paragraph.headingLevel),
       className: paragraphClassName(paragraph),
-      styleObj: { ...paragraphStyle(paragraph) },
+      styleObj: { ...paragraphStyle(paragraph, documentThemeOf(model)) },
       dataSection: 0,
       dataBlock: item.blockIndex,
       sliceStart: continuation ? String(sliceStart) : undefined,

@@ -11,6 +11,7 @@ import type {
   CommentMessage,
   CommentThread,
   DefaultStyles,
+  DocTheme,
   DocumentProperties,
   FieldKind,
   FieldSpec,
@@ -81,6 +82,8 @@ import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
 import { odfColorToCss, odfLengthToCm, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "../core/odfMeta";
+import { DEFAULT_THEME } from "../core/theme";
+import { readThemeStyles } from "../core/themeOdf";
 import {
   DC_NAMESPACE,
   DRAW_NAMESPACE,
@@ -147,6 +150,9 @@ export interface ParsedOdtDocument {
   /** Footnote/endnote contents (SPEC-031) the body's reference marks link
    * to; empty when the document holds no text:note elements. */
   notes: NoteContent[];
+  /** The document theme (SPEC-077 AC-40) recovered from the de-theme-*
+   * styles, its partName recording styles.xml; absent when there are none. */
+  theme?: DocTheme;
   /** Footnote numbering settings from styles.xml's notes-configuration. */
   footnoteSettings?: NoteSettings;
   /** Endnote numbering settings from styles.xml's notes-configuration. */
@@ -2457,7 +2463,13 @@ export async function parseOdt(
   const contentDoc = parsePart(decodeUtf8(contentBytes));
 
   const stylesBytes = parts.get("styles.xml");
-  const stylesDoc = stylesBytes ? parsePart(decodeUtf8(stylesBytes)) : undefined;
+  const stylesXmlText = stylesBytes ? decodeUtf8(stylesBytes) : undefined;
+  const stylesDoc = stylesXmlText !== undefined ? parsePart(stylesXmlText) : undefined;
+  // The document theme (SPEC-077 AC-40): recovered from the de-theme-*
+  // styles this product's writer stores under office:styles; an .odt
+  // without them opens with no model.theme (product default at resolve
+  // time) and every colour literal, exactly as before.
+  const docTheme = stylesXmlText !== undefined ? readThemeStyles(stylesXmlText, DEFAULT_THEME) : undefined;
 
   const catalog = parseOdfStyleCatalog(contentDoc, stylesDoc);
   // SPEC-032: the list-instance mint and definition registry the body's
@@ -2818,6 +2830,9 @@ export async function parseOdt(
     trackChangesRecording,
     properties,
   };
+  if (docTheme) {
+    result.theme = docTheme;
+  }
   const footnoteSettings = parseOdtNoteSettings(stylesDoc, "footnote");
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;

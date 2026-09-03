@@ -48,14 +48,14 @@ describe("headingTag", () => {
 
 describe("runStyle", () => {
   it("maps bold, italic, underline and strikethrough", () => {
-    const style = runStyle({ bold: true, italic: true, underline: true, strikethrough: true });
+    const style = runStyle({ bold: true, italic: true, underline: true, strikethrough: true }, DEFAULT_THEME);
     expect(style.fontWeight).toBe("bold");
     expect(style.fontStyle).toBe("italic");
     expect(style.textDecorationLine).toBe("underline line-through");
   });
 
   it("maps font family to its metric-twin stack, size and colour (SPEC-048 AC-2/AC-5)", () => {
-    const style = runStyle({ fontFamily: "Arial", fontSizePt: 14, color: "#1155cc" });
+    const style = runStyle({ fontFamily: "Arial", fontSizePt: 14, color: "#1155cc" }, DEFAULT_THEME);
     // The run keeps "Arial" in the model; the CSS renders the original if
     // installed, else the bundled metric twin, so layout matches Word.
     expect(style.fontFamily).toBe("Arial, Liberation Sans, sans-serif");
@@ -64,39 +64,39 @@ describe("runStyle", () => {
   });
 
   it("maps a known highlight name to its CSS colour", () => {
-    expect(runStyle({ highlight: "yellow" }).backgroundColor).toBe("#ffff00");
+    expect(runStyle({ highlight: "yellow" }, DEFAULT_THEME).backgroundColor).toBe("#ffff00");
   });
 
   it("falls back to the raw value for an unknown highlight name", () => {
-    expect(runStyle({ highlight: "mystery" }).backgroundColor).toBe("mystery");
+    expect(runStyle({ highlight: "mystery" }, DEFAULT_THEME).backgroundColor).toBe("mystery");
   });
 
   it("returns an empty style object for empty formatting", () => {
-    expect(runStyle({})).toEqual({});
+    expect(runStyle({}, DEFAULT_THEME)).toEqual({});
   });
 
   it("paints nothing for an explicit 'No colour' highlight (SPEC-013)", () => {
-    expect(runStyle({ highlight: false }).backgroundColor).toBeUndefined();
+    expect(runStyle({ highlight: false }, DEFAULT_THEME).backgroundColor).toBeUndefined();
   });
 
   it("paints an out-of-palette highlight hex as-is (SPEC-013)", () => {
-    expect(runStyle({ highlight: "#ff8800" }).backgroundColor).toBe("#ff8800");
+    expect(runStyle({ highlight: "#ff8800" }, DEFAULT_THEME).backgroundColor).toBe("#ff8800");
   });
 
   it("maps the white palette entry, which the picker hides (SPEC-013)", () => {
-    expect(runStyle({ highlight: "white" }).backgroundColor).toBe("#ffffff");
+    expect(runStyle({ highlight: "white" }, DEFAULT_THEME).backgroundColor).toBe("#ffffff");
   });
 
   it("renders sub/superscript shifted and reduced (SPEC-013)", () => {
-    expect(runStyle({ vertAlign: "subscript" }).verticalAlign).toBe("sub");
-    expect(runStyle({ vertAlign: "subscript" }).fontSize).toBe("0.65em");
-    const sized = runStyle({ vertAlign: "superscript", fontSizePt: 20 });
+    expect(runStyle({ vertAlign: "subscript" }, DEFAULT_THEME).verticalAlign).toBe("sub");
+    expect(runStyle({ vertAlign: "subscript" }, DEFAULT_THEME).fontSize).toBe("0.65em");
+    const sized = runStyle({ vertAlign: "superscript", fontSizePt: 20 }, DEFAULT_THEME);
     expect(sized.verticalAlign).toBe("super");
     expect(sized.fontSize).toBe("13pt");
   });
 
   it("never paints the shadingFill preservation slot (SPEC-013)", () => {
-    expect(runStyle({ highlight: "yellow", shadingFill: "#ff8800" }).backgroundColor).toBe(
+    expect(runStyle({ highlight: "yellow", shadingFill: "#ff8800" }, DEFAULT_THEME).backgroundColor).toBe(
       "#ffff00",
     );
   });
@@ -104,7 +104,7 @@ describe("runStyle", () => {
 
 describe("paragraphStyle", () => {
   it("always sets white-space: pre-wrap so tabs/line breaks render", () => {
-    expect(paragraphStyle({ type: "paragraph", runs: [] }).whiteSpace).toBe("pre-wrap");
+    expect(paragraphStyle({ type: "paragraph", runs: [] }, DEFAULT_THEME).whiteSpace).toBe("pre-wrap");
   });
 
   it("maps alignment, indents and spacing", () => {
@@ -120,7 +120,7 @@ describe("paragraphStyle", () => {
         spaceAfterPt: 6,
         lineSpacing: 1.5,
       },
-    });
+    }, DEFAULT_THEME);
     expect(style.textAlign).toBe("center");
     expect(style.marginInlineStart).toBe("1.27cm");
     expect(style.marginInlineEnd).toBe("1.27cm");
@@ -135,7 +135,7 @@ describe("paragraphStyle", () => {
       type: "paragraph",
       runs: [],
       formatting: { lineSpacing: 1.5, lineSpacingPt: 14 },
-    });
+    }, DEFAULT_THEME);
     expect(style.lineHeight).toBe("14pt");
   });
 
@@ -144,7 +144,7 @@ describe("paragraphStyle", () => {
       type: "paragraph",
       runs: [],
       formatting: { direction: "rtl", indentStartCm: 2, indentEndCm: 1 },
-    });
+    }, DEFAULT_THEME);
     expect(style.direction).toBe("rtl");
     // The values stay logical — the browser's inline axis does the mirroring.
     expect(style.marginInlineStart).toBe("2cm");
@@ -156,7 +156,7 @@ describe("paragraphStyle", () => {
       type: "paragraph",
       runs: [],
       formatting: { indentStartCm: 2 },
-    });
+    }, DEFAULT_THEME);
     expect(style.direction).toBeUndefined();
   });
 
@@ -165,7 +165,7 @@ describe("paragraphStyle", () => {
       type: "paragraph",
       runs: [],
       list: { type: "bullet", level: 3 },
-    });
+    }, DEFAULT_THEME);
     expect(style.marginInlineStart).toBe("3.81cm");
   });
 
@@ -174,14 +174,14 @@ describe("paragraphStyle", () => {
       type: "paragraph",
       runs: [],
       list: { type: "number", level: 1, indentCm: 2.5 },
-    });
+    }, DEFAULT_THEME);
     expect(imported.marginInlineStart).toBe("2.5cm");
     const direct = paragraphStyle({
       type: "paragraph",
       runs: [],
       formatting: { indentStartCm: 4 },
       list: { type: "number", level: 1, indentCm: 2.5 },
-    });
+    }, DEFAULT_THEME);
     expect(direct.marginInlineStart).toBe("4cm");
   });
 });
@@ -201,7 +201,7 @@ describe("tableCellStyle (SPEC-023 AC-10..17)", () => {
         left: { style: "double", widthPt: 1.5, color: "#00ff00" },
       },
     };
-    const style = tableCellStyle(cell);
+    const style = tableCellStyle(cell, DEFAULT_THEME);
     expect(style.borderTop).toBe("1pt solid #ff0000");
     expect(style.borderLeft).toBe("1.5pt double #00ff00");
     expect(style.borderBottom).toBeUndefined();
@@ -210,24 +210,24 @@ describe("tableCellStyle (SPEC-023 AC-10..17)", () => {
 
   it("renders a 'none' border explicitly so it can clear a default gridline", () => {
     const cell: TableCell = { blocks: [], borders: { top: { style: "none", widthPt: 0, color: "#000000" } } };
-    expect(tableCellStyle(cell).borderTop).toBe("none");
+    expect(tableCellStyle(cell, DEFAULT_THEME).borderTop).toBe("none");
   });
 
   it("maps shading and padding", () => {
     const cell: TableCell = { blocks: [], shadingFill: "#eeeeee", paddingCm: 0.3 };
-    const style = tableCellStyle(cell);
+    const style = tableCellStyle(cell, DEFAULT_THEME);
     expect(style.backgroundColor).toBe("#eeeeee");
     expect(style.padding).toBe("0.3cm");
   });
 
   it("maps vertical alignment to its CSS keyword — the model's 'center' is CSS's 'middle', not the invalid 'center'", () => {
-    expect(tableCellStyle({ blocks: [], verticalAlign: "center" }).verticalAlign).toBe("middle");
-    expect(tableCellStyle({ blocks: [], verticalAlign: "top" }).verticalAlign).toBe("top");
-    expect(tableCellStyle({ blocks: [], verticalAlign: "bottom" }).verticalAlign).toBe("bottom");
+    expect(tableCellStyle({ blocks: [], verticalAlign: "center" }, DEFAULT_THEME).verticalAlign).toBe("middle");
+    expect(tableCellStyle({ blocks: [], verticalAlign: "top" }, DEFAULT_THEME).verticalAlign).toBe("top");
+    expect(tableCellStyle({ blocks: [], verticalAlign: "bottom" }, DEFAULT_THEME).verticalAlign).toBe("bottom");
   });
 
   it("returns an empty style for a plain cell", () => {
-    expect(tableCellStyle({ blocks: [] })).toEqual({});
+    expect(tableCellStyle({ blocks: [] }, DEFAULT_THEME)).toEqual({});
   });
 });
 
@@ -539,12 +539,12 @@ describe("pageBorderStyle (SPEC-074 AC-21, AC-22)", () => {
   const line = { style: "single" as const, widthPt: 2, color: "#c00000" };
 
   it("is null when the section has no border or no edge is set", () => {
-    expect(pageBorderStyle(undefined, margins, 0)).toBeNull();
-    expect(pageBorderStyle({ offsetPt: 24 }, margins, 0)).toBeNull();
+    expect(pageBorderStyle(undefined, margins, 0, DEFAULT_THEME)).toBeNull();
+    expect(pageBorderStyle({ offsetPt: 24 }, margins, 0, DEFAULT_THEME)).toBeNull();
   });
 
   it("insets from the page edge by the offset when it measures from the page", () => {
-    const style = pageBorderStyle({ top: line, bottom: line, offsetPt: 36, measureFrom: "page" }, margins, 0);
+    const style = pageBorderStyle({ top: line, bottom: line, offsetPt: 36, measureFrom: "page" }, margins, 0, DEFAULT_THEME);
     // 36pt = half an inch = 1.27cm.
     expect(style?.top).toBe("1.27cm");
     expect(style?.borderTop).toBe("2pt solid #c00000");
@@ -552,31 +552,31 @@ describe("pageBorderStyle (SPEC-074 AC-21, AC-22)", () => {
   });
 
   it("insets from the text area outward when it measures from the text", () => {
-    const style = pageBorderStyle({ left: line, offsetPt: 36, measureFrom: "text" }, margins, 0);
+    const style = pageBorderStyle({ left: line, offsetPt: 36, measureFrom: "text" }, margins, 0, DEFAULT_THEME);
     // The 2.54cm margin less the 1.27cm offset.
     expect(style?.left).toBe("1.27cm");
   });
 
   it("never insets past the page edge", () => {
-    const style = pageBorderStyle({ top: line, offsetPt: 720, measureFrom: "text" }, margins, 0);
+    const style = pageBorderStyle({ top: line, offsetPt: 720, measureFrom: "text" }, margins, 0, DEFAULT_THEME);
     expect(style?.top).toBe("0cm");
   });
 
   it("renders on every page of the section by default (AC-22)", () => {
     for (const index of [0, 1, 7]) {
-      expect(pageBorderStyle({ top: line }, margins, index)).not.toBeNull();
+      expect(pageBorderStyle({ top: line }, margins, index, DEFAULT_THEME)).not.toBeNull();
     }
   });
 
   it("honours a first-page-only or all-but-first restriction", () => {
-    expect(pageBorderStyle({ top: line, appliesTo: "firstPage" }, margins, 0)).not.toBeNull();
-    expect(pageBorderStyle({ top: line, appliesTo: "firstPage" }, margins, 1)).toBeNull();
-    expect(pageBorderStyle({ top: line, appliesTo: "exceptFirstPage" }, margins, 0)).toBeNull();
-    expect(pageBorderStyle({ top: line, appliesTo: "exceptFirstPage" }, margins, 1)).not.toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "firstPage" }, margins, 0, DEFAULT_THEME)).not.toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "firstPage" }, margins, 1, DEFAULT_THEME)).toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "exceptFirstPage" }, margins, 0, DEFAULT_THEME)).toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "exceptFirstPage" }, margins, 1, DEFAULT_THEME)).not.toBeNull();
   });
 
   it("is inert decoration, never a hit target", () => {
-    expect(pageBorderStyle({ top: line }, margins, 0)?.pointerEvents).toBe("none");
+    expect(pageBorderStyle({ top: line }, margins, 0, DEFAULT_THEME)?.pointerEvents).toBe("none");
   });
 });
 
@@ -590,7 +590,7 @@ describe("paragraphStyle borders (SPEC-074 AC-13)", () => {
         shadingFill: "#fff2cc",
         indentStartCm: 1,
       },
-    });
+    }, DEFAULT_THEME);
     expect(style.borderTop).toBe("1pt solid #000000");
     expect(style.backgroundColor).toBe("#fff2cc");
     expect(style.paddingTop).toBe("4pt");
@@ -599,7 +599,7 @@ describe("paragraphStyle borders (SPEC-074 AC-13)", () => {
   });
 
   it("leaves an unbordered paragraph's style untouched", () => {
-    const style = paragraphStyle({ type: "paragraph", runs: [], formatting: { alignment: "center" } });
+    const style = paragraphStyle({ type: "paragraph", runs: [], formatting: { alignment: "center" } }, DEFAULT_THEME);
     expect(style.borderTop).toBeUndefined();
     expect(style.paddingTop).toBeUndefined();
   });
@@ -610,8 +610,8 @@ describe("paragraphStyle with style-inherited borders (SPEC-074 AC-17)", () => {
   const inherited = { borders: { top: { style: "single" as const, widthPt: 1, color: "#000000" } } };
 
   it("paints the style's box on a paragraph that carries none of its own", () => {
-    expect(paragraphStyle(plain).borderTop).toBeUndefined();
-    expect(paragraphStyle(plain, [], "all", ALL_EDGES, inherited).borderTop).toBe("1pt solid #000000");
+    expect(paragraphStyle(plain, DEFAULT_THEME).borderTop).toBeUndefined();
+    expect(paragraphStyle(plain, DEFAULT_THEME, [], "all", ALL_EDGES, inherited).borderTop).toBe("1pt solid #000000");
   });
 
   it("lets the paragraph's own borders win", () => {
@@ -620,7 +620,7 @@ describe("paragraphStyle with style-inherited borders (SPEC-074 AC-17)", () => {
       runs: [],
       formatting: { borders: { top: { style: "dotted" as const, widthPt: 2, color: "#c00000" } } },
     };
-    expect(paragraphStyle(own, [], "all", ALL_EDGES, inherited).borderTop).toBe("2pt dotted #c00000");
+    expect(paragraphStyle(own, DEFAULT_THEME, [], "all", ALL_EDGES, inherited).borderTop).toBe("2pt dotted #c00000");
   });
 
   it("paints only the edges this fragment takes, inherited or not (AC-14..16)", () => {

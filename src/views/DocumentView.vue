@@ -161,6 +161,7 @@ import {
   asParagraphBlock,
   createDocument,
   createEmptyHeaderFooterContent,
+  documentThemeOf,
   isBreak,
   isImage,
   isShape,
@@ -3640,6 +3641,7 @@ function handleMenuCommand(id = "") {
                 :columns="pageView.columns"
                 :virtual="pageView.virtual"
                 :cell-range="cellSelection || undefined"
+                :theme="documentThemeOf(doc)"
                 :dimmed="pageView.dimmed"
                 :header-style="pageView.headerStyle ?? undefined"
                 :footer-style="pageView.footerStyle ?? undefined"
@@ -4024,6 +4026,7 @@ function handleMenuCommand(id = "") {
       :box="shapeToolbarStyle()"
       :state="shapeToolbarState()"
       :format-dialog-open="shapeFormatOpen"
+      :theme="documentThemeOf(doc)"
       :can-align="!drawingArrange.alignDisabledReason.value"
       :can-distribute="!drawingArrange.distributeDisabledReason.value"
       v-on="shapeToolbarOn"

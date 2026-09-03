@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { inject, nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
-import { asShape } from "../lib/documentModel";
+import { asDocumentTheme, asShape } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
 import { drawingWrapSpacerStyle, shapeDisplayStyle, shapeTextRectStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
@@ -36,6 +36,9 @@ const props = defineProps({
    * list paragraphs (AC-18) resolve defined markers/indents from the same
    * catalogue the body does. */
   listDefinitions: { type: Array, default: () => [] },
+  /** The document's theme (SPEC-077) — the shape's text runs resolve theme
+   * colour/font references against it. */
+  theme: { type: Object, default: null },
 });
 
 defineEmits([
@@ -185,7 +188,7 @@ function shapeTextEntries() {
   if (!shape.text) {
     return [];
   }
-  return shapeTextRenderEntries(shape, asListDefinitions(props.listDefinitions));
+  return shapeTextRenderEntries(shape, asListDefinitions(props.listDefinitions), asDocumentTheme(props.theme));
 }
 
 /** The geometry's own text rectangle (AC-11), or an empty object when the
@@ -257,7 +260,10 @@ function textRectStyle() {
           @compositionstart.stop="editingText ? $emit('text-compositionstart') : undefined"
           @compositionend.stop="editingText ? $emit('text-compositionend', $event) : undefined"
         >
-          <DocBlockEntries :entries="shapeTextEntries()" />
+          <DocBlockEntries
+            :entries="shapeTextEntries()"
+            :theme="theme"
+          />
         </div>
         <span
           v-if="selected && overflowing"

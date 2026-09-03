@@ -628,7 +628,7 @@ const DASH_FOR: Partial<Record<BorderSide["style"], string>> = {
 
 /** A cell border edge → `a:lnL/R/T/B`. `"none"` paints `a:noFill`; a set style
  * emits width, solid colour, compound for double, and a preset dash. */
-function borderLnXml(tag: string, side: BorderSide | undefined): string {
+function borderLnXml(tag: string, side: BorderSide | undefined, tc: SlideColorWrite): string {
   if (!side) {
     return "";
   }
@@ -638,7 +638,7 @@ function borderLnXml(tag: string, side: BorderSide | undefined): string {
   const w = ` w="${Math.round(side.widthPt * 12700)}"`;
   const cmpd = side.style === "double" ? ` cmpd="dbl"` : "";
   const dash = DASH_FOR[side.style] ? `<a:prstDash val="${DASH_FOR[side.style]}"/>` : "";
-  return `<${tag}${w}${cmpd}><a:solidFill><a:srgbClr val="${hex(side.color)}"/></a:solidFill>${dash}</${tag}>`;
+  return `<${tag}${w}${cmpd}><a:solidFill>${colorElementXml(side.color, tc)}</a:solidFill>${dash}</${tag}>`;
 }
 
 /** A cell's `a:tcPr`: the preserved verbatim string when the cell has one
@@ -653,10 +653,10 @@ function tcPrXml(cell: SlideTableCell, tc: SlideColorWrite): string {
   const anchor =
     cell.verticalAlign === "center" ? ` anchor="ctr"` : cell.verticalAlign === "bottom" ? ` anchor="b"` : "";
   const borders =
-    borderLnXml("a:lnL", cell.borders?.left) +
-    borderLnXml("a:lnR", cell.borders?.right) +
-    borderLnXml("a:lnT", cell.borders?.top) +
-    borderLnXml("a:lnB", cell.borders?.bottom);
+    borderLnXml("a:lnL", cell.borders?.left, tc) +
+    borderLnXml("a:lnR", cell.borders?.right, tc) +
+    borderLnXml("a:lnT", cell.borders?.top, tc) +
+    borderLnXml("a:lnB", cell.borders?.bottom, tc);
   const fill = cell.fill ? fillXml(cell.fill, tc) : "";
   return `<a:tcPr${mar}${anchor}>${borders}${fill}</a:tcPr>`;
 }

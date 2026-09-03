@@ -12,6 +12,8 @@ import ShapeStylePanel from "./ShapeStylePanel.vue";
 defineProps({
   /** The selection's styling snapshot — ShapeStylePanel's `styling` prop. */
   styling: { type: Object, required: true },
+  /** The document's theme (SPEC-077), forwarded to ShapeStylePanel. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits([
@@ -34,6 +36,7 @@ const emit = defineEmits([
   >
     <ShapeStylePanel
       :styling="styling"
+      :theme="theme"
       @fill="(value) => emit('fill', value)"
       @outline="(value) => emit('outline', value)"
       @shadow="(value) => emit('shadow', value)"

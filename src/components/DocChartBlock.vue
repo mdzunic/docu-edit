@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { inject, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
-import { asChart } from "../lib/documentModel";
+import { asChart, asDocumentTheme } from "../lib/documentModel";
 import { chartDisplayStyle, drawingWrapSpacerStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
 import { paintChart } from "../lib/core/chartCanvas";
@@ -28,6 +28,9 @@ const props = defineProps({
    * shared with Shape's own counter (SPEC-051). */
   drawingIndex: { type: Number, default: 0 },
   displayMode: { type: String, default: "all" },
+  /** The document's theme (SPEC-077) — chart text fonts and theme-referenced
+   * colours resolve against it at paint time. */
+  theme: { type: Object, default: null },
 });
 
 defineEmits(["select", "edit-data"]);
@@ -66,7 +69,7 @@ function repaint() {
     axis: resolveThemeColor("--chart-axis"),
     gridline: resolveThemeColor("--chart-gridline"),
     text: resolveThemeColor("--chart-text"),
-  });
+  }, asDocumentTheme(props.theme));
 }
 
 // Reading the shared theme so a switch repaints the canvas with freshly
@@ -76,6 +79,7 @@ const { resolvedTheme } = useTheme();
 onMounted(repaint);
 onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
+watch(() => props.theme, repaint, { deep: true });
 watch(resolvedTheme, repaint);
 // Re-paint the backing store when the zoom changes so it stays crisp (AC-20).
 watch(documentZoom, repaint);

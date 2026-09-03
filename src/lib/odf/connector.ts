@@ -216,7 +216,7 @@ function parsePreservedConnectorStyle(xml: string | undefined): Element | undefi
 
 function connectorGraphicPropertiesXml(connector: Connector, ctx: OdfShapeStyleWriteContext): string {
   const defs = ctx.defs ?? createOdfDrawingDefs();
-  const strokeAttrs = connector.outline ? outlineStyleAttrs(connector.outline, defs) : ' draw:stroke="none"';
+  const strokeAttrs = connector.outline ? outlineStyleAttrs(connector.outline, defs, ctx.theme) : ' draw:stroke="none"';
   const markerEnd = connector.endArrow && connector.endArrow !== "none" ? ' draw:marker-end="Arrow" draw:marker-end-width="0.3cm"' : "";
   const markerStart = connector.startArrow && connector.startArrow !== "none" ? ' draw:marker-start="Arrow" draw:marker-start-width="0.3cm"' : "";
   const shadowAttrs = connector.shadow ? shadowStyleAttrs(connector.shadow) : "";

@@ -19,6 +19,7 @@
 import type { ChartOptions, ChartSeries, ChartType, ChartVisual } from "./charts";
 import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "./charts";
 import { escapeXmlAttribute, escapeXmlText, parseXml, XmlParseError } from "./xml";
+import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "./theme";
 import { cmToOdfLength, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "./odfXml";
 
 export const CHART_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0";
@@ -264,7 +265,7 @@ function tableXml(chart: ChartVisual, series: ChartSeries[]): string {
   );
 }
 
-function seriesXml(chart: ChartVisual, series: ChartSeries, index: number): string {
+function seriesXml(chart: ChartVisual, series: ChartSeries, index: number, theme: DocumentTheme): string {
   const col = tableColumnLetter(index);
   const rows = chart.categories.length;
   const classFor: Record<ChartType, string> = {
@@ -279,7 +280,9 @@ function seriesXml(chart: ChartVisual, series: ChartSeries, index: number): stri
     scatter: "chart:scatter",
   };
   return (
-    `<chart:series chart:class="${classFor[chart.chartType]}" chart:color="${escapeXmlAttribute(series.color)}"` +
+    // ODF's chart:color has no theme vocabulary — a reference writes its
+    // resolved literal (SPEC-077 D8/AC-39 semantics for the ODF family).
+    `<chart:series chart:class="${classFor[chart.chartType]}" chart:color="${escapeXmlAttribute(resolveColor(series.color, theme))}"` +
     ` chart:values-cell-range-address="local-table.$${col}$2:.$${col}$${rows + 1}"` +
     ` chart:label-cell-address="local-table.$${col}$1"/>`
   );
@@ -311,7 +314,12 @@ function axesXml(chart: ChartVisual): string {
  * the text product's `Chart` — carries no size; its container (the
  * `draw:frame`/`p:graphicFrame`) owns placement. An untouched chart never
  * calls this: its object's original bytes are re-emitted verbatim instead. */
-export function odfChartContentXml(chart: ChartVisual, widthCm: number, heightCm: number): string {
+export function odfChartContentXml(
+  chart: ChartVisual,
+  widthCm: number,
+  heightCm: number,
+  theme: DocumentTheme = DEFAULT_THEME,
+): string {
   const vertical = chart.chartType !== "barClustered";
   const stacked = chart.chartType === "columnStacked";
   const classFor: Record<ChartType, string> = {
@@ -342,7 +350,7 @@ export function odfChartContentXml(chart: ChartVisual, widthCm: number, heightCm
   // chart:circle/chart:ring holds exactly one chart:series; the model keeps
   // the rest for the data sheet to still show (SPEC-052 "Chart catalogue").
   const seriesToWrite = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
-  const seriesXmlStr = seriesToWrite.map((s, i) => seriesXml(chart, s, i)).join("");
+  const seriesXmlStr = seriesToWrite.map((s, i) => seriesXml(chart, s, i, theme)).join("");
   const dataLabelsAttr = chart.options.dataLabels ? ' chart:data-labels="true"' : "";
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
