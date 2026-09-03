@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { LINE_START } from "./keys";
+import { LINE_START, MOD } from "./keys";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BUILT_IN_THEMES, resolveColor } from "../src/lib/core/theme";
@@ -168,4 +168,16 @@ test("the AC-54 journey: gallery, one-apply recolour, an accent swatch that surv
   await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(office.colors.accent2));
   await expect(textOf(page, EXPLICIT)).toHaveCSS("color", rgb("#c00000"));
   expectPixel(await shapeCentrePixel(page), office.colors.accent4);
+
+  // AC-14: the apply was ONE undo entry — a single undo restores the
+  // previous theme and every colour that resolved from it, and redo
+  // re-applies it.
+  await content(page).click();
+  await page.keyboard.press(`${MOD}+z`);
+  await expect(textOf(page, "Body")).toHaveCSS("color", rgb(facet.colors.accent1));
+  await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(facet.colors.accent2));
+  expectPixel(await shapeCentrePixel(page), facet.colors.accent4);
+  await page.keyboard.press(`${MOD}+y`);
+  await expect(textOf(page, "Body")).toHaveCSS("color", rgb(office.colors.accent1));
+  await expect(textOf(page, HEADING)).toHaveCSS("color", rgb(office.colors.accent2));
 });
