@@ -25,3 +25,9 @@ brand when it comes back from Word.
 ## Out of scope
 Theme colours and font schemes. Table styles with banding. A shared
 organisation-wide style library.
+
+## Note (SPEC-074)
+The style editor gains a "Borders and shading…" control on paragraph styles,
+which opens the very same dialog `Format → Borders and shading…` opens for a
+paragraph — so a style and a paragraph can never disagree about what a
+border is. The result lands in the style's `paragraphFormatting`.

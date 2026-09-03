@@ -5,6 +5,7 @@
 // paragraph/run formatting, the ODF counterpart of docx/styles.ts.
 import type {
   NamedStyle,
+  PageBorders,
   ParagraphFormatting,
   RunFormatting,
   SectionColumns,
@@ -29,7 +30,9 @@ import {
   type FontFaceMap,
   type OdfTextProperties,
 } from "./properties";
-import { odfLengthToCm } from "./units";
+import { odfColorToCss, odfLengthToCm, odfLengthToPt } from "./units";
+import { DE_BORDER_NAMESPACE, parseBorderShorthand } from "./borders";
+import { borderSideVisible } from "../core/borders";
 
 interface OdfStyleDefinition {
   name: string;
@@ -107,6 +110,11 @@ export interface OdfMasterPageLayout {
   /** The page layout's `style:columns` as a section column layout
    * (SPEC-030); absent for a single-column page. */
   columns?: SectionColumns;
+  /** The page layout's border (SPEC-074 AC-31): `fo:border-*` with
+   * `fo:padding-*` as the offset. */
+  pageBorders?: PageBorders;
+  /** The page layout's `fo:background-color` (SPEC-074 AC-31). */
+  pageBackground?: string;
   /** `<style:header>`/`<style:header-left>`/`<style:footer>`/
    * `<style:footer-left>` — direct children of `<style:master-page>`
    * (SPEC-029 AC-9, AC-26). The `-left` variants are ODF's own
@@ -461,6 +469,45 @@ function parsePageLayoutProperties(props: Element): OdfMasterPageLayout {
   if (columns) {
     layout.columns = columns;
   }
+
+  // SPEC-074 AC-31: the page border and background. The offset rides on
+  // `fo:padding-*`; the reference edge and the applies-to restriction have no
+  // ODF attribute and come back from this product's extension namespace (see
+  // odf/borders.ts), defaulting to what ODF itself implies.
+  const shorthand = foAttr(props, "border");
+  const paddingAll = odfLengthToPt(foAttr(props, "padding"));
+  const pageBorders: PageBorders = {};
+  let offsetPt: number | undefined;
+  for (const edge of ["top", "bottom", "left", "right"] as const) {
+    const side = parseBorderShorthand(foAttr(props, `border-${edge}`) ?? shorthand);
+    // An explicit `none` is a present edge for a PARAGRAPH — that is how a
+    // paragraph cancels the border its style would give it. A page layout
+    // inherits from nothing, so `fo:border="none"` here means exactly what
+    // an absent attribute means: no page border. Recording it would give a
+    // document that has none a `pageBorders` object (and an inert border
+    // layer on every page) it did not have before.
+    if (!side || !borderSideVisible(side)) {
+      continue;
+    }
+    pageBorders[edge] = side;
+    offsetPt = offsetPt ?? odfLengthToPt(foAttr(props, `padding-${edge}`)) ?? paddingAll;
+  }
+  if (pageBorders.top || pageBorders.bottom || pageBorders.left || pageBorders.right) {
+    if (offsetPt !== undefined) {
+      pageBorders.offsetPt = offsetPt;
+    }
+    pageBorders.measureFrom =
+      props.getAttributeNS(DE_BORDER_NAMESPACE, "page-border-measure-from") === "text" ? "text" : "page";
+    const appliesTo = props.getAttributeNS(DE_BORDER_NAMESPACE, "page-border-applies-to");
+    if (appliesTo === "firstPage" || appliesTo === "exceptFirstPage") {
+      pageBorders.appliesTo = appliesTo;
+    }
+    layout.pageBorders = pageBorders;
+  }
+  const pageBackground = odfColorToCss(foAttr(props, "background-color"));
+  if (pageBackground !== undefined) {
+    layout.pageBackground = pageBackground;
+  }
   return layout;
 }
 
@@ -731,6 +778,17 @@ export function resolveParagraphStyle(
   let runFormatting = catalog.defaultRunFormatting;
   let headingLevel: number | undefined;
 
+  // `fo:border="none"` and `fo:background-color="transparent"` are taken at
+  // their word here — an explicit "no box"/"no fill" that stops a style's
+  // being inherited (SPEC-074 AC-17). The .docx reader instead drops such a
+  // value where the style chain had nothing to override; ODF cannot make
+  // that comparison, because the chain a paragraph resolves through does not
+  // contain the common style its box would come from: this product's own
+  // writer names a paragraph's automatic style after its style id (see
+  // odf/writer's paragraphNameFor), and styleChain's automatic-before-named
+  // lookup then stops at that shadowing entry. Reading the attribute
+  // literally is also the more faithful reading — an ODF automatic style IS
+  // direct formatting, so a border stated there was stated deliberately.
   for (const style of styleChain(catalog.paragraphStyles, styleName)) {
     paragraphFormatting = mergeParagraphFormatting(paragraphFormatting, style.paragraphFormatting);
     runFormatting = applyTextProperties(runFormatting, style.textProperties);

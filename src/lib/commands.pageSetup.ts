@@ -3,7 +3,7 @@ import { orderedRange, type CommandResult, type ModelSelection } from "./command
 import { snapCm } from "./commands.paragraph";
 import { type Margins, type PageSize } from "./core/pageSetup";
 import { type MeasurementUnit } from "./core/units";
-import { type DocumentModel, type Section } from "./documentModel";
+import { type DocumentModel, type PageBorders, type Section } from "./documentModel";
 
 /** Drops a stale preserved `w:sectPr` (SPEC-027): any command that changes
  * the page size or margins must not let the writer re-emit the source
@@ -182,4 +182,83 @@ export function setPageSetup(
   }
   const { start, end } = orderedRange(next, selection);
   return { model: next, selection: { anchor: start, focus: end } };
+}
+
+// --- page borders and background (SPEC-074 AC-19..23) ------------------------
+
+/** The Page setup dialog's Borders tab (SPEC-074 AC-19..23). Both fields
+ * follow the `null`-removes convention: `pageBorders: null` clears the
+ * section's border, `pageBackground: null` returns it to paper white.
+ *
+ * `applyTo` picks the scope the same way setPageSetup does — the caret's
+ * section, or every section. Unlike page size and margins, there are no
+ * document-level defaults for these: "whole document" means writing the same
+ * value onto every section, which is also what makes a `.docx` save lossless
+ * (OOXML holds one page background for the whole document — see AC-32). */
+export function setPageBorders(
+  model: DocumentModel,
+  selection: ModelSelection,
+  patch: { pageBorders?: PageBorders | null; pageBackground?: string | null },
+  applyTo: PageSetupScope = "thisSection",
+): CommandResult {
+  const target = orderedRange(model, selection).start.section;
+  const apply = (section: Section): Section => {
+    const updated: Section = { ...section };
+    if (patch.pageBorders !== undefined) {
+      const borders = patch.pageBorders === null ? undefined : snapPageBorders(patch.pageBorders);
+      if (borders === undefined) {
+        delete updated.pageBorders;
+      } else {
+        updated.pageBorders = borders;
+      }
+    }
+    if (patch.pageBackground !== undefined) {
+      if (patch.pageBackground === null) {
+        delete updated.pageBackground;
+      } else {
+        updated.pageBackground = patch.pageBackground;
+      }
+    }
+    // The preserved sectPr carries the source's own w:pgBorders, so it must
+    // go the moment the modelled value changes — the same rule
+    // withSectionGeometry applies to page size and margins.
+    delete updated.docxSectPr;
+    return updated;
+  };
+  let next: DocumentModel = {
+    ...model,
+    sections: model.sections.map((section, index) =>
+      applyTo === "wholeDocument" || index === target ? apply(section) : section,
+    ),
+  };
+  if (applyTo === "wholeDocument" || target === model.sections.length - 1) {
+    next = clearPreservedSectPr(next);
+  }
+  const { start, end } = orderedRange(next, selection);
+  return { model: next, selection: { anchor: start, focus: end } };
+}
+
+/** Border widths on the eighth-of-a-point grid `@w:sz` carries exactly, and
+ * the offset on the whole-point grid `@w:space` does — so a Borders tab edit
+ * survives a save + re-open unchanged. The offset is clamped to OOXML's own
+ * 0..31pt range rather than silently written out of schema. */
+function snapPageBorders(borders: PageBorders): PageBorders {
+  const snapped: PageBorders = {};
+  for (const edge of ["top", "bottom", "left", "right"] as const) {
+    const side = borders[edge];
+    if (side) {
+      snapped[edge] = { ...side, widthPt: Math.round(side.widthPt * 8) / 8 };
+    }
+  }
+  if (!snapped.top && !snapped.bottom && !snapped.left && !snapped.right) {
+    return snapped;
+  }
+  if (borders.offsetPt !== undefined) {
+    snapped.offsetPt = Math.min(31, Math.max(0, Math.round(borders.offsetPt)));
+  }
+  snapped.measureFrom = borders.measureFrom ?? "page";
+  if (borders.appliesTo !== undefined && borders.appliesTo !== "allPages") {
+    snapped.appliesTo = borders.appliesTo;
+  }
+  return snapped;
 }

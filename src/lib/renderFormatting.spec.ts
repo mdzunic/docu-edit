@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { ALL_EDGES } from "./paragraphBorders";
 import {
   displayParagraphFormatting,
+  pageBorderStyle,
   displayRunFormatting,
   drawingWrapSpacerStyle,
   headingTag,
@@ -528,5 +530,113 @@ describe("drawingWrapSpacerStyle — square/topAndBottom text exclusion", () => 
     );
     expect(style!.shapeOutside).toBe("inset(0cm 0 0 0)");
     expect(style!.width).toBe("16cm");
+  });
+});
+
+describe("pageBorderStyle (SPEC-074 AC-21, AC-22)", () => {
+  const margins = { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 };
+  const line = { style: "single" as const, widthPt: 2, color: "#c00000" };
+
+  it("is null when the section has no border or no edge is set", () => {
+    expect(pageBorderStyle(undefined, margins, 0)).toBeNull();
+    expect(pageBorderStyle({ offsetPt: 24 }, margins, 0)).toBeNull();
+  });
+
+  it("insets from the page edge by the offset when it measures from the page", () => {
+    const style = pageBorderStyle({ top: line, bottom: line, offsetPt: 36, measureFrom: "page" }, margins, 0);
+    // 36pt = half an inch = 1.27cm.
+    expect(style?.top).toBe("1.27cm");
+    expect(style?.borderTop).toBe("2pt solid #c00000");
+    expect(style?.borderLeft).toBe("none");
+  });
+
+  it("insets from the text area outward when it measures from the text", () => {
+    const style = pageBorderStyle({ left: line, offsetPt: 36, measureFrom: "text" }, margins, 0);
+    // The 2.54cm margin less the 1.27cm offset.
+    expect(style?.left).toBe("1.27cm");
+  });
+
+  it("never insets past the page edge", () => {
+    const style = pageBorderStyle({ top: line, offsetPt: 720, measureFrom: "text" }, margins, 0);
+    expect(style?.top).toBe("0cm");
+  });
+
+  it("renders on every page of the section by default (AC-22)", () => {
+    for (const index of [0, 1, 7]) {
+      expect(pageBorderStyle({ top: line }, margins, index)).not.toBeNull();
+    }
+  });
+
+  it("honours a first-page-only or all-but-first restriction", () => {
+    expect(pageBorderStyle({ top: line, appliesTo: "firstPage" }, margins, 0)).not.toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "firstPage" }, margins, 1)).toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "exceptFirstPage" }, margins, 0)).toBeNull();
+    expect(pageBorderStyle({ top: line, appliesTo: "exceptFirstPage" }, margins, 1)).not.toBeNull();
+  });
+
+  it("is inert decoration, never a hit target", () => {
+    expect(pageBorderStyle({ top: line }, margins, 0)?.pointerEvents).toBe("none");
+  });
+});
+
+describe("paragraphStyle borders (SPEC-074 AC-13)", () => {
+  it("paints a boxed paragraph's edges, padding and shading", () => {
+    const style = paragraphStyle({
+      type: "paragraph",
+      runs: [],
+      formatting: {
+        borders: { top: { style: "single", widthPt: 1, color: "auto" } },
+        shadingFill: "#fff2cc",
+        indentStartCm: 1,
+      },
+    });
+    expect(style.borderTop).toBe("1pt solid #000000");
+    expect(style.backgroundColor).toBe("#fff2cc");
+    expect(style.paddingTop).toBe("4pt");
+    // The shading follows the indent because the indent is a margin.
+    expect(style.marginInlineStart).toBe("1cm");
+  });
+
+  it("leaves an unbordered paragraph's style untouched", () => {
+    const style = paragraphStyle({ type: "paragraph", runs: [], formatting: { alignment: "center" } });
+    expect(style.borderTop).toBeUndefined();
+    expect(style.paddingTop).toBeUndefined();
+  });
+});
+
+describe("paragraphStyle with style-inherited borders (SPEC-074 AC-17)", () => {
+  const plain = { type: "paragraph" as const, runs: [] };
+  const inherited = { borders: { top: { style: "single" as const, widthPt: 1, color: "#000000" } } };
+
+  it("paints the style's box on a paragraph that carries none of its own", () => {
+    expect(paragraphStyle(plain).borderTop).toBeUndefined();
+    expect(paragraphStyle(plain, [], "all", ALL_EDGES, inherited).borderTop).toBe("1pt solid #000000");
+  });
+
+  it("lets the paragraph's own borders win", () => {
+    const own = {
+      type: "paragraph" as const,
+      runs: [],
+      formatting: { borders: { top: { style: "dotted" as const, widthPt: 2, color: "#c00000" } } },
+    };
+    expect(paragraphStyle(own, [], "all", ALL_EDGES, inherited).borderTop).toBe("2pt dotted #c00000");
+  });
+
+  it("paints only the edges this fragment takes, inherited or not (AC-14..16)", () => {
+    const boxed = {
+      borders: {
+        top: { style: "single" as const, widthPt: 1, color: "#000000" },
+        bottom: { style: "single" as const, widthPt: 1, color: "#000000" },
+      },
+    };
+    const style = paragraphStyle(
+      plain,
+      [],
+      "all",
+      { ...ALL_EDGES, top: false },
+      boxed,
+    );
+    expect(style.borderTop).toBe("none");
+    expect(style.borderBottom).toBe("1pt solid #000000");
   });
 });

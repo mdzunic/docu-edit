@@ -54,6 +54,10 @@ export function usePrintPreview(deps: PrintPreviewDeps) {
 
   const rangeMode = ref<"all" | "custom">("all");
   const rangeText = ref("");
+  /** "Print background colours" (SPEC-074 AC-25): off by default, exactly as
+   * in both source applications — a page background is a screen decoration
+   * until the user asks for it on paper. Page *borders* always print. */
+  const printBackground = ref(false);
 
   /** Pages the preview/print can address: zero for a content-empty
    * document, which previews as no pages and cannot print (AC-27). */
@@ -181,10 +185,12 @@ export function usePrintPreview(deps: PrintPreviewDeps) {
     pageStyleEl.textContent = printPageRuleCss(model);
   });
 
-  // The body marker class scoping the preview's screen-only exclusions.
+  // The body marker class scoping the preview's screen-only exclusions, and
+  // the one that lets page backgrounds through to paper (SPEC-074 AC-25).
   watchEffect(() => {
     if (typeof document !== "undefined") {
       document.body.classList.toggle("is-print-preview", printPreviewOpen.value);
+      document.body.classList.toggle("prints-background", printBackground.value);
     }
   });
 
@@ -193,6 +199,7 @@ export function usePrintPreview(deps: PrintPreviewDeps) {
     pageStyleEl = null;
     if (typeof document !== "undefined") {
       document.body.classList.remove("is-print-preview");
+      document.body.classList.remove("prints-background");
     }
   });
 
@@ -202,6 +209,7 @@ export function usePrintPreview(deps: PrintPreviewDeps) {
     forceRealizeAll,
     rangeMode,
     rangeText,
+    printBackground,
     rangeError,
     canPrint,
     printablePageCount,

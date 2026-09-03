@@ -42,6 +42,7 @@ import {
   styleTypeOf,
 } from "../../lib/styles";
 import { paragraphAtCaret } from "../../lib/textEditing";
+import { normaliseParagraphBorders, paintedShadingFill } from "../../lib/paragraphBorders";
 import type { ModelSelection, ParagraphCommand, StyleFormInput } from "../../lib/commands";
 import type { PendingFormat } from "../../lib/documentModel";
 import type { CaretPosition } from "../../lib/textEditing";
@@ -208,6 +209,14 @@ export function useStyleManager(deps: StyleManagerDeps) {
         initialCellBorderStyle: border?.style ?? "",
         initialCellBorderWidthPt: border?.widthPt ?? 1,
         initialCellBorderColor: border?.color ?? "#000000",
+        // SPEC-074 AC-18: the style's own paragraph borders and shading.
+        // Seeded through the paint helpers, so a value that is present but
+        // paints nothing — AC-17's explicit "off", which a .docx style can
+        // carry as an all-nil w:pBdr or w:shd w:fill="auto" — comes up as
+        // plain "no borders"/"no fill" rather than as a keyword in a colour
+        // input. The editor has no separate control for overriding a parent.
+        initialBorders: normaliseParagraphBorders(target?.paragraphFormatting?.borders),
+        initialShadingFill: paintedShadingFill(target?.paragraphFormatting) ?? "",
       };
     }
     const caretNow = getCaretPosition();
@@ -230,6 +239,12 @@ export function useStyleManager(deps: StyleManagerDeps) {
       initialCellBorderStyle: "",
       initialCellBorderWidthPt: 1,
       initialCellBorderColor: "#000000",
+      // A new style is seeded from the caret's paragraph, like every other
+      // field above (SPEC-074 AC-18) — and through the same paint helpers, so
+      // a paragraph carrying AC-17's explicit "off" seeds the style with no
+      // borders and no fill rather than with the override itself.
+      initialBorders: normaliseParagraphBorders(caretParagraph?.formatting?.borders),
+      initialShadingFill: paintedShadingFill(caretParagraph?.formatting) ?? "",
     };
   });
 

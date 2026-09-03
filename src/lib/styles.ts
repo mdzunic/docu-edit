@@ -17,6 +17,7 @@ import {
   type NamedStyle,
   type Paragraph,
   type ParagraphAlignment,
+  type ParagraphBorders,
   type ParagraphFormatting,
   type RunFormatting,
   type StyleType,
@@ -24,6 +25,12 @@ import {
 } from "./documentModel";
 import { type BorderLineStyle, type CellBorders } from "./core/tables";
 import { runStyle } from "./renderFormatting";
+import {
+  paragraphBordersEqual,
+  snapParagraphBorders,
+  withInheritedPaint,
+  type InheritedPaintOf,
+} from "./paragraphBorders";
 
 /** The id of the style every unstyled paragraph implicitly has. Word's
  * default-style id, which is also what AC "Normal is always available"
@@ -446,6 +453,9 @@ const PARAGRAPH_KEYS = [
   "lineSpacingPt",
   "lineSpacingRule",
   "direction",
+  // SPEC-074 AC-17: shading is a plain value, compared like the rest;
+  // `borders` is an object and needs the structural comparison below.
+  "shadingFill",
 ] as const;
 
 export function diffParagraphFormatting(
@@ -458,6 +468,13 @@ export function diffParagraphFormatting(
     if (value !== undefined && value !== base[key]) {
       (diff as Record<string, unknown>)[key] = value;
     }
+  }
+  // Borders are inherited from the style until the paragraph sets its own
+  // (SPEC-074 AC-17): a paragraph whose borders are structurally equal to
+  // the style's is carrying no direct formatting, so an identity comparison
+  // (which every freshly-baked object fails) would be wrong here.
+  if (effective.borders !== undefined && !paragraphBordersEqual(effective.borders, base.borders)) {
+    diff.borders = effective.borders;
   }
   return diff;
 }
@@ -492,6 +509,71 @@ export function paragraphStyleBase(model: DocumentModel, paragraph: Paragraph): 
     return { paragraphFormatting: {}, runFormatting: {} };
   }
   return resolveNamedStyle(model, namedId);
+}
+
+// --- borders and shading inheritance (SPEC-074 AC-17) -----------------------
+//
+// These two properties are the exception to this module's opening paragraph:
+// they are NOT baked onto the paragraph when a style is applied, they resolve
+// here at the moment something paints. Two reasons.
+//
+// A style's box belongs to the *style*. Baking it would give every paragraph
+// in the document its own copy, and both writers would then emit a
+// per-paragraph `w:pBdr`/`fo:border` instead of the single style definition
+// the formats (and Word/Writer) expect.
+//
+// And a paragraph with no `styleId` at all still has a style: Normal — the
+// one `styleDisplayName` already names for it in the picker. Setting Normal's
+// borders has to box the paragraphs of a blank document, and no re-bake
+// scoped to `styleId` can reach them, because they name no style to be
+// scoped by.
+
+/** What `styleId` contributes to a paragraph's borders and shading — with an
+ * absent id resolving through Normal, the style an unstyled paragraph
+ * implicitly has. Only the two fields carry over; everything else a style
+ * sets is baked, and layering it a second time here would double-apply it. */
+export function inheritedParagraphPaint(
+  model: DocumentModel,
+  styleId: string | undefined,
+): ParagraphFormatting {
+  const resolved = resolveNamedStyle(model, styleId ?? NORMAL_STYLE_ID).paragraphFormatting;
+  const paint: ParagraphFormatting = {};
+  if (resolved.borders !== undefined) {
+    paint.borders = resolved.borders;
+  }
+  if (resolved.shadingFill !== undefined) {
+    paint.shadingFill = resolved.shadingFill;
+  }
+  return paint;
+}
+
+/** `inheritedParagraphPaint` bound to one model and memoised per style id —
+ * the renderer asks once per paragraph per repaint, and walking a basedOn
+ * chain that many times would be waste. Build one per render pass and throw
+ * it away: it caches against the model it was built from, so a later
+ * catalogue edit needs a fresh resolver (which a fresh render pass makes). */
+export function paragraphPaintResolver(model: DocumentModel): InheritedPaintOf {
+  const cache = new Map<string, ParagraphFormatting>();
+  return (paragraph: Paragraph): ParagraphFormatting => {
+    const key = paragraph.styleId ?? NORMAL_STYLE_ID;
+    const cached = cache.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const paint = inheritedParagraphPaint(model, key);
+    cache.set(key, paint);
+    return paint;
+  };
+}
+
+/** The formatting a paragraph actually paints its borders and shading from
+ * (AC-17) — the one-shot form, for callers with a single paragraph to
+ * resolve rather than a page of them. */
+export function paintedParagraphFormatting(
+  model: DocumentModel,
+  paragraph: Paragraph,
+): ParagraphFormatting | undefined {
+  return withInheritedPaint(paragraph.formatting, inheritedParagraphPaint(model, paragraph.styleId));
 }
 
 // --- custom styles manager (SPEC-042) ---------------------------------------
@@ -657,6 +739,36 @@ export interface StyleEditorDraft {
   cellBorderStyle: string;
   cellBorderWidthPt: number;
   cellBorderColor: string;
+  /** Paragraph borders and shading the style carries (SPEC-074 AC-18) —
+   * edited through the same Borders and shading dialog a paragraph uses, so
+   * a style and a paragraph can never disagree about what a border is. */
+  borders?: ParagraphBorders;
+  shadingFill?: string;
+}
+
+/** The paragraph formatting a paragraph style's draft carries: its
+ * alignment, and — SPEC-074 AC-18 — its borders and shading. Undefined when
+ * the style is not a paragraph style or sets none of them, so a style that
+ * says nothing about paragraphs keeps saving nothing. */
+function paragraphFormattingFromDraft(draft: StyleEditorDraft): ParagraphFormatting | undefined {
+  if (draft.type !== "paragraph") {
+    return undefined;
+  }
+  const formatting: ParagraphFormatting = {};
+  if (draft.alignment) {
+    formatting.alignment = draft.alignment as ParagraphAlignment;
+  }
+  if (draft.borders !== undefined) {
+    // Rebuilt, not referenced: the dialog holds its draft in Vue reactive
+    // state, and a reactive proxy stored in the document model cannot be
+    // structured-cloned — which is how the model reaches IndexedDB and the
+    // word-count worker. See snapParagraphBorders.
+    formatting.borders = snapParagraphBorders(draft.borders);
+  }
+  if (draft.shadingFill !== undefined && draft.shadingFill !== "") {
+    formatting.shadingFill = draft.shadingFill;
+  }
+  return Object.keys(formatting).length > 0 ? formatting : undefined;
 }
 
 /** Builds a `commands.createStyle`/`modifyStyle` input from the dialog's
@@ -700,10 +812,7 @@ export function styleFormInputFromDraft(draft: StyleEditorDraft) {
     basedOn: draft.basedOn || undefined,
     next: draft.next || undefined,
     runFormatting,
-    paragraphFormatting:
-      draft.type === "paragraph" && draft.alignment
-        ? { alignment: draft.alignment as ParagraphAlignment }
-        : undefined,
+    paragraphFormatting: paragraphFormattingFromDraft(draft),
     listPresetKey: draft.type === "list" ? draft.listPresetKey : undefined,
     cellShadingFill:
       draft.type === "table" && draft.cellShadingFill.trim() ? draft.cellShadingFill.trim() : undefined,

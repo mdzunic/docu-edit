@@ -28,3 +28,10 @@ If a document has styles defined but lacks a 'Normal' style, does the picker sho
 ## Out of scope
 Creating and managing custom styles (SPEC-042). Character styles and list
 styles. Style sets / theme switching.
+
+## Note (SPEC-074)
+Borders and shading join the properties a paragraph style carries: a
+paragraph inherits its style's `borders`/`shadingFill` until it sets its own,
+which falls out of this spec's existing baked-formatting model — the
+direct-formatting diff compares `borders` structurally (an identity check
+would report every freshly-baked object as direct formatting).

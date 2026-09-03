@@ -25,3 +25,11 @@ not modelled properly.
 ## Out of scope
 Table styles / banded row themes. Repeat header row on page breaks. Text
 wrapping around floating tables. Sorting and formulas.
+
+## Note (SPEC-074)
+No behaviour change: `BorderSide` and `BorderLineStyle` moved from
+`src/lib/core/tables.ts` to `src/lib/core/borders.ts` (paragraphs and pages
+carry the same edges, so the types are not a table concept) and are
+re-exported from `core/tables.ts`, so every import and every test in this
+spec compiles untouched. `BorderLineStyle` gained `thick`, `dashDot` and
+`dashDotDot`, which cell borders may now also carry.

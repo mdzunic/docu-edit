@@ -45,13 +45,12 @@ import type {
 import type { ListDefinition, ListFormatting, ListLevelDefinition } from "../core/lists";
 import { contentTypeForPartName, type MediaPart } from "../core/media";
 import type {
-  BorderLineStyle,
-  BorderSide,
   CellBorders,
   CellVerticalAlign,
   TableAlignment,
   TableWidthMode,
 } from "../core/tables";
+import { parseBorderShorthand } from "./borders";
 import {
   createDefaultStyles,
   FIELD_PLACEHOLDER_TEXT,
@@ -80,7 +79,7 @@ import { parseShapeElement } from "./shape";
 import { parseConnectorElement, resolveOdfConnectorAttachments, stampOdfConnectorTargetId } from "./connector";
 import { parseChartFrame } from "./chart";
 import { isFormulaFrame, parseFormulaFrame } from "./formula";
-import { odfColorToCss, odfLengthToCm, odfLengthToPt, odfPercentage } from "./units";
+import { odfColorToCss, odfLengthToCm, odfPercentage } from "./units";
 import { parseOdfCustomProperties, parseOdfMeta } from "../core/odfMeta";
 import {
   DC_NAMESPACE,
@@ -1817,45 +1816,6 @@ function repeatCount(el: Element, attr: string): number | null {
   return count;
 }
 
-/** ODF's `fo:border`-family shorthand ("0.5pt solid #ff0000") or "none"/
- * "hidden" (SPEC-023). */
-function parseBorderShorthand(value: string | null): BorderSide | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  if (trimmed === "none" || trimmed === "hidden") {
-    return { style: "none", widthPt: 0, color: "#000000" };
-  }
-  const match = /^(\S+)\s+(\S+)\s+(#[0-9a-fA-F]{6})$/.exec(trimmed);
-  if (!match) {
-    return undefined;
-  }
-  const widthPt = odfLengthToPt(match[1]) ?? 1;
-  const style = mapOdfBorderStyle(match[2]);
-  const color = odfColorToCss(match[3]) ?? "#000000";
-  return { style, widthPt, color };
-}
-
-/** ODF's CSS2-derived border style keywords collapse to the model's small
- * enum (SPEC-023), the same simplification the .docx reader applies. */
-function mapOdfBorderStyle(word: string): BorderLineStyle {
-  const w = word.toLowerCase();
-  if (w === "none" || w === "hidden") {
-    return "none";
-  }
-  if (w === "double") {
-    return "double";
-  }
-  if (w === "dashed") {
-    return "dashed";
-  }
-  if (w === "dotted") {
-    return "dotted";
-  }
-  return "single"; // "solid", "groove", "ridge", "inset", "outset", …
-}
-
 /** A `style:table-cell-properties` element's SPEC-023 fields: per-side
  * borders (falling back to the `fo:border` shorthand for any side without
  * its own `fo:border-*`), background shading, padding and vertical
@@ -2570,6 +2530,14 @@ export async function parseOdt(
     if (sectionGeometry?.columns) {
       section.columns = { ...sectionGeometry.columns };
     }
+    // SPEC-074 AC-31: the master page's border and background belong to the
+    // section it pins, exactly like its geometry above.
+    if (sectionGeometry?.pageBorders) {
+      section.pageBorders = { ...sectionGeometry.pageBorders };
+    }
+    if (sectionGeometry?.pageBackground !== undefined) {
+      section.pageBackground = sectionGeometry.pageBackground;
+    }
     applyHeaderFooterLayout(section, sectionGeometry, stylesScopedCatalog);
     if (sectionPageNumberStart !== undefined) {
       section.pageNumberStart = sectionPageNumberStart;
@@ -2732,6 +2700,17 @@ export async function parseOdt(
   const leadingColumns = leadingGeometry?.columns ?? catalog.columns;
   if (leadingSection && leadingColumns) {
     leadingSection.columns = { ...leadingColumns };
+  }
+  // The leading section's page border/background, from the master it names
+  // or — the single-section case — the first-listed master (SPEC-074 AC-31).
+  const leadingPageLayout =
+    leadingGeometry ??
+    (catalog.firstMasterName ? catalog.masterPageLayouts.get(catalog.firstMasterName) : undefined);
+  if (leadingSection && leadingPageLayout?.pageBorders) {
+    leadingSection.pageBorders = { ...leadingPageLayout.pageBorders };
+  }
+  if (leadingSection && leadingPageLayout?.pageBackground !== undefined) {
+    leadingSection.pageBackground = leadingPageLayout.pageBackground;
   }
   // Header/footer content (SPEC-029): the master the first paragraph
   // explicitly named, or — the common case — whichever master is first in

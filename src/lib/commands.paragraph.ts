@@ -6,9 +6,19 @@ import {
   type DocumentModel,
   type Paragraph,
   type ParagraphAlignment,
+  type ParagraphBorders,
   type ParagraphDirection,
   type ParagraphFormatting,
 } from "./documentModel";
+import {
+  bordersPaintAnyEdge,
+  explicitNoBorders,
+  normaliseParagraphBorders,
+  paintedShadingFill,
+  snapParagraphBorders,
+  NO_SHADING_FILL,
+} from "./paragraphBorders";
+import { inheritedParagraphPaint } from "./styles";
 import {
   paragraphAt,
   paragraphSlicesInRange,
@@ -69,11 +79,19 @@ export function firstTouchedFormatting(
   model: DocumentModel,
   selection: ModelSelection,
 ): ParagraphFormatting {
+  return firstTouchedParagraph(model, selection)?.formatting ?? {};
+}
+
+/** The first touched paragraph itself, for the callers that need more than
+ * its formatting — the Borders and shading dialog seeds from what the
+ * paragraph *paints*, and only the paragraph carries the styleId that
+ * resolves its inherited box (SPEC-074 AC-17). */
+export function firstTouchedParagraph(
+  model: DocumentModel,
+  selection: ModelSelection,
+): Paragraph | undefined {
   const addresses = touchedBlocks(model, selection);
-  if (addresses.length === 0) {
-    return {};
-  }
-  return paragraphAt(model, addresses[0])?.formatting ?? {};
+  return addresses.length === 0 ? undefined : (paragraphAt(model, addresses[0]) ?? undefined);
 }
 
 /** Typed empty-formatting seed for refs in `.vue` scripts (espree bars the
@@ -94,7 +112,7 @@ export function emptyParagraphFormatting(): ParagraphFormatting {
 export function updateTouchedParagraphs(
   model: DocumentModel,
   selection: ModelSelection,
-  update: (formatting: ParagraphFormatting) => ParagraphFormatting | null,
+  update: (formatting: ParagraphFormatting, paragraph: Paragraph) => ParagraphFormatting | null,
 ): CommandResult {
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
@@ -103,7 +121,7 @@ export function updateTouchedParagraphs(
     if (!block) {
       continue;
     }
-    const updated = update(block.formatting ?? {});
+    const updated = update(block.formatting ?? {}, block);
     if (updated === null) {
       continue;
     }
@@ -220,6 +238,67 @@ export function applyParagraphFormat(
       }
     }
     return nextFormatting;
+  });
+}
+
+// --- borders and shading (SPEC-074) ------------------------------------------
+
+/** What the Borders and shading dialog applies. `null` is the dialog's "off"
+ * — `borders: null` is its None preset, `shadingFill: null` its cleared Fill
+ * checkbox ("no fill", which is distinct from `"#ffffff"` — AC-10). Off is
+ * not the same as unset: see applyParagraphBorders. */
+export interface ParagraphBorderPatch {
+  borders?: ParagraphBorders | null;
+  shadingFill?: string | null;
+}
+
+/** Applies borders and/or shading to every paragraph the selection touches
+ * (SPEC-074 AC-11, using SPEC-014's "touched by the selection" rule — the
+ * same `updateTouchedParagraphs` walk every other paragraph format uses).
+ *
+ * Padding is snapped to whole points because that is the finest grid OOXML's
+ * `@w:space` can carry, so the edit survives a save + re-open exactly (the
+ * same reasoning as snapCm/snapPt above).
+ *
+ * "Off" is spelled two different ways, and which one this writes depends on
+ * the paragraph's style (AC-17). Borders and shading inherit from the style
+ * until the paragraph sets its own, so on a paragraph whose style draws a
+ * box, dropping the field would just re-inherit that box and leave the
+ * dialog's None preset a silent no-op; there, off is an explicit value that
+ * is present and paints nothing. Where the style contributes nothing there
+ * is nothing to override, and off is simply the absent field — which keeps
+ * an ordinary unbordered paragraph free of an empty husk. */
+export function applyParagraphBorders(
+  model: DocumentModel,
+  selection: ModelSelection,
+  patch: ParagraphBorderPatch,
+): CommandResult {
+  return updateTouchedParagraphs(model, selection, (formatting, paragraph) => {
+    const next: ParagraphFormatting = { ...formatting };
+    // What this paragraph would paint with no value of its own — the thing
+    // an "off" has to override, if anything.
+    const inherited = inheritedParagraphPaint(model, paragraph.styleId);
+    if (patch.borders !== undefined) {
+      const painted =
+        patch.borders === null ? undefined : normaliseParagraphBorders(snapParagraphBorders(patch.borders));
+      if (painted !== undefined) {
+        next.borders = painted;
+      } else if (bordersPaintAnyEdge(inherited.borders)) {
+        next.borders = explicitNoBorders();
+      } else {
+        delete next.borders;
+      }
+    }
+    if (patch.shadingFill !== undefined) {
+      if (patch.shadingFill !== null) {
+        next.shadingFill = patch.shadingFill;
+      } else if (paintedShadingFill(inherited) !== undefined) {
+        next.shadingFill = NO_SHADING_FILL;
+      } else {
+        delete next.shadingFill;
+      }
+    }
+    return next;
   });
 }
 

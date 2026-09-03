@@ -24,4 +24,7 @@ wrong.
 
 ## Out of scope
 Different page setup per section (SPEC-028). Gutters, mirrored margins and
-book-fold layout. Page borders and background colour. Print scaling (SPEC-034).
+book-fold layout. ~~Page borders and background colour.~~ (superseded by
+SPEC-074, which adds `Section.pageBorders`/`pageBackground` and a Borders tab
+to this dialog; page size, margins and orientation are unchanged.) Print
+scaling (SPEC-034).

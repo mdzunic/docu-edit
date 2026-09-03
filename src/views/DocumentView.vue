@@ -41,6 +41,7 @@ import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
 import InsertTableDialog from "../components/InsertTableDialog.vue";
 import ColumnsDialog from "../components/ColumnsDialog.vue";
+import BordersShadingDialog from "../components/BordersShadingDialog.vue";
 import CommentsPane from "../components/CommentsPane.vue";
 import TrackChangesPane from "../components/TrackChangesPane.vue";
 import AccessibilityPane from "../components/AccessibilityPane.vue";
@@ -131,6 +132,7 @@ import { useOutlinePane } from "./document/useOutlinePane";
 import { useSidePanel } from "./document/useSidePanel";
 import { useMergeFields } from "./document/useMergeFields";
 import { useInsertBreaks } from "./document/useInsertBreaks";
+import { useBordersShading } from "./document/useBordersShading";
 import { useViewportVirtualization } from "./document/useViewportVirtualization";
 import { useCanvasGestures } from "./document/useCanvasGestures";
 import { useZoomView } from "./document/useZoomView";
@@ -2283,6 +2285,7 @@ const {
   forceRealizeAll: printForceRealize,
   rangeMode: printRangeMode,
   rangeText: printRangeText,
+  printBackground,
   rangeError: printRangeError,
   canPrint,
   printablePageCount,
@@ -2921,6 +2924,15 @@ const { pagedViews } = usePaginationView({
 // Insert → Break / section break (SPEC-018) — wiring in useInsertBreaks.
 const { handleInsertBreak, handleInsertSectionBreak } = useInsertBreaks({ ...editorContext, paragraphSelection });
 
+// Format → Borders and shading… (SPEC-074) — wiring in useBordersShading.
+const {
+  bordersDialogOpen,
+  bordersDialogInitial,
+  openBordersDialog,
+  closeBordersDialog,
+  applyBordersShading,
+} = useBordersShading({ ...editorContext, paragraphSelection });
+
 // --- mail-merge fields (SPEC-046) -------------------------------------------
 // The attached data source, the field picker / merge-run dialogs' state and
 // the literal {{...}} conversion live in useMergeFields.
@@ -3171,6 +3183,8 @@ const editorCommands = new Map([...themeCommands, // Theme command ids (SPEC-059
   // Ctrl/Cmd+\ (SPEC-020 AC-3).
   ["format.clearFormatting", handleClearFormatting],
   ["format.columns", openColumnsDialog], ["format.edit-points", pointEdit.enter],
+  // Format → Borders and shading… (SPEC-074 AC-6).
+  ["format.borders", openBordersDialog],
   // Drawing align/distribute (SPEC-072); wiring in useDrawingArrange.
   ...drawingArrange.commands,
   // Format → Drawing → Position and size… (SPEC-072 AC-35).
@@ -3620,6 +3634,8 @@ function handleMenuCommand(id = "") {
                 :key="pageIndex"
                 :page-style="pageView.pageStyle"
                 :content-style="pageView.contentStyle"
+                :page-border-style="pageView.pageBorderStyle || undefined"
+                :page-background-style="pageView.pageBackgroundStyle || undefined"
                 :entries="pageView.entries"
                 :columns="pageView.columns"
                 :virtual="pageView.virtual"
@@ -4112,6 +4128,13 @@ function handleMenuCommand(id = "") {
       @apply="handleColumnsApply"
       @cancel="columnsDialogOpen = false"
     />
+    <BordersShadingDialog
+      v-if="bordersDialogOpen"
+      :initial="bordersDialogInitial"
+      :unit="doc?.measurementUnit || 'cm'"
+      @apply="applyBordersShading"
+      @cancel="closeBordersDialog"
+    />
     <InsertTableDialog
       v-if="insertTableDialogOpen"
       @apply="handleInsertTable"
@@ -4284,8 +4307,10 @@ function handleMenuCommand(id = "") {
       :range-text="printRangeText"
       :error="printRangeError ?? ''"
       :can-print="canPrint"
+      :print-background="printBackground"
       @update:range-mode="printRangeMode = $event"
       @update:range-text="printRangeText = $event"
+      @update:print-background="printBackground = $event"
       @print="confirmPrint"
       @close="closePrintPreview"
     />

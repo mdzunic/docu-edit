@@ -62,7 +62,79 @@ describe("PageSetupDialog (SPEC-027 AC-1..9)", () => {
       measurementUnit: "cm",
       // SPEC-028 AC-20/21: the dialog reports what the edit targets.
       applyTo: "wholeDocument",
+      // SPEC-074 AC-19..AC-23: the Borders tab commits with the rest. This
+      // document has neither, so both report the "remove it" null rather
+      // than being absent — the shape setPageBorders takes.
+      pageBorders: null,
+      pageBackground: null,
     });
+  });
+
+  // --- the Borders tab (SPEC-074 AC-19..AC-23) ------------------------------
+
+  it("shows the Borders tab's controls only when that tab is chosen (AC-19)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    expect(wrapper.get('[data-testid="page-setup-borders"]').attributes("style")).toContain("display: none");
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    expect(wrapper.get('[data-testid="page-setup-borders"]').attributes("style") ?? "").not.toContain("display: none");
+  });
+
+  it("emits a page border with its style, width, colour and edges (AC-19, AC-20)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    await wrapper.get('[data-testid="page-border-edge-top"]').setValue(true);
+    await wrapper.get('[data-testid="page-border-edge-bottom"]').setValue(true);
+    await wrapper.get('[data-testid="page-border-style"]').setValue("double");
+    await wrapper.get('[data-testid="page-border-width"]').setValue("3");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    const payload = wrapper.emitted("apply")![0][0] as { pageBorders: Record<string, unknown> };
+    expect(payload.pageBorders.top).toEqual({ style: "double", widthPt: 3, color: "#000000" });
+    expect(payload.pageBorders.bottom).toEqual({ style: "double", widthPt: 3, color: "#000000" });
+    expect(payload.pageBorders.left).toBeUndefined();
+    expect(payload.pageBorders.right).toBeUndefined();
+  });
+
+  it("emits whether the offset measures from the page edge or the text (AC-21)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    await wrapper.get('[data-testid="page-border-edge-top"]').setValue(true);
+    await wrapper.get('[data-testid="page-border-measure-from"]').setValue("text");
+    await wrapper.get('[data-testid="page-border-offset"]').setValue("12");
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    const payload = wrapper.emitted("apply")![0][0] as { pageBorders: Record<string, unknown> };
+    expect(payload.pageBorders.measureFrom).toBe("text");
+    expect(payload.pageBorders.offsetPt).toBe(12);
+  });
+
+  it("emits a page background only when it is switched on (AC-23)", async () => {
+    const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    await wrapper.get('[data-testid="page-background-on"]').setValue(true);
+    await wrapper.get('[data-testid="page-setup-apply"]').trigger("click");
+    const payload = wrapper.emitted("apply")![0][0] as { pageBackground: string | null };
+    expect(payload.pageBackground).toBe("#fdf6e3");
+  });
+
+  it("prefills the tab from the section's own border and background", async () => {
+    const wrapper = mount(PageSetupDialog, {
+      props: {
+        initial: {
+          ...A4_INITIAL,
+          pageBorders: {
+            top: { style: "dashed", widthPt: 2, color: "#c00000" },
+            offsetPt: 10,
+            measureFrom: "text",
+          },
+          pageBackground: "#eeffee",
+        },
+      },
+    });
+    await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");
+    expect(fieldValue(wrapper, '[data-testid="page-border-style"]')).toBe("dashed");
+    expect(fieldValue(wrapper, '[data-testid="page-border-width"]')).toBe("2");
+    expect(fieldValue(wrapper, '[data-testid="page-border-offset"]')).toBe("10");
+    expect(fieldValue(wrapper, '[data-testid="page-border-measure-from"]')).toBe("text");
+    expect(fieldValue(wrapper, '[data-testid="page-background-color"]')).toBe("#eeffee");
   });
 
   it("switching to landscape swaps a standard size's width and height (AC-2)", async () => {

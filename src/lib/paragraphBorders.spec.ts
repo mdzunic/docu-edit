@@ -1,0 +1,600 @@
+import { describe, expect, it } from "vitest";
+import {
+  ALL_EDGES,
+  applyBorderPreset,
+  borderRuns,
+  DEFAULT_MARK_COLOR,
+  detectBorderPreset,
+  fragmentEdges,
+  bordersPaintAnyEdge,
+  dropRedundantPaintOverride,
+  explicitNoBorders,
+  hasBorderPaint,
+  isDarkFill,
+  normaliseParagraphBorders,
+  NO_SHADING_FILL,
+  paintedShadingFill,
+  paragraphBorderStyle,
+  paragraphBordersEqual,
+  paragraphMarkColorStyle,
+  paragraphPaddingPt,
+  snapParagraphBorders,
+  withInheritedPaint,
+} from "./paragraphBorders";
+import type { BorderSide } from "./core/borders";
+import type { Block, Paragraph, ParagraphBorders, ParagraphFormatting } from "./documentModel";
+
+const LINE: BorderSide = { style: "single", widthPt: 1, color: "#000000" };
+const THICK: BorderSide = { style: "thick", widthPt: 3, color: "#ff0000" };
+
+function para(formatting?: ParagraphFormatting, text = "x"): Paragraph {
+  return { type: "paragraph", runs: [{ text, formatting: {} }], formatting };
+}
+
+function boxed(extra: Partial<ParagraphFormatting> = {}): ParagraphFormatting {
+  return { borders: { top: LINE, bottom: LINE, left: LINE, right: LINE }, ...extra };
+}
+
+describe("paragraphPaddingPt (AC-9)", () => {
+  it("defaults every edge to 4pt", () => {
+    expect(paragraphPaddingPt(undefined, "top")).toBe(4);
+    expect(paragraphPaddingPt({ top: LINE }, "left")).toBe(4);
+  });
+
+  it("uses the paragraph's own value where it sets one", () => {
+    const borders: ParagraphBorders = { top: LINE, paddingPt: { top: 12 } };
+    expect(paragraphPaddingPt(borders, "top")).toBe(12);
+    expect(paragraphPaddingPt(borders, "bottom")).toBe(4);
+  });
+
+  it("honours an explicit zero rather than falling back to the default", () => {
+    expect(paragraphPaddingPt({ top: LINE, paddingPt: { top: 0 } }, "top")).toBe(0);
+  });
+});
+
+describe("hasBorderPaint", () => {
+  it("is false for no formatting, empty formatting and all-none borders", () => {
+    expect(hasBorderPaint(undefined)).toBe(false);
+    expect(hasBorderPaint({})).toBe(false);
+    expect(hasBorderPaint({ borders: { top: { style: "none", widthPt: 0, color: "auto" } } })).toBe(false);
+  });
+
+  it("is true for a visible edge or a shading fill", () => {
+    expect(hasBorderPaint({ borders: { bottom: LINE } })).toBe(true);
+    expect(hasBorderPaint({ shadingFill: "#eeeeee" })).toBe(true);
+  });
+
+  it("is false for the explicit no-borders and no-fill overrides", () => {
+    // They are present so inheritance stops at them (AC-17), but they paint
+    // nothing — a paragraph carrying them must not join a border run, or two
+    // ordinary paragraphs would lose the margin between them.
+    expect(hasBorderPaint({ borders: explicitNoBorders() })).toBe(false);
+    expect(hasBorderPaint({ shadingFill: NO_SHADING_FILL })).toBe(false);
+    expect(hasBorderPaint({ borders: explicitNoBorders(), shadingFill: NO_SHADING_FILL })).toBe(false);
+  });
+});
+
+describe("the explicit 'off' overrides (AC-17)", () => {
+  it("reads an override that paints nothing back as no paint", () => {
+    expect(bordersPaintAnyEdge(undefined)).toBe(false);
+    expect(bordersPaintAnyEdge(explicitNoBorders())).toBe(false);
+    expect(bordersPaintAnyEdge({ paddingPt: { top: 8 } })).toBe(false);
+    expect(bordersPaintAnyEdge({ right: LINE })).toBe(true);
+    expect(paintedShadingFill({ shadingFill: NO_SHADING_FILL })).toBeUndefined();
+    expect(paintedShadingFill({ shadingFill: "#ffffff" })).toBe("#ffffff");
+    expect(paintedShadingFill(undefined)).toBeUndefined();
+  });
+
+  it("stops a style's box and fill being inherited", () => {
+    const styleBox: ParagraphFormatting = { borders: { top: LINE }, shadingFill: "#eeeeee" };
+    const painted = withInheritedPaint(
+      { borders: explicitNoBorders(), shadingFill: NO_SHADING_FILL },
+      styleBox,
+    );
+    expect(painted?.borders).toEqual({});
+    expect(painted?.shadingFill).toBe(NO_SHADING_FILL);
+    expect(paragraphBorderStyle(painted)).toEqual({});
+  });
+
+  it("paints no background beside borders the paragraph does keep", () => {
+    const painted = withInheritedPaint({ borders: { top: THICK }, shadingFill: NO_SHADING_FILL }, {
+      shadingFill: "#eeeeee",
+    });
+    const style = paragraphBorderStyle(painted);
+    expect(style.borderTop).toContain("3pt");
+    expect(style.backgroundColor).toBeUndefined();
+    // The mark colour is a property of the shading, so an unshaded paragraph
+    // sets none (AC-26).
+    expect(style["--mark-color"]).toBeUndefined();
+  });
+
+  it("still merges with a neighbour that simply has no fill (AC-12)", () => {
+    const flags = borderRuns([para(boxed({ shadingFill: NO_SHADING_FILL })), para(boxed())]);
+    expect(flags[0].continuesBelow).toBe(true);
+    expect(flags.map((flag) => flag.top)).toEqual([true, false]);
+  });
+
+  it("leaves two paragraphs that paint nothing unmerged", () => {
+    const flags = borderRuns([
+      para({ borders: explicitNoBorders() }),
+      para({ borders: explicitNoBorders() }),
+    ]);
+    expect(flags.map((flag) => flag.continuesBelow)).toEqual([false, false]);
+    expect(flags.map((flag) => flag.sides)).toEqual([false, false]);
+  });
+});
+
+describe("dropRedundantPaintOverride (AC-17)", () => {
+  it("drops an override with nothing underneath to override", () => {
+    const effective: ParagraphFormatting = {
+      borders: explicitNoBorders(),
+      shadingFill: NO_SHADING_FILL,
+      alignment: "center",
+    };
+    dropRedundantPaintOverride(effective, {});
+    expect(effective).toEqual({ alignment: "center" });
+  });
+
+  it("keeps the override where the style chain really paints something", () => {
+    const effective: ParagraphFormatting = {
+      borders: explicitNoBorders(),
+      shadingFill: NO_SHADING_FILL,
+    };
+    dropRedundantPaintOverride(effective, { borders: { top: LINE }, shadingFill: "#eeeeee" });
+    expect(effective).toEqual({ borders: {}, shadingFill: NO_SHADING_FILL });
+  });
+
+  it("decides the two fields independently", () => {
+    const effective: ParagraphFormatting = {
+      borders: explicitNoBorders(),
+      shadingFill: NO_SHADING_FILL,
+    };
+    dropRedundantPaintOverride(effective, { shadingFill: "#eeeeee" });
+    expect(effective).toEqual({ shadingFill: NO_SHADING_FILL });
+  });
+
+  it("never touches a value that paints", () => {
+    const effective: ParagraphFormatting = { borders: { top: LINE }, shadingFill: "#ffffff" };
+    dropRedundantPaintOverride(effective, {});
+    expect(effective).toEqual({ borders: { top: LINE }, shadingFill: "#ffffff" });
+  });
+});
+
+describe("paragraphBordersEqual (AC-12's 'identical')", () => {
+  it("normalises the padding default, so absent equals an explicit 4pt on all edges", () => {
+    const absent: ParagraphBorders = { top: LINE };
+    const explicit: ParagraphBorders = { top: LINE, paddingPt: { top: 4, bottom: 4, left: 4, right: 4 } };
+    expect(paragraphBordersEqual(absent, explicit)).toBe(true);
+  });
+
+  it("separates paragraphs whose padding genuinely differs", () => {
+    expect(paragraphBordersEqual({ top: LINE }, { top: LINE, paddingPt: { top: 10 } })).toBe(false);
+  });
+
+  it("compares every edge including between", () => {
+    expect(paragraphBordersEqual({ top: LINE, between: LINE }, { top: LINE })).toBe(false);
+    expect(paragraphBordersEqual({ top: LINE }, { top: THICK })).toBe(false);
+  });
+});
+
+describe("borderRuns (AC-12)", () => {
+  it("gives a lone bordered paragraph every edge it sets", () => {
+    const blocks: Block[] = [para(boxed())];
+    expect(borderRuns(blocks)).toEqual([{ top: true, bottom: true, sides: true, between: false, continuesBelow: false }]);
+  });
+
+  it("merges three consecutive identical paragraphs into one block", () => {
+    const formatting = boxed();
+    const blocks: Block[] = [para({ ...formatting }), para({ ...formatting }), para({ ...formatting })];
+    expect(borderRuns(blocks)).toEqual([
+      { top: true, bottom: false, sides: true, between: false, continuesBelow: true },
+      { top: false, bottom: false, sides: true, between: false, continuesBelow: true },
+      { top: false, bottom: true, sides: true, between: false, continuesBelow: false },
+    ]);
+  });
+
+  it("draws the between edge at each internal boundary when it is set", () => {
+    const formatting: ParagraphFormatting = {
+      borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: THICK },
+    };
+    const blocks: Block[] = [para({ ...formatting }), para({ ...formatting }), para({ ...formatting })];
+    const runs = borderRuns(blocks);
+    expect(runs.map((r) => r.between)).toEqual([true, true, false]);
+    expect(runs.map((r) => r.top)).toEqual([true, false, false]);
+    expect(runs.map((r) => r.bottom)).toEqual([false, false, true]);
+  });
+
+  it("draws nothing at an internal boundary where between is absent", () => {
+    const formatting = boxed();
+    const blocks: Block[] = [para({ ...formatting }), para({ ...formatting })];
+    expect(borderRuns(blocks).map((r) => r.between)).toEqual([false, false]);
+  });
+
+  it("breaks the run at a paragraph whose borders differ", () => {
+    const blocks: Block[] = [para(boxed()), para({ borders: { top: THICK, bottom: THICK } }), para(boxed())];
+    const runs = borderRuns(blocks);
+    expect(runs[0]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(runs[1]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(runs[2]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+  });
+
+  it("breaks the run at a different shading fill", () => {
+    const blocks: Block[] = [
+      para(boxed({ shadingFill: "#eeeeee" })),
+      para(boxed({ shadingFill: "#ffffff" })),
+    ];
+    expect(borderRuns(blocks).map((r) => r.bottom)).toEqual([true, true]);
+  });
+
+  it("breaks the run at a different indent", () => {
+    const blocks: Block[] = [para(boxed()), para(boxed({ indentStartCm: 2 }))];
+    expect(borderRuns(blocks).map((r) => r.top)).toEqual([true, true]);
+  });
+
+  it("breaks the run at a non-paragraph block", () => {
+    const table = { type: "table", rows: [], columnWidthsCm: [] } as unknown as Block;
+    const blocks: Block[] = [para(boxed()), table, para(boxed())];
+    const runs = borderRuns(blocks);
+    expect(runs[0]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(runs[1]).toEqual({ top: false, bottom: false, sides: false, between: false, continuesBelow: false });
+    expect(runs[2]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+  });
+
+  it("gives an unbordered paragraph no edges at all", () => {
+    expect(borderRuns([para({}), para(undefined)])).toEqual([
+      { top: false, bottom: false, sides: false, between: false, continuesBelow: false },
+      { top: false, bottom: false, sides: false, between: false, continuesBelow: false },
+    ]);
+  });
+
+  it("merges paragraphs shaded alike with no borders at all", () => {
+    const shaded: ParagraphFormatting = { shadingFill: "#f5f5f5" };
+    const runs = borderRuns([para({ ...shaded }), para({ ...shaded })]);
+    expect(runs.map((r) => r.sides)).toEqual([true, true]);
+  });
+});
+
+describe("fragmentEdges (AC-14..16)", () => {
+  const runs = borderRuns([para(boxed())]);
+
+  it("draws the side borders on both fragments of a split paragraph", () => {
+    expect(fragmentEdges(runs, 0, true, false).sides).toBe(true);
+    expect(fragmentEdges(runs, 0, false, true).sides).toBe(true);
+  });
+
+  it("draws the top border only on the first fragment", () => {
+    expect(fragmentEdges(runs, 0, true, false).top).toBe(true);
+    expect(fragmentEdges(runs, 0, false, true).top).toBe(false);
+    expect(fragmentEdges(runs, 0, false, false).top).toBe(false);
+  });
+
+  it("draws the bottom border only on the last fragment", () => {
+    expect(fragmentEdges(runs, 0, false, true).bottom).toBe(true);
+    expect(fragmentEdges(runs, 0, true, false).bottom).toBe(false);
+  });
+
+  it("marks a paragraph sitting under a run's between rule", () => {
+    const withBetween = borderRuns([
+      para({ borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: LINE } }),
+      para({ borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: LINE } }),
+    ]);
+    expect(fragmentEdges(withBetween, 0, true, true).belowBetween).toBe(false);
+    expect(fragmentEdges(withBetween, 1, true, true).belowBetween).toBe(true);
+    // A continuation fragment of that second paragraph is below a page
+    // break, not below the rule.
+    expect(fragmentEdges(withBetween, 1, false, true).belowBetween).toBe(false);
+  });
+});
+
+describe("paragraphBorderStyle (AC-13..16)", () => {
+  it("returns nothing for a paragraph that paints nothing", () => {
+    expect(paragraphBorderStyle(undefined)).toEqual({});
+    expect(paragraphBorderStyle({ alignment: "center" })).toEqual({});
+  });
+
+  it("paints every set edge with its padding for a standalone paragraph", () => {
+    const style = paragraphBorderStyle(boxed(), ALL_EDGES);
+    expect(style.borderTop).toBe("1pt solid #000000");
+    expect(style.borderBottom).toBe("1pt solid #000000");
+    expect(style.borderLeft).toBe("1pt solid #000000");
+    expect(style.borderRight).toBe("1pt solid #000000");
+    expect(style.paddingTop).toBe("4pt");
+    expect(style.paddingLeft).toBe("4pt");
+  });
+
+  it("keeps a bottom-rule heading free of padding on the three edges it has no rule on", () => {
+    const style = paragraphBorderStyle({ borders: { bottom: LINE } }, ALL_EDGES);
+    expect(style.borderBottom).toBe("1pt solid #000000");
+    expect(style.borderTop).toBe("none");
+    expect(style.paddingTop).toBe("0");
+    expect(style.paddingLeft).toBe("0");
+    expect(style.paddingBottom).toBe("4pt");
+  });
+
+  it("fills the padding box with the shading, so it spans the content width (AC-13)", () => {
+    const style = paragraphBorderStyle(boxed({ shadingFill: "#eeeeee" }), ALL_EDGES);
+    expect(style.backgroundColor).toBe("#eeeeee");
+    expect(style.paddingLeft).toBe("4pt");
+  });
+
+  it("draws the between edge as the fragment's bottom rule and closes the gap", () => {
+    const formatting: ParagraphFormatting = {
+      borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: THICK },
+    };
+    const style = paragraphBorderStyle(formatting, {
+      top: true,
+      bottom: false,
+      sides: true,
+      between: true,
+      continuesBelow: true,
+      belowBetween: false,
+      continuesAbove: false,
+    });
+    expect(style.borderBottom).toBe("3pt solid #ff0000");
+    expect(style.marginBottom).toBe("0");
+  });
+
+  it("gives the paragraph under a between rule its top padding but no top rule or margin", () => {
+    const formatting: ParagraphFormatting = {
+      borders: { top: LINE, bottom: LINE, left: LINE, right: LINE, between: LINE },
+    };
+    const style = paragraphBorderStyle(formatting, {
+      top: false,
+      bottom: true,
+      sides: true,
+      between: false,
+      continuesBelow: false,
+      belowBetween: true,
+      continuesAbove: true,
+    });
+    expect(style.borderTop).toBe("none");
+    expect(style.paddingTop).toBe("4pt");
+    expect(style.marginTop).toBe("0");
+  });
+
+  it("leaves a mid-paragraph page fragment with sides only and no vertical padding", () => {
+    const style = paragraphBorderStyle(boxed(), {
+      top: false,
+      bottom: false,
+      sides: true,
+      between: false,
+      continuesBelow: false,
+      belowBetween: false,
+      continuesAbove: false,
+    });
+    expect(style.borderLeft).toBe("1pt solid #000000");
+    expect(style.borderTop).toBe("none");
+    expect(style.borderBottom).toBe("none");
+    expect(style.paddingTop).toBe("0");
+    expect(style.paddingBottom).toBe("0");
+  });
+
+  // The box has to survive paragraph spacing. A "Box" run draws no internal
+  // rule, so nothing tells the members apart visually — but each still
+  // carries its own space-before/space-after, and any margin left standing
+  // between two members breaks the left and right rules there and lets the
+  // page show through the side of the box (AC-12).
+  it("closes the internal boundaries of a run that has no between edge", () => {
+    const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
+    const runs = borderRuns([para({ ...spaced }), para({ ...spaced }), para({ ...spaced })]);
+
+    const first = paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, true));
+    const middle = paragraphBorderStyle(spaced, fragmentEdges(runs, 1, true, true));
+    const last = paragraphBorderStyle(spaced, fragmentEdges(runs, 2, true, true));
+
+    // No internal rule anywhere — this is a plain box, not "All".
+    expect([first, middle, last].map((s) => s.borderBottom)).toEqual([
+      "none",
+      "none",
+      "1pt solid #000000",
+    ]);
+    // ...and no margin at either internal boundary.
+    expect(first.marginBottom).toBe("0");
+    expect(middle.marginTop).toBe("0");
+    expect(middle.marginBottom).toBe("0");
+    expect(last.marginTop).toBe("0");
+    // The run's outer edges keep the paragraph's own spacing: the box as a
+    // whole still sits 8pt from what surrounds it.
+    expect(first.marginTop).toBeUndefined();
+    expect(last.marginBottom).toBeUndefined();
+  });
+
+  it("keeps a lone bordered paragraph's own space before and after", () => {
+    const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
+    const runs = borderRuns([para(spaced)]);
+    const style = paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, true));
+    expect(style.marginTop).toBeUndefined();
+    expect(style.marginBottom).toBeUndefined();
+  });
+
+  it("keeps the margin between two runs that did not merge", () => {
+    const a = boxed({ spaceAfterPt: 8 });
+    const b = boxed({ spaceBeforePt: 8, shadingFill: "#eeeeee" });
+    const runs = borderRuns([para(a), para(b)]);
+    expect(paragraphBorderStyle(a, fragmentEdges(runs, 0, true, true)).marginBottom).toBeUndefined();
+    expect(paragraphBorderStyle(b, fragmentEdges(runs, 1, true, true)).marginTop).toBeUndefined();
+  });
+
+  it("leaves a page-split seam alone — only the run's own boundaries collapse", () => {
+    const spaced = boxed({ spaceBeforePt: 8, spaceAfterPt: 8 });
+    const runs = borderRuns([para({ ...spaced }), para({ ...spaced })]);
+    // The first paragraph continues onto the next page: its opening fragment
+    // is not at the run's internal boundary, its closing fragment is.
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 0, true, false)).marginBottom).toBeUndefined();
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 0, false, true)).marginBottom).toBe("0");
+    // ...and the second paragraph's continuation fragment is below a page
+    // break, not below the paragraph it merged with.
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 1, true, true)).marginTop).toBe("0");
+    expect(paragraphBorderStyle(spaced, fragmentEdges(runs, 1, false, true)).marginTop).toBeUndefined();
+  });
+});
+
+describe("presets (AC-8)", () => {
+  it("detects each named preset", () => {
+    expect(detectBorderPreset(undefined)).toBe("none");
+    expect(detectBorderPreset({})).toBe("none");
+    expect(detectBorderPreset({ top: LINE, bottom: LINE, left: LINE, right: LINE })).toBe("box");
+    expect(detectBorderPreset({ top: LINE, bottom: LINE, left: LINE, right: LINE, between: LINE })).toBe("all");
+    expect(detectBorderPreset({ top: LINE, bottom: LINE })).toBe("topAndBottom");
+  });
+
+  it("reports a hand-built edge set as custom", () => {
+    expect(detectBorderPreset({ left: LINE })).toBe("custom");
+    expect(detectBorderPreset({ top: LINE, bottom: THICK })).toBe("custom");
+    expect(detectBorderPreset({ top: LINE, bottom: LINE, left: LINE, right: THICK })).toBe("custom");
+  });
+
+  it("round-trips every preset through applyBorderPreset", () => {
+    for (const preset of ["box", "all", "topAndBottom"] as const) {
+      expect(detectBorderPreset(applyBorderPreset(preset, LINE))).toBe(preset);
+    }
+    expect(applyBorderPreset("none", LINE)).toBeUndefined();
+  });
+
+  it("keeps the existing padding when a preset is applied", () => {
+    const applied = applyBorderPreset("box", LINE, { paddingPt: { top: 10 } });
+    expect(applied?.paddingPt).toEqual({ top: 10 });
+  });
+
+  it("leaves a custom edge set alone", () => {
+    const existing: ParagraphBorders = { left: THICK };
+    expect(applyBorderPreset("custom", LINE, existing)).toBe(existing);
+  });
+});
+
+describe("normaliseParagraphBorders", () => {
+  it("drops an object with nothing left to paint", () => {
+    expect(normaliseParagraphBorders(undefined)).toBeUndefined();
+    expect(normaliseParagraphBorders({ paddingPt: { top: 8 } })).toBeUndefined();
+    expect(normaliseParagraphBorders({ top: { style: "none", widthPt: 0, color: "auto" } })).toBeUndefined();
+  });
+
+  it("keeps an object with a visible edge", () => {
+    const borders: ParagraphBorders = { top: LINE };
+    expect(normaliseParagraphBorders(borders)).toBe(borders);
+  });
+});
+
+describe("formatting marks on a shaded paragraph (AC-26)", () => {
+  it("says nothing about a paragraph with no shading", () => {
+    expect(paragraphMarkColorStyle(undefined)).toEqual({});
+    expect(paragraphMarkColorStyle({ borders: { top: LINE } })).toEqual({});
+  });
+
+  it("keeps the default grey on a light fill", () => {
+    expect(paragraphMarkColorStyle({ shadingFill: "#f5f5f5" })["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
+    expect(paragraphMarkColorStyle({ shadingFill: "#fff2cc" })["--mark-color"]).toBe(DEFAULT_MARK_COLOR);
+  });
+
+  it("flips to a light grey on a dark fill, so the pilcrow stays visible", () => {
+    expect(paragraphMarkColorStyle({ shadingFill: "#1f1f1f" })["--mark-color"]).toBe("#d0d3d6");
+    expect(paragraphMarkColorStyle({ shadingFill: "#20365c" })["--mark-color"]).toBe("#d0d3d6");
+  });
+
+  it("rides on the paragraph's own style object, beside the shading", () => {
+    const style = paragraphBorderStyle({ shadingFill: "#1f1f1f" }, ALL_EDGES);
+    expect(style.backgroundColor).toBe("#1f1f1f");
+    expect(style["--mark-color"]).toBe("#d0d3d6");
+  });
+
+  it("reads luminance, not brightness of one channel", () => {
+    expect(isDarkFill("#ffff00")).toBe(false);
+    expect(isDarkFill("#0000ff")).toBe(true);
+    expect(isDarkFill("not-a-colour")).toBe(false);
+  });
+});
+
+describe("withInheritedPaint — a style's borders under the paragraph's (AC-17)", () => {
+  const styleBox: ParagraphFormatting = { borders: { top: LINE }, shadingFill: "#eeeeee" };
+
+  it("hands back the paragraph's own formatting when the style contributes nothing", () => {
+    const own: ParagraphFormatting = { alignment: "center" };
+    expect(withInheritedPaint(own, undefined)).toBe(own);
+    expect(withInheritedPaint(own, {})).toBe(own);
+    expect(withInheritedPaint(undefined, {})).toBeUndefined();
+  });
+
+  it("fills in what the paragraph does not set", () => {
+    expect(withInheritedPaint(undefined, styleBox)).toEqual(styleBox);
+    expect(withInheritedPaint({ alignment: "center" }, styleBox)).toEqual({
+      alignment: "center",
+      borders: { top: LINE },
+      shadingFill: "#eeeeee",
+    });
+  });
+
+  it("never overrides what the paragraph does set", () => {
+    const painted = withInheritedPaint({ borders: { bottom: THICK }, shadingFill: "#ffffff" }, styleBox);
+    expect(painted?.borders).toEqual({ bottom: THICK });
+    expect(painted?.shadingFill).toBe("#ffffff");
+  });
+
+  it("inherits the two fields independently", () => {
+    // A paragraph that set only its own box still takes the style's fill.
+    const painted = withInheritedPaint({ borders: { bottom: THICK } }, styleBox);
+    expect(painted?.borders).toEqual({ bottom: THICK });
+    expect(painted?.shadingFill).toBe("#eeeeee");
+  });
+});
+
+describe("borderRuns with style-inherited borders (AC-12, AC-17)", () => {
+  const inherited: ParagraphFormatting = { borders: { top: LINE, bottom: LINE, left: LINE, right: LINE } };
+
+  it("boxes a paragraph that carries nothing of its own", () => {
+    const blocks: Block[] = [para()];
+    expect(borderRuns(blocks)[0].sides).toBe(false);
+    expect(borderRuns(blocks, () => inherited)[0]).toEqual({
+      top: true,
+      bottom: true,
+      sides: true,
+      between: false,
+      continuesBelow: false,
+    });
+  });
+
+  it("merges consecutive paragraphs that inherit the same box (AC-12)", () => {
+    const flags = borderRuns([para(), para(), para()], () => inherited);
+    expect(flags.map((flag) => flag.top)).toEqual([true, false, false]);
+    expect(flags.map((flag) => flag.bottom)).toEqual([false, false, true]);
+    expect(flags.map((flag) => flag.sides)).toEqual([true, true, true]);
+    expect(flags.map((flag) => flag.continuesBelow)).toEqual([true, true, false]);
+  });
+
+  it("breaks the run where a paragraph overrides the inherited box", () => {
+    const blocks: Block[] = [para(), para({ borders: { bottom: THICK } }), para()];
+    const flags = borderRuns(blocks, () => inherited);
+    expect(flags[0].bottom).toBe(true);
+    expect(flags[1].bottom).toBe(true);
+    expect(flags[2].top).toBe(true);
+  });
+
+  it("only inherits per paragraph, so a differently-styled neighbour breaks the run", () => {
+    const styled = para();
+    styled.styleId = "Callout";
+    const flags = borderRuns([para(), styled], (paragraph) =>
+      paragraph.styleId === undefined ? inherited : {},
+    );
+    expect(flags[0]).toEqual({ top: true, bottom: true, sides: true, between: false, continuesBelow: false });
+    expect(flags[1].sides).toBe(false);
+  });
+});
+
+describe("snapParagraphBorders", () => {
+  it("snaps a width to eighths of a point and a padding to whole clamped points", () => {
+    const snapped = snapParagraphBorders({
+      top: { style: "double", widthPt: 1.03, color: "#c00000" },
+      paddingPt: { top: 4.4, bottom: -3, left: 99 },
+    });
+    expect(snapped.top).toEqual({ style: "double", widthPt: 1, color: "#c00000" });
+    expect(snapped.paddingPt).toEqual({ top: 4, bottom: 0, left: 31 });
+  });
+
+  it("rebuilds every object, so nothing foreign reaches the model", () => {
+    const side: BorderSide = { style: "single", widthPt: 1, color: "#000000" };
+    const padding = { top: 8 };
+    const snapped = snapParagraphBorders({ between: side, paddingPt: padding });
+    expect(snapped.between).toEqual(side);
+    expect(snapped.between).not.toBe(side);
+    expect(snapped.paddingPt).not.toBe(padding);
+  });
+});

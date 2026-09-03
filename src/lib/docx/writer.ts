@@ -32,10 +32,12 @@ import type {
   NoteKind,
   NoteNumberFormat,
   NoteSettings,
+  PageBorders,
   PageNumberFormat,
   NamedStyle,
   Paragraph,
   ParagraphAlignment,
+  ParagraphBorders,
   ParagraphFormatting,
   Run,
   RunFormatChange,
@@ -56,7 +58,9 @@ import type {
   RefFormat,
 } from "../documentModel";
 import type { Margins, PageSize } from "../core/pageSetup";
-import { computeOwnerGrid, type BorderLineStyle, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
+import { computeOwnerGrid, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
+import { borderElementXml } from "./borders";
+import { paragraphPaddingPt, NO_SHADING_FILL, type BorderEdge } from "../paragraphBorders";
 import {
   DEFAULT_TITLE,
   isEvaluatedField,
@@ -69,7 +73,13 @@ import {
 } from "../documentModel";
 import { chipLabel } from "../mergeChips";
 import { dateTimeFormatEntry } from "../fields";
-import { collectDropRecords, collectEditedChartDropRecords, opaquePartBytes, type WriteResult } from "../opaque";
+import {
+  collectDropRecords,
+  collectEditedChartDropRecords,
+  collectPageBackgroundDropRecords,
+  opaquePartBytes,
+  type WriteResult,
+} from "../opaque";
 import { equalStructural } from "../equality";
 import { inlineWriteLayout, linkTargetOf } from "../links";
 import { TOC_PLACEHOLDER_TEXT } from "../toc";
@@ -89,7 +99,7 @@ import {
 } from "../core/xml";
 import { catalogToNamedStyles, parseStylesCatalog } from "./styles";
 import { cssColorToOoxml } from "../core/colors";
-import { cmToTwips, ptToEighthPoints, ptToHalfPoints, ptToTwentiethsOfPoint } from "../core/units";
+import { cmToTwips, ptToHalfPoints, ptToTwentiethsOfPoint } from "../core/units";
 import {
   buildNumberingXml,
   mergeNumberingXml,
@@ -438,6 +448,24 @@ const TAB_LEADER_VALUES: Record<string, string> = {
  * sequence order: tabs, bidi, spacing, ind, jc. */
 function paragraphFormattingParts(formatting: ParagraphFormatting): string[] {
   const parts: string[] = [];
+
+  // Paragraph borders and shading (SPEC-074 AC-28) — first, per CT_PPrBase's
+  // sequence (pBdr and shd precede tabs).
+  const pBdr = paragraphBordersXml(formatting.borders);
+  if (pBdr !== "") {
+    parts.push(pBdr);
+  }
+  // `w:fill="auto"` is Word's "no fill", which is what the model's explicit
+  // no-fill override means: present, so a style's shading stops at it, and
+  // painting nothing (SPEC-074 AC-17).
+  if (formatting.shadingFill === NO_SHADING_FILL) {
+    parts.push('<w:shd w:val="clear" w:color="auto" w:fill="auto"/>');
+  } else {
+    const shd = cssColorToOoxml(formatting.shadingFill);
+    if (shd !== undefined) {
+      parts.push(`<w:shd w:val="clear" w:color="auto" w:fill="${shd}"/>`);
+    }
+  }
 
   // Custom tab stops (SPEC-032 AC-19..25): one w:tab per stop, positions in
   // twips from the leading text margin.
@@ -919,17 +947,82 @@ const GENERATED_TABLE_BORDERS =
   '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/>' +
   "</w:tblBorders>";
 
-function borderStyleVal(style: BorderLineStyle): string {
-  if (style === "none") {
-    return "nil";
-  }
-  return style;
+function borderSideXml(tag: string, side: BorderSide): string {
+  return borderElementXml(tag, side);
 }
 
-function borderSideXml(tag: string, side: BorderSide): string {
-  const sz = side.style === "none" ? 0 : Math.max(1, ptToEighthPoints(side.widthPt));
-  const color = side.color !== "auto" ? (cssColorToOoxml(side.color) ?? "auto") : "auto";
-  return `<w:${tag} w:val="${borderStyleVal(side.style)}" w:sz="${sz}" w:space="0" w:color="${color}"/>`;
+/** A paragraph's `w:pBdr` (SPEC-074 AC-28), in CT_PBdr's element order:
+ * top, left, bottom, right, between. Each edge carries its own `@w:space` —
+ * the border-to-text padding in whole points, the 4pt default when the
+ * paragraph sets none (AC-9). */
+function paragraphBordersXml(borders: ParagraphBorders | undefined): string {
+  if (!borders) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const [tag, edge] of [
+    ["top", "top"],
+    ["left", "left"],
+    ["bottom", "bottom"],
+    ["right", "right"],
+  ] as Array<[string, BorderEdge]>) {
+    const side = borders[edge];
+    if (side) {
+      parts.push(borderElementXml(tag, side, paragraphPaddingPt(borders, edge)));
+    }
+  }
+  if (borders.between) {
+    parts.push(borderElementXml("between", borders.between));
+  }
+  if (parts.length > 0) {
+    return `<w:pBdr>${parts.join("")}</w:pBdr>`;
+  }
+  // A borders object that paints nothing is the explicit override of a
+  // style's box (SPEC-074 AC-17) — Word spells it as a w:pBdr whose every
+  // edge is nil, and so does this. Writing nothing at all would let the
+  // style's box come back on the next open.
+  return (
+    "<w:pBdr>" +
+    NIL_BORDER_EDGES.map((tag) => `<w:${tag} w:val="nil" w:sz="0" w:space="0" w:color="auto"/>`).join("") +
+    "</w:pBdr>"
+  );
+}
+
+/** The edges an all-`nil` `w:pBdr` spells out, in CT_PBdr's element order. */
+const NIL_BORDER_EDGES = ["top", "left", "bottom", "right"] as const;
+
+/** A section's `w:pgBorders` (SPEC-074 AC-30), in CT_PageBorders' element
+ * order: top, left, bottom, right. `@w:offsetFrom` is the reference edge
+ * (AC-21) and `@w:display` which pages take it; each edge's `@w:space`
+ * carries the offset (AC-19, AC-20). */
+function pageBordersXml(borders: PageBorders | undefined): string {
+  if (!borders) {
+    return "";
+  }
+  const offsetPt = borders.offsetPt ?? 24;
+  const parts: string[] = [];
+  for (const [tag, edge] of [
+    ["top", "top"],
+    ["left", "left"],
+    ["bottom", "bottom"],
+    ["right", "right"],
+  ] as Array<[string, "top" | "left" | "bottom" | "right"]>) {
+    const side = borders[edge];
+    if (side) {
+      parts.push(borderElementXml(tag, side, offsetPt));
+    }
+  }
+  if (parts.length === 0) {
+    return "";
+  }
+  const offsetFrom = borders.measureFrom === "text" ? ' w:offsetFrom="text"' : ' w:offsetFrom="page"';
+  const display =
+    borders.appliesTo === "firstPage"
+      ? ' w:display="firstPage"'
+      : borders.appliesTo === "exceptFirstPage"
+        ? ' w:display="notFirstPage"'
+        : "";
+  return `<w:pgBorders${offsetFrom}${display}>${parts.join("")}</w:pgBorders>`;
 }
 
 /** A cell's `w:tcBorders` (SPEC-023 AC-10..12, AC-25): only the edges the
@@ -1970,6 +2063,7 @@ function sectionPropertiesXml(
   pageNumberStart: number | undefined,
   columns?: SectionColumns,
   notesPr = "",
+  pageBorders?: PageBorders,
 ): string {
   const width = cmToTwips(pageSize.widthCm);
   const height = cmToTwips(pageSize.heightCm);
@@ -2002,6 +2096,9 @@ function sectionPropertiesXml(
     `<w:pgMar w:top="${cmToTwips(topCm)}" w:right="${cmToTwips(rightCm)}"` +
     ` w:bottom="${cmToTwips(bottomCm)}" w:left="${cmToTwips(leftCm)}"` +
     ` w:header="${HEADER_FOOTER_TWIPS}" w:footer="${HEADER_FOOTER_TWIPS}" w:gutter="0"/>` +
+    // CT_SectPr sequence: pgBorders follows pgMar (and paperSrc) and
+    // precedes lnNumType/pgNumType.
+    pageBordersXml(pageBorders) +
     pgNumType +
     cols +
     titlePg +
@@ -2107,6 +2204,8 @@ function* documentBlockXml(
             section.titlePage === true,
             section.pageNumberStart,
             section.columns,
+            "",
+            section.pageBorders,
           );
     // Containment (SPEC-078): floating shapes/charts with an explicit,
     // resolvable anchor pairing are emitted inside their anchor paragraph's
@@ -2241,11 +2340,42 @@ function documentXmlFromBlocks(
           // — the one the reader reads them back from.
           notePrXml("footnotePr", model.footnoteSettings) +
             notePrXml("endnotePr", model.endnoteSettings),
+          lastSectionModel?.pageBorders,
         );
   return (
     `${XML_DECLARATION}<w:document xmlns:w="${WORD_NAMESPACE}" xmlns:m="${MATH_NAMESPACE}">` +
+    documentBackgroundXml(model) +
     `<w:body>${body}${sectPr}</w:body></w:document>`
   );
+}
+
+/** The document's `w:background` (SPEC-074 AC-30). OOXML stores the page
+ * background document-wide while the model holds it per section, so the
+ * first section that sets one wins; `collectPackageDropRecords` reports the
+ * loss when the sections disagree (AC-32). Emitted as `w:document`'s first
+ * child, where the schema puts it. */
+function documentBackgroundXml(model: DocumentModel): string {
+  const hex = cssColorToOoxml(firstPageBackground(model));
+  return hex !== undefined ? `<w:background w:color="${hex}"/>` : "";
+}
+
+/** The page background a `.docx` save writes: the first section that sets
+ * one. Shared with the drop-record walk, so the report and the file always
+ * agree on which value survived. */
+export function firstPageBackground(model: DocumentModel): string | undefined {
+  return model.sections.find((section) => section.pageBackground !== undefined)?.pageBackground;
+}
+
+/** Whether the sections disagree about the page background — the condition
+ * a `.docx` save reports a DropRecord for (SPEC-074 AC-32): more than one
+ * distinct value across the sections that set one, or a section that leaves
+ * it unset beside one that does not. */
+export function pageBackgroundDisagrees(model: DocumentModel): boolean {
+  if (model.sections.length < 2) {
+    return false;
+  }
+  const first = model.sections[0]?.pageBackground;
+  return model.sections.some((section) => section.pageBackground !== first);
 }
 
 export function buildDocumentXml(
@@ -3347,5 +3477,13 @@ export async function writeDocx(
   // SPEC-008's rule that a same-format save reports nothing still holds for
   // every part except an edited chart's (SPEC-052 "Rewriting a chart" — the
   // one narrow, documented exception).
-  return { bytes: await zip(entries), dropped: collectEditedChartDropRecords(model, "docx") };
+  return {
+    bytes: await zip(entries),
+    dropped: [
+      ...collectEditedChartDropRecords(model, "docx"),
+      // SPEC-074 AC-32: one w:background for the whole document, so sections
+      // that disagree lose theirs even on a same-format save.
+      ...collectPageBackgroundDropRecords(model),
+    ],
+  };
 }

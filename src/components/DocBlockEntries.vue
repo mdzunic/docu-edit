@@ -353,7 +353,10 @@ function componentFor(entry = noRenderEntries()[0]) {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  color: #80868b;
+  /* --mark-color is set on a SHADED paragraph (SPEC-074 AC-26): the marks
+     are drawn on the shading, so that is the surface they must read
+     against. Unshaded paragraphs never set it and take the default grey. */
+  color: var(--mark-color, #80868b);
   pointer-events: none;
 }
 
@@ -365,7 +368,7 @@ function componentFor(entry = noRenderEntries()[0]) {
   content: "→";
   position: absolute;
   left: 0;
-  color: #80868b;
+  color: var(--mark-color, #80868b);
   pointer-events: none;
 }
 
@@ -430,7 +433,7 @@ function componentFor(entry = noRenderEntries()[0]) {
    page: the paragraph has not ended there. */
 .marks-on .doc-paragraph:not([data-slice-more])::after {
   content: "¶";
-  color: #80868b;
+  color: var(--mark-color, #80868b);
 }
 
 /* A note reference mark (SPEC-031): clickable (AC-15), visually a link-blue

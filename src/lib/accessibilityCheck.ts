@@ -28,8 +28,15 @@ import {
   type Table,
 } from "./documentModel";
 import { blockText, compareCaret, type CaretPosition, type ParagraphAddress } from "./textEditing";
-import { NORMAL_STYLE_ID, namedStyleIdFor, resolveNamedStyle, type ResolvedNamedStyle } from "./styles";
+import {
+  NORMAL_STYLE_ID,
+  namedStyleIdFor,
+  paintedParagraphFormatting,
+  resolveNamedStyle,
+  type ResolvedNamedStyle,
+} from "./styles";
 import { LINK_COLOR } from "./renderFormatting";
+import { paintedShadingFill } from "./paragraphBorders";
 import { HIGHLIGHT_HEX } from "./core/colors";
 
 // --- issue shape (AC-2, AC-3) ------------------------------------------
@@ -139,17 +146,28 @@ function effectiveForegroundColor(resolvedStyle: ResolvedNamedStyle, run: Run): 
   return run.formatting.color ?? resolvedStyle.runFormatting.color ?? "#000000";
 }
 
-/** Background resolution (AC-18, AC-19): the run's highlight (mapped
- * through the renderer's own `HIGHLIGHT_HEX` palette so the checker never
- * disagrees with what was painted) — an explicit `false` ("No colour")
+/** Background resolution (AC-18, AC-19; SPEC-074 AC-27): the run's highlight
+ * (mapped through the renderer's own `HIGHLIGHT_HEX` palette so the checker
+ * never disagrees with what was painted) — an explicit `false` ("No colour")
  * falls through exactly like unset — then the run's own shading, then the
- * enclosing cell's, then the page. */
-function effectiveBackgroundColor(run: Run, cellShadingFill: string | undefined): string {
+ * *paragraph's* shading, then the enclosing cell's, then the page.
+ *
+ * The paragraph step is SPEC-074's: text on a shaded paragraph is checked
+ * against the shading, not against the page, because the shading is what it
+ * is actually read on. */
+function effectiveBackgroundColor(
+  run: Run,
+  paragraphShadingFill: string | undefined,
+  cellShadingFill: string | undefined,
+): string {
   if (run.formatting.highlight) {
     return HIGHLIGHT_HEX[run.formatting.highlight] ?? run.formatting.highlight;
   }
   if (run.formatting.shadingFill !== undefined) {
     return run.formatting.shadingFill;
+  }
+  if (paragraphShadingFill !== undefined) {
+    return paragraphShadingFill;
   }
   if (cellShadingFill !== undefined) {
     return cellShadingFill;
@@ -395,6 +413,14 @@ function checkParagraphContrastAndColour(
   issues: AccessibilityIssue[],
 ): void {
   const resolvedStyle = resolveNamedStyle(model, paragraph.styleId);
+  // SPEC-074 AC-27: the paragraph's own shading, else the one its style sets
+  // (AC-17's inheritance) — the surface this paragraph's text is read on.
+  // Resolved through `paintedParagraphFormatting` rather than `resolvedStyle`
+  // so the checker reads the very fill the renderer painted, including for a
+  // paragraph that names no style and inherits Normal's. A paragraph that
+  // explicitly overrides its style's fill with "no fill" is read on the page
+  // again, so the fill goes through paintedShadingFill.
+  const paragraphShadingFill = paintedShadingFill(paintedParagraphFormatting(model, paragraph));
 
   // Contrast (AC-11, AC-13..19): every run with visible text against its
   // own resolved background.
@@ -402,7 +428,7 @@ function checkParagraphContrastAndColour(
   for (const run of paragraph.runs) {
     if (run.text.trim().length > 0) {
       const foreground = effectiveForegroundColor(resolvedStyle, run);
-      const background = effectiveBackgroundColor(run, cellShadingFill);
+      const background = effectiveBackgroundColor(run, paragraphShadingFill, cellShadingFill);
       const ratio = contrastRatio(foreground, background);
       const fontSizePt = effectiveFontSizePt(model, resolvedStyle, run);
       const large = isLargeText(fontSizePt, run.formatting.bold === true);

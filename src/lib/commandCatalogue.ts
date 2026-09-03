@@ -113,6 +113,8 @@ export const COMMANDS: CommandMeta[] = [
   { id: "format.import-styles", label: "Import styles from another document…", path: ["Format"], scope: "document" },
   { id: "format.clearFormatting", label: "Clear formatting", path: ["Format"], scope: "document", icon: "clear-formatting" },
   { id: "format.tabs", label: "Tabs…", path: ["Format"], scope: "document" },
+  // SPEC-074 AC-6.
+  { id: "format.borders", label: "Borders and shading…", path: ["Format"], scope: "document" },
   { id: "format.columns", label: "Columns", path: ["Format"], scope: "document" },
   { id: "format.edit-points", label: "Edit points", path: ["Format"], scope: "document" },
   // Drawing align/distribute (SPEC-072). Path names the Format → Drawing menu

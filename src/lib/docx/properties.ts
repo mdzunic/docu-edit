@@ -4,6 +4,7 @@
 // named style) and the document-body parser (direct formatting on `w:r`/`w:p`).
 import type {
   ParagraphAlignment,
+  ParagraphBorders,
   ParagraphFormatChange,
   ParagraphFormatting,
   RunFormatChange,
@@ -17,6 +18,8 @@ import { wordAttr as attr, WORD_NAMESPACE } from "./xml";
 import { firstChildElement } from "../core/xml";
 import { ooxmlColorToCss } from "../core/colors";
 import { halfPointsToPt, twentiethsOfPointToPt, twipsToCm } from "../core/units";
+import { parseBorderElement } from "./borders";
+import { explicitNoBorders, normaliseParagraphBorders, NO_SHADING_FILL } from "../paragraphBorders";
 
 const FALSE_VALUES = new Set(["0", "false", "off"]);
 
@@ -329,7 +332,67 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
     formatting.widowControl = widowControl;
   }
 
+  // Paragraph borders and shading (SPEC-074 AC-28).
+  const borders = parseParagraphBorders(pPr);
+  if (borders !== undefined) {
+    formatting.borders = borders;
+  }
+  const shadingFill = parseParagraphShading(pPr);
+  if (shadingFill !== undefined) {
+    formatting.shadingFill = shadingFill;
+  }
+
   return formatting;
+}
+
+/** A paragraph's `w:pBdr` (SPEC-074 AC-28): the four physical edges plus
+ * `w:between`. `@w:space` is the border-to-text distance in whole points and
+ * becomes the model's per-edge `paddingPt`; `w:bar` (the edge beside a
+ * bidirectional column) has no model slot and is left to SPEC-008's
+ * preservation. */
+function parseParagraphBorders(pPr: Element): ParagraphBorders | undefined {
+  const pBdr = firstChildElement(pPr, WORD_NAMESPACE, "pBdr");
+  if (!pBdr) {
+    return undefined;
+  }
+  const borders: ParagraphBorders = {};
+  const paddingPt: { top?: number; bottom?: number; left?: number; right?: number } = {};
+  let anyPadding = false;
+  for (const tag of ["top", "bottom", "left", "right", "between"] as const) {
+    const el = firstChildElement(pBdr, WORD_NAMESPACE, tag);
+    const side = parseBorderElement(el, attr);
+    if (!side) {
+      continue;
+    }
+    borders[tag] = side;
+    if (tag !== "between") {
+      const space = Number(attr(el as Element, "space") ?? "");
+      if (Number.isFinite(space) && space >= 0) {
+        paddingPt[tag] = space;
+        anyPadding = true;
+      }
+    }
+  }
+  if (anyPadding) {
+    borders.paddingPt = paddingPt;
+  }
+  // A `w:pBdr` present but drawing nothing — every edge `w:val="nil"` — is
+  // Word's explicit "no border on this paragraph", the override of a style's
+  // box that SPEC-074 AC-17 needs; it reads back as a borders object that is
+  // present and paints nothing. `dropRedundantPaintOverride` discards it
+  // again where the style chain had no box to override.
+  return normaliseParagraphBorders(borders) ?? explicitNoBorders();
+}
+
+/** A paragraph's `w:shd` fill as CSS (SPEC-074 AC-28) — the same `@w:fill`
+ * reading a table cell's shading uses; `@w:color` is the pattern colour on
+ * top, which the model has no slot for and drops. A `w:shd` with no usable
+ * fill (`w:val="clear" w:fill="auto"`) is Word's "no fill", and reads as the
+ * explicit no-fill override rather than as absent — the element's presence
+ * is the paragraph overriding its style's shading (AC-17). */
+function parseParagraphShading(pPr: Element): string | undefined {
+  const shd = firstChildElement(pPr, WORD_NAMESPACE, "shd");
+  return shd ? (ooxmlColorToCss(attr(shd, "fill")) ?? NO_SHADING_FILL) : undefined;
 }
 
 /** `w:pPr/w:outlineLvl` is 0-based in OOXML; the document model's

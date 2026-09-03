@@ -42,6 +42,7 @@ import type {
   NoteSettings,
   PageNumberFormat,
   Paragraph,
+  PageBorders,
   ParagraphFormatting,
   Run,
   RunFormatting,
@@ -63,6 +64,8 @@ import type {
 import type { ListDefinition } from "../core/lists";
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderSide } from "../core/tables";
+import { borderShorthand as odfBorderShorthand, DE_BORDER_NAMESPACE } from "./borders";
+import { paragraphPaddingPt } from "../paragraphBorders";
 import {
   FIELD_PLACEHOLDER_TEXT,
   isEvaluatedField,
@@ -81,6 +84,7 @@ import { replyParagraphText, visibleCommentThreads } from "../comments";
 import { collectChanges } from "../trackChanges";
 import {
   collectBarTabDropRecords,
+  collectBorderStyleDropRecords,
   collectDropRecords,
   collectEditedChartDropRecords,
   opaquePartBytes,
@@ -256,6 +260,55 @@ function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number):
   return attrs.length > 0 ? `<style:text-properties ${attrs.join(" ")}/>` : "";
 }
 
+/** A paragraph's border/shading attributes on `style:paragraph-properties`
+ * (SPEC-074 AC-29): `fo:border-*` per edge, `fo:padding-*` for the
+ * border-to-text space (the 4pt default written explicitly, so a foreign
+ * consumer sees what this product renders), `fo:background-color` for the
+ * shading, and `style:join-border` — ODF's own name for the merge behaviour
+ * borderRuns implements (AC-12), written `"true"` because this product
+ * always merges identical neighbours.
+ *
+ * The `between` edge has no ODF attribute at all, so it rides in the
+ * extension namespace rather than being silently lost — the same convention
+ * SPEC-073's `de:shadow-blur-pt` uses. `xmlns:de` is declared on the same
+ * element, keeping the declaration local (see odf/shape.ts). */
+function paragraphBorderAttrs(formatting: ParagraphFormatting): string[] {
+  const attrs: string[] = [];
+  const borders = formatting.borders;
+  if (borders) {
+    let anyEdge = false;
+    for (const edge of ["top", "bottom", "left", "right"] as const) {
+      const side = borders[edge];
+      if (side) {
+        attrs.push(`fo:border-${edge}="${odfBorderShorthand(side)}"`);
+        attrs.push(`fo:padding-${edge}="${ptToOdfLength(paragraphPaddingPt(borders, edge))}"`);
+        anyEdge = true;
+      }
+    }
+    if (borders.between) {
+      attrs.push(
+        `xmlns:de="${DE_BORDER_NAMESPACE}"`,
+        `de:border-between="${escapeXml(odfBorderShorthand(borders.between))}"`,
+      );
+      anyEdge = true;
+    }
+    if (anyEdge) {
+      attrs.push('style:join-border="true"');
+    } else {
+      // A borders object that paints nothing is the explicit override of a
+      // style's box (SPEC-074 AC-17). ODF spells it with the shorthand:
+      // `fo:border="none"` on the paragraph's automatic style beats the
+      // named style's edges, where writing no attribute at all would let
+      // them through again on the next open.
+      attrs.push('fo:border="none"');
+    }
+  }
+  if (formatting.shadingFill !== undefined) {
+    attrs.push(`fo:background-color="${escapeXml(formatting.shadingFill)}"`);
+  }
+  return attrs;
+}
+
 /** A style:paragraph-properties element for the paragraph formatting, or ""
  * when there is nothing to say. `forcedBreakBefore` is the manual-break case
  * (SPEC-028 AC-32): ODF has no standalone break element, so a BreakBlock
@@ -330,6 +383,8 @@ function paragraphPropertiesXml(
   if (rtl) {
     attrs.push('style:writing-mode="rl-tb"');
   }
+  // Paragraph borders and shading (SPEC-074 AC-29).
+  attrs.push(...paragraphBorderAttrs(formatting));
   // "Start numbering at" (SPEC-029 AC-22) — the section-starting
   // paragraph's own restart value; absent means "continue from the
   // previous section", which needs no attribute at all.
@@ -459,16 +514,15 @@ function definedListLevelXml(def: ListDefinition, level: number): string {
  * paragraphs get "P<n>" and runs share "T<n>" styles per distinct
  * formatting; list runs share "L<n>" list styles per distinct level set
  * (SPEC-018). */
-/** A `BorderSide` as ODF's `fo:border`-family shorthand ("0.5pt solid
- * #ff0000", or "none"); SPEC-023's border style enum maps onto ODF's CSS2-
- * derived keywords one for one except "single", which ODF calls "solid". */
+/** A cell's `BorderSide` as ODF's `fo:border`-family shorthand ("0.5pt
+ * solid #ff0000", or "none"). SPEC-023 floors the width at a quarter point
+ * so a hairline cell rule still renders; the shared mapping (odf/borders.ts,
+ * SPEC-074) supplies the keyword. */
 function borderShorthand(side: BorderSide): string {
   if (side.style === "none") {
     return "none";
   }
-  const styleWord = side.style === "single" ? "solid" : side.style;
-  const color = side.color !== "auto" ? side.color : "#000000";
-  return `${ptToOdfLength(Math.max(0.25, side.widthPt))} ${styleWord} ${color}`;
+  return odfBorderShorthand({ ...side, widthPt: Math.max(0.25, side.widthPt) });
 }
 
 /** A cell's `style:table-cell-properties` attributes (SPEC-023 AC-10..12,
@@ -2734,11 +2788,47 @@ function headerFooterMasterContent(
 
 /** One style:page-layout carrying a page geometry — the shape the reader's
  * parsePageLayoutProperties parses back. */
+/** A section's page border and background on `style:page-layout-properties`
+ * (SPEC-074 AC-31): `fo:border-*` per edge with `fo:padding-*` carrying the
+ * offset, and `fo:background-color` for the page background — the master
+ * page's own properties, which is where ODF puts both. ODF has no attribute
+ * for *which* edge the offset measures from, nor for restricting the border
+ * to (or from) the first page, so those two ride in the extension namespace
+ * like the paragraph `between` edge does. */
+function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: string): string {
+  const attrs: string[] = [];
+  if (pageBorders) {
+    const offsetPt = pageBorders.offsetPt ?? 24;
+    let anyEdge = false;
+    for (const edge of ["top", "bottom", "left", "right"] as const) {
+      const side = pageBorders[edge];
+      if (side) {
+        attrs.push(`fo:border-${edge}="${odfBorderShorthand(side)}"`);
+        attrs.push(`fo:padding-${edge}="${ptToOdfLength(offsetPt)}"`);
+        anyEdge = true;
+      }
+    }
+    if (anyEdge) {
+      attrs.push(`xmlns:de="${DE_BORDER_NAMESPACE}"`);
+      attrs.push(`de:page-border-measure-from="${pageBorders.measureFrom ?? "page"}"`);
+      if (pageBorders.appliesTo !== undefined && pageBorders.appliesTo !== "allPages") {
+        attrs.push(`de:page-border-applies-to="${pageBorders.appliesTo}"`);
+      }
+    }
+  }
+  if (pageBackground !== undefined) {
+    attrs.push(`fo:background-color="${escapeXml(pageBackground)}"`);
+  }
+  return attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
+}
+
 function pageLayoutXml(
   name: string,
   pageSize: PageSize,
   margins: Margins,
   columns?: SectionColumns,
+  pageBorders?: PageBorders,
+  pageBackground?: string,
 ): string {
   // ODF stores landscape pages with width/height already swapped; the
   // orientation attribute just marks them, mirroring the .docx writer's
@@ -2749,7 +2839,8 @@ function pageLayoutXml(
     `<style:page-layout-properties fo:page-width="${cmToOdfLength(pageSize.widthCm)}"` +
     ` fo:page-height="${cmToOdfLength(pageSize.heightCm)}"${orientation}` +
     ` fo:margin-top="${cmToOdfLength(margins.topCm)}" fo:margin-right="${cmToOdfLength(margins.rightCm)}"` +
-    ` fo:margin-bottom="${cmToOdfLength(margins.bottomCm)}" fo:margin-left="${cmToOdfLength(margins.leftCm)}"`;
+    ` fo:margin-bottom="${cmToOdfLength(margins.bottomCm)}" fo:margin-left="${cmToOdfLength(margins.leftCm)}"` +
+    pageLayoutBorderAttrs(pageBorders, pageBackground);
   const columnsXml =
     columns && columns.count > 1
       ? columnsElementXml(columns, Math.max(0.1, pageSize.widthCm - margins.leftCm - margins.rightCm))
@@ -3053,7 +3144,14 @@ export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): strin
     .join("");
   const pageLayouts = model.sections
     .map((section, index) =>
-      pageLayoutXml(sectionLayoutName(index), sectionPageSize(model, index), sectionMargins(model, index), section.columns),
+      pageLayoutXml(
+        sectionLayoutName(index),
+        sectionPageSize(model, index),
+        sectionMargins(model, index),
+        section.columns,
+        section.pageBorders,
+        section.pageBackground,
+      ),
     )
     .join("");
   // Header/footer content (SPEC-029): each section's own automatic styles
@@ -3233,7 +3331,14 @@ export function patchOdtSectionMasterPages(
       "automatic-styles",
       "page-layout",
       layoutName,
-      pageLayoutXml(layoutName, sectionPageSize(model, index), sectionMargins(model, index), model.sections[index]?.columns),
+      pageLayoutXml(
+        layoutName,
+        sectionPageSize(model, index),
+        sectionMargins(model, index),
+        model.sections[index]?.columns,
+        model.sections[index]?.pageBorders,
+        model.sections[index]?.pageBackground,
+      ),
     );
     upsert(
       "master-styles",
@@ -3629,6 +3734,11 @@ export async function writeOdt(
   // AC-38 — a document opened from .odt takes this same-format branch).
   return {
     bytes: await zip(entries),
-    dropped: [...collectEditedChartDropRecords(model, "odt"), ...collectBarTabDropRecords(model, "odt")],
+    dropped: [
+      ...collectEditedChartDropRecords(model, "odt"),
+      ...collectBarTabDropRecords(model, "odt"),
+      // SPEC-074 AC-32: ODF has no dash-dot border keyword, on any save.
+      ...collectBorderStyleDropRecords(model),
+    ],
   };
 }

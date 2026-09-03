@@ -823,6 +823,12 @@ function chooseTableGrid(rows = 0, cols = 0) {
         @select="emit('command', 'format.tabs')"
       />
       <MenuItem
+        label="Borders and shading…"
+        testid="format-menu-borders"
+        :disabled="!editable"
+        @select="emit('command', 'format.borders')"
+      />
+      <MenuItem
         label="Edit points"
         testid="format-menu-edit-points"
         :disabled="!editable"

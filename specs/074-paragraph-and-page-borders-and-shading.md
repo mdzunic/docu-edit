@@ -33,23 +33,23 @@ field, a page-level field, and the layout rule for what a bordered
 paragraph does at a page break.
 
 ## Acceptance criteria
-- [ ] `BorderSide` and `BorderLineStyle` move to `src/lib/core/borders.ts`, product-neutral, re-exported from `src/lib/core/tables.ts` so no existing import changes, and gain the additional line styles in "Border styles"
-- [ ] `ParagraphFormatting` gains `borders?: ParagraphBorders` and `shadingFill?: string`, per "The paragraph model"
-- [ ] A Borders and shading dialog (`Format → Borders and shading…`) sets each of the five paragraph edges independently — top, bottom, left, right and between — with a style, width, colour, and a preset row (none, box, all, top and bottom, custom)
-- [ ] Padding between the border and the text is settable per edge, in the current measurement unit (SPEC-064), and defaults to 4pt
-- [ ] The dialog's paragraph shading control sets a background fill, with "no fill" as a distinct value from white
-- [ ] Borders and shading apply to every paragraph the selection touches, using SPEC-014's "touched by the selection" rule
-- [ ] **Consecutive paragraphs with identical borders and shading merge into one bordered block**: the outer edges draw once around the run, and the `between` edge draws between them — the behaviour both formats specify and the reason `between` exists as a separate edge
-- [ ] The shading region spans the paragraph's full content width including its padding — not just behind the glyphs — and follows the paragraph's indents
-- [ ] A bordered paragraph split across a page break draws its side borders on both fragments, its top border only on the first and its bottom only on the last, per "Pagination"
-- [ ] Borders and shading are inherited from the paragraph style (SPEC-019) until the paragraph sets its own; the style editor (SPEC-042) can set them on a style
-- [ ] Page borders are settable per section from Page setup — style, width, colour, an art-free line only, plus which edges and whether the border measures from the page edge or the text — and render on every page of that section
-- [ ] A page background colour is settable per section, renders behind the whole page, and is excluded from printing unless "print background" is chosen, matching both formats' own distinction
-- [ ] Formatting marks (SPEC-028) and the accessibility checker (SPEC-043) treat a shaded paragraph as a contrast surface: text on a shaded paragraph is checked against the shading, not against the page
-- [ ] Paragraph borders and shading round-trip through `.docx` (`w:pBdr` with `w:top/bottom/left/right/between`, `@w:val`, `@w:sz` in eighths of a point, `@w:space` in points, `@w:color`; `w:shd` with `@w:fill`) and `.odt` (`fo:border*`, `fo:padding*`, `fo:background-color`, plus `style:join-border` for the merge behaviour)
-- [ ] Page borders and background round-trip through `.docx` (`w:pgBorders` in `w:sectPr`, `w:background` in the document) and `.odt` (master-page and page-layout border and background properties)
-- [ ] A border style one format lacks maps to its nearest equivalent with a `DropRecord`, per "Border styles"
-- [ ] Fixtures with a boxed note paragraph, a bottom-rule heading, three consecutive identical bordered paragraphs, a shaded code block and a page border open, render, save and reopen `equalStructural`
+- [x] `BorderSide` and `BorderLineStyle` move to `src/lib/core/borders.ts`, product-neutral, re-exported from `src/lib/core/tables.ts` so no existing import changes, and gain the additional line styles in "Border styles"
+- [x] `ParagraphFormatting` gains `borders?: ParagraphBorders` and `shadingFill?: string`, per "The paragraph model"
+- [x] A Borders and shading dialog (`Format → Borders and shading…`) sets each of the five paragraph edges independently — top, bottom, left, right and between — with a style, width, colour, and a preset row (none, box, all, top and bottom, custom)
+- [x] Padding between the border and the text is settable per edge, in the current measurement unit (SPEC-064), and defaults to 4pt
+- [x] The dialog's paragraph shading control sets a background fill, with "no fill" as a distinct value from white
+- [x] Borders and shading apply to every paragraph the selection touches, using SPEC-014's "touched by the selection" rule
+- [x] **Consecutive paragraphs with identical borders and shading merge into one bordered block**: the outer edges draw once around the run, and the `between` edge draws between them — the behaviour both formats specify and the reason `between` exists as a separate edge
+- [x] The shading region spans the paragraph's full content width including its padding — not just behind the glyphs — and follows the paragraph's indents
+- [x] A bordered paragraph split across a page break draws its side borders on both fragments, its top border only on the first and its bottom only on the last, per "Pagination"
+- [x] Borders and shading are inherited from the paragraph style (SPEC-019) until the paragraph sets its own; the style editor (SPEC-042) can set them on a style
+- [x] Page borders are settable per section from Page setup — style, width, colour, an art-free line only, plus which edges and whether the border measures from the page edge or the text — and render on every page of that section
+- [x] A page background colour is settable per section, renders behind the whole page, and is excluded from printing unless "print background" is chosen, matching both formats' own distinction
+- [x] Formatting marks (SPEC-028) and the accessibility checker (SPEC-043) treat a shaded paragraph as a contrast surface: text on a shaded paragraph is checked against the shading, not against the page
+- [x] Paragraph borders and shading round-trip through `.docx` (`w:pBdr` with `w:top/bottom/left/right/between`, `@w:val`, `@w:sz` in eighths of a point, `@w:space` in points, `@w:color`; `w:shd` with `@w:fill`) and `.odt` (`fo:border*`, `fo:padding*`, `fo:background-color`, plus `style:join-border` for the merge behaviour)
+- [x] Page borders and background round-trip through `.docx` (`w:pgBorders` in `w:sectPr`, `w:background` in the document) and `.odt` (master-page and page-layout border and background properties)
+- [x] A border style one format lacks maps to its nearest equivalent with a `DropRecord`, per "Border styles"
+- [x] Fixtures with a boxed note paragraph, a bottom-rule heading, three consecutive identical bordered paragraphs, a shaded code block and a page border open, render, save and reopen `equalStructural`
 
 ## Out of scope
 Word's decorative "art" page borders (the clip-art border set) — preserved
@@ -196,6 +196,55 @@ Printing a page background is opt-in, exactly as it is in both source
 applications: SPEC-034's print path ignores `pageBackground` unless the
 print dialog's "print background colours" is set. Page *borders* always
 print.
+
+### Style inheritance
+Borders and shading are the one part of `ParagraphFormatting` this product
+does **not** bake onto the paragraph when a style is applied. They resolve
+at the point something paints them — `styles.paragraphPaintResolver` /
+`paintedParagraphFormatting`, layered by `paragraphBorders.withInheritedPaint`
+— and the paragraph's own values always win.
+
+Two reasons, both load-bearing:
+
+- A style's box belongs to the *style*. Baking it would give every
+  paragraph in the document a direct copy, and both writers would then emit
+  a per-paragraph `w:pBdr`/`fo:border` instead of the single style
+  definition Word and Writer expect (and that AC-18 saves).
+- A paragraph with no `styleId` at all still has a style: **Normal**, the
+  one the picker already names for it. Setting Normal's borders has to box
+  the paragraphs of a blank document, and no re-bake scoped to a style id
+  can reach a paragraph that names no style to be scoped by.
+
+The merge rule (AC-12) reads the same resolved values, so two paragraphs
+that inherit one box merge into one bordered run exactly as two that set it
+directly do; so does the accessibility checker (AC-27), which therefore
+measures contrast against the fill that was actually painted.
+
+Resolving rather than baking means "the paragraph has no borders" and "the
+paragraph inherits its style's borders" can no longer be the same state, so
+**off** is spelled two ways and `applyParagraphBorders` picks per paragraph:
+
+- the absent field, where the style contributes nothing — an ordinary
+  unbordered paragraph carries no husk, and picks up a box its style is
+  given later;
+- a value that is present and paints nothing, where the style *does* draw
+  one: `borders: {}` and `shadingFill: "transparent"`. `withInheritedPaint`
+  stops at any present value, so the style's box stops there too.
+
+Both file formats spell that override, and it round-trips as itself: a
+`w:pBdr` with every edge `w:val="nil"` and `w:shd w:val="clear"
+w:fill="auto"`; `fo:border="none"` and `fo:background-color="transparent"`.
+The `.docx` reader drops such a value again where the style chain (resolved
+through Normal for a paragraph naming no style) had nothing to override —
+Word writes both freely on paragraphs whose style sets neither. The `.odt`
+reader takes them at their word: an ODF automatic style *is* direct
+formatting, and the common style being overridden is not in the chain the
+paragraph resolves through (this product's writer names a paragraph's
+automatic style after its style id, which shadows it).
+
+The dialog therefore seeds from what the paragraph **paints**, not from what
+it sets directly: opening on a style-boxed paragraph shows that box, so OK
+re-applies it rather than silently stripping it.
 
 ### Specs this changes
 - `specs/014-paragraph-alignment-indents-spacing.md` — "Paragraph borders

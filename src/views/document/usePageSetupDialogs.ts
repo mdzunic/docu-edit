@@ -9,7 +9,8 @@
 // commands through the view's applyParagraphCommand chokepoint.
 import { computed, ref, triggerRef } from "vue";
 import { applyColumns, asColumnsScope } from "../../lib/columns";
-import { asPageSetupScope, setPageSetup } from "../../lib/commands";
+import { asPageSetupScope, setPageBorders, setPageSetup } from "../../lib/commands";
+import { noPageBackground, noPageBorders } from "../../lib/pageBorders";
 import { asMeasurementUnit } from "../../lib/core/units";
 import {
   resolveColumnWidthsCm,
@@ -42,6 +43,12 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
     margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
     measurementUnit: "cm",
     applyTo: "wholeDocument",
+    // The Borders tab's prefill (SPEC-074 AC-19..AC-23). Absent is `null`,
+    // never `""`: the dialog reads "is there a background?" as "is this a
+    // string?", so an empty string would open the tab with the background
+    // switch already on and commit `""` as the section's colour.
+    pageBorders: noPageBorders(),
+    pageBackground: noPageBackground(),
   });
   // The Format → Columns dialog (SPEC-030): open flag plus the prefill taken
   // from the caret's section columns and content width at the moment it opens.
@@ -70,6 +77,11 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
       margins: { ...sectionMargins(model, sectionIndex) },
       measurementUnit: model.measurementUnit ?? "cm",
       applyTo: "wholeDocument",
+      // The caret's section owns its border and background (SPEC-074). A
+      // section with no background prefills as `null`, not `""` — see the
+      // seed above.
+      pageBorders: model.sections[sectionIndex]?.pageBorders ?? noPageBorders(),
+      pageBackground: model.sections[sectionIndex]?.pageBackground ?? noPageBackground(),
     };
     pageSetupOpen.value = true;
   }
@@ -84,6 +96,8 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
       margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
       measurementUnit: "cm",
       applyTo: "wholeDocument",
+      pageBorders: noPageBorders(),
+      pageBackground: noPageBackground(),
     },
   ) {
     pageSetupOpen.value = false;
@@ -93,16 +107,29 @@ export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
       return;
     }
     const selection = paragraphSelection(root);
+    const scope = asPageSetupScope(payload.applyTo ?? "wholeDocument");
+    const geometry = setPageSetup(
+      model,
+      selection,
+      {
+        pageSize: payload.pageSize,
+        margins: payload.margins,
+        measurementUnit: asMeasurementUnit(payload.measurementUnit),
+      },
+      scope,
+    );
+    // The Borders tab commits with the rest, as ONE undo step (SPEC-074
+    // AC-19..AC-23): the border command runs on the geometry command's own
+    // result, so a single applyEdit carries both.
     applyEdit(
-      setPageSetup(
-        model,
-        selection,
+      setPageBorders(
+        geometry.model,
+        geometry.selection,
         {
-          pageSize: payload.pageSize,
-          margins: payload.margins,
-          measurementUnit: asMeasurementUnit(payload.measurementUnit),
+          pageBorders: payload.pageBorders ?? null,
+          pageBackground: payload.pageBackground ?? null,
         },
-        asPageSetupScope(payload.applyTo ?? "wholeDocument"),
+        scope,
       ),
       selection,
       "page setup",
