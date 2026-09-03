@@ -97,12 +97,19 @@ test.describe("SPEC-076 repeating header rows", () => {
   test("the word count is unaffected by the repeat (AC-10)", async ({ page }) => {
     await openFixture(page, "tables-repeating-header.docx");
     await waitForPagination(page);
-    const before = await page.getByTestId("word-count-button").textContent();
+    const counter = page.getByTestId("word-count-button");
+    // The live count is a throttled worker round-trip seeded at "0 words"
+    // (useWordCount), and pagination settling does not imply it has landed.
+    // Reading the baseline one-shot here captures that placeholder on a busy
+    // machine and then compares it against the real count after the scroll —
+    // so wait for the count itself before taking the baseline.
+    await expect(counter).not.toHaveText("0 words");
+    const before = await counter.textContent();
     // Scrolling realizes more pages, which draws more repeats — the count
     // walks the model, so it cannot move.
     await page.mouse.wheel(0, 4000);
     await waitForPagination(page);
-    await expect(page.getByTestId("word-count-button")).toHaveText(before ?? "");
+    await expect(counter).toHaveText(before ?? "");
   });
 });
 
