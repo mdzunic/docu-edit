@@ -6,7 +6,8 @@
 //   - measureTableElement (core/pageMetrics.ts) one line box per MODEL row
 //   - paginate (lib/pagination.ts)       the height the repeat costs a page
 import { describe, expect, it } from "vitest";
-import { tableSliceRows } from "./tables";
+import { insertTable, tableSliceRows } from "./tables";
+import { caretSelection } from "./commands";
 import { measureTableElement, type BlockMetrics } from "./core/pageMetrics";
 import { paginate, type MetricsProvider } from "./pagination";
 import { equalStructural } from "./equality";
@@ -189,5 +190,34 @@ describe("paginate with a repeating header", () => {
     const pages = paginate(fixture(table(1, 5)), fakeMetrics);
     expect(pages).toHaveLength(1);
     expect(pages[0].items[0].startLine).toBeUndefined();
+  });
+});
+
+describe("insertTable's header-row option (SPEC-076 AC-20, AC-21)", () => {
+  const at = caretSelection({ section: 0, block: 0, offset: 0 });
+
+  function emptyModel(): DocumentModel {
+    const model = createDocument("insert-table-fixture");
+    model.sections = [{ blocks: [{ type: "paragraph", runs: [] }] }];
+    return model;
+  }
+
+  it("marks the first row isHeader when the dialog's checkbox is on (AC-20)", () => {
+    const next = insertTable(emptyModel(), at, 3, 2, true).model;
+    const table = next.sections[0].blocks.find((block) => block.type === "table") as Table;
+    expect(table.rows[0].isHeader).toBe(true);
+    expect(table.rows[1].isHeader).toBeUndefined();
+  });
+
+  it("creates no header row when it is off (AC-20)", () => {
+    const next = insertTable(emptyModel(), at, 3, 2, false).model;
+    const table = next.sections[0].blocks.find((block) => block.type === "table") as Table;
+    expect(table.rows.every((row) => row.isHeader === undefined)).toBe(true);
+  });
+
+  it("creates no header row when the caller passes nothing — the Insert menu's grid quick-pick (AC-21)", () => {
+    const next = insertTable(emptyModel(), at, 3, 2).model;
+    const table = next.sections[0].blocks.find((block) => block.type === "table") as Table;
+    expect(table.rows.every((row) => row.isHeader === undefined)).toBe(true);
   });
 });
