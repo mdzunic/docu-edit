@@ -18,6 +18,10 @@ const props = defineProps({
   /** A trailing descriptive note, e.g. "Screen only" (SPEC-059 AC-71) — shown
    * in the shortcut gutter but styled as plain helper text, not a key. */
   hint: { type: String, default: "" },
+  /** Why this toggle is disabled, e.g. "the caret is not in a table"
+   * (SPEC-076 AC-18) — stated in the item, exactly as MenuItem states it, so
+   * a disabled command is never silently greyed out. */
+  reason: { type: String, default: "" },
 });
 
 const emit = defineEmits(["select"]);
@@ -36,6 +40,7 @@ const mark = computed(() => (props.checked === "mixed" ? "–" : props.checked =
     :data-testid="testid || undefined"
     :aria-checked="ariaChecked"
     :disabled="disabled"
+    :title="disabled && reason ? reason : undefined"
     tabindex="-1"
     @mousedown.prevent
     @click="emit('select')"
@@ -46,17 +51,33 @@ const mark = computed(() => (props.checked === "mixed" ? "–" : props.checked =
     >{{ mark }}</span>
     <span class="menu-item-label">{{ label }}</span>
     <span
-      v-if="hint"
+      v-if="disabled && reason"
+      class="menu-item-reason"
+      data-testid="menu-item-reason"
+    >{{ reason }}</span>
+    <span
+      v-else-if="hint"
       class="menu-hint"
     >{{ hint }}</span>
     <span
-      v-if="shortcut"
+      v-if="shortcut && !(disabled && reason)"
       class="menu-shortcut"
     >{{ shortcut }}</span>
   </button>
 </template>
 
 <style scoped>
+/* The stated reason a command is disabled (SPEC-076 AC-18), styled exactly
+   as MenuItem states its own — muted, italic, at the trailing edge. */
+.menu-item-reason {
+  margin-left: auto;
+  padding-left: var(--space-6);
+  color: var(--text-disabled);
+  font-size: var(--text-xs);
+  font-style: italic;
+  white-space: nowrap;
+}
+
 /* The trailing helper note (e.g. "Screen only", AC-71): pushed to the trailing
    edge like a shortcut but read as secondary descriptive text. */
 .menu-hint {

@@ -117,30 +117,75 @@ export function asTable(value: unknown): Table {
   return value as Table;
 }
 
-/** One row's real (non-covered) cells, each carrying its own grid column
- * index — a merged cell's covered neighbours (SPEC-023) render nothing of
- * their own; the spanning cell's own colspan/rowspan covers their space.
- * Lives here (rather than as a .vue-local helper) so the canvas's template
- * gets a properly typed `TableCell`/`colIndex` pair back regardless of how
- * loosely its own runtime-declared props are typed — see asTable. */
+/** One `<td>` a rendered row draws: the model cell, its grid column index
+ * and the spans to render. A merged cell's covered neighbours (SPEC-023)
+ * contribute no entry of their own — the spanning cell's colspan/rowspan
+ * covers their space. Lives here (rather than as a .vue-local helper) so the
+ * canvas's template gets a properly typed `TableCell`/`colIndex` pair back
+ * regardless of how loosely its own runtime-declared props are typed — see
+ * asTable. */
 export interface VisibleCellEntry {
   cell: TableCell;
   colIndex: number;
+  /** The colspan to draw: the owning cell's own. */
+  colSpan: number;
+  /** The rowspan to draw, clipped to the last row of the slice this entry
+   * belongs to — a page never renders a span reaching into rows it does not
+   * hold, which would make it taller than it measured (SPEC-076). */
+  rowSpan: number;
+  /** True for a slot whose owning cell a previous page slice drew: an empty
+   * stand-in that keeps this continuation's columns aligned with the header
+   * above it and with the colgroup. Renders no content and takes no cell
+   * selection. */
+  orphaned: boolean;
 }
 
-export function visibleRowCells(row: TableRow): VisibleCellEntry[] {
-  return row.cells
-    .map((cell, colIndex) => ({ cell, colIndex }))
-    .filter((entry) => !entry.cell.covered);
+/** The cells row `rowIndex` draws within the window `[windowStart,
+ * windowEnd)` — the rows one page slice holds. */
+function sliceRowCells(
+  table: Table,
+  grid: CellOwner[][],
+  rowIndex: number,
+  windowStart: number,
+  windowEnd: number,
+): VisibleCellEntry[] {
+  const entries: VisibleCellEntry[] = [];
+  const cells = table.rows[rowIndex].cells;
+  for (let colIndex = 0; colIndex < table.columnWidthsCm.length; colIndex += 1) {
+    const owner = grid[rowIndex]?.[colIndex];
+    if (!owner || owner.originCol !== colIndex) {
+      continue; // covered from the left: the owner's colspan already spans it
+    }
+    const rowSpan = Math.max(1, Math.min(owner.originRow + owner.rowSpan, windowEnd) - rowIndex);
+    if (owner.originRow === rowIndex) {
+      entries.push({
+        cell: cells[colIndex] ?? { blocks: [] },
+        colIndex,
+        colSpan: owner.colSpan,
+        rowSpan,
+        orphaned: false,
+      });
+    } else if (rowIndex === windowStart) {
+      // The vertical merge began above this slice, so its owning cell is not
+      // drawn here. The pagination engine does not split inside a merge
+      // (core/tables.verticalMergeCrossings), so this only arises for a
+      // caller windowing the table itself; stand in for the owner rather
+      // than shifting every later cell of the row a column left.
+      entries.push({ cell: { blocks: [] }, colIndex, colSpan: owner.colSpan, rowSpan, orphaned: true });
+    }
+  }
+  return entries;
 }
 
 /** One rendered row of a table's page slice: the model row, the model index
- * it keeps (so its cells' `data-row` always names the real row) and whether
- * this is the leading header run redrawn at the top of a continuation. */
+ * it keeps (so its cells' `data-row` always names the real row), whether
+ * this is the leading header run redrawn at the top of a continuation, and
+ * the `<td>`s it draws. */
 export interface TableSliceRow {
   row: TableRow;
   rowIndex: number;
   repeated: boolean;
+  cells: VisibleCellEntry[];
 }
 
 /** The rows one page slice of a table draws (SPEC-076 AC-1, AC-4, AC-6).
@@ -158,19 +203,33 @@ export interface TableSliceRow {
 export function tableSliceRows(table: Table, rowStart = 0, rowEnd = -1): TableSliceRow[] {
   const end = rowEnd < 0 ? table.rows.length : Math.min(rowEnd, table.rows.length);
   const start = Math.max(0, Math.min(rowStart, end));
+  const grid = computeOwnerGrid(table);
   const slice: TableSliceRow[] = [];
   if (start > 0) {
-    for (let index = 0; index < table.rows.length && table.rows[index].isHeader; index += 1) {
-      // Guard the degenerate case of a continuation starting inside the run
-      // itself: a row is drawn once, never as its own repeat.
-      if (index >= start) {
-        break;
-      }
-      slice.push({ row: table.rows[index], rowIndex: index, repeated: true });
+    // Guard the degenerate case of a continuation starting inside the run
+    // itself: a row is drawn once, never as its own repeat.
+    let headerEnd = 0;
+    while (headerEnd < start && table.rows[headerEnd].isHeader) {
+      headerEnd += 1;
+    }
+    for (let index = 0; index < headerEnd; index += 1) {
+      slice.push({
+        row: table.rows[index],
+        rowIndex: index,
+        repeated: true,
+        // The redrawn run is its own window: a header cell merged downward
+        // into the body clips at the run, not at the continuation's rows.
+        cells: sliceRowCells(table, grid, index, 0, headerEnd),
+      });
     }
   }
   for (let index = start; index < end; index += 1) {
-    slice.push({ row: table.rows[index], rowIndex: index, repeated: false });
+    slice.push({
+      row: table.rows[index],
+      rowIndex: index,
+      repeated: false,
+      cells: sliceRowCells(table, grid, index, start, end),
+    });
   }
   return slice;
 }

@@ -173,7 +173,10 @@ export function computeOwnerGrid(table: OwnerGridTable): CellOwner[][] {
       if (grid[r][c]) {
         continue;
       }
-      const cell = table.rows[r].cells[c];
+      // A well-formed table's rows are the full R×C grid; a ragged row (one
+      // shorter than columnWidthsCm declares) reads as plain 1×1 slots rather
+      // than throwing — this runs on every layout pass (SPEC-076).
+      const cell = table.rows[r].cells[c] ?? {};
       const owner: CellOwner = {
         originRow: r,
         originCol: c,
@@ -188,6 +191,35 @@ export function computeOwnerGrid(table: OwnerGridTable): CellOwner[][] {
     }
   }
   return grid;
+}
+
+/** Which row boundaries a vertical merge crosses. Entry `r` is true when a
+ * cell owned by some row above `r` still spans row `r`.
+ *
+ * SPEC-076 made tables split across pages at row boundaries; a break at a
+ * crossed boundary would tear a merged cell in half. The page above would
+ * carry a `rowspan` reaching past its last drawn row (rendering taller than
+ * it measured), and the continuation would open on a covered slot whose
+ * owning cell it does not draw, shifting every later cell a column left.
+ * The pagination engine therefore only ever splits where this reads false.
+ *
+ * Entry 0 is always false — the table's own top is never inside a merge —
+ * as is the boundary one past the last row, which is off the end. */
+export function verticalMergeCrossings(table: OwnerGridTable): boolean[] {
+  const rowCount = table.rows.length;
+  const crossings = new Array<boolean>(rowCount).fill(false);
+  for (let r = 0; r < rowCount; r++) {
+    const cells = table.rows[r].cells;
+    for (let c = 0; c < cells.length; c++) {
+      // Covered placeholders never carry a span of their own, so reading
+      // every cell's rowSpan counts each merge exactly once.
+      const rowSpan = cells[c]?.rowSpan ?? 1;
+      for (let dr = 1; dr < rowSpan && r + dr < rowCount; dr++) {
+        crossings[r + dr] = true;
+      }
+    }
+  }
+  return crossings;
 }
 
 // --- border presets (SPEC-023 AC-18..21) -------------------------------------

@@ -5,8 +5,13 @@
 //   - tableSliceRows (lib/tables.ts)     which rows one page slice draws
 //   - measureTableElement (core/pageMetrics.ts) one line box per MODEL row
 //   - paginate (lib/pagination.ts)       the height the repeat costs a page
+//
+// A table splitting at row boundaries at all is new here, so the rules about
+// WHERE it may split — never inside the header run, never inside a vertical
+// merge (core/tables.verticalMergeCrossings) — live here too.
 import { describe, expect, it } from "vitest";
 import { insertTable, tableSliceRows } from "./tables";
+import { verticalMergeCrossings } from "./core/tables";
 import { caretSelection } from "./commands";
 import { measureTableElement, type BlockMetrics } from "./core/pageMetrics";
 import { paginate, type MetricsProvider } from "./pagination";
@@ -57,6 +62,33 @@ const fakeMetrics: MetricsProvider = {
   },
 };
 
+/** Metrics with an explicit height per model row — for the cases where the
+ * split turns on one row being far taller than a page. */
+function rowMetrics(heights: number[]): MetricsProvider {
+  return {
+    metricsFor(_section, _block, _block2, contentWidthPx): BlockMetrics {
+      let top = 0;
+      const lines = heights.map((height) => {
+        const line = { top, height };
+        top += height;
+        return line;
+      });
+      return { contentWidthPx, heightPx: top, marginTopPx: 0, marginBottomPx: 0, lines };
+    },
+  };
+}
+
+/** Merges `rows` rows downward from `row` in column `col`, exactly as
+ * SPEC-023's merge command leaves the model: the owner carries the rowSpan
+ * and every slot below it becomes a covered placeholder. */
+function mergeDown(built: Table, row: number, col: number, rows: number): Table {
+  built.rows[row].cells[col] = { ...built.rows[row].cells[col], rowSpan: rows };
+  for (let index = row + 1; index < row + rows; index += 1) {
+    built.rows[index].cells[col] = { blocks: [], covered: true };
+  }
+  return built;
+}
+
 function fixture(block: Table): DocumentModel {
   const model = createDocument("header-repeat-fixture");
   model.defaultStyles.pageSize = {
@@ -103,6 +135,79 @@ describe("tableSliceRows", () => {
     const source = table(1, 4);
     const slice = tableSliceRows(source, 3, 5);
     expect(slice[0].row).toBe(source.rows[0]);
+  });
+});
+
+// A table splits at row boundaries now, so every row it draws must still fill
+// the whole grid: the colgroup, the repeated header above it and the rows
+// around it all assume a full complement of columns.
+describe("verticalMergeCrossings", () => {
+  it("crosses nothing when no cell is merged downward", () => {
+    expect(verticalMergeCrossings(table(1, 3))).toEqual([false, false, false, false]);
+  });
+
+  it("marks every boundary a rowSpan reaches over, and not the one it starts at", () => {
+    const merged = mergeDown(table(1, 4), 1, 0, 3); // rows 1..3 are one cell
+    expect(verticalMergeCrossings(merged)).toEqual([false, false, true, true, false]);
+  });
+
+  it("ignores a purely horizontal merge", () => {
+    const wide = table(1, 2);
+    wide.rows[1].cells[0] = { ...wide.rows[1].cells[0], colSpan: 2 };
+    wide.rows[1].cells[1] = { blocks: [], covered: true };
+    expect(verticalMergeCrossings(wide)).toEqual([false, false, false]);
+  });
+});
+
+describe("tableSliceRows cells", () => {
+  it("gives every column an entry when nothing is merged", () => {
+    const [first] = tableSliceRows(table(1, 1));
+    expect(first.cells.map((entry) => [entry.colIndex, entry.colSpan, entry.rowSpan, entry.orphaned])).toEqual([
+      [0, 1, 1, false],
+      [1, 1, 1, false],
+    ]);
+  });
+
+  it("draws a horizontally merged cell once, spanning its covered neighbour", () => {
+    const wide = table(0, 1);
+    wide.rows[0].cells[0] = { ...wide.rows[0].cells[0], colSpan: 2 };
+    wide.rows[0].cells[1] = { blocks: [], covered: true };
+    const [only] = tableSliceRows(wide);
+    expect(only.cells).toHaveLength(1);
+    expect(only.cells[0].colSpan).toBe(2);
+  });
+
+  it("clips a rowspan reaching past the last row this slice draws", () => {
+    // Rows 1..3 are one cell; the slice stops after row 2, so it may draw
+    // only two of the three rows — a taller rowspan would make the rendered
+    // slice taller than measureTableElement reported.
+    const merged = mergeDown(table(1, 4), 1, 0, 3);
+    const slice = tableSliceRows(merged, 0, 3);
+    expect(slice[1].cells[0].rowSpan).toBe(2);
+    expect(slice[1].cells[0].orphaned).toBe(false);
+  });
+
+  it("stands in for a merge owner an earlier slice drew, keeping the columns aligned", () => {
+    const merged = mergeDown(table(1, 4), 1, 0, 3);
+    const slice = tableSliceRows(merged, 2, 5);
+    const continuation = slice.find((entry) => entry.rowIndex === 2 && !entry.repeated);
+    // Two entries, not one: without the stand-in the row's remaining cell
+    // would lay out in column 0 and shift the whole row a column left.
+    expect(continuation?.cells.map((entry) => [entry.colIndex, entry.orphaned])).toEqual([
+      [0, true],
+      [1, false],
+    ]);
+    // The stand-in is empty and its span stops where the slice does.
+    expect(continuation?.cells[0].cell.blocks).toEqual([]);
+    expect(continuation?.cells[0].rowSpan).toBe(2);
+  });
+
+  it("clips a header cell merged into the body at the repeated run, not the continuation", () => {
+    const merged = mergeDown(table(2, 6), 0, 0, 3); // header rows 0-1 plus body row 2
+    const slice = tableSliceRows(merged, 4, 7);
+    const repeated = slice.filter((entry) => entry.repeated);
+    expect(repeated).toHaveLength(2);
+    expect(repeated[0].cells[0].rowSpan).toBe(2);
   });
 });
 
@@ -190,6 +295,59 @@ describe("paginate with a repeating header", () => {
     const pages = paginate(fixture(table(1, 5)), fakeMetrics);
     expect(pages).toHaveLength(1);
     expect(pages[0].items[0].startLine).toBeUndefined();
+  });
+
+  it("never splits inside a vertical merge", () => {
+    // Merges sitting across where an unmerged table would have broken: the
+    // first natural split is row 10, the second row 19.
+    const merged = mergeDown(mergeDown(table(1, 24), 8, 0, 3), 18, 1, 3);
+    const crossings = verticalMergeCrossings(merged);
+    const pages = paginate(fixture(merged), fakeMetrics);
+    expect(pages.length).toBeGreaterThan(2);
+    let expectedStart = 0;
+    for (const page of pages) {
+      const item = page.items[0];
+      const start = item.startLine ?? 0;
+      const end = item.endLine ?? merged.rows.length;
+      expect(crossings[start] ?? false).toBe(false);
+      expect(crossings[end] ?? false).toBe(false);
+      // And the slices still tile the table exactly once, in order.
+      expect(start).toBe(expectedStart);
+      expect(end).toBeGreaterThan(start);
+      expectedStart = end;
+    }
+    expect(expectedStart).toBe(merged.rows.length);
+  });
+
+  it("places a table whose every interior boundary is merged as one whole block", () => {
+    // One cell spanning every body row: there is nowhere legal to split, so
+    // the table stays atomic and overflows rather than tearing the merge.
+    const welded = mergeDown(table(1, 24), 1, 0, 24);
+    const pages = paginate(fixture(welded), fakeMetrics);
+    expect(pages).toHaveLength(1);
+    expect(pages[0].items).toHaveLength(1);
+    expect(pages[0].items[0].endLine ?? welded.rows.length).toBe(25);
+  });
+
+  it("draws no ghost continuation when the forced first slice swallows the table", () => {
+    // A header row plus one body row taller than the whole page. The first
+    // slice must clear the header run, which here means taking the entire
+    // table: there is nothing left for a second page to draw.
+    const pages = paginate(fixture(table(1, 1)), rowMetrics([ROW, PAGE_ROWS * ROW * 3]));
+    expect(pages).toHaveLength(1);
+    expect(pages[0].items).toHaveLength(1);
+    expect(pages[0].items[0].startLine ?? 0).toBe(0);
+    expect(pages[0].items[0].endLine ?? 2).toBe(2);
+  });
+
+  it("still continues onto a second page when a forced slice leaves rows behind", () => {
+    // The same forced first slice, but with a row after it: the continuation
+    // is real, and carries the repeated header above it.
+    const pages = paginate(fixture(table(1, 2)), rowMetrics([ROW, PAGE_ROWS * ROW * 3, ROW]));
+    expect(pages).toHaveLength(2);
+    expect(pages[0].items[0].endLine).toBe(2);
+    expect(pages[1].items[0].startLine).toBe(2);
+    expect(pages[1].items[0].endLine).toBe(3);
   });
 });
 

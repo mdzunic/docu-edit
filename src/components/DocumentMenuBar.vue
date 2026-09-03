@@ -1000,6 +1000,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
         testid="table-menu-repeat-header"
         :checked="table.rowIsHeader"
         :disabled="!editable || !table.inTable"
+        :reason="table.inTable ? '' : table.reason"
         @select="emit('command', 'table.repeat-header-row')"
       />
       <hr class="menu-separator">

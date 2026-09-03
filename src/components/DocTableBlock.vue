@@ -18,7 +18,7 @@ import {
   trackChangeRunHidden,
   trackChangeRunStyle,
 } from "../lib/renderFormatting";
-import { asTable, tableSliceRows, visibleRowCells } from "../lib/tables";
+import { asTable, tableSliceRows } from "../lib/tables";
 import { asCellRange, isCellInRange } from "../lib/core/tables";
 import { REPEATED_HEADER_ATTRIBUTE } from "../lib/core/pageMetrics";
 
@@ -95,19 +95,26 @@ function spanAttr(span = 1) {
         :aria-hidden="slice.repeated ? 'true' : undefined"
         :contenteditable="slice.repeated ? 'false' : undefined"
       >
+        <!-- The slice's cells, not the row's: a cell's rowspan is clipped to
+             the rows this page draws, and a slot whose owner a previous page
+             drew stands in as an empty cell, so the grid stays aligned with
+             the colgroup however the table is windowed (SPEC-076). -->
         <td
-          v-for="entry in visibleRowCells(slice.row)"
+          v-for="entry in slice.cells"
           :key="entry.colIndex"
           class="doc-table-cell"
           :class="{
-            'cell-selected': !slice.repeated && isCellInRange(asCellRange(cellRange), section, blockIndex, slice.rowIndex, entry.colIndex),
+            'cell-selected': !slice.repeated && !entry.orphaned && isCellInRange(asCellRange(cellRange), section, blockIndex, slice.rowIndex, entry.colIndex),
           }"
-          :style="tableCellBandedStyle(asTable(block), asNamedStyles(styles), slice.rowIndex, entry.colIndex, !slice.repeated && isCellInRange(asCellRange(cellRange), section, blockIndex, slice.rowIndex, entry.colIndex))"
-          :colspan="spanAttr(entry.cell.colSpan)"
-          :rowspan="spanAttr(entry.cell.rowSpan)"
-          :data-row="slice.rowIndex"
-          :data-col="entry.colIndex"
-          :data-testid="slice.repeated ? `repeated-header-cell-${slice.rowIndex}-${entry.colIndex}` : `table-cell-${slice.rowIndex}-${entry.colIndex}`"
+          :style="tableCellBandedStyle(asTable(block), asNamedStyles(styles), slice.rowIndex, entry.colIndex, !slice.repeated && !entry.orphaned && isCellInRange(asCellRange(cellRange), section, blockIndex, slice.rowIndex, entry.colIndex))"
+          :colspan="spanAttr(entry.colSpan)"
+          :rowspan="spanAttr(entry.rowSpan)"
+          :data-row="entry.orphaned ? undefined : slice.rowIndex"
+          :data-col="entry.orphaned ? undefined : entry.colIndex"
+          :data-canvas-ignore="entry.orphaned ? 'merged-continuation' : undefined"
+          :aria-hidden="entry.orphaned ? 'true' : undefined"
+          :contenteditable="entry.orphaned ? 'false' : undefined"
+          :data-testid="entry.orphaned ? `merged-continuation-cell-${slice.rowIndex}-${entry.colIndex}` : slice.repeated ? `repeated-header-cell-${slice.rowIndex}-${entry.colIndex}` : `table-cell-${slice.rowIndex}-${entry.colIndex}`"
         >
           <component
             :is="headingTag(paragraph.headingLevel)"

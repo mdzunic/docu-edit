@@ -26,6 +26,7 @@ import {
   type Paragraph,
 } from "./documentModel";
 import { type Margins, type PageSize } from "./core/pageSetup";
+import { verticalMergeCrossings } from "./core/tables";
 
 // PX_PER_CM moved to core/units.ts (one source for the fixed 96 dpi ratio);
 // imported for the engine's own math and re-exported so existing import
@@ -254,6 +255,45 @@ function repeatingHeaderRows(block: Block): number {
   return count >= block.rows.length ? 0 : count;
 }
 
+/** The row boundaries a vertical merge crosses, for a table; null for any
+ * block whose lines are not table rows. A split may never land on one
+ * (SPEC-076) — see core/tables.verticalMergeCrossings. */
+function mergeCrossings(block: Block): boolean[] | null {
+  return isTable(block) ? verticalMergeCrossings(block) : null;
+}
+
+/** Moves a proposed split at `end` UP the block until it is a boundary no
+ * vertical merge crosses, never past `startLine`. Returns `startLine` when
+ * the whole candidate range is inside one merge — the caller then treats the
+ * slice as not fitting at all, and the table moves down whole. */
+function splitAtOrAbove(crossings: boolean[] | null, startLine: number, end: number): number {
+  if (crossings === null) {
+    return end;
+  }
+  let split = end;
+  while (split > startLine && crossings[split]) {
+    split -= 1;
+  }
+  return split;
+}
+
+/** Moves a forced split at `end` DOWN until it clears every vertical merge,
+ * stopping at `lineCount`. Used only where the engine must make progress in
+ * an empty column, so it always returns a boundary past `startLine`: a merge
+ * that reaches the end of the table simply places the rest of it here. */
+function splitAtOrBelow(
+  crossings: boolean[] | null,
+  startLine: number,
+  end: number,
+  lineCount: number,
+): number {
+  let split = Math.min(Math.max(end, startLine + 1), lineCount);
+  while (split < lineCount && crossings?.[split]) {
+    split += 1;
+  }
+  return split;
+}
+
 function placeWhole(frame: Frame, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {
   const gap = frame.count === 0 ? m.marginTopPx : Math.max(frame.pendingMargin, m.marginTopPx);
   frame.page.items.push(frameItem(frame, sectionIndex, blockIndex));
@@ -446,6 +486,10 @@ export function paginate(
     // of its own rows, and a split may never fall inside the run itself.
     const headerRows = repeatingHeaderRows(block);
     const headerHeight = headerRows > 0 ? sliceHeight(m, 0, headerRows) : 0;
+    // A table's rows are its lines, and a vertically merged cell binds the
+    // rows it spans into one indivisible group: splitting inside it would
+    // strand the covered slots on a page that draws no cell for them.
+    const crossings = mergeCrossings(block);
 
     if (formatting?.pageBreakBefore && frame.count > 0) {
       frame = breakPage(sectionIndex);
@@ -483,12 +527,23 @@ export function paginate(
       // Does not fit. Decide how many lines stay in this column.
       const cannotSplit = lineCount <= 1 || formatting?.keepLines === true;
       let fit = cannotSplit ? 0 : linesFitting(m, startLine, available);
+      if (fit > 0) {
+        // Snap the split off any vertical merge it would tear — that decides
+        // which boundaries exist at all, so it comes before the rules about
+        // which of them are worth taking. Landing back on startLine means
+        // every candidate row is inside one merge: nothing splittable fits
+        // here and the table moves down whole.
+        fit = splitAtOrAbove(crossings, startLine, startLine + fit) - startLine;
+      }
       // Never break inside the header run: a page holding only the headings
       // of a table whose body starts overleaf is worse than moving the whole
       // table down (AC-1's "above the continuation's first body row").
       if (startLine === 0 && fit > 0 && fit <= headerRows) {
         fit = 0;
       }
+      // Widow/orphan control only ever runs for a paragraph, and `crossings`
+      // is only ever set for a table, so trimming a line here can never land
+      // back inside a merge.
       if (!cannotSplit && widow) {
         if (lineCount - startLine - fit === 1 && fit > 0) {
           fit -= 1; // never strand a single last line in the next column (widow)
@@ -510,9 +565,16 @@ export function paginate(
           // A table's first slice must carry at least one body row past its
           // header run, or the next slice would repeat rows already drawn.
           const floor = startLine === 0 ? headerRows + 1 : 1;
-          fit = Math.max(floor, linesFitting(m, startLine, available));
-          placeSlice(frame, sectionIndex, blockIndex, m, startLine, startLine + fit, repeat);
-          startLine += fit;
+          const forced = Math.max(floor, linesFitting(m, startLine, available));
+          const end = splitAtOrBelow(crossings, startLine, startLine + forced, lineCount);
+          placeSlice(frame, sectionIndex, blockIndex, m, startLine, end, repeat);
+          startLine = end;
+          if (startLine >= lineCount) {
+            // The forced slice swallowed the block. Opening a page for the
+            // remainder would draw an empty continuation — for a table, one
+            // showing nothing but its repeated header run.
+            return;
+          }
           frame = advanceFrame();
           continue;
         }
