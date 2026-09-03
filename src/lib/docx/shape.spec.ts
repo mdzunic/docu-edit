@@ -791,6 +791,16 @@ describe("SPEC-073 preservation of unmodelled styling (AC-35, AC-36)", () => {
     expect(again.shape.fill).toEqual({ kind: "solid", color: { theme: "accent1" } });
   });
 
+  it("a slide-space spelling (tx1) re-saves as the byte it arrived with (SPEC-077 AC-31)", () => {
+    const schemeFill = '<a:solidFill><a:schemeClr val="tx1"><a:lumMod val="75000"/></a:schemeClr></a:solidFill>';
+    const parsed = parseShapeDrawing(drawingElement(wsp(schemeFill)), readCtx)!;
+    expect(parsed.shape.fill).toEqual({ kind: "solid", color: { theme: "dk1", lumMod: 0.75, spelling: "tx1" } });
+    const rewritten = shapeDrawingXml(parsed.shape, 1, writeCtx);
+    expect(rewritten).toContain('<a:schemeClr val="tx1"><a:lumMod val="75000"/></a:schemeClr>');
+    // The spelling survives any number of round trips.
+    expect(parseShapeDrawing(drawingElement(rewritten), readCtx)!.shape.fill).toEqual(parsed.shape.fill);
+  });
+
   it("a scheme colour the model cannot carry (phClr, an alpha child) is preserved verbatim, never flattened (AC-29 carve-out)", () => {
     const phClrFill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>';
     const parsed = parseShapeDrawing(drawingElement(wsp(phClrFill)), readCtx)!;
