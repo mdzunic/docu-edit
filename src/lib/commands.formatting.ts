@@ -302,9 +302,13 @@ function displayFormatValue(value: RunFormatValue, theme: DocumentTheme): string
     return value;
   }
   if (typeof value === "object" && value !== null) {
-    return value.theme === "major" || value.theme === "minor"
-      ? resolveFont(value, theme)
-      : resolveColor(value, theme);
+    // Narrowed through a local so the slot discriminates the font/colour
+    // reference shapes (SPEC-077).
+    const slot = value.theme;
+    if (slot === "major" || slot === "minor") {
+      return resolveFont({ theme: slot }, theme);
+    }
+    return resolveColor({ ...value, theme: slot }, theme);
   }
   return "";
 }
