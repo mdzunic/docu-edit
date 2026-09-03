@@ -20,7 +20,18 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { JSDOM } from "jsdom";
 import { buildThemeFixtures } from "../src/lib/fixtures.theme.ts";
+
+// The docx theme splice parses the source scheme through core/xml's
+// DOMParser, which Node does not provide — borrow vitest's own DOM (jsdom is
+// the test environment already, so this adds nothing to the dependency set).
+const dom = new JSDOM("");
+globalThis.DOMParser ??= dom.window.DOMParser;
+globalThis.XMLSerializer ??= dom.window.XMLSerializer;
+globalThis.Node ??= dom.window.Node;
+globalThis.Element ??= dom.window.Element;
+globalThis.Document ??= dom.window.Document;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const e2eFixturesDir = path.join(__dirname, "..", "e2e", "fixtures");

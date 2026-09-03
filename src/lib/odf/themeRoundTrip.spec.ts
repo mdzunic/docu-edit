@@ -156,6 +156,52 @@ describe("SPEC-077 — .odt theme round trip", () => {
     expect(shape.fill).toEqual({ kind: "solid", color: { theme: "accent5" } });
   });
 
+  it("emits the de-theme-* carrier block for a THEMELESS document that carries a reference, so no written parent dangles (AC-38, AC-48)", async () => {
+    // A blank document never sets model.theme (AC-48), yet a shape preset or
+    // a theme swatch stores a reference — the carrier styles the automatic
+    // styles parent must still exist, resolved against DEFAULT_THEME.
+    const themeless: DocumentModel = {
+      id: "themeless-ref",
+      title: "Themeless Ref",
+      defaultStyles: createDefaultStyles(),
+      sections: [
+        {
+          blocks: [
+            { type: "paragraph", runs: [{ text: "accented", formatting: { color: { theme: "accent1" } } }] },
+            {
+              type: "shape",
+              geometry: "rect",
+              widthCm: 5,
+              heightCm: 3,
+              wrap: "inline",
+              fill: { kind: "solid", color: { theme: "accent2" } },
+            },
+          ],
+        },
+      ],
+    };
+    const { parsed, parts } = await saveAndReopen(themeless);
+    const stylesXml = decoder.decode(parts.get("styles.xml"));
+    const contentXml = decoder.decode(parts.get("content.xml"));
+    // Every de-theme-* parent written into content.xml resolves to a style
+    // styles.xml defines.
+    for (const match of contentXml.matchAll(/style:parent-style-name="(de-theme[^"]*)"/g)) {
+      expect(stylesXml).toContain(`style:name="${match[1]}"`);
+    }
+    expect(contentXml).toContain('style:parent-style-name="de-theme-text-accent1"');
+    expect(contentXml).toContain('style:parent-style-name="de-theme-accent2"');
+    // The references survive the round trip…
+    const runs = asParagraph(parsed.sections[0].blocks[0]).runs;
+    expect(runs[0].formatting.color).toEqual({ theme: "accent1" });
+    const shape = parsed.sections[0].blocks[1];
+    if (shape.type !== "shape") {
+      throw new Error("expected the shape block");
+    }
+    expect(shape.fill).toEqual({ kind: "solid", color: { theme: "accent2" } });
+    // …resolved against the product default scheme.
+    expect(parsed.theme?.colors.accent1).toBe(DEFAULT_THEME.colors.accent1);
+  });
+
   it("writes the literal alone when the parent slot is already taken by a link it did not mint (AC-38 conflict rule)", () => {
     const shape: Shape = {
       type: "shape",

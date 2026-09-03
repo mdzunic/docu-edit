@@ -273,9 +273,10 @@ function escapeAttr(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
 }
 
-/** Splices an edited theme into a preserved theme part: only `a:clrScheme`
- * and the two `a:latin` typefaces inside `a:fontScheme` change; `a:fmtScheme`,
- * `a:effectStyleLst`, `a:bgFillStyleLst`, `a:objectDefaults`,
+/** Splices an edited theme into a preserved theme part: `a:clrScheme`, the
+ * two `a:latin` typefaces inside `a:fontScheme` and the root `a:theme` name
+ * attribute (where AC-25 reads the theme's name back from) change;
+ * `a:fmtScheme`, `a:effectStyleLst`, `a:bgFillStyleLst`, `a:objectDefaults`,
  * `a:extraClrSchemeLst`, namespace declarations and element order survive
  * byte-verbatim (AC-34). Returns the input unchanged when it holds no
  * clrScheme to replace. */
@@ -287,6 +288,10 @@ export function spliceDocxThemeXml(sourceXml: string, theme: DocumentTheme): str
   // A function replacer so `$`-sequences in the generated XML are not
   // interpreted as replacement patterns.
   let out = sourceXml.replace(CLR_SCHEME_RE, () => clrSchemeXml(theme, source[0]));
+  // The root's name attribute is where readDocxTheme recovers the theme's
+  // name (AC-25), so an edited theme's name must land here or a save →
+  // reopen silently reverts it (AC-52).
+  out = out.replace(/(<a:theme\b[^>]*?\sname=")[^"]*(")/, (_, before: string, after: string) => before + escapeAttr(theme.name) + after);
   const spliceFont = (tag: string, typeface: string): void => {
     // Attribute-only splice: panose and the script-specific font children
     // survive untouched.

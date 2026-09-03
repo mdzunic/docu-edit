@@ -1080,6 +1080,35 @@ export interface OdfDrawingContext {
    * DrawingContext.groupOrdinals, seeded above every `de:group` already in
    * `content.xml` for the same reason. */
   groupOrdinals?: { next: number };
+  /** How many times each graphic automatic style was consumed into a
+   * MODELLED shape/connector (by `draw:style-name`). A consumed style is
+   * regenerated from the model on save, so preserving its definition
+   * verbatim would orphan one stale copy per open → save cycle and a no-edit
+   * save could never be byte-identical (SPEC-077 AC-53) — parseOdt drops a
+   * definition all of whose references were consumed. */
+  consumedGraphicStyles?: Map<string, number>;
+}
+
+/** Counts a modelled drawable's `draw:style-name` toward
+ * `consumedGraphicStyles` — see the field's doc comment. */
+function recordConsumedGraphicStyle(ctx: OdfDrawingContext, el: Element): void {
+  const name = el.getAttributeNS(DRAW_NAMESPACE, "style-name");
+  if (ctx.consumedGraphicStyles && name) {
+    ctx.consumedGraphicStyles.set(name, (ctx.consumedGraphicStyles.get(name) ?? 0) + 1);
+  }
+}
+
+/** How many elements anywhere in the document reference the named style via
+ * `draw:style-name` — compared against the consumed count so a style SHARED
+ * with unmodelled (preserved-opaque) markup is never dropped. */
+function countDrawStyleReferences(doc: Document, styleName: string): number {
+  let count = 0;
+  for (const el of Array.from(doc.getElementsByTagName("*"))) {
+    if (el.getAttributeNS(DRAW_NAMESPACE, "style-name") === styleName) {
+      count += 1;
+    }
+  }
+  return count;
 }
 
 /** collectInline run over a detached clone of `nodes` — reused so a
@@ -1428,6 +1457,7 @@ function parseBodyTextBlockOrSplit(
           recoverShapeThemeFill(frameEl, ctx.contentDoc, parsedShape.shape);
           blocks.push(parsedShape.shape);
           stampOdfConnectorTargetId(frameEl, parsedShape.shape);
+          recordConsumedGraphicStyle(ctx, frameEl);
           continue;
         }
       }
@@ -1437,6 +1467,7 @@ function parseBodyTextBlockOrSplit(
           flush();
           blocks.push(parsedConnector.connector);
           stampOdfConnectorTargetId(frameEl, parsedConnector.connector);
+          recordConsumedGraphicStyle(ctx, frameEl);
           continue;
         }
       }
@@ -2543,6 +2574,7 @@ export async function parseOdt(
     stylesDoc,
     anchorOrdinals: { next: 1 },
     groupOrdinals: { next: firstFreeOdfGroupOrdinal(contentDoc.documentElement) },
+    consumedGraphicStyles: new Map(),
   };
   const mediaById = new Map<string, MediaPart>();
   const sections: Section[] = [];
@@ -2819,9 +2851,22 @@ export async function parseOdt(
         def.namespaceURI === STYLE_NAMESPACE && def.localName === "style"
           ? def.getAttributeNS(STYLE_NAMESPACE, "family")
           : null;
-      if (family !== "paragraph" && family !== "text") {
-        kept.push(serializeElement(def));
+      if (family === "paragraph" || family === "text") {
+        continue;
       }
+      // A graphic style every reference of which was consumed into a
+      // modelled shape/connector is regenerated from the model on save;
+      // keeping the definition would orphan one stale copy per open → save
+      // cycle, so a no-edit save could never be byte-identical (SPEC-077
+      // AC-53). A style any unmodelled markup still references is kept.
+      if (family === "graphic") {
+        const name = def.getAttributeNS(STYLE_NAMESPACE, "name");
+        const consumed = name ? (drawingCtx.consumedGraphicStyles?.get(name) ?? 0) : 0;
+        if (name && consumed > 0 && consumed >= countDrawStyleReferences(contentDoc, name)) {
+          continue;
+        }
+      }
+      kept.push(serializeElement(def));
     }
     if (kept.length > 0) {
       sourceXml.odtAutomaticStyles = kept;

@@ -72,10 +72,11 @@ export const DOCX_THEME_SOURCE =
 /** DOCX_THEME_SOURCE after splicing DOCX_GOLDEN_THEME in: the changed dk1
  * becomes `a:srgbClr` (AC-35), the unchanged lt1 keeps its `a:sysClr` form
  * byte-verbatim, the two latin typefaces move with their panose attributes
- * preserved, and every byte outside `a:clrScheme`/the typefaces survives
- * verbatim (AC-34). */
+ * preserved, the root name attribute carries the edited theme's name (it is
+ * where AC-25 reads the name back from), and every byte outside
+ * `a:clrScheme`/the typefaces/that one attribute survives verbatim (AC-34). */
 export const DOCX_THEME_GOLDEN =
-  `${XML_DECL}<a:theme xmlns:a="${A_NS}" name="Office Theme"><a:themeElements>` +
+  `${XML_DECL}<a:theme xmlns:a="${A_NS}" name="Golden"><a:themeElements>` +
   `<a:clrScheme name="Golden"><a:dk1><a:srgbClr val="101010"/></a:dk1>` +
   `<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="123456"/></a:dk2>` +
   `<a:lt2><a:srgbClr val="EDCBA9"/></a:lt2><a:accent1><a:srgbClr val="AA1122"/></a:accent1>` +

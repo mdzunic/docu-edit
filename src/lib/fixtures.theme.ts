@@ -14,6 +14,8 @@
 // distinguishable in e2e.
 import { writeDocx } from "./docx/writer";
 import { writeOdt } from "./odf/writer";
+import { parseDocx, type ParsedDocxDocument } from "./docx/reader";
+import { parseOdt, type ParsedOdtDocument } from "./odf/reader";
 import { createDocument } from "./documentModel";
 import type { DocTheme, Block, DocumentModel, Paragraph, Table } from "./documentModel";
 import type { ThemeColorRef } from "./core/theme";
@@ -48,10 +50,13 @@ export const FIXTURE_THEME: DocTheme = {
  * formats round-trip as a reference (AC-52). */
 export const HEADING_COLOR_REF: ThemeColorRef = { theme: "accent2" };
 
-/** The table's cell shading: accent1 at Lighter 80% — a TRANSFORMED
- * reference. `.docx` round-trips it via w:themeFillTint; `.odt` cannot and
- * reopens the resolved literal, AC-39's first sanctioned delta. */
-export const TABLE_SHADING_REF: ThemeColorRef = { theme: "accent1", lumMod: 0.2, lumOff: 0.8 };
+/** The table's cell shading: accent1 at tint 0.2 (keep 20% of the colour —
+ * "Lighter 80%") — a TRANSFORMED reference in the tint form, which is the
+ * one WordprocessingML can spell: `.docx` round-trips it via
+ * w:themeFillTint, while a lumMod/lumOff ref would write its resolved
+ * literal alone (D8/AC-32). `.odt` cannot carry any transform and reopens
+ * the resolved literal, AC-39's first sanctioned delta. */
+export const TABLE_SHADING_REF: ThemeColorRef = { theme: "accent1", tint: 0.2 };
 
 /** The shape's solid fill: an untransformed accent reference. */
 export const SHAPE_FILL_REF: ThemeColorRef = { theme: "accent4" };
@@ -121,9 +126,45 @@ export function themeFixtureModel(title: string): DocumentModel {
   };
 }
 
+export const DOCX_FIXTURE_TITLE = "Word themes";
+export const ODT_FIXTURE_TITLE = "Writer themes";
+
+/** The model a same-format save starts from after an open — the shape
+ * fixtures.theme.spec.ts's modelFrom and openDocument build: parsed content
+ * plus the retained source package. */
+function reopenedModel(parsed: ParsedDocxDocument | ParsedOdtDocument, title: string, format: "docx" | "odt"): DocumentModel {
+  const model: DocumentModel = {
+    id: "spec077-theme",
+    title,
+    sections: parsed.sections,
+    defaultStyles: parsed.defaultStyles,
+    format,
+    opaque: parsed.opaque,
+    sourceXml: parsed.sourceXml,
+  };
+  if (parsed.theme) {
+    model.theme = parsed.theme;
+  }
+  return model;
+}
+
 export async function buildThemeFixtures(): Promise<{ name: string; bytes: Uint8Array }[]> {
-  const docx = await writeDocx(themeFixtureModel("Word themes"), { modified: FIXED_MODIFIED });
-  const odt = await writeOdt(themeFixtureModel("Writer themes"), { modified: FIXED_MODIFIED });
+  // Each fixture is written, reopened and written again, and the SECOND
+  // write's bytes are committed: both readers materialise the document
+  // defaults (font family/size) as explicit run formatting, so the first
+  // write — whose model carries bare runs — is not a fixed point of
+  // open → save, and AC-53's no-edit byte-identity holds only of the
+  // stabilised bytes.
+  const docxFirst = await writeDocx(themeFixtureModel(DOCX_FIXTURE_TITLE), { modified: FIXED_MODIFIED });
+  const docx = await writeDocx(
+    reopenedModel(await parseDocx(docxFirst.bytes), DOCX_FIXTURE_TITLE, "docx"),
+    { modified: FIXED_MODIFIED },
+  );
+  const odtFirst = await writeOdt(themeFixtureModel(ODT_FIXTURE_TITLE), { modified: FIXED_MODIFIED });
+  const odt = await writeOdt(
+    reopenedModel(await parseOdt(odtFirst.bytes), ODT_FIXTURE_TITLE, "odt"),
+    { modified: FIXED_MODIFIED },
+  );
   return [
     { name: "word-theme.docx", bytes: docx.bytes },
     { name: "lo-theme.odt", bytes: odt.bytes },

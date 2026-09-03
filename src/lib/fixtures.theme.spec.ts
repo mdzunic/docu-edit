@@ -28,12 +28,14 @@ import { BUILT_IN_THEMES, resolveColor } from "./core/theme";
 import type { DocumentModel, Paragraph, Shape, Table } from "./documentModel";
 import {
   buildThemeFixtures,
+  DOCX_FIXTURE_TITLE,
   EXPLICIT_COLOR,
   EXPLICIT_TEXT,
   FIXED_MODIFIED,
   FIXTURE_THEME,
   HEADING_COLOR_REF,
   HEADING_TEXT,
+  ODT_FIXTURE_TITLE,
   SHAPE_FILL_REF,
   TABLE_SHADING_REF,
 } from "./fixtures.theme";
@@ -54,11 +56,13 @@ beforeAll(async () => {
 
 /** The model an opened document actually holds (see openDocument.ts): the
  * parsed content plus the retained source package, so a same-format save
- * takes the preservation path rather than writing from scratch. */
+ * takes the preservation path rather than writing from scratch. The title
+ * matches the one the generator wrote, so a no-edit save rebuilds
+ * docProps/core.xml / meta.xml to the same bytes (AC-53). */
 function modelFrom(parsed: ParsedDocxDocument | ParsedOdtDocument, format: "docx" | "odt"): DocumentModel {
   const model: DocumentModel = {
     id: "spec077-theme",
-    title: "Themes",
+    title: format === "docx" ? DOCX_FIXTURE_TITLE : ODT_FIXTURE_TITLE,
     sections: parsed.sections,
     defaultStyles: parsed.defaultStyles,
     format,
@@ -166,7 +170,7 @@ describe("docx fixture (AC-52)", () => {
     const written = await writeDocx(model, { modified: FIXED_MODIFIED });
     const before = await unzip(docxBytes);
     const after = await unzip(written.bytes);
-    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
     for (const [name, bytes] of before) {
       expect(equalBytes(after.get(name)!, bytes), `part ${name} changed on a no-edit save`).toBe(true);
     }
@@ -213,7 +217,7 @@ describe("odt fixture (AC-52, with the two AC-39 deltas pinned)", () => {
     const written = await writeOdt(model, { modified: FIXED_MODIFIED });
     const before = await unzip(odtBytes);
     const after = await unzip(written.bytes);
-    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
     for (const [name, bytes] of before) {
       expect(equalBytes(after.get(name)!, bytes), `part ${name} changed on a no-edit save`).toBe(true);
     }

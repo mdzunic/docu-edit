@@ -139,10 +139,11 @@ describe("spliceDocxThemeXml — golden in both directions (AC-34, AC-35)", () =
     expect(theme).toBeDefined();
     expect(theme!.colors).toEqual(DOCX_GOLDEN_THEME.colors);
     expect(theme!.fonts).toEqual(DOCX_GOLDEN_THEME.fonts);
-    // The part's own name attribute survives the splice verbatim (AC-34) —
-    // the edited name lands on a:clrScheme — so the read-back name is the
-    // preserved root's, not the scheme's.
-    expect(theme!.name).toBe("Office Theme");
+    // The splice writes the edited name where AC-25 reads it back from —
+    // the root a:theme name attribute — as well as on a:clrScheme, so a
+    // save → reopen keeps the theme's name (AC-52).
+    expect(theme!.name).toBe("Golden");
+    expect(DOCX_THEME_GOLDEN).toContain('<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Golden">');
     expect(DOCX_THEME_GOLDEN).toContain('<a:clrScheme name="Golden">');
   });
 

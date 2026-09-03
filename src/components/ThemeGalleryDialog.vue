@@ -279,7 +279,7 @@ function cardName(card = { theme: DEFAULT_THEME, current: false }) {
   user-select: none;
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: var(--space-1);
   min-height: 6.5rem;
   max-height: 6.5rem;
   overflow: hidden;
@@ -289,21 +289,23 @@ function cardName(card = { theme: DEFAULT_THEME, current: false }) {
 }
 
 .preview-line {
-  font-size: 0.55rem;
-  line-height: 1.3;
+  /* Specimen text at miniature scale: a fixed fraction of the smallest
+   * type token, so the sheet shrinks and grows with the app's type ramp. */
+  font-size: calc(var(--text-xs) * 0.8);
+  line-height: calc(1.3em);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .preview-heading {
-  font-size: 0.75rem;
+  font-size: var(--text-sm);
   font-weight: var(--weight-bold);
 }
 
 .swatch-row {
   display: flex;
-  gap: 0.2rem;
+  gap: var(--space-1);
   margin-top: auto;
 }
 

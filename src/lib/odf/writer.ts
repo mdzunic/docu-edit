@@ -100,6 +100,7 @@ import {
   collectDropRecords,
   collectEditedChartDropRecords,
   collectThemeDropRecords,
+  modelHasThemeReference,
   opaquePartBytes,
   type WriteResult,
 } from "../opaque";
@@ -3259,8 +3260,13 @@ export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): strin
     "</style:default-style>" +
     namedStyles +
     // The document theme as named de-theme-* styles (SPEC-077 AC-37) —
-    // the SPEC-094 mapping, shared through core/themeOdf.
-    (model.theme !== undefined ? odtThemeBlockXml(documentThemeOf(model)) : "") +
+    // the SPEC-094 mapping, shared through core/themeOdf. Emitted whenever a
+    // reference exists too: a themeless document (AC-48) can still carry
+    // references (a shape preset, a theme swatch), and every
+    // style:parent-style-name="de-theme-…" the content writes must resolve.
+    (model.theme !== undefined || modelHasThemeReference(model)
+      ? odtThemeBlockXml(documentThemeOf(model))
+      : "") +
     notesConfigurationXml("footnote", model.footnoteSettings) +
     notesConfigurationXml("endnote", model.endnoteSettings) +
     // SPEC-073: the shared drawing definitions (draw:gradient/draw:hatch/
@@ -3783,9 +3789,10 @@ export async function writeOdt(
     patchedStyles =
       patchOdtShapeDefs(patchedStyles ?? originalStyles, drawingDefs.defsXml()) ?? patchedStyles;
     // The document theme block (SPEC-077 AC-37): rewritten in place only
-    // when the model carries a theme — an unedited themeless save stays
+    // when the model carries a theme or a theme REFERENCE (whose written
+    // de-theme-* parent must resolve) — an unedited themeless save stays
     // byte-identical.
-    if (model.theme !== undefined) {
+    if (model.theme !== undefined || modelHasThemeReference(model)) {
       const base = patchedStyles ?? originalStyles;
       const spliced = spliceThemeStyles(base, odtThemeBlockXml(documentThemeOf(model)));
       if (spliced !== base) {

@@ -19,7 +19,7 @@ import { DEFAULT_CHART_COLORS, SINGLE_SERIES_CHART_TYPES } from "./charts";
 import { childElements, escapeXmlText, firstChildElement, parseXml, XmlParseError } from "./xml";
 import { cssColorToOoxml } from "./colors";
 import { isThemeColor, type ModelColor } from "./theme";
-import { schemeClrXmlFor } from "./themeDrawingMl";
+import { schemeClrRefFrom, schemeClrXmlFor } from "./themeDrawingMl";
 
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
 export const C_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/chart";
@@ -153,12 +153,19 @@ function seriesNameOf(serEl: Element, fallback: string): string {
   return literal || fallback;
 }
 
-function seriesColorOf(serEl: Element, fallback: string): string {
+function seriesColorOf(serEl: Element, fallback: string): ModelColor {
   const spPr = firstChildElement(serEl, C_NAMESPACE, "spPr");
   const solidFill = spPr && firstChildElement(spPr, A_NAMESPACE, "solidFill");
   const srgbClr = solidFill && firstChildElement(solidFill, A_NAMESPACE, "srgbClr");
   const val = srgbClr?.getAttribute("val");
-  return val ? `#${val.toLowerCase()}` : fallback;
+  if (val) {
+    return `#${val.toLowerCase()}`;
+  }
+  // An `a:schemeClr` the model can carry reads back as a ThemeColorRef
+  // (SPEC-077 AC-29) — the form serFillXml writes for a themed series.
+  const schemeClr = solidFill && firstChildElement(solidFill, A_NAMESPACE, "schemeClr");
+  const ref = schemeClr ? schemeClrRefFrom(schemeClr) : undefined;
+  return ref ?? fallback;
 }
 
 function legendPositionOf(chartEl: Element): ChartOptions["legend"] {

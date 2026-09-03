@@ -21,7 +21,7 @@ import { arcToCubics, PATH_GRID, quadraticToCubic, type PathStep, type ShapePath
 import { childElements, escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
 import { isThemeColor, resolveColor, type DocumentTheme, type ModelColor } from "../core/theme";
-import { schemeClrXmlFor } from "../core/themeDrawingMl";
+import { schemeClrRefFrom, schemeClrXmlFor } from "../core/themeDrawingMl";
 import { cmToEmu, emuToCm } from "../core/units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -119,6 +119,22 @@ function parseSolidColor(parent: Element): { color: string; alpha?: number } | n
   return parsed;
 }
 
+/** parseSolidColor widened for the two surfaces AC-4 makes ModelColor — a
+ * shape's solid fill and its outline stroke: an `a:srgbClr` parses exactly
+ * as before, and an `a:schemeClr` the model can carry becomes a
+ * ThemeColorRef (SPEC-077 AC-29). A schemeClr the model cannot hold —
+ * `phClr`, an alpha child, an unmodelled transform — still returns null, so
+ * the caller preserves the property verbatim, exactly as today. */
+function parseSolidColorOrRef(parent: Element): { color: ModelColor; alpha?: number } | null {
+  const literal = parseSolidColor(parent);
+  if (literal) {
+    return literal;
+  }
+  const schemeClr = firstChildElement(parent, A_NAMESPACE, "schemeClr");
+  const ref = schemeClr ? schemeClrRefFrom(schemeClr) : undefined;
+  return ref ? { color: ref } : null;
+}
+
 const OOXML_DASH_TO_MODEL: Record<string, ShapeOutline["dash"]> = {
   dash: "dash",
   sysDash: "dot",
@@ -186,7 +202,7 @@ function parseLn(ln: Element | undefined): { outline?: ShapeOutline; preserved: 
   if (!solidFill && (firstChildElement(ln, A_NAMESPACE, "gradFill") || firstChildElement(ln, A_NAMESPACE, "pattFill"))) {
     return { preserved: true };
   }
-  const parsed = solidFill ? parseSolidColor(solidFill) : null;
+  const parsed = solidFill ? parseSolidColorOrRef(solidFill) : null;
   if (solidFill && !parsed) {
     return { preserved: true };
   }
@@ -383,7 +399,7 @@ export function parseShapeStyle(
         continue; // absence — the model's "no fill"
       }
       if (child.localName === "solidFill") {
-        const parsed = parseSolidColor(child);
+        const parsed = parseSolidColorOrRef(child);
         if (parsed) {
           fill = { kind: "solid", color: parsed.color };
           if (parsed.alpha !== undefined) {

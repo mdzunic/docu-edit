@@ -888,8 +888,13 @@ export function collectPageBackgroundDropRecords(model: DocumentModel): DropReco
 /** Whether any run/paragraph/cell/shape/chart in the model carries a theme
  * colour or font REFERENCE (an isThemeColor/isThemeFont value) — the scan
  * behind the single SPEC-077 AC-42 theme drop record. Literals never count:
- * a document that merely HAS a theme but references nothing loses nothing. */
-function modelHasThemeReference(model: DocumentModel): boolean {
+ * a document that merely HAS a theme but references nothing loses nothing.
+ * Exported for the `.odt` writer, which must emit the `de-theme-*` carrier
+ * block whenever a reference exists — even on a themeless document (a shape
+ * preset or theme swatch on a blank document stores a reference without
+ * setting model.theme), else the automatic styles would carry
+ * `style:parent-style-name="de-theme-…"` parents no style defines. */
+export function modelHasThemeReference(model: DocumentModel): boolean {
   const colorRef = (value: ModelColor | false | undefined): boolean => value !== false && isThemeColor(value);
   const fontRef = (value: ModelFont | undefined): boolean => isThemeFont(value);
   const paragraphHasRef = (paragraph: Paragraph): boolean =>

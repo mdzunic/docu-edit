@@ -490,6 +490,12 @@ describe("every declared palette exists in tokens.css with consistent blocks", (
 //      FrameStylePopover, ThemeGalleryDialog, useThemeGallery, …). Pickers of
 //      non-colour things (MergeFieldPickerDialog, CommandPalette) stay in
 //      the scan.
+//   6. The four AC-22 formatting dialogs that embed a ThemeSwatchRow —
+//      BordersShadingDialog, PageSetupDialog, TablePropertiesDialog,
+//      ChartOptionsDialog: they resolve a document colour reference only to
+//      display it (seeding an <input type=color> or a shading preview with
+//      the resolved hex), the same document-colour role as the pickers —
+//      never to style their own chrome.
 //
 // Chrome — MenuBar, StatusBar, toolbars, HomeView, the library list, the
 // Preferences dialog — matches none of these and must never appear.
@@ -502,6 +508,7 @@ const DOC_THEME_EXEMPT: RegExp[] = [
   /^components\/presentation\/(slideRender|slideTextDom)\.ts$/,
   /^components\/library\/SlideMiniature\.vue$/,
   /(ColorPicker|HighlightPicker|StylePicker|StylePopover|StylePanel|ThemeGallery|ThemeSwatch)[^/]*\.(vue|ts)$/,
+  /^components\/(BordersShadingDialog|PageSetupDialog|TablePropertiesDialog|ChartOptionsDialog)\.vue$/,
 ];
 
 function docThemeExempt(rel: string): boolean {
