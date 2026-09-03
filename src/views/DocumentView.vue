@@ -3363,8 +3363,7 @@ function handleMenuCommand(id = "") {
       />
     </template>
     <template #toolbar>
-      <DocumentToolbar
-        :theme="documentThemeOf(doc)"
+      <DocumentToolbar :theme="documentThemeOf(doc)"
         v-if="editable"
         ref="documentToolbarRef"
         :reserved-right="toolbarReservedRight"
@@ -4105,16 +4104,14 @@ function handleMenuCommand(id = "") {
       @apply="handleSplitCellApply"
       @cancel="splitCellDialogOpen = false"
     />
-    <TablePropertiesDialog
-      :theme="documentThemeOf(doc)"
+    <TablePropertiesDialog :theme="documentThemeOf(doc)"
       v-if="tablePropertiesOpen"
       :initial="tablePropertiesInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="handleTablePropertiesApply"
       @cancel="tablePropertiesOpen = false"
     />
-    <PageSetupDialog
-      :theme="documentThemeOf(doc)"
+    <PageSetupDialog :theme="documentThemeOf(doc)"
       v-if="pageSetupOpen"
       :initial="pageSetupInitial"
       @apply="handlePageSetupApply"
@@ -4127,8 +4124,7 @@ function handleMenuCommand(id = "") {
       @apply="handleColumnsApply"
       @cancel="columnsDialogOpen = false"
     />
-    <BordersShadingDialog
-      :theme="documentThemeOf(doc)"
+    <BordersShadingDialog :theme="documentThemeOf(doc)"
       v-if="bordersDialogOpen"
       :initial="bordersDialogInitial"
       :unit="doc?.measurementUnit || 'cm'"
@@ -4300,8 +4296,7 @@ function handleMenuCommand(id = "") {
       @apply="({ categories, series }) => { applyChartData(categories, series); editingChartData = false; }"
       @cancel="editingChartData = false"
     />
-    <ChartOptionsDialog
-      :theme="documentThemeOf(doc)"
+    <ChartOptionsDialog :theme="documentThemeOf(doc)"
       v-if="editingChartOptions"
       :initial="chartOptionsInitial"
       @apply="(options) => { applyChartOptions(options); editingChartOptions = false; }"
