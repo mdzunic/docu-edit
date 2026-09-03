@@ -207,7 +207,7 @@ export function computeOwnerGrid(table: OwnerGridTable): CellOwner[][] {
  * as is the boundary one past the last row, which is off the end. */
 export function verticalMergeCrossings(table: OwnerGridTable): boolean[] {
   const rowCount = table.rows.length;
-  const crossings = new Array<boolean>(rowCount).fill(false);
+  const crossings = Array.from({ length: rowCount }, () => false);
   for (let r = 0; r < rowCount; r++) {
     const cells = table.rows[r].cells;
     for (let c = 0; c < cells.length; c++) {
