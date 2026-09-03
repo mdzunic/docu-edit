@@ -67,6 +67,52 @@ async function shapeCentrePixel(page: Page): Promise<number[]> {
     });
 }
 
+/** A pixel of the shape canvas by canvas coordinate — `x` counted from the
+ * left edge, so x = 1 lands inside the outline stroke rather than on its
+ * antialiased boundary. */
+async function shapePixelAt(page: Page, x: number, fromMiddle = true): Promise<number[]> {
+  return content(page)
+    .locator("canvas.doc-shape-canvas")
+    .first()
+    .evaluate(
+      (el, [px, mid]) => {
+        const canvas = el as HTMLCanvasElement;
+        const ctx = canvas.getContext("2d")!;
+        const y = mid ? Math.floor(canvas.height / 2) : 1;
+        const data = ctx.getImageData(px, y, 1, 1).data;
+        return [data[0], data[1], data[2]];
+      },
+      [x, fromMiddle ? 1 : 0] as [number, number],
+    );
+}
+
+/** Whether any pixel of the shape canvas is (within tolerance) `hex` — the
+ * dependable way to look for a dashed outline's colour, whose stroke covers
+ * only part of any given row. */
+async function shapeCanvasHas(page: Page, hex: string): Promise<boolean> {
+  return content(page)
+    .locator("canvas.doc-shape-canvas")
+    .first()
+    .evaluate((el, target) => {
+      const canvas = el as HTMLCanvasElement;
+      const ctx = canvas.getContext("2d")!;
+      const n = Number.parseInt(target.slice(1), 16);
+      const want = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+      const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < data.length; i += 4) {
+        if (
+          data[i + 3] === 255 &&
+          Math.abs(data[i] - want[0]) <= 3 &&
+          Math.abs(data[i + 1] - want[1]) <= 3 &&
+          Math.abs(data[i + 2] - want[2]) <= 3
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }, hex);
+}
+
 function expectPixel(pixel: number[], hex: string): void {
   const n = Number.parseInt(hex.slice(1), 16);
   const expected = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
@@ -82,6 +128,33 @@ async function applyTheme(page: Page, name: string): Promise<void> {
   await expect(page.getByTestId("theme-gallery-dialog")).toBeVisible();
   await page.locator(`[data-testid="theme-card"][data-theme-name="${name}"]`).click();
   await expect(page.getByTestId("theme-gallery-dialog")).toBeHidden();
+}
+
+/** A blank document with one rectangle drawn on it, left selected, zoomed to
+ * 200% so a 1pt outline covers a whole canvas pixel and can be sampled
+ * without antialiasing against the fill. */
+async function newDocumentWithShape(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.getByTestId("new-document").click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await content(page).click({ position: { x: 20, y: 20 } });
+  await page.keyboard.type("Preset check");
+  await page.getByTestId("zoom-percent").click();
+  await page.getByTestId("zoom-preset-200").click();
+  await waitForPagination(page);
+  await page.getByTestId("menu-title-insert").click();
+  await page.getByTestId("shape-gallery-rect").click();
+  await content(page).click({ position: { x: 400, y: 250 } });
+  await expect(page.getByTestId("shape-toolbar")).toBeVisible();
+}
+
+/** Applies a style preset from the toolbar's Style popover. */
+async function applyPreset(page: Page, preset: string): Promise<void> {
+  if (!(await page.getByTestId("shape-style-panel").isVisible())) {
+    await page.getByTestId("shape-style-button").click();
+    await expect(page.getByTestId("shape-style-panel")).toBeVisible();
+  }
+  await page.getByTestId(`shape-style-preset-${preset}`).click();
 }
 
 /** Selects the first `length` characters of the paragraph holding `text`. */
@@ -212,4 +285,70 @@ test("a theme page background never freezes the live word count (AC-22)", async 
   await page.keyboard.press(LINE_END);
   await page.keyboard.type(" zeta eta theta");
   await expect(count).not.toHaveText(before, { timeout: 10_000 });
+});
+
+// SPEC-073's D3 table, pinned as literals rather than read back out of
+// SHAPE_STYLE_PRESETS: AC-44 is the proof that turning those colours into
+// accent1 references changed nothing a document already shipped with.
+const FILLED_FILL = "#4472c4";
+const FILLED_BORDER = "#2e5395";
+const SUBTLE_FILL = "#dae3f3";
+
+test("every style preset resolves to SPEC-073's shipped colours under Office, and only the accent-drawn ones follow a theme (AC-43, AC-44)", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await newDocumentWithShape(page);
+
+  // A document with no theme of its own resolves against DEFAULT_THEME —
+  // Office — so each preset must paint exactly what SPEC-073 shipped.
+  await applyPreset(page, "filled");
+  expectPixel(await shapeCentrePixel(page), FILLED_FILL);
+  expectPixel(await shapePixelAt(page, 0), FILLED_BORDER);
+
+  await applyPreset(page, "subtleFilled");
+  expectPixel(await shapeCentrePixel(page), SUBTLE_FILL);
+  expectPixel(await shapePixelAt(page, 0), FILLED_FILL);
+
+  await applyPreset(page, "outlined");
+  expectPixel(await shapePixelAt(page, 0), FILLED_FILL);
+
+  // AC-43: the fill is a reference, so a theme change restyles the shape —
+  // while the filled preset's border, the one colour that was never the
+  // accent nor a lighter variant of it, keeps its literal across the change.
+  await applyPreset(page, "filled");
+  await page.keyboard.press("Escape");
+  await applyTheme(page, "Facet");
+  expectPixel(await shapeCentrePixel(page), facet.colors.accent1);
+  expectPixel(await shapePixelAt(page, 0), FILLED_BORDER);
+});
+
+test("an outline width or dash edit leaves a theme-referenced outline a reference (AC-18)", async ({ page }) => {
+  test.setTimeout(120_000);
+  await newDocumentWithShape(page);
+
+  // Give the outline an Accent 3 reference through the style panel's theme
+  // row, and make it thick enough to sample away from the fill's edge.
+  await page.getByTestId("shape-style-button").click();
+  await expect(page.getByTestId("shape-style-panel")).toBeVisible();
+  await page.getByTestId("shape-outline-theme-row").getByLabel("Accent 3", { exact: true }).click();
+  await page.getByTestId("shape-style-panel").getByTestId("shape-style-outline-width").fill("4");
+  await expect(page.getByTestId("shape-outline-color")).toHaveValue(office.colors.accent3);
+  await page.getByTestId("shape-style-button").click();
+
+  // Editing only the width and the dash must re-emit the stored reference,
+  // never the hex the colour input displays.
+  await page.getByTestId("shape-outline-width").fill("5");
+  await page.getByTestId("shape-outline-dash").selectOption("dash");
+  await expect(page.getByTestId("shape-outline-color")).toHaveValue(office.colors.accent3);
+
+  // The proof the model still holds a reference: a theme change moves the
+  // outline. A flattened literal would stay Office's accent3 for ever.
+  expect(await shapeCanvasHas(page, office.colors.accent3)).toBe(true);
+  await page.keyboard.press("Escape");
+  await applyTheme(page, "Facet");
+  await expect
+    .poll(() => shapeCanvasHas(page, facet.colors.accent3), { timeout: 10_000 })
+    .toBe(true);
+  expect(await shapeCanvasHas(page, office.colors.accent3)).toBe(false);
 });
