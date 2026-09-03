@@ -535,6 +535,11 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
 
 <style scoped>
 .thumbnail {
+  /* relative anchors .thumbnail-deck's absolute inset:0 — without it the
+     deck's containing block escapes to the nearest positioned ancestor
+     (the sticky quick-look pane / the relative card well) and the slide
+     paints displaced outside its box. */
+  position: relative;
   width: 100%;
   overflow: hidden;
   background: var(--surface-base);

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Storage usage panel (SPEC-067 AC-47..50): bytes used (with a percentage
-// when the browser can estimate quota), the largest documents, and the
-// trash shortcut when it would free space. The quota read lives here with
-// the panel that displays it.
+// and a meter bar when the browser can estimate quota), the largest
+// documents, and the trash shortcut when it would free space. The quota
+// read lives here with the panel that displays it.
 import { computed, onMounted, ref } from "vue";
 import { formatFileSize } from "../../lib/format";
 
@@ -37,12 +37,31 @@ const usageHigh = computed(() => usagePercent.value !== null && usagePercent.val
     class="storage-panel"
     data-testid="storage-panel"
   >
-    <span
-      class="storage-usage"
-      data-testid="storage-usage"
-    >
-      {{ formatFileSize(props.lib.usage.value.totalBytes) }}<template v-if="usagePercent !== null"> of your browser's storage ({{ usagePercent }}%)</template> in use
-    </span>
+    <div class="storage-meter">
+      <span
+        class="storage-usage"
+        data-testid="storage-usage"
+      >
+        {{ formatFileSize(props.lib.usage.value.totalBytes) }}<template v-if="usagePercent !== null"> of your browser's storage ({{ usagePercent }}%)</template> in use
+      </span>
+      <div
+        v-if="usagePercent !== null"
+        class="storage-bar"
+        data-testid="storage-bar"
+        role="progressbar"
+        aria-label="Browser storage in use"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-valuenow="usagePercent"
+      >
+        <div
+          class="storage-bar-fill"
+          :class="{ 'is-high': usageHigh }"
+          data-testid="storage-bar-fill"
+          :style="{ width: `${usagePercent}%` }"
+        />
+      </div>
+    </div>
     <span
       v-if="props.lib.largestDocuments.value.length > 0"
       class="storage-largest"
@@ -79,6 +98,33 @@ const usageHigh = computed(() => usagePercent.value !== null && usagePercent.val
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-size: var(--text-sm);
+}
+
+/* The usage line and its meter bar read as one gauge, taking the panel's
+   full first row so the bar spans whatever width the pane gives it. */
+.storage-meter {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.storage-bar {
+  height: var(--space-2);
+  margin-top: var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.storage-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--motion-base) var(--easing);
+}
+
+/* Matches the panel's "storage is running low" threshold (AC-49). */
+.storage-bar-fill.is-high {
+  background: var(--warning);
 }
 
 .storage-largest {

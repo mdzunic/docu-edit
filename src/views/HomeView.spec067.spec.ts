@@ -309,6 +309,28 @@ describe("storage usage (AC-47)", () => {
     expect(wrapper.find('[data-testid="storage-panel"]').exists()).toBe(true);
     expect(wrapper.get('[data-testid="storage-usage"]').text()).toMatch(/B|KB|MB|GB/);
   });
+
+  it("meters the quota share with a progress bar", async () => {
+    const { store, mountHome } = await loadModules();
+    seed(store, "a", "One", 1000);
+    // jsdom ships no Storage API — stub the estimate the panel reads on mount.
+    const totalBytes = store.libraryStorageUsage().totalBytes;
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: { estimate: () => Promise.resolve({ usage: totalBytes, quota: totalBytes * 10 }) },
+    });
+    try {
+      const { wrapper } = await mountHome();
+      const bar = wrapper.get('[data-testid="storage-bar"]');
+      expect(bar.attributes("role")).toBe("progressbar");
+      expect(bar.attributes("aria-valuenow")).toBe("10");
+      expect(bar.attributes("aria-valuemax")).toBe("100");
+      expect(wrapper.get('[data-testid="storage-usage"]').text()).toContain("(10%) in use");
+      expect(wrapper.get('[data-testid="storage-bar-fill"]').attributes("style")).toContain("width: 10%");
+    } finally {
+      Reflect.deleteProperty(navigator, "storage");
+    }
+  });
 });
 
 describe("keyboard navigation (AC-58, AC-59, AC-60)", () => {
