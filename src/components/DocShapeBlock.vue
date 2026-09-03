@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { inject, nextTick, onMounted, onUpdated, ref, useTemplateRef, watch } from "vue";
-import { asShape } from "../lib/documentModel";
+import { asDocumentTheme, asShape } from "../lib/documentModel";
 import { asListDefinitions } from "../lib/core/lists";
 import { drawingWrapSpacerStyle, shapeDisplayStyle, shapeTextRectStyle, trackChangeBlockHidden } from "../lib/renderFormatting";
 import { asTrackChangesDisplayMode } from "../lib/documentModel";
@@ -36,6 +36,9 @@ const props = defineProps({
    * list paragraphs (AC-18) resolve defined markers/indents from the same
    * catalogue the body does. */
   listDefinitions: { type: Array, default: () => [] },
+  /** The document's theme (SPEC-077) — the shape's text runs resolve theme
+   * colour/font references against it. */
+  theme: { type: Object, default: null },
 });
 
 defineEmits([
@@ -85,7 +88,12 @@ function repaint() {
   }
   const widthPx = Math.max(1, Math.round(cmToPx(shape.widthCm)));
   const heightPx = Math.max(1, Math.round(cmToPx(Math.max(shape.heightCm, 0.05))));
-  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx, documentZoom.value, { pictures: resolvePicture });
+  paintShapeIntoCanvas(canvas, shape, widthPx, heightPx, documentZoom.value, {
+    pictures: resolvePicture,
+    // SPEC-077 AC-15: fill/outline references resolve against the document
+    // theme at paint time, so a theme change recolours the shape.
+    theme: asDocumentTheme(props.theme),
+  });
 }
 
 onMounted(repaint);
@@ -93,6 +101,9 @@ onUpdated(repaint);
 watch(() => props.block, repaint, { deep: true });
 // Re-paint the backing store when the zoom changes so it stays crisp (AC-20).
 watch(documentZoom, repaint);
+// …and when the document theme changes, so referenced colours follow it
+// (SPEC-077 AC-15) — the same wiring as DocChartBlock.
+watch(() => props.theme, repaint, { deep: true });
 
 const textFrameEl = useTemplateRef("textFrameEl");
 /** Whether the shape's text is currently clipped past its box (AC-21,
@@ -185,7 +196,7 @@ function shapeTextEntries() {
   if (!shape.text) {
     return [];
   }
-  return shapeTextRenderEntries(shape, asListDefinitions(props.listDefinitions));
+  return shapeTextRenderEntries(shape, asListDefinitions(props.listDefinitions), asDocumentTheme(props.theme));
 }
 
 /** The geometry's own text rectangle (AC-11), or an empty object when the
@@ -257,7 +268,10 @@ function textRectStyle() {
           @compositionstart.stop="editingText ? $emit('text-compositionstart') : undefined"
           @compositionend.stop="editingText ? $emit('text-compositionend', $event) : undefined"
         >
-          <DocBlockEntries :entries="shapeTextEntries()" />
+          <DocBlockEntries
+            :entries="shapeTextEntries()"
+            :theme="theme"
+          />
         </div>
         <span
           v-if="selected && overflowing"

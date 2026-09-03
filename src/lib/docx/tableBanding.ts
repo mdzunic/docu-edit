@@ -19,6 +19,7 @@ import { WORD_NAMESPACE, wordAttr } from "./xml";
 import { childElements, firstChildElement } from "../core/xml";
 import { borderElementXml, parseBorderElement } from "./borders";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
+import { resolveColor, type DocumentTheme } from "../core/theme";
 import type { CellBorders } from "../core/tables";
 import type { TableConditionalFormat, TableLook, TableStyleBanding } from "../documentModel";
 
@@ -107,17 +108,17 @@ export function parseTableLook(tblPr: Element | undefined): TableLook | undefine
   return look;
 }
 
-function conditionalXml(format: TableConditionalFormat | undefined): string {
+function conditionalXml(format: TableConditionalFormat | undefined, theme: DocumentTheme): string {
   if (!format) {
     return "";
   }
   const rPr = format.bold ? "<w:rPr><w:b/></w:rPr>" : "";
   const sides = BORDER_SIDES.map((side) => {
     const value = format.borders?.[side.key];
-    return value ? borderElementXml(side.wire, value) : "";
+    return value ? borderElementXml(side.wire, value, theme) : "";
   }).join("");
   const borders = sides.length > 0 ? `<w:tcBorders>${sides}</w:tcBorders>` : "";
-  const fill = cssColorToOoxml(format.shading);
+  const fill = cssColorToOoxml(format.shading === undefined ? undefined : resolveColor(format.shading, theme));
   const shd = fill !== undefined ? `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>` : "";
   const tcPr = borders + shd;
   return rPr + (tcPr.length > 0 ? `<w:tcPr>${tcPr}</w:tcPr>` : "");
@@ -138,7 +139,7 @@ export function tableStyleBandSizesXml(banding: TableStyleBanding | undefined): 
 
 /** The `w:tblStylePr` elements for a style's banding (AC-66), in Word's own
  * region order. A region the model does not carry emits nothing. */
-export function tableStylePrXml(banding: TableStyleBanding | undefined): string {
+export function tableStylePrXml(banding: TableStyleBanding | undefined, theme: DocumentTheme): string {
   if (!banding) {
     return "";
   }
@@ -146,7 +147,7 @@ export function tableStylePrXml(banding: TableStyleBanding | undefined): string 
     // Every region — band or edge — is a full conditional format (AC-37);
     // a band's `size` is not here but in tableStyleBandSizesXml.
     const format: TableConditionalFormat | undefined = banding[region.key];
-    const body = conditionalXml(format);
+    const body = conditionalXml(format, theme);
     return body.length > 0 ? `<w:tblStylePr w:type="${region.wire}">${body}</w:tblStylePr>` : "";
   }).join("");
 }

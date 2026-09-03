@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { resolveColor } from "../lib/core/theme";
+import { asDocumentTheme } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 
 // The chart options panel (SPEC-052 AC-14..AC-20): title, axis titles,
 // legend position, data labels, gridlines, per-series colour and axis
@@ -14,6 +17,13 @@ const props = defineProps({
    * dataLabels, gridlines, valueAxisMin, valueAxisMax, series: [{name,
    * color}], hasAxes: boolean }. */
   initial: { type: Object, required: true },
+  /** The DocumentTheme (SPEC-077 AC-22): when present, a theme swatch row
+   * renders under each series colour input; picking a swatch stores the
+   * ThemeColorRef on that series. A series' stored value may itself be a
+   * reference (new charts seed from the accent slots) — it resolves for the
+   * colour input's display and stays a reference unless this dialog changes
+   * that series. Null (the default) renders no rows. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits(["apply", "series-color", "cancel"]);
@@ -44,12 +54,25 @@ function minMaxError() {
   return "";
 }
 
+/** The hex a series' colour input displays — a stored theme reference
+ * resolves against the document theme (SPEC-077); a literal passes through. */
+function seriesColorHex(color = Object()) {
+  return resolveColor(color, asDocumentTheme(props.theme));
+}
+
 function onSeriesColorInput(index = 0, event = new Event("input")) {
   const target = event.target;
   if (target instanceof HTMLInputElement) {
     series.value[index].color = target.value;
     emit("series-color", index, target.value);
   }
+}
+
+/** A theme swatch under a series (SPEC-077 AC-22): only THIS series is
+ * written; the others keep whatever they stored — literal or reference. */
+function onSeriesThemeSwatch(index = 0, reference = Object()) {
+  series.value[index].color = reference;
+  emit("series-color", index, reference);
 }
 
 function apply() {
@@ -204,19 +227,26 @@ function apply() {
 
     <div class="field">
       <span class="field-label">Series colours</span>
-      <label
+      <div
         v-for="(s, index) in series"
         :key="index"
-        class="field-inline"
+        class="series-entry"
       >
-        <input
-          type="color"
-          :data-testid="`chart-options-series-color-${index}`"
-          :value="s.color"
-          @input="onSeriesColorInput(Number(index), $event)"
-        >
-        <span>{{ s.name }}</span>
-      </label>
+        <label class="field-inline">
+          <input
+            type="color"
+            :data-testid="`chart-options-series-color-${index}`"
+            :value="seriesColorHex(s.color)"
+            @input="onSeriesColorInput(Number(index), $event)"
+          >
+          <span>{{ s.name }}</span>
+        </label>
+        <ThemeSwatchRow
+          :theme="theme"
+          :testid="`chart-series-theme-${index}`"
+          @select="onSeriesThemeSwatch(Number(index), $event)"
+        />
+      </div>
     </div>
 
     <template #actions>
@@ -292,6 +322,14 @@ function apply() {
   margin: calc(-1 * var(--space-3)) 0 var(--space-4);
   color: var(--text-danger);
   font-size: var(--text-md);
+}
+
+.series-entry {
+  margin-bottom: var(--space-3);
+}
+
+.series-entry .field-inline {
+  margin-bottom: var(--space-2);
 }
 
 .dialog-actions button {

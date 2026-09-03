@@ -1,5 +1,6 @@
 // SPEC-070: the DrawingML connector (wps:cxnSp) reader/writer and the
 // arrow-preset untangle. Mirrors shape.spec.ts's fixture conventions.
+import { DEFAULT_THEME } from "../core/theme";
 import { describe, it, expect } from "vitest";
 import {
   connectorDrawingXml,
@@ -25,6 +26,7 @@ const readCtx: ShapeTextContext = {
 };
 const writeCtx: ShapeTextWriteContext = {
   paragraphXml: (): string => "<w:p/>",
+      theme: DEFAULT_THEME,
 };
 
 function baseConnector(overrides: Partial<Connector> = {}): Connector {

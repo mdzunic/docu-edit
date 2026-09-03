@@ -17,6 +17,7 @@
 // correct for a table that got its style from `w:tblStyle` on import and was
 // never baked.
 import type { NamedStyle, Table, TableConditionalFormat, TableLook, TableStyleBanding } from "./documentModel";
+import { DEFAULT_THEME, resolveColor, type DocumentTheme, type ModelColor } from "./core/theme";
 import type { CellBorders } from "./core/tables";
 
 /** A cell's effective paint, resolved from the table, its style and the
@@ -25,7 +26,7 @@ import type { CellBorders } from "./core/tables";
  * gridline, exactly as an unset cell border does today. */
 export interface ResolvedCellFormatting {
   borders?: CellBorders;
-  shadingFill?: string;
+  shadingFill?: ModelColor;
   /** From a conditional region's `bold` — the header/accent looks' emphasis.
    * Absent when no enabled region sets it. */
   bold?: boolean;
@@ -330,7 +331,10 @@ const BANDING_REGIONS: { key: keyof TableStyleBanding; label: string }[] = [
 
 /** A style's banding as the editor's draft (AC-37). An absent region reads
  * as an empty row, which `bandingFromDraft` turns back into absence. */
-export function bandingDraftFrom(banding: TableStyleBanding | undefined): TableBandingDraft {
+export function bandingDraftFrom(
+  banding: TableStyleBanding | undefined,
+  theme: DocumentTheme,
+): TableBandingDraft {
   return {
     rowBandSize: banding?.bandedRows?.size ?? 1,
     columnBandSize: banding?.bandedColumns?.size ?? 1,
@@ -342,7 +346,9 @@ export function bandingDraftFrom(banding: TableStyleBanding | undefined): TableB
       return {
         key: region.key,
         label: region.label,
-        shading: format?.shading ?? "",
+        // The editor's swatch is a CSS colour, so a theme reference
+        // resolves here (SPEC-077 AC-7's single resolution point).
+        shading: format?.shading === undefined ? "" : resolveColor(format.shading, theme),
         bold: format?.bold ?? false,
         // One border style per region; the width and colour come from the
         // style's own border controls, so a style's borders are described in
@@ -398,5 +404,5 @@ export function bandingFromDraft(
 /** Typed pass-through for the draft arriving as a `.vue` template's plain
  * `Object` prop (espree bars the annotation there). */
 export function asTableBandingDraft(value: unknown): TableBandingDraft {
-  return (value ?? bandingDraftFrom(undefined)) as TableBandingDraft;
+  return (value ?? bandingDraftFrom(undefined, DEFAULT_THEME)) as TableBandingDraft;
 }

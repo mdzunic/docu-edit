@@ -44,6 +44,11 @@ import { HIGHLIGHT_HEX } from "./core/colors";
 // family through the same helper, so measure and paint agree.
 import { fontStack } from "./fonts/substitution";
 import { resolvedShapeAdjustments, shapeDefinition } from "./core/shapeCatalogue";
+// The single resolution point for theme colour/font references (SPEC-077
+// AC-7): every colour painted here resolves through resolveColor against the
+// document's theme before it becomes CSS.
+import { resolveColor, resolveFont } from "./core/theme";
+import type { DocumentTheme } from "./core/theme";
 
 /** The HTML tag a paragraph should render as: h1-h6 for a resolved heading
  * level (clamped to h6), otherwise a plain paragraph. */
@@ -83,7 +88,7 @@ export function isExternalLink(formatting: RunFormatting): boolean {
   return formatting.linkHref !== undefined;
 }
 
-export function runStyle(formatting: RunFormatting): Record<string, string> {
+export function runStyle(formatting: RunFormatting, theme: DocumentTheme): Record<string, string> {
   const style: Record<string, string> = {};
   const linked = formatting.linkHref !== undefined || formatting.linkAnchor !== undefined;
   if (formatting.bold) {
@@ -108,20 +113,21 @@ export function runStyle(formatting: RunFormatting): Record<string, string> {
   if (formatting.fontFamily) {
     // Substitution is a rendering decision only (AC-5): the run keeps its
     // original family name in the model; the CSS gets the metric twin stack.
-    style.fontFamily = fontStack(formatting.fontFamily);
+    style.fontFamily = fontStack(resolveFont(formatting.fontFamily, theme));
   }
   if (formatting.fontSizePt) {
     style.fontSize = `${formatting.fontSizePt}pt`;
   }
   if (formatting.color) {
-    style.color = formatting.color;
+    style.color = resolveColor(formatting.color, theme);
   } else if (linked) {
     style.color = LINK_COLOR;
   }
   // highlight false is an explicit "No colour": like undefined it paints
   // nothing, unlike undefined it survives saving (SPEC-013).
   if (formatting.highlight) {
-    style.backgroundColor = HIGHLIGHT_HEX[formatting.highlight] ?? formatting.highlight;
+    const highlight = resolveColor(formatting.highlight, theme);
+    style.backgroundColor = HIGHLIGHT_HEX[highlight] ?? highlight;
   }
   if (formatting.vertAlign) {
     // Word renders sub/superscript at roughly two-thirds size on a shifted
@@ -162,6 +168,7 @@ export function displayParagraphFormatting(
  * keep importing `runStyle` from here. */
 export function paragraphStyle(
   paragraph: Paragraph,
+  theme: DocumentTheme,
   listDefinitions: readonly ListDefinition[] = [],
   displayMode: TrackChangesDisplayMode = "all",
   edges: BorderPaintEdges = ALL_EDGES,
@@ -226,7 +233,7 @@ export function paragraphStyle(
   // Borders and shading last, so their margin collapsing inside a merged
   // border run (SPEC-074 AC-12) wins over the paragraph's own space
   // before/after — two members of one box must not be pushed apart.
-  Object.assign(style, paragraphBorderStyle(formatting, edges));
+  Object.assign(style, paragraphBorderStyle(formatting, theme, edges));
   return style;
 }
 
@@ -257,6 +264,7 @@ export function pageBorderStyle(
   borders: PageBorders | undefined,
   margins: Margins,
   pageIndexInSection: number,
+  theme: DocumentTheme,
 ): Record<string, string> | null {
   if (!borders || !pageTakesBorder(borders, pageIndexInSection)) {
     return null;
@@ -273,10 +281,10 @@ export function pageBorderStyle(
     bottom: inset(margins.bottomCm),
     left: inset(margins.leftCm),
     right: inset(margins.rightCm),
-    borderTop: borderSideCss(borders.top),
-    borderBottom: borderSideCss(borders.bottom),
-    borderLeft: borderSideCss(borders.left),
-    borderRight: borderSideCss(borders.right),
+    borderTop: borderSideCss(borders.top, theme),
+    borderBottom: borderSideCss(borders.bottom, theme),
+    borderLeft: borderSideCss(borders.left, theme),
+    borderRight: borderSideCss(borders.right, theme),
     pointerEvents: "none",
   };
 }
@@ -390,23 +398,23 @@ export function trackChangeBlockHidden(
  * (AC-10..17): only the properties the cell actually sets — an unset side
  * falls through to the canvas's default hairline gridline (see
  * DocTableBlock.vue's `.doc-table-cell` rule). */
-export function tableCellStyle(cell: TableCell): Record<string, string> {
+export function tableCellStyle(cell: TableCell, theme: DocumentTheme): Record<string, string> {
   const style: Record<string, string> = {};
   const borders = cell.borders;
   if (borders?.top) {
-    style.borderTop = borderSideCss(borders.top);
+    style.borderTop = borderSideCss(borders.top, theme);
   }
   if (borders?.bottom) {
-    style.borderBottom = borderSideCss(borders.bottom);
+    style.borderBottom = borderSideCss(borders.bottom, theme);
   }
   if (borders?.left) {
-    style.borderLeft = borderSideCss(borders.left);
+    style.borderLeft = borderSideCss(borders.left, theme);
   }
   if (borders?.right) {
-    style.borderRight = borderSideCss(borders.right);
+    style.borderRight = borderSideCss(borders.right, theme);
   }
   if (cell.shadingFill !== undefined) {
-    style.backgroundColor = cell.shadingFill;
+    style.backgroundColor = resolveColor(cell.shadingFill, theme);
   }
   if (cell.paddingCm !== undefined) {
     style.padding = `${cell.paddingCm}cm`;
@@ -438,20 +446,26 @@ export const CELL_SELECTION_OVERLAY =
  *
  * `styles` is the document's catalogue; a table with no `styleId`, or a
  * document with no catalogue, resolves to exactly the cell's own formatting —
- * i.e. today's rendering, unchanged (D-10). */
+ * i.e. today's rendering, unchanged (D-10).
+ *
+ * The four levels resolve to a `ModelColor`, which may still be a theme
+ * reference from the style or the cell (SPEC-077); `tableCellStyle` is the
+ * single point that turns it into a CSS colour, so banding inherits theme
+ * awareness without a second resolution site. */
 export function tableCellBandedStyle(
   table: Table,
   styles: NamedStyle[] | undefined,
   rowIndex: number,
   colIndex: number,
   selected: boolean,
+  theme: DocumentTheme,
 ): Record<string, string> {
   const cell = table.rows[rowIndex]?.cells[colIndex];
   if (!cell) {
     return {};
   }
   const resolved = resolveCellFormatting(table, tableStyleFor(styles, table), rowIndex, colIndex);
-  const style = tableCellStyle({ ...cell, borders: resolved.borders, shadingFill: resolved.shadingFill });
+  const style = tableCellStyle({ ...cell, borders: resolved.borders, shadingFill: resolved.shadingFill }, theme);
   if (resolved.bold) {
     style.fontWeight = "bold";
   }

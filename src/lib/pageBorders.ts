@@ -3,7 +3,8 @@
 // (lib/paragraphBorders.ts): espree-parsed `.vue` scripts cannot carry the
 // annotations, and a pure draft is testable without mounting a dialog.
 import { borderSideVisible, type BorderLineStyle, type BorderSide } from "./core/borders";
-import type { PageBorderAppliesTo, PageBorderMeasureFrom, PageBorders } from "./documentModel";
+import type { ModelColor } from "./core/theme";
+import { plainModelColor, type PageBorderAppliesTo, type PageBorderMeasureFrom, type PageBorders } from "./documentModel";
 
 /** The four edges a page border can draw on — art borders are out of scope
  * (SPEC-074), so there is no fifth. */
@@ -27,12 +28,16 @@ export interface PageBorderDraft {
   right: boolean;
   style: BorderLineStyle;
   widthPt: number;
-  color: string;
+  /** A literal "#rrggbb" or a theme reference carried through from the
+   * section's stored border (SPEC-077): untouched edges keep their
+   * reference; the dialog's colour input writes a literal when moved. */
+  color: ModelColor;
   offsetPt: number;
   measureFrom: PageBorderMeasureFrom;
   appliesTo: PageBorderAppliesTo;
   backgroundOn: boolean;
-  background: string;
+  /** Same convention as `color`. */
+  background: ModelColor;
 }
 
 /** The dialog's opening state for a section. The shared line comes from the
@@ -42,14 +47,14 @@ export interface PageBorderDraft {
  * express. */
 export function pageBorderDraftFrom(
   borders: PageBorders | undefined,
-  background: string | undefined,
+  background: ModelColor | undefined,
 ): PageBorderDraft {
   const line = PAGE_BORDER_EDGES.map((edge) => borders?.[edge]).find((side) => borderSideVisible(side));
   // An empty string is not a colour, so it reads as "no background" exactly
   // like `undefined` does: the switch stays off and OK cannot commit `""` as
   // a section's fill (which no format can express — see writer.ts's
-  // fo:background-color).
-  const fill = typeof background === "string" && background !== "" ? background : undefined;
+  // fo:background-color). A theme reference is a colour and stays one.
+  const fill = background !== undefined && background !== "" ? background : undefined;
   return {
     top: borderSideVisible(borders?.top),
     bottom: borderSideVisible(borders?.bottom),
@@ -69,7 +74,9 @@ export function pageBorderDraftFrom(
 /** The draft as a `PageBorders`, or null when no edge is chosen — the
  * `null`-removes value setPageBorders takes. */
 export function pageBordersFromDraft(draft: PageBorderDraft): PageBorders | null {
-  const line: BorderSide = { style: draft.style, widthPt: draft.widthPt, color: draft.color };
+  // plainModelColor: a theme reference seeded from the model comes back out
+  // of the dialog's reactive draft as a Proxy — see documentModel.ts.
+  const line: BorderSide = { style: draft.style, widthPt: draft.widthPt, color: plainModelColor(draft.color) };
   const borders: PageBorders = {};
   let any = false;
   for (const edge of PAGE_BORDER_EDGES) {
@@ -89,9 +96,11 @@ export function pageBordersFromDraft(draft: PageBorderDraft): PageBorders | null
   return borders;
 }
 
-/** The draft's page background, or null for paper white (AC-23). */
-export function pageBackgroundFromDraft(draft: PageBorderDraft): string | null {
-  return draft.backgroundOn ? draft.background : null;
+/** The draft's page background, or null for paper white (AC-23). A theme
+ * reference is detached from the reactive draft (see plainModelColor) so the
+ * section never stores a Proxy the word-count worker cannot clone. */
+export function pageBackgroundFromDraft(draft: PageBorderDraft): ModelColor | null {
+  return draft.backgroundOn ? plainModelColor(draft.background) : null;
 }
 
 /** Typed empty seed for a `.vue` ref holding the draft. */
@@ -123,6 +132,6 @@ export function noPageBorders(): PageBorders | null {
 }
 
 /** Typed `null` seed for the page background, likewise. */
-export function noPageBackground(): string | null {
+export function noPageBackground(): ModelColor | null {
   return null;
 }

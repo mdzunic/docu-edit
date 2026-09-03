@@ -62,11 +62,23 @@ import type {
   TrackedChangeInfo,
 } from "../documentModel";
 import type { ListDefinition } from "../core/lists";
+import { DEFAULT_THEME, resolveColor, resolveFont } from "../core/theme";
+import {
+  odtThemeBlockXml,
+  spliceThemeStyles,
+  themeCellParent,
+  themeGraphicParent,
+  themeParagraphParent,
+  themeTextParent,
+  untransformedThemeSlot,
+} from "../core/themeOdf";
+import type { DocumentTheme, ModelColor } from "../core/theme";
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderSide } from "../core/tables";
 import { borderShorthand as odfBorderShorthand, DE_BORDER_NAMESPACE } from "./borders";
 import { paragraphPaddingPt } from "../paragraphBorders";
 import {
+  documentThemeOf,
   FIELD_PLACEHOLDER_TEXT,
   isEvaluatedField,
   isMergeChipField,
@@ -87,6 +99,8 @@ import {
   collectBorderStyleDropRecords,
   collectDropRecords,
   collectEditedChartDropRecords,
+  collectThemeDropRecords,
+  modelHasThemeReference,
   opaquePartBytes,
   type WriteResult,
 } from "../opaque";
@@ -181,6 +195,13 @@ const LINK_XMLNS = ` xmlns:xlink="${XLINK_NAMESPACE}"`;
 export const UNTITLED_ODT_TITLE = "Document 1";
 
 /** The suggested download file name: `<title>.odt` (AC-2). */
+// The theme colour/font references resolve against while a write is being
+// built (SPEC-077). Set from the model at each exported entry point, the
+// same synchronous module-context pattern odtNotesContext uses — ODF
+// attributes carry resolved literals (the reference itself rides on
+// `style:parent-style-name`, AC-38; transforms resolve outright, AC-39).
+let odtWriteTheme: DocumentTheme = DEFAULT_THEME;
+
 export function odtFileName(title: string): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : UNTITLED_ODT_TITLE}.odt`;
@@ -211,7 +232,7 @@ function highlightToOdfColor(highlight: string | false | undefined): string | un
 function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number): string {
   const attrs: string[] = [];
   if (formatting.fontFamily !== undefined) {
-    attrs.push(`fo:font-family="${escapeXml(formatting.fontFamily)}"`);
+    attrs.push(`fo:font-family="${escapeXml(resolveFont(formatting.fontFamily, odtWriteTheme))}"`);
   }
   if (formatting.fontSizePt !== undefined) {
     attrs.push(`fo:font-size="${ptToOdfLength(formatting.fontSizePt)}"`);
@@ -231,9 +252,11 @@ function textPropertiesXml(formatting: RunFormatting, fontSizePercent?: number):
     attrs.push(`style:text-line-through-style="${formatting.strikethrough ? "solid" : "none"}"`);
   }
   if (formatting.color !== undefined) {
-    attrs.push(`fo:color="${escapeXml(formatting.color)}"`);
+    attrs.push(`fo:color="${escapeXml(resolveColor(formatting.color, odtWriteTheme))}"`);
   }
-  const background = highlightToOdfColor(formatting.highlight);
+  const background = highlightToOdfColor(
+    typeof formatting.highlight === "object" ? resolveColor(formatting.highlight, odtWriteTheme) : formatting.highlight,
+  );
   if (background !== undefined) {
     attrs.push(`fo:background-color="${escapeXml(background)}"`);
   }
@@ -307,7 +330,7 @@ function paragraphBorderAttrs(formatting: ParagraphFormatting): string[] {
     }
   }
   if (formatting.shadingFill !== undefined) {
-    attrs.push(`fo:background-color="${escapeXml(formatting.shadingFill)}"`);
+    attrs.push(`fo:background-color="${escapeXml(resolveColor(formatting.shadingFill, odtWriteTheme))}"`);
   }
   return attrs;
 }
@@ -552,7 +575,9 @@ function cellStylePropertiesXml(cell: TableCell): string {
     parts.push(`fo:border-right="${borderShorthand(borders.right)}"`);
   }
   if (cell.shadingFill !== undefined) {
-    parts.push(`fo:background-color="${cell.shadingFill}"`);
+    // A theme reference resolves to its literal (SPEC-077 AC-38); the
+    // reference itself rides on the cell style's parent — see cellStyleName.
+    parts.push(`fo:background-color="${escapeXml(resolveColor(cell.shadingFill, odtWriteTheme))}"`);
   }
   if (cell.paddingCm !== undefined) {
     parts.push(`fo:padding="${cmToOdfLength(cell.paddingCm)}"`);
@@ -630,6 +655,27 @@ interface AutomaticStyles {
   /** The user-field names collected via `registerUserField`, in first-use
    * order. */
   userFieldNames(): string[];
+}
+
+/** SPEC-077 AC-38, the shape surface: swaps a generated graphic automatic
+ * style's boilerplate `"Graphics"` parent for the `de-theme-{slot}` carrier
+ * when the shape's solid fill is an UNTRANSFORMED colour reference — an
+ * automatic style has exactly one parent slot, and the writer-minted
+ * Graphics link (a default-look anchor, not model data; every modelled
+ * property is written explicitly beside it) yields to the reference. A
+ * style whose parent is anything else — a data-bearing link this writer did
+ * not mint — keeps it, and the fill stays the resolved literal alone: the
+ * stated conflict loss, reported through the "theme" drop record (AC-42)
+ * rather than silently. */
+export function withShapeThemeParent(styleXml: string, shape: Shape): string {
+  const slot = shape.fill?.kind === "solid" ? untransformedThemeSlot(shape.fill.color) : undefined;
+  if (slot === undefined) {
+    return styleXml;
+  }
+  return styleXml.replace(
+    'style:parent-style-name="Graphics"',
+    `style:parent-style-name="${themeGraphicParent(slot)}"`,
+  );
 }
 
 function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeStyleWriteContext): AutomaticStyles {
@@ -742,7 +788,15 @@ function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeSty
       if (!paragraph.styleId && propertiesXml === "" && masterAttr === "") {
         return undefined;
       }
-      const key = `${paragraph.styleId ?? ""} ${masterAttr} ${propertiesXml}`;
+      // SPEC-077 AC-38: an UNTRANSFORMED shading reference rides as the
+      // automatic style's parent, beside the resolved fo:background-color
+      // literal the properties carry. This writer's paragraph automatic
+      // styles otherwise never need a parent (a styleId shadows by name
+      // instead), so the reference never conflicts; a transformed reference
+      // has no faithful parent and writes the literal alone (AC-39).
+      const themeSlot = untransformedThemeSlot(paragraph.formatting?.shadingFill);
+      const parentAttr = themeSlot !== undefined ? ` style:parent-style-name="${themeParagraphParent(themeSlot)}"` : "";
+      const key = `${paragraph.styleId ?? ""} ${masterAttr}${parentAttr} ${propertiesXml}`;
       const existing = paragraphNames.get(key);
       if (existing !== undefined) {
         return existing;
@@ -762,8 +816,8 @@ function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeSty
       paragraphNames.set(key, name);
       defs.push(
         propertiesXml === ""
-          ? `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${masterAttr}/>`
-          : `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${masterAttr}>${propertiesXml}</style:style>`,
+          ? `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${parentAttr}${masterAttr}/>`
+          : `<style:style style:name="${escapeXml(name)}" style:family="paragraph"${parentAttr}${masterAttr}>${propertiesXml}</style:style>`,
       );
       return name;
     },
@@ -790,12 +844,21 @@ function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeSty
 
     textNameFor(formatting: RunFormatting, styleId?: string): string {
       const propertiesXml = textPropertiesXml(formatting);
+      // SPEC-077 AC-38: an UNTRANSFORMED colour reference rides as the
+      // automatic style's parent, beside the resolved fo:color literal —
+      // the file looks identical in other editors and re-opens here as a
+      // reference. Text automatic styles otherwise never need a parent in
+      // this writer (a character styleId shadows by name, below), so no
+      // conflict arises; a transformed reference writes the literal alone
+      // (AC-39, the stated loss).
+      const themeSlot = untransformedThemeSlot(formatting.color);
+      const parentAttr = themeSlot !== undefined ? ` style:parent-style-name="${themeTextParent(themeSlot)}"` : "";
       // SPEC-042: a character-styled run's automatic style is named after
       // its `styleId` the first time (shadowing the named style of the same
       // name in office:styles, the same trick `paragraphNameFor` already
       // plays for paragraph styles) so the reference round-trips; a run
       // with no character style keeps the plain "T1"/"T2"/… counter.
-      const key = `${styleId ?? ""} ${propertiesXml}`;
+      const key = `${styleId ?? ""}${parentAttr} ${propertiesXml}`;
       const existing = textNames.get(key);
       if (existing !== undefined) {
         return existing;
@@ -812,8 +875,8 @@ function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeSty
       textNames.set(key, name);
       defs.push(
         propertiesXml === ""
-          ? `<style:style style:name="${escapeXml(name)}" style:family="text"/>`
-          : `<style:style style:name="${escapeXml(name)}" style:family="text">${propertiesXml}</style:style>`,
+          ? `<style:style style:name="${escapeXml(name)}" style:family="text"${parentAttr}/>`
+          : `<style:style style:name="${escapeXml(name)}" style:family="text"${parentAttr}>${propertiesXml}</style:style>`,
       );
       return name;
     },
@@ -906,14 +969,22 @@ function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeSty
           if (propsXml === "") {
             return undefined;
           }
-          const existing = cellStyleNames.get(propsXml);
+          // SPEC-077 AC-38: an UNTRANSFORMED shading reference rides as
+          // the cell style's parent, beside the resolved literal (cell
+          // styles never otherwise need a parent here); a transformed one
+          // writes the literal alone (AC-39). Part of the dedup key: two
+          // different refs can resolve to the same literal.
+          const themeSlot = untransformedThemeSlot(cell.shadingFill);
+          const parentAttr = themeSlot !== undefined ? ` style:parent-style-name="${themeCellParent(themeSlot)}"` : "";
+          const key = `${parentAttr} ${propsXml}`;
+          const existing = cellStyleNames.get(key);
           if (existing !== undefined) {
             return existing;
           }
           const name = claimName(base, ".Cell");
-          cellStyleNames.set(propsXml, name);
+          cellStyleNames.set(key, name);
           defs.push(
-            `<style:style style:name="${escapeXml(name)}" style:family="table-cell">` +
+            `<style:style style:name="${escapeXml(name)}" style:family="table-cell"${parentAttr}>` +
               `<style:table-cell-properties ${propsXml}/>` +
               "</style:style>",
           );
@@ -955,7 +1026,7 @@ function createAutomaticStyles(model: DocumentModel, shapeStyleCtx?: OdfShapeSty
 
     shapeStyleNameFor(shape: Shape): string {
       const name = claimName("shfr", "");
-      defs.push(shapeGraphicStyleXml(name, shape, shapeStyleCtx));
+      defs.push(withShapeThemeParent(shapeGraphicStyleXml(name, shape, shapeStyleCtx), shape));
       return name;
     },
 
@@ -2085,6 +2156,7 @@ export function buildContentXml(
   drawingDefs: OdfDrawingDefs = createOdfDrawingDefs(),
 ): string {
   const includeOpaque = model.format === "odt";
+  odtWriteTheme = documentThemeOf(model);
   // SPEC-073: shape/connector graphic styles reference shared drawing
   // definitions (gradients, hatches, fill images, markers, dash patterns)
   // through this registry; the caller (writeOdt) reads the collected
@@ -2096,6 +2168,7 @@ export function buildContentXml(
     defs: drawingDefs,
     hrefForMedia: (mediaId) => mediaPlan.hrefFor(mediaId) || undefined,
     includePreserved: includeOpaque,
+    theme: documentThemeOf(model),
   };
   const styles = createAutomaticStyles(model, shapeStyleCtx);
   const blockXml: string[] = [];
@@ -2461,12 +2534,16 @@ function namedStyleDefinitionXml(definition: NamedStyle): string {
     // per-cell) — only background shading round-trips here; see
     // NamedStyle.cellBorders's doc comment for the docx side, which does
     // support it. Table style banding is out of scope either way.
-    const hex = definition.cellShadingFill;
-    const properties = hex !== undefined ? `<style:table-properties fo:background-color="${escapeXml(hex)}"/>` : "";
+    const fill = definition.cellShadingFill;
+    const properties =
+      fill !== undefined
+        ? `<style:table-properties fo:background-color="${escapeXml(resolveColor(fill, odtWriteTheme))}"/>`
+        : "";
     // SPEC-076 AC-68: the style's banding becomes a table:table-template plus
     // the generated table-cell styles its regions reference — siblings of the
-    // style itself under office:styles.
-    const banding = tableTemplateXml(definition);
+    // style itself under office:styles. ODF has no theme part, so a region's
+    // colour resolves to a literal here (SPEC-077 AC-37).
+    const banding = tableTemplateXml(definition, odtWriteTheme);
     const self =
       properties.length > 0
         ? `<style:style ${attrs}>${properties}</style:style>`
@@ -2693,27 +2770,37 @@ function createHeaderFooterAutomaticStyles(prefix: string): AutomaticStyles {
       if (propertiesXml === "") {
         return undefined;
       }
-      const existing = paragraphNames.get(propertiesXml);
+      // SPEC-077 AC-38, same carry as the body factory: an untransformed
+      // shading reference parents the automatic style.
+      const themeSlot = untransformedThemeSlot(paragraph.formatting?.shadingFill);
+      const parentAttr = themeSlot !== undefined ? ` style:parent-style-name="${themeParagraphParent(themeSlot)}"` : "";
+      const key = `${parentAttr} ${propertiesXml}`;
+      const existing = paragraphNames.get(key);
       if (existing !== undefined) {
         return existing;
       }
       const name = `${prefix}P${paragraphNames.size + 1}`;
-      paragraphNames.set(propertiesXml, name);
-      defs.push(`<style:style style:name="${name}" style:family="paragraph">${propertiesXml}</style:style>`);
+      paragraphNames.set(key, name);
+      defs.push(`<style:style style:name="${name}" style:family="paragraph"${parentAttr}>${propertiesXml}</style:style>`);
       return name;
     },
     textNameFor(formatting: RunFormatting): string {
       const propertiesXml = textPropertiesXml(formatting);
-      const existing = textNames.get(propertiesXml);
+      // SPEC-077 AC-38, same carry as the body factory: an untransformed
+      // colour reference parents the automatic style.
+      const themeSlot = untransformedThemeSlot(formatting.color);
+      const parentAttr = themeSlot !== undefined ? ` style:parent-style-name="${themeTextParent(themeSlot)}"` : "";
+      const key = `${parentAttr} ${propertiesXml}`;
+      const existing = textNames.get(key);
       if (existing !== undefined) {
         return existing;
       }
       const name = `${prefix}T${textNames.size + 1}`;
-      textNames.set(propertiesXml, name);
+      textNames.set(key, name);
       defs.push(
         propertiesXml === ""
-          ? `<style:style style:name="${name}" style:family="text"/>`
-          : `<style:style style:name="${name}" style:family="text">${propertiesXml}</style:style>`,
+          ? `<style:style style:name="${name}" style:family="text"${parentAttr}/>`
+          : `<style:style style:name="${name}" style:family="text"${parentAttr}>${propertiesXml}</style:style>`,
       );
       return name;
     },
@@ -2811,7 +2898,7 @@ function headerFooterMasterContent(
  * for *which* edge the offset measures from, nor for restricting the border
  * to (or from) the first page, so those two ride in the extension namespace
  * like the paragraph `between` edge does. */
-function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: string): string {
+function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: ModelColor): string {
   const attrs: string[] = [];
   if (pageBorders) {
     const offsetPt = pageBorders.offsetPt ?? 24;
@@ -2833,7 +2920,7 @@ function pageLayoutBorderAttrs(pageBorders?: PageBorders, pageBackground?: strin
     }
   }
   if (pageBackground !== undefined) {
-    attrs.push(`fo:background-color="${escapeXml(pageBackground)}"`);
+    attrs.push(`fo:background-color="${escapeXml(resolveColor(pageBackground, odtWriteTheme))}"`);
   }
   return attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
 }
@@ -2844,7 +2931,7 @@ function pageLayoutXml(
   margins: Margins,
   columns?: SectionColumns,
   pageBorders?: PageBorders,
-  pageBackground?: string,
+  pageBackground?: ModelColor,
 ): string {
   // ODF stores landscape pages with width/height already swapped; the
   // orientation attribute just marks them, mirroring the .docx writer's
@@ -3138,6 +3225,7 @@ export function patchOdtShapeDefs(originalStylesXml: string, drawingDefsXml: str
 }
 
 export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): string {
+  odtWriteTheme = documentThemeOf(model);
   const { fontFamily, fontSizePt, language, defaultTabStopCm } = model.defaultStyles;
   // The document's default tab interval (SPEC-054): style:tab-stop-distance on
   // the default paragraph style. Omitted when the model carries no explicit
@@ -3185,9 +3273,17 @@ export function buildStylesXml(model: DocumentModel, drawingDefsXml = ""): strin
     "<office:styles>" +
     '<style:default-style style:family="paragraph">' +
     defaultTabProps +
-    `<style:text-properties fo:font-family="${escapeXml(fontFamily)}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
+    `<style:text-properties fo:font-family="${escapeXml(resolveFont(fontFamily, odtWriteTheme))}" fo:font-size="${ptToOdfLength(fontSizePt)}"${languageAttrs}/>` +
     "</style:default-style>" +
     namedStyles +
+    // The document theme as named de-theme-* styles (SPEC-077 AC-37) —
+    // the SPEC-094 mapping, shared through core/themeOdf. Emitted whenever a
+    // reference exists too: a themeless document (AC-48) can still carry
+    // references (a shape preset, a theme swatch), and every
+    // style:parent-style-name="de-theme-…" the content writes must resolve.
+    (model.theme !== undefined || modelHasThemeReference(model)
+      ? odtThemeBlockXml(documentThemeOf(model))
+      : "") +
     notesConfigurationXml("footnote", model.footnoteSettings) +
     notesConfigurationXml("endnote", model.endnoteSettings) +
     // SPEC-073: the shared drawing definitions (draw:gradient/draw:hatch/
@@ -3222,6 +3318,7 @@ export function patchOdtStylesXml(
   if (!model.styles) {
     return null;
   }
+  odtWriteTheme = documentThemeOf(model);
   let stylesDoc: Document;
   let contentDoc: Document;
   try {
@@ -3328,6 +3425,7 @@ export function patchOdtSectionMasterPages(
   if (model.sections.length <= 1) {
     return null;
   }
+  odtWriteTheme = documentThemeOf(model);
   let stylesDoc: Document;
   try {
     stylesDoc = parseXml(originalStylesXml);
@@ -3738,6 +3836,17 @@ export async function writeOdt(
     // previous save are replaced by the set this content build collected.
     patchedStyles =
       patchOdtShapeDefs(patchedStyles ?? originalStyles, drawingDefs.defsXml()) ?? patchedStyles;
+    // The document theme block (SPEC-077 AC-37): rewritten in place only
+    // when the model carries a theme or a theme REFERENCE (whose written
+    // de-theme-* parent must resolve) — an unedited themeless save stays
+    // byte-identical.
+    if (model.theme !== undefined || modelHasThemeReference(model)) {
+      const base = patchedStyles ?? originalStyles;
+      const spliced = spliceThemeStyles(base, odtThemeBlockXml(documentThemeOf(model)));
+      if (spliced !== base) {
+        patchedStyles = spliced;
+      }
+    }
   }
 
   const entries: ZipEntryInput[] = [
@@ -3786,6 +3895,9 @@ export async function writeOdt(
       ...collectBarTabDropRecords(model, "odt"),
       // SPEC-074 AC-32: ODF has no dash-dot border keyword, on any save.
       ...collectBorderStyleDropRecords(model),
+      // SPEC-077 AC-42: ODF has no theme part, on any save — the one
+      // record naming the theme when the document carries any reference.
+      ...collectThemeDropRecords(model),
     ],
   };
 }

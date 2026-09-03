@@ -45,6 +45,7 @@ import {
 } from "../../lib/commands";
 import { setColumnBoundary } from "../../lib/columns";
 import { loadRecentColors, noHighlight, pushRecentColor } from "../../lib/core/colors";
+import type { ThemeColorRef } from "../../lib/core/theme";
 import { asListLevelDefinitions, asListMarkerStyle, asListType } from "../../lib/core/lists";
 import {
   asCharacterFormatKey,
@@ -326,16 +327,22 @@ export function useFormattingSurfaces(deps: FormattingSurfacesDeps) {
     }
   }
 
-  function handleTextColorSelect(hex = "") {
-    if (hex !== "") {
-      applyRunFormatPatch({ color: hex }, "text color");
-      recentColors.value = pushRecentColor(hex, recentColors.value);
+  /** The picker emits a "#rrggbb" literal or a ThemeColorRef (SPEC-077
+   * AC-23) — the reference is stored as-is, and only literals enter the
+   * recent list (AC-24: recents hold literals, never references). */
+  function handleTextColorSelect(color: string | ThemeColorRef = "") {
+    if (color !== "") {
+      applyRunFormatPatch({ color }, "text color");
+      if (typeof color === "string") {
+        recentColors.value = pushRecentColor(color, recentColors.value);
+      }
     }
   }
 
-  /** The highlight picker emits a palette name or false for "No colour" —
-   * false is applied as an explicit off, not an absence (SPEC-013). */
-  function handleHighlightSelect(value = noHighlight()) {
+  /** The highlight picker emits a palette name, false for "No colour" —
+   * an explicit off, not an absence (SPEC-013) — or a ThemeColorRef
+   * (SPEC-077 AC-23), stored as the reference itself. */
+  function handleHighlightSelect(value: string | false | ThemeColorRef = noHighlight()) {
     applyRunFormatPatch({ highlight: value }, "highlight");
   }
 

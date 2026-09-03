@@ -8,7 +8,11 @@ import { computed } from "vue";
 import { asConnector } from "../lib/documentModel";
 
 const props = defineProps({
-  connector: { type: Object, required: true },
+  connector: { type: Object, default: () => ({}) },
+  /** The line colour resolved to a hex by the owner (SPEC-077 AC-7) — the
+   * native colour input can only show a hex; a theme-referenced colour stays
+   * a reference in the model and emitOutline's spread re-emits it. */
+  lineColorHex: { type: String, default: "" },
 });
 
 const emit = defineEmits([
@@ -28,6 +32,7 @@ const WRAPS = ["square", "topAndBottom", "behind", "infront"];
 
 const model = computed(() => asConnector(props.connector));
 const outline = computed(() => model.value.outline ?? { color: "#2e5395", widthPt: 1, dash: "solid" });
+const outlineColorHex = computed(() => props.lineColorHex || "#2e5395");
 
 /** The value of an input/select event target, or "" (instanceof narrowing —
  * the `.vue` script's espree parser bars a TS `as` cast). */
@@ -97,7 +102,7 @@ function onAltText(event = new Event("input")) {
     <input
       type="color"
       data-testid="connector-color"
-      :value="outline.color"
+      :value="outlineColorHex"
       aria-label="Line colour"
       @input="onColor"
     >

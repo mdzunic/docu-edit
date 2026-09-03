@@ -32,7 +32,7 @@ function getClient(): WorkerRpcClient<StatsRequest, StatsResponse> {
  * deliberately, not on a keystroke-driven cadence), where the projection
  * below's extra work isn't worth paying for `model.notes` too. */
 function slimModel(model: DocumentModel): DocumentModel {
-  const { media: _media, opaque: _opaque, sourceXml: _sourceXml, ...slim } = model;
+  const { media: _media, opaque: _opaque, sourceXml: _sourceXml, theme: _theme, ...slim } = model;
   return slim as DocumentModel;
 }
 
@@ -92,8 +92,15 @@ export function projectModelForCounting(model: DocumentModel): DocumentModel {
     opaque: undefined,
     sourceXml: undefined,
     notes: [],
+    // Counting reads no colour: the theme and a section's background are
+    // dropped both to keep the clone graph lean and because either can be an
+    // object (SPEC-077's ThemeColorRef) — an object that leaked out of a
+    // reactive dialog draft as a Proxy would make postMessage's structured
+    // clone throw DataCloneError and silently freeze the live count.
+    theme: undefined,
     sections: model.sections.map((section) => ({
       ...section,
+      pageBackground: undefined,
       blocks: section.blocks.map(projectBlockForCounting),
     })),
   } as DocumentModel;

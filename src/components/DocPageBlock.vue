@@ -21,6 +21,9 @@ const props = defineProps({
   /** One lib/pageRender.RenderEntry — typed via the default seed. */
   entry: { type: Object, default: () => noRenderEntries()[0] },
   cellRange: { type: Object, default: null },
+  /** The document's theme (SPEC-077), forwarded to the table/shape/chart
+   * blocks whose own runs resolve theme colour/font references against it. */
+  theme: { type: Object, default: null },
 });
 
 // SPEC-056: clicking an equation opens the editor. Provided by DocumentView.
@@ -96,6 +99,7 @@ const entry = computed(() => asRenderEntry(props.entry));
     :data-row-start="entry.rowStart"
     :display-mode="entry.trackChangesDisplayMode"
     :cell-range="entry.kind === 'table' ? cellRange : undefined"
+    :theme="entry.kind === 'table' || entry.kind === 'shape' || entry.kind === 'chart' ? theme : undefined"
     :src="entry.imageSrc"
     :selected="entry.kind === 'shape' ? entry.shapeSelected : entry.kind === 'chart' ? entry.chartSelected : entry.imageSelected"
     :drawing-index="entry.drawingIndex"

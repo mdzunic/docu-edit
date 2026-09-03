@@ -15,6 +15,7 @@
 // writer emits size-1 banding and opaque.ts reports the loss).
 import { childElements, escapeXml, firstChildElement } from "../core/xml";
 import { borderShorthand, parseBorderShorthand } from "./borders";
+import { resolveColor, type DocumentTheme } from "../core/theme";
 import type { CellBorders } from "../core/tables";
 import type { NamedStyle, TableConditionalFormat, TableLook, TableStyleBanding } from "../documentModel";
 
@@ -93,7 +94,10 @@ export function parseTableUseStyles(tableEl: Element): TableLook | undefined {
 /** The generated `table-cell` styles a template's regions reference, plus the
  * `table:table-template` itself (AC-68) — returned together because both go
  * into `office:styles` and neither is meaningful without the other. */
-export function tableTemplateXml(style: NamedStyle): { cellStyles: string; template: string } {
+export function tableTemplateXml(
+  style: NamedStyle,
+  theme: DocumentTheme,
+): { cellStyles: string; template: string } {
   const banding = style.banding;
   if (!banding) {
     return { cellStyles: "", template: "" };
@@ -109,7 +113,9 @@ export function tableTemplateXml(style: NamedStyle): { cellStyles: string; templ
     }
     const name = templateCellStyleName(style.id, region.child);
     const properties = [
-      format.shading !== undefined ? ` fo:background-color="${escapeXml(format.shading)}"` : "",
+      format.shading !== undefined
+        ? ` fo:background-color="${escapeXml(resolveColor(format.shading, theme))}"`
+        : "",
       ...BORDER_SIDES.map((side) => {
         const value = format.borders?.[side.key];
         return value ? ` ${side.fo}="${escapeXml(borderShorthand(value))}"` : "";

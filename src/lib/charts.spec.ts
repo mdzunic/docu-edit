@@ -164,6 +164,25 @@ describe("setChartSeriesColor (AC-19)", () => {
     const { model: next } = setChartSeriesColor(model, selectionAt(0, 0), location, 5, "#abcdef");
     expect(chartAt(next, location)!.edited).toBeUndefined();
   });
+
+  it("stores a ThemeColorRef verbatim; untouched series keep their own references (SPEC-077 AC-23)", () => {
+    const untouched = { theme: "accent4", lumMod: 0.6, lumOff: 0.4 } as const;
+    const model = doc(
+      baseChart({
+        series: [
+          { name: "A", values: [1], color: untouched },
+          { name: "B", values: [2], color: "#222222" },
+        ],
+      }),
+    );
+    const location: ChartLocation = { section: 0, block: 0 };
+    const { model: next } = setChartSeriesColor(model, selectionAt(0, 0), location, 1, { theme: "accent2" });
+    const chart = chartAt(next, location)!;
+    // The changed series stores the reference, not a resolved hex...
+    expect(chart.series[1].color).toEqual({ theme: "accent2" });
+    // ...and the untouched series keeps its very own reference object.
+    expect(chart.series[0].color).toBe(untouched);
+  });
 });
 
 describe("placement commands never set `edited` (SPEC-052: 'only the data sheet and the options panel set it')", () => {
@@ -222,9 +241,11 @@ describe("chartDataFromTableCells (AC-21, AC-22)", () => {
     ];
     const result = chartDataFromTableCells(cells);
     expect(result.categories).toEqual(["Q1", "Q2"]);
+    // SPEC-077 AC-46: a new chart's series are seeded with theme accent
+    // references, not literals, so a theme change recolours the chart.
     expect(result.series).toEqual([
-      { name: "Revenue", values: [10, 20], color: expect.any(String) },
-      { name: "Cost", values: [5, 8], color: expect.any(String) },
+      { name: "Revenue", values: [10, 20], color: { theme: "accent1" } },
+      { name: "Cost", values: [5, 8], color: { theme: "accent2" } },
     ]);
     expect(result.unparsable).toEqual([]);
   });

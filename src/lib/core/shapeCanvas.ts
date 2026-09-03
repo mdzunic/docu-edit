@@ -28,12 +28,16 @@ import {
 } from "./shapeGeometry";
 import { resolvedShapeAdjustments, shapeDefinition } from "./shapeCatalogue";
 import type { ShapePath } from "./shapePath";
+import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "./theme";
 
 /** Host hooks the painter cannot supply itself (SPEC-073): a picture fill's
  * decoded bitmap. The painter is synchronous — an unresolved (still-loading)
  * picture paints nothing and the host repaints when the bitmap arrives. */
 export interface ShapePaintOptions {
   pictures?: (mediaId: string) => CanvasImageSource | null;
+  /** The document theme fill/outline references resolve against (SPEC-077);
+   * absent paints against the product default. */
+  theme?: DocumentTheme;
 }
 
 /** `#rrggbb` + a 0..1 opacity as a canvas-ready rgba() string; alpha absent
@@ -65,11 +69,16 @@ function dashPattern(dash: ShapeOutline["dash"]): number[] {
   }
 }
 
-function applyOutline(ctx: CanvasRenderingContext2D, outline: ShapeOutline | undefined, widthPxPerPt: number): void {
+function applyOutline(
+  ctx: CanvasRenderingContext2D,
+  outline: ShapeOutline | undefined,
+  widthPxPerPt: number,
+  theme: DocumentTheme,
+): void {
   if (!outline) {
     return;
   }
-  ctx.strokeStyle = withAlpha(outline.color, outline.alpha);
+  ctx.strokeStyle = withAlpha(resolveColor(outline.color, theme), outline.alpha);
   ctx.lineWidth = Math.max(1, outline.widthPt * widthPxPerPt);
   ctx.setLineDash(dashPattern(outline.dash));
   ctx.lineJoin = outline.join ?? "miter";
@@ -152,7 +161,9 @@ function fillCurrentPath(
 ): void {
   if (fill.kind === "solid" || fill.kind === "gradient") {
     ctx.fillStyle =
-      fill.kind === "solid" ? withAlpha(fill.color, fill.alpha) : gradientStyle(ctx, fill, widthPx, heightPx);
+      fill.kind === "solid"
+        ? withAlpha(resolveColor(fill.color, opts.theme ?? DEFAULT_THEME), fill.alpha)
+        : gradientStyle(ctx, fill, widthPx, heightPx);
     if (fillRule) {
       ctx.fill(fillRule);
     } else {
@@ -447,7 +458,7 @@ export function paintShape(
     }
     if (shape.outline) {
       trace();
-      applyOutline(ctx, shape.outline, PX_PER_PT);
+      applyOutline(ctx, shape.outline, PX_PER_PT, opts.theme ?? DEFAULT_THEME);
       ctx.stroke();
     }
     ctx.restore();
@@ -478,7 +489,7 @@ export function paintShape(
     if (shape.shadow) {
       paintShadowPass(ctx, shape.shadow, trace, false, outline);
     }
-    applyOutline(ctx, outline, PX_PER_PT);
+    applyOutline(ctx, outline, PX_PER_PT, opts.theme ?? DEFAULT_THEME);
     trace();
     ctx.stroke();
     // SPEC-073 AC-14: explicit arrowheads on any line geometry. The `arrow`
@@ -540,7 +551,7 @@ export function paintShape(
   }
   if (shape.outline) {
     traceOutline();
-    applyOutline(ctx, shape.outline, PX_PER_PT);
+    applyOutline(ctx, shape.outline, PX_PER_PT, opts.theme ?? DEFAULT_THEME);
     ctx.stroke();
     for (const hole of holePaths) {
       ctx.beginPath();

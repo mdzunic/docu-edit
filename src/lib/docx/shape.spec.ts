@@ -1,6 +1,7 @@
 // SPEC-051: the DrawingML shape reader/writer. Mirrors docx/drawing.spec.ts's
 // own fixture conventions (a `drawingElement` wrapper supplying the ambient
 // `xmlns:w` a real word/document.xml would already declare).
+import { DEFAULT_THEME } from "../core/theme";
 import { describe, it, expect } from "vitest";
 import { parseShapeDrawing, shapeDrawingXml, type ShapeTextContext, type ShapeTextWriteContext } from "./shape";
 import { parseXml } from "../core/xml";
@@ -39,6 +40,7 @@ const readCtx: ShapeTextContext = {
 };
 
 const writeCtx: ShapeTextWriteContext = {
+  theme: DEFAULT_THEME,
   paragraphXml: (paragraph: Paragraph): string => {
     const text = paragraph.runs.map((r) => r.text).join("");
     return `<w:p><w:r><w:t xml:space="preserve">${escapeXmlText(text)}</w:t></w:r></w:p>`;
@@ -778,19 +780,45 @@ describe("SPEC-073 preservation of unmodelled styling (AC-35, AC-36)", () => {
     spPrChildren +
     "</wps:spPr></wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>";
 
-  it("a scheme-colour fill is preserved verbatim, never flattened, and re-emitted on a same-format save", () => {
+  it("a scheme-colour fill the model can carry parses as a ThemeColorRef and round-trips (SPEC-077 AC-29)", () => {
     const schemeFill = '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>';
     const parsed = parseShapeDrawing(drawingElement(wsp(schemeFill)), readCtx)!;
+    expect(parsed.shape.fill).toEqual({ kind: "solid", color: { theme: "accent1" } });
+    expect(parsed.shape.unsupportedStyleXml ?? "").not.toContain("schemeClr");
+    const rewritten = shapeDrawingXml(parsed.shape, 1, writeCtx);
+    expect(rewritten).toContain('<a:schemeClr val="accent1"/>');
+    const again = parseShapeDrawing(drawingElement(rewritten), readCtx)!;
+    expect(again.shape.fill).toEqual({ kind: "solid", color: { theme: "accent1" } });
+  });
+
+  it("a slide-space spelling (tx1) re-saves as the byte it arrived with (SPEC-077 AC-31)", () => {
+    const schemeFill = '<a:solidFill><a:schemeClr val="tx1"><a:lumMod val="75000"/></a:schemeClr></a:solidFill>';
+    const parsed = parseShapeDrawing(drawingElement(wsp(schemeFill)), readCtx)!;
+    expect(parsed.shape.fill).toEqual({ kind: "solid", color: { theme: "dk1", lumMod: 0.75, spelling: "tx1" } });
+    const rewritten = shapeDrawingXml(parsed.shape, 1, writeCtx);
+    expect(rewritten).toContain('<a:schemeClr val="tx1"><a:lumMod val="75000"/></a:schemeClr>');
+    // The spelling survives any number of round trips.
+    expect(parseShapeDrawing(drawingElement(rewritten), readCtx)!.shape.fill).toEqual(parsed.shape.fill);
+  });
+
+  it("a scheme colour the model cannot carry (phClr, an alpha child) is preserved verbatim, never flattened (AC-29 carve-out)", () => {
+    const phClrFill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>';
+    const parsed = parseShapeDrawing(drawingElement(wsp(phClrFill)), readCtx)!;
     expect(parsed.shape.fill).toBeUndefined();
     expect(parsed.shape.unsupportedStyleXml).toContain("schemeClr");
     const rewritten = shapeDrawingXml(parsed.shape, 1, writeCtx);
-    expect(rewritten).toContain('<a:schemeClr val="accent1"/>');
+    expect(rewritten).toContain('<a:schemeClr val="phClr"/>');
     // The preserved fill takes the modelled fill's slot — no second fill.
     expect(rewritten).not.toContain("<a:noFill/></wps:spPr>");
     const again = parseShapeDrawing(drawingElement(rewritten), readCtx)!;
     expect(canonicalizeXml(`<x xmlns:a="${A_NS}">${again.shape.unsupportedStyleXml}</x>`)).toBe(
       canonicalizeXml(`<x xmlns:a="${A_NS}">${parsed.shape.unsupportedStyleXml}</x>`),
     );
+    // An alpha child is outside the modelled transforms too.
+    const alphaFill = '<a:solidFill><a:schemeClr val="accent1"><a:alpha val="50000"/></a:schemeClr></a:solidFill>';
+    const withAlpha = parseShapeDrawing(drawingElement(wsp(alphaFill)), readCtx)!;
+    expect(withAlpha.shape.fill).toBeUndefined();
+    expect(withAlpha.shape.unsupportedStyleXml).toContain("schemeClr");
   });
 
   it("a glow beside a parsed outerShdw preserves only the glow (exactly one source per property, AC-36)", () => {
@@ -827,12 +855,12 @@ describe("SPEC-073 preservation of unmodelled styling (AC-35, AC-36)", () => {
   });
 
   it("an edited modelled fill wins over a stale preserved scheme-colour fill (AC-36 one-source)", () => {
-    // Open a doc whose fill the model cannot hold (schemeClr -> preserved),
-    // then the user picks a solid red: the canvas shows red, so the save
-    // must write red — never resurrect the preserved theme fill. The edit
-    // path clears the preserved slot (see shapes.spec.ts); the writer's
-    // model-first guard covers any stale leftover, tested here directly.
-    const schemeFill = '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>';
+    // Open a doc whose fill the model cannot hold (a phClr schemeClr ->
+    // preserved), then the user picks a solid red: the canvas shows red, so
+    // the save must write red — never resurrect the preserved fill. The
+    // edit path clears the preserved slot (see shapes.spec.ts); the
+    // writer's model-first guard covers any stale leftover, tested here.
+    const schemeFill = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>';
     const parsed = parseShapeDrawing(drawingElement(wsp(schemeFill)), readCtx)!;
     const edited: typeof parsed.shape = { ...parsed.shape, fill: { kind: "solid", color: "#ff0000" } };
     const rewritten = shapeDrawingXml(edited, 1, writeCtx);

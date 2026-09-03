@@ -13,7 +13,8 @@ import type { ArrowheadKind, ArrowheadSize } from "../core/shapes";
 import { escapeXmlAttribute, firstChildElement } from "../core/xml";
 import { cssColorToOoxml } from "../core/colors";
 import { cmToEmu, emuToCm } from "../core/units";
-import { dashXml, emptyPreservedStyle, outerShdwXml, parseShapeStyle, splitPreservedStyle, srgbClrXml } from "./shape";
+import { dashXml, emptyPreservedStyle, outerShdwXml, parseShapeStyle, solidClrXml, splitPreservedStyle } from "./shape";
+import { DEFAULT_THEME, isThemeColor, type DocumentTheme } from "../core/theme";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
 const A_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -349,7 +350,7 @@ function arrowXml(kind: ArrowheadKind | undefined, localName: "headEnd" | "tailE
   return `<a:${localName} type="${ARROW_TO_OOXML[kind]}" w="${sz}" len="${sz}"/>`;
 }
 
-function connectorOutlineXml(connector: Connector): string {
+function connectorOutlineXml(connector: Connector, theme: DocumentTheme): string {
   const outline = connector.outline;
   const arrows =
     arrowXml(connector.startArrow, "headEnd", connector.startArrowSize) +
@@ -357,8 +358,7 @@ function connectorOutlineXml(connector: Connector): string {
   if (!outline) {
     return `<a:ln>${arrows || "<a:noFill/>"}</a:ln>`;
   }
-  const color = cssColorToOoxml(outline.color);
-  if (!color) {
+  if (!isThemeColor(outline.color) && !cssColorToOoxml(outline.color)) {
     return `<a:ln>${arrows || "<a:noFill/>"}</a:ln>`;
   }
   const capAttr = outline.cap === "round" ? ' cap="rnd"' : outline.cap === "square" ? ' cap="sq"' : "";
@@ -373,7 +373,7 @@ function connectorOutlineXml(connector: Connector): string {
   const joinXml = outline.join === "round" ? "<a:round/>" : outline.join === "bevel" ? "<a:bevel/>" : "";
   return (
     `<a:ln w="${ptToEmu(outline.widthPt)}"${capAttr}${cmpd ? ` cmpd="${cmpd}"` : ""}>` +
-    `<a:solidFill>${srgbClrXml(outline.color, outline.alpha)}</a:solidFill>` +
+    `<a:solidFill>${solidClrXml(outline.color, theme, outline.alpha)}</a:solidFill>` +
     dashXml(outline.dash) +
     joinXml +
     arrows +
@@ -391,7 +391,12 @@ export interface ConnectorTargetIds {
 /** Serialises a Connector + its assigned docPrId into a `w:drawing` holding a
  * `wps:cxnSp`. `targetIds` gives the docPr ids of the attached shapes so
  * `a:stCxn`/`a:endCxn` can name them. */
-export function connectorDrawingXml(connector: Connector, docPrId: number, targetIds: ConnectorTargetIds): string {
+export function connectorDrawingXml(
+  connector: Connector,
+  docPrId: number,
+  targetIds: ConnectorTargetIds,
+  theme: DocumentTheme = DEFAULT_THEME,
+): string {
   const cx = cmToEmu(connector.widthCm);
   const cy = cmToEmu(Math.max(0, connector.heightCm));
   const id = docPrId;
@@ -432,7 +437,7 @@ export function connectorDrawingXml(connector: Connector, docPrId: number, targe
   const lnPart =
     !connector.outline && preservedStyle.ln.length > 0
       ? preservedStyle.ln.join("")
-      : connectorOutlineXml(connector);
+      : connectorOutlineXml(connector, theme);
   const effectPart =
     connector.shadow || preservedStyle.effectsBefore.length > 0 || preservedStyle.effectsAfter.length > 0
       ? `<a:effectLst>${preservedStyle.effectsBefore.join("")}${connector.shadow ? outerShdwXml(connector.shadow) : ""}${preservedStyle.effectsAfter.join("")}</a:effectLst>`
@@ -504,8 +509,13 @@ export function connectorDrawingXml(connector: Connector, docPrId: number, targe
 
 /** A connector emitted at its own block slot (non-absorbed) needs its own
  * `w:p` wrapper, like shapeParagraphXml. */
-export function connectorParagraphXml(connector: Connector, docPrId: number, targetIds: ConnectorTargetIds): string {
-  return `<w:p><w:r>${connectorDrawingXml(connector, docPrId, targetIds)}</w:r></w:p>`;
+export function connectorParagraphXml(
+  connector: Connector,
+  docPrId: number,
+  targetIds: ConnectorTargetIds,
+  theme: DocumentTheme = DEFAULT_THEME,
+): string {
+  return `<w:p><w:r>${connectorDrawingXml(connector, docPrId, targetIds, theme)}</w:r></w:p>`;
 }
 
 /** Resolves the docPr ids of a connector's attachment targets from the map

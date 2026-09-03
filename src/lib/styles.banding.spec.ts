@@ -3,6 +3,7 @@
 // StyleFormInput into the catalogue, and the re-render a save triggers.
 import { describe, expect, it } from "vitest";
 import { bandingDraftFrom, bandingFromDraft } from "./tableStyles";
+import { DEFAULT_THEME } from "./core/theme";
 import { styleFormInputFromDraft } from "./styles";
 import { createStyle, modifyStyle } from "./commands.customStyles";
 import { caretSelection } from "./commands";
@@ -34,13 +35,13 @@ function draftFor(type = "table") {
     cellBorderStyle: "",
     cellBorderWidthPt: 1.5,
     cellBorderColor: "#123456",
-    banding: bandingDraftFrom(BANDING),
+    banding: bandingDraftFrom(BANDING, DEFAULT_THEME),
   };
 }
 
 describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
   it("lists the six regions in the dialog's order", () => {
-    expect(bandingDraftFrom(undefined).regions.map((region) => region.key)).toEqual([
+    expect(bandingDraftFrom(undefined, DEFAULT_THEME).regions.map((region) => region.key)).toEqual([
       "firstRow",
       "lastRow",
       "firstColumn",
@@ -51,14 +52,14 @@ describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
   });
 
   it("seeds the two band sizes from the style, defaulting to 1", () => {
-    expect(bandingDraftFrom(BANDING).rowBandSize).toBe(2);
-    expect(bandingDraftFrom(BANDING).columnBandSize).toBe(3);
-    expect(bandingDraftFrom(undefined).rowBandSize).toBe(1);
-    expect(bandingDraftFrom({ firstRow: { bold: true } }).columnBandSize).toBe(1);
+    expect(bandingDraftFrom(BANDING, DEFAULT_THEME).rowBandSize).toBe(2);
+    expect(bandingDraftFrom(BANDING, DEFAULT_THEME).columnBandSize).toBe(3);
+    expect(bandingDraftFrom(undefined, DEFAULT_THEME).rowBandSize).toBe(1);
+    expect(bandingDraftFrom({ firstRow: { bold: true } }, DEFAULT_THEME).columnBandSize).toBe(1);
   });
 
   it("round-trips shading, bold and band sizes", () => {
-    const back = bandingFromDraft(bandingDraftFrom(BANDING), 1, "#000000");
+    const back = bandingFromDraft(bandingDraftFrom(BANDING, DEFAULT_THEME), 1, "#000000");
     expect(back?.firstRow).toEqual({ shading: "#2f5496", bold: true });
     expect(back?.lastRow).toEqual({ shading: "#dddddd" });
     expect(back?.firstColumn).toEqual({ bold: true });
@@ -69,7 +70,7 @@ describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
   });
 
   it("builds a region's borders from its style plus the style's width and colour", () => {
-    const draft = bandingDraftFrom(undefined);
+    const draft = bandingDraftFrom(undefined, DEFAULT_THEME);
     draft.regions[0].borderStyle = "double";
     const back = bandingFromDraft(draft, 2.25, "#ff0000");
     expect(back?.firstRow?.borders?.top).toEqual({ style: "double", widthPt: 2.25, color: "#ff0000" });
@@ -77,7 +78,7 @@ describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
   });
 
   it("round-trips a band region's bold and borders (AC-37)", () => {
-    const draft = bandingDraftFrom(undefined);
+    const draft = bandingDraftFrom(undefined, DEFAULT_THEME);
     const bandedRows = draft.regions.find((region) => region.key === "bandedRows");
     const bandedColumns = draft.regions.find((region) => region.key === "bandedColumns");
     bandedRows!.bold = true;
@@ -91,7 +92,7 @@ describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
     // "independently settable").
     expect(back?.bandedColumns).toEqual({ size: 1, bold: true });
     // And the edit survives a second pass through the dialog.
-    const again = bandingDraftFrom(back);
+    const again = bandingDraftFrom(back, DEFAULT_THEME);
     expect(again.regions.find((region) => region.key === "bandedRows")).toMatchObject({
       bold: true,
       borderStyle: "dashed",
@@ -100,11 +101,11 @@ describe("bandingDraftFrom / bandingFromDraft (AC-37)", () => {
   });
 
   it("returns undefined when no region sets anything", () => {
-    expect(bandingFromDraft(bandingDraftFrom(undefined), 1, "#000000")).toBeUndefined();
+    expect(bandingFromDraft(bandingDraftFrom(undefined, DEFAULT_THEME), 1, "#000000")).toBeUndefined();
   });
 
   it("ignores a band whose shading is blank — a size alone is not banding", () => {
-    const draft = bandingDraftFrom(undefined);
+    const draft = bandingDraftFrom(undefined, DEFAULT_THEME);
     draft.rowBandSize = 4;
     expect(bandingFromDraft(draft, 1, "#000000")).toBeUndefined();
   });

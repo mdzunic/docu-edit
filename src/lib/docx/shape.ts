@@ -20,6 +20,8 @@ import { GEOMETRY_TO_PRST, PRST_TO_GEOMETRY, parseAvLstAdjustments } from "../co
 import { arcToCubics, PATH_GRID, quadraticToCubic, type PathStep, type ShapePath, type ShapeSubpath } from "../core/shapePath";
 import { childElements, escapeXmlAttribute, firstChildElement, serializeElement } from "../core/xml";
 import { cssColorToOoxml, ooxmlColorToCss } from "../core/colors";
+import { isThemeColor, resolveColor, type DocumentTheme, type ModelColor } from "../core/theme";
+import { schemeClrRefFrom, schemeClrXmlFor } from "../core/themeDrawingMl";
 import { cmToEmu, emuToCm } from "../core/units";
 
 const WP_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
@@ -117,6 +119,22 @@ function parseSolidColor(parent: Element): { color: string; alpha?: number } | n
   return parsed;
 }
 
+/** parseSolidColor widened for the two surfaces AC-4 makes ModelColor — a
+ * shape's solid fill and its outline stroke: an `a:srgbClr` parses exactly
+ * as before, and an `a:schemeClr` the model can carry becomes a
+ * ThemeColorRef (SPEC-077 AC-29). A schemeClr the model cannot hold —
+ * `phClr`, an alpha child, an unmodelled transform — still returns null, so
+ * the caller preserves the property verbatim, exactly as today. */
+function parseSolidColorOrRef(parent: Element): { color: ModelColor; alpha?: number } | null {
+  const literal = parseSolidColor(parent);
+  if (literal) {
+    return literal;
+  }
+  const schemeClr = firstChildElement(parent, A_NAMESPACE, "schemeClr");
+  const ref = schemeClr ? schemeClrRefFrom(schemeClr) : undefined;
+  return ref ? { color: ref } : null;
+}
+
 const OOXML_DASH_TO_MODEL: Record<string, ShapeOutline["dash"]> = {
   dash: "dash",
   sysDash: "dot",
@@ -184,7 +202,7 @@ function parseLn(ln: Element | undefined): { outline?: ShapeOutline; preserved: 
   if (!solidFill && (firstChildElement(ln, A_NAMESPACE, "gradFill") || firstChildElement(ln, A_NAMESPACE, "pattFill"))) {
     return { preserved: true };
   }
-  const parsed = solidFill ? parseSolidColor(solidFill) : null;
+  const parsed = solidFill ? parseSolidColorOrRef(solidFill) : null;
   if (solidFill && !parsed) {
     return { preserved: true };
   }
@@ -381,7 +399,7 @@ export function parseShapeStyle(
         continue; // absence — the model's "no fill"
       }
       if (child.localName === "solidFill") {
-        const parsed = parseSolidColor(child);
+        const parsed = parseSolidColorOrRef(child);
         if (parsed) {
           fill = { kind: "solid", color: parsed.color };
           if (parsed.alpha !== undefined) {
@@ -760,6 +778,22 @@ export function parseShapeDrawing(
   return { shape };
 }
 
+/** A solid `ModelColor` as its DrawingML colour element (SPEC-077 AC-31): a
+ * theme reference writes `a:schemeClr` with its transforms in canonical
+ * order; a literal writes `a:srgbClr`. A reference combined with a below-1
+ * alpha writes its resolved literal plus `a:alpha` — the AC-29 reader treats
+ * a `schemeClr` with an alpha child as unmodelled and would flatten it to a
+ * literal anyway, so resolving on write keeps the round trip consistent. */
+export function solidClrXml(color: ModelColor, theme: DocumentTheme, alpha?: number): string {
+  if (isThemeColor(color)) {
+    if (alpha === undefined || alpha >= 1) {
+      return schemeClrXmlFor(color);
+    }
+    return srgbClrXml(resolveColor(color, theme), alpha);
+  }
+  return srgbClrXml(color, alpha);
+}
+
 /** An `a:srgbClr`, with D5's 0..1 opacity written as `a:alpha` in
  * thousandths of a percent when below fully opaque. */
 export function srgbClrXml(color: string, alpha?: number): string {
@@ -797,7 +831,7 @@ function arrowEndXml(tag: "headEnd" | "tailEnd", arrow: ShapeArrowhead): string 
  * (SPEC-070 "Untangling the arrow preset") adds the bare
  * `<a:tailEnd type="triangle"/>` marking the model's `arrow` geometry —
  * suppressed when an explicit end arrowhead already writes a sized tail. */
-function outlineXml(outline: ShapeOutline | undefined, legacyTail = false): string {
+function outlineXml(outline: ShapeOutline | undefined, theme: DocumentTheme, legacyTail = false): string {
   const bareTail = legacyTail ? '<a:tailEnd type="triangle"/>' : "";
   if (!outline) {
     return `<a:ln>${bareTail || "<a:noFill/>"}</a:ln>`;
@@ -819,7 +853,7 @@ function outlineXml(outline: ShapeOutline | undefined, legacyTail = false): stri
   const tail = outline.endArrow ? arrowEndXml("tailEnd", outline.endArrow) : bareTail;
   return (
     `<a:ln w="${ptToEmu(outline.widthPt)}"${capAttr}${cmpdAttr}>` +
-    `<a:solidFill>${srgbClrXml(outline.color, outline.alpha)}</a:solidFill>` +
+    `<a:solidFill>${solidClrXml(outline.color, theme, outline.alpha)}</a:solidFill>` +
     dashXml(outline.dash) +
     joinXml +
     head +
@@ -832,12 +866,16 @@ function outlineXml(outline: ShapeOutline | undefined, legacyTail = false): stri
  * resolves a picture fill's mediaId to the relationship the media plan
  * registered — absent/unresolved falls back to `a:noFill` (the part is not
  * in the package, so a dangling r:embed would corrupt the file). */
-function fillXml(fill: ShapeFill | undefined, relIdForMedia?: (mediaId: string) => string | undefined): string {
+function fillXml(
+  fill: ShapeFill | undefined,
+  theme: DocumentTheme,
+  relIdForMedia?: (mediaId: string) => string | undefined,
+): string {
   if (!fill || fill.kind === "none") {
     return "<a:noFill/>";
   }
   if (fill.kind === "solid") {
-    return `<a:solidFill>${srgbClrXml(fill.color, fill.alpha)}</a:solidFill>`;
+    return `<a:solidFill>${solidClrXml(fill.color, theme, fill.alpha)}</a:solidFill>`;
   }
   if (fill.kind === "gradient") {
     const stops = fill.gradient.stops
@@ -982,6 +1020,8 @@ export function clearPreservedDocxStyle(
  * independent of paragraphXml's own dependency graph. */
 export interface ShapeTextWriteContext {
   paragraphXml: (paragraph: Paragraph) => string;
+  /** The document theme solid colours resolve/serialise against (SPEC-077). */
+  theme: DocumentTheme;
   /** The relationship id the media plan registered for a mediaId (SPEC-073
    * picture fills) — absent for callers whose part carries no media. */
   relIdForMedia?: (mediaId: string) => string | undefined;
@@ -1059,15 +1099,15 @@ export function shapeDrawingXml(shape: Shape, docPrId: number, ctx: ShapeTextWri
   const fillPart = isLine
     ? preserved.fill.join("")
     : shape.fill
-      ? fillXml(shape.fill, ctx.relIdForMedia)
+      ? fillXml(shape.fill, ctx.theme, ctx.relIdForMedia)
       : preserved.fill.length > 0
         ? preserved.fill.join("")
-        : fillXml(undefined, ctx.relIdForMedia);
+        : fillXml(undefined, ctx.theme, ctx.relIdForMedia);
   const lnPart = shape.outline
-    ? outlineXml(shape.outline, isArrow && !shape.outline.endArrow)
+    ? outlineXml(shape.outline, ctx.theme, isArrow && !shape.outline.endArrow)
     : preserved.ln.length > 0
       ? preserved.ln.join("")
-      : outlineXml(undefined, isArrow);
+      : outlineXml(undefined, ctx.theme, isArrow);
   const effectPart =
     shape.shadow || preserved.effectsBefore.length > 0 || preserved.effectsAfter.length > 0
       ? `<a:effectLst>${preserved.effectsBefore.join("")}${shape.shadow ? outerShdwXml(shape.shadow) : ""}${preserved.effectsAfter.join("")}</a:effectLst>`

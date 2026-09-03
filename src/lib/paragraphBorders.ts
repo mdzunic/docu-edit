@@ -17,11 +17,14 @@ import {
 import {
   DEFAULT_PARAGRAPH_BORDER_PADDING_PT,
   isParagraph,
+  plainModelColor,
   type Block,
   type Paragraph,
   type ParagraphBorders,
   type ParagraphFormatting,
 } from "./documentModel";
+import { resolveColor, sameModelColor } from "./core/theme";
+import type { DocumentTheme, ModelColor } from "./core/theme";
 
 /** The four physical padding edges, in the order the CSS shorthand wants. */
 export type BorderEdge = "top" | "bottom" | "left" | "right";
@@ -50,10 +53,12 @@ export function paragraphPaddingPt(borders: ParagraphBorders | undefined, edge: 
  * downstream renders it as a colour by accident. */
 export const NO_SHADING_FILL = "transparent";
 
-/** The fill a paragraph actually paints: its `shadingFill`, unless that is
- * the explicit no-fill override, which paints nothing. Every reader of the
- * field that wants a *colour* goes through here. */
-export function paintedShadingFill(formatting: ParagraphFormatting | undefined): string | undefined {
+/** The fill value a paragraph actually paints from: its `shadingFill`,
+ * unless that is the explicit no-fill override, which paints nothing. The
+ * result may still be a theme reference (SPEC-077) — a caller that wants a
+ * painted CSS colour resolves it through resolveColor. Every reader of the
+ * field goes through here. */
+export function paintedShadingFill(formatting: ParagraphFormatting | undefined): ModelColor | undefined {
   const fill = formatting?.shadingFill;
   return fill === undefined || fill === NO_SHADING_FILL ? undefined : fill;
 }
@@ -228,8 +233,11 @@ function mergesWith(
     return false;
   }
   // The *painted* fill, so a paragraph that spells "no fill" out as an
-  // override still merges with a neighbour that simply has none.
-  if (paintedShadingFill(a) !== paintedShadingFill(b)) {
+  // override still merges with a neighbour that simply has none. Theme
+  // references compare structurally (SPEC-077 AC-8) — two paragraphs
+  // shaded with the same accent merge, a reference never merges with its
+  // resolved literal.
+  if (!sameModelColor(paintedShadingFill(a), paintedShadingFill(b))) {
     return false;
   }
   if (!paragraphBordersEqual(a?.borders, b?.borders)) {
@@ -355,6 +363,7 @@ function pt(value: number): string {
  * on its margins, so the whole box follows them. */
 export function paragraphBorderStyle(
   formatting: ParagraphFormatting | undefined,
+  theme: DocumentTheme,
   edges: BorderPaintEdges = ALL_EDGES,
 ): Record<string, string> {
   if (!hasBorderPaint(formatting)) {
@@ -374,10 +383,10 @@ export function paragraphBorderStyle(
   const left: BorderSide | undefined = edges.sides ? borders?.left : undefined;
   const right: BorderSide | undefined = edges.sides ? borders?.right : undefined;
 
-  style.borderTop = borderSideCss(top);
-  style.borderBottom = borderSideCss(bottom);
-  style.borderLeft = borderSideCss(left);
-  style.borderRight = borderSideCss(right);
+  style.borderTop = borderSideCss(top, theme);
+  style.borderBottom = borderSideCss(bottom, theme);
+  style.borderLeft = borderSideCss(left, theme);
+  style.borderRight = borderSideCss(right, theme);
 
   // Padding sits on an edge only where that edge's rule is actually drawn —
   // a bottom-rule heading (a `---` autoformat rule) must not gain a 4pt
@@ -391,10 +400,10 @@ export function paragraphBorderStyle(
 
   const fill = paintedShadingFill(formatting);
   if (fill !== undefined) {
-    style.backgroundColor = fill;
+    style.backgroundColor = resolveColor(fill, theme);
     // Formatting marks are drawn on the shading, so the shading is the
     // surface they contrast against (AC-26).
-    Object.assign(style, paragraphMarkColorStyle(formatting));
+    Object.assign(style, paragraphMarkColorStyle(formatting, theme));
   }
   // Merged paragraphs must read as one block: no gap can open between two
   // members of a run, or the page would show through the box where the side
@@ -426,12 +435,13 @@ export const DEFAULT_MARK_COLOR = "#80868b";
  * decision is made once here rather than duplicated across four CSS rules. */
 export function paragraphMarkColorStyle(
   formatting: ParagraphFormatting | undefined,
+  theme: DocumentTheme,
 ): Record<string, string> {
   const fill = paintedShadingFill(formatting);
   if (fill === undefined) {
     return {};
   }
-  return { "--mark-color": isDarkFill(fill) ? "#d0d3d6" : DEFAULT_MARK_COLOR };
+  return { "--mark-color": isDarkFill(resolveColor(fill, theme)) ? "#d0d3d6" : DEFAULT_MARK_COLOR };
 }
 
 /** Whether a `"#rrggbb"` fill is dark enough that the default mark grey
@@ -541,7 +551,10 @@ export interface BorderEdgeDraft {
   on: boolean;
   style: BorderLineStyle;
   widthPt: number;
-  color: string;
+  /** A literal "#rrggbb" or a theme reference carried through from the
+   * paragraph's stored border (SPEC-077): an untouched edge keeps its
+   * reference; the dialog's colour input writes a literal when moved. */
+  color: ModelColor;
 }
 
 /** Every edge and padding the dialog edits. Padding is in points — the
@@ -600,7 +613,9 @@ export function bordersFromDraft(draft: BorderDraft): ParagraphBorders | undefin
   for (const edge of BORDER_DRAFT_EDGES) {
     const state = draft[edge];
     if (state.on) {
-      borders[edge] = { style: state.style, widthPt: state.widthPt, color: state.color };
+      // plainModelColor: a theme reference seeded from the model comes back
+      // out of the dialog's reactive draft as a Proxy — see documentModel.ts.
+      borders[edge] = { style: state.style, widthPt: state.widthPt, color: plainModelColor(state.color) };
     }
   }
   const padding = draft.paddingPt;
@@ -768,6 +783,6 @@ export function noParagraphBorders(): ParagraphBorders | null {
 }
 
 /** Typed `null` seed for the shading fill, likewise. */
-export function noShadingFill(): string | null {
+export function noShadingFill(): ModelColor | null {
   return null;
 }

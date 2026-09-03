@@ -104,7 +104,9 @@ const borderSummary = computed(() => {
 
 function applyStyleBorders(result = { borders: noParagraphBorders(), shadingFill: noShadingFill() }) {
   draft.borders = result.borders ?? undefined;
-  draft.shadingFill = result.shadingFill ?? "";
+  // SPEC-077: the dialog edits a literal draft; the borders dialog only ever
+  // returns a literal, so a non-string (theme reference) shape reads as none.
+  draft.shadingFill = typeof result.shadingFill === "string" ? result.shadingFill : "";
   bordersOpen.value = false;
 }
 

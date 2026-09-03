@@ -10,6 +10,7 @@
 // document does not define fall back to the built-in set below, which is
 // also the whole picker list for a blank document.
 import {
+  documentThemeOf,
   HORIZONTAL_RULE_STYLE_ID,
   mergeParagraphFormatting,
   mergeRunFormatting,
@@ -25,6 +26,7 @@ import {
 } from "./documentModel";
 import { type BorderLineStyle, type CellBorders } from "./core/tables";
 import { bandingFromDraft, type TableBandingDraft } from "./tableStyles";
+import type { DocumentTheme } from "./core/theme";
 import { runStyle } from "./renderFormatting";
 import {
   paragraphBordersEqual,
@@ -320,8 +322,8 @@ export interface StylePickerEntry {
   previewStyle: Record<string, string>;
 }
 
-function previewStyleFor(resolved: ResolvedNamedStyle): Record<string, string> {
-  const style = runStyle(resolved.runFormatting);
+function previewStyleFor(resolved: ResolvedNamedStyle, theme: DocumentTheme): Record<string, string> {
+  const style = runStyle(resolved.runFormatting, theme);
   // Cap the preview size so Title/Heading 1 don't blow up the menu; the
   // relative size difference stays visible.
   const size = resolved.runFormatting.fontSizePt;
@@ -353,7 +355,7 @@ export function stylePickerEntries(model: DocumentModel): StylePickerEntry[] {
     const entry: StylePickerEntry = {
       id: style.id,
       name: style.name ?? style.id,
-      previewStyle: previewStyleFor(resolved),
+      previewStyle: previewStyleFor(resolved, documentThemeOf(model)),
     };
     if (resolved.headingLevel !== undefined) {
       entry.headingLevel = resolved.headingLevel;

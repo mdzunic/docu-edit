@@ -2,19 +2,25 @@
 import { ref, useTemplateRef } from "vue";
 import { HIGHLIGHT_PICKER_ITEMS } from "../lib/core/colors";
 import { HIGHLIGHT_HEX } from "../lib/core/colors";
+import { resolveColor } from "../lib/core/theme";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
 const props = defineProps({
   /** The selection's highlight: an OOXML palette name, a "#rrggbb" for an
-   * out-of-palette colour (from an .odt), or false for no highlight —
-   * explicit or unset, which the picker shows identically. */
-  value: { type: [String, Boolean], default: false },
+   * out-of-palette colour (from an .odt), a ThemeColorRef (SPEC-077), or
+   * false for no highlight — explicit or unset, which the picker shows
+   * identically. */
+  value: { type: [String, Boolean, Object], default: false },
   /** True for a mixed selection: nothing renders active (SPEC-013 AC). */
   mixed: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
+  /** Optional DocumentTheme (SPEC-077 AC-20/22): when present, the theme
+   * row renders above the palette; picking a swatch emits the ThemeColorRef. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits(["select"]);
@@ -57,11 +63,22 @@ function pick(name = "") {
   open.value = false;
 }
 
+/** A theme swatch emits its ThemeColorRef, never the resolved hex
+ * (SPEC-077 AC-23). */
+function pickTheme(reference = Object()) {
+  emit("select", reference);
+  open.value = false;
+}
+
 /** The button's preview bar colour: the palette hex for a name, a raw hex
- * as-is, nothing for no-highlight or mixed. */
+ * as-is, a theme reference resolved for display (SPEC-077), nothing for
+ * no-highlight or mixed. */
 function currentHex() {
   if (props.mixed || props.value === false || props.value === true) {
     return "";
+  }
+  if (typeof props.value === "object") {
+    return props.theme ? resolveColor(Object(props.value), Object(props.theme)) : "";
   }
   return props.value.startsWith("#") ? props.value : (HIGHLIGHT_HEX[props.value] ?? "");
 }
@@ -105,6 +122,13 @@ function currentHex() {
       :style="menuStyle"
       @dismiss="open = false"
     >
+      <!-- Theme row (SPEC-077 AC-20/22): ABOVE the standard palette; a
+           swatch stores its ThemeColorRef, so the colour follows the theme. -->
+      <ThemeSwatchRow
+        :theme="theme"
+        testid="highlight-theme"
+        @select="pickTheme"
+      />
       <div class="swatch-grid">
         <!-- The 15 Word highlight colours (SPEC-013 AC); white is in the
              read/write palette but deliberately not offered here. -->

@@ -22,9 +22,11 @@ import {
   eventTargetValue,
   PAGE_BORDER_EDGES,
 } from "../lib/pageBorders";
-import { asPageBorders, asPageBorderAppliesTo, asPageBorderMeasureFrom } from "../lib/documentModel";
+import { asDocumentTheme, asPageBorders, asPageBorderAppliesTo, asPageBorderMeasureFrom } from "../lib/documentModel";
+import { isThemeColor, resolveColor } from "../lib/core/theme";
 import { BORDER_LINE_STYLES, asBorderLineStyleValue } from "../lib/core/borders";
 import BaseDialog from "./BaseDialog.vue";
+import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 import UiButton from "./ui/UiButton.vue";
 
 // The "Page setup" dialog (SPEC-027 AC-1..9): paper size (a standard size or
@@ -44,6 +46,11 @@ const props = defineProps({
   /** Prefill: { pageSize: {widthCm,heightCm}, margins: {topCm,rightCm,
    * bottomCm,leftCm}, measurementUnit, applyTo }. */
   initial: { type: Object, required: true },
+  /** The DocumentTheme (SPEC-077 AC-22): when present, a theme swatch row
+   * renders under the page-background control; picking a swatch makes OK
+   * carry the ThemeColorRef itself, not the hex it displays as. Null (the
+   * default) renders no row — existing mounts are unchanged. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
@@ -55,8 +62,33 @@ const activeTab = ref("page");
 const borderDraft = ref(emptyPageBorderDraft());
 borderDraft.value = pageBorderDraftFrom(
   asPageBorders(props.initial.pageBorders),
-  typeof props.initial.pageBackground === "string" ? props.initial.pageBackground : undefined,
+  // SPEC-077: a theme-referenced background seeds the draft as the reference
+  // itself, so an untouched OK re-emits it — reopening must not flatten it.
+  typeof props.initial.pageBackground === "string" || isThemeColor(props.initial.pageBackground)
+    ? props.initial.pageBackground
+    : undefined,
 );
+
+// The colour inputs can only display a hex, so a theme reference resolves
+// for display; the draft keeps the reference until the input itself is
+// edited (which writes a literal through the handlers below) — SPEC-077.
+const borderColorHex = computed(() => resolveColor(borderDraft.value.color, asDocumentTheme(props.theme)));
+const backgroundHex = computed(() => resolveColor(borderDraft.value.background, asDocumentTheme(props.theme)));
+
+function setBorderColor(value = "#000000") {
+  borderDraft.value.color = value;
+}
+
+function setBackgroundColor(value = "#fdf6e3") {
+  borderDraft.value.background = value;
+}
+
+/** A theme swatch for the page background (SPEC-077 AC-22): the draft holds
+ * the reference; the colour input shows its resolved hex. */
+function onBackgroundSwatch(reference = Object()) {
+  borderDraft.value.background = reference;
+  borderDraft.value.backgroundOn = true;
+}
 
 const BORDER_STYLE_LABELS = {
   none: "None",
@@ -469,10 +501,11 @@ function apply() {
         <label class="field">
           <span class="field-label">Colour</span>
           <input
-            v-model="borderDraft.color"
             class="field-input colour-input"
             type="color"
+            :value="borderColorHex"
             data-testid="page-border-color"
+            @input="setBorderColor(eventTargetValue($event.target))"
           >
         </label>
       </div>
@@ -535,14 +568,20 @@ function apply() {
           Page background
         </label>
         <input
-          v-model="borderDraft.background"
           class="field-input colour-input"
           type="color"
+          :value="backgroundHex"
           :disabled="!borderDraft.backgroundOn"
           data-testid="page-background-color"
           aria-label="Page background colour"
+          @input="setBackgroundColor(eventTargetValue($event.target))"
         >
       </div>
+      <ThemeSwatchRow
+        :theme="theme"
+        testid="page-background-theme"
+        @select="onBackgroundSwatch"
+      />
       <p class="hint">
         Page backgrounds print only when "Print background colours" is chosen
         in the print preview; page borders always print.

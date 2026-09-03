@@ -1,4 +1,6 @@
 // --- character formatting (SPEC-012) ----------------------------------------
+import { resolveColor, resolveFont, sameModelColor } from "./core/theme";
+import type { DocumentTheme, ModelColor, ThemeColorRef } from "./core/theme";
 import {
   isCollapsed,
   orderedRange,
@@ -7,6 +9,7 @@ import {
 } from "./commands.editing";
 import {
   cloneContainers,
+  documentThemeOf,
   type CharacterFormatKey,
   type DocumentModel,
   type PendingFormat,
@@ -139,17 +142,30 @@ export type RunFormatValueKey = "fontFamily" | "fontSizePt" | "color" | "highlig
  * formatting overridden by `pending`), mirroring formatState. */
 export interface FormatValueState {
   mixed: boolean;
-  value?: string | number | false;
+  value?: string | number | false | ThemeColorRef | { theme: "major" | "minor" };
 }
+
+/** What one run-format value field may hold after SPEC-077's widening. */
+type RunFormatValue = FormatValueState["value"] | undefined;
 
 // Highlight's explicit-off (`false`) and not-set (`undefined`) render
 // identically (no highlight), so the control must not report a selection
 // mixing only those two as indeterminate.
-function normalizeFormatValue(
-  key: RunFormatValueKey,
-  value: string | number | false | undefined,
-): string | number | false | undefined {
+function normalizeFormatValue(key: RunFormatValueKey, value: RunFormatValue): RunFormatValue {
   return key === "highlight" && value === undefined ? false : value;
+}
+
+/** Formatting-value equality for the mixed-state fold (SPEC-077 AC-8): theme
+ * references compare structurally through sameModelColor — two runs carrying
+ * the same accent are one value, and a reference is never equal to its
+ * resolved literal. Scalars keep `===`. */
+function sameFormatValue(a: RunFormatValue, b: RunFormatValue): boolean {
+  const aIsRef = typeof a === "object" && a !== null;
+  const bIsRef = typeof b === "object" && b !== null;
+  if (aIsRef || bIsRef) {
+    return aIsRef && bIsRef && sameModelColor(a as ModelColor, b as ModelColor);
+  }
+  return a === b;
 }
 
 export function formatValue(
@@ -170,7 +186,7 @@ export function formatValue(
   }
   const first = normalizeFormatValue(key, formattings[0][key]);
   for (const formatting of formattings) {
-    if (normalizeFormatValue(key, formatting[key]) !== first) {
+    if (!sameFormatValue(normalizeFormatValue(key, formatting[key]), first)) {
       return { mixed: true };
     }
   }
@@ -257,18 +273,42 @@ export function toolbarFormatValues(
   const size = formatValue(model, selection, "fontSizePt", pending);
   const color = formatValue(model, selection, "color", pending);
   const highlight = formatValue(model, selection, "highlight", pending);
+  // The toolbar controls display literals, so references resolve here —
+  // through resolveColor/resolveFont alone (SPEC-077 AC-7).
+  const theme = documentThemeOf(model);
   const highlightValue =
-    highlight.mixed || highlight.value === undefined || typeof highlight.value === "number"
+    highlight.mixed || highlight.value === undefined || typeof highlight.value === "number" || highlight.value === false
       ? false
-      : highlight.value;
+      : displayFormatValue(highlight.value, theme);
+  const familyValue = family.value ?? model.defaultStyles.fontFamily;
+  const colorValue = color.value ?? DEFAULT_TEXT_COLOR;
   return {
-    fontFamily: family.mixed ? "" : String(family.value ?? model.defaultStyles.fontFamily),
+    fontFamily: family.mixed ? "" : displayFormatValue(familyValue, theme),
     fontFamilyMixed: family.mixed,
     fontSizePt: size.mixed ? null : Number(size.value ?? model.defaultStyles.fontSizePt),
     fontSizeMixed: size.mixed,
-    color: color.mixed ? "" : String(color.value ?? DEFAULT_TEXT_COLOR),
+    color: color.mixed ? "" : displayFormatValue(colorValue, theme),
     colorMixed: color.mixed,
     highlight: highlightValue,
     highlightMixed: highlight.mixed,
   };
+}
+
+/** A format value as the toolbar displays it: a literal string as-is, a
+ * theme reference resolved against the document's theme, anything else
+ * (number/false/undefined — not this control's shape) blank. */
+function displayFormatValue(value: RunFormatValue, theme: DocumentTheme): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null) {
+    // Narrowed through a local so the slot discriminates the font/colour
+    // reference shapes (SPEC-077).
+    const slot = value.theme;
+    if (slot === "major" || slot === "minor") {
+      return resolveFont({ theme: slot }, theme);
+    }
+    return resolveColor({ ...value, theme: slot }, theme);
+  }
+  return "";
 }

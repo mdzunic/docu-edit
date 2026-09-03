@@ -28,6 +28,7 @@ import {
 } from "./commands.styles";
 import { presetLevels } from "./core/listDefinitions";
 import { type CellBorders } from "./core/tables";
+import { type ModelColor } from "./core/theme";
 import {
   cloneContainers,
   isTable,
@@ -120,7 +121,7 @@ export function toolbarCharacterStyleState(
 
 interface ResolvedTableStyle {
   cellBorders?: CellBorders;
-  cellShadingFill?: string;
+  cellShadingFill?: ModelColor;
   runFormatting: RunFormatting;
 }
 
@@ -143,7 +144,7 @@ function resolveTableStyle(model: DocumentModel, styleId: string | undefined): R
     currentId = style.basedOn;
   }
   let cellBorders: CellBorders | undefined;
-  let cellShadingFill: string | undefined;
+  let cellShadingFill: ModelColor | undefined;
   let runFormatting: RunFormatting = {};
   for (const style of chain) {
     if (style.cellBorders) {

@@ -8,6 +8,7 @@
 import { SHAPE_DEFINITIONS } from "./shapeCatalogue";
 import type { ShapePath } from "./shapePath";
 import { applyTransform, hexToRgb, rgbToHex } from "./theme";
+import type { ModelColor } from "./theme";
 
 /** The closed set of geometries the editor draws, resizes and round-trips
  * natively — the "expanded catalogue" of specs/069-shape-catalogue-expansion.md,
@@ -144,7 +145,8 @@ export const ARROWHEAD_SIZE_FACTORS: Record<ArrowheadSize, number> = {
  * spelling and meaning, the union only extends (AC-2). `alpha` follows D5
  * (0..1 opacity, absent = opaque). */
 export interface ShapeOutline {
-  color: string;
+  /** A literal "#rrggbb" or a theme colour reference (SPEC-077). */
+  color: ModelColor;
   widthPt: number;
   dash: "solid" | "dash" | "dot" | "dashDot" | "longDash" | "longDashDot";
   alpha?: number;
@@ -172,7 +174,7 @@ export interface ShapeGradient {
  * so the two share one part and one MediaRecord (AC-4). */
 export type ShapeFill =
   | { kind: "none" }
-  | { kind: "solid"; color: string; alpha?: number }
+  | { kind: "solid"; color: ModelColor; alpha?: number }
   | { kind: "gradient"; gradient: ShapeGradient }
   | { kind: "picture"; mediaId: string; mode: "stretch" | "tile"; alpha?: number }
   | { kind: "pattern"; preset: string; foreground: string; background: string };
@@ -193,13 +195,6 @@ export interface ShapeShadow {
 export function lighterTint(hex: string): string {
   const l = applyTransform(hexToRgb(hex), "lumMod", 0.6);
   return rgbToHex(applyTransform(l, "lumOff", 0.4));
-}
-
-/** The "Lighter 80%" tint (lumMod 0.2 then lumOff 0.8) — the subtleFilled
- * preset's fill (D3). */
-function lighterTint80(hex: string): string {
-  const l = applyTransform(hexToRgb(hex), "lumMod", 0.2);
-  return rgbToHex(applyTransform(l, "lumOff", 0.8));
 }
 
 /** Accepts the legacy `"#rrggbb"` string form and the `ShapeFill` union;
@@ -240,7 +235,7 @@ export function shapeFillIsVisible(fill: ShapeFill | undefined): boolean {
  * painted (PDF text extraction, library thumbnails): solid → its colour,
  * gradient → its first stop, pattern → its foreground; none/picture have no
  * meaningful flat colour. */
-export function shapeFillBaseColor(fill: ShapeFill | undefined): string | undefined {
+export function shapeFillBaseColor(fill: ShapeFill | undefined): ModelColor | undefined {
   if (!fill) {
     return undefined;
   }
@@ -343,11 +338,6 @@ export function defaultClickSizeCm(geometry: ShapeGeometry): { widthCm: number; 
  * fill/outline absent) or to a Line/Arrow (no area to fill). */
 export const DEFAULT_NEW_SHAPE_FILL: ShapeFill = { kind: "solid", color: "#4472c4" };
 
-/** The accent colour the defaults and the D3 style presets derive from —
- * `DEFAULT_NEW_SHAPE_FILL`'s own colour (SPEC-077 will swap this for a theme
- * colour; until then it is this literal). */
-const ACCENT = DEFAULT_NEW_SHAPE_FILL.color;
-
 /** The outline a gallery-drawn shape (area or Line/Arrow) starts with —
  * same reasoning as DEFAULT_NEW_SHAPE_FILL. */
 export const DEFAULT_NEW_SHAPE_OUTLINE: ShapeOutline = { color: "#2e5395", widthPt: 1, dash: "solid" };
@@ -388,33 +378,39 @@ export interface ShapeStylePreset {
   shadow?: ShapeShadow;
 }
 
-/** The exactly-five preset gallery (AC-18/AC-19), each colour derived from
- * the accent (`DEFAULT_NEW_SHAPE_FILL`) via core/theme.ts transforms — a
- * single source, ready for SPEC-077's theme accent. With today's literal
- * accent `#4472c4` these resolve to D3's table: subtleFilled's fill is the
- * accent at Lighter 80% (`#dae3f3`). */
+/** The exactly-five preset gallery (AC-18/AC-19). The colours SPEC-073 drew
+ * from the accent — the base `#4472c4` and its lighter variants — are theme
+ * references to accent1 (SPEC-077 AC-43), so applying a preset stores
+ * references and a theme change restyles those shapes. With the Office
+ * theme's accent1 the references resolve to exactly D3's table (AC-44):
+ * subtleFilled's fill is the accent at Lighter 80% (`#dae3f3`). The one
+ * colour that stays literal is the filled preset's `#2e5395` border: it was
+ * never the accent or a lighter variant of it, and no canonical
+ * lumMod/lumOff/shade/tint combination reproduces it from accent1 (the
+ * nearest, Darker 25%, resolves to #2f5597), so a reference there would
+ * break AC-44's byte-exact resolution pin. */
 export const SHAPE_STYLE_PRESETS: ShapeStylePreset[] = [
   {
     id: "filled",
     label: "Filled",
-    fill: { kind: "solid", color: ACCENT },
+    fill: { kind: "solid", color: { theme: "accent1" } },
     outline: { ...DEFAULT_NEW_SHAPE_OUTLINE },
   },
   {
     id: "subtleFilled",
     label: "Subtle fill",
-    fill: { kind: "solid", color: lighterTint80(ACCENT) },
-    outline: { color: ACCENT, widthPt: 1, dash: "solid" },
+    fill: { kind: "solid", color: { theme: "accent1", lumMod: 0.2, lumOff: 0.8 } },
+    outline: { color: { theme: "accent1" }, widthPt: 1, dash: "solid" },
   },
   {
     id: "outlined",
     label: "Outlined",
-    outline: { color: ACCENT, widthPt: 1.5, dash: "solid" },
+    outline: { color: { theme: "accent1" }, widthPt: 1.5, dash: "solid" },
   },
   {
     id: "outlinedShadow",
     label: "Outlined + shadow",
-    outline: { color: ACCENT, widthPt: 1.5, dash: "solid" },
+    outline: { color: { theme: "accent1" }, widthPt: 1.5, dash: "solid" },
     shadow: { ...DEFAULT_SHAPE_SHADOW },
   },
   { id: "noFill", label: "No fill" },

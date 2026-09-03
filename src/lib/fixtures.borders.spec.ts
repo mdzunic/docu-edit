@@ -18,6 +18,7 @@ import { parseOdt } from "./odf/reader";
 import { writeOdt } from "./odf/writer";
 import { equalStructural, firstStructuralDifference } from "./equality";
 import { borderRuns, fragmentEdges } from "./paragraphBorders";
+import { DEFAULT_THEME } from "./core/theme";
 import { paragraphStyle, pageBorderStyle } from "./renderFormatting";
 import {
   buildBorderFixtures,
@@ -145,6 +146,7 @@ for (const format of ["docx", "odt"] as const) {
       );
       const style = paragraphStyle(
         blocks[noteIndex] as Paragraph,
+        DEFAULT_THEME,
         [],
         "all",
         fragmentEdges(runs, noteIndex, true, true),
@@ -159,7 +161,7 @@ for (const format of ["docx", "odt"] as const) {
       const model = await open();
       const margins = model.defaultStyles.margins;
       for (const pageIndex of [0, 1, 5]) {
-        const style = pageBorderStyle(model.sections[0].pageBorders, margins, pageIndex);
+        const style = pageBorderStyle(model.sections[0].pageBorders, margins, pageIndex, DEFAULT_THEME);
         expect(style?.borderTop).toBe("3pt double #1f4e79");
       }
     });

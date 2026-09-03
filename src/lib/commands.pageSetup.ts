@@ -4,6 +4,7 @@ import { snapCm } from "./commands.paragraph";
 import { type Margins, type PageSize } from "./core/pageSetup";
 import { type MeasurementUnit } from "./core/units";
 import { type DocumentModel, type PageBorders, type Section } from "./documentModel";
+import { type ModelColor } from "./core/theme";
 
 /** Drops a stale preserved `w:sectPr` (SPEC-027): any command that changes
  * the page size or margins must not let the writer re-emit the source
@@ -198,7 +199,7 @@ export function setPageSetup(
 export function setPageBorders(
   model: DocumentModel,
   selection: ModelSelection,
-  patch: { pageBorders?: PageBorders | null; pageBackground?: string | null },
+  patch: { pageBorders?: PageBorders | null; pageBackground?: ModelColor | null },
   applyTo: PageSetupScope = "thisSection",
 ): CommandResult {
   const target = orderedRange(model, selection).start.section;

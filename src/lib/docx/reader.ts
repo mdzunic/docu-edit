@@ -13,6 +13,7 @@ import type {
   CommentMessage,
   CommentThread,
   DefaultStyles,
+  DocTheme,
   DocumentProperties,
   FieldKind,
   HeaderFooterKind,
@@ -119,6 +120,8 @@ import {
   parseRunPropertiesChange,
 } from "./properties";
 import { ooxmlColorToCss } from "../core/colors";
+import type { ModelColor } from "../core/theme";
+import { readDocxTheme, THEME_RELATIONSHIP, themeRefFromAttrs } from "./theme";
 import { twipsToCm } from "../core/units";
 import { parseCoreProperties, parseCustomProperties } from "../core/opcProperties";
 import { OFFICE_DOCUMENT_RELATIONSHIP } from "../core/packageDetect";
@@ -285,6 +288,9 @@ export interface ParsedDocxDocument {
   /** Multilevel list definitions (SPEC-032) reconstructed from composite
    * abstractNums the body actually references; empty when there are none. */
   listDefinitions: ListDefinition[];
+  /** The document's theme (SPEC-077 AC-25), parsed from the theme part the
+   * main part's rels name; absent when the package has none. */
+  theme?: DocTheme;
   /** Footnote/endnote contents (SPEC-031) the body's reference marks link
    * to; empty when the package has neither part. */
   notes: NoteContent[];
@@ -1598,9 +1604,18 @@ function parseCellBorders(tcPr: Element): CellBorders | undefined {
  * background colour; `w:color` is the pattern colour on top of it, which the
  * model has no slot for and drops (the same simplification run shading
  * makes, SPEC-013). */
-function parseCellShading(tcPr: Element): string | undefined {
+function parseCellShading(tcPr: Element): ModelColor | undefined {
   const shd = firstChildElement(tcPr, WORD_NAMESPACE, "shd");
-  return shd ? ooxmlColorToCss(wordAttr(shd, "fill")) : undefined;
+  if (!shd) {
+    return undefined;
+  }
+  // @w:themeFill becomes a reference (SPEC-077 AC-27), same as run shading.
+  const ref = themeRefFromAttrs(
+    wordAttr(shd, "themeFill"),
+    wordAttr(shd, "themeFillTint"),
+    wordAttr(shd, "themeFillShade"),
+  );
+  return ref ?? ooxmlColorToCss(wordAttr(shd, "fill")) ?? undefined;
 }
 
 /** A cell's `w:tcMar` (SPEC-023 AC-16): the model holds one uniform padding,
@@ -2859,6 +2874,7 @@ export async function parseDocx(
 
   let stylesDoc: Document | undefined;
   let numberingCatalog: NumberingCatalog = EMPTY_NUMBERING_CATALOG;
+  let docTheme: DocTheme | undefined;
   const mainRelsText = readPart(relsPathFor(mainPartPath));
   const mainRels: Map<string, Relationship> = mainRelsText ? parseRelationships(mainRelsText) : new Map();
   if (mainRelsText) {
@@ -2876,6 +2892,17 @@ export async function parseDocx(
       const numberingText = readPart(resolvePartPath(mainPartPath, numberingRel.target));
       if (numberingText) {
         numberingCatalog = parseNumberingCatalog(parseXml(numberingText));
+      }
+    }
+    // The theme part (SPEC-077 AC-25): word/theme/themeN.xml into
+    // model.theme, its part path recorded so the writer can splice or
+    // preserve exactly that part. `dirty` stays unset on open (AC-18).
+    const themeRel = Array.from(mainRels.values()).find((rel) => rel.type === THEME_RELATIONSHIP);
+    if (themeRel) {
+      const themePartPath = resolvePartPath(mainPartPath, themeRel.target);
+      const themeText = readPart(themePartPath);
+      if (themeText) {
+        docTheme = readDocxTheme(themeText, themePartPath);
       }
     }
   }
@@ -3289,6 +3316,9 @@ export async function parseDocx(
     trackChangesRecording,
     properties,
   };
+  if (docTheme) {
+    result.theme = docTheme;
+  }
   if (footnoteSettings) {
     result.footnoteSettings = footnoteSettings;
   }

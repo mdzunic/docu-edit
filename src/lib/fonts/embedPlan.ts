@@ -6,6 +6,7 @@
 // actual face bytes (bundled fetch / embedded extraction) is the composable's
 // job, injected as `resolveFace`.
 import {
+  documentThemeOf,
   isBreak,
   isChart,
   isConnector,
@@ -15,6 +16,7 @@ import {
   isTof,
   type DocumentModel,
 } from "../documentModel";
+import { resolveFont } from "../core/theme";
 import { subsetFont } from "./subset";
 
 export interface StyleUsage {
@@ -57,6 +59,7 @@ function styleKey(bold: boolean, italic: boolean): string {
 /** Every family+style a run actually uses, with the code points needed. The
  * document default backs a run with no explicit family. */
 export function collectFontUsage(model: DocumentModel): StyleUsage[] {
+  const theme = documentThemeOf(model);
   const byKey = new Map<string, StyleUsage>();
   const add = (family: string, bold: boolean, italic: boolean, text: string) => {
     if (!family || text.length === 0) {
@@ -85,7 +88,7 @@ export function collectFontUsage(model: DocumentModel): StyleUsage[] {
       for (const paragraph of paragraphs) {
         for (const run of paragraph.runs) {
           add(
-            run.formatting.fontFamily ?? defaultFamily,
+            resolveFont(run.formatting.fontFamily ?? defaultFamily, theme),
             run.formatting.bold === true,
             run.formatting.italic === true,
             run.text,

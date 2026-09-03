@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { asMeasurementUnit, formatLength, parseLengthToCm } from "../lib/core/units";
+import { isThemeColor, resolveColor } from "../lib/core/theme";
+import { asDocumentTheme, plainModelColor } from "../lib/documentModel";
 import BaseDialog from "./BaseDialog.vue";
+import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 import UiButton from "./ui/UiButton.vue";
 
 // The table properties dialog (SPEC-023 AC-10..23): border style/width/
@@ -22,6 +25,11 @@ const props = defineProps({
   /** The document's measurement-unit preference (SPEC-064) — the length
    * fields display and parse in this unit; the model stays in centimetres. */
   unit: { type: String, default: "cm" },
+  /** The DocumentTheme (SPEC-077 AC-22): when present, a theme swatch row
+   * renders under the shading colour input; picking a swatch makes OK carry
+   * the ThemeColorRef itself, not the hex it displays as. Null (the default)
+   * renders no row — existing mounts are unchanged. */
+  theme: { type: Object, default: null },
 });
 
 const emit = defineEmits(["apply", "cancel"]);
@@ -36,7 +44,22 @@ const borderColor = ref(String(props.initial.borderColor || "#000000"));
 const pendingPreset = ref("");
 
 const shadingEnabled = ref(!!props.initial.shadingFill);
-const shadingFill = ref(String(props.initial.shadingFill || "#ffff00"));
+// SPEC-077 AC-22/23: a theme swatch stores the reference here so OK carries
+// it to the cells; any manual edit of the colour input clears it back to a
+// literal. The colour input itself only ever displays a resolved hex.
+const shadingRef = ref(isThemeColor(props.initial.shadingFill) ? props.initial.shadingFill : null);
+const shadingFill = ref(
+  isThemeColor(props.initial.shadingFill)
+    ? resolveColor(props.initial.shadingFill, asDocumentTheme(props.theme))
+    : String(props.initial.shadingFill || "#ffff00"),
+);
+
+/** A theme swatch (SPEC-077): store the reference, show its resolved hex. */
+function onShadingSwatch(reference = Object()) {
+  shadingRef.value = reference;
+  shadingEnabled.value = true;
+  shadingFill.value = resolveColor(reference, asDocumentTheme(props.theme));
+}
 
 // Held as display text in the current unit; the underlying cm stays canonical.
 const paddingText = ref(formatLength(props.initial.paddingCm ?? 0.19, measurementUnit.value));
@@ -102,7 +125,10 @@ function apply() {
     borderStyle: borderStyle.value,
     borderWidthPt: Number(borderWidthPt.value),
     borderColor: borderColor.value,
-    shadingFill: shadingEnabled.value ? shadingFill.value : "",
+    // A stored theme reference wins over the hex it displays as (SPEC-077);
+    // plainModelColor detaches it from this ref's reactive wrapper so the
+    // model never holds a Proxy (see documentModel.ts).
+    shadingFill: shadingEnabled.value ? (plainModelColor(shadingRef.value) ?? shadingFill.value) : "",
     paddingCm: parseLengthToCm(paddingText.value, measurementUnit.value) ?? 0,
     verticalAlign: verticalAlign.value,
     alignment: alignment.value,
@@ -213,7 +239,13 @@ function apply() {
         data-testid="table-props-shading-color"
         type="color"
         :disabled="!shadingEnabled"
+        @input="shadingRef = null"
       >
+      <ThemeSwatchRow
+        :theme="theme"
+        testid="table-props-shading-theme"
+        @select="onShadingSwatch"
+      />
     </section>
 
     <section class="section">

@@ -6,7 +6,7 @@
 // package shape) plus its META-INF/manifest.xml file-entries. Keyed by a
 // chart's *location* (section/block index), not a stable id — Chart carries
 // no field named `id` (IGNORED_KEYS, see documentModel.ts).
-import { isChart, type DocumentModel } from "../documentModel";
+import { documentThemeOf, isChart, type DocumentModel } from "../documentModel";
 import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "./chart";
 import type { OdtManifestEntry } from "./media";
 import type { ZipEntryInput } from "../core/zipWriter";
@@ -106,7 +106,9 @@ export function planOdfChartWrite(
       }
       const objectDir = sourceDir ?? freshObjectDir();
       const needsRegeneration = forceRegenerate || !sourceDir || (block.edited === true && block.unsupportedChartXml === undefined);
-      const xml = needsRegeneration ? odfChartContentXml(block, block.widthCm, block.heightCm) : null;
+      const xml = needsRegeneration
+        ? odfChartContentXml(block, block.widthCm, block.heightCm, documentThemeOf(model))
+        : null;
       const partName = `${objectDir}/content.xml`;
       if (xml !== null) {
         if (sourceDir) {

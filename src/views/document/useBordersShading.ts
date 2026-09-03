@@ -9,7 +9,8 @@
 import { ref } from "vue";
 import { applyParagraphBorders, type ModelSelection } from "../../lib/commands";
 import { firstTouchedParagraph } from "../../lib/commands.paragraph";
-import type { ParagraphBorders } from "../../lib/documentModel";
+import { documentThemeOf, type ParagraphBorders } from "../../lib/documentModel";
+import { resolveColor, type ModelColor } from "../../lib/core/theme";
 import { paintedShadingFill } from "../../lib/paragraphBorders";
 import { paintedParagraphFormatting } from "../../lib/styles";
 import type { EditorContext } from "./context";
@@ -17,7 +18,9 @@ import type { EditorContext } from "./context";
 /** What the dialog emits on OK — the `null`-removes shape the command takes. */
 export interface BordersShadingResult {
   borders: ParagraphBorders | null;
-  shadingFill: string | null;
+  /** A literal hex, or the ThemeColorRef a theme swatch chose (SPEC-077) —
+   * passed to the command unchanged so the model stores the reference. */
+  shadingFill: ModelColor | null;
 }
 
 export interface BordersShadingDeps extends EditorContext {
@@ -58,7 +61,9 @@ export function useBordersShading(deps: BordersShadingDeps) {
     const root = contentRoot.value as HTMLElement | null;
     const paragraph = firstTouchedParagraph(model, deps.paragraphSelection(root));
     const formatting = paragraph ? paintedParagraphFormatting(model, paragraph) : undefined;
-    return { borders: formatting?.borders, shadingFill: paintedShadingFill(formatting) };
+    // SPEC-077: the dialog edits a literal draft; a theme reference resolves for display.
+    const fill = paintedShadingFill(formatting);
+    return { borders: formatting?.borders, shadingFill: fill === undefined ? undefined : resolveColor(fill, documentThemeOf(model)) };
   }
 
   function openBordersDialog(): void {

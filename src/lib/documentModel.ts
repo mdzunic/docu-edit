@@ -3,6 +3,8 @@
 // `JSON.stringify`/`JSON.parse` round-trips it without loss — that property
 // is what SPEC-006/007 (save) and SPEC-004/005 (open) will rely on.
 import { DEFAULT_LANGUAGE } from "./core/language";
+import { DEFAULT_THEME } from "./core/theme";
+import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "./core/theme";
 import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
 import type { OpaquePart } from "./core/packageParts";
 import type {
@@ -43,20 +45,24 @@ export interface RunFormatting {
   italic?: boolean;
   underline?: boolean;
   strikethrough?: boolean;
-  /** e.g. "Calibri" */
-  fontFamily?: string;
+  /** A literal family ("Calibri") or a theme font reference (SPEC-077).
+   * Resolved through resolveFont against documentThemeOf(model). */
+  fontFamily?: ModelFont;
   fontSizePt?: number;
-  /** CSS-ready colour, e.g. "#ff0000". */
-  color?: string;
+  /** CSS-ready colour ("#ff0000") or a theme colour reference (SPEC-077).
+   * Resolved through resolveColor against documentThemeOf(model). */
+  color?: ModelColor;
   /** OOXML highlight colour name ("yellow") for the 16-colour palette, a
-   * lowercase "#rrggbb" for any other colour, or `false` for an explicit
+   * lowercase "#rrggbb" for any other colour, `false` for an explicit
    * "No colour" — distinct from undefined (not set) the same way the
-   * boolean toggles distinguish explicit-off from unset (SPEC-013). */
-  highlight?: string | false;
-  /** Run shading (`w:shd` fill) as lowercase "#rrggbb" — a preservation
-   * slot set only when a source run carried both `w:highlight` and `w:shd`
-   * (SPEC-013). Never shown in the picker; the highlight wins on screen. */
-  shadingFill?: string;
+   * boolean toggles distinguish explicit-off from unset (SPEC-013) — or a
+   * theme colour reference (SPEC-077). */
+  highlight?: string | false | ThemeColorRef;
+  /** Run shading (`w:shd` fill) as lowercase "#rrggbb" or a theme reference —
+   * a preservation slot set only when a source run carried both `w:highlight`
+   * and `w:shd` (SPEC-013). Never shown in the picker; the highlight wins on
+   * screen. */
+  shadingFill?: ModelColor;
   vertAlign?: VerticalAlignment;
   /** External hyperlink target (SPEC-025) — an absolute URL. Two scalar
    * fields rather than one `{href}` object so run coalescing and formatting
@@ -103,10 +109,10 @@ export interface PendingFormat {
   italic?: boolean;
   underline?: boolean;
   strikethrough?: boolean;
-  fontFamily?: string;
+  fontFamily?: ModelFont;
   fontSizePt?: number;
-  color?: string;
-  highlight?: string | false;
+  color?: ModelColor;
+  highlight?: string | false | ThemeColorRef;
   vertAlign?: VerticalAlignment | false;
   /** SPEC-035's language selector, applied to a real selection via
    * applyFormat. */
@@ -486,9 +492,10 @@ export interface ParagraphFormatting {
   tabStops?: TabStop[];
   /** Paragraph borders (SPEC-074 AC-4); absent means none. */
   borders?: ParagraphBorders;
-  /** Paragraph background as a CSS-ready "#rrggbb" (SPEC-074 AC-5). Absent
-   * means no fill, which is distinct from "#ffffff". */
-  shadingFill?: string;
+  /** Paragraph background as a CSS-ready "#rrggbb" or a theme reference
+   * (SPEC-074 AC-5, SPEC-077). Absent means no fill, which is distinct
+   * from "#ffffff". */
+  shadingFill?: ModelColor;
 }
 
 // --- paragraph borders and shading (SPEC-074) -------------------------------
@@ -615,7 +622,10 @@ export type StyleType = "paragraph" | "character" | "list" | "table";
  * this stays `unmodeled` and round-trips verbatim (AC-71). */
 export interface TableConditionalFormat {
   /** Background as a CSS-ready "#rrggbb". */
-  shading?: string;
+  /** A literal "#rrggbb" or a theme reference (SPEC-077). Resolved at
+   * paint time by renderFormatting's tableCellStyle, and at write time by
+   * each format's own writer. */
+  shading?: ModelColor;
   bold?: boolean;
   borders?: CellBorders;
 }
@@ -726,8 +736,9 @@ export interface NamedStyle {
    * set applies uniformly. */
   cellBorders?: CellBorders;
   /** Table-type styles only (SPEC-042): default cell background a table
-   * using this style bakes onto cells that carry no shading of their own. */
-  cellShadingFill?: string;
+   * using this style bakes onto cells that carry no shading of their own.
+   * A literal "#rrggbb" or a theme reference (SPEC-077). */
+  cellShadingFill?: ModelColor;
   /** Table-type styles only (SPEC-076): the style's conditional formatting —
    * row/column banding and the four edge regions. Resolved at render time by
    * lib/tableStyles.ts against the table's own `look`; never baked onto
@@ -927,7 +938,7 @@ export interface CellPropertyChange extends TrackedChangeInfo {
     colSpan?: number;
     rowSpan?: number;
     borders?: CellBorders;
-    shadingFill?: string;
+    shadingFill?: ModelColor;
     paddingCm?: number;
     verticalAlign?: CellVerticalAlign;
   };
@@ -1385,8 +1396,9 @@ export interface TableCell {
   covered?: boolean;
   /** This cell's own border overrides (SPEC-023 AC-10..14). */
   borders?: CellBorders;
-  /** Background shading as a CSS-ready "#rrggbb" (SPEC-023 AC-15). */
-  shadingFill?: string;
+  /** Background shading as a CSS-ready "#rrggbb" or a theme reference
+   * (SPEC-023 AC-15, SPEC-077). */
+  shadingFill?: ModelColor;
   /** Cell padding in cm, all four sides (SPEC-023 AC-16); absent uses the
    * renderer/writer's own default padding. */
   paddingCm?: number;
@@ -1905,8 +1917,9 @@ export interface Section {
    * document-wide (`w:background`) and `.odt` per master page: the writers
    * reconcile (the .docx writer writes the first section's value and reports
    * a DropRecord if sections disagree), because modelling per section and
-   * losing on write beats being unable to read a valid `.odt`. */
-  pageBackground?: string;
+   * losing on write beats being unable to read a valid `.odt`. A literal
+   * "#rrggbb" or a theme reference (SPEC-077). */
+  pageBackground?: ModelColor;
 }
 
 // PageSize and Margins moved to core/pageSetup.ts and MeasurementUnit (the
@@ -1918,7 +1931,8 @@ export interface Section {
 export interface DefaultStyles {
   pageSize: PageSize;
   margins: Margins;
-  fontFamily: string;
+  /** A literal family or a theme font reference (SPEC-077). */
+  fontFamily: ModelFont;
   fontSizePt: number;
   /** The document's default language (SPEC-035), e.g. "en-US" — see
    * lib/language.ts. Absent means the product default (DEFAULT_LANGUAGE);
@@ -2014,12 +2028,53 @@ export function cloneDocumentProperties(properties?: DocumentProperties): Docume
   return { ...cloned, customProperties: cloned.customProperties ?? [] };
 }
 
+/** The document's colour and font scheme (SPEC-077): the shared
+ * twelve-colour/two-font DocumentTheme plus this product's bookkeeping —
+ * which package part it came from and whether the user edited it. The
+ * word-processor mirror of the presentation product's DeckTheme. */
+export interface DocTheme extends DocumentTheme {
+  /** The package part the theme was read from (e.g. "word/theme/theme1.xml").
+   * Absent for a theme that has no part yet (blank document, .odt, .md). */
+  partName?: string;
+  /** Set when the user applied or customised the theme this session
+   * (SPEC-077 AC-18); opening a document leaves it unset. The .docx writer
+   * splices the edited scheme into the preserved part only when set. */
+  dirty?: true;
+}
+
+/** The single way a document surface obtains its theme (SPEC-077 AC-3):
+ * the document's own theme, else the product default. */
+export function documentThemeOf(model: { theme?: DocumentTheme } | null | undefined): DocumentTheme {
+  return model?.theme ?? DEFAULT_THEME;
+}
+
+/** Typed pass-through for a theme prop arriving through a runtime-declared
+ * Object (espree bars the annotation in `.vue` scripts — see asRenderEntries
+ * for the same pattern). A missing/null prop falls back to the product
+ * default theme. */
+export function asDocumentTheme(value: unknown): DocumentTheme {
+  return (value ?? DEFAULT_THEME) as DocumentTheme;
+}
+
+/** A `ModelColor` detached from any reactive dialog draft that held it. A
+ * theme reference stored into a Vue `ref` draft comes back as a reactive
+ * Proxy, and a Proxy cannot pass the structured-clone boundaries the model
+ * must cross (the word-count worker's postMessage, IndexedDB persistence) —
+ * every draft→model conversion routes its colour values through here so the
+ * model only ever holds plain objects (SPEC-077 AC-22). */
+export function plainModelColor<T extends ModelColor | null | undefined>(color: T): T {
+  return (typeof color === "object" && color !== null ? { ...color } : color) as T;
+}
+
 /** The root of the document tree. */
 export interface DocumentModel {
   id: string;
   title: string;
   sections: Section[];
   defaultStyles: DefaultStyles;
+  /** The document's colour and font scheme (SPEC-077). Absent means the
+   * product default theme (see documentThemeOf). */
+  theme?: DocTheme;
   /** The document's own paragraph-style catalogue (SPEC-019), read from the
    * opened file's styles.xml. Absent for blank documents — the picker then
    * offers the built-in set from lib/styles.ts. */

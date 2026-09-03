@@ -878,6 +878,13 @@ function chooseTableGrid(rows = 0, cols = 0) {
         :disabled="!editable"
         @select="emit('command', 'format.columns')"
       />
+      <!-- Format → Theme… opens the document-theme gallery (SPEC-077 AC-9). -->
+      <MenuItem
+        label="Theme…"
+        testid="format-menu-theme"
+        :disabled="!editable"
+        @select="emit('command', 'format.theme')"
+      />
       <hr class="menu-separator">
       <!-- SPEC-072: align, distribute, the align-to reference and the numeric
            position dialog for a drawing selection. A new command names its
