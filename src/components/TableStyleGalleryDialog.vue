@@ -75,7 +75,7 @@ function lookOn(key = "firstRow") {
       aria-label="Table styles"
     >
       <button
-        v-for="entry in entries"
+        v-for="(entry, index) in entries"
         :key="entry.id ?? 'none'"
         type="button"
         class="gallery-tile"
@@ -83,7 +83,7 @@ function lookOn(key = "firstRow") {
         :class="{ selected: appliedId === entry.id }"
         :aria-selected="appliedId === entry.id"
         :data-testid="`table-style-${entry.id ?? 'none'}`"
-        autofocus
+        :autofocus="index === 0"
         @click="emit('apply', entry.id)"
       >
         <span class="gallery-preview">

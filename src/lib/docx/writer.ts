@@ -2487,11 +2487,11 @@ function collectReferencedStyleIds(model: DocumentModel): Set<string> {
 function stylePropertiesXml(definition: NamedStyle): string {
   if (definition.type === "table") {
     // Table styles (SPEC-042): the resolved border/shading set bakes onto
-    // every cell at apply time (commands.ts's applyTableStyle) — this
-    // declaration is written for a real .docx consumer's benefit (a plain
-    // Word open still sees a valid table style), never re-parsed by this
-    // app's own reader (table styles always come back `unmodeled`, see
-    // docx/styles.ts — banding regions are out of scope, SPEC-042).
+    // every cell at apply time (commands.ts's applyTableStyle). Since
+    // SPEC-076 (AC-71) the reader models this declaration back: a table
+    // style whose w:tblPr holds only band sizes and whose w:tblStylePr
+    // regions are all expressible as TableStyleBanding round-trips through
+    // the catalogue instead of coming back `unmodeled` (see docx/styles.ts).
     const tcPrParts = [cellBordersXml(definition.cellBorders), cellShadingXml(definition.cellShadingFill)].filter(
       (part) => part.length > 0,
     );
@@ -2716,13 +2716,19 @@ export function patchStylesXml(model: DocumentModel, originalXml: string): strin
       }
       replacement.setAttributeNodeNS(attr.cloneNode(true) as Attr);
     }
-    const regenerated = new Set(["name", "basedOn", "next", "pPr", "rPr", "tcPr"]);
-    // CT_Style puts pPr/rPr/tcPr last, so preserved children slot in before them.
+    // tblPr/tblStylePr joined this set with SPEC-076 (AC-71 makes table
+    // styles modelled): the replacement regenerates both from the model, and
+    // classification (docx/styles.ts) only admits a table style here when
+    // its w:tblPr holds nothing beyond the two band sizes and every
+    // w:tblStylePr type is within the six — so dropping the originals loses
+    // nothing and keeping them would duplicate elements CT_Style caps at one.
+    const regenerated = new Set(["name", "basedOn", "next", "pPr", "rPr", "tcPr", "tblPr", "tblStylePr"]);
+    // CT_Style puts the property elements last, so preserved children slot
+    // in before the first of them.
+    const propertyElements = new Set(["pPr", "rPr", "tblPr", "tcPr", "tblStylePr"]);
     const propertiesStart =
       Array.from(replacement.children).find(
-        (el) =>
-          el.namespaceURI === WORD_NAMESPACE &&
-          (el.localName === "pPr" || el.localName === "rPr" || el.localName === "tcPr"),
+        (el) => el.namespaceURI === WORD_NAMESPACE && propertyElements.has(el.localName),
       ) ?? null;
     for (const child of Array.from(existing.children)) {
       if (child.namespaceURI === WORD_NAMESPACE && regenerated.has(child.localName)) {

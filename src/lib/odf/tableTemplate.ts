@@ -53,6 +53,14 @@ export function templateCellStyleName(styleId: string, child: string): string {
   return `${styleId}.${child}`;
 }
 
+/** Every cell-style name `tableTemplateXml` can generate for one style — the
+ * set a patched styles.xml must clear before re-emitting the style, so a
+ * previous save's artefacts (or a since-removed region's) never linger
+ * beside the fresh ones (SPEC-076 AC-68). */
+export function templateCellStyleNames(styleId: string): string[] {
+  return REGIONS.map((region) => templateCellStyleName(styleId, region.child));
+}
+
 /** The `table:use-*-styles` attributes for a table's `look` (AC-68). An
  * absent look writes nothing at all, which is ODF's own default of "no
  * template regions in use". */

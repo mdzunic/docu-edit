@@ -123,7 +123,7 @@ import { formulaFrameAltText, planOdfFormulaWrite, type OdfFormulaWritePlan } fr
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
-import { tableTemplateXml, tableUseStyleAttrs } from "./tableTemplate";
+import { tableTemplateXml, tableUseStyleAttrs, templateCellStyleNames } from "./tableTemplate";
 import {
   DRAW_NAMESPACE,
   FO_NAMESPACE,
@@ -3260,7 +3260,32 @@ export function patchOdtStylesXml(
     const wrapper = parseXml(
       `<office:document-styles${DOCUMENT_XMLNS}>${namedStyleDefinitionXml(definition)}</office:document-styles>`,
     );
-    const imported = stylesDoc.importNode(wrapper.documentElement.firstElementChild!, true);
+    // A banded table style is several siblings — the style itself, its
+    // generated table-cell styles and the table:table-template (SPEC-076
+    // AC-68) — so import every element, not just the first.
+    const imported = Array.from(wrapper.documentElement.children).map(
+      (el) => stylesDoc.importNode(el, true) as Element,
+    );
+    if (definition.type === "table" && !definition.unmodeled) {
+      // Clear the artefacts a previous save generated for this style before
+      // re-emitting: a since-removed region's cell style must not linger,
+      // and a cleared banding must not resurrect from a stale template.
+      const generatedNames = new Set(templateCellStyleNames(definition.id));
+      for (const el of Array.from(officeStyles.children)) {
+        const staleTemplate =
+          el.namespaceURI === TABLE_NAMESPACE &&
+          el.localName === "table-template" &&
+          el.getAttributeNS(TABLE_NAMESPACE, "name") === definition.id;
+        const staleCellStyle =
+          el.namespaceURI === STYLE_NAMESPACE &&
+          el.localName === "style" &&
+          el.getAttributeNS(STYLE_NAMESPACE, "family") === "table-cell" &&
+          generatedNames.has(el.getAttributeNS(STYLE_NAMESPACE, "name") ?? "");
+        if (staleTemplate || staleCellStyle) {
+          officeStyles.removeChild(el);
+        }
+      }
+    }
     // Matched by name alone (SPEC-042): a style's family no longer maps 1:1
     // onto "paragraph", and a style:name is unique across families in one
     // styles.xml the same way a .docx styleId is.
@@ -3270,10 +3295,16 @@ export function patchOdtStylesXml(
         el.localName === "style" &&
         el.getAttributeNS(STYLE_NAMESPACE, "name") === definition.id,
     );
+    const [self, ...siblings] = imported;
     if (existing) {
-      officeStyles.replaceChild(imported, existing);
+      officeStyles.replaceChild(self, existing);
     } else {
-      officeStyles.appendChild(imported);
+      officeStyles.appendChild(self);
+    }
+    let anchor = self;
+    for (const sibling of siblings) {
+      officeStyles.insertBefore(sibling, anchor.nextSibling);
+      anchor = sibling;
     }
   }
   return `${XML_DECLARATION}${serializeElement(root)}`;
