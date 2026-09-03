@@ -356,12 +356,19 @@ onBeforeUnmount(() => {
   position: fixed;
   z-index: 40;
   min-width: 12rem;
+  /* Never taller than the screen: the placement clamp above can only SHIFT a
+     menu that fits, so a menu with every section present needs a ceiling of
+     its own. It is a safety net — the density rule below is what keeps the
+     table section inside a short viewport without scrolling at all. */
+  max-height: calc(100vh - var(--space-5));
+  overflow-y: auto;
   padding: var(--space-1);
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-2);
 }
+
 
 /* min-height, not vertical padding, sets the 32px hit target (AC-48): it keeps
    each row exactly one --height-control tall, so a menu with every section
@@ -398,5 +405,18 @@ onBeforeUnmount(() => {
   height: 1px;
   margin: var(--space-1) 0;
   background: var(--border-subtle);
+}
+
+/* SPEC-076 adds a "Repeat header row" item to the table section, and fifteen
+   32px hit targets already fill a 500px-tall viewport. On a short window the
+   rows tighten by one spacing step so the whole menu still lands inside it
+   without scrolling (SPEC-023's Table-properties reachability test). Stated
+   against the token rather than as a literal, so a coarse pointer — where
+   --height-control is 44px because the finger needs it — tightens to 38px
+   rather than to a mouse-sized target. */
+@media (max-height: 640px) {
+  .context-menu-item {
+    min-height: calc(var(--height-control) - var(--space-2));
+  }
 }
 </style>
