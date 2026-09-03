@@ -397,10 +397,18 @@ export function domPointForCaret(
   let paragraph: Element | null;
   let atomOffset: number | undefined;
   if (caret.cell) {
-    paragraph = root.querySelector(
-      `${address}[data-row="${caret.cell.row}"][data-col="${caret.cell.col}"]` +
-        `[data-cell-block="${caret.cell.block}"]`,
-    );
+    // A repeated header row (SPEC-076) copies the real row's whole address,
+    // so a plain querySelector could land the caret in a copy — one that is
+    // contenteditable=false and unselectable — whenever the real row's own
+    // page is virtualized away. The ignore filter is what keeps caret
+    // navigation out of the repeat (AC-9).
+    paragraph =
+      Array.from(
+        root.querySelectorAll(
+          `${address}[data-row="${caret.cell.row}"][data-col="${caret.cell.col}"]` +
+            `[data-cell-block="${caret.cell.block}"]`,
+        ),
+      ).find((el) => !inIgnoredSubtree(root, el)) ?? null;
   } else {
     // Cell paragraphs carry their table's section/block address too, so a
     // top-level lookup must exclude them. When the address itself is a

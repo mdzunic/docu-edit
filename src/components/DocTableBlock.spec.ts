@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import DocTableBlock from "./DocTableBlock.vue";
-import { caretFromRepeatedHeaderPoint } from "../lib/domCaret";
+import { caretFromRepeatedHeaderPoint, domPointForCaret } from "../lib/domCaret";
 import type { NamedStyle, Table } from "../lib/documentModel";
 
 function table(): Table {
@@ -84,6 +84,22 @@ describe("DocTableBlock header repetition (SPEC-076)", () => {
     // Two characters into "Name" — the offset nearest a click there.
     const caret = caretFromRepeatedHeaderPoint(root, text as Text, 2);
     expect(caret).toEqual({ section: 0, block: 0, offset: 2, cell: { row: 0, col: 0, block: 0 } });
+  });
+
+  it("never places the caret inside a repeat, even when only the continuation is realized (AC-9)", () => {
+    // The page holding the real header row is virtualized away: all the DOM
+    // has of row 0 is the continuation's redrawn copy.
+    const w = mountSlice(2, 4);
+    const root = document.createElement("div");
+    root.append(w.element);
+    expect(root.querySelectorAll('[data-row="0"][data-col="0"]').length).toBeGreaterThan(0);
+    const point = domPointForCaret(root, {
+      section: 0,
+      block: 0,
+      offset: 0,
+      cell: { row: 0, col: 0, block: 0 },
+    });
+    expect(point).toBeNull();
   });
 
   it("does not resolve a point outside a repeat (AC-8)", () => {
