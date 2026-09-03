@@ -243,25 +243,45 @@ describe("writeDocx — w:next round trip (SPEC-042 AC-3, AC-4, AC-13)", () => {
 });
 
 describe("writeDocx — unmodeled styles round trip verbatim (SPEC-042 AC-15..18)", () => {
-  it("a table-type style read from a source document is preserved and written back unchanged", async () => {
+  // SPEC-076 AC-71 narrows which table styles are unmodeled: the six
+  // w:tblStylePr regions it models (firstRow/lastRow/firstCol/lastCol/
+  // band1Horz/band1Vert) now come back as NamedStyle.banding and are
+  // editable. A region outside those six still keeps the whole style
+  // verbatim, which is what SPEC-042 AC-18 guarantees and what this test —
+  // rewritten from a firstRow example to an nwCell one — still asserts.
+  it("a table-type style with an unmodelled region is preserved and written back unchanged", async () => {
     const source = await writeDocx(typedModel());
     const doc = await parseDocx(source.bytes);
-    // Simulate a foreign document declaring a real (banded) table style —
-    // parseDocx always marks non-paragraph/character styles unmodeled.
     const model = modelFrom(doc);
     const raw =
       '<w:style xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
       'w:type="table" w:styleId="GridTable1"><w:name w:val="Grid Table 1"/>' +
-      '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
+      '<w:tblStylePr w:type="nwCell"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
     model.styles = [...(model.styles ?? []), { id: "GridTable1", name: "Grid Table 1", type: "table", unmodeled: true, rawXml: raw }];
     const { bytes } = await writeDocx(model);
     const stylesXml = await partText(bytes, "word/styles.xml");
     expect(stylesXml).toContain("w:tblStylePr");
-    expect(stylesXml).toContain('w:type="firstRow"');
+    expect(stylesXml).toContain('w:type="nwCell"');
 
     const reopened = await parseDocx(bytes);
     const style = reopened.styles.find((s) => s.id === "GridTable1");
     expect(style?.unmodeled).toBe(true);
     expect(style?.name).toBe("Grid Table 1");
+  });
+
+  it("a table style whose conditional formatting is all banding is modelled, not verbatim (SPEC-076 AC-71)", async () => {
+    const source = await writeDocx(typedModel());
+    const doc = await parseDocx(source.bytes);
+    const model = modelFrom(doc);
+    const raw =
+      '<w:style xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' +
+      'w:type="table" w:styleId="BandedOnly"><w:name w:val="Banded Only"/>' +
+      '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr></w:tblStylePr></w:style>';
+    model.styles = [...(model.styles ?? []), { id: "BandedOnly", name: "Banded Only", type: "table", unmodeled: true, rawXml: raw }];
+    const { bytes } = await writeDocx(model);
+    const reopened = await parseDocx(bytes);
+    const style = reopened.styles.find((s) => s.id === "BandedOnly");
+    expect(style?.unmodeled).toBeUndefined();
+    expect(style?.banding?.firstRow).toEqual({ bold: true });
   });
 });

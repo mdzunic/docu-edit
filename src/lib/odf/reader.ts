@@ -108,6 +108,7 @@ import {
   type OdfMasterPageLayout,
   type OdfStyleCatalog,
 } from "./styles";
+import { parseTableUseStyles } from "./tableTemplate";
 
 export class OdtOpenError extends Error {}
 export class FlatOdfError extends Error {}
@@ -2294,6 +2295,16 @@ function parseTableElement(tableEl: Element, catalog: OdfStyleCatalog, styleTabl
   const alignment = parseTableAlignmentAttr(tableEl);
   if (alignment !== undefined) {
     table.alignment = alignment;
+  }
+  // SPEC-076 AC-69: the banding style the table points at, and which of its
+  // regions it uses — the inverse of the writer's template-name/use-* pair.
+  const templateName = tableAttr(tableEl, "template-name");
+  if (templateName !== null) {
+    table.styleId = templateName;
+  }
+  const look = parseTableUseStyles(tableEl);
+  if (look !== undefined) {
+    table.look = look;
   }
   if (columnStyleNames.some((columnName) => columnName !== undefined)) {
     table.odtColumnStyleNames = columnStyleNames;

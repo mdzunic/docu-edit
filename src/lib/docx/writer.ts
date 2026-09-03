@@ -60,6 +60,7 @@ import type {
 import type { Margins, PageSize } from "../core/pageSetup";
 import { computeOwnerGrid, type BorderSide, type CellBorders, type CellVerticalAlign } from "../core/tables";
 import { borderElementXml } from "./borders";
+import { tableLookXml, tableStyleBandSizesXml, tableStylePrXml } from "./tableBanding";
 import { paragraphPaddingPt, NO_SHADING_FILL, type BorderEdge } from "../paragraphBorders";
 import {
   DEFAULT_TITLE,
@@ -1320,10 +1321,14 @@ function tableXml(
     includeOpaque && table.docxTblPr !== undefined && !hasTrackedTableChange
       ? table.docxTblPr
       : "<w:tblPr>" +
+        // SPEC-076: the style reference and w:tblLook come first, the order
+        // CT_TblPrBase declares them in.
+        (table.styleId !== undefined ? `<w:tblStyle w:val="${escapeXml(table.styleId)}"/>` : "") +
         tableWidthXml(table, totalTwips) +
         tableAlignmentXml(table) +
         GENERATED_TABLE_BORDERS +
         '<w:tblLayout w:type="fixed"/>' +
+        tableLookXml(table.look) +
         tablePropertyChangeXml(table, ctx) +
         "</w:tblPr>";
   const grid =
@@ -2491,7 +2496,16 @@ function stylePropertiesXml(definition: NamedStyle): string {
       (part) => part.length > 0,
     );
     const tcPr = tcPrParts.length > 0 ? `<w:tcPr>${tcPrParts.join("")}</w:tcPr>` : "";
-    return runPropertiesXml(definition.runFormatting ?? {}, undefined) + tcPr;
+    // SPEC-076 AC-66: the band sizes live in the style's own w:tblPr and the
+    // six conditional regions follow the style's base formatting.
+    const bandSizes = tableStyleBandSizesXml(definition.banding);
+    const tblPr = bandSizes.length > 0 ? `<w:tblPr>${bandSizes}</w:tblPr>` : "";
+    return (
+      runPropertiesXml(definition.runFormatting ?? {}, undefined) +
+      tblPr +
+      tcPr +
+      tableStylePrXml(definition.banding)
+    );
   }
   const pPrParts = paragraphFormattingParts(definition.paragraphFormatting ?? {});
   if (definition.headingLevel !== undefined) {

@@ -123,6 +123,7 @@ import { formulaFrameAltText, planOdfFormulaWrite, type OdfFormulaWritePlan } fr
 import { planOdtMediaWrite, type OdtManifestEntry, type OdtMediaWritePlan } from "./media";
 import { HIGHLIGHT_HEX } from "../core/colors";
 import { catalogToNamedStyles, parseOdfStyleCatalog } from "./styles";
+import { tableTemplateXml, tableUseStyleAttrs } from "./tableTemplate";
 import {
   DRAW_NAMESPACE,
   FO_NAMESPACE,
@@ -165,6 +166,8 @@ const DOCUMENT_XMLNS =
 // document root, so content.xml's bytes are unchanged for documents without
 // tables (SPEC-022).
 const TABLE_XMLNS = ` xmlns:table="${TABLE_NAMESPACE}"`;
+// SPEC-076: the banding half of the table model (table:table-template and the
+// table:use-*-styles attributes) lives in odf/tableTemplate.ts.
 
 // Declared once on each link-carrying paragraph (SPEC-025) — the TABLE_XMLNS
 // pattern, so content.xml is unchanged for documents without hyperlinks —
@@ -1997,9 +2000,16 @@ function cellChangeMarkerXml(cell: TableCell): string {
 function tableXml(table: Table, styles: AutomaticStyles, includeOpaque: boolean): string {
   const names = styles.tableNamesFor(table, includeOpaque);
   const alignAttr = table.alignment !== undefined ? ` table:align="${table.alignment}"` : "";
+  // SPEC-076 AC-68: the banding style the table points at, and which of its
+  // regions this table uses. `table:style-name` already carries the
+  // width-bearing automatic style, so the NAMED style rides on
+  // table:template-name — which is also what makes it come back on read.
+  const templateAttr =
+    table.styleId !== undefined ? ` table:template-name="${escapeXml(table.styleId)}"` : "";
   let xml =
     `<table:table${TABLE_XMLNS} table:name="${escapeXml(names.name)}"` +
-    ` table:style-name="${escapeXml(names.styleName)}"${alignAttr}>`;
+    ` table:style-name="${escapeXml(names.styleName)}"${alignAttr}${templateAttr}` +
+    `${tableUseStyleAttrs(table.look)}>`;
   for (const columnName of names.columnStyleNames) {
     xml += `<table:table-column table:style-name="${escapeXml(columnName)}"/>`;
   }
@@ -2453,9 +2463,15 @@ function namedStyleDefinitionXml(definition: NamedStyle): string {
     // support it. Table style banding is out of scope either way.
     const hex = definition.cellShadingFill;
     const properties = hex !== undefined ? `<style:table-properties fo:background-color="${escapeXml(hex)}"/>` : "";
-    return properties.length > 0
-      ? `<style:style ${attrs}>${properties}</style:style>`
-      : `<style:style ${attrs}/>`;
+    // SPEC-076 AC-68: the style's banding becomes a table:table-template plus
+    // the generated table-cell styles its regions reference — siblings of the
+    // style itself under office:styles.
+    const banding = tableTemplateXml(definition);
+    const self =
+      properties.length > 0
+        ? `<style:style ${attrs}>${properties}</style:style>`
+        : `<style:style ${attrs}/>`;
+    return self + banding.cellStyles + banding.template;
   }
   const properties =
     (family === "paragraph" ? paragraphPropertiesXml(definition.paragraphFormatting ?? {}) : "") +
