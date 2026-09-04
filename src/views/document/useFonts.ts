@@ -12,6 +12,7 @@ import { extractEmbeddedFonts } from "../../lib/fonts/embeddedFonts";
 import { documentFontReport, type FontReportEntry } from "../../lib/fonts/report";
 import { fontStack } from "../../lib/fonts/substitution";
 import { faceFileName, faceKeyFor } from "../../lib/pdf/fontMap";
+import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import {
   collectFontUsage,
   formatEmbedSize,
@@ -304,12 +305,7 @@ export function useFonts(deps: FontsDeps) {
         : await embedFontsIntoDocx(bytes, pendingPlan.faces);
       const fileName = isOdt ? odtFileName(model.title) : docxFileName(model.title);
       const mime = isOdt ? ODT_MIMETYPE : DOCX_MIME_TYPE;
-      const url = URL.createObjectURL(new Blob([embedded], { type: mime }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = fileName;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      triggerBlobDownload(embedded, fileName, mime);
       embedControls.dialogOpen = false;
       deps.addToast(`Saved ${fileName} with ${pendingPlan.faces.length} embedded font${pendingPlan.faces.length === 1 ? "" : "s"}`);
     } catch {

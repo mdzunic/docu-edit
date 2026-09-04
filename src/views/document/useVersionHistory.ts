@@ -24,6 +24,7 @@ import { caretSelection } from "../../lib/commands";
 import type { DocumentModel } from "../../lib/documentModel";
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../../lib/docx/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../../lib/odf/writer";
+import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import type { EditorContext } from "./context";
 
 /** Typed pass-through for a `VersionListEntry[]` arriving at
@@ -229,12 +230,7 @@ export function useVersionHistory(deps: UseVersionHistoryDeps) {
     const odt = format === "odt";
     const { bytes } = odt ? await writeOdt(model) : await writeDocx(model);
     const fileName = odt ? odtFileName(model.title) : docxFileName(model.title);
-    const url = URL.createObjectURL(new Blob([bytes], { type: odt ? ODT_MIMETYPE : DOCX_MIME_TYPE }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = fileName;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    triggerBlobDownload(bytes, fileName, odt ? ODT_MIMETYPE : DOCX_MIME_TYPE);
   }
 
   // --- session lifecycle -----------------------------------------------------

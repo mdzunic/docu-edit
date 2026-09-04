@@ -15,6 +15,7 @@ import { isStorageAvailable, touchDocument, trashDocument } from "../../lib/docu
 import { DOCX_MIME_TYPE, docxFileName, writeDocx } from "../../lib/docx/writer";
 import { MD_MIME_TYPE, mdFileName, writeMd } from "../../lib/md/writer";
 import { ODT_MIMETYPE, odtFileName, writeOdt } from "../../lib/odf/writer";
+import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { noConversionReport } from "../../lib/opaque";
 import { saveAsTemplate } from "../../lib/templateStore";
 import type { EditorContext } from "./context";
@@ -114,16 +115,8 @@ export function useFileActions(deps: FileActionsDeps) {
     touchDocument(doc.value.id);
     const fileName =
       format === "odt" ? odtFileName(doc.value.title) : format === "md" ? mdFileName(doc.value.title) : docxFileName(doc.value.title);
-    // A transient anchor pointed at an object URL is the download mechanism
-    // that needs no new browser permissions; revocation is deferred so the
-    // browser has started streaming the blob before the URL disappears.
     const mimeType = format === "odt" ? ODT_MIMETYPE : format === "md" ? MD_MIME_TYPE : DOCX_MIME_TYPE;
-    const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = fileName;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    triggerBlobDownload(bytes, fileName, mimeType);
     // A download is SPEC-003's explicit save: promote the state to committed,
     // and SPEC-040's other commit-point version-history trigger (AC-2).
     void commitNow().then(() => noteVersionHistoryCommitPoint());

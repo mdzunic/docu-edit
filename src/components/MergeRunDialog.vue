@@ -27,6 +27,7 @@ import { asDocumentModel } from "../lib/documentModel";
 import { blockText } from "../lib/textEditing";
 import { DOCX_MIME_TYPE } from "../lib/docx/writer";
 import { ODT_MIMETYPE } from "../lib/odf/writer";
+import { triggerBlobDownload } from "../lib/core/triggerDownload";
 import BaseDialog from "./BaseDialog.vue";
 
 const props = defineProps({
@@ -113,15 +114,6 @@ const running = ref(false);
 const runReport = shallowRef(noMergeRunReport());
 const runError = ref("");
 
-function downloadBytes(bytes = new Uint8Array(), fileName = "", mimeType = "") {
-  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
-}
-
 async function run() {
   if (!source.value || !canRun.value) {
     return;
@@ -135,7 +127,7 @@ async function run() {
       nameField: nameField.value || undefined,
     });
     const mimeType = result.delivery === "zip" ? "application/zip" : format.value === "odt" ? ODT_MIMETYPE : DOCX_MIME_TYPE;
-    downloadBytes(result.bytes, result.fileName, mimeType);
+    triggerBlobDownload(result.bytes, result.fileName, mimeType);
     runReport.value = result.report;
   } catch (error) {
     runError.value = error instanceof Error ? error.message : "The merge could not run";
