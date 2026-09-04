@@ -35,6 +35,14 @@ export async function rasterisePdfFirstPage(bytes: Uint8Array, maxEdgePx: number
   }
   // pdf.js transfers the buffer to its worker; hand it a copy so the model's
   // own bytes (round-trip fidelity!) can never be detached.
+  //
+  // Nothing here has to opt out of eval for SEC-6's `script-src 'self'`:
+  // pdf.js v6 dropped the `new Function` path it used to compile font
+  // programs and colour-space code through, along with the `isEvalSupported`
+  // option that disabled it — neither `pdf.mjs` nor `pdf.worker.mjs` contains
+  // a single `new Function(` or `eval(` any more. Worth re-checking on a
+  // major pdf.js upgrade: if eval comes back, this call needs the opt-out
+  // again rather than the CSP being widened to admit it.
   const task = pdfjs.getDocument({ data: bytes.slice() });
   try {
     const doc = await task.promise;

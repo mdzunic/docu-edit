@@ -84,6 +84,17 @@ export default defineConfig({
     // The benchmark chain (see the header): one per dependency level, each
     // starting only after the functional suite and every earlier benchmark
     // have finished, so nothing shares the machine with the run being timed.
+    //
+    // Every benchmark project sets `bypassCSP` (SEC-6). The three perf specs
+    // are the only ones that time a paint with `page.waitForFunction`, which
+    // Playwright evaluates in the page's main world — and index.html's
+    // `script-src 'self' 'sha256-...'` refuses it, since a CSP cannot
+    // distinguish the harness's predicate from injected script. Scoped to
+    // these projects on purpose: the functional suite keeps running under the
+    // real policy, so a change that breaks the app under CSP still fails the
+    // suite. Nothing in the app itself needs eval — and the alternative,
+    // rewriting the predicate to run Playwright-side, is the exact
+    // measurement mistake SPEC-052.perf's own header documents at length.
     // perf-quiet is the chain's tests-less head — it matches no files, so it
     // completes instantly and cannot fail, and its only job is to hold the
     // first real benchmark at level 1. The cost of the chain is that a
@@ -92,19 +103,19 @@ export default defineConfig({
     { name: "perf-quiet", testMatch: /^$/ },
     {
       name: "perf-charts",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], bypassCSP: true },
       testMatch: /SPEC-052\.perf\.spec\.ts$/,
       dependencies: ["perf-quiet"],
     },
     {
       name: "perf-find",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], bypassCSP: true },
       testMatch: /SPEC-017\.perf\.spec\.ts$/,
       dependencies: ["perf-charts"],
     },
     {
       name: "perf-large-document",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], bypassCSP: true },
       testMatch: /SPEC-047\.perf\.spec\.ts$/,
       dependencies: ["perf-find"],
     },

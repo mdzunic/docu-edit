@@ -35,6 +35,7 @@ import { fitImageSizeCm } from "../core/media";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";
 import { isFetchableUrl, sanitizeHref } from "../links";
+import { sanitizeXmlText } from "../core/xmlText";
 import { CODE_CHAR_STYLE_ID, headingStyleId, mdBuiltInStyles, resolveNamedStyle, type ResolvedNamedStyle } from "../styles";
 
 /** The parsed-package shape `assembleDocumentModel` (lib/openDocument.ts)
@@ -402,7 +403,15 @@ export async function parseMd(
   data: ArrayBuffer | Uint8Array,
   options: ParseMdOptions = {},
 ): Promise<ParsedMdDocument> {
-  const text = decodeUtf8(data).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  // Sanitized at the decode, before anything is parsed out of it, so the
+  // invariant holds for every payload this reader produces — run text,
+  // preserved opaque blocks and front matter alike — rather than only the
+  // paths that happen to route through insertText. Markdown is the one
+  // non-XML source we read, so it is the one reader that can carry a scalar
+  // XML cannot (core/xmlText.ts). SPEC-050 asserts `equalStructural` on a
+  // `.md` round trip and explicitly not `equalBytes`, so normalising here is
+  // within what the format's round-trip contract allows.
+  const text = sanitizeXmlText(decodeUtf8(data)).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const { body, frontMatter } = splitFrontMatter(text.split("\n"));
 
   const defaultStyles: DefaultStyles = createDefaultStyles();
