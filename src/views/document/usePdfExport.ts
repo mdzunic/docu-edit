@@ -21,6 +21,7 @@ import {
 import { extractPageContent, PT_PER_CM } from "../../lib/pdf/domExtract";
 import { encodeImage } from "../../lib/pdf/imageEncode";
 import { faceFileName, type FaceKey } from "../../lib/pdf/fontMap";
+import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { parseSfnt, type SfntFont } from "../../lib/pdf/sfnt";
 import { isDocumentContentEmpty } from "../../lib/printRange";
 import type { PaginationController } from "../../composables/usePagination";
@@ -211,12 +212,7 @@ export function usePdfExport(deps: PdfExportDeps) {
         fonts,
         images,
       });
-      const url = URL.createObjectURL(new Blob([bytes], { type: PDF_MIME_TYPE }));
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = pdfFileName(model.title, DEFAULT_TITLE);
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      triggerBlobDownload(bytes, pdfFileName(model.title, DEFAULT_TITLE), PDF_MIME_TYPE);
     } catch (error) {
       const reason =
         error instanceof Error && error.message.length > 0
