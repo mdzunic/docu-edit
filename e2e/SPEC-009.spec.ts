@@ -12,6 +12,15 @@ const odtFixture = join(odfFixturesDir, "libreoffice-writer.odt");
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const ODT_MIME = "application/vnd.oasis.opendocument.text";
 
+/** Navigates to /open?url=… and confirms the fetch. The confirmation panel
+ * is the whole point of the route (a link must not be able to fetch and
+ * store a document on its own), so every URL-open test goes through it. */
+async function openFromUrl(page: import("@playwright/test").Page, url: string) {
+  await page.goto("/open?url=" + encodeURIComponent(url));
+  await expect(page.getByTestId("open-from-url-confirm")).toBeVisible();
+  await page.getByTestId("open-from-url-confirm-button").click();
+}
+
 /** Builds a real DataTransfer holding real File objects inside the page —
  * jsdom can't do this (no DragEvent/DataTransfer), but a live browser can,
  * and it's the standard way Playwright recommends testing drag-and-drop
@@ -124,6 +133,39 @@ test("files larger than 50 MB are refused before parsing (AC-14)", async ({ page
   await expect(page).toHaveURL(/\/$/);
 });
 
+test("/open?url= shows the address and fetches nothing until the reader confirms (AC-9)", async ({ page }) => {
+  const bytes = readFileSync(wordFixture);
+  let fetchCount = 0;
+  await page.route("**/remote/report.docx", async (route) => {
+    fetchCount += 1;
+    await route.fulfill({ status: 200, contentType: DOCX_MIME, body: bytes });
+  });
+
+  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/report.docx"));
+  await expect(page.getByTestId("open-from-url-confirm")).toBeVisible();
+  await expect(page.getByTestId("open-from-url-host")).toHaveText("example.com");
+  await expect(page.getByTestId("open-from-url-target")).toHaveText(
+    "https://example.com/remote/report.docx",
+  );
+  // The point of the panel: sitting on it sends no request.
+  expect(fetchCount).toBe(0);
+
+  await page.getByTestId("open-from-url-confirm-button").click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  expect(fetchCount).toBe(1);
+});
+
+test("/open?url= refuses a non-http(s) scheme rather than fetching it (AC-9)", async ({ page }) => {
+  // A data: URL carries its own content type, so without the scheme check it
+  // would walk past the content-type gate and land in the library.
+  const dataUrl = "data:text/html,<script>alert(1)</script>";
+  await page.goto("/open?url=" + encodeURIComponent(dataUrl));
+  await page.getByTestId("open-from-url-confirm-button").click();
+  await expect(page.getByTestId("open-from-url-error")).toContainText("Couldn't open that link");
+  await expect(page.getByTestId("open-from-url-reason")).toContainText("http://");
+  await expect(page).toHaveURL(/\/open/);
+});
+
 test("/open?url= fetches the document at that URL, shows a loading state, then opens it (AC-9, AC-10)", async ({ page }) => {
   const bytes = readFileSync(wordFixture);
   let resolveResponse: () => void = () => {};
@@ -135,7 +177,7 @@ test("/open?url= fetches the document at that URL, shows a loading state, then o
     await route.fulfill({ status: 200, contentType: DOCX_MIME, body: bytes });
   });
 
-  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/report.docx"));
+  await openFromUrl(page, "https://example.com/remote/report.docx");
   await expect(page.getByTestId("open-from-url-loading")).toBeVisible();
   resolveResponse();
 
@@ -145,7 +187,7 @@ test("/open?url= fetches the document at that URL, shows a loading state, then o
 
 test("a URL fetch that fails shows 'Couldn't open that link' with a reason and a fallback button (AC-11)", async ({ page }) => {
   await page.route("**/remote/missing.docx", (route) => route.fulfill({ status: 404, body: "not found" }));
-  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/missing.docx"));
+  await openFromUrl(page, "https://example.com/remote/missing.docx");
   await expect(page.getByTestId("open-from-url-error")).toContainText("Couldn't open that link");
   await expect(page.getByTestId("open-from-url-reason")).toContainText("404");
   await expect(page.getByTestId("open-from-url-pick-file")).toHaveText("Choose a file instead");
@@ -153,7 +195,7 @@ test("a URL fetch that fails shows 'Couldn't open that link' with a reason and a
 
 test("a URL fetch blocked by CORS shows 'Couldn't open that link' with a reason and a fallback button (AC-12)", async ({ page }) => {
   await page.route("**/remote/blocked.docx", (route) => route.abort("failed"));
-  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/blocked.docx"));
+  await openFromUrl(page, "https://example.com/remote/blocked.docx");
   await expect(page.getByTestId("open-from-url-error")).toContainText("Couldn't open that link");
   await expect(page.getByTestId("open-from-url-reason")).not.toBeEmpty();
   await expect(page.getByTestId("open-from-url-pick-file")).toBeVisible();
@@ -161,14 +203,14 @@ test("a URL fetch blocked by CORS shows 'Couldn't open that link' with a reason 
 
 test("a URL fetch returning a non-document content type shows 'Couldn't open that link' with the reason (AC-13)", async ({ page }) => {
   await page.route("**/remote/page", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<html></html>" }));
-  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/page"));
+  await openFromUrl(page, "https://example.com/remote/page");
   await expect(page.getByTestId("open-from-url-error")).toContainText("Couldn't open that link");
   await expect(page.getByTestId("open-from-url-reason")).toContainText("text/html");
 });
 
 test("the fallback button on a failed URL fetch opens a local file (AC-11)", async ({ page }) => {
   await page.route("**/remote/missing.docx", (route) => route.fulfill({ status: 404, body: "not found" }));
-  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/missing.docx"));
+  await openFromUrl(page, "https://example.com/remote/missing.docx");
   await expect(page.getByTestId("open-from-url-error")).toBeVisible();
 
   await page.getByTestId("open-from-url-pick-file").click();
@@ -185,7 +227,7 @@ test("a document opened from a URL is stored in the local library and is not re-
     await route.fulfill({ status: 200, contentType: DOCX_MIME, body: bytes });
   });
 
-  await page.goto("/open?url=" + encodeURIComponent("https://example.com/remote/library.docx"));
+  await openFromUrl(page, "https://example.com/remote/library.docx");
   await expect(page).toHaveURL(/\/doc\/.+/);
   expect(fetchCount).toBe(1);
   const docUrl = page.url();

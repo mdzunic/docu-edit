@@ -13,6 +13,7 @@ import {
   insertBookmark,
   insertLinkText,
   isDangerousUrl,
+  isFetchableUrl,
   linkAtCaret,
   linkTargetLabel,
   linkTargetOf,
@@ -101,6 +102,38 @@ describe("dangerous URL schemes (security, AC-14..18)", () => {
 });
 
 // --- autolink detection (AC-5, AC-6) -----------------------------------------
+
+describe("isFetchableUrl (what the app will request on the reader's behalf)", () => {
+  it("allows the two web schemes", () => {
+    expect(isFetchableUrl("https://example.com/a.docx")).toBe(true);
+    expect(isFetchableUrl("http://intranet.example/a.docx")).toBe(true);
+  });
+
+  it.each([
+    ["data:text/html,<script>alert(1)</script>"],
+    ["blob:https://example.com/2b3c4d5e-0000-4000-8000-000000000000"],
+    ["javascript:alert(1)"],
+    ["vbscript:msgbox(1)"],
+    ["file:///etc/passwd"],
+    ["ftp://example.com/a.docx"],
+  ])("refuses %s", (url) => {
+    expect(isFetchableUrl(url)).toBe(false);
+  });
+
+  it("refuses anything that is not an absolute URL", () => {
+    // Callers resolving a relative reference must check the RESOLVED url —
+    // see resolveImageSrc in md/reader.ts.
+    expect(isFetchableUrl("images/photo.png")).toBe(false);
+    expect(isFetchableUrl("/absolute/path.png")).toBe(false);
+    expect(isFetchableUrl("")).toBe(false);
+    expect(isFetchableUrl("not a url at all")).toBe(false);
+  });
+
+  it("is stricter than sanitizeHref: mailto may be linked but never fetched", () => {
+    expect(sanitizeHref("mailto:a@example.com")).toBe("mailto:a@example.com");
+    expect(isFetchableUrl("mailto:a@example.com")).toBe(false);
+  });
+});
 
 describe("detectBareUrl", () => {
   it("matches an http(s) URL ending at the offset", () => {
