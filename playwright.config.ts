@@ -59,7 +59,21 @@ export default defineConfig({
   // module on first request while every worker asks at once, so the first
   // wait on a lazily-loaded route can legitimately outlast 5s. Failing tests
   // still fail — they just get a budget that reflects where this runs.
-  expect: { timeout: 10_000 },
+  //
+  // 10s was still not that budget. On the 2026-09-04 main gate every test in
+  // the suite ran 5-10x slower than the same test does on a quiet container:
+  // SPEC-047's *five-block* document — the trivial half of that file — took
+  // 13.9s to open and assert, against ~2s here, and its ceiling sibling blew
+  // this timeout waiting for a warning bar that appears in 0.6s (1.5s cold)
+  // when the machine is not oversubscribed. Four Playwright workers, each
+  // driving a Chromium, plus the single-threaded Vite dev server they all
+  // request every module from, is more than the container's CPU quota, and
+  // the whole suite dilates together. Nothing about a passing run costs more
+  // for these being larger — a timeout is only ever spent on a wait that was
+  // going to fail — so they are set where a loaded factory host still lands
+  // inside them.
+  timeout: 60_000,
+  expect: { timeout: 20_000 },
   reporter: [["list"]],
   use: {
     baseURL: "http://localhost:5173",

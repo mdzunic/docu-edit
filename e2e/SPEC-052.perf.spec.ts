@@ -8,6 +8,10 @@ import { test, expect, type Page } from "@playwright/test";
 // not a re-run of SPEC-047's own harness), and a data-sheet edit re-renders
 // in under 100ms for a 12-series, 100-category chart.
 
+// The open budget is asserted on the median of five opens (SPEC-047.perf's
+// own instrument): one open is a noisy reading, and a single sample taken in
+// a busy window fails a budget the product still holds.
+//
 // These two benchmarks share one dev server, and the budgets are calibrated
 // for a benchmark running in a quiet window (see SPEC-047's file header and
 // playwright.config.ts, which isolates each perf benchmark in its own project
@@ -103,12 +107,22 @@ async function seedBlocks(page: Page, docId: string, blocks: unknown[]): Promise
   );
 }
 
-test("a document with 20 charts opens and paints within budget (AC-38)", async ({ page }) => {
-  const docId = await createDocument(page);
-  const types = ["columnClustered", "columnStacked", "barClustered", "line", "lineMarkers", "area", "pie", "doughnut", "scatter"];
-  const blocks = Array.from({ length: 20 }, (_, i) => sampleChart(types[i % types.length], 5, 3));
-  await seedBlocks(page, docId, blocks);
+/** The middle value of `values` — the reading this benchmark asserts, for the
+ * same reason SPEC-047.perf.spec.ts takes one: a single open is a noisy
+ * sample, and the median absorbs the one run that shared the machine with
+ * something else. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
+/** Opens the seeded document from a cold navigation and returns the time from
+ * `goto` to the first chart painted. */
+async function measureOpenMs(page: Page, docId: string): Promise<number> {
+  // From the library, so every sample is the same navigation the first one was
+  // (a full document open, not a same-URL reload).
+  await page.goto("/");
   const start = Date.now();
   await page.goto(`/doc/${docId}`);
   // Time-to-first-paint is measured with an in-page requestAnimationFrame poll
@@ -135,12 +149,37 @@ test("a document with 20 charts opens and paints within budget (AC-38)", async (
     const box = drawing.getBoundingClientRect();
     return box.width > 0 && box.height > 0 && getComputedStyle(drawing).visibility !== "hidden";
   });
-  const firstVisibleMs = Date.now() - start;
+  return Date.now() - start;
+}
+
+test("a document with 20 charts opens and paints within budget (AC-38)", async ({ page }) => {
+  // Five opens, not one — see the median-of-5 note below.
+  test.setTimeout(5 * 60 * 1000);
+  const docId = await createDocument(page);
+  const types = ["columnClustered", "columnStacked", "barClustered", "line", "lineMarkers", "area", "pie", "doughnut", "scatter"];
+  const blocks = Array.from({ length: 20 }, (_, i) => sampleChart(types[i % types.length], 5, 3));
+  await seedBlocks(page, docId, blocks);
+
+  // Median of five opens, matching SPEC-047.perf.spec.ts's own open budgets.
+  // A single open is not a stable reading of this quantity even on a quiet
+  // machine: five sequential opens measured here spread 451-1045ms, and the
+  // 2026-09-04 main gate — where every functional test also ran 5-10x slower
+  // than it does locally (SPEC-047's five-block document took 13.9s to open
+  // there) — took its one sample at 2783ms and failed a budget that the
+  // product had not regressed against. Confirmed by A/B: the same instrument
+  // at dbd2ae7, the last commit before SPEC-077 widened the model, measures
+  // 541/852/1014ms against HEAD's 451/963/1045ms. The budget below is
+  // unchanged; only the number of samples it is taken from is.
+  const samples: number[] = [];
+  for (let i = 0; i < 5; i += 1) {
+    samples.push(await measureOpenMs(page, docId));
+  }
+  const firstVisibleMs = median(samples);
   // SPEC-047's own "first page visible" ceiling (2s) is measured on a
   // 300-page/500-image fixture; 20 charts is a small fraction of that
   // scale, so this generous bound catches a real regression without
   // re-asserting SPEC-047's own numbers.
-  expect(firstVisibleMs).toBeLessThan(2000);
+  expect(firstVisibleMs, `samples=[${samples.join(", ")}]`).toBeLessThan(2000);
 
   // The chart really is on the page and every one of the 20 painted (the paint
   // budget above must not be met by rendering a blank or partial document).
