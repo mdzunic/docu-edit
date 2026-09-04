@@ -32,6 +32,7 @@ import {
   type Table,
 } from "./documentModel";
 import { nextGraphemeBoundary, previousGraphemeBoundary } from "./core/grapheme";
+import { sanitizeXmlText } from "./core/xmlText";
 import { releaseAnchorOrdinal } from "./drawingAnchors";
 
 /** The path from a table block down to one of its cell's paragraphs
@@ -527,9 +528,16 @@ export function applyFormatPatch(base: RunFormatting, override: PendingFormat): 
 export function insertText(
   model: DocumentModel,
   caret: CaretPosition,
-  text: string,
+  rawText: string,
   formatOverride?: PendingFormat | null,
 ): CaretPosition {
+  // Every insertion path — typing, paste, autocorrect, find-and-replace,
+  // link text — routes through here, which makes this the one place that can
+  // hold the "no XML-illegal scalar ever enters the model" invariant. Without
+  // it a pasted U+000B (Word's own Shift+Enter in plain text) is written
+  // verbatim into document.xml and the saved file will not reopen. See
+  // core/xmlText.ts.
+  const text = sanitizeXmlText(rawText);
   const c = clampCaret(model, caret);
   const block = paragraphAt(model, c);
   if (!block) {
