@@ -10,6 +10,9 @@ interface FixtureEntry {
   name: string;
   content: string;
   method?: 0 | 8;
+  /** Overrides the uncompressed size written into both headers, so a
+   * fixture can lie about how far it expands the way a bomb does. */
+  declaredSize?: number;
 }
 
 function writeUint32LE(value: number): Uint8Array {
@@ -46,6 +49,7 @@ function buildZip(entries: FixtureEntry[]): Uint8Array {
     const nameBytes = encoder.encode(entry.name);
     const rawBytes = encoder.encode(entry.content);
     const dataBytes = method === 8 ? deflateRawSync(rawBytes) : rawBytes;
+    const declaredSize = entry.declaredSize ?? rawBytes.length;
 
     const localHeader = concat([
       writeUint32LE(0x04034b50),
@@ -56,7 +60,7 @@ function buildZip(entries: FixtureEntry[]): Uint8Array {
       writeUint16LE(0),
       writeUint32LE(0),
       writeUint32LE(dataBytes.length),
-      writeUint32LE(rawBytes.length),
+      writeUint32LE(declaredSize),
       writeUint16LE(nameBytes.length),
       writeUint16LE(0),
       nameBytes,
@@ -73,7 +77,7 @@ function buildZip(entries: FixtureEntry[]): Uint8Array {
       writeUint16LE(0),
       writeUint32LE(0),
       writeUint32LE(dataBytes.length),
-      writeUint32LE(rawBytes.length),
+      writeUint32LE(declaredSize),
       writeUint16LE(nameBytes.length),
       writeUint16LE(0),
       writeUint16LE(0),
@@ -136,5 +140,57 @@ describe("unzip", () => {
 
   it("throws ZipError for a truncated/too-small buffer", async () => {
     await expect(unzip(new Uint8Array([1, 2, 3]))).rejects.toThrow(ZipError);
+  });
+
+  // The decompression budget. DEFLATE reaches ~1000:1 on repetitive input,
+  // so the caller's limit on the compressed file bounds nothing here — the
+  // budget is what stops a small archive from inflating into an OOM.
+  describe("decompression budget", () => {
+    const FLOOR = 64 * 1024 * 1024;
+    // Under the floor, so a legitimate small package is never touched.
+    const UNDER_BUDGET = "x".repeat(1024 * 1024);
+
+    it("still opens a package that inflates well inside the budget", async () => {
+      const zip = buildZip([{ name: "word/document.xml", content: UNDER_BUDGET }]);
+      const parts = await unzip(zip);
+      expect(parts.get("word/document.xml")?.length).toBe(UNDER_BUDGET.length);
+    });
+
+    it("rejects an archive whose central directory declares more than the budget", async () => {
+      // What a bomb built by an ordinary ZIP tool looks like: the declared
+      // size is honest, and enormous. Rejected before anything inflates.
+      const zip = buildZip([
+        { name: "bomb.bin", content: "x", declaredSize: FLOOR + 1 },
+      ]);
+      await expect(unzip(zip)).rejects.toThrow(/declares more decompressed content/);
+    });
+
+    it("sums declared sizes across entries rather than checking each alone", async () => {
+      const half = Math.ceil(FLOOR / 2) + 1;
+      const zip = buildZip([
+        { name: "a.bin", content: "x", declaredSize: half },
+        { name: "b.bin", content: "x", declaredSize: half },
+      ]);
+      await expect(unzip(zip)).rejects.toThrow(/declares more decompressed content/);
+    });
+
+    it("stops inflating an entry that under-declares its size", async () => {
+      // The bomb that gets past the cheap check: the central directory says
+      // one byte, the entry really expands past the floor. Only the running
+      // total over what DecompressionStream actually produces catches this.
+      // Deflating the fixture costs ~100ms and ~110MB peak — the price of
+      // testing the path that matters rather than a proxy for it.
+      const zip = buildZip([
+        { name: "liar.bin", content: " ".repeat(FLOOR + 1024), declaredSize: 1 },
+      ]);
+      await expect(unzip(zip)).rejects.toThrow(/expands well beyond its declared size/);
+    });
+
+    it("names the offending entry so a bad package can be diagnosed", async () => {
+      const zip = buildZip([
+        { name: "word/media/image1.png", content: " ".repeat(FLOOR + 1024), declaredSize: 1 },
+      ]);
+      await expect(unzip(zip)).rejects.toThrow(/word\/media\/image1\.png/);
+    });
   });
 });

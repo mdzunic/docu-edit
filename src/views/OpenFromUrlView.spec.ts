@@ -26,6 +26,14 @@ async function mountAt(path: string) {
   return { wrapper, router };
 }
 
+/** Mounts and clicks through the confirmation panel — the fetch waits for a
+ * gesture, so every test past that gate goes through here. */
+async function mountAndConfirm(path: string) {
+  const mounted = await mountAt(path);
+  await mounted.wrapper.get('[data-testid="open-from-url-confirm-button"]').trigger("click");
+  return mounted;
+}
+
 async function untilPath(router: Router, path: string) {
   for (let i = 0; i < 200; i += 1) {
     if (router.currentRoute.value.path === path) {
@@ -49,6 +57,39 @@ describe("OpenFromUrlView", () => {
     vi.mocked(openDocumentFromUrl).mockReset();
   });
 
+  // The confirmation gate (AC-9). `url` is whatever a link put in the query
+  // string, so an auto-fetch on mount made any link a way to send a request
+  // from the reader's browser and file the response in their library, with
+  // nothing shown and nothing to decline.
+  it("shows the address and fetches nothing until the reader confirms (AC-9)", async () => {
+    const { wrapper } = await mountAt("/open?url=https://example.com/remote/report.docx");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="open-from-url-host"]').text()).toBe("example.com");
+    expect(wrapper.get('[data-testid="open-from-url-target"]').text()).toBe(
+      "https://example.com/remote/report.docx",
+    );
+    expect(wrapper.find('[data-testid="open-from-url-loading"]').exists()).toBe(false);
+    expect(openDocumentFromUrl).not.toHaveBeenCalled();
+  });
+
+  it("shows the full URL, not only the host, so a padded path cannot hide the target (AC-9)", async () => {
+    const url = "https://trusted-looking.example.com/a/very/long/path/that/keeps/going/report.docx";
+    const { wrapper } = await mountAt("/open?url=" + url);
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="open-from-url-target"]').text()).toBe(url);
+  });
+
+  it("offers a local file as an alternative to confirming (AC-9)", async () => {
+    const { wrapper } = await mountAt("/open?url=https://example.com/report.docx");
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="open-from-url-pick-file-instead"]').text()).toBe(
+      "Choose a file instead",
+    );
+  });
+
   it("shows a loading state while the fetch is in flight (AC-10)", async () => {
     let resolveFetch: (opened: { kind: "text"; model: ReturnType<typeof createDocument> }) => void = () => {};
     vi.mocked(openDocumentFromUrl).mockReturnValue(
@@ -56,7 +97,7 @@ describe("OpenFromUrlView", () => {
         resolveFetch = resolve;
       }),
     );
-    const { wrapper } = await mountAt("/open?url=https://example.com/report.docx");
+    const { wrapper } = await mountAndConfirm("/open?url=https://example.com/report.docx");
 
     expect(wrapper.find('[data-testid="open-from-url-loading"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="open-from-url-error"]').exists()).toBe(false);
@@ -68,7 +109,7 @@ describe("OpenFromUrlView", () => {
   it("fetches the URL and opens the document, storing it and navigating to /doc/:id (AC-9, AC-15)", async () => {
     const doc = { ...createDocument("from-url-id"), format: "docx" as const };
     vi.mocked(openDocumentFromUrl).mockResolvedValue({ kind: "text", model: doc });
-    const { wrapper, router } = await mountAt("/open?url=https://example.com/report.docx");
+    const { wrapper, router } = await mountAndConfirm("/open?url=https://example.com/report.docx");
     await flushPromises();
     await untilPath(router, "/doc/from-url-id");
 
@@ -80,7 +121,7 @@ describe("OpenFromUrlView", () => {
 
   it("shows the failure message with the underlying reason and a fallback button (AC-11, AC-12, AC-13)", async () => {
     vi.mocked(openDocumentFromUrl).mockRejectedValue(new OpenFromUrlError("The link returned text/html, not a .docx or .odt document"));
-    const { wrapper } = await mountAt("/open?url=https://example.com/page");
+    const { wrapper } = await mountAndConfirm("/open?url=https://example.com/page");
     await flushPromises();
 
     expect(wrapper.find('[data-testid="open-from-url-loading"]').exists()).toBe(false);
@@ -104,7 +145,7 @@ describe("OpenFromUrlView", () => {
 
   it("the fallback button opens a local file exactly like the picker, once chosen (AC-16 fallback path)", async () => {
     vi.mocked(openDocumentFromUrl).mockRejectedValue(new OpenFromUrlError("Failed to fetch"));
-    const { wrapper, router } = await mountAt("/open?url=https://blocked.example.com/report.docx");
+    const { wrapper, router } = await mountAndConfirm("/open?url=https://blocked.example.com/report.docx");
     await flushPromises();
 
     const bytes = readFileSync(join(fixturesDir, "word-authored.docx"));

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseMd } from "./reader";
 import { isImage, isTable, type Paragraph, type Table } from "../documentModel";
 
@@ -60,6 +60,31 @@ describe("SPEC-050 — parseMd", () => {
     const linkRun = p.runs.find((r) => r.formatting.linkHref);
     expect(linkRun?.text).toBe("a link");
     expect(linkRun?.formatting.linkHref).toBe("https://example.com/x");
+  });
+
+  // A link target reaches the `:href` a rendered run binds (DocPageBlock.vue),
+  // so the Markdown reader launders it exactly as the .docx and .odt readers
+  // do — a dangerous scheme leaves the text in place but unlinked.
+  it.each([
+    ["javascript:alert(1)"],
+    ["JaVaScRiPt:alert(1)"],
+    ["java\tscript:alert(1)"],
+    ["  javascript:alert(1)"],
+    ["data:text/html,<script>alert(1)</script>"],
+    ["vbscript:msgbox(1)"],
+  ])("strips a dangerous link scheme, keeping the text: %s", async (href) => {
+    const parsed = await parseMd(bytes(`see [a link](${href})\n`));
+    const [p] = paragraphs(parsed.sections[0].blocks);
+    expect(p.runs.map((r) => r.text).join("")).toBe("see a link");
+    expect(p.runs.every((r) => r.formatting.linkHref === undefined)).toBe(true);
+  });
+
+  it("keeps a safe link's other formatting when the scheme is stripped", async () => {
+    const parsed = await parseMd(bytes("**[bold link](javascript:alert(1))**\n"));
+    const [p] = paragraphs(parsed.sections[0].blocks);
+    const run = p.runs.find((r) => r.text === "bold link");
+    expect(run?.formatting.bold).toBe(true);
+    expect(run?.formatting.linkHref).toBeUndefined();
   });
 
   it("parses a two-space hard line break as embedded \\n", async () => {
@@ -135,6 +160,59 @@ describe("SPEC-050 — parseMd", () => {
     expect(isImage(block)).toBe(true);
     expect(parsed.media).toHaveLength(1);
     expect(parsed.media[0].contentType).toBe("image/png");
+  });
+
+  // The image path fetches on the reader's behalf off a URL the document
+  // supplied, so it takes the same scheme allow-list /open?url= does.
+  it.each([
+    ["file:///etc/passwd"],
+    ["blob:https://example.com/2b3c4d5e-0000-4000-8000-000000000000"],
+    ["ftp://example.com/logo.png"],
+    ["javascript:alert(1)"],
+  ])("never fetches an image src with a non-http(s) scheme: %s", async (src) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const parsed = await parseMd(bytes(`![alt](${src})\n`), { baseUrl: "https://example.com/doc.md" });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(parsed.media).toHaveLength(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("preserves an unfetchable image reference rather than dropping it (SPEC-008)", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    try {
+      const parsed = await parseMd(bytes("![alt](file:///etc/passwd)\n"), {
+        baseUrl: "https://example.com/doc.md",
+      });
+      expect(parsed.sections[0].opaqueBlocks).toHaveLength(1);
+      expect(parsed.sections[0].opaqueBlocks?.[0].xml).toContain("file:///etc/passwd");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("still fetches a relative image src resolved against an http(s) base", async () => {
+    const png = Uint8Array.from(atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    ), (c) => c.charCodeAt(0));
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: () => Promise.resolve(png.buffer),
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const parsed = await parseMd(bytes("![alt](images/photo.png)\n"), {
+        baseUrl: "https://example.com/docs/doc.md",
+      });
+      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/docs/images/photo.png");
+      expect(parsed.media).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("preserves front matter verbatim and off the body", async () => {

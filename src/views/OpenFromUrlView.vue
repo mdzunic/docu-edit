@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, useTemplateRef } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import { useTheme } from "../composables/useTheme";
@@ -18,16 +18,37 @@ const { addToast } = useToasts();
 useTheme();
 const fileInput = useTemplateRef("fileInput");
 
-// "loading" while the fetch is in flight, "error" once it's failed —
-// success replaces the route with /doc/:id, so there's no "done" state to
-// render here (SPEC-009 AC-9, AC-10, AC-16).
-const status = ref("loading");
-const errorReason = ref("");
-
 function urlParam() {
   const value = route.query.url;
   return typeof value === "string" ? value : "";
 }
+
+// "confirm" until the reader asks for the document, "loading" while the
+// fetch is in flight, "error" once it's failed — success replaces the route
+// with /doc/:id, so there's no "done" state to render here (SPEC-009 AC-9,
+// AC-10, AC-16).
+//
+// The fetch waits for a click rather than firing from onMounted: `url` is
+// whatever a link put in the query string, so an auto-fetch made any link a
+// way to send a request from the reader's browser to a host of the sender's
+// choosing and file the response in the reader's library, with nothing shown
+// and nothing to decline. Showing the address first is what makes it theirs
+// to refuse (AC-9).
+const status = ref(urlParam() === "" ? "error" : "confirm");
+const errorReason = ref(urlParam() === "" ? "No URL was given to open." : "");
+
+const targetUrl = computed(() => urlParam());
+
+/** The host the link points at, shown on its own line so it survives a long
+ * or padded path — the part of the address that says who is being asked. An
+ * unparseable URL has no host to show; `run` rejects it on click. */
+const targetHost = computed(() => {
+  try {
+    return new URL(targetUrl.value).host;
+  } catch {
+    return "";
+  }
+});
 
 async function run() {
   const url = urlParam();
@@ -50,8 +71,6 @@ async function run() {
     errorReason.value = error instanceof Error ? error.message : String(error);
   }
 }
-
-onMounted(run);
 
 function pickLocalFile() {
   fileInput.value?.click();
@@ -79,7 +98,45 @@ async function handleFileChosen() {
 <template>
   <AppShell document-title="No document">
     <div
-      v-if="status === 'loading'"
+      v-if="status === 'confirm'"
+      class="status-panel"
+      data-testid="open-from-url-confirm"
+    >
+      <p class="confirm-title">
+        Open this document?
+      </p>
+      <p class="confirm-host">
+        <span
+          v-if="targetHost"
+          data-testid="open-from-url-host"
+        >{{ targetHost }}</span>
+      </p>
+      <p
+        class="confirm-url"
+        data-testid="open-from-url-target"
+      >
+        {{ targetUrl }}
+      </p>
+      <div class="confirm-actions">
+        <button
+          type="button"
+          class="primary"
+          data-testid="open-from-url-confirm-button"
+          @click="run"
+        >
+          Open document
+        </button>
+        <button
+          type="button"
+          data-testid="open-from-url-pick-file-instead"
+          @click="pickLocalFile"
+        >
+          Choose a file instead
+        </button>
+      </div>
+    </div>
+    <div
+      v-else-if="status === 'loading'"
       class="status-panel"
       data-testid="open-from-url-loading"
       role="status"
@@ -145,6 +202,36 @@ async function handleFileChosen() {
   max-width: 32rem;
 }
 
+.confirm-title {
+  margin: 0;
+  font-size: var(--text-xl);
+  color: var(--text-primary);
+}
+
+.confirm-host {
+  margin: 0;
+  font-size: var(--text-lg);
+  color: var(--text-primary);
+}
+
+/* The full address, wrapped rather than truncated: a link that pads the
+   path to push the real host out of view is exactly what this panel is
+   here to expose. */
+.confirm-url {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+}
+
 .status-panel button {
   font: inherit;
   padding: var(--space-3) var(--space-6);
@@ -152,6 +239,14 @@ async function handleFileChosen() {
   border-radius: var(--radius-sm);
   background: var(--surface-base);
   cursor: pointer;
+}
+
+/* The repo's primary-button treatment (BookmarkDialog, ChartOptionsDialog,
+   …) so the confirming action reads the same here as everywhere else. */
+.status-panel button.primary {
+  background: var(--surface-brand);
+  border-color: var(--surface-brand);
+  color: var(--text-on-brand);
 }
 
 .visually-hidden {

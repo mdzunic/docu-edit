@@ -36,6 +36,8 @@ goes quietly out of date every time a later spec lands.
 - [ ] Format detection admits markdown by file extension, documented as the deliberate exception to the content-sniffing rule in "Detection" below
 - [ ] The unsupported-file-type message names all three formats, replacing the string SPEC-009 asserts — see "Specs this changes"
 - [ ] A test opens a `.md` fixture exercising every construct in the supported subset, saves as `.docx`, reopens, and asserts `equalSemantic` against the masked source
+- [ ] A link target carrying a dangerous scheme (`javascript:`/`data:`/`vbscript:`) is stripped on read, leaving the text unlinked — the same `sanitizeHref` rule the `.docx` and `.odt` readers apply
+- [ ] An image `src` is fetched only when it resolves to `http`/`https`; a `data:` URI is decoded without a request, and any other scheme is never fetched and stays preserved verbatim
 
 ## Out of scope
 CommonMark or GFM conformance — the subset below is the contract, and a
@@ -63,7 +65,7 @@ Everything else is preserved opaquely rather than parsed.
 | `> ` blockquote | Blockquote paragraph style |
 | `---` thematic break | Horizontal-rule paragraph |
 | `[text](url)` | Hyperlink run (SPEC-025) |
-| `![alt](src)` | Inline image (SPEC-024), `src` resolved relative to the file |
+| `![alt](src)` | Inline image (SPEC-024), `src` resolved relative to the file. A `data:` URI is decoded directly; any other resolved `src` is fetched only over `http`/`https` — a scheme we will not fetch leaves the reference preserved verbatim, like an unresolvable relative path |
 | GFM pipe table | Table without merged cells (SPEC-022) |
 
 ### What markdown cannot carry

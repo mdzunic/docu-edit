@@ -11,6 +11,7 @@ import {
 } from "./openDocument";
 import { OPENABLE_EXTENSIONS } from "./documentKinds";
 import { LIBRARY_IMAGE_MIME_TYPES } from "./core/media";
+import { isFetchableUrl } from "./links";
 
 export class OpenFromUrlError extends Error {}
 
@@ -95,6 +96,10 @@ function deriveFileName(response: Response, url: string): string {
  * file-picker path exactly — presentations included; the caller routes by
  * the returned `kind`. */
 export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
+  if (!isFetchableUrl(url)) {
+    throw new OpenFromUrlError("That isn't a web address we can open — links must start with http:// or https://");
+  }
+
   let response: Response;
   try {
     response = await fetch(url);

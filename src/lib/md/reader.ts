@@ -34,6 +34,7 @@ import { textAreaWidthCm } from "../images";
 import { fitImageSizeCm } from "../core/media";
 import { decodeImageDimensions } from "../core/imageDimensions";
 import { bytesToBase64 } from "../opaque";
+import { isFetchableUrl, sanitizeHref } from "../links";
 import { CODE_CHAR_STYLE_ID, headingStyleId, mdBuiltInStyles, resolveNamedStyle, type ResolvedNamedStyle } from "../styles";
 
 /** The parsed-package shape `assembleDocumentModel` (lib/openDocument.ts)
@@ -212,10 +213,15 @@ function parseInline(text: string, resolveCodeFormatting: () => RunFormatting): 
         if (closeParen !== -1) {
           flush();
           const linkText = text.slice(i + 1, closeBracket);
-          const href = text.slice(closeBracket + 2, closeParen).trim();
+          // Sanitized on the way in, exactly as the .docx and .odt readers do
+          // (docx/reader.ts's hyperlinkHref, odf/reader.ts's linkFormatting):
+          // a `javascript:`/`data:`/`vbscript:` target leaves the text
+          // unlinked rather than reaching the `:href` a rendered run binds.
+          const href = sanitizeHref(text.slice(closeBracket + 2, closeParen));
           const outer = currentFormatting(bold, italic, strikethrough);
           for (const run of parseInline(linkText, resolveCodeFormatting)) {
-            runs.push({ ...run, formatting: { ...outer, ...run.formatting, linkHref: href } });
+            const formatting = { ...outer, ...run.formatting };
+            runs.push({ ...run, formatting: href !== null ? { ...formatting, linkHref: href } : formatting });
           }
           i = closeParen + 1;
           continue;
@@ -273,8 +279,9 @@ function guessContentType(src: string): string {
  * (no network — always resolvable, and what SPEC-050's own kitchen-sink
  * fixture uses to stay hermetic); anything else is fetched, resolved against
  * `options.baseUrl` when given. Returns null when the src cannot be resolved
- * (a relative path with no base, or a failed fetch) — the caller preserves
- * the image reference as an opaque block instead of failing the open. */
+ * (a relative path with no base, a scheme we will not fetch, or a failed
+ * fetch) — the caller preserves the image reference as an opaque block
+ * instead of failing the open. */
 async function resolveImageSrc(
   src: string,
   options: ParseMdOptions,
@@ -292,6 +299,14 @@ async function resolveImageSrc(
   try {
     url = options.baseUrl ? new URL(src, options.baseUrl).toString() : new URL(src).toString();
   } catch {
+    return null;
+  }
+  // Checked on the RESOLVED url, so a relative `src` still resolves against
+  // an http(s) baseUrl and passes, while an absolute `src` naming any other
+  // scheme does not: the document is untrusted, and this is the app issuing
+  // a request on the reader's behalf rather than following a link they
+  // clicked. `data:` never reaches here — it returned above.
+  if (!isFetchableUrl(url)) {
     return null;
   }
   try {

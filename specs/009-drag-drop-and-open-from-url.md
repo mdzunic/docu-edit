@@ -16,7 +16,8 @@ product linkable from other tools.
 - [ ] Dropping an unsupported file type shows the error "We can only open .docx, .odt and .md files" and does not navigate away
 - [ ] Dropping multiple files opens the first and shows a toast "Opened <name> — only one file at a time"
 - [ ] Dragging over the window while a document is open does not modify the open document until the drop completes successfully
-- [ ] `/open?url=<encoded-url>` fetches the document at that URL and opens it, showing a loading state while fetching
+- [ ] `/open?url=<encoded-url>` shows the address it is being asked to open — the host on its own line, then the full URL — and fetches it only once the reader confirms, showing a loading state while fetching
+- [ ] `/open?url=` refuses any scheme other than `http`/`https` before fetching, so a link cannot smuggle a document in through `data:`/`blob:`
 - [ ] A fetch that fails, is blocked by CORS, or returns a non-document content type shows "Couldn't open that link" with the underlying reason and a button to pick a local file instead
 - [ ] Files larger than 50 MB are refused before parsing with "That file is too large to open (limit 50 MB)"
 - [ ] The document opened from a URL is stored in the local library like any other, and is not re-fetched on reload

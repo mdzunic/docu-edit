@@ -18,6 +18,36 @@ afterEach(() => {
 });
 
 describe("openDocumentFromUrl", () => {
+  // `url` arrives from a query parameter, so every scheme `fetch` understands
+  // is reachable from a link unless this path refuses it. `data:`/`blob:`
+  // carry their own content type and would walk past the content-type gate.
+  it.each([
+    ["data:text/html,<script>alert(1)</script>"],
+    ["data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,UEsDBA=="],
+    ["blob:https://example.com/2b3c4d5e-0000-4000-8000-000000000000"],
+    ["javascript:alert(1)"],
+    ["file:///etc/passwd"],
+    ["not a url at all"],
+    [""],
+  ])("refuses to fetch a non-http(s) URL: %s", async (url) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(openDocumentFromUrl(url)).rejects.toThrow(OpenFromUrlError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("still fetches plain http, not only https", async () => {
+    mockFetchResolvedWith({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: new Headers({ "content-type": DOCX_CONTENT_TYPE }),
+      arrayBuffer: () => Promise.resolve(docxBytes.buffer.slice(docxBytes.byteOffset, docxBytes.byteOffset + docxBytes.byteLength)),
+    });
+    const doc = await openDocumentFromUrl("http://intranet.example/Notes.docx");
+    expect(doc.model.title).toBe("Notes");
+  });
+
   it("fetches and opens a .docx file, exactly like the file picker (AC-9)", async () => {
     mockFetchResolvedWith({
       ok: true,

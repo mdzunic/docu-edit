@@ -101,6 +101,27 @@ export function sanitizeHref(url: string): string | null {
   return trimmed;
 }
 
+// The only two schemes anything here will *fetch*. A stricter rule than
+// sanitizeHref's: that one governs what a link may point at (the browser
+// navigates it, and the user chose to click), this governs what the app
+// will request on the reader's behalf, off a URL a document or a query
+// parameter supplied. `data:`/`blob:` carry their own content type and
+// would walk past a content-type gate; `file:` and the rest have no
+// business being fetched by a document reader at all.
+const FETCHABLE_PROTOCOLS = new Set(["http:", "https:"]);
+
+/** Whether `url` parses as absolute and names a scheme we are willing to
+ * fetch. Callers that resolve a relative reference against a base must
+ * check the RESOLVED url, not the raw reference — "images/x.png" is not
+ * absolute and would fail here on its own. */
+export function isFetchableUrl(url: string): boolean {
+  try {
+    return FETCHABLE_PROTOCOLS.has(new URL(url).protocol);
+  } catch {
+    return false;
+  }
+}
+
 // --- autolink detection (AC-5..7) -------------------------------------------
 
 /** A bare URL found in a paragraph's text: the covered character span plus
