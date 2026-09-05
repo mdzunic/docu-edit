@@ -18,25 +18,19 @@
 // composable it names — in practice at the end of setup, once
 // `editorCommands` (the shortcut registry) exists.
 import type { Ref } from "vue";
+import { adjustIndent, changeListLevel, documentEnd, documentStart, insertText } from "../../lib/commands";
+import { appendTableRowForTab } from "../../lib/tables";
 import {
-  adjustIndent,
-  changeListLevel,
-  documentEnd,
-  documentStart,
-  INDENT_STEP_CM,
-  insertText,
-  isCollapsed,
-  touchedBlocks,
-} from "../../lib/commands";
-import {
-  appendTableRowForTab,
-  caretTableLocation,
-  nextCellCaret,
-  prevCellCaret,
-} from "../../lib/tables";
-import { asNudgeDirection, type NudgeDirection } from "../../lib/core/shapes";
+  isContentKey,
+  isDeleteKey,
+  isDuplicateCombo,
+  isPlainPasteCombo,
+  isUnmodifiedArrowKey,
+  nudgeDirectionForKey,
+} from "../../lib/editorKeys";
+import { resolveTabAction } from "../../lib/tabKey";
 import { findShortcut } from "../../lib/shortcuts";
-import { paragraphAt } from "../../lib/textEditing";
+import type { NudgeDirection } from "../../lib/core/shapes";
 import type { PendingFormat } from "../../lib/documentModel";
 import type { ParagraphCommand } from "../../lib/commands";
 import type { EditorContext } from "./context";
@@ -47,21 +41,6 @@ import type { EditorContext } from "./context";
  * so naming each surface's own type here would add a dependency it does not
  * have; `unknown` is the accurate width, not a shortcut around one. */
 type ActiveFlag = Readonly<Ref<unknown>>;
-
-/** Whether a keydown would type or delete content — a plain printable
- * character, or Enter/Backspace/Delete without a modifier — the set
- * handleKeyDown's selected-TOC guard (SPEC-033 AC-15) intercepts. Excludes
- * navigation, Tab and every modifier combo, so Ctrl/Cmd+C (copy) and arrow
- * keys around a selected TOC still work normally. */
-function isContentKey(event = new KeyboardEvent("keydown")) {
-  if (event.ctrlKey || event.metaKey || event.altKey) {
-    return false;
-  }
-  if (event.key === "Enter" || event.key === "Backspace" || event.key === "Delete") {
-    return true;
-  }
-  return event.key.length === 1;
-}
 
 export interface UseKeyboardMapDeps extends EditorContext {
   // --- selections the map must clear, or act on before the caret does ------
@@ -212,24 +191,20 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
       // dedicated keydown path, the same reason images.ts's own image-delete
       // path is one — a shape click never places a DOM caret/selection inside
       // the contenteditable region.
-      if (event.key === "Delete" || event.key === "Backspace") {
+      if (isDeleteKey(event)) {
         event.preventDefault();
         handleShapeDelete();
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      if (isDuplicateCombo(event)) {
         event.preventDefault();
         handleShapeDuplicate();
         return;
       }
-      const direction =
-        event.key === "ArrowUp" ? "up" :
-        event.key === "ArrowDown" ? "down" :
-        event.key === "ArrowLeft" ? "left" :
-        event.key === "ArrowRight" ? "right" : "";
+      const direction = nudgeDirectionForKey(event.key);
       if (direction) {
         event.preventDefault();
-        handleShapeNudge(asNudgeDirection(direction), event.ctrlKey || event.metaKey);
+        handleShapeNudge(direction, event.ctrlKey || event.metaKey);
         return;
       }
     }
@@ -237,18 +212,18 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
       // A selected chart's keyboard interactions (SPEC-052) — the same
       // dedicated keydown path shapes/images use: a chart click never places
       // a DOM caret/selection inside a contenteditable region.
-      if (event.key === "Delete" || event.key === "Backspace") {
+      if (isDeleteKey(event)) {
         event.preventDefault();
         deleteChartWithCaptionPrompt();
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "d") {
+      if (isDuplicateCombo(event)) {
         event.preventDefault();
         handleChartDuplicate();
         return;
       }
     }
-    if (tocSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+    if (tocSelection.value && isDeleteKey(event)) {
       // Deleting a selected TOC (SPEC-033 AC-16) is the same dedicated
       // keydown path SPEC-024 uses for a selected image: a click never
       // places a DOM caret/selection inside it for the native beforeinput
@@ -266,7 +241,7 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
       addToast('This table of contents isn’t editable — use "Update table of contents" instead.');
       return;
     }
-    if (imageSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+    if (imageSelection.value && isDeleteKey(event)) {
       // Deleting a selected image (SPEC-024 AC-30) is a dedicated keydown
       // path, not the native beforeinput deletion flow: an image click never
       // places a DOM caret/selection inside the contenteditable region for
@@ -275,7 +250,7 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
       deleteImageWithCaptionPrompt();
       return;
     }
-    if (tofSelection.value && (event.key === "Delete" || event.key === "Backspace")) {
+    if (tofSelection.value && isDeleteKey(event)) {
       // Deleting a selected table of figures (SPEC-055 AC-35), like a selected TOC. tofSelection is
       // cleared on click-away (useCanvasGestures), so this fires only while it's genuinely selected.
       event.preventDefault();
@@ -291,13 +266,7 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
     if (handleLineEdgeKey(event)) {
       return;
     }
-    if (
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey &&
-      !event.altKey &&
-      (event.key === "ArrowUp" || event.key === "ArrowDown" || event.key === "ArrowLeft" || event.key === "ArrowRight")
-    ) {
+    if (isUnmodifiedArrowKey(event)) {
       // Cell-boundary arrow movement (SPEC-022 AC-13, AC-14). A caret at the
       // exact boundary in the arrow's direction moves deterministically to
       // the neighbouring cell (or out of the table); anywhere else the
@@ -317,7 +286,7 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
       }
       scheduleColumnArrowFallback(event.key);
     }
-    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "v") {
+    if (isPlainPasteCombo(event)) {
       // A plain Ctrl/Cmd+V clears a stale plain-paste flag (armed but never
       // consumed because an empty clipboard fired no paste event).
       clearPlainPaste();
@@ -359,49 +328,28 @@ export function useKeyboardMap(deps: UseKeyboardMapDeps) {
         if (!selection) {
           break;
         }
-        // SPEC-022 AC-10..12 (precedence rule 1): in a table cell, Tab moves to
-        // the next cell (Shift+Tab the previous), the last cell appending a row.
-        if (isCollapsed(selection) && selection.focus.cell) {
-          if (event.shiftKey) {
-            const prev = prevCellCaret(model, selection.focus);
-            if (prev) {
-              applyCaretMove(prev);
-            }
-          } else {
-            const next = nextCellCaret(model, selection.focus);
-            if (next) {
-              applyCaretMove(next);
-            } else {
-              const location = caretTableLocation(model, selection.focus);
-              if (location) {
-                applyEdit(
-                  appendTableRowForTab(model, selection, location),
-                  selection,
-                  "add table row",
-                );
-              }
-            }
-          }
-          break;
-        }
-        // SPEC-054 Tab precedence (rules 2-4): a caret collapsed at offset 0
-        // gates the list demote (rule 2, narrowed from SPEC-018's "any offset")
-        // and indent (rule 3); elsewhere a literal tab (rule 4) — AC-29, AC-30.
-        const collapsedAtStart = isCollapsed(selection) && selection.focus.offset === 0;
-        const listAtStart =
-          collapsedAtStart &&
-          touchedBlocks(model, selection).some((address) => !!paragraphAt(model, address)?.list);
-        if (listAtStart) {
+        // Which of SPEC-054's four rules applies is model-derived, and lives
+        // in lib/tabKey.ts where it can be unit-tested; this only applies it.
+        const action = resolveTabAction(model, selection, event.shiftKey);
+        if (action.kind === "moveCaret") {
+          applyCaretMove(action.caret);
+        } else if (action.kind === "appendRow") {
+          applyEdit(
+            appendTableRowForTab(model, selection, action.location),
+            selection,
+            "add table row",
+          );
+        } else if (action.kind === "listLevel") {
           applyParagraphCommand(
-            (current, target) => changeListLevel(current, target, event.shiftKey ? -1 : 1),
+            (current, target) => changeListLevel(current, target, action.delta),
             "list level",
           );
-        } else if (collapsedAtStart) {
+        } else if (action.kind === "indent") {
           applyParagraphCommand(
-            (current, target) => adjustIndent(current, target, (event.shiftKey ? -1 : 1) * INDENT_STEP_CM),
+            (current, target) => adjustIndent(current, target, action.deltaCm),
             "indent",
           );
-        } else if (!event.shiftKey) {
+        } else if (action.kind === "insertTab") {
           applyEdit(insertText(model, selection, "\t", getPendingFormat()), selection, "typing", { groupable: true });
         }
         break;
