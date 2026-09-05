@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { readPdfText } from "./pdf";
 import { deflateSync } from "node:zlib";
 import { extend, MOD, WORD_LEFT, WORD_RIGHT } from "./keys";
 
@@ -122,7 +123,7 @@ async function downloadPdfText(page: Page): Promise<string> {
   ]);
   const path = await download.path();
   expect(path).toBeTruthy();
-  return readFileSync(path!).toString("latin1");
+  return readPdfText(path!);
 }
 
 test("Ctrl/Cmd+P opens the print preview over the paginated document (AC-1, AC-2)", async ({

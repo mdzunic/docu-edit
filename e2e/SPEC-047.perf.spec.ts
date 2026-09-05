@@ -49,6 +49,15 @@ const BUDGETS: Record<string, { ceiling: number; direction: "atMost" | "atLeast"
   mainThreadBlockDuringOpenMs: { ceiling: 150, direction: "atMost" },
   saveMs: { ceiling: 5000, direction: "atMost" },
   heapAfterSettleMB: { ceiling: 400, direction: "atMost" },
+  // Not from SPEC-047's own table: exporting a PDF is the one path that
+  // deliberately turns virtualization OFF (usePrintPreview's realizeAllPages
+  // forces every page into the DOM so the extractor can read it), so the
+  // architecture every budget above validates does not apply to it, and
+  // nothing measured it. On this fixture that means realizing ~277 pages at
+  // once, against an 8s internal deadline past which the export gives up with
+  // "the document took too long to prepare". The ceiling here is that
+  // deadline plus the extract, font-load and build that follow it.
+  pdfExportMs: { ceiling: 20_000, direction: "atMost" },
 };
 
 // The 30-minute leak test (AC-18) is its own single-run check, not part of
@@ -353,6 +362,19 @@ async function measureTyping(
 /** AC-19, AC-20: invoke-to-Blob-resolved timing (the 'download' event fires
  * once the object URL is ready) plus the phase's longest main-thread block
  * (AC-20's "does not freeze the UI", made concrete). */
+/** "Export -> PDF (.pdf)" end to end: realize every page, extract each one,
+ * load the faces, build the file. The single most expensive thing the editor
+ * can be asked to do on a large document. */
+async function measurePdfExport(page: Page): Promise<{ pdfExportMs: number }> {
+  const t0 = Date.now();
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("file-menu-export").click();
+  const downloadPromise = page.waitForEvent("download", { timeout: 120_000 });
+  await page.getByTestId("download-pdf").click();
+  await downloadPromise;
+  return { pdfExportMs: Date.now() - t0 };
+}
+
 async function measureSave(page: Page): Promise<{ saveMs: number; mainThreadBlockDuringSaveMs: number }> {
   await resetLongTasks(page);
   const t0 = Date.now();
@@ -415,6 +437,11 @@ test("holds every SPEC-047 performance budget on the fixture, median of 5 runs (
     samples.mainThreadBlockDuringSaveMs.push(save.mainThreadBlockDuringSaveMs);
 
     samples.heapAfterSettleMB.push(await measureHeapMB(page));
+
+    // Strictly last in the run: exporting realizes every page, so it leaves
+    // both the DOM and the heap in a state nothing above would recognise —
+    // measuring heapAfterSettleMB after this would be measuring the export.
+    samples.pdfExportMs.push((await measurePdfExport(page)).pdfExportMs);
 
     await context.close();
   }

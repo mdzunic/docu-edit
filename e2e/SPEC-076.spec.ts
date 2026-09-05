@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { MOD } from "./keys";
 import { readFileSync } from "node:fs";
+import { readPdfText } from "./pdf";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -179,7 +180,7 @@ test.describe("SPEC-076 the table style gallery", () => {
     ]);
     const path = await download.path();
     expect(path).toBeTruthy();
-    const pdf = readFileSync(path!).toString("latin1");
+    const pdf = readPdfText(path!);
 
     // Filled closed paths exist at all (before this spec, a table exported
     // as bare text — not one fill or stroke operator in the stream)…
@@ -219,7 +220,7 @@ test.describe("SPEC-076 the table style gallery", () => {
       page.waitForEvent("download"),
       page.getByTestId("download-pdf").click(),
     ]);
-    const selectedPdf = readFileSync((await selectedDownload.path())!).toString("latin1");
+    const selectedPdf = readPdfText((await selectedDownload.path())!);
     expect(bandFills(selectedPdf)).toBe(bandFills(pdf));
     expect(headerFills(selectedPdf)).toBe(headerFills(pdf));
     expect(bandFills(pdf)).toBeGreaterThan(0);

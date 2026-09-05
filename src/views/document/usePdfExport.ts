@@ -22,6 +22,7 @@ import { extractPageContent, PT_PER_CM } from "../../lib/pdf/domExtract";
 import { encodeImage } from "../../lib/pdf/imageEncode";
 import { faceFileName, type FaceKey } from "../../lib/pdf/fontMap";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
+import { yieldToMainThread } from "../../lib/core/idleScheduler";
 import { parseSfnt, type SfntFont } from "../../lib/pdf/sfnt";
 import { isDocumentContentEmpty } from "../../lib/printRange";
 import type { PaginationController } from "../../composables/usePagination";
@@ -77,16 +78,6 @@ function loadFace(face: FaceKey): Promise<FaceResult> {
   return pending;
 }
 
-function raf(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => resolve());
-    } else {
-      setTimeout(resolve, 16);
-    }
-  });
-}
-
 export function usePdfExport(deps: PdfExportDeps) {
   const pdfExporting = ref(false);
   const pdfProgress = ref({ done: 0, total: 0 });
@@ -124,7 +115,13 @@ export function usePdfExport(deps: PdfExportDeps) {
         ),
       );
       pdfProgress.value = { done: index + 1, total: pageEls.length };
-      await raf();
+      // A macrotask yield, not a frame: the pages are already realized and
+      // measured by this point, so there is nothing to wait for a paint for.
+      // requestAnimationFrame does not fire in a background tab, so an export
+      // the user tabbed away from used to stall until the deadline killed it
+      // — and even in the foreground it cost a frame per page, ~4.6s of pure
+      // waiting on a 277-page document.
+      await yieldToMainThread();
     }
     return pages;
   }
