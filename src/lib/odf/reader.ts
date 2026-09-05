@@ -1445,6 +1445,21 @@ function parseBodyTextBlockOrSplit(
           flush();
           blocks.push(parsed.image);
           media.push(parsed.media);
+          // A FLOATING picture's graphic style is consumed like a shape's or
+          // a connector's: its wrap is modelled (graphicWrapStyles) and the
+          // writer mints an equivalent definition from the model on save.
+          // Leaving the image out of this count kept the old definition
+          // alongside the fresh one, so content.xml gained an orphan fr<N>
+          // graphic style on every single save.
+          //
+          // An INLINE picture is deliberately not counted: its frame carries
+          // no `draw:style-name` at all on the way out (graphicStyleNameFor
+          // returns nothing for "inline"), so there is no regenerated
+          // definition to replace the preserved one — dropping it would lose
+          // whatever else it held rather than de-duplicating anything.
+          if (parsed.image.wrap !== "inline") {
+            recordConsumedGraphicStyle(ctx, frameEl);
+          }
           continue;
         }
       }

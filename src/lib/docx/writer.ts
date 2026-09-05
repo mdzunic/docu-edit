@@ -126,6 +126,7 @@ import { connectorDrawingXml, connectorParagraphXml, connectorTargetIds } from "
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
 import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";
 import {
+  IMAGE_RELATIONSHIP,
   nextFreeRelId,
   planMediaWrite,
   planMediaWriteChunked,
@@ -3029,6 +3030,63 @@ function withMediaRelationships(relsXml: string, relationshipsXml: string): stri
  * other relationship patch in this file (which only ever appends), this is
  * the one case a save actually needs to remove a preserved entry: nothing
  * else references that target any more once the part itself is gone. */
+/** Relationship types whose parts the reader consumes and every save
+ * re-writes from the model. The write plans mint the complete current set
+ * each time, so the preserved part's own entries for these types are last
+ * save's answer to the same question — keeping them beside the fresh ones is
+ * what grew the rels part by a pair of image relationships per save and made
+ * a header's declarations pile up.
+ *
+ * Deliberately NOT here:
+ *  - styles, numbering, settings and theme: patched in place, one
+ *    relationship each, never re-minted;
+ *  - charts: an untouched chart reuses its preserved part name AND its id so
+ *    it stays byte-identical;
+ *  - HYPERLINKS: their target is an external URL rather than a part, and
+ *    preserved opaque markup this writer re-emits verbatim can carry a
+ *    `w:hyperlink r:id` naming one. The writer cannot tell, so a preserved
+ *    hyperlink relationship is kept and the model's own link re-minted
+ *    beside it (see hyperlinks.spec.ts's "additively"). That leaves
+ *    hyperlink relationships accumulating across saves — bounded by the
+ *    document's link count per save, and fixable by scanning the opaque XML
+ *    for surviving `r:id` references, which is its own piece of work;
+ *  - every unmodelled type — customXml, embedded objects, anything this
+ *    product does not parse — which SPEC-008 requires be preserved. */
+const REGENERATED_RELATIONSHIP_TYPES: ReadonlySet<string> = new Set([
+  IMAGE_RELATIONSHIP,
+  HEADER_RELATIONSHIP,
+  FOOTER_RELATIONSHIP,
+  FOOTNOTES_RELATIONSHIP,
+  ENDNOTES_RELATIONSHIP,
+  COMMENTS_RELATIONSHIP,
+]);
+
+/** A preserved main-document rels part with the regenerated-type
+ * relationships removed, ready for the current save's own to be appended.
+ *
+ * `survivingParts` are the parts copied through from the source untouched. A
+ * relationship pointing at one of those is kept even when its type is
+ * regenerated: a media part referenced only by opaque content stays in the
+ * package under its own name (the media plan mints around it), and dropping
+ * its relationship would break the very content SPEC-008 preserved it for. */
+function withoutRegeneratedRelationships(
+  relsXml: string,
+  mainPartName: string,
+  survivingParts: ReadonlySet<string>,
+): string {
+  return relsXml.replace(/<Relationship\b[^>]*\/>/g, (entry) => {
+    const type = /Type="([^"]+)"/.exec(entry)?.[1];
+    if (type === undefined || !REGENERATED_RELATIONSHIP_TYPES.has(type)) {
+      return entry;
+    }
+    const target = /Target="([^"]+)"/.exec(entry)?.[1];
+    if (target === undefined) {
+      return entry;
+    }
+    return survivingParts.has(resolvePartPath(mainPartName, target)) ? entry : "";
+  });
+}
+
 /** A preserved `[Content_Types].xml` with the `<Override>` for each of
  * `partNames` removed — the content-types half of withdrawing a stale
  * declaration for a part this save re-writes, so the plan's own Override can
@@ -3345,7 +3403,23 @@ export async function writeDocx(
   // Images (SPEC-024): media ids start past whatever the preserved main
   // rels part already uses, and past whatever package part names already
   // exist, so a freshly written word/media/imageN.ext can never collide.
-  const mainRelsTaken = mainRelsText ? takenRelIdsOf(parseRelationships(mainRelsText).values()) : new Set<string>();
+  // Ids held by relationships this save withdraws and re-mints are NOT
+  // taken: counting them would push each save's ids past the last one's, so
+  // the same unedited document would serialise differently every time
+  // (rId2/rId3, then rId4/rId5, then rId2/rId3 again once the stale pair was
+  // withdrawn). Reusing them makes a save byte-stable, which is what lets
+  // version history and dedupe see "nothing changed".
+  const mainRelsTaken = mainRelsText
+    ? takenRelIdsOf(
+        Array.from(parseRelationships(mainRelsText).values()).filter(
+          (rel) =>
+            !REGENERATED_RELATIONSHIP_TYPES.has(rel.type) ||
+            // Kept below (it points at a surviving preserved part), so its id
+            // is still occupied. Only a WITHDRAWN id is free to re-mint.
+            preservedParts.has(resolvePartPath(mainPartName, rel.target)),
+        ),
+      )
+    : new Set<string>();
   // Hyperlinks (SPEC-025) mint their rel ids first, past the preserved
   // part's own ids; media ids then start past both.
   const hyperlinkPlan = planHyperlinkWrite(model, mainRelsTaken);
@@ -3566,9 +3640,18 @@ export async function writeDocx(
         addThemeDecls) &&
       name === mainRelsName
     ) {
-      // Withdraw the source's declarations for parts this save re-writes
-      // before appending the fresh ones, or both end up in the file.
-      let rels = withoutRelationshipsToTargets(mainRelsText!, mainPartName, rewrittenPartNames);
+      // Withdraw the source's declarations before appending the fresh ones,
+      // or both end up in the file: every relationship of a type this save
+      // re-mints in full, plus (for the types it does not) any pointing at a
+      // part it re-writes.
+      const survivingParts = new Set(
+        [...preservedParts.keys()].filter((partName) => !rewrittenPartNames.has(partName)),
+      );
+      let rels = withoutRelationshipsToTargets(
+        withoutRegeneratedRelationships(mainRelsText!, mainPartName, survivingParts),
+        mainPartName,
+        rewrittenPartNames,
+      );
       if (addNumberingDecls) {
         rels = withNumberingRelationship(rels, "numbering.xml");
       }
