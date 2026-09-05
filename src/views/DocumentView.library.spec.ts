@@ -27,7 +27,17 @@ beforeEach(() => {
   vi.doMock("../lib/documents", () => ({ documentExists: () => true }));
 });
 
+// Every wrapper mountAt() creates, so afterEach can tear them down. A
+// DocumentView left mounted keeps its watchers and its debounced autosave
+// alive, and the next test then sees a putRecord call for the PREVIOUS
+// test's document — which made `toHaveBeenLastCalledWith` assertions depend
+// on how long the mounted view's async work happened to take.
+const mounted: Array<{ unmount: () => void }> = [];
+
 afterEach(() => {
+  while (mounted.length > 0) {
+    mounted.pop()?.unmount();
+  }
   vi.doUnmock("../lib/idb");
   vi.doUnmock("../lib/documents");
   vi.restoreAllMocks();
@@ -54,6 +64,7 @@ async function mountAt(path: string) {
   const router = createRouter({ history: createMemoryHistory(), routes });
   await router.push(path);
   const wrapper = mount(DocumentView, { global: { plugins: [router] } });
+  mounted.push(wrapper);
   await flushPromises();
   return { wrapper, router, store };
 }
