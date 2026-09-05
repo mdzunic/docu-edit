@@ -205,7 +205,7 @@ export function usePdfExport(deps: PdfExportDeps) {
       // touching the DOM or fetching fonts.
       const pages = isDocumentContentEmpty(model) ? [] : await extractPages(model);
       const [fonts, images] = await Promise.all([loadFonts(pages), loadImages(pages)]);
-      const bytes = buildPdf({
+      const bytes = await buildPdf({
         // An untitled document gets empty PDF title metadata (AC-32).
         title: model.title === DEFAULT_TITLE ? "" : model.title,
         pages,

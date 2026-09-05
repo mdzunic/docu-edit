@@ -11,6 +11,9 @@
 //    drawn to a canvas and embedded as zlib-compressed RGB samples, with the
 //    alpha channel split out into an /SMask when the image is transparent.
 import type { PdfImageData } from "./buildPdf";
+// Shared with buildPdf.ts, which deflates its font and content streams —
+// see core/deflate.ts for why it lives there rather than here.
+import { deflate } from "../core/deflate";
 
 /** The frame header of a JPEG: what /DCTDecode needs to know before the
  * original bytes can be handed to a PDF viewer unchanged. */
@@ -81,38 +84,6 @@ export function parseJpegHeader(bytes: Uint8Array): JpegHeader | null {
   return null;
 }
 
-/** zlib-wrapped DEFLATE (RFC 1950) — what /FlateDecode reads. The ZIP writer
- * has the raw-DEFLATE counterpart of this; both lean on the platform rather
- * than a dependency. */
-export async function deflate(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(data);
-      controller.close();
-    },
-  }).pipeThrough(new CompressionStream("deflate"));
-
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = stream.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
-    }
-    if (value) {
-      chunks.push(value);
-      total += value.length;
-    }
-  }
-  const out = new Uint8Array(total);
-  let cursor = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, cursor);
-    cursor += chunk.length;
-  }
-  return out;
-}
 
 /** The bytes behind a `data:` URI, or null for any other scheme. */
 export function dataUriBytes(src: string): Uint8Array | null {

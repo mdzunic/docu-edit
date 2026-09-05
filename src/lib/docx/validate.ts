@@ -621,8 +621,10 @@ function checkStylesPart(doc: Document, violations: string[]): void {
       if (!styleId) {
         violations.push(`${context} is missing required attribute w:styleId`);
       }
+      // Absent w:type means "paragraph" (the schema's default), so only a
+      // PRESENT value is checked against ST_StyleType.
       const styleType = wordAttr(child, "type");
-      if (styleType !== undefined && !STYLE_TYPES.has(styleType)) {
+      if (styleType !== null && !STYLE_TYPES.has(styleType)) {
         violations.push(
           `${context}[@w:styleId="${styleId}"] has w:type="${styleType}", not an ST_StyleType value`,
         );
