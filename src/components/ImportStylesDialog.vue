@@ -59,6 +59,8 @@ const canImport = computed(() => props.phase === "plan" && props.fileName.length
       <input
         ref="fileInput"
         type="file"
+        tabindex="-1"
+        aria-hidden="true"
         accept=".docx,.odt"
         class="hidden-file-input"
         data-testid="import-styles-file-input"

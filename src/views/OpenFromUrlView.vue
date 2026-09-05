@@ -169,6 +169,8 @@ async function handleFileChosen() {
     <input
       ref="fileInput"
       type="file"
+      tabindex="-1"
+      aria-hidden="true"
       :accept="OPEN_FILE_ACCEPT"
       data-testid="open-from-url-input"
       class="visually-hidden"

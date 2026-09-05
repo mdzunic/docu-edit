@@ -169,6 +169,8 @@ async function run() {
       <input
         ref="fileInput"
         type="file"
+        tabindex="-1"
+        aria-hidden="true"
         accept=".csv,.json"
         data-testid="merge-run-attach-input"
         class="visually-hidden"

@@ -69,6 +69,8 @@ defineExpose({ pick });
   <input
     ref="fileInput"
     type="file"
+    tabindex="-1"
+    aria-hidden="true"
     :accept="props.openFileAccept"
     data-testid="open-document-input"
     class="visually-hidden"

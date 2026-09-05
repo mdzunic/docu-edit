@@ -1091,6 +1091,8 @@ function chooseTableGrid(rows = 0, cols = 0) {
   <input
     ref="menuImageInput"
     type="file"
+    tabindex="-1"
+    aria-hidden="true"
     class="menu-image-input"
     data-testid="insert-image-file-input"
     :accept="ACCEPTED_IMAGE_ACCEPT_ATTR"

@@ -107,6 +107,8 @@ function confirmDelete() {
     <input
       ref="fileInput"
       type="file"
+      tabindex="-1"
+      aria-hidden="true"
       accept=".dotx,.ott"
       data-testid="template-gallery-import-input"
       class="visually-hidden"

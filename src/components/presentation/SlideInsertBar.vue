@@ -196,6 +196,8 @@ const mediaAccept = MEDIA_ACCEPT_ATTR;
     <input
       ref="fileInput"
       type="file"
+      tabindex="-1"
+      aria-hidden="true"
       class="sr-only"
       :accept="accept"
       data-testid="slides-image-input"
@@ -204,6 +206,8 @@ const mediaAccept = MEDIA_ACCEPT_ATTR;
     <input
       ref="mediaInput"
       type="file"
+      tabindex="-1"
+      aria-hidden="true"
       class="sr-only"
       :accept="mediaAccept"
       data-testid="slides-media-input"
