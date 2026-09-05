@@ -33,6 +33,10 @@ import { useDeckTheme } from "./presentation/useDeckTheme";
 import { useFilmstripCommands } from "./presentation/useFilmstripCommands";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
+import { useDeckFacts } from "./presentation/useDeckFacts";
+import { usePresentationMenu } from "./presentation/usePresentationMenu";
+import PresentationMenuBar from "../components/presentation/PresentationMenuBar.vue";
+import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useWindowKeys } from "./presentation/useWindowKeys";
 import { useDeckActions } from "./presentation/useDeckActions";
 import { useDeckSetup } from "./presentation/useDeckSetup";
@@ -83,29 +87,10 @@ function addSlideAction() {
   slideCommands.add(currentIndex.value);
 }
 
-const title = computed(() => presentation.value?.title ?? "No document");
-const badge = computed(() => (presentation.value ? formatBadgeLabel(presentation.value.format) : ""));
-const formatName = computed(() => (presentation.value ? presentationFormatLabel(presentation.value.format) : ""));
-const slideTotal = computed(() => presentation.value?.slides.length ?? 0);
-const slideCountLabel = computed(() => (slideTotal.value === 1 ? "1 slide" : `${slideTotal.value} slides`));
-
-const currentSlide = computed(() => presentation.value?.slides[currentIndex.value] ?? null);
-const liveLabel = computed(() =>
-  presentation.value ? `Slide ${currentIndex.value + 1} of ${slideTotal.value}` : "",
-);
-const deckMedia = computed(() => presentation.value?.media ?? []);
-// SPEC-093: each slide's resolved field band, read off the deck's shallowRef so
-// a commit (triggerRef) recomputes footers/numbers/dates live (AC-27/30/31).
-const deckFields = computed(() => {
-  const model = presentation.value;
-  return model ? model.slides.map((_, index) => stageFields(model, index, now())) : [];
-});
-
-function selectSlide(index = 0) {
-  if (index >= 0 && index < slideTotal.value) {
-    currentIndex.value = index;
-  }
-}
+// The deck's derived facts (title/badge/counts/fields) live in a composable so
+// this file stays a wiring hub within its budget.
+const { title, badge, formatName, slideTotal, slideCountLabel, currentSlide, liveLabel, deckMedia, deckFields, selectSlide } =
+  useDeckFacts({ presentation, currentIndex });
 
 // --- deck header actions: download + playback entry (SPEC-080/084) ---------
 const deckActions = useDeckActions({
@@ -196,6 +181,12 @@ const deckSetup = useDeckSetup({
 // --- header & footer: deck footer/date fields (SPEC-093) -------------------
 const headerFooter = useHeaderFooter({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit });
 
+// --- the menu bar (SPEC-049's model, for slides): routes to every composable above, so it is built last
+const menu = usePresentationMenu({
+  undo: slideUndo, deckActions, deckSetup, notes, transitions, animations, layouts, tables, media,
+  headerFooter, themePanel, stageEdit, charts, preferences: usePreferencesDialog(), addSlide: addSlideAction, toggleLayout,
+});
+
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
 useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut]);
 
@@ -206,6 +197,17 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
     :document-title="title"
     :format-badge="badge"
   >
+    <template
+      v-if="presentation"
+      #menubar
+    >
+      <PresentationMenuBar
+        :state="menu.state.value"
+        @command="menu.run"
+        @insert-image-file="stageEdit.insertion.insertImageFile($event)"
+        @insert-media-file="stageEdit.insertion.insertMediaFile($event)"
+      />
+    </template>
     <div
       v-if="!presentation"
       class="state-panel"

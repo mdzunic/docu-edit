@@ -258,3 +258,67 @@ test.describe("SPEC-049 menu bar and toolbar consolidation", () => {
     await expect(page.getByTestId("toolbar").getByTestId("format-bold")).toBeVisible();
   });
 });
+
+// The slides half of SPEC-049's model. The deck editor had only strips of
+// buttons, so the same application offered two different ways to find a
+// command — and named the same action twice ("Download" against "Export").
+// The bar is a second route to commands the strips already carry, so these
+// assert the routing rather than the commands, which their own specs cover.
+const SLIDE_MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Slide"];
+
+async function newDeck(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.getByTestId("new-presentation").click();
+  await expect(page).toHaveURL(/\/slides\/.+/);
+  await expect(page.getByTestId("presentation-view")).toBeVisible();
+}
+
+function slideMenu(page: Page) {
+  return page.getByRole("menubar", { name: "Presentation menu" });
+}
+
+test("the presentation editor has the same menu bar model as the document editor", async ({ page }) => {
+  await newDeck(page);
+  const bar = slideMenu(page);
+  await expect(bar).toBeVisible();
+  await expect(bar.getByRole("menuitem")).toHaveText(SLIDE_MENU_LABELS);
+});
+
+test("the slides menu runs commands and reflects their state", async ({ page }) => {
+  await newDeck(page);
+  const bar = slideMenu(page);
+  const open = async (label: string) => bar.getByRole("menuitem", { name: label, exact: true }).click();
+
+  // Undo starts unavailable on a fresh deck — a command is disabled, never
+  // hidden (SPEC-049), so the menu stays a stable map of the product.
+  await open("Edit");
+  await expect(page.getByTestId("slides-menu-undo")).toBeDisabled();
+  await page.keyboard.press("Escape");
+
+  // Slide ▸ New slide adds one, which in turn makes Undo available.
+  await expect(page.getByTestId("filmstrip-slide")).toHaveCount(1);
+  await open("Slide");
+  await page.getByTestId("slides-menu-new-slide").click();
+  await expect(page.getByTestId("filmstrip-slide")).toHaveCount(2);
+
+  await open("Edit");
+  await expect(page.getByTestId("slides-menu-undo")).toBeEnabled();
+  await page.getByTestId("slides-menu-undo").click();
+  await expect(page.getByTestId("filmstrip-slide")).toHaveCount(1);
+});
+
+test("the slides View menu checks the panel it opened", async ({ page }) => {
+  await newDeck(page);
+  const bar = slideMenu(page);
+  const openView = async () => bar.getByRole("menuitem", { name: "View", exact: true }).click();
+
+  await openView();
+  const design = page.getByTestId("slides-menu-design");
+  await expect(design).toHaveAttribute("aria-checked", "false");
+  await design.click();
+
+  // Reopening reads the checkmark back from the panel's own state, so the
+  // menu and the right-hand strip cannot disagree about what is open.
+  await openView();
+  await expect(page.getByTestId("slides-menu-design")).toHaveAttribute("aria-checked", "true");
+});
