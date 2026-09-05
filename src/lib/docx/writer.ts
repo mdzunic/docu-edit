@@ -2585,11 +2585,32 @@ function wireStyleType(type: NamedStyle["type"]): "paragraph" | "character" | "t
   return type === "character" || type === "table" ? type : "paragraph";
 }
 
+/** Whether a preserved style element came from a `.docx` source — i.e. is a
+ * WordprocessingML `w:style` rather than an ODF `style:style`. Read off the
+ * element's own namespace (the same "sniff the flavour" approach as
+ * preservedStyle.ts) so the test cannot drift from what the reader stored. */
+function isDocxStyleXml(rawXml: string): boolean {
+  try {
+    const wrapper = parseXml(`<w:root xmlns:w="${WORD_NAMESPACE}">${rawXml}</w:root>`);
+    const el = wrapper.documentElement.firstElementChild;
+    return el !== null && el.namespaceURI === WORD_NAMESPACE && el.localName === "style";
+  } catch {
+    return false;
+  }
+}
+
 /** An `unmodeled` style's original XML (SPEC-042 AC-18), re-emitted
  * verbatim except for the user-visible name — renaming (AC-6) is still
- * supported even for a style whose formatting the editor cannot express. */
+ * supported even for a style whose formatting the editor cannot express.
+ *
+ * `rawXml` is format-flavoured (a `w:style` from a .docx source, a
+ * `style:style` from a .odt one — see NamedStyle.rawXml), so it is only
+ * re-emitted here when it is OOXML to begin with. A cross-format save has
+ * nothing verbatim to preserve and falls back to the synthesized definition
+ * below: emitting an ODF `style:style` into word/styles.xml put a foreign
+ * element in an OOXML part, which is not a package Word will open. */
 function unmodeledStyleXml(definition: NamedStyle): string {
-  if (!definition.rawXml) {
+  if (!definition.rawXml || !isDocxStyleXml(definition.rawXml)) {
     return (
       `<w:style w:type="${wireStyleType(definition.type)}" w:styleId="${escapeXml(definition.id)}">` +
       `<w:name w:val="${escapeXml(definition.name ?? definition.id)}"/></w:style>`

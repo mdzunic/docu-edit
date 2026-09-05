@@ -2476,11 +2476,27 @@ export function buildContentXml(
  * style:name (with the display name alongside when it differs), the parent
  * link, the outline level that makes it a heading style, and the style's
  * own paragraph/text properties. */
+/** Whether a preserved style element came from a `.odt` source — i.e. is an
+ * ODF `style:style` rather than a WordprocessingML `w:style`. Read off the
+ * element's own namespace; mirrors docx/writer.ts's `isDocxStyleXml`. */
+function isOdfStyleXml(rawXml: string): boolean {
+  try {
+    const wrapper = parseXml(`<style:root xmlns:style="${STYLE_NAMESPACE}">${rawXml}</style:root>`);
+    const el = wrapper.documentElement.firstElementChild;
+    return el !== null && el.namespaceURI === STYLE_NAMESPACE && el.localName === "style";
+  } catch {
+    return false;
+  }
+}
+
 /** An `unmodeled` style's original XML (SPEC-042 AC-18), re-emitted
  * verbatim except for the user-visible name — mirrors docx/writer.ts's
- * `unmodeledStyleXml`. */
+ * `unmodeledStyleXml`, including its rule that `rawXml` is format-flavoured
+ * and is only re-emitted into the format that produced it. A .docx source's
+ * `w:style` has nothing to preserve here and falls back to the synthesized
+ * definition below. */
 function unmodeledOdfStyleXml(definition: NamedStyle): string {
-  if (!definition.rawXml) {
+  if (!definition.rawXml || !isOdfStyleXml(definition.rawXml)) {
     const displayAttr =
       definition.name !== undefined ? ` style:display-name="${escapeXml(definition.name)}"` : "";
     return `<style:style style:name="${escapeXml(definition.id)}"${displayAttr} style:family="table"/>`;
