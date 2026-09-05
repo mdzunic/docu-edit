@@ -56,6 +56,17 @@ function focusItem(index = 0) {
   buttons[clamped]?.focus();
 }
 
+// Activating an item closes the menu, and the item's own button goes with
+// it — so focus is returned to the trigger BEFORE the parent is told, not
+// after. The order matters: a command like Rename opens a dialog, and that
+// dialog records where focus was so it can put it back when it closes. Emit
+// first and it records a button that is already being unmounted, so both
+// surfaces drop focus and the keyboard user lands back on <body>.
+function selectItem(id = "") {
+  buttonRef.value?.focus();
+  emit("select", id);
+}
+
 function onMenuKeydown(event = new KeyboardEvent("keydown")) {
   const buttons = itemButtons();
   const active = document.activeElement;
@@ -113,7 +124,7 @@ function onMenuKeydown(event = new KeyboardEvent("keydown")) {
         role="menuitem"
         :class="{ 'is-danger': item.danger }"
         :data-testid="item.testid"
-        @click="emit('select', item.id)"
+        @click="selectItem(item.id)"
       >
         {{ item.label }}
       </button>

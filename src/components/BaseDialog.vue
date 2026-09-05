@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, useTemplateRef } from "vue";
+import { nextTick, onMounted, onUnmounted, useTemplateRef } from "vue";
 
 // The shared modal shell — backdrop, centred panel, title and actions row —
 // extracted from the near-identical copies that grew one per dialog. The base
@@ -40,6 +40,17 @@ function focusables() {
   return panel.value ? Array.from(panel.value.querySelectorAll(FOCUSABLE)) : [];
 }
 
+// Where focus was before this dialog took it. Read during setup — the
+// component's own onMounted moves focus into the panel, so anything later
+// would capture the dialog rather than what opened it.
+//
+// A dialog that returns focus to nothing is not a small thing: the browser
+// resets to <body> when the focused element is removed, so closing one put a
+// keyboard user back at the top of the app, ahead of the wordmark, the title,
+// every menu and the whole toolbar — dozens of tab stops from where they had
+// been. That happened on all of the dialogs built on this base.
+const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
 // Initial focus: the [autofocus] element if the dialog marked one (migrated
 // dialogs put the attribute on whatever their own onMounted used to focus),
 // else the panel itself so Escape and the Tab trap work immediately.
@@ -48,6 +59,28 @@ onMounted(async () => {
   const marked = panel.value?.querySelector("[autofocus]");
   const target = marked instanceof HTMLElement ? marked : panel.value;
   target?.focus();
+});
+
+onUnmounted(() => {
+  // Menu-launched dialogs are the reason this checks `isConnected` rather
+  // than trusting the reference: a flyout unmounts as it opens the dialog, so
+  // its item may be gone by now. In practice the menu has already handed
+  // focus back to the editing surface by the time setup ran, which is the
+  // right place to land anyway.
+  if (!previouslyFocused?.isConnected) {
+    return;
+  }
+  // Only reclaim focus this dialog was holding. A dialog whose action
+  // deliberately focuses something else — an inserted field, the canvas —
+  // has already placed the caret where the user needs it, and pulling it
+  // back to the trigger would undo that. Once the panel is detached the
+  // browser has parked focus on <body>, so that is what "still ours" looks
+  // like here.
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) {
+    return;
+  }
+  previouslyFocused.focus();
 });
 
 function handleKeydown(event = new KeyboardEvent("keydown")) {
