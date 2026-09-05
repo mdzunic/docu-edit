@@ -13,14 +13,17 @@ const manifest = JSON.parse(
 
 describe("SPEC-056 AC-27 — package.json is unchanged", () => {
   it("keeps exactly the sanctioned runtime dependencies", () => {
-    // vue + vue-router since SPEC-001; pdfjs-dist is the one sanctioned
-    // exception (approved 2026-08-30 — PDF first-page previews, see
-    // lib/pdfRaster.ts and CLAUDE.md). Still an exact pin: anything else
-    // added here fails.
+    // vue + vue-router since SPEC-001. Two sanctioned exceptions, both
+    // recorded in CLAUDE.md: pdfjs-dist (approved 2026-08-30 — PDF
+    // first-page previews, see lib/pdfRaster.ts) and wordlist-english
+    // (approved 2026-09-04 — SPEC-035's English word lists, see
+    // lib/spellcheck/dictionaries/enBase.ts). Still an exact pin: anything
+    // else added here fails.
     expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
       "pdfjs-dist",
       "vue",
       "vue-router",
+      "wordlist-english",
     ]);
   });
 

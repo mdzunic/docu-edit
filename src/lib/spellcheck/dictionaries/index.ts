@@ -5,7 +5,7 @@
 // English-only document never downloads the German/French/Spanish/Czech
 // word lists.
 import { isDictionaryAvailable, normalizeLanguageTag } from "../../core/language";
-import { createDictionary, type Dictionary } from "../dictionary";
+import { createDictionary, type Dictionary, type DictionaryOptions } from "../dictionary";
 
 type Loader = () => Promise<{ WORDS: readonly string[] }>;
 
@@ -16,6 +16,15 @@ const LOADERS: Record<string, Loader> = {
   "fr-FR": () => import("./frFR"),
   "es-ES": () => import("./esES"),
   "cs-CZ": () => import("./csCZ"),
+};
+
+// Only the English lists need the compound-token rules: their word lists
+// carry no apostrophes or hyphens, so "don't" and "well-known" would
+// otherwise be flagged. The other languages are curated lists that already
+// spell their own forms, and stay exact-match.
+const OPTIONS: Record<string, DictionaryOptions> = {
+  "en-US": { wordShapes: "english" },
+  "en-GB": { wordShapes: "english" },
 };
 
 const cache = new Map<string, Promise<Dictionary>>();
@@ -30,7 +39,9 @@ export function loadDictionary(tag: string): Promise<Dictionary> | null {
   const normalized = normalizeLanguageTag(tag);
   let cached = cache.get(normalized);
   if (!cached) {
-    cached = LOADERS[normalized]().then((module) => createDictionary(module.WORDS));
+    cached = LOADERS[normalized]().then((module) =>
+      createDictionary(module.WORDS, OPTIONS[normalized] ?? {}),
+    );
     cache.set(normalized, cached);
   }
   return cached;

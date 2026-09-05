@@ -5,35 +5,61 @@ import type { Dictionary } from "./dictionary";
 
 export const MAX_SUGGESTIONS = 5;
 
+// A suggestion more than this far from the misspelling is not a suggestion
+// at all — it just adds noise. It is also the budget that makes ranking
+// affordable: the dictionary is tens of thousands of words, and every one of
+// them is a candidate for every right-click.
+const MAX_EDIT_DISTANCE = 2;
+
 /** Damerau-Levenshtein edit distance (insertion, deletion, substitution,
  * adjacent transposition) — transposition matters for typos like "wrold",
  * the single most common misspelling shape, which plain Levenshtein scores
- * as distance 2 instead of 1 and would rank behind less relevant words. */
-function editDistance(a: string, b: string): number {
+ * as distance 2 instead of 1 and would rank behind less relevant words.
+ *
+ * Bounded by `max`: any distance greater than that is reported as exactly
+ * `max + 1` rather than computed. Two things follow from the bound, and both
+ * matter at dictionary scale. Only cells within `max` of the diagonal can
+ * hold a value inside the budget, so each row computes a band of `2·max + 1`
+ * cells instead of the whole width; and once an entire row exceeds the
+ * budget no later row can come back under it, so the candidate is abandoned
+ * there. The result is exact for every distance the caller can actually use.
+ */
+function editDistance(a: string, b: string, max: number): number {
   const al = a.length;
   const bl = b.length;
+  if (Math.abs(al - bl) > max) return max + 1;
   if (al === 0) return bl;
   if (bl === 0) return al;
-  const d: number[][] = Array.from({ length: al + 1 }, () => Array.from({ length: bl + 1 }, () => 0));
-  for (let i = 0; i <= al; i++) d[i][0] = i;
-  for (let j = 0; j <= bl; j++) d[0][j] = j;
-  for (let i = 1; i <= al; i++) {
-    for (let j = 1; j <= bl; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      let value = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
-      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        value = Math.min(value, d[i - 2][j - 2] + cost);
-      }
-      d[i][j] = value;
-    }
-  }
-  return d[al][bl];
-}
 
-// A suggestion more than this far from the misspelling is not a suggestion
-// at all — it just adds noise (this is also what keeps ranking a small
-// curated dictionary cheap: only near matches are scored precisely).
-const MAX_EDIT_DISTANCE = 2;
+  const over = max + 1;
+  let prev2: number[] | null = null;
+  let prev: number[] = Array.from({ length: bl + 1 }, () => 0);
+  let cur: number[] = Array.from({ length: bl + 1 }, () => 0);
+  for (let j = 0; j <= bl; j++) prev[j] = j;
+
+  for (let i = 1; i <= al; i++) {
+    cur.fill(over);
+    cur[0] = i;
+    const from = Math.max(1, i - max);
+    const to = Math.min(bl, i + max);
+    let rowMin = over;
+    for (let j = from; j <= to; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let value = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        value = Math.min(value, prev2[j - 2] + cost);
+      }
+      cur[j] = value;
+      if (value < rowMin) rowMin = value;
+    }
+    if (rowMin > max) return over;
+    const spare: number[] = prev2 ?? Array.from({ length: bl + 1 }, () => 0);
+    prev2 = prev;
+    prev = cur;
+    cur = spare;
+  }
+  return prev[bl];
+}
 
 /** Up to `MAX_SUGGESTIONS` dictionary words ranked by edit distance to
  * `word` (closest first; ties broken by the dictionary's own order, which
@@ -43,7 +69,14 @@ export function getSuggestions(word: string, dictionary: Dictionary): string[] {
   const lower = word.toLowerCase();
   const scored: Array<{ candidate: string; distance: number }> = [];
   for (const candidate of dictionary.words) {
-    const distance = editDistance(lower, candidate.toLowerCase());
+    // Reject on length before touching the matrix: each edit changes the
+    // length by at most one, so a candidate more than MAX_EDIT_DISTANCE
+    // longer or shorter can never score within budget. This is the cheapest
+    // of the three filters and discards most of the list on its own.
+    if (Math.abs(candidate.length - lower.length) > MAX_EDIT_DISTANCE) {
+      continue;
+    }
+    const distance = editDistance(lower, candidate.toLowerCase(), MAX_EDIT_DISTANCE);
     if (distance <= MAX_EDIT_DISTANCE) {
       scored.push({ candidate, distance });
     }

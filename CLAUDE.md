@@ -90,9 +90,17 @@ views) is where they compose. Enforced by `core/boundary.spec.ts` and
 
 - `package.json` is protected: dependencies are not added by feature work. If a
   spec genuinely cannot be built with the current dependency set, stop and say
-  so rather than working around it. The one sanctioned exception: `pdfjs-dist`
-  (Apache-2.0, zero runtime deps), approved 2026-08-30 for PDF first-page
-  previews — loaded lazily in `src/lib/pdfRaster.ts` only (the app layer;
-  `lib/media` stays framework- and package-free).
+  so rather than working around it. Two sanctioned exceptions, both pinned by
+  `src/lib/math/noDependencies.spec.ts`:
+  - `pdfjs-dist` (Apache-2.0, zero runtime deps), approved 2026-08-30 for PDF
+    first-page previews — loaded lazily in `src/lib/pdfRaster.ts` only (the app
+    layer; `lib/media` stays framework- and package-free).
+  - `wordlist-english` (MIT, zero runtime deps), approved 2026-09-04 for
+    SPEC-035's English dictionaries. Data only — SCOWL word lists as JSON, no
+    engine — imported lazily by `src/lib/spellcheck/dictionaries/enBase.ts`,
+    `enUS.ts` and `enGB.ts`. The hand-curated lists it replaced recognised 659
+    words and underlined roughly half of ordinary prose. It is English-only on
+    purpose: the equivalent packages for German, Czech and Spanish are GPL, so
+    `deDE`/`frFR`/`esES`/`csCZ` stay curated lists.
 - Round-trip fidelity matters more than feature count: never discard document
   content you did not parse — preserve unknown parts verbatim (see SPEC-008).

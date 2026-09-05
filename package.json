@@ -15,7 +15,8 @@
   "dependencies": {
     "pdfjs-dist": "^6.3.289",
     "vue": "^3.5.42",
-    "vue-router": "^5.3.0"
+    "vue-router": "^5.3.0",
+    "wordlist-english": "^1.2.1"
   },
   "devDependencies": {
     "@playwright/test": "1.49.1",
