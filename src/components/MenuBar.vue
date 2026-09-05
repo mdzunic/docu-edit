@@ -390,6 +390,7 @@ onBeforeUnmount(() => {
       v-for="(menu, index) in menuList"
       :key="menu.id"
       class="menu-bar-item"
+      role="none"
     >
       <button
         :id="`menu-title-${menu.id}`"

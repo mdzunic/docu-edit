@@ -76,6 +76,22 @@ export function chipCount(chip: FormatChip, counts: Record<DocumentFormat, numbe
   return chip.formats.reduce((sum, format) => sum + counts[format], 0);
 }
 
+/** Whether a chip should be unavailable: it stands for nothing in the library
+ * and is not currently on.
+ *
+ * A library with one document offered nine filters, eight of them reading "0",
+ * every one of them a click that could only ever produce "No documents match
+ * your search or filters" — nine advertised routes, eight of them dead ends.
+ * An ACTIVE chip stays enabled whatever it counts, or a filter that empties
+ * the list could not be switched back off. */
+export function chipUnavailable(
+  chip: FormatChip,
+  active: ReadonlySet<DocumentFormat>,
+  counts: Record<DocumentFormat, number>,
+): boolean {
+  return chipCount(chip, counts) === 0 && !chipActive(chip, active);
+}
+
 /** A run of a title, flagged as matched (a query character) or not, so the
  * row/card can highlight the matched characters (AC-9). */
 export interface HighlightSegment {

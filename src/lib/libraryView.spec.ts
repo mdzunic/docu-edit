@@ -1,14 +1,8 @@
 import { describe, it, expect } from "vitest";
 import type { LibraryEntry } from "./documentStore";
 import { kindOfFormat } from "./documentKinds";
-import {
-  filterCounts,
-  filterLibrary,
-  highlightSegments,
-  searchLibrary,
-  sortLibrary,
-  subsequenceMatch,
-} from "./libraryView";
+import { FORMAT_CHIPS, chipUnavailable, filterCounts, filterLibrary, highlightSegments, searchLibrary, sortLibrary, subsequenceMatch } from "./libraryView";
+import type { DocumentFormat } from "./documentStore";
 
 function entry(over: Partial<LibraryEntry> & { id: string }): LibraryEntry {
   const format = over.format ?? "new";
@@ -143,5 +137,26 @@ describe("sortLibrary (SPEC-067 AC-11..14, AC-21)", () => {
     expect(desc.map((e) => e.id)).toEqual(["mid", "old", "new"]);
     const asc = sortLibrary(entries, { key: "size", direction: "asc" }, sizeOf);
     expect(asc.map((e) => e.id)).toEqual(["mid", "new", "old"]);
+  });
+});
+
+describe("chipUnavailable", () => {
+  const chip = FORMAT_CHIPS[0];
+  const empty = { docx: 0, odt: 0, md: 0, pptx: 0, odp: 0, pdf: 0, image: 0, new: 0 } as Record<DocumentFormat, number>;
+
+  it("disables a filter that stands for nothing in the library", () => {
+    // A one-document library offered nine filters, eight reading "0" — nine
+    // advertised routes, eight of which could only produce an empty list.
+    expect(chipUnavailable(chip, new Set(), empty)).toBe(true);
+  });
+
+  it("leaves a filter with matches alone", () => {
+    const counts = { ...empty, [chip.formats[0]]: 3 };
+    expect(chipUnavailable(chip, new Set(), counts)).toBe(false);
+  });
+
+  it("keeps an ACTIVE filter enabled even at zero, so it can be switched off", () => {
+    // Otherwise a filter that empties the list would trap the user in it.
+    expect(chipUnavailable(chip, new Set(chip.formats), empty)).toBe(false);
   });
 });

@@ -10,7 +10,7 @@
 // `lib` is the LibraryController from useLibrary (runtime-typed Object —
 // the .vue ESLint parser bars the PropType syntax; see useLibrary.ts).
 import { computed, ref, watch } from "vue";
-import { chipActive, chipCount, FORMAT_CHIPS } from "../../lib/libraryView";
+import { chipActive, chipCount, chipUnavailable, FORMAT_CHIPS } from "../../lib/libraryView";
 import LibrarySearchBox from "./LibrarySearchBox.vue";
 
 const props = defineProps({
@@ -153,6 +153,7 @@ const subtitle = computed(() => {
         :data-testid="`filter-${chip.id}`"
         :class="{ 'is-active': chipActive(chip, props.lib.activeFormats.value) }"
         :aria-pressed="chipActive(chip, props.lib.activeFormats.value)"
+        :disabled="chipUnavailable(chip, props.lib.activeFormats.value, props.lib.counts.value.formats)"
         @click="props.lib.toggleFormatChip(chip)"
       >
         {{ chip.label }}
@@ -164,6 +165,7 @@ const subtitle = computed(() => {
         data-testid="filter-starred"
         :class="{ 'is-active': props.lib.starredOnly.value }"
         :aria-pressed="props.lib.starredOnly.value"
+        :disabled="props.lib.counts.value.starred === 0 && !props.lib.starredOnly.value"
         @click="props.lib.toggleStarredFilter()"
       >
         ★ Starred
@@ -287,6 +289,15 @@ const subtitle = computed(() => {
   background: var(--surface-base);
   color: var(--text-primary);
   cursor: pointer;
+}
+
+/* A filter that stands for nothing in this library: still listed, so the set
+   of filters stays a stable map of what the library can hold, but no longer
+   offering a click whose only outcome is an empty list. */
+.chip:disabled {
+  color: var(--text-disabled);
+  border-color: var(--border-subtle);
+  cursor: default;
 }
 
 .chip.is-active {

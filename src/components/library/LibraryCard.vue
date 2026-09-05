@@ -4,6 +4,7 @@ import { getDocument, getMedia, getPresentation } from "../../lib/documentStore"
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { getDocumentLibraryStats } from "../../lib/libraryStats";
 import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
+import { editorPathFor } from "../../lib/documentKinds";
 import LibraryThumbnail from "./LibraryThumbnail.vue";
 import HighlightedTitle from "./HighlightedTitle.vue";
 import RowMenu from "./RowMenu.vue";
@@ -145,10 +146,21 @@ function onClick(event = new MouseEvent("click")) {
         class="card-title"
         data-testid="row-title"
       >
-        <HighlightedTitle
-          :title="props.entry.title"
-          :search="props.search"
-        />
+        <!-- A real link for the address (hover URL, "Open in new tab", "Copy
+             link", middle-click), while the card keeps the click: a plain one
+             previews, a double-click opens and a modified one multi-selects,
+             so this anchor's own default is prevented. -->
+        <a
+          class="title-link"
+          :href="editorPathFor(props.entry.kind, props.entry.id)"
+          tabindex="-1"
+          @click.prevent
+        >
+          <HighlightedTitle
+            :title="props.entry.title"
+            :search="props.search"
+          />
+        </a>
       </div>
       <div class="card-meta">
         <span
@@ -327,5 +339,11 @@ function onClick(event = new MouseEvent("click")) {
   .row-highlight {
     animation: none;
   }
+}
+
+/* The card owns the click and the focus; the anchor carries the address. */
+.title-link {
+  color: inherit;
+  text-decoration: none;
 }
 </style>

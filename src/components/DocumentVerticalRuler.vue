@@ -477,4 +477,28 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
   background: var(--success);
   opacity: 0.85;
 }
+
+/* Coarse-pointer hit areas (SPEC-068). tokens.css grows every control to
+   44px under `pointer: coarse` through --height-control, but these markers
+   size themselves — the indent handles were 10px square and the margin
+   handles 4px wide, so on a touchscreen they were the one part of the ruler
+   you could not reliably grab.
+   They cannot simply become 44px: they mark an exact position on a ruler, and
+   at that size neighbouring handles would overlap and obscure the scale they
+   sit on. So the VISIBLE handle is unchanged and an invisible pseudo-element
+   centred on it carries the target — 24px, WCAG 2.5.8 AA's minimum, which
+   still fits between adjacent stops where 44 would not. */
+@media (pointer: coarse) {
+  .v-marker::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    min-width: 24px;
+    min-height: 24px;
+    width: 100%;
+    height: 100%;
+    transform: translate(-50%, -50%);
+  }
+}
 </style>

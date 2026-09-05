@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import AppIcon from "./AppIcon.vue";
 import PreferencesDialog from "./PreferencesDialog.vue";
@@ -34,6 +34,15 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["update:documentTitle"]);
+
+// The browser tab (SPEC-001): every document read "docu-edit", so three open
+// in three tabs were indistinguishable and each bookmarked under the same
+// name. The shell already knows the title — the library passes none, and gets
+// the product name on its own.
+const PRODUCT_NAME = "docu-edit";
+watchEffect(() => {
+  document.title = props.documentTitle ? `${props.documentTitle} — ${PRODUCT_NAME}` : PRODUCT_NAME;
+});
 
 const isEditingTitle = ref(false);
 const draftTitle = ref("");

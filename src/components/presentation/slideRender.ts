@@ -19,7 +19,10 @@ import {
 } from "../../lib/presentation/model";
 import { slideOutline } from "../../lib/presentation/slideModel";
 import { fieldKindToken, visibleFields } from "../../lib/presentation/headerFooter";
-import type { PresentationModel } from "../../lib/presentation/model";
+import type {
+  PlaceholderRole,
+  PresentationModel,
+} from "../../lib/presentation/model";
 import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme } from "../../lib/core/theme";
 import type { ShapeVisual } from "../../lib/core/shapes";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
@@ -141,6 +144,17 @@ export function groupChildren(frame: SlideFrame): SlideFrame[] {
   return frame.kind === "group" ? frame.children : [];
 }
 
+/** The names a placeholder is announced under, by role. Every placeholder used
+ * to be "Placeholder", so a slide's title and its body were indistinguishable
+ * to anything reading the accessible name — two controls, one name, while the
+ * screen plainly said "Click to add title" and "Click to add text". */
+const PLACEHOLDER_NAMES: Record<PlaceholderRole, string> = {
+  title: "Title placeholder",
+  subtitle: "Subtitle placeholder",
+  body: "Body placeholder",
+  other: "Placeholder",
+};
+
 /** The accessible name a top-level frame is exposed under (AC-52): "Image",
  * "Text box", the catalogue shape name, "Group", or a foreign label. */
 export function frameAccessibleName(frame: SlideFrame): string {
@@ -160,7 +174,7 @@ export function frameAccessibleName(frame: SlideFrame): string {
     case "media":
       return frame.media === "audio" ? "Audio" : "Video";
     default:
-      return frame.role ? "Placeholder" : "Text box";
+      return frame.role ? PLACEHOLDER_NAMES[frame.role] : "Text box";
   }
 }
 

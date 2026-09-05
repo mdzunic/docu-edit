@@ -26,6 +26,17 @@
   animation: fonts-skeleton-shimmer 1.1s ease-in-out infinite;
 }
 
+/* The token collapse in tokens.css covers every `transition`, but this is an
+   INFINITE animation with its own hardcoded duration, so it slipped past and
+   kept shimmering — which is the one thing prefers-reduced-motion exists to
+   stop. The skeleton still reads as a placeholder without the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .fonts-skeleton {
+    animation: none;
+    background: var(--surface-sunken);
+  }
+}
+
 @keyframes fonts-skeleton-shimmer {
   from {
     background-position: 200% 0;

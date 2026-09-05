@@ -7,6 +7,7 @@
 import HighlightedTitle from "../../components/library/HighlightedTitle.vue";
 import RowMenu from "../../components/library/RowMenu.vue";
 import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
+import { editorPathFor } from "../../lib/documentKinds";
 import { libraryRowMenuItems } from "../../lib/libraryMenu";
 
 const props = defineProps({
@@ -135,10 +136,25 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
           role="gridcell"
           data-testid="row-title"
         >
-          <HighlightedTitle
-            :title="entry.title"
-            :search="props.lib.search.value"
-          />
+          <!-- A real link, so the row has the affordances every document with
+               an address should: the URL on hover, "Open in new tab" and
+               "Copy link" in the context menu, a middle-click into a new tab,
+               and link semantics for assistive technology. The click itself is
+               still handled by the row — a plain click opens through the
+               router (keeping the flush-on-leave guard), and a modified click
+               means multi-select here, not a new tab, which is why this
+               anchor's default is prevented rather than followed. -->
+          <a
+            class="title-link"
+            :href="editorPathFor(entry.kind, entry.id)"
+            tabindex="-1"
+            @click.prevent
+          >
+            <HighlightedTitle
+              :title="entry.title"
+              :search="props.lib.search.value"
+            />
+          </a>
         </td>
         <td
           class="cell-modified"
@@ -269,6 +285,13 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
 .cell-title {
   font-weight: var(--weight-medium);
   overflow-wrap: anywhere;
+}
+
+/* The row owns the click and the focus; the anchor is here for the address,
+   so it inherits its surroundings rather than reading as a separate control. */
+.title-link {
+  color: inherit;
+  text-decoration: none;
 }
 
 .cell-modified {

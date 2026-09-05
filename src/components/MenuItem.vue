@@ -18,6 +18,12 @@ defineProps({
    * shown in the item — e.g. "not available on this screen size" — so the menu
    * stays a stable map of the product and nothing is silently dropped. */
   reason: { type: String, default: "" },
+  /** A destructive command — "Delete document" sat in the File menu in the
+   * same ink as Save as template and Preferences, one row from Close. The
+   * confirmation dialog and the Trash make it recoverable, but a command that
+   * removes something should still look unlike the ones that do not. Matches
+   * the library row menu's own `is-danger`. */
+  danger: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["select"]);
@@ -28,6 +34,7 @@ const emit = defineEmits(["select"]);
     type="button"
     role="menuitem"
     class="menu-item"
+    :class="{ 'is-danger': danger }"
     :data-testid="testid || undefined"
     :disabled="disabled"
     :title="disabled && reason ? reason : undefined"
@@ -49,6 +56,10 @@ const emit = defineEmits(["select"]);
 </template>
 
 <style scoped>
+.menu-item.is-danger:not(:disabled) .menu-item-label {
+  color: var(--text-danger);
+}
+
 /* The stated reason a command is disabled on this screen size (SPEC-068):
    pushed to the trailing edge like a shortcut, but muted and italic so it
    reads as an explanation, not an accelerator. */

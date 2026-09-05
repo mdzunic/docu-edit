@@ -284,6 +284,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <MenuItem
         label="Delete document"
         testid="delete-document"
+        danger
         :disabled="!editable"
         @select="emit('command', 'file.delete')"
       />
