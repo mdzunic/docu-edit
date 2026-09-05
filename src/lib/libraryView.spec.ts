@@ -142,7 +142,24 @@ describe("sortLibrary (SPEC-067 AC-11..14, AC-21)", () => {
 
 describe("chipUnavailable", () => {
   const chip = FORMAT_CHIPS[0];
-  const empty = { docx: 0, odt: 0, md: 0, pptx: 0, odp: 0, pdf: 0, image: 0, new: 0 } as Record<DocumentFormat, number>;
+  const images = FORMAT_CHIPS.find((c) => c.id === "images")!;
+  // Annotated, not cast: every format DocumentFormat declares carries a count
+  // here, so a format added to the union fails this file rather than silently
+  // counting as zero (which is how the media split slipped past).
+  const empty: Record<DocumentFormat, number> = {
+    docx: 0,
+    odt: 0,
+    md: 0,
+    pptx: 0,
+    odp: 0,
+    pdf: 0,
+    png: 0,
+    jpeg: 0,
+    gif: 0,
+    svg: 0,
+    webp: 0,
+    new: 0,
+  };
 
   it("disables a filter that stands for nothing in the library", () => {
     // A one-document library offered nine filters, eight reading "0" — nine
@@ -158,5 +175,15 @@ describe("chipUnavailable", () => {
   it("keeps an ACTIVE filter enabled even at zero, so it can be switched off", () => {
     // Otherwise a filter that empties the list would trap the user in it.
     expect(chipUnavailable(chip, new Set(chip.formats), empty)).toBe(false);
+  });
+
+  it("sums a grouped chip over every format it stands for (SPEC-107)", () => {
+    // "Images" is one click over five formats, so a library holding nothing
+    // but .webp must still offer it — counting only the first format would
+    // grey out the one filter that works.
+    expect(chipUnavailable(images, new Set(), empty)).toBe(true);
+    for (const format of images.formats) {
+      expect(chipUnavailable(images, new Set(), { ...empty, [format]: 2 })).toBe(false);
+    }
   });
 });
