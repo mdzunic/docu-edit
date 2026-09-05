@@ -327,9 +327,17 @@ function normaliseStoredShapeFills(model: StoredModel): void {
 
 // Fire-and-forget write-through: a failed write must not break the in-memory
 // session — it only flips the storage status.
-function persist(record: StoredDocumentRecord): void {
-  persistMedia(record.id, record.model.media)?.catch(() => markStorageUnavailable());
-  putRecordYielding({ ...record, model: stripMedia(record.model) }).catch(() => markStorageUnavailable());
+/** Resolves once both writes have settled. It never rejects — a failure has
+ * already latched the storage-unavailable state, which `isStorageAvailable()`
+ * reports and the warning banner shows — so a caller that only wants to know
+ * "is it written yet" can await this and read that latch afterwards. Callers
+ * with nothing to wait for ignore the promise, as they always have. */
+function persist(record: StoredDocumentRecord): Promise<void> {
+  const media = persistMedia(record.id, record.model.media)?.catch(() => markStorageUnavailable());
+  const shell = putRecordYielding({ ...record, model: stripMedia(record.model) }).catch(() =>
+    markStorageUnavailable(),
+  );
+  return Promise.all([media, shell]).then(() => undefined);
 }
 
 // --- hydration -------------------------------------------------------------
@@ -526,13 +534,13 @@ export function listTrashedDocuments(): LibraryEntry[] {
 
 /** Records that a document was just modified (content already updated on its
  * model, e.g. via the app bar's title editor) and persists it. */
-export function touchDocument(id: string): void {
+export function touchDocument(id: string): Promise<void> {
   const record = records.get(id);
   if (!record) {
-    return;
+    return Promise.resolve();
   }
   record.lastModified = Date.now();
-  persist(record);
+  return persist(record);
 }
 
 /** Returns `title` unless it is already taken, else the first free numbered

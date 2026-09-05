@@ -7,6 +7,8 @@
 import DeckActions from "./DeckActions.vue";
 
 defineProps({
+  saveState: { type: String, default: "saved" },
+  saveStateText: { type: String, default: "" },
   deckTitle: { type: String, default: "" },
   slideCountLabel: { type: String, default: "" },
   formatName: { type: String, default: "" },
@@ -42,6 +44,8 @@ const emit = defineEmits([
       </p>
     </div>
     <DeckActions
+      :save-state="saveState"
+      :save-state-text="saveStateText"
       :can-undo="canUndo"
       :can-redo="canRedo"
       :notes-open="notesOpen"

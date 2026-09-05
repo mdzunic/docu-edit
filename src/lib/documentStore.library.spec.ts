@@ -142,7 +142,11 @@ describe("write-through persistence", () => {
     });
     await store.initLibrary();
 
-    store.touchDocument("legacy-id");
+    const write = store.touchDocument("legacy-id");
+    // Awaitable so a caller can report whether the deck is written yet
+    // (the presentation header's save state does exactly this).
+    expect(write).toBeInstanceOf(Promise);
+    await write;
     await flushMicrotasks();
 
     const written = idb.putRecord.mock.calls.map((call) => call[0] as { id: string; media?: unknown[]; model?: { media: unknown[] } });

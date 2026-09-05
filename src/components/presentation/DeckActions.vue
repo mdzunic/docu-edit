@@ -5,10 +5,16 @@
 // the view owns the commands these fire. Runtime prop/emit declarations, not
 // the generic forms (espree lints .vue scripts).
 import AppIcon from "../AppIcon.vue";
+import SaveStateBadge from "../SaveStateBadge.vue";
 import UiButton from "../ui/UiButton.vue";
 import PresentationDownloadButton from "./PresentationDownloadButton.vue";
 
 defineProps({
+  /** SPEC-010's readout, for the deck. The word processor has shown this all
+   * along and the slides side showed nothing, which left the product's own
+   * "stored in this browser" promise uncheckable on half of it. */
+  saveState: { type: String, default: "saved" },
+  saveStateText: { type: String, default: "" },
   canUndo: { type: Boolean, default: false },
   canRedo: { type: Boolean, default: false },
   notesOpen: { type: Boolean, default: false },
@@ -82,6 +88,12 @@ const emit = defineEmits([
       @download-copy="emit('download-copy')"
       @export-html="emit('export-html')"
     />
+    <SaveStateBadge
+      v-if="saveStateText"
+      class="deck-save-state"
+      :save-state="saveState"
+      :text="saveStateText"
+    />
     <UiButton
       variant="ghost"
       data-testid="presentation-close"
@@ -97,5 +109,10 @@ const emit = defineEmits([
   display: flex;
   gap: var(--space-3);
   align-items: center;
+}
+
+/* Quieter than the buttons around it: a state to glance at, not an action. */
+.deck-save-state {
+  color: var(--text-secondary);
 }
 </style>

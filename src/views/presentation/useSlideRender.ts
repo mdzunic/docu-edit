@@ -10,6 +10,7 @@
 import { nextTick, triggerRef, type Ref, type ShallowRef } from "vue";
 import type { PresentationModel, SlideFrame } from "../../lib/presentation/model";
 import { touchDocument } from "../../lib/documentStore";
+import { useDeckSaveStatus } from "./useDeckSaveStatus";
 
 /** A fresh object identity for a frame AND its group descendants — a group
  * command (rotate, resize, ungroup-undo) mutates the children in place, and a
@@ -28,6 +29,11 @@ export interface SlideRenderDeps {
 }
 
 export function useSlideRender(deps: SlideRenderDeps) {
+  // The deck's save readout (SPEC-010) belongs to whatever does the writing,
+  // and that is `commit` below — so the header reads its state from here
+  // rather than the view wiring a second composable to the same writes.
+  const saveStatus = useDeckSaveStatus();
+
   // SPEC-095: `model.media` is one IndexedDB record whose write latch skips only
   // while the array reference is unchanged, so re-slicing it on every commit
   // rewrites a 20 MB clip whole on every nudge/keystroke. This flag gates the
@@ -84,10 +90,17 @@ export function useSlideRender(deps: SlideRenderDeps) {
       model.media = model.media.slice();
     }
     mediaDirty = false;
-    touchDocument(model.id);
+    saveStatus.trackWrite(touchDocument(model.id));
     triggerRef(deps.model);
     void nextTick(deps.recomputeScale);
   }
 
-  return { commit, refresh, bumpCurrentSlide, bumpMedia };
+  return {
+    commit,
+    refresh,
+    bumpCurrentSlide,
+    bumpMedia,
+    saveState: saveStatus.saveState,
+    saveStateText: saveStatus.saveStateText,
+  };
 }
