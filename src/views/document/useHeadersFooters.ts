@@ -65,6 +65,22 @@ export interface HeadersFootersDeps extends EditorContext {
   ) => CommandResult | null;
 }
 
+/** The range a double-click's own word selection left in the band, read
+ * against the band element itself rather than `hfRootEl()`: on the click
+ * that *enters* the band the element is not editable yet, so it carries no
+ * `data-hf-editable`. Turning the band editable does not change the shape of
+ * its rendered entries, so positions read here stay valid afterwards. */
+function bandSelection(band: EventTarget | null): ModelSelection | null {
+  if (!(band instanceof HTMLElement)) {
+    return noSelection();
+  }
+  const range = modelRangeFromSelection(band, document.getSelection());
+  if (!range) {
+    return noSelection();
+  }
+  return { anchor: range.start, focus: range.end };
+}
+
 export function useHeadersFooters(deps: HeadersFootersDeps) {
   const {
     doc,
@@ -173,22 +189,6 @@ export function useHeadersFooters(deps: HeadersFootersDeps) {
   function isLiveBand(pageIndex: number, part: string): boolean {
     const active = activeHeaderFooter.value;
     return !!active && active.pageIndex === pageIndex && active.part === part;
-  }
-
-  /** The range a double-click's own word selection left in the band, read
-   * against the band element itself rather than `hfRootEl()`: on the click
-   * that *enters* the band the element is not editable yet, so it carries no
-   * `data-hf-editable`. Turning the band editable does not change the shape of
-   * its rendered entries, so positions read here stay valid afterwards. */
-  function bandSelection(band: EventTarget | null): ModelSelection | null {
-    if (!(band instanceof HTMLElement)) {
-      return noSelection();
-    }
-    const range = modelRangeFromSelection(band, document.getSelection());
-    if (!range) {
-      return noSelection();
-    }
-    return { anchor: range.start, focus: range.end };
   }
 
   /** A double-click on a band both enters it and — this is the browser's own

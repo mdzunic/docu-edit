@@ -444,6 +444,8 @@ export function paragraphMarkColorStyle(
   return { "--mark-color": isDarkFill(resolveColor(fill, theme)) ? "#d0d3d6" : DEFAULT_MARK_COLOR };
 }
 
+const linear = (c: number): number => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+
 /** Whether a `"#rrggbb"` fill is dark enough that the default mark grey
  * would disappear into it. Relative luminance under the midpoint, the same
  * sRGB weighting the accessibility checker's contrast maths uses. */
@@ -456,7 +458,6 @@ export function isDarkFill(hex: string): boolean {
     const value = Number.parseInt(clean.slice(offset, offset + 2), 16);
     return Number.isNaN(value) ? 0 : value / 255;
   };
-  const linear = (c: number): number => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
   const luminance = 0.2126 * linear(channel(0)) + 0.7152 * linear(channel(2)) + 0.0722 * linear(channel(4));
   return luminance < 0.4;
 }

@@ -209,7 +209,7 @@ function addCommentAnchorPoint(
   if (!paragraph) {
     return false;
   }
-  const anchors = [...(paragraph.commentAnchors ?? []), anchor].sort((a, b) => a.offset - b.offset);
+  const anchors = [...(paragraph.commentAnchors ?? []), anchor].toSorted((a, b) => a.offset - b.offset);
   replaceParagraphAt(model, address, { ...paragraph, commentAnchors: anchors });
   return true;
 }

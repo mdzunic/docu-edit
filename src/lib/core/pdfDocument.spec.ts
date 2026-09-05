@@ -72,7 +72,7 @@ function pushClassicXref(
 ): number {
   const at = file.length;
   let xref = "xref\n";
-  const nums = [...offsets.keys()].sort((a, b) => a - b);
+  const nums = [...offsets.keys()].toSorted((a, b) => a - b);
   xref += "0 1\n0000000000 65535 f \n";
   for (const num of nums) {
     xref += `${num} 1\n${String(offsets.get(num)).padStart(10, "0")} 00000 n \n`;

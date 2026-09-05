@@ -51,7 +51,7 @@ describe("contentTypeForPartName / extensionForContentType (AC-1, AC-2)", () => 
   });
 
   it("CONTENT_TYPE_BY_EXTENSION covers the image and media (SPEC-095) extensions", () => {
-    expect(Object.keys(CONTENT_TYPE_BY_EXTENSION).sort()).toEqual([
+    expect(Object.keys(CONTENT_TYPE_BY_EXTENSION).toSorted()).toEqual([
       "gif",
       "jpeg",
       "jpg",

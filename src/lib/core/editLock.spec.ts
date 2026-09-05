@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { acquireEditLock, type LockManagerLike } from "./editLock";
 
+/** The initial value of a callback slot filled in later (a promise executor,
+ * a registration call) — shared so the slot's initialiser is not a nested
+ * function expression of its own. */
+const noop = (): void => {};
+
 async function microtasks(): Promise<void> {
   for (let i = 0; i < 10; i += 1) {
     await Promise.resolve();
@@ -20,7 +25,7 @@ function fakeLockManager(): LockManagerLike {
     name: string,
     callback: (lock: unknown) => Promise<void> | void,
   ): Promise<void> {
-    let done = (): void => {};
+    let done: () => void = noop;
     const release = new Promise<void>((resolve) => {
       done = resolve;
     });

@@ -19,6 +19,10 @@ function makeDeps(overrides: Partial<CommandPaletteDeps> = {}): CommandPaletteDe
   return { ...base, ...overrides } as unknown as CommandPaletteDeps;
 }
 
+const runOn = (model: { log: string[] }) => () => {
+  model.log.push("did-the-thing");
+};
+
 describe("useCommandPalette (SPEC-062)", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
@@ -28,9 +32,6 @@ describe("useCommandPalette (SPEC-062)", () => {
     // a model. The menu path and the palette path both dispatch through it, so
     // the resulting models must be identical.
     const registry = new Map<string, () => void>();
-    const runOn = (model: { log: string[] }) => () => {
-      model.log.push("did-the-thing");
-    };
 
     const viaMenu = { log: [] as string[] };
     const menuRegistry = new Map([["insert.footnote", runOn(viaMenu)]]);

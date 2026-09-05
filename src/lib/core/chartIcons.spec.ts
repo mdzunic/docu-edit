@@ -75,7 +75,7 @@ describe("chartIconMarks", () => {
       });
       const starts = bars
         .map((bar) => Math.min(...markPoints(bar.d).map((point) => point[across])))
-        .sort((a, b) => a - b);
+        .toSorted((a, b) => a - b);
       const slot = starts[1] - starts[0];
       for (const span of spans) {
         // Loose to a tenth: path coordinates are emitted rounded to two

@@ -544,7 +544,7 @@ export function modifyStyle(
     const formatting = mergeRunFormatting(mergeRunFormatting(underlay, base), diff);
     replaceParagraphAt(next, address, {
       ...block,
-      runs: block.runs.map((existing, index) => (index === runIndex ? { ...existing, formatting } : existing)),
+      runs: block.runs.map((existing, at) => (at === runIndex ? { ...existing, formatting } : existing)),
     });
   }
   if (type === "table") {

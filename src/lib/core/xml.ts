@@ -210,7 +210,7 @@ function canonicalizeElement(el: Element, out: string[]): void {
       name: `{${attr.namespaceURI ?? ""}}${attr.localName}`,
       value: attr.value,
     }))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    .toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const attr of attributes) {
     out.push(` ${attr.name}="${escapeXmlAttribute(attr.value)}"`);
   }

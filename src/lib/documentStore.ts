@@ -517,7 +517,7 @@ export function listDocuments(): LibraryEntry[] {
   return [...records.values()]
     .filter((record) => record.trashedAt === undefined)
     .map(toLibraryEntry)
-    .sort((a, b) => b.lastModified - a.lastModified);
+    .toSorted((a, b) => b.lastModified - a.lastModified);
 }
 
 /** Trashed documents only (SPEC-067), most recently trashed first. The
@@ -527,7 +527,7 @@ export function listTrashedDocuments(): LibraryEntry[] {
   return [...records.values()]
     .filter((record) => record.trashedAt !== undefined)
     .map(toLibraryEntry)
-    .sort((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0));
+    .toSorted((a, b) => (b.trashedAt ?? 0) - (a.trashedAt ?? 0));
 }
 
 // --- mutations -------------------------------------------------------------

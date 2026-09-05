@@ -270,11 +270,11 @@ describe("exportPresentationHtml — size accounting (AC-52)", () => {
   });
 });
 
-describe("exportPresentationHtml — media budget (SPEC-095 AC-47/48/50)", () => {
-  function mediaFrame(over: Partial<Extract<SlideFrame, { kind: "media" }>> = {}): SlideFrame {
-    return { id: "med1", kind: "media", media: "video", xCm: 0, yCm: 0, widthCm: 16, heightCm: 9, mediaId: "clip1", ...over };
-  }
+function mediaFrame(over: Partial<Extract<SlideFrame, { kind: "media" }>> = {}): SlideFrame {
+  return { id: "med1", kind: "media", media: "video", xCm: 0, yCm: 0, widthCm: 16, heightCm: 9, mediaId: "clip1", ...over };
+}
 
+describe("exportPresentationHtml — media budget (SPEC-095 AC-47/48/50)", () => {
   it("embeds a clip as a data: URI while under the budget", () => {
     const html = exportPresentationHtml(
       baseModel([slide("s1", [mediaFrame({ contentType: "video/mp4" })])], {

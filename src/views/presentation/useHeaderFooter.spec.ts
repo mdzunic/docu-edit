@@ -78,7 +78,7 @@ describe("useHeaderFooter", () => {
     expect(controller.open.value).toBe(false);
     expect(model.headerFooter?.footerText).toBe("Draft");
     expect(model.slides[0].fields).toBeUndefined();
-    expect(model.slides[1].fields?.map((f) => f.kind).sort()).toEqual(["footer", "slideNumber"]);
+    expect(model.slides[1].fields?.map((f) => f.kind).toSorted()).toEqual(["footer", "slideNumber"]);
     expect(model.headerFooterDirty).toBe(true);
   });
 

@@ -5,8 +5,8 @@
 // fresh model with a new id.
 import { createDocument, type DocumentModel, type Paragraph, type Run, type Table } from "./documentModel";
 
-function run(text: string, bold = false): Run {
-  return { text, formatting: bold ? { bold: true } : {} };
+function run(value: string, bold = false): Run {
+  return { text: value, formatting: bold ? { bold: true } : {} };
 }
 
 function paragraph(runs: Run[], headingLevel?: number): Paragraph {
@@ -17,8 +17,8 @@ function paragraph(runs: Run[], headingLevel?: number): Paragraph {
   return p;
 }
 
-function heading(text: string, level = 1): Paragraph {
-  return paragraph([run(text, true)], level);
+function heading(value: string, level = 1): Paragraph {
+  return paragraph([run(value, true)], level);
 }
 
 function text(value: string): Paragraph {

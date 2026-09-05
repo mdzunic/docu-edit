@@ -111,7 +111,7 @@ function difference(
     return null;
   }
   if (isPlainObject(a) && isPlainObject(b)) {
-    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].toSorted();
     for (const key of keys) {
       if (IGNORED_KEYS.has(key)) {
         continue;

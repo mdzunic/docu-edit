@@ -66,6 +66,113 @@ interface EquationLocator {
   runIndex: number;
 }
 
+/** The paragraphs of a block, flattened (a table contributes its cells'). */
+function paragraphByLocator(model: DocumentModel, loc: EquationLocator): Paragraph | null {
+  const block = model.sections[loc.section]?.blocks[loc.block];
+  if (!block) return null;
+  if (loc.cell) {
+    if (block.type !== "table") return null;
+    const para = block.rows[loc.cell.row]?.cells[loc.cell.column]?.blocks;
+    const p = para?.find((b) => b.type === "paragraph");
+    return (p as Paragraph) ?? null;
+  }
+  return block.type === "paragraph" ? block : null;
+}
+
+/** Finds the locator of the run carrying `spec` in the current model. */
+function locate(model: DocumentModel, spec: EquationSpec): EquationLocator | null {
+  for (let s = 0; s < model.sections.length; s++) {
+    const blocks = model.sections[s].blocks;
+    for (let b = 0; b < blocks.length; b++) {
+      const block = blocks[b];
+      if (block.type === "paragraph") {
+        const i = block.runs.findIndex((r) => r.equation === spec);
+        if (i >= 0) return { section: s, block: b, runIndex: i };
+      } else if (block.type === "table") {
+        for (let r = 0; r < block.rows.length; r++) {
+          for (let c = 0; c < block.rows[r].cells.length; c++) {
+            const paras = block.rows[r].cells[c].blocks;
+            for (const para of paras) {
+              if (para.type !== "paragraph") continue;
+              const i = para.runs.findIndex((run) => run.equation === spec);
+              if (i >= 0) return { section: s, block: b, cell: { row: r, column: c }, runIndex: i };
+            }
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** The equation whose body is empty — the one just inserted. Falls back to
+ * the last equation in document order. */
+function newestEquation(model: DocumentModel): EquationSpec | null {
+  let last: EquationSpec | null = null;
+  for (const section of model.sections) {
+    for (const block of section.blocks) {
+      const paras: Paragraph[] =
+        block.type === "paragraph"
+          ? [block]
+          : block.type === "table"
+            ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks.filter((b): b is Paragraph => b.type === "paragraph")))
+            : [];
+      for (const para of paras) {
+        for (const run of para.runs) {
+          if (run.equation) {
+            if (run.equation.body.length === 0) return run.equation;
+            last = run.equation;
+          }
+        }
+      }
+    }
+  }
+  return last;
+}
+
+/** Replace the run carrying the edited equation with a fresh run inside a
+ * fresh paragraph/table block, so the block's object identity changes and the
+ * canvas's `v-memo` repaints it (AC-21). Every command module replaces blocks
+ * rather than mutating them (see commands.editing.ts); doing the same here is
+ * what makes a just-edited equation actually appear in the document. */
+function writeEquation(next: DocumentModel, loc: EquationLocator, equation: EquationSpec) {
+  const blocks = next.sections[loc.section]?.blocks;
+  const block = blocks?.[loc.block];
+  if (!blocks || !block) return;
+  const replaceRun = (para: Paragraph): Paragraph => ({
+    ...para,
+    runs: para.runs.map((run, i) => (i === loc.runIndex ? { ...run, equation } : run)),
+  });
+  if (!loc.cell) {
+    if (block.type === "paragraph") blocks[loc.block] = replaceRun(block);
+    return;
+  }
+  if (block.type !== "table") return;
+  const { row, column } = loc.cell;
+  blocks[loc.block] = {
+    ...block,
+    rows: block.rows.map((r, ri) =>
+      ri !== row
+        ? r
+        : {
+            ...r,
+            cells: r.cells.map((c, ci) =>
+              ci !== column
+                ? c
+                : {
+                    ...c,
+                    blocks: c.blocks.map((b) =>
+                      b.type === "paragraph" && b.runs[loc.runIndex]?.equation
+                        ? replaceRun(b)
+                        : b,
+                    ),
+                  },
+            ),
+          },
+    ),
+  };
+}
+
 export function useEquations(deps: EquationsDeps) {
   const { doc, contentRoot, editable, currentSelection, applyEdit, getCaret } = deps;
 
@@ -79,45 +186,6 @@ export function useEquations(deps: EquationsDeps) {
     const root = contentRoot.value as HTMLElement | null;
     if (!root) return null;
     return currentSelection(root) ?? caretSelection(getCaret() ?? documentStart());
-  }
-
-  /** The paragraphs of a block, flattened (a table contributes its cells'). */
-  function paragraphByLocator(model: DocumentModel, loc: EquationLocator): Paragraph | null {
-    const block = model.sections[loc.section]?.blocks[loc.block];
-    if (!block) return null;
-    if (loc.cell) {
-      if (block.type !== "table") return null;
-      const para = block.rows[loc.cell.row]?.cells[loc.cell.column]?.blocks;
-      const p = para?.find((b) => b.type === "paragraph");
-      return (p as Paragraph) ?? null;
-    }
-    return block.type === "paragraph" ? block : null;
-  }
-
-  /** Finds the locator of the run carrying `spec` in the current model. */
-  function locate(model: DocumentModel, spec: EquationSpec): EquationLocator | null {
-    for (let s = 0; s < model.sections.length; s++) {
-      const blocks = model.sections[s].blocks;
-      for (let b = 0; b < blocks.length; b++) {
-        const block = blocks[b];
-        if (block.type === "paragraph") {
-          const i = block.runs.findIndex((r) => r.equation === spec);
-          if (i >= 0) return { section: s, block: b, runIndex: i };
-        } else if (block.type === "table") {
-          for (let r = 0; r < block.rows.length; r++) {
-            for (let c = 0; c < block.rows[r].cells.length; c++) {
-              const paras = block.rows[r].cells[c].blocks;
-              for (const para of paras) {
-                if (para.type !== "paragraph") continue;
-                const i = para.runs.findIndex((run) => run.equation === spec);
-                if (i >= 0) return { section: s, block: b, cell: { row: r, column: c }, runIndex: i };
-              }
-            }
-          }
-        }
-      }
-    }
-    return null;
   }
 
   /** Opens the editor on the equation identified by `spec` in `model`. */
@@ -162,31 +230,6 @@ export function useEquations(deps: EquationsDeps) {
     applyEdit(command, selection, "insert numbered equation", { skipCaretRestore: true });
     const spec = newestEquation(command.model);
     if (spec) openEditor(command.model, spec);
-  }
-
-  /** The equation whose body is empty — the one just inserted. Falls back to
-   * the last equation in document order. */
-  function newestEquation(model: DocumentModel): EquationSpec | null {
-    let last: EquationSpec | null = null;
-    for (const section of model.sections) {
-      for (const block of section.blocks) {
-        const paras: Paragraph[] =
-          block.type === "paragraph"
-            ? [block]
-            : block.type === "table"
-              ? block.rows.flatMap((row) => row.cells.flatMap((cell) => cell.blocks.filter((b): b is Paragraph => b.type === "paragraph")))
-              : [];
-        for (const para of paras) {
-          for (const run of para.runs) {
-            if (run.equation) {
-              if (run.equation.body.length === 0) return run.equation;
-              last = run.equation;
-            }
-          }
-        }
-      }
-    }
-    return last;
   }
 
   /** Activate the editor for an existing equation (a click on it). */
@@ -261,49 +304,6 @@ export function useEquations(deps: EquationsDeps) {
       equation.altText = editAltText.value.trim() === "" ? "" : editAltText.value;
     }
     return equation;
-  }
-
-  /** Replace the run carrying the edited equation with a fresh run inside a
-   * fresh paragraph/table block, so the block's object identity changes and the
-   * canvas's `v-memo` repaints it (AC-21). Every command module replaces blocks
-   * rather than mutating them (see commands.editing.ts); doing the same here is
-   * what makes a just-edited equation actually appear in the document. */
-  function writeEquation(next: DocumentModel, loc: EquationLocator, equation: EquationSpec) {
-    const blocks = next.sections[loc.section]?.blocks;
-    const block = blocks?.[loc.block];
-    if (!blocks || !block) return;
-    const replaceRun = (para: Paragraph): Paragraph => ({
-      ...para,
-      runs: para.runs.map((run, i) => (i === loc.runIndex ? { ...run, equation } : run)),
-    });
-    if (!loc.cell) {
-      if (block.type === "paragraph") blocks[loc.block] = replaceRun(block);
-      return;
-    }
-    if (block.type !== "table") return;
-    const { row, column } = loc.cell;
-    blocks[loc.block] = {
-      ...block,
-      rows: block.rows.map((r, ri) =>
-        ri !== row
-          ? r
-          : {
-              ...r,
-              cells: r.cells.map((c, ci) =>
-                ci !== column
-                  ? c
-                  : {
-                      ...c,
-                      blocks: c.blocks.map((b) =>
-                        b.type === "paragraph" && b.runs[loc.runIndex]?.equation
-                          ? replaceRun(b)
-                          : b,
-                      ),
-                    },
-              ),
-            },
-      ),
-    };
   }
 
   /** Commit the session's body and alt text back into the model and close the

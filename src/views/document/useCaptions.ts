@@ -65,6 +65,15 @@ export interface CaptionsDeps extends EditorContext, HeaderFooterBridge {
   handleInsertTable: (size?: { rows: number; cols: number; headerRow?: boolean }) => void;
 }
 
+/** The labels the caption dialog offers: the built-ins plus any custom label
+ * already used in the document. */
+function dialogLabels(model: DocumentModel): string[] {
+  const custom = listCaptions(model)
+    .map((c) => c.label)
+    .filter((label) => !BUILT_IN_CAPTION_LABELS.some((b) => b.toLowerCase() === label.toLowerCase()));
+  return [...BUILT_IN_CAPTION_LABELS, ...Array.from(new Set(custom))];
+}
+
 export function useCaptions(deps: CaptionsDeps) {
   const {
     doc,
@@ -170,15 +179,6 @@ export function useCaptions(deps: CaptionsDeps) {
     }
     return selectedObject() !== null;
   });
-
-  /** The labels the caption dialog offers: the built-ins plus any custom label
-   * already used in the document. */
-  function dialogLabels(model: DocumentModel): string[] {
-    const custom = listCaptions(model)
-      .map((c) => c.label)
-      .filter((label) => !BUILT_IN_CAPTION_LABELS.some((b) => b.toLowerCase() === label.toLowerCase()));
-    return [...BUILT_IN_CAPTION_LABELS, ...Array.from(new Set(custom))];
-  }
 
   const captionLabels = computed(() => (doc.value ? dialogLabels(doc.value) : BUILT_IN_CAPTION_LABELS));
 

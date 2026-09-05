@@ -50,6 +50,10 @@ function cloneDeckProperties(properties: DocumentProperties | undefined): Docume
   return properties ? JSON.parse(JSON.stringify(properties)) : {};
 }
 
+function inRange(cm: number | null): cm is number {
+  return cm !== null && cm >= MIN_SLIDE_DIMENSION_CM - 1e-9 && cm <= MAX_SLIDE_DIMENSION_CM + 1e-9;
+}
+
 export function useDeckSetup(deps: DeckSetupDeps) {
   const { preferences } = usePreferences();
 
@@ -107,10 +111,6 @@ export function useDeckSetup(deps: DeckSetupDeps) {
 
   const parsedWidthCm = computed(() => parseLengthToCm(widthText.value, unit.value));
   const parsedHeightCm = computed(() => parseLengthToCm(heightText.value, unit.value));
-
-  function inRange(cm: number | null): cm is number {
-    return cm !== null && cm >= MIN_SLIDE_DIMENSION_CM - 1e-9 && cm <= MAX_SLIDE_DIMENSION_CM + 1e-9;
-  }
 
   const sizeValid = computed(() => inRange(parsedWidthCm.value) && inRange(parsedHeightCm.value));
   const sizeError = computed(() =>

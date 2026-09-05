@@ -404,7 +404,7 @@ export function inlineWriteLayout(paragraph: Paragraph): InlineWriteLayout {
   const commentAnchors = paragraph.commentAnchors ?? [];
   const cutOffsets = Array.from(
     new Set([...bookmarks.map((b) => b.offset), ...commentAnchors.map((a) => a.offset)]),
-  ).sort((a, b) => a - b);
+  ).toSorted((a, b) => a - b);
   const runs: Run[] = [];
   const indexMap: number[] = [0];
   let pos = 0;
@@ -532,7 +532,7 @@ export function insertBookmark(
   if (!paragraph) {
     return { model: next, selection };
   }
-  const bookmarks = [...(paragraph.bookmarks ?? []), { name, offset: caret.offset }].sort(
+  const bookmarks = [...(paragraph.bookmarks ?? []), { name, offset: caret.offset }].toSorted(
     (a, b) => a.offset - b.offset,
   );
   replaceParagraphAt(next, caret, { ...paragraph, bookmarks });
@@ -560,7 +560,7 @@ export function ensureHeadingBookmark(
   }
   const next = cloneContainers(model);
   const target = paragraphAt(next, address)!;
-  const bookmarks = [...(target.bookmarks ?? []), { name: fallbackName, offset: 0, hidden: true as const }].sort(
+  const bookmarks = [...(target.bookmarks ?? []), { name: fallbackName, offset: 0, hidden: true as const }].toSorted(
     (a, b) => a.offset - b.offset,
   );
   replaceParagraphAt(next, address, { ...target, bookmarks });

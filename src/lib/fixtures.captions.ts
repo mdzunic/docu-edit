@@ -51,8 +51,9 @@ function image(): Image {
   };
 }
 
+const cell = (t: string) => ({ blocks: [{ type: "paragraph", runs: [{ text: t, formatting: {} }] }] as Block[] });
+
 function table(text: string): Table {
-  const cell = (t: string) => ({ blocks: [{ type: "paragraph", runs: [{ text: t, formatting: {} }] }] as Block[] });
   return {
     type: "table",
     columnWidthsCm: [4, 4],

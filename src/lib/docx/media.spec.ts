@@ -101,7 +101,7 @@ describe("planMediaWrite — referenced images", () => {
     expect(plan.zipEntries.map((e) => e.name)).toEqual(["word/media/image1.png", "word/media/image2.jpeg"]);
     expect(plan.relIdFor("m1")).toBe("rId1");
     expect(plan.relIdFor("m2")).toBe("rId2");
-    expect(plan.extensions.sort()).toEqual(["jpeg", "png"]);
+    expect(plan.extensions.toSorted()).toEqual(["jpeg", "png"]);
   });
 
   it("relIdFor returns empty string for an unknown mediaId", () => {

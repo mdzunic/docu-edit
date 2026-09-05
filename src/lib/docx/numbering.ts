@@ -700,7 +700,7 @@ export function planNumbering(
     }
     const numId = nextNum++;
     const overrides = [...instance.startOverrides.entries()]
-      .sort((a, b) => a[0] - b[0])
+      .toSorted((a, b) => a[0] - b[0])
       .map(
         ([ilvl, start]) =>
           `<w:lvlOverride w:ilvl="${ilvl}"><w:startOverride w:val="${start}"/></w:lvlOverride>`,

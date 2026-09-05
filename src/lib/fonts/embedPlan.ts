@@ -120,7 +120,7 @@ export function planFontEmbedding(model: DocumentModel, resolveFace: FaceResolve
     totalBytes += bytes.length;
     faces.push({ family: usage.family, bold: usage.bold, italic: usage.italic, bytes });
   }
-  return { faces, skipped: Array.from(skipped).sort((a, b) => a.localeCompare(b)), totalBytes };
+  return { faces, skipped: Array.from(skipped).toSorted((a, b) => a.localeCompare(b)), totalBytes };
 }
 
 /** A human "size cost" string for the embed disclosure (AC-16). */

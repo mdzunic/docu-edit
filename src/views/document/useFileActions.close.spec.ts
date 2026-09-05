@@ -23,6 +23,11 @@ vi.mock("../../lib/documentStore", async (importActual) => {
 
 import { useFileActions } from "./useFileActions";
 
+/** The initial value of a callback slot filled in later (a promise executor,
+ * a registration call) — shared so the slot's initialiser is not a nested
+ * function expression of its own. */
+const noop = (): void => {};
+
 afterEach(() => {
   storage.available = true;
   vi.restoreAllMocks();
@@ -68,7 +73,7 @@ describe("useFileActions — closing the document (SPEC-060)", () => {
   });
 
   it("shows a busy state while the flush is in flight and clears it after (AC-9)", async () => {
-    let resolveFlush: (ok: boolean) => void = () => {};
+    let resolveFlush: (ok: boolean) => void = noop;
     const flush = vi.fn(
       () => new Promise<boolean>((resolve) => (resolveFlush = resolve)),
     );

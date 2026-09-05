@@ -1482,7 +1482,7 @@ function resolveLayoutPath(
       }
     }
   }
-  const layouts = [...parts.keys()].filter((name) => /\/slideLayouts\/slideLayout\d+\.xml$/.test(name)).sort();
+  const layouts = [...parts.keys()].filter((name) => /\/slideLayouts\/slideLayout\d+\.xml$/.test(name)).toSorted();
   if (layouts[0]) {
     return layouts[0];
   }

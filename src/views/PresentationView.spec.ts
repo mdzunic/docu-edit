@@ -130,10 +130,10 @@ describe("PresentationView filmstrip", () => {
   });
 });
 
-describe("PresentationView slide management (SPEC-080)", () => {
-  const options = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
-    wrapper.findAll('[data-testid="filmstrip-slide"]');
+const options = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
+  wrapper.findAll('[data-testid="filmstrip-slide"]');
 
+describe("PresentationView slide management (SPEC-080)", () => {
   it("adds a slide via the Add slide button (AC-16/25)", async () => {
     const { wrapper } = await mountWith(createBlankPresentation());
     expect(options(wrapper)).toHaveLength(1);
@@ -212,11 +212,12 @@ describe("PresentationView slide management (SPEC-080)", () => {
   });
 });
 
+// Scope to the main stage — the filmstrip thumbnails render the same frames
+// read-only (no selection/editing wiring).
+const stage = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
+  wrapper.get('[data-testid="stage-workspace"]');
+
 describe("PresentationView text editing (SPEC-081)", () => {
-  // Scope to the main stage — the filmstrip thumbnails render the same frames
-  // read-only (no selection/editing wiring).
-  const stage = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>
-    wrapper.get('[data-testid="stage-workspace"]');
   // SPEC-082 unified every frame kind under data-testid="slide-frame"; a
   // blank deck's frames are all text placeholders, so this still returns them.
   const frames = (wrapper: Awaited<ReturnType<typeof mountWith>>["wrapper"]) =>

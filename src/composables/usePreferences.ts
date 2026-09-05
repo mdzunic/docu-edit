@@ -41,18 +41,18 @@ function install(): void {
   onPreferencesChange(sync);
 }
 
+/** Sets one preference, applying it live everywhere (AC-7). */
+function setPreference<K extends keyof Preferences>(key: K, value: Preferences[K]): void {
+  savePreference(key, value);
+}
+
+/** Restores every preference to its default (AC-28). */
+function resetPreferences(): void {
+  resetPreferencesStore();
+}
+
 export function usePreferences() {
   install();
-
-  /** Sets one preference, applying it live everywhere (AC-7). */
-  function setPreference<K extends keyof Preferences>(key: K, value: Preferences[K]): void {
-    savePreference(key, value);
-  }
-
-  /** Restores every preference to its default (AC-28). */
-  function resetPreferences(): void {
-    resetPreferencesStore();
-  }
 
   return {
     /** The live, reactive preferences. Read-only: mutate through

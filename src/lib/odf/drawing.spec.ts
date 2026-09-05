@@ -71,11 +71,11 @@ function graphicStyle(name: string, props: string): string {
   return `<style:style style:name="${name}" style:family="graphic"><style:graphic-properties ${props}/></style:style>`;
 }
 
-describe("collectGraphicWrapStyles", () => {
-  function styleDoc(bodyXml: string): Document {
-    return parseXml(`<root xmlns:style="${STYLE_NAMESPACE}">${bodyXml}</root>`);
-  }
+function styleDoc(bodyXml: string): Document {
+  return parseXml(`<root xmlns:style="${STYLE_NAMESPACE}">${bodyXml}</root>`);
+}
 
+describe("collectGraphicWrapStyles", () => {
   it("maps wrap='parallel' to 'square'", () => {
     const doc = styleDoc(graphicStyle("fr1", 'style:wrap="parallel"'));
     expect(collectGraphicWrapStyles(doc, undefined).get("fr1")).toBe("square");

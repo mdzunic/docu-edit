@@ -38,7 +38,7 @@ export function documentFontFamilies(model: DocumentModel): string[] {
       }
     }
   }
-  return Array.from(families.values()).sort((a, b) => a.localeCompare(b));
+  return Array.from(families.values()).toSorted((a, b) => a.localeCompare(b));
 }
 
 // Word's font-size limits: 1pt to 409pt in half-point steps (SPEC-013 AC).

@@ -54,6 +54,11 @@ function sameScheme(a: DocumentTheme, b: DocumentTheme): boolean {
   );
 }
 
+function themeFor(id: string | null): DocumentTheme | undefined {
+  const match = id ? /^builtin-(\d+)$/.exec(id) : null;
+  return match ? BUILT_IN_THEMES[Number(match[1])] : undefined;
+}
+
 export function useDeckTheme(deps: DeckThemeDeps) {
   const { preferences, setPreference } = usePreferences();
 
@@ -89,10 +94,6 @@ export function useDeckTheme(deps: DeckThemeDeps) {
   }
   function clearPreview(): void {
     previewId.value = null;
-  }
-  function themeFor(id: string | null): DocumentTheme | undefined {
-    const match = id ? /^builtin-(\d+)$/.exec(id) : null;
-    return match ? BUILT_IN_THEMES[Number(match[1])] : undefined;
   }
   /** What the stage renders against: a hovered card's scheme while previewing,
    * else the deck's own theme (every ref re-resolves live, nothing persists). */

@@ -56,18 +56,18 @@ describe("SlideFrameView group frame (SPEC-096)", () => {
   });
 });
 
-describe("SlideFrameView media frame (SPEC-095)", () => {
-  const mediaFrame = (over = {}) => ({
-    id: "m1",
-    xCm: 1,
-    yCm: 1,
-    widthCm: 16,
-    heightCm: 9,
-    kind: "media",
-    media: "video",
-    ...over,
-  });
+const mediaFrame = (over = {}) => ({
+  id: "m1",
+  xCm: 1,
+  yCm: 1,
+  widthCm: 16,
+  heightCm: 9,
+  kind: "media",
+  media: "video",
+  ...over,
+});
 
+describe("SlideFrameView media frame (SPEC-095)", () => {
   it("renders a slide-media-frame with the poster when one exists (AC-18)", () => {
     const wrapper = mount(SlideFrameView, {
       props: {

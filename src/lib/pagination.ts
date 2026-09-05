@@ -287,11 +287,15 @@ function splitAtOrBelow(
   end: number,
   lineCount: number,
 ): number {
-  let split = Math.min(Math.max(end, startLine + 1), lineCount);
-  while (split < lineCount && crossings?.[split]) {
-    split += 1;
+  const split = Math.min(Math.max(end, startLine + 1), lineCount);
+  if (crossings === null) {
+    return split;
   }
-  return split;
+  let below = split;
+  while (below < lineCount && crossings[below]) {
+    below += 1;
+  }
+  return below;
 }
 
 function placeWhole(frame: Frame, sectionIndex: number, blockIndex: number, m: BlockMetrics): void {

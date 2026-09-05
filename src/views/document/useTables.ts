@@ -119,6 +119,17 @@ export interface TablesDeps extends EditorContext, HeaderFooterBridge {
   ) => void;
 }
 
+/** True when the row at `target` already carries an `{{#each}}` chip in
+ * one of its cells (SPEC-046 "Repeating table rows" — the chip is the
+ * entire repeat state). */
+function rowAlreadyRepeats(model: DocumentModel, target: TableLoc): boolean {
+  const table = tableAt(model, target.section, target.block);
+  const row = table?.rows[target.row];
+  return !!row?.cells.some((cell) =>
+    cell.blocks.some((paragraph) => paragraph.runs.some((run) => run.field?.kind === "each")),
+  );
+}
+
 export function useTables(deps: TablesDeps) {
   const {
     doc,
@@ -409,17 +420,6 @@ export function useTables(deps: TablesDeps) {
     } else {
       applyTableAction(action, target);
     }
-  }
-
-  /** True when the row at `target` already carries an `{{#each}}` chip in
-   * one of its cells (SPEC-046 "Repeating table rows" — the chip is the
-   * entire repeat state). */
-  function rowAlreadyRepeats(model: DocumentModel, target: TableLoc): boolean {
-    const table = tableAt(model, target.section, target.block);
-    const row = table?.rows[target.row];
-    return !!row?.cells.some((cell) =>
-      cell.blocks.some((paragraph) => paragraph.runs.some((run) => run.field?.kind === "each")),
-    );
   }
 
   /** "Repeat row for each..." (SPEC-046 AC-29, AC-30): an already-repeating

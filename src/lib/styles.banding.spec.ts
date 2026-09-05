@@ -123,10 +123,11 @@ describe("styleFormInputFromDraft (AC-37)", () => {
   });
 });
 
+const cell = (text: string) => ({
+  blocks: [{ type: "paragraph" as const, runs: [{ text, formatting: {} }] }],
+});
+
 function modelWithTable(styleId?: string): DocumentModel {
-  const cell = (text: string) => ({
-    blocks: [{ type: "paragraph" as const, runs: [{ text, formatting: {} }] }],
-  });
   const table: Table = {
     type: "table",
     columnWidthsCm: [4, 4],

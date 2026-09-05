@@ -177,7 +177,7 @@ function contextAddresses(
   if (direction === "forward") {
     return all.slice(index);
   }
-  return all.slice(0, index).reverse();
+  return all.slice(0, index).toReversed();
 }
 
 /** The BlockAddress a caret's paragraph lives at. */
@@ -630,7 +630,7 @@ export function setTabStops(
     }
     byPosition.set(positionCm, cleaned);
   }
-  const normalized = [...byPosition.values()].sort((a, b) => a.positionCm - b.positionCm);
+  const normalized = [...byPosition.values()].toSorted((a, b) => a.positionCm - b.positionCm);
   return updateTouchedParagraphs(model, selection, (formatting) => {
     const nextFormatting: ParagraphFormatting = { ...formatting };
     if (normalized.length > 0) {

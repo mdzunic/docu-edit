@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseDocx } from "./reader";
 import { parseOdt } from "../odf/reader";
 import { readDocxBytes } from "../openDocument";
 import { writeDocx } from "./writer";
@@ -30,7 +29,7 @@ async function writtenFixture(name: string): Promise<Uint8Array> {
  * it lands rather than whenever someone remembers to extend a list. */
 const DOCX_FIXTURES = readdirSync(join(here, "fixtures"))
   .filter((name) => name.endsWith(".docx"))
-  .sort();
+  .toSorted();
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();

@@ -101,7 +101,7 @@ function addStop() {
     .concat([
       { positionCm: parsed, alignment: asTabStopAlignment(alignment.value), leader: leader.value },
     ])
-    .sort((a, b) => a.positionCm - b.positionCm);
+    .toSorted((a, b) => a.positionCm - b.positionCm);
   position.value = "";
 }
 

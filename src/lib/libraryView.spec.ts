@@ -113,13 +113,14 @@ describe("filterCounts (SPEC-067 AC-16, AC-17)", () => {
   });
 });
 
+const sizeOf = (id: string) => ({ old: 30, new: 10, mid: 20 })[id] ?? 0;
+
 describe("sortLibrary (SPEC-067 AC-11..14, AC-21)", () => {
   const entries = [
     entry({ id: "old", title: "Alpha", lastModified: 100 }),
     entry({ id: "new", title: "Zeta", lastModified: 300 }),
     entry({ id: "mid", title: "Mu", lastModified: 200, starred: true }),
   ];
-  const sizeOf = (id: string) => ({ old: 30, new: 10, mid: 20 })[id] ?? 0;
 
   it("sorts by last modified newest first by default, starred first (AC-11, AC-21)", () => {
     const out = sortLibrary(entries, { key: "modified", direction: "desc" }, sizeOf);

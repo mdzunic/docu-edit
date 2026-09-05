@@ -234,7 +234,7 @@ export function sortLibrary(
   sizeOf: (id: string) => number,
 ): LibraryEntry[] {
   const dir = sort.direction === "asc" ? 1 : -1;
-  return [...entries].sort((a, b) => {
+  return [...entries].toSorted((a, b) => {
     if (a.starred !== b.starred) {
       return a.starred ? -1 : 1;
     }

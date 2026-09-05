@@ -103,7 +103,7 @@ export function shapesInPaintOrder(model: DocumentModel): { location: ShapeLocat
       }
     });
   });
-  return drawings.sort((a, b) => {
+  return drawings.toSorted((a, b) => {
     const za = zOrderOf(a.shape);
     const zb = zOrderOf(b.shape);
     if (za !== zb) {
@@ -817,7 +817,7 @@ export function reorderShapeZ(
   if (!isShape(targetBlock) && !isImage(targetBlock) && !isChart(targetBlock) && !isConnector(targetBlock)) {
     return { model: next, selection };
   }
-  const drawings = allDrawings(next).sort((a, b) => zOrderOf(a.block) - zOrderOf(b.block));
+  const drawings = allDrawings(next).toSorted((a, b) => zOrderOf(a.block) - zOrderOf(b.block));
   const index = drawings.findIndex((d) => d.location.section === location.section && d.location.block === location.block);
   if (index < 0) {
     return { model: next, selection };

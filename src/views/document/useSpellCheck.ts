@@ -127,6 +127,47 @@ function occurrenceKey(section: number, block: number, start: number, word: stri
 
 export type SpellCheckDeps = EditorContext;
 
+function issueClientRects(root: HTMLElement, issue: SpellCheckIssue, sliceCache: CaretSliceCache): DOMRect[] {
+  const startPoint = domPointForCaret(
+    root,
+    { section: issue.section, block: issue.block, offset: issue.start },
+    sliceCache,
+  );
+  const endPoint = domPointForCaret(
+    root,
+    { section: issue.section, block: issue.block, offset: issue.end },
+    sliceCache,
+  );
+  if (!startPoint || !endPoint) {
+    return [];
+  }
+  try {
+    const range = root.ownerDocument.createRange();
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+    return Array.from(range.getClientRects());
+  } catch {
+    // Defensive against a Range implementation missing getClientRects
+    // (some test/embedding environments) — no rects just means nothing
+    // paints this pass, not a crash.
+    return [];
+  }
+}
+
+/** "Add to dictionary" (AC-7, AC-7.1, AC-7.2): persists the word for its
+ * language and clears its underline everywhere immediately. */
+function addWordToDictionary(word: string, lang: string): void {
+  // addCustomWord's persist() calls subscribeCustomDictionary's listener
+  // synchronously, which already clears the issue cache and reschedules.
+  addCustomWord(word, lang);
+}
+
+/** Removes a word from the custom dictionary (SPEC-035 AC-8.2's settings
+ * dialog) — re-flags it immediately via the same subscription. */
+function removeWordFromDictionary(word: string, lang: string): void {
+  removeCustomWord(word, lang);
+}
+
 export function useSpellCheck(deps: SpellCheckDeps) {
   const { doc, contentRoot, pageRef, getScrollContainer, onScroll, onSessionClose, onUnmount, zoom } = deps;
   // "Check spelling as you type" is a preference (SPEC-066): when off, no
@@ -298,33 +339,6 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     return found;
   }
 
-  function issueClientRects(root: HTMLElement, issue: SpellCheckIssue, sliceCache: CaretSliceCache): DOMRect[] {
-    const startPoint = domPointForCaret(
-      root,
-      { section: issue.section, block: issue.block, offset: issue.start },
-      sliceCache,
-    );
-    const endPoint = domPointForCaret(
-      root,
-      { section: issue.section, block: issue.block, offset: issue.end },
-      sliceCache,
-    );
-    if (!startPoint || !endPoint) {
-      return [];
-    }
-    try {
-      const range = root.ownerDocument.createRange();
-      range.setStart(startPoint.node, startPoint.offset);
-      range.setEnd(endPoint.node, endPoint.offset);
-      return Array.from(range.getClientRects());
-    } catch {
-      // Defensive against a Range implementation missing getClientRects
-      // (some test/embedding environments) — no rects just means nothing
-      // paints this pass, not a crash.
-      return [];
-    }
-  }
-
   // The full glyph-box rect is used both for the click/right-click hit area
   // and as the element the wavy underline paints into — CSS positions the
   // squiggle pattern at the box's own bottom edge (background-position:
@@ -459,20 +473,6 @@ export function useSpellCheck(deps: SpellCheckDeps) {
     ignoredWords.add(word.toLowerCase());
     invalidateIssueCache();
     scheduleSpellCheck();
-  }
-
-  /** "Add to dictionary" (AC-7, AC-7.1, AC-7.2): persists the word for its
-   * language and clears its underline everywhere immediately. */
-  function addWordToDictionary(word: string, lang: string): void {
-    // addCustomWord's persist() calls subscribeCustomDictionary's listener
-    // synchronously, which already clears the issue cache and reschedules.
-    addCustomWord(word, lang);
-  }
-
-  /** Removes a word from the custom dictionary (SPEC-035 AC-8.2's settings
-   * dialog) — re-flags it immediately via the same subscription. */
-  function removeWordFromDictionary(word: string, lang: string): void {
-    removeCustomWord(word, lang);
   }
 
   /** Up to five ranked suggestions for a flagged word (AC-2, AC-3.1). Empty

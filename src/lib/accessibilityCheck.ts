@@ -137,8 +137,8 @@ export function contrastRatio(hexA: string, hexB: string): number {
 /** "Large text" (AC-15): an effective size of 18pt+, or 14pt+ when the run
  * is bold — bold is the run's own `formatting.bold`, never inherited, the
  * same convention "looks like a heading" (AC-22) uses. */
-export function isLargeText(effectiveFontSizePt: number, bold: boolean): boolean {
-  return effectiveFontSizePt >= 18 || (bold && effectiveFontSizePt >= 14);
+export function isLargeText(fontSizePt: number, bold: boolean): boolean {
+  return fontSizePt >= 18 || (bold && fontSizePt >= 14);
 }
 
 /** Foreground resolution (AC-17): the run's own colour, else the resolved
@@ -710,7 +710,7 @@ export function finalizeAccessibilityScan(state: AccessibilityScanState, issues:
  * so the idle-chunked composable can sort its own accumulated array the
  * same way `checkAccessibility` sorts its synchronous result. */
 export function sortAccessibilityIssues(issues: AccessibilityIssue[]): AccessibilityIssue[] {
-  return issues.sort((a, b) => compareCaret(a.at, b.at));
+  return issues.toSorted((a, b) => compareCaret(a.at, b.at));
 }
 
 /** The whole scan, synchronously — used directly by tests and by a fix's

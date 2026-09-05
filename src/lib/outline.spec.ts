@@ -161,7 +161,7 @@ describe("hiddenBlockAddresses", () => {
   it("hides the whole subtree under a collapsed top-level heading", () => {
     const hidden = hiddenBlockAddresses(doc, new Set(["0:0"]));
     // Everything from just after A up to (not including) B.
-    expect([...hidden].sort()).toEqual(["0:1", "0:2", "0:3"]);
+    expect([...hidden].toSorted()).toEqual(["0:1", "0:2", "0:3"]);
   });
 
   it("ignores a stale address that no longer points at a heading", () => {

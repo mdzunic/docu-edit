@@ -78,6 +78,36 @@ function loadFace(face: FaceKey): Promise<FaceResult> {
   return pending;
 }
 
+/** Decodes every image the pages place, once per distinct source. An
+ * image that cannot be decoded is left out rather than failing the
+ * export — the rest of the document still becomes a PDF. Each source is
+ * sampled for the largest size it is printed at. */
+async function loadImages(pages: PdfPageInput[]): Promise<Map<string, PdfImageData>> {
+  const largest = new Map<string, { widthPt: number; heightPt: number }>();
+  for (const page of pages) {
+    for (const item of page.images) {
+      const seen = largest.get(item.src);
+      largest.set(item.src, {
+        widthPt: Math.max(seen?.widthPt ?? 0, item.widthPt),
+        heightPt: Math.max(seen?.heightPt ?? 0, item.heightPt),
+      });
+    }
+  }
+  const images = new Map<string, PdfImageData>();
+  const encoded = await Promise.all(
+    Array.from(largest.entries()).map(
+      async ([src, size]) =>
+        [src, await encodeImage(src, size.widthPt, size.heightPt)] as const,
+    ),
+  );
+  for (const [src, image] of encoded) {
+    if (image) {
+      images.set(src, image);
+    }
+  }
+  return images;
+}
+
 export function usePdfExport(deps: PdfExportDeps) {
   const pdfExporting = ref(false);
   const pdfProgress = ref({ done: 0, total: 0 });
@@ -151,36 +181,6 @@ export function usePdfExport(deps: PdfExportDeps) {
       throw new Error(`no fonts could be loaded for embedding (${failures[0]})`);
     }
     return fonts;
-  }
-
-  /** Decodes every image the pages place, once per distinct source. An
-   * image that cannot be decoded is left out rather than failing the
-   * export — the rest of the document still becomes a PDF. Each source is
-   * sampled for the largest size it is printed at. */
-  async function loadImages(pages: PdfPageInput[]): Promise<Map<string, PdfImageData>> {
-    const largest = new Map<string, { widthPt: number; heightPt: number }>();
-    for (const page of pages) {
-      for (const item of page.images) {
-        const seen = largest.get(item.src);
-        largest.set(item.src, {
-          widthPt: Math.max(seen?.widthPt ?? 0, item.widthPt),
-          heightPt: Math.max(seen?.heightPt ?? 0, item.heightPt),
-        });
-      }
-    }
-    const images = new Map<string, PdfImageData>();
-    const encoded = await Promise.all(
-      Array.from(largest.entries()).map(
-        async ([src, size]) =>
-          [src, await encodeImage(src, size.widthPt, size.heightPt)] as const,
-      ),
-    );
-    for (const [src, image] of encoded) {
-      if (image) {
-        images.set(src, image);
-      }
-    }
-    return images;
   }
 
   /** "Download → PDF (.pdf)" (AC-14). */

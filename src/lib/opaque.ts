@@ -390,7 +390,7 @@ function collectPackageDropRecords(model: DocumentModel, source: DocumentFormat,
   const convertibleChartParts = liveConvertibleChartSourceParts(model);
   let paragraphOffset = 0;
   for (const section of model.sections) {
-    const opaqueBlocks = [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex);
+    const opaqueBlocks = [...(section.opaqueBlocks ?? [])].toSorted((a, b) => a.blockIndex - b.blockIndex);
     for (let index = 0; index <= section.blocks.length; index++) {
       for (const block of opaqueBlocks) {
         if (Math.min(block.blockIndex, section.blocks.length) === index) {
@@ -685,7 +685,7 @@ function collectMarkdownDropRecords(model: DocumentModel): DropRecord[] {
     if (paragraph.runs.some((run) => run.field)) {
       dropped.push(record("pageNumberField", `paragraph ${paragraphNumber}`, target));
     }
-    for (const _bookmark of paragraph.bookmarks ?? []) {
+    for (let i = 0; i < (paragraph.bookmarks?.length ?? 0); i += 1) {
       dropped.push(record("bookmark", `paragraph ${paragraphNumber}`, target));
     }
     for (const anchor of paragraph.commentAnchors ?? []) {
@@ -826,6 +826,9 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
   return dropped;
 }
 
+const lost = (side: BorderSide | undefined): boolean =>
+  side !== undefined && (side.style === "dashDot" || side.style === "dashDotDot");
+
 /** The border styles ODF has no keyword for (SPEC-074 AC-32): `dashDot` and
  * `dashDotDot` write as `dashed`, their nearest equivalent, and each
  * paragraph (or section page border) that uses one is reported. Exported so
@@ -833,8 +836,6 @@ export function collectDropRecords(model: DocumentModel, target: DocumentFormat)
  * limit, not the conversion. */
 export function collectBorderStyleDropRecords(model: DocumentModel): DropRecord[] {
   const dropped: DropRecord[] = [];
-  const lost = (side: BorderSide | undefined): boolean =>
-    side !== undefined && (side.style === "dashDot" || side.style === "dashDotDot");
   const reason =
     "Not preserved when saving as OpenDocument Text: ODF's border keywords have no dash-dot " +
     "pattern, so the border is written as its nearest equivalent, dashed.";
@@ -949,6 +950,10 @@ export function collectPageBackgroundDropRecords(model: DocumentModel): DropReco
   ];
 }
 
+const colorRef = (value: ModelColor | false | undefined): boolean => value !== false && isThemeColor(value);
+
+const fontRef = (value: ModelFont | undefined): boolean => isThemeFont(value);
+
 /** Whether any run/paragraph/cell/shape/chart in the model carries a theme
  * colour or font REFERENCE (an isThemeColor/isThemeFont value) — the scan
  * behind the single SPEC-077 AC-42 theme drop record. Literals never count:
@@ -959,8 +964,6 @@ export function collectPageBackgroundDropRecords(model: DocumentModel): DropReco
  * setting model.theme), else the automatic styles would carry
  * `style:parent-style-name="de-theme-…"` parents no style defines. */
 export function modelHasThemeReference(model: DocumentModel): boolean {
-  const colorRef = (value: ModelColor | false | undefined): boolean => value !== false && isThemeColor(value);
-  const fontRef = (value: ModelFont | undefined): boolean => isThemeFont(value);
   const paragraphHasRef = (paragraph: Paragraph): boolean =>
     colorRef(paragraph.formatting?.shadingFill) ||
     paragraph.runs.some(

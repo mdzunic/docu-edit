@@ -59,7 +59,7 @@ function tableIn(model: DocumentModel): Table {
 describe("SPEC-076 table fixtures (AC-75, AC-76)", () => {
   it("commits eight packages — four documents in both formats", async () => {
     const built = await buildTableFixtures();
-    expect(built.map((entry) => entry.name).sort()).toEqual([
+    expect(built.map((entry) => entry.name).toSorted()).toEqual([
       "tables-banded.docx",
       "tables-banded.odt",
       "tables-repeating-header.docx",

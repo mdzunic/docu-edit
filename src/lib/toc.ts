@@ -153,7 +153,7 @@ export function insertTableOfContents(
   }
   const toc: TableOfContents = {
     type: "toc",
-    options: { ...options, levels: [...options.levels].sort((a, b) => a - b) },
+    options: { ...options, levels: [...options.levels].toSorted((a, b) => a - b) },
     entries: tocEntriesFromHeadings(next, options, pageNumberFor),
   };
   const blocks = next.sections[base.section].blocks;

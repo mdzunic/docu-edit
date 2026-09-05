@@ -664,6 +664,8 @@ export function shapeDisplayStyle(shape: Shape): Record<string, string> {
   return style;
 }
 
+const pct = (n: number) => `${(n * 100).toFixed(3)}%`;
+
 /** The inset a shape's text frame lays out within (SPEC-069 AC-11): its
  * geometry's declared text rectangle, as percentages of the box, so text in
  * a cylinder/chevron/callout stays inside the painted region rather than
@@ -679,7 +681,6 @@ export function shapeTextRectStyle(shape: Shape): Record<string, string> | null 
     return null;
   }
   const rect = def.textRect(resolvedShapeAdjustments(shape.geometry, shape.adjustments));
-  const pct = (n: number) => `${(n * 100).toFixed(3)}%`;
   return {
     left: pct(rect.x),
     top: pct(rect.y),

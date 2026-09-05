@@ -1313,16 +1313,16 @@ function fieldContentXml(field: FieldSpec, styles: AutomaticStyles): string {
       return `<text:page-count${FIELD_NUM_FORMAT[field.format]}>${FIELD_PLACEHOLDER_TEXT}</text:page-count>`;
     case "date": {
       const entry = dateTimeFormatEntry(field.format);
-      const styleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
+      const dataStyleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
       // A locked field is "fixed" in ODF (SPEC-053 rule 4): it is not updated.
       const fixedAttr = field.locked ? ' text:fixed="true"' : "";
-      return `<text:date${styleAttr}${fixedAttr}>${cached}</text:date>`;
+      return `<text:date${dataStyleAttr}${fixedAttr}>${cached}</text:date>`;
     }
     case "time": {
       const entry = dateTimeFormatEntry(field.format);
-      const styleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
+      const dataStyleAttr = entry ? ` style:data-style-name="${escapeXml(styles.dateStyleNameFor(entry))}"` : "";
       const fixedAttr = field.locked ? ' text:fixed="true"' : "";
-      return `<text:time${styleAttr}${fixedAttr}>${cached}</text:time>`;
+      return `<text:time${dataStyleAttr}${fixedAttr}>${cached}</text:time>`;
     }
     case "author":
       return `<text:author-name>${cached}</text:author-name>`;
@@ -2252,7 +2252,7 @@ export function buildContentXml(
       return options;
     };
     const opaqueBlocks = includeOpaque
-      ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
+      ? [...(section.opaqueBlocks ?? [])].toSorted((a, b) => a.blockIndex - b.blockIndex)
       : [];
     const blocks = section.blocks;
     // Containment (SPEC-078): floating shapes/charts with an explicit,
@@ -3656,12 +3656,13 @@ export function buildSettingsXml(): string {
   return `${XML_DECLARATION}<office:document-settings xmlns:office="${OFFICE_NAMESPACE}" office:version="1.2"/>`;
 }
 
+const part = (path: string, mediaType: string) =>
+  `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="${mediaType}"/>`;
+
 /** META-INF/manifest.xml listing every part (AC-8), plus a file-entry per
  * image media part the model references (SPEC-024 AC-26). The mimetype
  * entry is not listed — per ODF its media type belongs to the "/" entry. */
 export function buildManifestXml(mediaEntries: OdtManifestEntry[] = []): string {
-  const part = (path: string, mediaType: string) =>
-    `<manifest:file-entry manifest:full-path="${path}" manifest:media-type="${mediaType}"/>`;
   return (
     `${XML_DECLARATION}<manifest:manifest xmlns:manifest="${MANIFEST_NAMESPACE}" manifest:version="1.2">` +
     `<manifest:file-entry manifest:full-path="/" manifest:version="1.2" manifest:media-type="${ODT_MIMETYPE}"/>` +
@@ -3840,26 +3841,26 @@ export async function writeOdt(
   const preservedStyles = preservedParts.get("styles.xml");
   let patchedStyles: string | null = null;
   if (preservedStyles) {
-    const originalStyles = decoder.decode(preservedStyles);
-    patchedStyles = patchOdtStylesXml(model, originalStyles, content);
+    const stylesText = decoder.decode(preservedStyles);
+    patchedStyles = patchOdtStylesXml(model, stylesText, content);
     patchedStyles =
-      patchOdtSectionMasterPages(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
+      patchOdtSectionMasterPages(model, patchedStyles ?? stylesText, sectionNames) ?? patchedStyles;
     patchedStyles =
-      patchOdtSectionHeaderFooters(model, patchedStyles ?? originalStyles, sectionNames) ?? patchedStyles;
+      patchOdtSectionHeaderFooters(model, patchedStyles ?? stylesText, sectionNames) ?? patchedStyles;
     patchedStyles =
-      patchOdtNotesConfiguration(model, patchedStyles ?? originalStyles) ?? patchedStyles;
+      patchOdtNotesConfiguration(model, patchedStyles ?? stylesText) ?? patchedStyles;
     patchedStyles =
-      patchOdtDefaultLanguage(model, patchedStyles ?? originalStyles) ?? patchedStyles;
+      patchOdtDefaultLanguage(model, patchedStyles ?? stylesText) ?? patchedStyles;
     // Shared drawing definitions (SPEC-073) last: stale de-named defs from a
     // previous save are replaced by the set this content build collected.
     patchedStyles =
-      patchOdtShapeDefs(patchedStyles ?? originalStyles, drawingDefs.defsXml()) ?? patchedStyles;
+      patchOdtShapeDefs(patchedStyles ?? stylesText, drawingDefs.defsXml()) ?? patchedStyles;
     // The document theme block (SPEC-077 AC-37): rewritten in place only
     // when the model carries a theme or a theme REFERENCE (whose written
     // de-theme-* parent must resolve) — an unedited themeless save stays
     // byte-identical.
     if (model.theme !== undefined || modelHasThemeReference(model)) {
-      const base = patchedStyles ?? originalStyles;
+      const base = patchedStyles ?? stylesText;
       const spliced = spliceThemeStyles(base, odtThemeBlockXml(documentThemeOf(model)));
       if (spliced !== base) {
         patchedStyles = spliced;

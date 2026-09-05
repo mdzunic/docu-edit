@@ -195,14 +195,15 @@ describe("media minting", () => {
   // extensionForContentType — covered by core/media.spec.ts.)
 });
 
-describe("insertMediaFrame (SPEC-095)", () => {
-  function mp4(): MediaPart {
-    return { mediaId: "", contentType: "video/mp4", data: "AAAA" };
-  }
-  function wav(): MediaPart {
-    return { mediaId: "", contentType: "audio/wav", data: "AAAA" };
-  }
+function mp4(): MediaPart {
+  return { mediaId: "", contentType: "video/mp4", data: "AAAA" };
+}
 
+function wav(): MediaPart {
+  return { mediaId: "", contentType: "audio/wav", data: "AAAA" };
+}
+
+describe("insertMediaFrame (SPEC-095)", () => {
   it("lands a video at a 16×9 box, centred, selected, and mints a media part", () => {
     const model = blank();
     const id = insertMediaFrame(model, 0, mp4(), "video");
@@ -565,23 +566,23 @@ describe("groupFrames (SPEC-096)", () => {
   });
 });
 
-describe("group xml deletion on every mutating path (SPEC-096 AC-41)", () => {
-  function verbatimGroup(model: PresentationModel): GroupFrame {
-    const child: ShapeFrame = { id: "vc", xCm: 2, yCm: 2, widthCm: 2, heightCm: 2, kind: "shape", geometry: "rect" };
-    const group: GroupFrame = {
-      id: "vg",
-      xCm: 2,
-      yCm: 2,
-      widthCm: 2,
-      heightCm: 2,
-      kind: "group",
-      children: [child],
-      xml: "<p:grpSp>verbatim</p:grpSp>",
-    };
-    model.slides[0].frames.push(group);
-    return group;
-  }
+function verbatimGroup(model: PresentationModel): GroupFrame {
+  const child: ShapeFrame = { id: "vc", xCm: 2, yCm: 2, widthCm: 2, heightCm: 2, kind: "shape", geometry: "rect" };
+  const group: GroupFrame = {
+    id: "vg",
+    xCm: 2,
+    yCm: 2,
+    widthCm: 2,
+    heightCm: 2,
+    kind: "group",
+    children: [child],
+    xml: "<p:grpSp>verbatim</p:grpSp>",
+  };
+  model.slides[0].frames.push(group);
+  return group;
+}
 
+describe("group xml deletion on every mutating path (SPEC-096 AC-41)", () => {
   it("move shifts the children with the box and deletes xml", () => {
     const model = bare();
     const group = verbatimGroup(model);

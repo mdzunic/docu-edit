@@ -73,6 +73,14 @@ function ooxmlRotToDeg(rot: number): number {
   return Math.round(rot / 60000);
 }
 
+const num = (value: string | null): number | undefined => {
+  if (value === null) {
+    return undefined;
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+};
+
 /** Reads an `a:xfrm` (from a `p:spPr`/`p:grpSpPr`/`a:graphicFrame`) into EMU
  * numbers. Returns `undefined` when the element carries no `a:xfrm` at all. */
 export function parseXfrm(xfrm: Element | undefined): DrawingXfrm | undefined {
@@ -82,13 +90,6 @@ export function parseXfrm(xfrm: Element | undefined): DrawingXfrm | undefined {
   const off = firstA(xfrm, "off");
   const ext = firstA(xfrm, "ext");
   const rotAttr = xfrm.getAttribute("rot");
-  const num = (value: string | null): number | undefined => {
-    if (value === null) {
-      return undefined;
-    }
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  };
   return {
     xEmu: num(off?.getAttribute("x") ?? null),
     yEmu: num(off?.getAttribute("y") ?? null),
@@ -112,6 +113,8 @@ export interface GroupChildMapping {
   chCyEmu: number;
 }
 
+const emuAttr = (el: Element | undefined, attr: string): number => Number(el?.getAttribute(attr) ?? "NaN");
+
 /** Parses a group's `a:xfrm` (with `a:chOff`/`a:chExt`) into the offset/extent
  * mapping that turns a child's authored EMU coordinates into slide-space EMU
  * (pptx `chOff`/`chExt`, AC-37). Returns `undefined` when the extents are
@@ -125,16 +128,15 @@ export function parseGroupChildMapping(grpSpPr: Element): GroupChildMapping | un
   const ext = firstA(xfrm, "ext");
   const chOff = firstA(xfrm, "chOff");
   const chExt = firstA(xfrm, "chExt");
-  const n = (el: Element | undefined, attr: string): number => Number(el?.getAttribute(attr) ?? "NaN");
   const mapping: GroupChildMapping = {
-    xEmu: n(off, "x"),
-    yEmu: n(off, "y"),
-    cxEmu: n(ext, "cx"),
-    cyEmu: n(ext, "cy"),
-    chXEmu: n(chOff, "x"),
-    chYEmu: n(chOff, "y"),
-    chCxEmu: n(chExt, "cx"),
-    chCyEmu: n(chExt, "cy"),
+    xEmu: emuAttr(off, "x"),
+    yEmu: emuAttr(off, "y"),
+    cxEmu: emuAttr(ext, "cx"),
+    cyEmu: emuAttr(ext, "cy"),
+    chXEmu: emuAttr(chOff, "x"),
+    chYEmu: emuAttr(chOff, "y"),
+    chCxEmu: emuAttr(chExt, "cx"),
+    chCyEmu: emuAttr(chExt, "cy"),
   };
   if (!Number.isFinite(mapping.chCxEmu) || !Number.isFinite(mapping.chCyEmu) || mapping.chCxEmu === 0 || mapping.chCyEmu === 0) {
     return undefined;

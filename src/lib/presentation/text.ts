@@ -288,6 +288,8 @@ function fold<T>(current: FieldState<T> | "unset", value: T): FieldState<T> | "u
   return current === value ? current : "mixed";
 }
 
+const clean = <T>(state: FieldState<T> | "unset"): FieldState<T> => (state === "unset" ? undefined : state);
+
 /** The formatting state a toolbar reflects for a selection: each run field
  * folded over every covered character, each paragraph field over every touched
  * paragraph (AC-24). A collapsed caret reads the character to its left (or the
@@ -339,7 +341,6 @@ export function selectionFormatState(
     }
   }
 
-  const clean = <T>(state: FieldState<T> | "unset"): FieldState<T> => (state === "unset" ? undefined : state);
   return {
     bold: clean(bold),
     italic: clean(italic),

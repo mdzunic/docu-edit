@@ -411,14 +411,14 @@ function caretPointFromClick(
       caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
     };
   }) | null;
-  const document_ = view?.document;
-  if (!document_) {
+  const viewDocument = view?.document;
+  if (!viewDocument) {
     return null;
   }
-  const range = document_.caretRangeFromPoint?.(event.clientX, event.clientY);
+  const range = viewDocument.caretRangeFromPoint?.(event.clientX, event.clientY);
   if (range) {
     return { node: range.startContainer, offset: range.startOffset };
   }
-  const position = document_.caretPositionFromPoint?.(event.clientX, event.clientY);
+  const position = viewDocument.caretPositionFromPoint?.(event.clientX, event.clientY);
   return position ? { node: position.offsetNode, offset: position.offset } : null;
 }

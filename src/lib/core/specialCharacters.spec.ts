@@ -67,7 +67,7 @@ describe('character catalogue', () => {
     for (const category of CHARACTER_CATEGORIES) {
       if (category.id === 'emoji') continue
       const cps = category.chars.map((c) => c.cp)
-      const sorted = [...cps].sort((a, b) => a - b)
+      const sorted = [...cps].toSorted((a, b) => a - b)
       expect(cps).toEqual(sorted)
     }
   })
@@ -77,7 +77,7 @@ describe('character catalogue', () => {
     expect(emoji.chars[0].cp).toBe(0x1f600) // GRINNING FACE
     // Not in code-point order (a later entry has a lower code point).
     const cps = emoji.chars.map((c) => c.cp)
-    const sorted = [...cps].sort((a, b) => a - b)
+    const sorted = [...cps].toSorted((a, b) => a - b)
     expect(cps).not.toEqual(sorted)
   })
 

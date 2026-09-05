@@ -1413,7 +1413,7 @@ export async function buildOdpChartsFixtureBytes(): Promise<Uint8Array> {
   parts.set("META-INF/manifest.xml", encoder.encode(manifest));
 
   // `mimetype` must stay first and STOREd in an ODF package.
-  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }
 
@@ -1665,7 +1665,7 @@ export async function buildSpec094OdpFixtureBytes(): Promise<Uint8Array> {
     "styles.xml",
     encoder.encode(styles.replace("</office:styles>", `${SPEC094_ODP_EXTENSION_BLOCK}</office:styles>`)),
   );
-  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }
 
@@ -1804,7 +1804,7 @@ export async function buildSpec096OdpFixtureBytes(): Promise<Uint8Array> {
   const parts = await unzip(bytes);
   const content = new TextDecoder().decode(parts.get("content.xml")!);
   parts.set("content.xml", encoder.encode(content.replace("</draw:page>", `${SPEC096_ODP_GROUP}</draw:page>`)));
-  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }
 

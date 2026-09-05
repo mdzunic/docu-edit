@@ -225,17 +225,17 @@ describe("writeOdt — editing one paragraph leaves opaque content untouched (AC
   });
 });
 
+function specialModel(text: string): DocumentModel {
+  const model = createDocument("spec-026");
+  model.sections[0].blocks = [{ type: "paragraph", runs: [{ text, formatting: {} }] }];
+  return model;
+}
+
 describe("writeOdt — special characters round-trip (SPEC-026 AC-46)", () => {
   // The canonical fixture: "a b c", NON-BREAKING HYPHEN (U+2011), "d", SOFT
   // HYPHEN (U+00AD), "e", MATHEMATICAL ITALIC SMALL X (U+1D465), "f", GRINNING
   // FACE (U+1F600), "g" — every character representable in ODF.
   const SPECIAL_FIXTURE = "a b c‑d­e\u{1D465}f\u{1F600}g";
-
-  function specialModel(text: string): DocumentModel {
-    const model = createDocument("spec-026");
-    model.sections[0].blocks = [{ type: "paragraph", runs: [{ text, formatting: {} }] }];
-    return model;
-  }
 
   it("survives open -> save -> open equalStructural", async () => {
     // The first serialise+parse yields the canonical opened model; the fixture
@@ -249,6 +249,24 @@ describe("writeOdt — special characters round-trip (SPEC-026 AC-46)", () => {
     expect(equalStructural(opened.sections, reopened.sections)).toBe(true);
   });
 });
+
+    const makeContent = () => `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">
+ <office:automatic-styles><style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/></office:automatic-styles>
+ <office:body><office:text><text:p>first</text:p><text:p text:style-name="P1">second</text:p></office:text></office:body>
+</office:document-content>`;
+
+    const makeStyles = () => `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">
+ <office:automatic-styles>
+  <style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm"/></style:page-layout>
+  <style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="14.8cm" fo:page-height="21cm"><style:background-image/></style:page-layout-properties></style:page-layout>
+ </office:automatic-styles>
+ <office:master-styles>
+  <style:master-page style:name="Standard" style:page-layout-name="pm1"/>
+  <style:master-page style:name="A5Master" style:page-layout-name="pm2"/>
+ </office:master-styles>
+</office:document-styles>`;
 
 describe("writeOdt — sections through a same-format save (SPEC-028 AC-33)", () => {
   const modified = new Date("2026-08-03T12:34:56Z");
@@ -297,22 +315,6 @@ describe("writeOdt — sections through a same-format save (SPEC-028 AC-33)", ()
     // definition byte-for-byte and give the factory's own section a
     // non-colliding layout name instead.
     const { zip } = await import("../core/zipWriter");
-    const makeContent = () => `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">
- <office:automatic-styles><style:style style:name="P1" style:family="paragraph" style:master-page-name="A5Master"/></office:automatic-styles>
- <office:body><office:text><text:p>first</text:p><text:p text:style-name="P1">second</text:p></office:text></office:body>
-</office:document-content>`;
-    const makeStyles = () => `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" office:version="1.2">
- <office:automatic-styles>
-  <style:page-layout style:name="pm1"><style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm"/></style:page-layout>
-  <style:page-layout style:name="pm2"><style:page-layout-properties fo:page-width="14.8cm" fo:page-height="21cm"><style:background-image/></style:page-layout-properties></style:page-layout>
- </office:automatic-styles>
- <office:master-styles>
-  <style:master-page style:name="Standard" style:page-layout-name="pm1"/>
-  <style:master-page style:name="A5Master" style:page-layout-name="pm2"/>
- </office:master-styles>
-</office:document-styles>`;
     const opened = await parseOdt(
       await zip([
         { name: "mimetype", data: new TextEncoder().encode("application/vnd.oasis.opendocument.text"), store: true },

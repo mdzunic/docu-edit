@@ -447,8 +447,8 @@ describe("every declared palette exists in tokens.css with consistent blocks", (
       // The palette's light block appears after the base dark guards, so any
       // token it defines that its dark guards do not would win the cascade
       // tie and leak a light value into the dark scheme.
-      expect(Object.keys(blocks.dark).sort()).toEqual(Object.keys(blocks.light).sort());
-      expect(Object.keys(blocks.mediaDark).sort()).toEqual(Object.keys(blocks.light).sort());
+      expect(Object.keys(blocks.dark).toSorted()).toEqual(Object.keys(blocks.light).toSorted());
+      expect(Object.keys(blocks.mediaDark).toSorted()).toEqual(Object.keys(blocks.light).toSorted());
     });
     it(`${id}'s two dark guards agree on every value`, () => {
       expect(blocks.mediaDark).toEqual(blocks.dark);

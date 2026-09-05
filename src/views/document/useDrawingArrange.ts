@@ -111,6 +111,12 @@ export interface DrawingArrangeApi {
   toggleSnapToGrid: () => void;
 }
 
+function locatedShapes(model: DocumentModel, locations: ShapeLocation[]) {
+  return locations
+    .map((location) => ({ location, shape: shapeAt(model, location) }))
+    .filter((entry): entry is { location: ShapeLocation; shape: NonNullable<typeof entry.shape> } => entry.shape !== null);
+}
+
 export function useDrawingArrange(deps: DrawingArrangeDeps): DrawingArrangeApi {
   const { doc, shapeSelection, shapeMultiSelection, editable } = deps;
 
@@ -151,12 +157,6 @@ export function useDrawingArrange(deps: DrawingArrangeDeps): DrawingArrangeApi {
   function beforeSelection(): ModelSelection {
     const root = deps.contentRoot.value as HTMLElement | null;
     return deps.currentSelection(root) ?? caretSelection(deps.getCaret() ?? documentStart());
-  }
-
-  function locatedShapes(model: DocumentModel, locations: ShapeLocation[]) {
-    return locations
-      .map((location) => ({ location, shape: shapeAt(model, location) }))
-      .filter((entry): entry is { location: ShapeLocation; shape: NonNullable<typeof entry.shape> } => entry.shape !== null);
   }
 
   function alignMulti(model: DocumentModel, locations: ShapeLocation[], edge: AlignEdge): DrawingPositionUpdate[] {

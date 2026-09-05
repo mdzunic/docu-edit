@@ -112,20 +112,20 @@ describe("writeOdt/parseOdt — round-trips (SPEC-035)", () => {
   });
 });
 
-describe("writeOdt — preserved styles.xml (SPEC-008 byte-stability, SPEC-035)", () => {
-  function modelFrom(opened: Awaited<ReturnType<typeof parseOdt>>, title = "Field Report"): DocumentModel {
-    const model: DocumentModel = {
-      id: "test-doc",
-      title,
-      sections: opened.sections,
-      defaultStyles: opened.defaultStyles,
-      format: "odt",
-      opaque: opened.opaque,
-      sourceXml: opened.sourceXml,
-    };
-    return model;
-  }
+function modelFrom(opened: Awaited<ReturnType<typeof parseOdt>>, title = "Field Report"): DocumentModel {
+  const model: DocumentModel = {
+    id: "test-doc",
+    title,
+    sections: opened.sections,
+    defaultStyles: opened.defaultStyles,
+    format: "odt",
+    opaque: opened.opaque,
+    sourceXml: opened.sourceXml,
+  };
+  return model;
+}
 
+describe("writeOdt — preserved styles.xml (SPEC-008 byte-stability, SPEC-035)", () => {
   it("leaves styles.xml byte-identical when a re-opened fixture is saved unmodified", async () => {
     const fixture = loadFixture("libreoffice-writer.odt");
     const originalParts = await unzip(fixture);

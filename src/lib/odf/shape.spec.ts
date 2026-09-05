@@ -526,6 +526,14 @@ describe("path shapes round-trip through draw:enhanced-path (SPEC-071 AC-27)", (
   });
 });
 
+const hrefForMedia = (mediaId: string) => (mediaId === "Pictures/pic.png" ? "Pictures/image1.png" : undefined);
+
+const resolveFillImage = (href: string) => (href === "Pictures/image1.png" ? "Pictures/pic.png" : null);
+
+const stretchHrefForMedia = () => "Pictures/image1.png";
+
+const stretchResolveFillImage = () => "m1";
+
 // --- SPEC-073: fills (AC-33) -------------------------------------------------
 
 describe("SPEC-073 fills — written attributes and round trip", () => {
@@ -668,8 +676,6 @@ describe("SPEC-073 fills — written attributes and round trip", () => {
 
   it("picture fill writes draw:fill='bitmap' + a deFillImgN definition and style:repeat, and round-trips mediaId/mode/alpha", () => {
     const shape = baseShape({ fill: { kind: "picture", mediaId: "Pictures/pic.png", mode: "tile", alpha: 0.75 } });
-    const hrefForMedia = (mediaId: string) => (mediaId === "Pictures/pic.png" ? "Pictures/image1.png" : undefined);
-    const resolveFillImage = (href: string) => (href === "Pictures/image1.png" ? "Pictures/pic.png" : null);
     const defs = createOdfDrawingDefs();
     const styleXml = shapeGraphicStyleXml("gr1", shape, { defs, hrefForMedia });
     expect(styleXml).toContain('draw:fill="bitmap"');
@@ -687,11 +693,15 @@ describe("SPEC-073 fills — written attributes and round trip", () => {
 
   it("a stretched picture fill writes style:repeat='stretch' and round-trips mode 'stretch'", () => {
     const shape = baseShape({ fill: { kind: "picture", mediaId: "m1", mode: "stretch" } });
-    const hrefForMedia = () => "Pictures/image1.png";
-    const resolveFillImage = () => "m1";
-    const styleXml = shapeGraphicStyleXml("gr1", shape, { defs: createOdfDrawingDefs(), hrefForMedia });
+    const styleXml = shapeGraphicStyleXml("gr1", shape, {
+      defs: createOdfDrawingDefs(),
+      hrefForMedia: stretchHrefForMedia,
+    });
     expect(styleXml).toContain('style:repeat="stretch"');
-    const back = roundTrip(shape, "gr1", { hrefForMedia, resolveFillImage })!.shape;
+    const back = roundTrip(shape, "gr1", {
+      hrefForMedia: stretchHrefForMedia,
+      resolveFillImage: stretchResolveFillImage,
+    })!.shape;
     expect(back.fill).toEqual({ kind: "picture", mediaId: "m1", mode: "stretch" });
   });
 });

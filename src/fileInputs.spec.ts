@@ -35,7 +35,7 @@ function vueFiles(): string[] {
     }
   };
   walk(srcDir);
-  return found.sort();
+  return found.toSorted();
 }
 
 interface FileInput {

@@ -373,24 +373,25 @@ describe("insertChartFromTable (AC-21)", () => {
   });
 });
 
+const chartIn = (model: DocumentModel, block: number): Chart => {
+  const found = chartAt(model, { section: 0, block });
+  if (!found) {
+    throw new Error(`no chart at block ${block}`);
+  }
+  return found;
+};
+
+const paragraphIn = (model: DocumentModel, block: number): Paragraph => {
+  const found = model.sections[0].blocks[block];
+  if (found.type !== "paragraph") {
+    throw new Error(`no paragraph at block ${block}`);
+  }
+  return found;
+};
+
 // --- anchor pairing (SPEC-078) ----------------------------------------------
 
 describe("chart anchor pairing (SPEC-078)", () => {
-  const chartIn = (model: DocumentModel, block: number): Chart => {
-    const found = chartAt(model, { section: 0, block });
-    if (!found) {
-      throw new Error(`no chart at block ${block}`);
-    }
-    return found;
-  };
-  const paragraphIn = (model: DocumentModel, block: number): Paragraph => {
-    const found = model.sections[0].blocks[block];
-    if (found.type !== "paragraph") {
-      throw new Error(`no paragraph at block ${block}`);
-    }
-    return found;
-  };
-
   it("insertChart pairs the chart with the caret paragraph", () => {
     const { model } = insertChart(doc(paragraph("Anchor")), selectionAt(0, 6), "columnClustered");
     expect(model.sections[0].blocks.map((b) => b.type)).toEqual(["paragraph", "chart", "paragraph"]);

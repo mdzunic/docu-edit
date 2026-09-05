@@ -102,6 +102,22 @@ export function noReplyDrafts(): Record<string, string> {
 
 export type CommentsDeps = EditorContext;
 
+function rangeClientRects(root: HTMLElement, start: CaretPosition, end: CaretPosition): DOMRect[] {
+  const startPoint = domPointForCaret(root, start);
+  const endPoint = domPointForCaret(root, end);
+  if (!startPoint || !endPoint) {
+    return [];
+  }
+  const range = root.ownerDocument.createRange();
+  try {
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+  } catch {
+    return [];
+  }
+  return Array.from(range.getClientRects());
+}
+
 export function useComments(deps: CommentsDeps) {
   const {
     doc,
@@ -366,22 +382,6 @@ export function useComments(deps: CommentsDeps) {
    * container passed to measureCommentPositions — the margin-pane
    * counterpart of commentHighlightRects. */
   const commentThreadTops = shallowRef<Map<string, number>>(new Map());
-
-  function rangeClientRects(root: HTMLElement, start: CaretPosition, end: CaretPosition): DOMRect[] {
-    const startPoint = domPointForCaret(root, start);
-    const endPoint = domPointForCaret(root, end);
-    if (!startPoint || !endPoint) {
-      return [];
-    }
-    const range = root.ownerDocument.createRange();
-    try {
-      range.setStart(startPoint.node, startPoint.offset);
-      range.setEnd(endPoint.node, endPoint.offset);
-    } catch {
-      return [];
-    }
-    return Array.from(range.getClientRects());
-  }
 
   /** Rebuilds the highlight overlay (open threads only — AC "resolving...
    * removes the highlight") and the pane's per-thread card positions. Runs

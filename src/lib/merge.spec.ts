@@ -86,7 +86,7 @@ describe("parseJsonSource", () => {
       JSON.stringify([{ name: "Acme", line_items: [{ sku: "A1" }, { sku: "A2" }] }, { name: "Beta", line_items: [] }]),
     );
     expect(source.kind).toBe("json");
-    expect(source.columns.sort()).toEqual(["line_items", "name"]);
+    expect(source.columns.toSorted()).toEqual(["line_items", "name"]);
     expect(source.arrayColumns).toEqual(["line_items"]);
     expect(source.records).toHaveLength(2);
   });
@@ -513,7 +513,7 @@ describe("runMerge", () => {
     expect(result.report.recordCount).toBe(2);
     expect(result.report.missingFields).toEqual([{ recordIndex: 0, field: "total" }]);
     const files = await unzip(result.bytes);
-    expect([...files.keys()].sort()).toEqual(["1.docx", "2.docx"]);
+    expect([...files.keys()].toSorted()).toEqual(["1.docx", "2.docx"]);
     const first = await parseDocx(files.get("1.docx")!);
     const text = (first.sections[0].blocks[0] as Paragraph).runs.map((r) => r.text).join("");
     expect(text).toBe("Dear Acme, total [total]");

@@ -79,7 +79,7 @@ for (const format of ["pptx", "odp"] as const) {
       const bytesB = await write(reopened);
       const a = await unzip(bytesA);
       const b = await unzip(bytesB);
-      expect([...b.keys()].sort()).toEqual([...a.keys()].sort());
+      expect([...b.keys()].toSorted()).toEqual([...a.keys()].toSorted());
       for (const [name, data] of a) {
         expect(equalBytes(b.get(name)!, data), `part ${name} must round-trip byte-identical`).toBe(true);
       }

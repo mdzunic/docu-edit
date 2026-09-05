@@ -69,8 +69,8 @@ describe("SHAPE_DEFINITIONS — derivations (AC-15a)", () => {
   });
 
   it("is the sole source of LINE_GEOMETRIES", () => {
-    expect([...LINE_GEOMETRIES].sort()).toEqual(
-      SHAPE_DEFINITIONS.filter((def) => def.isLine).map((def) => def.geometry).sort(),
+    expect([...LINE_GEOMETRIES].toSorted()).toEqual(
+      SHAPE_DEFINITIONS.filter((def) => def.isLine).map((def) => def.geometry).toSorted(),
     );
   });
 

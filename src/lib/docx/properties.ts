@@ -297,7 +297,7 @@ export function parseParagraphProperties(pPr: Element | undefined): ParagraphFor
       stops.push(stop);
     }
     if (stops.length > 0) {
-      formatting.tabStops = stops.sort((a, b) => a.positionCm - b.positionCm);
+      formatting.tabStops = stops.toSorted((a, b) => a.positionCm - b.positionCm);
     }
   }
 

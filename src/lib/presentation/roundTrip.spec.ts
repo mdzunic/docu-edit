@@ -194,14 +194,15 @@ describe("presentationFormatOf / assemblePresentation", () => {
   });
 });
 
-describe("SPEC-079 frame model", () => {
-  async function pptxSlides(): Promise<Slide[]> {
-    return (await parsePptx(await buildPptxFixtureBytes())).slides;
-  }
-  async function odpSlides(): Promise<Slide[]> {
-    return (await parseOdp(await buildOdpFixtureBytes())).slides;
-  }
+async function pptxSlides(): Promise<Slide[]> {
+  return (await parsePptx(await buildPptxFixtureBytes())).slides;
+}
 
+async function odpSlides(): Promise<Slide[]> {
+  return (await parseOdp(await buildOdpFixtureBytes())).slides;
+}
+
+describe("SPEC-079 frame model", () => {
   it("yields the same per-slide frame kinds in z-order from both readers (AC-5/6)", async () => {
     const pptx = await pptxSlides();
     const odp = await odpSlides();
@@ -382,12 +383,12 @@ describe("from-scratch writers (no retained package)", () => {
   });
 });
 
-describe("pptx substitution rebuild", () => {
-  async function openFixture(): Promise<{ model: PresentationModel; source: Map<string, Uint8Array> }> {
-    const bytes = await buildPptxFixtureBytes();
-    return { model: await readPresentationBytes(bytes, "pptx", "Deck"), source: await unzip(bytes) };
-  }
+async function openFixture(): Promise<{ model: PresentationModel; source: Map<string, Uint8Array> }> {
+  const bytes = await buildPptxFixtureBytes();
+  return { model: await readPresentationBytes(bytes, "pptx", "Deck"), source: await unzip(bytes) };
+}
 
+describe("pptx substitution rebuild", () => {
   function expectUntouched(written: Map<string, Uint8Array>, source: Map<string, Uint8Array>): void {
     for (const [name, data] of source) {
       if (STRUCTURAL_PPTX_PARTS.has(name) || !written.has(name)) {

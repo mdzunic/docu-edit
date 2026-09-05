@@ -113,7 +113,7 @@ function produceMediaThumbnail() {
     return;
   }
   const image = new Image();
-  image.onload = () => {
+  image.addEventListener("load", () => {
     if (unmounted) {
       return;
     }
@@ -137,12 +137,12 @@ function produceMediaThumbnail() {
       // jsdom / a broken image: the honest fallback is the format badge.
       thumbnail.value = { lines: [], failed: true };
     }
-  };
-  image.onerror = () => {
+  });
+  image.addEventListener("error", () => {
     if (!unmounted) {
       thumbnail.value = { lines: [], failed: true };
     }
-  };
+  });
   image.src = src;
 }
 

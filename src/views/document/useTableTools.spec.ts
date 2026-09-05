@@ -37,6 +37,8 @@ interface Harness {
   contextCell: { value: TableCellTarget | null };
 }
 
+const noop = () => {};
+
 /** The composable wired to a minimal context: enough of EditorContext to
  * exercise every command, with each applyEdit recorded rather than applied. */
 function harness(selection?: ModelSelection): Harness {
@@ -45,7 +47,6 @@ function harness(selection?: ModelSelection): Harness {
   const edits: { label: string; result: CommandResult | null }[] = [];
   const toasts: string[] = [];
   const contextCell = { value: null as TableCellTarget | null };
-  const noop = () => {};
   const tools = useTableTools({
     doc,
     documentId: ref("d"),

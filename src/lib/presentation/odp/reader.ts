@@ -1858,23 +1858,24 @@ function deriveOdpLayout(
   }
 }
 
+const search = (doc: Document | undefined): { widthCm: number; heightCm: number } | undefined => {
+  if (!doc) {
+    return undefined;
+  }
+  const layouts = doc.documentElement.getElementsByTagNameNS(STYLE_NAMESPACE, "page-layout-properties");
+  for (const props of Array.from(layouts)) {
+    const w = odfLengthToCm(foAttr(props, "page-width"));
+    const h = odfLengthToCm(foAttr(props, "page-height"));
+    if (w !== undefined && h !== undefined) {
+      return { widthCm: w, heightCm: h };
+    }
+  }
+  return undefined;
+};
+
 /** The slide size from the master page's `style:page-layout`
  * (`fo:page-width`/`fo:page-height`), else the default. */
 function pageSize(stylesDoc: Document | undefined, contentDoc: Document): { widthCm: number; heightCm: number } {
-  const search = (doc: Document | undefined): { widthCm: number; heightCm: number } | undefined => {
-    if (!doc) {
-      return undefined;
-    }
-    const layouts = doc.documentElement.getElementsByTagNameNS(STYLE_NAMESPACE, "page-layout-properties");
-    for (const props of Array.from(layouts)) {
-      const w = odfLengthToCm(foAttr(props, "page-width"));
-      const h = odfLengthToCm(foAttr(props, "page-height"));
-      if (w !== undefined && h !== undefined) {
-        return { widthCm: w, heightCm: h };
-      }
-    }
-    return undefined;
-  };
   return (
     search(stylesDoc) ?? search(contentDoc) ?? { widthCm: DEFAULT_SLIDE_WIDTH_CM, heightCm: DEFAULT_SLIDE_HEIGHT_CM }
   );

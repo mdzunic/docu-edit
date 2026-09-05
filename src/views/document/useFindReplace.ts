@@ -54,6 +54,60 @@ export interface FindReplaceDeps extends EditorContext {
   registerRefresh: (fn: () => void) => void;
 }
 
+/** The set of "section:block" keys for paragraphs currently on (or just off)
+ * screen — the only ones whose matches are worth measuring. */
+function visibleFindBlockKeys(root: HTMLElement, bounds: { top: number; bottom: number }) {
+  const keys = new Set<string>();
+  const margin = 200;
+  const pageElements = root.querySelectorAll('[data-testid="document-page"]');
+  const scopes: HTMLElement[] = [];
+  if (pageElements.length > 0) {
+    for (const pageElement of Array.from(pageElements)) {
+      const rect = (pageElement as HTMLElement).getBoundingClientRect();
+      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+        continue;
+      }
+      scopes.push(pageElement as HTMLElement);
+    }
+  } else {
+    scopes.push(root);
+  }
+  for (const scope of scopes) {
+    for (const element of Array.from(scope.querySelectorAll(BLOCK_SELECTOR))) {
+      const rect = (element as HTMLElement).getBoundingClientRect();
+      if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
+        continue;
+      }
+      keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
+    }
+  }
+  return keys;
+}
+
+function matchClientRects(root: HTMLElement, match: FindMatch): DOMRect[] {
+  const startPoint = domPointForCaret(root, {
+    section: match.section,
+    block: match.block,
+    offset: match.start,
+  });
+  const endPoint = domPointForCaret(root, {
+    section: match.section,
+    block: match.block,
+    offset: match.end,
+  });
+  if (!startPoint || !endPoint) {
+    return [];
+  }
+  const range = root.ownerDocument.createRange();
+  try {
+    range.setStart(startPoint.node, startPoint.offset);
+    range.setEnd(endPoint.node, endPoint.offset);
+  } catch {
+    return [];
+  }
+  return Array.from(range.getClientRects());
+}
+
 export function useFindReplace(deps: FindReplaceDeps) {
   const {
     doc,
@@ -424,60 +478,6 @@ export function useFindReplace(deps: FindReplaceDeps) {
       return { top: rect.top, bottom: rect.bottom };
     }
     return { top: 0, bottom: window.innerHeight };
-  }
-
-  /** The set of "section:block" keys for paragraphs currently on (or just off)
-   * screen — the only ones whose matches are worth measuring. */
-  function visibleFindBlockKeys(root: HTMLElement, bounds: { top: number; bottom: number }) {
-    const keys = new Set<string>();
-    const margin = 200;
-    const pageElements = root.querySelectorAll('[data-testid="document-page"]');
-    const scopes: HTMLElement[] = [];
-    if (pageElements.length > 0) {
-      for (const pageElement of Array.from(pageElements)) {
-        const rect = (pageElement as HTMLElement).getBoundingClientRect();
-        if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
-          continue;
-        }
-        scopes.push(pageElement as HTMLElement);
-      }
-    } else {
-      scopes.push(root);
-    }
-    for (const scope of scopes) {
-      for (const element of Array.from(scope.querySelectorAll(BLOCK_SELECTOR))) {
-        const rect = (element as HTMLElement).getBoundingClientRect();
-        if (rect.bottom < bounds.top - margin || rect.top > bounds.bottom + margin) {
-          continue;
-        }
-        keys.add(`${element.getAttribute("data-section")}:${element.getAttribute("data-block")}`);
-      }
-    }
-    return keys;
-  }
-
-  function matchClientRects(root: HTMLElement, match: FindMatch): DOMRect[] {
-    const startPoint = domPointForCaret(root, {
-      section: match.section,
-      block: match.block,
-      offset: match.start,
-    });
-    const endPoint = domPointForCaret(root, {
-      section: match.section,
-      block: match.block,
-      offset: match.end,
-    });
-    if (!startPoint || !endPoint) {
-      return [];
-    }
-    const range = root.ownerDocument.createRange();
-    try {
-      range.setStart(startPoint.node, startPoint.offset);
-      range.setEnd(endPoint.node, endPoint.offset);
-    } catch {
-      return [];
-    }
-    return Array.from(range.getClientRects());
   }
 
   /** Rebuilds the overlay rectangles, measuring only on-screen matches (plus

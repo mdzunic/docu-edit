@@ -438,7 +438,7 @@ describe("issue ordering", () => {
     );
     const issues = checkAccessibility(model);
     const blocks = issues.map((issue) => issue.at.block);
-    expect(blocks).toEqual(blocks.slice().sort((a, b) => a - b));
+    expect(blocks).toEqual(blocks.slice().toSorted((a, b) => a - b));
   });
 });
 

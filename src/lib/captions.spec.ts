@@ -31,6 +31,30 @@ function modelWith(blocks: DocumentModel["sections"][0]["blocks"]): DocumentMode
   return doc;
 }
 
+const seq = (label: string, cached: string): Paragraph => ({
+  type: "paragraph",
+  styleId: CAPTION_STYLE_ID,
+  runs: [
+    { text: `${label} `, formatting: {} },
+    { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
+    { text: ": x", formatting: {} },
+  ],
+});
+
+// --- header/footer/footnote exclusion (§Numbering, AC-37..AC-38) --------
+
+const surfaceCaption = (label: string, cached: string): Paragraph => ({
+  type: "paragraph",
+  styleId: CAPTION_STYLE_ID,
+  runs: [
+    { text: `${label} `, formatting: {} },
+    { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
+    { text: ": x", formatting: {} },
+  ],
+});
+
+const cachedOf = (p: Paragraph) => (p.runs[1].field as { cached: string }).cached;
+
 describe("captions (SPEC-055)", () => {
   it("offers Figure, Table and Equation as built-in labels (AC-5)", () => {
     expect(BUILT_IN_CAPTION_LABELS).toEqual(["Figure", "Table", "Equation"]);
@@ -90,15 +114,6 @@ describe("captions (SPEC-055)", () => {
   });
 
   it("renumbers all captions of a label in document order (AC-15, AC-43)", () => {
-    const seq = (label: string, cached: string): Paragraph => ({
-      type: "paragraph",
-      styleId: CAPTION_STYLE_ID,
-      runs: [
-        { text: `${label} `, formatting: {} },
-        { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
-        { text: ": x", formatting: {} },
-      ],
-    });
     const model = modelWith([seq("Figure", "9"), seq("Figure", "9"), seq("Figure", "9")]);
     const next = renumberCaptions(model);
     const numbers = (next.sections[0].blocks as Paragraph[]).map(
@@ -116,19 +131,6 @@ describe("captions (SPEC-055)", () => {
     const model = modelWith([already]);
     expect(renumberCaptions(model)).toBe(model);
   });
-
-  // --- header/footer/footnote exclusion (§Numbering, AC-37..AC-38) --------
-
-  const surfaceCaption = (label: string, cached: string): Paragraph => ({
-    type: "paragraph",
-    styleId: CAPTION_STYLE_ID,
-    runs: [
-      { text: `${label} `, formatting: {} },
-      { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
-      { text: ": x", formatting: {} },
-    ],
-  });
-  const cachedOf = (p: Paragraph) => (p.runs[1].field as { cached: string }).cached;
 
   it("excludes header, footer and footnote captions from the per-label counter (AC-37, AC-38)", () => {
     const model = modelWith([surfaceCaption("Figure", "5"), surfaceCaption("Figure", "5")]);
@@ -173,7 +175,7 @@ describe("captions (SPEC-055)", () => {
   });
 
   it("breaks the binding when a paragraph separates caption and object (AC-40, AC-42)", () => {
-    const seq: Paragraph = {
+    const detached: Paragraph = {
       type: "paragraph",
       styleId: CAPTION_STYLE_ID,
       runs: [
@@ -181,7 +183,7 @@ describe("captions (SPEC-055)", () => {
         { text: "1", formatting: {}, field: { kind: "seq", label: "Figure", format: "decimal", cached: "1" } },
       ],
     };
-    const model = modelWith([image("m1"), paragraph("interrupting"), seq]);
+    const model = modelWith([image("m1"), paragraph("interrupting"), detached]);
     expect(captionForObject(model, { section: 0, block: 0 })).toBeNull();
     expect(objectForCaption(model, { section: 0, block: 2 })).toBeNull();
     // Still numbered and displayed correctly.

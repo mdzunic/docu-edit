@@ -34,6 +34,10 @@ const POLYGON_GEOMETRIES = SHAPE_CATALOGUE.map((entry) => entry.geometry).filter
   (geometry) => geometry !== "line" && geometry !== "arrow" && geometry !== "ellipse",
 );
 
+// Alternating radius: even indices are the outer points (r=0.5 from
+// centre), odd indices the inner ones (r=0.5*0.382).
+const dist = (p: Point) => Math.hypot(p.x - 0.5, p.y - 0.5);
+
 // --- shapePolygon ------------------------------------------------------------
 
 describe("shapePolygon", () => {
@@ -90,9 +94,6 @@ describe("shapePolygon", () => {
   it("star5 has 10 points (5 outer, 5 inner) centred on (0.5, 0.5)", () => {
     const star = shapePolygon("star5")!;
     expect(star).toHaveLength(10);
-    // Alternating radius: even indices are the outer points (r=0.5 from
-    // centre), odd indices the inner ones (r=0.5*0.382).
-    const dist = (p: Point) => Math.hypot(p.x - 0.5, p.y - 0.5);
     expect(dist(star[0])).toBeCloseTo(0.5, 6);
     expect(dist(star[1])).toBeCloseTo(0.5 * 0.382, 6);
     // The first (outer) point is straight up from centre.

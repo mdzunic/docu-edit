@@ -61,7 +61,7 @@ export function stopsToPx(stops: TabStop[]): TabStopPx[] {
       }
       return px;
     })
-    .sort((a, b) => a.positionPx - b.positionPx);
+    .toSorted((a, b) => a.positionPx - b.positionPx);
 }
 
 /** The next tab stop past `penX` (px): the nearest explicit non-bar stop

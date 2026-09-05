@@ -56,7 +56,7 @@ export function parsePageRange(input: string, totalPages: number): PageRangeResu
       selected.add(page);
     }
   }
-  return { pages: Array.from(selected).sort((a, b) => a - b) };
+  return { pages: Array.from(selected).toSorted((a, b) => a - b) };
 }
 
 /** Whether the document has no printable content: every section's block

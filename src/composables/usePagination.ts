@@ -212,6 +212,21 @@ function sameAreaLists(a: (NoteArea | null)[], b: (NoteArea | null)[]): boolean 
 // call and the layout fast-paths straight past the hidden check.
 const EMPTY_HIDDEN: ReadonlySet<string> = new Set();
 
+/** The tab context a paragraph is laid out against (SPEC-054): its effective
+ * stops (style-inherited until it sets its own), the document default
+ * interval and the document language's decimal separator. */
+function tabConfigFor(model: DocumentModel, paragraph: Paragraph): TabLayoutConfig {
+  return {
+    stops: tabContextFor(model, paragraph),
+    defaultTabStopCm: model.defaultStyles.defaultTabStopCm ?? 1.27,
+    decimalSeparator: decimalSeparatorFor(model.defaultStyles.language),
+  };
+}
+
+function isParagraphBlock(block: Block): block is Paragraph {
+  return !isTable(block) && !isImage(block) && !isBreak(block) && !isToc(block) && !isTof(block);
+}
+
 export function usePagination(
   docOf: () => DocumentModel | null,
   rootOf: () => HTMLElement | null,
@@ -300,17 +315,6 @@ export function usePagination(
       };
     }
     return baseFont;
-  }
-
-  /** The tab context a paragraph is laid out against (SPEC-054): its effective
-   * stops (style-inherited until it sets its own), the document default
-   * interval and the document language's decimal separator. */
-  function tabConfigFor(model: DocumentModel, paragraph: Paragraph): TabLayoutConfig {
-    return {
-      stops: tabContextFor(model, paragraph),
-      defaultTabStopCm: model.defaultStyles.defaultTabStopCm ?? 1.27,
-      decimalSeparator: decimalSeparatorFor(model.defaultStyles.language),
-    };
   }
 
   /** The tab config only when the paragraph actually contains a tab — the
@@ -585,10 +589,6 @@ export function usePagination(
       tableIndex = index;
     }
     return tableIndex.get(`${section}:${block}`) ?? [];
-  }
-
-  function isParagraphBlock(block: Block): block is Paragraph {
-    return !isTable(block) && !isImage(block) && !isBreak(block) && !isToc(block) && !isTof(block);
   }
 
   function measureOne(root: HTMLElement, model: DocumentModel, target: PendingTarget): boolean {

@@ -131,7 +131,7 @@ export function setListMarker(
 ): CommandResult {
   const next = cloneContainers(model);
   const { start, end } = orderedRange(next, selection);
-  const result: CommandResult = { model: next, selection: { anchor: start, focus: end } };
+  const listResult: CommandResult = { model: next, selection: { anchor: start, focus: end } };
   const startParagraph = paragraphAtCaret(next, start);
   const list = startParagraph?.list;
   // The containing block list: the cell's own blocks for a caret inside a
@@ -144,7 +144,7 @@ export function setListMarker(
   const index = start.cell ? start.cell.block : start.block;
   const run = listRunAround(container, index);
   if (!list || !run) {
-    return result;
+    return listResult;
   }
   const level = list.level;
   const type = markerType(marker);
@@ -158,7 +158,7 @@ export function setListMarker(
       : { section: start.section, block: blockIndex };
     replaceParagraphAt(next, address, { ...block, list: { ...block.list, type, marker } });
   }
-  return result;
+  return listResult;
 }
 
 /** Removes list formatting from every touched paragraph without touching

@@ -35,8 +35,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const docxFixtures = join(here, "docx", "fixtures");
 const odfFixtures = join(here, "odf", "fixtures");
 
-const DOCX = readdirSync(docxFixtures).filter((name) => name.endsWith(".docx")).sort();
-const ODT = readdirSync(odfFixtures).filter((name) => name.endsWith(".odt")).sort();
+const DOCX = readdirSync(docxFixtures).filter((name) => name.endsWith(".docx")).toSorted();
+const ODT = readdirSync(odfFixtures).filter((name) => name.endsWith(".odt")).toSorted();
 
 /** How many saves to chain. Three is the smallest number that distinguishes
  * "settles after the first save" from "moves a little every time": the
@@ -174,6 +174,17 @@ describe("repeated saves are idempotent — .odt", () => {
   });
 });
 
+/** One crossing: writes `model`, re-reads it, and reports what the writer
+ * said it dropped along the way. */
+async function cross(
+  model: DocumentModel,
+  write: (model: DocumentModel) => Promise<{ bytes: Uint8Array; dropped: unknown[] }>,
+  read: (bytes: Uint8Array) => Promise<DocumentModel>,
+): Promise<{ model: DocumentModel; dropped: unknown[] }> {
+  const written = await write(model);
+  return { model: await read(written.bytes), dropped: written.dropped };
+}
+
 // A conversion is not a one-way trip: someone who works in both applications
 // saves the same document back and forth for as long as the document lives.
 //
@@ -206,17 +217,6 @@ describe("repeated saves are idempotent — .odt", () => {
 // separate class from the same-format idempotence bugs above — the conversion
 // layer, not the packaging layer — and want their own review round.
 describe("a cross-format save that reports no drops loses nothing", () => {
-  /** One crossing: writes `model`, re-reads it, and reports what the writer
-   * said it dropped along the way. */
-  async function cross(
-    model: DocumentModel,
-    write: (model: DocumentModel) => Promise<{ bytes: Uint8Array; dropped: unknown[] }>,
-    read: (bytes: Uint8Array) => Promise<DocumentModel>,
-  ): Promise<{ model: DocumentModel; dropped: unknown[] }> {
-    const written = await write(model);
-    return { model: await read(written.bytes), dropped: written.dropped };
-  }
-
   async function expectSilentCrossingIsLossless(
     source: DocumentModel,
     label: string,

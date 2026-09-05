@@ -4,6 +4,12 @@
 // backbone need not import feature modules and there are no import cycles.
 // Registration is idempotent per feature; the Sets are exposed so the
 // backbone fires them at the right lifecycle moments.
+
+/** The initial value of a callback slot filled in later (a promise executor,
+ * a registration call) — shared so the slot's initialiser is not a nested
+ * function expression of its own. */
+const noop = (): void => {};
+
 export interface FeatureHooks {
   sessionCloseHooks: Set<() => void>;
   unmountHooks: Set<() => void>;
@@ -20,7 +26,7 @@ export function useFeatureHooks(): FeatureHooks {
   const sessionCloseHooks = new Set<() => void>();
   const unmountHooks = new Set<() => void>();
   const scrollHooks = new Set<() => void>();
-  let findRefreshScheduler: () => void = () => {};
+  let findRefreshScheduler: () => void = noop;
 
   return {
     sessionCloseHooks,

@@ -179,7 +179,7 @@ describe("planAnchoredDrawings", () => {
       shape({ anchorOrdinal: 99 }), // dangling — stays at its slot
     ];
     const plan = planAnchoredDrawings(blocks);
-    expect([...plan.absorbed].sort()).toEqual([0, 2]);
+    expect([...plan.absorbed].toSorted()).toEqual([0, 2]);
     expect(plan.byParagraph.get(1)).toEqual({ leading: [0], trailing: [2] });
   });
 

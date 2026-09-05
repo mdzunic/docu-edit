@@ -59,6 +59,19 @@ export interface ChartsDeps extends EditorContext {
   caretPosition: Ref<CaretPosition | null>;
 }
 
+/** The chart insertChart/insertChartFromTable just landed, found the same
+ * way shapeInsertedLocation does — a fresh chart lands adjacent to the
+ * anchor block index. */
+function chartInsertedLocation(model: DocumentModel, anchor: CaretPosition): ChartLocation | null {
+  const blocks = model.sections[anchor.section]?.blocks ?? [];
+  for (let i = 0; i < blocks.length; i++) {
+    if (isChart(blocks[i]) && Math.abs(i - anchor.block) <= 2) {
+      return { section: anchor.section, block: i };
+    }
+  }
+  return null;
+}
+
 export function useCharts(deps: ChartsDeps) {
   const {
     doc,
@@ -142,19 +155,6 @@ export function useCharts(deps: ChartsDeps) {
       return;
     }
     editingChartOptions.value = true;
-  }
-
-  /** The chart insertChart/insertChartFromTable just landed, found the same
-   * way shapeInsertedLocation does — a fresh chart lands adjacent to the
-   * anchor block index. */
-  function chartInsertedLocation(model: DocumentModel, anchor: CaretPosition): ChartLocation | null {
-    const blocks = model.sections[anchor.section]?.blocks ?? [];
-    for (let i = 0; i < blocks.length; i++) {
-      if (isChart(blocks[i]) && Math.abs(i - anchor.block) <= 2) {
-        return { section: anchor.section, block: i };
-      }
-    }
-    return null;
   }
 
   /** "Insert → Chart" (AC-2, AC-3): a fixed 12cm x 7.5cm chart with sample
@@ -398,7 +398,7 @@ export function useCharts(deps: ChartsDeps) {
       return null;
     }
     const els = root.querySelectorAll(".doc-chart-anchor");
-    for (const el of Array.from(els).reverse()) {
+    for (const el of Array.from(els).toReversed()) {
       const target = el.querySelector(".doc-chart");
       if (!(target instanceof HTMLElement)) {
         continue;

@@ -446,7 +446,7 @@ function mergedAnchors<T extends { offset: number }>(
       offset: from + Math.max(0, anchor.offset - to),
     })),
   ];
-  return merged.sort((a, b) => a.offset - b.offset);
+  return merged.toSorted((a, b) => a.offset - b.offset);
 }
 
 /** Writes a bookmark list onto a freshly built paragraph: assigns it when

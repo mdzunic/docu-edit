@@ -151,18 +151,18 @@ describe("BordersShadingDialog (SPEC-074 AC-6..AC-10)", () => {
   });
 });
 
+function openThemed(initial: Record<string, unknown> = {}) {
+  return mount(BordersShadingDialog, { props: { initial, unit: "cm", theme: DEFAULT_THEME } });
+}
+
+function swatchFor(wrapper: ReturnType<typeof openThemed>, slot: string) {
+  // The first matching swatch is the base row's (no lumMod/lumOff variant).
+  return wrapper.findAll('[data-testid="borders-shading-theme-swatch"]').find(
+    (s) => s.attributes("data-theme-slot") === slot,
+  )!;
+}
+
 describe("BordersShadingDialog — theme swatch row (SPEC-077 AC-22/AC-23)", () => {
-  function openThemed(initial: Record<string, unknown> = {}) {
-    return mount(BordersShadingDialog, { props: { initial, unit: "cm", theme: DEFAULT_THEME } });
-  }
-
-  function swatchFor(wrapper: ReturnType<typeof openThemed>, slot: string) {
-    // The first matching swatch is the base row's (no lumMod/lumOff variant).
-    return wrapper.findAll('[data-testid="borders-shading-theme-swatch"]').find(
-      (s) => s.attributes("data-theme-slot") === slot,
-    )!;
-  }
-
   it("renders no theme row without a theme (AC-21: existing mounts unchanged)", () => {
     expect(open().find('[data-testid="borders-shading-theme-row"]').exists()).toBe(false);
   });
