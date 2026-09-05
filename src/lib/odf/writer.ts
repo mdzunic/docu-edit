@@ -2329,6 +2329,17 @@ export function buildContentXml(
       // Serialised before the styles are read: paragraphXml/listRunXml
       // register each automatic style on first use.
       const block = blocks[i];
+      // An absorbed drawing (SPEC-078) is emitted inside its anchor
+      // paragraph via anchoredElementXml, never at its own block slot; a
+      // pending break/master rides on to the next emitted paragraph
+      // untaken. ONE guard covering every block type, like the .docx
+      // writer's — carrying it per-type is how the image case came to be
+      // emitted twice (absorbed into its paragraph AND at its own slot),
+      // which grew the document by one picture on every save.
+      if (anchoredPlan.absorbed.has(i)) {
+        i++;
+        continue;
+      }
       if (block.type === "table") {
         // table:table takes no paragraph style, so a pending break/section
         // boundary needs an empty carrier paragraph before it (SPEC-028).
@@ -2346,31 +2357,22 @@ export function buildContentXml(
         continue;
       }
       if (block.type === "shape") {
-        // An absorbed drawing (SPEC-078) is emitted inside its anchor
-        // paragraph via anchoredElementXml; a pending break/master rides on
-        // to the next emitted paragraph untaken.
-        if (!anchoredPlan.absorbed.has(i)) {
-          blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions(), drawIdFor(i)));
-        }
+        blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions(), drawIdFor(i)));
         i++;
         continue;
       }
       if (block.type === "connector") {
-        if (!anchoredPlan.absorbed.has(i)) {
-          const options = takeStyleOptions();
-          const wrapperName = options
-            ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, options)
-            : undefined;
-          const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
-          blockXml.push(`<text:p${wrapperAttr}>${connectorElementFor(block, i)}</text:p>`);
-        }
+        const options = takeStyleOptions();
+        const wrapperName = options
+          ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, options)
+          : undefined;
+        const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
+        blockXml.push(`<text:p${wrapperAttr}>${connectorElementFor(block, i)}</text:p>`);
         i++;
         continue;
       }
       if (block.type === "chart") {
-        if (!anchoredPlan.absorbed.has(i)) {
-          blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
-        }
+        blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
         i++;
         continue;
       }
