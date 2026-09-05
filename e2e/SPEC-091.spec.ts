@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { MOD } from "./keys";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +45,7 @@ test("pptx: table renders, edits through the panel, and round-trips", async ({ p
   // text machinery SPEC-081 gives text frames, now editing a cell's paragraphs.
   await stage.getByTestId("slide-table-cell-1-1").dblclick();
   await expect(page.getByTestId("slide-table-cell-edit")).toBeVisible();
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.keyboard.type("Growth");
   await page.keyboard.press("Escape");
   await expect(stage.getByTestId("slide-table-cell-1-1")).toContainText("Growth");

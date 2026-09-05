@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { MOD } from "./keys";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,10 +32,10 @@ test("edit a title + add a bulleted body line, round-trip the download, re-downl
   // Slide 1: double-click the title, select all, type a new title.
   await stageFrames(page).first().dblclick();
   await expect(page.getByTestId("slide-text-edit")).toBeVisible();
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.keyboard.type("New Title");
   // Select all again and bold it via the toolbar.
-  await page.keyboard.press("Control+a");
+  await page.keyboard.press(`${MOD}+a`);
   await page.getByTestId("slides-bold").click();
   await expect(page.getByTestId("slides-bold")).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");

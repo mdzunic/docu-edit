@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { MOD } from "./keys";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -238,7 +239,7 @@ test("rotating an authored group moves its children about the group centre; undo
   expect(moved(1)).toBeGreaterThan(20);
 
   // One undo restores the children's geometry together (AC-69).
-  await page.keyboard.press("Control+z");
+  await page.keyboard.press(`${MOD}+z`);
   const restored = await leftmostGroupChildBoxes(page);
   for (let i = 0; i < 2; i++) {
     expect(Math.abs(restored[i].x - before[i].x)).toBeLessThan(3);

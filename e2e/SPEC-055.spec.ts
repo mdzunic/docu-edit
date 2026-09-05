@@ -287,7 +287,7 @@ test("inserting an object renumbers captions; single undo reverts; labels indepe
   // AC-15/AC-16: insert a new figure at the top → a Figure 3 appears; one undo
   // reverts both the insertion and the renumber (no lingering Figure 3).
   await content(page).click({ position: { x: 8, y: 8 } });
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await insertImage(page);
   await selectLastImage(page);
   await captionSelected(page);
@@ -354,7 +354,7 @@ test("caption cross-reference lists captions, renders labelAndNumber, and renumb
   await expect(content(page).getByText(/Figure\s*1/).first()).toBeVisible();
 
   await content(page).click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   await page.keyboard.type("See ");
   await openInsert(page);
@@ -376,7 +376,7 @@ test("caption cross-reference lists captions, renders labelAndNumber, and renumb
   await expect(content(page).getByText(/See\s*Figure\s*1/).first()).toBeVisible();
 
   // AC-27: add a Figure above the target, update all fields → reference shows Figure 2.
-  await page.keyboard.press("Control+Home");
+  await page.keyboard.press(`${MOD}+Home`);
   await insertImage(page);
   await selectLastImage(page);
   await captionSelected(page);
@@ -393,7 +393,7 @@ test("caption cross-reference lists captions, renders labelAndNumber, and renumb
 async function figureWithCaption(page: Page, text: string): Promise<void> {
   await content(page).click();
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await openInsert(page);
   await page.getByTestId("insert-image-button").click();
   await page.getByTestId("insert-image-file-input").setInputFiles({
@@ -406,7 +406,7 @@ async function figureWithCaption(page: Page, text: string): Promise<void> {
   await content(page).locator('[data-testid="doc-image"]').last().click();
   await captionSelected(page);
   await page.keyboard.type(text);
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
 }
 
@@ -447,7 +447,7 @@ test("table of figures: entries, non-editable hint, staleness bar and choices, e
 
   // AC-36: a second ToF for a different label is independent.
   await content(page).click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("table-grid-cell-2-2").click();
@@ -455,7 +455,7 @@ test("table of figures: entries, non-editable hint, staleness bar and choices, e
   await content(page).locator("table td").first().click();
   await captionSelected(page, "Table");
   await content(page).click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   await openInsert(page);
   await page.getByTestId("insert-table-of-figures-button").click();
@@ -517,7 +517,7 @@ test("a caption built inside the header keeps its number, outside the body seque
   await page.locator(".page-content").first().dblclick(); // leave the band (SPEC-029 AC-8)
   await expect(header).not.toHaveAttribute("data-hf-editable", "1");
   await content(page).click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   await openInsert(page);
   await page.getByTestId("insert-table-of-figures-button").click();
@@ -578,7 +578,7 @@ test("a footnote caption keeps its saved number and stays out of the sequence an
 
   // AC-39: a Figure table of figures lists the two body captions only.
   await content(page).click();
-  await page.keyboard.press("Control+End");
+  await page.keyboard.press(`${MOD}+End`);
   await page.keyboard.press("Enter");
   await openInsert(page);
   await page.getByTestId("insert-table-of-figures-button").click();
