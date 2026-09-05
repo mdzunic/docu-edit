@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import { parseDocx, type ParsedDocxDocument } from "./reader";
 import { buildDocumentXml, writeDocx } from "./writer";
 import { unzip } from "../core/zip";
+import { readDocxBytes } from "../openDocument";
 import { zip } from "../core/zipWriter";
 import { WORD_NAMESPACE } from "./xml";
 import {
@@ -257,5 +258,55 @@ describe("stale preserved sectPr is dropped for a section gaining headers (SPEC-
     };
     const documentXml = buildDocumentXml(model);
     expect(documentXml).toContain("w:headerReference");
+  });
+});
+
+// The header part is consumed on open and re-written on every save, so its
+// canonical name is free again each time — while the PRESERVED
+// [Content_Types].xml and word/_rels/document.xml.rels still declare the
+// one the previous save wrote. Appending the fresh declarations beside the
+// stale ones put duplicate <Override PartName="/word/header1.xml"> in the
+// package from save two onward, which OPC forbids (ECMA-376 Part 2
+// §10.1.2.3) and Word answers with its repair prompt — growing by three
+// Overrides and three relationships per save thereafter, with autosave
+// running at up to two a minute. Our own reader re-opens such a package
+// happily, so only a package-level check across generations sees it.
+describe("repeated saves do not accumulate part declarations (SPEC-029, SPEC-008)", () => {
+  it("keeps one Override and one relationship per header/footer part across six saves", async () => {
+    const model = modelWith([
+      {
+        blocks: [paragraph("Body")],
+        headers: { default: { blocks: [paragraph("H")] } },
+        footers: { default: { blocks: [paragraph("F")] } },
+      },
+    ]);
+    let bytes = (await writeDocx(model)).bytes;
+    const counts: { overrides: number; rels: number }[] = [];
+    for (let generation = 0; generation < 6; generation++) {
+      const parts = await unzip(bytes);
+      const contentTypes = decoder.decode(parts.get("[Content_Types].xml")!);
+      const rels = decoder.decode(parts.get("word/_rels/document.xml.rels")!);
+      const overridesFor = (part: string) =>
+        contentTypes.split(`PartName="${part}"`).length - 1;
+      const relsFor = (target: string) => rels.split(`Target="${target}"`).length - 1;
+      expect(overridesFor("/word/header1.xml"), `generation ${generation}`).toBe(1);
+      expect(overridesFor("/word/footer1.xml"), `generation ${generation}`).toBe(1);
+      expect(relsFor("header1.xml"), `generation ${generation}`).toBe(1);
+      expect(relsFor("footer1.xml"), `generation ${generation}`).toBe(1);
+      counts.push({
+        overrides: contentTypes.split("<Override").length - 1,
+        rels: rels.split("<Relationship ").length - 1,
+      });
+      // Re-opened the way the app opens it, so the save below takes the
+      // SAME-FORMAT path: it is `format: "docx"` plus the retained source
+      // package that makes a save patch preserved declarations rather than
+      // build them from scratch. A hand-built model without `format` never
+      // reaches that path at all, and never reproduces this.
+      bytes = (await writeDocx(await readDocxBytes(bytes, "Headers"))).bytes;
+    }
+    // Not just the header's own: nothing in the package grows per save.
+    for (const count of counts) {
+      expect(count).toEqual(counts[counts.length - 1]);
+    }
   });
 });

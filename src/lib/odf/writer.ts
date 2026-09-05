@@ -2329,6 +2329,17 @@ export function buildContentXml(
       // Serialised before the styles are read: paragraphXml/listRunXml
       // register each automatic style on first use.
       const block = blocks[i];
+      // An absorbed drawing (SPEC-078) is emitted inside its anchor
+      // paragraph via anchoredElementXml, never at its own block slot; a
+      // pending break/master rides on to the next emitted paragraph
+      // untaken. ONE guard covering every block type, like the .docx
+      // writer's — carrying it per-type is how the image case came to be
+      // emitted twice (absorbed into its paragraph AND at its own slot),
+      // which grew the document by one picture on every save.
+      if (anchoredPlan.absorbed.has(i)) {
+        i++;
+        continue;
+      }
       if (block.type === "table") {
         // table:table takes no paragraph style, so a pending break/section
         // boundary needs an empty carrier paragraph before it (SPEC-028).
@@ -2346,31 +2357,22 @@ export function buildContentXml(
         continue;
       }
       if (block.type === "shape") {
-        // An absorbed drawing (SPEC-078) is emitted inside its anchor
-        // paragraph via anchoredElementXml; a pending break/master rides on
-        // to the next emitted paragraph untaken.
-        if (!anchoredPlan.absorbed.has(i)) {
-          blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions(), drawIdFor(i)));
-        }
+        blockXml.push(shapeParagraphXml(block, styles, includeOpaque, takeStyleOptions(), drawIdFor(i)));
         i++;
         continue;
       }
       if (block.type === "connector") {
-        if (!anchoredPlan.absorbed.has(i)) {
-          const options = takeStyleOptions();
-          const wrapperName = options
-            ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, options)
-            : undefined;
-          const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
-          blockXml.push(`<text:p${wrapperAttr}>${connectorElementFor(block, i)}</text:p>`);
-        }
+        const options = takeStyleOptions();
+        const wrapperName = options
+          ? styles.paragraphNameFor({ type: "paragraph", runs: [] }, options)
+          : undefined;
+        const wrapperAttr = wrapperName !== undefined ? ` text:style-name="${escapeXml(wrapperName)}"` : "";
+        blockXml.push(`<text:p${wrapperAttr}>${connectorElementFor(block, i)}</text:p>`);
         i++;
         continue;
       }
       if (block.type === "chart") {
-        if (!anchoredPlan.absorbed.has(i)) {
-          blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
-        }
+        blockXml.push(chartParagraphXml(block, styles, chartPlan, sectionIndex, i, takeStyleOptions()));
         i++;
         continue;
       }
@@ -2474,11 +2476,27 @@ export function buildContentXml(
  * style:name (with the display name alongside when it differs), the parent
  * link, the outline level that makes it a heading style, and the style's
  * own paragraph/text properties. */
+/** Whether a preserved style element came from a `.odt` source — i.e. is an
+ * ODF `style:style` rather than a WordprocessingML `w:style`. Read off the
+ * element's own namespace; mirrors docx/writer.ts's `isDocxStyleXml`. */
+function isOdfStyleXml(rawXml: string): boolean {
+  try {
+    const wrapper = parseXml(`<style:root xmlns:style="${STYLE_NAMESPACE}">${rawXml}</style:root>`);
+    const el = wrapper.documentElement.firstElementChild;
+    return el !== null && el.namespaceURI === STYLE_NAMESPACE && el.localName === "style";
+  } catch {
+    return false;
+  }
+}
+
 /** An `unmodeled` style's original XML (SPEC-042 AC-18), re-emitted
  * verbatim except for the user-visible name — mirrors docx/writer.ts's
- * `unmodeledStyleXml`. */
+ * `unmodeledStyleXml`, including its rule that `rawXml` is format-flavoured
+ * and is only re-emitted into the format that produced it. A .docx source's
+ * `w:style` has nothing to preserve here and falls back to the synthesized
+ * definition below. */
 function unmodeledOdfStyleXml(definition: NamedStyle): string {
-  if (!definition.rawXml) {
+  if (!definition.rawXml || !isOdfStyleXml(definition.rawXml)) {
     const displayAttr =
       definition.name !== undefined ? ` style:display-name="${escapeXml(definition.name)}"` : "";
     return `<style:style style:name="${escapeXml(definition.id)}"${displayAttr} style:family="table"/>`;

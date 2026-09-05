@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDocx } from "./reader";
 import { parseOdt } from "../odf/reader";
+import { readDocxBytes } from "../openDocument";
 import { writeDocx } from "./writer";
 import { validateDocx } from "./validate";
 import { unzip } from "../core/zip";
@@ -16,17 +17,20 @@ function loadFixture(...segments: string[]): Uint8Array {
   return new Uint8Array(readFileSync(join(here, ...segments)));
 }
 
+/** A fixture opened the way the app opens it — the full model, retained
+ * source package included — and saved back. Building a bare model here
+ * instead (sections + defaultStyles only) skipped SPEC-008's preservation
+ * path entirely, which is where every package-level violation this
+ * validator now catches actually comes from. */
 async function writtenFixture(name: string): Promise<Uint8Array> {
-  const parsed = await parseDocx(loadFixture("fixtures", name));
-  const model: DocumentModel = {
-    id: "test-doc",
-    title: "Fixture",
-    sections: parsed.sections,
-    defaultStyles: parsed.defaultStyles,
-    format: "docx",
-  };
-  return (await writeDocx(model)).bytes;
+  return (await writeDocx(await readDocxBytes(loadFixture("fixtures", name), "Fixture"))).bytes;
 }
+
+/** Every `.docx` fixture in the directory, so a new one is covered the day
+ * it lands rather than whenever someone remembers to extend a list. */
+const DOCX_FIXTURES = readdirSync(join(here, "fixtures"))
+  .filter((name) => name.endsWith(".docx"))
+  .sort();
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -53,12 +57,9 @@ async function tamper(
 }
 
 describe("validateDocx — accepts everything the writer produces (AC-19, AC-22)", () => {
-  it.each(["word-authored.docx", "libreoffice-authored.docx", "google-docs-exported.docx"])(
-    "round-tripped %s validates with no violations",
-    async (fixtureName) => {
-      expect(await validateDocx(await writtenFixture(fixtureName))).toEqual([]);
-    },
-  );
+  it.each(DOCX_FIXTURES)("round-tripped %s validates with no violations", async (fixtureName) => {
+    expect(await validateDocx(await writtenFixture(fixtureName))).toEqual([]);
+  });
 
   it("a blank document validates with no violations", async () => {
     expect(await validateDocx((await writeDocx(createDocument("id-1"))).bytes)).toEqual([]);
@@ -74,6 +75,94 @@ describe("validateDocx — accepts everything the writer produces (AC-19, AC-22)
       format: "odt",
     };
     expect(await validateDocx((await writeDocx(model)).bytes)).toEqual([]);
+  });
+});
+
+// The OPC packaging invariants an append-only relationship/content-type
+// patch can break. None of them stop OUR reader re-opening the file, so a
+// model-equality round-trip test cannot see them — only a package-level
+// check can, which is the whole reason these live here.
+describe("validateDocx — OPC packaging invariants", () => {
+  it("flags a duplicate Override for one part (ECMA-376 Part 2 §10.1.2.3)", async () => {
+    const broken = await tamper(
+      await writtenFixture("word-authored.docx"),
+      "[Content_Types].xml",
+      (xml) =>
+        xml.replace(
+          "</Types>",
+          '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
+        ),
+    );
+    expect(await validateDocx(broken)).toContain(
+      "[Content_Types].xml: duplicate Override for part /word/styles.xml",
+    );
+  });
+
+  it("flags a duplicate Default for one extension (§10.1.2.2)", async () => {
+    const broken = await tamper(
+      await writtenFixture("word-authored.docx"),
+      "[Content_Types].xml",
+      (xml) => xml.replace("</Types>", '<Default Extension="xml" ContentType="application/xml"/></Types>'),
+    );
+    expect(await validateDocx(broken)).toContain('[Content_Types].xml: duplicate Default for extension "xml"');
+  });
+
+  it("flags an Override naming a part the package does not contain", async () => {
+    const broken = await tamper(
+      await writtenFixture("word-authored.docx"),
+      "[Content_Types].xml",
+      (xml) =>
+        xml.replace(
+          "</Types>",
+          '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>',
+        ),
+    );
+    expect(await validateDocx(broken)).toContain(
+      "[Content_Types].xml: Override names missing part /word/header1.xml",
+    );
+  });
+
+  it("flags a duplicate relationship Id within one .rels part", async () => {
+    const broken = await tamper(
+      await writtenFixture("word-authored.docx"),
+      "word/_rels/document.xml.rels",
+      (xml) =>
+        xml.replace(
+          "</Relationships>",
+          '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>',
+        ),
+    );
+    expect(await validateDocx(broken)).toContain(
+      'word/_rels/document.xml.rels: duplicate relationship Id "rId1"',
+    );
+  });
+
+  it("flags a relationship targeting a part the package does not contain", async () => {
+    const broken = await tamper(
+      await writtenFixture("word-authored.docx"),
+      "word/_rels/document.xml.rels",
+      (xml) =>
+        xml.replace(
+          "</Relationships>",
+          '<Relationship Id="rIdGone" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>',
+        ),
+    );
+    expect(await validateDocx(broken)).toContain(
+      'word/_rels/document.xml.rels: relationship "rIdGone" targets missing part word/media/image1.png',
+    );
+  });
+
+  it("accepts an external relationship target, which names no part at all", async () => {
+    const withLink = await tamper(
+      await writtenFixture("word-authored.docx"),
+      "word/_rels/document.xml.rels",
+      (xml) =>
+        xml.replace(
+          "</Relationships>",
+          '<Relationship Id="rIdExt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>',
+        ),
+    );
+    expect(await validateDocx(withLink)).toEqual([]);
   });
 });
 

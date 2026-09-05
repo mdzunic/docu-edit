@@ -82,8 +82,47 @@ const RPR_SEQUENCE = [
 ];
 // CT_SectPr puts w:type before the page geometry (SPEC-028 AC-31); w:cols
 // follows w:pgMar in the schema (SPEC-030).
-const SECTPR_SEQUENCE = ["type", "pgSz", "pgMar", "cols"];
-const STYLE_SEQUENCE = ["name", "basedOn", "pPr", "rPr"];
+// CT_SectPr's child sequence per the ECMA-376 Transitional schema. The
+// header/footer references (SPEC-029) lead it and each may appear once per
+// ST_HdrFtr value (default/first/even), so they are repeatable.
+const SECTPR_SEQUENCE = [
+  "headerReference", "footerReference", "footnotePr", "endnotePr", "type",
+  "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType", "pgNumType", "cols",
+  "formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi",
+  "rtlGutter", "docGrid", "printerSettings", "sectPrChange",
+];
+const SECTPR_REPEATABLE = new Set(["headerReference", "footerReference"]);
+// CT_Style's child sequence per the ECMA-376 Transitional schema. The writer
+// itself emits only name/basedOn/next/pPr/rPr, but a same-format save
+// PRESERVES the source's styles.xml and patches it in place (see
+// patchStylesXml), so any producer's style children land here — w:uiPriority
+// and w:qFormat come back from LibreOffice on every round trip.
+const STYLE_SEQUENCE = [
+  "name", "aliases", "basedOn", "next", "link", "autoRedefine", "hidden",
+  "uiPriority", "semiHidden", "unhideWhenUsed", "qFormat", "locked", "personal",
+  "personalCompose", "personalReply", "rsid", "pPr", "rPr", "tblPr", "trPr",
+  "tcPr", "tblStylePr",
+];
+
+// ST_StyleType. The writer emits character styles (SPEC-042's Run.styleId)
+// and preserves whatever else the source defined.
+const STYLE_TYPES = new Set(["paragraph", "character", "table", "numbering"]);
+
+// EG_BlockLevelElts members the writer emits beyond w:p/w:tbl/w:sectPr,
+// which are handled by name above. w:sdt is a preserved content control and
+// the bookmark marks are SPEC-025's — all re-emitted verbatim from opaque
+// blocks (SPEC-008), so the body legitimately holds them.
+const BODY_CHILDREN = new Set(["sdt", "bookmarkStart", "bookmarkEnd", "customXml"]);
+
+// EG_RunInnerContent members the writer emits. w:drawing is every image,
+// shape and chart (SPEC-024/051/052); the note/comment reference marks are
+// SPEC-031/038; w:sym is SPEC-026's special characters.
+const RUN_CHILDREN = new Set([
+  "t", "tab", "br", "drawing", "pict", "sym", "softHyphen", "noBreakHyphen",
+  "footnoteReference", "endnoteReference", "commentReference",
+  "footnoteRef", "endnoteRef", "separator", "continuationSeparator",
+  "lastRenderedPageBreak", "delText", "object",
+]);
 
 const INTEGER_PATTERN = /^-?\d+$/;
 const UNSIGNED_PATTERN = /^\d+$/;
@@ -104,6 +143,9 @@ function checkSequence(
   sequence: string[],
   context: string,
   violations: string[],
+  /** Elements the schema allows more than once in a row (a section's three
+   * header references, one per ST_HdrFtr value). */
+  repeatable?: ReadonlySet<string>,
 ): void {
   let lastIndex = -1;
   for (const child of children) {
@@ -118,7 +160,7 @@ function checkSequence(
       violations.push(
         `${context}: w:${child.localName} is out of schema sequence order (must precede w:${sequence[lastIndex]})`,
       );
-    } else if (index === lastIndex) {
+    } else if (index === lastIndex && !repeatable?.has(child.localName)) {
       violations.push(`${context}: duplicate element w:${child.localName}`);
     } else {
       lastIndex = index;
@@ -292,7 +334,7 @@ function checkRun(run: Element, context: string, violations: string[]): void {
     } else if (child.localName === "instrText") {
       // Free-form field instruction text (SPEC-033's TOC/PAGEREF fields) —
       // no attribute constraints beyond being a WordprocessingML element.
-    } else if (!["t", "tab", "br"].includes(child.localName)) {
+    } else if (!RUN_CHILDREN.has(child.localName)) {
       violations.push(`${context}: unexpected element w:${child.localName}`);
     }
   });
@@ -357,7 +399,7 @@ function checkParagraph(paragraph: Element, context: string, violations: string[
 }
 
 function checkSectionProperties(sectPr: Element, context: string, violations: string[]): void {
-  checkSequence(Array.from(sectPr.children), SECTPR_SEQUENCE, context, violations);
+  checkSequence(Array.from(sectPr.children), SECTPR_SEQUENCE, context, violations, SECTPR_REPEATABLE);
   for (const child of Array.from(sectPr.children)) {
     if (!isWordElement(child)) {
       continue;
@@ -549,7 +591,7 @@ function checkDocumentPart(doc: Document, violations: string[]): void {
         violations.push("word/document.xml: body-level w:sectPr must be the last child of w:body");
       }
       checkSectionProperties(child, "word/document.xml: w:body/w:sectPr", violations);
-    } else {
+    } else if (!BODY_CHILDREN.has(child.localName)) {
       violations.push(`word/document.xml: unexpected element w:${child.localName} in w:body`);
     }
   });
@@ -579,10 +621,17 @@ function checkStylesPart(doc: Document, violations: string[]): void {
       if (!styleId) {
         violations.push(`${context} is missing required attribute w:styleId`);
       }
-      if (wordAttr(child, "type") !== "paragraph") {
-        violations.push(`${context}[@w:styleId="${styleId}"] must have w:type="paragraph"`);
+      // Absent w:type means "paragraph" (the schema's default), so only a
+      // PRESENT value is checked against ST_StyleType.
+      const styleType = wordAttr(child, "type");
+      if (styleType !== null && !STYLE_TYPES.has(styleType)) {
+        violations.push(
+          `${context}[@w:styleId="${styleId}"] has w:type="${styleType}", not an ST_StyleType value`,
+        );
       }
-      if (wordAttr(child, "default") === "1") {
+      // One default per FAMILY is legal; only the paragraph family's default
+      // is the one WordprocessingML requires exactly one of.
+      if (wordAttr(child, "default") === "1" && (styleType ?? "paragraph") === "paragraph") {
         defaultParagraphStyles++;
       }
       checkSequence(
@@ -721,6 +770,9 @@ function checkContentTypes(doc: Document, partNames: string[], violations: strin
       const contentType = child.getAttribute("ContentType");
       if (!extension || !contentType) {
         violations.push("[Content_Types].xml: Default needs Extension and ContentType");
+      } else if (defaults.has(extension.toLowerCase())) {
+        // OPC (ECMA-376 Part 2 §10.1.2.2): Extension is unique among Defaults.
+        violations.push(`[Content_Types].xml: duplicate Default for extension "${extension}"`);
       } else {
         defaults.set(extension.toLowerCase(), contentType);
       }
@@ -729,6 +781,12 @@ function checkContentTypes(doc: Document, partNames: string[], violations: strin
       const contentType = child.getAttribute("ContentType");
       if (!partName || !contentType) {
         violations.push("[Content_Types].xml: Override needs PartName and ContentType");
+      } else if (overrides.has(partName)) {
+        // OPC (ECMA-376 Part 2 §10.1.2.3): PartName is unique among Overrides.
+        // A save that re-writes a part the reader consumed used to append a
+        // second Override for it and leave the source's in place, so a
+        // document with a header went invalid on its second save.
+        violations.push(`[Content_Types].xml: duplicate Override for part ${partName}`);
       } else {
         overrides.set(partName, contentType);
       }
@@ -751,6 +809,14 @@ function checkContentTypes(doc: Document, partNames: string[], violations: strin
     }
     if (!contentTypeOf(partName)) {
       violations.push(`[Content_Types].xml: no content type declared for ${partName}`);
+    }
+  }
+  // The inverse: an Override for a part the package does not contain. A save
+  // that stops writing a part has to withdraw its Override with it, or the
+  // package declares a content type for nothing.
+  for (const partName of overrides.keys()) {
+    if (!partNames.includes(partName.replace(/^\//, ""))) {
+      violations.push(`[Content_Types].xml: Override names missing part ${partName}`);
     }
   }
   const mainType = contentTypeOf("word/document.xml");
@@ -797,6 +863,81 @@ function checkPackageRels(doc: Document, partNames: string[], violations: string
       violations.push(`_rels/.rels: missing ${label} relationship`);
     } else if (!partNames.includes(target)) {
       violations.push(`_rels/.rels: ${label} relationship targets missing part ${target}`);
+    }
+  }
+}
+
+/** The part a relationship Target names, resolved against the part its
+ * `.rels` belongs to. `_rels/.rels` describes the package root, so its own
+ * source part is "". */
+function resolveRelTarget(sourcePart: string, target: string): string {
+  if (target.startsWith("/")) {
+    return target.slice(1);
+  }
+  const slash = sourcePart.lastIndexOf("/");
+  const segments = slash === -1 ? [] : sourcePart.slice(0, slash).split("/");
+  for (const segment of target.split("/")) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      segments.pop();
+    } else {
+      segments.push(segment);
+    }
+  }
+  return segments.join("/");
+}
+
+/** The part whose relationships a `.rels` part describes: `word/_rels/
+ * document.xml.rels` -> `word/document.xml`, `_rels/.rels` -> "". */
+function relsSourcePart(relsName: string): string | null {
+  const match = /^(.*?)_rels\/([^/]*)\.rels$/.exec(relsName);
+  if (!match) {
+    return null;
+  }
+  return `${match[1]}${match[2]}`;
+}
+
+/** Every `.rels` part's relationships, checked for the two invariants an
+ * append-only patch can break: Id unique within its part, and Target naming
+ * a part the package actually contains. A save that re-writes a part the
+ * reader consumed used to append a fresh relationship beside the source's
+ * stale one, so both grew without bound across saves. */
+function checkRelationshipParts(
+  parts: Map<string, Uint8Array>,
+  parsePart: (name: string) => Document | undefined,
+  violations: string[],
+): void {
+  for (const name of parts.keys()) {
+    const source = relsSourcePart(name);
+    if (source === null) {
+      continue;
+    }
+    const doc = parsePart(name);
+    if (!doc || doc.documentElement.namespaceURI !== RELATIONSHIPS_NAMESPACE) {
+      continue; // Shape/namespace already reported by the caller's own checks.
+    }
+    const seenIds = new Set<string>();
+    for (const child of Array.from(doc.documentElement.children)) {
+      if (child.namespaceURI !== RELATIONSHIPS_NAMESPACE || child.localName !== "Relationship") {
+        continue;
+      }
+      const id = child.getAttribute("Id");
+      if (id) {
+        if (seenIds.has(id)) {
+          violations.push(`${name}: duplicate relationship Id "${id}"`);
+        }
+        seenIds.add(id);
+      }
+      const target = child.getAttribute("Target");
+      if (!target || child.getAttribute("TargetMode") === "External") {
+        continue;
+      }
+      const resolved = resolveRelTarget(source, target);
+      if (!parts.has(resolved)) {
+        violations.push(`${name}: relationship "${id}" targets missing part ${resolved}`);
+      }
     }
   }
 }
@@ -848,6 +989,7 @@ export async function validateDocx(data: ArrayBuffer | Uint8Array): Promise<stri
   if (packageRels) {
     checkPackageRels(packageRels, partNames, violations);
   }
+  checkRelationshipParts(parts, parsePart, violations);
   const documentPart = parsePart("word/document.xml");
   if (documentPart) {
     checkDocumentPart(documentPart, violations);

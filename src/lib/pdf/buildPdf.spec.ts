@@ -77,23 +77,60 @@ function latin1(bytes: Uint8Array): string {
   return text;
 }
 
-function build(input: Partial<PdfBuildInput> = {}): string {
-  return latin1(
-    buildPdf({ title: "Test", pages: [page()], fonts: fonts(), ...input }),
+/** The file as latin-1, with every /FlateDecode stream expanded in place.
+ * Content streams and font programs are compressed in the real output, so
+ * the structural assertions below would otherwise be reading zlib bytes —
+ * and round-tripping each one here doubles as proof that what the writer
+ * deflated is valid zlib a reader can actually get back. */
+async function inflateStreams(bytes: Uint8Array): Promise<string> {
+  const raw = latin1(bytes);
+  const header = /<<([^>]*)\/Length (\d+) >>\nstream\n/g;
+  let out = "";
+  let cursor = 0;
+  for (let match = header.exec(raw); match !== null; match = header.exec(raw)) {
+    const start = match.index + match[0].length;
+    const length = Number(match[2]);
+    out += raw.slice(cursor, start);
+    const body = bytes.subarray(start, start + length);
+    let expanded: string | null = null;
+    if (match[1].includes("/Filter /FlateDecode")) {
+      try {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(body);
+            controller.close();
+          },
+        }).pipeThrough(new DecompressionStream("deflate"));
+        expanded = latin1(new Uint8Array(await new Response(stream).arrayBuffer()));
+      } catch {
+        // Not really zlib — the image tests hand the writer synthetic bytes
+        // that it passes through untouched. Read them as they are.
+        expanded = null;
+      }
+    }
+    out += expanded ?? latin1(body);
+    cursor = start + length;
+  }
+  return out + raw.slice(cursor);
+}
+
+async function build(input: Partial<PdfBuildInput> = {}): Promise<string> {
+  return inflateStreams(
+    await buildPdf({ title: "Test", pages: [page()], fonts: fonts(), ...input }),
   );
 }
 
 describe("buildPdf", () => {
-  it("emits a v1.7 header, catalog, xref and EOF", () => {
-    const pdf = build();
+  it("emits a v1.7 header, catalog, xref and EOF", async () => {
+    const pdf = await build();
     expect(pdf.startsWith("%PDF-1.7\n")).toBe(true);
     expect(pdf).toContain("/Type /Catalog");
     expect(pdf).toContain("xref");
     expect(pdf.trimEnd().endsWith("%%EOF")).toBe(true);
   });
 
-  it("records correct xref byte offsets for every object", () => {
-    const bytes = buildPdf({ title: "T", pages: [page()], fonts: fonts() });
+  it("records correct xref byte offsets for every object", async () => {
+    const bytes = await buildPdf({ title: "T", pages: [page()], fonts: fonts() });
     const pdf = latin1(bytes);
     const xrefStart = Number(/startxref\n(\d+)\n/.exec(pdf)?.[1]);
     expect(pdf.slice(xrefStart, xrefStart + 4)).toBe("xref");
@@ -109,8 +146,27 @@ describe("buildPdf", () => {
     });
   });
 
-  it("writes text as Tj operators against an embedded CIDFontType2 face", () => {
-    const pdf = build();
+  // The embedded font programs dwarf everything else in a short document —
+  // four raw Liberation faces are 1.6 MB, and the Carlito set most .docx
+  // files resolve to is 2.7 MB — so an uncompressed one-page export was 98%
+  // font bytes. Deflating the font and content streams roughly halves a
+  // one-page file and takes a long one to a sixth of its former size.
+  it("compresses the font programs and page content streams", async () => {
+    const bytes = await buildPdf({ title: "T", pages: [page()], fonts: fonts() });
+    const raw = latin1(bytes);
+    // The uncompressed markers are only visible once the streams are expanded.
+    expect(raw).not.toContain(" Tj ET");
+    expect(await inflateStreams(bytes)).toContain(" Tj ET");
+    expect(raw).toContain("/Filter /FlateDecode");
+    // /Length1 stays the UNCOMPRESSED sfnt length, which is what a reader
+    // needs to reconstruct the font; /Length is the deflated stream.
+    const fontFile = /\/Length1 (\d+) \/Filter \/FlateDecode \/Length (\d+) >>/.exec(raw);
+    expect(fontFile, "the /FontFile2 stream is deflated").not.toBeNull();
+    expect(Number(fontFile![2])).toBeLessThan(Number(fontFile![1]));
+  });
+
+  it("writes text as Tj operators against an embedded CIDFontType2 face", async () => {
+    const pdf = await build();
     expect(pdf).toContain(" Tf ");
     expect(pdf).toContain("> Tj ET");
     expect(pdf).toContain("/Subtype /CIDFontType2");
@@ -122,8 +178,8 @@ describe("buildPdf", () => {
     expect(pdf).toContain("/Length1 " + sans.bytes.length);
   });
 
-  it("encodes text as the face's glyph ids with a reverse ToUnicode map", () => {
-    const pdf = build({
+  it("encodes text as the face's glyph ids with a reverse ToUnicode map", async () => {
+    const pdf = await build({
       pages: [page({ items: [{ text: "A", xPt: 0, yPt: 10, sizePt: 12, face: "sans-regular", color: [0, 0, 0] }] })],
     });
     const glyphHex = sans.glyphFor(0x41).toString(16).padStart(4, "0");
@@ -131,8 +187,8 @@ describe("buildPdf", () => {
     expect(pdf).toContain(`<${glyphHex}> <0041>`);
   });
 
-  it("only embeds faces the items use, with per-glyph widths", () => {
-    const pdf = build({
+  it("only embeds faces the items use, with per-glyph widths", async () => {
+    const pdf = await build({
       pages: [
         page({
           items: [
@@ -148,28 +204,28 @@ describe("buildPdf", () => {
     expect(pdf).toContain("/W [ ");
   });
 
-  it("substitutes a loaded face for one that is missing", () => {
-    const pdf = build({
+  it("substitutes a loaded face for one that is missing", async () => {
+    const pdf = await build({
       pages: [page({ items: [{ text: "x", xPt: 0, yPt: 10, sizePt: 12, face: "mono-bold", color: [0, 0, 0] }] })],
     });
     expect(pdf).toContain("/BaseFont /LiberationSans");
   });
 
-  it("throws when text exists but no fonts were provided", () => {
-    expect(() => build({ fonts: new Map() })).toThrow(/no fonts/);
+  it("throws when text exists but no fonts were provided", async () => {
+    await expect(build({ fonts: new Map() })).rejects.toThrow(/no fonts/);
   });
 
-  it("writes the title into Info, empty when the document has none", () => {
-    expect(build({ title: "My report" })).toContain("/Title (My report)");
-    expect(build({ title: "" })).toContain("/Title ()");
+  it("writes the title into Info, empty when the document has none", async () => {
+    expect(await build({ title: "My report" })).toContain("/Title (My report)");
+    expect(await build({ title: "" })).toContain("/Title ()");
   });
 
-  it("writes non-ASCII titles as UTF-16BE with a BOM", () => {
-    expect(build({ title: "Café" })).toContain("/Title <FEFF00430061006600E9>");
+  it("writes non-ASCII titles as UTF-16BE with a BOM", async () => {
+    expect(await build({ title: "Café" })).toContain("/Title <FEFF00430061006600E9>");
   });
 
-  it("builds a nested outline tree from headings in document order", () => {
-    const pdf = build({
+  it("builds a nested outline tree from headings in document order", async () => {
+    const pdf = await build({
       pages: [
         page({
           headings: [
@@ -192,14 +248,14 @@ describe("buildPdf", () => {
     expect(pdf).toContain(`/XYZ 0 ${841.89 - 50} 0`);
   });
 
-  it("omits outlines (and UseOutlines) when there are no headings", () => {
-    const pdf = build();
+  it("omits outlines (and UseOutlines) when there are no headings", async () => {
+    const pdf = await build();
     expect(pdf).not.toContain("/Outlines");
     expect(pdf).not.toContain("/UseOutlines");
   });
 
-  it("writes external links as URI annotations with escaped targets", () => {
-    const pdf = build({
+  it("writes external links as URI annotations with escaped targets", async () => {
+    const pdf = await build({
       pages: [
         page({
           links: [
@@ -213,8 +269,8 @@ describe("buildPdf", () => {
     expect(pdf).toContain("/Rect [10 ");
   });
 
-  it("writes internal links as destinations to the target page", () => {
-    const pdf = build({
+  it("writes internal links as destinations to the target page", async () => {
+    const pdf = await build({
       pages: [
         page({ links: [{ xPt: 10, yPt: 20, widthPt: 50, heightPt: 12, destPage: 1 }] }),
         page({ items: [] }),
@@ -224,22 +280,22 @@ describe("buildPdf", () => {
     expect(pdf).not.toContain("/S /URI");
   });
 
-  it("drops links whose internal target page does not exist", () => {
-    const pdf = build({
+  it("drops links whose internal target page does not exist", async () => {
+    const pdf = await build({
       pages: [page({ links: [{ xPt: 0, yPt: 0, widthPt: 10, heightPt: 10, destPage: 9 }] })],
     });
     expect(pdf).not.toContain("/Subtype /Link");
   });
 
-  it("builds a zero-page document for an empty model", () => {
-    const pdf = build({ pages: [], fonts: new Map() });
+  it("builds a zero-page document for an empty model", async () => {
+    const pdf = await build({ pages: [], fonts: new Map() });
     expect(pdf).toContain("/Kids [] /Count 0");
     expect(pdf).toContain("/Title (Test)");
     expect(pdf).not.toContain("/Font");
   });
 
-  it("uses per-page media boxes from each page's own size", () => {
-    const pdf = build({
+  it("uses per-page media boxes from each page's own size", async () => {
+    const pdf = await build({
       pages: [page(), page({ widthPt: 612, heightPt: 792, items: [] })],
     });
     expect(pdf).toContain("/MediaBox [0 0 595.28 841.89]");
@@ -247,8 +303,8 @@ describe("buildPdf", () => {
     expect(pdf).toContain("/Count 2");
   });
 
-  it("embeds a placed image as an XObject and draws it at the placed box", () => {
-    const pdf = build({
+  it("embeds a placed image as an XObject and draws it at the placed box", async () => {
+    const pdf = await build({
       pages: [page({ images: [imageItem()] })],
       images: imageMap(),
     });
@@ -260,8 +316,8 @@ describe("buildPdf", () => {
     expect(pdf).toContain("q 100 0 0 50 72 691.89 cm /Im1 Do Q");
   });
 
-  it("paints images under the text, and in-front images over it", () => {
-    const pdf = build({
+  it("paints images under the text, and in-front images over it", async () => {
+    const pdf = await build({
       pages: [
         page({
           images: [imageItem({ src: "under" }), imageItem({ src: "over", onTop: true })],
@@ -277,8 +333,8 @@ describe("buildPdf", () => {
     expect(text).toBeLessThan(over);
   });
 
-  it("embeds one XObject for a source placed on several pages", () => {
-    const pdf = build({
+  it("embeds one XObject for a source placed on several pages", async () => {
+    const pdf = await build({
       pages: [page({ images: [imageItem()] }), page({ items: [], images: [imageItem()] })],
       images: imageMap(),
     });
@@ -286,8 +342,8 @@ describe("buildPdf", () => {
     expect(pdf.split("/Im1 Do").length - 1).toBe(2);
   });
 
-  it("writes a transparent image's alpha as an /SMask", () => {
-    const pdf = build({
+  it("writes a transparent image's alpha as an /SMask", async () => {
+    const pdf = await build({
       pages: [page({ images: [imageItem()] })],
       images: new Map([
         [
@@ -307,8 +363,8 @@ describe("buildPdf", () => {
     expect(pdf).toContain("/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode");
   });
 
-  it("skips a placed image that has no decoded data, keeping the rest", () => {
-    const pdf = build({ pages: [page({ images: [imageItem()] })], images: new Map() });
+  it("skips a placed image that has no decoded data, keeping the rest", async () => {
+    const pdf = await build({ pages: [page({ images: [imageItem()] })], images: new Map() });
     expect(pdf).not.toContain("/Subtype /Image");
     expect(pdf).not.toContain("/XObject");
     expect(pdf).toContain(" Tj ");
@@ -316,7 +372,7 @@ describe("buildPdf", () => {
 });
 
 describe("pdfFileName", () => {
-  it("appends .pdf to the trimmed title, falling back when blank", () => {
+  it("appends .pdf to the trimmed title, falling back when blank", async () => {
     expect(pdfFileName("Report ", "Untitled document")).toBe("Report.pdf");
     expect(pdfFileName("  ", "Untitled document")).toBe("Untitled document.pdf");
   });
@@ -338,16 +394,16 @@ function pathItem(overrides: Partial<PdfPathItem> = {}): PdfPathItem {
 // SPEC-070: connectors are the one drawing the page paints as SVG, so they
 // reach the PDF as real vector paths rather than a rasterized bitmap.
 describe("vector paths", () => {
-  it("strokes a line, flipping y into PDF space", () => {
-    const pdf = build({ pages: [page({ paths: [pathItem()] })] });
+  it("strokes a line, flipping y into PDF space", async () => {
+    const pdf = await build({ pages: [page({ paths: [pathItem()] })] });
     // 841.89 - 20 = 821.89
     expect(pdf).toContain("1 0 0 RG 2 w [] 0 d 0 J 0 j 10 821.89 m");
     expect(pdf).toContain("110 821.89 l");
     expect(pdf).toContain("S Q");
   });
 
-  it("fills a closed sub-path (an arrowhead) with `f`, not `S`", () => {
-    const pdf = build({
+  it("fills a closed sub-path (an arrowhead) with `f`, not `S`", async () => {
+    const pdf = await build({
       pages: [
         page({
           paths: [
@@ -374,8 +430,8 @@ describe("vector paths", () => {
     expect(pdf).not.toContain("S Q");
   });
 
-  it("writes a cubic segment with the `c` operator", () => {
-    const pdf = build({
+  it("writes a cubic segment with the `c` operator", async () => {
+    const pdf = await build({
       pages: [
         page({
           paths: [
@@ -396,8 +452,8 @@ describe("vector paths", () => {
     expect(pdf).toContain("30 801.89 70 801.89 100 841.89 c");
   });
 
-  it("carries the cap and join styles the painted element used", () => {
-    const pdf = build({
+  it("carries the cap and join styles the painted element used", async () => {
+    const pdf = await build({
       pages: [
         page({
           paths: [pathItem({ stroke: { color: [0, 0, 0], widthPt: 1, cap: 1, join: 2 } })],
@@ -407,15 +463,15 @@ describe("vector paths", () => {
     expect(pdf).toContain("1 J 2 j");
   });
 
-  it("emits the dash pattern the stroke carries", () => {
-    const pdf = build({
+  it("emits the dash pattern the stroke carries", async () => {
+    const pdf = await build({
       pages: [page({ paths: [pathItem({ stroke: { color: [0, 0, 0], widthPt: 1, dashPt: [4.5, 3] } })] })],
     });
     expect(pdf).toContain("[4.5 3] 0 d");
   });
 
-  it("paints behind-text paths before the text and in-front ones after it", () => {
-    const pdf = build({
+  it("paints behind-text paths before the text and in-front ones after it", async () => {
+    const pdf = await build({
       pages: [
         page({
           paths: [
@@ -433,8 +489,8 @@ describe("vector paths", () => {
     expect(text).toBeLessThan(front);
   });
 
-  it("skips a path with neither stroke nor fill, and one with no geometry", () => {
-    const pdf = build({
+  it("skips a path with neither stroke nor fill, and one with no geometry", async () => {
+    const pdf = await build({
       pages: [
         page({
           paths: [
@@ -447,8 +503,8 @@ describe("vector paths", () => {
     expect(pdf).not.toContain(" m\n");
   });
 
-  it("draws nothing extra for a page that carries no `paths` at all", () => {
-    const pdf = build({ pages: [page()] });
+  it("draws nothing extra for a page that carries no `paths` at all", async () => {
+    const pdf = await build({ pages: [page()] });
     expect(pdf).not.toContain(" RG ");
     expect(pdf).toContain(" Tj ET");
   });

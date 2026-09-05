@@ -126,6 +126,7 @@ import { connectorDrawingXml, connectorParagraphXml, connectorTargetIds } from "
 import { chartDrawingXml, CHART_RELATIONSHIP } from "./chart";
 import { EMPTY_CHART_PLAN, planChartWrite, type ChartWritePlan } from "./chartWritePlan";
 import {
+  IMAGE_RELATIONSHIP,
   nextFreeRelId,
   planMediaWrite,
   planMediaWriteChunked,
@@ -2585,11 +2586,32 @@ function wireStyleType(type: NamedStyle["type"]): "paragraph" | "character" | "t
   return type === "character" || type === "table" ? type : "paragraph";
 }
 
+/** Whether a preserved style element came from a `.docx` source — i.e. is a
+ * WordprocessingML `w:style` rather than an ODF `style:style`. Read off the
+ * element's own namespace (the same "sniff the flavour" approach as
+ * preservedStyle.ts) so the test cannot drift from what the reader stored. */
+function isDocxStyleXml(rawXml: string): boolean {
+  try {
+    const wrapper = parseXml(`<w:root xmlns:w="${WORD_NAMESPACE}">${rawXml}</w:root>`);
+    const el = wrapper.documentElement.firstElementChild;
+    return el !== null && el.namespaceURI === WORD_NAMESPACE && el.localName === "style";
+  } catch {
+    return false;
+  }
+}
+
 /** An `unmodeled` style's original XML (SPEC-042 AC-18), re-emitted
  * verbatim except for the user-visible name — renaming (AC-6) is still
- * supported even for a style whose formatting the editor cannot express. */
+ * supported even for a style whose formatting the editor cannot express.
+ *
+ * `rawXml` is format-flavoured (a `w:style` from a .docx source, a
+ * `style:style` from a .odt one — see NamedStyle.rawXml), so it is only
+ * re-emitted here when it is OOXML to begin with. A cross-format save has
+ * nothing verbatim to preserve and falls back to the synthesized definition
+ * below: emitting an ODF `style:style` into word/styles.xml put a foreign
+ * element in an OOXML part, which is not a package Word will open. */
 function unmodeledStyleXml(definition: NamedStyle): string {
-  if (!definition.rawXml) {
+  if (!definition.rawXml || !isDocxStyleXml(definition.rawXml)) {
     return (
       `<w:style w:type="${wireStyleType(definition.type)}" w:styleId="${escapeXml(definition.id)}">` +
       `<w:name w:val="${escapeXml(definition.name ?? definition.id)}"/></w:style>`
@@ -3008,6 +3030,77 @@ function withMediaRelationships(relsXml: string, relationshipsXml: string): stri
  * other relationship patch in this file (which only ever appends), this is
  * the one case a save actually needs to remove a preserved entry: nothing
  * else references that target any more once the part itself is gone. */
+/** Relationship types whose parts the reader consumes and every save
+ * re-writes from the model. The write plans mint the complete current set
+ * each time, so the preserved part's own entries for these types are last
+ * save's answer to the same question — keeping them beside the fresh ones is
+ * what grew the rels part by a pair of image relationships per save and made
+ * a header's declarations pile up.
+ *
+ * Deliberately NOT here:
+ *  - styles, numbering, settings and theme: patched in place, one
+ *    relationship each, never re-minted;
+ *  - charts: an untouched chart reuses its preserved part name AND its id so
+ *    it stays byte-identical;
+ *  - HYPERLINKS: their target is an external URL rather than a part, and
+ *    preserved opaque markup this writer re-emits verbatim can carry a
+ *    `w:hyperlink r:id` naming one. The writer cannot tell, so a preserved
+ *    hyperlink relationship is kept and the model's own link re-minted
+ *    beside it (see hyperlinks.spec.ts's "additively"). That leaves
+ *    hyperlink relationships accumulating across saves — bounded by the
+ *    document's link count per save, and fixable by scanning the opaque XML
+ *    for surviving `r:id` references, which is its own piece of work;
+ *  - every unmodelled type — customXml, embedded objects, anything this
+ *    product does not parse — which SPEC-008 requires be preserved. */
+const REGENERATED_RELATIONSHIP_TYPES: ReadonlySet<string> = new Set([
+  IMAGE_RELATIONSHIP,
+  HEADER_RELATIONSHIP,
+  FOOTER_RELATIONSHIP,
+  FOOTNOTES_RELATIONSHIP,
+  ENDNOTES_RELATIONSHIP,
+  COMMENTS_RELATIONSHIP,
+]);
+
+/** A preserved main-document rels part with the regenerated-type
+ * relationships removed, ready for the current save's own to be appended.
+ *
+ * `survivingParts` are the parts copied through from the source untouched. A
+ * relationship pointing at one of those is kept even when its type is
+ * regenerated: a media part referenced only by opaque content stays in the
+ * package under its own name (the media plan mints around it), and dropping
+ * its relationship would break the very content SPEC-008 preserved it for. */
+function withoutRegeneratedRelationships(
+  relsXml: string,
+  mainPartName: string,
+  survivingParts: ReadonlySet<string>,
+): string {
+  return relsXml.replace(/<Relationship\b[^>]*\/>/g, (entry) => {
+    const type = /Type="([^"]+)"/.exec(entry)?.[1];
+    if (type === undefined || !REGENERATED_RELATIONSHIP_TYPES.has(type)) {
+      return entry;
+    }
+    const target = /Target="([^"]+)"/.exec(entry)?.[1];
+    if (target === undefined) {
+      return entry;
+    }
+    return survivingParts.has(resolvePartPath(mainPartName, target)) ? entry : "";
+  });
+}
+
+/** A preserved `[Content_Types].xml` with the `<Override>` for each of
+ * `partNames` removed — the content-types half of withdrawing a stale
+ * declaration for a part this save re-writes, so the plan's own Override can
+ * be appended without producing a duplicate PartName. */
+function withoutOverridesFor(contentTypesXml: string, partNames: Set<string>): string {
+  if (partNames.size === 0) {
+    return contentTypesXml;
+  }
+  return contentTypesXml.replace(/<Override\b[^>]*\/>/g, (entry) => {
+    const partName = /PartName="([^"]+)"/.exec(entry)?.[1];
+    return partName !== undefined && partNames.has(partName.replace(/^\//, "")) ? "" : entry;
+  });
+}
+
 function withoutRelationshipsToTargets(relsXml: string, mainPartName: string, targets: Set<string>): string {
   if (targets.size === 0) {
     return relsXml;
@@ -3310,7 +3403,23 @@ export async function writeDocx(
   // Images (SPEC-024): media ids start past whatever the preserved main
   // rels part already uses, and past whatever package part names already
   // exist, so a freshly written word/media/imageN.ext can never collide.
-  const mainRelsTaken = mainRelsText ? takenRelIdsOf(parseRelationships(mainRelsText).values()) : new Set<string>();
+  // Ids held by relationships this save withdraws and re-mints are NOT
+  // taken: counting them would push each save's ids past the last one's, so
+  // the same unedited document would serialise differently every time
+  // (rId2/rId3, then rId4/rId5, then rId2/rId3 again once the stale pair was
+  // withdrawn). Reusing them makes a save byte-stable, which is what lets
+  // version history and dedupe see "nothing changed".
+  const mainRelsTaken = mainRelsText
+    ? takenRelIdsOf(
+        Array.from(parseRelationships(mainRelsText).values()).filter(
+          (rel) =>
+            !REGENERATED_RELATIONSHIP_TYPES.has(rel.type) ||
+            // Kept below (it points at a surviving preserved part), so its id
+            // is still occupied. Only a WITHDRAWN id is free to re-mint.
+            preservedParts.has(resolvePartPath(mainPartName, rel.target)),
+        ),
+      )
+    : new Set<string>();
   // Hyperlinks (SPEC-025) mint their rel ids first, past the preserved
   // part's own ids; media ids then start past both.
   const hyperlinkPlan = planHyperlinkWrite(model, mainRelsTaken);
@@ -3457,6 +3566,46 @@ export async function writeDocx(
   // every other appended relationship uses).
   const themeTarget = themePartName.startsWith(mainDir) ? themePartName.slice(mainDir.length) : `/${themePartName}`;
 
+  // Every part this save writes FRESH from the model, rather than copying
+  // through from `preservedParts`.
+  //
+  // The reader consumes-and-rebuilds the header, footer, note, comment and
+  // media parts, so their canonical names are free again and the plans above
+  // hand them straight back — while the preserved main rels and
+  // [Content_Types].xml still declare the source's originals. Every patch
+  // below only ever appends, so each save added a second declaration for a
+  // part that already had one: a document with a header reached its second
+  // save carrying duplicate <Override PartName="/word/header1.xml">, which
+  // OPC forbids outright (ECMA-376 Part 2 §10.1.2.3) and Word answers with
+  // its repair prompt. Both grew by one per save, forever, with autosave
+  // running at up to two a minute.
+  //
+  // So the stale declarations are withdrawn before the fresh ones go in.
+  // Only names this save actually re-writes are touched: a media part that
+  // is still preserved (referenced solely by opaque content) keeps its own
+  // relationship, because the media plan minted a different name around it.
+  const rewrittenPartNames = new Set<string>();
+  for (const entry of mediaPlan.zipEntries) {
+    rewrittenPartNames.add(entry.name);
+  }
+  for (const partPlan of headerFooterPlan.parts) {
+    rewrittenPartNames.add(partPlan.partName);
+    rewrittenPartNames.add(relsPathFor(partPlan.partName));
+    for (const entry of partPlan.mediaPlan.zipEntries) {
+      rewrittenPartNames.add(entry.name);
+    }
+  }
+  for (const notesPart of notesPlan.parts) {
+    rewrittenPartNames.add(notesPart.partName);
+    rewrittenPartNames.add(relsPathFor(notesPart.partName));
+  }
+  for (const commentsPart of commentsPlan.parts) {
+    rewrittenPartNames.add(commentsPart.partName);
+  }
+  for (const entry of chartPlan.zipEntries) {
+    rewrittenPartNames.add(entry.name);
+  }
+
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
     entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
@@ -3491,7 +3640,18 @@ export async function writeDocx(
         addThemeDecls) &&
       name === mainRelsName
     ) {
-      let rels = mainRelsText!;
+      // Withdraw the source's declarations before appending the fresh ones,
+      // or both end up in the file: every relationship of a type this save
+      // re-mints in full, plus (for the types it does not) any pointing at a
+      // part it re-writes.
+      const survivingParts = new Set(
+        [...preservedParts.keys()].filter((partName) => !rewrittenPartNames.has(partName)),
+      );
+      let rels = withoutRelationshipsToTargets(
+        withoutRegeneratedRelationships(mainRelsText!, mainPartName, survivingParts),
+        mainPartName,
+        rewrittenPartNames,
+      );
       if (addNumberingDecls) {
         rels = withNumberingRelationship(rels, "numbering.xml");
       }
@@ -3558,7 +3718,10 @@ export async function writeDocx(
         addCustomPropsDecls ||
         removeCustomPropsDecls)
     ) {
-      let contentTypes = decoder.decode(data);
+      // Same withdrawal as the relationships just above: the source's
+      // Override for a part this save re-writes goes before the plan's own
+      // is appended (OPC requires PartName to be unique among Overrides).
+      let contentTypes = withoutOverridesFor(decoder.decode(data), rewrittenPartNames);
       if (!coreRel) {
         contentTypes = withCoreContentType(contentTypes);
       }

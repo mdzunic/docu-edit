@@ -6,6 +6,7 @@
 // /Outlines tree, and the document title lands in the Info dictionary.
 // package.json is frozen for feature work, so no PDF library — the writer
 // emits objects, xref and trailer itself. Framework-free per src/lib.
+import { deflate } from "../core/deflate";
 import type { FaceKey } from "./fontMap";
 import type { SfntFont } from "./sfnt";
 
@@ -313,11 +314,21 @@ function descriptorFlags(face: FaceKey): number {
   return flags;
 }
 
-/** Writes one face's font object graph; returns the Type0 font's id. */
-function writeFont(objects: PdfObjects, face: FaceKey, usage: FaceUsage): number {
+/** Writes one face's font object graph; returns the Type0 font's id.
+ *
+ * The whole font program is embedded (nothing here subsets glyphs), so it is
+ * by far the largest thing in a short document — four raw Liberation faces are
+ * 1.6 MB, and the Carlito set most .docx files resolve to is 2.7 MB, dwarfing
+ * a one-page PDF's actual content. /FontFile2 is a normal stream and takes a
+ * filter like any other, so deflate it: /Length1 stays the UNCOMPRESSED
+ * length, which is what a reader uses to reconstruct the sfnt. */
+async function writeFont(objects: PdfObjects, face: FaceKey, usage: FaceUsage): Promise<number> {
   const { font } = usage;
   const scale = 1000 / font.unitsPerEm;
-  const fileId = objects.stream("/Length1 " + font.bytes.length, font.bytes);
+  const fileId = objects.stream(
+    `/Length1 ${font.bytes.length} /Filter /FlateDecode`,
+    await deflate(font.bytes),
+  );
   const descriptorId = objects.add(
     `<< /Type /FontDescriptor /FontName /${font.postScriptName}` +
       ` /Flags ${descriptorFlags(face)}` +
@@ -442,7 +453,7 @@ function writeOutlines(
 
 /** Builds the complete PDF file. Throws when text exists but no font was
  * provided to embed — the exporter turns that into its failure toast. */
-export function buildPdf(input: PdfBuildInput): Uint8Array {
+export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
   const objects = new PdfObjects();
   const catalogId = objects.alloc();
   const pagesId = objects.alloc();
@@ -578,7 +589,9 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
   const pageAnnotIds: number[][] = [];
   const contentIds: number[] = [];
 
-  input.pages.forEach((page, pageIndex) => {
+  // A plain loop, not forEach: the content stream is deflated per page, and
+  // the pages' content objects must be allocated in page order.
+  for (const [pageIndex, page] of input.pages.entries()) {
     // Behind-the-text images first, then the text, then the images that sit
     // in front of it — PDF paints in content-stream order.
     let content = drawImages(page, false) + drawPaths(page, false);
@@ -595,7 +608,9 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
         `<${encodeText(usage, item.text)}> Tj ET\n`;
     }
     content += drawImages(page, true) + drawPaths(page, true);
-    contentIds.push(objects.stream("", content));
+    // Page content is operator text — highly compressible, and the bulk of
+    // any document long enough for the fonts not to dominate.
+    contentIds.push(objects.stream("/Filter /FlateDecode", await deflate(asciiBytes(content))));
     const annotIds: number[] = [];
     for (const link of page.links) {
       const x1 = fmt(link.xPt);
@@ -628,11 +643,13 @@ export function buildPdf(input: PdfBuildInput): Uint8Array {
         outlineEntries.push({ heading: { ...heading, title }, pageIndex });
       }
     }
-  });
+  }
 
   const fontIds = new Map<string, number>();
   for (const [face, usage] of usages) {
-    fontIds.set(usage.resourceName, writeFont(objects, face, usage));
+    // Sequential, not Promise.all: each writeFont allocates object ids as it
+    // goes, and the descriptor/CIDFont/Type0 graph has to stay contiguous.
+    fontIds.set(usage.resourceName, await writeFont(objects, face, usage));
   }
   const fontResources =
     fontIds.size > 0

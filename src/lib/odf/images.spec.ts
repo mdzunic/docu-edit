@@ -100,6 +100,13 @@ describe("writeOdt — images same-format round trip", () => {
     const { bytes, dropped } = await writeOdt(model);
     expect(dropped).toEqual([]);
     const reopened = await parseOdt(bytes);
+    // The block LIST, not just the blocks the assertions below index into:
+    // reading `blocks[3]` alone stayed green while a save duplicated the
+    // floating picture into a fresh block at index 4 (the duplicate landed
+    // past every index this test named).
+    expect(reopened.sections[0].blocks.map((block) => block.type)).toEqual(
+      parsed.sections[0].blocks.map((block) => block.type),
+    );
     const inline = reopened.sections[0].blocks[1] as Image;
     const floating = reopened.sections[0].blocks[3] as Image;
     expect(inline.wrap).toBe("inline");
@@ -112,5 +119,36 @@ describe("writeOdt — images same-format round trip", () => {
 
     const savedParts = await unzip(bytes);
     expect(Array.from(savedParts.keys()).some((name) => /Pictures\/image\d+\.png/.test(name))).toBe(true);
+  });
+
+  // A floating picture is ABSORBED into its anchor paragraph (SPEC-078), so
+  // it must not also be emitted at its own block slot. Emitting it twice
+  // added one picture per save — autosave alone turned a two-picture
+  // document into a dozen-picture one inside a single editing session — and
+  // one save was not enough to see it, since generation 1 still parsed back
+  // into a model whose blocks[1]/blocks[3] looked right.
+  it("keeps a floating picture single-copy across repeated saves", async () => {
+    let bytes = fixture;
+    const shapes: string[][] = [];
+    for (let generation = 0; generation < 4; generation++) {
+      const parsed = await parseOdt(bytes);
+      shapes.push(parsed.sections[0].blocks.map((block) => block.type));
+      bytes = (
+        await writeOdt({
+          id: "images-test",
+          title: "Images",
+          sections: parsed.sections,
+          defaultStyles: parsed.defaultStyles,
+          format: "odt",
+          opaque: parsed.opaque,
+          sourceXml: parsed.sourceXml,
+          media: parsed.media,
+        })
+      ).bytes;
+    }
+    for (const shape of shapes) {
+      expect(shape).toEqual(shapes[0]);
+    }
+    expect(shapes[0].filter((type) => type === "image")).toHaveLength(2);
   });
 });
