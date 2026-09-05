@@ -106,3 +106,13 @@ export function formatFileSize(bytes: number): string {
   }
   return `${(mb / 1024).toFixed(1)} GB`;
 }
+
+/** The recovery bar's sentence (SPEC-010).
+ *
+ * Relative, not a clock reading: this used to render `toLocaleTimeString()`,
+ * so a draft from last Tuesday and one from a minute ago both showed as a
+ * bare "3:36:58 PM" — precise to the second and useless for the only question
+ * being asked, which is whether these changes are recent enough to want. */
+export function recoveryNotice(savedAtMs: number, nowMs: number): string {
+  return `Recovered unsaved changes from ${formatRelativeTime(savedAtMs, nowMs)}`;
+}

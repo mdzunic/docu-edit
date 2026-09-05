@@ -1037,11 +1037,7 @@ const autosave = useAutosave({
   },
   onCleanClose: () => noteVersionHistoryCommitPoint(),
 });
-const { saveState, saveStateText, recovery, keepRecovered, discardRecovered } = autosave;
-
-const recoveryTime = computed(() =>
-  recovery.value ? new Date(recovery.value.savedAt).toLocaleTimeString() : "",
-);
+const { displaySaveState: saveState, saveStateText, recovery, recoveryLabel, keepRecovered, discardRecovered } = autosave;
 
 async function focusAndRestore() {
   await nextTick();
@@ -3167,14 +3163,14 @@ function handleMenuCommand(id = "") {
       role="status"
       data-testid="recovery-bar"
     >
-      <span>Recovered unsaved changes from {{ recoveryTime }}</span>
+      <span>{{ recoveryLabel }}</span>
       <button
         type="button"
         class="notice-button"
         data-testid="recovery-keep"
         @click="keepRecovered"
       >
-        Keep
+        Keep changes
       </button>
       <button
         type="button"
@@ -3182,7 +3178,7 @@ function handleMenuCommand(id = "") {
         data-testid="recovery-discard"
         @click="discardRecovered"
       >
-        Discard
+        Discard changes
       </button>
     </div>
     <div class="editor-layout">

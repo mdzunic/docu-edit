@@ -18,16 +18,16 @@ import {
   replaceDocumentModel,
   saveDraft,
 } from "../lib/documentStore";
+import { saveStateText as textForSaveState, STORAGE_FULL_REASON, SAVE_STATE_SAVING, SAVE_STATE_SAVED, SAVE_STATE_ERROR, type SaveState } from "../lib/core/saveState";
+import { recoveryNotice } from "../lib/format";
+import { now } from "../lib/clock";
 import type { DocumentModel } from "../lib/documentModel";
 import type { CaretPosition } from "../lib/textEditing";
 
-/** The single failure reason SPEC-010 defines: quota and write failures both
- * surface as a full store, with a download link as the escape hatch. */
-export const STORAGE_FULL_REASON = "browser storage is full";
-
-export const SAVE_STATE_SAVING = "Saving…";
-export const SAVE_STATE_SAVED = "All changes saved";
-export const SAVE_STATE_ERROR = `Not saved — ${STORAGE_FULL_REASON}`;
+// The state vocabulary is product-neutral (the deck reports through it too),
+// so it lives in lib/core/saveState.ts. Re-exported for the callers that had
+// been importing it from here.
+export { STORAGE_FULL_REASON, SAVE_STATE_SAVING, SAVE_STATE_SAVED, SAVE_STATE_ERROR };
 
 export interface RestoredState {
   model: DocumentModel;
@@ -64,22 +64,20 @@ export function useAutosave(options: UseAutosaveOptions) {
   // stops the committed write, not the safety net (AC-47). The "Autosave
   // delay" preference feeds the scheduler's debounce, read live per change.
   const { preferences } = usePreferences();
-  const saveState = ref<"saved" | "saving" | "error">("saved");
-  const saveStateText = computed(() => {
-    switch (saveState.value) {
-      case "saving":
-        return SAVE_STATE_SAVING;
-      case "error":
-        return SAVE_STATE_ERROR;
-      default:
-        return SAVE_STATE_SAVED;
-    }
-  });
+  const saveState = ref<SaveState>("saved");
   /** Non-null while the recovery bar should be visible. Holds only the
    * timestamp; the committed state stays in a closure so the model never
    * passes through Vue's deep reactivity (it must stay structured-cloneable
    * and cheap). */
   const recovery = ref<{ savedAt: number } | null>(null);
+  /** What the bar shows. A pending recovery decision outranks the stored state:
+   * `commitNow` and `endSession` both stand down while the banner is up, so the
+   * bar claiming "All changes saved" beside a banner announcing recovered
+   * UNSAVED changes was two contradictory statements about one document. */
+  const displaySaveState = computed<SaveState>(() => (recovery.value ? "recovered" : saveState.value));
+  const saveStateText = computed(() => textForSaveState(displaySaveState.value));
+  /** The banner's sentence: relative, and off the injectable clock. */
+  const recoveryLabel = computed(() => (recovery.value ? recoveryNotice(recovery.value.savedAt, now().getTime()) : ""));
   let committedStash: CommittedStash | null = null;
 
   let docId: string | null = null;
@@ -389,8 +387,10 @@ export function useAutosave(options: UseAutosaveOptions) {
 
   return {
     saveState,
+    displaySaveState,
     saveStateText,
     recovery,
+    recoveryLabel,
     markDirty,
     hasUnsavedChanges,
     beginSession,

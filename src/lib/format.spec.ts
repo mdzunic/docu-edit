@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  formatBadgeLabel,
-  formatRelativeTime,
-  formatTimestamp,
-} from "./format";
+import { formatBadgeLabel, formatRelativeTime, formatTimestamp, recoveryNotice } from "./format";
 
 describe("formatTimestamp", () => {
   it("formats a date as 'YYYY-MM-DD HH:mm' in local time", () => {
@@ -59,5 +55,35 @@ describe("formatBadgeLabel", () => {
     expect(formatBadgeLabel("docx")).toBe("DOCX");
     expect(formatBadgeLabel("odt")).toBe("ODT");
     expect(formatBadgeLabel("new")).toBe("New");
+  });
+});
+
+describe("recoveryNotice (SPEC-010)", () => {
+  const at = (label: string) => new Date(`2026-09-05T${label}Z`).getTime();
+
+  it("dates the draft relatively, not as a bare clock reading", () => {
+    // The bug: `toLocaleTimeString()` rendered "3:36:58 PM" for a draft from a
+    // minute ago and for one from last Tuesday alike — precise to the second
+    // and useless for the only question being asked, which is whether these
+    // changes are recent enough to want back.
+    expect(recoveryNotice(at("15:36:58"), at("15:41:00"))).toBe(
+      "Recovered unsaved changes from 4 minutes ago",
+    );
+    expect(recoveryNotice(at("15:36:58"), at("15:37:10"))).toBe(
+      "Recovered unsaved changes from just now",
+    );
+  });
+
+  it("keeps the prefix the recovery bar is identified by", () => {
+    expect(recoveryNotice(at("15:00:00"), at("18:00:00"))).toMatch(
+      /^Recovered unsaved changes from /,
+    );
+  });
+
+  it("spans days, so a stale draft cannot read as a recent one", () => {
+    const tuesday = new Date("2026-09-01T15:36:58Z").getTime();
+    expect(recoveryNotice(tuesday, at("15:36:58"))).toBe(
+      "Recovered unsaved changes from 4 days ago",
+    );
   });
 });
