@@ -74,6 +74,38 @@ test("the library list fits the compact width and keeps every row action reachab
   expect(renameBox.x + renameBox.width).toBeLessThanOrEqual(viewport);
 });
 
+test("the app bar keeps the document's name legible at compact", async ({ page }) => {
+  // The regression this guards: `overflow: hidden` zeroes a flex item's
+  // automatic minimum, so the title had nothing holding it open. A crowded
+  // bar shrank it to exactly the pencil's 16px and the name rendered at zero
+  // width — not even an ellipsis, just a context-free pencil icon where the
+  // document's identity should be.
+  await newDocument(page);
+  const title = page.getByTestId("document-title");
+  await expect(title).toBeVisible();
+
+  const text = title.locator(".document-title-text");
+  const box = (await text.boundingBox())!;
+  expect(box.width, "the title collapsed to nothing").toBeGreaterThan(40);
+
+  // The full name stays in the DOM even when the visible text is ellipsised,
+  // so it is still what assistive technology and a rename read.
+  await expect(text).toHaveText("Untitled document");
+
+  // It also has to beat the thing that was taking its space: at compact the
+  // resting save status is a dot, not ~110px of "All changes saved".
+  const save = page.getByTestId("save-state");
+  await expect(save).toHaveText("All changes saved");
+  const saveBox = (await save.boundingBox())!;
+  expect(saveBox.width).toBeLessThan(box.width);
+
+  // And none of it pushes the page sideways.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
 test("compact editor: fit-width web layout, essential toolbar, menu sheet, edit, comment, download", async ({
   page,
 }) => {

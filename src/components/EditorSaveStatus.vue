@@ -61,6 +61,28 @@ const emit = defineEmits(["download", "close"]);
   white-space: nowrap;
 }
 
+/* Compact tier (SPEC-068). "All changes saved" is ~110px of nowrap text that
+   never shrinks, and on a phone-width bar it was winning that space from the
+   document's own name. It is also the least urgent thing there: it says
+   nothing changed. So at compact the RESTING state becomes a dot — the
+   reassurance survives, its width does not — while "Saving…" and the error
+   state keep their words, because those are the ones worth reading.
+   `text-indent` rather than `display: none`: the text stays in the DOM and in
+   the accessibility tree, so the status is still announced and still
+   readable to anything that inspects it. */
+@media (max-width: 639.98px) {
+  .save-state[data-save-state="saved"] {
+    width: var(--space-3);
+    height: var(--space-3);
+    /* A circle, not the pill token: at 10px square that token's 4px radius
+       reads as a rounded box rather than a status dot. */
+    border-radius: 50%;
+    background: currentColor;
+    overflow: hidden;
+    text-indent: 100%;
+  }
+}
+
 .save-state-download {
   font-size: var(--text-md);
   color: var(--text-on-brand);

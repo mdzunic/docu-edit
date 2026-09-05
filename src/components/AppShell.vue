@@ -480,7 +480,15 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-width: 0;
+  /* A floor, not `min-width: 0`. The text below sets `overflow: hidden`,
+     which zeroes a flex item's automatic content-based minimum — so with
+     nothing holding the region open, a crowded bar shrank the title to
+     exactly the pencil's 16px and the name rendered at zero width. Not even
+     an ellipsis: the document you had open was unnameable, and the rename
+     affordance became a context-free pencil. The floor keeps enough room to
+     ellipsise into, and `min()` keeps that promise from ever being wider
+     than the bar it sits in. */
+  min-width: min(9ch, 100%);
   margin: 0;
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
@@ -490,6 +498,8 @@ onUnmounted(() => {
 }
 
 .document-title-text {
+  /* The shrinker inside that floor: this is what ellipsises. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
