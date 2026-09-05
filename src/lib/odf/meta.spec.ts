@@ -114,11 +114,11 @@ describe("buildMetaXml custom properties / parseOdfCustomProperties (SPEC-041 AC
   });
 });
 
-describe("writeOdt/parseOdt — document properties integration (SPEC-041 AC-5, AC-8, AC-12..14)", () => {
-  function blankModel(): DocumentModel {
-    return { ...createDocument("props-doc"), format: "odt" };
-  }
+function blankModel(): DocumentModel {
+  return { ...createDocument("props-doc"), format: "odt" };
+}
 
+describe("writeOdt/parseOdt — document properties integration (SPEC-041 AC-5, AC-8, AC-12..14)", () => {
   it("writes Description-tab edits to meta.xml and reads them back on reopen (AC-5)", async () => {
     const model = blankModel();
     model.properties = {

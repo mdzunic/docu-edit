@@ -341,7 +341,7 @@ describe("buildDocumentXml", () => {
       pPr.indexOf(`<${tag}`),
     );
     expect(order.every((index) => index >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect([...order].toSorted((a, b) => a - b)).toEqual(order);
   });
 
   it("exposes the .docx MIME type for the download blob", () => {
@@ -351,44 +351,44 @@ describe("buildDocumentXml", () => {
   });
 });
 
-describe("writeDocx — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
-  function geometryModel(): DocumentModel {
-    const model = createDocument("geometry");
-    model.sections[0].blocks = [
-      {
-        type: "paragraph",
-        runs: [{ text: "ltr paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
-        formatting: {
-          alignment: "justify",
-          indentStartCm: 1.27,
-          indentEndCm: 0.635,
-          indentFirstLineCm: -0.635,
-          spaceBeforePt: 12,
-          spaceAfterPt: 6,
-          lineSpacing: 1.15,
-        },
+function geometryModel(): DocumentModel {
+  const model = createDocument("geometry");
+  model.sections[0].blocks = [
+    {
+      type: "paragraph",
+      runs: [{ text: "ltr paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+      formatting: {
+        alignment: "justify",
+        indentStartCm: 1.27,
+        indentEndCm: 0.635,
+        indentFirstLineCm: -0.635,
+        spaceBeforePt: 12,
+        spaceAfterPt: 6,
+        lineSpacing: 1.15,
       },
-      {
-        type: "paragraph",
-        runs: [{ text: "rtl paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
-        formatting: {
-          direction: "rtl",
-          indentStartCm: 2.54,
-          indentEndCm: 1.27,
-          indentFirstLineCm: 0.635,
-          lineSpacingPt: 14,
-          lineSpacingRule: "exact",
-        },
+    },
+    {
+      type: "paragraph",
+      runs: [{ text: "rtl paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+      formatting: {
+        direction: "rtl",
+        indentStartCm: 2.54,
+        indentEndCm: 1.27,
+        indentFirstLineCm: 0.635,
+        lineSpacingPt: 14,
+        lineSpacingRule: "exact",
       },
-      {
-        type: "paragraph",
-        runs: [{ text: "at least", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
-        formatting: { lineSpacingPt: 16, spaceBeforePt: 0 },
-      },
-    ];
-    return model;
-  }
+    },
+    {
+      type: "paragraph",
+      runs: [{ text: "at least", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+      formatting: { lineSpacingPt: 16, spaceBeforePt: 0 },
+    },
+  ];
+  return model;
+}
 
+describe("writeDocx — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
   it("emits w:bidi with the logical w:ind values unchanged for RTL (AC-25)", async () => {
     const documentXml = await partText((await writeDocx(geometryModel())).bytes, "word/document.xml");
     // 2.54 cm start = 1440 twips, 1.27 cm end = 720 twips — the logical

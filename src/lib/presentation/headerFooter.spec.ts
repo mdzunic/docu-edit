@@ -165,7 +165,7 @@ describe("setFieldVisibility", () => {
     setFieldVisibility(m, s, "footer", true); // idempotent
     expect(s.fields?.length).toBe(1);
     setFieldVisibility(m, s, "date", true);
-    expect(s.fields?.map((f) => f.kind).sort()).toEqual(["date", "footer"]);
+    expect(s.fields?.map((f) => f.kind).toSorted()).toEqual(["date", "footer"]);
     setFieldVisibility(m, s, "footer", false);
     expect(s.fields?.map((f) => f.kind)).toEqual(["date"]);
     setFieldVisibility(m, s, "date", false);
@@ -180,7 +180,7 @@ describe("applyHeaderFooter scope rules and dirtying", () => {
     expect(m.headerFooter).toEqual({ footerText: "Confidential" });
     expect(m.headerFooterDirty).toBe(true);
     expect(m.slides[0].fields).toBeUndefined();
-    expect(m.slides[1].fields?.map((f) => f.kind).sort()).toEqual(["date", "footer", "slideNumber"]);
+    expect(m.slides[1].fields?.map((f) => f.kind).toSorted()).toEqual(["date", "footer", "slideNumber"]);
     expect(m.slides[2].fields).toBeUndefined();
     expect(m.slides[1].dirty).toBe(true); // markSlideEdited
     expect(m.slides[0].dirty).toBeUndefined();
@@ -191,7 +191,7 @@ describe("applyHeaderFooter scope rules and dirtying", () => {
     m.slides[0].fields = [{ kind: "footer", xCm: 0, yCm: 0, widthCm: 1, heightCm: 1, text: "old override" }];
     applyHeaderFooter(m, ALL_ON, { mode: "all" });
     for (const s of m.slides) {
-      expect(s.fields?.map((f) => f.kind).sort()).toEqual(["date", "footer", "slideNumber"]);
+      expect(s.fields?.map((f) => f.kind).toSorted()).toEqual(["date", "footer", "slideNumber"]);
       expect(s.dirty).toBe(true);
       expect(s.fields?.find((f) => f.kind === "footer")?.text).toBeUndefined();
     }

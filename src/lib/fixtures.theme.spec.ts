@@ -170,7 +170,7 @@ describe("docx fixture (AC-52)", () => {
     const written = await writeDocx(model, { modified: FIXED_MODIFIED });
     const before = await unzip(docxBytes);
     const after = await unzip(written.bytes);
-    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
     for (const [name, bytes] of before) {
       expect(equalBytes(after.get(name)!, bytes), `part ${name} changed on a no-edit save`).toBe(true);
     }
@@ -217,7 +217,7 @@ describe("odt fixture (AC-52, with the two AC-39 deltas pinned)", () => {
     const written = await writeOdt(model, { modified: FIXED_MODIFIED });
     const before = await unzip(odtBytes);
     const after = await unzip(written.bytes);
-    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
     for (const [name, bytes] of before) {
       expect(equalBytes(after.get(name)!, bytes), `part ${name} changed on a no-edit save`).toBe(true);
     }

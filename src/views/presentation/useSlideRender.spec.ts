@@ -39,14 +39,14 @@ function setup() {
   return { model, render };
 }
 
-describe("useSlideRender commit media gate (SPEC-095 AC-12/14)", () => {
-  function withMedia() {
-    const model = shallowRef<PresentationModel | null>(createBlankPresentation());
-    model.value!.media = [{ mediaId: "ppt/media/media1.mp4", contentType: "video/mp4", data: "AAAA" }];
-    const render = useSlideRender({ model, currentIndex: shallowRef(0), recomputeScale: () => {} });
-    return { model, render };
-  }
+function withMedia() {
+  const model = shallowRef<PresentationModel | null>(createBlankPresentation());
+  model.value!.media = [{ mediaId: "ppt/media/media1.mp4", contentType: "video/mp4", data: "AAAA" }];
+  const render = useSlideRender({ model, currentIndex: shallowRef(0), recomputeScale: () => {} });
+  return { model, render };
+}
 
+describe("useSlideRender commit media gate (SPEC-095 AC-12/14)", () => {
   it("does NOT re-slice model.media on a plain commit (a nudge/keystroke)", () => {
     const { model, render } = withMedia();
     const before = model.value!.media;

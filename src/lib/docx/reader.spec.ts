@@ -208,6 +208,29 @@ describe("parseDocx — special characters", () => {
   });
 });
 
+const u32 = (v: number) => {
+  const b = new Uint8Array(4);
+  new DataView(b.buffer).setUint32(0, v, true);
+  return b;
+};
+
+const u16 = (v: number) => {
+  const b = new Uint8Array(2);
+  new DataView(b.buffer).setUint16(0, v, true);
+  return b;
+};
+
+const concat = (parts: Uint8Array[]) => {
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+};
+
 describe("parseDocx — error handling", () => {
   it("rejects a file that is not a valid ZIP (AC-31)", async () => {
     const notZip = new TextEncoder().encode("not a zip file at all");
@@ -219,26 +242,6 @@ describe("parseDocx — error handling", () => {
     const entries = [
       { name: "readme.txt", content: "hello" },
     ];
-    const u32 = (v: number) => {
-      const b = new Uint8Array(4);
-      new DataView(b.buffer).setUint32(0, v, true);
-      return b;
-    };
-    const u16 = (v: number) => {
-      const b = new Uint8Array(2);
-      new DataView(b.buffer).setUint16(0, v, true);
-      return b;
-    };
-    const concat = (parts: Uint8Array[]) => {
-      const total = parts.reduce((s, p) => s + p.length, 0);
-      const out = new Uint8Array(total);
-      let o = 0;
-      for (const p of parts) {
-        out.set(p, o);
-        o += p.length;
-      }
-      return out;
-    };
     const encoder = new TextEncoder();
     const nameBytes = encoder.encode(entries[0].name);
     const rawBytes = encoder.encode(entries[0].content);

@@ -272,7 +272,7 @@ export function collectChanges(model: DocumentModel): ChangeEntry[] {
   };
   model.sections.forEach((section, sectionIndex) => walkBlocksForChanges(section.blocks, sectionIndex, note));
   return [...byId.values()]
-    .sort((a, b) => a.order - b.order)
+    .toSorted((a, b) => a.order - b.order)
     .map((acc) => ({
       changeId: acc.changeId,
       kind: acc.kind,

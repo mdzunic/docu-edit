@@ -42,7 +42,7 @@ async function chartDeckBytes(): Promise<Uint8Array> {
   );
   parts.set("META-INF/manifest.xml", enc(manifest));
   // mimetype must stay first + stored.
-  const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
 }
 
@@ -129,7 +129,7 @@ describe("odp chart read → write round trip", () => {
       `<manifest:file-entry manifest:full-path="ObjectReplacements/Object 1" manifest:media-type="application/vnd.oasis.opendocument.chart"/></manifest:manifest>`,
     );
     parts.set("META-INF/manifest.xml", enc(manifest));
-    const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+    const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
     const bytes = await zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
     const model = await readPresentationBytes(bytes, "odp", "Deck");
 
@@ -160,7 +160,7 @@ describe("odp chart read → write round trip", () => {
     const parts = await unzip(await chartDeckBytes());
     const content = dec(parts.get("content.xml")!).replace(DRAW_FRAME, `${DRAW_FRAME}${DRAW_FRAME}`);
     parts.set("content.xml", enc(content));
-    const ordered = [...parts].sort(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+    const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
     const bytes = await zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
     const source = await unzip(bytes);
     const model = await readPresentationBytes(bytes, "odp", "Deck");
@@ -181,7 +181,7 @@ describe("odp chart read → write round trip", () => {
     const values = reopened.slides[idx].frames
       .filter((f): f is ChartFrame => f.kind === "chart")
       .map((c) => c.series[0].values[0] as number)
-      .sort((a, b) => a - b);
+      .toSorted((a, b) => a - b);
     expect(values).toEqual([10, 42]);
   });
 });

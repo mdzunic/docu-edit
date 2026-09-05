@@ -263,7 +263,7 @@ describe("pptx chart read → write round trip", () => {
     const values = reopened.slides[0].frames
       .filter((f): f is ChartFrame => f.kind === "chart")
       .map((c) => c.series[0].values[0] as number)
-      .sort((a, b) => a - b);
+      .toSorted((a, b) => a - b);
     expect(values).toEqual([10, 42]);
   });
 });

@@ -1208,7 +1208,7 @@ function parseTableOfContent(el: Element): TableOfContents {
       }
     }
   }
-  let levels = Array.from(new Set(entries.map((entry) => entry.level))).sort((a, b) => a - b);
+  let levels = Array.from(new Set(entries.map((entry) => entry.level))).toSorted((a, b) => a - b);
   if (levels.length === 0) {
     const source = firstChildElement(el, TEXT_NAMESPACE, "table-of-content-source");
     const templateLevels = source
@@ -2853,9 +2853,9 @@ export async function parseOdt(
   // parseDocx for why: the writer regenerates their manifest/relationship
   // entries from `media` on every save, same-format or not).
   const opaque: OpaquePart[] = [];
-  for (const [name, data] of parts) {
+  for (const [name, partBytes] of parts) {
     if (name !== "content.xml" && name !== "meta.xml" && !mediaById.has(name)) {
-      opaque.push({ name, data: bytesToBase64(data) });
+      opaque.push({ name, data: bytesToBase64(partBytes) });
     }
   }
 

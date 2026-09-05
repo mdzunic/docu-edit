@@ -135,7 +135,7 @@ describe("CommentsPane", () => {
           {
             messageId: "m1",
             author: "Eve",
-            text: '<script>window.__pwned = true;</script><img src="x" onerror="window.__pwned = true">',
+            text: '<script>window.pwnedByComment = true;</script><img src="x" onerror="window.pwnedByComment = true">',
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         ],
@@ -145,12 +145,12 @@ describe("CommentsPane", () => {
       // No live script/img element was created from the comment text.
       expect(wrapper.find("script").exists()).toBe(false);
       expect(wrapper.find("img").exists()).toBe(false);
-      expect((window as unknown as { __pwned?: boolean }).__pwned).toBeUndefined();
+      expect((window as unknown as { pwnedByComment?: boolean }).pwnedByComment).toBeUndefined();
 
       // The raw markup shows up as literal, escaped text content.
       const card = wrapper.get('[data-testid="comment-thread-t1"]');
-      expect(card.text()).toContain("<script>window.__pwned = true;</script>");
-      expect(card.html()).not.toContain("<script>window.__pwned");
+      expect(card.text()).toContain("<script>window.pwnedByComment = true;</script>");
+      expect(card.html()).not.toContain("<script>window.pwnedByComment");
       expect(card.html()).toContain("&lt;script&gt;");
     });
 

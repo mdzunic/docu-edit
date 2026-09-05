@@ -651,7 +651,7 @@ function wavePoly(amp: number, periods: number): Point[] {
     top.push(bound({ x, y: amp + s }));
     bottom.push(bound({ x, y: 1 - amp + s }));
   }
-  return [...top, ...bottom.reverse()];
+  return [...top, ...bottom.toReversed()];
 }
 
 const CALLOUTS: ShapeDefinition[] = [

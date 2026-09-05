@@ -87,7 +87,7 @@ export function usePaginationEngine(deps: PaginationEngineDeps) {
       return new Map<string, string>();
     }
     const refPages = pagination.footnoteRefPages.value;
-    const labels = noteLabels(model, "footnote", collectNoteRefs(model, "footnote"), (ref, index) => refPages[index] ?? 0);
+    const labels = noteLabels(model, "footnote", collectNoteRefs(model, "footnote"), (_unused, index) => refPages[index] ?? 0);
     for (const [noteId, label] of noteLabels(model, "endnote", collectNoteRefs(model, "endnote"))) {
       labels.set(noteId, label);
     }

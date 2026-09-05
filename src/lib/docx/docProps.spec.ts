@@ -67,7 +67,7 @@ describe("buildCorePropertiesXml / parseCoreProperties round trip (SPEC-041 AC-2
       `</cp:coreProperties>`;
     const properties = parseCoreProperties(source);
     expect(properties.extraFields).toHaveLength(2);
-    expect(properties.extraFields?.map((field) => field.name).sort()).toEqual(["category", "revision"]);
+    expect(properties.extraFields?.map((field) => field.name).toSorted()).toEqual(["category", "revision"]);
     expect(properties.extraFields?.find((field) => field.name === "category")?.value).toBe("Finance");
     expect(properties.extraFields?.find((field) => field.name === "revision")?.value).toBe("3");
 
@@ -148,11 +148,11 @@ describe("buildCustomPropertiesXml / parseCustomProperties round trip (SPEC-041 
   });
 });
 
-describe("writeDocx/parseDocx — document properties integration (SPEC-041 AC-5, AC-8, AC-12..14)", () => {
-  function blankModel(): DocumentModel {
-    return { ...createDocument("props-doc"), format: "docx" };
-  }
+function blankModel(): DocumentModel {
+  return { ...createDocument("props-doc"), format: "docx" };
+}
 
+describe("writeDocx/parseDocx — document properties integration (SPEC-041 AC-5, AC-8, AC-12..14)", () => {
   it("writes Description-tab edits to docProps/core.xml and reads them back on reopen (AC-5)", async () => {
     const model = blankModel();
     model.properties = {

@@ -3,6 +3,12 @@ import { mount } from "@vue/test-utils";
 import PreferencesDialog from "./PreferencesDialog.vue";
 import { PALETTE_OPTIONS, loadPreferences, resetPreferences } from "../lib/preferences";
 
+// jsdom serialises the inline style to rgb(); compare numerically.
+const toRgb = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
+};
+
 // The redesigned Appearance controls: the segmented icon theme switch
 // (system / sun / moon) and the palette chips with their dominant-colour
 // swatches. The stored-preferences behaviour behind them is covered by
@@ -36,11 +42,6 @@ describe("PreferencesDialog appearance controls", () => {
     expect(chips.map((chip) => chip.attributes("data-testid"))).toEqual(
       PALETTE_OPTIONS.map((option) => `preferences-palette-${option.value}`),
     );
-    // jsdom serialises the inline style to rgb(); compare numerically.
-    const toRgb = (hex: string) => {
-      const n = parseInt(hex.slice(1), 16);
-      return `rgb(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
-    };
     for (const [index, option] of PALETTE_OPTIONS.entries()) {
       const swatch = chips[index]!.get(".palette-swatch");
       expect(swatch.attributes("style")).toContain(`background: ${toRgb(option.swatch)}`);

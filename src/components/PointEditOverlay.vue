@@ -11,7 +11,10 @@ defineProps({ controller: { type: Object, required: true } });
 </script>
 
 <template>
-  <div class="point-edit-overlay" data-testid="point-edit-overlay">
+  <div
+    class="point-edit-overlay"
+    data-testid="point-edit-overlay"
+  >
     <svg
       class="point-edit-outline"
       :style="{

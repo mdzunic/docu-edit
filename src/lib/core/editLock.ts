@@ -5,6 +5,11 @@
 // holder goes away, so the read-only tab becomes editable event-driven, with
 // no polling.
 
+/** The initial value of a callback slot filled in later (a promise executor,
+ * a registration call) — shared so the slot's initialiser is not a nested
+ * function expression of its own. */
+const noop = (): void => {};
+
 export type EditLockState = "acquired" | "busy";
 
 export interface EditLockHandle {
@@ -53,7 +58,7 @@ export function acquireEditLock(
   }
   const name = `docu-edit:doc:${docId}`;
   let released = false;
-  let releaseHeld = (): void => {};
+  let releaseHeld: () => void = noop;
   // Resolving this promise is what ends the lock-holding callback below,
   // handing the lock back to the browser.
   const held = new Promise<void>((resolve) => {

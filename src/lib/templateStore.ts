@@ -41,7 +41,7 @@ export function initTemplates(): Promise<void> {
 
 /** User templates, newest first. */
 export function listUserTemplates(): StoredTemplateRecord[] {
-  return [...templates.values()].sort((a, b) => b.createdAt - a.createdAt);
+  return [...templates.values()].toSorted((a, b) => b.createdAt - a.createdAt);
 }
 
 export function getUserTemplate(id: string): StoredTemplateRecord | undefined {

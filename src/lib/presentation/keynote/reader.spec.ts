@@ -175,27 +175,27 @@ describe("parseKeynote — drops and the import notice", () => {
   });
 });
 
-describe("parseKeynote — text handling on a bespoke graph", () => {
-  /** A one-slide deck whose single non-placeholder drawable holds `text`. */
-  function deckWithText(text: string): ArchiveInput[] {
-    return [
-      { id: 1, type: 1, payload: message(reference(2, 3)) },
-      {
-        id: 3,
-        type: 2,
-        payload: message(
-          lengthField(3, message(reference(2, 10))),
-          lengthField(4, message(float32Field(1, 1920), float32Field(2, 1080))),
-        ),
-      },
-      { id: 10, type: 4, payload: message(reference(1, 11)) },
-      { id: 11, type: 4, payload: message(reference(2, 21)) },
-      { id: 21, type: 5, payload: message(lengthField(7, varintField(1, 31))) },
-      { id: 31, type: 7, payload: message(lengthField(1, message(reference(2, 41)))) },
-      { id: 41, type: 2001, payload: message(stringField(3, text)) },
-    ];
-  }
+/** A one-slide deck whose single non-placeholder drawable holds `text`. */
+function deckWithText(text: string): ArchiveInput[] {
+  return [
+    { id: 1, type: 1, payload: message(reference(2, 3)) },
+    {
+      id: 3,
+      type: 2,
+      payload: message(
+        lengthField(3, message(reference(2, 10))),
+        lengthField(4, message(float32Field(1, 1920), float32Field(2, 1080))),
+      ),
+    },
+    { id: 10, type: 4, payload: message(reference(1, 11)) },
+    { id: 11, type: 4, payload: message(reference(2, 21)) },
+    { id: 21, type: 5, payload: message(lengthField(7, varintField(1, 31))) },
+    { id: 31, type: 7, payload: message(lengthField(1, message(reference(2, 41)))) },
+    { id: 41, type: 2001, payload: message(stringField(3, text)) },
+  ];
+}
 
+describe("parseKeynote — text handling on a bespoke graph", () => {
   it("splits paragraphs on \\n and U+2029 (AC-24)", async () => {
     const parsed = await parseBuilt(await buildKeynoteFromArchives(deckWithText("one\ntwo three")));
     const frame = parsed.slides[0].frames[0] as TextFrame;

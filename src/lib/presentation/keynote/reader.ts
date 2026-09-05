@@ -76,6 +76,8 @@ export function isLegacyKeynote(parts: Map<string, Uint8Array>): boolean {
   return parts.has("index.apxl") || parts.has("index.apxl.gz");
 }
 
+const clause = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 /** The non-blocking import notice for a finished import, or null when
  * nothing was dropped (AC-37/AC-38). Singular/zero forms handled: a zero
  * count's clause is omitted entirely. */
@@ -83,7 +85,6 @@ export function keynoteImportNotice(dropped: KeynoteDropCounts): string | null {
   if (dropped.objects === 0 && dropped.effects === 0) {
     return null;
   }
-  const clause = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;
   const clauses: string[] = [];
   if (dropped.objects > 0) {
     clauses.push(clause(dropped.objects, "object"));
@@ -540,7 +541,7 @@ function childNodeIds(objects: KeynoteObjects, nodeFields: Fields): number[] {
     list.push(field.bytes);
     byNum.set(field.num, list);
   }
-  const nums = [...byNum.keys()].sort((a, b) => a - b);
+  const nums = [...byNum.keys()].toSorted((a, b) => a - b);
   for (const num of nums) {
     const entries = byNum.get(num) ?? [];
     const ids: number[] = [];

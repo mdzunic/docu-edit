@@ -65,8 +65,8 @@ describe("SHORTCUTS registry (SPEC-021 AC-1, AC-5, AC-11)", () => {
 
   it("marks exactly the five deliberately-overridden browser shortcuts", () => {
     const overridden = SHORTCUTS.filter((definition) => definition.overridesBrowser).map((definition) => definition.id);
-    expect(overridden.sort()).toEqual(
-      ["file.print", "find.open", "format.bold", "format.italic", "format.underline"].sort(),
+    expect(overridden.toSorted()).toEqual(
+      ["file.print", "find.open", "format.bold", "format.italic", "format.underline"].toSorted(),
     );
   });
 });

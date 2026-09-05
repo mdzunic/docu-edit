@@ -1010,6 +1010,8 @@ function applyTcPr(cell: SlideTableCell, tcPr: Element, ctx: SlideContext): void
   }
 }
 
+const r3 = (v: number): number => Math.round(v * 1000) / 1000;
+
 /** Parses an in-subset `a:tbl` into a `TableFrame`, or `undefined` when it is
  * out of subset per the enumerated abort list — a missing/empty grid, no rows,
  * a row whose cells do not total the column count, or an inconsistent merge map
@@ -1067,7 +1069,6 @@ function parseTbl(
     }
     rows.push(row);
   }
-  const r3 = (v: number): number => Math.round(v * 1000) / 1000;
   const frame: TableFrame = {
     ...base,
     xCm: r3(base.xCm),
@@ -1466,6 +1467,21 @@ function buildPlaceholderMap(spTree: Element | undefined): Map<string, Placehold
   return map;
 }
 
+const read = (styleEl: Element | undefined): Element[] => {
+  const levels: Element[] = [];
+  if (!styleEl) {
+    return levels;
+  }
+  for (let i = 0; i < 9; i++) {
+    const lvl = firstA(styleEl, `lvl${i + 1}pPr`);
+    const defRPr = lvl ? firstA(lvl, "defRPr") : undefined;
+    if (defRPr) {
+      levels[i] = defRPr;
+    }
+  }
+  return levels;
+};
+
 /** Reads a master `p:txStyles` into role → level → defRPr. */
 function buildTxStyles(masterRoot: Element | undefined): Map<PlaceholderRole, Element[]> {
   const styles = new Map<PlaceholderRole, Element[]>();
@@ -1476,20 +1492,6 @@ function buildTxStyles(masterRoot: Element | undefined): Map<PlaceholderRole, El
   if (!txStyles) {
     return styles;
   }
-  const read = (styleEl: Element | undefined): Element[] => {
-    const levels: Element[] = [];
-    if (!styleEl) {
-      return levels;
-    }
-    for (let i = 0; i < 9; i++) {
-      const lvl = firstA(styleEl, `lvl${i + 1}pPr`);
-      const defRPr = lvl ? firstA(lvl, "defRPr") : undefined;
-      if (defRPr) {
-        levels[i] = defRPr;
-      }
-    }
-    return levels;
-  };
   styles.set("title", read(pChild(txStyles, "titleStyle")));
   const body = read(pChild(txStyles, "bodyStyle"));
   styles.set("body", body);

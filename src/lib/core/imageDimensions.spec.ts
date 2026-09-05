@@ -267,20 +267,21 @@ describe("decodeImageDimensions — unrecognised/malformed input", () => {
   });
 });
 
-describe("decodeImageDimensions — WebP (SPEC-107)", () => {
-  function riff(chunk: string, payload: number[]): Uint8Array {
-    const fourCC = (text: string) => [...text].map((c) => c.charCodeAt(0));
-    const size = payload.length;
-    return new Uint8Array([
-      ...fourCC("RIFF"),
-      (12 + size) & 0xff, ((12 + size) >> 8) & 0xff, 0, 0,
-      ...fourCC("WEBP"),
-      ...fourCC(chunk),
-      size & 0xff, (size >> 8) & 0xff, 0, 0,
-      ...payload,
-    ]);
-  }
+const fourCC = (text: string) => [...text].map((c) => c.charCodeAt(0));
 
+function riff(chunk: string, payload: number[]): Uint8Array {
+  const size = payload.length;
+  return new Uint8Array([
+    ...fourCC("RIFF"),
+    (12 + size) & 0xff, ((12 + size) >> 8) & 0xff, 0, 0,
+    ...fourCC("WEBP"),
+    ...fourCC(chunk),
+    size & 0xff, (size >> 8) & 0xff, 0, 0,
+    ...payload,
+  ]);
+}
+
+describe("decodeImageDimensions — WebP (SPEC-107)", () => {
   it("reads a lossy VP8 frame header", () => {
     // 3-byte frame tag, 9D 01 2A start code, then 14-bit LE width/height.
     const payload = [0, 0, 0, 0x9d, 0x01, 0x2a, 320 & 0xff, 320 >> 8, 240 & 0xff, 240 >> 8];

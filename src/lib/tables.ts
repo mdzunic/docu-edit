@@ -1083,14 +1083,14 @@ export function applyBorderPreset(
   if (!table) {
     return { model: next, selection };
   }
-  const { rows, bounds } = mapCellsInRange(table, range, (cell, owner, bounds) => {
+  const { rows, bounds } = mapCellsInRange(table, range, (cell, owner, rangeBounds) => {
     const rectBottom = owner.originRow + owner.rowSpan - 1;
     const rectRight = owner.originCol + owner.colSpan - 1;
     const borders: CellBorders = {
-      top: presetEdge(preset, owner.originRow === bounds.top, side),
-      bottom: presetEdge(preset, rectBottom === bounds.bottom, side),
-      left: presetEdge(preset, owner.originCol === bounds.left, side),
-      right: presetEdge(preset, rectRight === bounds.right, side),
+      top: presetEdge(preset, owner.originRow === rangeBounds.top, side),
+      bottom: presetEdge(preset, rectBottom === rangeBounds.bottom, side),
+      left: presetEdge(preset, owner.originCol === rangeBounds.left, side),
+      right: presetEdge(preset, rectRight === rangeBounds.right, side),
     };
     return { ...clearPreservedCell(cell), borders };
   });

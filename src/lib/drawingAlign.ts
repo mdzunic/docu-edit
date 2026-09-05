@@ -82,7 +82,7 @@ export function distributeRects(
 
   // Order by leading edge; the first and last in that order are the outermost
   // two and stay put. We reposition only the interior rectangles.
-  const order = rects.map((_, i) => i).sort((a, b) => pos(rects[a]) - pos(rects[b]));
+  const order = rects.map((_, i) => i).toSorted((a, b) => pos(rects[a]) - pos(rects[b]));
   const first = rects[order[0]];
   const last = rects[order[order.length - 1]];
 

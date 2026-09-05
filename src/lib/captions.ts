@@ -376,7 +376,7 @@ export function deleteObjectWithCaption(
 ): CommandResult {
   const next = cloneContainers(model);
   const blocks = next.sections[object.section].blocks;
-  const indices = [object.block, caption.block].sort((a, b) => b - a);
+  const indices = [object.block, caption.block].toSorted((a, b) => b - a);
   for (const index of indices) {
     blocks.splice(index, 1);
   }

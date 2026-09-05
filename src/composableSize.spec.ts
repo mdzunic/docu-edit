@@ -93,7 +93,7 @@ function composables(): string[] {
   };
   walk(join(srcDir, "views"));
   walk(join(srcDir, "composables"));
-  return found.sort();
+  return found.toSorted();
 }
 
 /** Counted the way the view budgets count, so the two are comparable. */

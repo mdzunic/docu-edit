@@ -151,9 +151,9 @@ describe("undo-burst coalescing (AC-28/29)", () => {
     sel?.addRange(range);
     editing.toggleBold();
     const table = model.value.slides[0].frames[0];
-    const cell = table.kind === "table" ? table.rows[0].cells[1] : null;
-    expect(cell?.paragraphs[0].runs.map((r) => r.text).join("")).toBe("Bravo");
-    expect(cell?.paragraphs[0].runs.every((r) => r.bold === true)).toBe(true);
+    const edited = table.kind === "table" ? table.rows[0].cells[1] : null;
+    expect(edited?.paragraphs[0].runs.map((r) => r.text).join("")).toBe("Bravo");
+    expect(edited?.paragraphs[0].runs.every((r) => r.bold === true)).toBe(true);
     // The unedited neighbour cell is untouched.
     const other = table.kind === "table" ? table.rows[0].cells[0] : null;
     expect(other?.paragraphs[0].runs[0].text).toBe("A");

@@ -7,10 +7,11 @@ import DocTableBlock from "./DocTableBlock.vue";
 import { caretFromRepeatedHeaderPoint, domPointForCaret } from "../lib/domCaret";
 import type { NamedStyle, Table } from "../lib/documentModel";
 
+const cell = (text: string) => ({
+  blocks: [{ type: "paragraph" as const, runs: [{ text, formatting: {} }] }],
+});
+
 function table(): Table {
-  const cell = (text: string) => ({
-    blocks: [{ type: "paragraph" as const, runs: [{ text, formatting: {} }] }],
-  });
   return {
     type: "table",
     columnWidthsCm: [4, 4],
@@ -63,11 +64,11 @@ describe("DocTableBlock header repetition (SPEC-076)", () => {
     const original = whole.findAll("tbody > tr")[0].findAll("td");
     const repeat = continuation.findAll("[data-repeated-header] td");
     expect(repeat).toHaveLength(original.length);
-    repeat.forEach((cell, index) => {
-      expect(cell.text()).toBe(original[index].text());
-      expect(cell.attributes("style")).toBe(original[index].attributes("style"));
-      expect(cell.attributes("data-row")).toBe(original[index].attributes("data-row"));
-      expect(cell.attributes("data-col")).toBe(original[index].attributes("data-col"));
+    repeat.forEach((repeated, index) => {
+      expect(repeated.text()).toBe(original[index].text());
+      expect(repeated.attributes("style")).toBe(original[index].attributes("style"));
+      expect(repeated.attributes("data-row")).toBe(original[index].attributes("data-row"));
+      expect(repeated.attributes("data-col")).toBe(original[index].attributes("data-col"));
     });
   });
 

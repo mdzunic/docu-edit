@@ -244,8 +244,8 @@ describe("MenuBar compact tier (SPEC-068)", () => {
     setTierWidthForTest(390);
     const wrapper = mountBar();
     await wrapper.get('[data-testid="menu-button"]').trigger("click");
-    const item = document.querySelector('[data-testid="file-a"]');
-    (item as HTMLElement).click();
+    const tapped = document.querySelector('[data-testid="file-a"]');
+    (tapped as HTMLElement).click();
     await wrapper.vm.$nextTick();
     expect(document.querySelector('[data-testid="menu-sheet"]')).toBeNull();
     wrapper.unmount();

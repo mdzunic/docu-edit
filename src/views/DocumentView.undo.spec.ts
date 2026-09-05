@@ -258,11 +258,11 @@ describe("typing grouping (AC-9..13)", () => {
   });
 
   it("a non-typing command breaks the typing group and is itself its own step", async () => {
-    const { wrapper } = await mountAt("/doc/group-non-typing");
+    const mounted = (await mountAt("/doc/group-non-typing")).wrapper;
     await typeText(0, 0, "ab");
     await microtasks();
 
-    await wrapper.get('[data-testid="align-center"]').trigger("click");
+    await mounted.get('[data-testid="align-center"]').trigger("click");
     await microtasks();
     await typeText(0, 2, "cd");
     await microtasks();

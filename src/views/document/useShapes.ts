@@ -168,6 +168,62 @@ export interface ShapesDeps extends EditorContext {
   ) => CommandResult | null;
 }
 
+/** The Shape a draw gesture will land. The preview paints this exact
+ * object and the insertion takes its fill/outline from it, so what is
+ * dragged out and what appears cannot disagree. A text box gets neither
+ * fill nor outline (AC-9). */
+function newDrawnShape(
+  geometry: ShapeGeometry,
+  isTextBox: boolean,
+  widthCm: number,
+  heightCm: number,
+): Shape {
+  const shape: Shape = { type: "shape", geometry, widthCm, heightCm, wrap: "square" };
+  if (isTextBox) {
+    return shape;
+  }
+  shape.outline = DEFAULT_NEW_SHAPE_OUTLINE;
+  if (!LINE_GEOMETRIES.has(geometry)) {
+    shape.fill = DEFAULT_NEW_SHAPE_FILL;
+  }
+  return shape;
+}
+
+/** The shape insertShape/insertTextBox just landed, found by scanning
+ * near the anchor block for the freshest shape — insertShape's own
+ * return selection points just after it (see its landing CaretPosition). */
+function shapeInsertedLocation(model: DocumentModel, anchor: CaretPosition): ShapeLocation | null {
+  const blocks = model.sections[anchor.section]?.blocks ?? [];
+  for (let i = 0; i < blocks.length; i++) {
+    if (isShape(blocks[i])) {
+      // Heuristic: the most recently inserted shape is adjacent to the
+      // anchor block index (insertShape splits/lands right there).
+      if (Math.abs(i - anchor.block) <= 2) {
+        return { section: anchor.section, block: i };
+      }
+    }
+  }
+  return null;
+}
+
+function clonePath(path: ShapePath): ShapePath {
+  return {
+    subpaths: path.subpaths.map((s) => ({ steps: s.steps.map((step) => ({ ...step })), closed: s.closed })),
+    smooth: path.smooth ? [...path.smooth] : undefined,
+  };
+}
+
+function leaderLineStyle(x1: number, y1: number, x2: number, y2: number): Record<string, string> {
+  const length = Math.hypot(x2 - x1, y2 - y1);
+  const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  return {
+    left: `${x1}px`,
+    top: `${y1}px`,
+    width: `${length}px`,
+    transform: `rotate(${angle}deg)`,
+  };
+}
+
 export function useShapes(deps: ShapesDeps) {
   const {
     doc,
@@ -1822,27 +1878,6 @@ export function useShapes(deps: ShapesDeps) {
     drawPreview.value = null;
   }
 
-  /** The Shape a draw gesture will land. The preview paints this exact
-   * object and the insertion takes its fill/outline from it, so what is
-   * dragged out and what appears cannot disagree. A text box gets neither
-   * fill nor outline (AC-9). */
-  function newDrawnShape(
-    geometry: ShapeGeometry,
-    isTextBox: boolean,
-    widthCm: number,
-    heightCm: number,
-  ): Shape {
-    const shape: Shape = { type: "shape", geometry, widthCm, heightCm, wrap: "square" };
-    if (isTextBox) {
-      return shape;
-    }
-    shape.outline = DEFAULT_NEW_SHAPE_OUTLINE;
-    if (!LINE_GEOMETRIES.has(geometry)) {
-      shape.fill = DEFAULT_NEW_SHAPE_FILL;
-    }
-    return shape;
-  }
-
   /** Finds the anchor CaretPosition + its page-relative top-left, in cm
    * (AC-4..6): the current caret's own paragraph, matching insertShape's
    * own caret-anchored insertion. */
@@ -2008,23 +2043,6 @@ export function useShapes(deps: ShapesDeps) {
       shapeSelection.value = inserted;
       void nextTick().then(remeasureShapeHandles);
     }
-  }
-
-  /** The shape insertShape/insertTextBox just landed, found by scanning
-   * near the anchor block for the freshest shape — insertShape's own
-   * return selection points just after it (see its landing CaretPosition). */
-  function shapeInsertedLocation(model: DocumentModel, anchor: CaretPosition): ShapeLocation | null {
-    const blocks = model.sections[anchor.section]?.blocks ?? [];
-    for (let i = 0; i < blocks.length; i++) {
-      if (isShape(blocks[i])) {
-        // Heuristic: the most recently inserted shape is adjacent to the
-        // anchor block index (insertShape splits/lands right there).
-        if (Math.abs(i - anchor.block) <= 2) {
-          return { section: anchor.section, block: i };
-        }
-      }
-    }
-    return null;
   }
 
   // --- freeform / curve / scribble drawing (SPEC-071) ---------------------
@@ -2281,13 +2299,6 @@ export function useShapes(deps: ShapesDeps) {
     void nextTick().then(remeasureShapeHandles);
   }
 
-  function clonePath(path: ShapePath): ShapePath {
-    return {
-      subpaths: path.subpaths.map((s) => ({ steps: s.steps.map((step) => ({ ...step })), closed: s.closed })),
-      smooth: path.smooth ? [...path.smooth] : undefined,
-    };
-  }
-
   /** Leaves point-edit mode, committing the whole session as one "edit
    * points" undo entry with the box renormalised (AC-22/AC-23), or deleting
    * the shape when its path emptied (AC-21). Restores the prior selection. */
@@ -2417,17 +2428,6 @@ export function useShapes(deps: ShapesDeps) {
       }
     }
     return out;
-  }
-
-  function leaderLineStyle(x1: number, y1: number, x2: number, y2: number): Record<string, string> {
-    const length = Math.hypot(x2 - x1, y2 - y1);
-    const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
-    return {
-      left: `${x1}px`,
-      top: `${y1}px`,
-      width: `${length}px`,
-      transform: `rotate(${angle}deg)`,
-    };
   }
 
   function selectPointEditVertex(index = 0) {

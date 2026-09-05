@@ -19,7 +19,7 @@ describe("SPEC-056 AC-27 — package.json is unchanged", () => {
     // (approved 2026-09-04 — SPEC-035's English word lists, see
     // lib/spellcheck/dictionaries/enBase.ts). Still an exact pin: anything
     // else added here fails.
-    expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
+    expect(Object.keys(manifest.dependencies ?? {}).toSorted()).toEqual([
       "pdfjs-dist",
       "vue",
       "vue-router",
@@ -35,7 +35,7 @@ describe("SPEC-056 AC-27 — package.json is unchanged", () => {
   });
 
   it("keeps the pinned dev dependency set", () => {
-    expect(Object.keys(manifest.devDependencies ?? {}).sort()).toEqual([
+    expect(Object.keys(manifest.devDependencies ?? {}).toSorted()).toEqual([
       "@playwright/test",
       "@types/node",
       "@vitejs/plugin-vue",

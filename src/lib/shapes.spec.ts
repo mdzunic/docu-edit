@@ -760,16 +760,16 @@ describe("duplicateShape (AC-43)", () => {
   });
 });
 
+function zOrders(model: DocumentModel): number[] {
+  return model.sections[0].blocks.filter(isShape).map((s) => s.zOrder!);
+}
+
 // --- reorderShapeZ (AC-29..AC-33) -----------------------------------------------
 
 describe("reorderShapeZ", () => {
   function threeShapes(): DocumentModel {
     // zOrder 0, 1, 2 at blocks 0, 1, 2.
     return doc(shape({ zOrder: 0 }), shape({ zOrder: 1 }), shape({ zOrder: 2 }), paragraph(""));
-  }
-
-  function zOrders(model: DocumentModel): number[] {
-    return model.sections[0].blocks.filter(isShape).map((s) => s.zOrder!);
   }
 
   it("bring to front: moves the target to the highest zOrder, others shift down", () => {
@@ -781,7 +781,7 @@ describe("reorderShapeZ", () => {
     expect((blocks[0] as Shape).zOrder).toBe(2);
     expect((blocks[1] as Shape).zOrder).toBe(0);
     expect((blocks[2] as Shape).zOrder).toBe(1);
-    expect(zOrders(next).sort()).toEqual([0, 1, 2]);
+    expect(zOrders(next).toSorted()).toEqual([0, 1, 2]);
   });
 
   it("send to back: moves the target to the lowest zOrder", () => {
@@ -1237,24 +1237,25 @@ describe("shapesInPaintOrder", () => {
   });
 });
 
+const shapeIn = (model: DocumentModel, block: number): Shape => {
+  const found = shapeAt(model, { section: 0, block });
+  if (!found) {
+    throw new Error(`no shape at block ${block}`);
+  }
+  return found;
+};
+
+const paragraphIn = (model: DocumentModel, block: number): Paragraph => {
+  const found = model.sections[0].blocks[block];
+  if (found.type !== "paragraph") {
+    throw new Error(`no paragraph at block ${block}`);
+  }
+  return found;
+};
+
 // --- anchor pairing (SPEC-078) ----------------------------------------------
 
 describe("anchor pairing (SPEC-078)", () => {
-  const shapeIn = (model: DocumentModel, block: number): Shape => {
-    const found = shapeAt(model, { section: 0, block });
-    if (!found) {
-      throw new Error(`no shape at block ${block}`);
-    }
-    return found;
-  };
-  const paragraphIn = (model: DocumentModel, block: number): Paragraph => {
-    const found = model.sections[0].blocks[block];
-    if (found.type !== "paragraph") {
-      throw new Error(`no paragraph at block ${block}`);
-    }
-    return found;
-  };
-
   it("insertShape pairs the shape with the caret paragraph (end-of-paragraph insert)", () => {
     const model = doc(paragraph("Anchor me"));
     const { model: next } = insertShape(model, selectionAt(0, 9), { geometry: "rect", widthCm: 3, heightCm: 2 });

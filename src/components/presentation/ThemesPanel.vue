@@ -112,7 +112,9 @@ function onFont(which = "major", event = new Event("change")) {
     </p>
 
     <details class="customise">
-      <summary data-testid="theme-customise">Customise</summary>
+      <summary data-testid="theme-customise">
+        Customise
+      </summary>
       <div class="customise-grid">
         <label
           v-for="slot in slots"

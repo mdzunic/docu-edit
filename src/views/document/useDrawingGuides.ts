@@ -42,6 +42,17 @@ function rectCandidates(x0: number, y0: number, x1: number, y1: number): SnapCan
   ];
 }
 
+/** A guide in on-screen (unscaled `.pages`) pixels, for the overlay. */
+function guidePx(guide: SnapGuide): { left: number; top: number; length: number; vertical: boolean } {
+  const vertical = guide.axis === "x";
+  return {
+    left: guide.coordCm * PX_PER_CM,
+    top: guide.startCm * PX_PER_CM,
+    length: (guide.endCm - guide.startCm) * PX_PER_CM,
+    vertical,
+  };
+}
+
 export function useDrawingGuides(deps: DrawingGuidesDeps) {
   const { pageRef, contentRoot, clientToContentPx, zoom } = deps;
   const { preferences } = usePreferences();
@@ -165,17 +176,6 @@ export function useDrawingGuides(deps: DrawingGuidesDeps) {
     if (snapGuides.value.length > 0) {
       snapGuides.value = [];
     }
-  }
-
-  /** A guide in on-screen (unscaled `.pages`) pixels, for the overlay. */
-  function guidePx(guide: SnapGuide): { left: number; top: number; length: number; vertical: boolean } {
-    const vertical = guide.axis === "x";
-    return {
-      left: guide.coordCm * PX_PER_CM,
-      top: guide.startCm * PX_PER_CM,
-      length: (guide.endCm - guide.startCm) * PX_PER_CM,
-      vertical,
-    };
   }
 
   return { snapGuides, applySnap, applyResizeSnap, clearGuides, guidePx };

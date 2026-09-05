@@ -148,6 +148,11 @@ export interface ChartFromTableResult {
   unparsable: string[];
 }
 
+/** Strips a digit-grouping separator, insisting the groups it separated
+ * were real thousands groups ("1,000,000", never "1,2,3"). */
+const ungroup = (grouped: string, separator: string): string | null =>
+  new RegExp(`^\\d{1,3}(?:\\${separator}\\d{3})*$`).test(grouped) ? grouped.split(separator).join("") : null;
+
 /** Reads one table cell's text as a number the way a person typing into a
  * table would expect, or null when it is not a number. Beyond what `Number()`
  * accepts: surrounding whitespace, a leading or trailing currency sign
@@ -191,10 +196,6 @@ export function parseChartNumber(raw: string): number | null {
   }
   const commas = text.split(",").length - 1;
   const points = text.split(".").length - 1;
-  /** Strips a digit-grouping separator, insisting the groups it separated
-   * were real thousands groups ("1,000,000", never "1,2,3"). */
-  const ungroup = (grouped: string, separator: string): string | null =>
-    new RegExp(`^\\d{1,3}(?:\\${separator}\\d{3})*$`).test(grouped) ? grouped.split(separator).join("") : null;
   if (commas > 0 && points > 0) {
     // Both present: the last one is the decimal separator.
     const decimal = text.lastIndexOf(",") > text.lastIndexOf(".") ? "," : ".";

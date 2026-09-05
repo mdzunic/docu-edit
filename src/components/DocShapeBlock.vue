@@ -73,7 +73,7 @@ function resolvePicture(mediaId = "") {
       return null;
     }
     img = new Image();
-    img.onload = repaint;
+    img.addEventListener("load", repaint);
     img.src = src;
     pictureCache.set(mediaId, img);
   }

@@ -49,6 +49,8 @@ function rect(kind: SlideFieldKind, w: number, h: number): { x: number; y: numbe
   return { x: r3(r.xCm), y: r3(r.yCm), w: r3(r.widthCm), h: r3(r.heightCm) };
 }
 
+const decode = (u: Uint8Array): string => new TextDecoder().decode(u);
+
 describe("SPEC-093 header/footer round trip", () => {
   describe("pptx", () => {
     it("reopens with the deck values + every field entry (equalStructural)", async () => {
@@ -81,7 +83,7 @@ describe("SPEC-093 header/footer round trip", () => {
       const resaved = (await writePptx(m)).bytes;
       const before = await unzip(bytes);
       const after = await unzip(resaved);
-      expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+      expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
       for (const [name, data] of before) {
         expect(equalBytes(after.get(name)!, data), `part ${name}`).toBe(true);
       }
@@ -110,7 +112,6 @@ describe("SPEC-093 header/footer round trip", () => {
     it("pins the sanctioned datetime* delta (AC-84): an auto date writes datetime3", async () => {
       const bytes = await buildPptxHeaderFooterFixtureBytes();
       const parts = await unzip(bytes);
-      const decode = (u: Uint8Array): string => new TextDecoder().decode(u);
       const slide1 = decode(parts.get("ppt/slides/slide2.xml")!); // slide index 1
       expect(slide1).toContain(`type="datetime3"`); // d MMMM yyyy ⇄ datetime3
       // presentation.xml carries the title-slide suppression attribute.

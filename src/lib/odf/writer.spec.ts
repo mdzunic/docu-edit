@@ -197,22 +197,22 @@ describe.each(["libreoffice-writer.odt", "openoffice-era.odt"])(
   },
 );
 
+function formattedModel(): DocumentModel {
+  const model = createDocument("id-1");
+  model.sections[0].blocks = [
+    {
+      type: "paragraph",
+      runs: [{ text: "styled", formatting: { bold: true, color: "#ff0000" } }],
+      formatting: { alignment: "center", indentStartCm: 1.27 },
+      styleId: "Fancy",
+    },
+  ];
+  return model;
+}
+
 describe("writeOdt — automatic styles (AC-16, AC-17, AC-18)", () => {
   async function contentDom(model: DocumentModel): Promise<Document> {
     return parseXml(await partText((await writeOdt(model)).bytes, "content.xml"));
-  }
-
-  function formattedModel(): DocumentModel {
-    const model = createDocument("id-1");
-    model.sections[0].blocks = [
-      {
-        type: "paragraph",
-        runs: [{ text: "styled", formatting: { bold: true, color: "#ff0000" } }],
-        formatting: { alignment: "center", indentStartCm: 1.27 },
-        styleId: "Fancy",
-      },
-    ];
-    return model;
   }
 
   it("emits run formatting as an automatic text style referenced by name (AC-16)", async () => {
@@ -438,46 +438,46 @@ describe("writeOdt — Shape (SPEC-051)", () => {
   });
 });
 
+function styledModel(): DocumentModel {
+  const model = createDocument("id-1");
+  model.sections[0].blocks = [
+    {
+      type: "shape",
+      geometry: "rect",
+      widthCm: 4,
+      heightCm: 3,
+      wrap: "square",
+      fill: {
+        kind: "gradient",
+        gradient: {
+          type: "linear",
+          angleDeg: 90,
+          stops: [
+            { position: 0, color: "#ff0000" },
+            { position: 1, color: "#0000ff" },
+          ],
+        },
+      },
+      outline: { color: "#123456", widthPt: 1, dash: "dashDot" },
+      shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 },
+    },
+    {
+      type: "shape",
+      geometry: "ellipse",
+      widthCm: 3,
+      heightCm: 3,
+      wrap: "square",
+      fill: { kind: "pattern", preset: "ltUpDiag", foreground: "#112233", background: "#ffffff" },
+    },
+  ];
+  return model;
+}
+
 // SPEC-073: shape styling depth — the shared drawing definitions a graphic
 // style references by name (draw:gradient/draw:hatch/draw:fill-image) land
 // in styles.xml <office:styles>, on the fresh path AND the preserved-part
 // patch path, and the reader resolves them across parts on reopen.
 describe("writeOdt — shape styling definitions in styles.xml (SPEC-073)", () => {
-  function styledModel(): DocumentModel {
-    const model = createDocument("id-1");
-    model.sections[0].blocks = [
-      {
-        type: "shape",
-        geometry: "rect",
-        widthCm: 4,
-        heightCm: 3,
-        wrap: "square",
-        fill: {
-          kind: "gradient",
-          gradient: {
-            type: "linear",
-            angleDeg: 90,
-            stops: [
-              { position: 0, color: "#ff0000" },
-              { position: 1, color: "#0000ff" },
-            ],
-          },
-        },
-        outline: { color: "#123456", widthPt: 1, dash: "dashDot" },
-        shadow: { color: "#000000", alpha: 0.4, blurPt: 4, distancePt: 3, angleDeg: 90 },
-      },
-      {
-        type: "shape",
-        geometry: "ellipse",
-        widthCm: 3,
-        heightCm: 3,
-        wrap: "square",
-        fill: { kind: "pattern", preset: "ltUpDiag", foreground: "#112233", background: "#ffffff" },
-      },
-    ];
-    return model;
-  }
-
   it("a fresh save puts deGrad/deHatch/deDashDot definitions in office:styles and the reopen round-trips them", async () => {
     const { bytes } = await writeOdt(styledModel());
     const stylesXml = await partText(bytes, "styles.xml");
@@ -695,34 +695,34 @@ describe("odtFileName (AC-2)", () => {
   });
 });
 
-describe("writeOdt — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
-  function geometryModel(): DocumentModel {
-    const model = createDocument("geometry");
-    model.sections[0].blocks = [
-      {
-        type: "paragraph",
-        runs: [{ text: "rtl paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
-        formatting: {
-          direction: "rtl",
-          indentStartCm: 2.54,
-          indentEndCm: 1.27,
-          indentFirstLineCm: 0.635,
-        },
+function geometryModel(): DocumentModel {
+  const model = createDocument("geometry");
+  model.sections[0].blocks = [
+    {
+      type: "paragraph",
+      runs: [{ text: "rtl paragraph", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+      formatting: {
+        direction: "rtl",
+        indentStartCm: 2.54,
+        indentEndCm: 1.27,
+        indentFirstLineCm: 0.635,
       },
-      {
-        type: "paragraph",
-        runs: [{ text: "exact", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
-        formatting: { lineSpacingPt: 14, lineSpacingRule: "exact", spaceBeforePt: 0 },
-      },
-      {
-        type: "paragraph",
-        runs: [{ text: "at least", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
-        formatting: { lineSpacingPt: 16, spaceAfterPt: 6 },
-      },
-    ];
-    return model;
-  }
+    },
+    {
+      type: "paragraph",
+      runs: [{ text: "exact", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+      formatting: { lineSpacingPt: 14, lineSpacingRule: "exact", spaceBeforePt: 0 },
+    },
+    {
+      type: "paragraph",
+      runs: [{ text: "at least", formatting: { fontFamily: "Calibri", fontSizePt: 11 } }],
+      formatting: { lineSpacingPt: 16, spaceAfterPt: 6 },
+    },
+  ];
+  return model;
+}
 
+describe("writeOdt — paragraph geometry (SPEC-014 AC-25, AC-26)", () => {
   it("writes RTL indents on the physical edges LibreOffice expects (AC-25)", async () => {
     const contentXml = await partText((await writeOdt(geometryModel())).bytes, "content.xml");
     // Logical start (2.54) lands on the physical RIGHT edge; end (1.27) on

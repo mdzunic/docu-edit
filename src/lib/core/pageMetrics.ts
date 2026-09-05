@@ -43,7 +43,7 @@ function lineBoxesOf(element: Element, elementRect: DOMRect): LineBox[] {
   }
   const usable = rects
     .filter((rect) => rect.height > 0)
-    .sort((a, b) => a.top - b.top || a.left - b.left);
+    .toSorted((a, b) => a.top - b.top || a.left - b.left);
   if (usable.length === 0) {
     return [{ top: 0, height: elementRect.height }];
   }

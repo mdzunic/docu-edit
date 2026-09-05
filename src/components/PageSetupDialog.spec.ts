@@ -257,15 +257,15 @@ describe("PageSetupDialog (SPEC-027 AC-1..9)", () => {
   });
 });
 
+function openThemed(initial: Record<string, unknown> = A4_INITIAL) {
+  return mount(PageSetupDialog, { props: { initial, theme: DEFAULT_THEME } });
+}
+
+function backgroundOf(wrapper: VueWrapper): unknown {
+  return (wrapper.emitted("apply")![0][0] as { pageBackground: unknown }).pageBackground;
+}
+
 describe("PageSetupDialog — page background theme swatches (SPEC-077 AC-22/AC-23)", () => {
-  function openThemed(initial: Record<string, unknown> = A4_INITIAL) {
-    return mount(PageSetupDialog, { props: { initial, theme: DEFAULT_THEME } });
-  }
-
-  function backgroundOf(wrapper: VueWrapper): unknown {
-    return (wrapper.emitted("apply")![0][0] as { pageBackground: unknown }).pageBackground;
-  }
-
   it("renders no theme row without a theme (AC-21: existing mounts unchanged)", async () => {
     const wrapper = mount(PageSetupDialog, { props: { initial: A4_INITIAL } });
     await wrapper.get('[data-testid="page-setup-tab-borders"]').trigger("click");

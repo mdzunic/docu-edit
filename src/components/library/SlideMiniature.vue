@@ -277,8 +277,8 @@ const FOREIGN_FILL = "#e9e7e6";
 
         <canvas
           v-else-if="frame.kind === 'chart'"
-          class="mini-chart"
           :ref="(el) => paintChartFrame(el, frame)"
+          class="mini-chart"
           :style="framePositionOnly(frame)"
         />
 

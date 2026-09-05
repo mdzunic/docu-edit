@@ -201,6 +201,17 @@ export type OpenedFile =
     }
   | { kind: "media"; model: MediaModel };
 
+// SPEC-047: the interactive open path (picker, drag-drop, URL, library)
+// parses a `.docx` with { deferMedia: true } so the ~1s base64 encode of a
+// large document's images does not sit between choosing the file and first
+// paint. The model comes back with its images' `data` still ""; each page
+// force-encodes its own images as it renders (usePaginationView's
+// renderEntryFor), and the first idle persist finalises the rest in a
+// chunked background pass (documentStore's persistMedia). Headless callers
+// (generate, template import) go through the exported helpers below, which
+// never defer.
+const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
+
 /** The shared open pipeline. Unzips at most once for detection (parsers
  * re-unzip on their own, as they always did), then dispatches on the
  * package's own declarations — see detectPackage:
@@ -222,16 +233,6 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
   const buffer = await readFileAsArrayBuffer(file);
   const bytes = new Uint8Array(buffer);
   const title = titleFromFileName(file.name);
-  // SPEC-047: the interactive open path (picker, drag-drop, URL, library)
-  // parses a `.docx` with { deferMedia: true } so the ~1s base64 encode of a
-  // large document's images does not sit between choosing the file and first
-  // paint. The model comes back with its images' `data` still ""; each page
-  // force-encodes its own images as it renders (usePaginationView's
-  // renderEntryFor), and the first idle persist finalises the rest in a
-  // chunked background pass (documentStore's persistMedia). Headless callers
-  // (generate, template import) go through the exported helpers below, which
-  // never defer.
-  const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
 
   // SPEC-107: media is sniffed BEFORE any unzip attempt, from the bytes and
   // never the extension — media files are not ZIPs, so this is both cheaper

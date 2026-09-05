@@ -268,7 +268,7 @@ interface FaceUsage {
 }
 
 function toUnicodeCMap(usage: FaceUsage): string {
-  const entries = Array.from(usage.usedGlyphs.entries()).sort((a, b) => a[0] - b[0]);
+  const entries = Array.from(usage.usedGlyphs.entries()).toSorted((a, b) => a[0] - b[0]);
   let body = "";
   for (let start = 0; start < entries.length; start += 100) {
     const batch = entries.slice(start, start + 100);
@@ -341,7 +341,7 @@ async function writeFont(objects: PdfObjects, face: FaceKey, usage: FaceUsage): 
       ` /FontFile2 ${fileId} 0 R >>`,
   );
   const widths = Array.from(usage.usedGlyphs.keys())
-    .sort((a, b) => a - b)
+    .toSorted((a, b) => a - b)
     .map((glyph) => `${glyph} [${fmt(font.advanceOf(glyph) * scale)}]`)
     .join(" ");
   const cidFontId = objects.add(
@@ -379,6 +379,17 @@ interface OutlineEntry {
   pageIndex: number;
 }
 
+interface OutlineNode {
+  id: number;
+  level: number;
+  parentId: number;
+  children: OutlineNode[];
+  entry: OutlineEntry;
+}
+
+const countDescendants = (node: OutlineNode): number =>
+  node.children.reduce((sum, child) => sum + 1 + countDescendants(child), 0);
+
 /** Writes the /Outlines tree from the flat heading list, nesting each entry
  * under the closest preceding entry of a shallower level. Returns the root
  * outline dictionary's id, or 0 when there are no headings. */
@@ -392,22 +403,15 @@ function writeOutlines(
     return 0;
   }
   const rootId = objects.alloc();
-  interface Node {
-    id: number;
-    level: number;
-    parentId: number;
-    children: Node[];
-    entry: OutlineEntry;
-  }
-  const roots: Node[] = [];
-  const stack: Node[] = [];
+  const roots: OutlineNode[] = [];
+  const stack: OutlineNode[] = [];
   for (const entry of entries) {
     const level = Math.min(Math.max(entry.heading.level, 1), 3);
     while (stack.length > 0 && stack[stack.length - 1].level >= level) {
       stack.pop();
     }
     const parent = stack[stack.length - 1];
-    const node: Node = {
+    const node: OutlineNode = {
       id: objects.alloc(),
       level,
       parentId: parent ? parent.id : rootId,
@@ -418,7 +422,7 @@ function writeOutlines(
     stack.push(node);
   }
   let total = 0;
-  const writeNode = (node: Node, prev: Node | undefined, next: Node | undefined) => {
+  const writeNode = (node: OutlineNode, prev: OutlineNode | undefined, next: OutlineNode | undefined) => {
     total += 1;
     const page = node.entry.pageIndex;
     const y = fmt(Math.max(0, (pageHeights[page] ?? 0) - node.entry.heading.yPt));
@@ -441,8 +445,6 @@ function writeOutlines(
       writeNode(child, node.children[index - 1], node.children[index + 1]),
     );
   };
-  const countDescendants = (node: Node): number =>
-    node.children.reduce((sum, child) => sum + 1 + countDescendants(child), 0);
   roots.forEach((node, index) => writeNode(node, roots[index - 1], roots[index + 1]));
   objects.set(
     rootId,

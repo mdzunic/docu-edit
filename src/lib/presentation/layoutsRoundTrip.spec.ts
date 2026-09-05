@@ -54,7 +54,7 @@ describe("AC-13/18: pptx repoint to an existing layout", () => {
     const bytes = (await writePptx(model)).bytes;
     const before = await unzip(source);
     const after = await unzip(bytes);
-    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
     for (const [name, data] of before) {
       expect(equalBytes(data, after.get(name)!), `part ${name}`).toBe(true);
     }

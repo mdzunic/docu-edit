@@ -87,6 +87,10 @@ function preservedXml(block: { type: string }): string {
   return paragraph.type === "paragraph" ? (paragraph.opaqueInlines ?? []).map((i) => i.xml).join("") : "";
 }
 
+const at = (zIndex: string) =>
+  `<w:pict><v:shape style="position:absolute;width:36pt;height:36pt;z-index:${zIndex}">` +
+  '<v:imagedata r:id="rId5"/></v:shape></w:pict>';
+
 describe("parseDocx — legacy VML pictures", () => {
   it("reads an inline v:shape/v:imagedata as an Image at its style's size", async () => {
     const pict =
@@ -127,9 +131,6 @@ describe("parseDocx — legacy VML pictures", () => {
   });
 
   it("splits behind from in-front by VML's own z-index sign", async () => {
-    const at = (zIndex: string) =>
-      `<w:pict><v:shape style="position:absolute;width:36pt;height:36pt;z-index:${zIndex}">` +
-      '<v:imagedata r:id="rId5"/></v:shape></w:pict>';
     expect(((await blocksOf([at("-1")]))[0] as Image).wrap).toBe("behind");
     expect(((await blocksOf([at("2")]))[0] as Image).wrap).toBe("infront");
   });

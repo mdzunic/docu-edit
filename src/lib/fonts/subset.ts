@@ -181,7 +181,7 @@ function tableChecksum(data: Uint8Array): number {
  * checksums and the head checkSumAdjustment. */
 function assemble(version: number, tables: Table[]): Uint8Array {
   const numTables = tables.length;
-  const sorted = [...tables].sort((a, b) => (a.tag < b.tag ? -1 : 1));
+  const sorted = [...tables].toSorted((a, b) => (a.tag < b.tag ? -1 : 1));
   const headerSize = 12 + numTables * 16;
   let offset = headerSize;
   const layout = sorted.map((table) => {

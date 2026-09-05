@@ -10,6 +10,11 @@ import { getDocument } from "../lib/documentStore";
 import { createDocument } from "../lib/documentModel";
 import { routes } from "../router";
 
+/** The initial value of a callback slot filled in later (a promise executor,
+ * a registration call) — shared so the slot's initialiser is not a nested
+ * function expression of its own. */
+const noop = (): void => {};
+
 // Only the fetch itself is mocked — OpenFromUrlError stays the real class,
 // so thrown instances keep a real .message the view can render.
 vi.mock("../lib/openDocumentFromUrl", async (importOriginal) => {
@@ -91,7 +96,7 @@ describe("OpenFromUrlView", () => {
   });
 
   it("shows a loading state while the fetch is in flight (AC-10)", async () => {
-    let resolveFetch: (opened: { kind: "text"; model: ReturnType<typeof createDocument> }) => void = () => {};
+    let resolveFetch: (opened: { kind: "text"; model: ReturnType<typeof createDocument> }) => void = noop;
     vi.mocked(openDocumentFromUrl).mockReturnValue(
       new Promise((resolve) => {
         resolveFetch = resolve;

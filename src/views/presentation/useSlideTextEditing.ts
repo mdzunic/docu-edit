@@ -109,6 +109,12 @@ export interface SlideTextEditing {
   indent: (delta: 1 | -1) => void;
 }
 
+function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {
+  const last = Math.max(0, owner.paragraphs.length - 1);
+  const lastLen = owner.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
+  placeCaret(el, { para: last, offset: lastLen });
+}
+
 export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
   const editingFrameId = ref<string | null>(null);
   const editingCell = ref<CellAddress | null>(null);
@@ -338,12 +344,6 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       /* caret placed at the click point */
     } else placeCaretAtEnd(el, owner);
     selectionTick.value++;
-  }
-
-  function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {
-    const last = Math.max(0, owner.paragraphs.length - 1);
-    const lastLen = owner.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
-    placeCaret(el, { para: last, offset: lastLen });
   }
 
   function stopEditing(): void {

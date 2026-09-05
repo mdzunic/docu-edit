@@ -168,7 +168,7 @@ describe("w:pPr pagination flags (SPEC-028 AC-22..29)", () => {
       "<w:jc",
     ].map((tag) => xml.indexOf(tag));
     expect(order.every((index) => index >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect([...order].toSorted((a, b) => a - b)).toEqual(order);
   });
 
   it("round-trips every flag, including the widowControl explicit-off, and validates", async () => {

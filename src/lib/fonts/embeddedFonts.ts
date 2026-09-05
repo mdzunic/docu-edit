@@ -94,7 +94,7 @@ export function deobfuscateOdttf(bytes: Uint8Array, fontKey: string): Uint8Array
   for (let i = 0; i < 16; i += 1) {
     guid[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
-  const key = guid.slice().reverse();
+  const key = guid.toReversed();
   const out = bytes.slice();
   const n = Math.min(32, out.length);
   for (let i = 0; i < n; i += 1) {

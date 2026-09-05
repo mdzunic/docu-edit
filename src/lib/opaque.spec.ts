@@ -181,7 +181,7 @@ describe("SPEC-050 — collectDropRecords for a .md target", () => {
       },
     ];
     const dropped = collectDropRecords(model, "md");
-    expect(dropped.map((d) => d.kind).sort()).toEqual(["bookmark", "paragraphFormatting", "runFormatting"]);
+    expect(dropped.map((d) => d.kind).toSorted()).toEqual(["bookmark", "paragraphFormatting", "runFormatting"]);
     for (const record of dropped) {
       expect(DROP_KIND_LABELS[record.kind]).toBeTruthy();
       expect(record.reason).toContain("Markdown (.md)");
@@ -209,7 +209,7 @@ describe("SPEC-050 — collectDropRecords for a .md target", () => {
       { type: "paragraph", runs: [{ text: "1", formatting: {}, note: { noteId: "n1", kind: "footnote" } }] },
     ];
     const dropped = collectDropRecords(model, "md");
-    expect(dropped.map((d) => d.kind).sort()).toEqual(["headerFooter", "note", "pageSetup"]);
+    expect(dropped.map((d) => d.kind).toSorted()).toEqual(["headerFooter", "note", "pageSetup"]);
   });
 });
 
@@ -237,18 +237,18 @@ describe("SPEC-050 — withoutDropped", () => {
   });
 });
 
+function shapeDoc(overrides: Record<string, unknown>) {
+  const model = { ...createDocument("id-style-drop"), format: "docx" as const };
+  model.sections[0].blocks = [
+    { type: "paragraph", runs: [] },
+    { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides } as never,
+  ];
+  return model;
+}
+
 // --- SPEC-073: shapeStyle drops (AC-34) --------------------------------------
 
 describe("shapeStyle DropRecords (SPEC-073 AC-34)", () => {
-  function shapeDoc(overrides: Record<string, unknown>) {
-    const model = { ...createDocument("id-style-drop"), format: "docx" as const };
-    model.sections[0].blocks = [
-      { type: "paragraph", runs: [] },
-      { type: "shape", geometry: "rect", widthCm: 3, heightCm: 2, wrap: "square", ...overrides } as never,
-    ];
-    return model;
-  }
-
   it("has a label for the new kind", () => {
     expect(DROP_KIND_LABELS.shapeStyle).toBe("Shape styling");
   });

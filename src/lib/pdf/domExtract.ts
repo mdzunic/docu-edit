@@ -132,6 +132,8 @@ export function filledRectItem(rect: PdfRect, fill: [number, number, number]): P
   };
 }
 
+const half = (edge?: CellEdgePaint) => (edge ? edge.widthPt / 2 : 0);
+
 /** A cell's painted border edges as filled strips (SPEC-076 AC-29). Each
  * strip is centred on the cell-rect edge: under border-collapse the painted
  * border straddles the grid line the neighbouring cell rects share, so two
@@ -147,7 +149,6 @@ export function cellBorderItems(
     left?: CellEdgePaint;
   },
 ): PdfPathItem[] {
-  const half = (edge?: CellEdgePaint) => (edge ? edge.widthPt / 2 : 0);
   const x0 = rect.xPt - half(edges.left);
   const y0 = rect.yPt - half(edges.top);
   const width = rect.widthPt + half(edges.left) + half(edges.right);

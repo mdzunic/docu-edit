@@ -80,10 +80,10 @@ describe("COMMANDS completeness (SPEC-062 AC-31, AC-32)", () => {
   });
 });
 
-describe("searchCommands ranking (SPEC-062)", () => {
-  const find = (query: string, id: string) =>
-    searchCommands(query).find((match) => match.meta.id === id);
+const find = (query: string, id: string) =>
+  searchCommands(query).find((match) => match.meta.id === id);
 
+describe("searchCommands ranking (SPEC-062)", () => {
   it("returns every command in catalogue order for an empty query", () => {
     const results = searchCommands("");
     expect(results.map((r) => r.meta.id)).toEqual(COMMANDS.map((c) => c.id));

@@ -176,7 +176,9 @@ function onOverlayDblclick(event = new MouseEvent("dblclick")) {
       data-testid="rotation-readout"
       aria-live="polite"
       :class="{ 'is-visible': readout !== '' }"
-    >{{ readout }}</div>
+    >
+      {{ readout }}
+    </div>
   </div>
 </template>
 

@@ -388,6 +388,14 @@ async function partOf(bytes: Uint8Array, name: string): Promise<string> {
   return new TextDecoder().decode(part);
 }
 
+function calloutOf(model: DocumentModel) {
+  return model.styles?.find((style) => style.id === "Callout")?.paragraphFormatting;
+}
+
+function paintedOf(model: DocumentModel, block = 0): ParagraphFormatting | undefined {
+  return paintedParagraphFormatting(model, model.sections[0].blocks[block] as Paragraph);
+}
+
 // SPEC-074 AC-17/AC-18 — a style's own borders and shading. They live on the
 // style, not copied onto every paragraph that uses it, so what has to survive
 // a save is the *style definition*: `w:pBdr`/`w:shd` inside styles.xml's
@@ -410,10 +418,6 @@ describe("a paragraph style's borders and shading (AC-17, AC-18)", () => {
       },
     ];
     return model;
-  }
-
-  function calloutOf(model: DocumentModel) {
-    return model.styles?.find((style) => style.id === "Callout")?.paragraphFormatting;
   }
 
   it("survives a .docx round trip on the style itself", async () => {
@@ -466,10 +470,6 @@ describe("a paragraph style's borders and shading (AC-17, AC-18)", () => {
         },
       ];
       return model;
-    }
-
-    function paintedOf(model: DocumentModel, block = 0): ParagraphFormatting | undefined {
-      return paintedParagraphFormatting(model, model.sections[0].blocks[block] as Paragraph);
     }
 
     it("writes an all-nil w:pBdr and a fill-less w:shd", async () => {

@@ -120,52 +120,52 @@ describe("paintShapeIntoCanvas — zoom-scaled backing store (AC-20)", () => {
   });
 });
 
+function pathCtx() {
+  const calls: string[] = [];
+  const ctx = {
+    calls,
+    save: () => calls.push("save"),
+    restore: () => calls.push("restore"),
+    translate: () => {},
+    rotate: () => {},
+    beginPath: () => calls.push("beginPath"),
+    closePath: () => calls.push("closePath"),
+    moveTo: () => calls.push("moveTo"),
+    lineTo: () => calls.push("lineTo"),
+    bezierCurveTo: () => calls.push("bezierCurveTo"),
+    arcTo: () => calls.push("arcTo"),
+    stroke: () => calls.push("stroke"),
+    fill: (rule?: string) => calls.push(`fill:${rule ?? ""}`),
+    ellipse: () => {},
+    strokeRect: () => calls.push("strokeRect"),
+    setLineDash: () => {},
+  };
+  return ctx;
+}
+
+const triShape = (overrides: Partial<Shape> = {}): Shape => ({
+  type: "shape",
+  geometry: "rect",
+  widthCm: 4,
+  heightCm: 4,
+  wrap: "inline",
+  path: {
+    subpaths: [
+      {
+        steps: [
+          { op: "move", x: 0, y: 1 },
+          { op: "line", x: 1, y: 1 },
+          { op: "cubic", x1: 0.75, y1: 0.5, x2: 0.25, y2: 0.5, x: 0.5, y: 0 },
+          { op: "close" },
+        ],
+        closed: true,
+      },
+    ],
+  },
+  ...overrides,
+});
+
 describe("paintShape — path (SPEC-071)", () => {
-  function pathCtx() {
-    const calls: string[] = [];
-    const ctx = {
-      calls,
-      save: () => calls.push("save"),
-      restore: () => calls.push("restore"),
-      translate: () => {},
-      rotate: () => {},
-      beginPath: () => calls.push("beginPath"),
-      closePath: () => calls.push("closePath"),
-      moveTo: () => calls.push("moveTo"),
-      lineTo: () => calls.push("lineTo"),
-      bezierCurveTo: () => calls.push("bezierCurveTo"),
-      arcTo: () => calls.push("arcTo"),
-      stroke: () => calls.push("stroke"),
-      fill: (rule?: string) => calls.push(`fill:${rule ?? ""}`),
-      ellipse: () => {},
-      strokeRect: () => calls.push("strokeRect"),
-      setLineDash: () => {},
-    };
-    return ctx;
-  }
-
-  const triShape = (overrides: Partial<Shape> = {}): Shape => ({
-    type: "shape",
-    geometry: "rect",
-    widthCm: 4,
-    heightCm: 4,
-    wrap: "inline",
-    path: {
-      subpaths: [
-        {
-          steps: [
-            { op: "move", x: 0, y: 1 },
-            { op: "line", x: 1, y: 1 },
-            { op: "cubic", x1: 0.75, y1: 0.5, x2: 0.25, y2: 0.5, x: 0.5, y: 0 },
-            { op: "close" },
-          ],
-          closed: true,
-        },
-      ],
-    },
-    ...overrides,
-  });
-
   it("paints the real outline (bezier), never the dashed placeholder", () => {
     const ctx = pathCtx();
     paintShape(ctx as unknown as CanvasRenderingContext2D, triShape({ outline: { color: "#000", widthPt: 1, dash: "solid" } }), 100, 100);

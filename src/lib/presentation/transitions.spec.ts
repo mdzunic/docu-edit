@@ -187,9 +187,9 @@ describe("odf duration", () => {
   });
 });
 
-describe("odp read", () => {
-  const read = (a: OdpTransitionAttrs) => readOdpTransition(a);
+const read = (a: OdpTransitionAttrs) => readOdpTransition(a);
 
+describe("odp read", () => {
   it("parses fade", () => {
     expect(read({ smilType: "fade", smilSubtype: "crossfade", smilDur: "PT0.6S" })).toEqual({
       type: "fade",

@@ -191,6 +191,8 @@ function stripFontFamily(value: string): string {
   return value.split(",")[0].trim().replace(/^['"]|['"]$/g, "");
 }
 
+const toHex = (n: string): string => Number(n).toString(16).padStart(2, "0");
+
 /** Parses a CSS colour (`#rrggbb`, `#rgb`, or `rgb(...)`) to lowercase
  * `#rrggbb`, or undefined when it can't. */
 export function cssColorToHex(value: string | undefined): string | undefined {
@@ -202,7 +204,6 @@ export function cssColorToHex(value: string | undefined): string | undefined {
   }
   const rgb = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(v);
   if (rgb) {
-    const toHex = (n: string): string => Number(n).toString(16).padStart(2, "0");
     return `#${toHex(rgb[1])}${toHex(rgb[2])}${toHex(rgb[3])}`.toLowerCase();
   }
   return undefined;

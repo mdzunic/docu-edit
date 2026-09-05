@@ -59,8 +59,9 @@ describe("classifyLayout: every pptx type + the exotic fallback", () => {
   });
 });
 
+const slot = (role: LayoutSlot["role"]): LayoutSlot => ({ role, xCm: 0, yCm: 0, widthCm: 1, heightCm: 1 });
+
 describe("classifyFromSlots: no declared @type (odp)", () => {
-  const slot = (role: LayoutSlot["role"]): LayoutSlot => ({ role, xCm: 0, yCm: 0, widthCm: 1, heightCm: 1 });
   it("infers kinds from slot roles", () => {
     expect(classifyFromSlots([])).toBe("blank");
     expect(classifyFromSlots([slot("title")])).toBe("titleOnly");

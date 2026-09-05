@@ -911,6 +911,12 @@ function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWrit
   return `<w:p><w:r>${drawing}</w:r></w:p>`;
 }
 
+const isIdBearingDrawing = (block: Block): boolean =>
+  block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "connector";
+
+const isAbsorbable = (block: Block): boolean =>
+  block.type === "shape" || block.type === "chart" || block.type === "connector";
+
 /** SPEC-070: pre-computes the `wp:docPr/@id` every drawing block will be
  * written under, in the exact order the body emission loop assigns them
  * (`docPrId++` per drawing, document order, absorbed drawings counted at their
@@ -919,10 +925,6 @@ function shapeParagraphXml(shape: Shape, includeOpaque: boolean, ctx: InlineWrit
 function planDocPrIds(model: DocumentModel): Map<string, number> {
   const map = new Map<string, number>();
   let id = 1;
-  const isIdBearingDrawing = (block: Block): boolean =>
-    block.type === "image" || block.type === "shape" || block.type === "chart" || block.type === "connector";
-  const isAbsorbable = (block: Block): boolean =>
-    block.type === "shape" || block.type === "chart" || block.type === "connector";
   for (let s = 0; s < model.sections.length; s++) {
     const blocks = model.sections[s].blocks;
     const plan = planAnchoredDrawings(blocks);
@@ -2268,7 +2270,7 @@ function* documentBlockXml(
       if (!entry) {
         return undefined;
       }
-      const runXml = (drawingIndex: number): string => {
+      const anchoredRunXml = (drawingIndex: number): string => {
         const drawing = section.blocks[drawingIndex];
         if (drawing.type === "shape") {
           const drawingContent = shapeDrawingXml(drawing, docPrId++, {
@@ -2296,7 +2298,10 @@ function* documentBlockXml(
         }
         return "";
       };
-      return { leading: entry.leading.map(runXml).join(""), trailing: entry.trailing.map(runXml).join("") };
+      return {
+        leading: entry.leading.map(anchoredRunXml).join(""),
+        trailing: entry.trailing.map(anchoredRunXml).join(""),
+      };
     };
     // The section-closing sectPr embeds into the last EMITTED block — with
     // absorption, a section whose blocks end `[…, para, shape]` genuinely
@@ -2307,7 +2312,7 @@ function* documentBlockXml(
     }
     const embedSectPr = sectPrXml !== undefined && section.blocks[lastEmittedIndex]?.type === "paragraph";
     const opaqueBlocks = includeOpaque
-      ? [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex)
+      ? [...(section.opaqueBlocks ?? [])].toSorted((a, b) => a.blockIndex - b.blockIndex)
       : [];
     for (let i = 0; i <= section.blocks.length; i++) {
       for (const node of opaqueBlocks) {
@@ -3647,51 +3652,51 @@ export async function writeDocx(
       const survivingParts = new Set(
         [...preservedParts.keys()].filter((partName) => !rewrittenPartNames.has(partName)),
       );
-      let rels = withoutRelationshipsToTargets(
+      let mainRels = withoutRelationshipsToTargets(
         withoutRegeneratedRelationships(mainRelsText!, mainPartName, survivingParts),
         mainPartName,
         rewrittenPartNames,
       );
       if (addNumberingDecls) {
-        rels = withNumberingRelationship(rels, "numbering.xml");
+        mainRels = withNumberingRelationship(mainRels, "numbering.xml");
       }
       if (addHyperlinkDecls) {
-        rels = withMediaRelationships(rels, hyperlinkPlan.relationshipsXml);
+        mainRels = withMediaRelationships(mainRels, hyperlinkPlan.relationshipsXml);
       }
       if (addMediaDecls) {
-        rels = withMediaRelationships(rels, mediaPlan.relationshipsXml);
+        mainRels = withMediaRelationships(mainRels, mediaPlan.relationshipsXml);
       }
       if (addNotesDecls) {
-        rels = withMediaRelationships(rels, notesPlan.relationshipsXml);
+        mainRels = withMediaRelationships(mainRels, notesPlan.relationshipsXml);
       }
       if (addCommentsDecls) {
-        rels = withMediaRelationships(rels, commentsPlan.relationshipsXml);
+        mainRels = withMediaRelationships(mainRels, commentsPlan.relationshipsXml);
       }
       if (addHeaderFooterDecls) {
-        rels = withMediaRelationships(rels, headerFooterPlan.relationshipsXml);
+        mainRels = withMediaRelationships(mainRels, headerFooterPlan.relationshipsXml);
       }
       if (addChartDecls) {
-        rels = withMediaRelationships(rels, chartPlan.relationshipsXml);
+        mainRels = withMediaRelationships(mainRels, chartPlan.relationshipsXml);
       }
       if (chartPlan.orphanedPartNames.size > 0) {
         // A deleted chart's own relationship (SPEC-052 AC "removes its
         // part, its relationship and its data on save") — the one case
         // this patch removes a preserved entry instead of only appending.
-        rels = withoutRelationshipsToTargets(rels, mainPartName, chartPlan.orphanedPartNames);
+        mainRels = withoutRelationshipsToTargets(mainRels, mainPartName, chartPlan.orphanedPartNames);
       }
       if (addSettingsPart) {
-        rels = withMediaRelationships(
-          rels,
+        mainRels = withMediaRelationships(
+          mainRels,
           `<Relationship Id="${settingsRelId}" Type="${SETTINGS_RELATIONSHIP}" Target="settings.xml"/>`,
         );
       }
       if (addThemeDecls) {
-        rels = withMediaRelationships(
-          rels,
+        mainRels = withMediaRelationships(
+          mainRels,
           `<Relationship Id="${themeRelId}" Type="${THEME_RELATIONSHIP}" Target="${themeTarget}"/>`,
         );
       }
-      entries.push({ name, data: encoder.encode(rels) });
+      entries.push({ name, data: encoder.encode(mainRels) });
     } else if ((!coreRel || addCustomPropsDecls || removeCustomPropsDecls) && name === "_rels/.rels") {
       let rootRels = relsText;
       if (!coreRel) {

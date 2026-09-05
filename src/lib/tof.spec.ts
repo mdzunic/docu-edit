@@ -34,6 +34,18 @@ function withThreeFigures(): DocumentModel {
   return model;
 }
 
+const surfaceCaption = (label: string, cached: string, text: string): Paragraph => ({
+  type: "paragraph",
+  styleId: CAPTION_STYLE_ID,
+  runs: [
+    { text: `${label} `, formatting: {} },
+    { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
+    { text: `: ${text}`, formatting: {} },
+  ],
+});
+
+const pageFor = () => 2;
+
 describe("table of figures (SPEC-055)", () => {
   it("lists a label's captions in document order with derived anchors (AC-29)", () => {
     const model = withThreeFigures();
@@ -44,15 +56,6 @@ describe("table of figures (SPEC-055)", () => {
   });
 
   it("excludes header, footer and footnote captions from entries and labels (AC-39)", () => {
-    const surfaceCaption = (label: string, cached: string, text: string): Paragraph => ({
-      type: "paragraph",
-      styleId: CAPTION_STYLE_ID,
-      runs: [
-        { text: `${label} `, formatting: {} },
-        { text: "1", formatting: {}, field: { kind: "seq", label, format: "decimal", cached } },
-        { text: `: ${text}`, formatting: {} },
-      ],
-    });
     const model = withThreeFigures();
     model.sections[0].headers = { default: { blocks: [surfaceCaption("Figure", "7", "Header chart")] } };
     model.sections[0].footers = { default: { blocks: [surfaceCaption("Chart", "1", "Footer chart")] } };
@@ -77,7 +80,6 @@ describe("table of figures (SPEC-055)", () => {
 
   it("a freshly generated table of figures is not stale (AC-32)", () => {
     const model = withThreeFigures();
-    const pageFor = () => 2;
     const { model: withTof } = insertTableOfFigures(
       model,
       caretSelection({ section: 0, block: model.sections[0].blocks.length - 1, offset: 0 }),

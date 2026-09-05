@@ -287,7 +287,7 @@ export async function writeMd(model: DocumentModel, _options: WriteMdOptions = {
 
   const listCounters: Array<number | undefined> = [];
   for (const section of model.sections) {
-    const opaqueBlocks = [...(section.opaqueBlocks ?? [])].sort((a, b) => a.blockIndex - b.blockIndex);
+    const opaqueBlocks = [...(section.opaqueBlocks ?? [])].toSorted((a, b) => a.blockIndex - b.blockIndex);
     const emitOpaqueBefore = (index: number): void => {
       for (const opaque of opaqueBlocks) {
         if (Math.min(opaque.blockIndex, section.blocks.length) === index) {

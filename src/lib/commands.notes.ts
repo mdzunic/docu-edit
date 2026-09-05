@@ -114,11 +114,11 @@ export function withNoteModel(model: DocumentModel, noteId: string): DocumentMod
 export function commitNoteModel(
   before: DocumentModel,
   noteId: string,
-  result: DocumentModel,
+  edited: DocumentModel,
 ): DocumentModel {
-  const blocks = result.sections[0].blocks;
+  const blocks = edited.sections[0].blocks;
   const notes = (before.notes ?? []).map((note) =>
     note.noteId === noteId ? { ...note, blocks } : note,
   );
-  return { ...result, sections: before.sections, notes };
+  return { ...edited, sections: before.sections, notes };
 }

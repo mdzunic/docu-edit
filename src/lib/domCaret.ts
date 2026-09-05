@@ -142,7 +142,7 @@ function slicesFor(root: Element, address: string, cache?: CaretSliceCache): Ele
   }
   const slices = Array.from(root.querySelectorAll(`${address}:not([data-row])`))
     .filter((el) => !inIgnoredSubtree(root, el))
-    .sort((a, b) => sliceStartOf(a) - sliceStartOf(b));
+    .toSorted((a, b) => sliceStartOf(a) - sliceStartOf(b));
   cache?.set(address, slices);
   return slices;
 }
@@ -382,6 +382,12 @@ export interface DomPoint {
   offset: number;
 }
 
+const afterAtom = (atom: Element): DomPoint => {
+  const parent = atom.parentNode as Node;
+  const index = Array.prototype.indexOf.call(parent.childNodes, atom);
+  return { node: parent, offset: index + 1 };
+};
+
 /** Resolves a model caret to the DOM point inside its paragraph element:
  * the text node containing the offset, the last text node's end when the
  * offset overshoots, or the paragraph element itself when it has no text.
@@ -456,11 +462,6 @@ export function domPointForCaret(
   for (const child of Array.from(paragraph.childNodes)) {
     visit(child);
   }
-  const afterAtom = (atom: Element): DomPoint => {
-    const parent = atom.parentNode as Node;
-    const index = Array.prototype.indexOf.call(parent.childNodes, atom);
-    return { node: parent, offset: index + 1 };
-  };
   let remaining = atomOffset ?? Math.max(0, caret.offset - sliceStartOf(paragraph));
   let last: { text: Text } | { atom: Element } | null = null;
   for (const unit of units) {

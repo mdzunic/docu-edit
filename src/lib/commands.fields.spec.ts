@@ -131,38 +131,38 @@ describe("F9 — updateFieldAtCaret (SPEC-053 AC-15)", () => {
   });
 });
 
+function headerDoc(...header: FieldSpec[]): DocumentModel {
+  const model = createDocument("cmd-fields-header");
+  model.defaultStyles.language = "en-GB";
+  model.sections = [
+    {
+      blocks: [
+        {
+          type: "paragraph",
+          runs: [{ text: "Body words go here", formatting: {} }],
+          bookmarks: [{ name: "intro", offset: 0 }],
+        },
+      ],
+      headers: {
+        default: {
+          blocks: header.map((field) => ({ type: "paragraph", runs: [createFieldSpecRun(field)] })),
+        },
+      },
+    },
+  ];
+  return model;
+}
+
+function headerField(model: DocumentModel, block = 0): FieldSpec | undefined {
+  const paragraph = model.sections[0].headers?.default?.blocks[block] as Paragraph;
+  return paragraph.runs[0].field;
+}
+
 // F9 with the caret in a header/footer band (AC-15 with AC-33). The band
 // addresses its content as a throwaway single-section model, so the update
 // runs in that coordinate space while values still come from the real
 // document — the composition useHeadersFooters' `updateFieldInBand` performs.
 describe("F9 in a header/footer band (SPEC-053 AC-15, AC-33)", () => {
-  function headerDoc(...header: FieldSpec[]): DocumentModel {
-    const model = createDocument("cmd-fields-header");
-    model.defaultStyles.language = "en-GB";
-    model.sections = [
-      {
-        blocks: [
-          {
-            type: "paragraph",
-            runs: [{ text: "Body words go here", formatting: {} }],
-            bookmarks: [{ name: "intro", offset: 0 }],
-          },
-        ],
-        headers: {
-          default: {
-            blocks: header.map((field) => ({ type: "paragraph", runs: [createFieldSpecRun(field)] })),
-          },
-        },
-      },
-    ];
-    return model;
-  }
-
-  function headerField(model: DocumentModel, block = 0): FieldSpec | undefined {
-    const paragraph = model.sections[0].headers?.default?.blocks[block] as Paragraph;
-    return paragraph.runs[0].field;
-  }
-
   it("recomputes the header field at the caret and folds it back into the header", () => {
     const model = headerDoc({ kind: "date", format: "d MMMM yyyy", cached: "1 January 2020" });
     const synthetic = withHeaderFooterModel(model, 0, "header", "default");
@@ -198,6 +198,11 @@ describe("F9 in a header/footer band (SPEC-053 AC-15, AC-33)", () => {
   });
 });
 
+function noteField(model: DocumentModel, block = 0): FieldSpec | undefined {
+  const blocks = model.notes?.[0].blocks ?? [];
+  return (blocks[block] as Paragraph).runs[0].field;
+}
+
 // F9 with the caret in a footnote/endnote body (AC-15 with AC-33, which lists
 // footnotes among the surfaces fields work in) — the band case's sibling, and
 // the composition useNotes' `updateFieldInNote` performs. Notes address their
@@ -228,11 +233,6 @@ describe("F9 in a footnote/endnote body (SPEC-053 AC-15, AC-33)", () => {
       },
     ];
     return model;
-  }
-
-  function noteField(model: DocumentModel, block = 0): FieldSpec | undefined {
-    const blocks = model.notes?.[0].blocks ?? [];
-    return (blocks[block] as Paragraph).runs[0].field;
   }
 
   it("recomputes the note field at the caret and folds it back into the note", () => {
@@ -267,40 +267,40 @@ describe("F9 in a footnote/endnote body (SPEC-053 AC-15, AC-33)", () => {
   });
 });
 
+function shapeDoc(...frame: FieldSpec[]): DocumentModel {
+  const model = createDocument("cmd-fields-shape");
+  model.defaultStyles.language = "en-GB";
+  const shape: Shape = {
+    type: "shape",
+    geometry: "rect",
+    widthCm: 5,
+    heightCm: 2,
+    wrap: "square",
+    text: {
+      blocks: frame.map((field) => ({ type: "paragraph", runs: [createFieldSpecRun(field)] })),
+      vAlign: "top",
+    },
+  };
+  model.sections = [
+    {
+      blocks: [
+        {
+          type: "paragraph",
+          runs: [{ text: "Body words go here", formatting: {} }],
+          bookmarks: [{ name: "intro", offset: 0 }],
+        },
+        shape,
+      ],
+    },
+  ];
+  return model;
+}
+
 // F9 with the caret in a shape's text frame (AC-15 with AC-33, which lists
 // shape text boxes) — the third surface with the same seam, and the
 // composition useShapes' `updateFieldInShapeText` performs.
 describe("F9 in a shape text box (SPEC-053 AC-15, AC-33)", () => {
   const SHAPE: ShapeLocation = { section: 0, block: 1 };
-
-  function shapeDoc(...frame: FieldSpec[]): DocumentModel {
-    const model = createDocument("cmd-fields-shape");
-    model.defaultStyles.language = "en-GB";
-    const shape: Shape = {
-      type: "shape",
-      geometry: "rect",
-      widthCm: 5,
-      heightCm: 2,
-      wrap: "square",
-      text: {
-        blocks: frame.map((field) => ({ type: "paragraph", runs: [createFieldSpecRun(field)] })),
-        vAlign: "top",
-      },
-    };
-    model.sections = [
-      {
-        blocks: [
-          {
-            type: "paragraph",
-            runs: [{ text: "Body words go here", formatting: {} }],
-            bookmarks: [{ name: "intro", offset: 0 }],
-          },
-          shape,
-        ],
-      },
-    ];
-    return model;
-  }
 
   function shapeField(model: DocumentModel, block = 0): FieldSpec | undefined {
     const frame = (model.sections[0].blocks[SHAPE.block] as Shape).text;
@@ -341,6 +341,17 @@ describe("F9 in a shape text box (SPEC-053 AC-15, AC-33)", () => {
   });
 });
 
+const caption = (cached: string): Paragraph => ({
+  type: "paragraph",
+  styleId: CAPTION_STYLE_ID,
+  runs: [
+    { text: "Figure ", formatting: {} },
+    createFieldSpecRun({ kind: "seq", label: "Figure", format: "decimal", cached }),
+  ],
+});
+
+const seqAt = (p: Paragraph) => p.runs.find((r) => r.field)?.field;
+
 describe("Update all fields (SPEC-053 AC-16..18, AC-28)", () => {
   it("updates every unlocked field and skips locked ones", () => {
     const model = fieldDoc(
@@ -370,14 +381,6 @@ describe("Update all fields (SPEC-053 AC-16..18, AC-28)", () => {
   });
 
   it("keeps header and footnote seq captions cached — the counter never sees them (SPEC-055 AC-37, AC-38)", () => {
-    const caption = (cached: string): Paragraph => ({
-      type: "paragraph",
-      styleId: CAPTION_STYLE_ID,
-      runs: [
-        { text: "Figure ", formatting: {} },
-        createFieldSpecRun({ kind: "seq", label: "Figure", format: "decimal", cached }),
-      ],
-    });
     const model = createDocument("seq-surfaces");
     model.sections = [
       {
@@ -387,7 +390,6 @@ describe("Update all fields (SPEC-053 AC-16..18, AC-28)", () => {
     ];
     model.notes = [{ noteId: "n1", kind: "footnote", blocks: [caption("9")] }];
     const out = updateAllFields(model, caretAt(0, 0), CTX, noTocPageNumbers());
-    const seqAt = (p: Paragraph) => p.runs.find((r) => r.field)?.field;
     // Body captions renumber 1..2 as if the surface captions did not exist.
     expect(seqAt(out.model.sections[0].blocks[0] as Paragraph)).toMatchObject({ cached: "1" });
     expect(seqAt(out.model.sections[0].blocks[1] as Paragraph)).toMatchObject({ cached: "2" });

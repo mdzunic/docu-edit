@@ -343,6 +343,8 @@ describe("cross-format unexpressible attachment (AC-32)", () => {
   });
 });
 
+const reactiveish = <T extends object>(value: T): T => new Proxy(value, {});
+
 describe("endpoint + formatting commands", () => {
   it("detaches an endpoint, freezing at the routed position", () => {
     const { model } = attachedFixture();
@@ -394,7 +396,6 @@ describe("endpoint + formatting commands", () => {
 
   it("survives an attachment handed in as a Proxy (what a Vue `ref` returns)", () => {
     const model = doc(shapeAtBox(0, 0), paragraph("x"));
-    const reactiveish = <T extends object>(value: T): T => new Proxy(value, {});
     const result = insertConnector(model, sel(1), {
       kind: "straight",
       widthCm: 4,

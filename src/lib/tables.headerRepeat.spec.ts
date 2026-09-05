@@ -81,9 +81,9 @@ function rowMetrics(heights: number[]): MetricsProvider {
 /** Merges `rows` rows downward from `row` in column `col`, exactly as
  * SPEC-023's merge command leaves the model: the owner carries the rowSpan
  * and every slot below it becomes a covered placeholder. */
-function mergeDown(built: Table, row: number, col: number, rows: number): Table {
-  built.rows[row].cells[col] = { ...built.rows[row].cells[col], rowSpan: rows };
-  for (let index = row + 1; index < row + rows; index += 1) {
+function mergeDown(built: Table, atRow: number, col: number, rows: number): Table {
+  built.rows[atRow].cells[col] = { ...built.rows[atRow].cells[col], rowSpan: rows };
+  for (let index = atRow + 1; index < atRow + rows; index += 1) {
     built.rows[index].cells[col] = { blocks: [], covered: true };
   }
   return built;
@@ -211,20 +211,20 @@ describe("tableSliceRows cells", () => {
   });
 });
 
-describe("measureTableElement", () => {
-  function tableElement(heights: number[], repeatedCount: number): Element {
-    const host = document.createElement("div");
-    host.innerHTML = `<table><tbody>${heights
-      .map((_unused, index) => `<tr${index < repeatedCount ? " data-repeated-header=\"true\"" : ""}></tr>`)
-      .join("")}</tbody></table>`;
-    const element = host.querySelector("table") as Element;
-    // jsdom measures nothing, so stub the per-row rects the reader asks for.
-    Array.from(element.querySelectorAll("tr")).forEach((tr, index) => {
-      tr.getBoundingClientRect = () => ({ height: heights[index] }) as DOMRect;
-    });
-    return element;
-  }
+function tableElement(heights: number[], repeatedCount: number): Element {
+  const host = document.createElement("div");
+  host.innerHTML = `<table><tbody>${heights
+    .map((_unused, index) => `<tr${index < repeatedCount ? " data-repeated-header=\"true\"" : ""}></tr>`)
+    .join("")}</tbody></table>`;
+  const element = host.querySelector("table") as Element;
+  // jsdom measures nothing, so stub the per-row rects the reader asks for.
+  Array.from(element.querySelectorAll("tr")).forEach((tr, index) => {
+    tr.getBoundingClientRect = () => ({ height: heights[index] }) as DOMRect;
+  });
+  return element;
+}
 
+describe("measureTableElement", () => {
   it("measures one line box per model row (SPEC-076)", () => {
     const metrics = measureTableElement(tableElement([12, 20, 8], 0), 500);
     expect(metrics.lines).toEqual([
@@ -351,31 +351,31 @@ describe("paginate with a repeating header", () => {
   });
 });
 
+function emptyModel(): DocumentModel {
+  const model = createDocument("insert-table-fixture");
+  model.sections = [{ blocks: [{ type: "paragraph", runs: [] }] }];
+  return model;
+}
+
 describe("insertTable's header-row option (SPEC-076 AC-20, AC-21)", () => {
   const at = caretSelection({ section: 0, block: 0, offset: 0 });
 
-  function emptyModel(): DocumentModel {
-    const model = createDocument("insert-table-fixture");
-    model.sections = [{ blocks: [{ type: "paragraph", runs: [] }] }];
-    return model;
-  }
-
   it("marks the first row isHeader when the dialog's checkbox is on (AC-20)", () => {
     const next = insertTable(emptyModel(), at, 3, 2, true).model;
-    const table = next.sections[0].blocks.find((block) => block.type === "table") as Table;
-    expect(table.rows[0].isHeader).toBe(true);
-    expect(table.rows[1].isHeader).toBeUndefined();
+    const inserted = next.sections[0].blocks.find((block) => block.type === "table") as Table;
+    expect(inserted.rows[0].isHeader).toBe(true);
+    expect(inserted.rows[1].isHeader).toBeUndefined();
   });
 
   it("creates no header row when it is off (AC-20)", () => {
     const next = insertTable(emptyModel(), at, 3, 2, false).model;
-    const table = next.sections[0].blocks.find((block) => block.type === "table") as Table;
-    expect(table.rows.every((row) => row.isHeader === undefined)).toBe(true);
+    const inserted = next.sections[0].blocks.find((block) => block.type === "table") as Table;
+    expect(inserted.rows.every((tableRow) => tableRow.isHeader === undefined)).toBe(true);
   });
 
   it("creates no header row when the caller passes nothing — the Insert menu's grid quick-pick (AC-21)", () => {
     const next = insertTable(emptyModel(), at, 3, 2).model;
-    const table = next.sections[0].blocks.find((block) => block.type === "table") as Table;
-    expect(table.rows.every((row) => row.isHeader === undefined)).toBe(true);
+    const inserted = next.sections[0].blocks.find((block) => block.type === "table") as Table;
+    expect(inserted.rows.every((tableRow) => tableRow.isHeader === undefined)).toBe(true);
   });
 });

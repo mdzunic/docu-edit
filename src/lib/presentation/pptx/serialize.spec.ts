@@ -173,17 +173,17 @@ describe("pptx field golden (SPEC-093 AC-127..129)", () => {
   });
 });
 
-describe("pptx field serialisation (SPEC-093 AC-66/67/68/69)", () => {
-  const deck = (slide: Slide): PresentationModel => ({
-    kind: "presentation",
-    id: "d",
-    title: "D",
-    format: "pptx",
-    slides: [slide],
-    slideWidthCm: 25.4,
-    slideHeightCm: 19.05,
-  });
+const deck = (slide: Slide): PresentationModel => ({
+  kind: "presentation",
+  id: "d",
+  title: "D",
+  format: "pptx",
+  slides: [slide],
+  slideWidthCm: 25.4,
+  slideHeightCm: 19.05,
+});
 
+describe("pptx field serialisation (SPEC-093 AC-66/67/68/69)", () => {
   it("rewrites only the cached a:t inside a preserved field p:sp", () => {
     const preserved = GOLDEN_SLIDENUM_SP; // cached "3"
     const slide: Slide = {
@@ -344,17 +344,17 @@ describe("pptx group/adjustment goldens (SPEC-096)", () => {
   });
 });
 
-describe("pptx single-pass wire-id mint (SPEC-096)", () => {
-  const animatedShape = (id: string): ShapeFrame => ({
-    id,
-    kind: "shape",
-    geometry: "rect",
-    xCm: 20,
-    yCm: 10,
-    widthCm: 4,
-    heightCm: 2,
-  });
+const animatedShape = (id: string): ShapeFrame => ({
+  id,
+  kind: "shape",
+  geometry: "rect",
+  xCm: 20,
+  yCm: 10,
+  widthCm: 4,
+  heightCm: 2,
+});
 
+describe("pptx single-pass wire-id mint (SPEC-096)", () => {
   it("an authored group claims a scaffold id plus one per descendant; the animated shape after it targets its own p:cNvPr id", () => {
     const shape = animatedShape("anim-shape");
     const slide = textSlide([structuredClone(GOLDEN_GROUP_FRAME), shape]);

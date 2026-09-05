@@ -175,6 +175,13 @@ describe("remapSelectionThroughTracking — multi-paragraph replacement", () => 
   });
 });
 
+const cellCaret = (offset: number): CaretPosition => ({
+  section: 0,
+  block: 0,
+  offset,
+  cell: { row: 0, col: 0, block: 0 },
+});
+
 describe("remapSelectionThroughTracking — table cells", () => {
   function tableDoc(): DocumentModel {
     const model = createDocument("track-changes-remap-table-test");
@@ -192,12 +199,6 @@ describe("remapSelectionThroughTracking — table cells", () => {
 
   it("keeps per-keystroke replace-typing inside a cell contiguous", () => {
     const before = tableDoc();
-    const cellCaret = (offset: number): CaretPosition => ({
-      section: 0,
-      block: 0,
-      offset,
-      cell: { row: 0, col: 0, block: 0 },
-    });
     let state: EditorState = { model: before, selection: selection(cellCaret(0), cellCaret(2)) };
     state = typeTracked(state, "XY");
     const cellRuns = ((state.model.sections[0].blocks[0] as Table).rows[0].cells[0].blocks[0] as Paragraph).runs;

@@ -40,6 +40,19 @@ export interface FieldsDeps extends EditorContext {
   closeContextMenu: () => void;
 }
 
+/** The dialog's `show` string narrowed to a non-page RefFormat (SPEC-053 +
+ * SPEC-055): the caption formats and position pass through, anything else is
+ * plain text. */
+function crossRefShow(show: string): RefFormat {
+  return show === "position" ||
+    show === "full" ||
+    show === "labelAndNumber" ||
+    show === "numberOnly" ||
+    show === "textOnly"
+    ? (show as RefFormat)
+    : "text";
+}
+
 export function useFields(deps: FieldsDeps) {
   const fieldDialogOpen = ref(false);
   const dateTimeDialogOpen = ref(false);
@@ -163,19 +176,6 @@ export function useFields(deps: FieldsDeps) {
   const crossReferenceBookmarks = shallowRef<Array<{ name: string }>>([]);
   // SPEC-055 AC-23: one category per caption label, its captions by full text.
   const crossReferenceCaptions = shallowRef<Array<{ anchor: string; label: string; text: string }>>([]);
-
-  /** The dialog's `show` string narrowed to a non-page RefFormat (SPEC-053 +
-   * SPEC-055): the caption formats and position pass through, anything else is
-   * plain text. */
-  function crossRefShow(show: string): RefFormat {
-    return show === "position" ||
-      show === "full" ||
-      show === "labelAndNumber" ||
-      show === "numberOnly" ||
-      show === "textOnly"
-      ? (show as RefFormat)
-      : "text";
-  }
 
   function openCrossReferenceDialog() {
     const m = model();

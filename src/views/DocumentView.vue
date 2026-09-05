@@ -29,13 +29,8 @@ import ImageOptionsDialog from "../components/ImageOptionsDialog.vue";
 import ShapePositionDialog from "../components/ShapePositionDialog.vue";
 import ImageToolbar from "../components/ImageToolbar.vue";
 import ShapeToolbarIsland from "../components/ShapeToolbarIsland.vue";
-import ShapeDrawPreview from "../components/ShapeDrawPreview.vue";
-import FreeformDrawPreview from "../components/FreeformDrawPreview.vue";
-import PointEditOverlay from "../components/PointEditOverlay.vue";
-import ConnectorOverlay from "../components/ConnectorOverlay.vue";
-import ConnectorToolbar from "../components/ConnectorToolbar.vue";
+import DrawingOverlays from "../components/DrawingOverlays.vue";
 import ShapeHandlesOverlay from "../components/ShapeHandlesOverlay.vue";
-import DrawingGuidesOverlay from "../components/DrawingGuidesOverlay.vue";
 import ChartToolbar from "../components/ChartToolbar.vue";
 import ChartDataSheetDialog from "../components/ChartDataSheetDialog.vue";
 import ChartOptionsDialog from "../components/ChartOptionsDialog.vue";
@@ -1396,11 +1391,11 @@ function applyHistorySnapshot(snapshot = noHistorySnapshot()) {
 /** Whether a caret's own block address (ignoring any cell path) is a TOC
  * atom (SPEC-033) — used to catch every edit attempt at its boundary before
  * the ordinary per-inputType dispatch below. */
-function caretAtToc(model = noDocument(), caret = noCaret()) {
-  if (!caret || caret.cell) {
+function caretAtToc(model = noDocument(), at = noCaret()) {
+  if (!at || at.cell) {
     return false;
   }
-  return isToc(model.sections[caret.section]?.blocks[caret.block]);
+  return isToc(model.sections[at.section]?.blocks[at.block]);
 }
 
 function handleBeforeInput(event = new InputEvent("beforeinput")) {
@@ -3106,9 +3101,10 @@ function handleMenuCommand(id = "") {
       />
     </template>
     <template #toolbar>
-      <DocumentToolbar :theme="documentThemeOf(doc)"
+      <DocumentToolbar
         v-if="editable"
         ref="documentToolbarRef"
+        :theme="documentThemeOf(doc)"
         :reserved-right="toolbarReservedRight"
         :undo-redo="undoRedoState"
         :style-entries="styleEntries"
@@ -3298,45 +3294,14 @@ function handleMenuCommand(id = "") {
               @adjust-start="startShapeAdjust"
               @adjust-keydown="handleAdjustmentKeydown"
             />
-            <DrawingGuidesOverlay v-if="snapGuides.length" :guides="snapGuides" />
-            <div
-              v-if="shapeAnchorMarker"
-              class="shape-anchor-marker print-exclude"
-              data-testid="shape-anchor-marker"
-              :style="{ left: `${shapeAnchorMarker.left}px`, top: `${shapeAnchorMarker.top}px` }"
+            <DrawingOverlays
+              :snap-guides="snapGuides"
+              :anchor-marker="shapeAnchorMarker || undefined"
+              :connectors="connectors"
+              :draw-preview="drawPreview || undefined"
+              :freeform-d="freeformPreviewD || ''"
+              :point-edit="pointEdit"
             />
-            <ConnectorOverlay
-              :renders="connectors.connectorRenders.value"
-              :hover-sites="connectors.hoverSites.value || undefined"
-              :draw-from="connectors.drawFrom.value || undefined"
-              :draw-pointer="connectors.drawPointer.value || undefined"
-              @select="connectors.selectConnector"
-              @endpoint-drag="connectors.startEndpointDrag"
-              @adjust-drag="connectors.startAdjustDrag"
-            />
-            <ConnectorToolbar
-              v-if="connectors.selectedConnector.value"
-              v-bind="connectors.connectorToolbarProps.value"
-              :style="connectors.connectorToolbarStyle.value"
-              @set-kind="connectors.setKind"
-              @set-outline="connectors.setOutline"
-              @set-arrowheads="connectors.setArrowheads"
-              @set-wrap="connectors.setWrap"
-              @set-alt-text="connectors.setAltText"
-              @set-z-order="connectors.setZOrder"
-              @delete="connectors.removeSelectedConnector"
-            />
-            <ShapeDrawPreview
-              v-if="drawPreview"
-              class="print-exclude"
-              :shape="drawPreview.shape"
-              :left="drawPreview.left"
-              :top="drawPreview.top"
-              :width="drawPreview.width"
-              :height="drawPreview.height"
-            />
-            <FreeformDrawPreview v-if="freeformPreviewD" :d="freeformPreviewD" />
-            <PointEditOverlay v-if="pointEdit.frame.value" class="print-exclude" :controller="pointEdit" />
             <div
               ref="contentRoot"
               class="document-content"
@@ -3848,15 +3813,17 @@ function handleMenuCommand(id = "") {
       @apply="tables.handleSplitCellApply"
       @cancel="splitCellDialogOpen = false"
     />
-    <TablePropertiesDialog :theme="documentThemeOf(doc)"
+    <TablePropertiesDialog
       v-if="tablePropertiesOpen"
+      :theme="documentThemeOf(doc)"
       :initial="tablePropertiesInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="tables.handleTablePropertiesApply"
       @cancel="tablePropertiesOpen = false"
     />
-    <PageSetupDialog :theme="documentThemeOf(doc)"
+    <PageSetupDialog
       v-if="pageSetupOpen"
+      :theme="documentThemeOf(doc)"
       :initial="pageSetupInitial"
       @apply="handlePageSetupApply"
       @cancel="pageSetupOpen = false"
@@ -3868,8 +3835,9 @@ function handleMenuCommand(id = "") {
       @apply="handleColumnsApply"
       @cancel="columnsDialogOpen = false"
     />
-    <BordersShadingDialog :theme="documentThemeOf(doc)"
+    <BordersShadingDialog
       v-if="bordersDialogOpen"
+      :theme="documentThemeOf(doc)"
       :initial="bordersDialogInitial"
       :unit="doc?.measurementUnit || 'cm'"
       @apply="applyBordersShading"
@@ -4041,8 +4009,9 @@ function handleMenuCommand(id = "") {
       @apply="({ categories, series }) => { applyChartData(categories, series); editingChartData = false; }"
       @cancel="editingChartData = false"
     />
-    <ChartOptionsDialog :theme="documentThemeOf(doc)"
+    <ChartOptionsDialog
       v-if="editingChartOptions"
+      :theme="documentThemeOf(doc)"
       :initial="chartOptionsInitial"
       @apply="(options) => { applyChartOptions(options); editingChartOptions = false; }"
       @series-color="(index, color) => applyChartSeriesColor(index, color)"
@@ -4262,22 +4231,6 @@ function handleMenuCommand(id = "") {
     width: 20px;
     height: 20px;
   }
-}
-
-/* The anchor marker (SPEC-051 AC-27): a small flag at the start of the
-   paragraph a selected shape is anchored to, moving with it on re-anchor
-   (AC-28) — same overlay convention as the resize/rotation handles, one
-   layer below them (z-index) since it never needs to receive a pointer. */
-.shape-anchor-marker {
-  position: absolute;
-  z-index: 14;
-  pointer-events: none;
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
-  margin-top: -2px;
-  background: var(--accent);
-  clip-path: polygon(0 0, 100% 50%, 0 100%);
 }
 
 /* Off-screen but rendered, so the aria-live caret announcements reach

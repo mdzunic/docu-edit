@@ -281,7 +281,7 @@ export function replaceMatches(
     let runs = targetBlock.runs;
     // Right-to-left: a later replacement never shifts an earlier match's
     // offsets, so each split uses offsets that are still valid.
-    const ordered = [...blockMatches].sort((a, b) => b.start - a.start);
+    const ordered = [...blockMatches].toSorted((a, b) => b.start - a.start);
     for (const match of ordered) {
       const [before, tail] = splitRuns(runs, match.start);
       const [within, after] = splitRuns(tail, match.end - match.start);

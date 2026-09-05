@@ -46,6 +46,8 @@ const BORDER_SIDES: { key: keyof CellBorders; wire: string; legacy?: string }[] 
   { key: "right", wire: "end", legacy: "right" },
 ];
 
+const on = (flag: boolean | undefined) => (flag ? "1" : "0");
+
 /** `w:tblLook` for a table's `look` (AC-66). `w:noHBand`/`w:noVBand` invert
  * `bandedRows`/`bandedColumns`: Word states which bands to SUPPRESS. The
  * legacy `w:val` bitmask is emitted alongside the explicit attributes, which
@@ -54,7 +56,6 @@ export function tableLookXml(look: TableLook | undefined): string {
   if (!look) {
     return "";
   }
-  const on = (flag: boolean | undefined) => (flag ? "1" : "0");
   const mask =
     (look.firstRow ? 0x20 : 0) +
     (look.lastRow ? 0x40 : 0) +
@@ -169,10 +170,10 @@ function parseConditional(el: Element): TableConditionalFormat | undefined {
     if (bordersEl) {
       const borders: CellBorders = {};
       for (const side of BORDER_SIDES) {
-        const el =
+        const sideEl =
           firstChildElement(bordersEl, WORD_NAMESPACE, side.wire) ??
           (side.legacy ? firstChildElement(bordersEl, WORD_NAMESPACE, side.legacy) : undefined);
-        const parsed = parseBorderElement(el, wordAttr);
+        const parsed = parseBorderElement(sideEl, wordAttr);
         if (parsed) {
           borders[side.key] = parsed;
         }

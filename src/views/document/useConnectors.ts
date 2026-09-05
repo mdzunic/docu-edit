@@ -86,6 +86,44 @@ function freeEndpointPx(origin: Point, connector: Connector, which: "start" | "e
 
 export interface ConnectorsDeps extends EditorContext {}
 
+/** The box's four corners (sites 4,5,6,7) — honouring rotation, so a
+ * centre-site attachment clips against the rotated outline and re-routes
+ * when the shape turns (AC-9), not against an axis-aligned rectangle. */
+function rectPolygon(box: ConnectorBox): Point[] {
+  return [4, 5, 6, 7].map((corner) => connectionSitePoint(box, corner));
+}
+
+function midpointOf(points: Point[], kind: ConnectorKind): Point {
+  if (points.length === 0) {
+    return { x: 0, y: 0 };
+  }
+  if (kind === "curved") {
+    const a = points[0];
+    const b = points[points.length - 1];
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+  // The middle segment's midpoint (elbow), or the whole segment (straight).
+  const midIndex = Math.floor((points.length - 1) / 2);
+  const p = points[midIndex];
+  const q = points[Math.min(points.length - 1, midIndex + 1)];
+  return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+}
+
+function straightPreviewD(a: Point, b: Point): string {
+  return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+}
+
+function projectFraction(a: Point, b: Point, p: Point): number {
+  // Fraction along the dominant axis of the endpoints — matches the elbow
+  // crossing's own placement.
+  if (Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)) {
+    const denom = b.x - a.x || 1;
+    return Math.min(1, Math.max(0, (p.x - a.x) / denom));
+  }
+  const denom = b.y - a.y || 1;
+  return Math.min(1, Math.max(0, (p.y - a.y) / denom));
+}
+
 export function useConnectors(deps: ConnectorsDeps) {
   const { doc, contentRoot, pageRef, editable, currentSelection, applyEdit, getCaret, zoom } = deps;
 
@@ -196,13 +234,6 @@ export function useConnectors(deps: ConnectorsDeps) {
     const rect = el.getBoundingClientRect();
     const z = renderScale();
     return { x: (rect.left - pageRect.left) / z, y: (rect.top - pageRect.top) / z };
-  }
-
-  /** The box's four corners (sites 4,5,6,7) — honouring rotation, so a
-   * centre-site attachment clips against the rotated outline and re-routes
-   * when the shape turns (AC-9), not against an axis-aligned rectangle. */
-  function rectPolygon(box: ConnectorBox): Point[] {
-    return [4, 5, 6, 7].map((corner) => connectionSitePoint(box, corner));
   }
 
   /** Resolves one endpoint of a connector to page-relative px, plus its
@@ -368,22 +399,6 @@ export function useConnectors(deps: ConnectorsDeps) {
     }
     pageLayerSignature = signature;
     pageLayers.value = layers;
-  }
-
-  function midpointOf(points: Point[], kind: ConnectorKind): Point {
-    if (points.length === 0) {
-      return { x: 0, y: 0 };
-    }
-    if (kind === "curved") {
-      const a = points[0];
-      const b = points[points.length - 1];
-      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    }
-    // The middle segment's midpoint (elbow), or the whole segment (straight).
-    const midIndex = Math.floor((points.length - 1) / 2);
-    const p = points[midIndex];
-    const q = points[Math.min(points.length - 1, midIndex + 1)];
-    return { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
   }
 
   // --- hit testing a drawing under the pointer (for draw / drag) ------------
@@ -616,10 +631,6 @@ export function useConnectors(deps: ConnectorsDeps) {
     }
   }
 
-  function straightPreviewD(a: Point, b: Point): string {
-    return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
-  }
-
   function finishEndpointDrag(event: MouseEvent) {
     window.removeEventListener("mousemove", handleEndpointMove);
     window.removeEventListener("mouseup", finishEndpointDrag);
@@ -692,17 +703,6 @@ export function useConnectors(deps: ConnectorsDeps) {
     const before = currentCaretSelection();
     applyEdit(setConnectorAdjustment(model, before, adjustDrag.location, fraction), before, "adjust connector");
     void Promise.resolve().then(remeasureConnectors);
-  }
-
-  function projectFraction(a: Point, b: Point, p: Point): number {
-    // Fraction along the dominant axis of the endpoints — matches the elbow
-    // crossing's own placement.
-    if (Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)) {
-      const denom = b.x - a.x || 1;
-      return Math.min(1, Math.max(0, (p.x - a.x) / denom));
-    }
-    const denom = b.y - a.y || 1;
-    return Math.min(1, Math.max(0, (p.y - a.y) / denom));
   }
 
   function finishAdjustDrag() {

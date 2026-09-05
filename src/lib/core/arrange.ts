@@ -88,7 +88,7 @@ export function distributeRects(rects: readonly Rect[], axis: "x" | "y"): Rect[]
   const size = axis === "x" ? (r: Rect) => r.widthCm : (r: Rect) => r.heightCm;
   const order = rects
     .map((r, index) => ({ r, index }))
-    .sort((a, b) => pos(a.r) + size(a.r) / 2 - (pos(b.r) + size(b.r) / 2));
+    .toSorted((a, b) => pos(a.r) + size(a.r) / 2 - (pos(b.r) + size(b.r) / 2));
   const first = order[0].r;
   const last = order[order.length - 1].r;
   const span = pos(last) + size(last) - pos(first);
@@ -199,7 +199,7 @@ export function snapRect(
     const container = hits.find((h) => h.tierIndex < CONTAINER_TIER);
     const frame = hits
       .filter((h) => h.tierIndex >= CONTAINER_TIER)
-      .sort((a, b) => a.dist - b.dist)[0];
+      .toSorted((a, b) => a.dist - b.dist)[0];
     const chosen = container ?? frame;
     if (!chosen) {
       continue;

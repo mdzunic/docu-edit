@@ -1007,5 +1007,5 @@ export function versionListEntries(index: VersionsIndexRecord): VersionListEntry
     ...entry,
     wordDelta: i === 0 ? entry.words : entry.words - index.versions[i - 1].words,
   }));
-  return withDeltas.reverse();
+  return withDeltas.toReversed();
 }

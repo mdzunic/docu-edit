@@ -24,9 +24,9 @@ export function parseOmmlEquation(el: Element): EquationSpec {
 
 function parseRow(parent: Element): MathNode[] {
   const out: MathNode[] = [];
-  for (const child of Array.from(parent.children)) {
-    if (child.namespaceURI !== M) continue;
-    const node = parseNode(child);
+  for (const element of Array.from(parent.children)) {
+    if (element.namespaceURI !== M) continue;
+    const node = parseNode(element);
     if (node) out.push(...node);
   }
   return out;

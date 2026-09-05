@@ -31,9 +31,9 @@ function policy(): Map<string, string[]> {
   }
   const directives = new Map<string, string[]>();
   for (const part of meta[1].split(";")) {
-    const [name, ...sources] = part.trim().split(/\s+/).filter(Boolean);
+    const [name, ...values] = part.trim().split(/\s+/).filter(Boolean);
     if (name) {
-      directives.set(name, sources);
+      directives.set(name, values);
     }
   }
   return directives;

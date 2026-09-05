@@ -31,6 +31,11 @@ const SLOTS = [
   "folHlink",
 ];
 
+const accents = (theme: DocumentTheme): string[] =>
+  ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"].map(
+    (slot) => theme.colors[slot as "accent1"],
+  );
+
 describe("the theme model", () => {
   it("declares the twelve slots in scheme order", () => {
     expect(THEME_COLOR_SLOTS).toEqual(SLOTS);
@@ -67,7 +72,7 @@ describe("the theme model", () => {
       "Wisp",
     ]);
     for (const theme of BUILT_IN_THEMES) {
-      expect(Object.keys(theme.colors).sort()).toEqual([...SLOTS].sort());
+      expect(Object.keys(theme.colors).toSorted()).toEqual([...SLOTS].toSorted());
       for (const value of Object.values(theme.colors)) {
         expect(value).toMatch(/^#[0-9a-f]{6}$/);
       }
@@ -77,10 +82,6 @@ describe("the theme model", () => {
   });
 
   it("pins each built-in's accent row (the gallery card swatches)", () => {
-    const accents = (theme: DocumentTheme): string[] =>
-      ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"].map(
-        (slot) => theme.colors[slot as "accent1"],
-      );
     expect(accents(BUILT_IN_THEMES[1])).toEqual(["#90c226", "#54a021", "#e6b91e", "#e76618", "#c42f1a", "#918655"]);
     expect(accents(BUILT_IN_THEMES[2])).toEqual(["#b01513", "#ea6312", "#e6b729", "#6aac90", "#5f9c9d", "#9b75b2"]);
     expect(accents(BUILT_IN_THEMES[3])).toEqual(["#e48312", "#bd582c", "#865640", "#9b8357", "#c2bc80", "#94a088"]);
@@ -133,14 +134,15 @@ describe("resolveFont / guards", () => {
   });
 });
 
+// WCAG relative luminance over the sRGB channels.
+const luminance = (hex: string): number => {
+  const [r, g, b] = hexToRgb(hex).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
 describe("built-in contrast", () => {
-  // WCAG relative luminance over the sRGB channels.
-  const luminance = (hex: string): number => {
-    const [r, g, b] = hexToRgb(hex).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  };
   const contrast = (a: string, b: string): number => {
-    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+    const [hi, lo] = [luminance(a), luminance(b)].toSorted((x, y) => y - x);
     return (hi + 0.05) / (lo + 0.05);
   };
 

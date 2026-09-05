@@ -42,6 +42,36 @@ beforeEach(() => {
   clearThumbnailCache();
 });
 
+const box = (offsetXCm: number, offsetYCm: number): Shape => ({
+  type: "shape",
+  geometry: "rect",
+  widthCm: 4,
+  heightCm: 2,
+  wrap: "square",
+  offsetXCm,
+  offsetYCm,
+});
+
+const indentedShape = (offsetXCm: number): Shape => ({
+  type: "shape",
+  geometry: "rect",
+  widthCm: 2,
+  heightCm: 2,
+  wrap: "square",
+  offsetXCm,
+  offsetYCm: 0,
+});
+
+const spacedShape = (offsetXCm: number): Shape => ({
+  type: "shape",
+  geometry: "rect",
+  widthCm: 3,
+  heightCm: 2,
+  wrap: "square",
+  offsetXCm,
+  offsetYCm: 0,
+});
+
 describe("buildThumbnail (SPEC-067)", () => {
   it("extracts the leading paragraphs with their heading levels", () => {
     const model = createDocument("doc");
@@ -276,15 +306,6 @@ describe("buildThumbnail (SPEC-067)", () => {
   // boxes were stacked one per line instead of placed where they sit.
   it("lays a run of drawings and connectors out at their real relative positions", () => {
     const model = createDocument("doc");
-    const box = (offsetXCm: number, offsetYCm: number): Shape => ({
-      type: "shape",
-      geometry: "rect",
-      widthCm: 4,
-      heightCm: 2,
-      wrap: "square",
-      offsetXCm,
-      offsetYCm,
-    });
     model.sections[0].blocks = [
       box(0, 0),
       box(10, 6),
@@ -349,16 +370,10 @@ describe("buildThumbnail (SPEC-067)", () => {
   it("indents a diagram to its own place across the content width", () => {
     const model = createDocument("doc");
     const contentWidthCm = sectionContentWidthCm(model, 0);
-    const shape = (offsetXCm: number): Shape => ({
-      type: "shape",
-      geometry: "rect",
-      widthCm: 2,
-      heightCm: 2,
-      wrap: "square",
-      offsetXCm,
-      offsetYCm: 0,
-    });
-    model.sections[0].blocks = [shape(contentWidthCm / 2), shape(contentWidthCm / 2 + 3)];
+    model.sections[0].blocks = [
+      indentedShape(contentWidthCm / 2),
+      indentedShape(contentWidthCm / 2 + 3),
+    ];
     const diagram = buildThumbnail(model).lines[0]?.diagram;
     expect(diagram).toBeDefined();
     expect(diagram!.leftFraction).toBeCloseTo(0.5, 2);
@@ -379,16 +394,13 @@ describe("buildThumbnail (SPEC-067)", () => {
 
   it("does not let the empty anchor paragraphs between drawings split a diagram", () => {
     const model = createDocument("doc");
-    const shape = (offsetXCm: number): Shape => ({
-      type: "shape",
-      geometry: "rect",
-      widthCm: 3,
-      heightCm: 2,
-      wrap: "square",
-      offsetXCm,
-      offsetYCm: 0,
-    });
-    model.sections[0].blocks = [shape(0), paragraph(""), shape(6), paragraph("   "), shape(12)];
+    model.sections[0].blocks = [
+      spacedShape(0),
+      paragraph(""),
+      spacedShape(6),
+      paragraph("   "),
+      spacedShape(12),
+    ];
     const thumb = buildThumbnail(model);
     expect(thumb.lines).toHaveLength(1);
     expect(thumb.lines[0]?.diagram?.items).toHaveLength(3);

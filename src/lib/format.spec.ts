@@ -58,9 +58,9 @@ describe("formatBadgeLabel", () => {
   });
 });
 
-describe("recoveryNotice (SPEC-010)", () => {
-  const at = (label: string) => new Date(`2026-09-05T${label}Z`).getTime();
+const at = (label: string) => new Date(`2026-09-05T${label}Z`).getTime();
 
+describe("recoveryNotice (SPEC-010)", () => {
   it("dates the draft relatively, not as a bare clock reading", () => {
     // The bug: `toLocaleTimeString()` rendered "3:36:58 PM" for a draft from a
     // minute ago and for one from last Tuesday alike — precise to the second

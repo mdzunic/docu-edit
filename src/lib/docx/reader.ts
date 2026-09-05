@@ -3223,7 +3223,7 @@ export async function parseDocx(
   }
   const pendingEncodes: PendingEncode[] = [];
   const opaque: OpaquePart[] = [];
-  for (const [name, data] of parts) {
+  for (const [name, partBytes] of parts) {
     if (
       name !== mainPartPath &&
       name !== corePartPath &&
@@ -3235,9 +3235,9 @@ export async function parseDocx(
       const part: OpaquePart = { name, data: "" };
       opaque.push(part);
       pendingEncodes.push({
-        byteLength: data.length,
+        byteLength: partBytes.length,
         encode: () => {
-          part.data = bytesToBase64(data);
+          part.data = bytesToBase64(partBytes);
         },
       });
     }

@@ -508,23 +508,23 @@ interface RowState {
   cellBlocks: number;
 }
 
+function paragraphFromProps(runs: Run[], props: BlockProps): Paragraph {
+  const paragraph: Paragraph = { type: "paragraph", runs };
+  if (props.formatting && Object.keys(props.formatting).length > 0) {
+    paragraph.formatting = { ...props.formatting };
+  }
+  if (props.headingLevel !== undefined) {
+    paragraph.headingLevel = props.headingLevel;
+  }
+  return paragraph;
+}
+
 /** Imports an external HTML fragment into model paragraphs. */
 export function importHtml(html: string): HtmlImportResult {
   const parsed = new DOMParser().parseFromString(html, "text/html");
   const blocks: Paragraph[] = [];
   let current: { runs: Run[]; props: BlockProps } | null = null;
   let imagesDropped = false;
-
-  function paragraphFromProps(runs: Run[], props: BlockProps): Paragraph {
-    const paragraph: Paragraph = { type: "paragraph", runs };
-    if (props.formatting && Object.keys(props.formatting).length > 0) {
-      paragraph.formatting = { ...props.formatting };
-    }
-    if (props.headingLevel !== undefined) {
-      paragraph.headingLevel = props.headingLevel;
-    }
-    return paragraph;
-  }
 
   function flush(): void {
     if (!current) {

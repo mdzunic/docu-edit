@@ -16,6 +16,9 @@ import {
 } from "./shapes";
 import { DEFAULT_THEME, resolveColor } from "./theme";
 
+const lum = (hex: string) =>
+  parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16) + parseInt(hex.slice(5, 7), 16);
+
 describe("lighterTint (D2, AC-23)", () => {
   it("tints the accent #4472c4 to exactly #8faadc", () => {
     expect(lighterTint("#4472c4")).toBe("#8faadc");
@@ -29,8 +32,6 @@ describe("lighterTint (D2, AC-23)", () => {
   it("lightens a mid colour (luminance strictly increases)", () => {
     const tinted = lighterTint("#70ad47");
     expect(tinted).not.toBe("#70ad47");
-    const lum = (hex: string) =>
-      parseInt(hex.slice(1, 3), 16) + parseInt(hex.slice(3, 5), 16) + parseInt(hex.slice(5, 7), 16);
     expect(lum(tinted)).toBeGreaterThan(lum("#70ad47"));
   });
 });
@@ -52,6 +53,9 @@ describe("normaliseShapeFill (AC-30) — all four cases", () => {
     expect(normaliseShapeFill({ some: "junk" })).toBeUndefined();
   });
 });
+
+const resolveSolid = (fill: ShapeFill | undefined) =>
+  fill?.kind === "solid" ? resolveColor(fill.color, DEFAULT_THEME) : undefined;
 
 describe("the five style presets (D3, AC-18/AC-19)", () => {
   it("is exactly the five ids in gallery order", () => {
@@ -96,8 +100,6 @@ describe("the five style presets (D3, AC-18/AC-19)", () => {
   });
   it("resolves to SPEC-073's shipped values under the Office theme (AC-44)", () => {
     const [filled, subtle, outlined, outlinedShadow] = SHAPE_STYLE_PRESETS;
-    const resolveSolid = (fill: ShapeFill | undefined) =>
-      fill?.kind === "solid" ? resolveColor(fill.color, DEFAULT_THEME) : undefined;
     // DEFAULT_NEW_SHAPE_FILL's shipped solid colour.
     expect(resolveSolid(filled.fill)).toBe("#4472c4");
     expect(resolveColor(filled.outline!.color, DEFAULT_THEME)).toBe("#2e5395");
@@ -122,7 +124,7 @@ describe("shadow presets (D4, AC-20/AC-21)", () => {
     expect(SHAPE_SHADOW_PRESETS).toHaveLength(9);
     expect(SHAPE_SHADOW_PRESETS[0].shadow).toBeUndefined();
     const angles = SHAPE_SHADOW_PRESETS.slice(1).map((p) => p.shadow!.angleDeg);
-    expect([...angles].sort((a, b) => a - b)).toEqual([0, 45, 90, 135, 180, 225, 270, 315]);
+    expect([...angles].toSorted((a, b) => a - b)).toEqual([0, 45, 90, 135, 180, 225, 270, 315]);
     for (const preset of SHAPE_SHADOW_PRESETS.slice(1)) {
       expect({ ...preset.shadow!, angleDeg: 90 }).toEqual(DEFAULT_SHAPE_SHADOW);
     }

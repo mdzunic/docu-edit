@@ -103,6 +103,26 @@ export interface CanvasGesturesDeps extends EditorContext {
   redirectRepeatedHeaderClick: (event: MouseEvent) => boolean;
 }
 
+/** Whether a drag carries a file of an accepted image type — checked from
+ * `dataTransfer.items` (available during dragenter/dragover, unlike the
+ * actual file, which only `drop` exposes). Used to steal the drag away from
+ * AppShell's window-level "drop to open a document" handling (SPEC-009) only
+ * when it is actually an image (AC-1); anything else — including a .docx/
+ * .odt file dragged over the canvas — falls through to that existing
+ * behaviour untouched. */
+function isImageDrag(event = new DragEvent("dragover")) {
+  const items = event.dataTransfer?.items;
+  if (!items) {
+    return false;
+  }
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" && isAcceptedImageType(items[i].type)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function useCanvasGestures(deps: CanvasGesturesDeps) {
   const {
     doc,
@@ -418,26 +438,6 @@ export function useCanvasGestures(deps: CanvasGesturesDeps) {
       mouseButtonDown = false;
       maybeApplyPainter();
     }
-  }
-
-  /** Whether a drag carries a file of an accepted image type — checked from
-   * `dataTransfer.items` (available during dragenter/dragover, unlike the
-   * actual file, which only `drop` exposes). Used to steal the drag away from
-   * AppShell's window-level "drop to open a document" handling (SPEC-009) only
-   * when it is actually an image (AC-1); anything else — including a .docx/
-   * .odt file dragged over the canvas — falls through to that existing
-   * behaviour untouched. */
-  function isImageDrag(event = new DragEvent("dragover")) {
-    const items = event.dataTransfer?.items;
-    if (!items) {
-      return false;
-    }
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].kind === "file" && isAcceptedImageType(items[i].type)) {
-        return true;
-      }
-    }
-    return false;
   }
 
   function handleCanvasDragEnter(event = new DragEvent("dragenter")) {

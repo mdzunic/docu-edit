@@ -304,8 +304,8 @@ export function useNotes(deps: NotesDeps) {
       return;
     }
     const kind = noteById(model, noteId)?.kind ?? "footnote";
-    const ref = collectNoteRefs(model, kind).find((entry) => entry.noteId === noteId);
-    if (!ref) {
+    const noteRef = collectNoteRefs(model, kind).find((entry) => entry.noteId === noteId);
+    if (!noteRef) {
       return;
     }
     // Leave note editing inline (not through exitNoteEditing, whose deferred
@@ -314,9 +314,9 @@ export function useNotes(deps: NotesDeps) {
     noteCaret = noCaret();
     noteSelectionAnchor = noCaret();
     notePendingFormat = noPendingFormat();
-    const target = ref.cell
-      ? { section: ref.section, block: ref.block, offset: ref.offset + 1, cell: ref.cell }
-      : { section: ref.section, block: ref.block, offset: ref.offset + 1 };
+    const target = noteRef.cell
+      ? { section: noteRef.section, block: noteRef.block, offset: noteRef.offset + 1, cell: noteRef.cell }
+      : { section: noteRef.section, block: noteRef.block, offset: noteRef.offset + 1 };
     void nextTick().then(() => {
       (contentRoot.value as HTMLElement | null)?.focus();
       applyCaretMove(target);

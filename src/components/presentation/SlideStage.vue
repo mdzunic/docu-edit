@@ -192,7 +192,9 @@ const previewStyle = computed(() => {
         data-testid="slide-field"
         :data-field-kind="field.kindToken"
         :style="field.style"
-      >{{ field.text }}</div>
+      >
+        {{ field.text }}
+      </div>
       <FrameSelectionOverlay
         v-if="showOverlay && selectedFrame"
         :frame="selectedFrame"

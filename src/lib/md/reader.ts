@@ -390,6 +390,11 @@ function emptyParagraph(): Paragraph {
   return { type: "paragraph", runs: [] };
 }
 
+const bakeRun = (run: Run, base: RunFormatting): Run => ({ ...run, formatting: { ...base, ...run.formatting } });
+
+const bakeParagraphFormatting = (base: ResolvedNamedStyle) =>
+  Object.keys(base.paragraphFormatting).length > 0 ? base.paragraphFormatting : undefined;
+
 /** Parses Markdown source into the document model (SPEC-050). Hand-written,
  * line-oriented: blocks are recognised by the "Supported subset" table's
  * patterns in priority order (fenced code, raw HTML, a reference
@@ -450,9 +455,6 @@ export async function parseMd(
   // merged in explicitly since there is no separate style-resolution pass
   // for a freshly parsed document the way docx/odf styles.xml gets one.
   const resolveStyle = (styleId: string): ResolvedNamedStyle => resolveNamedStyle({ ...modelStub, styles }, styleId);
-  const bakeRun = (run: Run, base: RunFormatting): Run => ({ ...run, formatting: { ...base, ...run.formatting } });
-  const bakeParagraphFormatting = (base: ResolvedNamedStyle) =>
-    Object.keys(base.paragraphFormatting).length > 0 ? base.paragraphFormatting : undefined;
 
   // Passed to every `parseInline` call so an inline code span seeds the
   // catalogue and gets its monospace formatting baked in regardless of

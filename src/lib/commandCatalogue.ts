@@ -322,7 +322,7 @@ export function searchCommands(
     const index = recentIds.indexOf(id);
     return index === -1 ? Number.POSITIVE_INFINITY : index;
   };
-  return matches.sort((a, b) => {
+  return matches.toSorted((a, b) => {
     if (b.score !== a.score) {
       return b.score - a.score;
     }
