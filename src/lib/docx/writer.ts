@@ -3029,6 +3029,20 @@ function withMediaRelationships(relsXml: string, relationshipsXml: string): stri
  * other relationship patch in this file (which only ever appends), this is
  * the one case a save actually needs to remove a preserved entry: nothing
  * else references that target any more once the part itself is gone. */
+/** A preserved `[Content_Types].xml` with the `<Override>` for each of
+ * `partNames` removed — the content-types half of withdrawing a stale
+ * declaration for a part this save re-writes, so the plan's own Override can
+ * be appended without producing a duplicate PartName. */
+function withoutOverridesFor(contentTypesXml: string, partNames: Set<string>): string {
+  if (partNames.size === 0) {
+    return contentTypesXml;
+  }
+  return contentTypesXml.replace(/<Override\b[^>]*\/>/g, (entry) => {
+    const partName = /PartName="([^"]+)"/.exec(entry)?.[1];
+    return partName !== undefined && partNames.has(partName.replace(/^\//, "")) ? "" : entry;
+  });
+}
+
 function withoutRelationshipsToTargets(relsXml: string, mainPartName: string, targets: Set<string>): string {
   if (targets.size === 0) {
     return relsXml;
@@ -3478,6 +3492,46 @@ export async function writeDocx(
   // every other appended relationship uses).
   const themeTarget = themePartName.startsWith(mainDir) ? themePartName.slice(mainDir.length) : `/${themePartName}`;
 
+  // Every part this save writes FRESH from the model, rather than copying
+  // through from `preservedParts`.
+  //
+  // The reader consumes-and-rebuilds the header, footer, note, comment and
+  // media parts, so their canonical names are free again and the plans above
+  // hand them straight back — while the preserved main rels and
+  // [Content_Types].xml still declare the source's originals. Every patch
+  // below only ever appends, so each save added a second declaration for a
+  // part that already had one: a document with a header reached its second
+  // save carrying duplicate <Override PartName="/word/header1.xml">, which
+  // OPC forbids outright (ECMA-376 Part 2 §10.1.2.3) and Word answers with
+  // its repair prompt. Both grew by one per save, forever, with autosave
+  // running at up to two a minute.
+  //
+  // So the stale declarations are withdrawn before the fresh ones go in.
+  // Only names this save actually re-writes are touched: a media part that
+  // is still preserved (referenced solely by opaque content) keeps its own
+  // relationship, because the media plan minted a different name around it.
+  const rewrittenPartNames = new Set<string>();
+  for (const entry of mediaPlan.zipEntries) {
+    rewrittenPartNames.add(entry.name);
+  }
+  for (const partPlan of headerFooterPlan.parts) {
+    rewrittenPartNames.add(partPlan.partName);
+    rewrittenPartNames.add(relsPathFor(partPlan.partName));
+    for (const entry of partPlan.mediaPlan.zipEntries) {
+      rewrittenPartNames.add(entry.name);
+    }
+  }
+  for (const notesPart of notesPlan.parts) {
+    rewrittenPartNames.add(notesPart.partName);
+    rewrittenPartNames.add(relsPathFor(notesPart.partName));
+  }
+  for (const commentsPart of commentsPlan.parts) {
+    rewrittenPartNames.add(commentsPart.partName);
+  }
+  for (const entry of chartPlan.zipEntries) {
+    rewrittenPartNames.add(entry.name);
+  }
+
   const entries: ZipEntryInput[] = [];
   if (!relsBytes) {
     entries.push({ name: "_rels/.rels", data: encoder.encode(relsText) });
@@ -3512,7 +3566,9 @@ export async function writeDocx(
         addThemeDecls) &&
       name === mainRelsName
     ) {
-      let rels = mainRelsText!;
+      // Withdraw the source's declarations for parts this save re-writes
+      // before appending the fresh ones, or both end up in the file.
+      let rels = withoutRelationshipsToTargets(mainRelsText!, mainPartName, rewrittenPartNames);
       if (addNumberingDecls) {
         rels = withNumberingRelationship(rels, "numbering.xml");
       }
@@ -3579,7 +3635,10 @@ export async function writeDocx(
         addCustomPropsDecls ||
         removeCustomPropsDecls)
     ) {
-      let contentTypes = decoder.decode(data);
+      // Same withdrawal as the relationships just above: the source's
+      // Override for a part this save re-writes goes before the plan's own
+      // is appended (OPC requires PartName to be unique among Overrides).
+      let contentTypes = withoutOverridesFor(decoder.decode(data), rewrittenPartNames);
       if (!coreRel) {
         contentTypes = withCoreContentType(contentTypes);
       }

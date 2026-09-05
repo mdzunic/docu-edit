@@ -82,7 +82,16 @@ const RPR_SEQUENCE = [
 ];
 // CT_SectPr puts w:type before the page geometry (SPEC-028 AC-31); w:cols
 // follows w:pgMar in the schema (SPEC-030).
-const SECTPR_SEQUENCE = ["type", "pgSz", "pgMar", "cols"];
+// CT_SectPr's child sequence per the ECMA-376 Transitional schema. The
+// header/footer references (SPEC-029) lead it and each may appear once per
+// ST_HdrFtr value (default/first/even), so they are repeatable.
+const SECTPR_SEQUENCE = [
+  "headerReference", "footerReference", "footnotePr", "endnotePr", "type",
+  "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType", "pgNumType", "cols",
+  "formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi",
+  "rtlGutter", "docGrid", "printerSettings", "sectPrChange",
+];
+const SECTPR_REPEATABLE = new Set(["headerReference", "footerReference"]);
 // CT_Style's child sequence per the ECMA-376 Transitional schema. The writer
 // itself emits only name/basedOn/next/pPr/rPr, but a same-format save
 // PRESERVES the source's styles.xml and patches it in place (see
@@ -134,6 +143,9 @@ function checkSequence(
   sequence: string[],
   context: string,
   violations: string[],
+  /** Elements the schema allows more than once in a row (a section's three
+   * header references, one per ST_HdrFtr value). */
+  repeatable?: ReadonlySet<string>,
 ): void {
   let lastIndex = -1;
   for (const child of children) {
@@ -148,7 +160,7 @@ function checkSequence(
       violations.push(
         `${context}: w:${child.localName} is out of schema sequence order (must precede w:${sequence[lastIndex]})`,
       );
-    } else if (index === lastIndex) {
+    } else if (index === lastIndex && !repeatable?.has(child.localName)) {
       violations.push(`${context}: duplicate element w:${child.localName}`);
     } else {
       lastIndex = index;
@@ -387,7 +399,7 @@ function checkParagraph(paragraph: Element, context: string, violations: string[
 }
 
 function checkSectionProperties(sectPr: Element, context: string, violations: string[]): void {
-  checkSequence(Array.from(sectPr.children), SECTPR_SEQUENCE, context, violations);
+  checkSequence(Array.from(sectPr.children), SECTPR_SEQUENCE, context, violations, SECTPR_REPEATABLE);
   for (const child of Array.from(sectPr.children)) {
     if (!isWordElement(child)) {
       continue;
