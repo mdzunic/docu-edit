@@ -102,6 +102,7 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
       >
         <td
           class="cell-select"
+          role="gridcell"
           @click.stop
         >
           <input
@@ -114,6 +115,7 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
         </td>
         <td
           class="cell-star"
+          role="gridcell"
           @click.stop
         >
           <button
@@ -130,6 +132,7 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
         </td>
         <td
           class="cell-title"
+          role="gridcell"
           data-testid="row-title"
         >
           <HighlightedTitle
@@ -139,11 +142,15 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
         </td>
         <td
           class="cell-modified"
+          role="gridcell"
           data-testid="row-modified"
         >
           {{ formatRelativeTime(entry.lastModified, props.lib.now.value) }}
         </td>
-        <td class="cell-format">
+        <td
+          class="cell-format"
+          role="gridcell"
+        >
           <span
             class="badge"
             data-testid="row-format"
@@ -151,12 +158,14 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
         </td>
         <td
           class="cell-size"
+          role="gridcell"
           data-testid="row-size"
         >
           {{ formatFileSize(props.lib.sizeOf(entry.id)) }}
         </td>
         <td
           class="cell-actions"
+          role="gridcell"
           @click.stop
         >
           <RowMenu
@@ -293,5 +302,98 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Compact tier (SPEC-068). Seven columns cannot share a phone's width: the
+   table's own minimum was ~520px inside a ~340px column, so it overflowed a
+   parent that does not scroll — the row menu sat off-screen entirely, and the
+   title column, squeezed to ~66px, broke mid-word ("Untit / led / doc").
+   LibraryGrid already had this breakpoint; the list never got one.
+
+   So each row becomes two lines: the things you act on (select, star, title,
+   menu) across the top, the metadata beneath. The markup is untouched — this
+   is the same grid of the same cells, re-flowed — which is why every cell
+   carries an explicit role above: blockifying a `td` drops the implicit table
+   semantics that `role="grid"` needs, and the roles have to outlive the
+   display change. */
+@media (max-width: 639.98px) {
+  .library-table,
+  .library-table tbody {
+    display: block;
+  }
+
+  /* The column headers name columns that no longer exist side by side. */
+  .library-table thead {
+    display: none;
+  }
+
+  .library-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: var(--border-width) solid var(--border-subtle);
+  }
+
+  /* Cells draw the row's border now, not their own. */
+  .library-table td {
+    padding: 0;
+    border-bottom: none;
+  }
+
+  .cell-select,
+  .cell-star {
+    order: 1;
+    width: auto;
+    flex: none;
+  }
+
+  .cell-star {
+    order: 2;
+  }
+
+  /* Grows to eat the first line, which is what pushes the metadata onto the
+     second — `flex-basis: 0` so wrapping is decided before it grows. */
+  .cell-title {
+    order: 3;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .cell-actions {
+    order: 4;
+    flex: none;
+  }
+
+  /* A zero-height flex item spanning the full width: the line break. Flexbox
+     has no break-before, and the metadata cells' own widths are small enough
+     that they would otherwise ride up onto the first line. */
+  .library-row::after {
+    content: "";
+    order: 5;
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  .cell-format {
+    order: 6;
+  }
+
+  .cell-modified {
+    order: 7;
+  }
+
+  .cell-size {
+    order: 8;
+    color: var(--text-secondary);
+  }
+
+  .cell-format,
+  .cell-modified,
+  .cell-size {
+    flex: none;
+    font-size: var(--text-sm);
+  }
 }
 </style>

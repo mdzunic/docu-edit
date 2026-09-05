@@ -32,6 +32,48 @@ test("the library is usable and collapses its header actions at compact (AC-37/3
   await expect(page.getByTestId("new-from-template")).toBeVisible();
 });
 
+test("the library list fits the compact width and keeps every row action reachable", async ({ page }) => {
+  // The regression this guards: the list is the DEFAULT view, and it had no
+  // width breakpoint at all while the grid did. Seven columns could not share
+  // a phone's width, so the table overflowed a parent that does not scroll —
+  // the row's overflow menu sat off-screen entirely, and the title column,
+  // squeezed to ~66px, broke mid-word. The grid view was fine, which is
+  // exactly why nothing caught it.
+  await newDocument(page);
+  await page.goto("/");
+  const row = page.getByTestId("library-row").first();
+  await expect(row).toBeVisible();
+
+  // Nothing may push the page sideways.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  // Every cell stays inside the viewport — the row menu above all, since a
+  // clipped one is unreachable rather than merely awkward.
+  const viewport = page.viewportSize()!.width;
+  for (const testId of ["row-title", "row-modified", "row-format", "row-size"]) {
+    const box = (await row.getByTestId(testId).boundingBox())!;
+    expect(box.x + box.width, `${testId} runs past the viewport`).toBeLessThanOrEqual(viewport);
+  }
+  const menuButton = row.getByRole("button", { name: /^Actions for / });
+  const menuBox = (await menuButton.boundingBox())!;
+  expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(viewport);
+
+  // The title gets a readable share of the row rather than a shredded column.
+  const titleBox = (await row.getByTestId("row-title").boundingBox())!;
+  expect(titleBox.width).toBeGreaterThan(viewport / 3);
+
+  // And the menu it opens is on-screen too, with its actions.
+  await menuButton.click();
+  const rename = page.getByRole("menuitem", { name: "Rename" });
+  await expect(rename).toBeVisible();
+  const renameBox = (await rename.boundingBox())!;
+  expect(renameBox.x).toBeGreaterThanOrEqual(0);
+  expect(renameBox.x + renameBox.width).toBeLessThanOrEqual(viewport);
+});
+
 test("compact editor: fit-width web layout, essential toolbar, menu sheet, edit, comment, download", async ({
   page,
 }) => {
