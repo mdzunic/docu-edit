@@ -36,6 +36,7 @@ import {
   type TrackChangesDisplayMode,
 } from "../../lib/documentModel";
 import { resolveColor } from "../../lib/core/theme";
+import { hasMixedPageSizes, pageBoxStyle } from "../../lib/printRange";
 import { chipLabel } from "../../lib/mergeChips";
 import {
   sectionColumnFlowWidthPx,
@@ -1207,6 +1208,8 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
     }
     const fieldCaretNow = fieldCaret.value;
     const marks = deps.marksOn.value;
+    // Only a mixed-size document names its page boxes (see pageBoxStyle).
+    const namedPages = hasMixedPageSizes(model);
     const byAddress = new Map<string, FlatEntry>();
     for (const entry of flatBlocks.value) {
       byAddress.set(`${entry.section}:${entry.blockIndex}`, entry);
@@ -1238,10 +1241,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
         deps.realizedSticky.has(page);
       if (!realized) {
         return {
-          pageStyle: {
-            width: `${page.pageSize.widthCm}cm`,
-            height: `${page.pageSize.heightCm}cm`,
-          },
+          pageStyle: pageBoxStyle(page, namedPages),
           contentStyle: {
             padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
           },
@@ -1311,10 +1311,7 @@ export function usePaginationView(deps: PaginationViewDeps): { pagedViews: Compu
       const footnoteView = footnotePlan ? noteAreaView(model, footnotePlan, pageNumber, totalPages, marks, deps) : null;
       const endnoteView = noteAreaView(model, pageNoteAreas.endnotes[pageIndex] ?? null, pageNumber, totalPages, marks, deps);
       return {
-        pageStyle: {
-          width: `${page.pageSize.widthCm}cm`,
-          height: `${page.pageSize.heightCm}cm`,
-        },
+        pageStyle: pageBoxStyle(page, namedPages),
         contentStyle: {
           padding: `${page.margins.topCm}cm ${page.margins.rightCm}cm ${page.margins.bottomCm}cm ${page.margins.leftCm}cm`,
         },

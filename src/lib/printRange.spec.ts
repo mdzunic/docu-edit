@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createDocument } from "./documentModel";
-import { isDocumentContentEmpty, parsePageRange, printPageRuleCss } from "./printRange";
+import {
+  hasMixedPageSizes,
+  isDocumentContentEmpty,
+  pageBoxStyle,
+  pageSizeRuleName,
+  parsePageRange,
+  printPageRuleCss,
+} from "./printRange";
 
 describe("parsePageRange", () => {
   it("parses single pages, ranges and comma lists, deduplicated and sorted", () => {
@@ -78,5 +85,87 @@ describe("printPageRuleCss", () => {
     const model = createDocument("d6");
     model.sections[0].pageSize = { widthCm: 21.59, heightCm: 27.94 };
     expect(printPageRuleCss(model)).toBe("@page { size: 21.59cm 27.94cm; margin: 0; }");
+  });
+
+  it("declares no named rule when every section shares one size", () => {
+    const model = createDocument("d7");
+    model.sections = [
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+    ];
+    expect(printPageRuleCss(model)).toBe("@page { size: 21cm 29.7cm; margin: 0; }");
+  });
+
+  // Sizing every sheet from section 0 printed a landscape section — a wide
+  // table's usual home — onto portrait paper and cropped it, while the screen
+  // showed it correctly.
+  it("gives each distinct size its own named rule when sections disagree", () => {
+    const model = createDocument("d8");
+    model.sections = [
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+      { blocks: [], pageSize: { widthCm: 29.7, heightCm: 21 } },
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+    ];
+    const css = printPageRuleCss(model);
+    // The unnamed rule stays: it is what a browser without named-page support
+    // falls back to, which is the behaviour this replaces rather than nothing.
+    expect(css).toContain("@page { size: 21cm 29.7cm; margin: 0; }");
+    expect(css).toContain(`@page ${pageSizeRuleName({ widthCm: 29.7, heightCm: 21 })} { size: 29.7cm 21cm; margin: 0; }`);
+    expect(css).toContain(`@page ${pageSizeRuleName({ widthCm: 21, heightCm: 29.7 })} { size: 21cm 29.7cm; margin: 0; }`);
+    // One rule per DISTINCT size, not one per section.
+    expect(css.split("@page").length - 1).toBe(3);
+  });
+});
+
+describe("pageSizeRuleName", () => {
+  it("is a CSS custom-ident derived from the dimensions", () => {
+    expect(pageSizeRuleName({ widthCm: 21, heightCm: 29.7 })).toBe("docupage-21-29-7");
+    expect(pageSizeRuleName({ widthCm: 29.7, heightCm: 21 })).toBe("docupage-29-7-21");
+  });
+
+  it("separates sizes that differ only by orientation", () => {
+    expect(pageSizeRuleName({ widthCm: 21, heightCm: 29.7 })).not.toBe(
+      pageSizeRuleName({ widthCm: 29.7, heightCm: 21 }),
+    );
+  });
+});
+
+describe("pageBoxStyle", () => {
+  const page = { pageSize: { widthCm: 21, heightCm: 29.7 } };
+
+  // Setting `page` is not free: a CHANGE in its value forces a page break in
+  // Chromium even with no rule of that name, which added a blank sheet to
+  // every single-size print. So the property appears only where it is needed.
+  it("omits the page property unless the document needs named rules", () => {
+    expect(pageBoxStyle(page)).toEqual({ width: "21cm", height: "29.7cm" });
+  });
+
+  it("names the box when asked, matching its size's rule", () => {
+    expect(pageBoxStyle(page, true)).toEqual({
+      width: "21cm",
+      height: "29.7cm",
+      page: pageSizeRuleName(page.pageSize),
+    });
+  });
+});
+
+describe("hasMixedPageSizes", () => {
+  it("is false for a document whose sections all agree", () => {
+    const model = createDocument("d9");
+    model.sections = [
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+    ];
+    expect(hasMixedPageSizes(model)).toBe(false);
+    expect(hasMixedPageSizes(createDocument("d10"))).toBe(false);
+  });
+
+  it("is true when a section turns landscape", () => {
+    const model = createDocument("d11");
+    model.sections = [
+      { blocks: [], pageSize: { widthCm: 21, heightCm: 29.7 } },
+      { blocks: [], pageSize: { widthCm: 29.7, heightCm: 21 } },
+    ];
+    expect(hasMixedPageSizes(model)).toBe(true);
   });
 });
