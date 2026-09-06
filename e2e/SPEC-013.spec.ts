@@ -14,12 +14,6 @@ async function createDocument(page: Page): Promise<string> {
   return url.slice(url.lastIndexOf("/") + 1);
 }
 
-const SAVED = "All changes saved";
-
-async function waitForSaved(page: Page): Promise<void> {
-  await expect(page.getByTestId("save-state")).toHaveText(SAVED);
-}
-
 const content = (page: Page) => page.getByTestId("document-content");
 
 interface ModelRun {
@@ -80,8 +74,42 @@ function firstParagraphRuns(model: ModelShape): ModelRun[] {
   return model.sections[0].blocks[0].runs;
 }
 
+/** Polls the persisted model until `read` matches, for every assertion that
+ * follows an edit.
+ *
+ * `readLatestModel` waits for the record to EXIST; it does not wait for the
+ * edit under test to be in it, and `waitForSaved` cannot supply that barrier
+ * either. Between the keystroke (or click) and the autosave starting, no edit
+ * has happened yet, so `save-state` still legitimately reads "All changes
+ * saved" from the PREVIOUS edit — `waitForSaved` returns on that stale text
+ * and the one-shot read after it samples the model as it was. Measured ~30ms
+ * wide on a warm dev server; SPEC-020's format-painter tests lost the same
+ * race on main (see the note on `polledModel` there). Polling keeps every
+ * expectation and drops the timing assumption. */
+function polledModel<T>(page: Page, id: string, read: (model: ModelShape) => T) {
+  return expect.poll(async () => read(await readLatestModel(page, id)));
+}
+
 /** Selects a substring of the current (single-paragraph) line by character
- * offsets, via Home + arrow keys — same technique as SPEC-011/012. */
+ * offsets, via Home + arrow keys — same technique as SPEC-011/012 — and then
+ * waits for the EDITOR to have observed the result.
+ *
+ * That wait is not ceremony. `selectionchange` is delivered asynchronously and
+ * at most once per task, so a run of synthetic Shift+ArrowRight presses can
+ * still be queued when the next step moves focus into a toolbar field (the
+ * size and custom-colour inputs both take it). The queued event then fires
+ * with the selection already inside that field, `modelRangeFromSelection`
+ * returns null, and the editor's tracked `selectionAnchor` — the very thing
+ * that lets a focus-stealing control apply to the user's range — is never set.
+ * `currentSelection()` falls back to a collapsed caret, the command applies to
+ * nothing, and the assertion fails against a model that never changed while
+ * the text still looks selected on screen. Instrumented on main: exactly one
+ * selectionchange (the leading collapse) reached the editor for a whole
+ * eleven-character extension, so the font applied and every control after it
+ * silently did not.
+ *
+ * `caret-status` is written by `updateCaretStatus`, inside the editor's own
+ * selectionchange handler, so matching it proves THIS range was seen. */
 async function selectRange(page: Page, from: number, to: number): Promise<void> {
   await page.keyboard.press(LINE_START);
   for (let i = 0; i < from; i++) {
@@ -92,6 +120,12 @@ async function selectRange(page: Page, from: number, to: number): Promise<void> 
     await page.keyboard.press("ArrowRight");
   }
   await page.keyboard.up("Shift");
+  const status = page.getByTestId("caret-status");
+  await (from === to
+    ? expect(status).toContainText(new RegExp(`^Paragraph \\d+ of \\d+, character ${from + 1}$`))
+    : expect(status).toContainText(
+        new RegExp(`character ${from + 1} to paragraph \\d+, character ${to + 1}$`),
+      ));
 }
 
 /** Downloads the document in the given format and returns the file path. */
@@ -111,6 +145,11 @@ async function reopen(page: Page, path: string): Promise<string> {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/doc\/.+/);
+  // The URL changes the moment the document is stored — before the parse, and
+  // well before layout: without a barrier here a test reads state the app has
+  // not built yet. Same pair SPEC-030/051 wait on.
+  await expect(page.getByTestId("document-opening")).toBeHidden();
+  await expect(page.getByTestId("document-pages")).toHaveAttribute("data-pagination-state", "clean");
   const url = page.url();
   return url.slice(url.lastIndexOf("/") + 1);
 }
@@ -139,8 +178,7 @@ test("the font list groups document fonts first and renders every item in its ow
   // Carlito is in the standard list but (in this container) not installed —
   // once applied, the document group must still list it (AC-8).
   await page.getByTestId("font-family-select").selectOption("Carlito");
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))[0]).toEqual({
+  await polledModel(page, id, (model) => firstParagraphRuns(model)[0]).toEqual({
     text: "styled",
     formatting: { fontFamily: "Carlito" },
   });
@@ -179,8 +217,7 @@ test("the size control accepts 0.5 pt steps, has +/- buttons, and clamps out-of-
   const input = page.getByTestId("font-size-input");
   await input.fill("11.5");
   await input.press("Enter");
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "sized", formatting: { fontSizePt: 11.5 } },
   ]);
 
@@ -190,8 +227,7 @@ test("the size control accepts 0.5 pt steps, has +/- buttons, and clamps out-of-
   await page.getByTestId("font-size-decrease").click();
   await page.getByTestId("font-size-decrease").click();
   await expect(input).toHaveValue("11");
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "sized", formatting: { fontSizePt: 11 } },
   ]);
 
@@ -227,8 +263,7 @@ test("the size control accepts 0.5 pt steps, has +/- buttons, and clamps out-of-
     expect(reached).toBe(true);
   }).toPass({ timeout: 15_000 });
   await expect(input).toHaveValue("409");
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "sized", formatting: { fontSizePt: 409 } },
   ]);
 });
@@ -244,8 +279,7 @@ test("the text colour picker offers a palette, recent colours and a custom input
   await page.getByTestId("text-color-button").click();
   await expect(page.getByTestId("text-color-menu")).toBeVisible();
   await page.locator('[data-testid="text-color-swatch"][data-color="#ff0000"]').click();
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "coloured", formatting: { color: "#ff0000" } },
   ]);
   await expect(content(page).locator("span").first()).toHaveCSS("color", "rgb(255, 0, 0)");
@@ -255,8 +289,7 @@ test("the text colour picker offers a palette, recent colours and a custom input
   await page.getByTestId("text-color-button").click();
   await page.getByTestId("text-color-custom-input").fill("#ff8800");
   await page.getByTestId("text-color-custom-apply").click();
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "coloured", formatting: { color: "#ff8800" } },
   ]);
 
@@ -279,8 +312,7 @@ test("the highlight picker offers the 15 Word colours plus 'No colour' (AC-19)",
   await expect(page.locator('[data-testid="highlight-swatch"]')).toHaveCount(15);
   await expect(page.getByTestId("highlight-none")).toBeVisible();
   await page.locator('[data-testid="highlight-swatch"][data-color="yellow"]').click();
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "marked", formatting: { highlight: "yellow" } },
   ]);
   await expect(content(page).locator("span").first()).toHaveCSS(
@@ -292,8 +324,7 @@ test("the highlight picker offers the 15 Word colours plus 'No colour' (AC-19)",
   await selectRange(page, 0, 6);
   await page.getByTestId("highlight-button").click();
   await page.getByTestId("highlight-none").click();
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "marked", formatting: { highlight: false } },
   ]);
 });
@@ -341,8 +372,7 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shi
 
   // SPEC-066 moved subscript to Ctrl+Shift+, so Cmd/Ctrl+, opens Preferences.
   await page.keyboard.press(`${MOD}+Shift+Comma`);
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "H", formatting: {} },
     { text: "2", formatting: { vertAlign: "subscript" } },
     { text: "O", formatting: {} },
@@ -351,8 +381,7 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shi
 
   // Superscript replaces the subscript — mutually exclusive (AC-25).
   await page.keyboard.press(`${MOD}+Period`);
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))[1]).toEqual({
+  await polledModel(page, id, (model) => firstParagraphRuns(model)[1]).toEqual({
     text: "2",
     formatting: { vertAlign: "superscript" },
   });
@@ -361,8 +390,7 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shi
 
   // The toolbar button toggles it back off.
   await page.getByTestId("format-superscript").click();
-  await waitForSaved(page);
-  expect(firstParagraphRuns(await readLatestModel(page, id))).toEqual([
+  await polledModel(page, id, (model) => firstParagraphRuns(model)).toEqual([
     { text: "H2O", formatting: {} },
   ]);
 });
@@ -370,7 +398,7 @@ test("subscript and superscript toggle, are mutually exclusive, and use Ctrl+Shi
 test("font, size, colour, highlight and superscript round-trip through .docx and .odt (AC-13..15, AC-20, AC-28, AC-29)", async ({
   page,
 }) => {
-  await createDocument(page);
+  const authored = await createDocument(page);
   await content(page).click();
   await page.keyboard.type("styled text");
   await selectRange(page, 0, 11);
@@ -388,7 +416,17 @@ test("font, size, colour, highlight and superscript round-trip through .docx and
   await page.locator('[data-testid="highlight-swatch"][data-color="yellow"]').click();
   await selectRange(page, 7, 11);
   await page.keyboard.press(`${MOD}+Period`);
-  await waitForSaved(page);
+  // Every attribute this test round-trips must be in the model BEFORE the
+  // export reads it. waitForSaved was no barrier for the last of them: it
+  // returned on the "All changes saved" the highlight had already left behind,
+  // so a lost race exported "styled text" as one unsuperscripted run and the
+  // reopened assertions failed on runs[0].text.
+  await polledModel(page, authored, (model) =>
+    firstParagraphRuns(model).map((run) => [run.text, run.formatting.vertAlign ?? ""]),
+  ).toEqual([
+    ["styled ", ""],
+    ["text", "superscript"],
+  ]);
 
   const docxPath = await download(page, "docx");
   const odtPath = await download(page, "odt");

@@ -20,6 +20,11 @@ async function openFixture(page: Page, path: string): Promise<string> {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/doc\/.+/);
+  // The URL changes the moment the document is stored — before the parse, and
+  // well before layout: without a barrier here a test reads state the app has
+  // not built yet. Same pair SPEC-030/051 wait on.
+  await expect(page.getByTestId("document-opening")).toBeHidden();
+  await expect(page.getByTestId("document-pages")).toHaveAttribute("data-pagination-state", "clean");
   const url = page.url();
   return url.slice(url.lastIndexOf("/") + 1);
 }
@@ -196,21 +201,30 @@ test("OK sets the four margins, which render exactly and the text wraps inside t
 test("the dialog's unit follows the document preference, which is settable and persists across reload (AC-6, AC-7)", async ({
   page,
 }) => {
+  // toHaveValue, not a one-shot inputValue(): openDialog waits for the dialog
+  // to be VISIBLE, which is not the same as its select having settled on the
+  // stored preference. After a reload the field can render its default for a
+  // tick before the preference reaches it, and the read then banks "cm" — the
+  // failure this test showed once per full suite at the default worker count.
+  // The preference itself is not in doubt: preferences.ts writes localStorage
+  // synchronously on apply, so nothing can be lost between here and the
+  // reload. Same expectation, retried.
+  const unit = page.getByTestId("page-setup-unit");
   await createDocument(page);
   await openDialog(page);
-  expect(await page.getByTestId("page-setup-unit").inputValue()).toBe("cm");
-  await page.getByTestId("page-setup-unit").selectOption("in");
+  await expect(unit).toHaveValue("cm");
+  await unit.selectOption("in");
   await apply(page);
 
   // Re-opening reflects the just-set preference (AC-6).
   await openDialog(page);
-  expect(await page.getByTestId("page-setup-unit").inputValue()).toBe("in");
+  await expect(unit).toHaveValue("in");
   await page.getByTestId("page-setup-cancel").click();
 
   // A real reload reads the preference back from storage (AC-7).
   await page.reload();
   await openDialog(page);
-  expect(await page.getByTestId("page-setup-unit").inputValue()).toBe("in");
+  await expect(unit).toHaveValue("in");
 });
 
 test("values from the opened document populate the dialog, including a non-standard custom size (AC-8)", async ({

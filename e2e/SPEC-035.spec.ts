@@ -23,6 +23,101 @@ async function typeBody(page: Page, text: string): Promise<void> {
   await page.keyboard.type(text);
 }
 
+/** Opens the status bar's language menu, re-armed.
+ *
+ * A click on this menu can be swallowed outright: the menu re-renders and Vue
+ * replaces the node under the pointer between Playwright's mousedown and
+ * mouseup, so the two land on different elements, no click event is
+ * synthesised, and the gesture simply does not happen. Instrumented over 192
+ * runs of the no-proof test: on every failure the editor still HELD the
+ * selection both before and after the click (the word counter, rendered off the
+ * same `selectionActive` the language composable guards on, read "1 of 3 words"
+ * throughout) and the model was never edited. So it is not a selection race and
+ * no barrier can cover it — the gesture has to be re-armed, which is what a
+ * user does anyway. `aria-expanded` is bound straight to the menu's `open`, so
+ * it is the state to drive off. */
+async function openLanguageMenu(page: Page): Promise<void> {
+  await expect(async () => {
+    if ((await languageButton(page).getAttribute("aria-expanded")) !== "true") {
+      await languageButton(page).click();
+    }
+    await expect(languageButton(page)).toHaveAttribute("aria-expanded", "true", { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+/** Clicks one item in the language menu, re-armed until `proof` holds — the
+ * item's own observable consequence, so a swallowed click is retried rather
+ * than silently lost. Every click on this menu needs it. */
+async function clickLanguageMenuItem(
+  page: Page,
+  testId: string,
+  proof: () => Promise<void>,
+): Promise<void> {
+  await expect(async () => {
+    await openLanguageMenu(page);
+    await page.getByTestId(testId).click({ timeout: 2_000 });
+    await proof();
+  }).toPass({ timeout: 20_000 });
+}
+
+/** Picks a language. `pick()` sets `open = false`, so the menu collapsing again
+ * proves the click registered — the swallowed ones left it standing open with
+ * the language unchanged, which is how AC-9 and AC-10 both went red (AC-10
+ * persistently: German never applied, so "Haus" stayed flagged against English
+ * for the full 20s). */
+async function pickLanguage(page: Page, tag: string): Promise<void> {
+  await clickLanguageMenuItem(page, `language-option-${tag}`, () =>
+    expect(languageButton(page)).toHaveAttribute("aria-expanded", "false", { timeout: 2_000 }),
+  );
+}
+
+/** Barrier: waits until the EDITOR has observed a selection running from the
+ * start of a paragraph to `length` characters in.
+ *
+ * Not ceremony. `selectionchange` is delivered asynchronously and at most once
+ * per task, so the events for a synthetic selection can still be queued when
+ * the next step clicks the language button — which takes focus. The queued
+ * event then fires with the selection inside that control, and
+ * `useDocumentLanguage.setSelection` never sees the range. Both consumers fail
+ * silently: `applyLanguage` takes its document-default branch and marks the
+ * WHOLE DOCUMENT instead of the selection, and `toggleNoProof` returns having
+ * done nothing at all — while the text still looks selected on screen. Flaky
+ * once per full suite at `--workers=16`; 12/12 in isolation, so it only shows
+ * when the machine is loaded. Same bug SPEC-013's `selectRange` documents.
+ *
+ * `caret-status` is written by DocumentView's `updateCaretStatus`, the single
+ * place `setSelection` is called from, so a match proves the composable was
+ * handed THIS range. Note it is a barrier, not an invariant: updateCaretStatus
+ * feeds the composables BEFORE its `!range.start` early return and only writes
+ * the status text after it, so a later null-range call would clear them while
+ * this text still reads the old range. When what you need is "a selection is
+ * held right now", the word counter is the sound proxy — it renders straight
+ * off the same `selectionActive` flag, with no such gap. */
+async function expectSelectionSeen(page: Page, length: number): Promise<void> {
+  await expect(page.getByTestId("caret-status")).toContainText(
+    new RegExp(`character 1 to paragraph \\d+, character ${length + 1}$`),
+  );
+}
+
+/** Selects `length` characters from the start of the line, then waits for the
+ * editor to have observed the range (see `expectSelectionSeen`). */
+async function selectFromLineStart(page: Page, length: number): Promise<void> {
+  await page.keyboard.press("Home");
+  for (let i = 0; i < length; i++) {
+    await page.keyboard.press("Shift+ArrowRight");
+  }
+  await expectSelectionSeen(page, length);
+}
+
+// Every underline assertion below is a RETRYING toHaveCount, never a one-shot
+// `await underlines(page).count()`. The fixed waitForTimeout that precedes each
+// one is a guess at how long an idle-scheduled spell pass takes, and it is not
+// always enough: dictionaries load on demand, so under load the German list can
+// still be in flight 500ms after the text was typed and "Haus" is briefly
+// flagged against nothing. Seen once in 204 runs at --workers=16 on AC-10's
+// `toBe(0)`. The sleeps stay — they keep the assertions non-vacuous by giving a
+// pass time to run at all — but the read after them retries.
+
 /** Waits for the idle-scheduled spell-check pass to land — there is no
  * status/idle indicator to poll, so this polls the underline count instead
  * of a fixed sleep, keeping the test fast when checking finishes quickly
@@ -175,12 +270,12 @@ test('"Ignore" clears one occurrence, "Ignore all" clears every occurrence, for 
   await rightClickFirstUnderline(page);
   await page.getByTestId("spell-ignore").click();
   await page.waitForTimeout(300);
-  expect(await underlines(page).count()).toBe(before - 1);
+  await expect(underlines(page)).toHaveCount(before - 1);
 
   await rightClickFirstUnderline(page);
   await page.getByTestId("spell-ignore-all").click();
   await page.waitForTimeout(300);
-  expect(await underlines(page).count()).toBe(0);
+  await expect(underlines(page)).toHaveCount(0);
 });
 
 test("Add to dictionary persists across a reload and removes the underline everywhere (AC-7, AC-7.1, AC-7.2)", async ({ page }) => {
@@ -190,21 +285,21 @@ test("Add to dictionary persists across a reload and removes the underline every
   await rightClickFirstUnderline(page);
   await page.getByTestId("spell-add-to-dictionary").click();
   await page.waitForTimeout(300);
-  expect(await underlines(page).count()).toBe(0);
+  await expect(underlines(page)).toHaveCount(0);
 
   await page.reload();
   await page.waitForTimeout(500);
   await typeBody(page, " docuedit");
   await page.waitForTimeout(500);
-  expect(await underlines(page).count()).toBe(0);
+  await expect(underlines(page)).toHaveCount(0);
 });
 
 test("the custom dictionary dialog lists, searches, adds, removes and filters by language (AC-8.1..8.3)", async ({ page }) => {
   await createDocument(page);
-  await languageButton(page).click();
-  await page.getByTestId("language-manage-dictionary").click();
   const dialog = page.getByTestId("custom-dictionary-dialog");
-  await expect(dialog).toBeVisible();
+  await clickLanguageMenuItem(page, "language-manage-dictionary", () =>
+    expect(dialog).toBeVisible({ timeout: 2_000 }),
+  );
   await expect(page.getByTestId("custom-dictionary-empty")).toBeVisible();
 
   await page.getByTestId("custom-dictionary-add-input").fill("docuedit");
@@ -232,15 +327,12 @@ test("the custom dictionary dialog lists, searches, adds, removes and filters by
 test("the language selector sets the document default with no selection, and only the selection when text is selected (AC-9, AC-9.1)", async ({ page }) => {
   await createDocument(page);
   await expect(languageButton(page)).toHaveText("English (US)");
-  await languageButton(page).click();
-  await page.getByTestId("language-option-de-DE").click();
+  await pickLanguage(page, "de-DE");
   await expect(languageButton(page)).toHaveText("German");
 
   await typeBody(page, "Bonjour");
-  await page.keyboard.press("Home");
-  for (let i = 0; i < 7; i++) await page.keyboard.press("Shift+ArrowRight");
-  await languageButton(page).click();
-  await page.getByTestId("language-option-fr-FR").click();
+  await selectFromLineStart(page, 7);
+  await pickLanguage(page, "fr-FR");
   await expect(languageButton(page)).toHaveText("French");
 
   // Collapsed elsewhere shows the (unchanged) document default again.
@@ -250,16 +342,15 @@ test("the language selector sets the document default with no selection, and onl
 
 test("each run is checked against its own language's dictionary (AC-10, AC-10.1)", async ({ page }) => {
   await createDocument(page);
-  await languageButton(page).click();
-  await page.getByTestId("language-option-de-DE").click();
+  await pickLanguage(page, "de-DE");
   await typeBody(page, "Haus");
   await page.waitForTimeout(500);
   // "Haus" (house) is a real German word — not flagged against German.
-  expect(await underlines(page).count()).toBe(0);
+  await expect(underlines(page)).toHaveCount(0);
 
   await page.keyboard.press(`${MOD}+a`);
-  await languageButton(page).click();
-  await page.getByTestId("language-option-en-US").click();
+  await expectSelectionSeen(page, 4);
+  await pickLanguage(page, "en-US");
   await page.waitForTimeout(500);
   // The same text, now marked English, is not a recognised English word.
   await waitForUnderlines(page, 1);
@@ -269,15 +360,26 @@ test('"Do not check spelling" skips the selection entirely (AC-11)', async ({ pa
   await createDocument(page);
   await typeBody(page, "zzqxnonsenseword stays flagged");
   await waitForUnderlines(page, 1);
-  await page.keyboard.press("Home");
-  for (let i = 0; i < 16; i++) await page.keyboard.press("Shift+ArrowRight");
-  await languageButton(page).click();
-  await page.getByTestId("language-no-proof").check();
+  await selectFromLineStart(page, 16);
+  await openLanguageMenu(page);
+  // Re-armed for the same reason `openLanguageMenu` is (see its note): a
+  // `.check()` here clicks once and throws "did not change its state" when the
+  // click never becomes a `change`. This box is the case that was instrumented.
+  const noProof = page.getByTestId("language-no-proof");
+  await expect(async () => {
+    if (!(await noProof.isChecked())) {
+      await noProof.click();
+    }
+    await expect(noProof).toBeChecked({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await page.keyboard.press("Escape");
   await page.keyboard.press("End");
   await page.waitForTimeout(500);
-  const words = await underlines(page).evaluateAll((els) => els.map((el) => el.getAttribute("data-word")));
-  expect(words).not.toContain("zzqxnonsenseword");
+  await expect
+    .poll(async () =>
+      underlines(page).evaluateAll((els) => els.map((el) => el.getAttribute("data-word"))),
+    )
+    .not.toContain("zzqxnonsenseword");
 });
 
 async function flaggedWords(page: Page): Promise<string[]> {
@@ -299,7 +401,7 @@ test("URLs and email addresses are skipped by default (AC-12)", async ({ page })
 
 test("dictionaries load on demand and at least the six required languages are available (AC-17, AC-18)", async ({ page }) => {
   await createDocument(page);
-  await languageButton(page).click();
+  await openLanguageMenu(page);
   for (const tag of ["en-US", "en-GB", "de-DE", "fr-FR", "es-ES", "cs-CZ"]) {
     await expect(page.getByTestId(`language-option-${tag}`)).toBeVisible();
   }
@@ -327,14 +429,13 @@ test("an empty document produces no spell-check errors and loads no dictionary u
     }
   });
   await page.waitForTimeout(500);
-  expect(await underlines(page).count()).toBe(0);
+  await expect(underlines(page)).toHaveCount(0);
   expect(requests).toEqual([]);
 });
 
 test("language round-trips through a .docx save and reopen, reflected in the status bar (AC-13, AC-14, AC-15, AC-15.1)", async ({ page }) => {
   await createDocument(page);
-  await languageButton(page).click();
-  await page.getByTestId("language-option-de-DE").click();
+  await pickLanguage(page, "de-DE");
   await typeBody(page, "haus");
 
   await page.getByTestId("menu-title-file").click();
