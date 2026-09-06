@@ -115,6 +115,22 @@ async function selectWholeLine(page: Page): Promise<void> {
   await page.keyboard.press(extend(LINE_END));
 }
 
+/** Polls the persisted model until `read` matches, for the assertions that
+ * follow a format-painter application.
+ *
+ * `waitForSaved` is NOT a barrier there. The painter applies from a
+ * `selectionchange`, which lands a task or two after the keystroke that made
+ * the selection; until it does, no edit has happened yet, so `save-state`
+ * still legitimately reads "All changes saved" from the PREVIOUS edit.
+ * `waitForSaved` returns on that stale text and the one-shot `readLatestModel`
+ * after it runs before the painter has touched anything. The window is real —
+ * measured ~30ms on a warm dev server, reproducible on a clean checkout — and
+ * a fast machine loses the race often enough to red four tests in this file.
+ * Polling keeps the same expectation and drops the timing assumption. */
+function polledModel<T>(page: Page, id: string, read: (model: ModelShape) => T) {
+  return expect.poll(async () => read(await readLatestModel(page, id)));
+}
+
 test("the Format menu offers Clear formatting and Format painter (AC-1, AC-9)", async ({ page }) => {
   await createDocument(page);
   await openFormatMenu(page);
@@ -206,9 +222,8 @@ test("a single click arms the painter (cursor + pressed state) and applies once 
   // The next selection — the plain second paragraph — receives the copy.
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
-  await waitForSaved(page);
 
-  expect(block(await readLatestModel(page, id), 1).runs[0].formatting).toEqual({ bold: true });
+  await polledModel(page, id, (model) => block(model, 1).runs[0].formatting).toEqual({ bold: true });
   await expect(painterButton(page)).toHaveAttribute("aria-checked", "false");
   await expect(content(page)).not.toHaveCSS("cursor", "copy");
 });
@@ -232,20 +247,27 @@ test("double-clicking the painter keeps it armed for repeated application until 
   await lockPainter(page);
   await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
 
+  // Each application is awaited where it happens, not both at the end. In
+  // repeat mode the painter stays armed, so neither waitForSaved nor the
+  // aria-checked assertion is a barrier — without one the second selection can
+  // be made before the FIRST application lands, and applyEdit's caret restore
+  // then throws it away, leaving "Target two" plain.
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
-  await waitForSaved(page);
+  await polledModel(page, id, (model) => block(model, 1).runs[0].formatting).toEqual({ bold: true });
   await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
 
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press(LINE_START);
   await selectWholeLine(page);
-  await waitForSaved(page);
+  await polledModel(page, id, (model) => block(model, 2).runs[0].formatting).toEqual({ bold: true });
   await expect(painterButton(page)).toHaveAttribute("aria-checked", "true");
 
-  const model = await readLatestModel(page, id);
-  expect(block(model, 1).runs[0].formatting).toEqual({ bold: true });
-  expect(block(model, 2).runs[0].formatting).toEqual({ bold: true });
+  // Repeat mode left the first application in place while making the second.
+  await polledModel(page, id, (model) => [
+    block(model, 1).runs[0].formatting,
+    block(model, 2).runs[0].formatting,
+  ]).toEqual([{ bold: true }, { bold: true }]);
 
   await page.keyboard.press("Escape");
   await expect(painterButton(page)).toHaveAttribute("aria-checked", "false");
@@ -277,9 +299,8 @@ test("copies paragraph formatting only when a whole paragraph is selected (AC-10
   await armPainter(page);
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
-  await waitForSaved(page);
 
-  expect(block(await readLatestModel(page, id), 1).formatting).toEqual({ alignment: "center" });
+  await polledModel(page, id, (model) => block(model, 1).formatting).toEqual({ alignment: "center" });
 });
 
 test("format painter application is a single undo step (AC-19)", async ({ page }) => {
@@ -297,10 +318,8 @@ test("format painter application is a single undo step (AC-19)", async ({ page }
   await armPainter(page);
   await page.keyboard.press("ArrowDown");
   await selectWholeLine(page);
-  await waitForSaved(page);
-  expect(block(await readLatestModel(page, id), 1).runs[0].formatting).toEqual({ bold: true });
+  await polledModel(page, id, (model) => block(model, 1).runs[0].formatting).toEqual({ bold: true });
 
   await page.keyboard.press(`${MOD}+z`);
-  await waitForSaved(page);
-  expect(block(await readLatestModel(page, id), 1).runs[0].formatting).toEqual({});
+  await polledModel(page, id, (model) => block(model, 1).runs[0].formatting).toEqual({});
 });

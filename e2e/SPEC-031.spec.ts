@@ -31,6 +31,11 @@ async function openFixture(page: Page, path: string): Promise<void> {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/doc\/.+/);
+  // The URL changes the moment the document is stored — before the parse, and
+  // well before layout: without a barrier here a test reads state the app has
+  // not built yet. Same pair SPEC-030/051 wait on.
+  await expect(page.getByTestId("document-opening")).toBeHidden();
+  await waitForPagination(page);
 }
 
 async function waitForPagination(page: Page, timeout = 30_000): Promise<void> {

@@ -73,6 +73,17 @@ export function useSlideLayouts(deps: SlideLayoutsDeps) {
   function close(): void {
     open.value = false;
   }
+  /** The ribbon's Layout button. The gallery is a dialog, not a docked panel,
+   * so "toggle" means open it on the current slide's layout or dismiss the one
+   * already up — both entry points and the open state are this composable's,
+   * so the view no longer hand-rolls the branch. */
+  function toggle(): void {
+    if (open.value) {
+      close();
+    } else {
+      openForChange();
+    }
+  }
   function choose(key: string): void {
     chosenKey.value = key;
   }
@@ -147,6 +158,7 @@ export function useSlideLayouts(deps: SlideLayoutsDeps) {
     openForChange,
     openForNew,
     close,
+    toggle,
     cards,
     currentKey,
     choose,

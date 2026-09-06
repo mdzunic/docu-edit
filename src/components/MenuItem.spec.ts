@@ -33,4 +33,26 @@ describe("MenuItem", () => {
     });
     expect(wrapper.find('[data-testid="menu-item-reason"]').exists()).toBe(false);
   });
+
+  // The handoff gives every menu row a 16px leading gutter so labels line up in
+  // one column. Before it, only MenuCheckItem reserved one, and a menu mixing
+  // commands with toggles read as two ragged columns.
+  it("always reserves the leading gutter, with or without an icon", () => {
+    const plain = mount(MenuItem, { props: { label: "Tabs…" } });
+    expect(plain.find(".menu-icon").exists()).toBe(true);
+    expect(plain.find(".menu-icon svg").exists()).toBe(false);
+
+    const iconed = mount(MenuItem, { props: { label: "Bold", icon: "bold" } });
+    const gutter = iconed.get(".menu-icon");
+    expect(gutter.attributes("aria-hidden")).toBe("true");
+    expect(gutter.find("svg").exists()).toBe(true);
+  });
+
+  // AppIcon renders nothing for a name it does not know, so a typo costs an
+  // empty gutter rather than a broken row.
+  it("renders an empty gutter for an unknown icon name", () => {
+    const wrapper = mount(MenuItem, { props: { label: "Tabs…", icon: "not-an-icon" } });
+    expect(wrapper.find(".menu-icon").exists()).toBe(true);
+    expect(wrapper.find(".menu-icon svg").exists()).toBe(false);
+  });
 });

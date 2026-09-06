@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openInsertTab } from "./slides";
 
 // SPEC-092 — charts on slides. Open a deck whose first slide carries a clustered
 // column, a line and a pie chart (painted as real charts) plus one out-of-
@@ -102,6 +103,7 @@ test("pptx: charts paint, edit through the toolbar, insert, and round-trip", asy
 
   // AC-13/13a: Insert → Chart → Pie → a new chart lands selected (its toolbar
   // shows the supported edit controls), bringing the deck to five charts.
+  await openInsertTab(page);
   await page.getByTestId("insert-chart").click();
   await expect(page.getByTestId("chart-gallery")).toBeVisible();
   await page.getByTestId("chart-gallery-pie").click();

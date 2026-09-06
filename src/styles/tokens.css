@@ -91,6 +91,10 @@
      the webfont has not loaded (offline, print, tests). */
   --font-ui: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* The caption face — the toolbar's tiny uppercase labels and field kickers.
+     Modernist has no condensed cut, so it rides the UI face; Industry swaps in
+     Barlow Condensed, which is what the redesign is drawn in. */
+  --font-caption: "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --text-xs: 11px; --text-sm: 12px; --text-md: 13px;
   --text-lg: 15px; --text-xl: 18px;
   --weight-regular: 400; --weight-medium: 500; --weight-bold: 700;
@@ -105,12 +109,23 @@
      (the handoff sits .btn and .input side by side at one size). */
   --text-control: 14px;
 
+  /* Toolbar captions (SPEC-061 redesign) — the tiny uppercase word printed
+     under a toolbar control's icon, and the same treatment on a field's
+     leading "kicker" (STYLE, FONT, WRAP). The Toolbar Redesign handoff sets
+     these at 9.5px in Barlow Condensed; a non-condensed face needs a touch
+     more to read at the same optical size, so the base step is 10px and the
+     Industry palette (which restores Barlow Condensed) takes it back to 9.5. */
+  --text-caption: 10px;
+  --tracking-caption: 0.07em;
+  --weight-caption: 600;
+
   /* Chrome heights — one stated height per region, not content-sized. */
   --height-app-bar: 48px;
   --height-menu-bar: 32px;
-  --height-toolbar: 40px;
+  --height-toolbar: 52px;      /* the banded strip; 36px controls + captions */
   --height-status-bar: 28px;
   --height-control: 32px;      /* the minimum hit target */
+  --height-toolbar-control: 36px;  /* the strip's own, taller control step */
   --width-pane: 280px;
 
   /* Motion. */
@@ -144,6 +159,7 @@
 @media (pointer: coarse) {
   :root {
     --height-control: 44px;
+    --height-toolbar-control: 44px;
     --space-2: 6px;
     --space-3: 10px;
     --space-4: 14px;
@@ -521,6 +537,148 @@
   --text-button: 13px;
   --weight-button: 500;
   --text-control: 13px;
+}
+
+/* -- Industry: Barlow on a cool grey ground, steel accent, square geometry.
+   The Toolbar Redesign handoff's own design system. Two deliberate divergences
+   from its stylesheet, both forced by the contrast pairs tokens.spec asserts:
+   the accent fill is the ramp's 700 step (#416180) rather than the raw #5980a6
+   — white on #5980a6 is 4.0:1, short of 4.5 — which is also what the system's
+   own readme prescribes for text-weight accent use; and the dark scheme's
+   accent is squeezed to #54718d, the one steel that clears 4.5:1 under
+   --text-on-brand while still holding 3:1 on the dark ground. -- */
+:root[data-palette="industry"] {
+  --surface-canvas:        #e4e4e7;
+  --surface-base:          #f2f2f3;
+  --surface-raised:        #e9e9ea;
+  --surface-sunken:        #dedee2;
+  --surface-brand:         #1d2d3d;
+  --surface-selected:      #d6ebff;
+  --surface-overlay:       rgb(29 31 32 / 0.45);
+
+  --text-primary:          #1d1f20;
+  --text-secondary:        #5d5d60;
+  --text-disabled:         #98989b;
+  --text-on-brand:         #f2f2f3;
+  --text-accent:           #2c455d;
+  --text-danger:           #a3231a;
+
+  --border-subtle:         #c9c9cd;
+  --border-default:        #b0b0b5;
+  --border-strong:         #7a7a7d;
+
+  --accent:                #416180;
+  --accent-hover:          #2c455d;
+  --accent-subtle:         #eef6ff;
+  --danger:                #a3231a;
+  --success:               #1f6b40;
+  --warning:               #8a5600;
+
+  --state-hover:           rgb(65 97 128 / 0.10);
+  --state-active:          rgb(65 97 128 / 0.18);
+  --focus-ring:            #416180;
+
+  --radius-sm: 0; --radius-md: 0; --radius-lg: 0; --radius-pill: 0;
+  --shadow-1: 0 1px 2px rgb(43 43 45 / 0.14);
+  --shadow-2: 0 3px 10px rgb(43 43 45 / 0.16);
+  --shadow-3: 0 12px 32px rgb(43 43 45 / 0.22);
+  --font-ui: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-caption: "Barlow Condensed", "Barlow", system-ui, sans-serif;
+  --weight-bold: 700;
+  --text-button: 14px;
+  --weight-button: 600;
+  --text-control: 14px;
+  --text-caption: 9.5px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="industry"]:not([data-theme="light"]) {
+    --surface-canvas:        #141516;
+    --surface-base:          #1d1f20;
+    --surface-raised:        #2b2b2d;
+    --surface-sunken:        #141516;
+    --surface-brand:         #141516;
+    --surface-selected:      #2c455d;
+    --surface-overlay:       rgb(9 10 11 / 0.55);
+
+    --text-primary:          #f2f2f3;
+    --text-secondary:        #b7b7ba;
+    --text-disabled:         #7a7a7d;
+    --text-on-brand:         #f2f2f3;
+    --text-accent:           #b5d9fd;
+    --text-danger:           #f29d95;
+
+    --border-subtle:         #4a4a4f;
+    --border-default:        #5a5a60;
+    --border-strong:         #98989b;
+
+    --accent:                #54718d;
+    --accent-hover:          #61809f;
+    --accent-subtle:         #1d2d3d;
+    --danger:                #f29d95;
+    --success:               #6fcf97;
+    --warning:               #e0b050;
+
+    --state-hover:           rgb(148 188 227 / 0.12);
+    --state-active:          rgb(148 188 227 / 0.20);
+    --focus-ring:            #94bce3;
+
+    --radius-sm: 0; --radius-md: 0; --radius-lg: 0; --radius-pill: 0;
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 0.50);
+    --shadow-2: 0 3px 10px rgb(0 0 0 / 0.55);
+    --shadow-3: 0 12px 32px rgb(0 0 0 / 0.60);
+    --font-ui: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-caption: "Barlow Condensed", "Barlow", system-ui, sans-serif;
+    --weight-bold: 700;
+    --text-button: 14px;
+    --weight-button: 600;
+    --text-control: 14px;
+    --text-caption: 9.5px;
+  }
+}
+
+:root[data-palette="industry"][data-theme="dark"] {
+  --surface-canvas:        #141516;
+  --surface-base:          #1d1f20;
+  --surface-raised:        #2b2b2d;
+  --surface-sunken:        #141516;
+  --surface-brand:         #141516;
+  --surface-selected:      #2c455d;
+  --surface-overlay:       rgb(9 10 11 / 0.55);
+
+  --text-primary:          #f2f2f3;
+  --text-secondary:        #b7b7ba;
+  --text-disabled:         #7a7a7d;
+  --text-on-brand:         #f2f2f3;
+  --text-accent:           #b5d9fd;
+  --text-danger:           #f29d95;
+
+  --border-subtle:         #4a4a4f;
+  --border-default:        #5a5a60;
+  --border-strong:         #98989b;
+
+  --accent:                #54718d;
+  --accent-hover:          #61809f;
+  --accent-subtle:         #1d2d3d;
+  --danger:                #f29d95;
+  --success:               #6fcf97;
+  --warning:               #e0b050;
+
+  --state-hover:           rgb(148 188 227 / 0.12);
+  --state-active:          rgb(148 188 227 / 0.20);
+  --focus-ring:            #94bce3;
+
+  --radius-sm: 0; --radius-md: 0; --radius-lg: 0; --radius-pill: 0;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 0.50);
+  --shadow-2: 0 3px 10px rgb(0 0 0 / 0.55);
+  --shadow-3: 0 12px 32px rgb(0 0 0 / 0.60);
+  --font-ui: "Barlow", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-caption: "Barlow Condensed", "Barlow", system-ui, sans-serif;
+  --weight-bold: 700;
+  --text-button: 14px;
+  --weight-button: 600;
+  --text-control: 14px;
+  --text-caption: 9.5px;
 }
 
 /* -- Petrol: cool utility blue-green on the Modernist ground. -- */

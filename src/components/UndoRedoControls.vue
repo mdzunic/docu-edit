@@ -39,6 +39,7 @@ function redoTitle() {
   >
     <UiIconButton
       icon="undo"
+      caption="Undo"
       :label="undoTitle()"
       :disabled="!canUndo"
       data-testid="undo-button"
@@ -47,6 +48,7 @@ function redoTitle() {
     />
     <UiIconButton
       icon="redo"
+      caption="Redo"
       :label="redoTitle()"
       :disabled="!canRedo"
       data-testid="redo-button"

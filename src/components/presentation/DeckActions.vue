@@ -1,12 +1,33 @@
 <script setup lang="ts">
-// The deck-header action cluster (undo/redo, Notes toggle, Present, download,
-// Close) — extracted from PresentationView so the view stays a thin wiring hub
-// (its size budget only ratchets down). Pure presentation + event forwarding;
-// the view owns the commands these fire. Runtime prop/emit declarations, not
-// the generic forms (espree lints .vue scripts).
-import AppIcon from "../AppIcon.vue";
+// The deck's app-bar action cluster (Present, download, save state, Close) —
+// extracted from PresentationView so the view stays a thin wiring hub (its size
+// budget only ratchets down). Pure presentation + event forwarding; the view
+// owns the commands these fire.
+//
+// It is deliberately the word processor's cluster plus Present: save state,
+// the download control, Close. Four controls left when the deck line folded
+// into the app bar, because eight of them overflowed the bar at 1024px and put
+// Close off the right edge where nothing could reach it — and each had a truer
+// home anyway:
+//
+//   · Notes was never an action. It opens the notes panel exactly as Design,
+//     Table and Media open theirs, so it joined SlideRibbon's panel toggles
+//     (its slides-notes-toggle testid unchanged).
+//   · Undo/redo went to the ribbon row, which is the deck's always-visible
+//     command line — where DocumentToolbar's band 1 keeps the word processor's
+//     pair, and where the handoff's own 2c strip starts.
+//   · Deck setup… is a rare command the File menu already carries
+//     (slides-menu-deck-setup); the handoff's 2c bar holds only Download,
+//     Present and Close.
+//
+// Close is now the same icon button the word processor's cluster ends with,
+// rather than a wider text button saying the same thing.
+//
+// Runtime prop/emit declarations, not the generic forms (espree lints .vue
+// scripts).
 import SaveStateBadge from "../SaveStateBadge.vue";
 import UiButton from "../ui/UiButton.vue";
+import UiIconButton from "../ui/UiIconButton.vue";
 import PresentationDownloadButton from "./PresentationDownloadButton.vue";
 
 defineProps({
@@ -15,18 +36,11 @@ defineProps({
    * "stored in this browser" promise uncheckable on half of it. */
   saveState: { type: String, default: "saved" },
   saveStateText: { type: String, default: "" },
-  canUndo: { type: Boolean, default: false },
-  canRedo: { type: Boolean, default: false },
-  notesOpen: { type: Boolean, default: false },
   canPresent: { type: Boolean, default: false },
   otherFormatLabel: { type: String, default: "" },
 });
 
 const emit = defineEmits([
-  "undo",
-  "redo",
-  "toggle-notes",
-  "deck-setup",
   "present",
   "download",
   "download-copy",
@@ -37,42 +51,6 @@ const emit = defineEmits([
 
 <template>
   <div class="deck-actions">
-    <UiButton
-      variant="ghost"
-      data-testid="presentation-undo"
-      :disabled="!canUndo"
-      aria-label="Undo"
-      title="Undo"
-      @click="emit('undo')"
-    >
-      <AppIcon name="undo" />
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      data-testid="presentation-redo"
-      :disabled="!canRedo"
-      aria-label="Redo"
-      title="Redo"
-      @click="emit('redo')"
-    >
-      <AppIcon name="redo" />
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      class="notes-toggle"
-      data-testid="slides-notes-toggle"
-      :aria-pressed="notesOpen"
-      @click="emit('toggle-notes')"
-    >
-      Notes
-    </UiButton>
-    <UiButton
-      variant="ghost"
-      data-testid="presentation-deck-setup"
-      @click="emit('deck-setup')"
-    >
-      Deck setup…
-    </UiButton>
     <UiButton
       variant="primary"
       data-testid="slides-present"
@@ -94,19 +72,20 @@ const emit = defineEmits([
       :save-state="saveState"
       :text="saveStateText"
     />
-    <UiButton
-      variant="ghost"
+    <UiIconButton
+      class="close-button"
+      icon="close"
+      label="Close presentation"
       data-testid="presentation-close"
       @click="emit('close')"
-    >
-      Close
-    </UiButton>
+    />
   </div>
 </template>
 
 <style scoped>
 .deck-actions {
   display: flex;
+  flex: none;
   gap: var(--space-3);
   align-items: center;
 }
@@ -114,5 +93,22 @@ const emit = defineEmits([
 /* Quieter than the buttons around it: a state to glance at, not an action. */
 .deck-save-state {
   color: var(--text-secondary);
+}
+
+/* The icon button's default greys are tuned for light surfaces; on the brand
+   bar it takes the on-brand foreground and a translucent wash so it reads in
+   both themes — the same treatment EditorSaveStatus gives the word processor's
+   Close, because it is now the same control. */
+.deck-actions .close-button {
+  color: var(--text-on-brand);
+}
+
+.deck-actions .close-button:not(:disabled):hover {
+  color: var(--text-on-brand);
+  background: color-mix(in srgb, var(--text-on-brand) 12%, transparent);
+}
+
+.deck-actions .close-button:not(:disabled):active {
+  background: color-mix(in srgb, var(--text-on-brand) 20%, transparent);
 }
 </style>

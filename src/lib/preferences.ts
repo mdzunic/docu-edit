@@ -61,6 +61,7 @@ export const PALETTE_IDS = [
   "modernist",
   "nocturne",
   "classic",
+  "industry",
   "petrol",
   "plum",
   "ink",
@@ -80,6 +81,7 @@ export const PALETTE_OPTIONS: { value: PaletteId; label: string; swatch: string 
   { value: "modernist", label: "Modernist", swatch: "#9c4a34" },
   { value: "nocturne", label: "Nocturne", swatch: "#6f5fc4" },
   { value: "classic", label: "Classic", swatch: "#1a73e8" },
+  { value: "industry", label: "Industry", swatch: "#416180" },
   { value: "petrol", label: "Petrol", swatch: "#0e6f83" },
   { value: "plum", label: "Plum", swatch: "#7a2d59" },
   { value: "ink", label: "Ink", swatch: "#1c1b1a" },
@@ -97,6 +99,11 @@ export interface Preferences {
   /** The design theme (colour palette / face / geometry) the chrome renders
    * in. Orthogonal to `theme`: every palette has a light and a dark scheme. */
   palette: PaletteId;
+  /** Toolbar Redesign: whether the banded strip prints the tiny uppercase
+   * caption under each control's icon ("icons + labels") or shows icons alone.
+   * Captions are additionally dropped automatically whenever they would not
+   * fit — this preference is the ceiling, not a guarantee. */
+  toolbarLabels: boolean;
   dimPage: boolean;
   measurementUnit: MeasurementUnit;
   defaultZoom: DefaultZoom;
@@ -179,6 +186,7 @@ export const AUTOSAVE_DELAY_CHOICES: number[] = [1000, AUTOSAVE_DEBOUNCE_MS, 300
 export const PREFERENCE_DEFAULTS: Preferences = {
   theme: "system",
   palette: "modernist",
+  toolbarLabels: true,
   dimPage: false,
   measurementUnit: "cm",
   defaultZoom: DEFAULT_ZOOM,
@@ -243,6 +251,7 @@ function inSet(raw: unknown, values: readonly string[]): string | undefined {
 const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   theme: oneOf<"theme">(["system", "light", "dark"]),
   palette: oneOf<"palette">(PALETTE_IDS),
+  toolbarLabels: isBoolean,
   dimPage: isBoolean,
   measurementUnit: oneOf<"measurementUnit">(["cm", "mm", "in", "pt"]),
   defaultZoom: (raw) => {

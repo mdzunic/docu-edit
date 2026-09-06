@@ -53,6 +53,7 @@ test("the Color theme select offers every declared palette", async ({ page }) =>
     "modernist",
     "nocturne",
     "classic",
+    "industry",
     "petrol",
     "plum",
     "ink",

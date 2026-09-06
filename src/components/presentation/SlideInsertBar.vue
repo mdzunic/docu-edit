@@ -172,7 +172,17 @@ const compact = ref(false);
 const overflowOpen = ref(false);
 const OVERFLOW_BELOW_PX = 620;
 function updateCompact() {
-  compact.value = (root.value?.clientWidth ?? 9999) < OVERFLOW_BELOW_PX;
+  // A width of 0 means the strip is not being laid out at all — it is the
+  // ribbon tab that is not showing (v-show sets display:none), not a narrow
+  // window. Treating that as "compact" would activate the overflow Teleport
+  // below, whose target lives inside this same subtree, and Vue's patch
+  // crashes on the next unmount (insertBefore of null). Hold the last known
+  // answer until the strip is measurable again.
+  const width = root.value?.clientWidth ?? 9999;
+  if (width === 0) {
+    return;
+  }
+  compact.value = width < OVERFLOW_BELOW_PX;
   if (!compact.value) overflowOpen.value = false;
 }
 const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateCompact) : null;

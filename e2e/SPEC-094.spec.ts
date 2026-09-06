@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openInsertTab } from "./slides";
 
 // SPEC-094 — deck themes. Open the themed fixture → Design marks the current
 // theme card → applying a built-in recolours the accent-filled shape and the
@@ -95,6 +96,7 @@ test("a theme swatch stores the reference and survives download → reopen (AC-5
   // Select the ellipse (shape canvas #1, frame index 3) and open its style
   // popover; pick the plain accent1 theme swatch for its fill.
   await stageFrames(page).nth(3).click();
+  await openInsertTab(page);
   await page.getByTestId("style-button").click();
   await expect(page.getByTestId("frame-style-popover")).toBeVisible();
   await page

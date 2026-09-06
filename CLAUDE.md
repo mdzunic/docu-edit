@@ -12,8 +12,20 @@ holds the queue and `specs/000-roadmap.md` the intended order.
 - **vue-router** — routes declared in `src/router.ts`
 - **HTML Canvas** for complex shapes and page rendering where DOM is a poor fit
 - **Vitest** + `@vue/test-utils` for unit tests
-- **Playwright** for e2e — pinned to **1.49.1** to match the CI container's
-  preinstalled browsers. Do not change this version.
+- **Playwright** for e2e — pinned to exactly **1.63.0** (no caret). The version
+  moves in lockstep with the factory lane image's base tag,
+  `mcr.microsoft.com/playwright:v1.63.0-noble` in dark_factory's
+  `container/Containerfile`. Playwright refuses to launch a browser whose
+  revision does not match the installed package, so bumping one side alone
+  fails EVERY e2e test and reads as "main is broken" — SPEC-097 (2026-09-05)
+  lost 942 tests and four attempts that way, and the only "fix" visible from
+  those failures was reverting the security bump that caused them. To move the
+  version: change this pin AND the Containerfile tag in one go, rebuild the
+  lane image (`podman build -t factory/agent:latest container/`), and run
+  `npx playwright install chromium` locally. `bin/lib/checks.mjs` now reports a
+  mismatch as an infra verdict rather than a product failure. Note that the
+  SPEC-047 perf baselines were calibrated against a Chromium build, so a
+  Playwright bump can shift them (`e2e/perf-baseline.json`).
 - **OXLint** for `.ts`, **ESLint** (`eslint-plugin-vue`) for `.vue` templates
 
 ## Commands

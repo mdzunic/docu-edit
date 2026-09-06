@@ -157,3 +157,62 @@ test("pptx: Tab/Shift+Tab move between cells, arrows do not (AC-6b, AC-6c)", asy
   await expect(table.locator("tbody > tr")).toHaveCount(4);
   await expect.poll(() => editingCell(page)).toBe("slide-table-cell-3-0");
 });
+
+// The Table panel's own promise. Opening its ribbon toggle used to light the
+// toggle and render nothing at all: SlidePanelStack gated the panel on a table
+// being selected as well as the toggle being on, so "Table" was a control that
+// visibly did nothing, and a panel already open vanished the moment you clicked
+// off the table. The panel now behaves like the other four — it appears when
+// its toggle is on — and states what to select, with its commands disabled
+// rather than live-looking and silently inert.
+test("the Table panel opens with no table selected, explains itself, and goes live on selection", async ({ page }) => {
+  await openFixture(page, PPTX);
+
+  const rowBelow = page.getByTestId("table-insert-row-below");
+
+  // Nothing selected: the toggle turns the panel on, and the panel says why it
+  // cannot act yet.
+  await page.getByTestId("slides-table-toggle").click();
+  await expect(page.getByTestId("slides-table-panel")).toBeVisible();
+  await expect(page.getByTestId("slides-table-empty")).toBeVisible();
+  await expect(rowBelow).toBeDisabled();
+
+  // Selecting a table arms it, with no second trip to the toggle.
+  const stage = page.getByTestId("stage-workspace");
+  await stage.getByTestId("slide-table-cell-0-0").click();
+  await expect(page.getByTestId("slides-table-empty")).toHaveCount(0);
+  await expect(rowBelow).toBeEnabled();
+  await expect(stage.getByTestId("slide-table").locator("tbody > tr")).toHaveCount(3);
+  await rowBelow.click();
+  await expect(stage.getByTestId("slide-table").locator("tbody > tr")).toHaveCount(4);
+
+  // Clicking off the table disarms the commands but keeps the panel — the
+  // toggle stays pressed, so what it controls stays on screen.
+  await stage.getByTestId("slide-stage").click({ position: { x: 6, y: 6 } });
+  await expect(page.getByTestId("slides-table-panel")).toBeVisible();
+  await expect(page.getByTestId("slides-table-empty")).toBeVisible();
+  await expect(rowBelow).toBeDisabled();
+  await expect(page.getByTestId("slides-table-toggle")).toHaveAttribute("aria-pressed", "true");
+});
+
+// The ribbon's two kinds of control (SPEC-061 Toolbar Redesign). An open panel
+// used to render as a second *selected tab* beside Home/Insert — two
+// aria-selected tabs in one tablist, and two accent-underlined tabs on screen.
+test("an open panel is a pressed toggle, never a second selected tab", async ({ page }) => {
+  await openFixture(page, PPTX);
+
+  const tabs = page.getByTestId("slides-ribbon-tabs").getByRole("tab");
+  await expect(tabs).toHaveCount(2);
+
+  await page.getByTestId("slides-tab-insert").click();
+  await page.getByTestId("slides-table-toggle").click();
+  await page.getByTestId("slides-media-toggle").click();
+
+  // Exactly one selected tab, whatever is open beside it.
+  await expect(page.getByTestId("slides-ribbon-tabs").locator('[aria-selected="true"]')).toHaveCount(1);
+  await expect(page.getByTestId("slides-tab-insert")).toHaveAttribute("aria-selected", "true");
+  // The panel toggles are pressed buttons, and more than one may be pressed.
+  await expect(page.getByTestId("slides-table-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("slides-media-toggle")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("slides-ribbon-panels").getByRole("tab")).toHaveCount(0);
+});

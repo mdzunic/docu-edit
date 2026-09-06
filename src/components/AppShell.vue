@@ -339,7 +339,10 @@ onUnmounted(() => {
     <StorageWarningBanner />
     <!-- The menu bar (SPEC-049) sits between the app bar and the toolbar
          strip. Only rendered when a view supplies one, so the home and
-         open-from-URL shells keep their previous layout. -->
+         open-from-URL shells keep their previous layout. The deck fills it
+         with its whole ribbon (menus, panel toggles and the strip): this
+         region is outside .canvas, which scrolls and would clip the menus'
+         popups. -->
     <div
       v-if="$slots.menubar"
       class="menubar-region"
@@ -574,9 +577,15 @@ onUnmounted(() => {
   width: min(28rem, 100%);
 }
 
+/* A row, not a bare box: the editors slot a cluster here (the deck slots its
+   facts *and* its action buttons), and without a flex context the pieces
+   stacked and the bar's one stated height clipped them. */
 .app-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   margin-left: auto;
-  align-self: center;
+  min-width: 0;
 }
 
 .format-badge {
@@ -591,7 +600,7 @@ onUnmounted(() => {
 }
 
 /* The menu bar's own row. It is flush against the app bar above and the
-   toolbar strip below; the MenuBar component paints its own background and
+   toolbar strip below; the slotted chrome paints its own background and
    border, so this wrapper only reserves the row and never clips the popups
    that hang out of it. */
 .menubar-region {
@@ -642,7 +651,14 @@ onUnmounted(() => {
   border-top: var(--border-width) solid var(--border-default);
   background: var(--surface-raised);
   color: var(--text-secondary);
+  /* Toolbar Redesign — the bar is a readout, so it takes the caption face:
+     condensed, uppercase and tracked, like the strip's own labels. The
+     controls inside it inherit all of this (they are deliberately plain
+     `font: inherit` buttons), so the whole bar changes from one rule. */
+  font-family: var(--font-caption);
   font-size: var(--text-sm);
+  letter-spacing: var(--tracking-caption);
+  text-transform: uppercase;
   /* SPEC-068 — when the on-screen keyboard opens it overlays the bottom of the
      viewport; DocumentView feeds the keyboard height as --keyboard-inset-bottom
      and the status bar lifts by exactly that so it stays pinned to the visible

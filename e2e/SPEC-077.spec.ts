@@ -113,6 +113,30 @@ async function shapeCanvasHas(page: Page, hex: string): Promise<boolean> {
     }, hex);
 }
 
+/** The outline's colour, found anywhere on the shape canvas.
+ *
+ * The four preset checks used to read it from `shapePixelAt(page, 0)` — the
+ * single leftmost pixel of the row through the middle. That is where the
+ * stroke lands only while the shape comes out at the exact size this file's
+ * zoom-then-insert sequence usually produces (226x152 at 200%, where x0 is
+ * the border, x1 is already an antialiased blend and x2 on is the fill). Under
+ * worker oversubscription the 200% zoom can still be settling when the
+ * insertion click lands, the shape is a pixel out, and the stroke straddles
+ * x0/x1: the sample reads the blend (60,103,180) instead of the border
+ * (46,83,149) and misses the ±3 tolerance by exactly 6, which is the failure
+ * seen at `--workers=16`.
+ *
+ * Scanning is what this file already calls "the dependable way" to find a
+ * stroke colour, and it is not vacuous here: in every one of these presets the
+ * outline is the ONLY thing painted in the colour being looked for — the fill
+ * is a different colour, or there is no fill. Wrapped in toPass so a canvas
+ * that has not repainted yet is a retry rather than a failure. */
+async function expectOutlineColour(page: Page, hex: string): Promise<void> {
+  await expect(async () => {
+    expect(await shapeCanvasHas(page, hex), `no pixel of the shape is ${hex}`).toBe(true);
+  }).toPass({ timeout: 10_000 });
+}
+
 function expectPixel(pixel: number[], hex: string): void {
   const n = Number.parseInt(hex.slice(1), 16);
   const expected = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
@@ -304,14 +328,14 @@ test("every style preset resolves to SPEC-073's shipped colours under Office, an
   // Office — so each preset must paint exactly what SPEC-073 shipped.
   await applyPreset(page, "filled");
   expectPixel(await shapeCentrePixel(page), FILLED_FILL);
-  expectPixel(await shapePixelAt(page, 0), FILLED_BORDER);
+  await expectOutlineColour(page, FILLED_BORDER);
 
   await applyPreset(page, "subtleFilled");
   expectPixel(await shapeCentrePixel(page), SUBTLE_FILL);
-  expectPixel(await shapePixelAt(page, 0), FILLED_FILL);
+  await expectOutlineColour(page, FILLED_FILL);
 
   await applyPreset(page, "outlined");
-  expectPixel(await shapePixelAt(page, 0), FILLED_FILL);
+  await expectOutlineColour(page, FILLED_FILL);
 
   // AC-43: the fill is a reference, so a theme change restyles the shape —
   // while the filled preset's border, the one colour that was never the
@@ -320,7 +344,7 @@ test("every style preset resolves to SPEC-073's shipped colours under Office, an
   await page.keyboard.press("Escape");
   await applyTheme(page, "Facet");
   expectPixel(await shapeCentrePixel(page), facet.colors.accent1);
-  expectPixel(await shapePixelAt(page, 0), FILLED_BORDER);
+  await expectOutlineColour(page, FILLED_BORDER);
 });
 
 test("an outline width or dash edit leaves a theme-referenced outline a reference (AC-18)", async ({ page }) => {

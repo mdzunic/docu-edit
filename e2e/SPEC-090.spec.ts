@@ -26,7 +26,12 @@ async function stageAspect(page: Page): Promise<number> {
 }
 
 async function openDeckSetup(page: Page): Promise<void> {
-  await page.getByTestId("presentation-deck-setup").click();
+  // Deck setup… left the deck's action cluster when it folded into the app bar
+  // (the eight controls overflowed a 1024px bar). It is a File-menu command
+  // now — where it had always also been — so this reaches it the way a user
+  // does. The dialog and everything below are unchanged.
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("slides-menu-deck-setup").click();
   await expect(page.getByTestId("deck-setup-dialog")).toBeVisible();
 }
 

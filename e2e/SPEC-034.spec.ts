@@ -484,19 +484,59 @@ test("a large export shows progress, keeps the UI responsive and completes well 
   const totalPages = await documentPages(page).count();
   expect(totalPages).toBeGreaterThan(10);
 
+  // The progress chip is transient: it lives only for the length of the
+  // export, which on a quiet machine is a few hundred milliseconds. Polling
+  // for it from the test process races that window — under worker
+  // oversubscription (12 workers on 12 cores) the client's first visibility
+  // check landed after the export had already finished, and the assertion
+  // then spent its whole 20s timeout on an element that had been and gone.
+  // Reproduced 6 failures in 10 at `--workers=10`, none at 1 or 4.
+  //
+  // So record the chip from inside the page instead, where nothing can be
+  // missed: a MutationObserver banks every distinct text it ever shows. That
+  // is a STRONGER reading of both criteria than the poll was. The chip
+  // appearing at all proves AC-22, and more than one distinct "page N of M"
+  // proves AC-23 — Vue only re-renders the counter between pages if the
+  // exporter really does yield the main thread, which a single long task
+  // could never do.
+  await page.evaluate(() => {
+    const seen: string[] = [];
+    (window as unknown as { __pdfProgress: string[] }).__pdfProgress = seen;
+    new MutationObserver(() => {
+      const chip = document.querySelector('[data-testid="pdf-export-progress"]');
+      const text = chip?.textContent?.trim();
+      if (text && text !== seen[seen.length - 1]) {
+        seen.push(text);
+      }
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
+
   const started = Date.now();
   await page.getByTestId("menu-title-file").click();
   await page.getByTestId("file-menu-export").click();
   const downloadPromise = page.waitForEvent("download", { timeout: 30_000 });
   await page.getByTestId("download-pdf").click();
-  // The progress indicator appears while pages are extracted (AC-22)…
-  await expect(page.getByTestId("pdf-export-progress")).toBeVisible();
-  // …and the page stays interactive: a DOM click round-trips mid-export
-  // (AC-23 — the exporter yields to the event loop between pages).
+  // The page stays interactive across the export: a real click still
+  // round-trips (this lands mid-export on a quiet machine and just after it on
+  // a loaded one — either way a wedged page would fail it).
   await page.getByTestId("document-title").click();
   await page.keyboard.press("Escape");
   const download = await downloadPromise;
+  // Stopped here, before the probe round-trips below, so the budget measures
+  // the export and not the assertions that read it back.
   const elapsed = Date.now() - started;
+
+  const progress = await page.evaluate(
+    () => (window as unknown as { __pdfProgress: string[] }).__pdfProgress,
+  );
+  // AC-22: the indicator appeared while pages were extracted.
+  expect(progress.length, "the export progress chip never appeared").toBeGreaterThan(0);
+  expect(progress[0]).toContain("Exporting PDF");
+  // AC-23: it counted up, so the exporter yielded between pages.
+  expect(
+    progress.filter((text) => /page \d+ of \d+/.test(text)).length,
+    `progress never counted pages: ${JSON.stringify(progress)}`,
+  ).toBeGreaterThan(1);
   expect(elapsed).toBeLessThan(30_000);
   const path = await download.path();
   const pdf = readFileSync(path!).toString("latin1");

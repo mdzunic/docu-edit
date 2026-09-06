@@ -38,8 +38,14 @@ defineProps({
     :controller="animations"
     :slide-number="slideNumber"
   />
+  <!-- Table is the one panel here that used to carry a second gate
+       (`tables.hasTable`), so opening its tab with no table selected lit the
+       tab and rendered nothing at all — and clicking off the table made the
+       panel vanish under you. The panel now shows whenever its toggle is on,
+       exactly like the other four, and says what to select when there is no
+       table. -->
   <TablePropertiesPanel
-    v-if="tables.open.value && tables.hasTable.value && hasSlide"
+    v-if="tables.open.value && hasSlide"
     :controller="tables"
     :slide-number="slideNumber"
   />

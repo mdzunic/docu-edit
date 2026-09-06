@@ -25,10 +25,19 @@ const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const docxShapesFixture = join(fixturesDir, "word-shapes.docx");
 const odtShapesFixture = join(fixturesDir, "lo-shapes.odt");
 
+/** The URL changes the moment the document is stored — before the parse, and
+ * well before layout. Without the two barriers below, a drawing proxy can be
+ * in the DOM with its aria-label already set (which is all `toHaveAttribute`
+ * requires) while it has no box yet, and `boundingBox()` returns null: that is
+ * how the group-container test went red once per full suite at the default
+ * worker count. Same barrier SPEC-028/029/030 and SPEC-047's
+ * `waitForFullyInteractive` use. */
 async function openFixture(page: Page, path: string): Promise<void> {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(page.getByTestId("document-opening")).toBeHidden();
+  await expect(page.getByTestId("document-pages")).toHaveAttribute("data-pagination-state", "clean");
 }
 
 const content = (page: Page) => page.getByTestId("document-content");
@@ -203,13 +212,17 @@ function registerGroupContainerTests(
       // The .docx group's child space is 2x its box on both axes, so a reader
       // that ignored `chExt` would size these 4cm and place B twice as far
       // across; the .odt group's members carry their own coordinates.
-      const boxA = await memberA.boundingBox();
-      const boxB = await memberB.boundingBox();
-      expect(boxA).not.toBeNull();
-      expect(boxB).not.toBeNull();
-      const cmToPx = boxA!.width / 2;
-      expect(boxB!.x - boxA!.x).toBeCloseTo(spanCm.x * cmToPx, -1);
-      expect(boxB!.y - boxA!.y).toBeCloseTo(spanCm.y * cmToPx, -1);
+      // One re-armed block: the two boxes are read in sequence, so a relayout
+      // between them would compare a stale A against a fresh B.
+      await expect(async () => {
+        const boxA = await memberA.boundingBox();
+        const boxB = await memberB.boundingBox();
+        expect(boxA).not.toBeNull();
+        expect(boxB).not.toBeNull();
+        const cmToPx = boxA!.width / 2;
+        expect(boxB!.x - boxA!.x).toBeCloseTo(spanCm.x * cmToPx, -1);
+        expect(boxB!.y - boxA!.y).toBeCloseTo(spanCm.y * cmToPx, -1);
+      }).toPass();
     });
 
     test("both members belong to one group — selecting either offers Ungroup", async ({ page }) => {

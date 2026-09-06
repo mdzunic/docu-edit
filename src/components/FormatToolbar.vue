@@ -22,15 +22,19 @@ const emit = defineEmits(["toggle"]);
 // runs once rather than as a computed. Shortcut text is read from the
 // SPEC-021 registry rather than hardcoded, so it can never drift from what
 // the app actually binds (AC-15, AC-16).
+// `caption` is the Toolbar Redesign's tiny uppercase word under the icon. It
+// is deliberately shorter than `label` — the caption has to fit a 36px control
+// without widening the band, while the accessible name stays the full
+// "Strikethrough (⌘⇧X)".
 const FORMATS = [
-  { key: "bold", label: "Bold", shortcut: shortcutLabel("format.bold"), icon: "bold" },
-  { key: "italic", label: "Italic", shortcut: shortcutLabel("format.italic"), icon: "italic" },
-  { key: "underline", label: "Underline", shortcut: shortcutLabel("format.underline"), icon: "underline" },
-  { key: "strikethrough", label: "Strikethrough", shortcut: shortcutLabel("format.strikethrough"), icon: "strikethrough" },
+  { key: "bold", label: "Bold", caption: "Bold", shortcut: shortcutLabel("format.bold"), icon: "bold" },
+  { key: "italic", label: "Italic", caption: "Italic", shortcut: shortcutLabel("format.italic"), icon: "italic" },
+  { key: "underline", label: "Underline", caption: "Under", shortcut: shortcutLabel("format.underline"), icon: "underline" },
+  { key: "strikethrough", label: "Strikethrough", caption: "Strike", shortcut: shortcutLabel("format.strikethrough"), icon: "strikethrough" },
   // SPEC-013: sub/superscript are toggle buttons like the four above;
   // mutual exclusivity lives in the command layer (one vertAlign field).
-  { key: "subscript", label: "Subscript", shortcut: shortcutLabel("format.subscript"), icon: "subscript" },
-  { key: "superscript", label: "Superscript", shortcut: shortcutLabel("format.superscript"), icon: "superscript" },
+  { key: "subscript", label: "Subscript", caption: "Sub", shortcut: shortcutLabel("format.subscript"), icon: "subscript" },
+  { key: "superscript", label: "Superscript", caption: "Super", shortcut: shortcutLabel("format.superscript"), icon: "superscript" },
 ];
 
 function tooltip(format = FORMATS[0]) {
@@ -76,6 +80,7 @@ function shownFormats() {
       :key="format.key"
       :icon="format.icon"
       :label="tooltip(format)"
+      :caption="format.caption"
       :pressed="ariaPressed(format.key)"
       :disabled="disabled"
       :data-testid="`format-${format.key}`"
@@ -88,6 +93,6 @@ function shownFormats() {
 <style scoped>
 .format-toolbar {
   display: inline-flex;
-  gap: var(--space-1);
+  gap: 0;
 }
 </style>

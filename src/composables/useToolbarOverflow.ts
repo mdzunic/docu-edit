@@ -1,5 +1,5 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
-import { collapsedBands, planCollapse } from "../lib/toolbarOverflow";
+import { collapsedBands, fitsWholly, planCollapse } from "../lib/toolbarOverflow";
 
 export interface UseToolbarOverflowOptions {
   /** The strip element whose available width is measured (AC-14). */
@@ -11,6 +11,10 @@ export interface UseToolbarOverflowOptions {
   reserved: Ref<number>;
   /** Extra slack before a collapsed band re-expands (AC hysteresis). */
   hysteresis?: number;
+  /** Whether the user wants control captions at all (the Toolbar Redesign's
+   * "icons + labels" / "icons only" preference). When false the strip never
+   * measures or shows the captioned geometry. */
+  captionsWanted?: () => boolean;
 }
 
 /** Drives whole-band overflow collapse from the strip's real available width.
@@ -23,15 +27,34 @@ export function useToolbarOverflow({
   bandOrder,
   reserved,
   hysteresis = 24,
+  captionsWanted = () => true,
 }: UseToolbarOverflowOptions) {
   const collapsedCount = ref(0);
+  // Whether the strip is currently showing its control captions. The redesign
+  // degrades captions BEFORE it collapses a band: losing the word under an
+  // icon keeps every command in the strip, whereas collapsing a band hides
+  // commands behind a menu. So the strip is measured twice — once captioned,
+  // once not — and the captioned geometry is used only when it fits whole.
+  const labelsOn = ref(false);
   // True while the strip force-expands every band so their natural widths can
   // be measured; DocumentToolbar disables the collapse teleports meanwhile.
   const measuring = ref(false);
 
+  // Two measured geometries of the same bands: with captions and without.
+  const captionedWidths: Record<number, number> = {};
   const bandWidths: Record<number, number> = {};
+  // While measuring, this forces the captions on for the first pass and off
+  // for the second, independently of the `labelsOn` the plan will settle on.
+  // DocumentToolbar reads it so the two geometries are really rendered.
+  const measuringCaptions = ref(true);
+  // Until the first measure pass lands, captionedWidths is empty and would
+  // read as "everything fits" — turning captions on for a frame and then off
+  // again on a narrow strip. Hold them off until there is something to
+  // compare.
+  let measured = false;
   let gap = 0;
   let overflowWidth = 44;
+  let captionedOverflowWidth = 44;
 
   function plan(fresh = false) {
     const el = strip();
@@ -39,12 +62,24 @@ export function useToolbarOverflow({
       return;
     }
     const available = el.clientWidth - Math.max(0, reserved.value);
+    // Step one: captions, but only if every band still fits with them on.
+    labelsOn.value =
+      measured &&
+      captionsWanted() &&
+      fitsWholly({
+        bandWidths: captionedWidths,
+        bandOrder,
+        gap,
+        available,
+        overflowWidth: captionedOverflowWidth,
+      });
+    // Step two: collapse bands against whichever geometry is now rendered.
     collapsedCount.value = planCollapse({
-      bandWidths,
+      bandWidths: labelsOn.value ? captionedWidths : bandWidths,
       bandOrder,
       gap,
       available,
-      overflowWidth,
+      overflowWidth: labelsOn.value ? captionedOverflowWidth : overflowWidth,
       // A fresh plan follows a re-measure (widths changed, not the available
       // width), so it takes the exact minimal fit — hysteresis exists to damp
       // resize flapping, and applying it here would lock in a pre-font
@@ -52,6 +87,28 @@ export function useToolbarOverflow({
       previousCollapsed: fresh ? 0 : collapsedCount.value,
       hysteresis,
     });
+  }
+
+  function readInto(el: HTMLElement, into: Record<number, number>) {
+    for (const band of bandOrder) {
+      const bandEl = el.querySelector(`[data-band="${band}"]`);
+      into[band] = bandEl instanceof HTMLElement ? bandEl.offsetWidth : 0;
+    }
+  }
+
+  /** The trailing overflow button's footprint including its margins and the
+   * gap before it, or null while it is hidden (nothing is collapsed yet, so
+   * the browser reports zero and the previous measurement stands). */
+  function readOverflowWidth(el: HTMLElement): number | null {
+    const overflowEl = el.querySelector('[data-testid="toolbar-overflow-button"]');
+    if (!(overflowEl instanceof HTMLElement) || overflowEl.offsetWidth === 0) {
+      return null;
+    }
+    const ovfStyles = getComputedStyle(overflowEl);
+    const margins =
+      (Number.parseFloat(ovfStyles.marginInlineStart) || 0) +
+      (Number.parseFloat(ovfStyles.marginInlineEnd) || 0);
+    return overflowEl.offsetWidth + margins + gap;
   }
 
   async function measure() {
@@ -63,21 +120,19 @@ export function useToolbarOverflow({
       return;
     }
     measuring.value = true;
+    // Pass one: every band expanded AND captioned.
+    measuringCaptions.value = true;
     await nextTick();
     const styles = getComputedStyle(el);
     gap = Number.parseFloat(styles.columnGap) || 0;
-    for (const band of bandOrder) {
-      const bandEl = el.querySelector(`[data-band="${band}"]`);
-      bandWidths[band] = bandEl instanceof HTMLElement ? bandEl.offsetWidth : 0;
-    }
-    const overflowEl = el.querySelector('[data-testid="toolbar-overflow-button"]');
-    if (overflowEl instanceof HTMLElement && overflowEl.offsetWidth > 0) {
-      const ovfStyles = getComputedStyle(overflowEl);
-      const margins =
-        (Number.parseFloat(ovfStyles.marginInlineStart) || 0) +
-        (Number.parseFloat(ovfStyles.marginInlineEnd) || 0);
-      overflowWidth = overflowEl.offsetWidth + margins + gap;
-    }
+    readInto(el, captionedWidths);
+    captionedOverflowWidth = readOverflowWidth(el) ?? captionedOverflowWidth;
+    // Pass two: the same bands with every caption hidden.
+    measuringCaptions.value = false;
+    await nextTick();
+    readInto(el, bandWidths);
+    overflowWidth = readOverflowWidth(el) ?? overflowWidth;
+    measured = true;
     measuring.value = false;
     await nextTick();
     plan(true);
@@ -126,5 +181,13 @@ export function useToolbarOverflow({
     return collapsedBands(collapsedCount.value).has(band);
   }
 
-  return { collapsedCount, measuring, isCollapsed, remeasure: measure, plan };
+  return {
+    collapsedCount,
+    measuring,
+    measuringCaptions,
+    labelsOn,
+    isCollapsed,
+    remeasure: measure,
+    plan,
+  };
 }

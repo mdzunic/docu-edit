@@ -55,7 +55,7 @@ install, no account; files stay on your machine.*
 - [Vite](https://vitejs.dev/) for dev server and build
 - HTML Canvas for page/slide rendering and complex shapes
 - No runtime dependencies beyond `vue` and `vue-router`
-- Testing: [Vitest](https://vitest.dev/) + `@vue/test-utils` (unit), [Playwright](https://playwright.dev/) 1.49.1 (e2e)
+- Testing: [Vitest](https://vitest.dev/) + `@vue/test-utils` (unit), [Playwright](https://playwright.dev/) 1.63.0 (e2e)
 - Linting: [OXLint](https://oxc.rs/docs/guide/usage/linter.html) for `.ts`, ESLint (`eslint-plugin-vue`) for `.vue` templates
 
 ## Getting started
@@ -178,8 +178,9 @@ redirect an id of the wrong kind (`/doc/:id` ↔ `/slides/:id`).
   [specs/000-roadmap.md](specs/000-roadmap.md) fixes the order.
 - **Locked dependency set.** `package.json` gains no dependencies from
   feature work; the app ships on `vue` + `vue-router` alone, and Canvas is
-  used wherever DOM is a poor fit. Playwright is pinned to 1.49.1 to match
-  the CI container's browsers.
+  used wherever DOM is a poor fit. Playwright is pinned to 1.63.0, in
+  lockstep with the CI container's base image — the two move together or
+  every e2e test fails.
 - **Size ratchets, not refactors on a whim.** Wiring hubs (`DocumentView`,
   `HomeView`) have line budgets that only ratchet down — when a budget
   fails, code is extracted into composables/components, never the budget

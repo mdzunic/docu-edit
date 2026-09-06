@@ -23,6 +23,12 @@ const props = defineProps({
   menus: { type: Array, default: () => [] },
   /** Accessible name for the menubar landmark. */
   ariaLabel: { type: String, default: "Application" },
+  /** The bar is hosted inside another chrome row rather than owning a row of
+   * its own (the slides ribbon merges it into the ribbon row), so it draws no
+   * ground, no bottom border and no inline padding — the host supplies all
+   * three, and the titles read as one zone of that row instead of a bar
+   * stacked on it. */
+  embedded: { type: Boolean, default: false },
 });
 
 const root = useTemplateRef("root");
@@ -321,6 +327,7 @@ onBeforeUnmount(() => {
   <div
     v-if="compact"
     class="menu-bar menu-bar-compact"
+    :class="{ 'menu-bar-embedded': embedded }"
     data-testid="menu-bar"
   >
     <button
@@ -382,6 +389,7 @@ onBeforeUnmount(() => {
     v-else
     ref="root"
     class="menu-bar"
+    :class="{ 'menu-bar-embedded': embedded }"
     role="menubar"
     :aria-label="ariaLabel"
     data-testid="menu-bar"
@@ -446,16 +454,34 @@ onBeforeUnmount(() => {
   border-bottom: var(--border-width) solid var(--border-default);
 }
 
+/* Merged into a host row (the slides ribbon): the row owns the ground, the
+   border and the inline padding, so the bar contributes only its titles. The
+   stated height stays — it is what keeps the titles the same size as the
+   controls beside them. */
+.menu-bar-embedded {
+  padding: 0;
+  background: transparent;
+  border-bottom: 0;
+}
+
 .menu-bar-item {
   position: relative;
   display: flex;
 }
 
+/* Toolbar Redesign — the bar's titles take the caption face: condensed,
+   uppercase and tracked, so the menu bar reads as chrome rather than as body
+   text sitting above the document. */
 .menu-title {
+  position: relative;
   border: var(--border-width) solid transparent;
   background: transparent;
   padding: var(--space-2) var(--space-4);
-  font-size: var(--text-md);
+  font-family: var(--font-caption);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-caption);
+  letter-spacing: var(--tracking-caption);
+  text-transform: uppercase;
   color: var(--text-primary);
   cursor: pointer;
   white-space: nowrap;
@@ -464,6 +490,23 @@ onBeforeUnmount(() => {
 .menu-title:hover,
 .menu-title[aria-expanded="true"] {
   background: var(--state-hover);
+}
+
+/* The open menu is marked by an accent rule along the bottom of its title,
+   drawn as a pseudo-element rather than an inset box-shadow (tokens.spec
+   allows only var(--shadow-*) shadows) and out of flow so it cannot shift
+   the title's own metrics. */
+.menu-title[aria-expanded="true"] {
+  color: var(--text-accent);
+}
+
+.menu-title[aria-expanded="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: var(--space-1);
+  background: var(--accent);
 }
 
 /* Absolutely positioned so an open menu overlays the toolbar/canvas below
@@ -483,7 +526,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-width: 15rem;
-  padding: var(--space-1) 0;
+  /* The handoff's .tb-menu: the box insets its rows rather than letting them
+     run to the border, so a hovered row reads as a row and not as a band
+     welded to the frame. Tighter vertically than horizontally — see the row
+     rule below on what the Insert menu's height costs. */
+  padding: var(--space-1) var(--space-2);
   border: var(--border-width) solid var(--border-default);
   border-radius: 0 0 var(--radius-md) var(--radius-md);
   background: var(--surface-base);
@@ -504,10 +551,18 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-3);
   width: 100%;
+  /* The handoff's .mi is a 30px row; this is 28. The Insert menu is 33 commands
+     plus a table grid and two galleries, and SPEC-028 requires all four break
+     items — which sit near its end — to be inside a 720px viewport without
+     scrolling. At 30px they land 19px past it. The row is stated against the
+     hit-target token rather than as a literal, so a coarse pointer still gets a
+     finger-sized 38px row, and the vertical rhythm is still the handoff's:
+     a fixed row height instead of the content-sized rows this replaced. */
+  min-height: calc(var(--height-control) - var(--space-2));
   box-sizing: border-box;
   border: 0;
   background: transparent;
-  padding: var(--space-2) var(--space-5);
+  padding: 0 var(--space-3);
   text-align: left;
   font: inherit;
   font-size: var(--text-md);
@@ -524,7 +579,11 @@ onBeforeUnmount(() => {
 .menu-popup :deep([role="menuitem"]:focus),
 .menu-popup :deep([role="menuitemcheckbox"]:focus),
 .menu-popup :deep([role="menuitemradio"]:focus) {
-  background: var(--state-hover);
+  /* The handoff's .mi:hover is an accent wash, not the neutral --state-hover
+     every other surface uses: a menu row is a command about to fire, and the
+     accent is what marks intent everywhere else in the strip. Mixed from the
+     palette's own --accent, so it follows every theme without a new token. */
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .menu-popup :deep([role="menuitem"]:disabled),
@@ -534,13 +593,29 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
-/* The leading gutter each command reserves for a check mark, so labels line
-   up whether or not the row is a toggle. */
-.menu-popup :deep(.menu-check) {
-  display: inline-block;
+/* The leading gutter every command reserves, so labels line up in one column
+   whatever the row carries: a check mark (MenuCheckItem), a glyph or nothing
+   (MenuItem, MenuSubmenu). Before the handoff only toggles reserved it, so a
+   menu of plain commands and toggles read as two ragged columns.
+
+   The glyph is the shared 20px AppIcon scaled to the handoff's 16px — the
+   menu's own measure, smaller than a toolbar button's. */
+.menu-popup :deep(.menu-check),
+.menu-popup :deep(.menu-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 1rem;
   flex: none;
+}
+
+.menu-popup :deep(.menu-check) {
   color: var(--accent);
+}
+
+.menu-popup :deep(.menu-icon .app-icon) {
+  width: 1rem;
+  height: 1rem;
 }
 
 /* The accelerator label, pushed to the trailing edge. */
@@ -548,7 +623,9 @@ onBeforeUnmount(() => {
   margin-left: auto;
   padding-left: var(--space-6);
   color: var(--text-secondary);
+  font-family: var(--font-caption);
   font-size: var(--text-sm);
+  letter-spacing: var(--tracking-caption);
 }
 
 .menu-popup :deep(.menu-separator) {
@@ -557,14 +634,32 @@ onBeforeUnmount(() => {
   border-top: var(--border-width) solid var(--border-subtle);
 }
 
+/* The handoff never draws a bare rule above a heading — the heading carries
+   its own top rule (below). A separator that only exists to introduce the next
+   section would double it, so it steps aside rather than every menu's markup
+   being rewritten to drop it. */
+.menu-popup :deep(.menu-separator:has(+ .menu-section-label)) {
+  display: none;
+}
+
+/* The same kicker the toolbar's overflow sections use, so a section heading
+   reads identically wherever a command list is grouped. Any kicker with
+   something above it also carries the divider, which is how the handoff
+   separates sections — one mark doing both jobs, and why no extra margin sits
+   above it here. */
+.menu-popup :deep(* + .menu-section-label) {
+  border-top: var(--border-width) solid var(--border-subtle);
+}
+
 .menu-popup :deep(.menu-section-label) {
-  padding: var(--space-1) var(--space-5) var(--space-1);
-  font-size: var(--text-xs);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-family: var(--font-caption);
+  font-size: var(--text-caption);
   line-height: var(--line-tight);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.04em;
+  font-weight: var(--weight-caption);
+  letter-spacing: var(--tracking-caption);
   text-transform: uppercase;
-  color: var(--text-secondary);
+  color: var(--text-accent);
 }
 
 /* ---- Compact tier: the "Menu" button + full-height sheet (SPEC-068) -------- */
@@ -668,7 +763,7 @@ onBeforeUnmount(() => {
 .menu-sheet :deep([role="menuitem"]:focus),
 .menu-sheet :deep([role="menuitemcheckbox"]:focus),
 .menu-sheet :deep([role="menuitemradio"]:focus) {
-  background: var(--state-hover);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .menu-sheet :deep([role="menuitem"]:disabled),
@@ -678,18 +773,31 @@ onBeforeUnmount(() => {
   cursor: default;
 }
 
-.menu-sheet :deep(.menu-check) {
-  display: inline-block;
+.menu-sheet :deep(.menu-check),
+.menu-sheet :deep(.menu-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 1rem;
   flex: none;
+}
+
+.menu-sheet :deep(.menu-check) {
   color: var(--accent);
+}
+
+.menu-sheet :deep(.menu-icon .app-icon) {
+  width: 1rem;
+  height: 1rem;
 }
 
 .menu-sheet :deep(.menu-shortcut) {
   margin-left: auto;
   padding-left: var(--space-6);
   color: var(--text-secondary);
+  font-family: var(--font-caption);
   font-size: var(--text-sm);
+  letter-spacing: var(--tracking-caption);
 }
 
 .menu-sheet :deep(.menu-separator) {
@@ -698,13 +806,25 @@ onBeforeUnmount(() => {
   border-top: var(--border-width) solid var(--border-subtle);
 }
 
+.menu-sheet :deep(.menu-separator:has(+ .menu-section-label)) {
+  display: none;
+}
+
+/* The sheet's headings wear the same kicker as the docked popup's — the two
+   tiers are one menu shown two ways, so they must not read as two designs. */
+.menu-sheet :deep(* + .menu-section-label) {
+  margin-top: var(--space-1);
+  border-top: var(--border-width) solid var(--border-subtle);
+}
+
 .menu-sheet :deep(.menu-section-label) {
-  padding: var(--space-1) var(--space-5) var(--space-1);
-  font-size: var(--text-xs);
+  padding: var(--space-3) var(--space-5) var(--space-1);
+  font-family: var(--font-caption);
+  font-size: var(--text-caption);
   line-height: var(--line-tight);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.04em;
+  font-weight: var(--weight-caption);
+  letter-spacing: var(--tracking-caption);
   text-transform: uppercase;
-  color: var(--text-secondary);
+  color: var(--text-accent);
 }
 </style>
