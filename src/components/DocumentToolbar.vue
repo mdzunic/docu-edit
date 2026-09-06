@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
+import UiControlCaption from "./ui/UiControlCaption.vue";
 import UndoRedoControls from "./UndoRedoControls.vue";
 import StylePicker from "./StylePicker.vue";
 import FontFamilySelect from "./FontFamilySelect.vue";
@@ -12,6 +13,7 @@ import ParagraphToolbar from "./ParagraphToolbar.vue";
 import { useToolbarOverflow } from "../composables/useToolbarOverflow";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import { useTier } from "../composables/useResponsiveTier";
+import { usePreferences } from "../composables/usePreferences";
 
 // The banded document toolbar (SPEC-061). It groups the strip's controls into
 // eight fixed bands separated by subtle rules (AC-3, AC-4), collapses the
@@ -98,11 +100,47 @@ watch(
   },
 );
 
-const { collapsedCount, measuring, isCollapsed } = useToolbarOverflow({
-  strip: () => strip.value,
-  bandOrder: BAND_ORDER,
-  reserved,
-});
+// The Toolbar Redesign's "icons + labels" preference. It is a ceiling, not a
+// promise: the strip drops captions on its own whenever they would not fit.
+const { preferences } = usePreferences();
+
+const { collapsedCount, measuring, measuringCaptions, labelsOn, isCollapsed } =
+  useToolbarOverflow({
+    strip: () => strip.value,
+    bandOrder: BAND_ORDER,
+    reserved,
+    captionsWanted: () => preferences.toolbarLabels,
+  });
+
+// What the strip actually paints right now. During a measure pass the planner
+// drives it (each geometry has to really render to be measured); the rest of
+// the time it is the planned answer. Captions are hidden through a custom
+// property rather than v-if so the two geometries differ by layout alone —
+// no component re-renders, and a caption that is hidden still belongs to the
+// button it names (screen readers never saw it: it is aria-hidden).
+const captionsVisible = computed(() =>
+  measuring.value ? measuringCaptions.value : labelsOn.value,
+);
+
+/** The strip's inherited control metrics. Controls read --control-height and
+ * --control-min-width with the plain --height-control as their fallback, so
+ * every button, picker and stepper inside the strip takes the taller toolbar
+ * step without a prop threaded through six components. The min-width only
+ * grows with the captions: at 1024px the strip has ~3px of slack (SPEC-061
+ * AC-36 wants Character AND Paragraph both inline there), so a wider
+ * icon-only control would push a band into the overflow. */
+const stripStyle = computed(() =>
+  captionsVisible.value
+    ? {
+        "--toolbar-caption-display": "block",
+        "--control-height": "var(--height-toolbar-control)",
+        "--control-min-width": "var(--height-toolbar-control)",
+      }
+    : {
+        "--toolbar-caption-display": "none",
+        "--control-height": "var(--height-toolbar-control)",
+      },
+);
 
 // SPEC-068 AC-9 — at the compact tier the strip reduces to one essential band:
 // undo, redo (band 1), the style picker (band 2), bold + italic (the reduced
@@ -379,6 +417,8 @@ onBeforeUnmount(() => {
   <div
     ref="strip"
     class="doc-toolbar-strip"
+    :style="stripStyle"
+    :data-labels="captionsVisible ? 'on' : 'off'"
     data-testid="doc-toolbar-strip"
     @keydown="onKeydown"
     @focusin="onFocusin"
@@ -671,6 +711,7 @@ onBeforeUnmount(() => {
       @click="toggleMenu"
     >
       <AppIcon name="more-horizontal" />
+      <UiControlCaption text="More" />
     </button>
   </div>
 </template>
@@ -688,12 +729,16 @@ onBeforeUnmount(() => {
   column-gap: 0;
 }
 
+/* One control grammar (Toolbar Redesign): the controls in a band sit flush,
+   not spaced, so a band reads as one instrument cluster and the rule between
+   bands is the only separation. Tighter than the pre-redesign --space-3 on
+   each side, which buys back the width the taller captioned controls spend. */
 .band {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 0;
   flex: none;
-  padding-inline: var(--space-3);
+  padding-inline: var(--space-2);
 }
 
 .band[data-band="1"] {
@@ -709,12 +754,14 @@ onBeforeUnmount(() => {
 
 .overflow-button {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: var(--space-1);
   flex: none;
-  width: var(--height-control);
-  height: var(--height-control);
-  margin-inline-start: var(--space-3);
+  min-width: var(--control-min-width, var(--height-control));
+  height: var(--control-height, var(--height-control));
+  margin-inline-start: var(--space-2);
   padding: 0;
   color: var(--text-secondary);
   background: transparent;
@@ -722,6 +769,7 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
+
 
 .overflow-button:hover {
   background: var(--state-hover);
@@ -737,6 +785,15 @@ onBeforeUnmount(() => {
    strip's clipping). */
 .overflow-menu {
   z-index: 40;
+  /* The menu is teleported to <body>, so it is outside the strip and inherits
+     none of its control metrics. Restate them here: a control that moved into
+     the overflow is the very same instance (AC-16) and must not change size on
+     the way in. Captions always show here — the menu is not width-constrained
+     the way the strip is, and the whole point of the section is to name what
+     moved. */
+  --control-height: var(--height-toolbar-control);
+  --control-min-width: var(--height-toolbar-control);
+  --toolbar-caption-display: block;
   min-width: 14rem;
   max-height: min(28rem, 80vh);
   overflow-y: auto;
@@ -761,14 +818,17 @@ onBeforeUnmount(() => {
   border-top: var(--border-width) solid var(--border-subtle);
 }
 
+/* The handoff's section kicker: the caption face in the accent, naming the
+   band whose controls sit under it. */
 .overflow-heading {
   margin: 0 0 var(--space-1);
   padding: 0 var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.04em;
+  font-family: var(--font-caption);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-caption);
+  letter-spacing: var(--tracking-caption);
   text-transform: uppercase;
-  color: var(--text-secondary);
+  color: var(--text-accent);
 }
 
 /* A collapsed band lays out its controls as a wrapping row inside the menu. */

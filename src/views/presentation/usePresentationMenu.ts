@@ -29,10 +29,8 @@ export interface PresentationMenuDeps {
   headerFooter: any;
   themePanel: any;
   stageEdit: any;
-  charts: any;
   preferences: any;
   addSlide: () => void;
-  toggleLayout: () => void;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -41,7 +39,6 @@ export function usePresentationMenu(deps: PresentationMenuDeps): {
   run: (command: string) => void;
 } {
   const arrange = () => deps.stageEdit.arrange;
-  const editing = () => deps.stageEdit.editing;
 
   const state = computed<PresentationMenuState>(() => ({
     canUndo: !!deps.undo.canUndo.value,
@@ -79,33 +76,25 @@ export function usePresentationMenu(deps: PresentationMenuDeps): {
     ["view.design", () => deps.themePanel.toggle()],
     ["view.transition", () => deps.transitions.toggle()],
     ["view.animate", () => deps.animations.toggle()],
-    ["view.layout", () => deps.toggleLayout()],
+    ["view.layout", () => deps.layouts.toggle()],
     ["view.table", () => deps.tables.toggle()],
     ["view.media", () => deps.media.toggle()],
     ["view.header-footer", () => deps.headerFooter.show()],
     ["view.notes", () => deps.notes.toggle()],
     ["view.present", () => deps.deckActions.present()],
 
-    // Insert
+    // Slide
     ["insert.slide", () => deps.addSlide()],
-    ["insert.text-box", () => deps.stageEdit.insertion.armTextBox()],
-
-    // Format
-    ["format.bold", () => editing().toggleBold()],
-    ["format.italic", () => editing().toggleItalic()],
-    ["format.underline", () => editing().toggleUnderline()],
-    ["format.bullet", () => editing().toggleBulletCmd()],
-    ["format.indent", () => editing().indent(1)],
-    ["format.outdent", () => editing().indent(-1)],
     ["format.group", () => arrange().group()],
     ["format.ungroup", () => arrange().ungroup()],
     ["format.position", () => arrange().openPosition()],
   ]);
 
-  /** Runs a command id, or a parameterised one: `insert.shape:<kind>`,
-   * `insert.chart:<kind>`, `format.align:<value>`, `arrange:<value>`. The
-   * suffix form keeps the bar emitting plain strings (as DocumentMenuBar
-   * does) instead of structured payloads. */
+  /** Runs a command id, or the one parameterised form the bar still emits:
+   * `arrange:<value>`. The suffix keeps the bar emitting plain strings (as
+   * DocumentMenuBar does) instead of structured payloads. The shape, chart
+   * and alignment forms went with the Insert and Format menus — the ribbon's
+   * two strips carry those, and they call the composables directly. */
   function run(command: string): void {
     const direct = commands.get(command);
     if (direct) {
@@ -117,20 +106,8 @@ export function usePresentationMenu(deps: PresentationMenuDeps): {
       return;
     }
     switch (id) {
-      case "insert.shape":
-        deps.stageEdit.insertion.armShape(argument);
-        break;
-      case "insert.chart":
-        deps.charts.pickChartType(argument);
-        break;
-      case "format.align":
-        editing().setAlign(argument);
-        break;
       case "arrange":
         deps.stageEdit.manipulation.arrange(argument);
-        break;
-      case "align":
-        arrange().align(argument);
         break;
       default:
         break;

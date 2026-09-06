@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { COLLAPSE_ORDER, collapsedBands, planCollapse } from "./toolbarOverflow";
+import { COLLAPSE_ORDER, collapsedBands, fitsWholly, planCollapse } from "./toolbarOverflow";
 
 // Representative band widths (px) for a full eight-band strip. Bands 1–4 are
 // permanent; 5 (Colour), 6 (Paragraph), 7 (Lists), 8 (extras) collapse in the
@@ -85,3 +85,42 @@ function requiredForOneCollapsed() {
     visible.reduce((s, b) => s + WIDTHS[b], 0) + GAP * (visible.length - 1) + OVERFLOW;
   return w;
 }
+
+// The Toolbar Redesign degrades in two steps: the strip first drops its
+// control captions, and only when the icon-only geometry still does not fit
+// does it collapse a band. `fitsWholly` is the first question — asked against
+// the CAPTIONED band widths, which are wider than the icon-only ones.
+describe("fitsWholly (the captions-before-bands step)", () => {
+  // The same strip with captions under every icon: every band grows.
+  const CAPTIONED: Record<number, number> = {
+    1: 92, 2: 128, 3: 172, 4: 240, 5: 104, 6: 200, 7: 176, 8: 92,
+  };
+  const fits = (available: number, bandWidths = CAPTIONED) =>
+    fitsWholly({ bandWidths, bandOrder: ORDER, gap: GAP, available, overflowWidth: OVERFLOW });
+
+  it("is true when every captioned band fits with nothing collapsed", () => {
+    // 1204 of bands + 7 gaps (84) = 1288.
+    expect(fits(1288)).toBe(true);
+    expect(fits(1400)).toBe(true);
+  });
+
+  it("is false one pixel below the captioned strip's own width", () => {
+    expect(fits(1287)).toBe(false);
+  });
+
+  it("is answered independently of the icon-only geometry, which still fits", () => {
+    // At 1100 the captions do not fit, so the strip drops them — and the
+    // icon-only widths then need no band collapsed at all. Losing the words
+    // under the icons costs no commands; collapsing a band would.
+    expect(fits(1100)).toBe(false);
+    expect(plan(1100)).toBe(0);
+  });
+
+  it("adds no overflow button when nothing is collapsed", () => {
+    // A captioned strip that exactly fills the width fits: `fitsWholly` asks
+    // about the zero-collapse case, where no overflow button is rendered.
+    const single = { 1: 100 };
+    expect(fitsWholly({ bandWidths: single, bandOrder: [1], gap: GAP, available: 100, overflowWidth: OVERFLOW })).toBe(true);
+    expect(fitsWholly({ bandWidths: single, bandOrder: [1], gap: GAP, available: 99, overflowWidth: OVERFLOW })).toBe(false);
+  });
+});

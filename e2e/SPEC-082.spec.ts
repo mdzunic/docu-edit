@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openInsertTab } from "./slides";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PNG = join(here, "fixtures", "fixture-image.png");
@@ -32,6 +33,7 @@ async function stageBox(page: Page) {
 test("insert a text box, a shape and an image; nudge, restack, round-trip", async ({ page }) => {
   await newDeck(page);
   const before = await stageFrames(page).count(); // 2 placeholders
+  await openInsertTab(page);
 
   // --- text box: arm, click to place the default box, type into it ----------
   await page.getByTestId("insert-text-box").click();
@@ -120,6 +122,7 @@ test("select and ungroup a deck's group whose grpSpPr carries no own xfrm (AC-31
   // Click the group's rendered content to select it; the Ungroup control only
   // appears for a group selection.
   await stage.getByText("Grouped note").click();
+  await openInsertTab(page);
   await expect(page.getByTestId("ungroup-button")).toBeVisible();
 
   // The selection chrome is sized from the group's own box; without the

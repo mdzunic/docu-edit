@@ -58,7 +58,6 @@ function stubs() {
       manipulation: { arrange: vi.fn((v: string) => calls.push(`arrange:${v}`)) },
     },
     addSlide: spy("addSlide"),
-    toggleLayout: spy("toggleLayout"),
   };
   return { deps, calls };
 }
@@ -76,18 +75,13 @@ describe("usePresentationMenu routing", () => {
     ["view.design", "themePanel.toggle"],
     ["view.transition", "transitions.toggle"],
     ["view.animate", "animations.toggle"],
-    ["view.layout", "toggleLayout"],
+    ["view.layout", "layouts.toggle"],
     ["view.table", "tables.toggle"],
     ["view.media", "media.toggle"],
     ["view.header-footer", "headerFooter.show"],
     ["view.notes", "notes.toggle"],
     ["view.present", "present"],
     ["insert.slide", "addSlide"],
-    ["insert.text-box", "textBox"],
-    ["format.bold", "bold"],
-    ["format.italic", "italic"],
-    ["format.underline", "underline"],
-    ["format.bullet", "bullet"],
     ["format.group", "group"],
     ["format.ungroup", "ungroup"],
     ["format.position", "position"],
@@ -99,25 +93,26 @@ describe("usePresentationMenu routing", () => {
     expect(calls).toEqual([expected]);
   });
 
-  it("routes the parameterised ids with their argument", () => {
+  // `arrange:` is the one parameterised id the bar still emits — the shape,
+  // chart and alignment forms went with the Insert and Format menus, which the
+  // ribbon's two strips replaced (they call the composables directly).
+  it("routes the parameterised id with its argument", () => {
+    const { deps, calls } = stubs();
+    const menu = usePresentationMenu(deps);
+    menu.run("arrange:front");
+    expect(calls).toEqual(["arrange:front"]);
+  });
+
+  // A suffix form the bar no longer emits must not quietly still work — that
+  // is how a deleted menu leaves a live back door behind it.
+  it("ignores the parameterised ids the ribbon took over", () => {
     const { deps, calls } = stubs();
     const menu = usePresentationMenu(deps);
     menu.run("insert.shape:ellipse");
     menu.run("insert.chart:pie");
     menu.run("format.align:center");
-    menu.run("arrange:front");
     menu.run("align:left");
-    menu.run("format.indent");
-    menu.run("format.outdent");
-    expect(calls).toEqual([
-      "shape:ellipse",
-      "chart:pie",
-      "setAlign:center",
-      "arrange:front",
-      "align:left",
-      "indent:1",
-      "indent:-1",
-    ]);
+    expect(calls).toEqual([]);
   });
 
   it("does nothing for an id it does not know", () => {

@@ -3,6 +3,7 @@ import { computed, ref, useTemplateRef } from "vue";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import { asStyleEntries, noStyleEntries } from "../lib/styles";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
+import UiControlCaption from "./ui/UiControlCaption.vue";
 
 // The paragraph style picker (SPEC-019): a toolbar dropdown showing the
 // current paragraph's style name (AC-1) whose menu lists the document's
@@ -104,6 +105,10 @@ function closeEntryMenu() {
       @mousedown.prevent
       @click="toggleMenu"
     >
+      <UiControlCaption
+        class="kicker"
+        text="Style"
+      />
       <span
         class="current-name"
         data-testid="style-picker-current"
@@ -177,7 +182,7 @@ function closeEntryMenu() {
 .picker-button {
   font: inherit;
   font-size: var(--text-md);
-  height: var(--height-control);
+  height: var(--control-height, var(--height-control));
   min-width: 6.5rem;
   padding: 0 var(--space-3);
   display: inline-flex;
@@ -193,6 +198,14 @@ function closeEntryMenu() {
 .picker-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* The field's leading kicker (STYLE), in the handoff's accent. It rides the
+   same --toolbar-caption-display switch as the control captions: a kicker is
+   a label, and at the widths where captions do not fit neither does it. */
+.kicker {
+  color: var(--text-accent);
+  flex: none;
 }
 
 .current-name {

@@ -26,19 +26,6 @@ const props = defineProps({
   enabled: { type: Boolean, default: false },
   /** Recently applied text colours, for the colour picker. */
   recentColors: { type: Array, default: () => [] },
-  /** Whether the slide-transition panel is open (SPEC-085). */
-  transitionOpen: { type: Boolean, default: false },
-  /** Whether the animations panel is open (SPEC-086). */
-  animateOpen: { type: Boolean, default: false },
-  /** Whether the layout gallery is open (SPEC-089). */
-  layoutOpen: { type: Boolean, default: false },
-  /** Whether the table properties panel is open (SPEC-091). */
-  tableOpen: { type: Boolean, default: false },
-  mediaOpen: { type: Boolean, default: false },
-  /** Whether the Header & Footer dialog is open (SPEC-093). */
-  headerFooterOpen: { type: Boolean, default: false },
-  /** Whether the Design (theme) panel is open (SPEC-094). */
-  themeOpen: { type: Boolean, default: false },
   /** The deck theme (SPEC-094): renders the colour picker's theme row. */
   theme: { type: Object, default: null },
 });
@@ -54,13 +41,6 @@ const emit = defineEmits([
   "bullet",
   "indent",
   "outdent",
-  "theme-toggle",
-  "transition-toggle",
-  "animate-toggle",
-  "media-toggle",
-  "layout-toggle",
-  "table-toggle",
-  "header-footer-toggle",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -89,11 +69,13 @@ function alignActive(value = "") {
 
 // The shared icon set (src/components/icons/paths.ts) — the same glyphs the
 // word processor's toolbar draws, so the two editors read as one product.
+// `caption` is the Toolbar Redesign's uppercase word under the icon; the
+// deck's strip wears the same grammar as the document's.
 const ALIGNMENTS = [
-  { value: "left", icon: "align-left", label: "Align left" },
-  { value: "center", icon: "align-center", label: "Align centre" },
-  { value: "right", icon: "align-right", label: "Align right" },
-  { value: "justify", icon: "align-justify", label: "Justify" },
+  { value: "left", icon: "align-left", label: "Align left", caption: "Left" },
+  { value: "center", icon: "align-center", label: "Align centre", caption: "Centre" },
+  { value: "right", icon: "align-right", label: "Align right", caption: "Right" },
+  { value: "justify", icon: "align-justify", label: "Justify", caption: "Fill" },
 ];
 
 // --- overflow (⋯) ----------------------------------------------------------
@@ -103,7 +85,17 @@ const overflowOpen = ref(false);
 const OVERFLOW_BELOW_PX = 620;
 
 function updateCompact() {
-  compact.value = (root.value?.clientWidth ?? 9999) < OVERFLOW_BELOW_PX;
+  // A width of 0 means the strip is not being laid out at all — it is the
+  // ribbon tab that is not showing (v-show sets display:none), not a narrow
+  // window. Treating that as "compact" would activate the overflow Teleport
+  // below, whose target lives inside this same subtree, and Vue's patch
+  // crashes on the next unmount (insertBefore of null). Hold the last known
+  // answer until the strip is measurable again.
+  const width = root.value?.clientWidth ?? 9999;
+  if (width === 0) {
+    return;
+  }
+  compact.value = width < OVERFLOW_BELOW_PX;
   if (!compact.value) overflowOpen.value = false;
 }
 const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateCompact) : null;
@@ -158,6 +150,7 @@ onBeforeUnmount(() => observer?.disconnect());
       <UiToggleButton
         icon="bold"
         label="Bold"
+        caption="Bold"
         data-testid="slides-bold"
         :pressed="pressed('bold')"
         :disabled="!enabled"
@@ -167,6 +160,7 @@ onBeforeUnmount(() => observer?.disconnect());
       <UiToggleButton
         icon="italic"
         label="Italic"
+        caption="Italic"
         data-testid="slides-italic"
         :pressed="pressed('italic')"
         :disabled="!enabled"
@@ -176,6 +170,7 @@ onBeforeUnmount(() => observer?.disconnect());
       <UiToggleButton
         icon="underline"
         label="Underline"
+        caption="Under"
         data-testid="slides-underline"
         :pressed="pressed('underline')"
         :disabled="!enabled"
@@ -225,6 +220,7 @@ onBeforeUnmount(() => observer?.disconnect());
             :key="a.value"
             :icon="a.icon"
             :label="a.label"
+            :caption="a.caption"
             :pressed="alignActive(a.value)"
             :data-align="a.value"
             :disabled="!enabled"
@@ -237,6 +233,7 @@ onBeforeUnmount(() => observer?.disconnect());
           <UiToggleButton
             icon="bullet-list"
             label="Bulleted list"
+            caption="Bullets"
             data-testid="slides-bullet"
             :pressed="pressed('bullet')"
             :disabled="!enabled"
@@ -246,6 +243,7 @@ onBeforeUnmount(() => observer?.disconnect());
           <UiToggleButton
             icon="indent-decrease"
             label="Decrease indent"
+            caption="Outdent"
             data-testid="slides-outdent"
             :disabled="!enabled"
             @mousedown.prevent
@@ -254,6 +252,7 @@ onBeforeUnmount(() => observer?.disconnect());
           <UiToggleButton
             icon="indent-increase"
             label="Increase indent"
+            caption="Indent"
             data-testid="slides-indent"
             :disabled="!enabled"
             @mousedown.prevent
@@ -262,69 +261,6 @@ onBeforeUnmount(() => observer?.disconnect());
         </div>
       </div>
     </Teleport>
-
-    <div
-      class="tb-band tb-slide-actions"
-      role="group"
-      aria-label="Slide"
-    >
-      <UiToggleButton
-        label="Design"
-        data-testid="slides-theme-toggle"
-        :pressed="themeOpen"
-        @click="emit('theme-toggle')"
-      >
-        Design
-      </UiToggleButton>
-      <UiToggleButton
-        label="Transition"
-        data-testid="slides-transition-toggle"
-        :pressed="transitionOpen"
-        @click="emit('transition-toggle')"
-      >
-        Transition
-      </UiToggleButton>
-      <UiToggleButton
-        label="Animate"
-        data-testid="slides-animate-toggle"
-        :pressed="animateOpen"
-        @click="emit('animate-toggle')"
-      >
-        Animate
-      </UiToggleButton>
-      <UiToggleButton
-        label="Layout"
-        data-testid="slides-layout-toggle"
-        :pressed="layoutOpen"
-        @click="emit('layout-toggle')"
-      >
-        Layout
-      </UiToggleButton>
-      <UiToggleButton
-        label="Table"
-        data-testid="slides-table-toggle"
-        :pressed="tableOpen"
-        @click="emit('table-toggle')"
-      >
-        Table
-      </UiToggleButton>
-      <UiToggleButton
-        label="Media"
-        data-testid="slides-media-toggle"
-        :pressed="mediaOpen"
-        @click="emit('media-toggle')"
-      >
-        Media
-      </UiToggleButton>
-      <UiToggleButton
-        label="Header & footer"
-        data-testid="slides-header-footer"
-        :pressed="headerFooterOpen"
-        @click="emit('header-footer-toggle')"
-      >
-        Header &amp; footer
-      </UiToggleButton>
-    </div>
 
     <div
       v-show="compact"
@@ -397,9 +333,6 @@ onBeforeUnmount(() => observer?.disconnect());
   border: none;
 }
 
-.tb-slide-actions {
-  margin-inline-start: auto;
-}
 
 .tb-overflow {
   position: relative;

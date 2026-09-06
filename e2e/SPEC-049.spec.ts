@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { openHomeTab, openInsertTab } from "./slides";
 
 // SPEC-049 — menu bar and toolbar consolidation. A menu bar (File, Edit, View,
 // Insert, Format, Tools) sits between the app bar and the toolbar strip and
@@ -49,8 +50,13 @@ test.describe("SPEC-049 menu bar and toolbar consolidation", () => {
     const bar = page.getByTestId("menu-bar");
     await expect(bar).toBeVisible();
 
+    // The Toolbar Redesign sets the bar's titles in the caption face, so what
+    // the user reads is the uppercase form; the DOM text is unchanged (this is
+    // text-transform, and allInnerTexts reports the rendered casing).
     const labels = await bar.locator("[data-menu-title]").allInnerTexts();
-    expect(labels.map((t) => t.trim())).toEqual(MENU_LABELS);
+    expect(labels.map((t) => t.trim())).toEqual(MENU_LABELS.map((l) => l.toUpperCase()));
+    const domLabels = await bar.locator("[data-menu-title]").allTextContents();
+    expect(domLabels.map((t) => t.trim())).toEqual(MENU_LABELS);
 
     const barBox = await bar.boundingBox();
     const toolbarBox = await page.getByTestId("toolbar").boundingBox();
@@ -264,7 +270,15 @@ test.describe("SPEC-049 menu bar and toolbar consolidation", () => {
 // command — and named the same action twice ("Download" against "Export").
 // The bar is a second route to commands the strips already carry, so these
 // assert the routing rather than the commands, which their own specs cover.
-const SLIDE_MENU_LABELS = ["File", "Edit", "View", "Insert", "Format", "Slide"];
+//
+// Four menus, where the word processor has seven: the deck's bar shares its
+// row with the ribbon's Home and Insert tabs, so an "Insert" menu sat a
+// thumb's width from the "Insert" tab in the same condensed uppercase face,
+// and a "Format" menu beside a Home tab holding the same commands. Both were
+// dropped INTO those tabs rather than deleted — the assertion below pins that
+// every command they carried is still reachable from the strip that replaced
+// them, so the shorter bar cannot quietly become a shorter product.
+const SLIDE_MENU_LABELS = ["File", "Edit", "View", "Slide"];
 
 async function newDeck(page: Page): Promise<void> {
   await page.goto("/");
@@ -282,6 +296,33 @@ test("the presentation editor has the same menu bar model as the document editor
   const bar = slideMenu(page);
   await expect(bar).toBeVisible();
   await expect(bar.getByRole("menuitem")).toHaveText(SLIDE_MENU_LABELS);
+  // Insert and Format are the ribbon's two tabs, in the same row as the bar.
+  await expect(page.getByTestId("slides-tab-insert")).toBeVisible();
+  await expect(page.getByTestId("slides-tab-home")).toBeVisible();
+});
+
+// What the two dropped menus carried, item by item, now reachable from the tab
+// that replaced them. Without this the menus could be removed and the commands
+// quietly go with them.
+test("every command the Insert and Format menus carried is on the strip that replaced them", async ({ page }) => {
+  await newDeck(page);
+
+  // Format ▸ Bold / Italic / Underline / Bulleted list / both indents.
+  await openHomeTab(page);
+  for (const testid of ["slides-bold", "slides-italic", "slides-underline", "slides-bullet", "slides-indent", "slides-outdent"]) {
+    await expect(page.getByTestId(testid), `Format ▸ ${testid} lost`).toBeVisible();
+  }
+  // Format ▸ Align text ▸ Left / Centre / Right / Justified.
+  const align = page.getByTestId("slides-align");
+  for (const value of ["left", "center", "right", "justify"]) {
+    await expect(align.locator(`[data-align="${value}"]`), `Format ▸ align ${value} lost`).toBeVisible();
+  }
+
+  // Insert ▸ Text box / Image… / Audio or video… / Shape ▸ / Chart ▸.
+  await openInsertTab(page);
+  for (const testid of ["insert-text-box", "insert-image", "insert-media", "insert-shape", "insert-chart"]) {
+    await expect(page.getByTestId(testid), `Insert ▸ ${testid} lost`).toBeVisible();
+  }
 });
 
 test("the slides menu runs commands and reflects their state", async ({ page }) => {

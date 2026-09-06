@@ -50,6 +50,20 @@ function requiredWidth(
   return width;
 }
 
+/** Whether every band fits `available` with nothing collapsed. The Toolbar
+ * Redesign degrades in two steps rather than one: the strip first drops its
+ * control captions (a cheaper loss than losing a whole band), and only when
+ * the icon-only geometry still does not fit does it start collapsing bands.
+ * This is that first question, asked against the captioned band widths. */
+export function fitsWholly(
+  params: Omit<PlanCollapseParams, "previousCollapsed" | "hysteresis">,
+): boolean {
+  return (
+    requiredWidth(0, { ...params, previousCollapsed: 0, hysteresis: 0 }) <=
+    params.available
+  );
+}
+
 /** How many bands (from the tail of COLLAPSE_ORDER) should collapse so the
  * strip fits `available`. Returns 0..COLLAPSE_ORDER.length. Chooses the
  * fewest collapses that fit; when that means re-expanding a band relative to

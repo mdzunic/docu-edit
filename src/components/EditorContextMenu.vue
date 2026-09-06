@@ -395,13 +395,18 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
+/* The handoff's .mi:hover — an accent wash, not the neutral --state-hover.
+   This menu is the same command list as the menu bar's popups, reached with
+   the other mouse button, so it must not mark a row a different way. */
 .context-menu-item:hover {
-  background: var(--state-hover);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .context-menu-shortcut {
   color: var(--text-secondary);
+  font-family: var(--font-caption);
   font-size: var(--text-sm);
+  letter-spacing: var(--tracking-caption);
 }
 
 .context-menu-separator {

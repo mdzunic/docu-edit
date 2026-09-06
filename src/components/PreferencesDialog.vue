@@ -203,6 +203,21 @@ function commitGridSpacing(event = new Event("change")) {
         </div>
       </UiField>
       <UiField
+        label="Toolbar labels"
+        for="preferences-toolbar-labels"
+        hint="Prints the word under each toolbar icon. Dropped automatically when the strip runs out of room. Default: on"
+      >
+        <input
+          id="preferences-toolbar-labels"
+          type="checkbox"
+          class="pref-checkbox"
+          data-testid="preferences-toolbar-labels"
+          aria-describedby="preferences-toolbar-labels-hint"
+          :checked="preferences.toolbarLabels"
+          @change="(event) => setPreference('toolbarLabels', checked(event))"
+        >
+      </UiField>
+      <UiField
         label="Dim page in dark theme"
         for="preferences-dim-page"
         hint="Tones down the bright page against a dark UI. Default: off"

@@ -234,6 +234,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
            the bar keeps only the save state and the Close control. -->
       <MenuSubmenu
         label="Export"
+        icon="download"
         testid="file-menu-export"
       >
         <MenuItem
@@ -247,6 +248,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Print"
+        icon="print"
         testid="file-menu-print"
         :shortcut="shortcutLabel('file.print')"
         @select="emit('command', 'file.print')"
@@ -264,6 +266,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <MenuItem
         label="Version history"
+        icon="history"
         testid="file-menu-version-history"
         @select="emit('command', 'file.version-history')"
       />
@@ -291,6 +294,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Preferences…"
+        icon="settings"
         testid="file-menu-preferences"
         :shortcut="shortcutLabel('app.preferences')"
         @select="emit('command', 'app.preferences')"
@@ -298,6 +302,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Close"
+        icon="close"
         testid="file-menu-close"
         @select="emit('command', 'file.close')"
       />
@@ -306,6 +311,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
     <template #edit>
       <MenuItem
         label="Undo"
+        icon="undo"
         testid="edit-menu-undo"
         :shortcut="shortcutLabel('edit.undo')"
         :disabled="!editable || !undoRedo.canUndo"
@@ -313,6 +319,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <MenuItem
         label="Redo"
+        icon="redo"
         testid="edit-menu-redo"
         :shortcut="shortcutLabel('edit.redo')"
         :disabled="!editable || !undoRedo.canRedo"
@@ -321,17 +328,20 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Cut"
+        icon="cut"
         testid="edit-menu-cut"
         :disabled="!editable"
         @select="emit('command', 'edit.cut')"
       />
       <MenuItem
         label="Copy"
+        icon="copy"
         testid="edit-menu-copy"
         @select="emit('command', 'edit.copy')"
       />
       <MenuItem
         label="Paste"
+        icon="paste"
         testid="edit-menu-paste"
         :disabled="!editable"
         @select="emit('command', 'edit.paste')"
@@ -353,6 +363,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Find and replace"
+        icon="find"
         testid="edit-menu-find-replace"
         :shortcut="shortcutLabel('find.openReplace')"
         @select="emit('command', 'find.openReplace')"
@@ -406,6 +417,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <!-- SPEC-063: the zoom ladder plus Fit width / Fit page (AC-34). -->
       <MenuSubmenu
         label="Zoom"
+        icon="zoom-in"
         testid="view-menu-zoom"
       >
         <MenuRadioItem
@@ -434,6 +446,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <!-- Rulers: one control for both (SPEC-064 AC-7), then each on its own. -->
       <MenuCheckItem
         label="Rulers"
+        icon="ruler"
         testid="toggle-ruler-button"
         :checked="showRuler"
         @select="emit('command', 'view.ruler')"
@@ -453,18 +466,21 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuCheckItem
         label="Outline pane"
+        icon="outline"
         testid="view-menu-outline"
         :checked="outlinePaneOpen"
         @select="emit('command', 'view.outline-pane')"
       />
       <MenuCheckItem
         label="Styles pane"
+        icon="styles"
         testid="view-menu-styles-pane"
         :checked="stylesPaneOpen"
         @select="emit('command', 'view.styles-pane')"
       />
       <MenuCheckItem
         label="Comments pane"
+        icon="comments"
         testid="view-menu-comments-pane"
         :checked="commentsPaneOpen"
         @select="emit('command', 'view.comments-pane')"
@@ -484,6 +500,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuSubmenu
         label="Appearance"
+        icon="sun"
         testid="view-menu-appearance"
       >
         <MenuRadioItem
@@ -517,6 +534,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuCheckItem
         label="Track changes"
+        icon="track-changes"
         testid="view-menu-track-changes"
         :shortcut="shortcutLabel('edit.toggleTrackChanges')"
         :checked="trackChangesRecording"
@@ -525,6 +543,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <MenuCheckItem
         label="Track changes pane"
+        icon="track-changes"
         testid="view-menu-track-changes-pane"
         :checked="trackChangesPaneOpen"
         @select="emit('command', 'view.track-changes-pane')"
@@ -571,12 +590,14 @@ function chooseTableGrid(rows = 0, cols = 0) {
       </div>
       <MenuItem
         label="Insert table…"
+        icon="table"
         testid="insert-table-dialog-item"
         :disabled="!editable"
         @select="emit('command', 'insert.table-dialog')"
       />
       <MenuItem
         label="Image…"
+        icon="image"
         testid="insert-image-button"
         :disabled="!editable"
         @select="triggerImageInsert"
@@ -597,12 +618,14 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <MenuItem
         v-else
         label="Shapes"
+        icon="shape"
         testid="insert-shapes-disabled"
         disabled
         :reason="compactReason"
       />
       <MenuItem
         label="Text box"
+        icon="text-box"
         testid="insert-textbox-button"
         :disabled="!editable || compact"
         :reason="compactReason"
@@ -615,6 +638,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <ChartGallery @pick="emit('chart-pick', $event)" />
       <MenuItem
         label="Chart from table"
+        icon="chart"
         testid="insert-chart-from-table-button"
         :disabled="!editable || !tableSelectedForChart"
         @select="emit('command', 'insert.chart-from-table')"
@@ -622,6 +646,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Page break"
+        icon="page-break"
         testid="break-page"
         :shortcut="shortcutLabel('insert.pageBreak')"
         :disabled="!editable"
@@ -681,6 +706,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Footnote"
+        icon="footnote"
         testid="notes-menu-footnote"
         :shortcut="shortcutLabel('insert.footnote')"
         :disabled="!editable"
@@ -702,6 +728,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Equation"
+        icon="equation"
         testid="insert-equation-button"
         :shortcut="shortcutLabel('insert.equation')"
         :disabled="!editable"
@@ -772,6 +799,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <MenuItem
         label="Special character"
+        icon="special-character"
         testid="insert-special-character-button"
         :disabled="!editable"
         @select="emit('command', 'insert.special-character')"
@@ -785,6 +813,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Link"
+        icon="link"
         testid="toolbar-insert-link"
         :shortcut="shortcutLabel('insert.link')"
         :disabled="!editable"
@@ -792,6 +821,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <MenuItem
         label="Bookmark"
+        icon="bookmark"
         testid="toolbar-insert-bookmark"
         :disabled="!editable"
         @select="emit('command', 'insert.bookmark')"
@@ -803,6 +833,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       />
       <MenuItem
         label="Comment"
+        icon="comment"
         testid="toolbar-insert-comment"
         :shortcut="shortcutLabel('insert.comment')"
         :disabled="!editable"
@@ -825,6 +856,7 @@ function chooseTableGrid(rows = 0, cols = 0) {
       <hr class="menu-separator">
       <MenuItem
         label="Clear formatting"
+        icon="clear-formatting"
         testid="clear-formatting-button"
         :shortcut="shortcutLabel('format.clearFormatting')"
         :disabled="!editable"

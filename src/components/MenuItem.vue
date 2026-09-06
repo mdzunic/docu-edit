@@ -7,8 +7,16 @@
 // single tab stop (AC-8).
 //
 // Runtime prop/emit declarations per the espree constraint (see AppShell.vue).
+import AppIcon from "./AppIcon.vue";
+
 defineProps({
   label: { type: String, required: true },
+  /** The handoff draws every menu row with a 16px glyph gutter, so labels line
+   * up in one column whether or not a row has an icon, a check mark or a
+   * submenu arrow. Named from the shared set (components/icons/paths.ts);
+   * omitted rows still reserve the gutter, and an unknown name renders
+   * nothing, so a typo is a blank gutter rather than a broken row. */
+  icon: { type: String, default: "" },
   testid: { type: String, default: "" },
   /** Pre-formatted accelerator, e.g. "Ctrl+K"; "" shows none. */
   shortcut: { type: String, default: "" },
@@ -42,6 +50,13 @@ const emit = defineEmits(["select"]);
     @mousedown.prevent
     @click="emit('select')"
   >
+    <span
+      class="menu-icon"
+      aria-hidden="true"
+    ><AppIcon
+      v-if="icon"
+      :name="icon"
+    /></span>
     <span class="menu-item-label">{{ label }}</span>
     <span
       v-if="disabled && reason"

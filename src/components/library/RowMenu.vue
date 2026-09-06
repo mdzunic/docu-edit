@@ -161,6 +161,7 @@ function onMenuKeydown(event = new KeyboardEvent("keydown")) {
   display: flex;
   flex-direction: column;
   min-width: 10rem;
+  padding: var(--space-2);
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
@@ -168,12 +169,18 @@ function onMenuKeydown(event = new KeyboardEvent("keydown")) {
   z-index: 20;
 }
 
+/* The same command row the menu bar's popups and the editor context menu draw
+   (the handoff's .mi): one --height-control tall, inset by --space-3, marked
+   on hover by an accent wash rather than a neutral fill. */
 .row-menu button {
   font: inherit;
+  display: flex;
+  align-items: center;
+  min-height: var(--height-control);
   text-align: left;
-  padding: var(--space-3) var(--space-5);
+  padding: 0 var(--space-3);
   border: none;
-  background: var(--surface-base);
+  background: transparent;
   cursor: pointer;
   color: var(--text-primary);
   white-space: nowrap;
@@ -181,7 +188,7 @@ function onMenuKeydown(event = new KeyboardEvent("keydown")) {
 
 .row-menu button:hover,
 .row-menu button:focus-visible {
-  background: var(--surface-sunken);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .row-menu button.is-danger {

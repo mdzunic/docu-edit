@@ -30,6 +30,7 @@ const emit = defineEmits(["format-dismiss"]);
     class="print-exclude"
     testid="shape-toolbar"
     label="Shape formatting"
+    context="Shape"
     :left="box.left"
     :top="box.top"
     :lift="box.placement === 'above'"

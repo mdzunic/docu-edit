@@ -6,6 +6,7 @@ import { resolveColor } from "../lib/core/theme";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
+import UiControlCaption from "./ui/UiControlCaption.vue";
 
 // Runtime prop/emit declarations, not the defineProps<{...}>()/defineEmits
 // generics — see AppShell.vue's comment on the same espree constraint.
@@ -103,13 +104,16 @@ function currentHex() {
       @click="toggle"
     >
       <span class="glyph">ab</span>
-      <span
-        class="color-bar"
-        data-testid="highlight-current"
-        :class="{ 'color-bar-mixed': mixed, 'color-bar-none': !mixed && currentHex() === '' }"
-        :style="currentHex() === '' ? {} : { background: currentHex() }"
-        :data-color="mixed ? 'mixed' : (currentHex() === '' ? 'none' : String(value))"
-      />
+      <span class="picker-foot">
+        <UiControlCaption text="Mark" />
+        <span
+          class="color-bar"
+          data-testid="highlight-current"
+          :class="{ 'color-bar-mixed': mixed, 'color-bar-none': !mixed && currentHex() === '' }"
+          :style="currentHex() === '' ? {} : { background: currentHex() }"
+          :data-color="mixed ? 'mixed' : (currentHex() === '' ? 'none' : String(value))"
+        />
+      </span>
     </button>
     <UiMenuSurface
       ref="menuSurface"
@@ -170,17 +174,33 @@ function currentHex() {
 .picker-button {
   font: inherit;
   font-size: var(--text-sm);
-  width: var(--height-control);
-  height: var(--height-control);
-  padding: 0;
+  min-width: var(--control-min-width, var(--height-control));
+  height: var(--control-height, var(--height-control));
+  padding: 0 var(--space-2);
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: var(--border-width) solid var(--border-default);
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  border: var(--border-width) solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--surface-base);
+  background: transparent;
   cursor: pointer;
+}
+
+.picker-button:not(:disabled):hover {
+  background: var(--state-hover);
+  color: var(--text-primary);
+}
+
+/* The caption and the current-colour bar share one row under the glyph, as
+   the handoff draws it (COLOUR ▬ / MARK ▬). With captions off the bar sits
+   alone under the glyph — the pre-redesign control, unchanged. */
+.picker-foot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .picker-button:disabled {

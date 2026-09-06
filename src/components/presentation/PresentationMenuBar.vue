@@ -10,12 +10,15 @@
 // Structure and keyboard behaviour come from MenuBar, which is product-neutral
 // (it renders titles and popups and owns the roving focus; the contents are
 // slots). That is also what gives the deck the compact-tier menu sheet for
-// free. Runtime prop declarations — see AppShell.vue on the espree constraint.
+// free. It renders `embedded`: the deck gives its menu no row of its own —
+// SlideRibbon hosts the titles at the head of the one chrome row, so the bar
+// draws no ground or border (see SlideRibbon on why the deck merged them).
+// Runtime prop declarations — see AppShell.vue on the espree constraint.
 import MenuBar from "../MenuBar.vue";
 import MenuItem from "../MenuItem.vue";
 import MenuCheckItem from "../MenuCheckItem.vue";
 import MenuSubmenu from "../MenuSubmenu.vue";
-import { computed, useTemplateRef } from "vue";
+import { computed } from "vue";
 import { asPresentationMenuState } from "../../lib/presentation/menuState";
 
 const props = defineProps({
@@ -23,46 +26,27 @@ const props = defineProps({
   state: { type: Object, default: () => ({}) },
 });
 
-const emit = defineEmits(["command", "insert-image-file", "insert-media-file"]);
+const emit = defineEmits(["command"]);
 
 // A computed, not a snapshot: the prop changes as panels open and the
 // selection changes, and the template auto-unwraps this so items stay `s.x`.
 const s = computed(() => asPresentationMenuState(props.state));
 
+// Four menus, not six. "Insert" and "Format" are the ribbon's two strip tabs,
+// which sit in the same row — so the bar used to offer INSERT twice, a menu
+// and a tab, in the same condensed uppercase face a thumb's width apart, and
+// FORMAT beside a Home tab holding the identical commands. Every command the
+// two menus carried is on the strip that replaced them: Bold/Italic/Underline,
+// the four alignments, bullets and both indents on Home; text box, image,
+// media, the shape gallery and the charts on Insert — each of which offers
+// MORE than the menu did (the full shape gallery, tables, arrange, align,
+// group, style). So the deck's bar is deliberately shorter than the word
+// processor's, which has no ribbon to absorb them.
 const MENUS = [
   { id: "file", label: "File" },
   { id: "edit", label: "Edit" },
   { id: "view", label: "View" },
-  { id: "insert", label: "Insert" },
-  { id: "format", label: "Format" },
   { id: "slide", label: "Slide" },
-];
-
-// The shape palette the Insert strip offers, trimmed to the ones worth naming
-// in a menu; the strip keeps the full gallery.
-const SHAPES = [
-  { id: "rect", label: "Rectangle" },
-  { id: "roundRect", label: "Rounded rectangle" },
-  { id: "ellipse", label: "Ellipse" },
-  { id: "triangle", label: "Triangle" },
-  { id: "diamond", label: "Diamond" },
-  { id: "arrowRight", label: "Arrow" },
-  { id: "star5", label: "Star" },
-  { id: "line", label: "Line" },
-];
-
-const CHARTS = [
-  { id: "bar", label: "Bar" },
-  { id: "column", label: "Column" },
-  { id: "line", label: "Line" },
-  { id: "pie", label: "Pie" },
-];
-
-const ALIGNMENTS = [
-  { id: "left", label: "Left" },
-  { id: "center", label: "Centre" },
-  { id: "right", label: "Right" },
-  { id: "justify", label: "Justified" },
 ];
 
 const ARRANGE = [
@@ -71,49 +55,18 @@ const ARRANGE = [
   { id: "backward", label: "Send backward" },
   { id: "back", label: "Send to back" },
 ];
-
-// Image/Media open the OS picker from the menu, exactly as the word
-// processor's Insert ▸ Image… does. Hidden from the tab order and the
-// accessibility tree: the menu item is the accessible control (see
-// src/fileInputs.spec.ts, which enforces that on every picker).
-const imageInput = useTemplateRef("imageInput");
-const mediaInput = useTemplateRef("mediaInput");
-
-// Default values rather than annotations: ESLint parses .vue scripts with
-// espree, which rejects TS-only syntax (see AppShell.vue).
-function pickedFile(event = new Event("change")) {
-  const target = event.target;
-  const file = target instanceof HTMLInputElement ? target.files?.[0] : undefined;
-  if (target instanceof HTMLInputElement) {
-    // Cleared so picking the same file twice still fires a change event.
-    target.value = "";
-  }
-  return file;
-}
-
-function onImagePicked(event = new Event("change")) {
-  const file = pickedFile(event);
-  if (file) {
-    emit("insert-image-file", file);
-  }
-}
-
-function onMediaPicked(event = new Event("change")) {
-  const file = pickedFile(event);
-  if (file) {
-    emit("insert-media-file", file);
-  }
-}
 </script>
 
 <template>
   <MenuBar
     :menus="MENUS"
     aria-label="Presentation menu"
+    embedded
   >
     <template #file>
       <MenuSubmenu
         label="Export"
+        icon="download"
         testid="slides-file-menu-export"
       >
         <MenuItem
@@ -141,12 +94,14 @@ function onMediaPicked(event = new Event("change")) {
       />
       <MenuItem
         label="Preferences…"
+        icon="settings"
         testid="slides-menu-preferences"
         @select="emit('command', 'app.preferences')"
       />
       <hr class="menu-separator">
       <MenuItem
         label="Close"
+        icon="close"
         testid="slides-menu-close"
         @select="emit('command', 'file.close')"
       />
@@ -155,12 +110,14 @@ function onMediaPicked(event = new Event("change")) {
     <template #edit>
       <MenuItem
         label="Undo"
+        icon="undo"
         testid="slides-menu-undo"
         :disabled="!s.canUndo"
         @select="emit('command', 'edit.undo')"
       />
       <MenuItem
         label="Redo"
+        icon="redo"
         testid="slides-menu-redo"
         :disabled="!s.canRedo"
         @select="emit('command', 'edit.redo')"
@@ -226,95 +183,6 @@ function onMediaPicked(event = new Event("change")) {
       />
     </template>
 
-    <template #insert>
-      <MenuItem
-        label="Text box"
-        testid="slides-menu-text-box"
-        @select="emit('command', 'insert.text-box')"
-      />
-      <MenuItem
-        label="Image…"
-        testid="slides-menu-image"
-        @select="imageInput?.click()"
-      />
-      <MenuItem
-        label="Audio or video…"
-        testid="slides-menu-media"
-        @select="mediaInput?.click()"
-      />
-      <hr class="menu-separator">
-      <MenuSubmenu
-        label="Shape"
-        testid="slides-menu-shape"
-      >
-        <MenuItem
-          v-for="shape in SHAPES"
-          :key="shape.id"
-          :label="shape.label"
-          :testid="`slides-menu-shape-${shape.id}`"
-          @select="emit('command', `insert.shape:${shape.id}`)"
-        />
-      </MenuSubmenu>
-      <MenuSubmenu
-        label="Chart"
-        testid="slides-menu-chart"
-      >
-        <MenuItem
-          v-for="chart in CHARTS"
-          :key="chart.id"
-          :label="chart.label"
-          :testid="`slides-menu-chart-${chart.id}`"
-          @select="emit('command', `insert.chart:${chart.id}`)"
-        />
-      </MenuSubmenu>
-    </template>
-
-    <template #format>
-      <MenuItem
-        label="Bold"
-        testid="slides-menu-bold"
-        @select="emit('command', 'format.bold')"
-      />
-      <MenuItem
-        label="Italic"
-        testid="slides-menu-italic"
-        @select="emit('command', 'format.italic')"
-      />
-      <MenuItem
-        label="Underline"
-        testid="slides-menu-underline"
-        @select="emit('command', 'format.underline')"
-      />
-      <hr class="menu-separator">
-      <MenuSubmenu
-        label="Align text"
-        testid="slides-menu-align-text"
-      >
-        <MenuItem
-          v-for="alignment in ALIGNMENTS"
-          :key="alignment.id"
-          :label="alignment.label"
-          :testid="`slides-menu-align-${alignment.id}`"
-          @select="emit('command', `format.align:${alignment.id}`)"
-        />
-      </MenuSubmenu>
-      <MenuItem
-        label="Bulleted list"
-        testid="slides-menu-bullet"
-        @select="emit('command', 'format.bullet')"
-      />
-      <MenuItem
-        label="Increase indent"
-        testid="slides-menu-indent"
-        @select="emit('command', 'format.indent')"
-      />
-      <MenuItem
-        label="Decrease indent"
-        testid="slides-menu-outdent"
-        @select="emit('command', 'format.outdent')"
-      />
-    </template>
-
     <template #slide>
       <MenuItem
         label="New slide"
@@ -356,31 +224,4 @@ function onMediaPicked(event = new Event("change")) {
       />
     </template>
   </MenuBar>
-
-  <input
-    ref="imageInput"
-    type="file"
-    tabindex="-1"
-    aria-hidden="true"
-    class="menu-file-input"
-    data-testid="slides-menu-image-input"
-    accept="image/png,image/jpeg,image/gif,image/svg+xml,image/webp"
-    @change="onImagePicked"
-  >
-  <input
-    ref="mediaInput"
-    type="file"
-    tabindex="-1"
-    aria-hidden="true"
-    class="menu-file-input"
-    data-testid="slides-menu-media-input"
-    accept="audio/*,video/*"
-    @change="onMediaPicked"
-  >
 </template>
-
-<style scoped>
-.menu-file-input {
-  display: none;
-}
-</style>

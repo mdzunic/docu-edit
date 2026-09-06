@@ -3,6 +3,7 @@ import { MOD } from "./keys";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openInsertTab } from "./slides";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PPTX = join(here, "fixtures", "spec096-objects.pptx");
@@ -51,6 +52,7 @@ function rectangles(page: Page) {
 
 test("marquee, align, distribute, group/ungroup, rotate, position dialog, round trip", async ({ page }) => {
   await openFixture(page, FIXTURE_PPTX);
+  await openInsertTab(page);
   const frameCount = await stageFrames(page).count();
   expect(frameCount).toBe(7); // 3 rects + image + roundRect + 2 verbatim groups
 
@@ -125,6 +127,7 @@ test("marquee, align, distribute, group/ungroup, rotate, position dialog, round 
   // --- download → reopen: rotation, alignment, adjustment all survive -------
   const file = await downloadTo(page, "spec096-objects-roundtrip.pptx");
   await openFixture(page, file);
+  await openInsertTab(page);
   await expect(stageFrames(page)).toHaveCount(7);
 
   // Rotation survived: the image's Position & Size dialog reads 90.
@@ -180,6 +183,7 @@ async function leftmostGroupChildBoxes(page: Page): Promise<{ x: number; y: numb
 // current one, not the pointer-down capture.
 test("Escape mid-rotation-drag restores the starting angle", async ({ page }) => {
   await openFixture(page, FIXTURE_PPTX);
+  await openInsertTab(page);
   await rectangles(page).nth(0).click(); // the blue rect at (2,2) 4×2 — centre (4,3)
   const handle = page.getByTestId("rotate-handle");
   await expect(handle).toBeVisible();
@@ -208,6 +212,7 @@ test("Escape mid-rotation-drag restores the starting angle", async ({ page }) =>
 // the stage origin), and one undo restores geometry and children together.
 test("rotating an authored group moves its children about the group centre; undo restores them", async ({ page }) => {
   await openFixture(page, FIXTURE_PPTX);
+  await openInsertTab(page);
   await rectangles(page).nth(0).click();
   await rectangles(page).nth(1).click({ modifiers: ["Shift"] });
   await page.getByTestId("group-button").click();
@@ -253,6 +258,7 @@ test("rotating an authored group moves its children about the group centre; undo
 // confirm, whose cancel changes nothing.
 test("verbatim groups select by click and release through the rotation confirm", async ({ page }) => {
   await openFixture(page, FIXTURE_PPTX);
+  await openInsertTab(page);
   const groups = page.getByTestId("stage-workspace").getByRole("group", { name: "Group", exact: true });
   await expect(groups).toHaveCount(2);
 

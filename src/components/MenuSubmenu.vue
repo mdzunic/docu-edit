@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from "vue";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
+import AppIcon from "./AppIcon.vue";
 import UiMenuSurface from "./ui/UiMenuSurface.vue";
 
 // A nested submenu inside a MenuBar popup (SPEC-059): a role="menuitem" that
@@ -20,6 +21,8 @@ import UiMenuSurface from "./ui/UiMenuSurface.vue";
 const props = defineProps({
   label: { type: String, required: true },
   testid: { type: String, default: "" },
+  /** The row's leading glyph — see MenuItem's note on the 16px gutter. */
+  icon: { type: String, default: "" },
 });
 
 const open = ref(false);
@@ -179,9 +182,12 @@ function onFlyoutClick(event = new MouseEvent("click")) {
       @keydown="onTriggerKeydown"
     >
       <span
-        class="menu-check"
+        class="menu-icon"
         aria-hidden="true"
-      />
+      ><AppIcon
+        v-if="icon"
+        :name="icon"
+      /></span>
       <span class="menu-item-label">{{ label }}</span>
       <span
         class="menu-submenu-arrow"

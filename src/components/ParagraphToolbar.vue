@@ -4,6 +4,7 @@ import { shortcutLabel } from "../lib/shortcuts";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import AppIcon from "./AppIcon.vue";
 import UiToggleButton from "./ui/UiToggleButton.vue";
+import UiControlCaption from "./ui/UiControlCaption.vue";
 
 // Paragraph geometry controls (SPEC-014): alignment, indent step buttons,
 // the line-spacing menu (presets, the space-before toggle, "Custom
@@ -59,10 +60,10 @@ const emit = defineEmits([
 // Static per mount, like FormatToolbar's FORMATS list. Shortcut text is read
 // from the SPEC-021 registry rather than hardcoded (AC-15, AC-16).
 const ALIGNMENTS = [
-  { key: "left", label: "Align left", shortcut: shortcutLabel("paragraph.alignLeft"), icon: "align-left" },
-  { key: "center", label: "Align centre", shortcut: shortcutLabel("paragraph.alignCenter"), icon: "align-center" },
-  { key: "right", label: "Align right", shortcut: shortcutLabel("paragraph.alignRight"), icon: "align-right" },
-  { key: "justify", label: "Justify", shortcut: shortcutLabel("paragraph.alignJustify"), icon: "align-justify" },
+  { key: "left", label: "Align left", caption: "Left", shortcut: shortcutLabel("paragraph.alignLeft"), icon: "align-left" },
+  { key: "center", label: "Align centre", caption: "Centre", shortcut: shortcutLabel("paragraph.alignCenter"), icon: "align-center" },
+  { key: "right", label: "Align right", caption: "Right", shortcut: shortcutLabel("paragraph.alignRight"), icon: "align-right" },
+  { key: "justify", label: "Justify", caption: "Fill", shortcut: shortcutLabel("paragraph.alignJustify"), icon: "align-justify" },
 ];
 
 const decreaseIndentTitle = `Decrease indent (${shortcutLabel("paragraph.outdent")} at the start of a paragraph)`;
@@ -253,6 +254,7 @@ onBeforeUnmount(() => {
         :key="entry.key"
         :icon="entry.icon"
         :label="`${entry.label} (${entry.shortcut})`"
+        :caption="entry.caption"
         :pressed="alignment === entry.key"
         :disabled="disabled"
         :data-testid="`align-${entry.key}`"
@@ -272,6 +274,7 @@ onBeforeUnmount(() => {
       @click="emit('indent', -1)"
     >
       <AppIcon name="indent-decrease" />
+      <UiControlCaption text="Outdent" />
     </button>
     <button
       v-if="showLists"
@@ -285,6 +288,7 @@ onBeforeUnmount(() => {
       @click="emit('indent', 1)"
     >
       <AppIcon name="indent-increase" />
+      <UiControlCaption text="Indent" />
     </button>
     <!-- Bulleted/numbered list toggles (SPEC-018 AC-1, AC-2), each with a
          marker-style dropdown on a separate expander next to the toggle
@@ -297,6 +301,7 @@ onBeforeUnmount(() => {
         class="list-toggle"
         icon="bullet-list"
         label="Bulleted list"
+        caption="Bullets"
         :pressed="bulleted"
         :disabled="disabled"
         data-testid="list-bulleted"
@@ -350,6 +355,7 @@ onBeforeUnmount(() => {
         class="list-toggle"
         icon="numbered-list"
         label="Numbered list"
+        caption="Numbered"
         :pressed="numbered"
         :disabled="disabled"
         data-testid="list-numbered"
@@ -408,6 +414,7 @@ onBeforeUnmount(() => {
       @click="emit('toggle-direction')"
     >
       <AppIcon name="paragraph-direction" />
+      <UiControlCaption text="RTL" />
     </button>
     <button
       v-if="showAlign"
@@ -424,6 +431,7 @@ onBeforeUnmount(() => {
       @click="toggleSpacingMenu"
     >
       <AppIcon name="line-spacing" />
+      <UiControlCaption text="Spacing" />
     </button>
     <div
       v-if="spacingOpen"
@@ -482,6 +490,7 @@ onBeforeUnmount(() => {
       @click="togglePaginationMenu"
     >
       <AppIcon name="paragraph-pagination" />
+      <UiControlCaption text="Flow" />
     </button>
     <div
       v-if="paginationOpen"
@@ -515,22 +524,40 @@ onBeforeUnmount(() => {
   gap: var(--space-2);
 }
 
+/* Toolbar Redesign — one control grammar. These were bordered steppers on a
+   filled surface, sitting beside transparent toggles and bordered split
+   buttons; three styles in one row is exactly what the handoff set out to
+   fix. They now wear the UiToggleButton treatment: transparent, square to the
+   palette's radius, and sized off the strip's inherited control metrics. */
 .paragraph-button {
   position: relative;
   z-index: 1;
   font: inherit;
   font-size: var(--text-md);
-  min-width: 1.75rem;
-  height: var(--height-control);
+  min-width: var(--control-min-width, var(--height-control));
+  height: var(--control-height, var(--height-control));
   padding: 0 var(--space-2);
-  line-height: 1;
+  line-height: var(--line-tight);
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: var(--border-width) solid var(--border-strong);
+  gap: var(--space-1);
+  color: var(--text-primary);
+  border: var(--border-width) solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--surface-base);
+  background: transparent;
   cursor: pointer;
+}
+
+.paragraph-button:not(:disabled):hover {
+  background: var(--state-hover);
+}
+
+.paragraph-button[aria-pressed="true"] {
+  background: var(--surface-selected);
+  color: var(--text-accent);
+  border-color: var(--accent);
 }
 
 /* A transparent out-of-flow hit area lifts each button to the 32×32 minimum
@@ -602,17 +629,12 @@ onBeforeUnmount(() => {
   display: inline-flex;
 }
 
+/* The list toggle keeps its caret sibling but loses the bordered-surface
+   treatment: pressed state now comes from UiToggleButton's own accent
+   outline, so the pair reads as one transparent control, not a filled well. */
 .list-cluster .list-toggle {
-  color: var(--text-primary);
-  border-color: var(--border-strong);
-  background: var(--surface-base);
   border-start-end-radius: 0;
   border-end-end-radius: 0;
-}
-
-.list-cluster .list-toggle.is-pressed {
-  color: var(--text-accent);
-  background: var(--surface-selected);
 }
 
 .list-cluster .list-menu-button {
