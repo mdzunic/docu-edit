@@ -16,13 +16,7 @@
 // arrow keys are left to the browser so the caret can leave the table at its
 // edges.
 //
-// SPEC-097: inside a (non-table) session Tab demotes and Shift+Tab promotes
-// every paragraph the selection touches — one "Indent" entry, never a literal
-// tab and never a focus move — and Cmd/Ctrl+K opens the link dialog through
-// the handler useSlideTextDepth registers (`setLinkShortcut`). The generic
-// `runTextCommand`/`runParagraphCommand` are the same record → mutate →
-// markSlideEdited → re-render → commit sequence every toolbar command uses,
-// exposed so the text-depth composable's list/spacing/link commands share it.
+// SPEC-097: Tab/Shift+Tab demote/promote; Cmd/Ctrl+K opens the link dialog.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
@@ -38,7 +32,6 @@ import {
   wholeFrameRange,
   type ParagraphFormatPatch,
   type ParagraphOwner,
-  type ParagraphRange,
   type RunFormatPatch,
   type SelectionFormatState,
   type TextRange,
@@ -46,7 +39,6 @@ import {
 import { insertTableRow, nextCellAddress, ownerCellAt, prevCellAddress } from "../../lib/presentation/tables";
 import {
   normalizeTextFrameDom,
-  placeCaret,
   placeCaretAtPoint,
   renderEditableParagraphs,
   selectAllIn,
@@ -54,22 +46,22 @@ import {
   setSelectionRange,
 } from "../../components/presentation/slideTextDom";
 import type { FrameSelection } from "./useFrameSelection";
+import {
+  insertPlainText,
+  isCollapsed,
+  paragraphSpan,
+  placeCaretAtEnd,
+  type CaretPoint,
+  type CellAddress,
+  type ParagraphCommand,
+  type TextCommand,
+  type TextCommandTarget,
+} from "./slideTextSession";
+
+export type { CaretPoint, CellAddress } from "./slideTextSession";
 
 /** How long a pause closes a typing burst (SPEC-081: ≥ 1s). */
 export const TYPING_BURST_MS = 1000;
-
-/** The viewport coordinates of a double-click, so the session drops the caret
- * at the click point rather than the end of the frame (AC-1). */
-export interface CaretPoint {
-  x: number;
-  y: number;
-}
-
-/** A table cell address (SPEC-091). */
-export interface CellAddress {
-  row: number;
-  col: number;
-}
 
 export interface SlideTextEditingDeps {
   model: Ref<PresentationModel | null>;
@@ -117,47 +109,16 @@ export interface SlideTextEditing {
   setAlign: (align: NonNullable<TextFrame["paragraphs"][number]["align"]>) => void;
   toggleBulletCmd: () => void;
   indent: (delta: 1 | -1) => void;
-  // SPEC-097 hooks for useSlideTextDepth.
-  /** The paragraph owner, its frame and the range a text command would act on
-   * right now (the live/last DOM selection in a session, else the whole
-   * selected text frame); null when nothing is targeted. */
+  // SPEC-097 hooks for useSlideTextDepth (types: slideTextSession.ts).
+  /** What a command would act on now (the live/last DOM selection in a
+   * session, else the whole selected text frame), or null. */
   commandTarget: () => TextCommandTarget | null;
-  /** Runs `apply` as ONE undo entry labelled `label`: record → mutate →
-   * markSlideEdited → re-render the session host → commit. `range` overrides
-   * the current command range (a dialog captured it before taking focus).
-   * Returns whether it ran (false when nothing is targeted). */
+  /** ONE undo entry: record → apply → markSlideEdited → re-render → commit;
+   * `range` overrides the command range. False when nothing is targeted. */
   runTextCommand: (label: string, apply: TextCommand, range?: TextRange) => boolean;
-  /** `runTextCommand` over the paragraphs the range touches. */
   runParagraphCommand: (label: string, apply: ParagraphCommand) => boolean;
   /** Registers what Cmd/Ctrl+K does inside a session (the link dialog). */
   setLinkShortcut: (handler: (() => void) | null) => void;
-}
-
-/** What a text command acts on (SPEC-097). */
-export interface TextCommandTarget {
-  owner: ParagraphOwner;
-  frame: SlideFrame;
-  range: TextRange;
-}
-
-/** A command over a character range of a paragraph owner. */
-export type TextCommand = (owner: ParagraphOwner, range: TextRange, frame: SlideFrame) => void;
-
-/** A command over the paragraphs a range touches. */
-export type ParagraphCommand = (owner: ParagraphOwner, range: ParagraphRange, frame: SlideFrame) => void;
-
-/** The inclusive paragraph span of a character range. */
-export function paragraphSpan(range: TextRange): ParagraphRange {
-  return {
-    startPara: Math.min(range.start.para, range.end.para),
-    endPara: Math.max(range.start.para, range.end.para),
-  };
-}
-
-function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {
-  const last = Math.max(0, owner.paragraphs.length - 1);
-  const lastLen = owner.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
-  placeCaret(el, { para: last, offset: lastLen });
 }
 
 export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
@@ -474,14 +435,11 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       tabCell(event.shiftKey ? -1 : 1);
       return;
     }
-    // SPEC-097 AC-23: in a text session Tab demotes and Shift+Tab promotes the
-    // touched paragraphs (clamped 0–8) as one "Indent" entry — never a literal
-    // tab character, never a focus move. Safe beside onGlobalKeydown's Tab
-    // frame-cycling, which already skips while a session is open.
+    // SPEC-097 AC-23: in a text session Tab demotes / Shift+Tab promotes (one
+    // "Indent" entry; onGlobalKeydown's Tab frame-cycling skips while editing).
     if (event.key === "Tab" && !event.metaKey && !event.ctrlKey) {
       event.preventDefault();
-      const shift = event.shiftKey ? promote : demote;
-      runCommand("Indent", (owner, range) => shift(owner, paragraphSpan(range)));
+      runCommand("Indent", (owner, range) => (event.shiftKey ? promote : demote)(owner, paragraphSpan(range)));
       return;
     }
     const mod = event.metaKey || event.ctrlKey;
@@ -501,8 +459,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
         if (host.value) selectAllIn(host.value);
         selectionTick.value++;
       } else if (key === "k" && linkShortcut) {
-        // SPEC-097 AC-46: Cmd/Ctrl+K opens the slide link dialog.
-        event.preventDefault();
+        event.preventDefault(); // SPEC-097 AC-46: the slide link dialog
         linkShortcut();
       }
     }
@@ -550,10 +507,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     return wholeFrameRange(owner);
   }
 
-  function runCommand(label: string, apply: TextCommand): void {
-    runTextCommand(label, apply);
-  }
-
+  const runCommand = (label: string, apply: TextCommand): void => void runTextCommand(label, apply);
   function runTextCommand(label: string, apply: TextCommand, override?: TextRange): boolean {
     const owner = targetOwner();
     const frame = targetFrame();
@@ -575,21 +529,15 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     return true;
   }
 
-  function runParagraphCommand(label: string, apply: ParagraphCommand): boolean {
-    return runTextCommand(label, (owner, range, frame) => apply(owner, paragraphSpan(range), frame));
-  }
-
+  const runParagraphCommand = (label: string, apply: ParagraphCommand): boolean =>
+    runTextCommand(label, (owner, range, frame) => apply(owner, paragraphSpan(range), frame));
   function commandTarget(): TextCommandTarget | null {
     const owner = targetOwner();
     const frame = targetFrame();
-    if (!owner || !frame) return null;
-    return { owner, frame, range: commandRange(owner) };
+    return owner && frame ? { owner, frame, range: commandRange(owner) } : null;
   }
-
   let linkShortcut: (() => void) | null = null;
-  function setLinkShortcut(handler: (() => void) | null): void {
-    linkShortcut = handler;
-  }
+  const setLinkShortcut = (handler: (() => void) | null): void => void (linkShortcut = handler);
 
   function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
     runCommand(label, (owner, range) =>
@@ -617,13 +565,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     paragraphCommand("Align", { align });
   const toggleBulletCmd = (): void =>
     runCommand("Bullet", (owner, range) => toggleBullet(owner, { startPara: range.start.para, endPara: range.end.para }));
-  // The toolbar's indent buttons shift levels through the same demote/promote
-  // as Tab (SPEC-097), so a list item's default-cycle marker follows its level
-  // ("3." demoted reads "a.") whichever way the user indents.
+  // Same demote/promote as Tab (SPEC-097): a default marker follows its level.
   const indent = (delta: 1 | -1): void =>
-    runCommand(delta > 0 ? "Indent" : "Outdent", (owner, range) =>
-      (delta > 0 ? demote : promote)(owner, { startPara: range.start.para, endPara: range.end.para }),
-    );
+    runCommand(delta > 0 ? "Indent" : "Outdent", (owner, range) => (delta > 0 ? demote : promote)(owner, paragraphSpan(range)));
 
   return {
     editingFrameId,
@@ -653,35 +597,4 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     runParagraphCommand,
     setLinkShortcut,
   };
-}
-
-function isCollapsed(range: { start: { para: number; offset: number }; end: { para: number; offset: number } }): boolean {
-  return range.start.para === range.end.para && range.start.offset === range.end.offset;
-}
-
-/** Inserts plain text at the caret, newlines becoming paragraph breaks
- * (AC-13). Deletes any selected content first. */
-function insertPlainText(host: HTMLElement, text: string): void {
-  const doc = host.ownerDocument;
-  const sel = doc.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
-  let range = sel.getRangeAt(0);
-  range.deleteContents();
-  const parts = text.replace(/\r\n?/g, "\n").split("\n");
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) {
-      const br = doc.createElement("br");
-      range.insertNode(br);
-      range.setStartAfter(br);
-    }
-    if (parts[i].length > 0) {
-      const node = doc.createTextNode(parts[i]);
-      range.insertNode(node);
-      range.setStartAfter(node);
-    }
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    range = sel.getRangeAt(0);
-  }
 }
