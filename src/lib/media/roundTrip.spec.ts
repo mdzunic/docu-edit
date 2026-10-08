@@ -37,6 +37,9 @@ describe("media round trip", () => {
       const model = await assembleMediaModel("fixture", fixture.format, source);
       const out = mediaSourceBytes(model);
       expect(equalBytes(out, source)).toBe(true);
+      // And after the trip through storage (the model is plain JSON).
+      const stored = JSON.parse(JSON.stringify(model)) as typeof model;
+      expect(equalBytes(mediaSourceBytes(stored), source)).toBe(true);
     });
   }
 
