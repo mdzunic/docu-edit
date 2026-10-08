@@ -21,6 +21,7 @@ import {
 } from "./model";
 import { retargetAnimations } from "./animations";
 import { newSlideFramesForLayout } from "./layouts";
+import { normaliseSections } from "./sections";
 
 /** cm rounded to 3 decimals — a hair finer than the eye and far coarser than
  * the EMU/ODF length precision the writers round to, so a placeholder's
@@ -108,13 +109,16 @@ export function addSlide(model: PresentationModel, afterIndex: number, layoutKey
   const at = Math.min(Math.max(afterIndex + 1, 0), model.slides.length);
   model.slides.splice(at, 0, slide);
   model.structureDirty = true;
+  // SPEC-099: the new slide joins its predecessor's section.
+  normaliseSections(model);
   return at;
 }
 
 /** Re-mints every frame's id (and group children's) so a duplicated slide's
  * frames are independent selection/undo targets (AC-30), recording each
- * old→new id in `idMap` so animation targets can follow (SPEC-086 AC-19). */
-function remintFrameIds(frames: SlideFrame[], idMap: Map<string, string>): void {
+ * old→new id in `idMap` so animation targets can follow (SPEC-086 AC-19).
+ * Exported for SPEC-099's `importSlides`, which re-mints the same way. */
+export function remintFrameIds(frames: SlideFrame[], idMap: Map<string, string>): void {
   for (const frame of frames) {
     const next = crypto.randomUUID();
     idMap.set(frame.id, next);
@@ -145,6 +149,7 @@ export function duplicateSlide(model: PresentationModel, index: number): number 
   copy.animations = retargetAnimations(copy.animations, idMap);
   model.slides.splice(index + 1, 0, copy);
   model.structureDirty = true;
+  normaliseSections(model);
   return index + 1;
 }
 
@@ -157,11 +162,15 @@ export function deleteSlide(model: PresentationModel, index: number): number {
   }
   model.slides.splice(index, 1);
   model.structureDirty = true;
+  normaliseSections(model);
   return model.slides.length === 0 ? 0 : Math.min(index, model.slides.length - 1);
 }
 
 /** Moves the slide at `from` to `to` (clamped), keeping it selected. Returns
- * the moved slide's new index. */
+ * the moved slide's new index. In a sectioned deck (SPEC-099) the moved slide
+ * keeps its section when it lands beside a slide of that section, and
+ * otherwise joins the section it lands in (its new predecessor's; the first
+ * run's when it lands first). */
 export function moveSlide(model: PresentationModel, from: number, to: number): number {
   if (from < 0 || from >= model.slides.length) {
     return from;
@@ -173,6 +182,17 @@ export function moveSlide(model: PresentationModel, from: number, to: number): n
   const [moved] = model.slides.splice(from, 1);
   model.slides.splice(target, 0, moved);
   model.structureDirty = true;
+  if (model.sections && moved.sectionKey !== undefined) {
+    const before = model.slides[target - 1]?.sectionKey;
+    const after = model.slides[target + 1]?.sectionKey;
+    if (moved.sectionKey !== before && moved.sectionKey !== after) {
+      const adopted = before ?? after;
+      if (adopted !== undefined) {
+        moved.sectionKey = adopted;
+      }
+    }
+  }
+  normaliseSections(model);
   return target;
 }
 
@@ -193,19 +213,29 @@ export function unconvertibleFrameCount(model: PresentationModel): number {
   return count;
 }
 
+/** Deletes a slide's per-slide package retention — `partName`, `sourceXml`
+ * and `preserved`, and nothing else — so the writers serialise it from the
+ * model alone. Shared by `stripRetention` and SPEC-099's `importSlides`; each
+ * caller keeps its own dirty-flag handling. */
+export function stripSlideParts(slide: Slide): void {
+  delete slide.partName;
+  delete slide.sourceXml;
+  delete slide.preserved;
+}
+
 /** A copy of the model with every retained-package field removed
  * (`opaque`, `odpContentEnvelope`, and per-slide `partName`/`sourceXml`/
  * `preserved`/`dirty`), so the writers rebuild every part from the model
  * alone (SPEC-080). The cross-format download path passes this so a
  * `.pptx`-born deck saved as `.odp` never leaks pptx parts and vice versa.
+ * Deck sections and each slide's `sectionKey` are content and are kept, so
+ * the copy carries them into the other format's mapping (SPEC-099).
  * Pure — the stored deck keeps its format and retention. */
 export function stripRetention(model: PresentationModel): PresentationModel {
   const { opaque: _opaque, odpContentEnvelope: _envelope, ...rest } = model;
   const copy: PresentationModel = structuredClone(rest);
   for (const slide of copy.slides) {
-    delete slide.partName;
-    delete slide.sourceXml;
-    delete slide.preserved;
+    stripSlideParts(slide);
     delete slide.dirty;
     // A chart frame is unconvertible (SPEC-092 AC-6d, D9): its part lives in the
     // stripped `opaque` and the from-scratch writers do not synthesise one, so a
