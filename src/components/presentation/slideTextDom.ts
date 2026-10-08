@@ -502,10 +502,26 @@ function applyRange(doc: Document, range: Range): void {
  * caret at the click point, not at the end). Uses `caretRangeFromPoint`
  * (Chromium/WebKit) or `caretPositionFromPoint` (standard); returns false when
  * neither exists (jsdom) or the point resolves outside the host, so the caller
- * can fall back to placing the caret at the end. */
+ * can fall back to placing the caret at the end.
+ *
+ * The host sits inside its frame's text body, whose insets are padding and
+ * whose anchor can hug the host to its content (SPEC-097), so a click in the
+ * frame's margin lands beside the host rather than on it. Such a point is
+ * retried at the nearest point inside the host's box: a double-click just left
+ * of the first character still drops the caret before it. */
 export function placeCaretAtPoint(host: HTMLElement, clientX: number, clientY: number): boolean {
+  if (placeCaretInsideAt(host, clientX, clientY)) return true;
+  const box = host.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return false;
+  const x = Math.min(Math.max(clientX, box.left + 1), box.right - 1);
+  const y = Math.min(Math.max(clientY, box.top + 1), box.bottom - 1);
+  if (x === clientX && y === clientY) return false;
+  return placeCaretInsideAt(host, x, y);
+}
+
+function placeCaretInsideAt(host: HTMLElement, x: number, y: number): boolean {
   const doc = host.ownerDocument;
-  const range = caretRangeAtPoint(doc, clientX, clientY);
+  const range = caretRangeAtPoint(doc, x, y);
   if (!range) return false;
   const node = range.startContainer;
   if (node !== host && !host.contains(node)) return false;

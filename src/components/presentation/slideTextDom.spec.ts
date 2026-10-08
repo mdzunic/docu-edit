@@ -123,7 +123,7 @@ describe("paragraph props survive a paragraph-count change", () => {
 
 // jsdom has no layout, so the hit-test API is absent; stub it on the document
 // as a plain property (index-signature cast so it can be deleted afterwards).
-function stubHitTest(resolve: () => Range): void {
+function stubHitTest(resolve: (x: number, y: number) => Range): void {
   (document as unknown as Record<string, unknown>).caretRangeFromPoint = resolve;
 }
 function clearHitTest(): void {
@@ -177,6 +177,62 @@ describe("placeCaretAtPoint (AC-1: caret at the click point)", () => {
     const el = host();
     renderEditableParagraphs(el, [{ runs: [{ text: "hi" }] }]);
     expect(placeCaretAtPoint(el, 1, 1)).toBe(false);
+  });
+
+  // SPEC-097 insets pad the body around the host: a double-click in that
+  // margin, just left of the first character, resolves to the body — retry
+  // at the nearest point inside the host's box rather than falling back to
+  // the end (SPEC-081 AC-1's "XXXQuarterly Review").
+  it("retries a point in the body's inset margin at the nearest point inside the host", () => {
+    const body = document.createElement("div");
+    const el = host();
+    body.appendChild(el);
+    document.body.appendChild(body);
+    renderEditableParagraphs(el, [{ runs: [{ text: "Quarterly Review" }] }]);
+    const textNode = el.querySelector("span")!.firstChild!;
+    el.getBoundingClientRect = () => new DOMRect(10, 20, 100, 30); // left 10, top 20, right 110, bottom 50
+    const probes: Array<[number, number]> = [];
+    stubHitTest((x: number, y: number) => {
+      probes.push([x, y]);
+      const range = document.createRange();
+      if (x < 10) range.setStart(body, 0); // the inset padding: the body, not the host
+      else range.setStart(textNode, 0);
+      return range;
+    });
+    try {
+      expect(placeCaretAtPoint(el, 3, 35)).toBe(true);
+      expect(probes).toEqual([
+        [3, 35],
+        [11, 35],
+      ]);
+      const sel = document.getSelection()!;
+      expect(sel.focusNode).toBe(textNode);
+      expect(sel.focusOffset).toBe(0);
+    } finally {
+      clearHitTest();
+      document.body.removeChild(body);
+    }
+  });
+
+  it("does not retry a point already inside the host's box that resolves elsewhere", () => {
+    const el = host();
+    document.body.appendChild(el);
+    renderEditableParagraphs(el, [{ runs: [{ text: "hi" }] }]);
+    el.getBoundingClientRect = () => new DOMRect(0, 0, 100, 30);
+    let probes = 0;
+    stubHitTest(() => {
+      probes++;
+      const range = document.createRange();
+      range.setStart(document.body, 0);
+      return range;
+    });
+    try {
+      expect(placeCaretAtPoint(el, 5, 5)).toBe(false);
+      expect(probes).toBe(1);
+    } finally {
+      clearHitTest();
+      document.body.removeChild(el);
+    }
   });
 });
 
