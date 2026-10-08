@@ -118,8 +118,9 @@ function decodeWebp(bytes: Uint8Array): ImageDimensions | null {
   }
   if (chunk === "VP8L") {
     // Lossless: a 0x2F signature byte, then width-1 and height-1 as
-    // consecutive 14-bit fields of a little-endian 32-bit read.
-    if (bytes[20] !== 0x2f) {
+    // consecutive 14-bit fields of a little-endian 32-bit read, an alpha
+    // bit, and a 3-bit version that must be 0.
+    if (bytes[20] !== 0x2f || bytes[24] >> 5 !== 0) {
       return null;
     }
     const packed =
