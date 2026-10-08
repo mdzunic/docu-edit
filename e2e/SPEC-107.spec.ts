@@ -2,14 +2,16 @@ import { test, expect, type Download, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { equalBytes } from "../src/lib/core/equality";
 
-// SPEC-107 — images and PDFs in the library: the full AC-16 journey. Drop a
-// PDF → it opens in the media viewer; its library row carries a PDF badge
-// and its grid card an honest 3-page placeholder; the details panel is built
-// from the structural parse; a dropped PNG's card shows a REAL thumbnail;
-// the image viewer zooms with SPEC-063's vocabulary; bulk download returns
-// the PDF byte-for-byte; trash/restore and the kind-grouped filter chips
-// treat media as first-class.
+// SPEC-107 — images and PDFs in the library: the full journey (AC-41..43).
+// Drop a PDF (spec107-pages.pdf, the app's own buildPdf output) → it opens
+// in the media viewer; its library row carries a PDF badge and its grid card
+// reads 3 pages; the details panel is built from the structural parse; a
+// dropped PNG's card shows a REAL thumbnail; the image viewer zooms with
+// SPEC-063's vocabulary; bulk download returns the PDF byte-for-byte;
+// trash/restore and the kind-grouped filter chips treat media as
+// first-class.
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const pdfFixture = join(fixturesDir, "spec107-pages.pdf");
@@ -37,7 +39,7 @@ function rowByTitle(page: Page, title: string) {
     .filter({ has: page.getByTestId("row-title").getByText(title, { exact: true }) });
 }
 
-test("media documents are first-class: drop, view, thumbnail, zoom, bulk download, trash, filter (AC-16)", async ({ page }) => {
+test("media documents are first-class: drop, view, thumbnail, zoom, bulk download, trash, filter (AC-41..43)", async ({ page }) => {
   await page.goto("/");
   await waitUntilAppReady(page);
 
@@ -52,6 +54,8 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   await expect(page.getByTestId("detail-pages")).toHaveText("3 pages");
   await expect(page.getByTestId("detail-page-size")).toContainText("mixed");
   await expect(page.getByTestId("detail-version")).toHaveText("1.7");
+  await expect(page.getByTestId("detail-info-author")).toHaveText("docu-edit factory");
+  await expect(page.getByTestId("detail-reconstructed")).toHaveText("No");
   await expect(page.locator('object[type="application/pdf"]')).toBeAttached();
   await expect(page.locator("embed")).toBeAttached();
 
@@ -61,9 +65,11 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   const pdfRow = rowByTitle(page, "spec107-pages");
   await expect(pdfRow.getByTestId("row-format")).toHaveText("PDF");
 
-  // The grid card shows a real raster of the PDF's first page (pdf.js — the
-  // sanctioned dependency exception), exactly as an image card does.
+  // A 3-page card. Its preview is a real raster of the first page (pdf.js —
+  // the dependency exception CLAUDE.md records for PDF first-page previews),
+  // replacing the aspect-true paper placeholder once it is drawn.
   await page.getByTestId("view-grid").click();
+  await expect(rowByTitle(page, "spec107-pages").getByTestId("row-counts")).toContainText("3 pages");
   const pdfThumb = page.getByTestId("media-thumbnail").first();
   await expect(pdfThumb).toBeVisible();
   expect(await pdfThumb.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
@@ -117,8 +123,8 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   expect(pdfDownload).toBeTruthy();
   const downloadedPath = await pdfDownload!.path();
   expect(downloadedPath).toBeTruthy();
-  const downloadedBytes = readFileSync(downloadedPath!);
-  expect(Buffer.compare(downloadedBytes, readFileSync(pdfFixture))).toBe(0);
+  const downloadedBytes = new Uint8Array(readFileSync(downloadedPath!));
+  expect(equalBytes(downloadedBytes, new Uint8Array(readFileSync(pdfFixture)))).toBe(true);
 
   // Trash both (the selection survives the download), restore both.
   await page.getByTestId("bulk-trash").click();
