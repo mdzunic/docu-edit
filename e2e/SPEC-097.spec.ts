@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MOD } from "./keys";
+import { LINE_END, MOD } from "./keys";
 import { unzip } from "../src/lib/core/zip";
 import { EXPECTED_TEXT_DEPTH } from "../src/lib/presentation/fixtures/build";
 
@@ -52,6 +52,22 @@ async function textFits(frame: Locator): Promise<boolean> {
     const paragraphs = Array.from(el.querySelectorAll("[data-testid='slide-paragraph']"));
     const bottom = Math.max(...paragraphs.map((p) => p.getBoundingClientRect().bottom));
     return bottom <= box.bottom + 1;
+  });
+}
+
+/** A frame's laid-out height in slide px (its own box, before the stage's
+ * fit transform) — what `heightCm` renders as. */
+async function layoutHeight(frame: Locator): Promise<number> {
+  return frame.evaluate((el) => parseFloat(getComputedStyle(el).height));
+}
+
+/** Whether the open session's text fits inside its frame's box (1px). */
+async function sessionFits(frame: Locator): Promise<boolean> {
+  return frame.evaluate((el) => {
+    const host = el.querySelector("[data-testid='slide-text-edit']");
+    if (!host) return false;
+    const bottom = Math.max(...Array.from(host.children).map((block) => block.getBoundingClientRect().bottom));
+    return bottom <= el.getBoundingClientRect().bottom + 1;
   });
 }
 
@@ -204,4 +220,58 @@ test("Enter in a Text panel field during a text session commits the field withou
   await expect(lastLine).toHaveText(new RegExp(EXPECTED_TEXT_DEPTH.bodyLines[2]));
   await expect(lastLine).toHaveCSS("margin-bottom", "16px"); // 12pt
   expect(await markersOf(body)).toEqual(EXPECTED_TEXT_DEPTH.bodyMarkers);
+});
+
+test("Resize shape to fit text keeps the frame fitted while its text is typed, and saves that height", async ({ page }) => {
+  await openFixture(page, PPTX);
+  const sentence = frameWith(page, EXPECTED_TEXT_DEPTH.linkSentence);
+  await sentence.click();
+  await page.getByTestId("slides-text-toggle").click();
+  const panel = page.getByTestId("slides-text-panel");
+  await expect(panel).toBeVisible();
+  await panel.getByTestId("text-autofit").selectOption({ label: "Resize shape to fit text" });
+  await expect(panel.getByTestId("text-autofit")).toHaveValue("resizeShape");
+  await expect.poll(() => textFits(sentence)).toBe(true);
+  const fitted = await layoutHeight(sentence);
+
+  // AC-38: typing three more lines in a session grows the frame with them —
+  // during the session, not only once it ends.
+  await sentence.getByText(EXPECTED_TEXT_DEPTH.linkSentence).dblclick();
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+  await page.keyboard.press(LINE_END);
+  for (const line of ["Second line", "Third line", "Fourth line"]) {
+    await page.keyboard.press("Enter");
+    await page.keyboard.type(line);
+  }
+  await expect.poll(() => layoutHeight(sentence)).toBeGreaterThan(fitted * 2);
+  await expect.poll(() => sessionFits(sentence)).toBe(true);
+  await expect(panel.getByTestId("text-autofit")).toHaveValue("resizeShape");
+
+  // After the session the rendered text still fits its (grown) frame.
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  await expect(sentence.getByTestId("slide-paragraph")).toHaveCount(4);
+  await expect.poll(() => textFits(sentence)).toBe(true);
+  const grown = await layoutHeight(sentence);
+  expect(grown).toBeGreaterThan(fitted * 2);
+
+  // Deleting a line shrinks it back toward its text.
+  await sentence.getByText("Fourth line").dblclick();
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+  await page.keyboard.press(LINE_END);
+  for (let i = 0; i < "Fourth line".length + 1; i++) await page.keyboard.press("Backspace");
+  await page.keyboard.press("Escape");
+  await expect(sentence.getByTestId("slide-paragraph")).toHaveCount(3);
+  await expect.poll(() => layoutHeight(sentence)).toBeLessThan(grown);
+  await expect.poll(() => textFits(sentence)).toBe(true);
+  const final = await layoutHeight(sentence);
+
+  // The download stores that height beside <a:spAutoFit/> (1px = 9525 EMU).
+  const file = await downloadTo(page, "spec097-resize-shape.pptx");
+  const parts = await unzip(new Uint8Array(readFileSync(file)));
+  const slideXml = new TextDecoder().decode(parts.get("ppt/slides/slide1.xml")!);
+  const shape = slideXml.split("<p:sp>").find((sp) => sp.includes("Third line")) ?? "";
+  expect(shape).toContain("<a:spAutoFit/>");
+  const cy = Number(/<a:ext cx="\d+" cy="(\d+)"\/>/.exec(shape)?.[1]);
+  expect(Math.abs(cy - final * 9525)).toBeLessThanOrEqual(2 * 9525);
 });
