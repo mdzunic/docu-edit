@@ -209,24 +209,24 @@ describe("undo-burst coalescing (AC-28/29)", () => {
   });
 });
 
+function numbered(...texts: string[]) {
+  return texts.map((text) => ({ runs: [{ text }], bullet: "number" }));
+}
+function paragraphsOf(model: ReturnType<typeof setup>["model"]) {
+  const frame = model.value.slides[0].frames[0];
+  return frame.kind === "text" ? frame.paragraphs : [];
+}
+function selectParagraphs(host: HTMLElement, from: number, to: number) {
+  setSelectionRange(host, { para: from, offset: 0 }, { para: to, offset: 1 });
+}
+function tab(shiftKey = false) {
+  return new KeyboardEvent("keydown", { key: "Tab", shiftKey, cancelable: true });
+}
+
 describe("Tab / Shift+Tab demote and promote (SPEC-097 AC-23)", () => {
   afterEach(() => {
     document.body.innerHTML = "";
   });
-
-  function numbered(...texts: string[]) {
-    return texts.map((text) => ({ runs: [{ text }], bullet: "number" }));
-  }
-  function paragraphsOf(model: ReturnType<typeof setup>["model"]) {
-    const frame = model.value.slides[0].frames[0];
-    return frame.kind === "text" ? frame.paragraphs : [];
-  }
-  function selectParagraphs(host: HTMLElement, from: number, to: number) {
-    setSelectionRange(host, { para: from, offset: 0 }, { para: to, offset: 1 });
-  }
-  function tab(shiftKey = false) {
-    return new KeyboardEvent("keydown", { key: "Tab", shiftKey, cancelable: true });
-  }
 
   it("Tab demotes every paragraph the selection touches as ONE 'Indent' entry and prevents the default", () => {
     const { editing, host, records, model } = setup(numbered("one", "two", "three"));
