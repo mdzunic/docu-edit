@@ -1,6 +1,6 @@
 ---
 id: SPEC-000
-title: Product roadmap — word processor, presentations and media
+title: Product roadmap — word processor, presentations, media and spreadsheets
 status: draft
 area: product
 ---
@@ -33,6 +33,15 @@ viewer instead.
 
 Phase 16 is the first experimental phase: features behind a Labs flag, off
 by default, including the only place this application may talk to a model.
+
+The fourth product (Phases 17–18): spreadsheets — `.xlsx` and `.ods`
+workbooks (and, from SPEC-126, `.csv`/`.tsv`) in the same library, at
+`/sheets/:id`. It is a fourth box on the same layering diagram: a
+`src/lib/spreadsheet/` product layer over `src/lib/core`, meeting the other
+three only in the app layer. Everything a spreadsheet needs that a word
+processor would not — the formula language, the calculation engine, the
+number-format engine, a forward-only XML scanner for million-cell parts — is
+written here; `package.json` gains nothing.
 
 Specs are ordered so each one is shippable on its own and builds on the ones
 before it. Later specs assume earlier ones are merged (`depends_on` in each
@@ -90,8 +99,33 @@ rejecting SPEC-007 as ambiguous:
    image edit stack in `specs/112-edit-an-image.md`. And on the
    experimental side: the Labs flag registry and the **only** module
    permitted to make a model request are defined in
-   `specs/113-experimental-features-and-the-model-gateway.md`. Nothing
-   redefines these.
+   `specs/113-experimental-features-and-the-model-gateway.md`. And on the
+   spreadsheet side: the workbook model, its invariants (copy-on-write rows,
+   sparseness, the retained source as splice base, dates as serials), A1
+   addressing, date serials, the General display, reader versions and the
+   per-sheet row split are defined in
+   `specs/116-workbooks-in-the-library.md`; cell styles, colour mapping,
+   grid geometry and the selection model in
+   `specs/117-sheet-grid-styles-sizes-and-selection.md`; number formats and
+   the spreadsheet locale in `specs/118-number-formats-and-dates.md`; the
+   formula language — canonical text, tokens, AST, references and both wire
+   dialects — in `specs/119-the-formula-language.md`; evaluation semantics,
+   recalculation and the function registry in
+   `specs/120-calculation-engine-and-core-functions.md`; the spreadsheet
+   writers' rebuild rules and undo stack in
+   `specs/121-create-workbook-and-sheet-management.md`; sheet-part
+   serialisation, the append-only shared-strings and styles writers and
+   input parsing in `specs/122-cell-entry-and-the-sheet-writer.md`;
+   structural reference adjustment and the adjuster registry every
+   reference-bearing structure joins in
+   `specs/124-rows-columns-and-merged-cells.md`; its cut-and-move twin
+   (`MOVE_ADJUSTERS`) in `specs/125-copy-paste-fill-and-move.md`; the
+   row-permutation hook sorting runs (`ROW_PERMUTATION_ADJUSTERS`) in
+   `specs/128-sort-and-filter.md`; and the spreadsheet side panel
+   (`useSheetSidePanel`) in `specs/129-conditional-formatting.md`. Two
+   shared helpers are owned by the first spec that needed them: ODS range
+   addresses (`spreadsheet/ods/rangeAddress.ts`) by SPEC-121, row and column
+   autofit (`spreadsheet/autofit.ts`) by SPEC-122. Nothing redefines these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -374,6 +408,77 @@ request at all.
 | SPEC-114 | Search inside the library (experimental) |
 | SPEC-115 | Design a presentation from a description (experimental) |
 
+### Phase 17 — The spreadsheet product
+The fourth product. A library that holds the report but not the numbers
+behind it sends its user somewhere else the moment the numbers change.
+
+Order is load-bearing, and stricter than Phase 13's. SPEC-116 adds the kind,
+both readers, a byte-preserving download and a read-only grid; its model is
+what every later spec edits. SPEC-117–120 then teach the readers everything a
+faithful *view* needs — styles and geometry, number formats, the formulas
+themselves and their evaluation — **before anything can be edited**, so each
+of them upgrades already-stored workbooks by simply re-reading them (SPEC-116's
+reader-version rule) instead of migrating user edits. SPEC-121/122 build the
+save machinery every editing spec reuses: workbook-level rebuild rules and
+the undo stack, then the sheet writer and the cell editor. SPEC-123–127 are
+the staples: formatting, rows and columns, the clipboard and fill, CSV, and
+the rest of the function library.
+
+Three specs here need something only a person can produce, committed before
+they are labelled ready (the factory container runs no office suite):
+SPEC-116 an Apple Numbers export (`e2e/fixtures/spec116-numbers.xlsx`, via
+`scripts/make-numbers-fixture.applescript`) and a check of its Numbers
+detection markers; SPEC-120 a Numbers-calculated answer key
+(`spec120-numbers.xlsx`); SPEC-125 four real clipboard captures — Excel for
+the web, Google Sheets, LibreOffice and Numbers — with a note of how each was
+taken.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-116 | Workbooks in the library — open .xlsx and .ods, the workbook model and a byte-preserving save |
+| SPEC-117 | The sheet grid — styles, sizes, merges, frozen panes and selection |
+| SPEC-118 | Number formats and dates |
+| SPEC-119 | The formula language — parse, print and translate formulas between both formats |
+| SPEC-120 | Calculation — the engine, recalculation and the core functions |
+| SPEC-121 | Create a workbook, and sheet management |
+| SPEC-122 | Cell entry and the sheet writer |
+| SPEC-123 | Cell formatting — fonts, fills, borders, alignment and number formats |
+| SPEC-124 | Rows, columns and merged cells |
+| SPEC-125 | Copy, paste, fill and move |
+| SPEC-126 | CSV and TSV — open, save and export |
+| SPEC-127 | The function library and the function picker |
+
+### Phase 18 — Spreadsheet depth
+What real workbooks arrive carrying, and what their owners do with them
+next. Each spec here models something SPEC-116 preserved verbatim, so each
+bumps the reader version, registers its structure with SPEC-124's reference
+adjusters (a row inserted above it must move it), and keeps whatever it does
+not model byte-verbatim. SPEC-131 comes before SPEC-132 — a chart is a
+drawing anchored to cells first. SPEC-136 needs SPEC-104's move of the PDF
+writer into `src/lib/core`; SPEC-138 needs SPEC-103's generalisation of
+drafts beyond text and SPEC-137's chunked row storage. SPEC-139 is the
+largest single spec in the phase and deliberately last. Two specs need a
+person first: SPEC-135 an Excel 365 workbook with threaded comments
+(`spec135-excel365-threads.xlsx` — Excel for the web can save one), and
+SPEC-137 a quiet factory-container baseline run to replace its projected
+budgets before its perf gate is enforced.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-128 | Sort and filter |
+| SPEC-129 | Conditional formatting |
+| SPEC-130 | Data validation and in-cell dropdowns |
+| SPEC-131 | Images and shapes on sheets |
+| SPEC-132 | Charts in workbooks |
+| SPEC-133 | Named ranges and tables |
+| SPEC-134 | Find and replace, and Go To |
+| SPEC-135 | Notes, comments and hyperlinks on cells |
+| SPEC-136 | Page setup, printing and PDF export for sheets |
+| SPEC-137 | Large workbooks — performance |
+| SPEC-138 | Autosave, drafts and version history for workbooks |
+| SPEC-139 | Pivot tables |
+| SPEC-140 | Workbook generation API |
+
 ---
 
 ## Backlog — identified, not yet specced
@@ -426,3 +531,27 @@ for the word processor (SPEC-115).
 | Embedded audio/video on slides | SPEC-088 keeps placeholders |
 | Keynote ’09 (`index.apxl`), .pages/.numbers products | SPEC-087 rejects with pointers |
 | Deck export to PDF; HTML export via the generation API | SPEC-034 is text-only; SPEC-088 names the API follow-up |
+
+**Spreadsheet gaps (Phases 17–18).** Deferred by the spreadsheet queue
+itself; none is a work order.
+
+| Gap | Deferred by |
+| --- | --- |
+| `.xls` (BIFF8), `.xlsb`, `.numbers` and flat `.fods` import; opening password-protected workbooks | SPEC-116 refuses each with a message |
+| Running, inspecting or editing macros (VBA is carried verbatim) | SPEC-116 |
+| Dynamic arrays and spill ranges — FILTER, SORT, UNIQUE, SEQUENCE, LET, LAMBDA evaluation | SPEC-119/120 show cached spill values only; SPEC-127 |
+| Iterative calculation; manual calculation mode beyond what SPEC-120 pins | SPEC-120 |
+| External workbook links (refresh, edit links) | SPEC-119 keeps them as opaque references |
+| Locale-specific formula syntax (`;` separators, localised function names) | SPEC-118 — formulas are always en-US |
+| Partial rich-text formatting inside one cell | SPEC-123 |
+| Insert/delete cells with shift (not whole rows/columns); outline grouping of rows/columns | SPEC-124 |
+| Paste-special operations (add, subtract, multiply, divide) | SPEC-125 |
+| Sort by colour or icon; advanced filter with a criteria range | SPEC-128 |
+| Sheet and workbook protection — set, change and remove passwords | SPEC-122 only honours protection |
+| Sparklines, slicers and timelines | Never specced |
+| What-If analysis — Goal Seek, scenarios, data tables; Solver | Never specced |
+| Data connections, Power Query, the data model | Never specced |
+| Real-time collaboration, spell check and an accessibility checker for sheets | Never specced |
+| Small-screen and touch layout for the grid; right-to-left sheets | SPEC-116/117 |
+| The command palette for the spreadsheet view | SPEC-062 is text-only |
+| Names, tables, charts, validation and conditional formatting in the generation API | SPEC-140 |
