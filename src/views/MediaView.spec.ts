@@ -66,10 +66,34 @@ describe("MediaView", () => {
     expect(wrapper.get('[data-testid="detail-dimensions"]').text()).toBe("64 × 40 px");
     expect(wrapper.get('[data-testid="detail-format"]').text()).toContain("PNG");
     expect(wrapper.get('[data-testid="detail-size"]').text()).toMatch(/B$/);
-    // No editor surfaces (AC-13): no save state, no menu bar, no comments.
-    expect(wrapper.find('[data-testid="save-state"]').exists()).toBe(false);
-    expect(wrapper.find('[data-testid="menu-bar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="detail-stored"]').exists()).toBe(true);
+    // No editor surfaces (AC-35): no save state, no menu bar and so no
+    // editor-only File menu entries, no version history, no comments.
+    for (const testId of [
+      "save-state",
+      "menu-bar",
+      "file-menu-export",
+      "file-menu-save-as-template",
+      "version-history-pane",
+      "comments-pane",
+    ]) {
+      expect(wrapper.find(`[data-testid="${testId}"]`).exists()).toBe(false);
+    }
     expect(wrapper.find('[data-testid="close-document"]').exists()).toBe(true);
+  });
+
+  it("creates one blob: URL per open and revokes it on unmount (AC-33)", async () => {
+    const { store, assembleMediaModel, mountMedia } = await loadModules();
+    const model = await assembleMediaModel("pages", "pdf", PAGES_PDF);
+    store.storeMedia(model);
+    const { wrapper } = await mountMedia(model.id);
+    // The mount loads once and re-syncs after initLibrary resolves; the
+    // re-sync of the same document must not mint (and revoke) a second URL.
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    expect(wrapper.get("object").attributes("data")).toBe("blob:test");
+    wrapper.unmount();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:test");
   });
 
   it("renders a PDF through the browser embed with parse-derived details (AC-12)", async () => {
@@ -86,8 +110,37 @@ describe("MediaView", () => {
     expect(wrapper.get('[data-testid="detail-page-size"]').text()).toContain("mixed");
     expect(wrapper.get('[data-testid="detail-version"]').text()).toBe("1.7");
     expect(wrapper.get('[data-testid="detail-producer"]').text()).toBe("docu-edit");
+    expect(wrapper.get('[data-testid="detail-info-title"]').text()).toBe("SPEC-107 pages");
+    expect(wrapper.get('[data-testid="detail-info-author"]').text()).toBe("docu-edit factory");
+    expect(wrapper.get('[data-testid="detail-created"]').text()).toBe("2026-08-30 12:00");
     expect(wrapper.get('[data-testid="detail-linearised"]').text()).toBe("No");
-    expect(wrapper.find('[data-testid="detail-reconstructed"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="detail-reconstructed"]').text()).toBe("No");
+    // The fallback's actions are there for a browser with no PDF viewer.
+    expect(wrapper.get('[data-testid="media-pdf-fallback"]').text()).toContain("Your browser cannot display PDFs here");
+    expect(wrapper.find('[data-testid="media-pdf-download"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="media-pdf-open-tab"]').attributes("target")).toBe("_blank");
+  });
+
+  it("reports a reconstructed PDF in the details panel", async () => {
+    const { store, assembleMediaModel, mountMedia } = await loadModules();
+    // A nonsense startxref: only the reconstruction path can read the file.
+    const text = String.fromCharCode(...PAGES_PDF);
+    const broken = Uint8Array.from(text.replace(/startxref\s+\d+/, "startxref\n2"), (char) => char.charCodeAt(0));
+    const model = await assembleMediaModel("broken", "pdf", broken);
+    store.storeMedia(model);
+    const { wrapper } = await mountMedia(model.id);
+    expect(wrapper.get('[data-testid="detail-reconstructed"]').text()).toMatch(/^Yes/);
+    expect(wrapper.get('[data-testid="detail-pages"]').text()).toBe("3 pages");
+  });
+
+  it("hands a presentation id off to /slides/:id", async () => {
+    const { store, mountMedia } = await loadModules();
+    const { createBlankPresentation } = await import("../lib/presentation/slides");
+    const deck = createBlankPresentation();
+    store.storePresentation(deck);
+    const { router } = await mountMedia(deck.id);
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe(`/slides/${deck.id}`);
   });
 
   it("hands a text id off to /doc/:id (AC-11 kind guard)", async () => {

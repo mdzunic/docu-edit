@@ -9,8 +9,7 @@ import {
   openAnyDocumentFile,
   type OpenedFile,
 } from "./openDocument";
-import { OPENABLE_EXTENSIONS } from "./documentKinds";
-import { LIBRARY_IMAGE_MIME_TYPES } from "./core/media";
+import { MEDIA_FORMAT_CONTENT_TYPES, OPENABLE_EXTENSIONS } from "./documentKinds";
 import { isFetchableUrl } from "./links";
 
 export class OpenFromUrlError extends Error {}
@@ -55,8 +54,7 @@ function isSupportedContentType(contentType: string | null): boolean {
     type === PPTX_CONTENT_TYPE ||
     type === ODP_CONTENT_TYPE ||
     type === KEY_CONTENT_TYPE ||
-    type === "application/pdf" ||
-    (LIBRARY_IMAGE_MIME_TYPES as readonly string[]).includes(type) ||
+    MEDIA_FORMAT_CONTENT_TYPES.includes(type) ||
     GENERIC_BINARY_CONTENT_TYPES.includes(type)
   );
 }

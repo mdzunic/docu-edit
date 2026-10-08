@@ -6,6 +6,7 @@
 import { onScopeDispose, shallowRef, watch, type ComputedRef, type Ref, ref } from "vue";
 import type { Router } from "vue-router";
 import { documentKindOf, getMedia, getStoredRecord, initLibrary } from "../../lib/documentStore";
+import { editorPathFor } from "../../lib/documentKinds";
 import type { MediaModel } from "../../lib/media/model";
 import { mediaSourceBytes } from "../../lib/media/download";
 
@@ -38,19 +39,22 @@ export function useMediaDocument(deps: MediaDocumentDeps): MediaDocumentControll
 
   function load(): void {
     const id = deps.mediaId.value;
-    // Wrong-kind ids hand off, exactly as /doc/:id and /slides/:id do.
+    // Wrong-kind ids hand off to their own view, exactly as /doc/:id and
+    // /slides/:id do (the route comes from the kind registry).
     const kind = documentKindOf(id);
-    if (kind === "text") {
-      void deps.router.replace(`/doc/${id}`);
-      return;
-    }
-    if (kind === "presentation") {
-      void deps.router.replace(`/slides/${id}`);
+    if (kind !== undefined && kind !== "media") {
+      void deps.router.replace(editorPathFor(kind, id));
       return;
     }
     const model = getMedia(id) ?? null;
-    media.value = model;
     storedAt.value = getStoredRecord(id)?.lastModified ?? 0;
+    if (model !== null && model === media.value && blobUrl.value) {
+      // The same document is already open (the post-initLibrary re-sync):
+      // one object URL per open, so the embed never loads a URL that is
+      // then revoked under it.
+      return;
+    }
+    media.value = model;
     revokeBlobUrl();
     if (model) {
       const bytes = mediaSourceBytes(model);
