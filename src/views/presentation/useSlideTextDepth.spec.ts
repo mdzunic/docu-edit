@@ -12,6 +12,7 @@ import { resizedHeightCm } from "../../lib/presentation/textBody";
 import { setSelectionRange } from "../../components/presentation/slideTextDom";
 import { useFrameSelection } from "./useFrameSelection";
 import { useSlideTextEditing } from "./useSlideTextEditing";
+import { stageFit } from "./slideTextDepthFields";
 import {
   BULLET_CHAR_ERROR,
   BULLET_IMAGE_TYPE_ERROR,
@@ -337,6 +338,10 @@ describe("autofit write-back (AC-40/41)", () => {
     h.depth.setAutofit("shrink");
     h.depth.setAutofit("none");
     expect(h.frame<TextFrame>("body").body).toBeUndefined();
+  });
+
+  it("the default stage measurer reads nothing where there is no layout (keeps what is stored)", () => {
+    expect(stageFit(textFrame("x", "body", ["one"]))).toBeNull();
   });
 
   it("a later command on a shrinking frame re-measures after the re-render, inside the same entry", async () => {
