@@ -71,11 +71,15 @@ function frameStartingWith(model: PresentationModel, text: string): TextFrame {
   return frame;
 }
 
+const r3 = (v: number): number => Math.round(v * 1000) / 1000;
+
+/** Every paragraph of a frame, as a paragraph range. */
+const all = (frame: TextFrame) => ({ startPara: 0, endPara: frame.paragraphs.length - 1 });
+
 /** The modelled subset this spec promises to reproduce, per text frame: the
  * paragraphs (every list/spacing/preservation field and every run mark),
  * the body, the frame link and the box — never ids. */
 function projection(frame: SlideFrame): Record<string, unknown> {
-  const r3 = (v: number): number => Math.round(v * 1000) / 1000;
   const out: Record<string, unknown> = {
     kind: frame.kind,
     box: [r3(frame.xCm), r3(frame.yCm), r3(frame.widthCm), r3(frame.heightCm)],
@@ -99,7 +103,6 @@ function editSlide1(model: PresentationModel): void {
   const continued = frameStartingWith(model, EXPECTED_TEXT_DEPTH.continuedLines[0]);
   const sentence = frameStartingWith(model, EXPECTED_TEXT_DEPTH.linkSentence);
   const title = frameStartingWith(model, EXPECTED_TEXT_DEPTH.title);
-  const all = (frame: TextFrame) => ({ startPara: 0, endPara: frame.paragraphs.length - 1 });
 
   // Numbered body with a start-at, 1.5× line spacing and 6pt space-before.
   applyParagraphFormat(body, all(body), { startAt: 3 });
