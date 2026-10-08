@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const MINI = join(here, "fixtures", "mini-deck.pptx");
 const SECTIONS = join(here, "fixtures", "spec099-sections.pptx");
+const SECTIONS_ODP = join(here, "fixtures", "spec099-sections.odp");
 
 function sorter(page: Page): Locator {
   return page.getByTestId("slides-sorter");
@@ -270,4 +272,41 @@ test("sections: rename, reject an empty name, move a section with its run, remov
   });
   await expect(live(page)).toHaveText("The clipboard doesn't hold any slides");
   await expect(cards(page)).toHaveCount(6);
+});
+
+// The odp mapping says once that Impress will not show sections; a download
+// with no edits is byte-identical to the source in both formats, and a
+// section-only edit survives a reopen.
+test("odp sections note, no-edit downloads stay byte-identical, a rename round-trips (AC-8, AC-15)", async ({
+  page,
+}) => {
+  for (const file of [SECTIONS, SECTIONS_ODP]) {
+    await page.goto("/");
+    await openFile(page, file);
+    const toggle = page.getByTestId("slides-sorter-toggle");
+    if ((await toggle.getAttribute("aria-pressed")) !== "true") {
+      await toggle.click();
+    }
+    await expect(cards(page)).toHaveCount(6);
+    await expect(sorter(page).getByTestId("sorter-section-name")).toHaveText(["Opening", "Details"]);
+    await expect(page.getByTestId("sorter-odp-note")).toHaveCount(file === SECTIONS_ODP ? 1 : 0);
+    const ext = file === SECTIONS_ODP ? "odp" : "pptx";
+    const untouched = await downloadTo(page, `spec099-noedit.${ext}`);
+    expect(readFileSync(untouched).equals(readFileSync(file))).toBe(true);
+
+    await sorter(page).getByTestId("sorter-section-name").first().dblclick();
+    await expect(sorter(page).getByTestId("section-rename-input")).toBeFocused();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("Prologue");
+    await page.keyboard.press("Enter");
+    await expect(sorter(page).getByTestId("sorter-section-name")).toHaveText(["Prologue", "Details"]);
+    const renamed = await downloadTo(page, `spec099-renamed.${ext}`);
+    expect(readFileSync(renamed).equals(readFileSync(file))).toBe(false);
+
+    await page.goto("/");
+    await openFile(page, renamed);
+    await expect(cards(page)).toHaveCount(6);
+    expect(await sectionSummary(page)).toEqual(["Prologue: 3 slides", "Details: 3 slides"]);
+    expect(await cardTitles(page)).toEqual(["Welcome", "Agenda", "Team photo", "Budget", "Timeline", "Next steps"]);
+  }
 });
