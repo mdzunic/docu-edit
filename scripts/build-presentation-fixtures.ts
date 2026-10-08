@@ -26,6 +26,8 @@ import {
   buildPptxMediaFixtureBytes,
   buildOdpTextDepthFixtureBytes,
   buildPptxTextDepthFixtureBytes,
+  buildSpec099OdpFixtureBytes,
+  buildSpec099PptxFixtureBytes,
 } from "../src/lib/presentation/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -84,6 +86,12 @@ const textDepthPptx = await buildPptxTextDepthFixtureBytes();
 writeFileSync(join(fixturesDir, "spec097-text-depth.pptx"), textDepthPptx);
 const textDepthOdp = await buildOdpTextDepthFixtureBytes();
 writeFileSync(join(fixturesDir, "spec097-text-depth.odp"), textDepthOdp);
+// SPEC-099 deck-section fixtures (six slides in two sections, an image, an
+// animation, and one out-of-subset deck-level extra on the preserve path).
+const sectionsPptx = await buildSpec099PptxFixtureBytes();
+writeFileSync(join(fixturesDir, "spec099-sections.pptx"), sectionsPptx);
+const sectionsOdp = await buildSpec099OdpFixtureBytes();
+writeFileSync(join(fixturesDir, "spec099-sections.odp"), sectionsOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
@@ -94,7 +102,8 @@ console.log(
     `spec094-themes.pptx (${themesPptx.byteLength}B), spec094-themes.odp (${themesOdp.byteLength}B), ` +
     `spec096-objects.pptx (${objectsPptx.byteLength}B), spec096-objects.odp (${objectsOdp.byteLength}B), ` +
     `spec095-media.pptx (${mediaPptx.byteLength}B), spec095-media.odp (${mediaOdp.byteLength}B), ` +
-    `spec097-text-depth.pptx (${textDepthPptx.byteLength}B), spec097-text-depth.odp (${textDepthOdp.byteLength}B)`,
+    `spec097-text-depth.pptx (${textDepthPptx.byteLength}B), spec097-text-depth.odp (${textDepthOdp.byteLength}B), ` +
+    `spec099-sections.pptx (${sectionsPptx.byteLength}B), spec099-sections.odp (${sectionsOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).
