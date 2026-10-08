@@ -37,6 +37,7 @@ import {
   type ParagraphAddress,
 } from "./textEditing";
 import { orderedRange, type CommandResult, type ModelSelection } from "./commands";
+import { buildClipboardEnvelope, isFiniteNumber, isSafeColor, parseClipboardEnvelope } from "./core/clipboardPayload";
 
 /** The private MIME type the internal payload travels under. Only
  * `ClipboardEvent.clipboardData.setData/getData` can carry it —
@@ -213,11 +214,7 @@ export function fragmentHtml(fragment: Paragraph[]): string {
 /** The internal flavour: the fragment labelled with the MIME type and a
  * version, exactly the format the paste-side parser validates. */
 export function serializeFragment(fragment: Paragraph[]): string {
-  return JSON.stringify({
-    mimeType: DOC_MODEL_MIME,
-    version: 1,
-    blocks: fragment,
-  });
+  return buildClipboardEnvelope(DOC_MODEL_MIME, 1, { blocks: fragment });
 }
 
 /** All three flavours of one fragment, ready for `setData`. */
@@ -237,22 +234,10 @@ export function clipboardFlavours(fragment: Paragraph[]): {
 // The clipboard is an untrusted boundary even for our own MIME type —
 // anything can write any string under any key — so the parser rebuilds the
 // fragment field by field from a whitelist instead of splicing parsed JSON
-// into the model.
+// into the model. The envelope and its guards are core/clipboardPayload.ts
+// (SPEC-099 hoisted them so the slide clipboard shares them).
 
 const ALIGNMENTS = new Set(["left", "center", "right", "justify"]);
-const SAFE_COLOR = /^#[0-9a-f]{3,8}$/i;
-const SAFE_COLOR_NAME = /^[a-zA-Z]+$/;
-
-function isSafeColor(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    (SAFE_COLOR.test(value) || SAFE_COLOR_NAME.test(value))
-  );
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
 
 function sanitizeRunFormatting(value: unknown): RunFormatting {
   const formatting: RunFormatting = {};
@@ -363,20 +348,8 @@ function sanitizeParagraph(value: unknown): Paragraph | null {
  * whitelisted fields. Null when anything doesn't hold — the caller falls
  * through to the `text/html` flavour. */
 export function parseFragmentPayload(raw: string): Paragraph[] | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) {
-    return null;
-  }
-  const payload = parsed as Record<string, unknown>;
-  if (payload.mimeType !== DOC_MODEL_MIME || payload.version !== 1) {
-    return null;
-  }
-  if (!Array.isArray(payload.blocks)) {
+  const payload = parseClipboardEnvelope(raw, DOC_MODEL_MIME, 1);
+  if (!payload || !Array.isArray(payload.blocks)) {
     return null;
   }
   const blocks: Paragraph[] = [];
