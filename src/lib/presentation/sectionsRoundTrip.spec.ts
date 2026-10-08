@@ -55,11 +55,19 @@ function runs(model: PresentationModel): [string, string[]][] {
   ]);
 }
 
+function frameIndex(slide: Slide, id: string): number {
+  return slide.frames.findIndex((frame) => frame.id === id);
+}
+
+/** Each section's name and run length. */
+function runShape(deck: PresentationModel): [string, number][] {
+  return sectionsOf(deck).map((run) => [run.section.name, run.endIndex - run.startIndex]);
+}
+
 /** The modelled subset compared after a round trip: the sections, and per
  * slide its section key, outline, animations (by target frame position) and
  * image media ids. */
 function modelledSubset(model: PresentationModel): unknown {
-  const frameIndex = (slide: Slide, id: string): number => slide.frames.findIndex((frame) => frame.id === id);
   return {
     sections: model.sections,
     slides: model.slides.map((slide) => ({
@@ -191,8 +199,7 @@ describe("the round-trip deck (AC-15)", () => {
     const back = stripRetention(asOdp);
     back.format = "pptx";
     const asPptx = await readPresentationBytes(await write(back), "pptx");
-    const shape = (deck: PresentationModel) => sectionsOf(deck).map((run) => [run.section.name, run.endIndex - run.startIndex]);
-    expect(shape(asPptx)).toEqual(shape(model));
+    expect(runShape(asPptx)).toEqual(runShape(model));
     expect(asPptx.slides.map((slide) => slide.sectionKey)).toEqual(model.slides.map((slide) => slide.sectionKey));
   });
 

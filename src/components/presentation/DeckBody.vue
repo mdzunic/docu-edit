@@ -35,6 +35,9 @@ const props = defineProps({
   mediaPanel: { type: Object, required: true },
   /** SPEC-093: each slide's pre-resolved deck field band, indexed to `slides`. */
   fieldsBySlide: { type: Array, default: () => [] },
+  /** SPEC-099: the shared slide selection (useSlideSelection) the filmstrip
+   * shares with the slide sorter. */
+  selection: { type: Object, default: null },
 });
 
 defineEmits(["select", "add", "command", "reorder"]);
@@ -53,6 +56,8 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
       :current-index="currentIndex"
       :fields-by-slide="fieldsBySlide"
       :theme="theme"
+      :selection="selection"
+      :selected-indexes="selection ? selection.indexes.value : []"
       @select="$emit('select', $event)"
       @add="$emit('add')"
       @command="$emit('command', $event)"

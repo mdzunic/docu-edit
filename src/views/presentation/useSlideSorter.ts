@@ -62,6 +62,23 @@ export interface SorterReport {
   lines: string[];
 }
 
+/** Typed pass-throughs for the sorter component's controller reads (espree
+ * bars casts in .vue scripts). */
+export function asSorterGroups(value: unknown): SorterGroup[] {
+  return value as SorterGroup[];
+}
+export function asIndexes(value: unknown): number[] {
+  return value as number[];
+}
+
+/** Focuses and selects a just-mounted rename input (a function ref). */
+export function focusAndSelect(el: unknown): void {
+  if (el instanceof HTMLInputElement && document.activeElement !== el) {
+    el.focus();
+    el.select();
+  }
+}
+
 /** What the sorter says when a paste carries no slides (AC-9). */
 export const NO_SLIDES_MESSAGE = "The clipboard doesn't hold any slides";
 
@@ -137,17 +154,17 @@ export function useSlideSorter(deps: SlideSorterDeps) {
     }
     const cards = (start: number, end: number): SorterCard[] =>
       model.slides.slice(start, end).map((slide, offset) => ({ index: start + offset, slide }));
-    const runs = sectionsOf(model);
-    if (runs.length === 0) {
+    const sections = sectionsOf(model);
+    if (sections.length === 0) {
       return [{ key: null, name: "", collapsed: false, startIndex: 0, endIndex: model.slides.length, cards: cards(0, model.slides.length) }];
     }
-    return runs.map((run) => ({
-      key: run.section.key,
-      name: run.section.name,
-      collapsed: run.section.collapsed === true,
-      startIndex: run.startIndex,
-      endIndex: run.endIndex,
-      cards: cards(run.startIndex, run.endIndex),
+    return sections.map((section) => ({
+      key: section.section.key,
+      name: section.section.name,
+      collapsed: section.section.collapsed === true,
+      startIndex: section.startIndex,
+      endIndex: section.endIndex,
+      cards: cards(section.startIndex, section.endIndex),
     }));
   });
 
@@ -380,9 +397,9 @@ export function useSlideSorter(deps: SlideSorterDeps) {
   }
 
   function removeAsCut(): void {
-    const count = selection.indexes.value.length;
+    const cutCount = selection.indexes.value.length;
     remove();
-    announce(`${plural(count, "slide")} cut`);
+    announce(`${plural(cutCount, "slide")} cut`);
   }
 
   /** The Copy/Cut buttons: a real copy/cut via execCommand — the only

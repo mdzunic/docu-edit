@@ -96,27 +96,27 @@ export function clearSlideClipboardStore(): void {
 // --- copy --------------------------------------------------------------------
 
 function mediaIdsOf(frames: SlideFrame[], into: Set<string>): void {
-  for (const frame of frames) {
+  for (const each of frames) {
     const paragraphs =
-      frame.kind === "text"
-        ? frame.paragraphs
-        : frame.kind === "shape"
-          ? (frame.paragraphs ?? [])
-          : frame.kind === "table"
-            ? frame.rows.flatMap((row) => row.cells.flatMap((cell) => cell.paragraphs))
+      each.kind === "text"
+        ? each.paragraphs
+        : each.kind === "shape"
+          ? (each.paragraphs ?? [])
+          : each.kind === "table"
+            ? each.rows.flatMap((row) => row.cells.flatMap((cell) => cell.paragraphs))
             : [];
     for (const paragraph of paragraphs) {
       if (paragraph.bulletImageId) {
         into.add(paragraph.bulletImageId);
       }
     }
-    if (frame.kind === "image") {
-      into.add(frame.mediaId);
-    } else if (frame.kind === "media") {
-      if (frame.mediaId) into.add(frame.mediaId);
-      if (frame.posterMediaId) into.add(frame.posterMediaId);
-    } else if (frame.kind === "group") {
-      mediaIdsOf(frame.children, into);
+    if (each.kind === "image") {
+      into.add(each.mediaId);
+    } else if (each.kind === "media") {
+      if (each.mediaId) into.add(each.mediaId);
+      if (each.posterMediaId) into.add(each.posterMediaId);
+    } else if (each.kind === "group") {
+      mediaIdsOf(each.children, into);
     }
   }
 }
