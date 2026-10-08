@@ -9,7 +9,7 @@
 // `command` the filmstrip emits). Everything that changes the deck runs
 // through the useSlideSorter controller. Runtime prop/emit declarations, not
 // the generic forms (espree lints .vue scripts).
-import { computed, nextTick, ref, useTemplateRef } from "vue";
+import { computed, nextTick, ref, useTemplateRef, watch } from "vue";
 import SlideThumb from "./SlideThumb.vue";
 import SlideContextMenu from "./SlideContextMenu.vue";
 import {
@@ -140,11 +140,22 @@ const draft = ref("");
 const renameError = ref(false);
 
 function startRename(key = "") {
-  const group = groups.value.find((entry) => entry.key === key);
-  draft.value = group ? group.name : "";
-  renameError.value = false;
   c.renaming.value = key;
 }
+
+// Whatever opened the rename (a double-click, the menu, or "Add section"
+// naming its new section), the input starts from the section's current name.
+watch(
+  () => c.renaming.value,
+  (key) => {
+    const group = groups.value.find((entry) => entry.key === key);
+    if (group) {
+      draft.value = group.name;
+      renameError.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 function onRenameKeydown(key = "", event = new KeyboardEvent("keydown")) {
   if (event.key === "Enter") {

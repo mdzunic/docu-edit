@@ -207,3 +207,16 @@ describe("SlideSorter", () => {
     expect(pptx.wrapper.find('[data-testid="sorter-odp-note"]').exists()).toBe(false);
   });
 });
+
+describe("SlideSorter — Add section", () => {
+  it("opens the new section's name for editing, seeded with its name", async () => {
+    const { wrapper, model } = mountSorter();
+    await wrapper.findAll('[data-testid="sorter-slide"]')[3].trigger("click");
+    await wrapper.get('[data-testid="sorter-add-section"]').trigger("click");
+    const input = wrapper.get('[data-testid="section-rename-input"]');
+    expect((input.element as HTMLInputElement).value).toBe("New section");
+    await input.setValue("Appendix");
+    await input.trigger("keydown", { key: "Enter" });
+    expect(model.sections!.map((s) => s.name)).toEqual(["Intro", "Body", "Appendix"]);
+  });
+});

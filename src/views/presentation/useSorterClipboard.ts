@@ -138,12 +138,16 @@ export function useSorterClipboard(deps: SorterClipboardDeps) {
    * clipboard's text is matched against this tab's own copies; when the
    * clipboard cannot be read at all, the latest in-tab copy is used. */
   async function paste(): Promise<void> {
-    let payload: SlideClipboardPayload | null = null;
-    try {
-      const text = (await navigator.clipboard?.readText()) ?? "";
-      payload = resolveSlidePaste({ text });
-    } catch {
+    let payload: SlideClipboardPayload | null;
+    const api = navigator.clipboard;
+    if (!api?.readText) {
       payload = latestSlideCopy() ?? null;
+    } else {
+      try {
+        payload = resolveSlidePaste({ text: await api.readText() });
+      } catch {
+        payload = latestSlideCopy() ?? null;
+      }
     }
     if (payload) {
       pasteFrom(payload);
