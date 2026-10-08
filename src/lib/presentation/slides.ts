@@ -196,6 +196,77 @@ export function moveSlide(model: PresentationModel, from: number, to: number): n
   return target;
 }
 
+function validIndexes(model: PresentationModel, indexes: number[]): number[] {
+  return [...new Set(indexes)].filter((i) => i >= 0 && i < model.slides.length).toSorted((a, b) => a - b);
+}
+
+/** Whether `moveSlides(model, indexes, to, sectionKey)` would change nothing:
+ * the block already sits at the drop point (and in the target section) — a
+ * drop the sorter cancels rather than recording an empty undo step. */
+export function isNoopMove(model: PresentationModel, indexes: number[], to: number, sectionKey?: string): boolean {
+  const picked = validIndexes(model, indexes);
+  if (picked.length === 0) {
+    return true;
+  }
+  const at = Math.min(Math.max(to, 0), model.slides.length);
+  const dest = at - picked.filter((i) => i < at).length;
+  const contiguous = picked[picked.length - 1] - picked[0] === picked.length - 1;
+  const sameSection =
+    sectionKey === undefined || !model.sections || picked.every((i) => model.slides[i].sectionKey === sectionKey);
+  return contiguous && dest === picked[0] && sameSection;
+}
+
+/** Moves the slides at `indexes` as one block so it lands where slide `to`
+ * stood (`to` is an insertion point in the current order, 0..length), one
+ * `moveSlide` per slide (SPEC-099). With `sectionKey`, every moved slide then
+ * joins that section — the sorter's "a slide dragged past a header adopts the
+ * section it lands in". Returns the block's new indexes, or the unchanged
+ * indexes when the drop is a no-op (the block already sits there). */
+export function moveSlides(model: PresentationModel, indexes: number[], to: number, sectionKey?: string): number[] {
+  const picked = validIndexes(model, indexes);
+  const at = Math.min(Math.max(to, 0), model.slides.length);
+  if (picked.length === 0 || isNoopMove(model, picked, at, sectionKey)) {
+    return picked;
+  }
+  const before = picked.filter((i) => i < at);
+  const after = picked.filter((i) => i >= at);
+  const block = picked.map((i) => model.slides[i]);
+  // Slides above the drop point, bottom-up, into the slots just above it;
+  // then the ones below it, top-down, into the slots after those.
+  before.toReversed().forEach((index, n) => moveSlide(model, index, at - 1 - n));
+  after.forEach((index, n) => moveSlide(model, index, at + n));
+  if (sectionKey !== undefined && model.sections?.some((section) => section.key === sectionKey)) {
+    for (const slide of block) {
+      slide.sectionKey = sectionKey;
+    }
+    normaliseSections(model);
+  }
+  model.structureDirty = true;
+  return block.map((slide) => model.slides.indexOf(slide));
+}
+
+/** Duplicates each slide at `indexes` in place — every copy right after its
+ * source (SPEC-099). Returns the copies' indexes. */
+export function duplicateSlides(model: PresentationModel, indexes: number[]): number[] {
+  const picked = validIndexes(model, indexes);
+  const copies: Slide[] = [];
+  for (const index of picked.toReversed()) {
+    duplicateSlide(model, index);
+    copies.push(model.slides[index + 1]);
+  }
+  return copies.map((slide) => model.slides.indexOf(slide)).toSorted((a, b) => a - b);
+}
+
+/** Deletes the slides at `indexes` (SPEC-099). Returns the index of the
+ * nearest remaining slide to make current. */
+export function deleteSlides(model: PresentationModel, indexes: number[]): number {
+  let next = 0;
+  for (const index of validIndexes(model, indexes).toReversed()) {
+    next = deleteSlide(model, index);
+  }
+  return next;
+}
+
 /** The number of frames a cross-format "Download a copy as…" cannot carry
  * through the model (SPEC-080): anything the from-scratch writers cannot yet
  * serialise — every non-placeholder-text frame (images, shapes, groups,

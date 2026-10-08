@@ -9,7 +9,7 @@
 // edits through the same `record`.
 import { ref, type Ref } from "vue";
 import type { DocumentProperties } from "../../lib/core/documentProperties";
-import type { DeckHeaderFooter, DeckTheme, PresentationModel, Slide } from "../../lib/presentation/model";
+import type { DeckHeaderFooter, DeckSection, DeckTheme, PresentationModel, Slide } from "../../lib/presentation/model";
 
 /** The most undo steps a view keeps; the oldest is dropped past this (AC-43). */
 export const MAX_UNDO_STEPS = 100;
@@ -39,6 +39,9 @@ interface Snapshot {
    * theme" puts the old theme back (absent key deleted — the deck cannot be
    * left recoloured by an undo). */
   theme?: DeckTheme;
+  /** SPEC-099: the deck's sections, cloned with the slides (whose
+   * `sectionKey`s ride along) so a section command undoes as one step. */
+  sections?: DeckSection[];
 }
 
 export interface PresentationUndoDeps {
@@ -96,6 +99,9 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
     if (model.theme) {
       snap.theme = structuredClone(model.theme);
     }
+    if (model.sections) {
+      snap.sections = structuredClone(model.sections);
+    }
     return snap;
   }
 
@@ -105,6 +111,11 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
       model.theme = snap.theme;
     } else {
       delete model.theme;
+    }
+    if (snap.sections) {
+      model.sections = snap.sections;
+    } else {
+      delete model.sections;
     }
     if (snap.structureDirty) {
       model.structureDirty = true;

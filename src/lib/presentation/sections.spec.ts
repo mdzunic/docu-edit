@@ -2,7 +2,17 @@
 // rule, and normaliseSections' idempotence after each structural command.
 import { describe, expect, it } from "vitest";
 import type { PresentationModel } from "./model";
-import { addSlide, createBlankPresentation, deleteSlide, duplicateSlide, moveSlide, stripRetention } from "./slides";
+import {
+  addSlide,
+  createBlankPresentation,
+  deleteSlide,
+  deleteSlides,
+  duplicateSlide,
+  duplicateSlides,
+  moveSlide,
+  moveSlides,
+  stripRetention,
+} from "./slides";
 import {
   addSection,
   DEFAULT_SECTION_NAME,
@@ -355,5 +365,55 @@ describe("stripRetention keeps sections (AC-15)", () => {
     const model = sectioned();
     model.sections![0].collapsed = true;
     expect(JSON.parse(JSON.stringify(model))).toEqual(model);
+  });
+});
+
+describe("the multi-slide commands (SPEC-099 sorter)", () => {
+  it("moveSlides moves a selection as a block down to the drop point", () => {
+    const model = deck(6);
+    const ids = model.slides.map((slide) => slide.id);
+    expect(moveSlides(model, [0, 1], 4)).toEqual([2, 3]);
+    expect(model.slides.map((slide) => slide.id)).toEqual([ids[2], ids[3], ids[0], ids[1], ids[4], ids[5]]);
+    expect(model.structureDirty).toBe(true);
+  });
+
+  it("moveSlides moves a scattered selection up and joins the target section", () => {
+    const model = sectioned();
+    const ids = model.slides.map((slide) => slide.id);
+    const intro = model.sections![0].key;
+    expect(moveSlides(model, [2, 4], 1, intro)).toEqual([1, 2]);
+    expect(model.slides.map((slide) => slide.id)).toEqual([ids[0], ids[2], ids[4], ids[1], ids[3]]);
+    expect(keys(model).slice(0, 4)).toEqual([intro, intro, intro, intro]);
+    expectNormalised(model);
+  });
+
+  it("moveSlides into the start of the next section adopts it", () => {
+    const model = sectioned();
+    const body = model.sections![1].key;
+    moveSlides(model, [0], 2, body);
+    expect(runs(model)).toEqual([
+      ["Intro", 0, 1],
+      ["Body", 1, 5],
+    ]);
+  });
+
+  it("a drop where the block already sits is a no-op", () => {
+    const model = deck(4);
+    expect(moveSlides(model, [1, 2], 1)).toEqual([1, 2]);
+    expect(moveSlides(model, [1, 2], 3)).toEqual([1, 2]);
+    expect(model.structureDirty).toBeUndefined();
+  });
+
+  it("duplicateSlides copies each slide in place; deleteSlides removes them all", () => {
+    const model = sectioned();
+    const ids = model.slides.map((slide) => slide.id);
+    expect(duplicateSlides(model, [0, 3])).toEqual([1, 5]);
+    expect(model.slides).toHaveLength(7);
+    expect(model.slides[0].id).toBe(ids[0]);
+    expect(model.slides[4].id).toBe(ids[3]);
+    expect(model.slides[5].sectionKey).toBe(model.sections![1].key);
+    expect(deleteSlides(model, [1, 5])).toBe(1);
+    expect(model.slides.map((slide) => slide.id)).toEqual(ids);
+    expectNormalised(model);
   });
 });

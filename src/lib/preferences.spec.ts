@@ -128,6 +128,17 @@ describe("preferences store (SPEC-066)", () => {
       expect(loadPreferences().presentationTextOpen).toBe(false);
     });
 
+    it("defaults the SPEC-099 slide sorter off, round-trips it and rejects a non-boolean", () => {
+      expect(PREFERENCE_DEFAULTS.presentationSorterOpen).toBe(false);
+      expect(loadPreferences().presentationSorterOpen).toBe(false);
+      savePreference("presentationSorterOpen", true);
+      expect(loadPreferences().presentationSorterOpen).toBe(true);
+      expect(stored().presentationSorterOpen).toBe(true);
+      // @ts-expect-error deliberately invalid for the runtime guard
+      savePreference("presentationSorterOpen", 1);
+      expect(loadPreferences().presentationSorterOpen).toBe(false);
+    });
+
     it("round-trips the snap preferences and rejects an out-of-range grid spacing", () => {
       savePreference("snapToGuides", false);
       savePreference("snapToGrid", true);
