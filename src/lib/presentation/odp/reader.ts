@@ -39,7 +39,7 @@ import {
   textAttr,
   xlinkAttr,
 } from "../../core/odfXml";
-import { bulletStyleForChar, type ListMarkerStyle } from "../../core/lists";
+import { bulletStyleForChar, LIST_INDENT_STEP_CM, type ListMarkerStyle } from "../../core/lists";
 import { sanitizeHref } from "../../core/urls";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
 import { guideValueToAdjustment } from "../../core/shapeCatalogue";
@@ -818,6 +818,14 @@ function parseParagraph(p: Element, role: PlaceholderRole | undefined, ctx: OdpC
   const indentCm = marginCm !== undefined ? round3(marginCm) : level?.indentCm;
   const textIndentCm = odfLengthToCm(styles.chainPick(paraStyleName, "paragraph-properties", (props) => foAttr(props, "text-indent") ?? undefined));
   const hangingCm = textIndentCm !== undefined ? (textIndentCm <= 0 ? round3(-textIndentCm) : undefined) : level?.hangingCm;
+  // A plain paragraph has no list nesting to carry its level: the writer
+  // emits it as `level × LIST_INDENT_STEP_CM`, so a whole number of steps
+  // reads back as that level — Tab/Shift+Tab keep working after a reopen.
+  if (!para.bullet && indentCm !== undefined) {
+    const steps = indentCm / LIST_INDENT_STEP_CM;
+    const stepLevel = Math.round(steps);
+    if (stepLevel >= 1 && stepLevel <= 8 && Math.abs(steps - stepLevel) < 0.001) para.level = stepLevel;
+  }
   if (indentCm !== undefined && Math.abs(indentCm - effectiveIndentCm(para)) > 0.0005) para.indentCm = indentCm;
   if (hangingCm !== undefined && Math.abs(hangingCm - effectiveHangingCm(para)) > 0.0005) para.hangingCm = hangingCm;
 

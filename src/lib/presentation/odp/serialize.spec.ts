@@ -365,11 +365,22 @@ describe("SPEC-097 paragraph and run properties (odp)", () => {
       { runs: [{ text: "indented" }], bullet: "number", level: 1, indentCm: 3, hangingCm: 1 },
       { runs: [{ text: "plain" }], level: 2 },
     ];
-    const back = roundTrip(depthFrame(paragraphs));
-    expect(back.paragraphs.slice(0, 4)).toEqual(paragraphs.slice(0, 4));
-    // A plain paragraph's level is not list nesting: its indent reads back as
-    // the explicit text edge it rendered at.
-    expect(back.paragraphs[4]).toEqual({ runs: [{ text: "plain" }], indentCm: 2.54 });
+    expect(roundTrip(depthFrame(paragraphs)).paragraphs).toEqual(paragraphs);
+  });
+
+  it("reads a plain paragraph's whole-step indent as its level, any other as an explicit indent", () => {
+    const back = roundTrip(
+      depthFrame([
+        { runs: [{ text: "stepped" }], level: 3 },
+        { runs: [{ text: "custom" }], indentCm: 2 },
+        { runs: [{ text: "hanging" }], level: 1, hangingCm: 0.5 },
+      ]),
+    );
+    expect(back.paragraphs).toEqual([
+      { runs: [{ text: "stepped" }], level: 3 },
+      { runs: [{ text: "custom" }], indentCm: 2 },
+      { runs: [{ text: "hanging" }], level: 1, hangingCm: 0.5 },
+    ]);
   });
 
   it("resolves line height and margins through the paragraph style's parent chain", () => {
