@@ -11,7 +11,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SlideStage from "../components/presentation/SlideStage.vue";
-import { stageFields } from "../components/presentation/slideRender";
+import { slideLinkElement, slideLinkTargetOf, stageFields } from "../components/presentation/slideRender";
 import { now } from "../lib/clock";
 import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { emptyTwoStageView, transitionAnimates } from "../components/presentation/transitionStyles";
@@ -293,6 +293,9 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   // anything typed into an input.
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.target && isTextInput(event.target)) return;
+  // Enter on a focused slide link activates it (its click follows the link,
+  // SPEC-097); it must not also advance.
+  if (event.key === "Enter" && digitBuffer.length === 0 && slideLinkElement(event.target)) return;
 
   if (event.key === "Escape") {
     event.preventDefault();
@@ -355,12 +358,30 @@ function onPointerUp(event = new PointerEvent("pointerup")) {
     }
   }
 }
-function onStageClick() {
+function onStageClick(event = new MouseEvent("click")) {
   if (swiped) {
     swiped = false;
     return;
   }
+  // SPEC-097 AC-49/50: a click on a rendered link follows it and NEVER also
+  // advances (or completes) a build — return before advanceStep.
+  const link = slideLinkElement(event.target);
+  if (link) {
+    followLink(slideLinkTargetOf(link));
+    return;
+  }
   advanceStep();
+}
+
+/** Follows a slide link: an in-deck target jumps (SPEC-084's jumpTo, 0-based)
+ * and an external one opens in a new tab with no opener/referrer. */
+function followLink(target = slideLinkTargetOf(document.createElement("a"))) {
+  if (!target) return;
+  if (target.slide !== undefined) {
+    jumpTo(target.slide - 1);
+  } else if (target.href) {
+    window.open(target.href, "_blank", "noopener,noreferrer");
+  }
 }
 
 // --- idle-fade HUD (counter + touch prev/next), 2s after pointer idle -------
@@ -534,6 +555,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
   cursor: default;
   touch-action: none;
+}
+
+/* SPEC-097: rendered links (a linked run, a linked frame's overlay) are live
+   in the show. */
+.play-stage :deep([data-testid="slide-link"]) {
+  cursor: pointer;
 }
 
 .end-screen {
