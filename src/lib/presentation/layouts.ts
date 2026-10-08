@@ -10,16 +10,16 @@
 // "Reset" snaps every matched placeholder back to its slot geometry. Neither
 // deletes anything: unmatched placeholders and non-placeholder frames stay
 // exactly where they are and are reported as kept in place.
-import { phKey } from "./pptx/reader";
 import { markSlideEdited } from "./text";
-import type {
-  LayoutSlot,
-  PlaceholderRole,
-  PresentationModel,
-  Slide,
-  SlideLayout,
-  SlideLayoutKind,
-  TextFrame,
+import {
+  phKey,
+  type LayoutSlot,
+  type PlaceholderRole,
+  type PresentationModel,
+  type Slide,
+  type SlideLayout,
+  type SlideLayoutKind,
+  type TextFrame,
 } from "./model";
 
 /** cm rounded to 3 decimals — matches `slides.ts`'s `r3` so a synthesised

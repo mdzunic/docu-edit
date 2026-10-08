@@ -81,15 +81,13 @@ import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/
 import { classifyLayout } from "../layouts";
 import { DEFAULT_THEME, type ModelColor } from "../../core/theme";
 import { readOdpTheme, themeParentSlot } from "./theme";
+import { ODP_MIMETYPE, OTP_MIMETYPE } from "../detect";
 
 export class OdpOpenError extends Error {}
 
 export const INVALID_ODP_MESSAGE = "This file isn't an OpenDocument presentation we can open";
 
-/** The package mimetype identifying an OpenDocument presentation. */
-export const ODP_MIMETYPE = "application/vnd.oasis.opendocument.presentation";
-/** An `.otp` template's mimetype — same package shape, opened the same way. */
-export const OTP_MIMETYPE = "application/vnd.oasis.opendocument.presentation-template";
+export { ODP_MIMETYPE, OTP_MIMETYPE };
 
 const DEFAULT_FONT_SIZE_PT = 18;
 

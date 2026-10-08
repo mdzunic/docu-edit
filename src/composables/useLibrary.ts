@@ -22,7 +22,6 @@ import {
 } from "../lib/documentStore";
 import { downloadMedia } from "../lib/media/download";
 import type { DocumentKind } from "../lib/documentKinds";
-import { downloadPresentation } from "../lib/presentation/download";
 import {
   filterCounts,
   filterLibrary,
@@ -351,11 +350,12 @@ export function useLibrary() {
 
   async function downloadDocuments(ids: string[]): Promise<void> {
     for (const id of ids) {
-      // Kind dispatch (see documentKinds.ts): each entry downloads through
-      // its own product's writer.
+      // Kind dispatch (see documentKinds.ts): each entry downloads through its own
+      // product's writer — a deck's loaded on demand, off the library page's graph.
       if (kindOf(id) === "presentation") {
         const presentation = getPresentation(id);
         if (presentation) {
+          const { downloadPresentation } = await import("../lib/presentation/download");
           await downloadPresentation(presentation);
         }
         continue;

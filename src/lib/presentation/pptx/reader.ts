@@ -52,6 +52,7 @@ import {
   DEFAULT_SLIDE_HEIGHT_CM,
   DEFAULT_SLIDE_WIDTH_CM,
   DEFAULT_TABLE_CELL_PADDING_CM,
+  phKey,
   type DeckHeaderFooter,
   type DeckTheme,
   type LayoutSlot,
@@ -84,15 +85,13 @@ import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
 import { readPptxTiming } from "./timing";
 import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
+import { PPTX_MAIN_CONTENT_TYPE } from "../detect";
 
 export class PptxOpenError extends Error {}
 
 export const INVALID_PPTX_MESSAGE = "This file isn't a PowerPoint presentation we can open";
 
-/** The main part's declared content type that makes an OPC package a
- * presentation (ECMA-376 PresentationML). */
-export const PPTX_MAIN_CONTENT_TYPE =
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";
+export { PPTX_MAIN_CONTENT_TYPE };
 
 /** The file's MIME type, for downloads. */
 export const PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -135,14 +134,6 @@ function roleOf(type: string | undefined): PlaceholderRole {
     return "body";
   }
   return "other";
-}
-
-/** The (type+idx) key a placeholder inherits geometry/style by (AC-9): title
- * and ctrTitle share a key so a slide's `ctrTitle` still matches a layout's
- * `title`. Exported for `layouts.ts`'s exact-match pass (SPEC-089). */
-export function phKey(type: string | undefined, idx: string | undefined): string {
-  const normalisedType = type === "ctrTitle" ? "title" : type ?? "body";
-  return `${normalisedType}#${idx ?? ""}`;
 }
 
 interface PlaceholderInfo {

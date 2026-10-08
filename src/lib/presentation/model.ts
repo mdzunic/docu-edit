@@ -710,6 +710,16 @@ export function slideCount(model: PresentationModel): number {
   return model.slides.length;
 }
 
+/** The (type+idx) key a placeholder inherits geometry/style by (AC-9): title
+ * and ctrTitle share a key so a slide's `ctrTitle` still matches a layout's
+ * `title`. Shared by the pptx reader and `layouts.ts`'s exact-match pass
+ * (SPEC-089); it lives here, not in the reader, so applying a layout never
+ * loads the pptx codec. */
+export function phKey(type: string | undefined, idx: string | undefined): string {
+  const normalisedType = type === "ctrTitle" ? "title" : type ?? "body";
+  return `${normalisedType}#${idx ?? ""}`;
+}
+
 /** Whether a stored record's model predates SPEC-079 (its slides are the
  * preparation milestone's outline shape, not `Slide[]`): it has no
  * `slideWidthCm`. The view upgrades such a record on open (AC-54). */

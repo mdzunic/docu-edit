@@ -31,18 +31,20 @@ import { parseMd, type ParseMdOptions } from "./md/reader";
 import { inferListStyleTypes } from "./styles";
 import { OPENABLE_EXTENSIONS } from "./documentKinds";
 import type { PresentationModel } from "./presentation/model";
-import { assemblePresentation, presentationFormatOf } from "./presentation/open";
-import { parsePptx } from "./presentation/pptx/reader";
-import { parseOdp } from "./presentation/odp/reader";
+// Only the presentation product's package signatures load with this module:
+// its codec (presentation/open, the pptx/odp readers and the Keynote
+// importer) is imported in `openFile` once a package IS a deck. Statically,
+// every text document's open path paid for the pptx/odp read-write stack —
+// the library page and the editor's preload both pulled it in, inside the
+// window SPEC-047's firstPageMs times.
+import { presentationFormatOf } from "./presentation/detect";
 import {
   isIwaPackage,
   isLegacyKeynote,
   KEYNOTE_LEGACY_MESSAGE,
   KEYNOTE_UNREADABLE_MESSAGE,
-  KeynoteOpenError,
-  keynoteImportNotice,
-  parseKeynote,
-} from "./presentation/keynote/reader";
+} from "./presentation/keynote/detect";
+import { KeynoteOpenError } from "./presentation/keynote/errors";
 
 export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError, KeynoteOpenError };
 
@@ -285,6 +287,11 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     if (!allowPresentations) {
       throw new UnsupportedFileError(PRESENTATION_NOT_TEXT_MESSAGE);
     }
+    const [{ assemblePresentation }, { parsePptx }, { parseOdp }] = await Promise.all([
+      import("./presentation/open"),
+      import("./presentation/pptx/reader"),
+      import("./presentation/odp/reader"),
+    ]);
     const parsed = presentationFormat === "pptx" ? await parsePptx(bytes, parts) : await parseOdp(bytes, parts);
     return { kind: "presentation", model: assemblePresentation(title, presentationFormat, parsed) };
   }
@@ -303,6 +310,10 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     }
     // A one-way import: the deck lives on as a from-scratch "pptx"
     // presentation saved via the existing writers.
+    const [{ parseKeynote, keynoteImportNotice }, { assemblePresentation }] = await Promise.all([
+      import("./presentation/keynote/reader"),
+      import("./presentation/open"),
+    ]);
     const parsed = await parseKeynote(parts);
     const model = assemblePresentation(title, "pptx", parsed);
     const importNotice = keynoteImportNotice(parsed.dropped);

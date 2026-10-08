@@ -18,18 +18,20 @@ import { CONTENT_TYPE_BY_EXTENSION } from "../../core/media";
 import type { MediaPart } from "../../core/media";
 import type { ParsedPresentation, PlaceholderRole, Slide, SlideFrame, SlideParagraph } from "../model";
 import { KeynoteOpenError } from "./errors";
+import { KEYNOTE_UNREADABLE_MESSAGE, NOT_KEYNOTE_MESSAGE } from "./detect";
 import { decodeIwa, parseArchives, type ArchiveMessage } from "./iwa";
 import { fields, float32Of, WIRE_FIXED32, WIRE_LENGTH_DELIMITED, WIRE_VARINT, type ProtoField } from "./protobuf";
 
 export { KeynoteOpenError };
-
-// The three user-facing rejection strings (AC-8..AC-11) — every failure
-// path in this module throws one of them as a KeynoteOpenError (AC-12).
-export const KEYNOTE_LEGACY_MESSAGE =
-  "This is a Keynote '09 file — open it in Keynote and save it again, or export it as .pptx, then try that file";
-export const NOT_KEYNOTE_MESSAGE = "This iWork file isn't a Keynote presentation we can open";
-export const KEYNOTE_UNREADABLE_MESSAGE =
-  "This Keynote file can't be opened — export it as .pptx from Keynote and try that file";
+// The detection predicates and the three rejection strings live in
+// detect.ts so the open funnel can use them without loading this module.
+export {
+  isIwaPackage,
+  isLegacyKeynote,
+  KEYNOTE_LEGACY_MESSAGE,
+  KEYNOTE_UNREADABLE_MESSAGE,
+  NOT_KEYNOTE_MESSAGE,
+} from "./detect";
 
 // Verified archive type numbers (spec Reference, fact #6).
 const TYPE_DOCUMENT = 1;
@@ -60,20 +62,6 @@ export interface KeynoteDropCounts {
  * from-scratch `.pptx`. */
 export interface ParsedKeynote extends ParsedPresentation {
   dropped: KeynoteDropCounts;
-}
-
-/** Whether an already-unzipped package is an iWork Archive: it holds
- * `Index/Document.iwa`, or an `Index.zip` (the older nesting — its entries
- * are checked when parsing) (AC-5/AC-6). Content-based; the extension never
- * decides. */
-export function isIwaPackage(parts: Map<string, Uint8Array>): boolean {
-  return parts.has("Index/Document.iwa") || parts.has("Index.zip");
-}
-
-/** Whether a ZIP is an iWork '05–'09 file (`index.apxl`/`index.apxl.gz`),
- * which uses a different, unsupported format (AC-8). */
-export function isLegacyKeynote(parts: Map<string, Uint8Array>): boolean {
-  return parts.has("index.apxl") || parts.has("index.apxl.gz");
 }
 
 const clause = (count: number, noun: string): string => `${count} ${noun}${count === 1 ? "" : "s"}`;

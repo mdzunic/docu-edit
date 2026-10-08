@@ -5,31 +5,19 @@
 // (openDocument.ts) owns choosing between products; this module owns
 // everything from "it's a presentation" down, plus the SPEC-079 migration of
 // preparation-milestone records.
-import type { PackageInfo } from "../core/packageDetect";
 import {
   DEFAULT_PRESENTATION_TITLE,
   type ParsedPresentation,
   type PresentationFormat,
   type PresentationModel,
 } from "./model";
-import { parsePptx, PPTX_MAIN_CONTENT_TYPE, PptxOpenError } from "./pptx/reader";
-import { ODP_MIMETYPE, OdpOpenError, OTP_MIMETYPE, parseOdp } from "./odp/reader";
+import { parsePptx, PptxOpenError } from "./pptx/reader";
+import { OdpOpenError, parseOdp } from "./odp/reader";
 import { writePptx } from "./pptx/writer";
 import { writeOdp } from "./odp/writer";
 
 export { PptxOpenError, OdpOpenError };
-
-/** Which presentation format a detected package is, or null when it is not
- * a presentation at all (the caller then tries the text formats). */
-export function presentationFormatOf(info: PackageInfo): PresentationFormat | null {
-  if (info.container === "odf" && (info.mimetype === ODP_MIMETYPE || info.mimetype === OTP_MIMETYPE)) {
-    return "odp";
-  }
-  if (info.container === "opc" && info.mainContentType === PPTX_MAIN_CONTENT_TYPE) {
-    return "pptx";
-  }
-  return null;
-}
+export { presentationFormatOf } from "./detect";
 
 /** Assembles a parsed package into a fresh PresentationModel: the shared
  * tail of every presentation open path, minting a new id the way
