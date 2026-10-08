@@ -1991,15 +1991,26 @@ function spec097Model(format: "pptx" | "odp"): PresentationModel {
 }
 
 /** Slide 1's hand-authored shape tree (pptx). */
+/** One plain `a:r` with extra `a:rPr` attributes. */
+function spec097Run(text: string, extra = ""): string {
+  return `<a:r><a:rPr lang="en-US"${extra}/><a:t>${text}</a:t></a:r>`;
+}
+
+/** A rect `p:sp` with its own nvPr content, box and txBody inner markup. */
+function spec097Sp(id: number, name: string, nvPr: string, box: string, body: string): string {
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr>${nvPr}</p:nvPr></p:nvSpPr>` +
+    `<p:spPr>${box}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody>${body}</p:txBody></p:sp>`
+  );
+}
+
 function spec097PptxSlide1Shapes(): string {
-  const run = (text: string, extra = ""): string => `<a:r><a:rPr lang="en-US"${extra}/><a:t>${text}</a:t></a:r>`;
+  const run = spec097Run;
+  const sp = spec097Sp;
   const numbered = (text: string): string =>
     `<a:p><a:pPr marL="${EMU(1.27)}" indent="-${EMU(1.27)}"><a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/></a:pPr>${run(text, ' sz="2400"')}</a:p>`;
   const continued = (text: string): string =>
     `<a:p><a:pPr marL="${EMU(1.27)}" indent="-${EMU(0.635)}"><a:buAutoNum type="arabicPeriod" startAt="${EXPECTED_TEXT_DEPTH.continuedStartAt}"/></a:pPr>${run(text, ' sz="2000"')}</a:p>`;
-  const sp = (id: number, name: string, nvPr: string, box: string, body: string): string =>
-    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr>${nvPr}</p:nvPr></p:nvSpPr>` +
-    `<p:spPr>${box}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody>${body}</p:txBody></p:sp>`;
   return (
     sp(
       2,
