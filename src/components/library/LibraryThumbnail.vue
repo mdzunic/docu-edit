@@ -84,14 +84,15 @@ function produceMediaThumbnail() {
       thumbnail.value = { lines: [], failed: true };
       return;
     }
-    // A real first-page raster (pdf.js, loaded lazily). Hosts that cannot
-    // rasterise — and any parse/render failure — keep the aspect-true paper
-    // placeholder: the card degrades, it never lies.
+    // The aspect-true paper placeholder (SPEC-107: the first page's real
+    // aspect ratio, page count and page size) shows at once. A real
+    // first-page raster (pdf.js, loaded lazily) replaces it where the host
+    // can rasterise; elsewhere — and on any parse/render failure — the
+    // placeholder stays: the card degrades, it never lies.
+    pdfInfo.value = pdfCardPlaceholder(model.pdf);
     if (!pdfRasterSupported()) {
-      pdfInfo.value = pdfCardPlaceholder(model.pdf);
       return;
     }
-    const summary = model.pdf;
     rasterisePdfFirstPage(mediaSourceBytes(model), MEDIA_THUMBNAIL_MAX_EDGE_PX)
       .then((dataUrl) => {
         if (unmounted) {
@@ -101,9 +102,7 @@ function produceMediaThumbnail() {
         mediaRaster.value = dataUrl;
       })
       .catch(() => {
-        if (!unmounted) {
-          pdfInfo.value = pdfCardPlaceholder(summary);
-        }
+        // The placeholder already shows.
       });
     return;
   }
@@ -313,7 +312,8 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
       >
     </div>
     <!-- A PDF card: a paper-shaped placeholder at the first page's REAL
-         aspect ratio, with the page count and size. No page is rasterised. -->
+         aspect ratio, with the page count and size — shown until (and
+         unless) the pdf.js raster above arrives. -->
     <div
       v-else-if="pdfInfo.pageCount > 0"
       class="thumbnail-pdf"
