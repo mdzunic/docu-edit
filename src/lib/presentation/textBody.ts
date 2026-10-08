@@ -12,8 +12,15 @@
 //
 // Layering rule (presentation/boundary.spec.ts): imports only presentation
 // siblings and src/lib/core.
-import type { ShapeFrame, SlideFrame, TextAnchor, TextAutofit, TextBodyProps, TextFrame } from "./model";
-import { MIN_FRAME_SIZE_CM } from "./frames";
+import {
+  MIN_FRAME_SIZE_CM,
+  type ShapeFrame,
+  type SlideFrame,
+  type TextAnchor,
+  type TextAutofit,
+  type TextBodyProps,
+  type TextFrame,
+} from "./model";
 
 export type { TextAnchor, TextAutofit, TextBodyProps } from "./model";
 

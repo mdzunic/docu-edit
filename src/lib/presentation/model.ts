@@ -670,6 +670,12 @@ export const DEFAULT_PRESENTATION_TITLE = "Untitled presentation";
 export const DEFAULT_SLIDE_WIDTH_CM = 33.867;
 export const DEFAULT_SLIDE_HEIGHT_CM = 19.05;
 
+/** The smallest a resize may leave a frame (SPEC-082 AC-24), and the floor a
+ * resizeShape autofit grows or shrinks a frame to (SPEC-097 AC-38). Declared
+ * here, not in frames.ts (which re-exports it), so textBody.ts reads it
+ * without importing the frame commands and their table/animation graph. */
+export const MIN_FRAME_SIZE_CM = 0.5;
+
 /** What a presentation reader hands back — the shared assembly input of
  * `assemblePresentation` (presentation/open.ts), the same split as the text
  * side's `ParsedDocxDocument`/`ParsedOdtDocument` vs `assembleDocumentModel`. */

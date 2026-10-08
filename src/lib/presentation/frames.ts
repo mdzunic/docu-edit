@@ -21,6 +21,7 @@ import { MIN_COLUMN_WIDTH_CM } from "../core/tables";
 import { markSlideEdited } from "./text";
 import { createTableFrame, scaleTableGrid, setColumnWidths, setRowHeight } from "./tables";
 import { removeAnimationsForFrame } from "./animations";
+import { MIN_FRAME_SIZE_CM } from "./model";
 import type {
   FrameStroke,
   GroupFrame,
@@ -53,8 +54,8 @@ export const DECK_DEFAULT_SHAPE_STROKE: { color: string; widthPt: number } = { c
 /** A click (no drag) with "Text box" armed drops a default 10×2.5cm box. */
 export const DEFAULT_TEXT_BOX_SIZE_CM: { widthCm: number; heightCm: number } = { widthCm: 10, heightCm: 2.5 };
 
-/** The smallest a resize may leave a frame (AC-24). */
-export const MIN_FRAME_SIZE_CM = 0.5;
+/** The smallest a resize may leave a frame (AC-24); declared in ./model. */
+export { MIN_FRAME_SIZE_CM };
 
 /** At least this much of a frame must stay on the slide after a move/nudge
  * (AC-18) — measured on the frame's axis-aligned box. */
