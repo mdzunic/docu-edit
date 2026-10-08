@@ -1935,12 +1935,9 @@ export const EXPECTED_TEXT_DEPTH = {
 
 const SPEC097_FIXTURE_INSTANT = new Date(Date.UTC(2026, 9, 1, 9, 0, 0));
 
-/** Slides 2 and 3 (slide 1 is a placeholder the builders replace). */
-function spec097Model(format: "pptx" | "odp"): PresentationModel {
-  const model = createBlankPresentation();
-  model.format = format;
-  model.title = "Text depth fixture";
-  const titleBox = (text: string): TextFrame => ({
+/** A slide title placeholder. */
+function spec097TitleBox(text: string): TextFrame {
+  return {
     id: crypto.randomUUID(),
     kind: "text",
     role: "title",
@@ -1950,7 +1947,15 @@ function spec097Model(format: "pptx" | "odp"): PresentationModel {
     widthCm: 30,
     heightCm: 2.5,
     paragraphs: [{ runs: [{ text }] }],
-  });
+  };
+}
+
+/** Slides 2 and 3 (slide 1 is a placeholder the builders replace). */
+function spec097Model(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Text depth fixture";
+  const titleBox = spec097TitleBox;
   const revealId = crypto.randomUUID();
   model.slides.push(
     {
