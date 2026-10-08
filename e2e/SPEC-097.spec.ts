@@ -176,3 +176,29 @@ test("pptx: numbered lists, Tab demote, spacing, shrink autofit and slide links 
   await expect(frameWith(page, EXPECTED_TEXT_DEPTH.linkSentence).getByTestId("slide-link")).toHaveText(EXPECTED_TEXT_DEPTH.linkWord);
   await expect(frameWith(page, EXPECTED_TEXT_DEPTH.verticalText)).toBeVisible();
 });
+
+test("Enter in a Text panel field during a text session commits the field without splitting the paragraph", async ({ page }) => {
+  await openFixture(page, PPTX);
+  const body = frameWith(page, EXPECTED_TEXT_DEPTH.bodyLines[0]);
+  await page.getByTestId("slides-text-toggle").click();
+  const panel = page.getByTestId("slides-text-panel");
+  await expect(panel).toBeVisible();
+
+  // A session on line 3 with the caret inside the line, not at its end.
+  await body.getByText(EXPECTED_TEXT_DEPTH.bodyLines[2]).dblclick();
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+  await page.keyboard.press("ArrowLeft");
+
+  const spaceAfter = panel.getByTestId("text-space-after");
+  await spaceAfter.click();
+  await spaceAfter.fill("12");
+  await spaceAfter.press("Enter");
+
+  const lastLine = body.getByTestId("slide-paragraph").nth(2);
+  await expect(lastLine).toHaveCSS("margin-bottom", "16px"); // 12pt
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  await expect(body.getByTestId("slide-paragraph")).toHaveCount(3);
+  await expect(lastLine).toHaveText(new RegExp(EXPECTED_TEXT_DEPTH.bodyLines[2]));
+  expect(await markersOf(body)).toEqual(EXPECTED_TEXT_DEPTH.bodyMarkers);
+});
