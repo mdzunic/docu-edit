@@ -201,7 +201,7 @@ export function setSlideSection(model: PresentationModel, slideIndex: number, ke
  *    keeping its slot;
  *  - duplicate entries are dropped, so a key held by no slide and no entry
  *    cannot survive. */
-export function normaliseSections(model: PresentationModel): void {
+export function normaliseSections(model: Pick<PresentationModel, "slides" | "sections">): void {
   if (!model.sections || model.sections.length === 0) {
     delete model.sections;
     for (const slide of model.slides) {
