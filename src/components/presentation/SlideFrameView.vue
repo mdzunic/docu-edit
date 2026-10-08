@@ -215,7 +215,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   unmounted = true;
 });
-watch([() => props.frame, deckTheme], scheduleRemeasure, { deep: true });
 watch(
   () => props.editing,
   (isEditing) => {
@@ -457,6 +456,7 @@ onMounted(paintChartFrame);
 watch([() => props.frame, deckTheme], () => {
   paint();
   paintChartFrame();
+  scheduleRemeasure(); // a text edit can change what a "shrink" body needs
 }, { deep: true });
 </script>
 

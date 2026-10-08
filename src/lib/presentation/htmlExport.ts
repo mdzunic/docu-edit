@@ -155,7 +155,10 @@ function renderMarker(para: SlideParagraph, marker: ParagraphMarker, ctx: TextCo
   const first = para.runs[0];
   const parts = [
     "display:inline-block",
+    "box-sizing:border-box",
     `min-width:${px(effectiveHangingCm(para))}`,
+    "padding-right:0.3em",
+    "text-align:left",
     "text-indent:0",
     `font-size:${scaledPx(first?.sizePt ?? DEFAULT_FONT_SIZE_PT)}`,
     `color:${validColor(first?.color ? resolveColor(first.color, ctx.theme) : undefined) ?? "#000000"}`,

@@ -37,6 +37,8 @@ const PT_TO_PX = 96 / 72;
 const DEFAULT_FONT_SIZE_PT = 18;
 /** CSS's single line pitch (line-height 1.2), the SPEC-079 renderer's own. */
 const SINGLE_LINE_HEIGHT = 1.2;
+/** The minimum gap between a list marker and its text. */
+const MARKER_GAP = "0.3em";
 
 /** A centimetre length as a px string (the model's own cm → CSS px). */
 export function cmPx(cm: number): string {
@@ -340,15 +342,20 @@ export function paragraphStyle(para: SlideParagraph, defaultAlign: NonNullable<S
   return style;
 }
 
-/** The marker box of a list paragraph: an inline-block `hangingCm` wide (at
- * least — a wider ordinal pushes its text on rather than overprinting it),
- * sized and coloured like the paragraph's first run (PowerPoint's 100%
- * `buSzPct`/follow-text colour; bullet colour/size are out of scope). */
+/** The marker box of a list paragraph: a left-aligned inline-block
+ * `hangingCm` wide (at least — a wider ordinal such as "10." pushes its text
+ * on, keeping a small gap, rather than overprinting it; border-box so the gap
+ * costs nothing when the marker fits), sized and coloured like the
+ * paragraph's first run (PowerPoint's 100% `buSzPct`/follow-text colour;
+ * bullet colour/size are out of scope). */
 export function markerStyle(entry: MarkedParagraph, theme: DocumentTheme = DEFAULT_THEME): Record<string, string> {
   const first = entry.para.runs[0];
   const style: Record<string, string> = {
     display: "inline-block",
+    boxSizing: "border-box",
     minWidth: cmPx(effectiveHangingCm(entry.para)),
+    paddingRight: MARKER_GAP,
+    textAlign: "left",
     textIndent: "0",
     fontSize: scaledPtPx(first?.sizePt ?? DEFAULT_FONT_SIZE_PT),
     color: first?.color ? resolveColor(first.color, theme) : "#000000",
