@@ -117,6 +117,17 @@ describe("preferences store (SPEC-066)", () => {
       expect(loadPreferences().palette).toBe(PREFERENCE_DEFAULTS.palette);
     });
 
+    it("defaults the SPEC-097 Text panel closed, round-trips it and rejects a non-boolean", () => {
+      expect(PREFERENCE_DEFAULTS.presentationTextOpen).toBe(false);
+      expect(loadPreferences().presentationTextOpen).toBe(false);
+      savePreference("presentationTextOpen", true);
+      expect(loadPreferences().presentationTextOpen).toBe(true);
+      expect(stored().presentationTextOpen).toBe(true);
+      // @ts-expect-error deliberately invalid for the runtime guard
+      savePreference("presentationTextOpen", "yes");
+      expect(loadPreferences().presentationTextOpen).toBe(false);
+    });
+
     it("round-trips the snap preferences and rejects an out-of-range grid spacing", () => {
       savePreference("snapToGuides", false);
       savePreference("snapToGrid", true);

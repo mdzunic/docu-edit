@@ -127,3 +127,67 @@ describe("odp firstSlideNumber is model-only (SPEC-090 AC-17)", () => {
     expect(written.has("styles.xml")).toBe(true);
   });
 });
+
+// --- SPEC-097: a picture bullet's media part ---------------------------------
+
+import { createBlankPresentation } from "../slides";
+import { markSlideEdited } from "../text";
+import type { TextFrame } from "../model";
+
+/** A 2×2 PNG for the picture bullet. */
+const BULLET_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGMw7jhj3HGGAUIBACiuBh3+iAU4AAAAAElFTkSuQmCC";
+
+const BULLET_PART = "Pictures/image97.png";
+
+function bulletFrame(): TextFrame {
+  return {
+    id: "pic",
+    kind: "text",
+    xCm: 2,
+    yCm: 2,
+    widthCm: 12,
+    heightCm: 4,
+    paragraphs: [
+      { runs: [{ text: "Pictured" }], bullet: "disc", bulletImageId: BULLET_PART },
+      { runs: [{ text: "Also pictured" }], bullet: "disc", bulletImageId: BULLET_PART },
+    ],
+  };
+}
+
+describe("odp picture bullets (SPEC-097)", () => {
+  it("an edited deck saves the bullet's Pictures/ part and its manifest entry, and reopens with it", async () => {
+    const model = await openDeck();
+    model.media = [...(model.media ?? []), { mediaId: BULLET_PART, contentType: "image/png", data: BULLET_PNG_BASE64 }];
+    model.slides[0].frames.push(bulletFrame());
+    markSlideEdited(model.slides[0], "odp");
+    const { bytes } = await writeOdp(model, { modified: MODIFIED });
+    const parts = await unzip(bytes);
+    expect(Buffer.from(parts.get(BULLET_PART)!).toString("base64")).toBe(BULLET_PNG_BASE64);
+    expect(partText(parts, "META-INF/manifest.xml")).toContain(`<manifest:file-entry manifest:full-path="${BULLET_PART}" manifest:media-type="image/png"/>`);
+    expect(partText(parts, "content.xml")).toContain(`<text:list-level-style-image text:level="1" xlink:href="${BULLET_PART}"`);
+
+    const reopened = await readPresentationBytes(bytes, "odp", "Deck");
+    const frame = reopened.slides[0].frames.find((f): f is TextFrame => f.kind === "text" && f.paragraphs[0]?.runs[0]?.text === "Pictured");
+    expect(frame?.paragraphs.map((p) => p.bulletImageId)).toEqual([BULLET_PART, BULLET_PART]);
+    expect(reopened.media?.find((m) => m.mediaId === BULLET_PART)?.data).toBe(BULLET_PNG_BASE64);
+  });
+
+  it("a from-scratch deck writes the bullet's part and manifest entry too", async () => {
+    const model: PresentationModel = { ...createBlankPresentation(), format: "odp" };
+    model.media = [{ mediaId: BULLET_PART, contentType: "image/png", data: BULLET_PNG_BASE64 }];
+    model.slides[0].frames.push(bulletFrame());
+    const parts = await writtenParts(model);
+    expect(parts.has(BULLET_PART)).toBe(true);
+    expect(partText(parts, "META-INF/manifest.xml")).toContain(`manifest:full-path="${BULLET_PART}"`);
+  });
+
+  it("a bullet image no paragraph references any more is not written", async () => {
+    const model = await openDeck();
+    model.media = [...(model.media ?? []), { mediaId: BULLET_PART, contentType: "image/png", data: BULLET_PNG_BASE64 }];
+    markSlideEdited(model.slides[0], "odp");
+    const parts = await writtenParts(model);
+    expect(parts.has(BULLET_PART)).toBe(false);
+    expect(partText(parts, "META-INF/manifest.xml")).not.toContain(BULLET_PART);
+  });
+});

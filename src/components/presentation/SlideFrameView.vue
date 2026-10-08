@@ -6,29 +6,51 @@
 // labelled dashed placeholder box. Runtime prop declarations, not
 // defineProps<{...}>() generics — this repo lints .vue scripts with espree,
 // which rejects TS-only syntax; every typed transform lives in slideRender.ts.
-import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
+//
+// SPEC-097: a text/shape frame's paragraphs render inside a `.text-body`
+// (insets, anchor, columns, wrap and the autofit scale — slideTextFit.ts
+// #bodyStyle) on a frame root carrying `data-frame-id` (top-level frames
+// only, so `frameTextHost` never finds a filmstrip thumbnail). List markers
+// are derived (slideLists.ts), linked runs render as `<a data-testid=
+// "slide-link">`, and a "shrink" body re-renders at its own MEASURED scale
+// held in a local ref — measuring never writes the model.
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { cmToPx } from "../../lib/core/units";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { paintChartIntoCanvas } from "../../lib/core/chartCanvas";
 import { mediaElementVolume } from "../../lib/presentation/mediaFrames";
+import { effectiveAnchor, effectiveAutofit } from "../../lib/presentation/textBody";
 import { createCanPlayProbe, mediaRenderDescriptor } from "./mediaRender";
+import { FULL_SCALE, bodyStyle, measureFrameFit } from "./slideTextFit";
 import {
   asResolver,
   asTheme,
+  bodyNoWrap,
   chartVisualOf,
   asSlideFrame,
+  defaultParagraphAlign,
+  fitScaleDiffers,
+  followEditorLink,
+  frameLinkRender,
   framePositionStyle,
   groupChildren,
   groupOriginStyle,
+  hasMarker,
   imageSrc,
+  initialFitScale,
   isEmptyTextPlaceholder,
   isForeignVisible,
   foreignLabel,
   markedParagraphs,
+  markerFallbackText,
+  markerImageSrc,
+  markerStyle,
   paragraphStyle,
   placeholderPrompt,
-  runStyle,
+  runRenders,
   shapeVisualOf,
+  noMeasuredScale,
+  textBodyFrameOf,
   tableColumnBoundaries,
   tableColumnWidths,
   tableRenderRows,
@@ -109,6 +131,96 @@ const foreignText = computed(() => foreignLabel(frame.value));
 const imgSrc = computed(() => imageSrc(frame.value, asResolver(props.resolveMedia)));
 const showPrompt = computed(() => !props.editing && isEmptyTextPlaceholder(frame.value));
 const promptText = computed(() => placeholderPrompt(frame.value));
+const resolver = computed(() => asResolver(props.resolveMedia));
+// `frameTextHost(frameId)` finds a rendered body by this attribute; only the
+// interactive stage's top-level frames carry it (never a thumbnail).
+const frameIdAttr = computed(() => (props.topLevel ? frame.value.id : undefined));
+const paragraphAlign = computed(() => defaultParagraphAlign(frame.value));
+
+// --- links (SPEC-097 AC-47..50) ---------------------------------------------
+// Anchors are never navigated by the browser on any surface. In playback the
+// click bubbles to PresentationPlayView#onStageClick, which follows it (and
+// does not advance); on the editor stage a plain click stays inert (so it
+// still selects / double-click still starts a text session) and Cmd/Ctrl+
+// click follows; a thumbnail's links are fully inert. Only playback links are
+// focusable — elsewhere they would add tab stops inside a frame or thumbnail.
+const linkTabIndex = computed(() => (props.playbackMode ? undefined : -1));
+const frameLink = computed(() => frameLinkRender(frame.value));
+// A whole-frame link is a clickable overlay covering the box: in playback for
+// every linkable kind, and on the editor stage for image/shape frames (Cmd/
+// Ctrl+click follows; a text frame's own runs already carry the frame link,
+// and an overlay there would steal the caret's double-click).
+const showFrameLink = computed(
+  () =>
+    frameLink.value !== null &&
+    !props.editing &&
+    (props.playbackMode || (props.topLevel && (kind.value === "image" || kind.value === "shape"))),
+);
+function onLinkClick(event = new MouseEvent("click")) {
+  event.preventDefault();
+  if (props.playbackMode || !props.topLevel) return;
+  if (!(event.metaKey || event.ctrlKey)) return;
+  const el = event.currentTarget;
+  if (el instanceof Element) followEditorLink(el);
+}
+
+// --- text body + autofit (SPEC-097 AC-11..15, 37..40) -----------------------
+// The body renders from the STORED scale; after mount/update a "shrink" body
+// measures itself (slideTextFit.ts#measureFrameFit) and, if its measurement
+// disagrees, re-renders at the measured scale through this LOCAL ref. The
+// model is never written here (AC-40/42) — only a command that already called
+// markSlideEdited stores a scale. jsdom measures null: keep what is stored.
+const measuredScale = shallowRef(noMeasuredScale());
+const currentScale = computed(() => measuredScale.value ?? initialFitScale(frame.value));
+const textBodyStyle = computed(() => {
+  const body = textBodyFrameOf(frame.value);
+  return body ? bodyStyle(body, currentScale.value) : {};
+});
+const editBodyStyle = computed(() => {
+  const body = textBodyFrameOf(frame.value);
+  return body ? bodyStyle(body, FULL_SCALE) : {};
+});
+const noWrap = computed(() => bodyNoWrap(frame.value));
+const anchoredBody = computed(() => {
+  const body = textBodyFrameOf(frame.value);
+  return body !== null && effectiveAnchor(body) !== "top";
+});
+const textBodyEl = useTemplateRef("textBodyEl");
+function remeasure() {
+  const body = textBodyFrameOf(frame.value);
+  if (!body || props.editing) return;
+  if (effectiveAutofit(body) !== "shrink") {
+    measuredScale.value = null;
+    return;
+  }
+  const host = textBodyEl.value;
+  const fit = measureFrameFit(body, host instanceof HTMLElement ? host : null);
+  if (!fit) return;
+  measuredScale.value = fitScaleDiffers(fit.scale, initialFitScale(body)) ? fit.scale : null;
+}
+function scheduleRemeasure() {
+  void nextTick(remeasure);
+}
+let unmounted = false;
+onMounted(() => {
+  scheduleRemeasure();
+  // Web fonts settling change every measurement; measure once more then.
+  const fonts = typeof document !== "undefined" ? document.fonts : undefined;
+  if (fonts && fonts.ready && typeof fonts.ready.then === "function") {
+    void fonts.ready.then(() => {
+      if (!unmounted) remeasure();
+    });
+  }
+});
+onBeforeUnmount(() => {
+  unmounted = true;
+});
+watch(
+  () => props.editing,
+  (isEditing) => {
+    if (!isEditing) scheduleRemeasure();
+  },
+);
 
 // --- media frame (SPEC-095) -------------------------------------------------
 // Nothing auto-plays in the editor (AC-19); activating the badge (click, or
@@ -344,6 +456,7 @@ onMounted(paintChartFrame);
 watch([() => props.frame, deckTheme], () => {
   paint();
   paintChartFrame();
+  scheduleRemeasure(); // a text edit can change what a "shrink" body needs
 }, { deep: true });
 </script>
 
@@ -355,6 +468,7 @@ watch([() => props.frame, deckTheme], () => {
     :class="{ 'is-selected': selected, 'is-editing': editing }"
     :style="[{ ...position, background: textFill }, playStyle]"
     :data-testid="testId"
+    :data-frame-id="frameIdAttr"
     :role="role"
     :aria-label="ariaName"
     :tabindex="tabIndex"
@@ -362,43 +476,101 @@ watch([() => props.frame, deckTheme], () => {
     @dblclick="onFrameDblclick"
     @pointerdown="onFramePointerdown"
   >
-    <!-- Editing session: an empty contenteditable the editing composable owns -->
+    <!-- Editing session: an empty contenteditable the editing composable
+         owns, inside a body with the frame's insets/anchor/columns (SPEC-097)
+         at FULL scale — the host's runs are plain px (slideTextDom.ts), and
+         it is deliberately not a `.text-body`: no shrink step can be laid
+         out on it, so it is measured only for "resizeShape"'s full-scale
+         content height (slideTextFit.ts#measureEditingFit). -->
     <div
       v-if="editing"
-      ref="editHost"
-      class="ce-host"
-      contenteditable="true"
-      spellcheck="false"
-      data-testid="slide-text-edit"
-    />
+      class="text-edit-body"
+      :class="{ 'no-wrap': noWrap, 'is-anchored': anchoredBody }"
+      :style="editBodyStyle"
+    >
+      <div
+        ref="editHost"
+        class="ce-host"
+        contenteditable="true"
+        spellcheck="false"
+        data-testid="slide-text-edit"
+      />
+    </div>
     <!-- Empty placeholder prompt (never in the model/files/clipboard) -->
     <div
       v-else-if="showPrompt"
-      class="ph-prompt"
-      data-testid="slide-placeholder-prompt"
+      class="text-body"
+      :style="textBodyStyle"
     >
-      {{ promptText }}
+      <div
+        class="ph-prompt"
+        data-testid="slide-placeholder-prompt"
+      >
+        {{ promptText }}
+      </div>
     </div>
-    <template v-else>
+    <div
+      v-else
+      ref="textBodyEl"
+      class="text-body"
+      :class="{ 'no-wrap': noWrap }"
+      :style="textBodyStyle"
+    >
       <div
         v-for="(entry, index) in paragraphs"
         :key="index"
         class="paragraph"
-        :style="paragraphStyle(entry.para)"
+        :style="paragraphStyle(entry.para, paragraphAlign)"
         data-testid="slide-paragraph"
       >
         <span
-          v-if="entry.marker"
+          v-if="hasMarker(entry)"
           class="bullet-marker"
           aria-hidden="true"
-        >{{ entry.marker }} </span>
-        <span
-          v-for="(run, runIndex) in entry.para.runs"
+          :style="markerStyle(entry, deckTheme)"
+        ><img
+          v-if="markerImageSrc(entry, resolver)"
+          class="bullet-image"
+          :src="markerImageSrc(entry, resolver)"
+          alt=""
+        ><template v-else>{{ markerFallbackText(entry) }}</template></span>
+        <template
+          v-for="(run, runIndex) in runRenders(entry.para, frame, deckTheme)"
           :key="runIndex"
-          :style="runStyle(run, deckTheme)"
-        >{{ run.text }}</span>
+        >
+          <a
+            v-if="run.link"
+            class="slide-link"
+            data-testid="slide-link"
+            draggable="false"
+            :href="run.link.href"
+            :title="run.link.tooltip"
+            :data-link-href="run.link.external || undefined"
+            :data-link-slide="run.link.slide || undefined"
+            :tabindex="linkTabIndex"
+            :style="run.style"
+            @click="onLinkClick"
+          >{{ run.text }}</a>
+          <span
+            v-else
+            :style="run.style"
+          >{{ run.text }}</span>
+        </template>
       </div>
-    </template>
+    </div>
+    <a
+      v-if="showFrameLink && frameLink"
+      class="frame-link"
+      data-testid="slide-link"
+      draggable="false"
+      :href="frameLink.href"
+      :title="frameLink.tooltip"
+      :aria-label="frameLink.tooltip || 'Link'"
+      :data-link-href="frameLink.external || undefined"
+      :data-link-slide="frameLink.slide || undefined"
+      :tabindex="linkTabIndex"
+      @click="onLinkClick"
+    />
   </div>
 
   <!-- Image frame -->
@@ -408,6 +580,7 @@ watch([() => props.frame, deckTheme], () => {
     :class="{ 'is-selected': selected }"
     :style="[position, playStyle]"
     :data-testid="testId"
+    :data-frame-id="frameIdAttr"
     :role="role"
     :aria-label="ariaName"
     :tabindex="tabIndex"
@@ -419,6 +592,19 @@ watch([() => props.frame, deckTheme], () => {
       :src="imgSrc"
       alt=""
     >
+    <a
+      v-if="showFrameLink && frameLink"
+      class="frame-link"
+      data-testid="slide-link"
+      draggable="false"
+      :href="frameLink.href"
+      :title="frameLink.tooltip"
+      :aria-label="frameLink.tooltip || 'Link'"
+      :data-link-href="frameLink.external || undefined"
+      :data-link-slide="frameLink.slide || undefined"
+      :tabindex="linkTabIndex"
+      @click="onLinkClick"
+    />
   </div>
 
   <!-- Media frame (SPEC-095) -->
@@ -537,6 +723,7 @@ watch([() => props.frame, deckTheme], () => {
     :class="{ 'is-selected': selected }"
     :style="[position, playStyle]"
     :data-testid="testId"
+    :data-frame-id="frameIdAttr"
     :role="role"
     :aria-label="ariaName"
     :tabindex="tabIndex"
@@ -547,23 +734,70 @@ watch([() => props.frame, deckTheme], () => {
       ref="canvasEl"
       class="shape-canvas"
     />
+    <!-- Shape text: the same paragraph styling as a text frame (markers,
+         indents, spacing, links) in a text body anchored "middle" by default;
+         a paragraph with no alignment of its own centres (SPEC-079). -->
     <div
       v-if="paragraphs.length > 0"
-      class="shape-text"
+      ref="textBodyEl"
+      class="text-body shape-text"
+      :class="{ 'no-wrap': noWrap }"
+      :style="textBodyStyle"
     >
       <div
         v-for="(entry, index) in paragraphs"
         :key="index"
         class="paragraph"
-        :style="{ textAlign: 'center' }"
+        :style="paragraphStyle(entry.para, paragraphAlign)"
       >
         <span
-          v-for="(run, runIndex) in entry.para.runs"
+          v-if="hasMarker(entry)"
+          class="bullet-marker"
+          aria-hidden="true"
+          :style="markerStyle(entry, deckTheme)"
+        ><img
+          v-if="markerImageSrc(entry, resolver)"
+          class="bullet-image"
+          :src="markerImageSrc(entry, resolver)"
+          alt=""
+        ><template v-else>{{ markerFallbackText(entry) }}</template></span>
+        <template
+          v-for="(run, runIndex) in runRenders(entry.para, frame, deckTheme)"
           :key="runIndex"
-          :style="runStyle(run, deckTheme)"
-        >{{ run.text }}</span>
+        >
+          <a
+            v-if="run.link"
+            class="slide-link"
+            data-testid="slide-link"
+            draggable="false"
+            :href="run.link.href"
+            :title="run.link.tooltip"
+            :data-link-href="run.link.external || undefined"
+            :data-link-slide="run.link.slide || undefined"
+            :tabindex="linkTabIndex"
+            :style="run.style"
+            @click="onLinkClick"
+          >{{ run.text }}</a>
+          <span
+            v-else
+            :style="run.style"
+          >{{ run.text }}</span>
+        </template>
       </div>
     </div>
+    <a
+      v-if="showFrameLink && frameLink"
+      class="frame-link"
+      data-testid="slide-link"
+      draggable="false"
+      :href="frameLink.href"
+      :title="frameLink.tooltip"
+      :aria-label="frameLink.tooltip || 'Link'"
+      :data-link-href="frameLink.external || undefined"
+      :data-link-slide="frameLink.slide || undefined"
+      :tabindex="linkTabIndex"
+      @click="onLinkClick"
+    />
   </div>
 
   <!-- Chart frame (SPEC-092): painted into a dpr-crisp canvas, exactly as the
@@ -676,15 +910,38 @@ watch([() => props.frame, deckTheme], () => {
                 :style="paragraphStyle(entry.para)"
               >
                 <span
-                  v-if="entry.marker"
+                  v-if="hasMarker(entry)"
                   class="bullet-marker"
                   aria-hidden="true"
-                >{{ entry.marker }} </span>
-                <span
-                  v-for="(run, runIndex) in entry.para.runs"
+                  :style="markerStyle(entry, deckTheme)"
+                ><img
+                  v-if="markerImageSrc(entry, resolver)"
+                  class="bullet-image"
+                  :src="markerImageSrc(entry, resolver)"
+                  alt=""
+                ><template v-else>{{ markerFallbackText(entry) }}</template></span>
+                <template
+                  v-for="(run, runIndex) in runRenders(entry.para, frame, deckTheme)"
                   :key="runIndex"
-                  :style="runStyle(run, deckTheme)"
-                >{{ run.text }}</span>
+                >
+                  <a
+                    v-if="run.link"
+                    class="slide-link"
+                    data-testid="slide-link"
+                    draggable="false"
+                    :href="run.link.href"
+                    :title="run.link.tooltip"
+                    :data-link-href="run.link.external || undefined"
+                    :data-link-slide="run.link.slide || undefined"
+                    :tabindex="linkTabIndex"
+                    :style="run.style"
+                    @click="onLinkClick"
+                  >{{ run.text }}</a>
+                  <span
+                    v-else
+                    :style="run.style"
+                  >{{ run.text }}</span>
+                </template>
               </div>
             </template>
           </td>
@@ -760,6 +1017,24 @@ watch([() => props.frame, deckTheme], () => {
   outline-offset: 1px;
 }
 
+/* SPEC-097: a text/shape frame's text body — insets (padding), anchor
+   (justify-content), columns and the autofit scale arrive inline from
+   slideTextFit.ts#bodyStyle. It fills the frame and overflows it visibly
+   (autofit "none" renders exactly as SPEC-079 did). */
+.text-body,
+.text-edit-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.text-body.no-wrap .paragraph,
+.text-edit-body.no-wrap .ce-host {
+  white-space: pre;
+}
+
 .ce-host {
   flex: 1 1 auto;
   min-height: 1em;
@@ -768,6 +1043,18 @@ watch([() => props.frame, deckTheme], () => {
   overflow-wrap: anywhere;
   line-height: 1.2;
   font-size: 24px; /* the renderer's 18pt default (18 * 96/72) */
+}
+
+/* A middle/bottom-anchored body keeps its anchor while editing: the host
+   hugs its content and the body's justify-content places it. */
+.text-edit-body.is-anchored > .ce-host {
+  flex: 0 0 auto;
+}
+
+/* A linked run in the session: underlined by class, never an inline mark
+   (which would read back as the run's own underline). */
+.ce-host :deep(.ce-link) {
+  text-decoration: underline;
 }
 
 .ce-host :deep(.ce-p) {
@@ -815,8 +1102,33 @@ watch([() => props.frame, deckTheme], () => {
   overflow-wrap: anywhere;
 }
 
+/* The marker box hangs in the paragraph's negative text-indent; its width,
+   size and colour arrive inline (slideRender.ts#markerStyle). */
 .bullet-marker {
-  color: inherit;
+  white-space: pre;
+}
+
+/* A picture bullet is sized to the line it marks. */
+.bullet-image {
+  height: 1em;
+  width: auto;
+  vertical-align: -0.12em;
+}
+
+/* SPEC-097 links: underlined in the run's own colour (inline), drawn above a
+   whole-frame link overlay so a run's own link wins where it sits. */
+.slide-link {
+  position: relative;
+  z-index: 2;
+  cursor: inherit;
+}
+
+.frame-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  cursor: inherit;
 }
 
 .frame-image {
@@ -912,14 +1224,17 @@ watch([() => props.frame, deckTheme], () => {
   left: 0;
 }
 
+/* Shape text overlays the canvas; its anchor (default "middle") and insets
+   arrive inline through the text body. Clicks fall through to the frame —
+   except on a link, which must stay clickable. */
 .shape-text {
   position: absolute;
   inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
   pointer-events: none;
+}
+
+.shape-text .slide-link {
+  pointer-events: auto;
 }
 
 .group-frame {

@@ -2,10 +2,13 @@
 import { describe, expect, it } from "vitest";
 import {
   cssColorToHex,
+  EDIT_LINK_CLASS,
+  marksEqual,
   normalizeTextFrameDom,
   placeCaretAtPoint,
   renderEditableParagraphs,
 } from "./slideTextDom";
+import { cmPx } from "./slideRender";
 import type { SlideParagraph } from "../../lib/presentation/model";
 
 function host(): HTMLElement {
@@ -120,7 +123,7 @@ describe("paragraph props survive a paragraph-count change", () => {
 
 // jsdom has no layout, so the hit-test API is absent; stub it on the document
 // as a plain property (index-signature cast so it can be deleted afterwards).
-function stubHitTest(resolve: () => Range): void {
+function stubHitTest(resolve: (x: number, y: number) => Range): void {
   (document as unknown as Record<string, unknown>).caretRangeFromPoint = resolve;
 }
 function clearHitTest(): void {
@@ -175,6 +178,62 @@ describe("placeCaretAtPoint (AC-1: caret at the click point)", () => {
     renderEditableParagraphs(el, [{ runs: [{ text: "hi" }] }]);
     expect(placeCaretAtPoint(el, 1, 1)).toBe(false);
   });
+
+  // SPEC-097 insets pad the body around the host: a double-click in that
+  // margin, just left of the first character, resolves to the body — retry
+  // at the nearest point inside the host's box rather than falling back to
+  // the end (SPEC-081 AC-1's "XXXQuarterly Review").
+  it("retries a point in the body's inset margin at the nearest point inside the host", () => {
+    const body = document.createElement("div");
+    const el = host();
+    body.appendChild(el);
+    document.body.appendChild(body);
+    renderEditableParagraphs(el, [{ runs: [{ text: "Quarterly Review" }] }]);
+    const textNode = el.querySelector("span")!.firstChild!;
+    el.getBoundingClientRect = () => new DOMRect(10, 20, 100, 30); // left 10, top 20, right 110, bottom 50
+    const probes: Array<[number, number]> = [];
+    stubHitTest((x: number, y: number) => {
+      probes.push([x, y]);
+      const range = document.createRange();
+      if (x < 10) range.setStart(body, 0); // the inset padding: the body, not the host
+      else range.setStart(textNode, 0);
+      return range;
+    });
+    try {
+      expect(placeCaretAtPoint(el, 3, 35)).toBe(true);
+      expect(probes).toEqual([
+        [3, 35],
+        [11, 35],
+      ]);
+      const sel = document.getSelection()!;
+      expect(sel.focusNode).toBe(textNode);
+      expect(sel.focusOffset).toBe(0);
+    } finally {
+      clearHitTest();
+      document.body.removeChild(body);
+    }
+  });
+
+  it("does not retry a point already inside the host's box that resolves elsewhere", () => {
+    const el = host();
+    document.body.appendChild(el);
+    renderEditableParagraphs(el, [{ runs: [{ text: "hi" }] }]);
+    el.getBoundingClientRect = () => new DOMRect(0, 0, 100, 30);
+    let probes = 0;
+    stubHitTest(() => {
+      probes++;
+      const range = document.createRange();
+      range.setStart(document.body, 0);
+      return range;
+    });
+    try {
+      expect(placeCaretAtPoint(el, 5, 5)).toBe(false);
+      expect(probes).toBe(1);
+    } finally {
+      clearHitTest();
+      document.body.removeChild(el);
+    }
+  });
 });
 
 describe("cssColorToHex", () => {
@@ -183,5 +242,124 @@ describe("cssColorToHex", () => {
     expect(cssColorToHex("#f00")).toBe("#ff0000");
     expect(cssColorToHex("rgb(255, 0, 0)")).toBe("#ff0000");
     expect(cssColorToHex("")).toBeUndefined();
+  });
+});
+
+// SPEC-097: every new paragraph field rides its block as data-*, every new
+// run mark its span, so an editing session never drops list, spacing,
+// preservation or link state (AC-1..10, 16, 43).
+describe("SPEC-097 fields survive the contenteditable round trip", () => {
+  const rich: SlideParagraph[] = [
+    {
+      runs: [{ text: "Seeded" }],
+      bullet: "number",
+      level: 1,
+      bulletStyle: "lowerRoman",
+      startAt: 7,
+      indentCm: 2.5,
+      hangingCm: 0.8,
+      lineSpacing: 1.5,
+      spaceBeforePt: 6,
+      spaceAfterPt: 12.5,
+      pptxPPr: '{"attrs":" fontAlgn=\\"ctr\\"","before":"","mid":"<a:buFont typeface=\\"Wingdings\\"/>","after":""}',
+    },
+    { runs: [{ text: "Starred" }], bullet: "disc", bulletChar: "★", lineSpacingPt: 24, lineSpacingRule: "exact" },
+    { runs: [{ text: "Pictured" }], bullet: "disc", bulletImageId: "ppt/media/image2.png", lineSpacingPt: 18 },
+    { runs: [{ text: "Odp" }], odpParaProps: 'fo:text-indent="0cm" style:punctuation-wrap="hanging"' },
+  ];
+
+  it("recovers every paragraph field per block", () => {
+    const el = host();
+    renderEditableParagraphs(el, rich);
+    expect(normalizeTextFrameDom(el)).toEqual(rich);
+  });
+
+  it("recovers letter spacing and both link kinds per run", () => {
+    const el = host();
+    const paragraphs: SlideParagraph[] = [
+      {
+        runs: [
+          { text: "wide", letterSpacingPt: 0.5 },
+          { text: " tight", letterSpacingPt: -1.2, bold: true },
+          { text: " site", linkHref: "https://example.com/", linkTooltip: "Example" },
+          { text: " slide", linkSlide: 3 },
+        ],
+      },
+    ];
+    renderEditableParagraphs(el, paragraphs);
+    expect(normalizeTextFrameDom(el)).toEqual(paragraphs);
+  });
+
+  it("marks a linked span by class and data-*, never an inline underline", () => {
+    const el = host();
+    renderEditableParagraphs(el, [{ runs: [{ text: "go", linkSlide: 2, linkTooltip: "Two" }] }]);
+    const span = el.querySelector("span") as HTMLElement;
+    expect(span.classList.contains(EDIT_LINK_CLASS)).toBe(true);
+    expect(span.dataset.linkSlide).toBe("2");
+    expect(span.dataset.linkTooltip).toBe("Two");
+    expect(span.style.textDecoration).toBe("");
+  });
+
+  it("coalesces only spans whose letter spacing and links agree (AC-10)", () => {
+    const el = host();
+    el.innerHTML =
+      '<div class="ce-p" data-p="1"><span style="letter-spacing: 2px">a</span><span style="letter-spacing: 2px">b</span>' +
+      '<span>c</span><span data-link-slide="2">d</span><span data-link-slide="2">e</span><span data-link-slide="3">f</span></div>';
+    expect(normalizeTextFrameDom(el)).toEqual([
+      {
+        runs: [
+          { text: "ab", letterSpacingPt: 1.5 },
+          { text: "c" },
+          { text: "de", linkSlide: 2 },
+          { text: "f", linkSlide: 3 },
+        ],
+      },
+    ]);
+    expect(marksEqual({ text: "x", linkHref: "https://a.example/" }, { text: "y", linkHref: "https://b.example/" })).toBe(false);
+    expect(marksEqual({ text: "x", linkSlide: 2, linkTooltip: "t" }, { text: "y", linkSlide: 2 })).toBe(false);
+    expect(marksEqual({ text: "x", letterSpacingPt: 0 }, { text: "y" })).toBe(true);
+  });
+
+  it("a browser-created line inherits list/spacing/preservation props, but not startAt", () => {
+    const el = host();
+    renderEditableParagraphs(el, [rich[0]]);
+    const inserted = el.ownerDocument.createElement("div");
+    inserted.textContent = "next";
+    el.appendChild(inserted);
+    const [first, second] = normalizeTextFrameDom(el);
+    expect(first).toEqual(rich[0]);
+    const { startAt: _seed, ...carried } = rich[0];
+    expect(second).toEqual({ ...carried, runs: [{ text: "next" }] });
+  });
+
+  it("a block the browser CLONED on Enter (same data-pi) keeps the props but drops the start-at seed", () => {
+    const el = host();
+    renderEditableParagraphs(el, [rich[0], { runs: [{ text: "after" }] }]);
+    // Chrome's Enter split clones the block, attributes and all.
+    const clone = el.children[0].cloneNode(false) as HTMLElement;
+    clone.textContent = "split";
+    el.children[0].after(clone);
+    const result = normalizeTextFrameDom(el);
+    expect(result).toHaveLength(3);
+    expect(result[0].startAt).toBe(7);
+    expect(result[1].startAt).toBeUndefined();
+    expect(result[1].bulletStyle).toBe("lowerRoman");
+    expect(result[1].pptxPPr).toBe(rich[0].pptxPPr);
+    expect(result[2]).toEqual({ runs: [{ text: "after" }] });
+  });
+
+  it("renders the paragraph's indent and spacing on its block (WYSIWYG), with no hanging first line for a list item", () => {
+    const el = host();
+    renderEditableParagraphs(el, [
+      { runs: [{ text: "item" }], bullet: "disc", spaceAfterPt: 6, lineSpacing: 2 },
+      { runs: [{ text: "plain" }], hangingCm: 0.5, indentCm: 1 },
+    ]);
+    const [item, plain] = Array.from(el.children) as HTMLElement[];
+    expect(item.style.marginLeft).toBe(cmPx(1.27));
+    expect(item.style.textIndent).toBe("");
+    expect(item.style.marginBottom).toBe("calc(8px * var(--fit-scale, 1))");
+    expect(item.style.lineHeight).toBe("calc(2.4 * var(--line-scale, 1))");
+    expect(plain.style.marginLeft).toBe(cmPx(1));
+    expect(plain.style.textIndent).toBe(cmPx(-0.5));
   });
 });

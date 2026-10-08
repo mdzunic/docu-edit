@@ -18,22 +18,29 @@ import { unzip, ZipError } from "../../core/zip";
 import { childElements, escapeXmlAttribute, firstChildElement, parseXml, serializeElement, XmlParseError } from "../../core/xml";
 import {
   DRAW_NAMESPACE,
+  FO_NAMESPACE,
   OFFICE_NAMESPACE,
   STYLE_NAMESPACE,
+  SVG_NAMESPACE,
   TABLE_NAMESPACE,
   TEXT_NAMESPACE,
   drawAttr,
   foAttr,
+  officeAttr,
   odfColorToCss,
   odfLengthToCm,
   odfLengthToPt,
+  odfPercentage,
   presentationAttr,
   smilAttr,
   styleAttr,
   svgAttr,
   tableAttr,
+  textAttr,
   xlinkAttr,
 } from "../../core/odfXml";
+import { bulletStyleForChar, LIST_INDENT_STEP_CM, type ListMarkerStyle } from "../../core/lists";
+import { sanitizeHref } from "../../core/urls";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
 import { guideValueToAdjustment } from "../../core/shapeCatalogue";
 import { normalizeRotationDeg } from "../../core/shapes";
@@ -41,6 +48,9 @@ import { CHART_NAMESPACE, parseOdfChartXml } from "../../core/chartPartOdf";
 import type { ShapeGeometry } from "../../core/shapes";
 import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
 import { readOdpAnim } from "./anim";
+import { effectiveHangingCm, effectiveIndentCm } from "../slideLists";
+import { isLinkableKind } from "../slideLinks";
+import { DEFAULT_INSETS_CM } from "../textBody";
 
 const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 import {
@@ -56,12 +66,14 @@ import {
   type SlideFieldPlaceholder,
   type SlideFrame,
   type SlideLayout,
+  type ShapeFrame,
   type SlideMediaKind,
   type SlideParagraph,
   type SlideRun,
   type SlideTableCell,
   type SlideTableRow,
   type TableFrame,
+  type TextBodyProps,
 } from "../model";
 import { DEFAULT_DATE_FORMAT, defaultFieldRect } from "../headerFooter";
 import { formatFromOdtDateStyleName } from "../../core/dateTimeFormats";
@@ -69,15 +81,13 @@ import { computeOwnerGrid, type BorderSide, type CellBorders } from "../../core/
 import { classifyLayout } from "../layouts";
 import { DEFAULT_THEME, type ModelColor } from "../../core/theme";
 import { readOdpTheme, themeParentSlot } from "./theme";
+import { ODP_MIMETYPE, OTP_MIMETYPE } from "../detect";
 
 export class OdpOpenError extends Error {}
 
 export const INVALID_ODP_MESSAGE = "This file isn't an OpenDocument presentation we can open";
 
-/** The package mimetype identifying an OpenDocument presentation. */
-export const ODP_MIMETYPE = "application/vnd.oasis.opendocument.presentation";
-/** An `.otp` template's mimetype — same package shape, opened the same way. */
-export const OTP_MIMETYPE = "application/vnd.oasis.opendocument.presentation-template";
+export { ODP_MIMETYPE, OTP_MIMETYPE };
 
 const DEFAULT_FONT_SIZE_PT = 18;
 
@@ -93,6 +103,9 @@ interface RunProps {
   sizePt?: number;
   /** SPEC-094: a `de-theme-text-*`-parented style's colour reads as a ref. */
   color?: ModelColor;
+  /** SPEC-097: `fo:letter-spacing` in points ("normal" reads as an explicit
+   *  0 so it overrides a parent's spacing). */
+  letterSpacingPt?: number;
 }
 
 interface GraphicProps {
@@ -119,6 +132,7 @@ class StyleResolver {
   private readonly drawingPageTransitions = new Map<string, OdpTransitionAttrs>();
   private readonly drawingPageDisplays = new Map<string, OdpDisplayFlags>();
   private readonly rawStyles = new Map<string, Element>();
+  private readonly listStyles = new Map<string, Element>();
 
   /** The raw `<style:style>` element for a name, for the table reader to read
    * table-column/row/cell properties the general resolver does not model
@@ -129,7 +143,10 @@ class StyleResolver {
 
   add(styleEl: Element): void {
     const name = styleAttr(styleEl, "name");
-    if (!name) {
+    // First registration wins: content.xml's automatic styles are added
+    // before styles.xml's, and Impress reuses the same automatic names (P1,
+    // T1, …) in both parts — a slide's paragraph means content.xml's.
+    if (!name || this.styles.has(name)) {
       return;
     }
     this.rawStyles.set(name, styleEl);
@@ -168,6 +185,42 @@ class StyleResolver {
       }
     }
     this.styles.set(name, entry);
+  }
+
+  /** Indexes a `text:list-style` by name (SPEC-097); first registration wins,
+   * as for `style:style`. */
+  addListStyle(listStyleEl: Element): void {
+    const name = styleAttr(listStyleEl, "name");
+    if (name && !this.listStyles.has(name)) {
+      this.listStyles.set(name, listStyleEl);
+    }
+  }
+
+  /** The `text:list-style` element of a name, or undefined. */
+  listStyle(name: string | null | undefined): Element | undefined {
+    return name ? this.listStyles.get(name) : undefined;
+  }
+
+  /** Walks a style's parent chain from the style itself outwards, handing
+   * each style's `style:{propsLocal}` element to `pick`; the first defined
+   * result wins (SPEC-097's paragraph and text-body properties resolve the
+   * way `align` does). */
+  chainPick<T>(name: string | null | undefined, propsLocal: string, pick: (props: Element) => T | undefined): T | undefined {
+    let current = name ?? undefined;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const styleEl = this.rawStyles.get(current);
+      const props = styleEl ? firstChildElement(styleEl, STYLE_NAMESPACE, propsLocal) : undefined;
+      if (props) {
+        const value = pick(props);
+        if (value !== undefined) {
+          return value;
+        }
+      }
+      current = this.styles.get(current)?.parent;
+    }
+    return undefined;
   }
 
   /** The transition attributes carried by a page's drawing-page style, or
@@ -276,6 +329,17 @@ function readTextProps(textProps: Element): RunProps {
   const font = styleAttr(textProps, "font-name") ?? foAttr(textProps, "font-family");
   if (font) {
     props.fontFamily = font;
+  }
+  const spacing = foAttr(textProps, "letter-spacing");
+  if (spacing === "normal") {
+    props.letterSpacingPt = 0;
+  } else {
+    const pt = odfLengthToPt(spacing);
+    if (pt !== undefined) {
+      // −10…10 pt in 0.1 steps (SPEC-097) — the cm wire's r3 rounding
+      // (≤ 0.015pt) snaps back onto the step.
+      props.letterSpacingPt = Math.round(Math.min(10, Math.max(-10, pt)) * 10) / 10;
+    }
   }
   return props;
 }
@@ -388,6 +452,7 @@ function mergeProps(base: RunProps, over: RunProps): RunProps {
     fontFamily: over.fontFamily ?? base.fontFamily,
     sizePt: over.sizePt ?? base.sizePt,
     color: over.color ?? base.color,
+    letterSpacingPt: over.letterSpacingPt ?? base.letterSpacingPt,
   };
 }
 
@@ -409,7 +474,7 @@ function roleOf(cls: string | null): PlaceholderRole | undefined {
   return "other";
 }
 
-function runFromProps(text: string, props: RunProps): SlideRun {
+function runFromProps(text: string, props: RunProps, link?: RunLink): SlideRun {
   const run: SlideRun = { text };
   if (props.bold) run.bold = true;
   if (props.italic) run.italic = true;
@@ -417,64 +482,356 @@ function runFromProps(text: string, props: RunProps): SlideRun {
   if (props.fontFamily) run.fontFamily = props.fontFamily;
   if (props.sizePt !== undefined && props.sizePt !== DEFAULT_FONT_SIZE_PT) run.sizePt = props.sizePt;
   if (props.color) run.color = props.color;
+  if (props.letterSpacingPt) run.letterSpacingPt = props.letterSpacingPt;
+  if (link) {
+    run.linkHref = link.href;
+    if (link.tooltip) run.linkTooltip = link.tooltip;
+  }
   return run;
 }
 
+/** A run's hyperlink while walking a `text:a` (SPEC-097): a
+ * `sanitizeHref`-clean external URL plus its `office:title`. */
+interface RunLink {
+  href: string;
+  tooltip?: string;
+}
+
+/** The modelled link of an `xlink:href` (text:a / draw:a): sanitised, or null
+ * for a dangerous/empty URL (read as plain text) and for an in-deck `#…`
+ * target — the slide-jump link form is golden-pending (textDepthGolden.ts),
+ * so it keeps today's plain-text reading rather than a guessed `linkSlide`. */
+function linkHrefOf(raw: string | null): string | null {
+  if (raw === null || raw.trim().startsWith("#")) {
+    return null;
+  }
+  return sanitizeHref(raw);
+}
+
+/** The list a paragraph sits in while walking a text body (SPEC-097): the
+ * resolved `text:list-style` (undefined = unresolvable → disc) and the
+ * 0-based nesting depth (= the slide paragraph level). */
+interface ListScope {
+  style: Element | undefined;
+  depth: number;
+}
+
+/** Where a paragraph sits: outside any list, in a `text:list-header` (an
+ * explicitly unnumbered paragraph), or in a `text:list-item`. */
+type ListPlace =
+  | { kind: "none" }
+  | { kind: "header" }
+  | { kind: "item"; scope: ListScope; itemStart?: number };
+
 /** Parses a `draw:text-box`'s `text:p`/`text:list` paragraphs into
- * SlideParagraphs, resolving each run through the style chain. */
-function parseTextBox(textBox: Element, role: PlaceholderRole | undefined, styles: StyleResolver): SlideParagraph[] {
+ * SlideParagraphs, resolving each run through the style chain. A `text:list`
+ * nests by depth into the paragraph `level` and its `text:list-style` level
+ * styles into the list fields (SPEC-097); a `text:list-header` paragraph is
+ * explicitly not a list item. */
+function parseTextBox(textBox: Element, role: PlaceholderRole | undefined, ctx: OdpContext): SlideParagraph[] {
   const paragraphs: SlideParagraph[] = [];
-  const walk = (container: Element): void => {
+  const walk = (container: Element, place: ListPlace): void => {
     for (const child of Array.from(container.children)) {
       if (child.namespaceURI !== TEXT_NAMESPACE) {
         continue;
       }
       if (child.localName === "p") {
-        const para = parseParagraph(child, role, styles);
+        const para = parseParagraph(child, role, ctx, place);
         if (para.runs.length > 0) {
           paragraphs.push(para);
         }
-      } else if (child.localName === "list" || child.localName === "list-item") {
-        walk(child);
+      } else if (child.localName === "list") {
+        const parent = place.kind === "item" ? place.scope : undefined;
+        const styleName = textAttr(child, "style-name");
+        // An own style name wins; a nested list without one inherits its
+        // container's (ODF 1.2 §19.880); an unresolvable name reads as disc.
+        const style = styleName !== null ? ctx.styles.listStyle(styleName) : parent?.style;
+        const scope: ListScope = { style, depth: parent ? parent.depth + 1 : 0 };
+        for (const entry of Array.from(child.children)) {
+          if (entry.namespaceURI !== TEXT_NAMESPACE) {
+            continue;
+          }
+          if (entry.localName === "list-item") {
+            const start = Number(textAttr(entry, "start-value"));
+            walk(entry, { kind: "item", scope, itemStart: Number.isInteger(start) && start > 1 ? start : undefined });
+          } else if (entry.localName === "list-header") {
+            walk(entry, { kind: "header" });
+          }
+        }
+      } else if (child.localName === "list-item") {
+        // A stray list-item outside a text:list: today's flattening.
+        walk(child, place);
       }
     }
   };
-  walk(textBox);
+  walk(textBox, { kind: "none" });
   return paragraphs;
 }
 
-function parseParagraph(p: Element, role: PlaceholderRole | undefined, styles: StyleResolver): SlideParagraph {
-  const paraStyleName = textStyleName(p);
-  const paraProps = styles.resolve(paraStyleName);
-  const runs: SlideRun[] = [];
-  for (const node of Array.from(p.childNodes)) {
-    if (node.nodeType === 3) {
-      const text = node.textContent ?? "";
-      if (text.length > 0) {
-        runs.push(runFromProps(text, paraProps));
-      }
-    } else if (node.nodeType === 1) {
-      const el = node as Element;
-      if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "span") {
-        const spanProps = mergeProps(paraProps, styles.resolve(textStyleName(el)));
-        const text = el.textContent ?? "";
-        if (text.length > 0) {
-          runs.push(runFromProps(text, spanProps));
-        }
-      } else if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "a") {
-        // A hyperlink renders as plain styled text (out of scope: real links).
-        const text = el.textContent ?? "";
-        if (text.length > 0) {
-          runs.push(runFromProps(text, paraProps));
-        }
+/** One `text:list-level-style-*` read into the paragraph list fields, plus
+ * the level's own indent/hanging (the paragraph style's fo:margin-left/
+ * fo:text-indent win over these). */
+interface OdpListLevel {
+  bullet: "disc" | "number";
+  bulletStyle?: ListMarkerStyle;
+  bulletChar?: string;
+  bulletImageId?: string;
+  startValue?: number;
+  indentCm?: number;
+  hangingCm?: number;
+}
+
+const NUM_FORMAT_STYLES: Record<string, ListMarkerStyle> = {
+  "1": "decimal",
+  a: "lowerAlpha",
+  A: "upperAlpha",
+  i: "lowerRoman",
+  I: "upperRoman",
+};
+
+/** The level style (1-based `text:level`) of a list style for a 0-based
+ * depth, read into list fields; a missing style or level reads as disc. */
+function readListLevel(listStyle: Element | undefined, depth: number, ctx: OdpContext): OdpListLevel {
+  const wanted = String(depth + 1);
+  const levelEl = listStyle
+    ? Array.from(listStyle.children).find(
+        (el) => el.namespaceURI === TEXT_NAMESPACE && el.localName.startsWith("list-level-style-") && textAttr(el, "level") === wanted,
+      )
+    : undefined;
+  if (!levelEl) {
+    return { bullet: "disc" };
+  }
+  const level: OdpListLevel = { bullet: "disc" };
+  if (levelEl.localName === "list-level-style-number") {
+    level.bullet = "number";
+    const style = NUM_FORMAT_STYLES[styleAttr(levelEl, "num-format") ?? "1"] ?? "decimal";
+    if (style !== "decimal") level.bulletStyle = style;
+    const start = Number(textAttr(levelEl, "start-value"));
+    if (Number.isInteger(start) && start >= 1) level.startValue = Math.min(start, 32767);
+  } else if (levelEl.localName === "list-level-style-image") {
+    const href = xlinkAttr(levelEl, "href");
+    const partPath = href ? normaliseHref(href) : undefined;
+    if (partPath && collectMedia(partPath, ctx)) level.bulletImageId = partPath;
+  } else if (levelEl.localName === "list-level-style-bullet") {
+    const char = textAttr(levelEl, "bullet-char") ?? "";
+    const style = char ? bulletStyleForChar(char) : undefined;
+    if (style) {
+      if (style !== "disc") level.bulletStyle = style;
+    } else if (char) {
+      level.bulletChar = char;
+    }
+  }
+  // The level's indents: label-alignment mode (ODF 1.2, Impress) carries the
+  // text edge and a negative first-line indent; the older position mode
+  // carries space-before + min-label-width.
+  const props = firstChildElement(levelEl, STYLE_NAMESPACE, "list-level-properties");
+  if (props) {
+    const align = firstChildElement(props, STYLE_NAMESPACE, "list-level-label-alignment");
+    if (align) {
+      const margin = odfLengthToCm(foAttr(align, "margin-left"));
+      const indent = odfLengthToCm(foAttr(align, "text-indent"));
+      if (margin !== undefined) level.indentCm = round3(margin);
+      if (indent !== undefined && indent <= 0) level.hangingCm = round3(-indent);
+    } else {
+      const before = odfLengthToCm(textAttr(props, "space-before"));
+      const label = odfLengthToCm(textAttr(props, "min-label-width"));
+      if (before !== undefined || label !== undefined) {
+        level.indentCm = round3((before ?? 0) + (label ?? 0));
+        level.hangingCm = round3(label ?? 0);
       }
     }
   }
+  return level;
+}
+
+/** The paragraph-properties attributes SPEC-097 models — everything else on a
+ * paragraph's own automatic style rides `odpParaProps`. A positive
+ * fo:text-indent (a first-line indent) is not modelled and is kept there. */
+const MODELLED_PARA_ATTRS = new Set([
+  "fo:text-align",
+  "fo:line-height",
+  "style:line-height-at-least",
+  "fo:margin-top",
+  "fo:margin-bottom",
+  "fo:margin-left",
+]);
+
+/** The prefixes the writer's documents bind, by namespace — a preserved
+ * attribute is re-spelt with its canonical prefix so the writer's
+ * modelled-wins de-duplication (by name) can never emit one attribute twice
+ * under two spellings. Other namespaces keep the source's own prefix (bound
+ * on the retained content.xml root). */
+const CANONICAL_PREFIX: Record<string, string> = {
+  [FO_NAMESPACE]: "fo",
+  [STYLE_NAMESPACE]: "style",
+  [TEXT_NAMESPACE]: "text",
+  [DRAW_NAMESPACE]: "draw",
+  [SVG_NAMESPACE]: "svg",
+  [OFFICE_NAMESPACE]: "office",
+};
+
+function canonicalAttrName(attr: Attr): string {
+  const prefix = attr.namespaceURI ? CANONICAL_PREFIX[attr.namespaceURI] : undefined;
+  return prefix ? `${prefix}:${attr.localName}` : attr.name;
+}
+
+/** A serialised fragment without the declarations of the canonical ODF
+ * prefixes (every content.xml root binds them), so a preserved child reads
+ * back to the very same string after a write — byte-stable re-saves. */
+function withoutCanonicalXmlns(xml: string): string {
+  let out = xml;
+  for (const [uri, prefix] of Object.entries(CANONICAL_PREFIX)) {
+    out = out.split(` xmlns:${prefix}="${uri}"`).join("");
+  }
+  return out;
+}
+
+/** The unmodelled remainder of a `style:paragraph-properties` element as
+ * SPEC-097's `odpParaProps` string: its other attributes in source order
+ * (`name="value"`, space-separated, values re-escaped) followed directly by
+ * its child elements verbatim (e.g. `style:tab-stops`) — the attribute part
+ * never contains "<", so the first "<" starts the children. Undefined when
+ * nothing is left. */
+function unmodelledParaProps(props: Element): string | undefined {
+  const attrs: string[] = [];
+  for (const attr of Array.from(props.attributes)) {
+    if (!attr.prefix || attr.prefix === "xmlns") {
+      continue;
+    }
+    const name = canonicalAttrName(attr);
+    if (MODELLED_PARA_ATTRS.has(name)) {
+      continue;
+    }
+    if (name === "fo:text-indent") {
+      const cm = odfLengthToCm(attr.value);
+      if (cm !== undefined && cm <= 0) {
+        continue; // a hanging (or zero) indent is modelled as hangingCm
+      }
+    }
+    attrs.push(`${name}="${escapeXmlAttribute(attr.value)}"`);
+  }
+  const children = Array.from(props.children).map((child) => withoutCanonicalXmlns(serializeElement(child))).join("");
+  const out = attrs.join(" ") + children;
+  return out.length > 0 ? out : undefined;
+}
+
+/** Points from an ODF length, snapped to 0.1pt — the cm wire's r3 rounding
+ * (≤ 0.015pt) lands back on the step a spacing value was authored at. */
+function spacingPt(value: string | null): number | undefined {
+  const pt = odfLengthToPt(value);
+  return pt === undefined ? undefined : Math.round(pt * 10) / 10;
+}
+
+function parseParagraph(p: Element, role: PlaceholderRole | undefined, ctx: OdpContext, place: ListPlace = { kind: "none" }): SlideParagraph {
+  const styles = ctx.styles;
+  const paraStyleName = textStyleName(p);
+  const paraProps = styles.resolve(paraStyleName);
+  const runs: SlideRun[] = [];
+  // Inline content: text nodes, spans (their own style over the paragraph's)
+  // and text:a hyperlinks. Inside a span or link any other element (a field,
+  // text:s, …) contributes its text content, as the flattening always did;
+  // directly under the paragraph such elements are skipped.
+  const walkInline = (parent: Element, props: RunProps, link: RunLink | undefined, nested: boolean): void => {
+    for (const node of Array.from(parent.childNodes)) {
+      if (node.nodeType === 3) {
+        const text = node.textContent ?? "";
+        if (text.length > 0) {
+          runs.push(runFromProps(text, props, link));
+        }
+      } else if (node.nodeType === 1) {
+        const el = node as Element;
+        if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "span") {
+          walkInline(el, mergeProps(props, styles.resolve(textStyleName(el))), link, true);
+        } else if (el.namespaceURI === TEXT_NAMESPACE && el.localName === "a") {
+          // SPEC-097: the href becomes the run link (sanitised; a dangerous,
+          // empty or in-deck `#…` target keeps the plain-text reading).
+          const href = linkHrefOf(xlinkAttr(el, "href"));
+          const title = officeAttr(el, "title");
+          walkInline(el, props, href ? { href, tooltip: title ?? undefined } : link, true);
+        } else if (nested) {
+          const text = el.textContent ?? "";
+          if (text.length > 0) {
+            runs.push(runFromProps(text, props, link));
+          }
+        }
+      }
+    }
+  };
+  walkInline(p, paraProps, undefined, false);
   const para: SlideParagraph = { runs };
   const align = styles.align(paraStyleName);
   if (align) para.align = align;
-  const bullet = role === "body" ? "disc" : undefined;
-  if (bullet) para.bullet = bullet;
+
+  // List membership (SPEC-097): a list item reads its level style; a list
+  // header is explicitly unnumbered; a body-role paragraph outside any list
+  // keeps the placeholder's implicit disc.
+  let level: OdpListLevel | undefined;
+  if (place.kind === "item") {
+    level = readListLevel(place.scope.style, place.scope.depth, ctx);
+    para.bullet = level.bullet;
+    if (level.bulletStyle) para.bulletStyle = level.bulletStyle;
+    if (level.bulletChar) para.bulletChar = level.bulletChar;
+    if (level.bulletImageId) para.bulletImageId = level.bulletImageId;
+    const depth = Math.min(place.scope.depth, 8);
+    if (depth > 0) para.level = depth;
+    // Every item of a level carries the level's start value (as every pptx
+    // `a:buAutoNum` carries its startAt); only a run's first item seeds the
+    // derived numbers. A per-item `text:start-value` (one of the two
+    // golden-pending restart forms) is read tolerantly for its own item.
+    const start = place.itemStart ?? level.startValue;
+    if (start !== undefined && start !== 1) para.startAt = Math.min(start, 32767);
+  } else if (place.kind === "none" && role === "body") {
+    para.bullet = "disc";
+  }
+
+  // Spacing (SPEC-097), resolved along the paragraph style's parent chain.
+  const lineHeight = styles.chainPick(paraStyleName, "paragraph-properties", (props) => {
+    const value = foAttr(props, "line-height");
+    if (value !== null) return { value, atLeast: false };
+    const least = styleAttr(props, "line-height-at-least");
+    return least !== null ? { value: least, atLeast: true } : undefined;
+  });
+  if (lineHeight) {
+    const percent = lineHeight.atLeast ? undefined : odfPercentage(lineHeight.value);
+    if (percent !== undefined) {
+      const multiple = round3(percent / 100);
+      if (multiple !== 1) para.lineSpacing = multiple;
+    } else {
+      const pt = odfLengthToPt(lineHeight.value);
+      if (pt !== undefined && pt > 0) {
+        para.lineSpacingPt = round3(pt);
+        if (!lineHeight.atLeast) para.lineSpacingRule = "exact";
+      }
+    }
+  }
+  const before = spacingPt(styles.chainPick(paraStyleName, "paragraph-properties", (props) => foAttr(props, "margin-top") ?? undefined) ?? null);
+  if (before) para.spaceBeforePt = before;
+  const after = spacingPt(styles.chainPick(paraStyleName, "paragraph-properties", (props) => foAttr(props, "margin-bottom") ?? undefined) ?? null);
+  if (after) para.spaceAfterPt = after;
+
+  // Indents: the paragraph style's fo:margin-left / negative fo:text-indent,
+  // else the list level's; stored only where they differ from slideLists'
+  // effective defaults for this paragraph's level and list membership.
+  const marginCm = odfLengthToCm(styles.chainPick(paraStyleName, "paragraph-properties", (props) => foAttr(props, "margin-left") ?? undefined));
+  const indentCm = marginCm !== undefined ? round3(marginCm) : level?.indentCm;
+  const textIndentCm = odfLengthToCm(styles.chainPick(paraStyleName, "paragraph-properties", (props) => foAttr(props, "text-indent") ?? undefined));
+  const hangingCm = textIndentCm !== undefined ? (textIndentCm <= 0 ? round3(-textIndentCm) : undefined) : level?.hangingCm;
+  // A plain paragraph has no list nesting to carry its level: the writer
+  // emits it as `level × LIST_INDENT_STEP_CM`, so a whole number of steps
+  // reads back as that level — Tab/Shift+Tab keep working after a reopen.
+  if (!para.bullet && indentCm !== undefined) {
+    const steps = indentCm / LIST_INDENT_STEP_CM;
+    const stepLevel = Math.round(steps);
+    if (stepLevel >= 1 && stepLevel <= 8 && Math.abs(steps - stepLevel) < 0.001) para.level = stepLevel;
+  }
+  if (indentCm !== undefined && Math.abs(indentCm - effectiveIndentCm(para)) > 0.0005) para.indentCm = indentCm;
+  if (hangingCm !== undefined && Math.abs(hangingCm - effectiveHangingCm(para)) > 0.0005) para.hangingCm = hangingCm;
+
+  // Everything else on the paragraph's OWN automatic style is preserved.
+  const ownStyle = styles.raw(paraStyleName);
+  const ownProps = ownStyle ? firstChildElement(ownStyle, STYLE_NAMESPACE, "paragraph-properties") : undefined;
+  const preserved = ownProps ? unmodelledParaProps(ownProps) : undefined;
+  if (preserved) para.odpParaProps = preserved;
   return para;
 }
 
@@ -566,6 +923,8 @@ function parseFrameChild(el: Element, ctx: OdpContext): SlideFrame | null {
     return null;
   }
   switch (el.localName) {
+    case "a":
+      return parseFrameLink(el, ctx);
     case "frame":
       return parseDrawFrame(el, ctx);
     case "custom-shape":
@@ -581,6 +940,127 @@ function parseFrameChild(el: Element, ctx: OdpContext): SlideFrame | null {
     default:
       return foreignOf(el, "Object");
   }
+}
+
+/** The one drawing element a `draw:a` wraps, or undefined when it wraps
+ * anything else (none, several, or non-draw content). */
+function linkedShapeOf(a: Element): Element | undefined {
+  const children = Array.from(a.children);
+  return children.length === 1 && children[0].namespaceURI === DRAW_NAMESPACE ? children[0] : undefined;
+}
+
+/** A `draw:a` wrapping one shape element (SPEC-097): the shape parses as
+ * usual and, for a linkable kind (text/image/shape — isLinkableKind), carries
+ * the sanitised `xlink:href` as its frame link (+ `office:title` tooltip). A
+ * dangerous href is stripped (the frame reads unlinked). An in-deck `#…`
+ * target (the golden-pending slide-jump form), a non-linkable child (group,
+ * table, chart, media) or an unexpected shape of wrapper keeps the whole
+ * `draw:a` verbatim as a foreign frame — today's reading — so its markup
+ * survives. */
+function parseFrameLink(a: Element, ctx: OdpContext): SlideFrame | null {
+  const inner = linkedShapeOf(a);
+  const base = frameBase((inner && geometryOf(inner)) ?? { xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 });
+  const raw = xlinkAttr(a, "href");
+  if (!inner || (raw !== null && raw.trim().startsWith("#"))) {
+    return foreignAt(a, base, "Object");
+  }
+  const frame = parseFrameChild(inner, ctx);
+  if (!frame) {
+    return null;
+  }
+  if (!isLinkableKind(frame.kind)) {
+    return foreignAt(a, base, "Object");
+  }
+  const href = linkHrefOf(raw);
+  if (href) {
+    frame.linkHref = href;
+    const title = officeAttr(a, "title");
+    if (title) frame.linkTooltip = title;
+  }
+  return frame;
+}
+
+/** The text-body graphic properties SPEC-097 does not model, preserved in
+ * `odpBodyProps` in this fixed order (`draw:textarea-vertical-align` only for
+ * a value outside top/middle/bottom). The vertical-text frame's
+ * `style:writing-mode` rides here, as do both golden-pending shrink-on-
+ * overflow candidates (`draw:fit-to-size`, `style:shrink-to-fit`). */
+const PRESERVED_BODY_ATTRS: ReadonlyArray<readonly [string, string, string]> = [
+  [STYLE_NAMESPACE, "writing-mode", "style:writing-mode"],
+  [DRAW_NAMESPACE, "fit-to-size", "draw:fit-to-size"],
+  [STYLE_NAMESPACE, "shrink-to-fit", "style:shrink-to-fit"],
+  [DRAW_NAMESPACE, "auto-grow-width", "draw:auto-grow-width"],
+  [DRAW_NAMESPACE, "textarea-horizontal-align", "draw:textarea-horizontal-align"],
+  [DRAW_NAMESPACE, "textarea-vertical-align", "draw:textarea-vertical-align"],
+];
+
+const ANCHORS = new Set(["top", "middle", "bottom"]);
+
+/** A text/shape frame's text-body properties (SPEC-097), read from its
+ * graphic style along the `draw:style-name` parent chain: fo:padding-* (or
+ * the fo:padding shorthand) → insetsCm when any side differs from the pptx
+ * defaults, draw:textarea-vertical-align → anchor when not the kind's default,
+ * draw:auto-grow-height="true" → "resizeShape", fo:wrap-option="no-wrap" →
+ * wrap false, style:columns → columns; the unmodelled rest → odpBodyProps. */
+function readTextBody(el: Element, kind: "text" | "shape", ctx: OdpContext): { body?: TextBodyProps; odpBodyProps?: string } {
+  const name = drawAttr(el, "style-name");
+  if (!name) {
+    return {};
+  }
+  const pick = <T>(fn: (props: Element) => T | undefined): T | undefined => ctx.styles.chainPick(name, "graphic-properties", fn);
+  const body: TextBodyProps = {};
+  const side = (edge: string): number | undefined =>
+    odfLengthToCm(pick((props) => foAttr(props, `padding-${edge}`) ?? foAttr(props, "padding") ?? undefined));
+  const left = side("left");
+  const top = side("top");
+  const right = side("right");
+  const bottom = side("bottom");
+  if (left !== undefined || top !== undefined || right !== undefined || bottom !== undefined) {
+    const insets = {
+      left: round3(left ?? DEFAULT_INSETS_CM.left),
+      top: round3(top ?? DEFAULT_INSETS_CM.top),
+      right: round3(right ?? DEFAULT_INSETS_CM.right),
+      bottom: round3(bottom ?? DEFAULT_INSETS_CM.bottom),
+    };
+    if (
+      insets.left !== DEFAULT_INSETS_CM.left ||
+      insets.top !== DEFAULT_INSETS_CM.top ||
+      insets.right !== DEFAULT_INSETS_CM.right ||
+      insets.bottom !== DEFAULT_INSETS_CM.bottom
+    ) {
+      body.insetsCm = insets;
+    }
+  }
+  const anchor = pick((props) => drawAttr(props, "textarea-vertical-align") ?? undefined);
+  if (anchor && ANCHORS.has(anchor) && anchor !== (kind === "shape" ? "middle" : "top")) {
+    body.anchor = anchor as NonNullable<TextBodyProps["anchor"]>;
+  }
+  if (pick((props) => drawAttr(props, "auto-grow-height") ?? undefined) === "true") {
+    body.autofit = "resizeShape";
+  }
+  if (pick((props) => foAttr(props, "wrap-option") ?? undefined) === "no-wrap") {
+    body.wrap = false;
+  }
+  const columns = pick((props) => firstChildElement(props, STYLE_NAMESPACE, "columns"));
+  if (columns) {
+    const count = Number(foAttr(columns, "column-count"));
+    const gapCm = odfLengthToCm(foAttr(columns, "column-gap")) ?? 0;
+    if (Number.isInteger(count) && count >= 1 && (count > 1 || gapCm > 0)) {
+      body.columns = { count: Math.min(count, 16), gapCm: round3(Math.max(0, gapCm)) };
+    }
+  }
+  const preserved: string[] = [];
+  for (const [ns, local, qname] of PRESERVED_BODY_ATTRS) {
+    const value = pick((props) => props.getAttributeNS(ns, local) ?? undefined);
+    if (value === undefined || (local === "textarea-vertical-align" && ANCHORS.has(value))) {
+      continue;
+    }
+    preserved.push(`${qname}="${escapeXmlAttribute(value)}"`);
+  }
+  const out: { body?: TextBodyProps; odpBodyProps?: string } = {};
+  if (Object.keys(body).length > 0) out.body = body;
+  if (preserved.length > 0) out.odpBodyProps = preserved.join(" ");
+  return out;
 }
 
 function graphicFillColor(el: Element, ctx: OdpContext): ModelColor | undefined {
@@ -641,13 +1121,16 @@ function parseDrawFrame(frame: Element, ctx: OdpContext): SlideFrame {
 
   const textBox = firstChildElement(frame, DRAW_NAMESPACE, "text-box");
   if (textBox) {
-    const paragraphs = parseTextBox(textBox, role, ctx.styles);
+    const paragraphs = parseTextBox(textBox, role, ctx);
     const out: SlideFrame = { ...base, kind: "text", paragraphs };
     if (role) out.role = role;
     const fill = graphicFillColor(frame, ctx);
     if (fill) out.fill = { type: "solid", color: fill };
     const stroke = ctx.styles.stroke(drawAttr(frame, "style-name"));
     if (stroke) out.stroke = stroke;
+    const { body, odpBodyProps } = readTextBody(frame, "text", ctx);
+    if (body) out.body = body;
+    if (odpBodyProps) out.odpBodyProps = odpBodyProps;
     return withRotation(out, frame);
   }
   return foreignAt(frame, base, "Object");
@@ -803,7 +1286,7 @@ function parseOdpCells(row: Element, ctx: OdpContext): SlideTableCell[] {
     if (el.localName === "covered-table-cell") {
       cells.push({ paragraphs: [], covered: true });
     } else if (el.localName === "table-cell") {
-      const cell: SlideTableCell = { paragraphs: parseTextBox(el, undefined, ctx.styles) };
+      const cell: SlideTableCell = { paragraphs: parseTextBox(el, undefined, ctx) };
       const colSpan = Number(tableAttr(el, "number-columns-spanned") ?? "1");
       const rowSpan = Number(tableAttr(el, "number-rows-spanned") ?? "1");
       if (colSpan > 1) cell.colSpan = colSpan;
@@ -1095,14 +1578,17 @@ function shapeFrame(
   geometry: ShapeGeometry,
   ctx: OdpContext,
 ): SlideFrame {
-  const frame: SlideFrame = { ...base, kind: "shape", geometry };
+  const frame: ShapeFrame = { ...base, kind: "shape", geometry };
   const fill = graphicFillColor(el, ctx);
   if (fill) frame.fill = { type: "solid", color: fill };
   const stroke = ctx.styles.stroke(drawAttr(el, "style-name"));
   if (stroke) frame.stroke = stroke;
   const textBox = firstChildElement(el, DRAW_NAMESPACE, "text-box") ?? el;
-  const paragraphs = parseTextBox(textBox, undefined, ctx.styles);
+  const paragraphs = parseTextBox(textBox, undefined, ctx);
   if (paragraphs.length > 0) frame.paragraphs = paragraphs;
+  const { body, odpBodyProps } = readTextBody(el, "shape", ctx);
+  if (body) frame.body = body;
+  if (odpBodyProps) frame.odpBodyProps = odpBodyProps;
   return withRotation(frame, el);
 }
 
@@ -1573,7 +2059,9 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
     const frame = parseFrameChild(child, ctx);
     if (frame) {
       frames.push(frame);
-      const wireId = child.getAttributeNS(XML_NAMESPACE, "id") ?? drawAttr(child, "id");
+      // A linked frame's wire id sits on the shape inside its draw:a.
+      const idEl = child.namespaceURI === DRAW_NAMESPACE && child.localName === "a" ? (linkedShapeOf(child) ?? child) : child;
+      const wireId = idEl.getAttributeNS(XML_NAMESPACE, "id") ?? drawAttr(idEl, "id");
       if (wireId) {
         frameForWire.set(wireId, frame.id);
       }
@@ -1731,6 +2219,8 @@ function addStylesFrom(root: Element, resolver: StyleResolver): void {
     for (const styleEl of Array.from(stylesEl.children)) {
       if (styleEl.namespaceURI === STYLE_NAMESPACE && styleEl.localName === "style") {
         resolver.add(styleEl);
+      } else if (styleEl.namespaceURI === TEXT_NAMESPACE && styleEl.localName === "list-style") {
+        resolver.addListStyle(styleEl);
       }
     }
   }
@@ -1801,8 +2291,10 @@ function odpSlotsFromPageLayout(styleEl: Element): LayoutSlot[] {
  * box (or the master placeholder fallback). */
 function odpSlotsFromPage(page: Element, ctx: OdpContext): LayoutSlot[] {
   const slots: LayoutSlot[] = [];
-  for (const child of Array.from(page.children)) {
-    if (child.namespaceURI !== DRAW_NAMESPACE || child.localName !== "frame") {
+  for (const pageChild of Array.from(page.children)) {
+    // A linked placeholder (SPEC-097) sits inside its draw:a.
+    const child = pageChild.namespaceURI === DRAW_NAMESPACE && pageChild.localName === "a" ? linkedShapeOf(pageChild) : pageChild;
+    if (!child || child.namespaceURI !== DRAW_NAMESPACE || child.localName !== "frame") {
       continue;
     }
     const cls = presentationAttr(child, "class");

@@ -11,8 +11,13 @@
 //
 // Layering rule (presentation/boundary.spec.ts): imports only presentation
 // siblings and src/lib/core — never a Vue component. The stage's render
-// decisions (pt→px, 0.95cm/level bullet indent, marker glyphs) are reproduced
-// here rather than imported from components/presentation/slideRender.ts.
+// decisions (pt→px, the text body's insets/anchor/columns) are reproduced here
+// rather than imported from components/presentation/slideRender.ts; the
+// MODEL derivations are shared, not copied (SPEC-097): list markers come from
+// slideLists#paragraphMarkers and indents from effectiveIndentCm/
+// effectiveHangingCm — the same calls the stage makes, so the two surfaces
+// cannot disagree — the autofit scale is the frame's STORED one (an export
+// never measures), and links resolve through slideLinks#effectiveRunLink.
 import { cmToPx } from "../core/units";
 import { mediaDataUri, type MediaPart } from "../core/media";
 import { shapeDefinition, shapeSvgPath } from "../core/shapeCatalogue";
@@ -41,12 +46,14 @@ import { advanceKeys, backKeys, firstKeys, lastKeys } from "./playbackKeys";
 import { fieldKindToken, visibleFields } from "./headerFooter";
 import { now } from "../core/clock";
 import { resolveColor, resolveFont, type DocumentTheme } from "../core/theme";
+import { sanitizeHref } from "../core/urls";
 import { deckThemeOf } from "./theme";
+import { effectiveHangingCm, effectiveIndentCm, isListParagraph, paragraphMarkers, type ParagraphMarker } from "./slideLists";
+import { effectiveRunLink, isLinkableKind, linkOf, type SlideLinkTarget } from "./slideLinks";
+import { effectiveAnchor, effectiveColumns, effectiveInsetsCm, storedScale, type TextBodyFrame } from "./textBody";
 
 /** pt → px at 96/72 — the ratio the stage renderer uses. */
 const PT_TO_PX = 96 / 72;
-/** Bullet indent per level, in cm (SPEC-079). */
-const LEVEL_INDENT_CM = 0.95;
 /** A run with no explicit size renders at this point size. */
 const DEFAULT_FONT_SIZE_PT = 18;
 
@@ -90,53 +97,143 @@ const px = (cm: number): string => `${num(cmToPx(cm))}px`;
 
 // --- text rendering (mirrors slideRender.ts's decisions) --------------------
 
-/** A frame's paragraphs annotated with their bullet marker glyph — numbered
- * bullets restart per contiguous same-level run (reproduced from the stage's
- * `markedParagraphs`). */
-function markedParagraphs(paragraphs: SlideParagraph[]): { para: SlideParagraph; marker: string }[] {
-  const counts: Record<number, number> = {};
-  let prev: SlideParagraph | undefined;
-  return paragraphs.map((para) => {
-    let marker = "";
-    if (para.bullet === "number") {
-      const level = para.level ?? 0;
-      if (prev && prev.bullet === "number" && (prev.level ?? 0) === level) {
-        counts[level] = (counts[level] ?? 0) + 1;
-      } else {
-        counts[level] = 1;
-      }
-      marker = `${counts[level]}.`;
-    } else if (para.bullet === "disc") {
-      marker = "•";
-    }
-    prev = para;
-    return { para, marker };
-  });
+/** A pt length as px scaled by the body's `--fit-scale` (the stored autofit
+ * font scale; 1 outside a text body). */
+function scaledPx(pt: number): string {
+  return `calc(${num(pt * PT_TO_PX)}px * var(--fit-scale, 1))`;
 }
 
-function runStyle(run: SlideRun, theme: DocumentTheme): string {
+/** The stage's line pitch (slideRender.ts#paragraphLineHeight): a multiple
+ * is unitless `1.2 × m`; a point pitch is px on the paragraph — "exact" on
+ * the runs too, "at least" with the runs at their natural 1.2. */
+function lineHeights(para: SlideParagraph): { paragraph: string; run?: string } {
+  if (para.lineSpacingPt !== undefined) {
+    const paragraph = `calc(${num(para.lineSpacingPt * PT_TO_PX)}px * var(--fit-scale, 1) * var(--line-scale, 1))`;
+    return para.lineSpacingRule === "exact" ? { paragraph } : { paragraph, run: "calc(1.2 * var(--line-scale, 1))" };
+  }
+  return { paragraph: `calc(${num(1.2 * (para.lineSpacing ?? 1))} * var(--line-scale, 1))` };
+}
+
+function runStyle(run: SlideRun, theme: DocumentTheme, linked: boolean, lineHeight: string | undefined): string {
   const parts: string[] = [];
   if (run.bold) parts.push("font-weight:700");
   if (run.italic) parts.push("font-style:italic");
-  if (run.underline) parts.push("text-decoration:underline");
+  if (run.underline || linked) parts.push("text-decoration:underline");
   const family = run.fontFamily ? safeFamily(resolveFont(run.fontFamily, theme)) : "";
   if (family) parts.push(`font-family:'${family}', ${SYSTEM_STACK}`);
-  parts.push(`font-size:${num((run.sizePt ?? DEFAULT_FONT_SIZE_PT) * PT_TO_PX)}px`);
+  parts.push(`font-size:${scaledPx(run.sizePt ?? DEFAULT_FONT_SIZE_PT)}`);
   parts.push(`color:${validColor(run.color ? resolveColor(run.color, theme) : undefined) ?? "#000000"}`);
+  if (run.letterSpacingPt && Number.isFinite(run.letterSpacingPt)) parts.push(`letter-spacing:${scaledPx(run.letterSpacingPt)}`);
+  if (lineHeight) parts.push(`line-height:${lineHeight}`);
   return parts.join(";");
+}
+
+/** A link's anchor attributes, or "" when nothing safe remains: an external
+ * href is re-sanitised here (the export trusts no model string), an in-deck
+ * link points at the viewer's own `#N` hash (so even "open in new tab" lands
+ * on the slide) and carries `data-link-slide` for the click handler. */
+function linkAttrs(target: SlideLinkTarget | null, slideCount: number): string {
+  if (!target) return "";
+  const title = target.tooltip ? ` title="${esc(target.tooltip)}"` : "";
+  if (target.slide !== undefined && Number.isInteger(target.slide) && target.slide >= 1 && target.slide <= slideCount) {
+    return `data-testid="slide-link" href="#${target.slide}" data-link-slide="${target.slide}"${title}`;
+  }
+  const href = target.href !== undefined ? sanitizeHref(target.href) : null;
+  return href ? `data-testid="slide-link" href="${esc(href)}" data-link-href="${esc(href)}"${title}` : "";
 }
 
 const ALIGNMENTS = new Set(["left", "center", "right", "justify"]);
 
-function renderParagraph(entry: { para: SlideParagraph; marker: string }, centered: boolean, theme: DocumentTheme): string {
-  const align = centered ? "center" : entry.para.align && ALIGNMENTS.has(entry.para.align) ? entry.para.align : "left";
-  const styleParts = [`text-align:${align}`];
-  if (!centered && entry.para.level) {
-    styleParts.push(`margin-left:${px(entry.para.level * LEVEL_INDENT_CM)}`);
-  }
-  const marker = entry.marker && !centered ? `<span class="marker" aria-hidden="true">${esc(entry.marker)} </span>` : "";
-  const runs = entry.para.runs.map((run) => `<span style="${esc(runStyle(run, theme))}">${esc(run.text)}</span>`).join("");
-  return `<div class="para" style="${esc(styleParts.join(";"))}">${marker}${runs}</div>`;
+interface TextContext {
+  theme: DocumentTheme;
+  media: Map<string, MediaPart>;
+  slideCount: number;
+}
+
+function renderMarker(para: SlideParagraph, marker: ParagraphMarker, ctx: TextContext): string {
+  if (!isListParagraph(para)) return "";
+  const first = para.runs[0];
+  const parts = [
+    "display:inline-block",
+    "box-sizing:border-box",
+    `min-width:${px(effectiveHangingCm(para))}`,
+    "padding-right:0.3em",
+    "text-align:left",
+    "text-indent:0",
+    `font-size:${scaledPx(first?.sizePt ?? DEFAULT_FONT_SIZE_PT)}`,
+    `color:${validColor(first?.color ? resolveColor(first.color, ctx.theme) : undefined) ?? "#000000"}`,
+  ];
+  const pictureSrc = marker.imageId ? mediaDataUri(ctx.media.get(marker.imageId)) : "";
+  const inner = pictureSrc ? `<img class="marker-img" alt="" src="${esc(pictureSrc)}">` : esc(marker.text || "•");
+  return `<span class="marker" aria-hidden="true" style="${esc(parts.join(";"))}">${inner}</span>`;
+}
+
+function renderParagraph(
+  para: SlideParagraph,
+  marker: ParagraphMarker,
+  frame: SlideFrame | null,
+  defaultAlign: string,
+  ctx: TextContext,
+): string {
+  const align = para.align && ALIGNMENTS.has(para.align) ? para.align : defaultAlign;
+  const lines = lineHeights(para);
+  const styleParts = [`text-align:${align}`, `margin-left:${px(effectiveIndentCm(para))}`, `line-height:${lines.paragraph}`];
+  const hanging = effectiveHangingCm(para);
+  if (hanging) styleParts.push(`text-indent:${px(-hanging)}`);
+  if (para.spaceBeforePt) styleParts.push(`margin-top:${scaledPx(para.spaceBeforePt)}`);
+  if (para.spaceAfterPt) styleParts.push(`margin-bottom:${scaledPx(para.spaceAfterPt)}`);
+  const runs = para.runs
+    .map((run) => {
+      const link = linkAttrs(effectiveRunLink(run, frame ?? undefined), ctx.slideCount);
+      const style = esc(runStyle(run, ctx.theme, link !== "", lines.run));
+      return link
+        ? `<a class="slide-link" ${link} style="${style}">${esc(run.text)}</a>`
+        : `<span style="${style}">${esc(run.text)}</span>`;
+    })
+    .join("");
+  return `<div class="para" style="${esc(styleParts.join(";"))}">${renderMarker(para, marker, ctx)}${runs}</div>`;
+}
+
+/** A paragraph list (a text body or a table cell) with its derived markers. */
+function renderParagraphs(paragraphs: SlideParagraph[], frame: SlideFrame | null, defaultAlign: string, ctx: TextContext): string {
+  const markers = paragraphMarkers(paragraphs);
+  return paragraphs.map((para, index) => renderParagraph(para, markers[index] ?? { text: "" }, frame, defaultAlign, ctx)).join("");
+}
+
+const JUSTIFY_FOR_ANCHOR = { top: "flex-start", middle: "center", bottom: "flex-end" } as const;
+
+/** The stage's text-body style (slideTextFit.ts#bodyStyle) at the frame's
+ * STORED autofit scale. */
+function textBodyStyle(frame: TextBodyFrame): string {
+  const insets = effectiveInsetsCm(frame);
+  const columns = effectiveColumns(frame);
+  const scale = storedScale(frame);
+  const parts = [
+    `--fit-scale:${num(scale.fontScalePct / 100)}`,
+    `--line-scale:${num(scale.lineScalePct / 100)}`,
+    `padding:${px(insets.top)} ${px(insets.right)} ${px(insets.bottom)} ${px(insets.left)}`,
+    `justify-content:${JUSTIFY_FOR_ANCHOR[effectiveAnchor(frame)]}`,
+  ];
+  if (columns.count > 1) parts.push(`column-count:${columns.count}`, `column-gap:${px(columns.gapCm)}`, "display:block");
+  return parts.join(";");
+}
+
+function renderTextBody(frame: TextBodyFrame, paragraphs: SlideParagraph[], ctx: TextContext): string {
+  const classes = ["text-body", ...(frame.kind === "shape" ? ["shape-text"] : []), ...(frame.body?.wrap === false ? ["no-wrap"] : [])];
+  const defaultAlign = frame.kind === "shape" ? "center" : "left";
+  return `<div class="${classes.join(" ")}" style="${esc(textBodyStyle(frame))}">${renderParagraphs(paragraphs, frame, defaultAlign, ctx)}</div>`;
+}
+
+/** A whole-frame link (text/image/shape) as a clickable overlay covering the
+ * box, beneath the frame's own run links. */
+function frameLinkOverlay(frame: SlideFrame, slideCount: number): string {
+  if (!isLinkableKind(frame.kind)) return "";
+  const link = linkAttrs(linkOf(frame), slideCount);
+  return link ? `<a class="frame-link" ${link} aria-label="${esc(frame.linkTooltip || "Link")}"></a>` : "";
+}
+
+function textContext(ctx: EmitContext, theme: DocumentTheme): TextContext {
+  return { theme, media: ctx.media, slideCount: ctx.model.slides.length };
 }
 
 // --- frame positioning ------------------------------------------------------
@@ -151,7 +248,7 @@ function positionStyle(frame: SlideFrame): string[] {
 
 // --- shapes -----------------------------------------------------------------
 
-function renderShape(frame: ShapeFrame, fid: string, theme: DocumentTheme): string {
+function renderShape(frame: ShapeFrame, fid: string, theme: DocumentTheme, ctx: EmitContext): string {
   const style = positionStyle(frame);
   const w = cmToPx(frame.widthCm);
   const h = cmToPx(frame.heightCm);
@@ -168,10 +265,9 @@ function renderShape(frame: ShapeFrame, fid: string, theme: DocumentTheme): stri
   const svg =
     `<svg class="shape-svg" width="${num(w)}" height="${num(h)}" viewBox="0 0 ${num(w)} ${num(h)}" ` +
     `preserveAspectRatio="none" aria-hidden="true"><path ${pathAttrs.join(" ")}/></svg>`;
-  const paragraphs = frame.paragraphs && frame.paragraphs.length > 0
-    ? `<div class="shape-text">${markedParagraphs(frame.paragraphs).map((e) => renderParagraph(e, true, theme)).join("")}</div>`
-    : "";
-  return `<div class="frame shape" data-fid="${fid}" style="${esc(style.join(";"))}">${svg}${paragraphs}</div>`;
+  const paragraphs = frame.paragraphs && frame.paragraphs.length > 0 ? renderTextBody(frame, frame.paragraphs, textContext(ctx, theme)) : "";
+  const overlay = frameLinkOverlay(frame, ctx.model.slides.length);
+  return `<div class="frame shape" data-fid="${fid}" style="${esc(style.join(";"))}">${svg}${paragraphs}${overlay}</div>`;
 }
 
 // --- per-slide frame emission -----------------------------------------------
@@ -226,18 +322,20 @@ function nextFid(ctx: EmitContext, frame: SlideFrame): string {
   return fid;
 }
 
-function renderTextFrame(frame: TextFrame, fid: string, theme: DocumentTheme): string {
+function renderTextFrame(frame: TextFrame, fid: string, theme: DocumentTheme, ctx: EmitContext): string {
   const style = positionStyle(frame);
   const fill = frame.fill && frame.fill.type === "solid" ? validColor(resolveColor(frame.fill.color, theme)) : undefined;
   if (fill) style.push(`background:${fill}`);
-  const body = markedParagraphs(frame.paragraphs).map((e) => renderParagraph(e, false, theme)).join("");
-  return `<div class="frame text" data-fid="${fid}" style="${esc(style.join(";"))}">${body}</div>`;
+  const body = renderTextBody(frame, frame.paragraphs, textContext(ctx, theme));
+  const overlay = frameLinkOverlay(frame, ctx.model.slides.length);
+  return `<div class="frame text" data-fid="${fid}" style="${esc(style.join(";"))}">${body}${overlay}</div>`;
 }
 
 function renderImageFrame(frame: Extract<SlideFrame, { kind: "image" }>, fid: string, ctx: EmitContext): string {
   const style = positionStyle(frame);
   const src = mediaDataUri(ctx.media.get(frame.mediaId));
-  return `<div class="frame image" data-fid="${fid}" style="${esc(style.join(";"))}"><img alt="" src="${esc(src)}"></div>`;
+  const overlay = frameLinkOverlay(frame, ctx.model.slides.length);
+  return `<div class="frame image" data-fid="${fid}" style="${esc(style.join(";"))}"><img alt="" src="${esc(src)}">${overlay}</div>`;
 }
 
 function renderGroupFrame(frame: GroupFrame, fid: string, ctx: EmitContext): string {
@@ -253,7 +351,7 @@ function renderForeignFrame(frame: Extract<SlideFrame, { kind: "foreign" }>, fid
   return `<div class="frame foreign" data-fid="${fid}" style="${esc(style.join(";"))}"><span class="foreign-label">${esc(frame.label)}</span></div>`;
 }
 
-function renderTableFrame(frame: TableFrame, fid: string, theme: DocumentTheme): string {
+function renderTableFrame(frame: TableFrame, fid: string, theme: DocumentTheme, ctx: EmitContext): string {
   const style = positionStyle(frame);
   const cols = frame.columnWidthsCm
     .map((cm) => `<col style="width:${px(cm)}">`)
@@ -271,7 +369,7 @@ function renderTableFrame(frame: TableFrame, fid: string, theme: DocumentTheme):
           const fill = cell.fill && cell.fill.type === "solid" ? validColor(resolveColor(cell.fill.color, theme)) : undefined;
           if (fill) cellStyle.push(`background:${fill}`);
           cellStyle.push(`vertical-align:${cell.verticalAlign ?? "top"}`);
-          const body = markedParagraphs(cell.paragraphs).map((e) => renderParagraph(e, false, theme)).join("");
+          const body = renderParagraphs(cell.paragraphs, frame, "left", textContext(ctx, theme));
           return `<td${spanAttrs} style="${esc(cellStyle.join(";"))}">${body}</td>`;
         })
         .join("");
@@ -314,17 +412,17 @@ function renderFrame(frame: SlideFrame, ctx: EmitContext): string {
   const theme = deckThemeOf(ctx.model);
   switch (frame.kind) {
     case "text":
-      return renderTextFrame(frame, fid, theme);
+      return renderTextFrame(frame, fid, theme, ctx);
     case "image":
       return renderImageFrame(frame, fid, ctx);
     case "shape":
-      return renderShape(frame, fid, theme);
+      return renderShape(frame, fid, theme, ctx);
     case "group":
       return renderGroupFrame(frame, fid, ctx);
     case "foreign":
       return renderForeignFrame(frame, fid);
     case "table":
-      return renderTableFrame(frame, fid, theme);
+      return renderTableFrame(frame, fid, theme, ctx);
     case "chart":
       return renderChartFrame(frame, fid);
     case "media":
@@ -546,11 +644,17 @@ html,body{margin:0;padding:0;height:100%;background:#000;overflow:hidden;font-fa
 .slide.current{display:block}
 .frame{position:absolute;box-sizing:border-box;overflow:visible}
 .frame.text{display:flex;flex-direction:column;justify-content:flex-start}
+.text-body{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;box-sizing:border-box}
 .para{margin:0;line-height:1.2;white-space:pre-wrap;overflow-wrap:anywhere}
-.marker{color:inherit}
+.text-body.no-wrap .para{white-space:pre}
+.marker{white-space:pre}
+.marker-img{height:1em;width:auto;vertical-align:-.12em}
+.slide-link{position:relative;z-index:2;cursor:pointer}
+.frame-link{position:absolute;inset:0;z-index:1;display:block;cursor:pointer}
 .frame.image img{width:100%;height:100%;object-fit:fill;display:block}
 .shape-svg{position:absolute;top:0;left:0;overflow:visible}
-.shape-text{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none}
+.shape-text{position:absolute;inset:0;pointer-events:none}
+.shape-text .slide-link{pointer-events:auto}
 .frame.group{left:0!important;top:0!important;width:0!important;height:0!important;overflow:visible}
 .frame.foreign{border:1px dashed #b0b0b0;display:flex;align-items:center;justify-content:center}
 .foreign-label{color:#666;font-size:.75rem}
@@ -751,6 +855,7 @@ function clearDigits(){digitBuffer="";if(digitTimer){clearTimeout(digitTimer);di
 document.addEventListener("keydown",function(e){
  if(e.metaKey||e.ctrlKey||e.altKey)return;
  var t=e.target;if(t&&(t.tagName==="INPUT"||t.tagName==="TEXTAREA"||t.isContentEditable))return;
+ if(e.key==="Enter"&&digitBuffer.length===0&&mode==="playing"&&linkOf(t))return;
  if(hasNotes&&(e.key==="v"||e.key==="V")){e.preventDefault();toggleNotes();return;}
  if(e.key>="0"&&e.key<="9"){e.preventDefault();digitBuffer+=e.key;if(digitTimer)clearTimeout(digitTimer);digitTimer=setTimeout(clearDigits,3000);return;}
  if(e.key==="Enter"&&digitBuffer.length>0){e.preventDefault();var target=parseInt(digitBuffer,10);clearDigits();jumpTo(target);return;}
@@ -764,7 +869,13 @@ var SWIPE=48;var startX=0,startY=0,swiped=false;
 stage.addEventListener("pointerdown",function(e){startX=e.clientX;startY=e.clientY;swiped=false;});
 window.addEventListener("pointerup",function(e){var dx=e.clientX-startX,dy=e.clientY-startY;
  if(Math.abs(dx)>=SWIPE&&Math.abs(dx)>Math.abs(dy)){swiped=true;if(dx<0)advance();else back();}});
-document.addEventListener("click",function(){if(swiped){swiped=false;return;}if(mode!=="playing"){advance();return;}advance();});
+// links (SPEC-097): a click on a rendered link follows it and never also advances
+function linkOf(t){return t&&t.closest?t.closest('[data-testid="slide-link"]'):null;}
+function followLink(a){var n=parseInt(a.getAttribute("data-link-slide"),10);if(isFinite(n)&&n>=1){jumpTo(n);return;}
+ var h=a.getAttribute("data-link-href");if(h)window.open(h,"_blank","noopener,noreferrer");}
+document.addEventListener("click",function(e){if(swiped){swiped=false;return;}
+ var a=mode==="playing"?linkOf(e.target):null;if(a){e.preventDefault();followLink(a);return;}
+ if(mode!=="playing"){advance();return;}advance();});
 document.addEventListener("visibilitychange",function(){if(document.hidden)clearAuto();else scheduleAuto();});
 window.addEventListener("resize",rescale);
 mq.addEventListener&&mq.addEventListener("change",function(){});

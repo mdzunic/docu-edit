@@ -29,6 +29,7 @@ import {
   type PresentationModel,
   type SlideFrame,
   type SlideLayout,
+  type SlideParagraph,
 } from "../model";
 import { classifyFromSlots, synthesiseStandardLayouts } from "../layouts";
 import { ODP_MIMETYPE } from "./reader";
@@ -40,12 +41,30 @@ import { CHART_OBJECT_CONTENT_TYPE, odfChartContentXml } from "../../core/chartP
 
 /** Every media part referenced by an ImageFrame anywhere in the deck (groups
  * descended), from `model.media` — the writer's source of truth for inserted
- * `Pictures/…` parts (SPEC-082). */
+ * `Pictures/…` parts (SPEC-082). SPEC-097: a picture bullet's
+ * `SlideParagraph.bulletImageId` (text frames, shape text, table cells) is a
+ * reference too, or its `text:list-level-style-image` href would dangle with
+ * neither the part nor its manifest entry written. */
 function referencedMedia(model: PresentationModel): MediaPart[] {
   const used = new Set<string>();
+  const bullets = (paragraphs: SlideParagraph[] | undefined): void => {
+    for (const para of paragraphs ?? []) {
+      if (para.bulletImageId) {
+        used.add(para.bulletImageId);
+      }
+    }
+  };
   const walk = (frames: SlideFrame[]): void => {
     for (const frame of frames) {
-      if (frame.kind === "image") {
+      if (frame.kind === "text" || frame.kind === "shape") {
+        bullets(frame.paragraphs);
+      } else if (frame.kind === "table") {
+        for (const row of frame.rows) {
+          for (const cell of row.cells) {
+            bullets(cell.paragraphs);
+          }
+        }
+      } else if (frame.kind === "image") {
         used.add(frame.mediaId);
       } else if (frame.kind === "media") {
         // SPEC-095: a media frame's clip AND poster parts, or an inserted clip

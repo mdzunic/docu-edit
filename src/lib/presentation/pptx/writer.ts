@@ -50,6 +50,7 @@ import {
 import { spliceThemeXml } from "./theme";
 import { now as clockNow } from "../../core/clock";
 import { chartPartXml } from "../../core/chartPartOoxml";
+import { bulletImageIdsOf, collectRelNeeds, HYPERLINK_RELATIONSHIP } from "./textDepthWire";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -139,6 +140,9 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
   // Layout changes (SPEC-089): a slide whose layoutKey differs from its source
   // .rels has only that .rels repointed; a synthesised layout is authored once.
   const plan = planLayouts(model, parts, presPath);
+  // No structural change: every slide is saved under its own part name, which
+  // is what a slide-jump link's relationship targets (SPEC-097).
+  const slideParts = model.slides.map((slide) => slide.partName ?? "");
   const rebuilt = new Map<string, Uint8Array>();
   for (const slide of model.slides) {
     if (slide.dirty && slide.partName && parts.has(slide.partName)) {
@@ -148,10 +152,10 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
       // re-emitting the rels so nothing points at the excluded part (AC-20).
       const strippedRelsXml = stripOrphanChartRels(relsXml, slide.partName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
-      const newRels = [...linkImageRels(slide, rels, slide.partName), ...linkChartRels(slide, rels, slide.partName), ...linkMediaRels(slide, rels, slide.partName)];
+      const newRels = [...linkFrameRels(slide, rels, slide.partName, slideParts), ...linkChartRels(slide, rels, slide.partName), ...linkMediaRels(slide, rels, slide.partName)];
       rebuilt.set(
         slide.partName,
-        encode(serializeSlideXml(slide, rels, slide.partName, fieldsBySlide.get(slide) ?? [], model.theme)),
+        encode(serializeSlideXml(slide, rels, slide.partName, fieldsBySlide.get(slide) ?? [], model.theme, slideParts)),
       );
       let outRels = relsForLayoutChange(slide, slide.partName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
@@ -254,11 +258,16 @@ function buildTextEditSubstitution(model: PresentationModel, parts: Map<string, 
  * deck (groups descended), from `model.media` — the writers' source of truth for
  * inserted image AND audio/video parts (SPEC-095: a media frame contributes its
  * clip `mediaId` and its `posterMediaId`, or an inserted clip's part is silently
- * dropped from the saved package). */
+ * dropped from the saved package). SPEC-097: a picture bullet's
+ * `bulletImageId` (text/shape bodies and table cells) counts too, or its part
+ * and `<Default Extension>` row are never written. */
 function referencedMedia(model: PresentationModel): MediaPart[] {
   const used = new Set<string>();
   const walk = (frames: SlideFrame[]): void => {
     for (const frame of frames) {
+      for (const id of bulletImageIdsOf(frame)) {
+        used.add(id);
+      }
       if (frame.kind === "image") {
         used.add(frame.mediaId);
       } else if (frame.kind === "media") {
@@ -319,37 +328,63 @@ function planMedia(model: PresentationModel, parts: Map<string, Uint8Array>, con
   return { override, appended, defaults };
 }
 
-/** Adds image relationships to `rels` for any ImageFrame whose media is not
- * yet resolvable in it (a freshly inserted image), minting ids after the
- * highest existing one. Mutates `rels`; returns the new relationships (empty
- * when the slide gained none). */
-function linkImageRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
-  const resolved = new Set<string>();
+/** Adds the relationships a slide's model-serialised frames need and `rels`
+ * cannot yet resolve (SPEC-082's `linkImageRels`, generalised by SPEC-097):
+ * an image relationship per freshly inserted ImageFrame part or picture
+ * bullet, a `TargetMode="External"` hyperlink relationship per distinct
+ * external href, and a slide relationship per in-deck jump target —
+ * `slideParts[n − 1]` is the part deck slide `n` is saved under, the target
+ * written relative to this slide. Ids mint after the highest existing one; an
+ * existing matching relationship is reused and an unreferenced one is never
+ * deleted, so the untouched `.rels` bytes survive. Mutates `rels`; returns the
+ * new relationships (empty when the slide gained none). */
+function linkFrameRels(
+  slide: Slide,
+  rels: Map<string, Relationship>,
+  slidePartName: string,
+  slideParts: readonly string[],
+): Relationship[] {
+  const images = new Set<string>();
+  const hrefs = new Set<string>();
+  const slideTargets = new Set<string>();
   let maxId = 0;
   for (const rel of rels.values()) {
     maxId = Math.max(maxId, relIdNumber(rel.id));
     if (rel.type === IMAGE_REL) {
-      resolved.add(resolvePartPath(slidePartName, rel.target));
+      images.add(resolvePartPath(slidePartName, rel.target));
+    } else if (rel.type === HYPERLINK_RELATIONSHIP) {
+      hrefs.add(rel.target);
+    } else if (rel.type === SLIDE_REL) {
+      slideTargets.add(resolvePartPath(slidePartName, rel.target));
     }
   }
   const added: Relationship[] = [];
-  const seen = new Set<string>();
-  const walk = (frames: SlideFrame[]): void => {
-    for (const frame of frames) {
-      if (frame.kind === "image") {
-        if (!resolved.has(frame.mediaId) && !seen.has(frame.mediaId)) {
-          seen.add(frame.mediaId);
-          maxId += 1;
-          const rel: Relationship = { id: `rId${maxId}`, type: IMAGE_REL, target: relativeTarget(slidePartName, frame.mediaId) };
-          rels.set(rel.id, rel);
-          added.push(rel);
-        }
-      } else if (frame.kind === "group") {
-        walk(frame.children);
-      }
-    }
+  const mint = (rel: Omit<Relationship, "id">): void => {
+    maxId += 1;
+    const minted: Relationship = { id: `rId${maxId}`, ...rel };
+    rels.set(minted.id, minted);
+    added.push(minted);
   };
-  walk(slide.frames);
+  const needs = collectRelNeeds(slide.frames);
+  for (const mediaId of needs.images) {
+    if (!images.has(mediaId)) {
+      images.add(mediaId);
+      mint({ type: IMAGE_REL, target: relativeTarget(slidePartName, mediaId) });
+    }
+  }
+  for (const href of needs.hrefs) {
+    if (!hrefs.has(href)) {
+      hrefs.add(href);
+      mint({ type: HYPERLINK_RELATIONSHIP, target: href, targetMode: "External" });
+    }
+  }
+  for (const slideNumber of needs.slides) {
+    const part = slideParts[slideNumber - 1];
+    if (part && !slideTargets.has(part)) {
+      slideTargets.add(part);
+      mint({ type: SLIDE_REL, target: relativeTarget(slidePartName, part) });
+    }
+  }
   return added;
 }
 
@@ -432,7 +467,7 @@ function passThroughChartParts(model: PresentationModel): Set<string> {
 /** Adds a chart relationship to `rels` for any touched chart frame whose
  * `sourcePart` is not yet resolvable in it (a new part, or a rel the source
  * slide never carried), minting ids after the highest existing one. Mutates
- * `rels`; returns the new relationships. Call after `linkImageRels` so the two
+ * `rels`; returns the new relationships. Call after `linkFrameRels` so the two
  * never mint the same id. */
 function linkChartRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
   let maxId = 0;
@@ -461,7 +496,7 @@ function linkChartRels(slide: Slide, rels: Map<string, Relationship>, slidePartN
  * plus the modern `media` rel to the same part (or, for a linked clip, a
  * `video`/`audio` rel to the external target). A clip re-emitting its verbatim
  * `sourceXml` already carries its own rels in the slide's `.rels`, so this only
- * fires for a frame the writer rebuilds. Minted after `linkImageRels`/
+ * fires for a frame the writer rebuilds. Minted after `linkFrameRels`/
  * `linkChartRels` so the ids never collide. Mutates `rels`. */
 function linkMediaRels(slide: Slide, rels: Map<string, Relationship>, slidePartName: string): Relationship[] {
   let maxId = 0;
@@ -624,6 +659,13 @@ function removeChartOverrides(contentTypesXml: string, orphaned: Set<string>): s
   return out;
 }
 
+/** One `<Relationship>` element (with `TargetMode="External"` for an external
+ * target — a SPEC-097 hyperlink). */
+function relationshipXml(rel: Relationship): string {
+  const mode = rel.targetMode === "External" ? ` TargetMode="External"` : "";
+  return `<Relationship Id="${rel.id}" Type="${rel.type}" Target="${escapeXmlAttribute(rel.target)}"${mode}/>`;
+}
+
 /** The `.rels` XML of a slide with `newRels` appended before `</Relationships>`
  * — splicing keeps every existing relationship byte-verbatim (TargetMode and
  * all), unlike re-serialising the parsed map. */
@@ -631,9 +673,7 @@ function appendRelationships(relsXml: string, newRels: Relationship[]): string {
   if (newRels.length === 0) {
     return relsXml;
   }
-  const additions = newRels
-    .map((rel) => `<Relationship Id="${rel.id}" Type="${rel.type}" Target="${escapeXmlAttribute(rel.target)}"/>`)
-    .join("");
+  const additions = newRels.map(relationshipXml).join("");
   if (/<\/Relationships>/.test(relsXml)) {
     return relsXml.replace(/<\/Relationships>/, `${additions}</Relationships>`);
   }
@@ -672,8 +712,9 @@ function slideXml(
   rels: Map<string, Relationship> = new Map(),
   path = "",
   fields: ResolvedField[] = [],
+  slideParts: readonly string[] = [],
 ): string {
-  return serializeSlideXml(slide, rels, path, fields, model.theme);
+  return serializeSlideXml(slide, rels, path, fields, model.theme, slideParts);
 }
 
 /** The in-place rewritten theme part for an edited deck theme (SPEC-094
@@ -861,7 +902,7 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     const layoutTarget = `../slideLayouts/slideLayout${standardLayoutIndexForSlide(slide) + 1}.xml`;
     const rels = new Map<string, Relationship>();
     rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-    const imageRels = [...linkImageRels(slide, rels, slidePath), ...linkMediaRels(slide, rels, slidePath)];
+    const imageRels = [...linkFrameRels(slide, rels, slidePath, slidePaths), ...linkMediaRels(slide, rels, slidePath)];
     const notesNumber = notesNumberBySlideIndex.get(index);
     const extraRels = [...imageRels];
     if (notesNumber !== undefined) {
@@ -875,7 +916,7 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
         target: `../notesSlides/notesSlide${notesNumber}.xml`,
       });
     }
-    entries.push({ name: slidePath, data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now))) });
+    entries.push({ name: slidePath, data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now), slidePaths)) });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
       data: encode(appendRelationships(slideRelsXml(layoutTarget), extraRels)),
@@ -1054,9 +1095,7 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       return `<Relationship Id="${entry.relId}" Type="${SLIDE_REL}" Target="${escapeXmlAttribute(relativeTarget(presPath, entry.emitName))}"/>`;
     })
     .join("");
-  const keptRelXml = keptRels
-    .map((rel) => `<Relationship Id="${rel.id}" Type="${rel.type}" Target="${escapeXmlAttribute(rel.target)}"/>`)
-    .join("");
+  const keptRelXml = keptRels.map(relationshipXml).join("");
   const rebuiltPresRels = `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">${keptRelXml}${slideRelXml}</Relationships>`;
 
   // Rebuild presentation.xml: splice a fresh p:sldIdLst (ids re-minted 256…),
@@ -1087,6 +1126,10 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
     chartContentTypeOverrides(charts),
   );
 
+  // The part each model slide is saved under, in deck order — what a
+  // slide-jump link's relationship targets (SPEC-097).
+  const slideParts = emitted.map((entry) => entry.emitName);
+
   // A dirty slide kept under its own part name is rebuilt in place; one that
   // gained an inserted image also has its `.rels` re-emitted with the new image
   // relationship spliced in. An untouched slide re-emits byte-verbatim.
@@ -1097,8 +1140,8 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const relsXml = decode(parts.get(relsPath) ?? encode(""));
       const strippedRelsXml = stripOrphanChartRels(relsXml, entry.emitName, orphanedCharts);
       const rels = strippedRelsXml ? parseRelationships(strippedRelsXml) : new Map<string, Relationship>();
-      const newRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)];
-      rebuiltOwn.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
+      const newRels = [...linkFrameRels(entry.slide, rels, entry.emitName, slideParts), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)];
+      rebuiltOwn.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [], slideParts)));
       let outRels = relsForLayoutChange(entry.slide, entry.emitName, strippedRelsXml, newRels, plan);
       if (outRels === undefined && strippedRelsXml !== relsXml) {
         outRels = strippedRelsXml;
@@ -1127,10 +1170,10 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const sourceRelsXml = sourceRelsBytes ? stripNotesSlideRel(decode(sourceRelsBytes)) : "";
       const rels = sourceRelsXml ? parseRelationships(sourceRelsXml) : new Map<string, Relationship>();
       const newRels = entry.slide.dirty
-        ? [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)]
+        ? [...linkFrameRels(entry.slide, rels, entry.emitName, slideParts), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)]
         : [];
       const xml = entry.slide.dirty
-        ? encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? []))
+        ? encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [], slideParts))
         : parts.get(entry.sourceName)!;
       baseSlideParts.set(entry.emitName, xml);
       if (sourceRelsBytes) {
@@ -1142,8 +1185,8 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
       const layoutTarget = relativeTarget(entry.emitName, resolveLayoutPath(model, entry, parts, slidesDir, presPath, plan));
       const rels = new Map<string, Relationship>();
       rels.set("rId1", { id: "rId1", type: SLIDE_LAYOUT_REL, target: layoutTarget });
-      const imageRels = [...linkImageRels(entry.slide, rels, entry.emitName), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)];
-      baseSlideParts.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [])));
+      const imageRels = [...linkFrameRels(entry.slide, rels, entry.emitName, slideParts), ...linkChartRels(entry.slide, rels, entry.emitName), ...linkMediaRels(entry.slide, rels, entry.emitName)];
+      baseSlideParts.set(entry.emitName, encode(slideXml(model, entry.slide, rels, entry.emitName, fieldsBySlide.get(entry.slide) ?? [], slideParts)));
       baseSlideRels.set(relsName, appendRelationships(slideRelsXml(layoutTarget), imageRels));
     }
   }

@@ -3,10 +3,19 @@ import type { SlideParagraph, TextFrame } from "./model";
 import {
   applyParagraphFormat,
   applyRunFormat,
+  demote,
+  lineSpacingKey,
   markSlideEdited,
   normalizeRange,
+  paragraphMarkerStyle,
+  parseLineSpacingKey,
+  promote,
   selectionFormatState,
   setIndentLevel,
+  setLetterSpacing,
+  setLineSpacing,
+  setListStyle,
+  setParagraphSpacing,
   toggleBullet,
   wholeFrameRange,
 } from "./text";
@@ -119,5 +128,224 @@ describe("markSlideEdited", () => {
     markSlideEdited(slide, "odp");
     expect(slide.dirty).toBe(true);
     expect(slide.sourceXml).toBeUndefined();
+  });
+});
+
+// --- SPEC-097: lists, spacing, letter spacing, preservation clearing --------
+
+describe("SPEC-097 widened ParagraphFormatPatch", () => {
+  const all = { startPara: 0, endPara: 0 };
+
+  it("sets every new paragraph field and null clears each back to absent", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "number" }]);
+    applyParagraphFormat(frame, all, {
+      startAt: 4,
+      indentCm: 2,
+      hangingCm: 0.5,
+      lineSpacing: 1.5,
+      spaceBeforePt: 6,
+      spaceAfterPt: 12,
+    });
+    expect(frame.paragraphs[0]).toEqual({
+      runs: [{ text: "a" }],
+      bullet: "number",
+      startAt: 4,
+      indentCm: 2,
+      hangingCm: 0.5,
+      lineSpacing: 1.5,
+      spaceBeforePt: 6,
+      spaceAfterPt: 12,
+    });
+    applyParagraphFormat(frame, all, {
+      startAt: null,
+      indentCm: null,
+      hangingCm: null,
+      lineSpacing: null,
+      spaceBeforePt: null,
+      spaceAfterPt: null,
+    });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], bullet: "number" });
+  });
+
+  it("clamps to the documented ranges and drops values equal to the default", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "number" }]);
+    applyParagraphFormat(frame, all, { startAt: 99999, lineSpacing: 9, spaceBeforePt: 900, lineSpacingPt: 1 });
+    expect(frame.paragraphs[0].startAt).toBe(32767);
+    expect(frame.paragraphs[0].lineSpacing).toBe(5);
+    expect(frame.paragraphs[0].spaceBeforePt).toBe(500);
+    expect(frame.paragraphs[0].lineSpacingPt).toBe(4);
+    applyParagraphFormat(frame, all, { startAt: 1, lineSpacing: 1, spaceBeforePt: 0 });
+    expect(frame.paragraphs[0].startAt).toBeUndefined();
+    expect(frame.paragraphs[0].lineSpacing).toBeUndefined();
+    expect(frame.paragraphs[0].spaceBeforePt).toBeUndefined();
+  });
+
+  it("clears the preserved a:pPr / ODF props when a shadowed property is edited, and only then", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "disc", pptxPPr: "<a:pPr><a:buFont/></a:pPr>", odpParaProps: "x" }]);
+    applyParagraphFormat(frame, all, { align: "center" });
+    applyParagraphFormat(frame, all, { indentCm: 3 });
+    setIndentLevel(frame, all, 1);
+    expect(frame.paragraphs[0].pptxPPr).toBe("<a:pPr><a:buFont/></a:pPr>");
+    expect(frame.paragraphs[0].odpParaProps).toBe("x");
+    setLineSpacing(frame, all, { mode: "multiple", value: 1.5 });
+    expect(frame.paragraphs[0].pptxPPr).toBeUndefined();
+    expect(frame.paragraphs[0].odpParaProps).toBeUndefined();
+    frame.paragraphs[0].pptxPPr = "<a:pPr/>";
+    setListStyle(frame, all, "square");
+    expect(frame.paragraphs[0].pptxPPr).toBeUndefined();
+  });
+});
+
+describe("toggleBullet's style argument", () => {
+  it("toggles numbering on and off with a number style, leaving the default call disc", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }] }, { runs: [{ text: "b" }] }]);
+    toggleBullet(frame, { startPara: 0, endPara: 1 }, "decimal");
+    expect(frame.paragraphs.map((p) => p.bullet)).toEqual(["number", "number"]);
+    expect(frame.paragraphs.map((p) => p.bulletStyle)).toEqual([undefined, undefined]);
+    toggleBullet(frame, { startPara: 0, endPara: 1 }, "decimal");
+    expect(frame.paragraphs.map((p) => p.bullet)).toEqual([undefined, undefined]);
+  });
+
+  it("switches a bulleted list to numbered (not off) and stores a non-default style", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "disc", bulletChar: "→" }]);
+    toggleBullet(frame, { startPara: 0, endPara: 0 }, "upperRoman");
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], bullet: "number", bulletStyle: "upperRoman" });
+  });
+
+  it("turning a list off drops every marker field with it", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "number", bulletStyle: "lowerAlpha", startAt: 3 }]);
+    toggleBullet(frame, { startPara: 0, endPara: 0 }, "decimal");
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }] });
+  });
+});
+
+describe("setListStyle", () => {
+  const all = { startPara: 0, endPara: 0 };
+
+  it("a marker style decides the list type (markerType agrees with bullet)", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }] }]);
+    setListStyle(frame, all, "lowerRoman");
+    expect(frame.paragraphs[0].bullet).toBe("number");
+    expect(paragraphMarkerStyle(frame.paragraphs[0])).toBe("lowerRoman");
+    setListStyle(frame, all, "circle");
+    expect(frame.paragraphs[0].bullet).toBe("disc");
+    expect(frame.paragraphs[0].bulletStyle).toBe("circle");
+    setListStyle(frame, all, "disc");
+    expect(frame.paragraphs[0].bulletStyle).toBeUndefined();
+  });
+
+  it("a custom bullet char makes a disc list and wins over the style; a picture wins over both", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "number" }]);
+    setListStyle(frame, all, { bulletChar: "★" });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], bullet: "disc", bulletChar: "★" });
+    setListStyle(frame, all, { bulletImageId: "ppt/media/image3.png" });
+    expect(frame.paragraphs[0].bulletImageId).toBe("ppt/media/image3.png");
+    setListStyle(frame, all, "decimal");
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], bullet: "number" });
+  });
+
+  it("paragraphMarkerStyle ignores a style that disagrees with bullet", () => {
+    expect(paragraphMarkerStyle({ runs: [], bullet: "number", bulletStyle: "square" })).toBe("decimal");
+    expect(paragraphMarkerStyle({ runs: [], bullet: "disc" })).toBe("disc");
+    expect(paragraphMarkerStyle({ runs: [] })).toBeUndefined();
+  });
+});
+
+describe("spacing commands", () => {
+  const all = { startPara: 0, endPara: 0 };
+
+  it("setLineSpacing: a point value wins and a multiple drops it", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }] }]);
+    setLineSpacing(frame, all, { mode: "exact", pt: 24 });
+    expect(frame.paragraphs[0]).toMatchObject({ lineSpacingPt: 24, lineSpacingRule: "exact" });
+    expect(lineSpacingKey(frame.paragraphs[0])).toBe("exact:24");
+    setLineSpacing(frame, all, { mode: "atLeast", pt: 18 });
+    expect(frame.paragraphs[0].lineSpacingRule).toBeUndefined();
+    expect(lineSpacingKey(frame.paragraphs[0])).toBe("atLeast:18");
+    setLineSpacing(frame, all, { mode: "multiple", value: 1.5 });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], lineSpacing: 1.5 });
+    expect(parseLineSpacingKey("multiple:1.5")).toEqual({ mode: "multiple", value: 1.5 });
+    expect(parseLineSpacingKey("exact:24")).toEqual({ mode: "exact", pt: 24 });
+  });
+
+  it("setParagraphSpacing sets before/after independently", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }] }]);
+    setParagraphSpacing(frame, all, { spaceAfterPt: 6 });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], spaceAfterPt: 6 });
+    setParagraphSpacing(frame, all, { spaceBeforePt: 3, spaceAfterPt: 0 });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "a" }], spaceBeforePt: 3 });
+  });
+
+  it("setLetterSpacing marks only the range, clamps to ±10 in 0.1 steps, 0 clears and runs coalesce", () => {
+    const frame = frameOf([{ runs: [{ text: "abcd" }] }]);
+    setLetterSpacing(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 2 } }, 0.54);
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "ab", letterSpacingPt: 0.5 }, { text: "cd" }]);
+    setLetterSpacing(frame, { start: { para: 0, offset: 2 }, end: { para: 0, offset: 4 } }, 0.5);
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "abcd", letterSpacingPt: 0.5 }]);
+    setLetterSpacing(frame, wholeFrameRange(frame), 40);
+    expect(frame.paragraphs[0].runs[0].letterSpacingPt).toBe(10);
+    setLetterSpacing(frame, wholeFrameRange(frame), 0);
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "abcd" }]);
+  });
+
+  it("run links coalesce per key and a tooltip never outlives its link", () => {
+    const frame = frameOf([{ runs: [{ text: "abcd" }] }]);
+    applyRunFormat(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 2 } }, { linkSlide: 3, linkTooltip: "Go" });
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "ab", linkSlide: 3, linkTooltip: "Go" }, { text: "cd" }]);
+    applyRunFormat(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 2 } }, { linkHref: "https://x.test" });
+    expect(frame.paragraphs[0].runs[0]).toEqual({ text: "ab", linkHref: "https://x.test", linkTooltip: "Go" });
+    applyRunFormat(frame, wholeFrameRange(frame), { linkHref: null });
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "abcd" }]);
+  });
+});
+
+describe("demote / promote", () => {
+  it("demotes a numbered item to the next level's default style (3. → a.) and back", () => {
+    const frame = frameOf([{ runs: [{ text: "c" }], bullet: "number" }]);
+    demote(frame, { startPara: 0, endPara: 0 });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "c" }], bullet: "number", level: 1, bulletStyle: "lowerAlpha" });
+    demote(frame, { startPara: 0, endPara: 0 });
+    expect(frame.paragraphs[0].bulletStyle).toBe("lowerRoman");
+    promote(frame, { startPara: 0, endPara: 0 });
+    promote(frame, { startPara: 0, endPara: 0 });
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "c" }], bullet: "number" });
+  });
+
+  it("keeps an explicitly chosen non-cycle style and shifts an explicit indent", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], bullet: "number", bulletStyle: "upperRoman", indentCm: 1 }]);
+    demote(frame, { startPara: 0, endPara: 0 });
+    expect(frame.paragraphs[0]).toMatchObject({ level: 1, bulletStyle: "upperRoman", indentCm: 2.27 });
+  });
+
+  it("clamps 0..8", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }], level: 8 }, { runs: [{ text: "b" }] }]);
+    demote(frame, { startPara: 0, endPara: 1 });
+    expect(frame.paragraphs.map((p) => p.level)).toEqual([8, 1]);
+    promote(frame, { startPara: 1, endPara: 1 });
+    promote(frame, { startPara: 1, endPara: 1 });
+    expect(frame.paragraphs[1].level).toBeUndefined();
+  });
+});
+
+describe("SelectionFormatState SPEC-097 fields", () => {
+  it("folds list, spacing and letter spacing, reporting mixed where they differ", () => {
+    const frame = frameOf([
+      { runs: [{ text: "ab", letterSpacingPt: 1 }], bullet: "number", startAt: 3, lineSpacing: 1.5, spaceAfterPt: 6 },
+      { runs: [{ text: "cd" }], bullet: "number", startAt: 3, lineSpacing: 1.5, spaceAfterPt: 6, spaceBeforePt: 2 },
+    ]);
+    const state = selectionFormatState(frame, { start: { para: 0, offset: 0 }, end: { para: 1, offset: 2 } });
+    expect(state.bulletStyle).toBe("decimal");
+    expect(state.numbered).toBe(true);
+    expect(state.startAt).toBe(3);
+    expect(state.lineSpacing).toBe("multiple:1.5");
+    expect(state.spaceAfterPt).toBe(6);
+    expect(state.spaceBeforePt).toBe("mixed");
+    expect(state.letterSpacingPt).toBe("mixed");
+  });
+
+  it("reports none for non-list paragraphs and mixed list styles", () => {
+    const frame = frameOf([{ runs: [{ text: "a" }] }, { runs: [{ text: "b" }], bullet: "disc" }]);
+    expect(selectionFormatState(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 1 } }).bulletStyle).toBe("none");
+    expect(selectionFormatState(frame, wholeFrameRange(frame)).bulletStyle).toBe("mixed");
   });
 });

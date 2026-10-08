@@ -162,3 +162,56 @@ describe("PresentationPlayView", () => {
     expect(push).toHaveBeenCalledWith("/");
   });
 });
+
+// SPEC-097 AC-49/50 — a click on a rendered link navigates and never also
+// advances a build: in-deck through jumpTo, external through window.open.
+describe("PresentationPlayView links (SPEC-097)", () => {
+  /** The mini-deck with slide 1's first text frame given a linked run (to
+   * `link`) and a second frame entering on click, so a stray advance would
+   * visibly play a build. */
+  async function linkedDeck(link: { linkSlide?: number; linkHref?: string }): Promise<PresentationModel> {
+    const deck = await freshDeck();
+    const first = deck.slides[0];
+    const textFrames = first.frames.filter((frame) => frame.kind === "text");
+    const host = textFrames[0];
+    if (host.kind !== "text") throw new Error("fixture slide 1 has no text frame");
+    host.paragraphs = [{ runs: [{ text: "Jump " }, { text: "here", ...link }] }];
+    const target = textFrames[1] ?? host;
+    first.animations = [{ frameId: target.id, effect: "fadeIn", trigger: "click" }];
+    return deck;
+  }
+
+  it("an in-deck link jumps to its slide without also advancing the build", async () => {
+    const deck = await linkedDeck({ linkSlide: 3 });
+    const { wrapper, replace } = await mountAt(`/slides/${deck.id}/present/1`, deck);
+    replace.mockClear();
+    const link = wrapper.get('[data-testid="presentation-play"] [data-testid="slide-link"]');
+    expect(link.text()).toBe("here");
+    await link.trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("3 / 4");
+    expect(replace).toHaveBeenCalledWith(`/slides/${deck.id}/present/3`);
+    expect(wrapper.get('[data-testid="presentation-play"]').attributes("data-building")).toBe("false");
+  });
+
+  it("an external link opens a new tab and the show stays put (no advance)", async () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const deck = await linkedDeck({ linkHref: "https://example.com/deck" });
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/1`, deck);
+    await wrapper.get('[data-testid="slide-link"]').trigger("click");
+    await flushPromises();
+    expect(open).toHaveBeenCalledWith("https://example.com/deck", "_blank", "noopener,noreferrer");
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("1 / 4");
+    expect(wrapper.get('[data-testid="presentation-play"]').attributes("data-building")).toBe("false");
+  });
+
+  it("a click anywhere else still advances (the build plays)", async () => {
+    const deck = await linkedDeck({ linkSlide: 3 });
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/1`, deck);
+    await wrapper.get('[data-testid="presentation-play"]').trigger("click");
+    await flushPromises();
+    // The click-triggered build began on slide 1 (not a slide change).
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("1 / 4");
+    expect(wrapper.get('[data-testid="presentation-play"]').attributes("data-building")).toBe("true");
+  });
+});

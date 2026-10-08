@@ -142,6 +142,10 @@ export interface Preferences {
   /** Whether the presentation editor's Design (theme) panel is expanded
    * (SPEC-094). Per-device, default collapsed. */
   presentationThemeOpen: boolean;
+  /** Whether the presentation editor's Text panel (list, spacing, autofit
+   * and text-body controls) is expanded (SPEC-097). Per-device, default
+   * collapsed. */
+  presentationTextOpen: boolean;
   /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
   snapToGuides: boolean;
   /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
@@ -212,6 +216,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationAnimationsOpen: false,
   presentationMediaOpen: false,
   presentationThemeOpen: false, // SPEC-094 Design panel
+  presentationTextOpen: false, // SPEC-097 Text panel
   presentationTableOpen: false,
   snapToGuides: true,
   snapToGrid: false,
@@ -288,6 +293,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationAnimationsOpen: isBoolean,
   presentationMediaOpen: isBoolean,
   presentationThemeOpen: isBoolean,
+  presentationTextOpen: isBoolean,
   presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,
   snapToGrid: isBoolean,

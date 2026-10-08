@@ -35,6 +35,10 @@ const props = defineProps({
   theme: { type: Object, default: null },
   /** The armed insertion tool ("textbox" | "shape"), for active styling. */
   armedKind: { type: String, default: "" },
+  /** SPEC-097: one whole text/image/shape frame is selected outside a text
+   * session, so `slides-link` shows (inside a session the text toolbar's
+   * button does — never both, the strips stay mounted side by side). */
+  canLink: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -53,6 +57,7 @@ const emit = defineEmits([
   "position-toggle",
   "set-fill",
   "set-stroke",
+  "link",
 ]);
 
 const hasSelection = computed(() => props.selectedFrame !== null);
@@ -384,6 +389,18 @@ const mediaAccept = MEDIA_ACCEPT_ATTR;
           @click="chartGalleryOpen = false"
         />
       </div>
+      <!-- SPEC-097: link the whole selected frame (the dialog's frame mode) -->
+      <button
+        v-if="canLink"
+        type="button"
+        class="tb-btn"
+        aria-haspopup="dialog"
+        data-testid="slides-link"
+        @click="emit('link')"
+      >
+        <AppIcon name="link" />
+        Link…
+      </button>
     </div>
 
     <!-- Secondary group: inline, or in the ⋯ menu when compact -->

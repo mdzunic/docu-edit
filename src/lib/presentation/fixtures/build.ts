@@ -1891,3 +1891,227 @@ export async function buildOdpMediaFixtureBytes(): Promise<Uint8Array> {
     await writeOdp(mediaFixtureModel("odp"), { now: SPEC095_FIXTURE_INSTANT, modified: SPEC095_FIXTURE_INSTANT })
   ).bytes;
 }
+
+// ============================================================================
+// SPEC-097 text-depth fixtures (spec097-text-depth) — three slides built
+// through the from-scratch writers (slide 3 carries a click build, so a link
+// click in playback can be seen NOT to also advance it), with slide 1 / page 1
+// replaced by hand-authored markup so the readers are pinned against real
+// source XML rather than our own writer's: a long overflowing title, a
+// numbered body (1.–3.), a second numbered list whose start-at is 5, a
+// sentence whose word "results" the e2e links to slide 3, and one
+// deliberately OUT-OF-SUBSET body — a vertical-text frame (pptx
+// `a:bodyPr vert="vert270"` / odp `style:writing-mode="tb-rl"`) — whose
+// paragraph also carries an unmodelled `a:pPr` child (`a:tabLst`) / an
+// unmodelled paragraph property, pinning the preserve-don't-parse path. The
+// four mini-deck slides above are never touched.
+
+/** What the SPEC-097 fixtures carry, for the unit specs and the e2e. */
+export const EXPECTED_TEXT_DEPTH = {
+  slideCount: 3,
+  /** Slide 1's title: long enough to overflow its 1.8cm-high frame at 44pt. */
+  title: "Quarterly results and the road ahead for every team",
+  titleSizePt: 44,
+  /** The numbered body's lines and their derived markers. */
+  bodyLines: ["Revenue grew", "Costs fell", "Margins widened"],
+  bodyMarkers: ["1.", "2.", "3."],
+  /** The body's source indent: marL 1.27cm with a 1.27cm hanging indent. */
+  bodyIndentCm: 1.27,
+  bodyHangingCm: 1.27,
+  /** The second list: numbering seeded by start-at 5. */
+  continuedLines: ["Hiring plan", "Next steps"],
+  continuedMarkers: ["5.", "6."],
+  continuedStartAt: 5,
+  /** The sentence and the word the e2e links to slide `linkSlide`. */
+  linkSentence: "See the results slide for detail",
+  linkWord: "results",
+  linkSlide: 3,
+  /** The out-of-subset vertical-text frame. */
+  verticalText: "Sidebar notes",
+  /** Slide 3's title and the shape its click build reveals. */
+  buildSlideTitle: "Results",
+  buildShapeText: "Revealed on click",
+};
+
+const SPEC097_FIXTURE_INSTANT = new Date(Date.UTC(2026, 9, 1, 9, 0, 0));
+
+/** A slide title placeholder. */
+function spec097TitleBox(text: string): TextFrame {
+  return {
+    id: crypto.randomUUID(),
+    kind: "text",
+    role: "title",
+    phType: "title",
+    xCm: 1.5,
+    yCm: 0.8,
+    widthCm: 30,
+    heightCm: 2.5,
+    paragraphs: [{ runs: [{ text }] }],
+  };
+}
+
+/** Slides 2 and 3 (slide 1 is a placeholder the builders replace). */
+function spec097Model(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Text depth fixture";
+  const titleBox = spec097TitleBox;
+  const revealId = crypto.randomUUID();
+  model.slides.push(
+    {
+      id: crypto.randomUUID(),
+      frames: [
+        titleBox("Details"),
+        {
+          id: crypto.randomUUID(),
+          kind: "text",
+          xCm: 1.5,
+          yCm: 4,
+          widthCm: 30,
+          heightCm: 4,
+          paragraphs: [{ runs: [{ text: "Supporting detail" }] }],
+        },
+      ],
+    },
+    {
+      id: crypto.randomUUID(),
+      frames: [
+        titleBox(EXPECTED_TEXT_DEPTH.buildSlideTitle),
+        {
+          id: revealId,
+          kind: "shape",
+          geometry: "rect",
+          xCm: 4,
+          yCm: 5,
+          widthCm: 12,
+          heightCm: 5,
+          fill: { type: "solid", color: "#4472c4" },
+          paragraphs: [{ runs: [{ text: EXPECTED_TEXT_DEPTH.buildShapeText, color: "#ffffff" }] }],
+        },
+      ],
+      animations: [{ frameId: revealId, effect: "appear", trigger: "click" }],
+    },
+  );
+  return model;
+}
+
+/** Slide 1's hand-authored shape tree (pptx). */
+/** One plain `a:r` with extra `a:rPr` attributes. */
+function spec097Run(text: string, extra = ""): string {
+  return `<a:r><a:rPr lang="en-US"${extra}/><a:t>${text}</a:t></a:r>`;
+}
+
+/** A rect `p:sp` with its own nvPr content, box and txBody inner markup. */
+function spec097Sp(id: number, name: string, nvPr: string, box: string, body: string): string {
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr/><p:nvPr>${nvPr}</p:nvPr></p:nvSpPr>` +
+    `<p:spPr>${box}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody>${body}</p:txBody></p:sp>`
+  );
+}
+
+function spec097PptxSlide1Shapes(): string {
+  const run = spec097Run;
+  const sp = spec097Sp;
+  const numbered = (text: string): string =>
+    `<a:p><a:pPr marL="${EMU(1.27)}" indent="-${EMU(1.27)}"><a:buFont typeface="+mj-lt"/><a:buAutoNum type="arabicPeriod"/></a:pPr>${run(text, ' sz="2400"')}</a:p>`;
+  const continued = (text: string): string =>
+    `<a:p><a:pPr marL="${EMU(1.27)}" indent="-${EMU(0.635)}"><a:buAutoNum type="arabicPeriod" startAt="${EXPECTED_TEXT_DEPTH.continuedStartAt}"/></a:pPr>${run(text, ' sz="2000"')}</a:p>`;
+  return (
+    sp(
+      2,
+      "Title 1",
+      `<p:ph type="title"/>`,
+      xfrm(1.5, 0.8, 18, 1.8),
+      `<a:bodyPr/><a:lstStyle/><a:p>${run(EXPECTED_TEXT_DEPTH.title, ` sz="${EXPECTED_TEXT_DEPTH.titleSizePt * 100}"`)}</a:p>`,
+    ) +
+    sp(
+      3,
+      "Content Placeholder 2",
+      `<p:ph type="body" idx="1"/>`,
+      xfrm(1.5, 3.2, 15, 7),
+      `<a:bodyPr/><a:lstStyle/>${EXPECTED_TEXT_DEPTH.bodyLines.map(numbered).join("")}`,
+    ) +
+    sp(4, "TextBox 3", "", xfrm(1.5, 11, 15, 3), `<a:bodyPr wrap="square"/><a:lstStyle/>${EXPECTED_TEXT_DEPTH.continuedLines.map(continued).join("")}`) +
+    sp(5, "TextBox 4", "", xfrm(18, 3.2, 12, 2), `<a:bodyPr wrap="square"/><a:lstStyle/><a:p>${run(EXPECTED_TEXT_DEPTH.linkSentence, ' sz="2000"')}</a:p>`) +
+    sp(
+      6,
+      "TextBox 5",
+      "",
+      xfrm(31, 2, 2, 14),
+      `<a:bodyPr vert="vert270" rtlCol="0" anchor="ctr"/><a:lstStyle/>` +
+        `<a:p><a:pPr><a:tabLst><a:tab pos="914400" algn="l"/></a:tabLst></a:pPr>${run(EXPECTED_TEXT_DEPTH.verticalText, ' sz="1800"')}</a:p>`,
+    )
+  );
+}
+
+/** A `.pptx` text-depth deck (SPEC-097 AC-55/56). */
+export async function buildPptxTextDepthFixtureBytes(): Promise<Uint8Array> {
+  const bytes = (
+    await writePptx(spec097Model("pptx"), { now: SPEC097_FIXTURE_INSTANT, modified: SPEC097_FIXTURE_INSTANT })
+  ).bytes;
+  const parts = await unzip(bytes);
+  const slide = new TextDecoder().decode(parts.get("ppt/slides/slide1.xml")!);
+  const scaffoldEnd = slide.indexOf("<p:grpSpPr/>") + "<p:grpSpPr/>".length;
+  const treeEnd = slide.indexOf("</p:spTree>");
+  parts.set(
+    "ppt/slides/slide1.xml",
+    encoder.encode(slide.slice(0, scaffoldEnd) + spec097PptxSlide1Shapes() + slide.slice(treeEnd)),
+  );
+  return zip([...parts].map(([name, data]) => ({ name, data })));
+}
+
+/** Page 1's hand-authored frames (odp) and the automatic styles they use. */
+const SPEC097_ODP_STYLES =
+  `<style:style style:name="T97title" style:family="text"><style:text-properties fo:font-size="${EXPECTED_TEXT_DEPTH.titleSizePt}pt"/></style:style>` +
+  `<style:style style:name="T97body" style:family="text"><style:text-properties fo:font-size="24pt"/></style:style>` +
+  `<style:style style:name="P97wrap" style:family="paragraph"><style:paragraph-properties style:punctuation-wrap="hanging"/></style:style>` +
+  `<style:style style:name="gr97vert" style:family="graphic"><style:graphic-properties style:writing-mode="tb-rl" draw:textarea-vertical-align="middle"/></style:style>` +
+  `<text:list-style style:name="L97num"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix=".">` +
+  `<style:list-level-properties text:list-level-position-and-space-mode="label-alignment"><style:list-level-label-alignment text:label-followed-by="listtab" fo:text-indent="-1.27cm" fo:margin-left="1.27cm"/></style:list-level-properties>` +
+  `</text:list-level-style-number></text:list-style>` +
+  `<text:list-style style:name="L97start"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="." text:start-value="${EXPECTED_TEXT_DEPTH.continuedStartAt}"/></text:list-style>`;
+
+const spec097GeomAttrs = (x: number, y: number, w: number, h: number): string =>
+  ` svg:x="${x}cm" svg:y="${y}cm" svg:width="${w}cm" svg:height="${h}cm"`;
+
+/** A `text:list` of one item per line, each optionally in a text span style. */
+function spec097OdpList(style: string, lines: string[], span: string): string {
+  return (
+    `<text:list text:style-name="${style}">` +
+    lines.map((line) => `<text:list-item><text:p>${span ? `<text:span text:style-name="${span}">${line}</text:span>` : line}</text:p></text:list-item>`).join("") +
+    `</text:list>`
+  );
+}
+
+function spec097OdpPage1Frames(): string {
+  const geomAttrs = spec097GeomAttrs;
+  const items = spec097OdpList;
+  return (
+    `<draw:frame presentation:class="title"${geomAttrs(1.5, 0.8, 18, 1.8)}><draw:text-box>` +
+    `<text:p><text:span text:style-name="T97title">${EXPECTED_TEXT_DEPTH.title}</text:span></text:p></draw:text-box></draw:frame>` +
+    `<draw:frame presentation:class="outline"${geomAttrs(1.5, 3.2, 15, 7)}><draw:text-box>` +
+    items("L97num", EXPECTED_TEXT_DEPTH.bodyLines, "T97body") +
+    `</draw:text-box></draw:frame>` +
+    `<draw:frame${geomAttrs(1.5, 11, 15, 3)}><draw:text-box>${items("L97start", EXPECTED_TEXT_DEPTH.continuedLines, "")}</draw:text-box></draw:frame>` +
+    `<draw:frame${geomAttrs(18, 3.2, 12, 2)}><draw:text-box><text:p>${EXPECTED_TEXT_DEPTH.linkSentence}</text:p></draw:text-box></draw:frame>` +
+    `<draw:frame draw:style-name="gr97vert"${geomAttrs(31, 2, 2, 14)}><draw:text-box>` +
+    `<text:p text:style-name="P97wrap">${EXPECTED_TEXT_DEPTH.verticalText}</text:p></draw:text-box></draw:frame>`
+  );
+}
+
+/** The `.odp` twin (SPEC-097 AC-55/56). */
+export async function buildOdpTextDepthFixtureBytes(): Promise<Uint8Array> {
+  const bytes = (
+    await writeOdp(spec097Model("odp"), { now: SPEC097_FIXTURE_INSTANT, modified: SPEC097_FIXTURE_INSTANT })
+  ).bytes;
+  const parts = await unzip(bytes);
+  let content = new TextDecoder().decode(parts.get("content.xml")!);
+  const pageStart = content.indexOf("<draw:page");
+  const pageOpenEnd = content.indexOf(">", pageStart) + 1;
+  const pageEnd = content.indexOf("</draw:page>", pageOpenEnd);
+  content = content.slice(0, pageOpenEnd) + spec097OdpPage1Frames() + content.slice(pageEnd);
+  content = content.replace("</office:automatic-styles>", `${SPEC097_ODP_STYLES}</office:automatic-styles>`);
+  parts.set("content.xml", encoder.encode(content));
+  const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
+  return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+}

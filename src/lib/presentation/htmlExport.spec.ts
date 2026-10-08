@@ -365,3 +365,101 @@ function deepFreeze<T>(value: T): T {
   }
   return value;
 }
+
+// SPEC-097 AC-31/47/49/50 — the export renders markers, indents, spacing, the
+// stored autofit scale and links through the SAME model derivations the stage
+// uses (slideLists / slideLinks / textBody), so the two surfaces agree.
+const markersOf = (html: string): string[] =>
+  Array.from(html.matchAll(/<span class="marker"[^>]*>([^<]*)<\/span>/g)).map((m) => m[1]);
+
+describe("exportPresentationHtml — slide text depth (SPEC-097)", () => {
+  it("derives markers by adjacency, startAt and style — the stage's paragraphMarkers", () => {
+    const frame = textFrame("f1", "x", {
+      paragraphs: [
+        { runs: [{ text: "a" }], bullet: "number", startAt: 3 },
+        { runs: [{ text: "b" }], bullet: "number" },
+        { runs: [{ text: "b1" }], bullet: "number", level: 1, bulletStyle: "lowerAlpha" },
+        { runs: [{ text: "c" }], bullet: "number" },
+        { runs: [{ text: "c1" }], bullet: "number", level: 1, bulletStyle: "lowerAlpha" },
+        { runs: [{ text: "plain" }] },
+        { runs: [{ text: "d" }], bullet: "number" },
+        { runs: [{ text: "star" }], bullet: "disc", bulletChar: "★" },
+      ],
+    });
+    const html = exportPresentationHtml(baseModel([slide("s1", [frame])]), { includeNotes: false });
+    expect(markersOf(html)).toEqual(["3.", "4.", "a.", "5.", "a.", "1.", "★"]);
+  });
+
+  it("indents list items (level + 1) × 1.27cm with a 0.635cm hanging marker box — not the old 0.95cm", () => {
+    const frame = textFrame("f1", "x", { paragraphs: [{ runs: [{ text: "deep" }], bullet: "disc", level: 1 }] });
+    const html = exportPresentationHtml(baseModel([slide("s1", [frame])]), { includeNotes: false });
+    // 2.54cm = 96px exactly; 0.635cm = 24px.
+    expect(html).toContain("margin-left:96px");
+    expect(html).toContain("text-indent:-24px");
+    expect(html).toContain("min-width:24px");
+  });
+
+  it("renders a picture bullet as an inline image from the deck's media", () => {
+    const frame = textFrame("f1", "x", { paragraphs: [{ runs: [{ text: "pic" }], bullet: "disc", bulletImageId: "ppt/media/image9.png" }] });
+    const html = exportPresentationHtml(
+      baseModel([slide("s1", [frame])], { media: [{ mediaId: "ppt/media/image9.png", contentType: "image/png", data: "QUJD" }] }),
+      { includeNotes: false },
+    );
+    expect(html).toContain('<img class="marker-img" alt="" src="data:image/png;base64,QUJD">');
+  });
+
+  it("renders line/paragraph/letter spacing and the stored autofit scale, anchor and insets", () => {
+    const frame = textFrame("f1", "x", {
+      body: { autofit: "shrink", fontScalePct: 62.5, lineScalePct: 90, anchor: "middle", columns: { count: 2, gapCm: 0.5 } },
+      paragraphs: [
+        { runs: [{ text: "spaced", letterSpacingPt: 0.75 }], lineSpacing: 1.5, spaceBeforePt: 6 },
+        { runs: [{ text: "exact" }], lineSpacingPt: 24, lineSpacingRule: "exact" },
+      ],
+    });
+    const html = exportPresentationHtml(baseModel([slide("s1", [frame])]), { includeNotes: false });
+    expect(html).toContain("--fit-scale:0.625;--line-scale:0.9");
+    expect(html).toContain("justify-content:center");
+    expect(html).toContain("column-count:2");
+    expect(html).toContain("line-height:calc(1.8 * var(--line-scale, 1))");
+    expect(html).toContain("margin-top:calc(8px * var(--fit-scale, 1))");
+    expect(html).toContain("letter-spacing:calc(1px * var(--fit-scale, 1))");
+    expect(html).toContain("line-height:calc(32px * var(--fit-scale, 1) * var(--line-scale, 1))");
+    expect(html).toContain("font-size:calc(24px * var(--fit-scale, 1))");
+  });
+
+  it("renders run and frame links as data-testid=slide-link anchors; dangerous hrefs never reach the file", () => {
+    const linked = textFrame("f1", "x", {
+      linkSlide: 2,
+      paragraphs: [
+        {
+          runs: [
+            { text: "own", linkHref: "https://example.com/a?b=1&c=2", linkTooltip: "Ex \"1\"" },
+            { text: "framed" },
+            { text: "evil", linkHref: "javascript:alert(1)" },
+          ],
+        },
+      ],
+    });
+    const image: SlideFrame = { id: "i1", kind: "image", mediaId: "m", xCm: 0, yCm: 0, widthCm: 1, heightCm: 1, linkHref: "https://img.example/" };
+    const html = exportPresentationHtml(baseModel([slide("s1", [linked, image]), slide("s2", [])]), { includeNotes: false });
+    expect(html).toContain(
+      '<a class="slide-link" data-testid="slide-link" href="https://example.com/a?b=1&amp;c=2" data-link-href="https://example.com/a?b=1&amp;c=2" title="Ex &quot;1&quot;"',
+    );
+    // A run without its own link takes the frame's (an in-deck jump to #2).
+    expect(html).toContain('<a class="slide-link" data-testid="slide-link" href="#2" data-link-slide="2" style=');
+    // The frame link also covers the whole box; the image gets one too.
+    expect(html).toContain('<a class="frame-link" data-testid="slide-link" href="#2" data-link-slide="2" aria-label="Link"></a>');
+    expect(html).toContain('<a class="frame-link" data-testid="slide-link" href="https://img.example/"');
+    expect(html).not.toContain("javascript:alert(1)");
+    // The viewer follows a link and returns before advancing.
+    expect(html).toContain('window.open(h,"_blank","noopener,noreferrer")');
+    expect(html).toContain("if(a){e.preventDefault();followLink(a);return;}");
+  });
+
+  it("an in-deck link past the last slide renders as plain text", () => {
+    const frame = textFrame("f1", "x", { paragraphs: [{ runs: [{ text: "gone", linkSlide: 9 }] }] });
+    const html = exportPresentationHtml(baseModel([slide("s1", [frame])]), { includeNotes: false });
+    expect(html).not.toMatch(/<a [^>]*data-testid="slide-link"/);
+    expect(html).toContain(">gone</span>");
+  });
+});

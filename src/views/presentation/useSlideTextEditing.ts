@@ -15,6 +15,9 @@
 // Shift+Tab move between non-covered cells (Tab in the last cell appends a row);
 // arrow keys are left to the browser so the caret can leave the table at its
 // edges.
+//
+// SPEC-097: Tab/Shift+Tab demote/promote; Cmd/Ctrl+K opens the link dialog;
+// every committed text edit tells the after-edit hook (the autofit refit).
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
@@ -22,9 +25,10 @@ import type { ModelColor } from "../../lib/core/theme";
 import {
   applyParagraphFormat,
   applyRunFormat,
+  demote,
   markSlideEdited,
+  promote,
   selectionFormatState,
-  setIndentLevel,
   toggleBullet,
   wholeFrameRange,
   type ParagraphFormatPatch,
@@ -36,7 +40,6 @@ import {
 import { insertTableRow, nextCellAddress, ownerCellAt, prevCellAddress } from "../../lib/presentation/tables";
 import {
   normalizeTextFrameDom,
-  placeCaret,
   placeCaretAtPoint,
   renderEditableParagraphs,
   selectAllIn,
@@ -44,22 +47,24 @@ import {
   setSelectionRange,
 } from "../../components/presentation/slideTextDom";
 import type { FrameSelection } from "./useFrameSelection";
+import {
+  copyPlainText,
+  insertPlainText,
+  isCollapsed,
+  paragraphSpan,
+  placeCaretAtEnd,
+  reidentifyEditedFrame,
+  type CaretPoint,
+  type CellAddress,
+  type ParagraphCommand,
+  type TextCommand,
+  type TextCommandTarget,
+} from "./slideTextSession";
+
+export type { CaretPoint, CellAddress } from "./slideTextSession";
 
 /** How long a pause closes a typing burst (SPEC-081: ≥ 1s). */
 export const TYPING_BURST_MS = 1000;
-
-/** The viewport coordinates of a double-click, so the session drops the caret
- * at the click point rather than the end of the frame (AC-1). */
-export interface CaretPoint {
-  x: number;
-  y: number;
-}
-
-/** A table cell address (SPEC-091). */
-export interface CellAddress {
-  row: number;
-  col: number;
-}
 
 export interface SlideTextEditingDeps {
   model: Ref<PresentationModel | null>;
@@ -107,12 +112,20 @@ export interface SlideTextEditing {
   setAlign: (align: NonNullable<TextFrame["paragraphs"][number]["align"]>) => void;
   toggleBulletCmd: () => void;
   indent: (delta: 1 | -1) => void;
-}
-
-function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {
-  const last = Math.max(0, owner.paragraphs.length - 1);
-  const lastLen = owner.paragraphs[last]?.runs.reduce((n, r) => n + r.text.length, 0) ?? 0;
-  placeCaret(el, { para: last, offset: lastLen });
+  // SPEC-097 hooks for useSlideTextDepth (types: slideTextSession.ts).
+  /** What a command would act on now (the live/last DOM selection in a
+   * session, else the whole selected text frame), or null. */
+  commandTarget: () => TextCommandTarget | null;
+  /** ONE undo entry: record → apply → markSlideEdited → re-render → commit;
+   * `range` overrides the command range. False when nothing is targeted. */
+  runTextCommand: (label: string, apply: TextCommand, range?: TextRange) => boolean;
+  runParagraphCommand: (label: string, apply: ParagraphCommand) => boolean;
+  /** Registers what Cmd/Ctrl+K does inside a session (the link dialog). */
+  setLinkShortcut: (handler: (() => void) | null) => void;
+  /** Registers what runs, with the frame's id, after each text edit committed
+   * here (typing, paste, cut, a command, the end of a session that changed
+   * text) — already marked edited, so autofit may write back (AC-38/41). */
+  setAfterEdit: (handler: ((frameId: string) => void) | null) => void;
 }
 
 export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
@@ -144,22 +157,15 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     }
   }
 
-  // The slides model is a shallowRef and child views' computeds key off object
-  // identity, so a nested `frame.paragraphs = …` is not seen by the read-only
-  // renderers (the stage's other frames, the filmstrip thumbnail — AC-43/44).
-  // Replace BOTH the edited frame and its slide with fresh objects (same ids)
-  // so every `:slide`/`:frame`-bound view re-renders. The editing frame's
-  // contenteditable host is imperatively managed and keyed by id, so it is not
-  // disturbed; the slide id is unchanged, so selection is not dropped.
-  function bumpFrame(frame: SlideFrame): void {
-    const model = deps.model.value;
-    const current = deps.currentSlide.value;
-    if (!model || !current) return;
-    const frames = current.frames.map((f) => (f.id === frame.id ? { ...f } : f));
-    const index = model.slides.indexOf(current);
-    if (index >= 0) {
-      model.slides[index] = { ...current, frames };
-    }
+  // Fresh frame + slide identities so the read-only views re-render (AC-43/44).
+  const bumpFrame = (frame: SlideFrame): void => reidentifyEditedFrame(deps.model.value, deps.currentSlide.value, frame.id);
+
+  // --- the after-edit hook (SPEC-097) ---------------------------------------
+  let afterEdit: ((frameId: string) => void) | null = null;
+  let sessionEdited = false; // so a session that changed nothing never refits
+  function edited(frame: SlideFrame): void {
+    if (editingFrameId.value) sessionEdited = true;
+    afterEdit?.(frame.id);
   }
 
   // --- frame / owner lookup -------------------------------------------------
@@ -349,8 +355,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   function stopEditing(): void {
     closeBurst();
     if (host.value && editingOwner.value) {
-      syncModelFromDom();
+      syncModelFromDom(sessionEdited);
     }
+    sessionEdited = false;
     detachAndClearHost();
     editingFrameId.value = null;
     editingCell.value = null;
@@ -365,7 +372,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     syncModelFromDom();
   }
 
-  function syncModelFromDom(): void {
+  function syncModelFromDom(notify = true): void {
     const el = host.value;
     const owner = editingOwner.value;
     const frame = editingFrame.value;
@@ -380,6 +387,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     bumpFrame(frame);
     deps.commit();
     selectionTick.value++;
+    if (notify) edited(frame);
   }
 
   function onPaste(event: ClipboardEvent): void {
@@ -395,15 +403,8 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     syncModelFromDom();
   }
 
-  /** Cut/copy put PLAIN text on the clipboard (AC-14) — the styled DOM is never
-   * written, so a paste elsewhere carries no slide formatting; the empty-
-   * placeholder prompt lives outside the host, so it can never be copied. */
-  function onCopy(event: ClipboardEvent): void {
-    const text = host.value?.ownerDocument.getSelection()?.toString() ?? "";
-    if (!event.clipboardData) return;
-    event.preventDefault();
-    event.clipboardData.setData("text/plain", text);
-  }
+  // Cut/copy put PLAIN text on the clipboard (AC-14).
+  const onCopy = (event: ClipboardEvent): void => copyPlainText(event, host.value);
   function onCut(event: ClipboardEvent): void {
     if (!host.value || !editingOwner.value) return;
     onCopy(event);
@@ -429,6 +430,13 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       tabCell(event.shiftKey ? -1 : 1);
       return;
     }
+    // SPEC-097 AC-23: in a text session Tab demotes / Shift+Tab promotes (one
+    // "Indent" entry; onGlobalKeydown's Tab frame-cycling skips while editing).
+    if (event.key === "Tab" && !event.metaKey && !event.ctrlKey) {
+      event.preventDefault();
+      runCommand("Indent", (owner, range) => (event.shiftKey ? promote : demote)(owner, paragraphSpan(range)));
+      return;
+    }
     const mod = event.metaKey || event.ctrlKey;
     if (mod && !event.shiftKey && !event.altKey) {
       const key = event.key.toLowerCase();
@@ -445,6 +453,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
         event.preventDefault();
         if (host.value) selectAllIn(host.value);
         selectionTick.value++;
+      } else if (key === "k" && linkShortcut) {
+        event.preventDefault(); // SPEC-097 AC-46: the slide link dialog
+        linkShortcut();
       }
     }
     // Arrow keys are deliberately NOT trapped: the browser moves the caret, so
@@ -491,16 +502,17 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     return wholeFrameRange(owner);
   }
 
-  function runCommand(label: string, apply: (owner: ParagraphOwner, range: TextRange) => void): void {
+  const runCommand = (label: string, apply: TextCommand): void => void runTextCommand(label, apply);
+  function runTextCommand(label: string, apply: TextCommand, override?: TextRange): boolean {
     const owner = targetOwner();
     const frame = targetFrame();
     const slide = deps.currentSlide.value;
     const model = deps.model.value;
-    if (!owner || !frame || !slide || !model) return;
+    if (!owner || !frame || !slide || !model) return false;
     closeBurst();
-    const range = commandRange(owner);
+    const range = override ?? commandRange(owner);
     deps.record(label);
-    apply(owner, range);
+    apply(owner, range, frame);
     markSlideEdited(slide, model.format);
     if (editingOwner.value && host.value) {
       renderEditableParagraphs(host.value, owner.paragraphs);
@@ -509,7 +521,20 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     bumpFrame(frame);
     deps.commit();
     selectionTick.value++;
+    edited(frame);
+    return true;
   }
+
+  const runParagraphCommand = (label: string, apply: ParagraphCommand): boolean =>
+    runTextCommand(label, (owner, range, frame) => apply(owner, paragraphSpan(range), frame));
+  function commandTarget(): TextCommandTarget | null {
+    const owner = targetOwner();
+    const frame = targetFrame();
+    return owner && frame ? { owner, frame, range: commandRange(owner) } : null;
+  }
+  let linkShortcut: (() => void) | null = null;
+  const setLinkShortcut = (handler: (() => void) | null): void => void (linkShortcut = handler);
+  const setAfterEdit = (handler: ((frameId: string) => void) | null): void => void (afterEdit = handler);
 
   function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
     runCommand(label, (owner, range) =>
@@ -537,10 +562,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     paragraphCommand("Align", { align });
   const toggleBulletCmd = (): void =>
     runCommand("Bullet", (owner, range) => toggleBullet(owner, { startPara: range.start.para, endPara: range.end.para }));
+  // Same demote/promote as Tab (SPEC-097): a default marker follows its level.
   const indent = (delta: 1 | -1): void =>
-    runCommand(delta > 0 ? "Indent" : "Outdent", (owner, range) =>
-      setIndentLevel(owner, { startPara: range.start.para, endPara: range.end.para }, delta),
-    );
+    runCommand(delta > 0 ? "Indent" : "Outdent", (owner, range) => (delta > 0 ? demote : promote)(owner, paragraphSpan(range)));
 
   return {
     editingFrameId,
@@ -565,36 +589,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     setAlign,
     toggleBulletCmd,
     indent,
+    commandTarget,
+    runTextCommand,
+    runParagraphCommand,
+    setLinkShortcut,
+    setAfterEdit,
   };
-}
-
-function isCollapsed(range: { start: { para: number; offset: number }; end: { para: number; offset: number } }): boolean {
-  return range.start.para === range.end.para && range.start.offset === range.end.offset;
-}
-
-/** Inserts plain text at the caret, newlines becoming paragraph breaks
- * (AC-13). Deletes any selected content first. */
-function insertPlainText(host: HTMLElement, text: string): void {
-  const doc = host.ownerDocument;
-  const sel = doc.getSelection();
-  if (!sel || sel.rangeCount === 0) return;
-  let range = sel.getRangeAt(0);
-  range.deleteContents();
-  const parts = text.replace(/\r\n?/g, "\n").split("\n");
-  for (let i = 0; i < parts.length; i++) {
-    if (i > 0) {
-      const br = doc.createElement("br");
-      range.insertNode(br);
-      range.setStartAfter(br);
-    }
-    if (parts[i].length > 0) {
-      const node = doc.createTextNode(parts[i]);
-      range.insertNode(node);
-      range.setStartAfter(node);
-    }
-    range.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    range = sel.getRangeAt(0);
-  }
 }

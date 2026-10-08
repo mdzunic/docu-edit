@@ -53,7 +53,9 @@ describe("serializeSlideXml — text frame", () => {
     ]);
     const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
     expect(xml).toContain(`<a:buNone/>`);
-    expect(xml).toContain(`<a:pPr algn="ctr" lvl="1"><a:buChar char="•"/></a:pPr>`);
+    // SPEC-097: a list item now carries its indents (marL = (level + 1) ×
+    // 1.27cm, indent = −0.635cm) ahead of lvl/algn.
+    expect(xml).toContain(`<a:pPr marL="914400" indent="-228600" lvl="1" algn="ctr"><a:buChar char="•"/></a:pPr>`);
   });
 
   it("emits an empty paragraph as a:p with a:endParaRPr", () => {
@@ -386,5 +388,75 @@ describe("notes part avLst sites stay untouched (SPEC-096)", () => {
     const xml = serializeNotesSlideXml(["hello"]);
     expect(xml.match(/<a:avLst\/>/g)).toHaveLength(2);
     expect(xml).not.toContain("<a:gd");
+  });
+});
+
+// --- SPEC-097 text depth inside a serialised slide --------------------------
+describe("serializeSlideXml — SPEC-097 text depth", () => {
+  const R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const rels = new Map<string, Relationship>([
+    ["rId7", { id: "rId7", type: `${R}/hyperlink`, target: "https://example.com/", targetMode: "External" }],
+  ]);
+
+  it("puts the frame's a:bodyPr (attributes, then the autofit child) ahead of a:lstStyle", () => {
+    const frame = titleFrame([{ runs: [{ text: "Fit" }] }]);
+    frame.body = { autofit: "shrink", fontScalePct: 62.5, lineScalePct: 80, anchor: "bottom", insetsCm: { left: 0, top: 0, right: 0, bottom: 0 } };
+    frame.pptxBodyPr = `<a:bodyPr vert="vert270" rtlCol="0"><a:scene3d/></a:bodyPr>`;
+    const xml = serializeSlideXml(textSlide([frame]), NO_RELS, "ppt/slides/slide1.xml");
+    expect(xml).toContain(
+      `<p:txBody><a:bodyPr lIns="0" tIns="0" rIns="0" bIns="0" anchor="b" vert="vert270" rtlCol="0">` +
+        `<a:normAutofit fontScale="62500" lnSpcReduction="20000"/><a:scene3d/></a:bodyPr><a:lstStyle/>`,
+    );
+  });
+
+  it("re-emits a paragraph's preserved a:pPr children around the modelled ones", () => {
+    const xml = serializeSlideXml(
+      textSlide([
+        titleFrame([
+          {
+            runs: [{ text: "x", letterSpacingPt: -1.5 }],
+            bullet: "number",
+            bulletStyle: "lowerRoman",
+            startAt: 2,
+            lineSpacingPt: 30,
+            lineSpacingRule: "exact",
+            pptxPPr: `<a:pPr eaLnBrk="1"><a:buFont typeface="+mj-lt"/><a:defRPr/></a:pPr>`,
+          },
+        ]),
+      ]),
+      NO_RELS,
+      "ppt/slides/slide1.xml",
+    );
+    expect(xml).toContain(
+      `<a:pPr marL="457200" indent="-228600" eaLnBrk="1"><a:lnSpc><a:spcPts val="3000"/></a:lnSpc>` +
+        `<a:buFont typeface="+mj-lt"/><a:buAutoNum type="romanLcPeriod" startAt="2"/><a:defRPr/></a:pPr>`,
+    );
+    expect(xml).toContain(`<a:rPr lang="en-US" sz="1800" spc="-150">`);
+  });
+
+  it("serialises a table cell's list item and run link through the same paragraph path", () => {
+    const slide: Slide = {
+      id: "s",
+      frames: [
+        {
+          id: "tb",
+          kind: "table",
+          xCm: 0,
+          yCm: 0,
+          widthCm: 4,
+          heightCm: 1,
+          columnWidthsCm: [4],
+          rows: [{ cells: [{ paragraphs: [{ runs: [{ text: "go", linkHref: "https://example.com/" }], bullet: "disc" }] }] }],
+        },
+      ],
+    };
+    const xml = serializeSlideXml(slide, rels, "ppt/slides/slide1.xml");
+    expect(xml).toContain(`<a:pPr marL="457200" indent="-228600"><a:buChar char="•"/></a:pPr>`);
+    expect(xml).toContain(`<a:hlinkClick xmlns:r="${R}" r:id="rId7"/></a:rPr><a:t>go</a:t>`);
+  });
+
+  it("writes no a:hlinkClick for a slide jump whose target part is unknown", () => {
+    const xml = serializeSlideXml(textSlide([titleFrame([{ runs: [{ text: "x", linkSlide: 9 }] }])]), rels, "ppt/slides/slide1.xml");
+    expect(xml).not.toContain("hlinkClick");
   });
 });

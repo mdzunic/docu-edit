@@ -14,13 +14,13 @@ import UiButton from "../components/ui/UiButton.vue";
 import DeckBody from "../components/presentation/DeckBody.vue";
 import { stageFields } from "../components/presentation/slideRender";
 import { now } from "../lib/clock";
-import PresentationToolbar from "../components/presentation/PresentationToolbar.vue";
-import SlideInsertBar from "../components/presentation/SlideInsertBar.vue";
+import SlideToolbarHost from "../components/presentation/SlideToolbarHost.vue";
 import SlideRibbon from "../components/presentation/SlideRibbon.vue";
 import DeckAppBar from "../components/presentation/DeckAppBar.vue";
 import PresentationDialogs from "../components/presentation/PresentationDialogs.vue";
 import HeaderFooterDialog from "../components/presentation/HeaderFooterDialog.vue";
 import ThemesPanel from "../components/presentation/ThemesPanel.vue";
+import TextPanel from "../components/presentation/TextPanel.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
@@ -42,6 +42,7 @@ import { useWindowKeys } from "./presentation/useWindowKeys";
 import { useDeckActions } from "./presentation/useDeckActions";
 import { useDeckSetup } from "./presentation/useDeckSetup";
 import { useHeaderFooter } from "./presentation/useHeaderFooter";
+import { useSlideTextDepth } from "./presentation/useSlideTextDepth";
 
 const route = useRoute();
 const router = useRouter();
@@ -145,6 +146,9 @@ const { transitions, animations, tables, charts, media } = useEditingPanels({
 // --- deck theme: the Design panel (SPEC-094) -------------------------------
 const themePanel = useDeckTheme({ model: presentation, record: slideUndo.record, commit });
 
+// --- slide text depth: lists, spacing, autofit, links (SPEC-097) -----------
+const textDepth = useSlideTextDepth({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit, selection: stageEdit.selection, editing: stageEdit.editing });
+
 // --- slide layouts + Reset slide (SPEC-089) --------------------------------
 const layouts = useSlideLayouts({
   model: presentation,
@@ -209,10 +213,12 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
         :media-open="media.open.value"
         :header-footer-open="headerFooter.open.value"
         :theme-open="themePanel.open.value"
+        :text-open="textDepth.panelOpen.value"
         @undo="slideUndo.undo()"
         @redo="slideUndo.redo()"
         @notes-toggle="notes.toggle()"
         @theme-toggle="themePanel.toggle()"
+        @text-toggle="textDepth.togglePanel()"
         @transition-toggle="transitions.toggle()"
         @animate-toggle="animations.toggle()"
         @layout-toggle="layouts.toggle()"
@@ -226,49 +232,22 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
             @command="menu.run"
           />
         </template>
+        <!-- Both strips' bindings live in SlideToolbarHost (SPEC-097). -->
         <template #home>
-          <PresentationToolbar
-            :state="stageEdit.editing.toolbarState.value ?? undefined"
-            :enabled="stageEdit.editing.toolbarEnabled.value"
-            :recent-colors="stageEdit.recentColors.value"
+          <SlideToolbarHost
+            :stage-edit="stageEdit"
+            :text-depth="textDepth"
             :theme="presentation.theme"
-            @bold="stageEdit.editing.toggleBold()"
-            @italic="stageEdit.editing.toggleItalic()"
-            @underline="stageEdit.editing.toggleUnderline()"
-            @font="stageEdit.editing.setFontFamily($event)"
-            @size="stageEdit.editing.setFontSize($event)"
-            @color="stageEdit.setColor($event)"
-            @align="stageEdit.editing.setAlign($event)"
-            @bullet="stageEdit.editing.toggleBulletCmd()"
-            @indent="stageEdit.editing.indent(1)"
-            @outdent="stageEdit.editing.indent(-1)"
           />
         </template>
         <template #insert>
-          <SlideInsertBar
-            :selected-frame="stageEdit.selection.anchorFrame.value ?? undefined"
-            :selected-count="stageEdit.arrange.selectedCount.value"
-            :has-group="stageEdit.selection.selectedFrameIds.value.some((id) => currentSlide?.frames.find((f) => f.id === id)?.kind === 'group')"
-            :can-distribute="stageEdit.arrange.canDistribute.value"
-            :distribute-reason="stageEdit.arrange.distributeReason.value"
-            :align-reference="stageEdit.arrange.alignReference.value"
+          <SlideToolbarHost
+            strip="insert"
+            :stage-edit="stageEdit"
+            :text-depth="textDepth"
             :theme="presentation.theme"
-            :armed-kind="stageEdit.insertion.armed.value?.kind ?? ''"
-            @insert-text-box="stageEdit.insertion.armTextBox()"
-            @insert-shape="stageEdit.insertion.armShape($event)"
-            @insert-image="stageEdit.insertion.insertImageFile($event)"
-            @insert-media="stageEdit.insertion.insertMediaFile($event)"
-            @insert-table="(rows, cols) => stageEdit.insertion.insertTable(rows, cols)"
-            @insert-chart="charts.pickChartType($event)"
-            @arrange="stageEdit.manipulation.arrange($event)"
-            @align="stageEdit.arrange.align($event)"
-            @distribute="stageEdit.arrange.distribute($event)"
-            @align-reference="stageEdit.arrange.alignReference.value = $event"
-            @group="stageEdit.arrange.group()"
-            @ungroup="stageEdit.arrange.ungroup()"
-            @position-toggle="stageEdit.arrange.openPosition()"
-            @set-fill="stageEdit.setFill($event)"
-            @set-stroke="stageEdit.setStroke($event)"
+            :charts="charts"
+            :slide="currentSlide ?? undefined"
           />
         </template>
       </SlideRibbon>
@@ -329,6 +308,10 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
         @reorder="filmstrip.onReorder"
       />
       <ThemesPanel :controller="themePanel" />
+      <TextPanel
+        :controller="textDepth"
+        :slide-number="currentIndex + 1"
+      />
     </div>
     <PresentationDialogs
       :deck-actions="deckActions"

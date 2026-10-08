@@ -11,6 +11,7 @@
 // siblings and src/lib/core.
 import type { PresentationFormat, SlideParagraph, SlideRun } from "./model";
 import { paragraphText } from "./slideModel";
+import { defaultMarkerStyle, markerType, type ListMarkerStyle } from "../core/lists";
 import {
   DEFAULT_THEME,
   resolveColor,
@@ -54,14 +55,33 @@ export interface RunFormatPatch {
   fontFamily?: ModelFont;
   sizePt?: number;
   color?: ModelColor;
+  /** SPEC-097: letter spacing in points; `null` or 0 clears. */
+  letterSpacingPt?: number | null;
+  /** SPEC-097 run link: `null` clears. Setting one target clears the other
+   *  (at most one of `linkHref`/`linkSlide` is ever set). */
+  linkHref?: string | null;
+  linkSlide?: number | null;
+  linkTooltip?: string | null;
 }
 
 /** The paragraph-level formatting a command sets. `align:"left"`, `bullet:null`
- * and `level:0` clear back to the model default (the field is dropped). */
+ * and `level:0` clear back to the model default (the field is dropped); every
+ * SPEC-097 field clears with `null` the same way `bullet: null` does. */
 export interface ParagraphFormatPatch {
   align?: SlideParagraph["align"];
   bullet?: SlideParagraph["bullet"] | null;
   level?: number;
+  bulletStyle?: ListMarkerStyle | null;
+  bulletChar?: string | null;
+  bulletImageId?: string | null;
+  startAt?: number | null;
+  indentCm?: number | null;
+  hangingCm?: number | null;
+  lineSpacing?: number | null;
+  lineSpacingPt?: number | null;
+  lineSpacingRule?: "exact" | null;
+  spaceBeforePt?: number | null;
+  spaceAfterPt?: number | null;
 }
 
 /** A paragraph range (inclusive) for paragraph-level commands. */
@@ -88,7 +108,11 @@ function marksEqual(a: RunMarks, b: RunMarks): boolean {
     !!a.underline === !!b.underline &&
     sameModelFont(a.fontFamily, b.fontFamily) &&
     a.sizePt === b.sizePt &&
-    sameModelColor(a.color, b.color)
+    sameModelColor(a.color, b.color) &&
+    a.letterSpacingPt === b.letterSpacingPt &&
+    a.linkHref === b.linkHref &&
+    a.linkSlide === b.linkSlide &&
+    a.linkTooltip === b.linkTooltip
   );
 }
 
@@ -127,6 +151,10 @@ function buildRun(text: string, marks: RunMarks): SlideRun {
   if (marks.fontFamily) run.fontFamily = marks.fontFamily;
   if (marks.sizePt !== undefined) run.sizePt = marks.sizePt;
   if (marks.color) run.color = marks.color;
+  if (marks.letterSpacingPt !== undefined) run.letterSpacingPt = marks.letterSpacingPt;
+  if (marks.linkHref !== undefined) run.linkHref = marks.linkHref;
+  if (marks.linkSlide !== undefined) run.linkSlide = marks.linkSlide;
+  if (marks.linkTooltip !== undefined) run.linkTooltip = marks.linkTooltip;
   return run;
 }
 
@@ -153,6 +181,30 @@ function applyPatchToMarks(marks: RunMarks, patch: RunFormatPatch): void {
   if (patch.color !== undefined) {
     if (patch.color) marks.color = patch.color;
     else delete marks.color;
+  }
+  if (patch.letterSpacingPt !== undefined) {
+    const pt = patch.letterSpacingPt === null ? 0 : clampLetterSpacing(patch.letterSpacingPt);
+    if (pt === 0) delete marks.letterSpacingPt;
+    else marks.letterSpacingPt = pt;
+  }
+  if (patch.linkHref !== undefined) {
+    if (patch.linkHref) {
+      marks.linkHref = patch.linkHref;
+      delete marks.linkSlide;
+    } else delete marks.linkHref;
+  }
+  if (patch.linkSlide !== undefined) {
+    if (patch.linkSlide) {
+      marks.linkSlide = patch.linkSlide;
+      delete marks.linkHref;
+    } else delete marks.linkSlide;
+  }
+  if (patch.linkTooltip !== undefined) {
+    if (patch.linkTooltip) marks.linkTooltip = patch.linkTooltip;
+    else delete marks.linkTooltip;
+  }
+  if (marks.linkHref === undefined && marks.linkSlide === undefined) {
+    delete marks.linkTooltip; // a tooltip is meaningless without a link
   }
 }
 
@@ -209,8 +261,52 @@ export function applyRunFormat(frame: ParagraphOwner, range: TextRange, patch: R
   return changed;
 }
 
-/** Applies paragraph-level formatting (align/bullet/level) to every paragraph
- * a range touches. */
+/** The SPEC-097 value ranges, clamped by every command (and by the panel). */
+export const LINE_SPACING_RANGE = { min: 0.25, max: 5 } as const;
+export const LINE_SPACING_PT_RANGE = { min: 4, max: 1000 } as const;
+export const PARAGRAPH_SPACE_PT_RANGE = { min: 0, max: 500 } as const;
+export const LETTER_SPACING_PT_RANGE = { min: -10, max: 10 } as const;
+export const START_AT_RANGE = { min: 1, max: 32767 } as const;
+
+const round = (value: number, step: number): number => Math.round(value / step) * step;
+const r3 = (value: number): number => Math.round(value * 1000) / 1000;
+
+/** Letter spacing clamped to −10…10 pt in 0.1 steps. */
+export function clampLetterSpacing(pt: number): number {
+  return Math.round(clamp(pt, LETTER_SPACING_PT_RANGE.min, LETTER_SPACING_PT_RANGE.max) * 10) / 10;
+}
+
+/** The patch keys whose edit clears a paragraph's preserved source properties
+ * (`pptxPPr`/`odpParaProps`): the preserved `a:buFont`/`a:buClr`/`a:buSzPct`
+ * and any unrecognised bullet or spacing form shadow the marker and the
+ * spacing, so a command that edits those must not let stale markup be
+ * re-emitted over it — exactly Table.docxTblPr's documented rule. Alignment,
+ * level and the (fully modelled) indents shadow nothing preserved. */
+const SHADOWING_KEYS: (keyof ParagraphFormatPatch)[] = [
+  "bullet",
+  "bulletStyle",
+  "bulletChar",
+  "bulletImageId",
+  "startAt",
+  "lineSpacing",
+  "lineSpacingPt",
+  "lineSpacingRule",
+  "spaceBeforePt",
+  "spaceAfterPt",
+];
+
+/** Drops a paragraph's preserved source properties (both formats). */
+export function clearParagraphPreservation(para: SlideParagraph): void {
+  delete para.pptxPPr;
+  delete para.odpParaProps;
+}
+
+function setOrDrop<K extends keyof SlideParagraph>(para: SlideParagraph, key: K, value: SlideParagraph[K] | undefined): void {
+  if (value === undefined) delete para[key];
+  else para[key] = value;
+}
+
+/** Applies paragraph-level formatting to every paragraph a range touches. */
 export function applyParagraphFormat(
   frame: ParagraphOwner,
   range: ParagraphRange,
@@ -218,39 +314,183 @@ export function applyParagraphFormat(
 ): void {
   const start = clamp(range.startPara, 0, Math.max(0, frame.paragraphs.length - 1));
   const end = clamp(range.endPara, 0, Math.max(0, frame.paragraphs.length - 1));
+  const shadows = SHADOWING_KEYS.some((key) => patch[key] !== undefined);
   for (let p = start; p <= end; p++) {
     const para = frame.paragraphs[p];
     if (!para) continue;
+    if (shadows) clearParagraphPreservation(para);
     if (patch.align !== undefined) {
       if (patch.align === "left") delete para.align;
       else para.align = patch.align;
     }
     if (patch.bullet !== undefined) {
-      if (patch.bullet === null) delete para.bullet;
-      else para.bullet = patch.bullet;
+      if (patch.bullet === null) {
+        // Leaving the list drops every marker field with it, so a stale
+        // style can never disagree with an absent `bullet`.
+        delete para.bullet;
+        delete para.bulletStyle;
+        delete para.bulletChar;
+        delete para.bulletImageId;
+        delete para.startAt;
+      } else para.bullet = patch.bullet;
     }
     if (patch.level !== undefined) {
       const lvl = clamp(patch.level, 0, MAX_INDENT_LEVEL);
       if (lvl === 0) delete para.level;
       else para.level = lvl;
     }
+    if (patch.bulletStyle !== undefined) {
+      const style = patch.bulletStyle;
+      if (style === null || !para.bullet) delete para.bulletStyle;
+      else {
+        para.bullet = markerType(style) === "bullet" ? "disc" : "number";
+        if (style === defaultStyleFor(para.bullet)) delete para.bulletStyle;
+        else para.bulletStyle = style;
+      }
+    }
+    if (patch.bulletChar !== undefined) {
+      setOrDrop(para, "bulletChar", patch.bulletChar && para.bullet === "disc" ? patch.bulletChar : undefined);
+    }
+    if (patch.bulletImageId !== undefined) {
+      setOrDrop(para, "bulletImageId", patch.bulletImageId && para.bullet ? patch.bulletImageId : undefined);
+    }
+    if (patch.startAt !== undefined) {
+      const at = patch.startAt === null ? undefined : Math.round(clamp(patch.startAt, START_AT_RANGE.min, START_AT_RANGE.max));
+      setOrDrop(para, "startAt", at === undefined || at === 1 ? undefined : at);
+    }
+    if (patch.indentCm !== undefined) {
+      setOrDrop(para, "indentCm", patch.indentCm === null ? undefined : r3(clamp(patch.indentCm, 0, 50)));
+    }
+    if (patch.hangingCm !== undefined) {
+      setOrDrop(para, "hangingCm", patch.hangingCm === null ? undefined : r3(clamp(patch.hangingCm, 0, 50)));
+    }
+    if (patch.lineSpacing !== undefined) {
+      const v = patch.lineSpacing === null ? undefined : r3(clamp(patch.lineSpacing, LINE_SPACING_RANGE.min, LINE_SPACING_RANGE.max));
+      setOrDrop(para, "lineSpacing", v === 1 ? undefined : v);
+    }
+    if (patch.lineSpacingPt !== undefined) {
+      const v = patch.lineSpacingPt === null ? undefined : round(clamp(patch.lineSpacingPt, LINE_SPACING_PT_RANGE.min, LINE_SPACING_PT_RANGE.max), 0.01);
+      setOrDrop(para, "lineSpacingPt", v === undefined ? undefined : r3(v));
+    }
+    if (patch.lineSpacingRule !== undefined) {
+      setOrDrop(para, "lineSpacingRule", patch.lineSpacingRule ?? undefined);
+    }
+    if (patch.spaceBeforePt !== undefined) {
+      const v = patch.spaceBeforePt === null ? 0 : r3(clamp(patch.spaceBeforePt, PARAGRAPH_SPACE_PT_RANGE.min, PARAGRAPH_SPACE_PT_RANGE.max));
+      setOrDrop(para, "spaceBeforePt", v === 0 ? undefined : v);
+    }
+    if (patch.spaceAfterPt !== undefined) {
+      const v = patch.spaceAfterPt === null ? 0 : r3(clamp(patch.spaceAfterPt, PARAGRAPH_SPACE_PT_RANGE.min, PARAGRAPH_SPACE_PT_RANGE.max));
+      setOrDrop(para, "spaceAfterPt", v === 0 ? undefined : v);
+    }
+    if (para.lineSpacingPt === undefined) delete para.lineSpacingRule;
+    if (para.bullet !== "disc") delete para.bulletChar;
   }
 }
 
-/** Toggles the disc bullet over a paragraph range: turns it OFF when every
- * paragraph in range already has a disc, otherwise turns it ON for all
- * (SPEC-081 writes "disc" only; numbered authoring is out of scope). */
-export function toggleBullet(frame: ParagraphOwner, range: ParagraphRange): void {
+/** The model default marker style of a list type (AC-1's absent rule). */
+function defaultStyleFor(bullet: NonNullable<SlideParagraph["bullet"]>): ListMarkerStyle {
+  return bullet === "number" ? "decimal" : "disc";
+}
+
+/** A list paragraph's EFFECTIVE marker style: `bulletStyle` when it agrees
+ * with `bullet` (markerType), else the type's absent default; undefined for a
+ * paragraph that is not a list item. */
+export function paragraphMarkerStyle(para: SlideParagraph): ListMarkerStyle | undefined {
+  if (!para.bullet) return undefined;
+  const type = para.bullet === "number" ? "number" : "bullet";
+  if (para.bulletStyle && markerType(para.bulletStyle) === type) return para.bulletStyle;
+  return defaultStyleFor(para.bullet);
+}
+
+/** Toggles a list over a paragraph range (SPEC-081, widened by SPEC-097):
+ * turns it OFF when every paragraph in range already is a list item of
+ * `style`'s type (bulleted for a bullet style, numbered for a number style),
+ * otherwise turns it ON for all with `style`. The default third argument
+ * keeps every SPEC-081 call site's "disc" behaviour unchanged. */
+export function toggleBullet(frame: ParagraphOwner, range: ParagraphRange, style: ListMarkerStyle = "disc"): void {
   const start = clamp(range.startPara, 0, Math.max(0, frame.paragraphs.length - 1));
   const end = clamp(range.endPara, 0, Math.max(0, frame.paragraphs.length - 1));
-  let allDisc = true;
+  const bullet = markerType(style) === "bullet" ? "disc" : "number";
+  let allOn = true;
   for (let p = start; p <= end; p++) {
-    if (frame.paragraphs[p] && frame.paragraphs[p].bullet !== "disc") {
-      allDisc = false;
+    if (frame.paragraphs[p] && frame.paragraphs[p].bullet !== bullet) {
+      allOn = false;
       break;
     }
   }
-  applyParagraphFormat(frame, { startPara: start, endPara: end }, { bullet: allDisc ? null : "disc" });
+  const pr = { startPara: start, endPara: end };
+  if (allOn) {
+    applyParagraphFormat(frame, pr, { bullet: null });
+    return;
+  }
+  applyParagraphFormat(frame, pr, { bullet, bulletChar: null, bulletImageId: null });
+  applyParagraphFormat(frame, pr, { bulletStyle: style });
+}
+
+/** What `setListStyle` applies: a marker style (bullet or number — the
+ * paragraphs' list type follows it), a custom bullet glyph, or a picture
+ * bullet (a `model.media` part name) — both of the latter make the items
+ * bulleted. */
+export type ListStyleChoice = ListMarkerStyle | { bulletChar: string } | { bulletImageId: string };
+
+/** Sets the list marker of every paragraph in range (making each a list item
+ * when it was not). A custom glyph/picture keeps (or starts) a bulleted list. */
+export function setListStyle(frame: ParagraphOwner, range: ParagraphRange, choice: ListStyleChoice): void {
+  if (typeof choice === "string") {
+    applyParagraphFormat(frame, range, {
+      bullet: markerType(choice) === "bullet" ? "disc" : "number",
+      bulletChar: null,
+      bulletImageId: null,
+    });
+    applyParagraphFormat(frame, range, { bulletStyle: choice });
+    return;
+  }
+  if ("bulletChar" in choice) {
+    applyParagraphFormat(frame, range, { bullet: "disc", bulletImageId: null, bulletStyle: null });
+    applyParagraphFormat(frame, range, { bulletChar: choice.bulletChar });
+    return;
+  }
+  // A picture bullet is a bullet (pptx `a:buBlip` replaces any `a:buAutoNum`),
+  // so the items become bulleted and drop their numbering fields.
+  applyParagraphFormat(frame, range, { bullet: "disc", bulletChar: null, bulletStyle: null, startAt: null });
+  applyParagraphFormat(frame, range, { bulletImageId: choice.bulletImageId });
+}
+
+/** Paragraph spacing before/after (pt, 0–500; `null`/0 clears). */
+export function setParagraphSpacing(
+  frame: ParagraphOwner,
+  range: ParagraphRange,
+  spacing: { spaceBeforePt?: number | null; spaceAfterPt?: number | null },
+): void {
+  applyParagraphFormat(frame, range, spacing);
+}
+
+/** A line-spacing choice in the panel's vocabulary (CustomSpacingDialog's
+ * multiple / exactly / at least). */
+export type LineSpacingChoice =
+  | { mode: "multiple"; value: number }
+  | { mode: "exact"; pt: number }
+  | { mode: "atLeast"; pt: number };
+
+/** Sets line spacing: a multiple drops any point value; a point value wins
+ * over the multiple (AC-7) with the rule `"exact"` or absent ("at least"). */
+export function setLineSpacing(frame: ParagraphOwner, range: ParagraphRange, choice: LineSpacingChoice): void {
+  if (choice.mode === "multiple") {
+    applyParagraphFormat(frame, range, { lineSpacing: choice.value, lineSpacingPt: null, lineSpacingRule: null });
+  } else {
+    applyParagraphFormat(frame, range, {
+      lineSpacing: null,
+      lineSpacingPt: choice.pt,
+      lineSpacingRule: choice.mode === "exact" ? "exact" : null,
+    });
+  }
+}
+
+/** Letter spacing over a character range (pt, −10…10 in 0.1 steps; 0
+ * clears). Returns whether anything changed. */
+export function setLetterSpacing(frame: ParagraphOwner, range: TextRange, pt: number): boolean {
+  return applyRunFormat(frame, range, { letterSpacingPt: pt });
 }
 
 /** Shifts every paragraph in a range by `delta` indent levels, clamped 0–8. */
@@ -264,6 +504,60 @@ export function setIndentLevel(frame: ParagraphOwner, range: ParagraphRange, del
     if (next === 0) delete para.level;
     else para.level = next;
   }
+}
+
+/** Demote (+1) / promote (−1) wrapping `setIndentLevel` (SPEC-097): a list
+ * item whose marker is its old level's default-cycle style (core/lists.ts —
+ * disc/circle/square, decimal/a./i.) moves to the new level's default, so a
+ * demoted "3." reads "a."; an explicit indent shifts by one
+ * LIST_INDENT_STEP_CM with it. Clamped 0–8. */
+function shiftLevel(frame: ParagraphOwner, range: ParagraphRange, delta: 1 | -1): void {
+  const start = clamp(range.startPara, 0, Math.max(0, frame.paragraphs.length - 1));
+  const end = clamp(range.endPara, 0, Math.max(0, frame.paragraphs.length - 1));
+  for (let p = start; p <= end; p++) {
+    const para = frame.paragraphs[p];
+    if (!para) continue;
+    const from = para.level ?? 0;
+    const to = clamp(from + delta, 0, MAX_INDENT_LEVEL);
+    if (to === from) continue;
+    const style = paragraphMarkerStyle(para);
+    if (style && para.bullet && !para.bulletChar && !para.bulletImageId) {
+      const type = para.bullet === "number" ? "number" : "bullet";
+      if (style === defaultMarkerStyle(type, from + 1)) {
+        const next = defaultMarkerStyle(type, to + 1);
+        if (next === defaultStyleFor(para.bullet)) delete para.bulletStyle;
+        else para.bulletStyle = next;
+      }
+    }
+    if (para.indentCm !== undefined) para.indentCm = r3(Math.max(0, para.indentCm + (to - from) * 1.27));
+    setIndentLevel(frame, { startPara: p, endPara: p }, to - from);
+  }
+}
+
+export function demote(frame: ParagraphOwner, range: ParagraphRange): void {
+  shiftLevel(frame, range, 1);
+}
+
+export function promote(frame: ParagraphOwner, range: ParagraphRange): void {
+  shiftLevel(frame, range, -1);
+}
+
+/** A paragraph's line spacing as a single comparable token, so the selection
+ * state folds it like any scalar: `multiple:1.5`, `exact:24`, `atLeast:18`. */
+export function lineSpacingKey(para: SlideParagraph): string {
+  if (para.lineSpacingPt !== undefined) {
+    return `${para.lineSpacingRule === "exact" ? "exact" : "atLeast"}:${para.lineSpacingPt}`;
+  }
+  return `multiple:${para.lineSpacing ?? 1}`;
+}
+
+/** The inverse of `lineSpacingKey`. */
+export function parseLineSpacingKey(key: string): LineSpacingChoice {
+  const [mode, raw] = key.split(":");
+  const value = Number(raw);
+  if (mode === "exact") return { mode: "exact", pt: value };
+  if (mode === "atLeast") return { mode: "atLeast", pt: value };
+  return { mode: "multiple", value: Number.isFinite(value) ? value : 1 };
 }
 
 /** A toolbar-facing value that may be uniform, mixed across the selection, or
@@ -280,6 +574,16 @@ export interface SelectionFormatState {
   align: FieldState<NonNullable<SlideParagraph["align"]>>;
   bullet: FieldState<boolean>;
   level: FieldState<number>;
+  /** SPEC-097: the effective marker style, `"none"` for a non-list paragraph. */
+  bulletStyle: FieldState<ListMarkerStyle | "none">;
+  /** Whether the paragraphs are numbered (the slides-numbering toggle). */
+  numbered: FieldState<boolean>;
+  startAt: FieldState<number>;
+  /** `lineSpacingKey` tokens (`multiple:1.5`, `exact:24`, `atLeast:18`). */
+  lineSpacing: FieldState<string>;
+  spaceBeforePt: FieldState<number>;
+  spaceAfterPt: FieldState<number>;
+  letterSpacingPt: FieldState<number>;
 }
 
 function fold<T>(current: FieldState<T> | "unset", value: T): FieldState<T> | "unset" {
@@ -309,6 +613,13 @@ export function selectionFormatState(
   let align: FieldState<NonNullable<SlideParagraph["align"]>> | "unset" = "unset";
   let bullet: FieldState<boolean> | "unset" = "unset";
   let level: FieldState<number> | "unset" = "unset";
+  let bulletStyle: FieldState<ListMarkerStyle | "none"> | "unset" = "unset";
+  let numbered: FieldState<boolean> | "unset" = "unset";
+  let startAt: FieldState<number> | "unset" = "unset";
+  let lineSpacing: FieldState<string> | "unset" = "unset";
+  let spaceBeforePt: FieldState<number> | "unset" = "unset";
+  let spaceAfterPt: FieldState<number> | "unset" = "unset";
+  let letterSpacingPt: FieldState<number> | "unset" = "unset";
 
   for (let p = norm.start.para; p <= norm.end.para; p++) {
     const para = frame.paragraphs[p];
@@ -316,6 +627,12 @@ export function selectionFormatState(
     align = fold(align, para.align ?? "left");
     bullet = fold(bullet, para.bullet === "disc");
     level = fold(level, para.level ?? 0);
+    bulletStyle = fold(bulletStyle, paragraphMarkerStyle(para) ?? "none");
+    numbered = fold(numbered, para.bullet === "number");
+    startAt = fold(startAt, para.startAt ?? 1);
+    lineSpacing = fold(lineSpacing, lineSpacingKey(para));
+    spaceBeforePt = fold(spaceBeforePt, para.spaceBeforePt ?? 0);
+    spaceAfterPt = fold(spaceAfterPt, para.spaceAfterPt ?? 0);
 
     const text = paragraphText(para);
     const chars = expand(para);
@@ -338,6 +655,7 @@ export function selectionFormatState(
       fontFamily = fold(fontFamily, m.fontFamily ? resolveFont(m.fontFamily, theme) : "");
       sizePt = fold(sizePt, m.sizePt ?? DEFAULT_SIZE_PT);
       color = fold(color, m.color ? resolveColor(m.color, theme) : "");
+      letterSpacingPt = fold(letterSpacingPt, m.letterSpacingPt ?? 0);
     }
   }
 
@@ -351,6 +669,13 @@ export function selectionFormatState(
     align: clean(align),
     bullet: clean(bullet),
     level: clean(level),
+    bulletStyle: clean(bulletStyle),
+    numbered: clean(numbered),
+    startAt: clean(startAt),
+    lineSpacing: clean(lineSpacing),
+    spaceBeforePt: clean(spaceBeforePt),
+    spaceAfterPt: clean(spaceAfterPt),
+    letterSpacingPt: clean(letterSpacingPt),
   };
 }
 

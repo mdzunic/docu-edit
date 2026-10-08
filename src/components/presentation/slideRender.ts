@@ -24,14 +24,21 @@ import type {
   PresentationModel,
 } from "../../lib/presentation/model";
 import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme } from "../../lib/core/theme";
+import { sanitizeHref } from "../../lib/core/urls";
+import { effectiveHangingCm, effectiveIndentCm, paragraphMarkers } from "../../lib/presentation/slideLists";
+import { effectiveRunLink, isLinkableKind, linkOf, type SlideLinkTarget } from "../../lib/presentation/slideLinks";
+import { storedScale, type TextBodyFrame } from "../../lib/presentation/textBody";
 import type { ShapeVisual } from "../../lib/core/shapes";
 import { shapeDefinition } from "../../lib/core/shapeCatalogue";
 import type { ChartVisual } from "../../lib/core/charts";
 
 /** pt → px at 96/72, the ratio the text editor uses. */
 const PT_TO_PX = 96 / 72;
-const LEVEL_INDENT_CM = 0.95;
 const DEFAULT_FONT_SIZE_PT = 18;
+/** CSS's single line pitch (line-height 1.2), the SPEC-079 renderer's own. */
+const SINGLE_LINE_HEIGHT = 1.2;
+/** The minimum gap between a list marker and its text. */
+const MARKER_GAP = "0.3em";
 
 /** A centimetre length as a px string (the model's own cm → CSS px). */
 export function cmPx(cm: number): string {
@@ -226,30 +233,31 @@ export function surfaceBackground(slide: Slide, theme: DocumentTheme = DEFAULT_T
 }
 
 // --- text ------------------------------------------------------------------
-/** A text/shape frame's paragraphs annotated with their bullet marker
- * (numbered bullets restart per contiguous same-level run). */
-export function markParagraphList(paragraphs: SlideParagraph[]): { para: SlideParagraph; marker: string }[] {
-  const counts: Record<number, number> = {};
-  let prev: SlideParagraph | undefined;
-  return paragraphs.map((para) => {
-    let marker = "";
-    if (para.bullet === "number") {
-      const level = para.level ?? 0;
-      if (prev && prev.bullet === "number" && (prev.level ?? 0) === level) {
-        counts[level] = (counts[level] ?? 0) + 1;
-      } else {
-        counts[level] = 1;
-      }
-      marker = `${counts[level]}.`;
-    } else if (para.bullet === "disc") {
-      marker = "•";
-    }
-    prev = para;
-    return { para, marker };
+/** One paragraph annotated with its derived list marker (SPEC-097: numbering
+ * is DERIVED by adjacency in lib/presentation/slideLists.ts, never stored).
+ * `marker` is the glyph/ordinal text ("" for a non-list paragraph or a
+ * picture bullet); `markerImageId` names a picture bullet's media part. The
+ * `{ para, marker }` shape is SPEC-079's, kept so every consumer (the stage,
+ * the library's SlideMiniature) reads one list. */
+export interface MarkedParagraph {
+  para: SlideParagraph;
+  marker: string;
+  markerImageId?: string;
+}
+
+/** A paragraph list (a text body or a table cell) annotated with its markers,
+ * through `paragraphMarkers` — the one derivation every surface shares (the
+ * stage, filmstrip thumbnails, the play view and the build preview render
+ * through SlideFrameView; SPEC-088's export calls `paragraphMarkers` itself). */
+export function markParagraphList(paragraphs: SlideParagraph[]): MarkedParagraph[] {
+  const markers = paragraphMarkers(paragraphs);
+  return paragraphs.map((para, index) => {
+    const marker = markers[index] ?? { text: "" };
+    return marker.imageId ? { para, marker: "", markerImageId: marker.imageId } : { para, marker: marker.text };
   });
 }
 
-export function markedParagraphs(frame: SlideFrame): { para: SlideParagraph; marker: string }[] {
+export function markedParagraphs(frame: SlideFrame): MarkedParagraph[] {
   const paragraphs = frame.kind === "text" ? frame.paragraphs : frame.kind === "shape" ? frame.paragraphs ?? [] : [];
   return markParagraphList(paragraphs);
 }
@@ -272,11 +280,105 @@ export function placeholderPrompt(frame: SlideFrame): string {
   return frame.role === "title" ? "Click to add title" : "Click to add text";
 }
 
-export function paragraphStyle(para: SlideParagraph): Record<string, string> {
-  return {
-    textAlign: para.align ?? "left",
-    marginLeft: para.level ? cmPx(para.level * LEVEL_INDENT_CM) : "0",
+/** A pt length as a px string that scales with the text body's autofit font
+ * scale (`--fit-scale`, set on the `.text-body` by slideTextFit.ts#bodyStyle;
+ * 1 anywhere else, e.g. a table cell). */
+function scaledPtPx(pt: number): string {
+  return `calc(${round3(pt * PT_TO_PX)}px * var(--fit-scale, 1))`;
+}
+
+const round3 = (value: number): number => Math.round(value * 1000) / 1000;
+
+/** A paragraph's line pitch as a CSS `line-height` (SPEC-097 AC-6..8), scaled
+ * by the body's `--line-scale`:
+ * - a multiple `m` (absent = 1) → unitless `1.2 × m`, so every run's line
+ *   grows with its own size, exactly SPEC-079's `line-height: 1.2` at 1×;
+ * - `lineSpacingPt` with rule "exact" → that pitch in px (scaled with the
+ *   font too, so a shrink step actually shrinks it);
+ * - `lineSpacingPt` "at least" (rule absent) → the pitch in px on the
+ *   PARAGRAPH only, which CSS treats as the line box's strut — and
+ *   `runLineHeight` gives the runs their own natural 1.2 pitch, so a line is
+ *   at least the pitch and grows for bigger type. That is the CSS spelling
+ *   of "at least" (CSS has no `line-height: max(...)` per line). */
+export function paragraphLineHeight(para: SlideParagraph): string {
+  if (para.lineSpacingPt !== undefined) {
+    return `calc(${round3(para.lineSpacingPt * PT_TO_PX)}px * var(--fit-scale, 1) * var(--line-scale, 1))`;
+  }
+  const multiple = para.lineSpacing ?? 1;
+  return `calc(${round3(SINGLE_LINE_HEIGHT * multiple)} * var(--line-scale, 1))`;
+}
+
+/** The run-level line height of an "at least" paragraph (see
+ * `paragraphLineHeight`); undefined when the runs simply inherit. */
+export function runLineHeight(para: SlideParagraph): string | undefined {
+  if (para.lineSpacingPt !== undefined && para.lineSpacingRule !== "exact") {
+    return `calc(${SINGLE_LINE_HEIGHT} * var(--line-scale, 1))`;
+  }
+  return undefined;
+}
+
+/** A paragraph's block style (SPEC-079, widened by SPEC-097):
+ * - indent from the model (AC-32/33): the text edge sits `indentCm` in
+ *   (`margin-left`) and the first line starts `hangingCm` earlier
+ *   (`text-indent: -hanging`), where the marker box (`markerStyle`) hangs —
+ *   both through slideLists' `effectiveIndentCm`/`effectiveHangingCm`, so a
+ *   list item's default is `(level + 1) × 1.27cm` (the writers' value; the old
+ *   private 0.95cm/level is gone — a deliberate correction);
+ * - line pitch (`paragraphLineHeight`) and space before/after in pt → px,
+ *   scaled with the body's fit scale.
+ * `defaultAlign` is the frame's own: "left" for a text frame/cell, "center"
+ * for shape text (SPEC-079's centred shape text, now only when the paragraph
+ * states no alignment of its own). */
+export function paragraphStyle(para: SlideParagraph, defaultAlign: NonNullable<SlideParagraph["align"]> = "left"): Record<string, string> {
+  const style: Record<string, string> = {
+    textAlign: para.align ?? defaultAlign,
+    marginLeft: cmPx(effectiveIndentCm(para)),
+    lineHeight: paragraphLineHeight(para),
   };
+  const hanging = effectiveHangingCm(para);
+  if (hanging !== 0) style.textIndent = cmPx(-hanging);
+  if (para.spaceBeforePt) style.marginTop = scaledPtPx(para.spaceBeforePt);
+  if (para.spaceAfterPt) style.marginBottom = scaledPtPx(para.spaceAfterPt);
+  return style;
+}
+
+/** The marker box of a list paragraph: a left-aligned inline-block
+ * `hangingCm` wide (at least — a wider ordinal such as "10." pushes its text
+ * on, keeping a small gap, rather than overprinting it; border-box so the gap
+ * costs nothing when the marker fits), sized and coloured like the
+ * paragraph's first run (PowerPoint's 100% `buSzPct`/follow-text colour;
+ * bullet colour/size are out of scope). */
+export function markerStyle(entry: MarkedParagraph, theme: DocumentTheme = DEFAULT_THEME): Record<string, string> {
+  const first = entry.para.runs[0];
+  const style: Record<string, string> = {
+    display: "inline-block",
+    boxSizing: "border-box",
+    minWidth: cmPx(effectiveHangingCm(entry.para)),
+    paddingRight: MARKER_GAP,
+    textAlign: "left",
+    textIndent: "0",
+    fontSize: scaledPtPx(first?.sizePt ?? DEFAULT_FONT_SIZE_PT),
+    color: first?.color ? resolveColor(first.color, theme) : "#000000",
+  };
+  const lineHeight = runLineHeight(entry.para);
+  if (lineHeight) style.lineHeight = lineHeight;
+  return style;
+}
+
+/** Whether a marked paragraph shows a marker box at all. */
+export function hasMarker(entry: MarkedParagraph): boolean {
+  return entry.marker !== "" || entry.markerImageId !== undefined;
+}
+
+/** A picture bullet's image source ("" when the paragraph has none or its
+ * media does not resolve — the marker then falls back to "•"). */
+export function markerImageSrc(entry: MarkedParagraph, resolveMedia: (mediaId: string) => string): string {
+  return entry.markerImageId ? resolveMedia(entry.markerImageId) : "";
+}
+
+/** The text a marker box shows when it has no (resolvable) picture. */
+export function markerFallbackText(entry: MarkedParagraph): string {
+  return entry.marker || "•";
 }
 
 export function runStyle(run: SlideRun, theme: DocumentTheme = DEFAULT_THEME): Record<string, string> {
@@ -285,9 +387,150 @@ export function runStyle(run: SlideRun, theme: DocumentTheme = DEFAULT_THEME): R
   if (run.italic) style.fontStyle = "italic";
   if (run.underline) style.textDecoration = "underline";
   if (run.fontFamily) style.fontFamily = `'${resolveFont(run.fontFamily, theme)}', sans-serif`;
-  style.fontSize = `${(run.sizePt ?? DEFAULT_FONT_SIZE_PT) * PT_TO_PX}px`;
+  // Through the body's `--fit-scale` (SPEC-097 autofit): one rendered body
+  // re-scales by changing a custom property, without re-rendering its runs.
+  style.fontSize = scaledPtPx(run.sizePt ?? DEFAULT_FONT_SIZE_PT);
   style.color = run.color ? resolveColor(run.color, theme) : "#000000";
+  if (run.letterSpacingPt) style.letterSpacing = scaledPtPx(run.letterSpacingPt);
   return style;
+}
+
+// --- links (SPEC-097 AC-47..50) ----------------------------------------------
+/** The test id (and `closest()` hook) of every rendered link element — a
+ * linked run's `<a>` and a linked frame's overlay. */
+export const SLIDE_LINK_TESTID = "slide-link";
+/** The bubbling event the editor stage dispatches from a Cmd/Ctrl+clicked
+ * in-deck link (`detail.slide` is 1-based); the editor's link composable
+ * listens for it on `document` and navigates. */
+export const SLIDE_LINK_FOLLOW_EVENT = "slide-link-follow";
+
+/** A link as the renderer emits it. */
+export interface LinkRender {
+  /** The anchor's `href`: the external URL, or `#slide-N` for an in-deck jump. */
+  href: string;
+  /** The sanitised external URL ("" for an in-deck link). */
+  external: string;
+  /** The 1-based in-deck slide (0 for an external link). */
+  slide: number;
+  /** The hover tooltip (undefined = no `title`). */
+  tooltip: string | undefined;
+}
+
+/** A link target as rendered, or null when there is nothing safe to link:
+ * an external href is re-checked through `sanitizeHref` at render (the model
+ * only ever stores clean hrefs; the renderer does not trust that). */
+export function linkRender(target: SlideLinkTarget | null): LinkRender | null {
+  if (!target) return null;
+  const tooltip = target.tooltip ? target.tooltip : undefined;
+  if (target.slide !== undefined && Number.isInteger(target.slide) && target.slide >= 1) {
+    return { href: `#slide-${target.slide}`, external: "", slide: target.slide, tooltip };
+  }
+  const href = target.href !== undefined ? sanitizeHref(target.href) : null;
+  return href ? { href, external: href, slide: 0, tooltip } : null;
+}
+
+/** One run as rendered: text, inline style, and its link (own, else its
+ * frame's — `effectiveRunLink`). A linked run is underlined in its OWN colour
+ * (theme `hlink` belongs to SPEC-094). */
+export interface RunRender {
+  text: string;
+  style: Record<string, string>;
+  link: LinkRender | null;
+}
+
+export function runRenders(para: SlideParagraph, frame: SlideFrame | null, theme: DocumentTheme = DEFAULT_THEME): RunRender[] {
+  const lineHeight = runLineHeight(para);
+  return para.runs.map((run) => {
+    const style = runStyle(run, theme);
+    if (lineHeight) style.lineHeight = lineHeight;
+    const link = linkRender(effectiveRunLink(run, frame ?? undefined));
+    if (link) style.textDecoration = "underline";
+    return { text: run.text, style, link };
+  });
+}
+
+/** A whole-frame link (text/image/shape frames only), as rendered. */
+export function frameLinkRender(frame: SlideFrame): LinkRender | null {
+  return isLinkableKind(frame.kind) ? linkRender(linkOf(frame)) : null;
+}
+
+/** The rendered link element an event landed in (`closest()` over the
+ * `slide-link` test id), or null. */
+export function slideLinkElement(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) return null;
+  const el = target.closest(`[data-testid="${SLIDE_LINK_TESTID}"]`);
+  return el instanceof HTMLElement ? el : null;
+}
+
+/** The target a rendered link element carries (its `data-link-slide` /
+ * `data-link-href`), re-sanitised; null when it carries nothing usable. */
+export function slideLinkTargetOf(el: Element): { slide?: number; href?: string } | null {
+  const slide = Number(el.getAttribute("data-link-slide"));
+  if (Number.isInteger(slide) && slide >= 1) return { slide };
+  const raw = el.getAttribute("data-link-href");
+  const href = raw ? sanitizeHref(raw) : null;
+  return href ? { href } : null;
+}
+
+/** Opens an external link the way both playback surfaces do: a new tab with
+ * no opener and no referrer. */
+export function openExternalLink(href: string): void {
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+
+/** The editor stage's Cmd/Ctrl+click on a link element: an external link
+ * opens in a new tab; an in-deck link dispatches the bubbling
+ * `slide-link-follow` event (detail `{ slide }`, 1-based) from the element.
+ * Returns whether anything was followed. */
+export function followEditorLink(el: Element): boolean {
+  const target = slideLinkTargetOf(el);
+  if (!target) return false;
+  if (target.slide !== undefined) {
+    el.dispatchEvent(new CustomEvent(SLIDE_LINK_FOLLOW_EVENT, { bubbles: true, detail: { slide: target.slide } }));
+  } else if (target.href) {
+    openExternalLink(target.href);
+  }
+  return true;
+}
+
+// --- text body (SPEC-097 AC-11..15, 37..40) ----------------------------------
+/** A frame narrowed to a text-body frame (text or shape), or null. */
+export function textBodyFrameOf(frame: SlideFrame): TextBodyFrame | null {
+  return frame.kind === "text" || frame.kind === "shape" ? frame : null;
+}
+
+/** Whether a text-body frame's text does not wrap (`body.wrap: false`). */
+export function bodyNoWrap(frame: SlideFrame): boolean {
+  const body = textBodyFrameOf(frame)?.body;
+  return body?.wrap === false;
+}
+
+/** The scale a text body renders at before the stage measures it: the
+ * frame's STORED shrink scale (`textBody.storedScale`), 100/100 otherwise. */
+export function initialFitScale(frame: SlideFrame): { fontScalePct: number; lineScalePct: number } {
+  const body = textBodyFrameOf(frame);
+  return body ? storedScale(body) : { fontScalePct: 100, lineScalePct: 100 };
+}
+
+/** The "nothing measured yet" scale a renderer's local ref starts from
+ * (typed here — the `.vue` scripts carry no type syntax). */
+export function noMeasuredScale(): { fontScalePct: number; lineScalePct: number } | null {
+  return null;
+}
+
+/** Whether two fit scales differ enough to re-render (measurement noise
+ * below a hundredth of a percent is "the same"). */
+export function fitScaleDiffers(
+  a: { fontScalePct: number; lineScalePct: number },
+  b: { fontScalePct: number; lineScalePct: number },
+): boolean {
+  return Math.abs(a.fontScalePct - b.fontScalePct) > 0.01 || Math.abs(a.lineScalePct - b.lineScalePct) > 0.01;
+}
+
+/** The default paragraph alignment of a frame's text: shape text centres
+ * (SPEC-079's renderer assumption) unless a paragraph says otherwise. */
+export function defaultParagraphAlign(frame: SlideFrame): "left" | "center" {
+  return frame.kind === "shape" ? "center" : "left";
 }
 
 // --- shapes -----------------------------------------------------------------
@@ -449,7 +692,7 @@ export interface TableCellRender {
   colSpan: number;
   rowSpan: number;
   style: Record<string, string>;
-  paragraphs: { para: SlideParagraph; marker: string }[];
+  paragraphs: MarkedParagraph[];
 }
 
 /** The table's rows as arrays of visible owner cells (covered slots dropped),
