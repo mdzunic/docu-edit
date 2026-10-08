@@ -40,9 +40,15 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   // The stage's window keys (arrow nudges, Escape-deselect) must not also act
   // on keys typed into the panel's controls.
   event.stopPropagation();
-  // Enter commits a number field (its change event) and keeps focus nearby.
+  // Enter commits a number field (its change event, fired by the blur). Its
+  // default action is cancelled first: the commit re-renders and refocuses an
+  // open text session's contenteditable host, and the browser would otherwise
+  // deliver this Enter there and split the paragraph at the caret.
   const target = event.target;
-  if (event.key === "Enter" && target instanceof HTMLInputElement) target.blur();
+  if (event.key === "Enter" && target instanceof HTMLInputElement) {
+    event.preventDefault();
+    target.blur();
+  }
 }
 function onMode(event = new Event("change")) {
   const mode = eventString(event);

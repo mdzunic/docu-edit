@@ -224,6 +224,20 @@ describe("TextPanel (AC-34..36)", () => {
     expect(controller.setColumnGap).toHaveBeenCalledWith(0.5);
   });
 
+  it("Enter commits a number field by blurring it and cancels the key's default", () => {
+    // The commit refocuses an open text session's host; an uncancelled Enter
+    // would then split the paragraph at the session's caret.
+    const wrapper = mount(TextPanel, { props: { controller: panelController() }, attachTo: document.body });
+    const input = wrapper.get('[data-testid="text-space-after"]').element as HTMLInputElement;
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    input.dispatchEvent(enter);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(document.activeElement).not.toBe(input);
+    wrapper.unmount();
+  });
+
   it("disables the paragraph and body groups with nothing targeted", () => {
     const controller = panelController();
     controller.paragraphsEnabled.value = false;
