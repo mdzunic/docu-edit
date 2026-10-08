@@ -38,7 +38,7 @@ export function isTextBodyFrame(frame: SlideFrame | null | undefined): frame is 
 
 /** The insets a frame renders with: its own, else the pptx defaults. */
 export function effectiveInsetsCm(frame: TextBodyFrame): { left: number; top: number; right: number; bottom: number } {
-  return { ...DEFAULT_INSETS_CM, ...(frame.body?.insetsCm ?? {}) };
+  return { ...DEFAULT_INSETS_CM, ...frame.body?.insetsCm };
 }
 
 /** The vertical anchor: stored, else "top" for a text frame and "middle" for
@@ -136,7 +136,7 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(Math.max(v
  * `vert`/`upright`/`anchorCtr`/unrecognised autofit shadow exactly those
  * (Table.docxTblPr's rule); insets/columns/wrap shadow nothing preserved. */
 export function applyTextBody(frame: TextBodyFrame, patch: TextBodyPatch): void {
-  const body: TextBodyProps = { ...(frame.body ?? {}) };
+  const body: TextBodyProps = { ...frame.body };
   if (patch.autofit !== undefined || patch.anchor !== undefined) {
     delete frame.pptxBodyPr;
     delete frame.odpBodyProps;

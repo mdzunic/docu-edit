@@ -10,7 +10,7 @@ describe("core/urls (SPEC-097's move of SPEC-025's URL helpers)", () => {
   });
 
   it("rejects the dangerous schemes and trims the rest", () => {
-    expect([...DANGEROUS_SCHEMES].sort()).toEqual(["data", "javascript", "vbscript"]);
+    expect([...DANGEROUS_SCHEMES].toSorted()).toEqual(["data", "javascript", "vbscript"]);
     expect(isDangerousUrl("DATA:text/html,x")).toBe(true);
     expect(sanitizeHref("vbscript:x")).toBeNull();
     expect(sanitizeHref("   ")).toBeNull();

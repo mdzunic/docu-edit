@@ -21,11 +21,11 @@ function shapeFrame(extra: Partial<ShapeFrame> = {}): ShapeFrame {
   return { id: "s", kind: "shape", geometry: "rect", xCm: 0, yCm: 0, widthCm: 10, heightCm: 4, ...extra };
 }
 
-describe("fitScale (the deterministic autofit ladder)", () => {
-  /** A synthetic measurer: content of `natural` cm at 100% scaling linearly
-   * with the font scale and the line scale. */
-  const linear = (natural: number) => (font: number, line: number): number => (natural * font * line) / 10000;
+/** A synthetic measurer: content of `natural` cm at 100% scaling linearly
+ * with the font scale and the line scale. */
+const linear = (natural: number) => (font: number, line: number): number => (natural * font * line) / 10000;
 
+describe("fitScale (the deterministic autofit ladder)", () => {
   it("keeps 100/100 when the content already fits", () => {
     expect(fitScale(linear(3), 3.5)).toEqual({ fontScalePct: 100, lineScalePct: 100 });
   });
