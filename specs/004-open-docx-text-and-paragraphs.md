@@ -1,7 +1,7 @@
 ---
 id: SPEC-004
 title: Open .docx — text and paragraphs
-status: draft
+status: done
 area: io
 depends_on: [SPEC-002, SPEC-003]
 ---

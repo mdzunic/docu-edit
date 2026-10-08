@@ -1,7 +1,7 @@
 ---
 id: SPEC-018
 title: Bulleted and numbered lists
-status: draft
+status: done
 area: formatting
 depends_on: [SPEC-014, SPEC-015]
 ---

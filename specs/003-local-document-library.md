@@ -1,7 +1,7 @@
 ---
 id: SPEC-003
 title: Local document library
-status: draft
+status: done
 area: io
 depends_on: [SPEC-002]
 ---

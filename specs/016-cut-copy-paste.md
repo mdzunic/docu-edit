@@ -1,7 +1,7 @@
 ---
 id: SPEC-016
 title: Cut, copy and paste
-status: draft
+status: done
 area: editing
 depends_on: [SPEC-011, SPEC-015]
 ---

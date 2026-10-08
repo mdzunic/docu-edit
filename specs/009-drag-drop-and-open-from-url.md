@@ -1,7 +1,7 @@
 ---
 id: SPEC-009
 title: Drag-and-drop and open-from-URL
-status: draft
+status: done
 area: io
 depends_on: [SPEC-004, SPEC-005]
 ---

@@ -1,7 +1,7 @@
 ---
 id: SPEC-015
 title: Undo and redo
-status: draft
+status: done
 area: editing
 depends_on: [SPEC-011, SPEC-012]
 ---

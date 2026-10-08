@@ -1,7 +1,7 @@
 ---
 id: SPEC-014
 title: Paragraph alignment, indents and spacing
-status: draft
+status: done
 area: formatting
 depends_on: [SPEC-011]
 ---

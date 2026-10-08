@@ -1,7 +1,7 @@
 ---
 id: SPEC-006
 title: Save as .docx
-status: draft
+status: done
 area: io
 depends_on: [SPEC-004]
 ---
