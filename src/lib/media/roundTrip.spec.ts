@@ -2,6 +2,8 @@
 // the bytes that go back out, byte-for-byte, for all six formats. This is
 // round-trip fidelity taken to its trivial-but-absolute case: no writer, no
 // re-encode, no metadata rewrite.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../core/equality";
 import { assembleMediaModel } from "./open";
@@ -10,14 +12,17 @@ import type { MediaFormat } from "./model";
 import {
   buildGifFixtureBytes,
   buildJpegFixtureBytes,
-  buildPagesPdfBytes,
   buildPngFixtureBytes,
   buildSvgFixtureBytes,
   buildWebpFixtureBytes,
 } from "./fixtures/build";
 
+// spec107-pages.pdf is the app's own buildPdf output, checked in by
+// scripts/build-media-fixtures.ts (this layer cannot import the writer).
+const PAGES_PDF = new Uint8Array(readFileSync(join(__dirname, "../../../e2e/fixtures/spec107-pages.pdf")));
+
 const FIXTURES: Array<{ format: MediaFormat; bytes: () => Promise<Uint8Array> | Uint8Array }> = [
-  { format: "pdf", bytes: () => buildPagesPdfBytes() },
+  { format: "pdf", bytes: () => PAGES_PDF },
   { format: "png", bytes: () => buildPngFixtureBytes() },
   { format: "jpeg", bytes: () => buildJpegFixtureBytes() },
   { format: "gif", bytes: () => buildGifFixtureBytes() },

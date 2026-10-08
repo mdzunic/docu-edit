@@ -2,10 +2,15 @@
 // cards — badges, the kind-grouped "Images"/"PDFs" chips, the size column,
 // and the shared search/sort/star/select/trash machinery over MIXED kinds
 // with no new code path. Same harness as HomeView.spec067.spec.ts.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { routes } from "../router";
+
+// The checked-in spec107-pages.pdf (the app's own buildPdf output).
+const PAGES_PDF = new Uint8Array(readFileSync(join(__dirname, "../../e2e/fixtures/spec107-pages.pdf")));
 
 beforeEach(() => {
   vi.resetModules();
@@ -36,7 +41,7 @@ async function loadModules() {
   }
   async function seedMedia(title: string, format: "png" | "pdf", at: number) {
     const bytes =
-      format === "pdf" ? fixtures.buildPagesPdfBytes() : await fixtures.buildPngFixtureBytes();
+      format === "pdf" ? PAGES_PDF : await fixtures.buildPngFixtureBytes();
     const model = await assembleMediaModel(title, format, bytes);
     vi.spyOn(Date, "now").mockReturnValue(at);
     store.storeMedia(model);

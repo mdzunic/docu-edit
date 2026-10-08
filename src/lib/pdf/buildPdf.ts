@@ -124,11 +124,23 @@ export interface PdfPageInput {
   /** Vector paths (SPEC-070 connectors). Optional: a page input built before
    * this existed draws none. */
   paths?: PdfPathItem[];
+  /** The page's /Rotate — how a viewer turns it for display, clockwise.
+   * Absent or 0 writes no entry. SPEC-107's fixture needs a rotated page. */
+  rotate?: 0 | 90 | 180 | 270;
+}
+
+/** Info entries beyond the title. Absent entries are not written. */
+export interface PdfInfoInput {
+  author?: string;
+  creationDate?: Date;
+  modDate?: Date;
 }
 
 export interface PdfBuildInput {
   /** Info /Title — the empty string when the document has no title. */
   title: string;
+  /** Further Info entries (SPEC-107's fixture records an author and dates). */
+  info?: PdfInfoInput;
   pages: PdfPageInput[];
   /** Parsed faces available for embedding; only faces the items actually
    * use are written into the file. */
@@ -171,6 +183,15 @@ function pdfTextString(text: string): string {
     }
   }
   return `<${hex}>`;
+}
+
+/** A date operand (ISO 32000 7.9.4), in UTC: (D:YYYYMMDDHHmmSSZ). */
+function pdfDateString(date: Date): string {
+  const pad = (value: number, width = 2) => String(value).padStart(width, "0");
+  return (
+    `(D:${pad(date.getUTCFullYear(), 4)}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+    `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z)`
+  );
 }
 
 /** A URI operand: control characters stripped, delimiters escaped, so a
@@ -674,10 +695,11 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
       pageAnnotIds[pageIndex].length > 0
         ? ` /Annots [${pageAnnotIds[pageIndex].map((id) => `${id} 0 R`).join(" ")}]`
         : "";
+    const rotate = page.rotate ? ` /Rotate ${page.rotate}` : "";
     objects.set(
       pageIds[pageIndex],
       `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${fmt(page.widthPt)} ${fmt(page.heightPt)}]` +
-        ` /Resources ${resourcesId} 0 R /Contents ${contentIds[pageIndex]} 0 R${annots} >>`,
+        `${rotate} /Resources ${resourcesId} 0 R /Contents ${contentIds[pageIndex]} 0 R${annots} >>`,
     );
   });
 
@@ -698,9 +720,15 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
       (outlinesId > 0 ? ` /Outlines ${outlinesId} 0 R /PageMode /UseOutlines` : "") +
       " >>",
   );
+  const info = input.info ?? {};
   objects.set(
     infoId,
-    `<< /Title ${pdfTextString(input.title)} /Producer (docu-edit) >>`,
+    `<< /Title ${pdfTextString(input.title)}` +
+      (info.author !== undefined ? ` /Author ${pdfTextString(info.author)}` : "") +
+      " /Producer (docu-edit)" +
+      (info.creationDate ? ` /CreationDate ${pdfDateString(info.creationDate)}` : "") +
+      (info.modDate ? ` /ModDate ${pdfDateString(info.modDate)}` : "") +
+      " >>",
   );
 
   return objects.assemble(catalogId, infoId);

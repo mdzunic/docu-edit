@@ -3,9 +3,14 @@
 // own embed with the parse-derived details beside it; a wrong-kind id hands
 // off to its own view; and none of the editor's surfaces (autosave, version
 // history, comments, File menu) exist here.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
+
+// The checked-in spec107-pages.pdf (the app's own buildPdf output).
+const PAGES_PDF = new Uint8Array(readFileSync(join(__dirname, "../../e2e/fixtures/spec107-pages.pdf")));
 
 beforeEach(() => {
   vi.resetModules();
@@ -69,7 +74,7 @@ describe("MediaView", () => {
 
   it("renders a PDF through the browser embed with parse-derived details (AC-12)", async () => {
     const { store, assembleMediaModel, fixtures, mountMedia } = await loadModules();
-    const model = await assembleMediaModel("pages", "pdf", fixtures.buildPagesPdfBytes());
+    const model = await assembleMediaModel("pages", "pdf", PAGES_PDF);
     store.storeMedia(model);
     const { wrapper } = await mountMedia(model.id);
 

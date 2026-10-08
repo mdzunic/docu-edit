@@ -1,13 +1,18 @@
 // DOM-free builders for the SPEC-107 media fixtures — the same pattern as
 // presentation/fixtures/build.ts: the checked-in e2e fixtures are generated
-// from here (scripts/build-media-fixtures.ts) and the unit specs build the
+// from here by scripts/build-media-fixtures.ts, and the unit specs build the
 // same bytes, so the two can never drift apart. Deflate goes through the
 // platform's CompressionStream (zlib format, what PDF's /FlateDecode and
 // PNG's IDAT both carry), so this module stays importable from core-only
 // territory and runs identically under Node and the browser.
 //
+// spec107-pages.pdf is NOT built here: the fixture script writes it with the
+// app's own buildPdf (src/lib/pdf/buildPdf.ts), which this module cannot
+// import — the media layer imports only its siblings and core. The unit
+// specs read that checked-in file directly.
+//
 // Production notes (AC: fixtures are checked in "with a note recording how
-// each was produced"):
+// each was produced"; scripts/build-media-fixtures.ts restates them):
 // - spec107-shot.png     — buildPngFixtureBytes: a real 64×40 PNG written
 //                          chunk by chunk (IHDR/IDAT/IEND with CRCs), RGB
 //                          gradient scanlines deflated via CompressionStream.
@@ -29,12 +34,6 @@
 //                          the fixture exercises detection, dimensions and
 //                          byte fidelity (nothing in this spec rasterises
 //                          it).
-// - spec107-pages.pdf    — buildPagesPdfBytes: a 3-page PDF 1.7 with mixed
-//                          page sizes (Letter inherited from the page tree
-//                          root, A4 rotated 90°, and a landscape page with a
-//                          CropBox), an /Info dictionary and a classic xref
-//                          table, written object by object with computed
-//                          offsets.
 // - spec107-xrefstream.pdf — buildXrefStreamPdfBytes: a PDF 1.5 file whose
 //                          catalog and /Info live in an object stream and
 //                          whose xref is a cross-reference STREAM with PNG
@@ -291,7 +290,7 @@ export function buildWebpFixtureBytes(): Uint8Array {
 /** Assembles numbered objects into a classic-xref PDF file. Each entry in
  * `objects` is the object BODY (without `N 0 obj`/`endobj`); object numbers
  * are 1-based positions in the array. */
-function assembleClassicPdf(
+export function assembleClassicPdf(
   version: string,
   objects: Array<string | Uint8Array>,
   trailerExtra: string,
@@ -320,24 +319,6 @@ function assembleClassicPdf(
   xref += `startxref\n${xrefStart}\n%%EOF\n`;
   push(xref);
   return concat(parts);
-}
-
-/** spec107-pages.pdf: 3 pages, mixed sizes, one rotated, /Info metadata,
- * classic xref. Page 1 inherits US Letter from the page-tree root; page 2 is
- * A4 rotated 90°; page 3 is landscape with a CropBox. */
-export function buildPagesPdfBytes(): Uint8Array {
-  return assembleClassicPdf(
-    "1.7",
-    [
-      "<< /Type /Catalog /Pages 2 0 R >>",
-      "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 /MediaBox [0 0 612 792] >>",
-      "<< /Type /Page /Parent 2 0 R >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Rotate 90 >>",
-      "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 720 540] /CropBox [10 10 710 530] >>",
-      "<< /Title (SPEC-107 pages) /Author (docu-edit factory) /Producer (docu-edit) /CreationDate (D:20260830120000Z) >>",
-    ],
-    "/Root 1 0 R /Info 6 0 R",
-  );
 }
 
 /** spec107-xrefstream.pdf: PDF 1.5 — catalog and /Info live in an object

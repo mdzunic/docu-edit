@@ -13,6 +13,13 @@
 // chain, a self-referential page tree or a decompression bomb terminates
 // with an error rather than a hang, and each bound has a test that trips it
 // (pdfDocument.spec.ts).
+//
+// Generations: the object map is keyed by object number alone. The
+// generation an xref entry gives is honoured when the object is read (its
+// `N G obj` header must carry it, and the newest xref section's entry wins),
+// but it is never a second map key. A file that genuinely needs
+// generation-keyed lookup — a reference whose generation differs from the
+// live object's — is refused with a PdfParseError rather than half-read.
 
 /** Hard ceilings on what a parse will touch. */
 export const MAX_PDF_OBJECTS = 500_000;
@@ -38,6 +45,13 @@ export class PdfEncryptedError extends PdfParseError {
   }
 }
 
+// Two more refusals that are final: neither is an unusable xref, so the
+// one reconstruction retry would only meet them again.
+/** A reference whose generation is not the live object's (see the header). */
+class PdfGenerationError extends PdfParseError {}
+/** A stream that inflates past MAX_INFLATED_STREAM_BYTES. */
+class PdfInflateLimitError extends PdfParseError {}
+
 /** One parsed PDF value. Strings stay raw bytes (their encoding is
  * context-dependent — see `pdfTextOf`); a stream keeps its dictionary plus
  * the raw (still-encoded) data, decoded on demand by `streamData`. */
@@ -53,6 +67,23 @@ export type PdfValue =
   | { t: "ref"; num: number; gen: number };
 
 const PDF_NULL: PdfValue = { t: "null" };
+
+/** Where each loaded object's `N G obj` header sits in the file, per parsed
+ * document — kept beside the pinned PdfDocument shape (not on it) so errors
+ * raised after the parse (resolve, streamData) still report a real byte
+ * offset. Object-stream members map to their container's offset. */
+const objectOffsets = new WeakMap<PdfDocument, Map<number, number>>();
+
+function offsetOfObject(doc: PdfDocument, num: number): number {
+  return objectOffsets.get(doc)?.get(num) ?? 0;
+}
+
+/** The file offset of a stream's raw data, when it is a view into the
+ * document's own bytes (every stream `parsePdf` reads is); 0 otherwise. */
+function offsetOfStream(doc: PdfDocument, raw: Uint8Array): number {
+  const start = raw.byteOffset - doc.bytes.byteOffset;
+  return raw.buffer === doc.bytes.buffer && start >= 0 && start <= doc.bytes.length ? start : 0;
+}
 
 /** One leaf of the page tree, with its inherited attributes resolved. */
 export interface PdfPageRef {
@@ -493,7 +524,7 @@ async function inflate(
       if (value) {
         total += value.length;
         if (total > maxBytes) {
-          throw new PdfParseError("inflated stream exceeds the size limit", offset);
+          throw new PdfInflateLimitError("inflated stream exceeds the size limit", offset);
         }
         chunks.push(value);
       }
@@ -514,8 +545,51 @@ async function inflate(
   return result;
 }
 
+/** The largest /Columns a predictor may declare — far past any real image
+ * or xref row, small enough that no row buffer can be a hostile allocation. */
+const MAX_PREDICTOR_COLUMNS = 1 << 24;
+
+/** Undoes TIFF Predictor 2 (horizontal differencing) in place, one row of
+ * `columns` × `colors` samples at a time, at any bit depth a PDF allows. */
+function undoTiffPredictor(out: Uint8Array, columns: number, colors: number, bitsPerComponent: number): void {
+  const rowBytes = Math.ceil((columns * colors * bitsPerComponent) / 8);
+  for (let base = 0; base < out.length; base += rowBytes) {
+    const end = Math.min(base + rowBytes, out.length);
+    if (bitsPerComponent === 8) {
+      for (let i = base + colors; i < end; i += 1) {
+        out[i] = (out[i] + out[i - colors]) & 0xff;
+      }
+    } else if (bitsPerComponent === 16) {
+      const step = colors * 2;
+      for (let i = base + step; i + 1 < end; i += 2) {
+        const sum = ((out[i] << 8) | out[i + 1]) + ((out[i - step] << 8) | out[i - step + 1]);
+        out[i] = (sum >> 8) & 0xff;
+        out[i + 1] = sum & 0xff;
+      }
+    } else {
+      // 1, 2 or 4 bits: samples packed big-endian within each byte.
+      const mask = (1 << bitsPerComponent) - 1;
+      const samples = Math.floor(((end - base) * 8) / bitsPerComponent);
+      const read = (s: number): number => {
+        const bit = s * bitsPerComponent;
+        return (out[base + (bit >> 3)] >> (8 - bitsPerComponent - (bit & 7))) & mask;
+      };
+      const write = (s: number, value: number): void => {
+        const bit = s * bitsPerComponent;
+        const shift = 8 - bitsPerComponent - (bit & 7);
+        const at = base + (bit >> 3);
+        out[at] = (out[at] & ~(mask << shift)) | ((value & mask) << shift);
+      };
+      for (let s = colors; s < Math.min(samples, columns * colors); s += 1) {
+        write(s, read(s) + read(s - colors));
+      }
+    }
+  }
+}
+
 /** Undoes a /Predictor pre-transform. 10–15 are the PNG predictors (what
- * xref streams actually use); 2 is TIFF horizontal differencing. */
+ * xref streams actually use); 2 is TIFF horizontal differencing. Parameters
+ * outside what a PDF can declare are refused, never guessed at. */
 function applyPredictor(
   data: Uint8Array,
   predictor: number,
@@ -527,25 +601,27 @@ function applyPredictor(
   if (predictor <= 1) {
     return data;
   }
-  const bpp = Math.max(1, Math.ceil((colors * bitsPerComponent) / 8));
-  const rowBytes = Math.max(1, Math.ceil((columns * colors * bitsPerComponent) / 8));
+  if (
+    !Number.isInteger(columns) || columns < 1 || columns > MAX_PREDICTOR_COLUMNS ||
+    !Number.isInteger(colors) || colors < 1 || colors > 32 ||
+    ![1, 2, 4, 8, 16].includes(bitsPerComponent)
+  ) {
+    throw new PdfParseError("bad /DecodeParms for a predictor", offset);
+  }
   if (predictor === 2) {
-    if (bitsPerComponent !== 8) {
-      throw new PdfParseError("unsupported TIFF predictor depth", offset);
-    }
     const out = data.slice();
-    for (let row = 0; row * rowBytes < out.length; row += 1) {
-      const base = row * rowBytes;
-      for (let i = bpp; i < rowBytes && base + i < out.length; i += 1) {
-        out[base + i] = (out[base + i] + out[base + i - bpp]) & 0xff;
-      }
-    }
+    undoTiffPredictor(out, columns, colors, bitsPerComponent);
     return out;
   }
   if (predictor < 10 || predictor > 15) {
     throw new PdfParseError(`unsupported predictor ${predictor}`, offset);
   }
+  const bpp = Math.max(1, Math.ceil((colors * bitsPerComponent) / 8));
+  const rowBytes = Math.ceil((columns * colors * bitsPerComponent) / 8);
   const rows = Math.floor(data.length / (rowBytes + 1));
+  if (rows === 0) {
+    return new Uint8Array(0);
+  }
   const out = new Uint8Array(rows * rowBytes);
   const prior = new Uint8Array(rowBytes);
   for (let row = 0; row < rows; row += 1) {
@@ -685,7 +761,7 @@ export async function streamData(
   stream: { dict: Map<string, PdfValue>; raw: Uint8Array },
   maxBytes: number = MAX_INFLATED_STREAM_BYTES,
 ): Promise<Uint8Array> {
-  const offset = 0;
+  const offset = offsetOfStream(doc, stream.raw);
   const filterValue = resolve(doc, stream.dict.get("Filter") ?? PDF_NULL);
   const parmsValue = stream.dict.get("DecodeParms") ?? stream.dict.get("DP");
   const filters: string[] = [];
@@ -739,7 +815,10 @@ export function resolve(doc: PdfDocument, value: PdfValue): PdfValue {
   let current = value;
   for (let depth = 0; current.t === "ref"; depth += 1) {
     if (depth >= MAX_RESOLVE_DEPTH) {
-      throw new PdfParseError("reference chain too deep", 0);
+      throw new PdfParseError(
+        "reference chain too deep",
+        value.t === "ref" ? offsetOfObject(doc, value.num) : 0,
+      );
     }
     current = doc.objects.get(current.num) ?? PDF_NULL;
   }
@@ -774,39 +853,32 @@ async function readXrefStream(bytes: Uint8Array, offset: number): Promise<XrefSe
     throw new PdfParseError("expected an xref stream", offset);
   }
   const dict = object.value.dict;
-  // A minimal standalone decode: xref streams are FlateDecode (+ PNG
-  // predictors) or plain; the full streamData needs a built document, which
-  // does not exist yet at xref-read time.
-  const filter = dict.get("Filter");
-  let data = object.value.raw;
-  if (filter?.t === "name" && filter.v === "FlateDecode") {
-    data = await inflate(data, offset);
-    const parmsValue = dict.get("DecodeParms") ?? dict.get("DP");
-    if (parmsValue?.t === "dict") {
-      const num = (key: string, fallback: number): number => {
-        const entry = parmsValue.v.get(key);
-        return entry?.t === "num" ? entry.v : fallback;
-      };
-      data = applyPredictor(data, num("Predictor", 1), num("Columns", 1), num("Colors", 1), num("BitsPerComponent", 8), offset);
-    }
-  } else if (filter !== undefined && filter.t !== "null") {
-    throw new PdfParseError("unsupported xref stream filter", offset);
-  }
+  // An xref stream's dictionary entries are all direct (ISO 32000 7.5.8.2),
+  // so the full filter chain decodes it against a bare document — the real
+  // one does not exist yet at xref-read time.
+  const data = await streamData(buildDocument(bytes, "", false), object.value);
+  const isCount = (value: PdfValue): value is { t: "num"; v: number } =>
+    value.t === "num" && Number.isInteger(value.v) && value.v >= 0;
   const wValue = dict.get("W");
   const sizeValue = dict.get("Size");
-  if (wValue?.t !== "array" || sizeValue?.t !== "num") {
+  if (wValue?.t !== "array" || sizeValue === undefined || !isCount(sizeValue)) {
     throw new PdfParseError("bad xref stream dictionary", offset);
   }
-  const widths = wValue.v.map((entry) => (entry.t === "num" ? entry.v : 0));
+  // Each field is at most 8 bytes wide (a 64-bit offset); anything else is a
+  // hostile or broken /W.
+  const widths = wValue.v.map((entry) => (isCount(entry) && entry.v <= 8 ? entry.v : -1));
   const rowBytes = widths.reduce((sum, w) => sum + w, 0);
-  if (widths.length < 3 || rowBytes <= 0) {
+  if (widths.length < 3 || widths.includes(-1) || rowBytes <= 0) {
     throw new PdfParseError("bad xref stream /W", offset);
   }
   const indexValue = dict.get("Index");
   const index: number[] = [];
   if (indexValue?.t === "array") {
     for (const entry of indexValue.v) {
-      index.push(entry.t === "num" ? entry.v : 0);
+      if (!isCount(entry)) {
+        throw new PdfParseError("bad xref stream /Index", offset);
+      }
+      index.push(entry.v);
     }
   } else {
     index.push(0, sizeValue.v);
@@ -1011,16 +1083,17 @@ function walkPageTree(
   visited: Set<number>,
   depth: number,
 ): void {
+  const at = offsetOfObject(doc, nodeRef.num);
   if (depth > MAX_RESOLVE_DEPTH) {
-    throw new PdfParseError("page tree too deep", 0);
+    throw new PdfParseError("page tree too deep", at);
   }
   if (visited.has(nodeRef.num)) {
-    throw new PdfParseError("cyclic page tree", 0);
+    throw new PdfParseError("cyclic page tree", at);
   }
   visited.add(nodeRef.num);
   const node = resolve(doc, { t: "ref", num: nodeRef.num, gen: nodeRef.gen });
   if (node.t !== "dict") {
-    throw new PdfParseError(`page tree node ${nodeRef.num} is not a dictionary`, 0);
+    throw new PdfParseError(`page tree node ${nodeRef.num} is not a dictionary`, at);
   }
   const own = new Map(inherited);
   for (const key of INHERITABLE_KEYS) {
@@ -1033,15 +1106,15 @@ function walkPageTree(
   const kids = resolve(doc, node.v.get("Kids") ?? PDF_NULL);
   if ((type.t === "name" && type.v === "Pages") || kids.t === "array") {
     if (kids.t !== "array") {
-      throw new PdfParseError(`pages node ${nodeRef.num} has no /Kids`, 0);
+      throw new PdfParseError(`pages node ${nodeRef.num} has no /Kids`, at);
     }
     for (const kid of kids.v) {
       if (kid.t !== "ref") {
-        throw new PdfParseError("page tree kid is not a reference", 0);
+        throw new PdfParseError("page tree kid is not a reference", at);
       }
       walkPageTree(doc, kid, own, visited, depth + 1);
       if (doc.pages.length > MAX_PDF_OBJECTS) {
-        throw new PdfParseError("too many pages", 0);
+        throw new PdfParseError("too many pages", at);
       }
     }
     return;
@@ -1075,11 +1148,66 @@ function walkPageTree(
 
 // --- object loading ----------------------------------------------------------
 
-/** Loads every object the xref lists into `doc.objects`: type-1 entries are
- * parsed at their offsets (tolerantly — a single broken object is skipped,
- * and the page walk decides whether the file is still usable), then type-2
- * entries are expanded out of their object streams. */
-async function loadObjects(doc: PdfDocument, entries: Map<number, XrefEntry>): Promise<void> {
+/** What a parse learned about each live object: its generation (from the
+ * xref entry, or from the header of the definition a rebuilt table kept)
+ * and the byte offset of its `N G obj` header (an object-stream member
+ * reports its container's). */
+interface LiveObjects {
+  generations: Map<number, number>;
+  offsets: Map<number, number>;
+}
+
+function isName(value: PdfValue | undefined, name: string): boolean {
+  return value?.t === "name" && value.v === name;
+}
+
+/** Parses an object stream's members into `doc.objects` — the step the
+ * structured and reconstruction paths share. `accept` says which member
+ * numbers to take. */
+function expandObjectStream(
+  doc: PdfDocument,
+  live: LiveObjects,
+  containerNum: number,
+  container: { dict: Map<string, PdfValue> },
+  data: Uint8Array,
+  accept: (num: number) => boolean,
+): void {
+  const at = live.offsets.get(containerNum) ?? 0;
+  const firstValue = container.dict.get("First");
+  const nValue = container.dict.get("N");
+  const first = firstValue?.t === "num" ? firstValue.v : 0;
+  const count = nValue?.t === "num" ? nValue.v : 0;
+  if (count < 0 || count > MAX_PDF_OBJECTS) {
+    throw new PdfParseError("object stream too large", at);
+  }
+  const header: Cursor = { bytes: data, pos: 0 };
+  for (let i = 0; i < count; i += 1) {
+    const num = tryParseUint(header);
+    const memberOffset = tryParseUint(header);
+    if (num === null || memberOffset === null) {
+      break;
+    }
+    if (!accept(num) || first + memberOffset >= data.length) {
+      continue;
+    }
+    try {
+      doc.objects.set(num, parseValue({ bytes: data, pos: first + memberOffset }, 0));
+      // A compressed object's generation is always 0 (ISO 32000 7.5.7).
+      live.generations.set(num, 0);
+      live.offsets.set(num, at);
+    } catch {
+      // Tolerated, as for top-level objects.
+    }
+  }
+}
+
+/** Loads every object the xref lists into `doc.objects`. A type-1 entry is
+ * read at its offset, and its header must carry the entry's object number
+ * AND generation — the generation is honoured when reading, never a second
+ * map key. A broken entry is skipped (tolerantly: the page walk decides
+ * whether the file is still usable). Type-2 entries are then expanded out
+ * of their object streams. */
+async function loadObjects(doc: PdfDocument, entries: Map<number, XrefEntry>, live: LiveObjects): Promise<void> {
   const resolveLength: LengthResolver = (ref) => {
     const entry = entries.get(ref.num);
     if (entry === undefined || entry.type !== 1) {
@@ -1094,27 +1222,24 @@ async function loadObjects(doc: PdfDocument, entries: Map<number, XrefEntry>): P
       return null;
     }
   };
-  const inStreams = new Map<number, Array<{ num: number; index: number }>>();
+  const containers = new Set<number>();
   for (const [num, entry] of entries) {
     if (entry.type === 1) {
       try {
         const object = parseObjectAt(doc.bytes, entry.offset, resolveLength);
-        if (object.num === num) {
+        if (object.num === num && object.gen === entry.gen) {
           doc.objects.set(num, object.value);
+          live.generations.set(num, entry.gen);
+          live.offsets.set(num, entry.offset);
         }
-      } catch (error) {
-        if (error instanceof PdfEncryptedError) {
-          throw error;
-        }
+      } catch {
         // Tolerated: the page walk fails loudly if this object mattered.
       }
     } else if (entry.type === 2) {
-      const members = inStreams.get(entry.container) ?? [];
-      members.push({ num, index: entry.index });
-      inStreams.set(entry.container, members);
+      containers.add(entry.container);
     }
   }
-  for (const [containerNum, members] of inStreams) {
+  for (const containerNum of containers) {
     const container = doc.objects.get(containerNum);
     if (container === undefined || container.t !== "stream") {
       continue;
@@ -1123,40 +1248,51 @@ async function loadObjects(doc: PdfDocument, entries: Map<number, XrefEntry>): P
     try {
       data = await streamData(doc, container);
     } catch (error) {
-      if (error instanceof PdfParseError && error.message.includes("size limit")) {
+      if (error instanceof PdfInflateLimitError) {
         throw error;
       }
       continue;
     }
-    const firstValue = container.dict.get("First");
-    const nValue = container.dict.get("N");
-    const first = firstValue?.t === "num" ? firstValue.v : 0;
-    const count = nValue?.t === "num" ? nValue.v : 0;
-    if (count < 0 || count > MAX_PDF_OBJECTS) {
-      throw new PdfParseError("object stream too large", 0);
-    }
-    const header: Cursor = { bytes: data, pos: 0 };
-    const positions = new Map<number, number>();
-    for (let i = 0; i < count; i += 1) {
-      const num = tryParseUint(header);
-      const offset = tryParseUint(header);
-      if (num === null || offset === null) {
-        break;
-      }
-      positions.set(num, first + offset);
-    }
-    for (const member of members) {
-      const position = positions.get(member.num);
-      if (position === undefined || position >= data.length) {
-        continue;
-      }
-      try {
-        doc.objects.set(member.num, parseValue({ bytes: data, pos: position }, 0));
-      } catch {
-        // Tolerated, as for top-level objects.
-      }
-    }
+    expandObjectStream(doc, live, containerNum, container, data, (num) => {
+      const entry = entries.get(num);
+      return entry?.type === 2 && entry.container === containerNum;
+    });
   }
+}
+
+/** Refuses a file that genuinely needs generation-keyed lookup: every
+ * reference to a live object must name that object's live generation. (A
+ * reference to an absent or free object number is merely dangling — it
+ * resolves to null, as ISO 32000 says — and needs no generation at all.) */
+function checkGenerations(doc: PdfDocument, live: LiveObjects, trailerOffset: number): void {
+  const check = (root: PdfValue, at: number): void => {
+    const stack: PdfValue[] = [root];
+    while (stack.length > 0) {
+      const value = stack.pop() as PdfValue;
+      if (value.t === "ref") {
+        const generation = live.generations.get(value.num);
+        if (generation !== undefined && generation !== value.gen) {
+          throw new PdfGenerationError(
+            `object ${value.num} is referenced as generation ${value.gen}, but its live ` +
+              `definition is generation ${generation} — generation-keyed lookup is not supported`,
+            at,
+          );
+        }
+      } else if (value.t === "array") {
+        for (const item of value.v) {
+          stack.push(item);
+        }
+      } else if (value.t === "dict" || value.t === "stream") {
+        for (const item of (value.t === "dict" ? value.v : value.dict).values()) {
+          stack.push(item);
+        }
+      }
+    }
+  };
+  for (const [num, value] of doc.objects) {
+    check(value, live.offsets.get(num) ?? 0);
+  }
+  check({ t: "dict", v: doc.trailer }, trailerOffset);
 }
 
 // --- header, startxref, assembly ---------------------------------------------
@@ -1206,20 +1342,24 @@ function buildDocument(bytes: Uint8Array, version: string, reconstructed: boolea
 }
 
 /** Resolves the catalog, walks the page tree and picks up /Info — the shared
- * tail of the structured and reconstruction paths. */
-function finishDocument(doc: PdfDocument): void {
+ * tail of the structured and reconstruction paths. `trailerOffset` is where
+ * the trailer was found, the offset reported when there is no catalog. */
+function finishDocument(doc: PdfDocument, trailerOffset: number): void {
   const rootValue = doc.trailer.get("Root");
   const root = rootValue === undefined ? PDF_NULL : resolve(doc, rootValue);
   if (root.t !== "dict") {
-    throw new PdfParseError("no document catalog", 0);
+    throw new PdfParseError("no document catalog", trailerOffset);
   }
   const pagesRef = root.v.get("Pages");
   if (pagesRef?.t !== "ref") {
-    throw new PdfParseError("catalog has no /Pages", 0);
+    throw new PdfParseError(
+      "catalog has no /Pages",
+      rootValue?.t === "ref" ? offsetOfObject(doc, rootValue.num) : trailerOffset,
+    );
   }
   walkPageTree(doc, pagesRef, new Map(), new Set(), 0);
   if (doc.pages.length === 0) {
-    throw new PdfParseError("document has no pages", 0);
+    throw new PdfParseError("document has no pages", offsetOfObject(doc, pagesRef.num));
   }
   const infoValue = doc.trailer.get("Info");
   if (infoValue !== undefined) {
@@ -1230,9 +1370,9 @@ function finishDocument(doc: PdfDocument): void {
   }
 }
 
-function checkEncrypted(trailer: Map<string, PdfValue>): void {
+function checkEncrypted(trailer: Map<string, PdfValue>, offset: number): void {
   if (trailer.has("Encrypt")) {
-    throw new PdfEncryptedError(0);
+    throw new PdfEncryptedError(offset);
   }
 }
 
@@ -1250,11 +1390,14 @@ async function parseWithXref(bytes: Uint8Array, version: string, headerOffset: n
     startOffset += headerOffset;
   }
   const { entries, trailer } = await readXrefChain(bytes, startOffset);
-  checkEncrypted(trailer);
+  checkEncrypted(trailer, startOffset);
   const doc = buildDocument(bytes, version, false);
   doc.trailer = trailer;
-  await loadObjects(doc, entries);
-  finishDocument(doc);
+  const live: LiveObjects = { generations: new Map(), offsets: new Map() };
+  objectOffsets.set(doc, live.offsets);
+  await loadObjects(doc, entries, live);
+  checkGenerations(doc, live, startOffset);
+  finishDocument(doc, startOffset);
   return doc;
 }
 
@@ -1266,13 +1409,15 @@ async function parseWithXref(bytes: Uint8Array, version: string, headerOffset: n
 async function parseReconstructed(bytes: Uint8Array, version: string): Promise<PdfDocument> {
   const text = latin1(bytes);
   const doc = buildDocument(bytes, version, true);
-  const offsets = new Map<number, number>();
+  const live: LiveObjects = { generations: new Map(), offsets: new Map() };
+  objectOffsets.set(doc, live.offsets);
+  const headers = new Map<number, number>();
   const headerPattern = /(?:^|[^0-9])(\d{1,8})[ \t\r\n]+(\d{1,5})[ \t\r\n]+obj\b/g;
   for (let match = headerPattern.exec(text); match !== null; match = headerPattern.exec(text)) {
     const num = Number(match[1]);
     const start = match.index + match[0].indexOf(match[1]);
-    offsets.set(num, start);
-    if (offsets.size > MAX_PDF_OBJECTS) {
+    headers.set(num, start);
+    if (headers.size > MAX_PDF_OBJECTS) {
       throw new PdfParseError("too many objects", start);
     }
     // Continue scanning from just past the header, not past the whole
@@ -1280,11 +1425,11 @@ async function parseReconstructed(bytes: Uint8Array, version: string): Promise<P
     // harmless (last definition wins anyway).
     headerPattern.lastIndex = match.index + match[0].length;
   }
-  if (offsets.size === 0) {
+  if (headers.size === 0) {
     throw new PdfParseError("no objects found", 0);
   }
   const resolveLength: LengthResolver = (ref) => {
-    const at = offsets.get(ref.num);
+    const at = headers.get(ref.num);
     if (at === undefined) {
       return null;
     }
@@ -1295,77 +1440,89 @@ async function parseReconstructed(bytes: Uint8Array, version: string): Promise<P
       return null;
     }
   };
-  for (const [num, offset] of offsets) {
+  for (const [num, offset] of headers) {
     try {
       const object = parseObjectAt(bytes, offset, resolveLength);
       doc.objects.set(num, object.value);
-    } catch (error) {
-      if (error instanceof PdfEncryptedError) {
-        throw error;
-      }
+      live.generations.set(num, object.gen);
+      live.offsets.set(num, offset);
+    } catch {
+      // Skipped: the page walk fails loudly if this object mattered.
     }
   }
-  // Expand object streams so members hidden inside them are reachable too.
-  for (const [, value] of Array.from(doc.objects)) {
-    if (value.t !== "stream") {
-      continue;
-    }
-    const type = value.dict.get("Type");
-    if (type?.t !== "name" || type.v !== "ObjStm") {
+  // Expand object streams so members hidden inside them are reachable too
+  // (a top-level definition beats a compressed one).
+  for (const [num, value] of Array.from(doc.objects)) {
+    if (value.t !== "stream" || !isName(value.dict.get("Type"), "ObjStm")) {
       continue;
     }
     let data: Uint8Array;
     try {
       data = await streamData(doc, value);
-    } catch {
+    } catch (error) {
+      if (error instanceof PdfInflateLimitError) {
+        throw error;
+      }
       continue;
     }
-    const firstValue = value.dict.get("First");
-    const nValue = value.dict.get("N");
-    const first = firstValue?.t === "num" ? firstValue.v : 0;
-    const count = nValue?.t === "num" ? Math.min(nValue.v, MAX_PDF_OBJECTS) : 0;
-    const header: Cursor = { bytes: data, pos: 0 };
-    for (let i = 0; i < count; i += 1) {
-      const num = tryParseUint(header);
-      const memberOffset = tryParseUint(header);
-      if (num === null || memberOffset === null) {
-        break;
-      }
-      if (!doc.objects.has(num) && first + memberOffset < data.length) {
-        try {
-          doc.objects.set(num, parseValue({ bytes: data, pos: first + memberOffset }, 0));
-        } catch {
-          // Skipped.
-        }
-      }
-    }
+    expandObjectStream(doc, live, num, value, data, (member) => !doc.objects.has(member));
   }
-  // Prefer a real trailer dict (the last one in the file) for /Root, /Info
-  // and the /Encrypt check; fall back to scanning for the catalog.
-  const trailerAt = text.lastIndexOf("trailer");
-  if (trailerAt >= 0) {
+  // Every trailer the file carries, in file order: each classic `trailer`
+  // dictionary and each cross-reference stream's dictionary (a PDF 1.5 file
+  // has no `trailer` keyword — its xref stream carries /Root, /Info and
+  // /Encrypt).
+  const trailers: Array<{ at: number; dict: Map<string, PdfValue> }> = [];
+  for (let at = text.indexOf("trailer"); at >= 0; at = text.indexOf("trailer", at + 7)) {
     try {
-      const cur: Cursor = { bytes, pos: trailerAt + 7 };
-      const trailerValue = parseValue(cur, 0);
-      if (trailerValue.t === "dict") {
-        doc.trailer = trailerValue.v;
+      const value = parseValue({ bytes, pos: at + 7 }, 0);
+      if (value.t === "dict") {
+        trailers.push({ at, dict: value.v });
       }
     } catch {
-      // Fall through to the catalog scan.
+      // Not a trailer after all.
     }
   }
-  checkEncrypted(doc.trailer);
-  if (!doc.trailer.has("Root")) {
+  for (const [num, value] of doc.objects) {
+    if (value.t === "stream" && isName(value.dict.get("Type"), "XRef")) {
+      trailers.push({ at: live.offsets.get(num) ?? 0, dict: value.dict });
+    }
+  }
+  trailers.sort((a, b) => a.at - b.at);
+  // An encrypted file is refused whichever of its trailers says so.
+  for (const trailer of trailers) {
+    checkEncrypted(trailer.dict, trailer.at);
+  }
+  // The newest trailer whose /Root resolves to a catalog supplies /Root and
+  // /Info; with none, the /Type /Catalog itself is found by scanning (the
+  // last one in the file, as with every other object).
+  const isCatalog = (value: PdfValue | undefined): boolean => {
+    const resolved = value === undefined ? PDF_NULL : resolve(doc, value);
+    return resolved.t === "dict" && resolved.v.get("Pages")?.t === "ref";
+  };
+  const newestFirst = trailers.toReversed();
+  const chosen = newestFirst.find((trailer) => isCatalog(trailer.dict.get("Root")));
+  let trailerAt = chosen?.at ?? 0;
+  if (chosen) {
+    doc.trailer = chosen.dict;
+  } else {
+    let catalog: { num: number; at: number } | null = null;
     for (const [num, value] of doc.objects) {
-      const dict = value.t === "dict" ? value.v : value.t === "stream" ? value.dict : null;
-      const type = dict?.get("Type");
-      if (type?.t === "name" && type.v === "Catalog") {
-        doc.trailer.set("Root", { t: "ref", num, gen: 0 });
-        break;
+      const at = live.offsets.get(num) ?? 0;
+      if (value.t === "dict" && isName(value.v.get("Type"), "Catalog") && (catalog === null || at > catalog.at)) {
+        catalog = { num, at };
       }
     }
+    if (catalog !== null) {
+      doc.trailer = new Map([["Root", { t: "ref", num: catalog.num, gen: live.generations.get(catalog.num) ?? 0 }]]);
+      const info = newestFirst.find((trailer) => trailer.dict.has("Info"))?.dict.get("Info");
+      if (info !== undefined) {
+        doc.trailer.set("Info", info);
+      }
+      trailerAt = catalog.at;
+    }
   }
-  finishDocument(doc);
+  checkGenerations(doc, live, trailerAt);
+  finishDocument(doc, trailerAt);
   return doc;
 }
 
@@ -1380,7 +1537,13 @@ export async function parsePdf(bytes: Uint8Array): Promise<PdfDocument> {
   try {
     return await parseWithXref(bytes, header.version, header.offset);
   } catch (error) {
-    if (error instanceof PdfEncryptedError) {
+    // Refusals are final: encryption, a generation conflict and a
+    // decompression bomb are not an unusable xref.
+    if (
+      error instanceof PdfEncryptedError ||
+      error instanceof PdfGenerationError ||
+      error instanceof PdfInflateLimitError
+    ) {
       throw error;
     }
     return parseReconstructed(bytes, header.version);

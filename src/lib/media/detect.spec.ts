@@ -2,16 +2,20 @@
 // false-positive cases the spec calls out — an XHTML file, an XML file whose
 // COMMENT mentions svg, and an empty file. The sniff runs on bytes alone;
 // no test here involves a file name.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { detectMedia } from "../core/packageDetect";
 import {
   buildGifFixtureBytes,
   buildJpegFixtureBytes,
-  buildPagesPdfBytes,
   buildPngFixtureBytes,
   buildSvgFixtureBytes,
   buildWebpFixtureBytes,
+  buildXrefStreamPdfBytes,
 } from "./fixtures/build";
+
+const PAGES_PDF = new Uint8Array(readFileSync(join(__dirname, "../../../e2e/fixtures/spec107-pages.pdf")));
 
 function utf8(text: string): Uint8Array {
   return new TextEncoder().encode(text);
@@ -19,7 +23,8 @@ function utf8(text: string): Uint8Array {
 
 describe("detectMedia", () => {
   it("recognises all six formats from their bytes", async () => {
-    expect(detectMedia(buildPagesPdfBytes())).toBe("pdf");
+    expect(detectMedia(PAGES_PDF)).toBe("pdf");
+    expect(detectMedia(await buildXrefStreamPdfBytes())).toBe("pdf");
     expect(detectMedia(await buildPngFixtureBytes())).toBe("png");
     expect(detectMedia(buildJpegFixtureBytes())).toBe("jpeg");
     expect(detectMedia(buildGifFixtureBytes())).toBe("gif");
