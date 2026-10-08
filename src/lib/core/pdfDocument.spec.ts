@@ -134,6 +134,31 @@ function breakStartxref(bytes: Uint8Array): Uint8Array {
   return ascii(latin1(bytes).replace(/startxref\s+\d+/, "startxref\n2"));
 }
 
+/** PNG-predicts `rows` (1 byte per pixel) with the given per-row filter
+ * types — the encoder side of what the reader must undo. */
+function pngPredict(rows: number[][], types: number[]): Uint8Array {
+  const out: number[] = [];
+  let prior = rows[0].map(() => 0);
+  rows.forEach((row, r) => {
+    const type = types[r];
+    out.push(type);
+    row.forEach((raw, i) => {
+      const left = i > 0 ? row[i - 1] : 0;
+      const up = prior[i];
+      const upLeft = i > 0 ? prior[i - 1] : 0;
+      const p = left + up - upLeft;
+      const paeth =
+        Math.abs(p - left) <= Math.abs(p - up) && Math.abs(p - left) <= Math.abs(p - upLeft)
+          ? left
+          : Math.abs(p - up) <= Math.abs(p - upLeft) ? up : upLeft;
+      const predicted = [0, left, up, Math.floor((left + up) / 2), paeth][type];
+      out.push((raw - predicted) & 0xff);
+    });
+    prior = row;
+  });
+  return new Uint8Array(out);
+}
+
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
   return promise.then(
     () => null,
@@ -430,31 +455,6 @@ describe("streams and filters", () => {
     const zeros = { dict: new Map<string, PdfValue>([["Filter", { t: "name", v: "ASCII85Decode" }]]), raw: ascii("z@:E^~>") };
     expect([...(await streamData(doc, zeros))]).toEqual([0, 0, 0, 0, 0x61, 0x62, 0x63]);
   });
-
-  /** PNG-predicts `rows` (1 byte per pixel) with the given per-row filter
-   * types — the encoder side of what the reader must undo. */
-  function pngPredict(rows: number[][], types: number[]): Uint8Array {
-    const out: number[] = [];
-    let prior = rows[0].map(() => 0);
-    rows.forEach((row, r) => {
-      const type = types[r];
-      out.push(type);
-      row.forEach((raw, i) => {
-        const left = i > 0 ? row[i - 1] : 0;
-        const up = prior[i];
-        const upLeft = i > 0 ? prior[i - 1] : 0;
-        const p = left + up - upLeft;
-        const paeth =
-          Math.abs(p - left) <= Math.abs(p - up) && Math.abs(p - left) <= Math.abs(p - upLeft)
-            ? left
-            : Math.abs(p - up) <= Math.abs(p - upLeft) ? up : upLeft;
-        const predicted = [0, left, up, Math.floor((left + up) / 2), paeth][type];
-        out.push((raw - predicted) & 0xff);
-      });
-      prior = row;
-    });
-    return new Uint8Array(out);
-  }
 
   it("decodes FlateDecode with every PNG predictor (10–15): None, Sub, Up, Average, Paeth", async () => {
     const doc = await parsePdf(simplePdf());

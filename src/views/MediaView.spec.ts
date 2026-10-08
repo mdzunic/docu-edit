@@ -73,7 +73,7 @@ describe("MediaView", () => {
   });
 
   it("renders a PDF through the browser embed with parse-derived details (AC-12)", async () => {
-    const { store, assembleMediaModel, fixtures, mountMedia } = await loadModules();
+    const { store, assembleMediaModel, mountMedia } = await loadModules();
     const model = await assembleMediaModel("pages", "pdf", PAGES_PDF);
     store.storeMedia(model);
     const { wrapper } = await mountMedia(model.id);

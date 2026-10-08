@@ -844,6 +844,11 @@ function addEntry(entries: Map<number, XrefEntry>, num: number, entry: XrefEntry
   }
 }
 
+/** A non-negative integer — what /Size, /W and /Index entries must be. */
+function isCount(value: PdfValue): value is { t: "num"; v: number } {
+  return value.t === "num" && Number.isInteger(value.v) && value.v >= 0;
+}
+
 /** Parses an xref STREAM object at `offset` (also used for hybrid /XRefStm
  * targets). The stream's own /Length must be direct (real xref streams'
  * always is; an indirect one falls back to the endstream scan). */
@@ -857,8 +862,6 @@ async function readXrefStream(bytes: Uint8Array, offset: number): Promise<XrefSe
   // so the full filter chain decodes it against a bare document — the real
   // one does not exist yet at xref-read time.
   const data = await streamData(buildDocument(bytes, "", false), object.value);
-  const isCount = (value: PdfValue): value is { t: "num"; v: number } =>
-    value.t === "num" && Number.isInteger(value.v) && value.v >= 0;
   const wValue = dict.get("W");
   const sizeValue = dict.get("Size");
   if (wValue?.t !== "array" || sizeValue === undefined || !isCount(sizeValue)) {

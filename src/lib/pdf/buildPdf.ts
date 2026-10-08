@@ -185,9 +185,12 @@ function pdfTextString(text: string): string {
   return `<${hex}>`;
 }
 
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, "0");
+}
+
 /** A date operand (ISO 32000 7.9.4), in UTC: (D:YYYYMMDDHHmmSSZ). */
 function pdfDateString(date: Date): string {
-  const pad = (value: number, width = 2) => String(value).padStart(width, "0");
   return (
     `(D:${pad(date.getUTCFullYear(), 4)}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
     `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z)`
