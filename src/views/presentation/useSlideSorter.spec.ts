@@ -10,7 +10,8 @@ import type { PresentationModel, Slide, TextFrame } from "../../lib/presentation
 import { addSection } from "../../lib/presentation/sections";
 import { clearSlideClipboardStore, SLIDES_MIME } from "../../lib/presentation/slideClipboard";
 import { usePreferences } from "../../composables/usePreferences";
-import { describeImport, NO_SLIDES_MESSAGE, useSlideSorter, type SlideSorter } from "./useSlideSorter";
+import { describeImport, NO_SLIDES_MESSAGE } from "./sorterFields";
+import { useSlideSorter, type SlideSorter } from "./useSlideSorter";
 
 const library = vi.hoisted(() => new Map<string, PresentationModel>());
 

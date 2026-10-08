@@ -21,7 +21,7 @@ import {
 } from "./slideRender";
 import { MAX_SECTION_NAME_LENGTH } from "../../lib/presentation/sections";
 import { eventValue } from "../../views/presentation/deckSetupFields";
-import { asIndexes, asSorterGroups, focusAndSelect } from "../../views/presentation/useSlideSorter";
+import { asIndexes, asSorterGroups, focusAndSelect } from "../../views/presentation/sorterFields";
 
 const props = defineProps({
   /** The useSlideSorter() controller. */
@@ -577,7 +577,7 @@ function indicatorOn(index = 0, edge = "before") {
 }
 
 .section-rename-input[aria-invalid="true"] {
-  outline: var(--border-width) solid var(--danger, #c00);
+  outline: var(--border-width) solid var(--danger);
 }
 
 .sorter-slide {
@@ -594,7 +594,7 @@ function indicatorOn(index = 0, edge = "before") {
 }
 
 .sorter-slide.current {
-  box-shadow: 0 0 0 1px var(--accent);
+  outline: var(--border-width) solid var(--accent);
 }
 
 .sorter-drop-indicator {
@@ -602,7 +602,7 @@ function indicatorOn(index = 0, edge = "before") {
   top: 0;
   bottom: 0;
   width: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius-sm);
   background: var(--accent);
   pointer-events: none;
 }

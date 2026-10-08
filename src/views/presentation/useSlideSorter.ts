@@ -7,7 +7,7 @@
 // Built once by PresentationView (one `useSlideSorter({...})` call); it builds
 // useSlideSelection (shared with the filmstrip) and useReuseSlides inside, as
 // usePresentationEditing builds useFrameSelection.
-import { computed, onBeforeUnmount, onMounted, ref, type Ref, type ShallowRef } from "vue";
+import { computed, ref, type Ref, type ShallowRef } from "vue";
 import { usePreferences } from "../../composables/usePreferences";
 import type { PresentationModel, Slide } from "../../lib/presentation/model";
 import {
@@ -18,18 +18,12 @@ import {
   sectionsOf,
 } from "../../lib/presentation/sections";
 import { deleteSlides, duplicateSlides, isNoopMove, moveSlides } from "../../lib/presentation/slides";
-import { importSlides, type SlideImportReport } from "../../lib/presentation/slideImport";
-import {
-  latestSlideCopy,
-  resolveSlidePaste,
-  SLIDES_MIME,
-  slideClipboardFlavours,
-  type SlideClipboardPayload,
-} from "../../lib/presentation/slideClipboard";
+import type { SlideImportReport } from "../../lib/presentation/slideImport";
 import { slideOutline } from "../../lib/presentation/slideModel";
-import { frameAccessibleName } from "../../components/presentation/slideRender";
+import { describeImport, isInsideOverlay, isTypingTarget, plural, type SorterReport } from "./sorterFields";
 import { useSlideSelection } from "./useSlideSelection";
 import { useReuseSlides } from "./useReuseSlides";
+import { useSorterClipboard } from "./useSorterClipboard";
 
 export interface SlideSorterDeps {
   model: ShallowRef<PresentationModel | null>;
@@ -54,73 +48,6 @@ export interface SorterGroup {
   startIndex: number;
   endIndex: number;
   cards: SorterCard[];
-}
-
-/** The import report as the sorter shows it. */
-export interface SorterReport {
-  title: string;
-  lines: string[];
-}
-
-/** Typed pass-throughs for the sorter component's controller reads (espree
- * bars casts in .vue scripts). */
-export function asSorterGroups(value: unknown): SorterGroup[] {
-  return value as SorterGroup[];
-}
-export function asIndexes(value: unknown): number[] {
-  return value as number[];
-}
-
-/** Focuses and selects a just-mounted rename input (a function ref). */
-export function focusAndSelect(el: unknown): void {
-  if (el instanceof HTMLInputElement && document.activeElement !== el) {
-    el.focus();
-    el.select();
-  }
-}
-
-/** What the sorter says when a paste carries no slides (AC-9). */
-export const NO_SLIDES_MESSAGE = "The clipboard doesn't hold any slides";
-
-function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
-}
-
-/** The honest summary of an import: what arrived (by title), what was reused,
- * and what could not come along. */
-export function describeImport(report: SlideImportReport, titles: string[], verb: string): SorterReport {
-  const named = titles.map((title) => `“${title}”`).join(", ");
-  const lines = [`Kept ${plural(report.slides, "slide")}: ${named}.`];
-  if (report.mediaReused > 0) {
-    lines.push(`Reused ${plural(report.mediaReused, "image")} already in this deck.`);
-  }
-  if (report.rescaled) {
-    lines.push("Resized to fit this deck's slide size.");
-  }
-  if (report.droppedFrames > 0) {
-    lines.push(`Left out ${plural(report.droppedFrames, "object")} this deck can't hold: ${report.droppedFrameNames.join(", ")}.`);
-  }
-  if (report.lostTransitions > 0) {
-    lines.push(`${plural(report.lostTransitions, "transition")} couldn't come along.`);
-  }
-  if (report.lostAnimations > 0) {
-    lines.push(`${plural(report.lostAnimations, "animation")} couldn't come along.`);
-  }
-  if (report.droppedFrames + report.lostTransitions + report.lostAnimations === 0) {
-    lines.push("Nothing was left out.");
-  }
-  return { title: `${verb} ${plural(report.slides, "slide")}`, lines };
-}
-
-function isTypingTarget(target: EventTarget | null): boolean {
-  return (
-    target instanceof HTMLElement &&
-    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)
-  );
-}
-
-function isInsideOverlay(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest('[role="dialog"], [role="menu"]') !== null;
 }
 
 export function useSlideSorter(deps: SlideSorterDeps) {
@@ -317,40 +244,7 @@ export function useSlideSorter(deps: SlideSorterDeps) {
     }
   }
 
-  // --- clipboard ---------------------------------------------------------------
-
-  /** Writes the selection's two flavours to a clipboard event (SPEC-016's
-   * discipline: only ClipboardEvent.clipboardData carries the private type). */
-  function writeSelection(data: DataTransfer): boolean {
-    const model = deps.model.value;
-    if (!model || selection.indexes.value.length === 0) {
-      return false;
-    }
-    const flavours = slideClipboardFlavours(model, selection.indexes.value);
-    data.setData("text/plain", flavours.text);
-    if (flavours.payload !== null) {
-      data.setData(SLIDES_MIME, flavours.payload);
-    }
-    return true;
-  }
-
-  /** Inserts a payload's slides after the selection (one undo step). */
-  function pasteFrom(payload: SlideClipboardPayload): void {
-    const at = Math.max(...selection.indexes.value, -1) + 1;
-    const result = run("Paste slides", (model) =>
-      importSlides(model, payload, payload.slides.map((_, index) => index), { at, frameName: frameAccessibleName }),
-    );
-    if (!result || result.slides === 0) {
-      announce(NO_SLIDES_MESSAGE);
-      return;
-    }
-    const pasted = Array.from({ length: result.slides }, (_, i) => at + i);
-    selection.selectRange(pasted);
-    announce(`${plural(result.slides, "slide")} pasted`);
-    if (result.droppedFrames + result.lostTransitions + result.lostAnimations > 0 || result.rescaled) {
-      showReport(result, at, "Pasted");
-    }
-  }
+  // --- clipboard: copy/cut/paste of slides (useSorterClipboard) -----------------
 
   function showReport(result: SlideImportReport, at: number, verb: string): void {
     const model = deps.model.value;
@@ -364,89 +258,8 @@ export function useSlideSorter(deps: SlideSorterDeps) {
     report.value = null;
   }
 
-  /** Cmd/Ctrl+C / X / V and the sorter's buttons land here while the sorter
-   * is open: copy and cut write both flavours; paste takes the slides payload
-   * (the in-tab copy winning by nonce) or announces there are none. */
-  function onClipboardEvent(event: ClipboardEvent): void {
-    if (!open.value || isTypingTarget(event.target) || isInsideOverlay(event.target) || !event.clipboardData) {
-      return;
-    }
-    if (event.type === "copy" || event.type === "cut") {
-      if (writeSelection(event.clipboardData)) {
-        event.preventDefault();
-        if (event.type === "cut") {
-          removeAsCut();
-        } else {
-          announce(`${plural(selection.indexes.value.length, "slide")} copied`);
-        }
-      }
-      return;
-    }
-    if (event.type === "paste") {
-      event.preventDefault();
-      const payload = resolveSlidePaste({
-        slides: event.clipboardData.getData(SLIDES_MIME),
-        text: event.clipboardData.getData("text/plain"),
-      });
-      if (payload) {
-        pasteFrom(payload);
-      } else {
-        announce(NO_SLIDES_MESSAGE);
-      }
-    }
-  }
-
-  function removeAsCut(): void {
-    const cutCount = selection.indexes.value.length;
-    remove();
-    announce(`${plural(cutCount, "slide")} cut`);
-  }
-
-  /** The Copy/Cut buttons: a real copy/cut via execCommand — the only
-   * synchronous route from a click to clipboardData (and the private type);
-   * the event lands in onClipboardEvent. Without it, the outline text goes
-   * through the async API and the in-tab store still pastes the slides. */
-  function copy(): void {
-    if (!document.execCommand?.("copy")) {
-      const model = deps.model.value;
-      if (model) {
-        const flavours = slideClipboardFlavours(model, selection.indexes.value);
-        void navigator.clipboard?.writeText(flavours.text).catch(() => {});
-        announce(`${plural(selection.indexes.value.length, "slide")} copied`);
-      }
-    }
-  }
-
-  function cut(): void {
-    if (!document.execCommand?.("cut")) {
-      const model = deps.model.value;
-      if (model) {
-        const flavours = slideClipboardFlavours(model, selection.indexes.value);
-        void navigator.clipboard?.writeText(flavours.text).catch(() => {});
-        removeAsCut();
-      }
-    }
-  }
-
-  /** The Paste button: the async API cannot see the private type, so the
-   * clipboard's text is matched against this tab's own copies; when the
-   * clipboard cannot be read at all, the latest in-tab copy is used. */
-  async function paste(): Promise<void> {
-    let payload: SlideClipboardPayload | null = null;
-    try {
-      const text = (await navigator.clipboard?.readText()) ?? "";
-      payload = resolveSlidePaste({ text });
-    } catch {
-      payload = latestSlideCopy() ?? null;
-    }
-    if (payload) {
-      pasteFrom(payload);
-    } else {
-      announce(NO_SLIDES_MESSAGE);
-    }
-  }
-
-  const canPaste = computed(() => deps.model.value !== null);
+  const clipboard = useSorterClipboard({ model: deps.model, open, selection, run, remove, announce, showReport });
+  const { copy, cut, paste, canPaste, onClipboardEvent } = clipboard;
 
   // --- Reuse slides ------------------------------------------------------------
 
@@ -500,17 +313,6 @@ export function useSlideSorter(deps: SlideSorterDeps) {
       event.stopImmediatePropagation();
     }
   }
-
-  onMounted(() => {
-    for (const type of ["copy", "cut", "paste"]) {
-      window.addEventListener(type, onClipboardEvent as EventListener);
-    }
-  });
-  onBeforeUnmount(() => {
-    for (const type of ["copy", "cut", "paste"]) {
-      window.removeEventListener(type, onClipboardEvent as EventListener);
-    }
-  });
 
   return {
     open,
