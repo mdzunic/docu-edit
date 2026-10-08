@@ -80,7 +80,7 @@ function ptToCm(pt: number): number {
  * into its attribute string and its verbatim child elements: the attribute
  * part never contains "<" (values are escaped), so the first "<" starts the
  * children. */
-export function splitPreservedProps(slot: string | undefined): { attrs: string[]; children: string } {
+function splitPreservedProps(slot: string | undefined): { attrs: string[]; children: string } {
   if (!slot) {
     return { attrs: [], children: "" };
   }
