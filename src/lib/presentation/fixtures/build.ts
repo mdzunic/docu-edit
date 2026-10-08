@@ -2055,13 +2055,21 @@ const SPEC097_ODP_STYLES =
   `</text:list-level-style-number></text:list-style>` +
   `<text:list-style style:name="L97start"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="." text:start-value="${EXPECTED_TEXT_DEPTH.continuedStartAt}"/></text:list-style>`;
 
-function spec097OdpPage1Frames(): string {
-  const geomAttrs = (x: number, y: number, w: number, h: number): string =>
-    ` svg:x="${x}cm" svg:y="${y}cm" svg:width="${w}cm" svg:height="${h}cm"`;
-  const items = (style: string, lines: string[], span: string): string =>
+const spec097GeomAttrs = (x: number, y: number, w: number, h: number): string =>
+  ` svg:x="${x}cm" svg:y="${y}cm" svg:width="${w}cm" svg:height="${h}cm"`;
+
+/** A `text:list` of one item per line, each optionally in a text span style. */
+function spec097OdpList(style: string, lines: string[], span: string): string {
+  return (
     `<text:list text:style-name="${style}">` +
     lines.map((line) => `<text:list-item><text:p>${span ? `<text:span text:style-name="${span}">${line}</text:span>` : line}</text:p></text:list-item>`).join("") +
-    `</text:list>`;
+    `</text:list>`
+  );
+}
+
+function spec097OdpPage1Frames(): string {
+  const geomAttrs = spec097GeomAttrs;
+  const items = spec097OdpList;
   return (
     `<draw:frame presentation:class="title"${geomAttrs(1.5, 0.8, 18, 1.8)}><draw:text-box>` +
     `<text:p><text:span text:style-name="T97title">${EXPECTED_TEXT_DEPTH.title}</text:span></text:p></draw:text-box></draw:frame>` +
