@@ -224,10 +224,10 @@ export interface SlideParagraph {
   spaceBeforePt?: number; // 0–500; absent = 0
   spaceAfterPt?: number; // 0–500; absent = 0
   /** pptx: the source `a:pPr`'s UNMODELLED attributes and children, verbatim
-   *  (`{"attrs":"…","before":"…","mid":"…","after":"…"}` — see
-   *  pptx/textDepthWire.ts), cleared by the command that edits a modelled
-   *  property it shadows (Table.docxTblPr's rule). Not in equality.ts's
-   *  XML_STRING_KEYS, so it compares raw. */
+   *  — a `<a:pPr …attrs…>…children…</a:pPr>` element string (see
+   *  pptx/textDepthWire.ts), re-emitted in schema order and cleared by the
+   *  command that edits a modelled property it shadows (Table.docxTblPr's
+   *  rule). Not in equality.ts's XML_STRING_KEYS, so it compares raw. */
   pptxPPr?: string;
   /** odp: the source paragraph style's unmodelled property string. Same
    *  clearing rule. */
@@ -288,8 +288,9 @@ export interface TextFrame extends SlideFrameBase {
   /** SPEC-097 text-body properties; absent = every default. */
   body?: TextBodyProps;
   /** pptx: the source `a:bodyPr`'s unmodelled attributes/children, verbatim
-   *  (see pptx/textDepthWire.ts); cleared by the command that edits a
-   *  modelled body property it shadows. Compares raw under equalStructural. */
+   *  — a `<a:bodyPr …attrs…>…children…</a:bodyPr>` element string (see
+   *  pptx/textDepthWire.ts); cleared by the command that edits a modelled body
+   *  property it shadows. Compares raw under equalStructural. */
   pptxBodyPr?: string;
   /** odp: the source graphic style's unmodelled text-body property string. */
   odpBodyProps?: string;
