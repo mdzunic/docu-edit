@@ -194,11 +194,14 @@ test("Enter in a Text panel field during a text session commits the field withou
   await spaceAfter.fill("12");
   await spaceAfter.press("Enter");
 
-  const lastLine = body.getByTestId("slide-paragraph").nth(2);
-  await expect(lastLine).toHaveCSS("margin-bottom", "16px"); // 12pt
+  // The field committed to the caret's paragraph, and the session's text is
+  // unchanged: no fourth paragraph split off at the caret.
+  await expect(spaceAfter).toHaveValue("12");
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
   await expect(body.getByTestId("slide-paragraph")).toHaveCount(3);
+  const lastLine = body.getByTestId("slide-paragraph").nth(2);
   await expect(lastLine).toHaveText(new RegExp(EXPECTED_TEXT_DEPTH.bodyLines[2]));
+  await expect(lastLine).toHaveCSS("margin-bottom", "16px"); // 12pt
   expect(await markersOf(body)).toEqual(EXPECTED_TEXT_DEPTH.bodyMarkers);
 });
