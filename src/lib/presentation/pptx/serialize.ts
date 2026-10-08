@@ -51,6 +51,15 @@ import {
 import { writePptxTiming } from "./timing";
 import { DEFAULT_DATE_FORMAT, fieldText, isTitleSlide } from "../headerFooter";
 import { FIELD_GUID, FORMAT_TO_PPTX_DATETIME, PH_IDX_OF_KIND, PH_NAME_OF_KIND, PH_TYPE_OF_KIND } from "./fields";
+import {
+  bodyPrXml,
+  hlinkClickXml,
+  imageRelId,
+  letterSpacingAttr,
+  pPrXml,
+  type LinkFields,
+  type RelLookup,
+} from "./textDepthWire";
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -58,18 +67,10 @@ const R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationship
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const STANDARD_ROOT_ATTRS = ` xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"`;
 
-const IMAGE_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const CHART_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
 const C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
 const DEFAULT_SIZE_PT = 18;
 const DEFAULT_COLOR = "#000000";
-
-const ALGN: Record<NonNullable<SlideParagraph["align"]>, string> = {
-  left: "l",
-  center: "ctr",
-  right: "r",
-  justify: "just",
-};
 
 /** A model colour (`#rrggbb`) as a DrawingML `srgbClr@val` (uppercase, no #). */
 function hex(color: string): string {
@@ -110,14 +111,18 @@ function capitalise(text: string): string {
 /** Serialises a slide to its `.pptx` slide-part XML. `rels` is the slide's
  * (original, carried-forward) relationships, used to resolve an `ImageFrame`'s
  * media part back to its `r:embed` id; `slidePartPath` anchors that relative
- * resolution. */
+ * resolution. `slideParts` (SPEC-097) is the part name every deck slide is
+ * saved under, in deck order, so a slide-jump link resolves to the `slide`
+ * relationship of its target part; absent, slide links are not written. */
 export function serializeSlideXml(
   slide: Slide,
   rels: Map<string, Relationship>,
   slidePartPath: string,
   fields: ResolvedField[] = [],
   deckTheme?: DeckTheme,
+  slideParts: readonly string[] = [],
 ): string {
+  const lookup: RelLookup = { rels, slidePartPath, slideParts };
   const rootAttrs = slide.preserved?.["@root"] ?? STANDARD_ROOT_ATTRS;
   // SPEC-094: refs write through the deck clrMap, a parseable p:clrMapOvr's
   // override map, or — when the override cannot be parsed — as literals.
@@ -140,7 +145,7 @@ export function serializeSlideXml(
     }
     return id;
   };
-  const shapes = slide.frames.map((frame) => frameXml(frame, mint, rels, slidePartPath, tc)).join("");
+  const shapes = slide.frames.map((frame) => frameXml(frame, mint, lookup, tc)).join("");
   // SPEC-093: the deck field placeholders follow the frame shapes — each
   // rewritten from its preserved `p:sp` (only the cached `a:t` refreshed) or,
   // for a newly-enabled field, built canonical.
@@ -242,19 +247,19 @@ export function preserveNotesFieldPlaceholders(
 function frameXml(
   frame: SlideFrame,
   mint: (frameId?: string) => number,
-  rels: Map<string, Relationship>,
-  slidePartPath: string,
+  lookup: RelLookup,
   tc: SlideColorWrite,
 ): string {
+  const { rels, slidePartPath } = lookup;
   switch (frame.kind) {
     case "text":
-      return textFrameXml(frame, mint(frame.id), tc);
+      return textFrameXml(frame, mint(frame.id), tc, lookup);
     case "shape":
-      return shapeFrameXml(frame, mint(frame.id), tc);
+      return shapeFrameXml(frame, mint(frame.id), tc, lookup);
     case "image":
-      return imageFrameXml(frame, mint(frame.id), rels, slidePartPath, tc);
+      return imageFrameXml(frame, mint(frame.id), lookup, tc);
     case "table":
-      return tableFrameXml(frame, mint(frame.id), tc);
+      return tableFrameXml(frame, mint(frame.id), tc, lookup);
     case "chart":
       // An untouched chart re-emits its verbatim graphicFrame (byte-identical,
       // AC-18/AC-19); a touched one emits the canonical graphicFrame against
@@ -263,7 +268,7 @@ function frameXml(
     case "group":
       // Verbatim (still carrying its source xml) re-emits unchanged and
       // claims no id; an authored group rebuilds as p:grpSp (SPEC-096).
-      return frame.xml ?? groupFrameXml(frame, mint, rels, slidePartPath, tc);
+      return frame.xml ?? groupFrameXml(frame, mint, lookup, tc);
     case "media":
       // An untouched clip re-emits its verbatim p:pic (byte-identical, AC-44);
       // a touched/inserted one rebuilds against its minted media rels (SPEC-095).
@@ -283,8 +288,7 @@ function frameXml(
 function groupFrameXml(
   frame: GroupFrame,
   mint: (frameId?: string) => number,
-  rels: Map<string, Relationship>,
-  slidePartPath: string,
+  lookup: RelLookup,
   tc: SlideColorWrite,
 ): string {
   const id = mint(frame.id);
@@ -292,7 +296,7 @@ function groupFrameXml(
   const y = cmToEmu(frame.yCm);
   const cx = cmToEmu(frame.widthCm);
   const cy = cmToEmu(frame.heightCm);
-  const children = frame.children.map((child) => frameXml(child, mint, rels, slidePartPath, tc)).join("");
+  const children = frame.children.map((child) => frameXml(child, mint, lookup, tc)).join("");
   return (
     `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${id}" name="Group ${id}"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
     `<p:grpSpPr><a:xfrm>` +
@@ -358,57 +362,59 @@ function strokeXml(stroke: FrameStroke | undefined, tc: SlideColorWrite): string
 
 // --- text frame ------------------------------------------------------------
 
-function textFrameXml(frame: TextFrame, id: number, tc: SlideColorWrite): string {
+/** A frame's `p:cNvPr`, carrying its link (SPEC-097) as the first — and
+ * only — child when it has one. */
+function cNvPrXml(id: number, name: string, link: LinkFields, lookup: RelLookup | undefined): string {
+  const hlink = hlinkClickXml(link, lookup);
+  const attrs = ` id="${id}" name="${escapeXmlAttribute(name)}"`;
+  return hlink ? `<p:cNvPr${attrs}>${hlink}</p:cNvPr>` : `<p:cNvPr${attrs}/>`;
+}
+
+function textFrameXml(frame: TextFrame, id: number, tc: SlideColorWrite, lookup: RelLookup): string {
   const phAttrs =
     (frame.phType ? ` type="${escapeXmlAttribute(frame.phType)}"` : "") +
     (frame.phIdx !== undefined ? ` idx="${frame.phIdx}"` : "");
   const ph = frame.role ? `<p:ph${phAttrs}/>` : "";
   const name = frame.role ? capitalise(frame.role) : "TextBox";
   const nvSpPr =
-    `<p:nvSpPr><p:cNvPr id="${id}" name="${escapeXmlAttribute(name)}"/>` +
+    `<p:nvSpPr>${cNvPrXml(id, name, frame, lookup)}` +
     `<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>${ph}</p:nvPr></p:nvSpPr>`;
   const spPr = `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${fillXml(frame.fill, tc)}${strokeXml(frame.stroke, tc)}</p:spPr>`;
-  return `<p:sp>${nvSpPr}${spPr}${txBodyXml(frame.paragraphs, tc)}</p:sp>`;
+  return `<p:sp>${nvSpPr}${spPr}${txBodyXml(frame.paragraphs, tc, lookup, bodyPrXml(frame.body, frame.pptxBodyPr))}</p:sp>`;
 }
 
-/** A `p:txBody` from a frame's paragraphs. An empty body emits a single empty
- * `a:p` (the from-scratch placeholder shape). */
-function txBodyXml(paragraphs: SlideParagraph[], tc: SlideColorWrite): string {
-  const body = paragraphs.length > 0 ? paragraphs.map((para) => paragraphXml(para, tc)).join("") : `<a:p/>`;
-  return `<p:txBody><a:bodyPr/><a:lstStyle/>${body}</p:txBody>`;
+/** A `p:txBody` from a frame's paragraphs under its `a:bodyPr` (SPEC-097:
+ * `<a:bodyPr/>` exactly when the frame has no body properties). An empty body
+ * emits a single empty `a:p` (the from-scratch placeholder shape). */
+function txBodyXml(paragraphs: SlideParagraph[], tc: SlideColorWrite, lookup: RelLookup | undefined, bodyPr: string): string {
+  const body = paragraphs.length > 0 ? paragraphs.map((para) => paragraphXml(para, tc, lookup)).join("") : `<a:p/>`;
+  return `<p:txBody>${bodyPr}<a:lstStyle/>${body}</p:txBody>`;
 }
 
-function paragraphXml(para: SlideParagraph, tc: SlideColorWrite): string {
-  const runs = para.runs.length > 0 ? para.runs.map((run) => runXml(run, tc)).join("") : `<a:endParaRPr lang="en-US"/>`;
-  return `<a:p>${pPrXml(para)}${runs}</a:p>`;
-}
-
-/** A paragraph's `a:pPr`: `algn` (omitted for left), `lvl` (omitted for 0),
- * and an explicit bullet element — `a:buNone` for none so the reader's
- * body-role "default to disc" rule cannot re-add one (fidelity). */
-function pPrXml(para: SlideParagraph): string {
-  const algn = para.align && para.align !== "left" ? ` algn="${ALGN[para.align]}"` : "";
-  const lvl = para.level ? ` lvl="${para.level}"` : "";
-  const bullet =
-    para.bullet === "disc"
-      ? `<a:buChar char="•"/>`
-      : para.bullet === "number"
-        ? `<a:buAutoNum type="arabicPeriod"/>`
-        : `<a:buNone/>`;
-  return `<a:pPr${algn}${lvl}>${bullet}</a:pPr>`;
+/** One `a:p`: its `a:pPr` (textDepthWire.ts owns the SPEC-097 mapping —
+ * indents, spacing, the bullet and the preserved rest) then its runs. Table
+ * cells share it. */
+function paragraphXml(para: SlideParagraph, tc: SlideColorWrite, lookup: RelLookup | undefined): string {
+  const runs =
+    para.runs.length > 0 ? para.runs.map((run) => runXml(run, tc, lookup)).join("") : `<a:endParaRPr lang="en-US"/>`;
+  return `<a:p>${pPrXml(para, lookup)}${runs}</a:p>`;
 }
 
 /** A run's `a:r`. Every effective value is written explicitly (fidelity AC):
  * `sz` and `a:solidFill` always (the reader drops the 18pt / #000000 defaults
- * back to `undefined`), `b`/`i`/`u` when set, `a:latin` when a family is set. */
-function runXml(run: SlideRun, tc: SlideColorWrite): string {
+ * back to `undefined`), `b`/`i`/`u` when set, `spc` for letter spacing, and
+ * `a:latin` when a family is set. A link's `a:hlinkClick` (SPEC-097) follows
+ * `a:latin` — its `CT_TextCharacterProperties` schema position. */
+function runXml(run: SlideRun, tc: SlideColorWrite, lookup: RelLookup | undefined): string {
   const sz = ` sz="${Math.round((run.sizePt ?? DEFAULT_SIZE_PT) * 100)}"`;
   const b = run.bold ? ` b="1"` : "";
   const i = run.italic ? ` i="1"` : "";
   const u = run.underline ? ` u="sng"` : "";
+  const spc = letterSpacingAttr(run);
   const color = `<a:solidFill>${colorElementXml(run.color ?? DEFAULT_COLOR, tc)}</a:solidFill>`;
   const latin = run.fontFamily ? latinXml(run.fontFamily, tc) : "";
-  return `<a:r><a:rPr lang="en-US"${sz}${b}${i}${u}>${color}${latin}</a:rPr><a:t>${escapeXmlText(run.text)}</a:t></a:r>`;
+  const hlink = hlinkClickXml(run, lookup);
+  return `<a:r><a:rPr lang="en-US"${sz}${b}${i}${u}${spc}>${color}${latin}${hlink}</a:rPr><a:t>${escapeXmlText(run.text)}</a:t></a:r>`;
 }
 
 // --- deck field placeholders (SPEC-093) ------------------------------------
@@ -526,29 +532,26 @@ function avLstXml(frame: ShapeFrame): string {
   return `<a:avLst>${gds}</a:avLst>`;
 }
 
-function shapeFrameXml(frame: ShapeFrame, id: number, tc: SlideColorWrite): string {
+function shapeFrameXml(frame: ShapeFrame, id: number, tc: SlideColorWrite, lookup: RelLookup): string {
   const prst = GEOMETRY_TO_PRST[frame.geometry] ?? "rect";
-  const nvSpPr =
-    `<p:nvSpPr><p:cNvPr id="${id}" name="Shape ${id}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`;
+  const nvSpPr = `<p:nvSpPr>${cNvPrXml(id, `Shape ${id}`, frame, lookup)}<p:cNvSpPr/><p:nvPr/></p:nvSpPr>`;
   const spPr =
     `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="${prst}">${avLstXml(frame)}</a:prstGeom>${fillXml(frame.fill, tc)}${strokeXml(frame.stroke, tc)}</p:spPr>`;
-  const txBody = frame.paragraphs && frame.paragraphs.length > 0 ? txBodyXml(frame.paragraphs, tc) : "";
+  // A shape with body properties but no text still keeps its body (SPEC-097).
+  const paragraphs = frame.paragraphs ?? [];
+  const hasBody = frame.body !== undefined || frame.pptxBodyPr !== undefined;
+  const txBody =
+    paragraphs.length > 0 || hasBody ? txBodyXml(paragraphs, tc, lookup, bodyPrXml(frame.body, frame.pptxBodyPr)) : "";
   return `<p:sp>${nvSpPr}${spPr}${txBody}</p:sp>`;
 }
 
 // --- image frame -----------------------------------------------------------
 
-function imageFrameXml(
-  frame: ImageFrame,
-  id: number,
-  rels: Map<string, Relationship>,
-  slidePartPath: string,
-  tc: SlideColorWrite,
-): string {
-  const embed = embedIdFor(frame.mediaId, rels, slidePartPath);
+function imageFrameXml(frame: ImageFrame, id: number, lookup: RelLookup, tc: SlideColorWrite): string {
+  const embed = embedIdFor(frame.mediaId, lookup.rels, lookup.slidePartPath);
   const blip = embed ? `<a:blip r:embed="${escapeXmlAttribute(embed)}"/>` : `<a:blip/>`;
   return (
-    `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="Picture ${id}"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
+    `<p:pic><p:nvPicPr>${cNvPrXml(id, `Picture ${id}`, frame, lookup)}<p:cNvPicPr/><p:nvPr/></p:nvPicPr>` +
     `<p:blipFill>${blip}<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
     `<p:spPr>${xfrmXml(frame)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>${strokeXml(frame.stroke, tc)}</p:spPr></p:pic>`
   );
@@ -557,12 +560,7 @@ function imageFrameXml(
 /** The `r:embed` id whose image relationship resolves to `mediaId`, carried
  * from the slide's original rels (this spec never mints image rels). */
 function embedIdFor(mediaId: string, rels: Map<string, Relationship>, slidePartPath: string): string | undefined {
-  for (const rel of rels.values()) {
-    if (rel.type === IMAGE_RELATIONSHIP && resolvePartPath(slidePartPath, rel.target) === mediaId) {
-      return rel.id;
-    }
-  }
-  return undefined;
+  return imageRelId({ rels, slidePartPath }, mediaId);
 }
 
 // --- media frame (SPEC-095) -------------------------------------------------
@@ -663,8 +661,8 @@ function tcPrXml(cell: SlideTableCell, tc: SlideColorWrite): string {
 
 /** A table cell's `a:txBody` (the DrawingML-namespaced counterpart of a shape's
  * `p:txBody`). An empty cell emits a single empty `a:p`. */
-function cellTxBodyXml(paragraphs: SlideParagraph[], tc: SlideColorWrite): string {
-  const body = paragraphs.length > 0 ? paragraphs.map((para) => paragraphXml(para, tc)).join("") : `<a:p/>`;
+function cellTxBodyXml(paragraphs: SlideParagraph[], tc: SlideColorWrite, lookup: RelLookup | undefined): string {
+  const body = paragraphs.length > 0 ? paragraphs.map((para) => paragraphXml(para, tc, lookup)).join("") : `<a:p/>`;
   return `<a:txBody><a:bodyPr/><a:lstStyle/>${body}</a:txBody>`;
 }
 
@@ -708,7 +706,7 @@ export function serializeTableFrame(frame: TableFrame, id: number, deckTheme?: D
   return tableFrameXml(frame, id, deckTheme ? { theme: deckTheme, mode: deckTheme.colorMap ?? {} } : LITERAL_WRITE);
 }
 
-function tableFrameXml(frame: TableFrame, id: number, tc: SlideColorWrite): string {
+function tableFrameXml(frame: TableFrame, id: number, tc: SlideColorWrite, lookup?: RelLookup): string {
   const grid = computeOwnerGrid(frame);
   const gridCols = frame.columnWidthsCm.map((w) => `<a:gridCol w="${cmToEmu(w)}"/>`).join("");
   const rows = frame.rows
@@ -724,7 +722,7 @@ function tableFrameXml(frame: TableFrame, id: number, tc: SlideColorWrite): stri
           }
           const gs = cell.colSpan && cell.colSpan > 1 ? ` gridSpan="${cell.colSpan}"` : "";
           const rs = cell.rowSpan && cell.rowSpan > 1 ? ` rowSpan="${cell.rowSpan}"` : "";
-          return `<a:tc${gs}${rs}>${cellTxBodyXml(cell.paragraphs, tc)}${tcPrXml(cell, tc)}</a:tc>`;
+          return `<a:tc${gs}${rs}>${cellTxBodyXml(cell.paragraphs, tc, lookup)}${tcPrXml(cell, tc)}</a:tc>`;
         })
         .join("");
       return `<a:tr${h}>${cells}</a:tr>`;

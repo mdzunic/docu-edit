@@ -105,6 +105,9 @@ export interface Relationship {
   id: string;
   type: string;
   target: string;
+  /** `TargetMode="External"` — the target is a URI outside the package (an
+   * external hyperlink), not a part path to resolve. Absent = internal. */
+  targetMode?: "External";
 }
 
 /** Parses a `_rels/*.rels` part into its relationships, keyed by `Id`. */
@@ -120,7 +123,11 @@ export function parseRelationships(xmlText: string): Map<string, Relationship> {
     const type = el.getAttribute("Type");
     const target = el.getAttribute("Target");
     if (id && type && target) {
-      relationships.set(id, { id, type, target });
+      const rel: Relationship = { id, type, target };
+      if (el.getAttribute("TargetMode") === "External") {
+        rel.targetMode = "External";
+      }
+      relationships.set(id, rel);
     }
   }
   return relationships;

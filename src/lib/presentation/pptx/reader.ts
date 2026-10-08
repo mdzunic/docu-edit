@@ -69,7 +69,9 @@ import {
   type SlideRun,
   type SlideTableCell,
   type SlideTableRow,
+  type ShapeFrame,
   type TableFrame,
+  type TextFrame,
 } from "../model";
 import { DEFAULT_DATE_FORMAT, defaultFieldRect } from "../headerFooter";
 import { KIND_OF_PH_TYPE, PPTX_DATETIME_TO_FORMAT } from "./fields";
@@ -81,6 +83,7 @@ import { DEFAULT_THEME, type ModelColor, type ModelFont } from "../../core/theme
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
 import { readPptxTiming } from "./timing";
+import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
 
 export class PptxOpenError extends Error {}
 
@@ -157,6 +160,8 @@ interface RunProps {
   fontFamily?: ModelFont;
   sizePt?: number;
   color?: ModelColor;
+  /** `a:rPr@spc` in points (SPEC-097). */
+  letterSpacingPt?: number;
 }
 
 /** Everything a slide's frames resolve their effective values against. */
@@ -177,6 +182,9 @@ interface SlideContext {
   /** Every package part's raw bytes — the chart-part lookup (SPEC-092 AC-7a)
    *  resolves a `p:graphicFrame`'s `c:chart r:id` through here. */
   parts: Map<string, Uint8Array>;
+  /** Slide part path → 1-based deck position, so a slide-jump link
+   *  (`ppaction://hlinksldjump`) resolves to `linkSlide` (SPEC-097). */
+  slideNumberOf?: Map<string, number>;
 }
 
 /** The first colour element (`a:srgbClr`/`a:sysClr`/`a:schemeClr`) inside a
@@ -255,6 +263,10 @@ function readRunProps(
       props.color = value;
     }
   }
+  const spacing = readLetterSpacing(rPr);
+  if (spacing !== undefined) {
+    props.letterSpacingPt = spacing;
+  }
   return props;
 }
 
@@ -268,6 +280,7 @@ function mergeProps(base: RunProps, over: RunProps): RunProps {
     fontFamily: over.fontFamily ?? base.fontFamily,
     sizePt: over.sizePt ?? base.sizePt,
     color: over.color ?? base.color,
+    letterSpacingPt: over.letterSpacingPt ?? base.letterSpacingPt,
   };
 }
 
@@ -316,25 +329,22 @@ function resolveRun(
   if (props.fontFamily) run.fontFamily = props.fontFamily;
   if (props.sizePt !== undefined && props.sizePt !== DEFAULT_FONT_SIZE_PT) run.sizePt = props.sizePt;
   if (props.color && props.color !== DEFAULT_COLOR) run.color = props.color;
+  if (props.letterSpacingPt) run.letterSpacingPt = props.letterSpacingPt;
+  // A link is never inherited: only the run's own rPr carries one (SPEC-097).
+  Object.assign(run, readHlinkClick(rPr ? firstA(rPr, "hlinkClick") : undefined, ctx));
   return run;
 }
 
-/** The bullet a paragraph renders (AC / Reader rules): explicit buChar/
- * buAutoNum/buNone win; else body-role paragraphs default to "disc", title/
- * subtitle to none. */
-function bulletOf(pPr: Element | undefined, role: PlaceholderRole | undefined): SlideParagraph["bullet"] {
-  if (pPr) {
-    if (firstA(pPr, "buNone")) {
-      return undefined;
-    }
-    if (firstA(pPr, "buChar")) {
-      return "disc";
-    }
-    if (firstA(pPr, "buAutoNum")) {
-      return "number";
-    }
+/** The image part a slide relationship id names, when it is an image
+ * relationship whose part is in the media map (a picture bullet's
+ * `a:buBlip r:embed`, resolved exactly as an image frame's `r:embed`). */
+function imagePartFor(relId: string, ctx: SlideContext): string | undefined {
+  const rel = ctx.slideRels.get(relId);
+  if (!rel || rel.type !== IMAGE_RELATIONSHIP) {
+    return undefined;
   }
-  return role === "body" ? "disc" : undefined;
+  const partPath = resolvePartPath(ctx.slidePartPath, rel.target);
+  return ctx.media.has(partPath) ? partPath : undefined;
 }
 
 function alignOf(pPr: Element | undefined): SlideParagraph["align"] {
@@ -357,15 +367,22 @@ function parseTxBody(
   for (const p of childrenA(txBody, "p")) {
     const pPr = firstA(p, "pPr");
     const level = Number(pPr?.getAttribute("lvl") ?? "0") || 0;
-    const bullet = bulletOf(pPr, role);
     const align = alignOf(pPr);
+    // The bullet (explicit buNone/buChar/buAutoNum/buBlip win; else body-role
+    // paragraphs default to "disc", title/subtitle to none), the list and
+    // spacing fields, and the unmodelled rest of a:pPr (SPEC-097).
+    const wire = readParagraphPPr(pPr, role === "body" ? "disc" : undefined, level, (relId) => imagePartFor(relId, ctx));
     // A paragraph splits into visual lines at each a:br.
     let currentRuns: SlideRun[] = [];
+    let first = true;
     const flush = (): void => {
       const para: SlideParagraph = { runs: currentRuns };
       if (align) para.align = align;
-      if (bullet) para.bullet = bullet;
       if (level) para.level = level;
+      Object.assign(para, wire);
+      // A start-at seeds only the paragraph's first (non-empty) visual line.
+      if (!first) delete para.startAt;
+      if (currentRuns.length > 0) first = false;
       paragraphs.push(para);
       currentRuns = [];
     };
@@ -596,9 +613,25 @@ function parseFieldPlaceholder(
   return { entry, deckDateFormat };
 }
 
+/** A frame's own link: the `a:hlinkClick` under its `p:cNvPr` (SPEC-097). */
+function frameLinkOf(nv: Element | undefined, ctx: SlideContext): ReturnType<typeof readHlinkClick> {
+  const cNvPr = nv && pChild(nv, "cNvPr");
+  return readHlinkClick(cNvPr ? firstA(cNvPr, "hlinkClick") : undefined, ctx);
+}
+
+/** A text body's own `a:bodyPr` as the frame's modelled body properties plus
+ * its preservation slot (SPEC-097). */
+function applyBodyPr(frame: TextFrame | ShapeFrame, txBody: Element | undefined): void {
+  const bodyPr = txBody ? firstA(txBody, "bodyPr") : undefined;
+  const { body, pptxBodyPr } = readBodyPr(bodyPr, frame.kind);
+  if (body) frame.body = body;
+  if (pptxBodyPr) frame.pptxBodyPr = pptxBodyPr;
+}
+
 /** Parses one `p:sp` (a shape or placeholder) into a frame. */
 function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
   const nvSpPr = pChild(sp, "nvSpPr");
+  const link = frameLinkOf(nvSpPr, ctx);
   const nvPr = nvSpPr && pChild(nvSpPr, "nvPr");
   const ph = nvPr && pChild(nvPr, "ph");
   const phType = ph?.getAttribute("type") ?? undefined;
@@ -617,13 +650,14 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
 
   if (isPlaceholder) {
     const paragraphs = txBody ? parseTxBody(txBody, role, ctx) : [];
-    const frame: SlideFrame = { ...base, kind: "text", role, paragraphs };
+    const frame: TextFrame = { ...base, ...link, kind: "text", role, paragraphs };
     if (phType) frame.phType = phType;
     if (phIdx !== undefined) frame.phIdx = Number(phIdx);
     const fill = fillOf(spPr, ctx);
     if (fill) frame.fill = fill;
     const stroke = strokeOf(spPr, ctx);
     if (stroke) frame.stroke = stroke;
+    applyBodyPr(frame, txBody);
     return frame;
   }
 
@@ -632,15 +666,16 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
   const geometry = prst ? PRST_TO_GEOMETRY[prst] : undefined;
   if ((prst === "" || prst === "rect") && txBody) {
     const paragraphs = parseTxBody(txBody, undefined, ctx);
-    const frame: SlideFrame = { ...base, kind: "text", paragraphs };
+    const frame: TextFrame = { ...base, ...link, kind: "text", paragraphs };
     const fill = fillOf(spPr, ctx);
     if (fill) frame.fill = fill;
     const stroke = strokeOf(spPr, ctx);
     if (stroke) frame.stroke = stroke;
+    applyBodyPr(frame, txBody);
     return frame;
   }
   if (geometry) {
-    const frame: SlideFrame = { ...base, kind: "shape", geometry };
+    const frame: ShapeFrame = { ...base, ...link, kind: "shape", geometry };
     const adjustments = prstGeom ? parseAvLstAdjustments(prstGeom) : [];
     if (adjustments.length > 0) frame.adjustments = adjustments;
     const fill = fillOf(spPr, ctx);
@@ -650,6 +685,7 @@ function parseSp(sp: Element, ctx: SlideContext): SlideFrame {
     if (txBody) {
       const paragraphs = parseTxBody(txBody, undefined, ctx);
       if (paragraphs.length > 0) frame.paragraphs = paragraphs;
+      applyBodyPr(frame, txBody);
     }
     return frame;
   }
@@ -690,7 +726,7 @@ function parsePic(pic: Element, ctx: SlideContext): SlideFrame {
   if (rel && rel.type === IMAGE_RELATIONSHIP) {
     const partPath = resolvePartPath(ctx.slidePartPath, rel.target);
     if (ctx.media.has(partPath)) {
-      const frame: SlideFrame = { ...base, kind: "image", mediaId: partPath };
+      const frame: SlideFrame = { ...base, ...frameLinkOf(pChild(pic, "nvPicPr"), ctx), kind: "image", mediaId: partPath };
       const stroke = strokeOf(spPr, ctx);
       if (stroke) frame.stroke = stroke;
       return frame;
@@ -1230,20 +1266,39 @@ export function parseTableGraphicFrameForTest(graphicFrameXml: string): TableFra
  * into a SlideFrame through a minimal context, so the group/adjustment
  * goldens can assert the reader accepts the canonical bytes plus
  * attribute-reordered variants. */
-export function parseShapeTreeChildForTest(elementXml: string): SlideFrame | null {
+export function parseShapeTreeChildForTest(
+  elementXml: string,
+  slide: {
+    /** The slide's relationships (SPEC-097: links and picture bullets). */
+    rels?: Map<string, Relationship>;
+    slidePartPath?: string;
+    /** Media part names already collected (picture bullets, images). */
+    mediaIds?: string[];
+    /** Slide part path → 1-based deck position (slide-jump links). */
+    slideNumberOf?: Map<string, number>;
+  } = {},
+): SlideFrame | null {
+  // `xmlns:r` only when the fragment uses it, so a verbatim group's captured
+  // `xml` stays exactly what the SPEC-096 goldens pin.
+  const rDecl = /\sr:[A-Za-z]+=/.test(elementXml) ? ` xmlns:r="${R_ATTRIBUTE_NAMESPACE}"` : "";
   const xml = elementXml.includes("xmlns:p")
     ? elementXml
-    : elementXml.replace(/^<(p:sp|p:grpSp)>/, `<$1 xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}">`);
+    : elementXml.replace(/^<(p:sp|p:grpSp|p:pic)>/, `<$1 xmlns:p="${P_NAMESPACE}" xmlns:a="${A_NAMESPACE}"${rDecl}>`);
   const doc = parseXml(xml);
+  const media = new Map<string, MediaPart>();
+  for (const mediaId of slide.mediaIds ?? []) {
+    media.set(mediaId, { mediaId, contentType: contentTypeForPartName(mediaId) ?? "image/png", data: "" });
+  }
   const ctx: SlideContext = {
     color: { scheme: {}, map: {} },
     layoutPh: new Map(),
     masterPh: new Map(),
     txStyles: new Map(),
-    slideRels: new Map(),
-    slidePartPath: "",
-    media: new Map(),
+    slideRels: slide.rels ?? new Map(),
+    slidePartPath: slide.slidePartPath ?? "",
+    media,
     parts: new Map(),
+    slideNumberOf: slide.slideNumberOf,
   };
   return parseShapeTreeChild(doc.documentElement, ctx);
 }
@@ -1691,6 +1746,27 @@ export async function parsePptx(
   // Collect every media part up-front, keyed by its own path (AC-31/32).
   const media = new Map<string, MediaPart>();
 
+  // The deck's slide order, up front (SPEC-097): a slide-jump link may point
+  // forward, so every slide part's 1-based position is known before any
+  // slide is built. Only parts that become model slides are numbered.
+  const slidePaths: string[] = [];
+  const sldIdLst = pChild(mainDoc.documentElement, "sldIdLst");
+  for (const sldId of sldIdLst ? childElements(sldIdLst, P_NAMESPACE, "sldId") : []) {
+    const relId = sldId.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
+    const rel = relId ? mainRels.get(relId) : undefined;
+    if (!rel || rel.type !== SLIDE_RELATIONSHIP) {
+      continue;
+    }
+    const slidePath = resolvePartPath(info.mainPartPath, rel.target);
+    if (parts.has(slidePath)) {
+      slidePaths.push(slidePath);
+    }
+  }
+  const slideNumberOf = new Map<string, number>();
+  slidePaths.forEach((path, index) => {
+    if (!slideNumberOf.has(path)) slideNumberOf.set(path, index + 1);
+  });
+
   const deps: BuildDeps = {
     readPart,
     themeHolder: {},
@@ -1700,18 +1776,12 @@ export async function parsePptx(
     parts,
     deckWidthCm: slideWidthCm,
     deckHeightCm: slideHeightCm,
+    slideNumberOf,
   };
 
   const slides: Slide[] = [];
   let deckDateFormat: string | undefined;
-  const sldIdLst = pChild(mainDoc.documentElement, "sldIdLst");
-  for (const sldId of sldIdLst ? childElements(sldIdLst, P_NAMESPACE, "sldId") : []) {
-    const relId = sldId.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
-    const rel = relId ? mainRels.get(relId) : undefined;
-    if (!rel || rel.type !== SLIDE_RELATIONSHIP) {
-      continue;
-    }
-    const slidePath = resolvePartPath(info.mainPartPath, rel.target);
+  for (const slidePath of slidePaths) {
     const slideText = readPart(slidePath);
     if (slideText === undefined) {
       continue;
@@ -1834,6 +1904,8 @@ interface BuildDeps {
    *  back to `DEFAULT_FIELD_BAND` (SPEC-093 AC-13). */
   deckWidthCm: number;
   deckHeightCm: number;
+  /** Slide part path → 1-based deck position (SPEC-097 slide-jump links). */
+  slideNumberOf: Map<string, number>;
 }
 
 /** Resolves a slide's layout/master/theme chain and parses its shape tree.
@@ -1878,6 +1950,7 @@ function buildSlide(
     slidePartPath: slidePath,
     media: deps.media,
     parts: deps.parts,
+    slideNumberOf: deps.slideNumberOf,
   };
 
   // Populate media referenced by this slide's image rels.

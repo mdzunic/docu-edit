@@ -53,7 +53,9 @@ describe("serializeSlideXml — text frame", () => {
     ]);
     const xml = serializeSlideXml(slide, NO_RELS, "ppt/slides/slide1.xml");
     expect(xml).toContain(`<a:buNone/>`);
-    expect(xml).toContain(`<a:pPr algn="ctr" lvl="1"><a:buChar char="•"/></a:pPr>`);
+    // SPEC-097: a list item now carries its indents (marL = (level + 1) ×
+    // 1.27cm, indent = −0.635cm) ahead of lvl/algn.
+    expect(xml).toContain(`<a:pPr marL="914400" indent="-228600" lvl="1" algn="ctr"><a:buChar char="•"/></a:pPr>`);
   });
 
   it("emits an empty paragraph as a:p with a:endParaRPr", () => {
