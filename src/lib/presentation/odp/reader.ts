@@ -677,6 +677,17 @@ function canonicalAttrName(attr: Attr): string {
   return prefix ? `${prefix}:${attr.localName}` : attr.name;
 }
 
+/** A serialised fragment without the declarations of the canonical ODF
+ * prefixes (every content.xml root binds them), so a preserved child reads
+ * back to the very same string after a write — byte-stable re-saves. */
+function withoutCanonicalXmlns(xml: string): string {
+  let out = xml;
+  for (const [uri, prefix] of Object.entries(CANONICAL_PREFIX)) {
+    out = out.split(` xmlns:${prefix}="${uri}"`).join("");
+  }
+  return out;
+}
+
 /** The unmodelled remainder of a `style:paragraph-properties` element as
  * SPEC-097's `odpParaProps` string: its other attributes in source order
  * (`name="value"`, space-separated, values re-escaped) followed directly by
@@ -701,7 +712,7 @@ function unmodelledParaProps(props: Element): string | undefined {
     }
     attrs.push(`${name}="${escapeXmlAttribute(attr.value)}"`);
   }
-  const children = Array.from(props.children).map((child) => serializeElement(child)).join("");
+  const children = Array.from(props.children).map((child) => withoutCanonicalXmlns(serializeElement(child))).join("");
   const out = attrs.join(" ") + children;
   return out.length > 0 ? out : undefined;
 }
@@ -2274,8 +2285,10 @@ function odpSlotsFromPageLayout(styleEl: Element): LayoutSlot[] {
  * box (or the master placeholder fallback). */
 function odpSlotsFromPage(page: Element, ctx: OdpContext): LayoutSlot[] {
   const slots: LayoutSlot[] = [];
-  for (const child of Array.from(page.children)) {
-    if (child.namespaceURI !== DRAW_NAMESPACE || child.localName !== "frame") {
+  for (const pageChild of Array.from(page.children)) {
+    // A linked placeholder (SPEC-097) sits inside its draw:a.
+    const child = pageChild.namespaceURI === DRAW_NAMESPACE && pageChild.localName === "a" ? linkedShapeOf(pageChild) : pageChild;
+    if (!child || child.namespaceURI !== DRAW_NAMESPACE || child.localName !== "frame") {
       continue;
     }
     const cls = presentationAttr(child, "class");
