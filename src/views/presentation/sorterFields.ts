@@ -4,6 +4,7 @@
 // (espree bars casts in .vue scripts), the rename input's focus ref, the
 // event-target guards the sorter's window listeners share, and the honest
 // wording of an import report. Nothing here holds state.
+import { nextTick } from "vue";
 import type { SlideImportReport } from "../../lib/presentation/slideImport";
 import type { SorterGroup } from "./useSlideSorter";
 
@@ -22,9 +23,27 @@ export function asIndexes(value: unknown): number[] {
   return value as number[];
 }
 
-/** Focuses and selects a just-mounted rename input (a function ref). */
+/** Focuses and selects a just-mounted rename input (a function ref). "Add
+ * section" mounts a whole new header row with its input inside, so the ref
+ * runs while the input is still detached and a focus() then would leave the
+ * keyboard on the button; it waits for the render to reach the document. */
 export function focusAndSelect(el: unknown): void {
-  if (el instanceof HTMLInputElement && document.activeElement !== el) {
+  if (!(el instanceof HTMLInputElement)) {
+    return;
+  }
+  if (el.isConnected) {
+    focusInput(el);
+  } else {
+    void nextTick(() => {
+      if (el.isConnected) {
+        focusInput(el);
+      }
+    });
+  }
+}
+
+function focusInput(el: HTMLInputElement): void {
+  if (document.activeElement !== el) {
     el.focus();
     el.select();
   }

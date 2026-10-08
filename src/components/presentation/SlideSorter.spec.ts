@@ -4,7 +4,7 @@
 // dragging, and the odp note.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h, ref, shallowRef, triggerRef } from "vue";
-import { mount, type VueWrapper } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import type { PresentationModel, Slide, TextFrame } from "../../lib/presentation/model";
 import { addSection } from "../../lib/presentation/sections";
 import { usePreferences } from "../../composables/usePreferences";
@@ -218,5 +218,35 @@ describe("SlideSorter — Add section", () => {
     await input.setValue("Appendix");
     await input.trigger("keydown", { key: "Enter" });
     expect(model.sections!.map((s) => s.name)).toEqual(["Intro", "Body", "Appendix"]);
+  });
+
+  // QA: the new section's header row mounts with its input inside it, so a
+  // focus() made as the input is created lands on a detached element and the
+  // keyboard stays on the button — Enter then added a second section.
+  it("moves keyboard focus into the new section's name, selected, from the toolbar button", async () => {
+    const { wrapper, model } = mountSorter();
+    await wrapper.findAll('[data-testid="sorter-slide"]')[3].trigger("click");
+    const button = wrapper.get('[data-testid="sorter-add-section"]');
+    (button.element as HTMLButtonElement).focus();
+    await button.trigger("click");
+    await flushPromises();
+    const input = wrapper.get('[data-testid="section-rename-input"]').element as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, "New section".length]);
+    expect(model.sections).toHaveLength(3);
+  });
+
+  it("moves keyboard focus into the new section's name from the section menu's Add section", async () => {
+    const { wrapper, model } = mountSorter();
+    await wrapper.findAll('[data-testid="sorter-slide"]')[3].trigger("click");
+    await wrapper.findAll('[data-testid="sorter-section-menu"]')[1].trigger("click");
+    await flushPromises();
+    const item = wrapper.get('[data-testid="section-add"]');
+    expect(document.activeElement).toBe(item.element);
+    await item.trigger("click");
+    await flushPromises();
+    const input = wrapper.get('[data-testid="section-rename-input"]').element as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect(model.sections).toHaveLength(3);
   });
 });

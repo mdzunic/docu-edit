@@ -187,6 +187,42 @@ test("sorter: sections, multi-select copy/paste, collapse + drag, reuse from ano
   await expect.poll(() => stageImage.evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
 });
 
+// "Add section" hands the keyboard to the new section's name: typing replaces
+// it and Enter commits it. Typed through page.keyboard, not locator.press(),
+// which focuses its target itself and so cannot see where the app put focus.
+test("Add section focuses the new section's name for typing (AC-6)", async ({ page }) => {
+  await page.goto("/");
+  await openFile(page, SECTIONS);
+  await page.getByTestId("slides-sorter-toggle").click();
+  await expect(cards(page)).toHaveCount(6);
+  const input = sorter(page).getByTestId("section-rename-input");
+
+  // From the sorter's toolbar, at slide 5.
+  await cards(page).nth(4).click();
+  await sorter(page).getByTestId("sorter-add-section").click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("New section");
+  await page.keyboard.type("Appendix");
+  await page.keyboard.press("Enter");
+  await expect(input).toHaveCount(0);
+  expect(await sectionSummary(page)).toEqual(["Opening: 3 slides", "Details: 1 slide", "Appendix: 2 slides"]);
+
+  // From a section's menu, at slide 2.
+  await cards(page).nth(1).click();
+  await sorter(page).getByTestId("sorter-section-menu").first().click();
+  await page.getByTestId("section-add").click();
+  await expect(input).toBeFocused();
+  await page.keyboard.type("Middle");
+  await page.keyboard.press("Enter");
+  await expect(input).toHaveCount(0);
+  expect(await sectionSummary(page)).toEqual([
+    "Opening: 1 slide",
+    "Middle: 2 slides",
+    "Details: 1 slide",
+    "Appendix: 2 slides",
+  ]);
+});
+
 test("sections: rename, reject an empty name, move a section with its run, remove it (AC-6)", async ({ page }) => {
   await page.goto("/");
   await openFile(page, SECTIONS);
