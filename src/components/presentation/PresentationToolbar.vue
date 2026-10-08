@@ -8,6 +8,13 @@
 // overflow menu when the strip is too narrow for them (the e2e-viewport lesson:
 // controls must never fall off the edge unreachable).
 //
+// SPEC-097 adds the numbered toggle (`slides-numbering`, beside
+// `slides-bullet`), the list menu (`slides-list-menu` → SlideListPopover) and,
+// inside a text session, the link button (`slides-link`, also Cmd/Ctrl+K). The
+// link button renders only while a session is open: the insert bar's
+// whole-frame `slides-link` renders only outside one, so the test id is never
+// on two elements at once (both ribbon strips stay mounted).
+//
 // Runtime prop/emit declarations, not the generic forms — espree lints .vue
 // scripts (see AppShell.vue's note).
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
@@ -15,6 +22,7 @@ import FontFamilySelect from "../FontFamilySelect.vue";
 import FontSizeControl from "../FontSizeControl.vue";
 import TextColorPicker from "../TextColorPicker.vue";
 import UiToggleButton from "../ui/UiToggleButton.vue";
+import SlideListPopover from "./SlideListPopover.vue";
 import { alignIsActive, asFormatState, togglePressed } from "./slideToolbarState";
 
 const props = defineProps({
@@ -28,6 +36,15 @@ const props = defineProps({
   recentColors: { type: Array, default: () => [] },
   /** The deck theme (SPEC-094): renders the colour picker's theme row. */
   theme: { type: Object, default: null },
+  /** SPEC-097: the touched paragraphs' `{ indentCm, hangingCm }` for the list
+   * popover ("" when mixed). */
+  listGeometry: { type: Object, default: null },
+  /** SPEC-097: the last list command's error, shown in the popover. */
+  listError: { type: String, default: "" },
+  /** SPEC-097: the picture-bullet input's accept list. */
+  imageAccept: { type: String, default: "" },
+  /** SPEC-097: a text session is open, so the link button shows. */
+  linkEnabled: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -41,6 +58,15 @@ const emit = defineEmits([
   "bullet",
   "indent",
   "outdent",
+  // SPEC-097
+  "numbering",
+  "list-style",
+  "bullet-char",
+  "bullet-image",
+  "start-at",
+  "list-indent",
+  "list-hanging",
+  "link",
 ]);
 
 // SPEC-081 AC-18: the presentation font-size control clamps to 6–96 pt, a
@@ -77,6 +103,17 @@ const ALIGNMENTS = [
   { value: "right", icon: "align-right", label: "Align right", caption: "Right" },
   { value: "justify", icon: "align-justify", label: "Justify", caption: "Fill" },
 ];
+
+// --- the list popover (SPEC-097) -------------------------------------------
+const listOpen = ref(false);
+const listHost = useTemplateRef("listHost");
+/** Closes the popover and hands focus back to its trigger (keyboard users
+ * land where they opened it). */
+function closeList() {
+  listOpen.value = false;
+  const trigger = listHost.value?.querySelector('[data-testid="slides-list-menu"]');
+  if (trigger instanceof HTMLElement) trigger.focus();
+}
 
 // --- overflow (⋯) ----------------------------------------------------------
 const root = useTemplateRef("root");
@@ -241,6 +278,52 @@ onBeforeUnmount(() => observer?.disconnect());
             @click="emit('bullet')"
           />
           <UiToggleButton
+            icon="numbered-list"
+            label="Numbered list"
+            caption="Numbers"
+            data-testid="slides-numbering"
+            :pressed="pressed('numbered')"
+            :disabled="!enabled"
+            @mousedown.prevent
+            @click="emit('numbering')"
+          />
+          <div
+            ref="listHost"
+            class="popover-host"
+          >
+            <UiToggleButton
+              icon="multilevel-list"
+              label="List style"
+              caption="Lists"
+              data-testid="slides-list-menu"
+              aria-haspopup="dialog"
+              :aria-expanded="listOpen"
+              :pressed="listOpen"
+              :disabled="!enabled"
+              @mousedown.prevent
+              @click="listOpen = !listOpen"
+            />
+            <SlideListPopover
+              v-if="listOpen && enabled"
+              :state="state"
+              :geometry="listGeometry"
+              :accept="imageAccept"
+              :error="listError"
+              @style="(style) => emit('list-style', style)"
+              @bullet-char="(char) => emit('bullet-char', char)"
+              @bullet-image="(file) => emit('bullet-image', file)"
+              @start-at="(value) => emit('start-at', value)"
+              @indent="(cm) => emit('list-indent', cm)"
+              @hanging="(cm) => emit('list-hanging', cm)"
+              @close="closeList"
+            />
+            <div
+              v-if="listOpen && enabled"
+              class="popover-backdrop"
+              @click="listOpen = false"
+            />
+          </div>
+          <UiToggleButton
             icon="indent-decrease"
             label="Decrease indent"
             caption="Outdent"
@@ -257,6 +340,15 @@ onBeforeUnmount(() => observer?.disconnect());
             :disabled="!enabled"
             @mousedown.prevent
             @click="emit('indent')"
+          />
+          <UiToggleButton
+            v-if="linkEnabled"
+            icon="link"
+            label="Link (Ctrl+K)"
+            caption="Link"
+            data-testid="slides-link"
+            @mousedown.prevent
+            @click="emit('link')"
           />
         </div>
       </div>
@@ -336,6 +428,17 @@ onBeforeUnmount(() => observer?.disconnect());
 
 .tb-overflow {
   position: relative;
+}
+
+.popover-host {
+  position: relative;
+  display: inline-flex;
+}
+
+.popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
 }
 
 .tb-overflow-menu {

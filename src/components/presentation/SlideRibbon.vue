@@ -22,8 +22,9 @@
 //
 //   · "Home" and "Insert" are tabs. They switch which slotted strip shows,
 //     one at a time — a single-select tablist.
-//   · Notes, Design, Transitions, Animate, Layout, Table, Media and Header &
-//     footer open side panels, any number of which can be open at once. Notes
+//   · Notes, Design, Text, Transitions, Animate, Layout, Table, Media and
+//     Header & footer open side panels, any number of which can be open at
+//     once (Text is SPEC-097's lists/spacing/autofit panel). Notes
 //     joined them from the deck's action cluster, where it was the one entry
 //     that opened a panel rather than running a command.
 //
@@ -71,6 +72,8 @@ const props = defineProps({
   tableOpen: { type: Boolean, default: false },
   mediaOpen: { type: Boolean, default: false },
   headerFooterOpen: { type: Boolean, default: false },
+  /** SPEC-097: the Text panel (lists, spacing, autofit, text body). */
+  textOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -84,6 +87,7 @@ const emit = defineEmits([
   "table-toggle",
   "media-toggle",
   "header-footer-toggle",
+  "text-toggle",
 ]);
 
 /** Which slotted strip is showing. Both stay mounted (v-show, not v-if): the
@@ -107,6 +111,7 @@ const PANELS = [
   { id: "notes", label: "Notes", testid: "slides-notes-toggle", open: () => props.notesOpen, toggle: () => emit("notes-toggle") },
   { id: "layout", label: "Layout", testid: "slides-layout-toggle", open: () => props.layoutOpen, toggle: () => emit("layout-toggle") },
   { id: "design", label: "Design", testid: "slides-theme-toggle", open: () => props.themeOpen, toggle: () => emit("theme-toggle") },
+  { id: "text", label: "Text", testid: "slides-text-toggle", open: () => props.textOpen, toggle: () => emit("text-toggle") },
   { id: "transition", label: "Transitions", testid: "slides-transition-toggle", open: () => props.transitionOpen, toggle: () => emit("transition-toggle") },
   { id: "animate", label: "Animate", testid: "slides-animate-toggle", open: () => props.animateOpen, toggle: () => emit("animate-toggle") },
   { id: "table", label: "Table", testid: "slides-table-toggle", open: () => props.tableOpen, toggle: () => emit("table-toggle") },

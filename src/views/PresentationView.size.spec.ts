@@ -51,12 +51,18 @@
 //                    <MediaPanel> mount, the slides-media toolbar toggle and the
 //                    insert-media hookup); the spec mandates a drop of at least
 //                    10 (view at 374 lines)
+//   2026-10-08  365  SPEC-097 — extracted the ribbon strips' PresentationToolbar
+//                    and SlideInsertBar prop/emit blocks into SlideToolbarHost
+//                    (one `<SlideToolbarHost strip=… />` per ribbon slot),
+//                    paying for the useSlideTextDepth wiring call, the
+//                    <TextPanel> mount and the Text toggle prop pair; the spec
+//                    mandates a drop of at least 10 (view at 360 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 380;
+const LINE_BUDGET = 365;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
