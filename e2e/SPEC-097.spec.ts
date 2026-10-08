@@ -1,10 +1,11 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LINE_END, MOD } from "./keys";
 import { unzip } from "../src/lib/core/zip";
+import { zip } from "../src/lib/core/zipWriter";
 import { EXPECTED_TEXT_DEPTH } from "../src/lib/presentation/fixtures/build";
 
 // SPEC-097 — slide text depth. Open a deck whose first slide carries a
@@ -69,6 +70,41 @@ async function sessionFits(frame: Locator): Promise<boolean> {
     const bottom = Math.max(...Array.from(host.children).map((block) => block.getBoundingClientRect().bottom));
     return bottom <= el.getBoundingClientRect().bottom + 1;
   });
+}
+
+/** The `--fit-scale` a frame's rendered text body is laid out at. */
+async function fitScaleOf(frame: Locator): Promise<number> {
+  return Number(await frame.locator(".text-body").evaluate((el) => getComputedStyle(el).getPropertyValue("--fit-scale").trim()));
+}
+
+/** The `<p:sp>` of a slide part whose text contains `text`. */
+function shapeWith(slideXml: string, text: string): string {
+  return slideXml.split("<p:sp>").find((sp) => sp.includes(text)) ?? "";
+}
+
+/** slide1.xml of a downloaded deck. */
+async function slide1Of(file: string): Promise<string> {
+  const parts = await unzip(new Uint8Array(readFileSync(file)));
+  return new TextDecoder().decode(parts.get("ppt/slides/slide1.xml")!);
+}
+
+/** The text-depth fixture with autofit stored in its source: the title says
+ * normAutofit at 90% (more than it needs to fit — the renderer measures
+ * smaller) and the link sentence's box says spAutoFit at its 2cm height. */
+async function writeAutofitDeck(): Promise<{ file: string; parts: Map<string, Uint8Array> }> {
+  const parts = await unzip(new Uint8Array(readFileSync(PPTX)));
+  const slideXml = new TextDecoder().decode(parts.get("ppt/slides/slide1.xml")!);
+  const title = shapeWith(slideXml, EXPECTED_TEXT_DEPTH.title);
+  const sentence = shapeWith(slideXml, EXPECTED_TEXT_DEPTH.linkSentence);
+  expect(title).toContain("<a:bodyPr/>");
+  expect(sentence).toContain('<a:bodyPr wrap="square"/>');
+  const crafted = slideXml
+    .replace(title, title.replace("<a:bodyPr/>", '<a:bodyPr><a:normAutofit fontScale="90000"/></a:bodyPr>'))
+    .replace(sentence, sentence.replace('<a:bodyPr wrap="square"/>', '<a:bodyPr wrap="square"><a:spAutoFit/></a:bodyPr>'));
+  parts.set("ppt/slides/slide1.xml", new TextEncoder().encode(crafted));
+  const file = join(tmpdir(), "spec097-autofit-source.pptx");
+  writeFileSync(file, await zip(Array.from(parts, ([name, data]) => ({ name, data }))));
+  return { file, parts };
 }
 
 /** Selects `word` inside the open contenteditable host (the session's own
@@ -274,4 +310,96 @@ test("Resize shape to fit text keeps the frame fitted while its text is typed, a
   expect(shape).toContain("<a:spAutoFit/>");
   const cy = Number(/<a:ext cx="\d+" cy="(\d+)"\/>/.exec(shape)?.[1]);
   expect(Math.abs(cy - final * 9525)).toBeLessThanOrEqual(2 * 9525);
+});
+
+test("autofit is measured without dirtying: no-edit downloads stay byte-identical, a no-op session stores nothing, a typed shrink frame stores its new scale", async ({ page }) => {
+  const { file, parts } = await writeAutofitDeck();
+  await openFixture(page, file);
+  const title = frameWith(page, EXPECTED_TEXT_DEPTH.title);
+  const sentence = frameWith(page, EXPECTED_TEXT_DEPTH.linkSentence);
+
+  // AC-40: the renderer re-measures the stored 90% down until the title fits,
+  // leaving the model alone — the download is the source, part for part (AC-42).
+  await expect.poll(() => textFits(title)).toBe(true);
+  expect(await fitScaleOf(title)).toBeLessThan(0.9);
+  const noEdit = await unzip(new Uint8Array(readFileSync(await downloadTo(page, "spec097-autofit-noedit.pptx"))));
+  expect([...noEdit.keys()]).toEqual([...parts.keys()]);
+  for (const [name, bytes] of parts) expect(Buffer.from(noEdit.get(name)!).equals(Buffer.from(bytes)), name).toBe(true);
+
+  // AC-41: a session that changes nothing writes no scale and no height.
+  for (const [frame, text] of [
+    [title, EXPECTED_TEXT_DEPTH.title],
+    [sentence, EXPECTED_TEXT_DEPTH.linkSentence],
+  ] as const) {
+    await frame.getByText(text).dblclick();
+    await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  }
+  const untouched = await slide1Of(await downloadTo(page, "spec097-autofit-noop.pptx"));
+  expect(shapeWith(untouched, EXPECTED_TEXT_DEPTH.title)).toContain('<a:normAutofit fontScale="90000"/>');
+  expect(shapeWith(untouched, EXPECTED_TEXT_DEPTH.linkSentence)).toMatch(/<a:ext cx="\d+" cy="720000"\/>/);
+
+  // AC-37/41: typing into the shrink title stores the re-measured scale when
+  // the session ends, inside that Typing edit — one undo restores both.
+  await title.getByText(EXPECTED_TEXT_DEPTH.title).dblclick();
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+  await page.keyboard.press(`${MOD}+End`);
+  await page.keyboard.type(" across every region and product line");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  await expect.poll(() => textFits(title)).toBe(true);
+  const scale = await fitScaleOf(title);
+  const typed = shapeWith(await slide1Of(await downloadTo(page, "spec097-autofit-typed.pptx")), "across every region");
+  expect(typed).toContain(`<a:normAutofit fontScale="${Math.round(scale * 100) * 1000}"`);
+  expect(typed).not.toContain('fontScale="90000"');
+
+  await page.getByTestId("presentation-undo").click();
+  await expect(title).not.toContainText("across every region");
+  const undone = shapeWith(await slide1Of(await downloadTo(page, "spec097-autofit-undone.pptx")), EXPECTED_TEXT_DEPTH.title);
+  expect(undone).toContain('<a:normAutofit fontScale="90000"/>');
+});
+
+test("Text panel paragraph and run commands refit a shrink title and a resize-shape box inside their own edit", async ({ page }) => {
+  await openFixture(page, PPTX);
+  const title = frameWith(page, EXPECTED_TEXT_DEPTH.title);
+  const sentence = frameWith(page, EXPECTED_TEXT_DEPTH.linkSentence);
+  await title.click();
+  await page.getByTestId("slides-text-toggle").click();
+  const panel = page.getByTestId("slides-text-panel");
+  await expect(panel).toBeVisible();
+
+  // AC-63: shrink fits the overflowing title; 1.5× line spacing (a paragraph
+  // command) re-measures it to a smaller step that still fits.
+  await panel.getByTestId("text-autofit").selectOption({ label: "Shrink text on overflow" });
+  await expect.poll(() => textFits(title)).toBe(true);
+  const shrunk = await fitScaleOf(title);
+  await panel.getByTestId("text-line-spacing-mode").selectOption("multiple");
+  await panel.getByTestId("text-line-spacing").fill("1.5");
+  await panel.getByTestId("text-line-spacing").press("Enter");
+  await expect.poll(() => fitScaleOf(title)).toBeLessThan(shrunk);
+  await expect.poll(() => textFits(title)).toBe(true);
+
+  // AC-38: a resize-shape box grows with space-before (paragraph) and wide
+  // letter spacing (run), its text fitting each time.
+  await sentence.click();
+  await panel.getByTestId("text-autofit").selectOption({ label: "Resize shape to fit text" });
+  await expect.poll(() => textFits(sentence)).toBe(true);
+  const fitted = await layoutHeight(sentence);
+  await panel.getByTestId("text-space-before").fill("20");
+  await panel.getByTestId("text-space-before").press("Enter");
+  await expect.poll(() => layoutHeight(sentence)).toBeGreaterThan(fitted);
+  const spaced = await layoutHeight(sentence);
+  await panel.getByTestId("text-letter-spacing").fill("8");
+  await panel.getByTestId("text-letter-spacing").press("Enter");
+  await expect.poll(() => layoutHeight(sentence)).toBeGreaterThan(spaced);
+  await expect.poll(() => textFits(sentence)).toBe(true);
+
+  const slideXml = await slide1Of(await downloadTo(page, "spec097-panel-refit.pptx"));
+  const scale = await fitScaleOf(title);
+  expect(shapeWith(slideXml, EXPECTED_TEXT_DEPTH.title)).toContain(`<a:normAutofit fontScale="${Math.round(scale * 100) * 1000}"`);
+  const box = shapeWith(slideXml, EXPECTED_TEXT_DEPTH.linkSentence);
+  expect(box).toContain("<a:spAutoFit/>");
+  const cy = Number(/<a:ext cx="\d+" cy="(\d+)"\/>/.exec(box)?.[1]);
+  expect(Math.abs(cy - (await layoutHeight(sentence)) * 9525)).toBeLessThanOrEqual(2 * 9525);
 });
