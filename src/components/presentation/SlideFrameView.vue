@@ -465,7 +465,7 @@ watch([() => props.frame, deckTheme], () => {
   <div
     v-if="kind === 'text'"
     class="frame text-frame"
-    :class="{ 'is-selected': selected, 'is-editing': editing, 'is-linked-frame': showFrameLink }"
+    :class="{ 'is-selected': selected, 'is-editing': editing }"
     :style="[{ ...position, background: textFill }, playStyle]"
     :data-testid="testId"
     :data-frame-id="frameIdAttr"
@@ -576,7 +576,7 @@ watch([() => props.frame, deckTheme], () => {
   <div
     v-else-if="kind === 'image'"
     class="frame"
-    :class="{ 'is-selected': selected, 'is-linked-frame': showFrameLink }"
+    :class="{ 'is-selected': selected }"
     :style="[position, playStyle]"
     :data-testid="testId"
     :data-frame-id="frameIdAttr"
@@ -719,7 +719,7 @@ watch([() => props.frame, deckTheme], () => {
   <div
     v-else-if="kind === 'shape'"
     class="frame shape-frame"
-    :class="{ 'is-selected': selected, 'is-linked-frame': showFrameLink }"
+    :class="{ 'is-selected': selected }"
     :style="[position, playStyle]"
     :data-testid="testId"
     :data-frame-id="frameIdAttr"
