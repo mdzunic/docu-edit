@@ -21,7 +21,7 @@ import { paintChartIntoCanvas } from "../../lib/core/chartCanvas";
 import { mediaElementVolume } from "../../lib/presentation/mediaFrames";
 import { effectiveAnchor, effectiveAutofit } from "../../lib/presentation/textBody";
 import { createCanPlayProbe, mediaRenderDescriptor } from "./mediaRender";
-import { bodyStyle, measureFrameFit } from "./slideTextFit";
+import { FULL_SCALE, bodyStyle, measureFrameFit } from "./slideTextFit";
 import {
   asResolver,
   asTheme,
@@ -175,6 +175,10 @@ const currentScale = computed(() => measuredScale.value ?? initialFitScale(frame
 const textBodyStyle = computed(() => {
   const body = textBodyFrameOf(frame.value);
   return body ? bodyStyle(body, currentScale.value) : {};
+});
+const editBodyStyle = computed(() => {
+  const body = textBodyFrameOf(frame.value);
+  return body ? bodyStyle(body, FULL_SCALE) : {};
 });
 const noWrap = computed(() => bodyNoWrap(frame.value));
 const anchoredBody = computed(() => {
@@ -473,13 +477,15 @@ watch([() => props.frame, deckTheme], () => {
     @pointerdown="onFramePointerdown"
   >
     <!-- Editing session: an empty contenteditable the editing composable
-         owns, inside the same text body (insets, anchor, fit scale) so the
-         session edits what the stage shows (SPEC-097) -->
+         owns, inside a body with the frame's insets/anchor/columns (SPEC-097)
+         at FULL scale — the host's runs are plain px (slideTextDom.ts), and
+         it is deliberately not a `.text-body`, so `frameTextHost` never
+         measures an unscalable editing DOM (it reads null → keep stored). -->
     <div
       v-if="editing"
-      class="text-body is-editing"
+      class="text-edit-body"
       :class="{ 'no-wrap': noWrap, 'is-anchored': anchoredBody }"
-      :style="textBodyStyle"
+      :style="editBodyStyle"
     >
       <div
         ref="editHost"
@@ -1014,7 +1020,8 @@ watch([() => props.frame, deckTheme], () => {
    (justify-content), columns and the autofit scale arrive inline from
    slideTextFit.ts#bodyStyle. It fills the frame and overflows it visibly
    (autofit "none" renders exactly as SPEC-079 did). */
-.text-body {
+.text-body,
+.text-edit-body {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -1023,7 +1030,7 @@ watch([() => props.frame, deckTheme], () => {
 }
 
 .text-body.no-wrap .paragraph,
-.text-body.no-wrap .ce-host {
+.text-edit-body.no-wrap .ce-host {
   white-space: pre;
 }
 
@@ -1033,15 +1040,20 @@ watch([() => props.frame, deckTheme], () => {
   outline: none;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: calc(1.2 * var(--line-scale, 1));
-  /* the renderer's 18pt default (18 * 96/72), at the body's fit scale */
-  font-size: calc(24px * var(--fit-scale, 1));
+  line-height: 1.2;
+  font-size: 24px; /* the renderer's 18pt default (18 * 96/72) */
 }
 
 /* A middle/bottom-anchored body keeps its anchor while editing: the host
    hugs its content and the body's justify-content places it. */
-.text-body.is-editing.is-anchored > .ce-host {
+.text-edit-body.is-anchored > .ce-host {
   flex: 0 0 auto;
+}
+
+/* A linked run in the session: underlined by class, never an inline mark
+   (which would read back as the run's own underline). */
+.ce-host :deep(.ce-link) {
+  text-decoration: underline;
 }
 
 .ce-host :deep(.ce-p) {
