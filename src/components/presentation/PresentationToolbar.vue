@@ -17,7 +17,7 @@
 //
 // Runtime prop/emit declarations, not the generic forms — espree lints .vue
 // scripts (see AppShell.vue's note).
-import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import FontFamilySelect from "../FontFamilySelect.vue";
 import FontSizeControl from "../FontSizeControl.vue";
 import TextColorPicker from "../TextColorPicker.vue";
@@ -114,6 +114,13 @@ function closeList() {
   const trigger = listHost.value?.querySelector('[data-testid="slides-list-menu"]');
   if (trigger instanceof HTMLElement) trigger.focus();
 }
+// Losing the target (nothing selected) closes it, so it never pops back open.
+watch(
+  () => props.enabled,
+  (on) => {
+    if (!on) listOpen.value = false;
+  },
+);
 
 // --- overflow (⋯) ----------------------------------------------------------
 const root = useTemplateRef("root");
