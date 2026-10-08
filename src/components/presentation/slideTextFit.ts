@@ -85,7 +85,11 @@ export function applyFitStyle(el: HTMLElement, frame: BodyFrame, scale: FitScale
 /** The rendered text-body element of a frame on the stage (`root` defaults
  * to the document), or null when it is not rendered. */
 export function frameTextHost(frameId: string, root: ParentNode = document): HTMLElement | null {
-  const frameEl = root.querySelector(`[${FRAME_ID_ATTRIBUTE}="${CSS.escape(frameId)}"]`);
+  // Matched by attribute value rather than an escaped selector: ids are
+  // arbitrary strings, and `CSS.escape` is absent in jsdom.
+  const frameEl = Array.from(root.querySelectorAll(`[${FRAME_ID_ATTRIBUTE}]`)).find(
+    (el) => el.getAttribute(FRAME_ID_ATTRIBUTE) === frameId,
+  );
   const host = frameEl?.querySelector(`.${TEXT_BODY_CLASS}`);
   return host instanceof HTMLElement ? host : null;
 }
@@ -104,6 +108,10 @@ export function measureBodyHeightCm(host: HTMLElement, widthCm: number, fontScal
   clone.style.pointerEvents = "none";
   clone.style.left = "0";
   clone.style.top = "0";
+  // A body that is itself absolutely inset (shape text: `inset: 0`) would
+  // otherwise stretch to its frame — release the far edges so height is auto.
+  clone.style.right = "auto";
+  clone.style.bottom = "auto";
   clone.style.width = cmPx(widthCm);
   clone.style.height = "auto";
   clone.style.minHeight = "0";
