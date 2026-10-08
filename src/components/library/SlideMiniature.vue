@@ -12,17 +12,27 @@
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
 import {
   chartVisualOf,
+  defaultParagraphAlign,
+  hasMarker,
   imageSrc,
+  initialFitScale,
   isEmptyTextPlaceholder,
   isForeignVisible,
   markParagraphList,
   markedParagraphs,
+  markerFallbackText,
+  markerImageSrc,
+  markerStyle,
   mediaResolver,
+  paragraphStyle as stageParagraphStyle,
+  runRenders,
   shapeVisualOf,
   surfaceBackground,
+  textBodyFrameOf,
   textFrameFill,
 } from "../presentation/slideRender";
-import { DEFAULT_THEME, resolveColor, resolveFont } from "../../lib/core/theme";
+import { bodyStyle } from "../presentation/slideTextFit";
+import { DEFAULT_THEME, resolveColor } from "../../lib/core/theme";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { paintChart } from "../../lib/core/chartCanvas";
 import { cmToPx } from "../../lib/core/units";
@@ -99,7 +109,7 @@ function frameStyle(frame = Object()) {
 }
 
 function textStyle(frame = Object()) {
-  const style = framePositionOnly(frame);
+  const style = { ...framePositionOnly(frame), ...textBodyStyle(frame) };
   style.background = textFrameFill(frame, deckTheme.value);
   if (frame.stroke) {
     style.border = `${(frame.stroke.widthPt * 96) / 72}px solid ${resolveColor(frame.stroke.color, deckTheme.value)}`;
@@ -107,37 +117,27 @@ function textStyle(frame = Object()) {
   return style;
 }
 
+/** SPEC-097: the stage's text-body style (insets, anchor, columns) at the
+ * frame's STORED autofit scale — the miniature paints, it never measures. */
+function textBodyStyle(frame = Object()) {
+  const body = textBodyFrameOf(frame);
+  return body ? bodyStyle(body, initialFitScale(body)) : {};
+}
+
+/** The stage's paragraph style (derived indent/hanging, line pitch,
+ * spacing), so a miniature's lists agree with the stage's. */
+function paragraphStyleOf(entry = Object(), frame = Object()) {
+  return stageParagraphStyle(entry.para, defaultParagraphAlign(frame));
+}
+
+/** A paragraph's runs styled as the stage styles them (a linked run keeps its
+ * underline; the miniature renders no live anchors). */
+function runsOf(entry = Object(), frame = Object()) {
+  return runRenders(entry.para, frame, deckTheme.value);
+}
+
 function framePositionOnly(frame = Object()) {
   return frameStyle(frame);
-}
-
-function runStyle(run = Object()) {
-  const style = Object();
-  style.color = "#000000";
-  if (run.color) {
-    style.color = resolveColor(run.color, deckTheme.value);
-  }
-  style.fontSize = `${((run.sizePt || 18) * 96) / 72}px`;
-  if (run.bold) {
-    style.fontWeight = "700";
-  }
-  if (run.italic) {
-    style.fontStyle = "italic";
-  }
-  if (run.underline) {
-    style.textDecoration = "underline";
-  }
-  if (run.fontFamily) {
-    style.fontFamily = resolveFont(run.fontFamily, deckTheme.value);
-  }
-  return style;
-}
-
-function paragraphStyle(entry = Object()) {
-  const style = Object();
-  style.textAlign = entry.para.align || "left";
-  style.paddingInlineStart = `${(entry.para.level || 0) * 1.2}em`;
-  return style;
 }
 
 /** Function ref for a shape frame's canvas — the shared core painter, guarded
@@ -229,16 +229,22 @@ const FOREIGN_FILL = "#e9e7e6";
             v-for="(entry, index) in markedParagraphs(frame)"
             :key="index"
             class="mini-paragraph"
-            :style="paragraphStyle(entry)"
+            :style="paragraphStyleOf(entry, frame)"
           >
             <span
-              v-if="entry.marker"
+              v-if="hasMarker(entry)"
               class="mini-marker"
-            >{{ entry.marker }}</span>
+              :style="markerStyle(entry, deckTheme)"
+            ><img
+              v-if="markerImageSrc(entry, resolveMedia)"
+              class="mini-bullet-image"
+              :src="markerImageSrc(entry, resolveMedia)"
+              alt=""
+            ><template v-else>{{ markerFallbackText(entry) }}</template></span>
             <span
-              v-for="(run, runIndex) in entry.para.runs"
+              v-for="(run, runIndex) in runsOf(entry, frame)"
               :key="runIndex"
-              :style="runStyle(run)"
+              :style="run.style"
             >{{ run.text }}</span>
           </div>
         </div>
@@ -252,16 +258,28 @@ const FOREIGN_FILL = "#e9e7e6";
           <div
             v-if="frame.paragraphs && frame.paragraphs.length"
             class="mini-shape-text"
+            :style="textBodyStyle(frame)"
           >
             <div
               v-for="(entry, index) in markedParagraphs(frame)"
               :key="index"
-              :style="paragraphStyle(entry)"
+              class="mini-paragraph"
+              :style="paragraphStyleOf(entry, frame)"
             >
               <span
-                v-for="(run, runIndex) in entry.para.runs"
+                v-if="hasMarker(entry)"
+                class="mini-marker"
+                :style="markerStyle(entry, deckTheme)"
+              ><img
+                v-if="markerImageSrc(entry, resolveMedia)"
+                class="mini-bullet-image"
+                :src="markerImageSrc(entry, resolveMedia)"
+                alt=""
+              ><template v-else>{{ markerFallbackText(entry) }}</template></span>
+              <span
+                v-for="(run, runIndex) in runsOf(entry, frame)"
                 :key="runIndex"
-                :style="runStyle(run)"
+                :style="run.style"
               >{{ run.text }}</span>
             </div>
           </div>
@@ -307,11 +325,22 @@ const FOREIGN_FILL = "#e9e7e6";
                 <div
                   v-for="(entry, index) in markParagraphsOf(cell)"
                   :key="index"
+                  :style="paragraphStyleOf(entry, frame)"
                 >
                   <span
-                    v-for="(run, runIndex) in entry.para.runs"
+                    v-if="hasMarker(entry)"
+                    class="mini-marker"
+                    :style="markerStyle(entry, deckTheme)"
+                  ><img
+                    v-if="markerImageSrc(entry, resolveMedia)"
+                    class="mini-bullet-image"
+                    :src="markerImageSrc(entry, resolveMedia)"
+                    alt=""
+                  ><template v-else>{{ markerFallbackText(entry) }}</template></span>
+                  <span
+                    v-for="(run, runIndex) in runsOf(entry, frame)"
                     :key="runIndex"
-                    :style="runStyle(run)"
+                    :style="run.style"
                   >{{ run.text }}</span>
                 </div>
               </template>
@@ -353,14 +382,27 @@ const FOREIGN_FILL = "#e9e7e6";
   overflow: hidden;
 }
 
+.mini-text {
+  display: flex;
+  flex-direction: column;
+}
+
 .mini-paragraph {
-  line-height: var(--line-tight);
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+/* The marker box's width/size/colour arrive inline (slideRender#markerStyle),
+   exactly as on the stage. */
 .mini-marker {
-  margin-inline-end: 0.35em;
+  white-space: pre;
+}
+
+.mini-bullet-image {
+  height: 1em;
+  width: auto;
+  vertical-align: -0.12em;
 }
 
 .mini-shape canvas {
@@ -374,8 +416,7 @@ const FOREIGN_FILL = "#e9e7e6";
   inset: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  box-sizing: border-box;
   overflow: hidden;
 }
 
