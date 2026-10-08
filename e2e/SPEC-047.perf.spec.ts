@@ -217,6 +217,12 @@ interface OpenSample {
 async function measureOpen(page: Page): Promise<OpenSample> {
   await page.goto("/");
   await resetLongTasks(page);
+  // goto resolves on the load event, which can fire while main.ts is still
+  // hydrating IndexedDB and HomeView's lazy route chunk hasn't mounted yet.
+  // A file can't be chosen before the picker exists, so wait for it: otherwise
+  // the landing page's own load, plus Playwright's 270→770ms locator re-poll,
+  // land inside the open timing (~850ms in the container, bimodally).
+  await page.getByTestId("open-document-input").waitFor({ state: "attached" });
   const navigated = page.waitForURL(/\/doc\/.+/, { timeout: 30_000 });
   // t0 at the moment the file is chosen, NOT at the URL change: in this SPA
   // every expensive part of opening (read, unzip, parse, store) happens
