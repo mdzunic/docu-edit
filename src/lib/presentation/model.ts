@@ -21,6 +21,7 @@ import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
 import type { ShapeGeometry } from "../core/shapes";
 import type { ChartVisual } from "../core/charts";
+import type { ListMarkerStyle } from "../core/lists";
 
 /** The presentation file formats, by the package family they ride in:
  * `.pptx` is OPC/PresentationML, `.odp` is an ODF package. */
@@ -169,17 +170,92 @@ export interface SlideRun {
   fontFamily?: ModelFont; // effective; absent = renderer default stack
   sizePt?: number; // effective; absent = 18
   color?: ModelColor; // effective; absent = #000000
+  /** Letter spacing in points, −10…10 in 0.1 steps; absent = 0 (SPEC-097). */
+  letterSpacingPt?: number;
+  /** SPEC-097 hyperlink: an external URL (always `sanitizeHref`-clean) OR a
+   *  1-based in-deck slide number — at most one of the two is set. Two
+   *  scalars rather than one object, exactly documentModel.ts's
+   *  `linkHref`/`linkAnchor` reason: run coalescing and `marksEqual` stay
+   *  `===` per key. A run link inside a linked frame wins for that run. */
+  linkHref?: string;
+  linkSlide?: number;
+  /** The link's hover tooltip; meaningless without a link. */
+  linkTooltip?: string;
 }
 
 /** One paragraph (visual line) of a text body. An explicit line break
- * (`a:br`) starts a new paragraph, so each entry is one rendered row. */
+ * (`a:br`) starts a new paragraph, so each entry is one rendered row.
+ *
+ * SPEC-097 adds the list, spacing and preservation fields. Displayed numbers
+ * are DERIVED by adjacency (`lib/presentation/slideLists.ts`), never stored. */
 export interface SlideParagraph {
   runs: SlideRun[];
   align?: "left" | "center" | "right" | "justify"; // absent = left
-  /** Bullet marker: "disc" renders •, "number" renders 1./2./… restarting
-   *  per contiguous same-level run of numbered paragraphs. */
+  /** Bullet marker: "disc" = a bulleted item, "number" = a numbered item
+   *  (SPEC-079's meaning); the exact glyph/format is `bulletStyle`. */
   bullet?: "disc" | "number";
   level?: number; // 0..8 indent level; absent = 0
+  /** The marker style (core/lists.ts); absent = "disc" for `bullet: "disc"`,
+   *  "decimal" for `bullet: "number"`. `markerType(bulletStyle)` always agrees
+   *  with `bullet`. */
+  bulletStyle?: ListMarkerStyle;
+  /** A custom bullet glyph (one grapheme), `bullet: "disc"` only; wins over
+   *  `bulletStyle`. */
+  bulletChar?: string;
+  /** A picture bullet: a `model.media` part name; wins over `bulletStyle` and
+   *  `bulletChar`. Deliberately not named `id` (equalStructural's
+   *  IGNORED_KEYS). */
+  bulletImageId?: string;
+  /** The number a numbered run starts at, 1–32767; absent = 1 / continue. */
+  startAt?: number;
+  /** Text edge (cm from the box's inner left); absent =
+   *  `(level + 1) × LIST_INDENT_STEP_CM` for a list item, 0 otherwise. */
+  indentCm?: number;
+  /** The marker box hanging before the text edge (cm); absent =
+   *  `LIST_MARKER_WIDTH_CM` (0.635). */
+  hangingCm?: number;
+  /** Line spacing as a multiple, 0.25–5; absent = 1. */
+  lineSpacing?: number;
+  /** Line spacing in points, 4–1000; wins over `lineSpacing`. */
+  lineSpacingPt?: number;
+  /** `"exact"` = `lineSpacingPt` is exact; absent = "at least" — the same
+   *  three fields and absent meaning as documentModel's ParagraphFormatting. */
+  lineSpacingRule?: "exact";
+  spaceBeforePt?: number; // 0–500; absent = 0
+  spaceAfterPt?: number; // 0–500; absent = 0
+  /** pptx: the source `a:pPr`'s UNMODELLED attributes and children, verbatim
+   *  (`{"attrs":"…","before":"…","mid":"…","after":"…"}` — see
+   *  pptx/textDepthWire.ts), cleared by the command that edits a modelled
+   *  property it shadows (Table.docxTblPr's rule). Not in equality.ts's
+   *  XML_STRING_KEYS, so it compares raw. */
+  pptxPPr?: string;
+  /** odp: the source paragraph style's unmodelled property string. Same
+   *  clearing rule. */
+  odpParaProps?: string;
+}
+
+/** The text-body properties of a text-carrying frame (SPEC-097). Declared
+ * here, beside SlideTransition/SlideAnimation, never downstream in
+ * textBody.ts — textBody.ts's derivations take `TextFrame`/`ShapeFrame`, so a
+ * downstream declaration would invert the layering into a cycle. */
+export type TextAutofit = "none" | "shrink" | "resizeShape";
+export type TextAnchor = "top" | "middle" | "bottom";
+
+export interface TextBodyProps {
+  /** Absent = "none" (overflow exactly as SPEC-079 renders it). */
+  autofit?: TextAutofit;
+  /** "shrink" only: the stored font scale, 10–100. */
+  fontScalePct?: number;
+  /** "shrink" only: the stored line-spacing scale, 80–100. */
+  lineScalePct?: number;
+  /** Absent = "top" on a TextFrame, "middle" on a ShapeFrame. */
+  anchor?: TextAnchor;
+  /** Absent = 0.254/0.127/0.254/0.127 (the pptx EMU defaults). */
+  insetsCm?: { left: number; top: number; right: number; bottom: number };
+  /** count 1–16; absent = one column. */
+  columns?: { count: number; gapCm: number };
+  /** `false` = no wrapping; absent = wrap. */
+  wrap?: false;
 }
 
 interface SlideFrameBase {
@@ -192,6 +268,11 @@ interface SlideFrameBase {
   widthCm: number;
   heightCm: number;
   rotationDeg?: number; // clockwise, like DrawingPlacement's convention
+  /** SPEC-097 frame link (text/image/shape frames only — `isLinkableKind`):
+   *  an external URL or a 1-based slide number, at most one set. */
+  linkHref?: string;
+  linkSlide?: number;
+  linkTooltip?: string;
 }
 
 export interface TextFrame extends SlideFrameBase {
@@ -204,6 +285,14 @@ export interface TextFrame extends SlideFrameBase {
   paragraphs: SlideParagraph[];
   fill?: SlideFill; // frame background; absent = none
   stroke?: FrameStroke; // frame border; absent = none (SPEC-082)
+  /** SPEC-097 text-body properties; absent = every default. */
+  body?: TextBodyProps;
+  /** pptx: the source `a:bodyPr`'s unmodelled attributes/children, verbatim
+   *  (see pptx/textDepthWire.ts); cleared by the command that edits a
+   *  modelled body property it shadows. Compares raw under equalStructural. */
+  pptxBodyPr?: string;
+  /** odp: the source graphic style's unmodelled text-body property string. */
+  odpBodyProps?: string;
 }
 
 export interface ImageFrame extends SlideFrameBase {
@@ -219,6 +308,10 @@ export interface ShapeFrame extends SlideFrameBase {
   fill?: SlideFill;
   stroke?: FrameStroke;
   paragraphs?: SlideParagraph[]; // shape text, centred per bodyPr default
+  /** SPEC-097 text-body properties (anchor absent = "middle" here). */
+  body?: TextBodyProps;
+  pptxBodyPr?: string;
+  odpBodyProps?: string;
 }
 
 /** A slide media clip is one of two element kinds (SPEC-095). */
