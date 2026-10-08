@@ -479,8 +479,9 @@ watch([() => props.frame, deckTheme], () => {
     <!-- Editing session: an empty contenteditable the editing composable
          owns, inside a body with the frame's insets/anchor/columns (SPEC-097)
          at FULL scale — the host's runs are plain px (slideTextDom.ts), and
-         it is deliberately not a `.text-body`, so `frameTextHost` never
-         measures an unscalable editing DOM (it reads null → keep stored). -->
+         it is deliberately not a `.text-body`: no shrink step can be laid
+         out on it, so it is measured only for "resizeShape"'s full-scale
+         content height (slideTextFit.ts#measureEditingFit). -->
     <div
       v-if="editing"
       class="text-edit-body"

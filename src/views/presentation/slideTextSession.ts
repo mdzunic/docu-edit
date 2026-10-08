@@ -1,9 +1,10 @@
 // The slide text session's plain helpers and shared types (SPEC-081, widened
 // by SPEC-097), kept beside useSlideTextEditing.ts so the composable stays
 // within its composableSize.spec.ts budget: the caret/cell address shapes, the
-// command signatures useSlideTextDepth runs through `runTextCommand`, and the
-// DOM helpers the session uses (caret-at-end, plain-text paste).
-import type { SlideFrame } from "../../lib/presentation/model";
+// command signatures useSlideTextDepth runs through `runTextCommand`, the
+// frame re-identification every edit ends with, and the DOM helpers the
+// session uses (caret-at-end, plain-text paste and copy).
+import type { PresentationModel, Slide, SlideFrame } from "../../lib/presentation/model";
 import type { ParagraphOwner, ParagraphRange, TextRange } from "../../lib/presentation/text";
 import { placeCaret } from "../../components/presentation/slideTextDom";
 
@@ -44,6 +45,31 @@ export function paragraphSpan(range: TextRange): ParagraphRange {
 
 export function isCollapsed(range: TextRange): boolean {
   return range.start.para === range.end.para && range.start.offset === range.end.offset;
+}
+
+/** The slides model is a shallowRef and child views' computeds key off object
+ * identity, so a nested `frame.paragraphs = …` is not seen by the read-only
+ * renderers (the stage's other frames, the filmstrip thumbnail — SPEC-081
+ * AC-43/44). Replaces BOTH the edited frame and its slide with fresh objects
+ * (same ids) so every `:slide`/`:frame`-bound view re-renders. The editing
+ * frame's contenteditable host is imperatively managed and keyed by id, so it
+ * is not disturbed; the slide id is unchanged, so selection is not dropped. */
+export function reidentifyEditedFrame(model: PresentationModel | null, current: Slide | null, frameId: string): void {
+  if (!model || !current) return;
+  const index = model.slides.indexOf(current);
+  if (index >= 0) {
+    model.slides[index] = { ...current, frames: current.frames.map((f) => (f.id === frameId ? { ...f } : f)) };
+  }
+}
+
+/** Cut/copy put PLAIN text on the clipboard (SPEC-081 AC-14) — the styled DOM
+ * is never written, so a paste elsewhere carries no slide formatting; the
+ * empty-placeholder prompt lives outside the host, so it can never be copied. */
+export function copyPlainText(event: ClipboardEvent, host: HTMLElement | null): void {
+  const text = host?.ownerDocument.getSelection()?.toString() ?? "";
+  if (!event.clipboardData) return;
+  event.preventDefault();
+  event.clipboardData.setData("text/plain", text);
 }
 
 export function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {

@@ -5,7 +5,13 @@ import type { SlideParagraph } from "../../lib/presentation/model";
 import type { FieldState, ParagraphOwner, ParagraphRange, TextRange } from "../../lib/presentation/text";
 import type { TextBodyFrame } from "../../lib/presentation/textBody";
 import { linkOf, type SlideLinkTarget } from "../../lib/presentation/slideLinks";
-import { frameTextHost, measureFrameFit, type FitScale } from "../../components/presentation/slideTextFit";
+import {
+  frameTextHost,
+  measureEditingFit,
+  measureFrameFit,
+  TEXT_EDIT_BODY_CLASS,
+  type FitScale,
+} from "../../components/presentation/slideTextFit";
 import { isCollapsed } from "./slideTextSession";
 
 /** What a rendered text body measures to (slideTextFit.ts#measureFrameFit). */
@@ -50,16 +56,19 @@ export const LINK_SLIDE_ERROR = "Choose a slide in this deck";
  * slide link (`detail.slide` is 1-based). */
 export const SLIDE_LINK_FOLLOW_EVENT = "slide-link-follow";
 
-/** The DOM measurer: the frame's rendered body on the editor stage, or null
- * when it is not rendered (jsdom, another slide). Only the interactive
- * stage's top-level frames carry `data-frame-id` (filmstrip thumbnails and the
- * build preview do not — each thumbnail is its own `slide-stage`, so that test
- * id must not scope this), and the stage workspace narrows it further. */
+/** The DOM measurer: the frame's rendered body on the editor stage — or, in
+ * a text session, its editing body ("resizeShape" only) — else null (jsdom,
+ * another slide). Only the interactive stage's top-level frames carry
+ * `data-frame-id` (filmstrip thumbnails and the build preview do not — each
+ * thumbnail is its own `slide-stage`, so that test id must not scope this),
+ * and the stage workspace narrows it further. */
 export function stageFit(frame: TextBodyFrame): FrameFit | null {
   // jsdom has neither layout nor `CSS.escape` (frameTextHost's selector).
   if (typeof document === "undefined" || typeof CSS === "undefined") return null;
   const workspace = document.querySelector('[data-testid="stage-workspace"]') ?? document;
-  return measureFrameFit(frame, frameTextHost(frame.id, workspace));
+  const rendered = frameTextHost(frame.id, workspace);
+  if (rendered) return measureFrameFit(frame, rendered);
+  return measureEditingFit(frame, frameTextHost(frame.id, workspace, TEXT_EDIT_BODY_CLASS));
 }
 
 /** A selection field as a control value: the number, or "" when mixed/absent. */

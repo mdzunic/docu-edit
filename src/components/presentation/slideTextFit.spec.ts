@@ -14,8 +14,10 @@ import {
   frameTextHost,
   FULL_SCALE,
   measureBodyHeightCm,
+  measureEditingFit,
   measureFrameFit,
   TEXT_BODY_CLASS,
+  TEXT_EDIT_BODY_CLASS,
   textWidthCm,
 } from "./slideTextFit";
 
@@ -27,22 +29,24 @@ function shapeFrame(extra: Partial<ShapeFrame> = {}): ShapeFrame {
   return { id: "s1", kind: "shape", geometry: "rect", xCm: 0, yCm: 0, widthCm: 6, heightCm: 3, ...extra };
 }
 
-/** A rendered frame root + text body in the document, as the stage emits it. */
-function renderedBody(frameId = "t1"): HTMLElement {
+/** A rendered frame root + text body in the document, as the stage emits it
+ * (`bodyClass` TEXT_EDIT_BODY_CLASS: the body of a frame in a text session). */
+function renderedBody(frameId = "t1", bodyClass = TEXT_BODY_CLASS): HTMLElement {
   const root = document.createElement("div");
   root.setAttribute(FRAME_ID_ATTRIBUTE, frameId);
   const body = document.createElement("div");
-  body.className = TEXT_BODY_CLASS;
+  body.className = bodyClass;
   body.textContent = "Some text";
   root.appendChild(body);
   document.body.appendChild(root);
   return body;
 }
 
-/** Stubs layout: a `.text-body` measures `heightAtFullCm × --fit-scale`. */
+/** Stubs layout: a `.text-body` (or editing body) measures `heightAtFullCm ×
+ * --fit-scale`. */
 function stubLayout(heightAtFullCm: number): void {
   vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
-    if (!this.classList.contains(TEXT_BODY_CLASS)) return 0;
+    if (!this.classList.contains(TEXT_BODY_CLASS) && !this.classList.contains(TEXT_EDIT_BODY_CLASS)) return 0;
     const scale = Number(this.style.getPropertyValue("--fit-scale") || "1");
     return cmToPx(heightAtFullCm * scale);
   });
@@ -142,6 +146,26 @@ describe("measuring (AC-37/38/40)", () => {
     stubLayout(2.5);
     const fit = measureFrameFit(shapeFrame({ body: { autofit: "resizeShape" } }), renderedBody("s1"));
     expect(fit).toEqual({ scale: FULL_SCALE, contentHeightCm: 2.5 });
+  });
+
+  it("in a session, measures the editing body for 'resizeShape' only (AC-38)", () => {
+    stubLayout(2.5);
+    const editBody = renderedBody("s1", TEXT_EDIT_BODY_CLASS);
+    expect(frameTextHost("s1")).toBeNull();
+    expect(frameTextHost("s1", document, TEXT_EDIT_BODY_CLASS)).toBe(editBody);
+    expect(measureEditingFit(shapeFrame({ body: { autofit: "resizeShape" } }), editBody)).toEqual({
+      scale: FULL_SCALE,
+      contentHeightCm: 2.5,
+    });
+    // No shrink step can be laid out on plain-px runs; "none" never measures.
+    expect(measureEditingFit(shapeFrame({ body: { autofit: "shrink" } }), editBody)).toBeNull();
+    expect(measureEditingFit(shapeFrame(), editBody)).toBeNull();
+    expect(measureEditingFit(shapeFrame({ body: { autofit: "resizeShape" } }), null)).toBeNull();
+    expect(editBody.parentElement?.children).toHaveLength(1);
+  });
+
+  it("an editing body that lays nothing out (jsdom) measures null", () => {
+    expect(measureEditingFit(textFrame({ body: { autofit: "resizeShape" } }), renderedBody("t1", TEXT_EDIT_BODY_CLASS))).toBeNull();
   });
 
   it("text width is the frame width less the side insets", () => {

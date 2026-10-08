@@ -9,9 +9,11 @@
 // half (useSlideLinks). Paragraph/run commands run through
 // useSlideTextEditing's runTextCommand, so a session's host re-renders exactly
 // as for the toolbar, and each is ONE undo entry (record before, commit after)
-// in the spec's labels; any of them on an autofitting frame re-measures it
-// inside the same edit. The model rules live in lib/presentation.
-import { computed, ref, type ComputedRef, type Ref } from "vue";
+// in the spec's labels. Every text edit the session commits — these commands,
+// the toolbar's, typing, paste, cut, a session's end — re-measures an
+// autofitting frame inside that same edit, through the session's after-edit
+// hook (AC-38/41). The model rules live in lib/presentation.
+import { computed, getCurrentScope, onScopeDispose, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame } from "../../lib/presentation/model";
 import type { ListMarkerStyle } from "../../lib/core/lists";
 import { nextGraphemeBoundary } from "../../lib/core/grapheme";
@@ -116,18 +118,16 @@ export function useSlideTextDepth(deps: SlideTextDepthDeps) {
     measureFit: deps.measureFit,
   });
 
-  // --- command runners (each then refits an autofitting frame) ----------------
-  function editedBodyFrameId(): string | null {
-    const target = deps.editing.commandTarget();
-    return target && isTextBodyFrame(target.frame) ? target.frame.id : null;
-  }
+  // --- command runners ---------------------------------------------------------
+  // Any text edit the session commits refits the edited frame, inside that
+  // edit — a "resizeShape" frame tracks its text as it is typed (AC-38).
+  deps.editing.setAfterEdit((frameId) => void body.refit(frameId));
+  if (getCurrentScope()) onScopeDispose(() => deps.editing.setAfterEdit(null));
   function paragraphCommand(label: string, apply: (owner: ParagraphOwner, range: ParagraphRange) => void): void {
-    const frameId = editedBodyFrameId();
-    if (deps.editing.runParagraphCommand(label, apply)) void body.refit(frameId);
+    deps.editing.runParagraphCommand(label, apply);
   }
   function textCommand(label: string, apply: (owner: ParagraphOwner, range: TextRange) => void, range?: TextRange): void {
-    const frameId = editedBodyFrameId();
-    if (deps.editing.runTextCommand(label, apply, range)) void body.refit(frameId);
+    deps.editing.runTextCommand(label, apply, range);
   }
 
   const links = useSlideLinks({

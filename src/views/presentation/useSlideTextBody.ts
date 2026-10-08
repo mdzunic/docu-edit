@@ -5,10 +5,12 @@
 // WRITE-BACK RULE. A scale/height reaches the model ONLY inside a mutation
 // that has already called markSlideEdited: picking a mode in text-autofit
 // ("shrink" stores the measured fontScalePct/lineScalePct, "resizeShape" sets
-// heightCm = resizedHeightCm(frame, contentHeightCm)), or a later command of
-// the text-depth composables on that frame, re-measured once the stage has
-// re-rendered (nextTick) and folded into the same edit. Rendering and reading
-// never write — slideTextFit.ts measures, only a command stores.
+// heightCm = resizedHeightCm(frame, contentHeightCm)), a later frame command
+// here, or any later text edit on that frame (useSlideTextEditing's after-edit
+// hook: typing, paste, cut, a text command, the end of a session that changed
+// text), re-measured once the stage has re-rendered (nextTick) and folded into
+// the same edit. Rendering and reading never write — slideTextFit.ts
+// measures, only an edit stores.
 import { computed, nextTick, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame } from "../../lib/presentation/model";
 import { markSlideEdited } from "../../lib/presentation/text";
@@ -75,9 +77,10 @@ export function useSlideTextBody(deps: SlideTextBodyDeps) {
     return true;
   }
 
-  /** After a command on an autofitting frame, re-measure once the stage has
+  /** After an edit of an autofitting frame, re-measure once the stage has
    * re-rendered and fold the result into the SAME edit — no new undo entry
-   * (the command's record() already snapshotted the pre-edit state). */
+   * (the edit's record() already snapshotted the pre-edit state). Inside a
+   * session only "resizeShape" can measure (stageFit). */
   async function refit(frameId: string | null): Promise<void> {
     if (!frameId) return;
     await nextTick();

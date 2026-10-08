@@ -341,6 +341,33 @@ describe("SPEC-097 hooks for the text-depth composable", () => {
     expect(spans).toEqual([{ startPara: 1, endPara: 2 }]);
   });
 
+  it("tells the after-edit hook the frame after typing, a command and the end of a session that changed text", () => {
+    const { editing, host } = setup();
+    const seen: string[] = [];
+    editing.setAfterEdit((frameId) => seen.push(frameId));
+    host.innerHTML = "<div>hia</div>";
+    editing.onInput();
+    editing.toggleBold();
+    expect(seen).toEqual(["f1", "f1"]);
+    editing.stopEditing();
+    expect(seen).toEqual(["f1", "f1", "f1"]);
+    // A command on the selected frame, outside any session.
+    editing.toggleItalic();
+    expect(seen).toEqual(["f1", "f1", "f1", "f1"]);
+    editing.setAfterEdit(null);
+    editing.toggleItalic();
+    expect(seen).toHaveLength(4);
+  });
+
+  it("a session that changed nothing ends without telling the hook", () => {
+    const { editing, model } = setup();
+    const afterEdit = vi.fn();
+    editing.setAfterEdit(afterEdit);
+    editing.stopEditing();
+    expect(afterEdit).not.toHaveBeenCalled();
+    expect(model.value.slides[0].frames[0]).toMatchObject({ heightCm: 5 });
+  });
+
   it("commandTarget is null with nothing targeted", () => {
     const { editing } = setupTable(); // nothing selected, no session
     expect(editing.commandTarget()).toBeNull();

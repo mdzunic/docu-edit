@@ -42,8 +42,10 @@ export const FULL_SCALE: FitScale = { fontScalePct: 100, lineScalePct: 100 };
 
 /** The class the renderer gives a frame's text-body element, and the data
  * attribute carrying the frame id on the frame root — the hooks
- * `frameTextHost` finds a rendered body by. */
+ * `frameTextHost` finds a rendered body by. A frame in a text session renders
+ * its editing body (TEXT_EDIT_BODY_CLASS) instead. */
 export const TEXT_BODY_CLASS = "text-body";
+export const TEXT_EDIT_BODY_CLASS = "text-edit-body";
 export const FRAME_ID_ATTRIBUTE = "data-frame-id";
 
 const JUSTIFY_FOR_ANCHOR = { top: "flex-start", middle: "center", bottom: "flex-end" } as const;
@@ -83,14 +85,15 @@ export function applyFitStyle(el: HTMLElement, frame: BodyFrame, scale: FitScale
 }
 
 /** The rendered text-body element of a frame on the stage (`root` defaults
- * to the document), or null when it is not rendered. */
-export function frameTextHost(frameId: string, root: ParentNode = document): HTMLElement | null {
+ * to the document; `bodyClass` picks the editing body), or null when it is
+ * not rendered. */
+export function frameTextHost(frameId: string, root: ParentNode = document, bodyClass = TEXT_BODY_CLASS): HTMLElement | null {
   // Matched by attribute value rather than an escaped selector: ids are
   // arbitrary strings, and `CSS.escape` is absent in jsdom.
   const frameEl = Array.from(root.querySelectorAll(`[${FRAME_ID_ATTRIBUTE}]`)).find(
     (el) => el.getAttribute(FRAME_ID_ATTRIBUTE) === frameId,
   );
-  const host = frameEl?.querySelector(`.${TEXT_BODY_CLASS}`);
+  const host = frameEl?.querySelector(`.${bodyClass}`);
   return host instanceof HTMLElement ? host : null;
 }
 
@@ -147,4 +150,15 @@ export function measureFrameFit(frame: BodyFrame, host: HTMLElement | null): { s
   if (effectiveAutofit(frame) !== "shrink") return { scale: FULL_SCALE, contentHeightCm };
   const scale = fitScale((font, line) => measureBodyHeightCm(host, width, font, line), availableTextHeightCm(frame));
   return { scale, contentHeightCm };
+}
+
+/** What a frame's EDITING body measures to, during a text session. Its runs
+ * are plain px at full scale with the stage's own paragraph styles, so it
+ * lays out "resizeShape"'s input (the full-scale content height) but no step
+ * of the shrink ladder: null for any other mode, or where nothing lays out —
+ * the session's end re-measures the rendered body. */
+export function measureEditingFit(frame: BodyFrame, editBody: HTMLElement | null): { scale: FitScale; contentHeightCm: number } | null {
+  if (!editBody || effectiveAutofit(frame) !== "resizeShape") return null;
+  const contentHeightCm = measureBodyHeightCm(editBody, textWidthCm(frame), 100, 100);
+  return contentHeightCm > 0 ? { scale: FULL_SCALE, contentHeightCm } : null;
 }

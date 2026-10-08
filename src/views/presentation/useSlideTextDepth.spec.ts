@@ -70,6 +70,11 @@ function imageFile(type: string, bytes: number[]): File {
   return { type, arrayBuffer: async () => new Uint8Array(bytes).buffer } as unknown as File;
 }
 
+/** What an unscaled body measures to at a natural content height. */
+function natural(contentHeightCm: number): FrameFit {
+  return { scale: { fontScalePct: 100, lineScalePct: 100 }, contentHeightCm };
+}
+
 let scope: EffectScope | null = null;
 
 function harness(fit: FrameFit | null = null) {
@@ -355,6 +360,81 @@ describe("autofit write-back (AC-40/41)", () => {
     expect(h.frame<TextFrame>("body").body).toEqual({ autofit: "shrink", fontScalePct: 50, lineScalePct: 80 });
     expect(h.records).toEqual(["Text autofit", "Paragraph spacing"]);
   });
+
+  describe("text edits in and out of a session (AC-38)", () => {
+    it("typing refits a 'resizeShape' frame as the text grows and shrinks, inside the 'Typing' entry", async () => {
+      const h = harness(natural(2));
+      h.selection.select("body");
+      h.depth.setAutofit("resizeShape");
+      await nextTick(); // the pick's own refit settles first
+      expect(h.frame<TextFrame>("body").heightCm).toBe(resizedHeightCm(h.frame<TextFrame>("body"), 2));
+      const host = editBody(h, 2, 5, 5);
+      h.measured.fit = natural(5);
+      host.appendChild(document.createElement("div")).textContent = "four";
+      h.editing.onInput();
+      await nextTick();
+      expect(h.frame<TextFrame>("body").paragraphs).toHaveLength(4);
+      expect(h.frame<TextFrame>("body").heightCm).toBe(resizedHeightCm(h.frame<TextFrame>("body"), 5));
+      h.measured.fit = natural(1.5);
+      host.lastElementChild?.remove();
+      h.editing.onInput();
+      await nextTick();
+      expect(h.frame<TextFrame>("body").heightCm).toBe(resizedHeightCm(h.frame<TextFrame>("body"), 1.5));
+      // The refits folded into the burst's one entry; the slide is edited.
+      expect(h.records).toEqual(["Text autofit", "Typing"]);
+      expect(h.model.value?.slides[0].dirty).toBe(true);
+    });
+
+    it("a session's end stores a 'shrink' frame's re-measured scale — not when it changed nothing", async () => {
+      const h = harness(shrinkFit);
+      h.selection.select("body");
+      h.depth.setAutofit("shrink");
+      await nextTick(); // the pick's own refit settles first
+      const smaller: FrameFit = { scale: { fontScalePct: 50, lineScalePct: 80 }, contentHeightCm: 8 };
+      // A session that changes nothing ends without a refit.
+      editBody(h, 0, 0, 0);
+      h.measured.fit = smaller;
+      h.editing.stopEditing();
+      await nextTick();
+      expect(h.frame<TextFrame>("body").body).toEqual({ autofit: "shrink", fontScalePct: 62.5, lineScalePct: 90 });
+      // Inside a session a shrink body cannot measure (stageFit reads null);
+      // the session's end measures the rendered body and stores its scale.
+      const host = editBody(h, 0, 3, 3);
+      h.measured.fit = null;
+      (host.firstElementChild as HTMLElement).textContent = "one more";
+      h.editing.onInput();
+      await nextTick();
+      expect(h.frame<TextFrame>("body").body).toEqual({ autofit: "shrink", fontScalePct: 62.5, lineScalePct: 90 });
+      h.measured.fit = smaller;
+      h.editing.stopEditing();
+      await nextTick();
+      expect(h.frame<TextFrame>("body").body).toEqual({ autofit: "shrink", fontScalePct: 50, lineScalePct: 80 });
+      expect(h.records).toEqual(["Text autofit", "Typing"]);
+    });
+
+    it("a toolbar command on the selected frame refits it inside its own entry", async () => {
+      const h = harness(natural(2));
+      h.selection.select("body");
+      h.depth.setAutofit("resizeShape");
+      await nextTick(); // the pick's own refit settles first
+      h.measured.fit = natural(3.5);
+      h.editing.setFontSize(40);
+      await nextTick();
+      expect(h.frame<TextFrame>("body").heightCm).toBe(resizedHeightCm(h.frame<TextFrame>("body"), 3.5));
+      expect(h.records).toEqual(["Text autofit", "Font size"]);
+    });
+
+    it("never measures a frame that does not autofit", async () => {
+      const h = harness(natural(9));
+      const host = editBody(h, 0, 3, 3);
+      host.appendChild(document.createElement("div")).textContent = "four";
+      h.editing.onInput();
+      h.editing.stopEditing();
+      await nextTick();
+      expect(h.measureFit).not.toHaveBeenCalled();
+      expect(h.frame<TextFrame>("body").heightCm).toBe(4);
+    });
+  });
 });
 
 describe("links (AC-43..46)", () => {
@@ -441,8 +521,10 @@ describe("links (AC-43..46)", () => {
 
   it("stops listening once its scope is disposed", () => {
     const h = harness();
+    const afterEdit = vi.spyOn(h.editing, "setAfterEdit");
     scope?.stop();
     document.dispatchEvent(new CustomEvent(SLIDE_LINK_FOLLOW_EVENT, { detail: { slide: 2 } }));
     expect(h.currentIndex.value).toBe(0);
+    expect(afterEdit).toHaveBeenCalledWith(null);
   });
 });

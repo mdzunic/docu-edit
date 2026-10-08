@@ -16,7 +16,8 @@
 // arrow keys are left to the browser so the caret can leave the table at its
 // edges.
 //
-// SPEC-097: Tab/Shift+Tab demote/promote; Cmd/Ctrl+K opens the link dialog.
+// SPEC-097: Tab/Shift+Tab demote/promote; Cmd/Ctrl+K opens the link dialog;
+// every committed text edit tells the after-edit hook (the autofit refit).
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
@@ -47,10 +48,12 @@ import {
 } from "../../components/presentation/slideTextDom";
 import type { FrameSelection } from "./useFrameSelection";
 import {
+  copyPlainText,
   insertPlainText,
   isCollapsed,
   paragraphSpan,
   placeCaretAtEnd,
+  reidentifyEditedFrame,
   type CaretPoint,
   type CellAddress,
   type ParagraphCommand,
@@ -119,6 +122,10 @@ export interface SlideTextEditing {
   runParagraphCommand: (label: string, apply: ParagraphCommand) => boolean;
   /** Registers what Cmd/Ctrl+K does inside a session (the link dialog). */
   setLinkShortcut: (handler: (() => void) | null) => void;
+  /** Registers what runs, with the frame's id, after each text edit committed
+   * here (typing, paste, cut, a command, the end of a session that changed
+   * text) — already marked edited, so autofit may write back (AC-38/41). */
+  setAfterEdit: (handler: ((frameId: string) => void) | null) => void;
 }
 
 export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditing {
@@ -150,22 +157,15 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     }
   }
 
-  // The slides model is a shallowRef and child views' computeds key off object
-  // identity, so a nested `frame.paragraphs = …` is not seen by the read-only
-  // renderers (the stage's other frames, the filmstrip thumbnail — AC-43/44).
-  // Replace BOTH the edited frame and its slide with fresh objects (same ids)
-  // so every `:slide`/`:frame`-bound view re-renders. The editing frame's
-  // contenteditable host is imperatively managed and keyed by id, so it is not
-  // disturbed; the slide id is unchanged, so selection is not dropped.
-  function bumpFrame(frame: SlideFrame): void {
-    const model = deps.model.value;
-    const current = deps.currentSlide.value;
-    if (!model || !current) return;
-    const frames = current.frames.map((f) => (f.id === frame.id ? { ...f } : f));
-    const index = model.slides.indexOf(current);
-    if (index >= 0) {
-      model.slides[index] = { ...current, frames };
-    }
+  // Fresh frame + slide identities so the read-only views re-render (AC-43/44).
+  const bumpFrame = (frame: SlideFrame): void => reidentifyEditedFrame(deps.model.value, deps.currentSlide.value, frame.id);
+
+  // --- the after-edit hook (SPEC-097) ---------------------------------------
+  let afterEdit: ((frameId: string) => void) | null = null;
+  let sessionEdited = false; // so a session that changed nothing never refits
+  function edited(frame: SlideFrame): void {
+    if (editingFrameId.value) sessionEdited = true;
+    afterEdit?.(frame.id);
   }
 
   // --- frame / owner lookup -------------------------------------------------
@@ -355,8 +355,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   function stopEditing(): void {
     closeBurst();
     if (host.value && editingOwner.value) {
-      syncModelFromDom();
+      syncModelFromDom(sessionEdited);
     }
+    sessionEdited = false;
     detachAndClearHost();
     editingFrameId.value = null;
     editingCell.value = null;
@@ -371,7 +372,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     syncModelFromDom();
   }
 
-  function syncModelFromDom(): void {
+  function syncModelFromDom(notify = true): void {
     const el = host.value;
     const owner = editingOwner.value;
     const frame = editingFrame.value;
@@ -386,6 +387,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     bumpFrame(frame);
     deps.commit();
     selectionTick.value++;
+    if (notify) edited(frame);
   }
 
   function onPaste(event: ClipboardEvent): void {
@@ -401,15 +403,8 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     syncModelFromDom();
   }
 
-  /** Cut/copy put PLAIN text on the clipboard (AC-14) — the styled DOM is never
-   * written, so a paste elsewhere carries no slide formatting; the empty-
-   * placeholder prompt lives outside the host, so it can never be copied. */
-  function onCopy(event: ClipboardEvent): void {
-    const text = host.value?.ownerDocument.getSelection()?.toString() ?? "";
-    if (!event.clipboardData) return;
-    event.preventDefault();
-    event.clipboardData.setData("text/plain", text);
-  }
+  // Cut/copy put PLAIN text on the clipboard (AC-14).
+  const onCopy = (event: ClipboardEvent): void => copyPlainText(event, host.value);
   function onCut(event: ClipboardEvent): void {
     if (!host.value || !editingOwner.value) return;
     onCopy(event);
@@ -526,6 +521,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     bumpFrame(frame);
     deps.commit();
     selectionTick.value++;
+    edited(frame);
     return true;
   }
 
@@ -538,6 +534,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   }
   let linkShortcut: (() => void) | null = null;
   const setLinkShortcut = (handler: (() => void) | null): void => void (linkShortcut = handler);
+  const setAfterEdit = (handler: ((frameId: string) => void) | null): void => void (afterEdit = handler);
 
   function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
     runCommand(label, (owner, range) =>
@@ -596,5 +593,6 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     runTextCommand,
     runParagraphCommand,
     setLinkShortcut,
+    setAfterEdit,
   };
 }
