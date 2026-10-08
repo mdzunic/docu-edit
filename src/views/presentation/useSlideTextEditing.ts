@@ -15,6 +15,14 @@
 // Shift+Tab move between non-covered cells (Tab in the last cell appends a row);
 // arrow keys are left to the browser so the caret can leave the table at its
 // edges.
+//
+// SPEC-097: inside a (non-table) session Tab demotes and Shift+Tab promotes
+// every paragraph the selection touches — one "Indent" entry, never a literal
+// tab and never a focus move — and Cmd/Ctrl+K opens the link dialog through
+// the handler useSlideTextDepth registers (`setLinkShortcut`). The generic
+// `runTextCommand`/`runParagraphCommand` are the same record → mutate →
+// markSlideEdited → re-render → commit sequence every toolbar command uses,
+// exposed so the text-depth composable's list/spacing/link commands share it.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
@@ -22,13 +30,15 @@ import type { ModelColor } from "../../lib/core/theme";
 import {
   applyParagraphFormat,
   applyRunFormat,
+  demote,
   markSlideEdited,
+  promote,
   selectionFormatState,
-  setIndentLevel,
   toggleBullet,
   wholeFrameRange,
   type ParagraphFormatPatch,
   type ParagraphOwner,
+  type ParagraphRange,
   type RunFormatPatch,
   type SelectionFormatState,
   type TextRange,
@@ -107,6 +117,41 @@ export interface SlideTextEditing {
   setAlign: (align: NonNullable<TextFrame["paragraphs"][number]["align"]>) => void;
   toggleBulletCmd: () => void;
   indent: (delta: 1 | -1) => void;
+  // SPEC-097 hooks for useSlideTextDepth.
+  /** The paragraph owner, its frame and the range a text command would act on
+   * right now (the live/last DOM selection in a session, else the whole
+   * selected text frame); null when nothing is targeted. */
+  commandTarget: () => TextCommandTarget | null;
+  /** Runs `apply` as ONE undo entry labelled `label`: record → mutate →
+   * markSlideEdited → re-render the session host → commit. `range` overrides
+   * the current command range (a dialog captured it before taking focus).
+   * Returns whether it ran (false when nothing is targeted). */
+  runTextCommand: (label: string, apply: TextCommand, range?: TextRange) => boolean;
+  /** `runTextCommand` over the paragraphs the range touches. */
+  runParagraphCommand: (label: string, apply: ParagraphCommand) => boolean;
+  /** Registers what Cmd/Ctrl+K does inside a session (the link dialog). */
+  setLinkShortcut: (handler: (() => void) | null) => void;
+}
+
+/** What a text command acts on (SPEC-097). */
+export interface TextCommandTarget {
+  owner: ParagraphOwner;
+  frame: SlideFrame;
+  range: TextRange;
+}
+
+/** A command over a character range of a paragraph owner. */
+export type TextCommand = (owner: ParagraphOwner, range: TextRange, frame: SlideFrame) => void;
+
+/** A command over the paragraphs a range touches. */
+export type ParagraphCommand = (owner: ParagraphOwner, range: ParagraphRange, frame: SlideFrame) => void;
+
+/** The inclusive paragraph span of a character range. */
+export function paragraphSpan(range: TextRange): ParagraphRange {
+  return {
+    startPara: Math.min(range.start.para, range.end.para),
+    endPara: Math.max(range.start.para, range.end.para),
+  };
 }
 
 function placeCaretAtEnd(el: HTMLElement, owner: ParagraphOwner): void {
@@ -429,6 +474,16 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       tabCell(event.shiftKey ? -1 : 1);
       return;
     }
+    // SPEC-097 AC-23: in a text session Tab demotes and Shift+Tab promotes the
+    // touched paragraphs (clamped 0–8) as one "Indent" entry — never a literal
+    // tab character, never a focus move. Safe beside onGlobalKeydown's Tab
+    // frame-cycling, which already skips while a session is open.
+    if (event.key === "Tab" && !event.metaKey && !event.ctrlKey) {
+      event.preventDefault();
+      const shift = event.shiftKey ? promote : demote;
+      runCommand("Indent", (owner, range) => shift(owner, paragraphSpan(range)));
+      return;
+    }
     const mod = event.metaKey || event.ctrlKey;
     if (mod && !event.shiftKey && !event.altKey) {
       const key = event.key.toLowerCase();
@@ -445,6 +500,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
         event.preventDefault();
         if (host.value) selectAllIn(host.value);
         selectionTick.value++;
+      } else if (key === "k" && linkShortcut) {
+        // SPEC-097 AC-46: Cmd/Ctrl+K opens the slide link dialog.
+        event.preventDefault();
+        linkShortcut();
       }
     }
     // Arrow keys are deliberately NOT trapped: the browser moves the caret, so
@@ -491,16 +550,20 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     return wholeFrameRange(owner);
   }
 
-  function runCommand(label: string, apply: (owner: ParagraphOwner, range: TextRange) => void): void {
+  function runCommand(label: string, apply: TextCommand): void {
+    runTextCommand(label, apply);
+  }
+
+  function runTextCommand(label: string, apply: TextCommand, override?: TextRange): boolean {
     const owner = targetOwner();
     const frame = targetFrame();
     const slide = deps.currentSlide.value;
     const model = deps.model.value;
-    if (!owner || !frame || !slide || !model) return;
+    if (!owner || !frame || !slide || !model) return false;
     closeBurst();
-    const range = commandRange(owner);
+    const range = override ?? commandRange(owner);
     deps.record(label);
-    apply(owner, range);
+    apply(owner, range, frame);
     markSlideEdited(slide, model.format);
     if (editingOwner.value && host.value) {
       renderEditableParagraphs(host.value, owner.paragraphs);
@@ -509,6 +572,23 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     bumpFrame(frame);
     deps.commit();
     selectionTick.value++;
+    return true;
+  }
+
+  function runParagraphCommand(label: string, apply: ParagraphCommand): boolean {
+    return runTextCommand(label, (owner, range, frame) => apply(owner, paragraphSpan(range), frame));
+  }
+
+  function commandTarget(): TextCommandTarget | null {
+    const owner = targetOwner();
+    const frame = targetFrame();
+    if (!owner || !frame) return null;
+    return { owner, frame, range: commandRange(owner) };
+  }
+
+  let linkShortcut: (() => void) | null = null;
+  function setLinkShortcut(handler: (() => void) | null): void {
+    linkShortcut = handler;
   }
 
   function paragraphCommand(label: string, patch: ParagraphFormatPatch): void {
@@ -537,9 +617,12 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     paragraphCommand("Align", { align });
   const toggleBulletCmd = (): void =>
     runCommand("Bullet", (owner, range) => toggleBullet(owner, { startPara: range.start.para, endPara: range.end.para }));
+  // The toolbar's indent buttons shift levels through the same demote/promote
+  // as Tab (SPEC-097), so a list item's default-cycle marker follows its level
+  // ("3." demoted reads "a.") whichever way the user indents.
   const indent = (delta: 1 | -1): void =>
     runCommand(delta > 0 ? "Indent" : "Outdent", (owner, range) =>
-      setIndentLevel(owner, { startPara: range.start.para, endPara: range.end.para }, delta),
+      (delta > 0 ? demote : promote)(owner, { startPara: range.start.para, endPara: range.end.para }),
     );
 
   return {
@@ -565,6 +648,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     setAlign,
     toggleBulletCmd,
     indent,
+    commandTarget,
+    runTextCommand,
+    runParagraphCommand,
+    setLinkShortcut,
   };
 }
 

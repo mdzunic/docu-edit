@@ -302,8 +302,9 @@ export function markFrameEdited(slide: Slide, frame: MediaFrame, format: Present
  * already in the package: `{dir}image{n}.{ext}`, `n` = 1 + the highest
  * `image{n}` numeric suffix across `opaque` part names and existing `media`
  * ids (arbitrary/non-numeric image names are ignored for the counter, then
- * guarded against by a final uniqueness pass). */
-function mintMediaId(model: PresentationModel, contentType: string): string {
+ * guarded against by a final uniqueness pass). Exported for SPEC-097's
+ * picture bullets, which mint their image by the same rule. */
+export function mintMediaId(model: PresentationModel, contentType: string): string {
   const dir = mediaDirectory(model);
   const ext = extensionForContentType(contentType);
   const taken = new Set<string>();

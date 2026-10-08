@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PresentationModel } from "../../lib/presentation/model";
 import { useFrameSelection } from "./useFrameSelection";
 import { TYPING_BURST_MS, useSlideTextEditing } from "./useSlideTextEditing";
+import { setSelectionRange } from "../../components/presentation/slideTextDom";
 
 function setup(paragraphs: unknown = [{ runs: [{ text: "hi" }] }]) {
   const model = ref({
@@ -205,5 +206,144 @@ describe("undo-burst coalescing (AC-28/29)", () => {
       ["B", "disc"],
       ["C", "disc"], // was silently de-bulleted by the index-based merge
     ]);
+  });
+});
+
+describe("Tab / Shift+Tab demote and promote (SPEC-097 AC-23)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  function numbered(...texts: string[]) {
+    return texts.map((text) => ({ runs: [{ text }], bullet: "number" }));
+  }
+  function paragraphsOf(model: ReturnType<typeof setup>["model"]) {
+    const frame = model.value.slides[0].frames[0];
+    return frame.kind === "text" ? frame.paragraphs : [];
+  }
+  function selectParagraphs(host: HTMLElement, from: number, to: number) {
+    setSelectionRange(host, { para: from, offset: 0 }, { para: to, offset: 1 });
+  }
+  function tab(shiftKey = false) {
+    return new KeyboardEvent("keydown", { key: "Tab", shiftKey, cancelable: true });
+  }
+
+  it("Tab demotes every paragraph the selection touches as ONE 'Indent' entry and prevents the default", () => {
+    const { editing, host, records, model } = setup(numbered("one", "two", "three"));
+    selectParagraphs(host, 1, 2);
+    const event = tab();
+    editing.onKeydown(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(records).toEqual(["Indent"]);
+    const paras = paragraphsOf(model);
+    expect(paras.map((p) => p.level ?? 0)).toEqual([0, 1, 1]);
+    // A demoted "3." moves to its new level's default marker ("a.").
+    expect(paras[2].bulletStyle).toBe("lowerAlpha");
+    expect(model.value.slides[0].dirty).toBe(true);
+  });
+
+  it("never inserts a literal tab character and never leaves the session", () => {
+    const { editing, host, model } = setup(numbered("one", "two"));
+    selectParagraphs(host, 1, 1);
+    editing.onKeydown(tab());
+    expect(paragraphsOf(model).map((p) => p.runs.map((r) => r.text).join(""))).toEqual(["one", "two"]);
+    expect(host.textContent).not.toContain("\t");
+    expect(editing.editingFrameId.value).toBe("f1");
+  });
+
+  it("Shift+Tab promotes, restoring the level's default marker", () => {
+    const { editing, host, records, model } = setup([
+      { runs: [{ text: "one" }], bullet: "number" },
+      { runs: [{ text: "two" }], bullet: "number", level: 1, bulletStyle: "lowerAlpha" },
+    ]);
+    selectParagraphs(host, 1, 1);
+    const event = tab(true);
+    editing.onKeydown(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(records).toEqual(["Indent"]);
+    const paras = paragraphsOf(model);
+    expect(paras[1].level).toBeUndefined();
+    expect(paras[1].bulletStyle).toBeUndefined();
+  });
+
+  it("clamps to levels 0–8", () => {
+    const { editing, host, model } = setup([
+      { runs: [{ text: "top" }] },
+      { runs: [{ text: "deep" }], level: 8 },
+    ]);
+    selectParagraphs(host, 0, 0);
+    editing.onKeydown(tab(true));
+    expect(paragraphsOf(model)[0].level).toBeUndefined();
+    selectParagraphs(host, 1, 1);
+    editing.onKeydown(tab());
+    expect(paragraphsOf(model)[1].level).toBe(8);
+  });
+
+  it("a table-cell session keeps Tab for cell navigation", () => {
+    const { editing, host, model } = setupTable();
+    editing.startEditingCell("t1", 0, 0);
+    editing.registerHost(host);
+    editing.onKeydown(tab());
+    expect(editing.editingCell.value).toEqual({ row: 0, col: 1 });
+    const table = model.value.slides[0].frames[0];
+    expect(table.kind === "table" && table.rows[0].cells[0].paragraphs[0].level).toBeUndefined();
+  });
+
+  it("the toolbar indent buttons shift levels through the same demote/promote", () => {
+    const { editing, host, records, model } = setup(numbered("one", "two"));
+    selectParagraphs(host, 1, 1);
+    editing.indent(1);
+    expect(paragraphsOf(model)[1]).toMatchObject({ level: 1, bulletStyle: "lowerAlpha" });
+    editing.indent(-1);
+    expect(paragraphsOf(model)[1].level).toBeUndefined();
+    expect(records).toEqual(["Indent", "Outdent"]);
+  });
+});
+
+describe("SPEC-097 hooks for the text-depth composable", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("Cmd/Ctrl+K runs the registered link shortcut (and nothing without one)", () => {
+    const { editing } = setup();
+    const unhandled = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, cancelable: true });
+    editing.onKeydown(unhandled);
+    expect(unhandled.defaultPrevented).toBe(false);
+    const handler = vi.fn();
+    editing.setLinkShortcut(handler);
+    const event = new KeyboardEvent("keydown", { key: "k", metaKey: true, cancelable: true });
+    editing.onKeydown(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("runTextCommand records ONE entry, marks the slide edited and honours a range override", () => {
+    const { editing, records, model } = setup([{ runs: [{ text: "hello world" }] }]);
+    const ran = editing.runTextCommand(
+      "Letter spacing",
+      (owner, range) => {
+        expect(range).toEqual({ start: { para: 0, offset: 6 }, end: { para: 0, offset: 11 } });
+        owner.paragraphs[0].runs[0].letterSpacingPt = 2;
+      },
+      { start: { para: 0, offset: 6 }, end: { para: 0, offset: 11 } },
+    );
+    expect(ran).toBe(true);
+    expect(records).toEqual(["Letter spacing"]);
+    expect(model.value.slides[0].dirty).toBe(true);
+  });
+
+  it("runParagraphCommand hands the command the touched paragraph span", () => {
+    const { editing, host } = setup([{ runs: [{ text: "a" }] }, { runs: [{ text: "b" }] }, { runs: [{ text: "c" }] }]);
+    setSelectionRange(host, { para: 1, offset: 0 }, { para: 2, offset: 1 });
+    const spans: unknown[] = [];
+    editing.runParagraphCommand("Paragraph spacing", (_owner, range) => spans.push(range));
+    expect(spans).toEqual([{ startPara: 1, endPara: 2 }]);
+  });
+
+  it("commandTarget is null with nothing targeted", () => {
+    const { editing } = setupTable(); // nothing selected, no session
+    expect(editing.commandTarget()).toBeNull();
+    expect(editing.runTextCommand("Add link", () => {})).toBe(false);
   });
 });
