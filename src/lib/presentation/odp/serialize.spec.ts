@@ -295,3 +295,408 @@ describe("odp draw:transform rotation (SPEC-096)", () => {
     expect(frame.rotationDeg).toBeUndefined();
   });
 });
+
+// --- SPEC-097: slide text depth on the odp wire -----------------------------
+
+import type { ImageFrame } from "../model";
+
+function depthFrame(paragraphs: TextFrame["paragraphs"], extra: Partial<TextFrame> = {}): TextFrame {
+  return { id: "t", kind: "text", xCm: 1, yCm: 1, widthCm: 10, heightCm: 4, paragraphs, ...extra };
+}
+
+/** Serialises one frame with a fresh registry (frame markup + its styles). */
+function writeFrame(frame: SlideFrame): { frame: string; autoStyles: string } {
+  return serializeOdpGroupFrame(structuredClone(frame));
+}
+
+/** Writes a frame and reads it back through the reader. */
+function roundTrip<T extends SlideFrame>(frame: T): T {
+  const out = writeFrame(frame);
+  return parseFrameChildForTest(out.frame, out.autoStyles) as T;
+}
+
+const LABEL = (indentCm: string, hangingCm: string): string =>
+  `<style:list-level-properties text:list-level-position-and-space-mode="label-alignment">` +
+  `<style:list-level-label-alignment text:label-followed-by="listtab" fo:text-indent="${hangingCm}" fo:margin-left="${indentCm}"/>` +
+  `</style:list-level-properties>`;
+
+describe("SPEC-097 paragraph and run properties (odp)", () => {
+  it("writes spacing and line height into the paragraph style's property string", () => {
+    const registry = new StyleRegistry();
+    registry.paragraphStyle({ runs: [], align: "center", lineSpacing: 1.5, spaceBeforePt: 6, spaceAfterPt: 12 });
+    registry.paragraphStyle({ runs: [], lineSpacingPt: 18, lineSpacingRule: "exact" });
+    registry.paragraphStyle({ runs: [], lineSpacingPt: 18 });
+    expect(registry.xml()).toBe(
+      `<style:style style:name="de-P1" style:family="paragraph"><style:paragraph-properties fo:text-align="center" fo:margin-top="0.212cm" fo:margin-bottom="0.423cm" fo:line-height="150%"/></style:style>` +
+        `<style:style style:name="de-P2" style:family="paragraph"><style:paragraph-properties fo:line-height="18pt"/></style:style>` +
+        `<style:style style:name="de-P3" style:family="paragraph"><style:paragraph-properties style:line-height-at-least="18pt"/></style:style>`,
+    );
+  });
+
+  it("writes the effective indent (1.27cm per level) and the hanging marker box", () => {
+    const registry = new StyleRegistry();
+    registry.paragraphStyle({ runs: [], bullet: "disc" }); // list item: (0 + 1) × 1.27, hanging 0.635
+    registry.paragraphStyle({ runs: [], level: 2 }); // plain text: 2 × 1.27, no hanging
+    registry.paragraphStyle({ runs: [], bullet: "number", level: 1, indentCm: 3, hangingCm: 1 });
+    expect(registry.xml()).toBe(
+      `<style:style style:name="de-P1" style:family="paragraph"><style:paragraph-properties fo:margin-left="1.27cm" fo:text-indent="-0.635cm"/></style:style>` +
+        `<style:style style:name="de-P2" style:family="paragraph"><style:paragraph-properties fo:margin-left="2.54cm"/></style:style>` +
+        `<style:style style:name="de-P3" style:family="paragraph"><style:paragraph-properties fo:margin-left="3cm" fo:text-indent="-1cm"/></style:style>`,
+    );
+    // An unindented plain paragraph still mints no style.
+    expect(new StyleRegistry().paragraphStyle({ runs: [] })).toBeUndefined();
+  });
+
+  it("writes letter spacing into the text style in cm", () => {
+    const registry = new StyleRegistry();
+    registry.textStyle({ text: "a", letterSpacingPt: 0.5 });
+    registry.textStyle({ text: "b", letterSpacingPt: -1.2 });
+    expect(registry.xml()).toBe(
+      `<style:style style:name="de-T1" style:family="text"><style:text-properties fo:letter-spacing="0.018cm"/></style:style>` +
+        `<style:style style:name="de-T2" style:family="text"><style:text-properties fo:letter-spacing="-0.042cm"/></style:style>`,
+    );
+  });
+
+  it("reads every spacing, indent and letter-spacing field back", () => {
+    const paragraphs: TextFrame["paragraphs"] = [
+      { runs: [{ text: "multiple", letterSpacingPt: 0.5 }], lineSpacing: 1.5, spaceBeforePt: 6, spaceAfterPt: 12, align: "center" },
+      { runs: [{ text: "exact", letterSpacingPt: -1.2 }], lineSpacingPt: 18, lineSpacingRule: "exact" },
+      { runs: [{ text: "at least" }], lineSpacingPt: 24.5 },
+      { runs: [{ text: "indented" }], bullet: "number", level: 1, indentCm: 3, hangingCm: 1 },
+      { runs: [{ text: "plain" }], level: 2 },
+    ];
+    const back = roundTrip(depthFrame(paragraphs));
+    expect(back.paragraphs.slice(0, 4)).toEqual(paragraphs.slice(0, 4));
+    // A plain paragraph's level is not list nesting: its indent reads back as
+    // the explicit text edge it rendered at.
+    expect(back.paragraphs[4]).toEqual({ runs: [{ text: "plain" }], indentCm: 2.54 });
+  });
+
+  it("resolves line height and margins through the paragraph style's parent chain", () => {
+    const styles =
+      `<style:style style:name="Base" style:family="paragraph"><style:paragraph-properties fo:line-height="120%" fo:margin-bottom="0.3cm"/></style:style>` +
+      `<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Base"><style:paragraph-properties fo:margin-top="0.1cm"/></style:style>`;
+    const frame = parseFrameChildForTest(
+      `<draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="4cm"><draw:text-box><text:p text:style-name="P1">x</text:p></draw:text-box></draw:frame>`,
+      styles,
+    ) as TextFrame;
+    expect(frame.paragraphs[0]).toEqual({ runs: [{ text: "x" }], lineSpacing: 1.2, spaceBeforePt: 2.8, spaceAfterPt: 8.5 });
+  });
+});
+
+describe("SPEC-097 lists (odp)", () => {
+  const NESTED: TextFrame["paragraphs"] = [
+    { runs: [{ text: "One" }], bullet: "number", startAt: 3 },
+    { runs: [{ text: "One-a" }], bullet: "number", bulletStyle: "lowerAlpha", level: 1 },
+    { runs: [{ text: "One-b" }], bullet: "number", bulletStyle: "lowerAlpha", level: 1 },
+    { runs: [{ text: "Two" }], bullet: "number", startAt: 3 },
+    { runs: [{ text: "Deep" }], bullet: "disc", bulletChar: "★", level: 2 },
+  ];
+
+  it("wraps a list run in nested text:list markup over one minted de-L list style", () => {
+    const out = writeFrame(depthFrame(NESTED));
+    expect(out.frame).toBe(
+      `<draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="4cm"><draw:text-box>` +
+        `<text:list text:style-name="de-L1">` +
+        `<text:list-item><text:p text:style-name="de-P1">One</text:p>` +
+        `<text:list><text:list-item><text:p text:style-name="de-P2">One-a</text:p></text:list-item>` +
+        `<text:list-item><text:p text:style-name="de-P2">One-b</text:p></text:list-item></text:list></text:list-item>` +
+        `<text:list-item><text:p text:style-name="de-P1">Two</text:p>` +
+        // A skipped level (0 → 2) is bridged by an empty list-item.
+        `<text:list><text:list-item><text:list><text:list-item><text:p text:style-name="de-P3">Deep</text:p></text:list-item></text:list></text:list-item></text:list>` +
+        `</text:list-item></text:list>` +
+        `</draw:text-box></draw:frame>`,
+    );
+    expect(out.autoStyles).toContain(
+      `<text:list-style style:name="de-L1">` +
+        `<text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="." text:start-value="3">${LABEL("1.27cm", "-0.635cm")}</text:list-level-style-number>` +
+        `<text:list-level-style-number text:level="2" style:num-format="a" style:num-suffix=".">${LABEL("2.54cm", "-0.635cm")}</text:list-level-style-number>` +
+        `<text:list-level-style-bullet text:level="3" text:bullet-char="★">${LABEL("3.81cm", "-0.635cm")}</text:list-level-style-bullet>` +
+        `</text:list-style>`,
+    );
+  });
+
+  it("reads the nesting depth as the level and the level styles as the list fields", () => {
+    expect(roundTrip(depthFrame(NESTED)).paragraphs).toEqual(NESTED);
+  });
+
+  it("maps every marker style to its level style and back", () => {
+    const paragraphs: TextFrame["paragraphs"] = [
+      { runs: [{ text: "circle" }], bullet: "disc", bulletStyle: "circle" },
+      { runs: [{ text: "square" }], bullet: "disc", bulletStyle: "square" },
+      { runs: [{ text: "A" }], bullet: "number", bulletStyle: "upperAlpha" },
+      { runs: [{ text: "i" }], bullet: "number", bulletStyle: "lowerRoman" },
+      { runs: [{ text: "I" }], bullet: "number", bulletStyle: "upperRoman" },
+    ];
+    const out = writeFrame(depthFrame(paragraphs));
+    for (const attr of [`text:bullet-char="◦"`, `text:bullet-char="▪"`, `style:num-format="A"`, `style:num-format="i"`, `style:num-format="I"`]) {
+      expect(out.autoStyles).toContain(attr);
+    }
+    // A level's marker changing starts a new list (and list style) each time.
+    expect(out.frame.match(/<text:list /g)).toHaveLength(5);
+    expect(roundTrip(depthFrame(paragraphs)).paragraphs).toEqual(paragraphs);
+  });
+
+  it("de-duplicates list styles by signature and seeds the L counter past a source's names", () => {
+    const registry = new StyleRegistry();
+    registry.seedFrom(`<text:list-style style:name="de-L4"/>`);
+    const list = [{ runs: [{ text: "x" }], bullet: "number" as const }];
+    const slide: Slide = { id: "s", frames: [depthFrame(list), { ...depthFrame(list), id: "u" }] };
+    const xml = serializePage(slide, registry, new Set(), "Default");
+    expect(xml.match(/text:style-name="de-L5"/g)).toHaveLength(2);
+    expect(registry.xml().match(/<text:list-style /g)).toHaveLength(1);
+  });
+
+  it("keeps a body placeholder's plain discs bare and puts its non-list paragraphs in a list header", () => {
+    const out = writeFrame(
+      bodyFrame([
+        { runs: [{ text: "first" }], bullet: "disc" },
+        { runs: [{ text: "second" }], bullet: "disc" },
+        { runs: [{ text: "aside" }] },
+      ]),
+    );
+    expect(out.frame).toContain(
+      `<draw:text-box><text:p text:style-name="de-P1">first</text:p><text:p text:style-name="de-P1">second</text:p>` +
+        `<text:list><text:list-header><text:p>aside</text:p></text:list-header></text:list></draw:text-box>`,
+    );
+    const back = parseFrameChildForTest(out.frame, out.autoStyles) as TextFrame;
+    expect(back.paragraphs.map((p) => p.bullet)).toEqual(["disc", "disc", undefined]);
+  });
+
+  it("writes a body placeholder's numbered or nested list as real markup", () => {
+    const out = writeFrame(
+      bodyFrame([
+        { runs: [{ text: "one" }], bullet: "number" },
+        { runs: [{ text: "sub" }], bullet: "disc", level: 1 },
+      ]),
+    );
+    expect(out.frame).toContain(`<text:list text:style-name="de-L1"><text:list-item><text:p text:style-name="de-P1">one</text:p><text:list>`);
+    const back = parseFrameChildForTest(out.frame, out.autoStyles) as TextFrame;
+    expect(back.paragraphs.map((p) => [p.bullet, p.level])).toEqual([
+      ["number", undefined],
+      ["disc", 1],
+    ]);
+  });
+
+  it("reads an Impress-style label-alignment list: every item carries the level's start value", () => {
+    const styles =
+      `<text:list-style style:name="L1"><text:list-level-style-number text:level="1" style:num-format="1" style:num-suffix="." text:start-value="5">` +
+      `<style:list-level-properties text:list-level-position-and-space-mode="label-alignment">` +
+      `<style:list-level-label-alignment text:label-followed-by="listtab" fo:text-indent="-1.27cm" fo:margin-left="1.27cm"/>` +
+      `</style:list-level-properties></text:list-level-style-number></text:list-style>`;
+    const frame = parseFrameChildForTest(
+      `<draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="4cm"><draw:text-box><text:list text:style-name="L1">` +
+        `<text:list-item><text:p>a</text:p></text:list-item><text:list-item><text:p>b</text:p></text:list-item>` +
+        `</text:list></draw:text-box></draw:frame>`,
+      styles,
+    ) as TextFrame;
+    expect(frame.paragraphs).toEqual([
+      { runs: [{ text: "a" }], bullet: "number", startAt: 5, hangingCm: 1.27 },
+      { runs: [{ text: "b" }], bullet: "number", startAt: 5, hangingCm: 1.27 },
+    ]);
+  });
+
+  it("reads a list with no resolvable style as disc, and the older space-before indents", () => {
+    const styles =
+      `<text:list-style style:name="Lpos"><text:list-level-style-bullet text:level="1" text:bullet-char="●">` +
+      `<style:list-level-properties text:space-before="1cm" text:min-label-width="0.5cm"/></text:list-level-style-bullet></text:list-style>`;
+    const frame = parseFrameChildForTest(
+      `<draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="4cm"><draw:text-box>` +
+        `<text:list text:style-name="Missing"><text:list-item><text:p>a</text:p></text:list-item></text:list>` +
+        `<text:list text:style-name="Lpos"><text:list-item><text:p>b</text:p></text:list-item></text:list>` +
+        `</draw:text-box></draw:frame>`,
+      styles,
+    ) as TextFrame;
+    expect(frame.paragraphs).toEqual([
+      { runs: [{ text: "a" }], bullet: "disc" },
+      { runs: [{ text: "b" }], bullet: "disc", bulletChar: "●", indentCm: 1.5, hangingCm: 0.5 },
+    ]);
+  });
+
+  it("writes a picture bullet as a list-level-style-image into Pictures/", () => {
+    const out = writeFrame(depthFrame([{ runs: [{ text: "pic" }], bullet: "disc", bulletImageId: "Pictures/bullet.png" }]));
+    expect(out.autoStyles).toContain(
+      `<text:list-level-style-image text:level="1" xlink:href="Pictures/bullet.png" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad">`,
+    );
+  });
+});
+
+describe("SPEC-097 text-body properties (odp)", () => {
+  it("writes the body onto the frame's graphic style, preserved properties after the modelled ones", () => {
+    const out = writeFrame(
+      depthFrame([{ runs: [{ text: "x" }] }], {
+        body: { insetsCm: { left: 0.5, top: 0.25, right: 0.5, bottom: 0.25 }, anchor: "bottom", autofit: "resizeShape", wrap: false, columns: { count: 2, gapCm: 0.5 } },
+        // The modelled anchor wins over a preserved one of the same name.
+        odpBodyProps: `style:writing-mode="tb-rl" draw:textarea-vertical-align="justify"`,
+      }),
+    );
+    expect(out.frame).toContain(`<draw:frame draw:style-name="de-G1"`);
+    expect(out.autoStyles).toBe(
+      `<style:style style:name="de-G1" style:family="graphic"><style:graphic-properties` +
+        ` fo:padding-left="0.5cm" fo:padding-top="0.25cm" fo:padding-right="0.5cm" fo:padding-bottom="0.25cm"` +
+        ` draw:textarea-vertical-align="bottom" draw:auto-grow-height="true" fo:wrap-option="no-wrap" style:writing-mode="tb-rl">` +
+        `<style:columns fo:column-count="2" fo:column-gap="0.5cm"/></style:graphic-properties></style:style>`,
+    );
+  });
+
+  it("reads the body back, kind defaults absent", () => {
+    const text = depthFrame([{ runs: [{ text: "x" }] }], {
+      body: { insetsCm: { left: 0.5, top: 0.25, right: 0.5, bottom: 0.25 }, anchor: "middle", autofit: "resizeShape", wrap: false, columns: { count: 3, gapCm: 0.4 } },
+      odpBodyProps: `style:writing-mode="tb-rl"`,
+      fill: { type: "solid", color: "#ff0000" },
+    });
+    const back = roundTrip(text);
+    expect([back.body, back.odpBodyProps, back.fill]).toEqual([text.body, text.odpBodyProps, text.fill]);
+    const shape: ShapeFrame = { id: "s", kind: "shape", geometry: "rect", xCm: 1, yCm: 1, widthCm: 4, heightCm: 2, paragraphs: [{ runs: [{ text: "s" }] }], body: { anchor: "top" } };
+    expect(roundTrip(shape).body).toEqual({ anchor: "top" });
+  });
+
+  it("resolves the body along the draw:style-name chain and drops values equal to the defaults", () => {
+    const styles =
+      `<style:style style:name="base" style:family="graphic"><style:graphic-properties fo:padding="0.4cm" draw:textarea-vertical-align="top" draw:auto-grow-height="false"/></style:style>` +
+      `<style:style style:name="gr1" style:family="graphic" style:parent-style-name="base"><style:graphic-properties fo:padding-left="0.254cm"/></style:style>`;
+    const frame = parseFrameChildForTest(
+      `<draw:frame draw:style-name="gr1" svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="4cm"><draw:text-box><text:p>x</text:p></draw:text-box></draw:frame>`,
+      styles,
+    ) as TextFrame;
+    expect(frame.body).toEqual({ insetsCm: { left: 0.254, top: 0.4, right: 0.4, bottom: 0.4 } });
+    expect(frame.odpBodyProps).toBeUndefined();
+  });
+
+  it("writes no body attribute for a frame without one (existing pages keep their bytes)", () => {
+    expect(writeFrame(depthFrame([{ runs: [{ text: "x" }] }])).autoStyles).toBe("");
+  });
+});
+
+describe("SPEC-097 preservation slots (odp)", () => {
+  it("re-emits odpParaProps after the modelled properties — attributes, then child elements — modelled winning a clash", () => {
+    const registry = new StyleRegistry();
+    registry.paragraphStyle({
+      runs: [],
+      bullet: "disc",
+      odpParaProps: `fo:margin-left="9cm" fo:keep-together="always"<style:tab-stops><style:tab-stop style:position="2cm"/></style:tab-stops>`,
+    });
+    expect(registry.xml()).toBe(
+      `<style:style style:name="de-P1" style:family="paragraph"><style:paragraph-properties fo:margin-left="1.27cm" fo:text-indent="-0.635cm" fo:keep-together="always">` +
+        `<style:tab-stops><style:tab-stop style:position="2cm"/></style:tab-stops></style:paragraph-properties></style:style>`,
+    );
+  });
+
+  it("reads the paragraph's OWN style's unmodelled properties into odpParaProps, in source order", () => {
+    const styles =
+      `<style:style style:name="Parent" style:family="paragraph"><style:paragraph-properties fo:hyphenate="true"/></style:style>` +
+      `<style:style style:name="P1" style:family="paragraph" style:parent-style-name="Parent"><style:paragraph-properties` +
+      ` style:writing-mode="tb-rl" fo:text-align="center" fo:margin-left="1cm" fo:text-indent="0.5cm" fo:keep-together="always"/></style:style>`;
+    const frame = parseFrameChildForTest(
+      `<draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="4cm"><draw:text-box><text:p text:style-name="P1">x</text:p></draw:text-box></draw:frame>`,
+      styles,
+    ) as TextFrame;
+    // The modelled align/indent are fields; a positive (first-line) text-indent
+    // is not modelled and is kept; the parent's properties are not copied.
+    expect(frame.paragraphs[0]).toEqual({
+      runs: [{ text: "x" }],
+      align: "center",
+      indentCm: 1,
+      odpParaProps: `style:writing-mode="tb-rl" fo:text-indent="0.5cm" fo:keep-together="always"`,
+    });
+    // …and re-emits it after the modelled properties.
+    const out = writeFrame(frame);
+    expect(out.autoStyles).toContain(
+      `<style:paragraph-properties fo:text-align="center" fo:margin-left="1cm" style:writing-mode="tb-rl" fo:text-indent="0.5cm" fo:keep-together="always"/>`,
+    );
+  });
+
+  it("re-saves a rich page with byte-identical page and style bytes (write → read → write)", () => {
+    const frames: SlideFrame[] = [
+      bodyFrame([
+        { runs: [{ text: "One", letterSpacingPt: 0.5 }], bullet: "number", startAt: 3, lineSpacing: 1.5, spaceBeforePt: 6 },
+        { runs: [{ text: "Sub" }], bullet: "disc", bulletStyle: "square", level: 1, odpParaProps: `fo:keep-together="always"` },
+        { runs: [{ text: "see " }, { text: "link", linkHref: "https://example.com/", linkTooltip: "Tip" }] },
+      ]),
+      depthFrame([{ runs: [{ text: "boxed" }] }], {
+        body: { anchor: "bottom", insetsCm: { left: 0.1, top: 0.1, right: 0.1, bottom: 0.1 }, columns: { count: 2, gapCm: 0.3 } },
+        odpBodyProps: `style:writing-mode="tb-rl"`,
+        linkHref: "https://example.org/",
+      }),
+    ];
+    const first = new StyleRegistry();
+    const page1 = serializePage({ id: "s", frames, preserved: { "@page": ` draw:name="p1"` } }, first, new Set(), "Default");
+    const inner = page1.replace(/^<draw:page[^>]*>/, "").replace(/<\/draw:page>$/, "");
+    const read: SlideFrame[] = [];
+    for (const element of inner.match(/<draw:(?:a|frame)\b[\s\S]*?<\/draw:(?:a|frame)>(?=<draw:|$)/g) ?? []) {
+      read.push(parseFrameChildForTest(element, first.xml())!);
+    }
+    expect(read).toHaveLength(2);
+    const second = new StyleRegistry();
+    const page2 = serializePage({ id: "s", frames: read, preserved: { "@page": ` draw:name="p1"` } }, second, new Set(), "Default");
+    expect(page2).toBe(page1);
+    expect(second.xml()).toBe(first.xml());
+  });
+});
+
+describe("SPEC-097 links (odp)", () => {
+  it("wraps consecutive runs sharing a link in one text:a", () => {
+    const out = writeFrame(
+      depthFrame([
+        {
+          runs: [
+            { text: "see " },
+            { text: "here", linkHref: "https://a.example/", linkTooltip: "Tip" },
+            { text: "!", linkHref: "https://a.example/", linkTooltip: "Tip", bold: true },
+            { text: "b", linkHref: "https://b.example/?q=1&r=2" },
+          ],
+        },
+      ]),
+    );
+    expect(out.frame).toContain(
+      `<text:p>see <text:a xlink:href="https://a.example/" xlink:type="simple" office:title="Tip">here<text:span text:style-name="de-T1">!</text:span></text:a>` +
+        `<text:a xlink:href="https://b.example/?q=1&amp;r=2" xlink:type="simple">b</text:a></text:p>`,
+    );
+  });
+
+  it("reads a text:a back as run links (spans inside keep their style) and strips a dangerous href", () => {
+    const runs: TextFrame["paragraphs"][number]["runs"] = [
+      { text: "see " },
+      { text: "here", linkHref: "https://a.example/", linkTooltip: "Tip" },
+      { text: "!", bold: true, linkHref: "https://a.example/", linkTooltip: "Tip" },
+    ];
+    expect(roundTrip(depthFrame([{ runs }])).paragraphs[0].runs).toEqual(runs);
+    expect(writeFrame(depthFrame([{ runs: [{ text: "x", linkHref: "javascript:alert(1)" }] }])).frame).not.toContain("text:a");
+    const read = parseFrameChildForTest(
+      `<draw:frame svg:x="1cm" svg:y="1cm" svg:width="10cm" svg:height="2cm"><draw:text-box><text:p><text:a xlink:href="javascript:alert(1)">x</text:a></text:p></draw:text-box></draw:frame>`,
+    ) as TextFrame;
+    expect(read.paragraphs[0].runs).toEqual([{ text: "x" }]);
+  });
+
+  it("wraps a linked text, image or shape frame in draw:a and reads it back", () => {
+    const image: ImageFrame = { id: "i", kind: "image", xCm: 1, yCm: 1, widthCm: 4, heightCm: 3, mediaId: "Pictures/a.png", linkHref: "https://img.example/" };
+    expect(writeFrame(image).frame).toBe(
+      `<draw:a xlink:href="https://img.example/" xlink:type="simple"><draw:frame svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="3cm">` +
+        `<draw:image xlink:href="Pictures/a.png" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame></draw:a>`,
+    );
+    const shape: ShapeFrame = { id: "s", kind: "shape", geometry: "ellipse", xCm: 1, yCm: 1, widthCm: 4, heightCm: 2, linkHref: "https://shape.example/", linkTooltip: "Shape" };
+    expect(writeFrame(shape).frame).toMatch(/^<draw:a xlink:href="https:\/\/shape.example\/" xlink:type="simple" office:title="Shape"><draw:ellipse /);
+    const back = roundTrip(shape);
+    expect([back.kind, back.linkHref, back.linkTooltip]).toEqual(["shape", "https://shape.example/", "Shape"]);
+    const text = roundTrip(depthFrame([{ runs: [{ text: "t" }] }], { linkHref: "https://text.example/" }));
+    expect(text.linkHref).toBe("https://text.example/");
+  });
+
+  it("never wraps a non-linkable frame, and keeps a draw:a around one verbatim on read", () => {
+    const group: SlideFrame = {
+      id: "g",
+      kind: "group",
+      xCm: 1,
+      yCm: 1,
+      widthCm: 4,
+      heightCm: 2,
+      children: [{ id: "r", kind: "shape", geometry: "rect", xCm: 1, yCm: 1, widthCm: 4, heightCm: 2 }],
+      linkHref: "https://group.example/",
+    };
+    expect(writeFrame(group).frame).not.toContain("draw:a");
+    const read = parseFrameChildForTest(
+      `<draw:a xlink:href="https://g.example/" xlink:type="simple"><draw:g><draw:rect svg:x="1cm" svg:y="1cm" svg:width="4cm" svg:height="2cm"/></draw:g></draw:a>`,
+    );
+    expect(read?.kind).toBe("foreign");
+  });
+});
