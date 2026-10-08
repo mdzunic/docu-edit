@@ -430,7 +430,8 @@ export function toggleBullet(frame: ParagraphOwner, range: ParagraphRange, style
 
 /** What `setListStyle` applies: a marker style (bullet or number — the
  * paragraphs' list type follows it), a custom bullet glyph, or a picture
- * bullet (a `model.media` part name). */
+ * bullet (a `model.media` part name) — both of the latter make the items
+ * bulleted. */
 export type ListStyleChoice = ListMarkerStyle | { bulletChar: string } | { bulletImageId: string };
 
 /** Sets the list marker of every paragraph in range (making each a list item
@@ -450,12 +451,9 @@ export function setListStyle(frame: ParagraphOwner, range: ParagraphRange, choic
     applyParagraphFormat(frame, range, { bulletChar: choice.bulletChar });
     return;
   }
-  const start = clamp(range.startPara, 0, Math.max(0, frame.paragraphs.length - 1));
-  const end = clamp(range.endPara, 0, Math.max(0, frame.paragraphs.length - 1));
-  for (let p = start; p <= end; p++) {
-    const para = frame.paragraphs[p];
-    if (para && !para.bullet) applyParagraphFormat(frame, { startPara: p, endPara: p }, { bullet: "disc" });
-  }
+  // A picture bullet is a bullet (pptx `a:buBlip` replaces any `a:buAutoNum`),
+  // so the items become bulleted and drop their numbering fields.
+  applyParagraphFormat(frame, range, { bullet: "disc", bulletChar: null, bulletStyle: null, startAt: null });
   applyParagraphFormat(frame, range, { bulletImageId: choice.bulletImageId });
 }
 
