@@ -40,6 +40,14 @@ async function loadModules() {
     const router = createRouter({ history: createMemoryHistory(), routes });
     await router.push("/");
     const wrapper = mount(HomeView, { global: { plugins: [router] }, attachTo: document.body });
+    // HomeView preloads the editor chunk on mount (SPEC-047 AC-3) and never
+    // awaits it. vitest 4 fails the run when an import settles after the
+    // file's environment is torn down — which the full suite's load makes
+    // likely for this file's last mount — so join that same in-flight import
+    // here. Here rather than in afterEach: the cold DocumentView import is
+    // 3-4 s idle and far slower under load (HomeView.library.spec.ts), too
+    // close to the 10 s hook timeout, while a test gets 30 s.
+    await import("./DocumentView.vue");
     await flushPromises();
     return { wrapper, router };
   }
