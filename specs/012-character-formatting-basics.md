@@ -1,7 +1,7 @@
 ---
 id: SPEC-012
 title: Character formatting — bold, italic, underline, strikethrough
-status: draft
+status: done
 area: formatting
 depends_on: [SPEC-011]
 ---

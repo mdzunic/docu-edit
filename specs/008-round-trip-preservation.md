@@ -1,7 +1,7 @@
 ---
 id: SPEC-008
 title: Round-trip preservation of unsupported content
-status: draft
+status: done
 area: io
 depends_on: [SPEC-006, SPEC-007]
 ---

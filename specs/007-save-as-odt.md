@@ -1,7 +1,7 @@
 ---
 id: SPEC-007
 title: Save as .odt
-status: draft
+status: done
 area: io
 depends_on: [SPEC-005, SPEC-006]
 ---

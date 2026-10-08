@@ -1,7 +1,7 @@
 ---
 id: SPEC-011
 title: Rich text editing core
-status: draft
+status: done
 area: editing
 depends_on: [SPEC-002, SPEC-004]
 ---

@@ -1,7 +1,7 @@
 ---
 id: SPEC-005
 title: Open .odt — text and paragraphs
-status: draft
+status: done
 area: io
 depends_on: [SPEC-004]
 ---

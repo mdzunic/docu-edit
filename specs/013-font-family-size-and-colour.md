@@ -1,7 +1,7 @@
 ---
 id: SPEC-013
 title: Font family, size, text colour and highlight
-status: draft
+status: done
 area: formatting
 depends_on: [SPEC-012]
 ---

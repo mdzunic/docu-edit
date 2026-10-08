@@ -1,7 +1,7 @@
 ---
 id: SPEC-010
 title: Autosave and crash recovery
-status: draft
+status: done
 area: io
 depends_on: [SPEC-003, SPEC-011]
 ---
