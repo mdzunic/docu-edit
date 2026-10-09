@@ -41,7 +41,9 @@ import {
   resolveActiveSheet,
   type ParsedSpreadsheet,
 } from "../parsed";
+import { ODS_DEFAULT_COL_WIDTH_PX, ODS_DEFAULT_ROW_HEIGHT_PT } from "../geometry";
 import { odsDateValueToSerial, odsTimeValueToSerial } from "../serial";
+import { defaultStyles } from "../styles";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
 const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
@@ -243,6 +245,10 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
       kind: "grid",
       rows: done.rows,
       sourceXml: xml.slice(done.start, end),
+      columns: [],
+      defaultColWidthPx: ODS_DEFAULT_COL_WIDTH_PX,
+      defaultRowHeightPt: ODS_DEFAULT_ROW_HEIGHT_PT,
+      merges: [],
     });
     previousTableEnd = end;
   };
@@ -531,6 +537,7 @@ export async function parseOds(
 
   const parsed: ParsedSpreadsheet = {
     sheets: content.sheets,
+    styles: defaultStyles(),
     activeSheetIndex: resolveActiveSheet(Math.max(activeIndex, 0), content.sheets),
     dateSystem: content.dates.dateSystem,
     odsContentEnvelope: { prefix: content.prefix, suffix: content.suffix },

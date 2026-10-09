@@ -1,8 +1,11 @@
-// SPEC-116 "Reader versions": SPREADSHEET_READER_VERSION, the (empty)
-// upgrade list, assembly, and upgradeSpreadsheetModel — a current record
-// comes back untouched; an older one with no dirty sheet is re-read from its
-// retained package keeping its id, title and every sheet's id (by position);
-// a dirty sheet instead runs every pending step, in order.
+// SPEC-116 "Reader versions" and SPEC-117 "Reader version":
+// SPREADSHEET_READER_VERSION and the upgrade list, assembly, and
+// upgradeSpreadsheetModel — a current record comes back untouched; an older
+// one with no dirty sheet is re-read from its retained package keeping its
+// id, title and every sheet's id (by position); a dirty sheet instead runs
+// every pending step, in order. SPEC-117 moves the version to 2 and appends a
+// step that throws (no sheet can be dirty before SPEC-121), and a workbook a
+// SPEC-116 reader stored reopens with its styles, sizes, merges and views.
 import { afterEach, describe, expect, it } from "vitest";
 import { getCell } from "./address";
 import { buildMiniBookOdsBytes, buildMiniBookXlsxBytes } from "./fixtures/build";
@@ -16,6 +19,9 @@ import {
   type ReaderUpgrade,
 } from "./open";
 
+/** The shipped upgrade list, restored after each test that swaps it. */
+const SHIPPED_UPGRADES = [...READER_UPGRADES];
+
 /** A record as an older reader would have stored it: version 0, the same
  * package retained, but nothing extracted from it yet (empty rows). */
 async function versionZero(build: () => Promise<Uint8Array>, format: "xlsx" | "ods"): Promise<SpreadsheetModel> {
@@ -27,14 +33,50 @@ async function versionZero(build: () => Promise<Uint8Array>, format: "xlsx" | "o
   };
 }
 
+/** A record exactly as SPEC-116's reader stored it (version 1): values and
+ * runs, but none of SPEC-117's fields — no styles, no theme, no layout, no
+ * view settings — on the model, its sheets, rows, cells or runs. */
+async function spec116Record(build: () => Promise<Uint8Array>, format: "xlsx" | "ods"): Promise<SpreadsheetModel> {
+  const model = await readSpreadsheetBytes(await build(), format, "Stored by SPEC-116");
+  const plain = JSON.parse(JSON.stringify(model)) as Record<string, unknown> & { sheets: Record<string, unknown>[] };
+  for (const key of ["styles", "defaultStyleId", "theme", "indexedColors"]) {
+    delete plain[key];
+  }
+  plain.sheets = model.sheets.map((sheet, index) => ({
+    id: `stored-sheet-${index}`,
+    name: sheet.name,
+    visibility: sheet.visibility,
+    kind: sheet.kind,
+    rows: sheet.rows
+      .filter((row) => row.cells.some((cell) => cell.value !== null))
+      .map((row) => ({
+        index: row.index,
+        cells: row.cells
+          .filter((cell) => cell.value !== null)
+          .map((cell) => (cell.runs ? { col: cell.col, value: cell.value, runs: cell.runs.map((run) => ({ text: run.text })) } : { col: cell.col, value: cell.value })),
+      })),
+    ...(sheet.partName !== undefined ? { partName: sheet.partName } : {}),
+    ...(sheet.sourceXml !== undefined ? { sourceXml: sheet.sourceXml } : {}),
+  }));
+  plain.readerVersion = 1;
+  return plain as unknown as SpreadsheetModel;
+}
+
 afterEach(() => {
-  READER_UPGRADES.length = 0;
+  READER_UPGRADES.splice(0, READER_UPGRADES.length, ...SHIPPED_UPGRADES);
 });
 
 describe("reader versions", () => {
-  it("starts at version 1 with no upgrades", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(1);
-    expect(READER_UPGRADES).toEqual([]);
+  it("SPEC-117 moves the reader to version 2 with one contiguous step from 1", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(2);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1]);
+  });
+
+  it("SPEC-117's step refuses a dirty sheet loudly — none can exist before SPEC-121", async () => {
+    const model = await readSpreadsheetBytes(await buildMiniBookXlsxBytes(), "xlsx", "mini-book");
+    expect(() => READER_UPGRADES[0]!.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow(
+      "unreachable: no sheet is dirty before SPEC-121",
+    );
   });
 
   it("stamps every fresh read with the current version and a card preview", async () => {
@@ -46,17 +88,33 @@ describe("reader versions", () => {
     expect(model.preview?.cells[1]?.[1]).toBe("Revenue");
   });
 
-  it("omits empty optional fields when assembling", () => {
+  it("omits empty optional fields when assembling (styles and the default style id are required)", () => {
     const model = assembleSpreadsheet("t", "xlsx", {
-      sheets: [{ id: "s", name: "S", visibility: "visible", kind: "grid", rows: [] }],
+      sheets: [{ id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
+      styles: [{}],
       activeSheetIndex: 0,
       dateSystem: "1900",
       opaque: [],
       properties: {},
     });
     expect(Object.keys(model).toSorted()).toEqual(
-      ["activeSheetIndex", "dateSystem", "format", "id", "kind", "opaque", "preview", "readerVersion", "sheets", "title"].toSorted(),
+      [
+        "activeSheetIndex",
+        "dateSystem",
+        "defaultStyleId",
+        "format",
+        "id",
+        "kind",
+        "opaque",
+        "preview",
+        "readerVersion",
+        "sheets",
+        "styles",
+        "title",
+      ].toSorted(),
     );
+    expect(model.styles).toEqual([{}]);
+    expect(model.defaultStyleId).toBe(0);
   });
 
   it("returns a current record as the same object", async () => {
@@ -81,6 +139,26 @@ describe("reader versions", () => {
       expect(upgraded.sheets.some((sheet) => sheet.rows.length > 0)).toBe(true);
       expect(upgraded.preview?.cells.length).toBeGreaterThan(0);
     });
+
+    it(`a ${format} workbook stored by SPEC-116's reader reopens with its styles, sizes, merges and views`, async () => {
+      const stored = await spec116Record(build, format);
+      const fresh = await readSpreadsheetBytes(await build(), format, "Stored by SPEC-116");
+      const upgraded = await upgradeSpreadsheetModel(stored);
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+      expect(upgraded.id).toBe(stored.id);
+      expect(upgraded.title).toBe("Stored by SPEC-116");
+      expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(stored.sheets.map((sheet) => sheet.id));
+      // Everything SPEC-117 reads comes back from the retained source, as a
+      // fresh read of the same bytes has it.
+      expect(upgraded.styles).toEqual(fresh.styles);
+      expect(upgraded.theme).toEqual(fresh.theme);
+      expect(upgraded.indexedColors).toEqual(fresh.indexedColors);
+      upgraded.sheets.forEach((sheet, index) => {
+        const { id: _upgradedId, ...layout } = sheet;
+        const { id: _freshId, ...expected } = fresh.sheets[index]!;
+        expect(layout, sheet.name).toEqual(expected);
+      });
+    });
   }
 
   it("runs every pending step, in order, on a dirty sheet and re-reads the clean ones", async () => {
@@ -95,9 +173,11 @@ describe("reader versions", () => {
         calls.push(`${from}:${sheet.id}:${sourceParts.has(sheet.partName!)}:${model.id}`);
       },
     });
-    READER_UPGRADES.push(step(0));
+    // The machinery under test, not SPEC-117's step (which refuses a dirty
+    // sheet): two recording steps, registered out of order.
+    READER_UPGRADES.splice(0, READER_UPGRADES.length, step(1), step(0));
     const upgraded = await upgradeSpreadsheetModel(stored);
-    expect(calls).toEqual([`0:${dirty.id}:true:${stored.id}`]);
+    expect(calls).toEqual([`0:${dirty.id}:true:${stored.id}`, `1:${dirty.id}:true:${stored.id}`]);
     // The dirty sheet keeps its edits; the clean ones are re-read.
     expect(upgraded.sheets[1]).toBe(dirty);
     expect(getCell(upgraded.sheets[1]!, 0, 0)?.value).toBe("edited");

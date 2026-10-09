@@ -42,7 +42,9 @@ import {
   resolveActiveSheet,
   type ParsedSpreadsheet,
 } from "../parsed";
+import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT } from "../geometry";
 import { odsDateValueToSerial } from "../serial";
+import { defaultStyles } from "../styles";
 
 /** SpreadsheetML's main namespace, transitional and strict. */
 const MAIN_NAMESPACES: ReadonlySet<string> = new Set([
@@ -581,6 +583,10 @@ export async function parseXlsx(
       kind: entry.kind,
       rows: [],
       partName: entry.partName,
+      columns: [],
+      defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
+      defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
+      merges: [],
     };
     const bytes = parts.get(entry.partName);
     if (entry.kind === "grid" && bytes) {
@@ -597,6 +603,7 @@ export async function parseXlsx(
 
   const parsed: ParsedSpreadsheet = {
     sheets,
+    styles: defaultStyles(),
     activeSheetIndex: resolveActiveSheet(workbook.activeTab, sheets),
     dateSystem,
     opaque: await encodeOpaque(parts),

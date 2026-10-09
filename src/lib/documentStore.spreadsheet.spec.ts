@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildMiniBookXlsxBytes, buildSpecMacrosXlsmBytes } from "./spreadsheet/fixtures/build";
 import type { Row, SpreadsheetModel } from "./spreadsheet/model";
+import { SPREADSHEET_READER_VERSION } from "./spreadsheet/open";
 
 function makeIdbMock(loaded: unknown[] = []) {
   return {
@@ -305,7 +306,7 @@ describe("the reader-version upgrade on load", () => {
     await store.initLibrary();
 
     const upgraded = store.getSpreadsheet(model.id)!;
-    expect(upgraded.readerVersion).toBe(1);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.id).toBe(model.id);
     expect(upgraded.title).toBe("Q3 numbers");
     expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(["kept-0", "kept-1", "kept-2"]);
@@ -317,7 +318,7 @@ describe("the reader-version upgrade on load", () => {
     await flushWrites();
     const shells = written(idb).filter((entry) => entry.id === model.id);
     expect(shells).toHaveLength(1);
-    expect(shells[0]!.model!.readerVersion).toBe(1);
+    expect(shells[0]!.model!.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(rowsWrites(idb)).toHaveLength(3);
   });
 
@@ -327,7 +328,7 @@ describe("the reader-version upgrade on load", () => {
     idb.getRecord.mockImplementation(async (key: string) => (key === model.id ? record : undefined));
     await store.refreshDocumentFromStorage(model.id);
     const upgraded = store.getSpreadsheet(model.id)!;
-    expect(upgraded.readerVersion).toBe(1);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(["kept-0", "kept-1", "kept-2"]);
     expect(await store.upgradeStoredSpreadsheet(model.id)).toBe(upgraded);
   });

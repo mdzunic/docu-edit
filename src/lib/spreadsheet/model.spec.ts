@@ -1,5 +1,7 @@
-// SPEC-116 "The workbook model": the grid and workbook limits; the model is
-// plain JSON — a hand-built model with every optional field, and every model
+// SPEC-116 "The workbook model" (with SPEC-117's additions): the grid and
+// workbook limits; the model is plain JSON — a hand-built model with every
+// optional field (SPEC-117's styles, theme, layout and view fields among
+// them), and every model
 // the readers build from the fixtures (the Numbers export included), survive
 // JSON.parse(JSON.stringify(…)) and hold no Map, Set or class instance; the
 // invariants hold on read models (rows strictly ascending by index, cells
@@ -27,6 +29,7 @@ import {
   toCellError,
   type CellValue,
   type ErrorCode,
+  type SheetColorRef,
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
@@ -52,6 +55,10 @@ const ERROR_CODES: ErrorCode[] = [
   "#BUSY!",
   "#UNKNOWN!",
 ];
+
+/** A theme colour as the xlsx reader keeps it: the transform plus the
+ * source `tint` text (SPEC-117's SheetColorRef). */
+const ACCENT1_DARKER_25: SheetColorRef = { theme: "accent1", lumMod: 0.75, xlsxTint: "-0.249977111117893" };
 
 /** A model with every optional field populated and every kind of value. */
 function handBuiltModel(): SpreadsheetModel {
@@ -84,13 +91,43 @@ function handBuiltModel(): SpreadsheetModel {
               { col: 2, value: true },
               { col: 3, value: { error: "#DIV/0!" } },
               { col: 4, value: 46_303.75 },
-              { col: 5, value: "Bold and plain", runs: [{ text: "Bold" }, { text: " and plain" }] },
+              {
+                col: 5,
+                value: "Bold and plain",
+                runs: [{ text: "Bold", font: { bold: true, color: ACCENT1_DARKER_25 } }, { text: " and plain" }],
+                styleId: 1,
+              },
             ],
           },
-          { index: 4, cells: [{ col: 1, value: false }] },
+          // SPEC-117: a styled empty row, a style-only cell, row properties.
+          { index: 2, cells: [], heightPt: 30, customHeight: true, sourceAttrs: 'spans="1:6" x14ac:dyDescent="0.25"' },
+          { index: 3, cells: [], hidden: true, styleId: 2, sourceStyleName: "ro2" },
+          { index: 4, cells: [{ col: 1, value: false }, { col: 6, value: null, styleId: 1 }] },
           { index: MAX_ROWS - 1, cells: [{ col: MAX_COLS - 1, value: -0.5 }] },
         ],
         sourceXml: '\n   <table:table table:name="Summary" table:style-name="ta1">…</table:table>',
+        columns: [
+          { min: 0, max: 0, widthPx: 120, sourceWidthChars: 16.42578125, sourceAttrs: 'bestFit="1" customWidth="1"' },
+          { min: 3, max: 5, styleId: 1, sourceStyleName: "co2" },
+          { min: 6, max: 6, hidden: true },
+        ],
+        defaultColWidthPx: 85.33,
+        defaultRowHeightPt: 12.8,
+        merges: [{ top: 0, left: 2, bottom: 0, right: 4 }],
+        frozen: { rows: 1, cols: 1 },
+        showGridLines: false,
+        showZeros: false,
+        zoomPercent: 85,
+        tabColor: { theme: "accent2", lumMod: 0.6, lumOff: 0.4 },
+        selection: {
+          active: { row: 1, col: 1 },
+          ranges: [
+            { top: 1, left: 1, bottom: 4, right: 1 },
+            { top: 6, left: 3, bottom: 7, right: 4 },
+          ],
+          activeRangeIndex: 0,
+        },
+        topLeftCell: { row: 1, col: 1 },
       },
       {
         id: "sheet-b",
@@ -99,6 +136,10 @@ function handBuiltModel(): SpreadsheetModel {
         kind: "foreign",
         rows: [],
         partName: "xl/chartsheets/sheet1.xml",
+        columns: [],
+        defaultColWidthPx: 64,
+        defaultRowHeightPt: 15,
+        merges: [],
       },
       {
         id: "sheet-c",
@@ -107,6 +148,10 @@ function handBuiltModel(): SpreadsheetModel {
         kind: "grid",
         rows: [{ index: 3, cells: [{ col: 2, value: { error: "#N/A" } }] }],
         sourceXml: '<table:table table:name="Secret">…</table:table>',
+        columns: [],
+        defaultColWidthPx: 85.33,
+        defaultRowHeightPt: 12.8,
+        merges: [],
       },
     ],
     activeSheetIndex: 0,
@@ -132,6 +177,59 @@ function handBuiltModel(): SpreadsheetModel {
       extraFields: [{ name: "generator", xml: "<meta:generator>LibreOffice/24.8</meta:generator>", value: "LibreOffice/24.8" }],
     },
     media: [],
+    styles: [
+      {},
+      {
+        font: { family: { theme: "minor" }, sizePt: 11, bold: true, italic: true, underline: "double", strike: true, color: "#ff0000", vertAlign: "superscript" },
+        fill: { kind: "solid", color: "#ffff00" },
+        borders: {
+          top: { style: "thin" },
+          right: { style: "mediumDashDot", color: { theme: "dk1" } },
+          bottom: { style: "double", color: "#0000ff" },
+          left: { style: "hair" },
+          diagonal: { style: "dashed", up: true, down: true },
+        },
+        alignment: { horizontal: "center", vertical: "top", wrap: true, indent: 2, textRotation: 255, shrinkToFit: true },
+        protection: { locked: false, hidden: true },
+        quotePrefix: true,
+        sourceXf: 1,
+      },
+      { fill: { kind: "pattern", pattern: "darkTrellis", fg: { theme: "accent2", tint: 0.5 }, bg: "#ffffff" }, sourceStyleName: "ce2" },
+      {
+        fill: {
+          kind: "gradient",
+          type: "path",
+          left: 0.5,
+          right: 0.5,
+          top: 0.5,
+          bottom: 0.5,
+          stops: [
+            { position: 0, color: "#ffffff" },
+            { position: 1, color: { theme: "accent1" } },
+          ],
+        },
+      },
+    ],
+    defaultStyleId: 0,
+    theme: {
+      name: "Office Theme",
+      colors: {
+        dk1: "#000000",
+        lt1: "#ffffff",
+        dk2: "#44546a",
+        lt2: "#e7e6e6",
+        accent1: "#4472c4",
+        accent2: "#ed7d31",
+        accent3: "#a5a5a5",
+        accent4: "#ffc000",
+        accent5: "#5b9bd5",
+        accent6: "#70ad47",
+        hlink: "#0563c1",
+        folHlink: "#954f72",
+      },
+      fonts: { major: "Calibri Light", minor: "Calibri" },
+    },
+    indexedColors: Array.from({ length: 64 }, (_, i) => `#${i.toString(16).padStart(2, "0").repeat(3)}`),
   };
 }
 
@@ -151,7 +249,8 @@ function invariantViolations(model: SpreadsheetModel): string[] {
         problems.push(`${where}: not strictly ascending inside the grid (after row ${previousRow})`);
       }
       previousRow = row.index;
-      if (row.cells.length === 0) {
+      // SPEC-117: a row with no cells is stored only for its properties.
+      if (row.cells.length === 0 && row.heightPt === undefined && !row.hidden && row.styleId === undefined) {
         problems.push(`${where}: stored with no cells`);
       }
       let previousCol = -1;
@@ -161,7 +260,8 @@ function invariantViolations(model: SpreadsheetModel): string[] {
           problems.push(`${at}: column not strictly ascending inside the grid (after col ${previousCol})`);
         }
         previousCol = cell.col;
-        if (cell.value === null) {
+        // SPEC-117: a style-only cell (value null, styleId set) is stored.
+        if (cell.value === null && cell.styleId === undefined) {
           problems.push(`${at}: stored with value null`);
         }
         if (cell.runs && cell.value !== cell.runs.map((run) => run.text).join("")) {
@@ -267,7 +367,7 @@ describe("the invariants hold on read models", () => {
   });
 
   it.each(READ_FIXTURES)(
-    "$name: rows strictly ascending by index, cells strictly ascending by column, no null cell, no empty row, unique sheet ids",
+    "$name: rows strictly ascending by index, cells strictly ascending by column, no bare null cell, no bare empty row, unique sheet ids",
     async (fixture) => {
       const model = await readFixture(fixture);
       expect(model.sheets.length).toBeGreaterThan(0);

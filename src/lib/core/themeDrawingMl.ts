@@ -6,8 +6,15 @@
 // slots for the model, carries the source's spelling on the ref, and emits
 // that spelling back on write — the theme-space name for product-created
 // refs, so an unedited shape round-trips byte-identically (AC-31).
+//
+// It also reads the theme part itself (SPEC-117 "Theme"): `readThemePart`
+// is docx/theme.ts's readDocxTheme body moved here verbatim, so the
+// spreadsheet product (which may import only core) reads an xlsx workbook's
+// `xl/theme/theme1.xml` through the same code the word processor does;
+// readDocxTheme now delegates to it.
 import { THEME_COLOR_SLOTS } from "./theme";
-import type { ThemeColorRef, ThemeColorSlot } from "./theme";
+import type { DocumentTheme, ThemeColorRef, ThemeColorSlot } from "./theme";
+import { parseXml } from "./xml";
 
 const DRAWINGML_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
@@ -103,4 +110,91 @@ export function schemeClrXmlFor(ref: DrawingMlColorRef): string {
     .map((name) => `<a:${name} val="${Math.round((ref[name] as number) * 100000)}"/>`)
     .join("");
   return children === "" ? `<a:schemeClr val="${val}"/>` : `<a:schemeClr val="${val}">${children}</a:schemeClr>`;
+}
+
+// --- the theme part: read (SPEC-077 AC-25/26, moved here by SPEC-117) -------
+
+function firstByLocalName(parent: Element, localName: string): Element | undefined {
+  for (const child of Array.from(parent.children)) {
+    if (child.localName === localName && child.namespaceURI === DRAWINGML_NS) {
+      return child;
+    }
+  }
+  return undefined;
+}
+
+function descendant(root: Element, ...path: string[]): Element | undefined {
+  let current: Element | undefined = root;
+  for (const name of path) {
+    current = current ? firstByLocalName(current, name) : undefined;
+  }
+  return current;
+}
+
+/** One clrScheme slot's colour: `a:srgbClr@val`, or `a:sysClr@lastClr` with
+ * the windowText/window fallbacks when `lastClr` is absent (AC-26). */
+export function themeSlotColorOf(slotEl: Element | undefined): string | undefined {
+  if (!slotEl) {
+    return undefined;
+  }
+  const srgb = firstByLocalName(slotEl, "srgbClr");
+  if (srgb) {
+    const val = srgb.getAttribute("val");
+    return val && /^[0-9a-fA-F]{6}$/.test(val) ? `#${val.toLowerCase()}` : undefined;
+  }
+  const sys = firstByLocalName(slotEl, "sysClr");
+  if (sys) {
+    const last = sys.getAttribute("lastClr");
+    if (last && /^[0-9a-fA-F]{6}$/.test(last)) {
+      return `#${last.toLowerCase()}`;
+    }
+    const val = sys.getAttribute("val");
+    return val === "window" ? "#ffffff" : "#000000";
+  }
+  return undefined;
+}
+
+/** Parses a DrawingML theme part (`a:theme`) into a DocumentTheme: the
+ * `a:clrScheme` slots, the `a:fontScheme` major/minor `a:latin` typefaces and
+ * the root's name. Undefined when the XML is not a usable theme part (no
+ * clrScheme). */
+export function readThemePart(themeXml: string): DocumentTheme | undefined {
+  let doc: Document;
+  try {
+    doc = parseXml(themeXml);
+  } catch {
+    return undefined;
+  }
+  const root = doc.documentElement;
+  if (root.localName !== "theme") {
+    return undefined;
+  }
+  const clrScheme = descendant(root, "themeElements", "clrScheme");
+  if (!clrScheme) {
+    return undefined;
+  }
+  const colors = {} as Record<ThemeColorSlot, string>;
+  let sawAny = false;
+  for (const slot of THEME_COLOR_SLOTS) {
+    const color = themeSlotColorOf(firstByLocalName(clrScheme, slot));
+    if (color !== undefined) {
+      colors[slot] = color;
+      sawAny = true;
+    } else {
+      // A missing slot falls back to black — a real theme always has all
+      // twelve, so this only cushions a truncated part.
+      colors[slot] = "#000000";
+    }
+  }
+  if (!sawAny) {
+    return undefined;
+  }
+  const fontScheme = descendant(root, "themeElements", "fontScheme");
+  const major = fontScheme && descendant(fontScheme, "majorFont", "latin")?.getAttribute("typeface");
+  const minor = fontScheme && descendant(fontScheme, "minorFont", "latin")?.getAttribute("typeface");
+  return {
+    name: root.getAttribute("name") ?? "Custom",
+    colors,
+    fonts: { major: major || "Calibri Light", minor: minor || "Calibri" },
+  };
 }

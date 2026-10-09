@@ -7,11 +7,23 @@ import type { Row, Sheet, SpreadsheetModel } from "./model";
 import { buildPreview, PREVIEW_COLS, PREVIEW_ROWS } from "./preview";
 
 function sheet(name: string, rows: Row[], kind: Sheet["kind"] = "grid", partName?: string): Sheet {
-  return { id: name, name, visibility: "visible", kind, rows, partName };
+  return { id: name, name, visibility: "visible", kind, rows, partName, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 }
 
 function model(sheets: Sheet[], activeSheetIndex = 0, opaque: SpreadsheetModel["opaque"] = []): SpreadsheetModel {
-  return { kind: "spreadsheet", id: "w", title: "W", format: "xlsx", readerVersion: 1, sheets, activeSheetIndex, dateSystem: "1900", opaque };
+  return {
+    kind: "spreadsheet",
+    id: "w",
+    title: "W",
+    format: "xlsx",
+    readerVersion: 1,
+    sheets,
+    activeSheetIndex,
+    dateSystem: "1900",
+    opaque,
+    styles: [{}],
+    defaultStyleId: 0,
+  };
 }
 
 describe("buildPreview", () => {

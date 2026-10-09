@@ -35,6 +35,9 @@
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
+import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "../core/theme";
+import type { CellRef, GridRange } from "./address";
+import type { SheetSelection } from "./selection";
 
 export type SpreadsheetFormat = "xlsx" | "ods"; // SPEC-126 widens with "csv" | "tsv"
 export type PackageVariant = "macroEnabled" | "template" | "macroEnabledTemplate";
@@ -66,23 +69,139 @@ export interface CellError {
 /** Dates and times are numbers — serials in the workbook's date system. */
 export type CellValue = number | string | boolean | CellError | null;
 
-/** One run of a rich-text string. SPEC-117 adds `font?: CellFont`; until
- *  then a run carries its text only (the formatting stays in the source). */
+// --- cell styles (SPEC-117 "Model additions") --------------------------------
+// SPEC-117 is the normative source for CellStyle and the style tables both
+// readers fill it from (xlsx/styles.ts, ods/styles.ts). Every colour is a
+// core ModelColor resolved through resolveColor(color, model.theme ??
+// DEFAULT_THEME) — nothing else interprets one.
+
+/** A theme reference read from SpreadsheetML; `xlsxTint` is the source `tint`
+ *  attribute text, re-emitted verbatim by SPEC-122 when the colour is unchanged
+ *  (resolveColor ignores it — the same move as core/themeDrawingMl.ts's `spelling`). */
+export interface SheetColorRef extends ThemeColorRef {
+  xlsxTint?: string;
+}
+
+export type SheetBorderStyle =
+  | "thin"
+  | "medium"
+  | "thick"
+  | "dashed"
+  | "dotted"
+  | "double"
+  | "hair"
+  | "mediumDashed"
+  | "dashDot"
+  | "mediumDashDot"
+  | "dashDotDot"
+  | "mediumDashDotDot"
+  | "slantDashDot";
+
+export interface CellBorderEdge {
+  style: SheetBorderStyle;
+  color?: ModelColor; // absent = automatic (black)
+}
+
+export interface CellFont {
+  family?: ModelFont;
+  sizePt?: number;
+  bold?: true;
+  italic?: true;
+  underline?: "single" | "double" | "singleAccounting" | "doubleAccounting";
+  strike?: true;
+  color?: ModelColor; // absent = automatic (black)
+  vertAlign?: "superscript" | "subscript";
+}
+
+export type CellFill =
+  | { kind: "solid"; color: ModelColor }
+  | { kind: "pattern"; pattern: string; fg?: ModelColor; bg?: ModelColor } // xlsx patternType other than none/solid
+  | {
+      kind: "gradient";
+      type: "linear" | "path";
+      degree?: number;
+      left?: number; // path focus, 0..1
+      right?: number;
+      top?: number;
+      bottom?: number;
+      stops: { position: number; color: ModelColor }[];
+    };
+
+export interface CellAlignment {
+  horizontal?: "general" | "left" | "center" | "right" | "fill" | "justify" | "centerContinuous" | "distributed";
+  vertical?: "top" | "center" | "bottom" | "justify" | "distributed"; // absent = bottom
+  wrap?: true;
+  indent?: number;
+  textRotation?: number; // 0..180, 255 = vertical stacked
+  shrinkToFit?: true;
+}
+
+export interface CellBorders {
+  top?: CellBorderEdge;
+  right?: CellBorderEdge;
+  bottom?: CellBorderEdge;
+  left?: CellBorderEdge;
+  diagonal?: CellBorderEdge & { up?: true; down?: true };
+}
+
+export interface CellStyle {
+  font?: CellFont;
+  fill?: CellFill;
+  borders?: CellBorders;
+  alignment?: CellAlignment;
+  numberFormat?: string; // declared here, populated by SPEC-118; absent = "General"
+  builtinFormatId?: number; // SPEC-118: a locale-dependent Excel built-in (14, 22, 5–8, 41–44)
+  protection?: { locked?: false; hidden?: true }; // locked defaults to true
+  quotePrefix?: true; // xlsx xf@quotePrefix: the value was entered as text with a leading '
+  namedStyle?: string; // "Good", "Heading 1"… — declared here, read and written by SPEC-123
+  sourceXf?: number; // xlsx: the cellXfs index this was read from
+  sourceStyleName?: string; // ods: the automatic/common style name this was read from
+}
+
+/** A run of columns sharing one size, visibility and style (SPEC-117) —
+ * stored only when it has a width other than the sheet default, `hidden` or
+ * a `styleId`. */
+export interface ColumnSpan {
+  min: number; // 0-based inclusive; spans sorted, non-overlapping
+  max: number;
+  widthPx?: number; // px at 100% zoom; absent = the sheet default
+  hidden?: true;
+  styleId?: number;
+  sourceWidthChars?: number; // xlsx <col width>, re-emitted verbatim while widthPx is unchanged
+  sourceAttrs?: string; // xlsx: unmodelled <col> attributes, verbatim, in source order
+  sourceStyleName?: string; // ods: the table-column style name
+}
+
+/** One run of a rich-text string. `font` (SPEC-117) is a full run font in
+ * xlsx (`<rPr>`) and the span's own properties in ods (`text:span`). */
 export interface TextRun {
   text: string;
+  font?: CellFont;
 }
 
 export interface Cell {
   col: number; // 0-based
   value: CellValue; // the literal, or a formula cell's cached result; null = no value
   runs?: TextRun[]; // rich text; `value` is then the runs' concatenated text
-  // Later specs add optional fields only: formula (119), styleId (117), …
+  /** Index into `SpreadsheetModel.styles` (SPEC-117). A style-only cell —
+   * `value: null` with a `styleId` — is stored. */
+  styleId?: number;
+  // Later specs add optional fields only: formula (119), …
 }
 
 export interface Row {
   index: number; // 0-based
   cells: Cell[]; // ascending by col, unique
-  // SPEC-117 adds heightPt?, customHeight?, hidden?, styleId?
+  // SPEC-117 — a row with no cells is stored only if it has a height,
+  // `hidden` or a `styleId`:
+  heightPt?: number;
+  customHeight?: true;
+  hidden?: true;
+  /** Present only when the source row had customFormat="1" (xlsx) or a
+   * default cell style (ods). */
+  styleId?: number;
+  sourceAttrs?: string; // xlsx: unmodelled <row> attributes, verbatim, in source order
+  sourceStyleName?: string; // ods: the row style name
 }
 
 export interface Sheet {
@@ -93,6 +212,19 @@ export interface Sheet {
   rows: Row[]; // sparse, ascending by index
   partName?: string; // xlsx: the sheet part ("xl/worksheets/sheet1.xml"); its bytes are in `opaque`
   sourceXml?: string; // ods: this sheet's <table:table> text, with the whitespace that preceded it
+  // --- SPEC-117: layout, merges and view settings ---
+  columns: ColumnSpan[]; // sparse, sorted, non-overlapping
+  defaultColWidthPx: number; // px at 100% zoom
+  defaultRowHeightPt: number;
+  /** Ranges of two or more cells, each overlapping no earlier merge. */
+  merges: GridRange[];
+  frozen?: { rows: number; cols: number };
+  showGridLines?: false;
+  showZeros?: false;
+  zoomPercent?: number; // 10..400, absent = 100
+  tabColor?: ModelColor;
+  selection?: SheetSelection; // view state (SPEC-117 "View state")
+  topLeftCell?: CellRef;
 }
 
 export interface SheetPreview {
@@ -118,6 +250,12 @@ export interface SpreadsheetModel {
   preview?: SheetPreview;
   properties?: DocumentProperties;
   media?: MediaPart[]; // unused until SPEC-131; present so the store's media split applies unchanged
+  // --- SPEC-117 ---
+  /** Every cell style, index 0 the default ("Normal") style — never empty. */
+  styles: CellStyle[];
+  defaultStyleId: 0;
+  theme?: DocumentTheme; // xlsx: the workbook's theme part; ods: none
+  indexedColors?: string[]; // the file's 64-entry override palette, lowercase #rrggbb
 }
 
 /** The error codes a cell can hold, for readers validating what a file

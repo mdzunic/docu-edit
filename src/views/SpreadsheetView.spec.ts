@@ -96,6 +96,10 @@ async function loadModules() {
   return { store, readFixture, mountSheets };
 }
 
+/** SPEC-117's required layout fields at Excel's defaults: 64 px columns and
+ * 15 pt (20 px) rows, nothing merged. */
+const DEFAULT_LAYOUT = { columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] } satisfies Partial<Sheet>;
+
 /** A grid sheet from [row, col, value] triples (0-based) — sparse, rows and
  * cells ascending, as the model's invariants require. */
 function gridSheet(
@@ -112,13 +116,13 @@ function gridSheet(
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { id: crypto.randomUUID(), name, visibility, kind: "grid", rows };
+  return { id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** A foreign sheet (chartsheet, dialogsheet, macrosheet): a placeholder, its
  * part carried verbatim. */
 function foreignSheet(name: string, partName: string): Sheet {
-  return { id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName };
+  return { id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
 }
 
 /** A hand-built workbook with no source package (`opaque` is empty, so it
@@ -135,6 +139,8 @@ function handBuiltBook(sheets: Sheet[], activeSheetIndex = 0): SpreadsheetModel 
     activeSheetIndex,
     dateSystem: "1900",
     opaque: [],
+    styles: [{}],
+    defaultStyleId: 0,
   };
 }
 
@@ -165,7 +171,7 @@ function millionRowSheet(): Sheet {
     }
     rows.push({ index, cells });
   }
-  return { id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows };
+  return { id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** The tab strip, one "name:aria-selected:tabindex" string per tab. */
