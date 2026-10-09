@@ -45,6 +45,25 @@ const binary = (op: "+" | "-" | "*" | "^" | "," | " " | ":" | "&" | "=", left: F
 const unary = (op: "+" | "-" | "%", operand: FormulaNode): FormulaNode => ({ kind: "unary", op, operand, ...at });
 const call = (name: string, ...args: FormulaNode[]): FormulaNode => ({ kind: "function", name, args, ...at });
 
+/** A reference part (0-based; absent row/col = whole column/row). */
+function part(row: number | undefined, col: number | undefined, rowAbs = false, colAbs = false) {
+  return { ...(row === undefined ? {} : { row }), ...(col === undefined ? {} : { col }), rowAbs, colAbs };
+}
+
+/** A grid sheet holding `cells` ([row, cell] pairs). */
+function sheetOf(cells: Array<[number, Cell]>): Sheet {
+  const rows: Sheet["rows"] = [];
+  for (const [index, cell] of cells.toSorted((a, b) => a[0] - b[0] || a[1].col - b[1].col)) {
+    const last = rows.at(-1);
+    if (last?.index === index) {
+      last.cells.push(cell);
+    } else {
+      rows.push({ index, cells: [cell] });
+    }
+  }
+  return { id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
+}
+
 describe("printFormula is the parser's oracle", () => {
   it("parse(print(parse(t))) deep-equals parse(t), spans aside, for every corpus formula", () => {
     for (const text of CANONICAL_CORPUS) {
@@ -127,12 +146,6 @@ describe("sheet-name quoting", () => {
 });
 
 describe("formatReference", () => {
-  const part = (row: number | undefined, col: number | undefined, rowAbs = false, colAbs = false) => ({
-    ...(row === undefined ? {} : { row }),
-    ...(col === undefined ? {} : { col }),
-    rowAbs,
-    colAbs,
-  });
   it.each<[ReferenceNode, string]>([
     [{ start: part(2, 1) }, "B3"],
     [{ start: part(0, 0, true, true) }, "$A$1"],
@@ -152,18 +165,6 @@ describe("formatReference", () => {
 
 describe("formulaBarText", () => {
   const ctx: FormulaBarContext = { locale: SPREADSHEET_LOCALES["en-US"], dateSystem: "1900" };
-  const sheetOf = (cells: Array<[number, Cell]>): Sheet => {
-    const rows: Sheet["rows"] = [];
-    for (const [index, cell] of cells.toSorted((a, b) => a[0] - b[0] || a[1].col - b[1].col)) {
-      const last = rows.at(-1);
-      if (last?.index === index) {
-        last.cells.push(cell);
-      } else {
-        rows.push({ index, cells: [cell] });
-      }
-    }
-    return { id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
-  };
   const sheet = sheetOf([
     [0, { col: 0, value: 60, formula: "SUM(B2:B4)" }],
     [0, { col: 1, value: 6, formula: "A2:A4*2", arrayRange: { top: 0, left: 1, bottom: 2, right: 1 } }],

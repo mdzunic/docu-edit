@@ -60,6 +60,11 @@ function syntaxError(text: string): FormulaSyntaxError {
   throw new Error(`"${text}" parsed`);
 }
 
+/** `1` inside `depth` parentheses. */
+function nested(depth: number): string {
+  return `${"(".repeat(depth)}1${")".repeat(depth)}`;
+}
+
 afterEach(() => {
   clearFormulaAstCache();
 });
@@ -233,7 +238,6 @@ describe("syntax errors", () => {
 
   it(`bounds nesting at MAX_PARSE_DEPTH = 256 — deeper is a FormulaSyntaxError, never a stack overflow`, () => {
     expect(MAX_PARSE_DEPTH).toBe(256);
-    const nested = (depth: number): string => `${"(".repeat(depth)}1${")".repeat(depth)}`;
     expect(() => parseFormula(nested(256))).not.toThrow();
     expect(syntaxError(nested(257)).offset).toBe(256);
     expect(syntaxError(nested(100_000))).toBeInstanceOf(FormulaSyntaxError);

@@ -2097,14 +2097,16 @@ function formulaCell(ref: string, f: string, v: string | number, options: { t?: 
   return `<c r="${ref}"${options.cm === undefined ? "" : ` cm="${options.cm}"`}${options.t ? ` t="${options.t}"` : ""}>${f}<v>${v}</v></c>`;
 }
 
+/** A shared formula's follower, as Excel writes one. */
+const follower = (ref: string, si: number, v: number | string, t?: "e"): string =>
+  `<c r="${ref}"${t ? ` t="${t}"` : ""}><f t="shared" si="${si}"/><v>${v}</v></c>`;
+
 /** A normal formula's `<f>`. */
 const normalF = (text: string): string => `<f>${xmlText(text)}</f>`;
 
 export async function buildSpec119FormulasXlsxBytes(): Promise<Uint8Array> {
   const W = SPEC119_WIRE;
   const text = (ref: string, value: (typeof SPEC119_STRINGS)[number]): string => sharedCell(ref, SPEC119_STRINGS.indexOf(value));
-  const follower = (ref: string, si: number, v: number | string, t?: "e"): string =>
-    `<c r="${ref}"${t ? ` t="${t}"` : ""}><f t="shared" si="${si}"/><v>${v}</v></c>`;
   const calcRows = [
     spec119Row(1, "1:19", text("A1", "Value") + text("B1", "Amount") + numberCell("F1", 2)),
     spec119Row(
