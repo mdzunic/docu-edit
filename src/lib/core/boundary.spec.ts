@@ -88,7 +88,11 @@ describe("format layer boundaries", () => {
   /** Import specifiers in `name` (under `dir`) that resolve into a `docx/`,
    * `odf/` or `presentation/` path segment named by `banned` — "../docx/x",
    * "./odf/x" and aliased "…/docx/x" forms alike. */
-  function formatImportViolations(dir: string, name: string, banned: "docx" | "odf" | "presentation" | "media"): string[] {
+  function formatImportViolations(
+    dir: string,
+    name: string,
+    banned: "docx" | "odf" | "presentation" | "media" | "spreadsheet",
+  ): string[] {
     const source = readFileSync(join(dir, name), "utf8");
     const bannedSegment = new RegExp(`(^|/)${banned}/`);
     return importSpecifiers(source)
@@ -177,6 +181,23 @@ describe("format layer boundaries", () => {
     const violations = [
       ...scanned.flatMap(({ dir, name }) => formatImportViolations(dir, name, "media")),
       ...MODEL_LAYER_MODULES.flatMap((name) => formatImportViolations(libDir, name, "media")),
+    ];
+    expect(violations).toEqual([]);
+  });
+
+  // The spreadsheet product (SPEC-116), reverse direction: nothing in core,
+  // the text product (its model layer and its .docx/.odt/.md format layers,
+  // its PDF writer), the presentation layer or the media layer may import
+  // spreadsheet/ — the spreadsheet layer's own side of the rule (only
+  // siblings and core) is spreadsheet/boundary.spec.ts. Subdirectories
+  // count (presentation/pptx/, presentation/keynote/, media/fixtures/, …).
+  it("no core, text-product, presentation or media module imports from spreadsheet/", () => {
+    const dirs = ["core", "docx", "odf", "md", "pdf", "presentation", "media"].map((name) => join(libDir, name));
+    const scanned = dirs.flatMap((dir) => nestedRuntimeModules(dir).map((name) => ({ dir, name })));
+    expect(scanned.some(({ name }) => name.includes("/"))).toBe(true);
+    const violations = [
+      ...scanned.flatMap(({ dir, name }) => formatImportViolations(dir, name, "spreadsheet")),
+      ...MODEL_LAYER_MODULES.flatMap((name) => formatImportViolations(libDir, name, "spreadsheet")),
     ];
     expect(violations).toEqual([]);
   });

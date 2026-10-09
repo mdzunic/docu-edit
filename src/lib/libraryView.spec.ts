@@ -240,3 +240,38 @@ describe("media in the library view (SPEC-107)", () => {
     expect(MEDIA.map((format) => formatBadgeLabel(format))).toEqual(["PDF", "PNG", "JPEG", "GIF", "SVG", "WEBP"]);
   });
 });
+
+/** A workbook's library entry (SPEC-116). */
+function workbookEntry(id: string, format: DocumentFormat, packageVariant?: LibraryEntry["packageVariant"]): LibraryEntry {
+  return { id, title: id, format, kind: "spreadsheet", lastModified: 1, starred: false, packageVariant };
+}
+
+describe("workbook chips (SPEC-116)", () => {
+
+  it("adds an xlsx and an ods chip right after odp, and makes both filterable", () => {
+    const ids = FORMAT_CHIPS.map((chip) => chip.id);
+    const odpAt = ids.indexOf("odp");
+    expect(ids.slice(odpAt, odpAt + 3)).toEqual(["odp", "xlsx", "ods"]);
+    expect(FORMAT_CHIPS.find((chip) => chip.id === "xlsx")).toEqual({ id: "xlsx", label: "XLSX", formats: ["xlsx"] });
+    expect(FORMAT_CHIPS.find((chip) => chip.id === "ods")).toEqual({ id: "ods", label: "ODS", formats: ["ods"] });
+    expect(FILTERABLE_FORMATS).toContain("xlsx");
+    expect(FILTERABLE_FORMATS).toContain("ods");
+  });
+
+  it("filters and counts a workbook's variants with their format", () => {
+    const entries = [
+      workbookEntry("book", "xlsx"),
+      workbookEntry("macros", "xlsx", "macroEnabled"),
+      workbookEntry("template", "xlsx", "template"),
+      workbookEntry("calc", "ods"),
+      workbookEntry("calc-template", "ods", "template"),
+    ];
+    const xlsx = filterLibrary(entries, { search: "", formats: new Set(["xlsx"]), starredOnly: false });
+    expect(xlsx.map((found) => found.id)).toEqual(["book", "macros", "template"]);
+    const ods = filterLibrary(entries, { search: "", formats: new Set(["ods"]), starredOnly: false });
+    expect(ods.map((found) => found.id)).toEqual(["calc", "calc-template"]);
+    const counts = filterCounts(entries, "").formats;
+    expect(counts.xlsx).toBe(3);
+    expect(counts.ods).toBe(2);
+  });
+});
