@@ -183,7 +183,7 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
         return;
       }
       const nav = deps.sheetMetrics.nav();
-      if (selectionStoredCellEstimate(sheet, sel.ranges) <= AGGREGATE_DEFER_THRESHOLD) {
+      if (selectionStoredCellEstimate(sheet, sel.ranges, AGGREGATE_DEFER_THRESHOLD) <= AGGREGATE_DEFER_THRESHOLD) {
         aggregates.value = selectionAggregates(sheet, sel.ranges, nav);
         return;
       }
