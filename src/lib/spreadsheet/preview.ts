@@ -12,7 +12,7 @@ import { getCell, usedRange } from "./address";
 import type { SheetPreview, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
 import type { SpreadsheetLocale } from "./numberFormat/locale";
-import { formatValue, plainText, type FormatContext } from "./numberFormat/render";
+import { formatValue, plainText, workbookFormatContext } from "./numberFormat/render";
 import { cellStyle, effectiveStyleId } from "./styles";
 
 export const PREVIEW_ROWS = 12;
@@ -33,14 +33,7 @@ export function buildPreview(
   if (!used) {
     return { sheetName: sheet.name, cells: [] };
   }
-  const ctx: FormatContext = {
-    locale,
-    dateSystem: model.dateSystem,
-    dateQuirks: model.format === "ods" ? "proleptic" : "excel",
-  };
-  if (model.indexedColors !== undefined) {
-    ctx.palette = model.indexedColors;
-  }
+  const ctx = workbookFormatContext(model, locale);
   const rowCount = Math.min(PREVIEW_ROWS, used.bottom + 1);
   const colCount = Math.min(PREVIEW_COLS, used.right + 1);
   const cells: string[][] = [];

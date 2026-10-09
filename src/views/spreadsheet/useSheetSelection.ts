@@ -17,21 +17,30 @@
 //   until release.
 // - Aggregates are computed over stored cells only; a selection over
 //   AGGREGATE_DEFER_THRESHOLD stored cells is computed in browser idle time
-//   (core/idleScheduler.ts) rather than on the keystroke.
+//   (core/idleScheduler.ts) rather than on the keystroke. SPEC-118: Sum and
+//   Average render with the number format of the selection's first numeric
+//   cell (row-major), in the view's locale; Count stays a plain integer.
+// - SPEC-118: the formula bar shows the active cell's editText — its value
+//   as the cell editor would hold it, in the view's locale, through the
+//   cell's effective style.
 import { computed, shallowRef, watch } from "vue";
 import { isMacPlatform } from "../../lib/core/platform";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { isOutsideDocumentInput } from "../../lib/shortcuts";
 import { formatA1, getCell, type CellRef } from "../../lib/spreadsheet/address";
 import {
+  firstNumericCell,
   formatAggregates,
   selectionAggregates,
   selectionSpansMultipleCells,
   selectionStoredCellEstimate,
   type SelectionAggregates,
 } from "../../lib/spreadsheet/aggregates";
-import { generalText } from "../../lib/spreadsheet/general";
-import type { Sheet } from "../../lib/spreadsheet/model";
+import type { CellStyle, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import { formatCodeOf } from "../../lib/spreadsheet/numberFormat/builtin";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { editText, formatValue, plainText, workbookFormatContext, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
+import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import {
   addRange,
   extendTo,
@@ -64,6 +73,11 @@ export interface SheetSelectionDeps {
   sheet: () => Sheet | null;
   sheetMetrics: Pick<SheetMetrics, "nav" | "metrics" | "merges">;
   viewState: Pick<SheetViewState, "active" | "updateActive">;
+  /** The workbook (its styles, date system and format) — absent: every
+   * cell shows with the Normal style. */
+  model?: () => SpreadsheetModel | null;
+  /** The number locale (useSpreadsheetLocale) — absent: the default. */
+  locale?: () => SpreadsheetLocale;
 }
 
 export function useSheetSelection(deps: SheetSelectionDeps) {
@@ -164,15 +178,35 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
    * drag size while a drag is in progress. */
   const nameBoxText = computed(() => dragSize.value ?? formatA1(selection.value.active));
 
-  /** The formula bar's content: the active cell's General text (SPEC-118
-   * refines this to the edit text), line breaks preserved. */
+  /** The workbook's format context in the view's locale (SPEC-118). */
+  const formatContext = computed((): FormatContext => {
+    const locale = deps.locale?.() ?? SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE];
+    const model = deps.model?.();
+    return model ? workbookFormatContext(model, locale) : { locale, dateSystem: "1900" };
+  });
+
+  /** A position's effective style (SPEC-117); Normal without a workbook. */
+  function styleAt(sheet: Sheet, row: number, col: number): CellStyle | undefined {
+    const model = deps.model?.();
+    return model ? cellStyle(model, effectiveStyleId(sheet, row, col)) : undefined;
+  }
+
+  /** The formula bar's content: the active cell's edit text (SPEC-118),
+   * line breaks preserved. */
   const activeContent = computed(() => {
     const sheet = deps.sheet();
     const active = selection.value.active;
-    return sheet ? generalText(getCell(sheet, active.row, active.col)?.value ?? null) : "";
+    const cell = sheet ? getCell(sheet, active.row, active.col) : undefined;
+    if (!sheet || !cell) {
+      return "";
+    }
+    return editText(cell, { ...formatContext.value, style: styleAt(sheet, active.row, active.col) });
   });
 
   const aggregates = shallowRef<SelectionAggregates | null>(null);
+  /** The selection's first numeric cell (row-major), whose format Sum and
+   * Average take. */
+  const firstNumeric = shallowRef<CellRef | undefined>(undefined);
   let generation = 0;
   watch(
     [() => deps.sheet(), selection],
@@ -184,6 +218,7 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
       }
       const nav = deps.sheetMetrics.nav();
       if (selectionStoredCellEstimate(sheet, sel.ranges, AGGREGATE_DEFER_THRESHOLD) <= AGGREGATE_DEFER_THRESHOLD) {
+        firstNumeric.value = firstNumericCell(sheet, sel.ranges, nav);
         aggregates.value = selectionAggregates(sheet, sel.ranges, nav);
         return;
       }
@@ -191,6 +226,7 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
       const mine = generation;
       runWhenIdle(() => {
         if (mine === generation) {
+          firstNumeric.value = firstNumericCell(sheet, sel.ranges, nav);
           aggregates.value = selectionAggregates(sheet, sel.ranges, nav);
         }
       }, 1000);
@@ -198,12 +234,20 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     { immediate: true },
   );
 
-  /** The status bar's texts ({} when nothing is shown). */
-  const statusTexts = computed(() =>
-    aggregates.value
-      ? formatAggregates(aggregates.value, selectionSpansMultipleCells(selection.value.ranges, deps.sheetMetrics.merges.value))
-      : {},
-  );
+  /** The status bar's texts ({} when nothing is shown): Sum and Average in
+   * the first numeric cell's number format. */
+  const statusTexts = computed(() => {
+    if (!aggregates.value) {
+      return {};
+    }
+    const sheet = deps.sheet();
+    const first = firstNumeric.value;
+    const ctx = formatContext.value;
+    const style = sheet && first ? styleAt(sheet, first.row, first.col) : undefined;
+    const code = style ? formatCodeOf(style, ctx.locale) : undefined;
+    const multi = selectionSpansMultipleCells(selection.value.ranges, deps.sheetMetrics.merges.value);
+    return formatAggregates(aggregates.value, multi, (n) => plainText(formatValue(n, code, ctx)));
+  });
 
   return {
     selection,

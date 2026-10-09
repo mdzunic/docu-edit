@@ -20,11 +20,13 @@
 //   row's sorted cells and never more than OVERFLOW_SCAN_COLS columns away.
 // - estimateTextWidth: the per-character estimate shrink-to-fit and fill use
 //   (and SPEC-118's #### decisions) — an estimate, never a measurement.
+// - cellDisplay (SPEC-118): a value through its style's number format in the
+//   cell's width — the text, the format's colour, the alignment General
+//   follows, a fill and the "####" overflow.
 import { findRow } from "./address";
 import type { GridRange } from "./address";
 import { CELL_PADDING_PX, estimateTextWidth, INDENT_PX_PER_LEVEL } from "./geometry";
 import type { GridMetrics } from "./geometry";
-import { generalText } from "./general";
 import { mergeAt, mergesIn } from "./merges";
 import type { MergeIndex } from "./merges";
 import { MAX_COLS, MAX_ROWS } from "./model";
@@ -39,6 +41,9 @@ import type {
   Sheet,
   SheetBorderStyle,
 } from "./model";
+import { formatCodeOf } from "./numberFormat/builtin";
+import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
+import { formatValue, type FormatContext, type FormattedValue } from "./numberFormat/render";
 import { hexToRgb, resolveColor, resolveFont, rgbToHex } from "../core/theme";
 import type { DocumentTheme, ModelColor } from "../core/theme";
 
@@ -88,12 +93,16 @@ export function valueKind(value: CellValue): ValueKind {
 export type ResolvedHorizontal = Exclude<NonNullable<CellAlignment["horizontal"]>, "general">;
 
 /** The horizontal alignment a cell renders with: the style's own, or for
- * General (and absent) numbers right, booleans and errors centred, strings
+ * General (and absent) the formatted value's `alignHint` (SPEC-118) when
+ * there is one, else numbers right, booleans and errors centred, strings
  * (and empty cells) left. */
-export function resolvedHorizontal(style: CellStyle, kind: ValueKind): ResolvedHorizontal {
+export function resolvedHorizontal(style: CellStyle, kind: ValueKind, alignHint?: FormattedValue["alignHint"]): ResolvedHorizontal {
   const horizontal = style.alignment?.horizontal;
   if (horizontal !== undefined && horizontal !== "general") {
     return horizontal;
+  }
+  if (alignHint !== undefined) {
+    return alignHint;
   }
   if (kind === "number") {
     return "right";
@@ -343,14 +352,16 @@ function paddingCss(horizontal: ResolvedHorizontal, indent: number | undefined):
  *   `rotate((θ − 90)deg)` about the centre; 255 → vertical stacked text).
  *
  * Shrink-to-fit and fill need the text and the width, so the component
- * applies shrinkScale and fillRepeat itself. */
+ * applies shrinkScale and fillRepeat itself. `alignHint` is the formatted
+ * value's (SPEC-118), which General alignment follows. */
 export function cellCss(
   style: CellStyle,
   theme: DocumentTheme,
   kind: ValueKind = "string",
+  alignHint?: FormattedValue["alignHint"],
 ): { box: CssDeclarations; text: CssDeclarations } {
   const alignment = style.alignment;
-  const horizontal = resolvedHorizontal(style, kind);
+  const horizontal = resolvedHorizontal(style, kind, alignHint);
   const box: CssDeclarations = fillCss(style.fill, theme);
   box["text-align"] = TEXT_ALIGN[horizontal] ?? "left";
   if (horizontal === "distributed") {
@@ -928,11 +939,21 @@ export function fillRepeat(text: string, widthPx: number, mdw: number): string {
   return text.repeat(Math.max(1, Math.ceil(widthPx / unit)));
 }
 
-/** The text a cell shows: generalText(value) (SPEC-118 replaces it), except
- * that a numeric zero shows "" on a sheet with `showZeros: false`. */
-export function displayText(value: CellValue, sheet: Pick<Sheet, "showZeros">): string {
+/** What a cell shows (SPEC-118): its value through its style's number
+ * format (formatCodeOf in the context's locale) at the context's width —
+ * except that a numeric zero shows "" on a sheet with `showZeros: false`. */
+export function cellDisplay(value: CellValue, style: CellStyle, sheet: Pick<Sheet, "showZeros">, ctx: FormatContext): FormattedValue {
   if (value === 0 && sheet.showZeros === false) {
-    return "";
+    return { text: "" };
   }
-  return generalText(value);
+  return formatValue(value, formatCodeOf(style, ctx.locale), ctx);
+}
+
+/** Full width in en-US: General's text, as SPEC-116 drew every cell. */
+const GENERAL_DISPLAY: FormatContext = { locale: SPREADSHEET_LOCALES["en-US"], dateSystem: "1900" };
+
+/** The General text a cell shows at full width (generalText), "" for a
+ * zero on a sheet with `showZeros: false` — cellDisplay with no format. */
+export function displayText(value: CellValue, sheet: Pick<Sheet, "showZeros">): string {
+  return cellDisplay(value, {}, sheet, GENERAL_DISPLAY).text;
 }

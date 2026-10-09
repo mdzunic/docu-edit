@@ -18,6 +18,12 @@ import { STANDARD_FONT_FAMILIES } from "../lib/core/fonts";
 import { COMMON_FONT_SIZES } from "../lib/fonts";
 import { ZOOM_PRESETS } from "../lib/zoom";
 import { parseLengthToCm, formatLength, asMeasurementUnit } from "../lib/core/units";
+import {
+  DEFAULT_SPREADSHEET_LOCALE,
+  isSpreadsheetLocaleTag,
+  SPREADSHEET_LOCALE_TAGS,
+} from "../lib/spreadsheet/numberFormat/locale";
+import { localeOptionLabel } from "../lib/spreadsheet/numberFormat/render";
 
 // The Preferences dialog (SPEC-066). Every control reads the live reactive
 // preferences and, on change, writes straight through usePreferences —
@@ -63,6 +69,9 @@ const autosaveDelayOptions = AUTOSAVE_DELAY_CHOICES.map((ms) => ({
   value: String(ms),
   label: `${ms / 1000} s`,
 }));
+// SPEC-118: each locale labelled with its name and a live sample, formatted
+// by the number-format engine ("Deutsch (Deutschland) — 1.234,56 · 08.10.2026").
+const spreadsheetLocaleOptions = SPREADSHEET_LOCALE_TAGS.map((tag) => ({ value: tag, label: localeOptionLabel(tag) }));
 const downloadFormatOptions = [
   { value: "source", label: "Same as source" },
   { value: "docx", label: ".docx" },
@@ -90,6 +99,11 @@ function zoomValue(value = "") {
     return value;
   }
   return Number(value);
+}
+
+/** Narrows a locale select value to the preference's tags without a cast. */
+function spreadsheetLocaleValue(value = "") {
+  return isSpreadsheetLocaleTag(value) ? value : DEFAULT_SPREADSHEET_LOCALE;
 }
 
 /** Narrows a theme segment value to the preference union without a cast
@@ -391,6 +405,34 @@ function commitGridSpacing(event = new Event("change")) {
           :value="preferences.authorName"
           @change="(event) => setPreference('authorName', textValue(event))"
         >
+      </UiField>
+    </section>
+
+    <!-- Spreadsheets (SPEC-118) -->
+    <section
+      class="section"
+      aria-labelledby="preferences-spreadsheets-heading"
+    >
+      <h3
+        id="preferences-spreadsheets-heading"
+        class="section-title"
+      >
+        <AppIcon name="table" />
+        Spreadsheets
+      </h3>
+      <UiField
+        label="Number and date format"
+        for="preferences-spreadsheet-locale"
+        hint="How workbooks show numbers and dates; never saved into the file. Default: English (United States)"
+      >
+        <UiSelect
+          id="preferences-spreadsheet-locale"
+          data-testid="preferences-spreadsheet-locale"
+          aria-describedby="preferences-spreadsheet-locale-hint"
+          :model-value="preferences.spreadsheetLocale"
+          :options="spreadsheetLocaleOptions"
+          @update:model-value="(value) => setPreference('spreadsheetLocale', spreadsheetLocaleValue(value))"
+        />
       </UiField>
     </section>
 

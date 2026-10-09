@@ -448,17 +448,24 @@ describe("SpreadsheetView read-only grid", () => {
     }
   });
 
-  it("shows every value through the General display", async () => {
+  it("shows every value through its number format, General fitted to its column (SPEC-118)", async () => {
     const wrapper = await mountMiniBook();
     const shown = (ref: string) => wrapper.get(`[data-ref="${ref}"]`).element.textContent;
     expect(shown("A1")).toBe("Q3 report"); // rich text: its runs' text
     expect(shown("B4")).toBe("950.5");
-    expect(shown("B10")).toBe("1.23457E+11");
-    expect(shown("B11")).toBe("1.234E-10");
+    // General in B's 64 px column (Aptos Narrow 11, MDW 7) drops mantissa
+    // decimals until the text fits — Excel's "1.23E+11", not the full-width
+    // "1.23457E+11".
+    expect(shown("B10")).toBe("1.23E+11");
+    expect(shown("B11")).toBe("1.23E-10");
     expect(shown("B8")).toBe("TRUE");
     expect(shown("C8")).toBe("FALSE");
     expect(shown("B6")).toBe("#DIV/0!");
-    expect(shown("B7")).toBe("45573"); // a date is its serial until SPEC-118
+    // Built-in 14 makes the serial 45573 the date "10/8/2024" — whose
+    // estimated 63 px (every character but `.` `,` `:` and space weighs one
+    // digit) does not fit the 59 px the column leaves, so it shows as
+    // Excel's overflow: # × floor(59 / 7).
+    expect(shown("B7")).toBe("########");
   });
 
   it("lays its cells out on the sheet's GridMetrics: <cols> widths through the MDW formula, rows at the sheet's default height", async () => {

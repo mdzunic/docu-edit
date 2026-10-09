@@ -24,7 +24,7 @@
 // - Fitting. With `widthPx`, General shrinks (formatGeneral) and any other
 //   number or date that does not fit is `#` repeated to the width; text never
 //   shrinks or hashes.
-import type { Cell, CellStyle, CellValue } from "../model";
+import type { Cell, CellStyle, CellValue, SpreadsheetModel } from "../model";
 import { isCellError } from "../model";
 import { CELL_PADDING_PX, DEFAULT_COL_WIDTH_PX, estimateTextWidth } from "../geometry";
 import { civilFromDays, daysFromCivil, serialToParts } from "../serial";
@@ -41,7 +41,14 @@ import {
   scientificCandidate,
   significand,
 } from "./decimal";
-import { localeNames, localeTagOfLcid, type SpreadsheetLocale } from "./locale";
+import {
+  localeNames,
+  localeTagOfLcid,
+  SPREADSHEET_LOCALE_NAMES,
+  SPREADSHEET_LOCALES,
+  type SpreadsheetLocale,
+  type SpreadsheetLocaleTag,
+} from "./locale";
 import {
   LCID_SYSTEM_LONG_DATE,
   LCID_SYSTEM_LONG_TIME,
@@ -79,6 +86,20 @@ export interface FormattedValue {
 export interface EditTextContext extends FormatContext {
   /** The cell's effective style; absent = Normal. */
   style?: CellStyle;
+}
+
+/** The context a workbook's cells format in, in `locale`: its date system,
+ * Excel's calendar quirks for an xlsx-born workbook and the proleptic
+ * Gregorian calendar for an ods-born one, and its [ColorN] palette. */
+export function workbookFormatContext(
+  model: Pick<SpreadsheetModel, "dateSystem" | "format" | "indexedColors">,
+  locale: SpreadsheetLocale,
+): FormatContext {
+  const ctx: FormatContext = { locale, dateSystem: model.dateSystem, dateQuirks: model.format === "ods" ? "proleptic" : "excel" };
+  if (model.indexedColors !== undefined) {
+    ctx.palette = model.indexedColors;
+  }
+  return ctx;
 }
 
 const FIGURE_SPACE = "\u2007";
@@ -1113,4 +1134,19 @@ export function editText(cell: Pick<Cell, "value">, ctx: EditTextContext): strin
     return `${plainNotation(value * 100, decimal)}%`;
   }
   return plainNotation(value, decimal);
+}
+
+/** The sample a locale picker shows: 1,234.56 and 2026-10-08 (serial 46303)
+ * as that locale writes them. */
+const SAMPLE_NUMBER = 1234.56;
+const SAMPLE_DATE = 46303;
+
+/** A locale's picker label — its name and a live sample formatted by
+ * formatValue: "English (United States) — 1,234.56 · 10/8/2026". */
+export function localeOptionLabel(tag: SpreadsheetLocaleTag): string {
+  const locale = SPREADSHEET_LOCALES[tag];
+  const ctx: FormatContext = { locale, dateSystem: "1900" };
+  const number = formatValue(SAMPLE_NUMBER, "#,##0.00", ctx).text;
+  const date = formatValue(SAMPLE_DATE, locale.shortDate, ctx).text;
+  return `${SPREADSHEET_LOCALE_NAMES[tag]} — ${number} · ${date}`;
 }

@@ -14,8 +14,10 @@
 // cell's family is the resolved name; it is wrapped in SPEC-048's fontStack
 // here. Each cell element's id, role, data-ref and ARIA come from
 // cellAttributes — none on a merge's paint-only copy in a further frozen
-// pane. Runtime prop declarations per the espree constraint (see
-// AppShell.vue).
+// pane. A number format's `*x` fill (SPEC-118) is a flex row: the text
+// before it, a run of the fill character taking the remaining width (clipped,
+// hidden from assistive technology), the text after it. Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
 import { asBandItems, cellAttributes } from "../../views/spreadsheet/sheetLayerProps";
@@ -114,12 +116,16 @@ function px(value = 0) {
             >
               <span
                 class="sheet-cell-content"
+                :class="{ 'is-filled': cell.fill }"
                 :style="cell.contentStyle"
               ><template v-if="cell.runs"><span
                 v-for="(run, i) in cell.runs"
                 :key="i"
                 :style="textStyle(run.style)"
-              >{{ run.text }}</span></template><template v-else>{{ cell.text }}</template></span>
+              >{{ run.text }}</span></template><template v-else-if="cell.fill"><span>{{ cell.fill.before }}</span><span
+                class="sheet-cell-fill"
+                aria-hidden="true"
+              >{{ cell.fill.run }}</span><span>{{ cell.fill.after }}</span></template><template v-else>{{ cell.text }}</template></span>
             </div>
             <svg
               v-if="cell.diagonal"
@@ -272,6 +278,17 @@ function px(value = 0) {
 
 .sheet-cell-content {
   display: block;
+}
+
+/* A format's fill: the run takes whatever width the text leaves. */
+.sheet-cell-content.is-filled {
+  display: flex;
+}
+
+.sheet-cell-fill {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sheet-cell-diagonal {

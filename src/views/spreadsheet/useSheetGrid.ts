@@ -10,6 +10,7 @@ import { computed, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import type { SheetMetrics } from "./useSheetMetrics";
 import { useSheetCells } from "./useSheetCells";
 import { useSheetOverlays } from "./useSheetOverlays";
@@ -26,6 +27,9 @@ export interface SheetGridContext {
   selection: SheetSelectionController;
   zoom: SheetZoom;
   viewState: SheetViewState;
+  /** The number locale values render in (useSpreadsheetLocale, SPEC-118);
+   * absent = the default locale. */
+  locale?: SpreadsheetLocale;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -51,7 +55,7 @@ export function useSheetGrid(
     initialTopLeft: () => context().viewState.active.value.topLeftCell ?? sheet().topLeftCell,
     onTopLeftChange: (cell) => context().viewState.updateActive({ topLeftCell: cell }),
   });
-  const cells = useSheetCells({ model: () => context().model, sheet, metrics, merges, selection, viewport });
+  const cells = useSheetCells({ model: () => context().model, sheet, metrics, merges, selection, viewport, locale: () => context().locale });
   const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport });
   const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection });
 

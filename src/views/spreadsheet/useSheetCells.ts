@@ -23,13 +23,20 @@
 //   and keeps its alignment); the nearest string stored left (or right) of
 //   the window is mounted too, so a long title anchored off-screen still
 //   paints into view.
+// - SPEC-118: every value renders through its number format (cellDisplay →
+//   formatValue) with the cell's (or merge's) width and its font's MDW, in
+//   the locale the view hands in: the format's colour overrides the font
+//   colour, its alignHint drives General alignment, a `*x` fill becomes a
+//   flexible run of its character between the text either side, and a value
+//   that does not fit is "####", which never spills.
 import { computed, type ComputedRef } from "vue";
 import { findRow, formatA1, getCell, type GridRange } from "../../lib/spreadsheet/address";
 import {
   borderCss,
   cellCss,
+  cellDisplay,
   diagonalLines,
-  displayText,
+  estimateTextWidth,
   fillRepeat,
   offscreenSpillCandidate,
   overflowAlignment,
@@ -46,6 +53,8 @@ import { CELL_PADDING_PX, type GridMetrics } from "../../lib/spreadsheet/geometr
 import { mergeAt, paneMerges, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selection";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { plainText, workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
 import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
@@ -66,6 +75,9 @@ export interface CellItem {
   height: number;
   text: string;
   runs: { text: string; style: CssDeclarations }[] | null;
+  /** A number format's `*x` fill (SPEC-118): the text before and after a
+   * flexible run of the fill character, which takes the remaining width. */
+  fill: { before: string; run: string; after: string } | null;
   boxStyle: CssDeclarations;
   textStyle: CssDeclarations;
   contentStyle: CssDeclarations;
@@ -112,6 +124,9 @@ export interface SheetCellsDeps {
   merges: () => MergeIndex;
   selection: () => SheetSelection;
   viewport: SheetViewport;
+  /** The number locale values render in (useSpreadsheetLocale); absent =
+   * the default locale. */
+  locale?: () => SpreadsheetLocale | undefined;
 }
 
 /** The border element for one resolved edge, region-relative. */
@@ -131,6 +146,10 @@ function borderItem(segment: EdgeSegment, shiftX: number, shiftY: number, index:
 
 export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandItem[]> } {
   const theme = computed((): DocumentTheme => deps.model().theme ?? DEFAULT_THEME);
+  /** The workbook's format context in the current locale (SPEC-118). */
+  const formatContext = computed(() =>
+    workbookFormatContext(deps.model(), deps.locale?.() ?? SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE]),
+  );
 
   // Per-style caches, rebuilt with the style table or the theme.
   const cssCache = computed(() => {
@@ -148,11 +167,11 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     return cellStyle(deps.model(), id);
   }
 
-  function cssFor(id: number, kind: ReturnType<typeof valueKind>): ReturnType<typeof cellCss> {
-    const key = `${id}|${kind}`;
+  function cssFor(id: number, kind: ReturnType<typeof valueKind>, alignHint: FormattedValue["alignHint"]): ReturnType<typeof cellCss> {
+    const key = `${id}|${kind}|${alignHint ?? ""}`;
     let css = cssCache.value.get(key);
     if (!css) {
-      css = cellCss(styleOf(id), theme.value, kind);
+      css = cellCss(styleOf(id), theme.value, kind, alignHint);
       cssCache.value.set(key, css);
     }
     return css;
@@ -187,15 +206,31 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     const style = styleOf(styleId);
     const value = cell?.value ?? null;
     const kind = valueKind(value);
-    const css = cssFor(styleId, kind);
+    const mdw = mdwFor(styleId);
+    // The value through its number format, fitted to the cell (or merge);
+    // a shrink-to-fit cell shrinks its font instead of fitting the text.
+    const formatted = cellDisplay(value, style, sheet, {
+      ...formatContext.value,
+      ...(style.alignment?.shrinkToFit ? {} : { widthPx: place.width }),
+      digitWidthPx: mdw,
+    });
+    const css = cssFor(styleId, kind, formatted.alignHint);
     const textStyle: CssDeclarations = {};
     const contentStyle: CssDeclarations = {};
     for (const [key, val] of Object.entries(css.text)) {
       (CONTENT_KEYS.has(key) ? contentStyle : textStyle)[key] = val;
     }
-    let text = displayText(value, sheet);
-    const mdw = mdwFor(styleId);
-    const horizontal = resolvedHorizontal(style, kind);
+    if (formatted.color !== undefined) {
+      textStyle.color = formatted.color;
+    }
+    let text = plainText(formatted);
+    const horizontal = resolvedHorizontal(style, kind, formatted.alignHint);
+    let fill: CellItem["fill"] = null;
+    if (formatted.fill && horizontal !== "fill") {
+      const { char, index } = formatted.fill;
+      const repeat = Math.ceil(place.width / Math.max(1, estimateTextWidth(char, mdw))) + 1;
+      fill = { before: formatted.text.slice(0, index), run: char.repeat(repeat), after: formatted.text.slice(index) };
+    }
     if (horizontal === "fill" && text.length > 0) {
       text = fillRepeat(text, place.width, mdw);
     }
@@ -208,7 +243,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     let raised = false;
     let textLeft = 0;
     let textWidth = place.width;
-    const spill = merge ? null : overflowAlignment(style, value);
+    const spill = merge || formatted.overflow === "hash" ? null : overflowAlignment(style, value);
     if (spill && text.length > 0) {
       const room = overflowExtent(sheet, at.row, at.col, spill, deps.metrics(), deps.merges(), deps.viewport.frozenCols.value);
       if (room.left > 0 || room.right > 0) {
@@ -242,6 +277,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       ...place,
       text,
       runs,
+      fill,
       boxStyle,
       textStyle,
       contentStyle,
