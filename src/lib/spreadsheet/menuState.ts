@@ -26,6 +26,8 @@ export const SHEET_MENU_COMMANDS = {
   showFormulas: "view.show-formulas",
   zoomIn: "view.zoom-in",
   zoomOut: "view.zoom-out",
+  /** SPEC-120: Data ▸ Recalculate (F9). */
+  recalculate: "data.recalculate",
 } as const;
 
 /** `view.zoom-<n>`: one rung of the ZOOM_PRESETS ladder. */

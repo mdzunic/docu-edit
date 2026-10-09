@@ -52,6 +52,10 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
    * or the reader-version upgrade's re-read), so the grid re-mounts and
    * re-applies that model's view settings (SPEC-117). */
   const generation = ref(0);
+  /** Bumped when a recalculation (SPEC-120) rewrote cell values: it replaces
+   * the touched sheets copy-on-write inside the same model, so the sheet on
+   * show re-reads without a re-mount. */
+  const revision = ref(0);
 
   function show(model: SpreadsheetModel | null): void {
     if (model === workbook.value) {
@@ -86,7 +90,15 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
   void initLibrary().then(load);
   watch(deps.workbookId, load);
 
-  const activeSheet = computed(() => workbook.value?.sheets[activeIndex.value] ?? null);
+  const activeSheet = computed(() => {
+    void revision.value;
+    return workbook.value?.sheets[activeIndex.value] ?? null;
+  });
+
+  /** A recalculation pass rewrote values in the model on show. */
+  function sheetsChanged(): void {
+    revision.value += 1;
+  }
   /** One tab per visible sheet; hidden and very-hidden sheets have none. */
   const tabs = computed((): SheetTab[] =>
     (workbook.value?.sheets ?? []).flatMap((sheet, index) =>
@@ -137,6 +149,7 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     ),
     selectSheet,
     cycleSheet,
+    sheetsChanged,
     download,
     close,
   };

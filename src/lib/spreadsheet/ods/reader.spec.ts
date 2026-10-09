@@ -440,16 +440,20 @@ describe("formulas (SPEC-119 \"Reading formulas from .ods\")", () => {
   });
 });
 
-describe('calculation settings (SPEC-120 "Calculation settings")', () => {
-  const settingsPart = (autoCalculate: boolean): string =>
-    `<office:document-settings ${NAMESPACES}><office:settings><config:config-item-set config:name="ooo:configuration-settings">` +
-    `<config:config-item config:name="AutoCalculate" config:type="boolean">${autoCalculate}</config:config-item>` +
-    `</config:config-item-set></office:settings></office:document-settings>`;
+/** settings.xml holding only AutoCalculate. */
+const autoCalculatePart = (autoCalculate: boolean): string =>
+  `<office:document-settings ${NAMESPACES}><office:settings><config:config-item-set config:name="ooo:configuration-settings">` +
+  `<config:config-item config:name="AutoCalculate" config:type="boolean">${autoCalculate}</config:config-item>` +
+  `</config:config-item-set></office:settings></office:document-settings>`;
 
+/** A `table:calculation-settings` element with the given attributes. */
+const calculationSettings = (attrs: string): string => `<table:calculation-settings ${attrs}/>`;
+
+describe('calculation settings (SPEC-120 "Calculation settings")', () => {
   async function calcOf(declarations: string, autoCalculate?: boolean) {
     const parts = synthetic({ body: table("T", row(float(1))), declarations });
     if (autoCalculate !== undefined) {
-      parts.set("settings.xml", encoder.encode(settingsPart(autoCalculate)));
+      parts.set("settings.xml", encoder.encode(autoCalculatePart(autoCalculate)));
     }
     return (await parseOds(new Uint8Array(0), parts)).calc;
   }
@@ -459,7 +463,7 @@ describe('calculation settings (SPEC-120 "Calculation settings")', () => {
   });
 
   it("reads LibreOffice's explicit attributes: wildcards win, plain when neither is on, case and whole-cell matching", async () => {
-    const settings = (attrs: string): string => `<table:calculation-settings ${attrs}/>`;
+    const settings = calculationSettings;
     expect(await calcOf(settings(`table:use-regular-expressions="false" table:use-wildcards="true"`))).toEqual({ caseSensitive: true });
     expect(await calcOf(settings(`table:case-sensitive="false" table:use-regular-expressions="false" table:use-wildcards="true"`))).toBeUndefined();
     expect(await calcOf(settings(`table:case-sensitive="false" table:use-regular-expressions="false"`))).toEqual({ criteria: "plain" });

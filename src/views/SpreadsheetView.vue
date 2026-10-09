@@ -3,8 +3,8 @@
 // hub (SpreadsheetView.size.spec.ts holds its line budget). Loading, the kind
 // guard, the reader upgrade and the sheet on show: useWorkbookLoad; view state
 // (never a change to the file): useSheetViewState; geometry, zoom, selection,
-// menu routing, the number locale (SPEC-118) and formula display (SPEC-119):
-// the spreadsheet/ composables imported below; the surfaces:
+// menus, the locale (SPEC-118), formula display (SPEC-119) and recalculation
+// (SPEC-120): the spreadsheet/ composables imported below; the surfaces:
 // components/spreadsheet/*. This file only wires them.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -15,6 +15,7 @@ import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import { useTheme } from "../composables/useTheme";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
+import { useRecalc } from "./spreadsheet/useRecalc";
 import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
 import { useSheetViewState } from "./spreadsheet/useSheetViewState";
@@ -38,8 +39,9 @@ const zoom = useSheetZoom({ viewState });
 const sheetLocale = useSpreadsheetLocale();
 const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState, model: () => book.workbook.value, locale: () => sheetLocale.locale.value });
 const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model: () => book.workbook.value, viewState, selection });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas }));
+const recalc = useRecalc({ book, locale: () => sheetLocale.locale.value });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc }));
 </script>
 
 <template>
@@ -81,9 +83,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       #status-bar
     >
       <SpreadsheetStatusBar
-        :average="selection.statusTexts.value.average"
-        :count="selection.statusTexts.value.count"
-        :sum="selection.statusTexts.value.sum"
+        v-bind="{ ...selection.statusTexts.value, ...recalc.status.value }"
         :zoom-percent="zoom.percent.value"
         :zoom-disabled="book.activeSheet.value?.kind !== 'grid'"
         @zoom-in="zoom.zoomIn"
