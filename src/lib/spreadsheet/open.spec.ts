@@ -6,6 +6,9 @@
 // every pending step, in order. SPEC-117 moves the version to 2 and appends a
 // step that throws (no sheet can be dirty before SPEC-121), and a workbook a
 // SPEC-116 reader stored reopens with its styles, sizes, merges and views.
+// SPEC-119 moves it to 4 (its step throws "SPEC-119 upgrade: …"), and a
+// record SPEC-118's reader stored re-reads its clean sheets and gains its
+// formulas.
 import { afterEach, describe, expect, it } from "vitest";
 import { getCell } from "./address";
 import {
@@ -16,6 +19,8 @@ import {
   buildSpec118FormatsOdsBytes,
   buildSpec118FormatsXlsxBytes,
   buildSpec118GeneratedXlsxBytes,
+  buildSpec119FormulasOdsBytes,
+  buildSpec119FormulasXlsxBytes,
 } from "./fixtures/build";
 import type { Sheet, SpreadsheetModel } from "./model";
 import {
@@ -89,6 +94,26 @@ async function spec117Record(build: () => Promise<Uint8Array>, format: "xlsx" | 
     })),
   }));
   model.readerVersion = 2;
+  return model;
+}
+
+/** A record exactly as SPEC-118's reader stored it (version 3): no formula
+ * fields on any cell (formula, formulaUnparsed, arrayRange, dynamicArray, cm,
+ * dataTableXml), no showFormulas on any sheet — and no cell SPEC-119 stores
+ * only for its formula (one with no cached value or style). */
+async function spec118Record(build: () => Promise<Uint8Array>, format: "xlsx" | "ods"): Promise<SpreadsheetModel> {
+  const model = JSON.parse(JSON.stringify(await readSpreadsheetBytes(await build(), format, "Stored by SPEC-118"))) as SpreadsheetModel;
+  model.sheets = model.sheets.map(({ showFormulas: _showFormulas, ...sheet }, index) => ({
+    ...sheet,
+    id: `stored-sheet-${index}`,
+    rows: sheet.rows.map((row) => ({
+      ...row,
+      cells: row.cells
+        .filter((cell) => cell.value !== null || cell.styleId !== undefined)
+        .map(({ formula: _f, formulaUnparsed: _u, arrayRange: _a, dynamicArray: _d, cm: _c, dataTableXml: _t, ...cell }) => cell),
+    })),
+  }));
+  model.readerVersion = 3;
   return model;
 }
 
@@ -219,6 +244,33 @@ describe("reader versions", () => {
       upgraded.sheets.forEach((sheet, index) => {
         expect(sheet.rows).toEqual(fresh.sheets[index]!.rows);
       });
+    });
+  }
+
+  for (const [format, build] of [
+    ["xlsx", buildSpec119FormulasXlsxBytes],
+    ["ods", buildSpec119FormulasOdsBytes],
+  ] as const) {
+    it(`a ${format} workbook (${build.name}) stored by SPEC-118's reader re-reads its clean sheets and gains its formulas`, async () => {
+      const stored = await spec118Record(build, format);
+      expect(stored.sheets.some((sheet) => sheet.rows.some((row) => row.cells.some((cell) => cell.formula !== undefined)))).toBe(false);
+      const fresh = await readSpreadsheetBytes(await build(), format, "Stored by SPEC-118");
+      const upgraded = await upgradeSpreadsheetModel(stored);
+      expect(upgraded).not.toBe(stored);
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+      expect(upgraded.id).toBe(stored.id);
+      expect(upgraded.title).toBe("Stored by SPEC-118");
+      expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(stored.sheets.map((sheet) => sheet.id));
+      upgraded.sheets.forEach((sheet, index) => {
+        const { id: _upgradedId, ...read } = sheet;
+        const { id: _freshId, ...expected } = fresh.sheets[index]!;
+        expect(read, sheet.name).toEqual(expected);
+      });
+      const calc = upgraded.sheets[0]!;
+      expect(getCell(calc, 4, 1)?.formula).toBe("SUM(B2:B4)");
+      if (format === "xlsx") {
+        expect(upgraded.sheets[1]!.showFormulas).toBe(true);
+      }
     });
   }
 

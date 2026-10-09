@@ -3,12 +3,23 @@
 // materialised, non-empty ones expanded), covered cells, every value type,
 // text:p/text:s/text:tab/text:line-break, calcext errors, hidden tables, the
 // null date, the active table, properties, splice equality, out-of-grid
-// addresses and the cell ceiling.
+// addresses and the cell ceiling. SPEC-119 adds formulas: every "Reading
+// formulas from .ods" rule over spec119-formulas.ods and synthetic content —
+// the dialect prefix resolved against content.xml's declarations, matrix
+// spans, repetitions copying the text unshifted, no value type → null.
 import { describe, expect, it } from "vitest";
 import { getCell, parseA1, usedRange } from "../address";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
-import { buildMiniBookOdsBytes, buildSpecWideOdsBytes, FIXTURE_WORKBOOK_AUTHOR, MINI_BOOK_ODS, SPEC116_WIDE } from "../fixtures/build";
-import type { Sheet } from "../model";
+import {
+  buildMiniBookOdsBytes,
+  buildSpec119FormulasOdsBytes,
+  buildSpecWideOdsBytes,
+  FIXTURE_WORKBOOK_AUTHOR,
+  MINI_BOOK_ODS,
+  SPEC116_WIDE,
+  SPEC119_FORMULAS_ODS,
+} from "../fixtures/build";
+import type { Cell, Sheet } from "../model";
 import { dateToSerial } from "../serial";
 import { unzip } from "../../core/zip";
 import { parseOds, readActiveTableName } from "./reader";
@@ -331,5 +342,96 @@ describe("refusals", () => {
 
   it("refuses a spreadsheet with no tables", async () => {
     expect(await failure(synthetic({ body: "" }))).toBeInstanceOf(SpreadsheetOpenError);
+  });
+});
+
+function cellAt(sheet: Sheet, a1: string): Cell | undefined {
+  const ref = parseA1(a1)!;
+  return getCell(sheet, ref.row, ref.col);
+}
+
+const formulaCell = (formula: string, value?: number, extra = ""): string =>
+  value === undefined
+    ? `<table:table-cell table:formula="${formula}"${extra}/>`
+    : `<table:table-cell table:formula="${formula}" office:value-type="float" office:value="${value}"${extra}><text:p>${value}</text:p></table:table-cell>`;
+
+describe("formulas (SPEC-119 \"Reading formulas from .ods\")", () => {
+  /** content.xml's root declarations for synthetic formulas. */
+  const FORMULA_NAMESPACES = `xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2" xmlns:oooc="http://openoffice.org/2004/calc"`;
+
+  /** One synthetic table whose content.xml root also declares `extra`. */
+  async function formulaTable(rows: string, extra = FORMULA_NAMESPACES): Promise<Sheet> {
+    const parts = synthetic({ body: table("T", rows) });
+    const content = new TextDecoder().decode(parts.get("content.xml"));
+    parts.set("content.xml", encoder.encode(content.replace("<office:document-content ", `<office:document-content ${extra} `)));
+    return (await parseOds(new Uint8Array(0), parts)).sheets[0]!;
+  }
+
+  it("reads every formula of spec119-formulas.ods — OpenFormula, oooc: and msoxl: — with its cached value", async () => {
+    const calc = (await parseOds(await buildSpec119FormulasOdsBytes())).sheets[0]!;
+    for (const [a1, formula] of Object.entries(SPEC119_FORMULAS_ODS.formulas)) {
+      expect(cellAt(calc, a1)?.formula, a1).toBe(formula);
+      expect(cellAt(calc, a1)?.formulaUnparsed, a1).toBeUndefined();
+    }
+    for (const [a1, value] of Object.entries(SPEC119_FORMULAS_ODS.values)) {
+      expect(cellAt(calc, a1)?.value, a1).toEqual(value);
+    }
+  });
+
+  it("turns the matrix spans into the anchor's arrayRange; its members keep values only", async () => {
+    const calc = (await parseOds(await buildSpec119FormulasOdsBytes())).sheets[0]!;
+    expect(cellAt(calc, "B9")).toEqual({ col: 1, value: 20, formula: "B2:B4*2", arrayRange: SPEC119_FORMULAS_ODS.matrix.B9 });
+    expect(cellAt(calc, "B10")).toEqual({ col: 1, value: 40 });
+  });
+
+  it("copies a repeated formula cell's text verbatim to every repetition — never shifted — in repeated columns and rows", async () => {
+    const calc = (await parseOds(await buildSpec119FormulasOdsBytes())).sheets[0]!;
+    expect([cellAt(calc, "B12"), cellAt(calc, "C12")]).toEqual([
+      { col: 1, value: 30, formula: "B2*3" },
+      { col: 2, value: 30, formula: "B2*3" },
+    ]);
+    const sheet = await formulaTable(row(formulaCell("of:=[.A1]+[$Other.B2]", 5, ` table:number-columns-repeated="2"`), 3));
+    expect(sheet.rows.map((r) => r.cells.map((cell) => `${cell.col}:${cell.formula}`))).toEqual([
+      ["0:A1+Other!B2", "1:A1+Other!B2"],
+      ["0:A1+Other!B2", "1:A1+Other!B2"],
+      ["0:A1+Other!B2", "1:A1+Other!B2"],
+    ]);
+  });
+
+  it("moves a matrix with each repetition of a repeated row", async () => {
+    const sheet = await formulaTable(row(formulaCell("of:=[.A1]*2", 2, ` table:number-matrix-columns-spanned="2" table:number-matrix-rows-spanned="1"`), 2));
+    expect(sheet.rows.map((r) => r.cells[0]!.arrayRange)).toEqual([
+      { top: 0, left: 0, bottom: 0, right: 1 },
+      { top: 1, left: 0, bottom: 1, right: 1 },
+    ]);
+  });
+
+  it("keeps a formula cell with no office:value-type as value: null", async () => {
+    const calc = (await parseOds(await buildSpec119FormulasOdsBytes())).sheets[0]!;
+    expect(cellAt(calc, "B14")).toEqual({ col: 1, value: null, formula: "B2+1" });
+  });
+
+  it("resolves the dialect prefix against content.xml's own declarations, whatever the prefix is called", async () => {
+    const sheet = await formulaTable(
+      row(formulaCell("calc:=SUM([.A1];2)", 3) + formulaCell("xl:=SUM(A1,2)", 3) + formulaCell("=[.A1]*2", 2)),
+      `xmlns:calc="urn:oasis:names:tc:opendocument:xmlns:of:1.2" xmlns:xl="http://schemas.microsoft.com/office/excel/formula"`,
+    );
+    expect(sheet.rows[0]!.cells.map((cell) => cell.formula)).toEqual(["SUM(A1,2)", "SUM(A1,2)", "A1*2"]);
+  });
+
+  it("keeps a formula that does not translate or parse as the whole table:formula value, prefix included, formulaUnparsed", async () => {
+    const sheet = await formulaTable(row(formulaCell("of:=SUM([.A1];", 1) + formulaCell("zz:=1", 1) + formulaCell("of:=[A1]", 1)), `xmlns:zz="urn:example:unknown" ${FORMULA_NAMESPACES}`);
+    expect(sheet.rows[0]!.cells).toEqual([
+      { col: 0, value: 1, formula: "of:=SUM([.A1];", formulaUnparsed: true },
+      { col: 1, value: 1, formula: "zz:=1", formulaUnparsed: true },
+      { col: 2, value: 1, formula: "of:=[A1]", formulaUnparsed: true },
+    ]);
+  });
+
+  it("gives mini-book.ods's formulas their canonical text", async () => {
+    const sheets = (await parseOds(await buildMiniBookOdsBytes())).sheets;
+    expect(cellAt(sheets[1]!, "D2")?.formula).toBe("B2*C2");
+    expect(cellAt(sheets[1]!, "B18")?.formula).toBe('CONCATENATE(A2," x",B2)');
+    expect(cellAt(sheets[2]!, "B1")?.formula).toBe("SUM(Inventory!D2:D6)");
   });
 });
