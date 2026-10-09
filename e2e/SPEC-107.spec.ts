@@ -223,3 +223,38 @@ test("with no raster, a PDF card is paper at its first page's real aspect ratio 
   await rowByTitle(page, "spec107-strip").click();
   await expectPaperAtRatio(page.getByTestId("quick-look").getByTestId("row-thumbnail"), 300 / 900);
 });
+
+test("when the pdf.js raster fails, a PDF card keeps its aspect-true paper (AC-29)", async ({ page }) => {
+  // Workers exist here, so the card tries to rasterise; pdf.js never loads,
+  // the render throws, and the placeholder must stay — never a blank card.
+  await page.route(/pdfjs-dist/, (route) => route.abort());
+  const rasterFailed = page.waitForEvent("requestfailed", (request) => request.url().includes("pdfjs-dist"));
+  await page.goto("/");
+  await waitUntilAppReady(page);
+
+  const pdfs = [
+    { title: "spec107-pages", bytes: readFileSync(pdfFixture), ratio: 612 / 792, pages: "3 pages" },
+    { title: "spec107-landscape", bytes: onePagePdf(842, 595), ratio: 842 / 595, pages: "1 page" },
+  ];
+  for (const pdf of pdfs) {
+    const transfer = await dataTransferWithBytes(page, `${pdf.title}.pdf`, "application/pdf", pdf.bytes);
+    await page.dispatchEvent("body", "drop", { dataTransfer: transfer });
+    await expect(page).toHaveURL(/\/media\/.+/);
+    await page.getByTestId("close-document").click();
+    await expect(page.getByTestId("library")).toBeVisible();
+  }
+
+  await page.getByTestId("view-grid").click();
+  for (const pdf of pdfs) {
+    const thumbnail = rowByTitle(page, pdf.title).getByTestId("row-thumbnail");
+    await expect(thumbnail.getByTestId("pdf-placeholder")).toContainText(pdf.pages);
+    await expectPaperAtRatio(thumbnail, pdf.ratio);
+  }
+  // The raster attempt really ran and failed — and once that failure has
+  // settled, the paper is still there.
+  await rasterFailed;
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId("pdf-placeholder")).toHaveCount(2);
+  await expectPaperAtRatio(rowByTitle(page, "spec107-pages").getByTestId("row-thumbnail"), 612 / 792);
+  await expect(page.getByTestId("media-thumbnail")).toHaveCount(0);
+});
