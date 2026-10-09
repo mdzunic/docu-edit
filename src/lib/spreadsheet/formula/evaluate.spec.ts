@@ -109,6 +109,19 @@ describe("references, intersection and the reference operators", () => {
     expect("node" in shared ? evaluate(shared.node, ctx) : null).toBe(30);
   });
 
+  it("=SUM(A:A) over a column of 1,000 values reads those 1,000 stored cells, not 1,048,576", () => {
+    const cells: Record<string, CellSpec> = {};
+    for (let row = 1; row <= 1000; row += 1) {
+      cells[`A${row}`] = row;
+    }
+    const model = calcWorkbook({ Sheet1: { ...cells, B1: "=SUM(A:A)" } });
+    const base = storedValueContext(model);
+    let reads = 0;
+    const counting = { ...base, valueAt: (sheetId: string, row: number, col: number) => ((reads += 1), base.valueAt(sheetId, row, col)) };
+    expect(at(model, "B1", "Sheet1", counting)).toBe(500_500);
+    expect(reads).toBe(1000);
+  });
+
   it("reads an empty cell as EMPTY — 0 at the top level", () => {
     expect(value("A1")).toBe(0);
     expect(value('A1&"x"')).toBe("x");
