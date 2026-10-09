@@ -2,9 +2,10 @@
 // read its bytes, detect the format from the bytes themselves (never the
 // extension — an ODF package is recognised by its `mimetype` entry), parse
 // them, and produce a DocumentModel ready to store and navigate to. Parsing
-// errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError)
-// propagate unchanged — the caller only mutates app state once this
-// resolves, so a rejected file leaves the previous state untouched.
+// errors (DocxOpenError / LegacyDocError / OdtOpenError / FlatOdfError /
+// KeynoteOpenError / SpreadsheetOpenError) propagate unchanged — the caller
+// only mutates app state once this resolves, so a rejected file leaves the
+// previous state untouched.
 import {
   DEFAULT_TITLE,
   type CommentThread,
@@ -23,7 +24,7 @@ import { type MediaPart } from "./core/media";
 import { parseDocx, DocxOpenError, LegacyDocError } from "./docx/reader";
 import { detectOdf, parseOdt, FlatOdfError, OdtOpenError, FLAT_ODF_MESSAGE, ODT_MIMETYPE, OTT_MIMETYPE } from "./odf/reader";
 import { unzip, ZipError } from "./core/zip";
-import { detectMedia, detectPackage } from "./core/packageDetect";
+import { detectMedia, detectPackage, spreadsheetFormatOf } from "./core/packageDetect";
 import type { MediaModel } from "./media/model";
 import { assembleMediaModel } from "./media/open";
 import { readFileAsArrayBuffer } from "./core/fileReader";
@@ -45,16 +46,27 @@ import {
   KEYNOTE_UNREADABLE_MESSAGE,
 } from "./presentation/keynote/detect";
 import { KeynoteOpenError } from "./presentation/keynote/errors";
+// Likewise the spreadsheet product's refusals only: the workbook readers
+// (spreadsheet/open → xlsx/ods readers) load once a package IS a workbook.
+import type { SpreadsheetModel } from "./spreadsheet/model";
+import {
+  LEGACY_OR_ENCRYPTED_WORKBOOK_MESSAGE,
+  NUMBERS_UNSUPPORTED_MESSAGE,
+  SpreadsheetOpenError,
+  XLSB_UNSUPPORTED_MESSAGE,
+} from "./spreadsheet/errors";
+import { isLegacyOrEncryptedWorkbook, isNumbersPackage } from "./spreadsheet/detect";
 
-export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError, KeynoteOpenError };
+export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError, KeynoteOpenError, SpreadsheetOpenError };
 
 /** A file whose format was recognised but isn't openable where it was
- * handed in — an ODF package of an unsupported kind, or a presentation
- * given to a text-only entry point. */
+ * handed in — an ODF package of an unsupported kind, or a presentation,
+ * media file or workbook given to a text-only entry point. */
 export class UnsupportedFileError extends Error {}
-export const UNSUPPORTED_ODF_MESSAGE = "This OpenDocument file isn't a text document or presentation we can open";
+export const UNSUPPORTED_ODF_MESSAGE = "This OpenDocument file isn't a text document, presentation or spreadsheet we can open";
 export const PRESENTATION_NOT_TEXT_MESSAGE = "This is a presentation file — open it from the library instead";
 export const MEDIA_NOT_TEXT_MESSAGE = "This is a PDF or image file — open it from the library instead";
+export const SPREADSHEET_NOT_TEXT_MESSAGE = "This is a spreadsheet file — open it from the library instead";
 
 /** SPEC-009 AC-14: shared across every open path (picker, drag-drop,
  * URL fetch) since they all funnel through `openDocumentFile`. */
@@ -69,7 +81,8 @@ export class FileTooLargeError extends Error {}
  * except Markdown (SPEC-050), which has no content signature at all and is
  * admitted by extension as the deliberate, documented exception (see
  * `openDocumentFile`). */
-export const UNSUPPORTED_FILE_TYPE_MESSAGE = "We can only open .docx, .odt, .md, .pptx, .odp, .key, .pdf and image files";
+export const UNSUPPORTED_FILE_TYPE_MESSAGE =
+  "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .pdf and image files";
 
 const SUPPORTED_EXTENSION_PATTERN = new RegExp(`\\.(${OPENABLE_EXTENSIONS.join("|")})$`, "i");
 
@@ -88,7 +101,7 @@ export function hasTemplateFileExtension(fileName: string): boolean {
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
   const withoutExtension = fileName.replace(
-    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|key|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
+    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|key|xlsx|xlsm|xltx|xltm|ods|ots|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
     "",
   );
   return withoutExtension.length > 0 ? withoutExtension : fileName;
@@ -201,7 +214,8 @@ export type OpenedFile =
        * .pptx/.odp opens). Surfaced as a toast by `storeOpenedFile`. */
       importNotice?: string;
     }
-  | { kind: "media"; model: MediaModel };
+  | { kind: "media"; model: MediaModel }
+  | { kind: "spreadsheet"; model: SpreadsheetModel };
 
 // SPEC-047: the interactive open path (picker, drag-drop, URL, library)
 // parses a `.docx` with { deferMedia: true } so the ~1s base64 encode of a
@@ -218,16 +232,20 @@ const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
  * re-unzip on their own, as they always did), then dispatches on the
  * package's own declarations — see detectPackage:
  * - an ODF package opens as .odt (text mimetype), .odp (presentation
- *   mimetype), or is rejected with the honest unsupported-ODF message;
- * - an OPC package whose main part declares PresentationML opens as .pptx;
+ *   mimetype), .ods (spreadsheet mimetype), or is rejected with the honest
+ *   unsupported-ODF message;
+ * - an OPC package whose main part declares PresentationML opens as .pptx,
+ *   one declaring SpreadsheetML as .xlsx (an .xlsb is refused);
+ * - an iWork archive is Numbers (refused with the way out) or Keynote;
  * - anything else that is a ZIP takes the .docx path and fails there on its
  *   own terms;
  * - a non-ZIP is flat ODF (rejected specifically), Markdown by extension
  *   (SPEC-050's deliberate exception — Markdown has no content signature),
+ *   an old or password-protected workbook (a compound file named as one),
  *   or takes the .docx path (whose legacy-.doc detection also lives there).
  * `allowPresentations` is false for the text-only entry point, which must
- * keep returning DocumentModel — a presentation there is an error, not a
- * silent misparse. */
+ * keep returning DocumentModel — a presentation, media file or workbook
+ * there is an error, not a silent misparse. */
 async function openFile(file: File, options: ParseMdOptions, allowPresentations: boolean): Promise<OpenedFile> {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     throw new FileTooLargeError(FILE_TOO_LARGE_MESSAGE);
@@ -270,6 +288,13 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     if (/\.(md|markdown)$/i.test(file.name)) {
       return text(assembleDocumentModel(title, "md", await parseMd(bytes, options)));
     }
+    // SPEC-116: an OLE compound file named as an Excel workbook is a BIFF8
+    // .xls or an encrypted .xlsx/.xlsm — refused with the way out before the
+    // .docx path could call it an old Word document. Every other compound
+    // file keeps that path's own .doc message.
+    if (isLegacyOrEncryptedWorkbook(bytes, file.name)) {
+      throw new SpreadsheetOpenError(LEGACY_OR_ENCRYPTED_WORKBOOK_MESSAGE);
+    }
     if (namedDotKey) {
       // Not even a ZIP — a corrupt or truncated Keynote file.
       throw new KeynoteOpenError(KEYNOTE_UNREADABLE_MESSAGE);
@@ -295,12 +320,32 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     const parsed = presentationFormat === "pptx" ? await parsePptx(bytes, parts) : await parseOdp(bytes, parts);
     return { kind: "presentation", model: assemblePresentation(title, presentationFormat, parsed) };
   }
+  // SPEC-116: workbooks, from the package's own declarations (the main
+  // part's content type, the mimetype), never the extension.
+  const spreadsheet = spreadsheetFormatOf(info);
+  if (spreadsheet === "xlsb") {
+    throw new SpreadsheetOpenError(XLSB_UNSUPPORTED_MESSAGE);
+  }
+  if (spreadsheet !== null) {
+    if (!allowPresentations) {
+      throw new UnsupportedFileError(SPREADSHEET_NOT_TEXT_MESSAGE);
+    }
+    const { readSpreadsheetBytes } = await import("./spreadsheet/open");
+    return { kind: "spreadsheet", model: await readSpreadsheetBytes(bytes, spreadsheet.format, title, parts) };
+  }
   // SPEC-087: Keynote detection is content-based inside the ZIP funnel,
   // after the native presentation dispatch so `presentationFormatOf` and
   // the docx/odf paths are untouched (AC-5..AC-7). iWork '05–'09 gets its
   // own honest rejection (AC-8) before the IWA check.
   if (isLegacyKeynote(parts)) {
     throw new KeynoteOpenError(KEYNOTE_LEGACY_MESSAGE);
+  }
+  // SPEC-116: an Apple Numbers document is told apart from Keynote inside
+  // the iWork branch, BEFORE the Keynote dispatch — the Keynote reader would
+  // only refuse it as "not a Keynote presentation", naming no way out.
+  const namedDotNumbers = /\.numbers$/i.test(file.name);
+  if (isIwaPackage(parts) && isNumbersPackage(parts, file.name)) {
+    throw new SpreadsheetOpenError(NUMBERS_UNSUPPORTED_MESSAGE);
   }
   if (isIwaPackage(parts)) {
     if (!allowPresentations) {
@@ -330,6 +375,11 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     // problem, not a Word document (AC-11).
     throw new KeynoteOpenError(KEYNOTE_UNREADABLE_MESSAGE);
   }
+  if (namedDotNumbers && isNumbersPackage(parts, file.name)) {
+    // A ZIP named .numbers with no iWork markers either way — still a
+    // Numbers problem, not a Word document (SPEC-116, as .key above).
+    throw new SpreadsheetOpenError(NUMBERS_UNSUPPORTED_MESSAGE);
+  }
   return text(assembleDocumentModel(title, "docx", await parseDocx(bytes, parts, { deferMedia: true })));
 }
 
@@ -341,10 +391,17 @@ export async function openAnyDocumentFile(file: File, options: ParseMdOptions = 
 }
 
 /** Reads and parses a picked File into a new text DocumentModel — the
- * text-only entry point (template import, style import). A presentation
- * handed here is rejected with a specific message rather than misparsed. */
+ * text-only entry point (template import, style import). A presentation,
+ * media file or workbook handed here is rejected with a specific message
+ * rather than misparsed. */
 export async function openDocumentFile(file: File, options: ParseMdOptions = {}): Promise<DocumentModel> {
   const opened = await openFile(file, options, false);
+  if (opened.kind === "spreadsheet") {
+    throw new UnsupportedFileError(SPREADSHEET_NOT_TEXT_MESSAGE);
+  }
+  if (opened.kind === "media") {
+    throw new UnsupportedFileError(MEDIA_NOT_TEXT_MESSAGE);
+  }
   if (opened.kind !== "text") {
     throw new UnsupportedFileError(PRESENTATION_NOT_TEXT_MESSAGE);
   }

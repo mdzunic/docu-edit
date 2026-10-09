@@ -167,6 +167,8 @@ describe("chipUnavailable", () => {
     md: 0,
     pptx: 0,
     odp: 0,
+    xlsx: 0,
+    ods: 0,
     pdf: 0,
     png: 0,
     jpeg: 0,

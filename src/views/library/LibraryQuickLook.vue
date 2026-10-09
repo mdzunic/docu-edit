@@ -44,7 +44,7 @@ const facts = computed(() => {
   return [
     { label: "Modified", value: formatRelativeTime(entry.value.lastModified, props.lib.now.value) },
     { label: "Size", value: formatFileSize(props.lib.sizeOf(entry.value.id)) },
-    { label: "Format", value: formatBadgeLabel(entry.value.format) },
+    { label: "Format", value: formatBadgeLabel(entry.value.format, entry.value.packageVariant) },
   ];
 });
 </script>
@@ -93,7 +93,7 @@ const facts = computed(() => {
           class="quick-look-title"
           data-testid="quick-look-title"
         >{{ entry.title }}</span>
-        <span class="quick-look-badge">{{ formatBadgeLabel(entry.format) }}</span>
+        <span class="quick-look-badge">{{ formatBadgeLabel(entry.format, entry.packageVariant) }}</span>
       </div>
 
       <dl class="quick-look-facts">

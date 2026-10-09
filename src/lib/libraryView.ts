@@ -7,13 +7,16 @@ import type { LibrarySort } from "./libraryPrefs";
 
 /** Every format the filter can act on, in display order. The media formats
  * (SPEC-107) are filterable but do NOT each get their own chip — see
- * FORMAT_CHIPS below. */
+ * FORMAT_CHIPS below. The workbook formats (SPEC-116) follow the decks; a
+ * workbook's template or macro-enabled variant filters with its format. */
 export const FILTERABLE_FORMATS: readonly DocumentFormat[] = [
   "docx",
   "odt",
   "md",
   "pptx",
   "odp",
+  "xlsx",
+  "ods",
   "pdf",
   "png",
   "jpeg",
@@ -37,7 +40,7 @@ export interface FormatChip {
 }
 
 export const FORMAT_CHIPS: readonly FormatChip[] = [
-  ...(["docx", "odt", "md", "pptx", "odp"] as const).map((format) => ({
+  ...(["docx", "odt", "md", "pptx", "odp", "xlsx", "ods"] as const).map((format) => ({
     id: format,
     label: format.toUpperCase(),
     formats: [format] as readonly DocumentFormat[],
@@ -206,6 +209,8 @@ export function filterCounts(
     md: 0,
     pptx: 0,
     odp: 0,
+    xlsx: 0,
+    ods: 0,
     pdf: 0,
     png: 0,
     jpeg: 0,

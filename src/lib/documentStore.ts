@@ -8,6 +8,9 @@ import { createDocument, type DocumentModel } from "./documentModel";
 import { kindOfFormat, type DocumentKind, type LibraryFormat } from "./documentKinds";
 import type { PresentationModel } from "./presentation/model";
 import type { MediaModel } from "./media/model";
+import type { PackageVariant, Row, SpreadsheetModel } from "./spreadsheet/model";
+import { SPREADSHEET_READER_VERSION, upgradeSpreadsheetModel } from "./spreadsheet/open";
+import { buildPreview } from "./spreadsheet/preview";
 import type { OpenedFile } from "./openDocument";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
@@ -23,9 +26,9 @@ import type { CaretPosition } from "./textEditing";
 export type DocumentFormat = LibraryFormat;
 
 /** Everything a library record's `model` can hold: the word processor's
- * document tree, a presentation, or a media document. Discriminated by
- * `kind` — `DocumentModel` is the one without it. */
-export type StoredModel = DocumentModel | PresentationModel | MediaModel;
+ * document tree, a presentation, a media document or a workbook.
+ * Discriminated by `kind` — `DocumentModel` is the one without it. */
+export type StoredModel = DocumentModel | PresentationModel | MediaModel | SpreadsheetModel;
 
 /** Narrows a stored model to the presentation product's. */
 export function isPresentationModel(model: StoredModel): model is PresentationModel {
@@ -35,6 +38,11 @@ export function isPresentationModel(model: StoredModel): model is PresentationMo
 /** Narrows a stored model to the media product's (SPEC-107). */
 export function isMediaModel(model: StoredModel): model is MediaModel {
   return "kind" in model && model.kind === "media";
+}
+
+/** Narrows a stored model to the spreadsheet product's (SPEC-116). */
+export function isSpreadsheetModel(model: StoredModel): model is SpreadsheetModel {
+  return "kind" in model && model.kind === "spreadsheet";
 }
 
 /** What the library persists per document: the model plus its metadata.
@@ -93,8 +101,23 @@ export interface MediaRecord {
   media: MediaPart[];
 }
 
+/** One workbook sheet's rows, persisted as their own record (SPEC-116): the
+ * shell record stores every sheet with `rows: []`, and each sheet's rows go
+ * here — written only when that array's reference changed since the last
+ * write (see persistSheetRows). The model's copy-on-write invariant (an edit
+ * replaces the rows array it touches and nothing else) is what makes the
+ * reference check sound, so a rename, a star or a library listing never
+ * structured-clones a cell. */
+export interface SheetRowsRecord {
+  /** The IndexedDB key: SHEET_ROWS_KEY_PREFIX + docId + ":" + sheetId. */
+  id: string;
+  docId: string;
+  sheetId: string;
+  rows: Row[];
+}
+
 /** Everything the documents object store can hold. */
-export type PersistedRecord = StoredDocumentRecord | DraftRecord | MediaRecord;
+export type PersistedRecord = StoredDocumentRecord | DraftRecord | MediaRecord | SheetRowsRecord;
 
 export const DRAFT_KEY_PREFIX = "draft:";
 export const MEDIA_KEY_PREFIX = "media:";
@@ -105,6 +128,7 @@ export const MEDIA_KEY_PREFIX = "media:";
  * shared the committed media record, a draft that deleted an image would
  * already have destroyed the committed copy of it. */
 export const DRAFT_MEDIA_KEY_PREFIX = "draftmedia:";
+export const SHEET_ROWS_KEY_PREFIX = "sheetrows:";
 
 function draftKey(docId: string): string {
   return DRAFT_KEY_PREFIX + docId;
@@ -118,6 +142,10 @@ function draftMediaKey(docId: string): string {
   return DRAFT_MEDIA_KEY_PREFIX + docId;
 }
 
+function sheetRowsKey(docId: string, sheetId: string): string {
+  return `${SHEET_ROWS_KEY_PREFIX}${docId}:${sheetId}`;
+}
+
 export function isDraftRecord(record: PersistedRecord): record is DraftRecord {
   return record.id.startsWith(DRAFT_KEY_PREFIX);
 }
@@ -128,6 +156,10 @@ export function isMediaRecord(record: PersistedRecord): record is MediaRecord {
 
 export function isDraftMediaRecord(record: PersistedRecord): record is MediaRecord {
   return record.id.startsWith(DRAFT_MEDIA_KEY_PREFIX);
+}
+
+export function isSheetRowsRecord(record: PersistedRecord): record is SheetRowsRecord {
+  return record.id.startsWith(SHEET_ROWS_KEY_PREFIX);
 }
 
 /** Row-level metadata the library list renders; no document content. */
@@ -144,6 +176,9 @@ export interface LibraryEntry {
   /** Epoch ms the document was trashed — present only on entries returned by
    * listTrashedDocuments(); always absent from listDocuments(). */
   trashedAt?: number;
+  /** A workbook's package variant (SPEC-116) — its badge reads XLSM, XLTX,
+   * XLTM or OTS by it; absent for every other entry. */
+  packageVariant?: PackageVariant;
 }
 
 export const MAX_TITLE_LENGTH = 200;
@@ -242,6 +277,16 @@ function persistMedia(docId: string, media: MediaPart[] | undefined): Promise<vo
 // The draft's own copy of the latch — see persistDraftMedia.
 const lastDraftPersistedMedia = new Map<string, MediaPart[] | undefined>();
 
+// The rows array last written for each sheet (keyed by its record id), so
+// persistSheetRows skips every sheet whose rows reference is unchanged — the
+// same latch discipline as lastPersistedMedia, seeded from storage on load
+// only for records that actually exist there.
+const lastPersistedRows = new Map<string, Row[]>();
+// Per document, the sheet-rows record ids stored (or being written) — so the
+// next persist deletes the record of a sheet that no longer exists, and
+// deleteDocument finds every one.
+const sheetRowsKeys = new Map<string, Set<string>>();
+
 /** The draft-flavoured persistMedia (SPEC-047 AC-15): writes the draft's
  * media under DRAFT_MEDIA_KEY_PREFIX so an autosave can never overwrite the
  * committed media record ("Discard" restores the committed shell, which
@@ -298,6 +343,77 @@ function rejoinMedia(model: StoredModel, media: MediaPart[] | undefined): Stored
   return model;
 }
 
+/** The shell record's model: media stripped (stripMedia), and for a workbook
+ * every sheet's rows emptied — they live in their own SheetRowsRecords. */
+function shellModel<M extends StoredModel>(model: M): M {
+  const shell = stripMedia(model);
+  if (isSpreadsheetModel(shell)) {
+    shell.sheets = shell.sheets.map((sheet) => ({ ...sheet, rows: [] }));
+  }
+  return shell;
+}
+
+/** Writes a workbook's sheet rows as their own records — only the sheets
+ * whose `rows` reference differs from the last one written (SPEC-116's
+ * copy-on-write invariant makes that sound) — and deletes the record of any
+ * sheet the model no longer has. When any rows changed, the card preview is
+ * recomputed first so the shell written after this carries it. Returns the
+ * writes' promises; a failed write clears its latch (so the next persist
+ * retries) and is handed to `onFailure`. */
+function persistSheetRows(docId: string, model: StoredModel, onFailure: (error: unknown) => void): Promise<void>[] {
+  if (!isSpreadsheetModel(model)) {
+    return [];
+  }
+  const writes: Promise<void>[] = [];
+  const current = new Set<string>();
+  for (const sheet of model.sheets) {
+    const key = sheetRowsKey(docId, sheet.id);
+    current.add(key);
+    const rows = sheet.rows;
+    if (lastPersistedRows.get(key) === rows) {
+      continue;
+    }
+    lastPersistedRows.set(key, rows);
+    const record: SheetRowsRecord = { id: key, docId, sheetId: sheet.id, rows };
+    writes.push(
+      putRecordYielding(record).catch((error: unknown) => {
+        if (lastPersistedRows.get(key) === rows) {
+          lastPersistedRows.delete(key);
+        }
+        onFailure(error);
+      }),
+    );
+  }
+  for (const key of sheetRowsKeys.get(docId) ?? []) {
+    if (!current.has(key)) {
+      lastPersistedRows.delete(key);
+      deleteRecord(key).catch(() => {});
+    }
+  }
+  sheetRowsKeys.set(docId, current);
+  if (writes.length > 0) {
+    model.preview = buildPreview(model);
+  }
+  return writes;
+}
+
+/** Rejoins a workbook's sheet rows (read back from their own records) into a
+ * model whose stored shell had them emptied — applied on every read path.
+ * Seeds the latch only for rows that really exist in storage, and records
+ * every stored key for the document (orphans included, so the next persist
+ * removes them). */
+function rejoinSheetRows(docId: string, model: SpreadsheetModel, stored: readonly SheetRowsRecord[]): void {
+  const bySheet = new Map(stored.map((record) => [record.sheetId, record.rows]));
+  for (const sheet of model.sheets) {
+    const rows = bySheet.get(sheet.id);
+    if (rows !== undefined) {
+      sheet.rows = rows;
+      lastPersistedRows.set(sheetRowsKey(docId, sheet.id), rows);
+    }
+  }
+  sheetRowsKeys.set(docId, new Set(stored.map((record) => record.id)));
+}
+
 /** SPEC-073 migration (AC-30): a model stored by an earlier version carries
  * legacy `"#rrggbb"` string shape fills; normalise them to the `ShapeFill`
  * union here on the document-store read path (rejoinMedia runs on every
@@ -306,7 +422,7 @@ function rejoinMedia(model: StoredModel, media: MediaPart[] | undefined): Stored
  * Mutates in place, like rejoinMedia itself: these run on freshly
  * deserialised records nothing else holds yet. */
 function normaliseStoredShapeFills(model: StoredModel): void {
-  if (isPresentationModel(model) || isMediaModel(model) || !Array.isArray(model.sections)) {
+  if (isPresentationModel(model) || isMediaModel(model) || isSpreadsheetModel(model) || !Array.isArray(model.sections)) {
     return;
   }
   for (const section of model.sections) {
@@ -334,10 +450,44 @@ function normaliseStoredShapeFills(model: StoredModel): void {
  * with nothing to wait for ignore the promise, as they always have. */
 function persist(record: StoredDocumentRecord): Promise<void> {
   const media = persistMedia(record.id, record.model.media)?.catch(() => markStorageUnavailable());
-  const shell = putRecordYielding({ ...record, model: stripMedia(record.model) }).catch(() =>
+  const rows = persistSheetRows(record.id, record.model, () => markStorageUnavailable());
+  const shell = putRecordYielding({ ...record, model: shellModel(record.model) }).catch(() =>
     markStorageUnavailable(),
   );
-  return Promise.all([media, shell]).then(() => undefined);
+  return Promise.all([media, ...rows, shell]).then(() => undefined);
+}
+
+/** Brings a stored workbook up to the current reader version in place
+ * (SPEC-116 "Reader versions"): only the model is replaced, so the record
+ * keeps its id, starred and trash state, and upgradeSpreadsheetModel keeps
+ * the title and every sheet's id; the upgraded record is written back once.
+ * A record that cannot be re-read stays exactly as it was. */
+async function upgradeSpreadsheetRecord(record: StoredDocumentRecord): Promise<void> {
+  const model = record.model;
+  if (!isSpreadsheetModel(model) || model.readerVersion >= SPREADSHEET_READER_VERSION) {
+    return;
+  }
+  let upgraded: SpreadsheetModel;
+  try {
+    upgraded = await upgradeSpreadsheetModel(model);
+  } catch {
+    return;
+  }
+  if (records.get(record.id) === record && record.model === model) {
+    record.model = upgraded;
+    void persist(record);
+  }
+}
+
+/** The view's half of the upgrade path (useWorkbookLoad): upgrades the
+ * workbook stored under `id` if it is behind the reader version, resolving
+ * to the current model — undefined for a missing or non-workbook id. */
+export async function upgradeStoredSpreadsheet(id: string): Promise<SpreadsheetModel | undefined> {
+  const record = records.get(id);
+  if (record) {
+    await upgradeSpreadsheetRecord(record);
+  }
+  return getSpreadsheet(id);
 }
 
 // --- hydration -------------------------------------------------------------
@@ -350,8 +500,9 @@ let initPromise: Promise<void> | null = null;
  * awaits this before mounting the app. */
 export function initLibrary(): Promise<void> {
   initPromise ??= loadAllRecords()
-    .then((stored) => {
+    .then(async (stored) => {
       const mediaByDocId = new Map<string, MediaPart[]>();
+      const sheetRowsByDocId = new Map<string, SheetRowsRecord[]>();
       for (const record of stored) {
         // Strictly committed media only — a draft's media copy
         // (isDraftMediaRecord) must never rejoin the committed shell.
@@ -360,18 +511,30 @@ export function initLibrary(): Promise<void> {
         }
         if (isMediaRecord(record)) {
           mediaByDocId.set(record.docId, record.media);
+        } else if (isSheetRowsRecord(record)) {
+          const forDoc = sheetRowsByDocId.get(record.docId) ?? [];
+          forDoc.push(record);
+          sheetRowsByDocId.set(record.docId, forDoc);
         }
       }
+      const behindReaderVersion: StoredDocumentRecord[] = [];
       for (const record of stored) {
-        // Drafts and media records live in the same object store but are
-        // not library entries; the editor loads a draft explicitly via
-        // loadDraft, and media rejoins its document record below.
-        if (isDraftRecord(record) || isMediaRecord(record) || isDraftMediaRecord(record)) {
+        // Drafts, media and sheet-rows records live in the same object
+        // store but are not library entries; the editor loads a draft
+        // explicitly via loadDraft, and media and rows rejoin their
+        // document record below.
+        if (isDraftRecord(record) || isMediaRecord(record) || isDraftMediaRecord(record) || isSheetRowsRecord(record)) {
           continue;
         }
         if (!records.has(record.id)) {
           const media = mediaByDocId.get(record.id);
           rejoinMedia(record.model, media);
+          if (isSpreadsheetModel(record.model)) {
+            rejoinSheetRows(record.id, record.model, sheetRowsByDocId.get(record.id) ?? []);
+            if (record.model.readerVersion < SPREADSHEET_READER_VERSION) {
+              behindReaderVersion.push(record);
+            }
+          }
           // Seed the skip-map ONLY when a MediaRecord actually exists in
           // storage. A record written before the media split carries its
           // media inline in the shell and has no MediaRecord — seeding from
@@ -383,6 +546,11 @@ export function initLibrary(): Promise<void> {
           }
           records.set(record.id, record);
         }
+      }
+      // SPEC-116: a workbook stored by an older reader is re-read from its
+      // retained package before anything reads it.
+      for (const record of behindReaderVersion) {
+        await upgradeSpreadsheetRecord(record);
       }
     })
     .catch(() => markStorageUnavailable());
@@ -397,7 +565,7 @@ export function initLibrary(): Promise<void> {
  * other product's model). */
 export function getDocument(id: string): DocumentModel | undefined {
   const model = records.get(id)?.model;
-  return model !== undefined && !isPresentationModel(model) && !isMediaModel(model)
+  return model !== undefined && !isPresentationModel(model) && !isMediaModel(model) && !isSpreadsheetModel(model)
     ? model
     : undefined;
 }
@@ -415,6 +583,13 @@ export function getPresentation(id: string): PresentationModel | undefined {
 export function getMedia(id: string): MediaModel | undefined {
   const model = records.get(id)?.model;
   return model !== undefined && isMediaModel(model) ? model : undefined;
+}
+
+/** The workbook counterpart of `getDocument`/`getPresentation`/`getMedia`
+ * (SPEC-116): undefined for absent ids and for every other kind. */
+export function getSpreadsheet(id: string): SpreadsheetModel | undefined {
+  const model = records.get(id)?.model;
+  return model !== undefined && isSpreadsheetModel(model) ? model : undefined;
 }
 
 /** Which product owns a stored id — the routing guard's question ("is
@@ -483,6 +658,10 @@ export function getOrCreateDocument(id: string): DocumentModel {
       // bytes with a blank text document is the one unforgivable failure.
       throw new Error(`Document ${id} is a media file`);
     }
+    if (isSpreadsheetModel(existing.model)) {
+      // And for workbooks (SPEC-116).
+      throw new Error(`Document ${id} is a spreadsheet`);
+    }
     return existing.model;
   }
   const model = createDocument(id);
@@ -499,7 +678,7 @@ export function getOrCreateDocument(id: string): DocumentModel {
 }
 
 function toLibraryEntry(record: StoredDocumentRecord): LibraryEntry {
-  return {
+  const entry: LibraryEntry = {
     id: record.id,
     format: record.format,
     kind: kindOfFormat(record.format),
@@ -508,6 +687,10 @@ function toLibraryEntry(record: StoredDocumentRecord): LibraryEntry {
     starred: record.starred === true,
     trashedAt: record.trashedAt,
   };
+  if (isSpreadsheetModel(record.model) && record.model.packageVariant !== undefined) {
+    entry.packageVariant = record.model.packageVariant;
+  }
+  return entry;
 }
 
 /** Library rows sorted by last modified, newest first. Excludes trashed
@@ -682,28 +865,62 @@ function approximateRecordBytes(record: StoredDocumentRecord): number {
   if (isMediaModel(record.model)) {
     return record.model.byteLength;
   }
+  // A workbook (SPEC-116) counts its shell plus every sheet's rows record —
+  // each rows array measured once per reference (copy-on-write: an
+  // unchanged sheet is never re-serialised to be sized).
+  if (isSpreadsheetModel(record.model)) {
+    return record.model.sheets.reduce((total, sheet) => total + rowsBytes(sheet.rows), jsonBytes(shellModel(record.model)));
+  }
+  return jsonBytes(record.model);
+}
+
+/** UTF-8 byte length of a value's JSON (0 when not serialisable). */
+function jsonBytes(value: unknown): number {
   try {
-    const json = JSON.stringify(record.model);
+    const json = JSON.stringify(value);
     return byteCounter ? byteCounter.encode(json).length : json.length;
   } catch {
     return 0;
   }
 }
 
+const rowsByteCache = new WeakMap<Row[], number>();
+
+function rowsBytes(rows: Row[]): number {
+  let bytes = rowsByteCache.get(rows);
+  if (bytes === undefined) {
+    bytes = jsonBytes(rows);
+    rowsByteCache.set(rows, bytes);
+  }
+  return bytes;
+}
+
 /** Removes a document from the session and from storage, along with any
  * autosave draft. */
 export function deleteDocument(id: string): void {
+  const model = records.get(id)?.model;
   if (!records.delete(id)) {
     return;
   }
   lastPersistedMedia.delete(id);
   lastDraftPersistedMedia.delete(id);
   deleteRecord(id).catch(() => markStorageUnavailable());
-  // Draft/media cleanup is best-effort and not a SPEC-003 write-through
+  // Draft/media/rows cleanup is best-effort and not a SPEC-003 write-through
   // failure.
   deleteRecord(draftKey(id)).catch(() => {});
   deleteRecord(mediaKey(id)).catch(() => {});
   deleteRecord(draftMediaKey(id)).catch(() => {});
+  const rowsKeys = new Set(sheetRowsKeys.get(id));
+  if (model && isSpreadsheetModel(model)) {
+    for (const sheet of model.sheets) {
+      rowsKeys.add(sheetRowsKey(id, sheet.id));
+    }
+  }
+  for (const key of rowsKeys) {
+    lastPersistedRows.delete(key);
+    deleteRecord(key).catch(() => {});
+  }
+  sheetRowsKeys.delete(id);
 }
 
 // --- autosave (SPEC-010) ---------------------------------------------------
@@ -732,6 +949,11 @@ export async function saveDraft(
     // A media document has no draft state at all (SPEC-107): its bytes are
     // immutable, and an autosave draft would be a path to overwriting them.
     throw new Error(`Document ${id} is a media file`);
+  }
+  if (isSpreadsheetModel(record.model)) {
+    // Nothing edits a workbook yet (SPEC-116; SPEC-121 brings editing), and
+    // a text-editor draft over its id would destroy it.
+    throw new Error(`Document ${id} is a spreadsheet`);
   }
   const mediaWrite = persistDraftMedia(id, record.model.media);
   const draft: DraftRecord = {
@@ -798,10 +1020,16 @@ export async function commitDocument(
   record.caret = caret;
   record.scroll = scroll;
   const mediaWrite = persistMedia(id, record.model.media);
+  const failures: unknown[] = [];
+  const rowsWrites = persistSheetRows(id, record.model, (error) => failures.push(error));
   await Promise.all([
     mediaWrite ?? Promise.resolve(),
-    putRecordYielding({ ...record, model: stripMedia(record.model) }),
+    ...rowsWrites,
+    putRecordYielding({ ...record, model: shellModel(record.model) }),
   ]);
+  if (failures.length > 0) {
+    throw failures[0];
+  }
   await deleteDraft(id);
 }
 
@@ -820,11 +1048,22 @@ export async function refreshDocumentFromStorage(
       stored &&
       !isDraftRecord(stored) &&
       !isMediaRecord(stored) &&
+      !isSheetRowsRecord(stored) &&
       (!current || stored.lastModified > current.lastModified)
     ) {
       const mediaRecord = await getRecord(mediaKey(id));
       const media = mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined;
       rejoinMedia(stored.model, media);
+      if (isSpreadsheetModel(stored.model)) {
+        const rowsRecords: SheetRowsRecord[] = [];
+        for (const sheet of stored.model.sheets) {
+          const rowsRecord = await getRecord(sheetRowsKey(id, sheet.id));
+          if (rowsRecord && isSheetRowsRecord(rowsRecord)) {
+            rowsRecords.push(rowsRecord);
+          }
+        }
+        rejoinSheetRows(id, stored.model, rowsRecords);
+      }
       // Same rule as initLibrary: only a found MediaRecord may seed the
       // skip-map. A legacy record (inline media, no MediaRecord) must leave
       // the map unseeded so the next persist writes the media out rather
@@ -835,10 +1074,15 @@ export async function refreshDocumentFromStorage(
         lastPersistedMedia.delete(id);
       }
       records.set(id, stored);
-      return stored;
     }
   } catch {
     // Fall through to the in-memory record.
+  }
+  // SPEC-116: whichever record is now current, a workbook behind the reader
+  // version is upgraded before it is handed out.
+  const record = records.get(id);
+  if (record) {
+    await upgradeSpreadsheetRecord(record);
   }
   return records.get(id);
 }
@@ -856,6 +1100,10 @@ export function replaceDocumentModel(
     // SPEC-107: replacing a media document's model with text-editor state
     // would destroy the stored bytes — the loud-throw rule applies.
     throw new Error(`Document ${id} is a media file`);
+  }
+  if (record && isSpreadsheetModel(record.model)) {
+    // SPEC-116: the same rule for a workbook.
+    throw new Error(`Document ${id} is a spreadsheet`);
   }
   if (!record) {
     const created: StoredDocumentRecord = {
@@ -892,6 +1140,13 @@ export function storeMedia(model: MediaModel): void {
   storeRecord(model, model.format);
 }
 
+/** The workbook counterpart (SPEC-116) — an opened `.xlsx`/`.ods` stores
+ * through the same record machinery, its sheets' rows split into their own
+ * records like every other kind's payload. */
+export function storeSpreadsheet(model: SpreadsheetModel): void {
+  storeRecord(model, model.format);
+}
+
 /** Stores whatever the kind-agnostic open path returned, dispatching on
  * `kind` — the shared tail of the picker, drag-drop and URL open paths. A
  * Keynote import's non-blocking notice (SPEC-087 AC-37) is handed to
@@ -905,6 +1160,8 @@ export function storeOpenedFile(opened: OpenedFile, notify?: (message: string) =
     }
   } else if (opened.kind === "media") {
     storeMedia(opened.model);
+  } else if (opened.kind === "spreadsheet") {
+    storeSpreadsheet(opened.model);
   } else {
     storeDocument(opened.model);
   }

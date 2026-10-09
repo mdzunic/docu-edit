@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { getDocument, getMedia, getPresentation } from "../../lib/documentStore";
+import { getDocument, getMedia, getPresentation, getSpreadsheet } from "../../lib/documentStore";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { getDocumentLibraryStats } from "../../lib/libraryStats";
 import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
@@ -48,6 +48,8 @@ const slideTotal = ref(0);
 // A media entry's count line (SPEC-107): dimensions or page count, plus the
 // verbatim source's byte size.
 const mediaLabel = ref("");
+// A workbook entry's count line (SPEC-116): "N sheets", hidden ones counted.
+const sheetTotal = ref(0);
 
 onMounted(() => {
   runWhenIdle(() => {
@@ -55,6 +57,14 @@ onMounted(() => {
       const presentation = getPresentation(props.entry.id);
       if (presentation) {
         slideTotal.value = presentation.slides.length;
+        statsReady.value = true;
+      }
+      return;
+    }
+    if (props.entry.kind === "spreadsheet") {
+      const workbook = getSpreadsheet(props.entry.id);
+      if (workbook) {
+        sheetTotal.value = workbook.sheets.length;
         statsReady.value = true;
       }
       return;
@@ -166,7 +176,7 @@ function onClick(event = new MouseEvent("click")) {
         <span
           class="badge"
           data-testid="row-format"
-        >{{ formatBadgeLabel(props.entry.format) }}</span>
+        >{{ formatBadgeLabel(props.entry.format, props.entry.packageVariant) }}</span>
         <span
           class="card-modified"
           data-testid="row-modified"
@@ -181,6 +191,9 @@ function onClick(event = new MouseEvent("click")) {
         </template>
         <template v-else-if="statsReady && props.entry.kind === 'media'">
           {{ mediaLabel }}
+        </template>
+        <template v-else-if="statsReady && props.entry.kind === 'spreadsheet'">
+          {{ sheetTotal }} {{ sheetTotal === 1 ? "sheet" : "sheets" }}
         </template>
         <template v-else-if="statsReady">
           {{ stats.pages }} {{ stats.pages === 1 ? "page" : "pages" }} ·

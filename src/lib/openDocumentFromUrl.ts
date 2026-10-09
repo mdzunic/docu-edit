@@ -9,7 +9,7 @@ import {
   openAnyDocumentFile,
   type OpenedFile,
 } from "./openDocument";
-import { MEDIA_FORMAT_CONTENT_TYPES, OPENABLE_EXTENSIONS } from "./documentKinds";
+import { MEDIA_FORMAT_CONTENT_TYPES, OPENABLE_EXTENSIONS, SPREADSHEET_FORMAT_CONTENT_TYPES } from "./documentKinds";
 import { isFetchableUrl } from "./links";
 
 export class OpenFromUrlError extends Error {}
@@ -55,6 +55,7 @@ function isSupportedContentType(contentType: string | null): boolean {
     type === ODP_CONTENT_TYPE ||
     type === KEY_CONTENT_TYPE ||
     MEDIA_FORMAT_CONTENT_TYPES.includes(type) ||
+    SPREADSHEET_FORMAT_CONTENT_TYPES.includes(type) ||
     GENERIC_BINARY_CONTENT_TYPES.includes(type)
   );
 }

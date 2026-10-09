@@ -106,7 +106,7 @@ const emit = defineEmits(["empty-trash", "keydown", "menu-toggle", "menu-close",
             <span
               class="badge"
               data-testid="row-format"
-            >{{ formatBadgeLabel(entry.format) }}</span>
+            >{{ formatBadgeLabel(entry.format, entry.packageVariant) }}</span>
           </td>
           <td class="cell-actions">
             <UiButton
