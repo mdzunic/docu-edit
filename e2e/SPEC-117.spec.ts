@@ -244,6 +244,58 @@ test("spec117-styles.xlsx renders, navigates, remembers its view and downloads b
   }
 });
 
+// A minimal workbook isolating the three scenarios behind SPEC-117's round-1
+// review findings (all in useSheetCells.ts), which spec117-styles.xlsx does
+// not itself exercise: a merge crossing the frozen-row line, a merge
+// crossing the frozen-column line, a merge whose top row is hidden, and a
+// bold string wide enough that a character-count width estimate would have
+// undercounted it (AC-31, AC-33, AC-34, AC-35, AC-45).
+const mergeEdgeCasesFixture = join(fixturesDir, "spec117-merge-edge-cases.xlsx");
+
+test("merges across the freeze line and under a hidden row render once each; bold text spills exactly where there is room (AC-31, AC-33, AC-34, AC-35, AC-45)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("app-bar")).toBeVisible();
+  await dropFile(page, "spec117-merge-edge-cases.xlsx", XLSX_TYPE, mergeEdgeCasesFixture);
+  await expect(page).toHaveURL(/\/sheets\/.+/);
+
+  // A merge inside the frozen column, crossing the frozen-row line: one
+  // element, full logical rowspan, no duplicate.
+  const frozenColMerge = cell(page, "A1");
+  await expect(frozenColMerge).toHaveCount(1);
+  await expect(frozenColMerge).toHaveAttribute("aria-rowspan", "4");
+  await expect(frozenColMerge).toHaveAttribute("id", "sheet-cell-A1");
+
+  // A merge inside the frozen row band, crossing the frozen-column line:
+  // one element, full logical colspan.
+  const frozenRowMerge = cell(page, "B1");
+  await expect(frozenRowMerge).toHaveCount(1);
+  await expect(frozenRowMerge).toHaveAttribute("aria-colspan", "3");
+
+  // A merge whose top row (8) is hidden still renders, hosted on the first
+  // visible row, and the active cell resolves to it.
+  const hiddenTopMerge = cell(page, "B8");
+  await expect(hiddenTopMerge).toHaveCount(1);
+  await expect(hiddenTopMerge).toHaveAttribute("aria-rowspan", "3");
+  await expect(hiddenTopMerge).toHaveAttribute("aria-colspan", "3");
+  await hiddenTopMerge.click({ force: true });
+  await expect(page.getByTestId("spreadsheet-grid")).toHaveAttribute("aria-activedescendant", "sheet-cell-B8");
+  await expect(page.getByTestId("name-box")).toHaveValue("B8");
+
+  // A bold string too wide for the width estimate: spills into an empty
+  // neighbour (F1, with empty G1 before a value at H1)...
+  const f1Text = cell(page, "F1").locator(".sheet-cell-text");
+  const f1Box = await f1Text.boundingBox();
+  const f1CellBox = await cell(page, "F1").boundingBox();
+  expect(f1Box!.width).toBeGreaterThan(f1CellBox!.width * 1.5);
+
+  // ...but stays clipped to its own cell when the neighbour (G2) holds a
+  // value.
+  const f2Text = cell(page, "F2").locator(".sheet-cell-text");
+  const f2Box = await f2Text.boundingBox();
+  const f2CellBox = await cell(page, "F2").boundingBox();
+  expect(f2Box!.width).toBeLessThanOrEqual(f2CellBox!.width + 1);
+});
+
 test("spec117-styles.ods opens with its frozen pane, merge, hidden column and file zoom (AC-62)", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("app-bar")).toBeVisible();
