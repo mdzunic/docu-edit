@@ -1071,14 +1071,12 @@ describe("SPEC-117 Rendering: values show through generalText; showZeros: false 
   });
 });
 
-describe("SPEC-118: a cell's formatted display and its layout", () => {
-  const ctx = (widthPx?: number, tag: keyof typeof SPREADSHEET_LOCALES = "en-US"): FormatContext => ({
-    locale: SPREADSHEET_LOCALES[tag],
-    dateSystem: "1900",
-    digitWidthPx: 7,
-    ...(widthPx === undefined ? {} : { widthPx }),
-  });
+/** A format context at MDW 7, `widthPx` wide (absent: full width). */
+function ctx(widthPx?: number, tag: keyof typeof SPREADSHEET_LOCALES = "en-US"): FormatContext {
+  return { locale: SPREADSHEET_LOCALES[tag], dateSystem: "1900", digitWidthPx: 7, ...(widthPx === undefined ? {} : { widthPx }) };
+}
 
+describe("SPEC-118: a cell's formatted display and its layout", () => {
   it("renders a value through formatCodeOf(style, locale), fitted to the width; showZeros: false still blanks zeros", () => {
     expect(cellDisplay(46303, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }, {}, ctx(100))).toMatchObject({ text: "10/8/2026", alignHint: "right" });
     expect(cellDisplay(46303, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }, {}, ctx(100, "de-DE")).text).toBe("08.10.2026");
