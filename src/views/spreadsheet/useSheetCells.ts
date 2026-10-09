@@ -36,12 +36,12 @@ import {
   type CssDeclarations,
   type EdgeSegment,
 } from "../../lib/spreadsheet/cellRender";
-import { CELL_PADDING_PX, maxDigitWidthPx, type GridMetrics } from "../../lib/spreadsheet/geometry";
+import { CELL_PADDING_PX, type GridMetrics } from "../../lib/spreadsheet/geometry";
 import { mergeAt, mergesIn, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selection";
-import { cellStyle, columnSpanAt, effectiveStyleId } from "../../lib/spreadsheet/styles";
-import { DEFAULT_THEME, resolveFont, type DocumentTheme } from "../../lib/core/theme";
+import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
+import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
 
 export const GRID_MAX_MOUNTED_CELLS = 10_000;
@@ -154,9 +154,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
   function mdwFor(id: number): number {
     let mdw = mdwCache.value.get(id);
     if (mdw === undefined) {
-      const font = styleOf(id).font;
-      const family = font?.family !== undefined ? resolveFont(font.family, theme.value) : theme.value.fonts.minor;
-      mdw = maxDigitWidthPx(family, font?.sizePt ?? 11);
+      mdw = fontMaxDigitWidth(styleOf(id).font, theme.value);
       mdwCache.value.set(id, mdw);
     }
     return mdw;

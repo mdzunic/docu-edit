@@ -4,8 +4,10 @@
 // `styleId`, else its row's (present only when the source row carried a
 // format), else the column span covering it, else the default style 0 —
 // each step a binary search over sparse, sorted data, never a scan.
+import { resolveFont, type DocumentTheme } from "../core/theme";
 import { findRow, getCell } from "./address";
-import type { CellStyle, ColumnSpan, Sheet, SpreadsheetModel } from "./model";
+import { maxDigitWidthPx } from "./geometry";
+import type { CellFont, CellStyle, ColumnSpan, Sheet, SpreadsheetModel } from "./model";
 
 /** The default style table: one empty ("Normal") style. */
 export function defaultStyles(): CellStyle[] {
@@ -70,4 +72,13 @@ export function cellStyle(model: Pick<SpreadsheetModel, "styles">, id: number): 
     return {};
   }
   return (Number.isInteger(id) && id >= 0 ? styles[id] : undefined) ?? styles[0]!;
+}
+
+/** The maximum digit width of a cell font (the pinned MDW table — never a
+ * measurement), for the text-width estimates of overflow, shrink-to-fit and
+ * fill: its family resolved against the theme (the theme's minor font when
+ * the font names none), its size 11 pt when it states none. */
+export function fontMaxDigitWidth(font: CellFont | undefined, theme: DocumentTheme): number {
+  const family = font?.family !== undefined ? resolveFont(font.family, theme) : theme.fonts.minor;
+  return maxDigitWidthPx(family, font?.sizePt ?? 11);
 }

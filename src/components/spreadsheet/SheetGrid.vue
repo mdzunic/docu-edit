@@ -302,10 +302,11 @@ function px(value = 0) {
   border: var(--border-width) solid var(--accent);
 }
 
+/* The active cell: a 2 px (--space-1) accent outline. */
 .sheet-active-cell {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid var(--accent);
+  border: var(--space-1) solid var(--accent);
 }
 
 .sheet-freeze-line {
