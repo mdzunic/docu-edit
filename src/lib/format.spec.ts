@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatBadgeLabel, formatRelativeTime, formatTimestamp, recoveryNotice } from "./format";
+import { formatBadgeLabel, formatRelativeTime, formatTimestamp, recoveryNotice, spreadsheetFormatLabel } from "./format";
 
 describe("formatTimestamp", () => {
   it("formats a date as 'YYYY-MM-DD HH:mm' in local time", () => {
@@ -85,5 +85,27 @@ describe("recoveryNotice (SPEC-010)", () => {
     expect(recoveryNotice(tuesday, at("15:36:58"))).toBe(
       "Recovered unsaved changes from 4 days ago",
     );
+  });
+});
+
+describe("workbook badges and labels (SPEC-116)", () => {
+  it("badges a workbook by format + package variant", () => {
+    expect(formatBadgeLabel("xlsx")).toBe("XLSX");
+    expect(formatBadgeLabel("xlsx", "macroEnabled")).toBe("XLSM");
+    expect(formatBadgeLabel("xlsx", "template")).toBe("XLTX");
+    expect(formatBadgeLabel("xlsx", "macroEnabledTemplate")).toBe("XLTM");
+    expect(formatBadgeLabel("ods")).toBe("ODS");
+    expect(formatBadgeLabel("ods", "template")).toBe("OTS");
+    // A variant means nothing outside the spreadsheet kind.
+    expect(formatBadgeLabel("pptx", "template")).toBe("PPTX");
+  });
+
+  it("names each format and variant as the Reference table does", () => {
+    expect(spreadsheetFormatLabel("xlsx")).toBe("Excel workbook (.xlsx)");
+    expect(spreadsheetFormatLabel("xlsx", "macroEnabled")).toBe("Excel macro-enabled workbook (.xlsm)");
+    expect(spreadsheetFormatLabel("xlsx", "template")).toBe("Excel template (.xltx)");
+    expect(spreadsheetFormatLabel("xlsx", "macroEnabledTemplate")).toBe("Excel macro-enabled template (.xltm)");
+    expect(spreadsheetFormatLabel("ods")).toBe("OpenDocument Spreadsheet (.ods)");
+    expect(spreadsheetFormatLabel("ods", "template")).toBe("OpenDocument Spreadsheet template (.ots)");
   });
 });

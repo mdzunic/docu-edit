@@ -10,9 +10,6 @@ import type { DocumentFormat, LibraryEntry } from "../lib/documentStore";
 import {
   deleteDocument,
   duplicateDocument,
-  getDocument,
-  getMedia,
-  getPresentation,
   libraryStorageUsage,
   listDocuments,
   listTrashedDocuments,
@@ -20,7 +17,6 @@ import {
   setStarred,
   trashDocument,
 } from "../lib/documentStore";
-import { downloadMedia } from "../lib/media/download";
 import type { DocumentKind } from "../lib/documentKinds";
 import {
   filterCounts,
@@ -40,7 +36,7 @@ import {
   type LibrarySortKey,
   type LibraryViewMode,
 } from "../lib/libraryPrefs";
-import { downloadDocument } from "../lib/downloadDocument";
+import { downloadStoredDocument } from "../lib/libraryDownload";
 
 /** The default sort direction for each key: newest/largest first for time and
  * size, A–Z for title (AC-11, AC-12). */
@@ -49,6 +45,14 @@ const DEFAULT_DIRECTION: Record<LibrarySortKey, "asc" | "desc"> = {
   title: "asc",
   size: "desc",
 };
+
+/** Bulk download (AC-27..29): each entry through its own product's writer,
+ * dispatched by kind in lib/libraryDownload.ts (see documentKinds.ts). */
+async function downloadDocuments(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await downloadStoredDocument(id);
+  }
+}
 
 export function useLibrary() {
   const view = ref<LibraryViewMode>(loadLibraryView());
@@ -346,32 +350,6 @@ export function useLibrary() {
       setStarred(id, anyUnstarred);
     }
     refresh();
-  }
-
-  async function downloadDocuments(ids: string[]): Promise<void> {
-    for (const id of ids) {
-      // Kind dispatch (see documentKinds.ts): each entry downloads through its own
-      // product's writer — a deck's loaded on demand, off the library page's graph.
-      if (kindOf(id) === "presentation") {
-        const presentation = getPresentation(id);
-        if (presentation) {
-          const { downloadPresentation } = await import("../lib/presentation/download");
-          await downloadPresentation(presentation);
-        }
-        continue;
-      }
-      if (kindOf(id) === "media") {
-        const media = getMedia(id);
-        if (media) {
-          downloadMedia(media);
-        }
-        continue;
-      }
-      const model = getDocument(id);
-      if (model) {
-        await downloadDocument(model);
-      }
-    }
   }
 
   // --- keyboard navigation (AC-57..61) -------------------------------------

@@ -11,8 +11,6 @@ import { usePreferences } from "./usePreferences";
 import {
   commitDocument,
   deleteDraft,
-  isMediaModel,
-  isPresentationModel,
   loadDraft,
   refreshDocumentFromStorage,
   replaceDocumentModel,
@@ -160,10 +158,11 @@ export function useAutosave(options: UseAutosaveOptions) {
     if (docId !== id || !record) {
       return;
     }
-    if (isPresentationModel(record.model) || isMediaModel(record.model)) {
-      // Autosave is a text-editor session; a presentation or media id can
-      // only reach here through a misrouted view, and starting a session
-      // would clobber the stored model with text-editor state (SPEC-107).
+    if ("kind" in record.model) {
+      // Autosave is a text-editor session, and the text model is the one
+      // stored model without a `kind`: a presentation, media or workbook id
+      // can only reach here through a misrouted view, and starting a session
+      // would clobber the stored model with text-editor state (SPEC-107/116).
       return;
     }
     const draft = await loadDraft(id);

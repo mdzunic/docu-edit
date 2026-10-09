@@ -170,7 +170,7 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
           <span
             class="badge"
             data-testid="row-format"
-          >{{ formatBadgeLabel(entry.format) }}</span>
+          >{{ formatBadgeLabel(entry.format, entry.packageVariant) }}</span>
         </td>
         <td
           class="cell-size"

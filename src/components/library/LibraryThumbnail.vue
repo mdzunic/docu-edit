@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
-import { getDocument, getMedia, getPresentation } from "../../lib/documentStore";
+import { getDocument, getMedia, getPresentation, getSpreadsheet } from "../../lib/documentStore";
 import SlideMiniature from "./SlideMiniature.vue";
+import SheetMiniature from "./SheetMiniature.vue";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import {
   getCachedThumbnail,
@@ -67,6 +68,14 @@ const presentationAspect = computed(() => {
   }
   return 16 / 9;
 });
+// --- workbook cards (SPEC-116) ----------------------------------------------
+// A workbook previews as a SheetMiniature of `model.preview` — the active
+// sheet's top-left corner, kept on the shell record — under the same
+// observe-then-idle gating; no PNG cache, the miniature is light.
+const isSpreadsheetEntry = computed(() => kindOfFormat(props.format) === "spreadsheet");
+// Seeded from a miss so the ref's inferred type is the model's preview
+// (an annotation is barred in .vue scripts).
+const sheetPreview = ref(getSpreadsheet("")?.preview ?? null);
 const mediaRaster = ref(getCachedMediaThumbnail(props.id, props.lastModified) ?? "");
 // Seeded null-ish so the inferred type carries the placeholder shape.
 const pdfInfo = ref({ aspectRatio: 0, pageCount: 0, pageSize: "" });
@@ -157,11 +166,20 @@ let observer = { disconnect() {} };
 let unmounted = false;
 
 function produce() {
-  if (thumbnail.value || mediaRaster.value || presentationModel.value) {
+  if (thumbnail.value || mediaRaster.value || presentationModel.value || sheetPreview.value) {
     return;
   }
   runWhenIdle(() => {
-    if (unmounted || thumbnail.value || mediaRaster.value || presentationModel.value) {
+    if (unmounted || thumbnail.value || mediaRaster.value || presentationModel.value || sheetPreview.value) {
+      return;
+    }
+    if (isSpreadsheetEntry.value) {
+      const workbook = getSpreadsheet(props.id);
+      if (workbook) {
+        sheetPreview.value = workbook.preview ?? { sheetName: "", cells: [] };
+      } else {
+        thumbnail.value = { lines: [], failed: true };
+      }
       return;
     }
     if (isMediaEntry.value) {
@@ -298,6 +316,11 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
     >
       <SlideMiniature :presentation="presentationModel" />
     </div>
+    <!-- A workbook card: its active sheet's corner (SPEC-116). -->
+    <SheetMiniature
+      v-else-if="sheetPreview"
+      :preview="sheetPreview"
+    />
     <!-- A media image card: the real downscaled raster (SPEC-107). -->
     <div
       v-else-if="mediaRaster"

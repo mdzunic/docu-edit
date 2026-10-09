@@ -1,6 +1,9 @@
 import type { DocumentFormat } from "./documentStore";
 import type { DocumentFormat as ModelDocumentFormat } from "./documentModel";
 import type { PresentationFormat } from "./presentation/model";
+import type { PackageVariant, SpreadsheetFormat } from "./spreadsheet/model";
+import { spreadsheetFileExtension } from "./spreadsheet/fileTypes";
+import { kindOfFormat } from "./documentKinds";
 
 const pad = (value: number): string => String(value).padStart(2, "0");
 
@@ -57,13 +60,19 @@ const BADGE_LABELS: Record<DocumentFormat, string> = {
   gif: "GIF",
   svg: "SVG",
   webp: "WEBP",
+  xlsx: "XLSX",
+  ods: "ODS",
   new: "New",
 };
 
-/** The display label for a library row's format badge. Accepts a plain string
- * (a runtime-typed .vue prop) and falls back to its upper-case form for any
- * value outside the known formats. */
-export function formatBadgeLabel(format: string): string {
+/** The display label for a library row's format badge. Accepts plain strings
+ * (runtime-typed .vue props) and falls back to the upper-case format for any
+ * value outside the known formats. A workbook is badged by format + package
+ * variant (SPEC-116): XLSX, XLSM, XLTX, XLTM, ODS or OTS — its extension. */
+export function formatBadgeLabel(format: string, packageVariant?: string): string {
+  if (packageVariant && kindOfFormat(format) === "spreadsheet") {
+    return spreadsheetFileExtension(format as SpreadsheetFormat, packageVariant as PackageVariant).toUpperCase();
+  }
   return BADGE_LABELS[format as DocumentFormat] ?? format.toUpperCase();
 }
 
@@ -87,6 +96,26 @@ const PRESENTATION_FORMAT_LABELS: Record<PresentationFormat, string> = {
 /** The full format name a presentation's view header shows. */
 export function presentationFormatLabel(format: PresentationFormat): string {
   return PRESENTATION_FORMAT_LABELS[format];
+}
+
+const SPREADSHEET_FORMAT_LABELS: Record<SpreadsheetFormat, Partial<Record<PackageVariant | "plain", string>>> = {
+  xlsx: {
+    plain: "Excel workbook (.xlsx)",
+    macroEnabled: "Excel macro-enabled workbook (.xlsm)",
+    template: "Excel template (.xltx)",
+    macroEnabledTemplate: "Excel macro-enabled template (.xltm)",
+  },
+  ods: {
+    plain: "OpenDocument Spreadsheet (.ods)",
+    template: "OpenDocument Spreadsheet template (.ots)",
+  },
+};
+
+/** The full format name a workbook's view header shows (SPEC-116), by
+ * format + package variant. */
+export function spreadsheetFormatLabel(format: SpreadsheetFormat, variant?: PackageVariant): string {
+  const labels = SPREADSHEET_FORMAT_LABELS[format];
+  return (variant !== undefined ? labels[variant] : undefined) ?? labels.plain ?? "";
 }
 
 /** A byte count as a human-readable size (SPEC-041 AC-2's General tab),
