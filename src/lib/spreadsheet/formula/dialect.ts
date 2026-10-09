@@ -536,9 +536,10 @@ export function fromOdsFormula(wire: string, namespaces: ReadonlyMap<string, str
 }
 
 /** A sheet name as an OpenFormula reference writes it: `$` (absolute), then
- * bare or quoted by the shared predicate. */
+ * bare or quoted by the shared predicate — and quoted whenever it holds a
+ * `.`, which would otherwise end the sheet name (`[$'My.Sheet'.A1]`). */
 function odsSheet(name: string): string {
-  return `$${sheetNameNeedsQuotes(name) ? `'${name.replaceAll("'", "''")}'` : name}`;
+  return `$${sheetNameNeedsQuotes(name) || name.includes(".") ? `'${name.replaceAll("'", "''")}'` : name}`;
 }
 
 function odsPart(part: RefPart): string {
