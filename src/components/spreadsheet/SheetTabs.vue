@@ -125,7 +125,7 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .sheet-tab:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--space-1) solid var(--focus-ring);
   outline-offset: 1px;
 }
 </style>

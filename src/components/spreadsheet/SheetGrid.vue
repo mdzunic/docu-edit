@@ -126,7 +126,7 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
 }
 
 .sheet-grid:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: var(--space-1) solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -204,7 +204,7 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   top: 0;
   width: 64px;
   height: 100%;
-  padding: 0 3px;
+  padding: 0 var(--space-1);
   overflow: hidden;
   white-space: pre;
   line-height: 19px;

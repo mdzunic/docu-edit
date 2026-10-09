@@ -59,19 +59,20 @@ const columns = computed(() => Math.max(1, ...preview.value.cells.map((row) => r
   flex: 1 1 auto;
   align-content: start;
   min-height: 0;
+  overflow: hidden;
   border-left: var(--border-width) solid var(--border-subtle);
 }
 
 .miniature-cell {
   min-width: 0;
-  height: 0.9rem;
-  padding: 0 2px;
+  height: 1.6em;
+  padding: 0 var(--space-1);
   overflow: hidden;
   border-right: var(--border-width) solid var(--border-subtle);
   border-bottom: var(--border-width) solid var(--border-subtle);
   color: var(--text-primary);
-  font-size: 0.5rem;
-  line-height: 0.9rem;
+  font-size: calc(var(--text-sm) * 0.6);
+  line-height: 1.6em;
   white-space: nowrap;
 }
 
