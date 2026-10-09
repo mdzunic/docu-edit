@@ -20,13 +20,20 @@
 //   flags are ignored (Excel writes cellXfs fully resolved) and `xfId` (the
 //   named style) is SPEC-123's.
 // - `<colors><indexedColors>` → the 64-entry override palette.
-// numFmts (SPEC-118), cellStyleXfs/cellStyles (SPEC-123), dxfs (SPEC-129),
-// tableStyles (SPEC-133), extLst and colors/mruColors stay unread in the
-// retained part. Colours map through themeColor.ts, the only module that
-// interprets them.
+// - SPEC-118 "Reading xlsx number formats": `numFmts/numFmt@numFmtId` +
+//   `@formatCode` (attribute-decoded) are read into a map; each
+//   `xf@numFmtId` (absent → 0) resolves: a map entry → `numberFormat` (any
+//   id, Excel writes 5–8 and 41–44 explicitly); else a locale-dependent
+//   built-in → `builtinFormatId` and the en-US code; else another built-in →
+//   its code; 0, unknown and CJK ids → absent. A code equal to `General` is
+//   stored absent; `applyNumberFormat` is ignored like every `apply*`.
+// cellStyleXfs/cellStyles (SPEC-123), dxfs (SPEC-129), tableStyles
+// (SPEC-133), extLst and colors/mruColors stay unread in the retained part.
+// Colours map through themeColor.ts, the only module that interprets them.
 import { DEFAULT_THEME, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../../core/theme";
 import { parseXml } from "../../core/xml";
 import type { CellAlignment, CellBorderEdge, CellBorders, CellFill, CellFont, CellStyle, SheetBorderStyle } from "../model";
+import { BUILTIN_NUMBER_FORMATS, LOCALE_DEPENDENT_BUILTINS } from "../numberFormat/builtin";
 import { defaultStyles, INDEXED_COLORS } from "../styles";
 import { elementAttributes, xlsxColorFrom, xlsxColorFromElement, xlsxRgbToHex, type AttributeGetter } from "./themeColor";
 
@@ -355,12 +362,42 @@ function copy<T>(value: T): T {
   return structuredClone(value);
 }
 
+/** `<numFmts>`: each `numFmt@numFmtId` → its `formatCode` (attribute-decoded). */
+function readNumFmts(root: Element): Map<number, string> {
+  const codes = new Map<number, string>();
+  const numFmts = childNamed(root, "numFmts");
+  for (const numFmt of numFmts ? childrenNamed(numFmts, "numFmt") : []) {
+    const id = parseIndex(numFmt.getAttribute("numFmtId"));
+    const code = numFmt.getAttribute("formatCode");
+    if (id !== undefined && code !== null) {
+      codes.set(id, code);
+    }
+  }
+  return codes;
+}
+
+/** An xf's number format (SPEC-118): the file's own entry for the id, else
+ * the built-in — a locale-dependent one also as `builtinFormatId`; General,
+ * unknown and CJK ids leave both absent. */
+export function xfNumberFormat(numFmtId: number, numFmts: ReadonlyMap<number, string>): Pick<CellStyle, "numberFormat" | "builtinFormatId"> {
+  const explicit = numFmts.get(numFmtId);
+  const code = explicit ?? BUILTIN_NUMBER_FORMATS[numFmtId];
+  if (code === undefined || /^general$/i.test(code.trim())) {
+    return {};
+  }
+  if (explicit === undefined && LOCALE_DEPENDENT_BUILTINS.includes(numFmtId)) {
+    return { numberFormat: code, builtinFormatId: numFmtId };
+  }
+  return { numberFormat: code };
+}
+
 function readXf(
   xf: Element,
   index: number,
   fonts: readonly CellFont[],
   fills: readonly (CellFill | undefined)[],
   borders: readonly (CellBorders | undefined)[],
+  numFmts: ReadonlyMap<number, string>,
 ): CellStyle {
   const style: CellStyle = {};
   // A missing id is the first record, as every producer means it.
@@ -384,6 +421,7 @@ function readXf(
   if (protection !== undefined) {
     style.protection = protection;
   }
+  Object.assign(style, xfNumberFormat(parseIndex(xf.getAttribute("numFmtId")) ?? 0, numFmts));
   if (isOn(xf.getAttribute("quotePrefix"))) {
     style.quotePrefix = true;
   }
@@ -435,7 +473,8 @@ export function readXlsxStyles(xml: string | undefined, theme: DocumentTheme | u
   const borders = bordersElement ? childrenNamed(bordersElement, "border").map((border) => readBorder(border, indexedColors)) : [];
   const xfsElement = childNamed(root, "cellXfs");
   const xfs = xfsElement ? childrenNamed(xfsElement, "xf") : [];
-  const styles = xfs.map((xf, index) => readXf(xf, index, fonts, fills, borders));
+  const numFmts = readNumFmts(root);
+  const styles = xfs.map((xf, index) => readXf(xf, index, fonts, fills, borders, numFmts));
 
   // The Normal style's font: cellXfs[0]'s (fonts[0] when there is no xf).
   const normalFont = fonts[xfs[0] ? (parseIndex(xfs[0].getAttribute("fontId")) ?? 0) : 0];

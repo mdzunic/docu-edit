@@ -36,6 +36,10 @@
 //   styled empty position is stored (`{ col, value: null, styleId }`) and
 //   counted like a value. LibreOffice's 16380-column trailing runs, styled
 //   or not, store no cell.
+// - SPEC-118: a date, time or percentage value whose style names no data
+//   style points at a derived style with its implied format (the style the
+//   position shows — its own, else the row's or column's default — is the
+//   base; OdsStyleBook.impliedStyleId decides).
 // - Covered cells (`table:covered-table-cell`, under a span) now follow the
 //   same rules: one carrying a value or a style is stored (rendering hides
 //   it under the merge; SPEC-122 re-serialises it), one with neither stores
@@ -61,6 +65,9 @@ export interface OdsLayoutStyles {
    * style) set none. */
   columnWidthPx(styleName: string | undefined): number | undefined;
   rowHeight(styleName: string | undefined): OdsRowHeight;
+  /** The style a value with an implied format `code` shows over the base
+   * style `baseId` (SPEC-118 "Implied formats"). */
+  impliedStyleId(baseId: number, code: string): number;
 }
 
 /** A table's layout, as the sheet stores it. */
@@ -326,9 +333,10 @@ export class OdsTableReader {
   }
 
   /** One cell element of the current row, repeated as declared: `value` is
-   * its value (null for none) and `runs` its rich text. Returns false when
-   * the cell ceiling stops the read. */
-  cell(attrs: readonly XmlScanAttribute[], covered: boolean, value: CellValue, runs?: TextRun[]): boolean {
+   * its value (null for none), `runs` its rich text and `impliedCode` the
+   * format its value type implies when its style gives none (SPEC-118).
+   * Returns false when the cell ceiling stops the read. */
+  cell(attrs: readonly XmlScanAttribute[], covered: boolean, value: CellValue, runs?: TextRun[], impliedCode?: string): boolean {
     const row = this.row!;
     const repeat = repeatCount(attrs, "number-columns-repeated");
     const first = row.col;
@@ -339,7 +347,7 @@ export class OdsTableReader {
       this.collectSpan(row, attrs, first, repeat);
     }
     if (value !== null) {
-      return this.storeValues(row, first, repeat, value, runs, styleId);
+      return this.storeValues(row, first, repeat, value, runs, styleId, impliedCode);
     }
     if (styleId !== undefined) {
       return this.storeStyled(row, first, repeat, styleId);
@@ -365,6 +373,7 @@ export class OdsTableReader {
     value: CellValue,
     runs: TextRun[] | undefined,
     styleId: number | undefined,
+    impliedCode: string | undefined,
   ): boolean {
     if (row.index >= MAX_ROWS) {
       throw outOfGridError(this.name, addressText(row.index, first));
@@ -382,6 +391,13 @@ export class OdsTableReader {
       }
       if (styleId !== undefined) {
         cell.styleId = styleId;
+      }
+      if (impliedCode !== undefined) {
+        const base = styleId ?? (row.ownDefault ? row.styleId! : this.columnDefault(first + k));
+        const shown = this.styles.impliedStyleId(base, impliedCode);
+        if (shown !== base) {
+          cell.styleId = shown;
+        }
       }
       row.cells.push(cell);
     }

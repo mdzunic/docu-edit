@@ -22,6 +22,9 @@ import {
   buildSpecWideOdsBytes,
   buildSpec117StylesOdsBytes,
   buildSpec117StylesXlsxBytes,
+  buildSpec118FormatsXlsxBytes,
+  buildSpec118GeneratedXlsxBytes,
+  buildSpec118FormatsOdsBytes,
 } from "./fixtures/build";
 import {
   isCellError,
@@ -317,6 +320,9 @@ const READ_FIXTURES: ReadFixture[] = [
   { name: "spec116-numbers.xlsx", format: "xlsx", title: "spec116-numbers", bytes: numbersExportBytes },
   { name: "spec117-styles.xlsx", format: "xlsx", title: "spec117-styles", bytes: buildSpec117StylesXlsxBytes },
   { name: "spec117-styles.ods", format: "ods", title: "spec117-styles", bytes: buildSpec117StylesOdsBytes },
+  { name: "spec118-formats.xlsx", format: "xlsx", title: "spec118-formats", bytes: buildSpec118FormatsXlsxBytes },
+  { name: "spec118-generated.xlsx", format: "xlsx", title: "spec118-generated", bytes: buildSpec118GeneratedXlsxBytes },
+  { name: "spec118-formats.ods", format: "ods", title: "spec118-formats", bytes: buildSpec118FormatsOdsBytes },
 ];
 
 const readModels = new Map<string, Promise<SpreadsheetModel>>();

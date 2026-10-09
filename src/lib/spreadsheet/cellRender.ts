@@ -20,11 +20,13 @@
 //   row's sorted cells and never more than OVERFLOW_SCAN_COLS columns away.
 // - estimateTextWidth: the per-character estimate shrink-to-fit and fill use
 //   (and SPEC-118's #### decisions) — an estimate, never a measurement.
+// - cellDisplay (SPEC-118): a value through its style's number format in the
+//   cell's width — the text, the format's colour, the alignment General
+//   follows, a fill and the "####" overflow.
 import { findRow } from "./address";
 import type { GridRange } from "./address";
-import { CELL_PADDING_PX, INDENT_PX_PER_LEVEL } from "./geometry";
+import { CELL_PADDING_PX, estimateTextWidth, INDENT_PX_PER_LEVEL } from "./geometry";
 import type { GridMetrics } from "./geometry";
-import { generalText } from "./general";
 import { mergeAt, mergesIn } from "./merges";
 import type { MergeIndex } from "./merges";
 import { MAX_COLS, MAX_ROWS } from "./model";
@@ -39,6 +41,9 @@ import type {
   Sheet,
   SheetBorderStyle,
 } from "./model";
+import { formatCodeOf } from "./numberFormat/builtin";
+import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
+import { formatValue, type FormatContext, type FormattedValue } from "./numberFormat/render";
 import { hexToRgb, resolveColor, resolveFont, rgbToHex } from "../core/theme";
 import type { DocumentTheme, ModelColor } from "../core/theme";
 
@@ -88,12 +93,16 @@ export function valueKind(value: CellValue): ValueKind {
 export type ResolvedHorizontal = Exclude<NonNullable<CellAlignment["horizontal"]>, "general">;
 
 /** The horizontal alignment a cell renders with: the style's own, or for
- * General (and absent) numbers right, booleans and errors centred, strings
+ * General (and absent) the formatted value's `alignHint` (SPEC-118) when
+ * there is one, else numbers right, booleans and errors centred, strings
  * (and empty cells) left. */
-export function resolvedHorizontal(style: CellStyle, kind: ValueKind): ResolvedHorizontal {
+export function resolvedHorizontal(style: CellStyle, kind: ValueKind, alignHint?: FormattedValue["alignHint"]): ResolvedHorizontal {
   const horizontal = style.alignment?.horizontal;
   if (horizontal !== undefined && horizontal !== "general") {
     return horizontal;
+  }
+  if (alignHint !== undefined) {
+    return alignHint;
   }
   if (kind === "number") {
     return "right";
@@ -343,14 +352,16 @@ function paddingCss(horizontal: ResolvedHorizontal, indent: number | undefined):
  *   `rotate((θ − 90)deg)` about the centre; 255 → vertical stacked text).
  *
  * Shrink-to-fit and fill need the text and the width, so the component
- * applies shrinkScale and fillRepeat itself. */
+ * applies shrinkScale and fillRepeat itself. `alignHint` is the formatted
+ * value's (SPEC-118), which General alignment follows. */
 export function cellCss(
   style: CellStyle,
   theme: DocumentTheme,
   kind: ValueKind = "string",
+  alignHint?: FormattedValue["alignHint"],
 ): { box: CssDeclarations; text: CssDeclarations } {
   const alignment = style.alignment;
-  const horizontal = resolvedHorizontal(style, kind);
+  const horizontal = resolvedHorizontal(style, kind, alignHint);
   const box: CssDeclarations = fillCss(style.fill, theme);
   box["text-align"] = TEXT_ALIGN[horizontal] ?? "left";
   if (horizontal === "distributed") {
@@ -904,18 +915,9 @@ export function offscreenSpillCandidate(
 
 // --- text width, shrink and fill ---------------------------------------------
 
-const NARROW_CHARACTERS: ReadonlySet<string> = new Set([".", ",", ":", " "]);
-
-/** A text's estimated width in px: Σ per-character weights × MDW, weight 0.5
- * for `.` `,` `:` and space and 1 for everything else — an estimate, never a
- * measurement (SPEC-117 "Alignment"; SPEC-118 reuses it). */
-export function estimateTextWidth(text: string, mdw: number): number {
-  let units = 0;
-  for (const character of text) {
-    units += NARROW_CHARACTERS.has(character) ? 0.5 : 1;
-  }
-  return units * mdw;
-}
+/** A text's estimated width in px (geometry.ts — SPEC-117 "Alignment";
+ * SPEC-118's General fitting and #### decisions share it). */
+export { estimateTextWidth };
 
 /** The shrink-to-fit font scale: min(1, available / estimated width) — 1 for
  * text with no width. */
@@ -937,11 +939,95 @@ export function fillRepeat(text: string, widthPx: number, mdw: number): string {
   return text.repeat(Math.max(1, Math.ceil(widthPx / unit)));
 }
 
-/** The text a cell shows: generalText(value) (SPEC-118 replaces it), except
- * that a numeric zero shows "" on a sheet with `showZeros: false`. */
-export function displayText(value: CellValue, sheet: Pick<Sheet, "showZeros">): string {
-  if (value === 0 && sheet.showZeros === false) {
-    return "";
+/** A cell element's box declarations: its style's box at `place` — and, for
+ * a merged range with no fill of its own, white inside its last pixel row
+ * and column, hiding the gridlines within it (not its own right and bottom
+ * ones) as Excel draws a merge. */
+export function cellBoxCss(
+  box: CssDeclarations,
+  place: { left: number; top: number; width: number; height: number },
+  merged: boolean,
+): CssDeclarations {
+  const css: CssDeclarations = { ...box, left: `${place.left}px`, top: `${place.top}px`, width: `${place.width}px`, height: `${place.height}px` };
+  if (merged && css["background-color"] === undefined && css["background-image"] === undefined) {
+    css["background-image"] = "linear-gradient(#ffffff, #ffffff)";
+    css["background-size"] = "calc(100% - 1px) calc(100% - 1px)";
+    css["background-repeat"] = "no-repeat";
   }
-  return generalText(value);
+  return css;
+}
+
+/** The element of one resolved border edge, relative to (shiftX, shiftY):
+ * its line centred on the edge, the hair style's opacity on the element. */
+export function edgeElementCss(segment: EdgeSegment, shiftX: number, shiftY: number): CssDeclarations {
+  const css = borderCss(segment.style);
+  const half = Math.ceil(css.width / 2);
+  const line = `${css.width}px ${css.lineStyle} ${segment.color}`;
+  const style: CssDeclarations =
+    segment.orientation === "horizontal"
+      ? { left: `${segment.x - shiftX}px`, top: `${segment.y - shiftY - half}px`, width: `${segment.length}px`, "border-top": line }
+      : { left: `${segment.x - shiftX - half}px`, top: `${segment.y - shiftY}px`, height: `${segment.length}px`, "border-left": line };
+  if (css.opacity !== undefined) {
+    style.opacity = String(css.opacity);
+  }
+  return style;
+}
+
+/** A cell's text as the paper lays it out. */
+export interface CellText {
+  /** The text (a format fill as one character; fill alignment repeated). */
+  text: string;
+  /** A number format's `*x` fill (SPEC-118): the text either side of a
+   * flexible run of the fill character, long enough for the cell. */
+  fill: { before: string; run: string; after: string } | null;
+  horizontal: ResolvedHorizontal;
+  /** The shrink-to-fit font size ("8.25pt"), when the text must shrink. */
+  shrunkFontSize?: string;
+}
+
+/** Lays a formatted value out in a cell `widthPx` wide (font MDW `mdw`):
+ * SPEC-118's format fill as a flexible run, SPEC-117's fill alignment
+ * (fillRepeat) and shrink-to-fit (shrinkScale). */
+export function cellText(formatted: FormattedValue, style: CellStyle, kind: ValueKind, widthPx: number, mdw: number): CellText {
+  let text = formatted.text;
+  if (formatted.fill) {
+    const { char, index } = formatted.fill;
+    text = text.slice(0, index) + char + text.slice(index);
+  }
+  const horizontal = resolvedHorizontal(style, kind, formatted.alignHint);
+  const laid: CellText = { text, fill: null, horizontal };
+  if (formatted.fill && horizontal !== "fill") {
+    const { char, index } = formatted.fill;
+    const repeat = Math.ceil(widthPx / Math.max(1, estimateTextWidth(char, mdw))) + 1;
+    laid.fill = { before: formatted.text.slice(0, index), run: char.repeat(repeat), after: formatted.text.slice(index) };
+  }
+  if (horizontal === "fill" && text.length > 0) {
+    laid.text = fillRepeat(text, widthPx, mdw);
+  }
+  if (style.alignment?.shrinkToFit && laid.text.length > 0) {
+    const scale = shrinkScale(laid.text, Math.max(1, widthPx - 2 * CELL_PADDING_PX), mdw);
+    if (scale < 1) {
+      laid.shrunkFontSize = `${((style.font?.sizePt ?? 11) * scale).toFixed(2)}pt`;
+    }
+  }
+  return laid;
+}
+
+/** What a cell shows (SPEC-118): its value through its style's number
+ * format (formatCodeOf in the context's locale) at the context's width —
+ * except that a numeric zero shows "" on a sheet with `showZeros: false`. */
+export function cellDisplay(value: CellValue, style: CellStyle, sheet: Pick<Sheet, "showZeros">, ctx: FormatContext): FormattedValue {
+  if (value === 0 && sheet.showZeros === false) {
+    return { text: "" };
+  }
+  return formatValue(value, formatCodeOf(style, ctx.locale), ctx);
+}
+
+/** Full width in en-US: General's text, as SPEC-116 drew every cell. */
+const GENERAL_DISPLAY: FormatContext = { locale: SPREADSHEET_LOCALES["en-US"], dateSystem: "1900" };
+
+/** The General text a cell shows at full width (generalText), "" for a
+ * zero on a sheet with `showZeros: false` — cellDisplay with no format. */
+export function displayText(value: CellValue, sheet: Pick<Sheet, "showZeros">): string {
+  return cellDisplay(value, {}, sheet, GENERAL_DISPLAY).text;
 }

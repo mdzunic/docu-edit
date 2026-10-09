@@ -61,3 +61,39 @@ describe("PreferencesDialog appearance controls", () => {
     ).toBe("false");
   });
 });
+
+// SPEC-118 "The preference": a "Spreadsheets" section right after "Editing"
+// with "Number and date format" — each locale labelled with its name and a
+// live sample the format engine writes — applied straight through.
+describe("PreferencesDialog spreadsheet locale", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetPreferences();
+  });
+
+  it("puts a Spreadsheets section right after Editing", () => {
+    const wrapper = mount(PreferencesDialog);
+    const headings = wrapper.findAll("h3.section-title").map((heading) => heading.text());
+    expect(headings[headings.indexOf("Editing") + 1]).toBe("Spreadsheets");
+    const section = wrapper.get('[aria-labelledby="preferences-spreadsheets-heading"]');
+    expect(section.find('[data-testid="preferences-spreadsheet-locale"]').exists()).toBe(true);
+    expect(section.text()).toContain("Number and date format");
+  });
+
+  it("labels each of the six locales with its name and a live sample, en-US chosen by default", () => {
+    const wrapper = mount(PreferencesDialog);
+    const select = wrapper.get('[data-testid="preferences-spreadsheet-locale"]');
+    const options = select.findAll("option");
+    expect(options.map((option) => option.attributes("value"))).toEqual(["en-US", "en-GB", "de-DE", "fr-FR", "es-ES", "cs-CZ"]);
+    expect(options[0]!.text()).toBe("English (United States) — 1,234.56 · 10/8/2026");
+    expect(options[2]!.text()).toBe("Deutsch (Deutschland) — 1.234,56 · 08.10.2026");
+    expect(options[5]!.text()).toBe("Čeština (Česko) — 1\u00a0234,56 · 08.10.2026");
+    expect((select.element as HTMLSelectElement).value).toBe("en-US");
+  });
+
+  it("applies a choice straight through to the preference", async () => {
+    const wrapper = mount(PreferencesDialog);
+    await wrapper.get('[data-testid="preferences-spreadsheet-locale"]').setValue("de-DE");
+    expect(loadPreferences().spreadsheetLocale).toBe("de-DE");
+  });
+});

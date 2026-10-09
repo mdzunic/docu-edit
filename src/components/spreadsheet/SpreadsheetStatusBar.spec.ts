@@ -2,8 +2,15 @@
 // Count and Sum texts it is handed (each hidden when empty — a single cell or
 // a selection of text shows less), and SPEC-063's ZoomControl at its right
 // with its fit entries hidden.
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
+import { computed, defineComponent, h, nextTick, shallowRef } from "vue";
+import { loadPreferences, resetPreferences } from "../../lib/preferences";
+import type { CellStyle, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import { SPREADSHEET_LOCALES, type SpreadsheetLocaleTag } from "../../lib/spreadsheet/numberFormat/locale";
+import { useSheetMetrics } from "../../views/spreadsheet/useSheetMetrics";
+import { useSheetSelection } from "../../views/spreadsheet/useSheetSelection";
+import type { SheetViewFields } from "../../views/spreadsheet/useSheetViewState";
 import SpreadsheetStatusBar from "./SpreadsheetStatusBar.vue";
 import ZoomControl from "../ZoomControl.vue";
 
@@ -51,5 +58,141 @@ describe("SpreadsheetStatusBar", () => {
     expect(wrapper.emitted("zoom-out")).toHaveLength(1);
     expect(wrapper.emitted("set-zoom")).toEqual([[150]]);
     expect(wrapper.emitted("apply-zoom")).toEqual([["85%"]]);
+  });
+});
+
+// SPEC-118: Sum and Average take the number format of the selection's first
+// numeric cell in row-major order, in the view's locale; Count stays a plain
+// integer. And the sheet-locale control: the tag, a menu of one
+// menuitemradio per locale, a choice written as the preference.
+describe("SpreadsheetStatusBar formatted aggregates and the locale control (SPEC-118)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetPreferences();
+  });
+
+  const styles: CellStyle[] = [{}, { numberFormat: "#,##0.00" }, { numberFormat: "0.0%" }, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }];
+  /** B2 "Label", C2 1234.5 (#,##0.00), B3 0.5 (0.0%), C3 2 (General); B5 46303 and C5 1 (dates). */
+  const sheet: Sheet = {
+    id: "s1",
+    name: "Sheet1",
+    visibility: "visible",
+    kind: "grid",
+    rows: [
+      { index: 1, cells: [{ col: 1, value: "Label" }, { col: 2, value: 1234.5, styleId: 1 }] },
+      { index: 2, cells: [{ col: 1, value: 0.5, styleId: 2 }, { col: 2, value: 2 }] },
+      { index: 4, cells: [{ col: 1, value: 46303, styleId: 3 }, { col: 2, value: 1, styleId: 3 }] },
+    ],
+    columns: [],
+    defaultColWidthPx: 64,
+    defaultRowHeightPt: 15,
+    merges: [],
+  };
+  const model: SpreadsheetModel = {
+    kind: "spreadsheet",
+    id: "w",
+    title: "W",
+    format: "xlsx",
+    readerVersion: 3,
+    sheets: [sheet],
+    activeSheetIndex: 0,
+    dateSystem: "1900",
+    opaque: [],
+    styles,
+    defaultStyleId: 0,
+  };
+
+  function mountBar() {
+    const locale = shallowRef<SpreadsheetLocaleTag>("en-US");
+    const fields = shallowRef<SheetViewFields>({});
+    let selectRange!: (top: number, left: number, bottom: number, right: number) => void;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          const sheetMetrics = useSheetMetrics(() => sheet);
+          const viewState = {
+            active: computed(() => fields.value),
+            updateActive: (patch: SheetViewFields) => {
+              fields.value = { ...fields.value, ...patch };
+            },
+          };
+          const selection = useSheetSelection({
+            sheet: () => sheet,
+            sheetMetrics,
+            viewState,
+            model: () => model,
+            locale: () => SPREADSHEET_LOCALES[locale.value],
+          });
+          selectRange = (top, left, bottom, right) => {
+            selection.press({ row: top, col: left }, { shift: false, mod: false });
+            selection.press({ row: bottom, col: right }, { shift: true, mod: false });
+            selection.release();
+          };
+          return () =>
+            h(SpreadsheetStatusBar, {
+              average: selection.statusTexts.value.average ?? "",
+              count: selection.statusTexts.value.count ?? "",
+              sum: selection.statusTexts.value.sum ?? "",
+            });
+        },
+      }),
+      { attachTo: document.body },
+    );
+    const texts = async (range: [number, number, number, number], tag: SpreadsheetLocaleTag = "en-US") => {
+      locale.value = tag;
+      selectRange(...range);
+      await nextTick();
+      const text = (id: string) => wrapper.find(`[data-testid="${id}"]`);
+      return {
+        average: text("sheet-status-average").exists() ? text("sheet-status-average").text() : undefined,
+        count: text("sheet-status-count").text(),
+        sum: text("sheet-status-sum").exists() ? text("sheet-status-sum").text() : undefined,
+      };
+    };
+    return { wrapper, texts };
+  }
+
+  it("formats Sum and Average with the first numeric cell's format, row-major", async () => {
+    const { wrapper, texts } = mountBar();
+    // B2:C3 row-major: "Label", 1234.5 (#,##0.00) first, then 0.5, 2.
+    expect(await texts([1, 1, 2, 2])).toEqual({ average: "Average: 412.33", count: "Count: 4", sum: "Sum: 1,237.00" });
+    // B3:C3: 0.5 (0.0%) first.
+    expect(await texts([2, 1, 2, 2])).toEqual({ average: "Average: 125.0%", count: "Count: 2", sum: "Sum: 250.0%" });
+    // Dates sum as dates, as Excel's bar shows them.
+    expect(await texts([4, 1, 4, 2])).toEqual({ average: "Average: 5/21/1963", count: "Count: 2", sum: "Sum: 10/9/2026" });
+    wrapper.unmount();
+  });
+
+  it("formats them in the view's locale; Count stays a plain integer", async () => {
+    const { wrapper, texts } = mountBar();
+    expect(await texts([1, 1, 2, 2], "de-DE")).toEqual({ average: "Average: 412,33", count: "Count: 4", sum: "Sum: 1.237,00" });
+    expect(await texts([4, 1, 4, 2], "de-DE")).toMatchObject({ sum: "Sum: 09.10.2026", count: "Count: 2" });
+    wrapper.unmount();
+  });
+
+  it("shows the locale's tag and offers one menuitemradio per locale; a choice is the preference", async () => {
+    const wrapper = mount(SpreadsheetStatusBar, { props: { count: "Count: 3" }, attachTo: document.body });
+    const button = wrapper.get('[data-testid="sheet-locale"]');
+    expect(button.text()).toBe("en-US");
+    expect(button.attributes("aria-haspopup")).toBe("menu");
+    await button.trigger("click");
+    const items = wrapper.findAll('[role="menuitemradio"]');
+    expect(items.map((item) => item.attributes("data-testid"))).toEqual([
+      "sheet-locale-en-US",
+      "sheet-locale-en-GB",
+      "sheet-locale-de-DE",
+      "sheet-locale-fr-FR",
+      "sheet-locale-es-ES",
+      "sheet-locale-cs-CZ",
+    ]);
+    expect(items[0]!.attributes("aria-checked")).toBe("true");
+    expect(items[2]!.text()).toBe("Deutsch (Deutschland) — 1.234,56 · 08.10.2026");
+    await wrapper.get('[data-testid="sheet-locale-de-DE"]').trigger("click");
+    expect(loadPreferences().spreadsheetLocale).toBe("de-DE");
+    await nextTick();
+    expect(wrapper.get('[data-testid="sheet-locale"]').text()).toBe("de-DE");
+    // The zoom control stays the bar's last child.
+    expect(wrapper.get('[data-testid="spreadsheet-status-bar"]').element.lastElementChild).toBe(wrapper.get('[data-testid="zoom-control"]').element);
+    wrapper.unmount();
   });
 });

@@ -22,13 +22,21 @@
 // 2 — SPEC-117: cell styles (xl/styles.xml, the ODS automatic and common
 //     styles), the theme, column/row sizes, merges, frozen panes, hidden rows
 //     and columns, view settings, style-only cells and ODS covered cells.)
+// 3 — SPEC-118: number formats (xlsx numFmts and built-in ids, ODS data
+//     styles) and the implied formats of unformatted dates, times and
+//     percentages.
 import { decodedPartBytes } from "../core/packageParts";
 import type { Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { buildPreview } from "./preview";
 import { defaultStyles } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 2;
+export const SPREADSHEET_READER_VERSION = 3;
+
+/** The locale a preview built here formats in: the reader knows no
+ * preference — the store rebuilds the card in the user's locale (SPEC-118). */
+const READ_PREVIEW_LOCALE = SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE];
 
 export interface ReaderUpgrade {
   from: number; // upgrades a record at `from` to `from + 1`
@@ -45,6 +53,16 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
     // throws so the impossible case is loud instead of silently merging half
     // a style table into an edited sheet.
     from: 1,
+    upgradeDirtySheet() {
+      throw new Error("unreachable: no sheet is dirty before SPEC-121");
+    },
+  },
+  {
+    // SPEC-118 (2 → 3): number formats. The same choice and reason as
+    // SPEC-117's step — every read path upgrades by re-reading `opaque`, and
+    // no sheet can be dirty before SPEC-121; this keeps the registry
+    // contiguous.
+    from: 2,
     upgradeDirtySheet() {
       throw new Error("unreachable: no sheet is dirty before SPEC-121");
     },
@@ -90,7 +108,7 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   if (Object.keys(parsed.properties).length > 0) {
     model.properties = parsed.properties;
   }
-  model.preview = buildPreview(model);
+  model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
 }
 
@@ -150,6 +168,6 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
     }
     return { ...sheet, id: stored.id };
   });
-  fresh.preview = buildPreview(fresh);
+  fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
   return fresh;
 }

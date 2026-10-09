@@ -19,6 +19,13 @@
 //                             setting the reader models
 // - spec117-styles.ods      — SPEC-117, LibreOffice-shaped: the same
 //                             constructs in Calc's own shapes
+// - spec118-formats.xlsx    — SPEC-118, Excel-shaped: custom and built-in
+//                             number formats, a narrow column and a
+//                             too-narrow date
+// - spec118-generated.xlsx  — SPEC-118, openpyxl-shaped: t="d" dates under
+//                             a General style
+// - spec118-formats.ods     — SPEC-118, LibreOffice-shaped data styles and
+//                             unstyled dates, times and percentages
 // spec116-numbers.xlsx is NOT generated here: Apple Numbers exported it
 // (scripts/make-numbers-fixture.applescript, e2e/fixtures/spec116-numbers.md).
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -33,6 +40,9 @@ import {
   buildSpecWideOdsBytes,
   buildSpec117StylesOdsBytes,
   buildSpec117StylesXlsxBytes,
+  buildSpec118FormatsOdsBytes,
+  buildSpec118FormatsXlsxBytes,
+  buildSpec118GeneratedXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -46,6 +56,9 @@ writeFileSync(join(fixturesDir, "spec116-template.xltx"), await buildSpecTemplat
 writeFileSync(join(fixturesDir, "spec116-wide.ods"), await buildSpecWideOdsBytes());
 writeFileSync(join(fixturesDir, "spec117-styles.xlsx"), await buildSpec117StylesXlsxBytes());
 writeFileSync(join(fixturesDir, "spec117-styles.ods"), await buildSpec117StylesOdsBytes());
+writeFileSync(join(fixturesDir, "spec118-formats.xlsx"), await buildSpec118FormatsXlsxBytes());
+writeFileSync(join(fixturesDir, "spec118-generated.xlsx"), await buildSpec118GeneratedXlsxBytes());
+writeFileSync(join(fixturesDir, "spec118-formats.ods"), await buildSpec118FormatsOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

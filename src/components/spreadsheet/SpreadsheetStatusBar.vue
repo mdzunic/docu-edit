@@ -3,10 +3,13 @@
 // selection covers more than one cell, "Average: …", "Count: …" and
 // "Sum: …" (computed by useSheetSelection through lib/spreadsheet/
 // aggregates.ts, over stored cells only — Average and Sum only when numbers
-// are selected and no error is), and SPEC-063's ZoomControl at its right,
-// with its fit entries hidden (a sheet has no page to fit). Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// are selected and no error is, in the number format of the first numeric
+// cell, SPEC-118), then the number-locale control (SheetLocaleControl,
+// SPEC-118) and SPEC-063's ZoomControl at its right, with its fit entries
+// hidden (a sheet has no page to fit). Runtime prop declarations per the
+// espree constraint (see AppShell.vue).
 import ZoomControl from "../ZoomControl.vue";
+import SheetLocaleControl from "./SheetLocaleControl.vue";
 
 const props = defineProps({
   /** "Average: 20" — empty hides it. */
@@ -47,6 +50,7 @@ const emit = defineEmits(["zoom-in", "zoom-out", "apply-zoom", "set-zoom"]);
         data-testid="sheet-status-sum"
       >{{ props.sum }}</span>
     </div>
+    <SheetLocaleControl class="sheet-status-locale" />
     <ZoomControl
       :zoom-percent="props.zoomPercent"
       :show-fit="false"
@@ -69,11 +73,17 @@ const emit = defineEmits(["zoom-in", "zoom-out", "apply-zoom", "set-zoom"]);
   min-width: 0;
 }
 
+/* The aggregates take what the locale and the zoom leave. */
 .sheet-status-aggregates {
   display: flex;
+  flex: 1 1 auto;
   gap: var(--space-4);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.sheet-status-locale {
+  flex: none;
 }
 </style>

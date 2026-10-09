@@ -11,7 +11,9 @@
 // 0), and a `<c>` carrying a style but no value is stored as a style-only
 // cell, counted against MAX_WORKBOOK_CELLS like any other. Shared-string and
 // inline `<r>` runs carry their `<rPr>` as `font` (xlsx/styles.ts's font
-// mapping); a plain `<t>` item stays `{ text }`.
+// mapping); a plain `<t>` item stays `{ text }`. SPEC-118: a `t="d"` value
+// whose style is General points at a derived style with the implied
+// `yyyy-mm-dd` (+ ` hh:mm:ss`) format (impliedFormats.ts).
 //
 // Layout and view (SPEC-117, only the root's own children are read):
 // - `sheetFormatPr`: `defaultRowHeight` (absent element → 15 pt);
@@ -57,6 +59,7 @@ import {
   type Sheet,
   type TextRun,
 } from "../model";
+import { impliedDateCode, type ImpliedFormatStyles } from "../impliedFormats";
 import { addressText, normaliseCells, normaliseRows, outOfGridError, parseError, type CellBudget } from "../parsed";
 import type { SheetSelection } from "../selection";
 import { odsDateValueToSerial } from "../serial";
@@ -615,6 +618,9 @@ export interface WorksheetReadOptions {
   mdw: number;
   /** The workbook's `<indexedColors>` override palette. */
   indexedColors?: readonly string[];
+  /** The workbook's implied-format styles (SPEC-118), for `t="d"` values
+   * with a General style. */
+  implied?: ImpliedFormatStyles;
 }
 
 /** The root's children whose content this reader reads. */
@@ -625,7 +631,7 @@ const SECTIONS: ReadonlySet<string> = new Set<Section>(["sheetPr", "sheetViews",
 /** Reads one worksheet part (see the module header) in a single scanner
  * pass. Returns null when the cell ceiling stopped the scan. */
 export function readWorksheet(xml: string, sheetName: string, options: WorksheetReadOptions): WorksheetContent | null {
-  const { sharedStrings, dateSystem, budget, mdw, indexedColors } = options;
+  const { sharedStrings, dateSystem, budget, mdw, indexedColors, implied } = options;
   const rows: Row[] = [];
   /** Open elements enclosing the next event (the root is level 1). */
   let depth = 0;
@@ -653,10 +659,22 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   let inFirstView = false;
   const view: ViewState = { selections: [] };
 
+  /** The style a column's `<col>` gives it (the first `<col>` claiming it). */
+  const columnStyleAt = (col: number): number | undefined =>
+    columnCandidates.find((candidate) => candidate.min <= col && col <= candidate.max)?.styleId;
+
   const finishCell = (cell: PendingCell): "stop" | undefined => {
     const current = row!;
     const { value, runs } = cellValue(cell, sharedStrings, dateSystem, () => `"${sheetName}"!${addressText(current.index, cell.col)}`);
-    const styleId = cell.styleId;
+    let styleId = cell.styleId;
+    if (cell.type === "d" && typeof value === "number" && implied) {
+      // A date its producer left General shows as a date (SPEC-118).
+      const base = styleId ?? current.styleId ?? columnStyleAt(cell.col) ?? 0;
+      const shown = implied.styleFor(base, impliedDateCode(value));
+      if (shown !== base) {
+        styleId = shown;
+      }
+    }
     if (value === null && styleId === undefined) {
       return undefined;
     }

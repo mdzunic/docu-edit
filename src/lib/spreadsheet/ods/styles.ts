@@ -19,8 +19,13 @@
 //   (`table:default-cell-style-name`) or a covered cell — gets ONE entry, in
 //   first-reference order, with `sourceStyleName` set. Names are never
 //   deduplicated (two names are two entries, however alike); "Default" is
-//   always 0. `namedStyle` is SPEC-123's and `style:data-style-name`
-//   SPEC-118's: neither is read here.
+//   always 0. `namedStyle` is SPEC-123's.
+// - SPEC-118: `style:data-style-name` (inherited down the same chain, the
+//   nearest definition winning) names a `number:*-style` in content.xml's
+//   automatic styles or styles.xml's common styles; odsNumberStyleToCode
+//   turns it into `numberFormat` (General → absent). A date, time or
+//   percentage value in a style with no data style at all gets a derived
+//   style with its implied format (impliedStyleId, impliedFormats.ts).
 // - Mapping (the spec's table): `table-cell-properties` fo:background-color →
 //   a solid fill (`transparent` → none); fo:border-* → borders by the pinned
 //   "ODS borders" table; style:diagonal-bl-tr / -tl-br → the diagonal with
@@ -41,10 +46,12 @@
 //   through exact rationals so "0.178in" is 12.816 pt, not 12.8159999….
 // - Absent properties are omitted — a CellStyle never carries an
 //   `undefined`-valued key (the model is plain JSON).
-import { FO_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE } from "../../core/odfXml";
+import { FO_NAMESPACE, NUMBER_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE } from "../../core/odfXml";
 import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "../../core/theme";
 import { escapeXmlAttribute, parseXml, XmlParseError } from "../../core/xml";
 import { INDENT_PX_PER_LEVEL } from "../geometry";
+import { ImpliedFormatStyles } from "../impliedFormats";
+import { odsNumberStyleToCode } from "../numberFormat/odsNumberStyles";
 import type {
   CellAlignment,
   CellBorderEdge,
@@ -86,6 +93,8 @@ interface StyleDefinition {
   family: string;
   parent?: string;
   props: PropertySets;
+  /** `style:data-style-name` (SPEC-118). */
+  dataStyle?: string;
 }
 
 const EMPTY_PROPS: Props = new Map();
@@ -98,6 +107,8 @@ export interface OdsStyleSheet {
   common: Map<string, StyleDefinition>;
   /** `style:font-face@style:name` → its family (`svg:font-family`, unquoted). */
   fontFaces: Map<string, string>;
+  /** The common data styles (`number:*-style`) by `style:name` (SPEC-118). */
+  dataStyles: Map<string, Element>;
 }
 
 /** content.xml's style sections as the reader needs them. */
@@ -105,6 +116,8 @@ export interface OdsContentStyles {
   /** The automatic styles, keyed by styleKey(family, name). */
   automatic: Map<string, StyleDefinition>;
   fontFaces: Map<string, string>;
+  /** The automatic data styles by `style:name` (SPEC-118). */
+  dataStyles: Map<string, Element>;
 }
 
 /** A row style's layout properties, as tableXml.ts applies them. */
@@ -186,8 +199,26 @@ function readDefinition(el: Element, family: string): StyleDefinition {
       props[kind as PropertyKind] = expandShorthands(kind as PropertyKind, readProps(child));
     }
   }
+  const definition: StyleDefinition = { family, props };
   const parent = el.getAttributeNS(STYLE_NAMESPACE, "parent-style-name");
-  return parent ? { family, parent, props } : { family, props };
+  if (parent) {
+    definition.parent = parent;
+  }
+  const dataStyle = el.getAttributeNS(STYLE_NAMESPACE, "data-style-name");
+  if (dataStyle) {
+    definition.dataStyle = dataStyle;
+  }
+  return definition;
+}
+
+/** Reads every data style (`number:*-style`) child of `container` by name. */
+function readDataStyles(container: Element, into: Map<string, Element>): void {
+  for (const el of Array.from(container.children)) {
+    const name = el.getAttributeNS(STYLE_NAMESPACE, "name");
+    if (el.namespaceURI === NUMBER_NAMESPACE && el.localName.endsWith("-style") && name) {
+      into.set(name, el);
+    }
+  }
 }
 
 /** Reads every `style:style` child of `container` into `into`. */
@@ -225,7 +256,7 @@ function readFontFaces(container: Element, into: Map<string, string>): void {
 
 /** A styles.xml with nothing in it — the part is optional. */
 export function emptyOdsStyleSheet(): OdsStyleSheet {
-  return { defaults: new Map(), common: new Map(), fontFaces: new Map() };
+  return { defaults: new Map(), common: new Map(), fontFaces: new Map(), dataStyles: new Map() };
 }
 
 /** Reads styles.xml: the default styles, the common styles and the font
@@ -241,6 +272,7 @@ export function readOdsStyleSheet(xml: string): OdsStyleSheet {
       readFontFaces(section, sheet.fontFaces);
     } else if (section.localName === "styles") {
       readStyles(section, sheet.common);
+      readDataStyles(section, sheet.dataStyles);
       for (const el of Array.from(section.children)) {
         const family = el.getAttributeNS(STYLE_NAMESPACE, "family");
         if (el.namespaceURI === STYLE_NAMESPACE && el.localName === "default-style" && family) {
@@ -266,7 +298,7 @@ export function namespaceDeclarations(attrs: readonly { name: string; value: str
  * elements plus the document element's namespace declarations (they parse
  * wrapped in a root that declares them). Throws XmlParseError. */
 export function readOdsContentStyles(slices: readonly string[], declarations: string): OdsContentStyles {
-  const styles: OdsContentStyles = { automatic: new Map(), fontFaces: new Map() };
+  const styles: OdsContentStyles = { automatic: new Map(), fontFaces: new Map(), dataStyles: new Map() };
   if (slices.length === 0) {
     return styles;
   }
@@ -279,6 +311,7 @@ export function readOdsContentStyles(slices: readonly string[], declarations: st
       readFontFaces(section, styles.fontFaces);
     } else if (section.localName === "automatic-styles") {
       readStyles(section, styles.automatic);
+      readDataStyles(section, styles.dataStyles);
     }
   }
   return styles;
@@ -670,20 +703,27 @@ export class OdsStyleBook {
   private readonly automatic: Map<string, StyleDefinition>;
   private readonly fontFaces: Map<string, string>;
   private readonly cellIds = new Map<string, number>();
+  private readonly dataStyles: Map<string, Element>;
+  /** The cell styles that name a data style (SPEC-118) — General or not. */
+  private readonly formatted = new Set<number>();
+  private readonly implied: ImpliedFormatStyles;
   private readonly textFonts = new Map<string, CellFont | undefined>();
   private readonly columnWidths = new Map<string | undefined, number | undefined>();
   private readonly rowHeights = new Map<string | undefined, OdsRowHeight>();
 
-  constructor(sheet: OdsStyleSheet, content: OdsContentStyles = { automatic: new Map(), fontFaces: new Map() }) {
+  constructor(sheet: OdsStyleSheet, content: OdsContentStyles = { automatic: new Map(), fontFaces: new Map(), dataStyles: new Map() }) {
     this.sheet = sheet;
     this.automatic = content.automatic;
     this.fontFaces = new Map([...sheet.fontFaces, ...content.fontFaces]);
+    this.dataStyles = new Map([...sheet.dataStyles, ...content.dataStyles]);
     const base = cellStyleFrom(this.flatten("table-cell", "Default", { commonOnly: true }), this.fontFaces);
+    this.applyDataStyle(base, 0, this.dataStyleOf("Default", true));
     if (sheet.common.has(styleKey("table-cell", "Default"))) {
       base.sourceStyleName = "Default";
     }
     this.styles = [base];
     this.cellIds.set("Default", 0);
+    this.implied = new ImpliedFormatStyles(this.styles);
   }
 
   /** The index in `styles` of the table-cell style `name`, adding its
@@ -694,11 +734,52 @@ export class OdsStyleBook {
     if (id === undefined) {
       id = this.styles.length;
       const style = cellStyleFrom(this.flatten("table-cell", name), this.fontFaces);
+      this.applyDataStyle(style, id, this.dataStyleOf(name, false));
       style.sourceStyleName = name;
       this.styles.push(style);
       this.cellIds.set(name, id);
     }
     return id;
+  }
+
+  /** The style a date, time or percentage value with an implied `code`
+   * shows (SPEC-118 "Implied formats"): `baseId` when that style names a
+   * data style, else a derived style carrying `code`. */
+  impliedStyleId(baseId: number, code: string): number {
+    return this.formatted.has(baseId) ? baseId : this.implied.styleFor(baseId, code);
+  }
+
+  /** The data style a table-cell style names, inherited down its parent
+   * chain (the nearest definition wins); undefined when none does. */
+  private dataStyleOf(name: string, commonOnly: boolean): string | undefined {
+    const seen = new Set<string>();
+    let current = commonOnly ? this.sheet.common.get(styleKey("table-cell", name)) : this.lookup("table-cell", name, false);
+    seen.add(name);
+    for (let depth = 0; current && depth < MAX_STYLE_DEPTH; depth += 1) {
+      if (current.dataStyle !== undefined) {
+        return current.dataStyle;
+      }
+      const parent = current.parent;
+      if (parent === undefined || seen.has(parent)) {
+        break;
+      }
+      seen.add(parent);
+      current = this.lookup("table-cell", parent, true);
+    }
+    return this.sheet.defaults.get("table-cell")?.dataStyle;
+  }
+
+  /** Gives a cell style the number format its data style maps to. */
+  private applyDataStyle(style: CellStyle, id: number, dataStyleName: string | undefined): void {
+    const element = dataStyleName === undefined ? undefined : this.dataStyles.get(dataStyleName);
+    if (!element) {
+      return;
+    }
+    this.formatted.add(id);
+    const code = odsNumberStyleToCode(element, (name) => this.dataStyles.get(name));
+    if (code !== undefined && !/^general$/i.test(code.trim())) {
+      style.numberFormat = code;
+    }
   }
 
   /** A `text:span`'s own font: its text style's `style:text-properties`

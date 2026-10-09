@@ -24,6 +24,7 @@ import {
 } from "./styles";
 
 const NS =
+  `xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" ` +
   `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
   `xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" ` +
   `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:tableooo="http://openoffice.org/2009/table" ` +
@@ -444,6 +445,71 @@ async function read() {
   };
   return { parsed, at };
 }
+
+describe("number formats: style:data-style-name (SPEC-118)", () => {
+  /** LibreOffice's two-section red-negative style, as Calc writes it. */
+  const N2 =
+    `<number:number-style style:name="N2P0" style:volatile="true"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/></number:number-style>` +
+    `<number:number-style style:name="N2"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text>` +
+    `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+    `<style:map style:condition="value()&gt;=0" style:apply-style-name="N2P0"/></number:number-style>`;
+
+  it("maps an automatic cell style's data style to numberFormat (LibreOffice's sign pattern as plain sections)", () => {
+    const book = styleBook(`${N2}<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N2"/>`, LO_COMMON);
+    expect(book.styles[book.cellStyleId("ce1")]!.numberFormat).toBe("0.00;[Red]-0.00");
+  });
+
+  it("finds a data style in styles.xml's common styles, and inherits the name down the parent chain", () => {
+    const common =
+      `${LO_COMMON}<number:percentage-style style:name="N10"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+      `<number:text>%</number:text></number:percentage-style>` +
+      `<style:style style:name="Percent" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N10"/>`;
+    const book = styleBook(`<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Percent"><style:text-properties fo:font-weight="bold"/></style:style>`, common);
+    expect(book.styles[book.cellStyleId("ce1")]).toMatchObject({ numberFormat: "0.00%", font: { bold: true } });
+    expect(book.styles[book.cellStyleId("Percent")]!.numberFormat).toBe("0.00%");
+    // The nearest definition wins.
+    const own = styleBook(
+      `${N2}<style:style style:name="ce2" style:family="table-cell" style:parent-style-name="Percent" style:data-style-name="N2"/>`,
+      common,
+    );
+    expect(own.styles[own.cellStyleId("ce2")]!.numberFormat).toBe("0.00;[Red]-0.00");
+  });
+
+  it("leaves General absent: no data style, a General number style, an era style, a name no part defines", () => {
+    const automatic =
+      `<number:number-style style:name="N0"><number:number number:min-integer-digits="1"/></number:number-style>` +
+      `<number:date-style style:name="N80"><number:era number:style="long"/><number:text> </number:text><number:year/></number:date-style>` +
+      `<style:style style:name="plain" style:family="table-cell"/>` +
+      `<style:style style:name="general" style:family="table-cell" style:data-style-name="N0"/>` +
+      `<style:style style:name="era" style:family="table-cell" style:data-style-name="N80"/>` +
+      `<style:style style:name="missing" style:family="table-cell" style:data-style-name="N404"/>`;
+    const book = styleBook(automatic, LO_COMMON);
+    for (const name of ["plain", "general", "era", "missing"]) {
+      expect(book.styles[book.cellStyleId(name)]!.numberFormat, name).toBeUndefined();
+    }
+  });
+
+  it("derives one style per (base, implied code) for a value whose style names no data style — and none for one that does", () => {
+    const automatic =
+      `${N2}<style:style style:name="ce1" style:family="table-cell"><style:text-properties fo:font-weight="bold"/></style:style>` +
+      `<style:style style:name="ce2" style:family="table-cell" style:data-style-name="N2"/>` +
+      `<number:date-style style:name="N80"><number:era/></number:date-style>` +
+      `<style:style style:name="era" style:family="table-cell" style:data-style-name="N80"/>`;
+    const book = styleBook(automatic, LO_COMMON);
+    const ce1 = book.cellStyleId("ce1");
+    const derived = book.impliedStyleId(ce1, "yyyy-mm-dd");
+    expect(derived).toBe(book.styles.length - 1);
+    expect(book.styles[derived]).toEqual({ font: { family: "Liberation Sans", sizePt: 10, bold: true }, numberFormat: "yyyy-mm-dd" });
+    expect(book.impliedStyleId(ce1, "yyyy-mm-dd")).toBe(derived);
+    expect(book.impliedStyleId(ce1, "[hh]:mm:ss")).toBe(derived + 1);
+    expect(book.impliedStyleId(0, "0.00%")).toBe(derived + 2);
+    expect(book.styles[derived + 2]!.sourceStyleName).toBeUndefined();
+    const ce2 = book.cellStyleId("ce2");
+    expect(book.impliedStyleId(ce2, "yyyy-mm-dd")).toBe(ce2);
+    const era = book.cellStyleId("era");
+    expect(book.impliedStyleId(era, "yyyy-mm-dd")).toBe(era); // it names a data style, if one that reads as General
+  });
+});
 
 describe("spec117-styles.ods (LibreOffice-shaped)", () => {
 

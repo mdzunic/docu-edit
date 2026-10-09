@@ -6,8 +6,8 @@
 // gridlines, scroll, active sheet — never a change to the file) in
 // useSheetViewState; geometry in useSheetMetrics; zoom, selection and the
 // menu bar's routing in useSheetZoom, useSheetSelection and
-// useSpreadsheetMenu; the surfaces in components/spreadsheet/*. This file
-// only wires them under SPEC-058's app bar with SPEC-060's Close.
+// useSpreadsheetMenu; the number locale (SPEC-118) in useSpreadsheetLocale;
+// the surfaces in components/spreadsheet/*. This file only wires them.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -20,6 +20,7 @@ import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
 import { useSheetViewState } from "./spreadsheet/useSheetViewState";
 import { useSheetZoom } from "./spreadsheet/useSheetZoom";
+import { useSpreadsheetLocale } from "./spreadsheet/useSpreadsheetLocale";
 import { useSpreadsheetMenu } from "./spreadsheet/useSpreadsheetMenu";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
@@ -35,9 +36,10 @@ const book = useWorkbookLoad({ workbookId, router });
 const viewState = useSheetViewState({ workbook: book.workbook, activeIndex: book.activeIndex });
 const sheetMetrics = useSheetMetrics(() => book.activeSheet.value);
 const zoom = useSheetZoom({ viewState });
-const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState });
+const sheetLocale = useSpreadsheetLocale();
+const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState, model: () => book.workbook.value, locale: () => sheetLocale.locale.value });
 const menu = useSpreadsheetMenu({ book, viewState, zoom });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value }));
 </script>
 
 <template>

@@ -15,9 +15,11 @@
 //   scheduler.
 // - The texts appear only when the selection spans more than one cell and
 //   count ≥ 1: "Count: n" always, "Average: …" and "Sum: …" only when
-//   numericCount ≥ 1 and there is no error; numbers through generalText
-//   (SPEC-118 formats them).
-import type { GridRange } from "./address";
+//   numericCount ≥ 1 and there is no error. Count is a plain integer; Sum
+//   and Average render through the caller's formatter — SPEC-118: the
+//   number format of the selection's first numeric cell in row-major order
+//   (firstNumericCell) — and through General without one.
+import type { CellRef, GridRange } from "./address";
 import { generalText } from "./general";
 import { mergeAt, type MergeIndex } from "./merges";
 import { isCellError, MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet } from "./model";
@@ -163,6 +165,34 @@ export function selectionAggregates(
   return totals;
 }
 
+/** The first stored numeric cell of the union of `ranges` in row-major
+ * order (hidden rows and columns excluded) — whose number format the
+ * status bar's Sum and Average take (SPEC-118); undefined when none is. */
+export function firstNumericCell(
+  sheet: Sheet,
+  ranges: readonly GridRange[],
+  nav: Pick<NavContext, "isRowHidden" | "isColHidden">,
+): CellRef | undefined {
+  const rows = sheet.rows;
+  for (const band of rowBands(ranges)) {
+    for (let i = firstRowAtOrAfter(rows, band.top); i < rows.length && rows[i]!.index <= band.bottom; i += 1) {
+      const row = rows[i]!;
+      if (row.cells.length === 0 || nav.isRowHidden(row.index)) {
+        continue;
+      }
+      for (const [left, right] of band.spans) {
+        const cells = row.cells;
+        for (let j = firstCellAtOrAfter(cells, left); j < cells.length && cells[j]!.col <= right; j += 1) {
+          if (typeof cells[j]!.value === "number" && !nav.isColHidden(cells[j]!.col)) {
+            return { row: row.index, col: cells[j]!.col };
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 /** A cheap upper bound of the stored cells selectionAggregates would visit
  * for `ranges` — one pass over the stored rows the selection crosses,
  * without touching a cell — so the caller can defer a large computation to
@@ -199,15 +229,20 @@ export function selectionSpansMultipleCells(ranges: readonly GridRange[], merges
 
 /** The status bar's texts for `agg`: nothing unless the selection spans more
  * than one cell and count ≥ 1; then "Count: n", plus "Average: …" and
- * "Sum: …" when numericCount ≥ 1 and no counted cell is an error. */
-export function formatAggregates(agg: SelectionAggregates, isMultiCell: boolean): AggregateTexts {
+ * "Sum: …" when numericCount ≥ 1 and no counted cell is an error — those two
+ * through `format` (default General); Count is always a plain integer. */
+export function formatAggregates(
+  agg: SelectionAggregates,
+  isMultiCell: boolean,
+  format: (n: number) => string = generalText,
+): AggregateTexts {
   if (!isMultiCell || agg.count < 1) {
     return {};
   }
   const texts: AggregateTexts = { count: `Count: ${generalText(agg.count)}` };
   if (agg.numericCount >= 1 && !agg.hasError) {
-    texts.average = `Average: ${generalText(agg.sum / agg.numericCount)}`;
-    texts.sum = `Sum: ${generalText(agg.sum)}`;
+    texts.average = `Average: ${format(agg.sum / agg.numericCount)}`;
+    texts.sum = `Sum: ${format(agg.sum)}`;
   }
   return texts;
 }

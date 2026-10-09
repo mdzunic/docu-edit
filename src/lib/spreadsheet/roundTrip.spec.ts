@@ -1,5 +1,5 @@
-// SPEC-116's round-trip promise (kept by SPEC-117's readers, whose two styles
-// fixtures join the list), over every fixture (the ones built here and
+// SPEC-116's round-trip promise (kept by SPEC-117's and SPEC-118's readers,
+// whose styles and formats fixtures join the list), over every fixture (the ones built here and
 // the Numbers export a person committed): downloading an untouched workbook
 // re-emits every source part byte-identical, in source order — the ZIP
 // container itself is rebuilt, so the relation is part-level equalBytes, as
@@ -23,6 +23,9 @@ import {
   buildSpecWideOdsBytes,
   buildSpec117StylesOdsBytes,
   buildSpec117StylesXlsxBytes,
+  buildSpec118FormatsOdsBytes,
+  buildSpec118FormatsXlsxBytes,
+  buildSpec118GeneratedXlsxBytes,
   SPEC116_VBA_PROJECT,
 } from "./fixtures/build";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
@@ -107,6 +110,29 @@ const FIXTURES: Fixture[] = [
     extension: "ods",
     mimeType: "application/vnd.oasis.opendocument.spreadsheet",
     bytes: buildSpec117StylesOdsBytes,
+  },
+  // SPEC-118: reading number formats — and adding the implied-format styles
+  // an unformatted date or percentage gets — writes nothing either.
+  {
+    file: "spec118-formats.xlsx",
+    format: "xlsx",
+    extension: "xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    bytes: buildSpec118FormatsXlsxBytes,
+  },
+  {
+    file: "spec118-generated.xlsx",
+    format: "xlsx",
+    extension: "xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    bytes: buildSpec118GeneratedXlsxBytes,
+  },
+  {
+    file: "spec118-formats.ods",
+    format: "ods",
+    extension: "ods",
+    mimeType: "application/vnd.oasis.opendocument.spreadsheet",
+    bytes: buildSpec118FormatsOdsBytes,
   },
 ];
 
