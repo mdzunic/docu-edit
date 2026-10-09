@@ -124,6 +124,13 @@ describe("ODS", () => {
     expect(fromOdsFormula("of:=[.A1]~[.B1]", LO_NAMESPACES)).toBe("(A1,B1)");
   });
 
+  it("from: a relative sheet, an unanchored quoted sheet and a same-sheet second endpoint read as the plain sheet reference", () => {
+    expect(fromOdsFormula("of:=[Sheet1.A1]", LO_NAMESPACES)).toBe("Sheet1!A1");
+    expect(fromOdsFormula("of:=['My Sheet'.A1]", LO_NAMESPACES)).toBe("'My Sheet'!A1");
+    expect(fromOdsFormula("of:=[$Sheet1.A1:$Sheet1.B2]", LO_NAMESPACES)).toBe("Sheet1!A1:B2");
+    expect(fromOdsFormula("of:=[Sheet1.A1:Sheet3.B2]", LO_NAMESPACES)).toBe("Sheet1:Sheet3!A1:B2");
+  });
+
   it("from: any bracket reference holding #REF! is the bare error", () => {
     expect(fromOdsFormula("of:=[.#REF!]+[$Sheet2.#REF!]+[$#REF!.A1]+[.A1:.#REF!]", LO_NAMESPACES)).toBe("#REF!+#REF!+#REF!+#REF!");
   });

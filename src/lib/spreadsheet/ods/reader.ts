@@ -133,10 +133,9 @@ function cellFormula(
     return undefined;
   }
   const formula: OdsCellFormula = readOdsFormula(wire, namespaces, host);
-  const cols = repeatCount(attrs, "number-matrix-columns-spanned");
-  const rows = repeatCount(attrs, "number-matrix-rows-spanned");
-  if (scanAttr(attrs, "number-matrix-columns-spanned", TABLE_NAMESPACE) !== undefined || scanAttr(attrs, "number-matrix-rows-spanned", TABLE_NAMESPACE) !== undefined) {
-    formula.matrix = { cols, rows };
+  const spans = ["number-matrix-columns-spanned", "number-matrix-rows-spanned"];
+  if (spans.some((local) => scanAttr(attrs, local, TABLE_NAMESPACE) !== undefined)) {
+    formula.matrix = { cols: repeatCount(attrs, spans[0]!), rows: repeatCount(attrs, spans[1]!) };
   }
   return formula;
 }

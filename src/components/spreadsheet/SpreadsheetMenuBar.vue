@@ -7,9 +7,8 @@
 // View — Gridlines (a menuitemcheckbox), SPEC-119's Show formulas (another,
 // with its Ctrl+` shortcut — Control on every platform) and Zoom ▸ the
 // ZOOM_PRESETS ladder, Zoom in and Zoom out. Later specs append menus and
-// items; item test ids
-// keep the `sheet-menu-` prefix. Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
+// items; item test ids keep the `sheet-menu-` prefix. Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import MenuBar from "../MenuBar.vue";
 import MenuCheckItem from "../MenuCheckItem.vue";

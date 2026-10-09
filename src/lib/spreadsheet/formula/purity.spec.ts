@@ -5,7 +5,10 @@
 // package, no other product), touches no `window` or `document`, and builds
 // no code from text — no `eval`, `new Function` or `Function(`. Formula text
 // is data: SPEC-120's evaluator over these modules interprets an AST, and
-// SPEC-120 extends this scan to the files it adds.
+// SPEC-120 extends this scan to the files it adds. And no rewrite is
+// print(parse()) — which would discard the user's whitespace: printFormula is
+// a test oracle and a builder (SPEC-125, SPEC-140), so no runtime module of
+// the spreadsheet layer calls it yet.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,6 +100,14 @@ describe("the formula layer's purity", () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  it("implements no transformation as print(parse()): no runtime spreadsheet module but print.ts mentions printFormula", () => {
+    const callers = runtimeModules(spreadsheetDir)
+      .filter((path) => path !== join(formulaDir, "print.ts"))
+      .filter((path) => /\bprintFormula\b/.test(codeOnly(readFileSync(path, "utf8"))))
+      .map((path) => path.slice(spreadsheetDir.length + 1));
+    expect(callers).toEqual([]);
   });
 
   it("catches what it scans for (the scan itself is not vacuous)", () => {
