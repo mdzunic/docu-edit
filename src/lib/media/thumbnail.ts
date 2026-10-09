@@ -81,10 +81,10 @@ export function pdfPageSizesLabel(pdf: PdfSummary): string {
   return uniform ? pageSizeLabel(first) : `mixed (first ${pageSizeLabel(first)})`;
 }
 
-/** What the PDF card's paper-shaped placeholder shows: the REAL aspect
- * ratio of the first page (rotation applied, so a rotated page reads
- * landscape) plus the page count. No page is ever rasterised — a card never
- * fakes a preview it cannot produce. */
+/** What the PDF card's paper-shaped placeholder shows wherever no first-page
+ * raster is available: the REAL aspect ratio of the first page (rotation
+ * applied, so a rotated page reads landscape) plus the page count. The card
+ * sizes its paper from this ratio, so it is always positive and finite. */
 export function pdfCardPlaceholder(
   pdf: PdfSummary,
 ): { aspectRatio: number; pageCount: number; pageSize: string } {
@@ -93,7 +93,8 @@ export function pdfCardPlaceholder(
   const width = swapped ? first.heightPt : first.widthPt;
   const height = swapped ? first.widthPt : first.heightPt;
   return {
-    aspectRatio: height > 0 ? width / height : 1,
+    // A zero-area page has no shape to be true to: it draws square.
+    aspectRatio: width > 0 && height > 0 ? width / height : 1,
     pageCount: pdf.pageCount,
     pageSize: pageSizeLabel(first),
   };

@@ -1,8 +1,9 @@
-import { test, expect, type Download, type Page } from "@playwright/test";
+import { test, expect, type Download, type Locator, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { equalBytes } from "../src/lib/core/equality";
+import { assembleClassicPdf } from "../src/lib/media/fixtures/build";
 
 // SPEC-107 — images and PDFs in the library: the full journey (AC-41..43).
 // Drop a PDF (spec107-pages.pdf, the app's own buildPdf output) → it opens
@@ -17,7 +18,7 @@ const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const pdfFixture = join(fixturesDir, "spec107-pages.pdf");
 const pngFixture = join(fixturesDir, "spec107-shot.png");
 
-async function dataTransferWithFile(page: Page, name: string, mime: string, path: string) {
+async function dataTransferWithBytes(page: Page, name: string, mime: string, bytes: Uint8Array) {
   return page.evaluateHandle(
     (item) => {
       const dt = new DataTransfer();
@@ -25,8 +26,44 @@ async function dataTransferWithFile(page: Page, name: string, mime: string, path
       dt.items.add(new File([bytes], item.name, { type: item.mime }));
       return dt;
     },
-    { name, mime, base64: readFileSync(path).toString("base64") },
+    { name, mime, base64: Buffer.from(bytes).toString("base64") },
   );
+}
+
+async function dataTransferWithFile(page: Page, name: string, mime: string, path: string) {
+  return dataTransferWithBytes(page, name, mime, readFileSync(path));
+}
+
+/** A one-page PDF of the given size, written by the same classic-xref
+ * assembler the media fixtures use. */
+function onePagePdf(widthPt: number, heightPt: number): Uint8Array {
+  return assembleClassicPdf(
+    "1.7",
+    [
+      "<< /Type /Catalog /Pages 2 0 R >>",
+      "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${widthPt} ${heightPt}] >>`,
+    ],
+    "/Root 1 0 R",
+  );
+}
+
+/** The PDF placeholder's RENDERED paper, measured rather than read off its
+ * style: the first page's real aspect ratio, inside the thumbnail, and sized
+ * from it — the paper spans the thumbnail along whichever axis binds, so its
+ * labels cannot be what sizes it. (An inline aspect-ratio once read right
+ * while the labels' widths stretched the paper off it.) */
+async function expectPaperAtRatio(thumbnail: Locator, ratio: number) {
+  const paper = thumbnail.getByTestId("pdf-paper");
+  await expect(paper).toBeVisible();
+  const outer = (await thumbnail.boundingBox())!;
+  const box = (await paper.boundingBox())!;
+  expect(box.width / box.height).toBeCloseTo(ratio, 2);
+  expect(box.x).toBeGreaterThanOrEqual(outer.x);
+  expect(box.y).toBeGreaterThanOrEqual(outer.y);
+  expect(box.x + box.width).toBeLessThanOrEqual(outer.x + outer.width);
+  expect(box.y + box.height).toBeLessThanOrEqual(outer.y + outer.height);
+  expect(Math.max(box.width / outer.width, box.height / outer.height)).toBeGreaterThan(0.75);
 }
 
 async function waitUntilAppReady(page: Page) {
@@ -145,4 +182,44 @@ test("media documents are first-class: drop, view, thumbnail, zoom, bulk downloa
   await page.getByTestId("filter-pdf").click();
   await expect(page.getByTestId("row-title")).toHaveCount(1);
   await expect(page.getByTestId("row-title")).toHaveText("spec107-pages");
+});
+
+test("with no raster, a PDF card is paper at its first page's real aspect ratio (AC-29)", async ({ page }) => {
+  // The paper placeholder shows wherever no pdf.js raster is available. A
+  // host without Workers is one such place (pdfRasterSupported() is false),
+  // so there the placeholder is the card's final state and can be measured.
+  await page.addInitScript(() => {
+    delete (window as { Worker?: unknown }).Worker;
+  });
+  await page.goto("/");
+  await waitUntilAppReady(page);
+
+  // Portrait (the fixture's US Letter first page), A4 landscape, and a strip
+  // narrower than the labels it carries.
+  const pdfs = [
+    { title: "spec107-pages", bytes: readFileSync(pdfFixture), ratio: 612 / 792, pages: "3 pages", size: "612 × 792 pt" },
+    { title: "spec107-landscape", bytes: onePagePdf(842, 595), ratio: 842 / 595, pages: "1 page", size: "842 × 595 pt" },
+    { title: "spec107-strip", bytes: onePagePdf(300, 900), ratio: 300 / 900, pages: "1 page", size: "300 × 900 pt" },
+  ];
+  for (const pdf of pdfs) {
+    const transfer = await dataTransferWithBytes(page, `${pdf.title}.pdf`, "application/pdf", pdf.bytes);
+    await page.dispatchEvent("body", "drop", { dataTransfer: transfer });
+    await expect(page).toHaveURL(/\/media\/.+/);
+    await page.getByTestId("close-document").click();
+    await expect(page.getByTestId("library")).toBeVisible();
+  }
+
+  await page.getByTestId("view-grid").click();
+  for (const pdf of pdfs) {
+    const thumbnail = rowByTitle(page, pdf.title).getByTestId("row-thumbnail");
+    await expect(thumbnail.getByTestId("pdf-placeholder")).toContainText(pdf.pages);
+    await expect(thumbnail.getByTestId("pdf-placeholder")).toContainText(pdf.size);
+    await expectPaperAtRatio(thumbnail, pdf.ratio);
+  }
+  await expect(page.getByTestId("media-thumbnail")).toHaveCount(0);
+
+  // The quick-look pane sizes the same thumbnail differently; the paper keeps
+  // the page's ratio there too.
+  await rowByTitle(page, "spec107-strip").click();
+  await expectPaperAtRatio(page.getByTestId("quick-look").getByTestId("row-thumbnail"), 300 / 900);
 });

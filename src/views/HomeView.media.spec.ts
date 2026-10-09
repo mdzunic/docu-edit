@@ -212,8 +212,10 @@ describe("honest thumbnails per kind (AC-28, AC-29)", () => {
     const placeholder = wrapper.get('[data-testid="pdf-placeholder"]');
     expect(placeholder.text()).toContain("3 pages");
     expect(placeholder.text()).toContain("612 × 792 pt");
-    const paper = placeholder.get(".thumbnail-pdf-paper").element as HTMLElement;
-    expect(Number(paper.style.aspectRatio)).toBeCloseTo(612 / 792);
+    // The ratio the paper is sized from (jsdom has no layout; e2e measures
+    // the rendered box).
+    const paper = placeholder.get('[data-testid="pdf-paper"]').element as HTMLElement;
+    expect(Number(paper.style.getPropertyValue("--paper-aspect"))).toBeCloseTo(612 / 792);
     expect(wrapper.find('[data-testid="media-thumbnail"]').exists()).toBe(false);
     await vi.waitFor(() => expect(wrapper.get('[data-testid="row-counts"]').text()).toContain("3 pages"));
     wrapper.unmount();
