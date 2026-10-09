@@ -7,7 +7,7 @@ import { bytesToBase64Async, type OpaquePart } from "../core/packageParts";
 import type { DocumentTheme } from "../core/theme";
 import { colToLetters } from "./address";
 import { SpreadsheetOpenError } from "./errors";
-import { MAX_WORKBOOK_CELLS, type CellStyle, type PackageVariant, type Sheet } from "./model";
+import { MAX_WORKBOOK_CELLS, type CalcSettings, type CellStyle, type PackageVariant, type Sheet } from "./model";
 
 export interface ParsedSpreadsheet {
   sheets: Sheet[];
@@ -22,6 +22,8 @@ export interface ParsedSpreadsheet {
   packageVariant?: PackageVariant;
   opaque: OpaquePart[];
   properties: DocumentProperties;
+  /** SPEC-120: the file's calculation settings (absent: none set). */
+  calc?: CalcSettings;
 }
 
 /** Counts stored cells across every sheet of one read against

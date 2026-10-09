@@ -48,7 +48,10 @@
 // - `table:null-date` → the date system (see serial.ts); settings.xml
 //   (ods/settings.ts) → the active table and each table's frozen panes,
 //   scroll position, gridlines, zero display, zoom and cursor; meta.xml →
-//   properties.
+//   properties;
+// - SPEC-120: `table:calculation-settings` (case sensitivity, regular
+//   expressions, wildcards, whole-cell matching, `table:iteration`) and
+//   settings.xml's AutoCalculate → `calc`, read only.
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -56,7 +59,7 @@ import { XmlParseError } from "../../core/xml";
 import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { unzip, ZipError } from "../../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
-import { toCellError, type CellFont, type CellStyle, type CellValue, type Sheet, type TextRun } from "../model";
+import { toCellError, type CalcSettings, type CellFont, type CellStyle, type CellValue, type Sheet, type TextRun } from "../model";
 import {
   addressText,
   CellBudget,
@@ -278,6 +281,31 @@ interface OdsContent {
   prefix: string;
   suffix: string;
   dates: { dateSystem: "1900" | "1904"; odsNullDate?: string };
+  /** SPEC-120: what `table:calculation-settings` says (ODF's defaults when
+   * it, or an attribute, is absent). */
+  calc: CalcSettings;
+}
+
+/** SPEC-120 "Calculation settings" from `table:calculation-settings` and its
+ * `table:iteration`, ODF's defaults filling what is absent: case-sensitive
+ * true, regular expressions true, wildcards false, whole cell true. Wildcards
+ * win over regular expressions (LibreOffice offers one or the other). */
+function odsCalcSettings(attrs: readonly XmlScanAttribute[] | undefined, iterationStatus: string | undefined): CalcSettings {
+  const attr = (local: string): string | undefined => (attrs ? scanAttr(attrs, local, TABLE_NAMESPACE) : undefined);
+  const calc: CalcSettings = {};
+  if (attr("case-sensitive") !== "false") {
+    calc.caseSensitive = true;
+  }
+  if (attr("use-wildcards") !== "true") {
+    calc.criteria = attr("use-regular-expressions") === "false" ? "plain" : "regex";
+  }
+  if (attr("search-criteria-must-apply-to-whole-cell") === "false") {
+    calc.partialCellMatch = true;
+  }
+  if (iterationStatus === "enable") {
+    calc.iterate = true;
+  }
+  return calc;
 }
 
 /** Reads content.xml, `sheetStyles` being styles.xml's declarations.
@@ -289,6 +317,8 @@ export function readOdsContent(
 ): OdsContent | null {
   const sheets: Sheet[] = [];
   let dates: OdsContent["dates"] = { dateSystem: "1900" };
+  let calcAttrs: readonly XmlScanAttribute[] | undefined;
+  let iterationStatus: string | undefined;
   let depth = 0;
   let spreadsheetLevel = -1;
   let firstTableStart = -1;
@@ -483,6 +513,10 @@ export function readOdsContent(
       } else if (event.ns === TABLE_NAMESPACE) {
         if (event.local === "null-date" && spreadsheetLevel > 0 && table === null) {
           dates = dateSystemOf(scanAttr(event.attrs, "date-value", TABLE_NAMESPACE) ?? DEFAULT_NULL_DATE);
+        } else if (event.local === "calculation-settings" && level === spreadsheetLevel + 1 && table === null) {
+          calcAttrs = event.attrs;
+        } else if (event.local === "iteration" && spreadsheetLevel > 0 && table === null) {
+          iterationStatus = scanAttr(event.attrs, "status", TABLE_NAMESPACE);
         } else if (event.local === "table" && table === null && level === spreadsheetLevel + 1) {
           let start = event.start;
           if (previousTableEnd >= 0) {
@@ -594,6 +628,7 @@ export function readOdsContent(
     prefix: xml.slice(0, firstTableStart),
     suffix: xml.slice(previousTableEnd),
     dates,
+    calc: odsCalcSettings(calcAttrs, iterationStatus),
   };
 }
 
@@ -679,6 +714,13 @@ export async function parseOds(
   }
   if (detected.packageVariant) {
     parsed.packageVariant = detected.packageVariant;
+  }
+  const calc: CalcSettings = { ...content.calc };
+  if (settings?.autoCalculate === false) {
+    calc.manual = true;
+  }
+  if (Object.keys(calc).length > 0) {
+    parsed.calc = calc;
   }
   return parsed;
 }

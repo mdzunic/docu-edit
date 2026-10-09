@@ -99,9 +99,9 @@ export const CALCULATING_STATUS_DELAY_MS = 250;
  * the rows, then over each changed row's cells): the keys of every cell an
  * edit touched, row-major. */
 export function changedCellsBetween(sheetId: string, before: Row[], after: Row[]): CellKey[] {
-  const window = windowOf(before, after);
-  const beforeRows = new Map(window.beforeMid.map((row) => [row.index, row] as const));
-  const afterRows = new Map(window.afterMid.map((row) => [row.index, row] as const));
+  const rows = windowOf(before, after);
+  const beforeRows = new Map(rows.beforeMid.map((row) => [row.index, row] as const));
+  const afterRows = new Map(rows.afterMid.map((row) => [row.index, row] as const));
   const indices = [...new Set([...beforeRows.keys(), ...afterRows.keys()])].toSorted((a, b) => a - b);
   const keys: CellKey[] = [];
   for (const index of indices) {

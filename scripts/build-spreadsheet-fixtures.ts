@@ -35,8 +35,18 @@
 //                             oooc: and msoxl: formulas, unions,
 //                             intersections, an inline array, a matrix and a
 //                             repeated formula cell
-// spec116-numbers.xlsx is NOT generated here: Apple Numbers exported it
-// (scripts/make-numbers-fixture.applescript, e2e/fixtures/spec116-numbers.md).
+// - spec120-calc.xlsx       — SPEC-120, Excel-shaped: a wrong cached SUM,
+//                             TODAY(), an add-in call, the conformance rows
+//                             and a two-cell cycle on "Loop"
+// - spec120-fullcalc.xlsx   — SPEC-120, XlsxWriter-shaped: fullCalcOnLoad="1"
+//                             and every formula cached 0
+// - spec120-manual.xlsx     — SPEC-120, Excel-shaped: calcMode="manual"
+// - spec120-calc.ods        — SPEC-120, LibreOffice-shaped: case-sensitive,
+//                             wildcards, AutoCalculate, uncached formulas
+// spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
+// Numbers exported them (scripts/make-numbers-fixture.applescript,
+// scripts/make-numbers-calc-fixture.applescript and their notes in
+// e2e/fixtures/).
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -54,6 +64,10 @@ import {
   buildSpec118GeneratedXlsxBytes,
   buildSpec119FormulasOdsBytes,
   buildSpec119FormulasXlsxBytes,
+  buildSpec120CalcOdsBytes,
+  buildSpec120CalcXlsxBytes,
+  buildSpec120FullCalcXlsxBytes,
+  buildSpec120ManualXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -72,6 +86,10 @@ writeFileSync(join(fixturesDir, "spec118-generated.xlsx"), await buildSpec118Gen
 writeFileSync(join(fixturesDir, "spec118-formats.ods"), await buildSpec118FormatsOdsBytes());
 writeFileSync(join(fixturesDir, "spec119-formulas.xlsx"), await buildSpec119FormulasXlsxBytes());
 writeFileSync(join(fixturesDir, "spec119-formulas.ods"), await buildSpec119FormulasOdsBytes());
+writeFileSync(join(fixturesDir, "spec120-calc.xlsx"), await buildSpec120CalcXlsxBytes());
+writeFileSync(join(fixturesDir, "spec120-fullcalc.xlsx"), await buildSpec120FullCalcXlsxBytes());
+writeFileSync(join(fixturesDir, "spec120-manual.xlsx"), await buildSpec120ManualXlsxBytes());
+writeFileSync(join(fixturesDir, "spec120-calc.ods"), await buildSpec120CalcOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

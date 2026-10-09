@@ -31,7 +31,9 @@
 //   column spans, default sizes, merges, the tab colour and the first sheet
 //   view (frozen pane, gridlines, zeros, zoom, top-left cell, selection);
 // - `workbookPr@date1904`, `bookViews/workbookView@activeTab`,
-//   `docProps/core.xml`.
+//   `docProps/core.xml`;
+// - SPEC-120: `calcPr@fullCalcOnLoad`, `@calcMode="manual"` and `@iterate`
+//   → `calc` (read only: the element stays in the retained part, verbatim).
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -47,7 +49,7 @@ import type { DocumentProperties } from "../../core/documentProperties";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, maxDigitWidthPx } from "../geometry";
 import { ImpliedFormatStyles } from "../impliedFormats";
-import type { Sheet } from "../model";
+import type { CalcSettings, Sheet } from "../model";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
 import { isSpreadsheetMl, readXlsxStyles } from "./styles";
@@ -111,9 +113,35 @@ interface WorkbookInfo {
   sheets: WorkbookSheet[];
   date1904: boolean;
   activeTab: number;
+  /** SPEC-120: calcPr's fullCalcOnLoad, calcMode and iterate. */
+  calc: CalcSettings;
   sharedStringsPath: string | undefined;
   themePath: string | undefined;
   stylesPath: string | undefined;
+}
+
+/** An xsd:boolean attribute's truth ("1" or "true"). */
+function isTrue(value: string | null): boolean {
+  return value === "1" || value === "true";
+}
+
+/** SPEC-120 "Calculation settings": `calcPr@fullCalcOnLoad`, `@calcMode`
+ * ("manual"; "auto" and "autoNoTable" are automatic) and `@iterate`. */
+function readCalcPr(calcPr: Element | undefined): CalcSettings {
+  const calc: CalcSettings = {};
+  if (!calcPr) {
+    return calc;
+  }
+  if (isTrue(calcPr.getAttribute("fullCalcOnLoad"))) {
+    calc.fullCalcOnLoad = true;
+  }
+  if (calcPr.getAttribute("calcMode") === "manual") {
+    calc.manual = true;
+  }
+  if (isTrue(calcPr.getAttribute("iterate"))) {
+    calc.iterate = true;
+  }
+  return calc;
 }
 
 /** The workbook part (see WorkbookInfo). */
@@ -167,6 +195,7 @@ function readWorkbook(parts: Map<string, Uint8Array>, workbookPath: string): Wor
     sheets,
     date1904: date1904Attr === "1" || date1904Attr === "true",
     activeTab: Number.isFinite(activeTab) ? activeTab : 0,
+    calc: readCalcPr(childElements(root, "calcPr")[0]),
     sharedStringsPath: target("/sharedStrings"),
     themePath: target("/theme"),
     stylesPath: target("/styles"),
@@ -280,6 +309,9 @@ export async function parseXlsx(
   }
   if (detected.packageVariant) {
     parsed.packageVariant = detected.packageVariant;
+  }
+  if (Object.keys(workbook.calc).length > 0) {
+    parsed.calc = workbook.calc;
   }
   return parsed;
 }

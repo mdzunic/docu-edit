@@ -9,7 +9,8 @@
 // cells. (The layout, view and style reading itself is in sheetXml.spec.ts
 // and styles.spec.ts.) SPEC-119 adds formulas: every "Reading formulas from
 // .xlsx" row over spec119-formulas.xlsx and synthetic sheets, and the
-// Numbers export's formula reading without formulaUnparsed.
+// Numbers export's formula reading without formulaUnparsed. SPEC-120 adds the
+// calculation settings calcPr gives `calc`.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -19,6 +20,9 @@ import {
   buildMiniBookXlsxBytes,
   buildSpec1904XlsxBytes,
   buildSpec119FormulasXlsxBytes,
+  buildSpec120CalcXlsxBytes,
+  buildSpec120FullCalcXlsxBytes,
+  buildSpec120ManualXlsxBytes,
   buildSpecMacrosXlsmBytes,
   buildSpecTemplateXltxBytes,
   FIXTURE_WORKBOOK_AUTHOR,
@@ -499,5 +503,32 @@ describe("formulas (SPEC-119 \"Reading formulas from .xlsx\")", () => {
       dynamicArray: true,
       cm: 1,
     });
+  });
+});
+
+describe('calculation settings (SPEC-120 "Calculation settings")', () => {
+  async function calcOf(calcPr: string) {
+    return (await parseXlsx(new Uint8Array(0), synthetic({ sheets: [{ name: "S" }], workbookPr: calcPr }))).calc;
+  }
+
+  it("reads calcPr@fullCalcOnLoad, @calcMode=\"manual\" and @iterate as xsd:booleans", async () => {
+    expect(await calcOf(`<calcPr calcId="191029" fullCalcOnLoad="1"/>`)).toEqual({ fullCalcOnLoad: true });
+    expect(await calcOf(`<calcPr calcId="191029" fullCalcOnLoad="true"/>`)).toEqual({ fullCalcOnLoad: true });
+    expect(await calcOf(`<calcPr calcId="191029" calcMode="manual"/>`)).toEqual({ manual: true });
+    expect(await calcOf(`<calcPr calcId="191029" iterate="1" iterateCount="100"/>`)).toEqual({ iterate: true });
+    expect(await calcOf(`<calcPr fullCalcOnLoad="1" calcMode="manual" iterate="true"/>`)).toEqual({ fullCalcOnLoad: true, manual: true, iterate: true });
+  });
+
+  it("leaves calc out when calcPr is absent or says nothing it models — autoNoTable and auto are automatic", async () => {
+    expect(await calcOf("")).toBeUndefined();
+    expect(await calcOf(`<calcPr calcId="191029"/>`)).toBeUndefined();
+    expect(await calcOf(`<calcPr calcId="191029" calcMode="autoNoTable" fullCalcOnLoad="0"/>`)).toBeUndefined();
+    expect(await calcOf(`<calcPr calcMode="auto" iterate="0"/>`)).toBeUndefined();
+  });
+
+  it("reads the SPEC-120 fixtures: spec120-calc.xlsx none, spec120-fullcalc.xlsx fullCalcOnLoad, spec120-manual.xlsx manual", async () => {
+    expect((await parseXlsx(await buildSpec120CalcXlsxBytes())).calc).toBeUndefined();
+    expect((await parseXlsx(await buildSpec120FullCalcXlsxBytes())).calc).toEqual({ fullCalcOnLoad: true });
+    expect((await parseXlsx(await buildSpec120ManualXlsxBytes())).calc).toEqual({ manual: true });
   });
 });

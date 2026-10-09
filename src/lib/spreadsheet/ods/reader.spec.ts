@@ -7,17 +7,21 @@
 // formulas from .ods" rule over spec119-formulas.ods and synthetic content —
 // the dialect prefix resolved against content.xml's declarations, matrix
 // spans, repetitions copying the text unshifted, no value type → null.
+// SPEC-120 adds the calculation settings: table:calculation-settings with
+// ODF's defaults, table:iteration and settings.xml's AutoCalculate → `calc`.
 import { describe, expect, it } from "vitest";
 import { getCell, parseA1, usedRange } from "../address";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import {
   buildMiniBookOdsBytes,
   buildSpec119FormulasOdsBytes,
+  buildSpec120CalcOdsBytes,
   buildSpecWideOdsBytes,
   FIXTURE_WORKBOOK_AUTHOR,
   MINI_BOOK_ODS,
   SPEC116_WIDE,
   SPEC119_FORMULAS_ODS,
+  SPEC120_CALC_ODS,
 } from "../fixtures/build";
 import type { Cell, Sheet } from "../model";
 import { dateToSerial } from "../serial";
@@ -433,5 +437,50 @@ describe("formulas (SPEC-119 \"Reading formulas from .ods\")", () => {
     expect(cellAt(sheets[1]!, "D2")?.formula).toBe("B2*C2");
     expect(cellAt(sheets[1]!, "B18")?.formula).toBe('CONCATENATE(A2," x",B2)');
     expect(cellAt(sheets[2]!, "B1")?.formula).toBe("SUM(Inventory!D2:D6)");
+  });
+});
+
+describe('calculation settings (SPEC-120 "Calculation settings")', () => {
+  const settingsPart = (autoCalculate: boolean): string =>
+    `<office:document-settings ${NAMESPACES}><office:settings><config:config-item-set config:name="ooo:configuration-settings">` +
+    `<config:config-item config:name="AutoCalculate" config:type="boolean">${autoCalculate}</config:config-item>` +
+    `</config:config-item-set></office:settings></office:document-settings>`;
+
+  async function calcOf(declarations: string, autoCalculate?: boolean) {
+    const parts = synthetic({ body: table("T", row(float(1))), declarations });
+    if (autoCalculate !== undefined) {
+      parts.set("settings.xml", encoder.encode(settingsPart(autoCalculate)));
+    }
+    return (await parseOds(new Uint8Array(0), parts)).calc;
+  }
+
+  it("applies ODF's defaults when table:calculation-settings is absent: case-sensitive, regular expressions", async () => {
+    expect(await calcOf("")).toEqual({ caseSensitive: true, criteria: "regex" });
+  });
+
+  it("reads LibreOffice's explicit attributes: wildcards win, plain when neither is on, case and whole-cell matching", async () => {
+    const settings = (attrs: string): string => `<table:calculation-settings ${attrs}/>`;
+    expect(await calcOf(settings(`table:use-regular-expressions="false" table:use-wildcards="true"`))).toEqual({ caseSensitive: true });
+    expect(await calcOf(settings(`table:case-sensitive="false" table:use-regular-expressions="false" table:use-wildcards="true"`))).toBeUndefined();
+    expect(await calcOf(settings(`table:case-sensitive="false" table:use-regular-expressions="false"`))).toEqual({ criteria: "plain" });
+    expect(await calcOf(settings(`table:case-sensitive="false" table:use-wildcards="true" table:search-criteria-must-apply-to-whole-cell="false"`))).toEqual({
+      partialCellMatch: true,
+    });
+  });
+
+  it("reads table:iteration's status and settings.xml's AutoCalculate", async () => {
+    const iterating = `<table:calculation-settings table:case-sensitive="false" table:use-wildcards="true"><table:iteration table:status="enable" table:steps="100"/></table:calculation-settings>`;
+    expect(await calcOf(iterating)).toEqual({ iterate: true });
+    const plain = `<table:calculation-settings table:case-sensitive="false" table:use-wildcards="true"/>`;
+    expect(await calcOf(plain, false)).toEqual({ manual: true });
+    expect(await calcOf(plain, true)).toBeUndefined();
+  });
+
+  it("reads spec120-calc.ods: case-sensitive with wildcards, AutoCalculate on, two formula cells without cached values", async () => {
+    const parsed = await parseOds(await buildSpec120CalcOdsBytes());
+    expect(parsed.calc).toEqual({ caseSensitive: true });
+    const sheet = parsed.sheets[0]!;
+    expect(cellAt(sheet, "A4")).toMatchObject({ formula: SPEC120_CALC_ODS.formulas.A4, value: null });
+    expect(cellAt(sheet, "B4")).toMatchObject({ formula: SPEC120_CALC_ODS.formulas.B4, value: null });
   });
 });

@@ -8,7 +8,9 @@
 // SPEC-116 reader stored reopens with its styles, sizes, merges and views.
 // SPEC-119 moves it to 4 (its step throws "SPEC-119 upgrade: …"), and a
 // record SPEC-118's reader stored re-reads its clean sheets and gains its
-// formulas.
+// formulas. SPEC-120 moves it to 5 (its step throws "SPEC-120 upgrade: …"): a
+// record SPEC-119's reader stored gains its calculation settings, and a
+// stored forceFullCalcOnLoad survives the re-read.
 import { afterEach, describe, expect, it } from "vitest";
 import { getCell } from "./address";
 import {
@@ -21,6 +23,10 @@ import {
   buildSpec118GeneratedXlsxBytes,
   buildSpec119FormulasOdsBytes,
   buildSpec119FormulasXlsxBytes,
+  buildSpec120CalcOdsBytes,
+  buildSpec120CalcXlsxBytes,
+  buildSpec120FullCalcXlsxBytes,
+  buildSpec120ManualXlsxBytes,
 } from "./fixtures/build";
 import type { Sheet, SpreadsheetModel } from "./model";
 import {
@@ -122,19 +128,22 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3 and SPEC-119 to 4, with one contiguous step each (from 1, 2, 3)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(4);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4 and SPEC-120 to 5, with one contiguous step each (from 1, 2, 3, 4)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(5);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4]);
   });
 
-  it("SPEC-117's, SPEC-118's and SPEC-119's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
+  it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
     const model = await readSpreadsheetBytes(await buildMiniBookXlsxBytes(), "xlsx", "mini-book");
-    const [spec117, spec118, spec119] = READER_UPGRADES;
+    const [spec117, spec118, spec119, spec120] = READER_UPGRADES;
     for (const step of [spec117!, spec118!]) {
       expect(() => step.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow("unreachable: no sheet is dirty before SPEC-121");
     }
     expect(() => spec119!.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow(
       new Error("SPEC-119 upgrade: a sheet cannot be dirty before SPEC-121"),
+    );
+    expect(() => spec120!.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow(
+      new Error("SPEC-120 upgrade: a sheet cannot be dirty before SPEC-121"),
     );
   });
 
@@ -296,5 +305,42 @@ describe("reader versions", () => {
     expect(getCell(upgraded.sheets[1]!, 0, 0)?.value).toBe("edited");
     expect(getCell(upgraded.sheets[0]!, 1, 1)?.value).toBe("Revenue");
     expect(upgraded.sheets[0]!.id).toBe(stored.sheets[0]!.id);
+  });
+});
+
+/** A record exactly as SPEC-119's reader stored it (version 4): no `calc`. */
+async function spec119Record(build: () => Promise<Uint8Array>, format: "xlsx" | "ods"): Promise<SpreadsheetModel> {
+  const read = JSON.parse(JSON.stringify(await readSpreadsheetBytes(await build(), format, "Stored by SPEC-119"))) as SpreadsheetModel;
+  const { calc: _calc, ...model } = read;
+  return { ...model, readerVersion: 4, sheets: model.sheets.map((sheet, index) => ({ ...sheet, id: `stored-sheet-${index}` })) };
+}
+
+describe("SPEC-120's calculation settings in stored records", () => {
+  for (const [format, build, calc] of [
+    ["xlsx", buildSpec120FullCalcXlsxBytes, { fullCalcOnLoad: true }],
+    ["xlsx", buildSpec120ManualXlsxBytes, { manual: true }],
+    ["ods", buildSpec120CalcOdsBytes, { caseSensitive: true }],
+  ] as const) {
+    it(`a ${format} workbook (${build.name}) stored by SPEC-119's reader re-reads its clean sheets and gains its calculation settings`, async () => {
+      const stored = await spec119Record(build, format);
+      expect(stored.calc).toBeUndefined();
+      const upgraded = await upgradeSpreadsheetModel(stored);
+      expect(upgraded).not.toBe(stored);
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+      expect(upgraded.calc).toEqual(calc);
+      expect(upgraded.id).toBe(stored.id);
+      expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(stored.sheets.map((sheet) => sheet.id));
+    });
+  }
+
+  it("a fresh read of spec120-calc.xlsx has no calc (its calcPr sets nothing modelled) and no forceFullCalcOnLoad", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec120CalcXlsxBytes(), "xlsx", "spec120-calc");
+    expect(model.calc).toBeUndefined();
+    expect(model.forceFullCalcOnLoad).toBeUndefined();
+  });
+
+  it("keeps a stored model's forceFullCalcOnLoad through the re-read — this product never clears it", async () => {
+    const stored: SpreadsheetModel = { ...(await spec119Record(buildSpec120CalcXlsxBytes, "xlsx")), forceFullCalcOnLoad: true };
+    expect((await upgradeSpreadsheetModel(stored)).forceFullCalcOnLoad).toBe(true);
   });
 });

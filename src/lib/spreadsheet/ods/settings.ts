@@ -25,6 +25,10 @@
 //   (whole page, page width) are not a percentage and are left alone.
 // - `CursorPositionX`/`Y` → `selection`: that one cell, active.
 // Counts and positions are clamped into the 1,048,576 × 16,384 grid.
+// SPEC-120 also reads `ooo:configuration-settings`' AutoCalculate item — a
+// boolean LibreOffice writes into every document's settings.xml (its
+// document-settings property of that name) — false meaning the workbook was
+// set to calculate manually.
 import type { CellRef } from "../address";
 import { MAX_COLS, MAX_ROWS } from "../model";
 import type { SheetSelection } from "../selection";
@@ -46,6 +50,10 @@ export interface OdsTableView {
 export interface OdsSettings {
   /** The view's `ActiveTable` (a table name). */
   activeTable?: string;
+  /** SPEC-120: `ooo:configuration-settings`' AutoCalculate — the document's
+   * own "AutoCalculate" (Data ▸ Calculate ▸ AutoCalculate), which
+   * LibreOffice persists per document. Absent when the file does not say. */
+  autoCalculate?: boolean;
   /** Each table's view fields, by table name. */
   tables: Map<string, OdsTableView>;
   /** The view-level items alone — what a table with no entry of its own
@@ -140,11 +148,14 @@ export function readOdsSettings(xml: string): OdsSettings {
   const doc = parseOdsPart(xml);
   const settings: OdsSettings = { tables: new Map(), defaultView: {} };
 
-  // The first ActiveTable item in document order (where SPEC-116 found it).
+  // The first ActiveTable item in document order (where SPEC-116 found it),
+  // and the first AutoCalculate item (SPEC-120).
   for (const item of Array.from(doc.getElementsByTagNameNS(CONFIG_NAMESPACE, "config-item"))) {
-    if (configName(item) === "ActiveTable") {
+    const name = configName(item);
+    if (name === "ActiveTable" && settings.activeTable === undefined) {
       settings.activeTable = item.textContent ?? "";
-      break;
+    } else if (name === "AutoCalculate" && settings.autoCalculate === undefined) {
+      settings.autoCalculate = (item.textContent ?? "").trim() !== "false";
     }
   }
 
