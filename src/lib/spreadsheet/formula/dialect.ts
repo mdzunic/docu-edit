@@ -383,7 +383,12 @@ function odfReference(inner: string): ReferenceNode | null {
       ref.sheetEnd = second.sheet;
     }
   }
-  ref.end = second.address.part;
+  const [a, b] = [first.address.part, second.address.part];
+  const sameCell = a.row === b.row && a.col === b.col && a.rowAbs === b.rowAbs && a.colAbs === b.colAbs;
+  // A 3-D single cell can only be written as a range in OpenFormula.
+  if (!(ref.sheetEnd !== undefined && first.address.type === "cell" && sameCell)) {
+    ref.end = b;
+  }
   return ref;
 }
 
@@ -547,11 +552,12 @@ function odsPart(part: RefPart): string {
   return text;
 }
 
-/** A reference as an OpenFormula bracket reference. */
+/** A reference as an OpenFormula bracket reference — a whole column or row,
+ * and a 3-D single cell, as a range (`[$Jan.B5:$Mar.B5]`). */
 function odsReference(ref: ReferenceNode): string {
   const sheet = ref.sheet === undefined ? "" : odsSheet(ref.sheet);
   const whole = ref.start.row === undefined || ref.start.col === undefined;
-  const end = ref.end ?? (whole ? ref.start : undefined);
+  const end = ref.end ?? (whole || ref.sheetEnd !== undefined ? ref.start : undefined);
   let text = `${sheet}.${odsPart(ref.start)}`;
   if (end) {
     text += `:${ref.sheetEnd === undefined ? "" : odsSheet(ref.sheetEnd)}.${odsPart(end)}`;
