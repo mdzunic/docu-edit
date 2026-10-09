@@ -5,8 +5,10 @@
 // pattern, and Ctrl+PageUp/PageDown from the grid); the DOM-virtualised
 // read-only grid — its ARIA, headers, the General display and alignment, and
 // a million-row sheet's bounded DOM; foreign sheets; the reader-version
-// upgrade path through the view; and SPEC-119's wiring — the formula bar's
-// text and View ▸ Show formulas / Ctrl+` through the real view. Same harness as MediaView.spec.ts: fresh
+// upgrade path through the view; SPEC-119's wiring — the formula bar's
+// text and View ▸ Show formulas / Ctrl+` through the real view; and SPEC-120's
+// — the open-time policy, the circular status, the Data menu, F9 and stale
+// cells. Same harness as MediaView.spec.ts: fresh
 // modules per test (the store is module state), idb mocked, the view mounted
 // at its route through a memory router — attached to the document so focus
 // is real.
@@ -27,7 +29,7 @@ import type {
   SpreadsheetModel,
 } from "../lib/spreadsheet/model";
 
-type FixtureName = "mini-book.xlsx" | "mini-book.ods" | "spec116-macros.xlsm" | "spec116-template.xltx" | "spec119-formulas.xlsx";
+type FixtureName = "mini-book.xlsx" | "mini-book.ods" | "spec116-macros.xlsm" | "spec116-template.xltx" | "spec119-formulas.xlsx" | "spec120-calc.xlsx";
 
 /** What a test reads off a rendered wrapper (VueWrapper and DOMWrapper alike). */
 interface Finder {
@@ -76,6 +78,7 @@ async function loadModules() {
     "spec116-macros.xlsm": fixtures.buildSpecMacrosXlsmBytes,
     "spec116-template.xltx": fixtures.buildSpecTemplateXltxBytes,
     "spec119-formulas.xlsx": fixtures.buildSpec119FormulasXlsxBytes,
+    "spec120-calc.xlsx": fixtures.buildSpec120CalcXlsxBytes,
   };
   /** A fixture read as the open funnel reads it, titled by its base name. */
   async function readFixture(name: FixtureName) {
@@ -682,5 +685,52 @@ describe("SpreadsheetView formulas (SPEC-119)", () => {
     expect(grid.attributes("aria-label")).toBe("Jan");
     expect(grid.attributes("data-show-formulas")).toBe("true");
     expect(grid.get('[data-ref="C2"]').text()).toBe("=B2*2");
+  });
+});
+
+describe("SpreadsheetView recalculation (SPEC-120)", () => {
+  afterEach(async () => {
+    const { setClock } = await import("../lib/core/clock");
+    setClock(null);
+  });
+
+  it("trusts the cache at open, recomputes TODAY once idle, reports the cycle, and recalculates on F9 and Data ▸ Recalculate", async () => {
+    const { setClock } = await import("../lib/core/clock");
+    setClock(new Date(2026, 9, 8, 9, 30));
+    const { store, readFixture, mountSheets } = await loadModules();
+    const { model } = await readFixture("spec120-calc.xlsx");
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+    const grid = wrapper.get('[data-testid="spreadsheet-grid"]');
+    const text = (ref: string) => grid.get(`[data-ref="${ref}"]`).text();
+    expect(text("B2")).toBe("999");
+    await vi.waitFor(() => expect(text("D2")).toBe("10/8/2026"));
+    await vi.waitFor(() => expect(wrapper.get('[data-testid="sheet-status-circular"]').text()).toBe("Circular reference: Loop!A1"));
+    expect(text("B2")).toBe("999");
+    expect(wrapper.find('[data-testid="sheet-status-calculating"]').exists()).toBe(false);
+
+    // The Data menu, after View: a separator, then Recalculate with its F9 hint.
+    const titles = wrapper.get('[role="menubar"]').findAll("[data-menu-title]").map((title) => title.text());
+    expect(titles).toEqual(["File", "View", "Data"]);
+    await wrapper.get('[data-testid="menu-title-data"]').trigger("click");
+    const recalculate = wrapper.get('[data-testid="sheet-menu-recalculate"]');
+    expect(recalculate.text()).toContain("Recalculate");
+    expect(recalculate.text()).toContain("F9");
+    expect(recalculate.element.previousElementSibling?.tagName).toBe("HR");
+
+    // F9: every formula recalculated; the add-in call keeps its value, stale.
+    grid.element.dispatchEvent(new KeyboardEvent("keydown", { key: "F9", bubbles: true }));
+    await flushPromises();
+    await vi.waitFor(() => expect(text("B2")).toBe("6"));
+    const addIn = grid.get('[data-ref="E2"]');
+    expect(addIn.text()).toBe("42");
+    expect(addIn.attributes("data-stale")).toBe("true");
+    expect(addIn.attributes("title")).toBe("This value couldn't be recalculated here — _XLL.CUSTOM isn't supported yet");
+    expect(grid.get('[data-ref="B2"]').attributes("data-stale")).toBeUndefined();
+
+    // The menu item runs the same full pass (nothing left to change).
+    await recalculate.trigger("click");
+    await flushPromises();
+    expect(text("B2")).toBe("6");
   });
 });

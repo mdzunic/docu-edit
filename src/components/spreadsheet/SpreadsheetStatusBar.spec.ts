@@ -59,6 +59,21 @@ describe("SpreadsheetStatusBar", () => {
     expect(wrapper.emitted("set-zoom")).toEqual([[150]]);
     expect(wrapper.emitted("apply-zoom")).toEqual([["85%"]]);
   });
+
+  it("SPEC-120: shows the circular-reference warning and Calculating… only while they apply, after the aggregates", async () => {
+    const wrapper = mount(SpreadsheetStatusBar, { props: { count: "Count: 3" } });
+    expect(wrapper.find('[data-testid="sheet-status-circular"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="sheet-status-calculating"]').exists()).toBe(false);
+    await wrapper.setProps({ circular: "Circular reference: Loop!A1", calculating: true });
+    expect(wrapper.get('[data-testid="sheet-status-circular"]').text()).toBe("Circular reference: Loop!A1");
+    expect(wrapper.get('[data-testid="sheet-status-calculating"]').text()).toBe("Calculating…");
+    const regions = wrapper.findAll('[role="status"]');
+    expect(regions).toHaveLength(2);
+    expect(regions[1]!.attributes("aria-live")).toBe("polite");
+    await wrapper.setProps({ circular: "", calculating: false });
+    expect(wrapper.find('[data-testid="sheet-status-circular"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="sheet-status-calculating"]').exists()).toBe(false);
+  });
 });
 
 // SPEC-118: Sum and Average take the number format of the selection's first
