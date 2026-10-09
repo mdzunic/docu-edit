@@ -16,12 +16,19 @@
 // step in order. The store writes the upgraded record back once. (The same
 // move SPEC-079 made with upgradePresentationModel, made general up front
 // because this queue grows the readers fourteen times.)
+//
+// Version history:
+// 1 — SPEC-116: values, rich-text runs, sheets, the date system.
+// 2 — SPEC-117: cell styles (xl/styles.xml, the ODS automatic and common
+//     styles), the theme, column/row sizes, merges, frozen panes, hidden rows
+//     and columns, view settings, style-only cells and ODS covered cells.)
 import { decodedPartBytes } from "../core/packageParts";
 import type { Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
 import { buildPreview } from "./preview";
+import { defaultStyles } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 1;
+export const SPREADSHEET_READER_VERSION = 2;
 
 export interface ReaderUpgrade {
   from: number; // upgrades a record at `from` to `from + 1`
@@ -30,7 +37,19 @@ export interface ReaderUpgrade {
   upgradeDirtySheet(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>): void;
 }
 
-export const READER_UPGRADES: ReaderUpgrade[] = [];
+export const READER_UPGRADES: ReaderUpgrade[] = [
+  {
+    // SPEC-117 (1 → 2). A record behind this version is re-read whole from
+    // `opaque`: no sheet can be dirty before SPEC-121 lands, and every read
+    // path upgrades. The step exists to keep READER_UPGRADES contiguous, and
+    // throws so the impossible case is loud instead of silently merging half
+    // a style table into an edited sheet.
+    from: 1,
+    upgradeDirtySheet() {
+      throw new Error("unreachable: no sheet is dirty before SPEC-121");
+    },
+  },
+];
 
 /** The title a workbook gets when nothing names it. */
 export const DEFAULT_SPREADSHEET_TITLE = "Untitled workbook";
@@ -50,7 +69,15 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
     activeSheetIndex: parsed.activeSheetIndex,
     dateSystem: parsed.dateSystem,
     opaque: parsed.opaque,
+    styles: parsed.styles.length > 0 ? parsed.styles : defaultStyles(),
+    defaultStyleId: 0,
   };
+  if (parsed.theme !== undefined) {
+    model.theme = parsed.theme;
+  }
+  if (parsed.indexedColors !== undefined) {
+    model.indexedColors = parsed.indexedColors;
+  }
   if (parsed.packageVariant !== undefined) {
     model.packageVariant = parsed.packageVariant;
   }

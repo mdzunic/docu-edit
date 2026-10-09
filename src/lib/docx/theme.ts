@@ -10,6 +10,7 @@
 // here beyond the wire mapping.
 import { parseXml } from "../core/xml";
 import { THEME_COLOR_SLOTS } from "../core/theme";
+import { readThemePart, themeSlotColorOf } from "../core/themeDrawingMl";
 import type { DocumentTheme, ThemeColorRef, ThemeColorSlot } from "../core/theme";
 import type { DocTheme } from "../documentModel";
 
@@ -155,90 +156,15 @@ export function fontThemeFromAttr(value: string | null | undefined): "major" | "
 
 // --- the theme part: read (AC-25, AC-26) -------------------------------------
 
-function firstByLocalName(parent: Element, localName: string): Element | undefined {
-  for (const child of Array.from(parent.children)) {
-    if (child.localName === localName && child.namespaceURI === DRAWINGML_NS) {
-      return child;
-    }
-  }
-  return undefined;
-}
-
-function descendant(root: Element, ...path: string[]): Element | undefined {
-  let current: Element | undefined = root;
-  for (const name of path) {
-    current = current ? firstByLocalName(current, name) : undefined;
-  }
-  return current;
-}
-
-/** One clrScheme slot's colour: `a:srgbClr@val`, or `a:sysClr@lastClr` with
- * the windowText/window fallbacks when `lastClr` is absent (AC-26). */
-function slotColorOf(slotEl: Element | undefined): string | undefined {
-  if (!slotEl) {
-    return undefined;
-  }
-  const srgb = firstByLocalName(slotEl, "srgbClr");
-  if (srgb) {
-    const val = srgb.getAttribute("val");
-    return val && /^[0-9a-fA-F]{6}$/.test(val) ? `#${val.toLowerCase()}` : undefined;
-  }
-  const sys = firstByLocalName(slotEl, "sysClr");
-  if (sys) {
-    const last = sys.getAttribute("lastClr");
-    if (last && /^[0-9a-fA-F]{6}$/.test(last)) {
-      return `#${last.toLowerCase()}`;
-    }
-    const val = sys.getAttribute("val");
-    return val === "window" ? "#ffffff" : "#000000";
-  }
-  return undefined;
-}
-
 /** Parses a `word/theme/themeN.xml` part into the document's theme (AC-25),
  * recording the part path in `partName`. Undefined when the XML is not a
  * usable theme part (no clrScheme) — the document then has no modelled
- * theme and the part stays a preserved opaque part. */
+ * theme and the part stays a preserved opaque part. The parsing itself is
+ * core's readThemePart (SPEC-117 moved it there for the spreadsheet
+ * product); this keeps the word processor's entry point and its partName. */
 export function readDocxTheme(themeXml: string, partName: string): DocTheme | undefined {
-  let doc: Document;
-  try {
-    doc = parseXml(themeXml);
-  } catch {
-    return undefined;
-  }
-  const root = doc.documentElement;
-  if (root.localName !== "theme") {
-    return undefined;
-  }
-  const clrScheme = descendant(root, "themeElements", "clrScheme");
-  if (!clrScheme) {
-    return undefined;
-  }
-  const colors = {} as Record<ThemeColorSlot, string>;
-  let sawAny = false;
-  for (const slot of THEME_COLOR_SLOTS) {
-    const color = slotColorOf(firstByLocalName(clrScheme, slot));
-    if (color !== undefined) {
-      colors[slot] = color;
-      sawAny = true;
-    } else {
-      // A missing slot falls back to black — a real Word theme always has
-      // all twelve, so this only cushions a truncated part.
-      colors[slot] = "#000000";
-    }
-  }
-  if (!sawAny) {
-    return undefined;
-  }
-  const fontScheme = descendant(root, "themeElements", "fontScheme");
-  const major = fontScheme && descendant(fontScheme, "majorFont", "latin")?.getAttribute("typeface");
-  const minor = fontScheme && descendant(fontScheme, "minorFont", "latin")?.getAttribute("typeface");
-  return {
-    name: root.getAttribute("name") ?? "Custom",
-    colors,
-    fonts: { major: major || "Calibri Light", minor: minor || "Calibri" },
-    partName,
-  };
+  const theme = readThemePart(themeXml);
+  return theme ? { ...theme, partName } : undefined;
 }
 
 // --- the theme part: splice (AC-34, AC-35) -----------------------------------
@@ -260,7 +186,7 @@ function clrSchemeXml(theme: DocumentTheme, sourceScheme: string): string {
       const sourceColorRoot = parseXml(
         `<a:root xmlns:a="${DRAWINGML_NS}">${sourceSlot}</a:root>`,
       ).documentElement.firstElementChild;
-      if (sourceColorRoot && slotColorOf(sourceColorRoot) === theme.colors[slot]) {
+      if (sourceColorRoot && themeSlotColorOf(sourceColorRoot) === theme.colors[slot]) {
         return sourceSlot;
       }
     }

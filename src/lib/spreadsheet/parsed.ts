@@ -4,12 +4,17 @@
 // into a SpreadsheetModel.
 import type { DocumentProperties } from "../core/documentProperties";
 import { bytesToBase64Async, type OpaquePart } from "../core/packageParts";
+import type { DocumentTheme } from "../core/theme";
 import { colToLetters } from "./address";
 import { SpreadsheetOpenError } from "./errors";
-import { MAX_WORKBOOK_CELLS, type PackageVariant, type Sheet } from "./model";
+import { MAX_WORKBOOK_CELLS, type CellStyle, type PackageVariant, type Sheet } from "./model";
 
 export interface ParsedSpreadsheet {
   sheets: Sheet[];
+  /** SPEC-117: the cell styles, index 0 the default — never empty. */
+  styles: CellStyle[];
+  theme?: DocumentTheme;
+  indexedColors?: string[];
   activeSheetIndex: number;
   dateSystem: "1900" | "1904";
   odsNullDate?: string;

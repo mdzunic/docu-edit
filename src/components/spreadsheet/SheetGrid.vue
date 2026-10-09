@@ -1,41 +1,55 @@
 <script setup lang="ts">
-// The read-only grid (SPEC-116): one sheet's values, DOM-virtualised — only
-// the rows and columns in the viewport plus overscan exist as elements
-// (useSheetViewport owns the window and the scroll extent), positioned
-// absolutely inside a canvas sized to the extent, under sticky lettered
-// column headers and numbered row headers. A value is a text node through
-// the General display, clipped to its 64 × 20 px cell; each row paints its
-// own gridlines, so an empty cell needs no element at all.
+// The read-only grid (SPEC-116, styled and navigable by SPEC-117): one sheet,
+// DOM-virtualised — only the rows and columns in the viewport plus overscan
+// exist as elements (useSheetViewport owns the window and the extent).
+//
+// Structure: the scroller holds a spacer sized to the sheet's extent × zoom
+// and one sticky, viewport-sized box; inside it a single content box is
+// scaled by the zoom (transform-origin top left) and everything is placed in
+// unscaled px: the sheet paper (SheetCellLayer — the file's cells, in every
+// app theme), then the selection overlays, the freeze lines and the headers,
+// which follow the app theme. Frozen rows and columns (and their corner)
+// stay in place while the rest scrolls.
 //
 // ARIA: a read-only grid of MAX_ROWS + 1 rows by MAX_COLS + 1 columns
-// (headers included), named by the sheet; every rendered cell carries its
-// 1-based aria-rowindex/aria-colindex, offset by the header row/column.
+// (headers included), named by the sheet, focusable, with
+// aria-activedescendant naming the active cell's element
+// (id="sheet-cell-B3"); every rendered cell carries its 1-based
+// aria-rowindex/aria-colindex, offset by the header row/column, and
+// aria-selected. Keys and pointer gestures go through useSheetGrid
+// (useSheetSelection's keyboard map, GridMetrics hit-testing);
 // Ctrl+PageUp/Ctrl+PageDown asks the view for the previous/next sheet — a
-// convenience only where the browser does not keep the keys for its own tab
-// switching; the sheet tabs are the keyboard path that always works.
-// Runtime prop declarations per the espree constraint (see AppShell.vue).
+// convenience only where the browser does not keep the keys; the sheet tabs
+// are the keyboard path that always works. Runtime prop declarations per the
+// espree constraint (see AppShell.vue).
 import { useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
-import { asSheet, useSheetViewport } from "../../views/spreadsheet/useSheetViewport";
+import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
+import { asSheet, COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "../../views/spreadsheet/useSheetViewport";
+import SheetCellLayer from "./SheetCellLayer.vue";
 
 const props = defineProps({
   /** The grid Sheet on show. */
   sheet: { type: Object, required: true },
+  /** The view-level state of the sheet on show (SheetGridContext). */
+  context: { type: Object, required: true },
 });
 
 const emit = defineEmits(["cycle-sheet"]);
 
 const scroller = useTemplateRef("scroller");
-const viewport = useSheetViewport(scroller, () => asSheet(props.sheet));
+const grid = useSheetGrid(
+  scroller,
+  () => asSheet(props.sheet),
+  () => asSheetGridContext(props.context),
+  (delta = 1) => emit("cycle-sheet", delta),
+);
+const vp = grid.viewport;
+const RH = ROW_HEADER_WIDTH_PX;
+const CH = COLUMN_HEADER_HEIGHT_PX;
 
-function onKeydown(event = new KeyboardEvent("keydown")) {
-  if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
-    return;
-  }
-  if (event.key === "PageDown" || event.key === "PageUp") {
-    event.preventDefault();
-    emit("cycle-sheet", event.key === "PageDown" ? 1 : -1);
-  }
+function px(value = 0) {
+  return `${value}px`;
 }
 </script>
 
@@ -45,81 +59,199 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
     class="sheet-grid"
     role="grid"
     aria-readonly="true"
+    aria-multiselectable="true"
     :aria-rowcount="MAX_ROWS + 1"
     :aria-colcount="MAX_COLS + 1"
     :aria-label="props.sheet.name"
+    :aria-activedescendant="grid.activeDescendant.value"
     data-testid="spreadsheet-grid"
     tabindex="0"
-    @scroll="viewport.onScroll"
-    @keydown="onKeydown"
+    @scroll="vp.onScroll"
+    @keydown="grid.onKeydown"
+    @wheel="grid.onWheel"
+    @pointerdown="grid.pointer.onPointerDown"
+    @pointermove="grid.pointer.onPointerMove"
+    @pointerup="grid.pointer.onPointerUp"
+    @pointercancel="grid.pointer.onPointerUp"
   >
     <div
-      class="grid-head"
-      role="row"
-      aria-rowindex="1"
-      :style="{ width: `${viewport.canvasWidth.value}px` }"
+      class="grid-area"
+      :style="grid.areaStyle.value"
     >
       <div
-        class="grid-corner"
-        aria-hidden="true"
+        class="grid-viewport"
+        :style="{ width: px(vp.viewW.value * vp.z.value), height: px(vp.viewH.value * vp.z.value) }"
+      >
+        <div
+          class="grid-content"
+          :style="grid.contentStyle.value"
+        >
+          <SheetCellLayer
+            :bands="grid.bands.value"
+            :grid-lines="grid.showGridLines.value"
+            :frozen-width="vp.frozenW.value"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+          />
+          <div
+            class="sheet-overlays"
+            aria-hidden="true"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+          >
+            <div
+              v-for="rect in grid.overlays.selectionRects.value"
+              :key="rect.key"
+              class="sheet-selection"
+              data-testid="sheet-selection"
+              :style="{ left: px(rect.left), top: px(rect.top), width: px(rect.width), height: px(rect.height) }"
+            />
+            <div
+              v-if="grid.overlays.activeRect.value"
+              class="sheet-active-cell"
+              data-testid="sheet-active-cell"
+              :style="{
+                left: px(grid.overlays.activeRect.value.left),
+                top: px(grid.overlays.activeRect.value.top),
+                width: px(grid.overlays.activeRect.value.width),
+                height: px(grid.overlays.activeRect.value.height),
+              }"
+            />
+            <div
+              v-if="grid.overlays.freezeLines.value.vertical !== null"
+              class="sheet-freeze-line is-vertical"
+              data-testid="sheet-freeze-line"
+              :style="{ left: px(grid.overlays.freezeLines.value.vertical - 1) }"
+            />
+            <div
+              v-if="grid.overlays.freezeLines.value.horizontal !== null"
+              class="sheet-freeze-line is-horizontal"
+              data-testid="sheet-freeze-line"
+              :style="{ top: px(grid.overlays.freezeLines.value.horizontal - 1) }"
+            />
+          </div>
+          <div
+            class="sheet-col-headers"
+            role="row"
+            aria-rowindex="1"
+            :style="{ width: px(vp.viewW.value), height: px(CH) }"
+          >
+            <div
+              class="sheet-select-all"
+              data-testid="sheet-select-all"
+              title="Select all"
+              aria-hidden="true"
+              :style="{ width: px(RH), height: px(CH) }"
+            />
+            <div
+              class="sheet-header-region"
+              :style="{ left: px(RH), width: px(vp.frozenW.value), height: px(CH) }"
+            >
+              <div
+                v-for="col in grid.overlays.columnHeaders.value.frozen"
+                :key="col.index"
+                class="col-header"
+                :class="{ 'is-selected': col.selected }"
+                role="columnheader"
+                data-testid="sheet-col-header"
+                :aria-colindex="col.index + 2"
+                :style="{ left: px(col.start), width: px(col.size) }"
+              >
+                {{ col.label }}
+              </div>
+            </div>
+            <div
+              class="sheet-header-region"
+              :style="{ left: px(RH + vp.frozenW.value), width: px(Math.max(0, vp.viewCols.value - vp.frozenW.value)), height: px(CH) }"
+            >
+              <div
+                v-for="col in grid.overlays.columnHeaders.value.scrolled"
+                :key="col.index"
+                class="col-header"
+                :class="{ 'is-selected': col.selected }"
+                role="columnheader"
+                data-testid="sheet-col-header"
+                :aria-colindex="col.index + 2"
+                :style="{ left: px(col.start), width: px(col.size) }"
+              >
+                {{ col.label }}
+              </div>
+            </div>
+            <div
+              v-for="marker in grid.overlays.hiddenMarkers.value.columns"
+              :key="marker.key"
+              class="sheet-hidden-marker is-column"
+              data-testid="sheet-hidden-marker"
+              :title="marker.title"
+              :aria-label="marker.title"
+              :style="{ left: px(RH + marker.at - 3) }"
+            />
+          </div>
+          <div
+            class="sheet-row-headers"
+            :style="{ top: px(CH), width: px(RH), height: px(vp.viewRows.value) }"
+          >
+            <div
+              class="sheet-header-region"
+              :style="{ top: '0px', width: px(RH), height: px(vp.frozenH.value) }"
+            >
+              <div
+                v-for="row in grid.overlays.rowHeaders.value.frozen"
+                :key="row.index"
+                class="row-header"
+                :class="{ 'is-selected': row.selected }"
+                role="rowheader"
+                data-testid="sheet-row-header"
+                aria-colindex="1"
+                :style="{ top: px(row.start), height: px(row.size), lineHeight: px(row.size - 1) }"
+              >
+                {{ row.label }}
+              </div>
+            </div>
+            <div
+              class="sheet-header-region"
+              :style="{ top: px(vp.frozenH.value), width: px(RH), height: px(Math.max(0, vp.viewRows.value - vp.frozenH.value)) }"
+            >
+              <div
+                v-for="row in grid.overlays.rowHeaders.value.scrolled"
+                :key="row.index"
+                class="row-header"
+                :class="{ 'is-selected': row.selected }"
+                role="rowheader"
+                data-testid="sheet-row-header"
+                aria-colindex="1"
+                :style="{ top: px(row.start), height: px(row.size), lineHeight: px(row.size - 1) }"
+              >
+                {{ row.label }}
+              </div>
+            </div>
+            <div
+              v-for="marker in grid.overlays.hiddenMarkers.value.rows"
+              :key="marker.key"
+              class="sheet-hidden-marker is-row"
+              data-testid="sheet-hidden-marker"
+              :title="marker.title"
+              :aria-label="marker.title"
+              :style="{ top: px(marker.at - 3) }"
+            />
+          </div>
+        </div>
+      </div>
+      <div
+        class="grid-canvas"
+        :style="grid.canvasStyle.value"
       />
-      <div
-        v-for="col in viewport.visibleCols.value"
-        :key="col.index"
-        class="col-header"
-        role="columnheader"
-        :aria-colindex="col.index + 2"
-        :style="{ left: `${col.left}px` }"
-      >
-        {{ col.letters }}
-      </div>
-    </div>
-    <div
-      class="grid-canvas"
-      :style="{ width: `${viewport.canvasWidth.value}px`, height: `${viewport.canvasHeight.value}px` }"
-    >
-      <div
-        v-for="row in viewport.visibleRows.value"
-        :key="row.index"
-        class="grid-row"
-        role="row"
-        :aria-rowindex="row.index + 2"
-        :style="{ top: `${row.top}px` }"
-      >
-        <div
-          class="row-header"
-          role="rowheader"
-          aria-colindex="1"
-        >
-          {{ row.index + 1 }}
-        </div>
-        <div
-          v-for="cell in row.cells"
-          :key="cell.col"
-          class="sheet-cell"
-          :class="`is-${cell.align}`"
-          role="gridcell"
-          :aria-rowindex="row.index + 2"
-          :aria-colindex="cell.col + 2"
-          data-testid="sheet-cell"
-          :data-ref="cell.ref"
-          :style="{ left: `${cell.left}px` }"
-        >
-          {{ cell.text }}
-        </div>
-      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-/* The geometry here is useSheetViewport's: 64 × 20 px cells, a 56 px row
-   header and a 20 px letter row. */
+/* Headers, overlays and freeze lines follow the app theme (tokens); the
+   paper underneath is SheetCellLayer's. Geometry is unscaled px inside the
+   scaled content box. */
 .sheet-grid {
   position: relative;
   height: 100%;
   overflow: auto;
-  background: var(--surface-raised);
+  background: var(--surface-sunken);
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: var(--text-sm);
@@ -130,96 +262,160 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   outline-offset: -2px;
 }
 
-.grid-head {
+.grid-area {
+  position: relative;
+}
+
+/* The viewport-sized box that does not scroll: everything is placed in it
+   from the scroll position. */
+.grid-viewport {
   position: sticky;
   top: 0;
-  z-index: 2;
-  height: 20px;
+  left: 0;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.grid-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+/* The spacer: the sheet's extent (headers excluded), behind the viewport. */
+.grid-canvas {
+  position: absolute;
+  pointer-events: none;
+}
+
+.sheet-overlays {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.sheet-selection {
+  position: absolute;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: var(--border-width) solid var(--accent);
+}
+
+/* The active cell: a 2 px (--space-1) accent outline. */
+.sheet-active-cell {
+  position: absolute;
+  box-sizing: border-box;
+  border: var(--space-1) solid var(--accent);
+}
+
+.sheet-freeze-line {
+  position: absolute;
+  background: var(--border-default);
+}
+
+.sheet-freeze-line.is-vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.sheet-freeze-line.is-horizontal {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.sheet-col-headers,
+.sheet-row-headers {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
   background: var(--surface-sunken);
+}
+
+.sheet-col-headers {
+  z-index: 2;
   border-bottom: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
 }
 
-.grid-corner {
-  position: sticky;
-  left: 0;
-  z-index: 3;
-  width: 56px;
-  height: 100%;
-  background: var(--surface-sunken);
+.sheet-row-headers {
+  z-index: 2;
   border-right: var(--border-width) solid var(--border-default);
   box-sizing: border-box;
+}
+
+.sheet-select-all {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  box-sizing: border-box;
+  background: var(--surface-sunken);
+  border-right: var(--border-width) solid var(--border-default);
+  cursor: cell;
+}
+
+.sheet-header-region {
+  position: absolute;
+  overflow: hidden;
 }
 
 .col-header,
 .row-header {
+  position: absolute;
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  line-height: 19px;
   text-align: center;
   overflow: hidden;
   white-space: nowrap;
   box-sizing: border-box;
+  user-select: none;
 }
 
 .col-header {
-  position: absolute;
   top: 0;
-  width: 64px;
   height: 100%;
+  line-height: 19px;
   border-right: var(--border-width) solid var(--border-subtle);
 }
 
-.grid-canvas {
-  position: relative;
-}
-
-/* One row: its own gridlines (a bottom border, and a column line every
-   64 px past the row header), so empty cells need no elements. */
-.grid-row {
-  position: absolute;
+.row-header {
   left: 0;
   width: 100%;
-  height: 20px;
   border-bottom: var(--border-width) solid var(--border-subtle);
-  box-sizing: border-box;
-  background-image: linear-gradient(to right, transparent 63px, var(--border-subtle) 63px);
-  background-position: 56px 0;
-  background-size: 64px 100%;
-  background-repeat: repeat-x;
 }
 
-.row-header {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  width: 56px;
-  height: 100%;
-  background: var(--surface-sunken);
-  border-right: var(--border-width) solid var(--border-default);
+.col-header.is-selected,
+.row-header.is-selected {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
 }
 
-.sheet-cell {
+/* A hidden run's header boundary: a short double tick where the run was. */
+.sheet-hidden-marker {
   position: absolute;
-  top: 0;
-  width: 64px;
-  height: 100%;
-  padding: 0 var(--space-1);
-  overflow: hidden;
-  white-space: pre;
-  line-height: 19px;
+  z-index: 2;
   box-sizing: border-box;
+  border: var(--border-width) solid var(--text-secondary);
 }
 
-.sheet-cell.is-number {
-  text-align: right;
+.sheet-hidden-marker.is-column {
+  top: 3px;
+  width: 6px;
+  height: 14px;
+  border-top: none;
+  border-bottom: none;
 }
 
-.sheet-cell.is-text {
-  text-align: left;
-}
-
-.sheet-cell.is-centred {
-  text-align: center;
+.sheet-hidden-marker.is-row {
+  left: 3px;
+  width: 50px;
+  height: 6px;
+  border-left: none;
+  border-right: none;
 }
 </style>

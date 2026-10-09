@@ -47,6 +47,11 @@ const ALLOWED: RegExp[] = [
   /^lib\/core\/theme[A-Z][A-Za-z]*\.ts$/,
   // Format-layer theme parts (w:themeColor/w:themeTint attrs etc.).
   /^lib\/(docx|odf|md)\/theme[A-Za-z]*\.ts$/,
+  // The spreadsheet colour codec (SPEC-117 "Colours"): SpreadsheetML's
+  // theme-index swap and tint ↔ lumMod/lumOff arithmetic, both ways
+  // (xlsx/themeColor.ts), and any ODS twin — nothing else in the spreadsheet
+  // product reads a reference's fields.
+  /^lib\/spreadsheet\/(xlsx|ods)\/theme[A-Za-z]*\.ts$/,
   // The presentation product's readers/writers (SPEC-094) serialise
   // references throughout pptx/odp.
   /^lib\/presentation\//,

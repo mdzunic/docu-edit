@@ -96,6 +96,10 @@ async function loadModules() {
   return { store, readFixture, mountSheets };
 }
 
+/** SPEC-117's required layout fields at Excel's defaults: 64 px columns and
+ * 15 pt (20 px) rows, nothing merged. */
+const DEFAULT_LAYOUT = { columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] } satisfies Partial<Sheet>;
+
 /** A grid sheet from [row, col, value] triples (0-based) — sparse, rows and
  * cells ascending, as the model's invariants require. */
 function gridSheet(
@@ -112,13 +116,13 @@ function gridSheet(
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { id: crypto.randomUUID(), name, visibility, kind: "grid", rows };
+  return { id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** A foreign sheet (chartsheet, dialogsheet, macrosheet): a placeholder, its
  * part carried verbatim. */
 function foreignSheet(name: string, partName: string): Sheet {
-  return { id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName };
+  return { id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
 }
 
 /** A hand-built workbook with no source package (`opaque` is empty, so it
@@ -135,6 +139,8 @@ function handBuiltBook(sheets: Sheet[], activeSheetIndex = 0): SpreadsheetModel 
     activeSheetIndex,
     dateSystem: "1900",
     opaque: [],
+    styles: [{}],
+    defaultStyleId: 0,
   };
 }
 
@@ -165,7 +171,7 @@ function millionRowSheet(): Sheet {
     }
     rows.push({ index, cells });
   }
-  return { id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows };
+  return { id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** The tab strip, one "name:aria-selected:tabindex" string per tab. */
@@ -455,15 +461,22 @@ describe("SpreadsheetView read-only grid", () => {
     expect(shown("B7")).toBe("45573"); // a date is its serial until SPEC-118
   });
 
-  it("lays its cells out on the default 64 × 20 px geometry", async () => {
+  it("lays its cells out on the sheet's GridMetrics: <cols> widths through the MDW formula, rows at the sheet's default height", async () => {
+    // SPEC-117 replaced SPEC-116's uniform 64 × 20 px lattice. mini-book's
+    // Summary sheet: column A is `width="14.6328125"` (Aptos Narrow 11, MDW
+    // 7 → 102 px), B–E the 64 px default, and every row the sheetFormatPr's
+    // 14.5 pt (19 px).
     const wrapper = await mountMiniBook();
     const element = (ref: string) => wrapper.get(`[data-ref="${ref}"]`).element as HTMLElement;
     const left = (ref: string) => Number.parseFloat(element(ref).style.left);
+    const width = (ref: string) => Number.parseFloat(element(ref).style.width);
     const top = (ref: string) => Number.parseFloat((element(ref).closest('[role="row"]') as HTMLElement).style.top);
+    expect(width("A3")).toBe(102);
+    expect(width("B2")).toBe(64);
     expect(left("C2") - left("B2")).toBe(64);
-    expect(left("E3") - left("A3")).toBe(4 * 64);
-    expect(top("B3") - top("B2")).toBe(20);
-    expect(top("B11") - top("B2")).toBe(9 * 20);
+    expect(left("E3") - left("A3")).toBe(102 + 3 * 64);
+    expect(top("B3") - top("B2")).toBe(19);
+    expect(top("B11") - top("B2")).toBe(9 * 19);
   });
 
   it("sizes its scroll extent 100 rows past the used range, 1,000 at least, growing by 100 within one screen of the end", async () => {
@@ -541,9 +554,11 @@ describe("SpreadsheetView read-only grid", () => {
     expect(wrapper.get('[data-ref="M1000000"]').text()).toBe("12");
     expect(cellCount()).toBeLessThan(2_000);
     // The row is placed inside the scrolled viewport, not merely mounted.
+    // (SPEC-117: the grid's content box no longer scrolls — rows are placed
+    // relative to the visible band, which here starts under the letter row.)
     const rowTop = Number.parseFloat((last.element.closest('[role="row"]') as HTMLElement).style.top);
-    expect(rowTop - scrollTop).toBeGreaterThanOrEqual(0);
-    expect(rowTop - scrollTop + rowPx).toBeLessThanOrEqual(viewPx);
+    expect(rowTop).toBeGreaterThanOrEqual(0);
+    expect(rowTop + rowPx).toBeLessThanOrEqual(viewPx);
   });
 });
 
@@ -583,8 +598,9 @@ describe("SpreadsheetView reader versions", () => {
     store.storeSpreadsheet(stale);
     const { wrapper } = await mountSheets(stale.id);
 
-    await vi.waitFor(() => expect(wrapper.find('[data-ref="B2"]').exists()).toBe(true), { timeout: 10_000 });
-    expect(wrapper.get('[data-ref="B2"]').text()).toBe("Revenue");
+    // SPEC-117 mounts every position in the window, so B2 exists (empty)
+    // before the upgrade lands: wait for its value.
+    await vi.waitFor(() => expect(wrapper.find('[data-ref="B2"]').text()).toBe("Revenue"), { timeout: 10_000 });
     const upgraded = store.getSpreadsheet(stale.id);
     expect(upgraded?.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded?.id).toBe(stale.id);

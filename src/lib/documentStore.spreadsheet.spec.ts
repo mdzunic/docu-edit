@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildMiniBookXlsxBytes, buildSpecMacrosXlsmBytes } from "./spreadsheet/fixtures/build";
 import type { Row, SpreadsheetModel } from "./spreadsheet/model";
+import { SPREADSHEET_READER_VERSION } from "./spreadsheet/open";
 
 function makeIdbMock(loaded: unknown[] = []) {
   return {
@@ -240,6 +241,59 @@ function persisted(model: SpreadsheetModel, extra: Record<string, unknown> = {})
   return { shell, rows };
 }
 
+describe("view state (SPEC-117)", () => {
+  it("storeSpreadsheetViewState writes the shell only, keeping lastModified — no rows record, nothing dirty", async () => {
+    const { store, idb, workbook } = await loadStore();
+    const model = await workbook();
+    store.storeSpreadsheet(model);
+    await flushWrites();
+    const lastModified = store.getStoredRecord(model.id)!.lastModified;
+    idb.putRecord.mockClear();
+
+    // A view-state change replaces the sheet objects' view fields; every
+    // sheet keeps its rows array.
+    const viewed: SpreadsheetModel = {
+      ...model,
+      activeSheetIndex: 1,
+      sheets: model.sheets.map((sheet, index) =>
+        index === 0
+          ? {
+              ...sheet,
+              zoomPercent: 150,
+              showGridLines: false,
+              topLeftCell: { row: 40, col: 2 },
+              selection: { active: { row: 41, col: 2 }, ranges: [{ top: 41, left: 2, bottom: 43, right: 3 }], activeRangeIndex: 0 },
+            }
+          : { ...sheet },
+      ),
+    };
+    await store.storeSpreadsheetViewState(viewed);
+    await flushWrites();
+
+    expect(rowsWrites(idb)).toEqual([]);
+    const shells = written(idb).filter((record) => record.id === model.id);
+    expect(shells).toHaveLength(1);
+    const shell = shells[0]!.model!;
+    expect(shell.activeSheetIndex).toBe(1);
+    expect(shell.sheets[0]).toMatchObject({ zoomPercent: 150, showGridLines: false, topLeftCell: { row: 40, col: 2 } });
+    expect(shell.sheets[0]!.selection?.ranges).toEqual([{ top: 41, left: 2, bottom: 43, right: 3 }]);
+    expect(shell.sheets.some((sheet) => "dirty" in sheet)).toBe(false);
+    expect(store.getStoredRecord(model.id)!.lastModified).toBe(lastModified);
+    expect(store.getSpreadsheet(model.id)).toBe(viewed);
+    // The workbook's opaque package — what Download hands back — is untouched.
+    expect(store.getSpreadsheet(model.id)!.opaque).toBe(model.opaque);
+  });
+
+  it("is a no-op for an id the store does not hold as a workbook", async () => {
+    const { store, idb, workbook } = await loadStore();
+    const model = await workbook();
+    await store.storeSpreadsheetViewState(model);
+    await flushWrites();
+    expect(idb.putRecord).not.toHaveBeenCalled();
+    expect(store.getSpreadsheet(model.id)).toBeUndefined();
+  });
+});
+
 describe("every read path rejoins the rows", () => {
   it("initLibrary rejoins each sheet's rows and seeds the latch (no rewrite on the next persist)", async () => {
     const { workbook } = await loadStore();
@@ -305,7 +359,7 @@ describe("the reader-version upgrade on load", () => {
     await store.initLibrary();
 
     const upgraded = store.getSpreadsheet(model.id)!;
-    expect(upgraded.readerVersion).toBe(1);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.id).toBe(model.id);
     expect(upgraded.title).toBe("Q3 numbers");
     expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(["kept-0", "kept-1", "kept-2"]);
@@ -317,7 +371,7 @@ describe("the reader-version upgrade on load", () => {
     await flushWrites();
     const shells = written(idb).filter((entry) => entry.id === model.id);
     expect(shells).toHaveLength(1);
-    expect(shells[0]!.model!.readerVersion).toBe(1);
+    expect(shells[0]!.model!.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(rowsWrites(idb)).toHaveLength(3);
   });
 
@@ -327,7 +381,7 @@ describe("the reader-version upgrade on load", () => {
     idb.getRecord.mockImplementation(async (key: string) => (key === model.id ? record : undefined));
     await store.refreshDocumentFromStorage(model.id);
     const upgraded = store.getSpreadsheet(model.id)!;
-    expect(upgraded.readerVersion).toBe(1);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(["kept-0", "kept-1", "kept-2"]);
     expect(await store.upgradeStoredSpreadsheet(model.id)).toBe(upgraded);
   });

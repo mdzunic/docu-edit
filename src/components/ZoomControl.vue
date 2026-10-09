@@ -10,6 +10,9 @@
 // blur commits; empty/non-numeric reverts, AC-10), and clicking it opens the
 // preset menu. UiMenuSurface leaves focus on the input (return-focus off), so
 // the two roles do not fight.
+//
+// `showFit` (SPEC-117) hides the two fit entries: the workbook view shares
+// this control and its ZOOM_PRESETS ladder, but a sheet has no page to fit.
 import { computed, ref, useTemplateRef, watch } from "vue";
 import { useFloatingMenu } from "../composables/useFloatingMenu";
 import { ZOOM_PRESETS } from "../lib/zoom";
@@ -23,6 +26,9 @@ const props = defineProps({
   /** Which fit mode, if any, is active — its menu entry shows checked. */
   fitMode: { type: String, default: "none" },
   disabled: { type: Boolean, default: false },
+  /** Whether the menu offers Fit width / Fit page. A sheet has no page to
+   * fit (SPEC-117 "Zoom"), so the workbook view passes false. */
+  showFit: { type: Boolean, default: true },
 });
 
 const emit = defineEmits(["zoom-in", "zoom-out", "fit-width", "fit-page", "apply-input", "set-preset"]);
@@ -172,32 +178,34 @@ function isPresetChecked(preset = 0) {
       >
         {{ preset }}%
       </button>
-      <div
-        class="zoom-menu-separator"
-        role="separator"
-      />
-      <button
-        type="button"
-        role="menuitemradio"
-        class="zoom-option"
-        :class="{ active: fitMode === 'fit-width' }"
-        :aria-checked="fitMode === 'fit-width' ? 'true' : 'false'"
-        data-testid="zoom-fit-width"
-        @click="pickFitWidth"
-      >
-        Fit width
-      </button>
-      <button
-        type="button"
-        role="menuitemradio"
-        class="zoom-option"
-        :class="{ active: fitMode === 'fit-page' }"
-        :aria-checked="fitMode === 'fit-page' ? 'true' : 'false'"
-        data-testid="zoom-fit-page"
-        @click="pickFitPage"
-      >
-        Fit page
-      </button>
+      <template v-if="showFit">
+        <div
+          class="zoom-menu-separator"
+          role="separator"
+        />
+        <button
+          type="button"
+          role="menuitemradio"
+          class="zoom-option"
+          :class="{ active: fitMode === 'fit-width' }"
+          :aria-checked="fitMode === 'fit-width' ? 'true' : 'false'"
+          data-testid="zoom-fit-width"
+          @click="pickFitWidth"
+        >
+          Fit width
+        </button>
+        <button
+          type="button"
+          role="menuitemradio"
+          class="zoom-option"
+          :class="{ active: fitMode === 'fit-page' }"
+          :aria-checked="fitMode === 'fit-page' ? 'true' : 'false'"
+          data-testid="zoom-fit-page"
+          @click="pickFitPage"
+        >
+          Fit page
+        </button>
+      </template>
     </UiMenuSurface>
   </div>
 </template>

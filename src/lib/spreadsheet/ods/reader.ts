@@ -1,85 +1,101 @@
-// The .ods reader (SPEC-116): an ODF package whose mimetype declares a
-// spreadsheet (or its template) → the workbook model. content.xml is read
-// with the forward-only scanner (core/xmlScanner.ts), whose exact offsets
-// are also how each table's verbatim XML is sliced out: `sourceXml` is the
-// whitespace before a `<table:table>` plus the element itself, and the
-// model's `odsContentEnvelope` holds everything before the first and after
-// the last — so prefix + every sourceXml + suffix is content.xml, exactly
-// (the splice base SPEC-121/122's writers build on).
+// The .ods reader (SPEC-116, SPEC-117): an ODF package whose mimetype
+// declares a spreadsheet (or its template) → the workbook model. content.xml
+// is read ONCE, start to finish, with the forward-only scanner
+// (core/xmlScanner.ts), whose exact offsets are also how each table's
+// verbatim XML is sliced out: `sourceXml` is the whitespace before a
+// `<table:table>` plus the element itself, and the model's
+// `odsContentEnvelope` holds everything before the first and after the last
+// — so prefix + every sourceXml + suffix is content.xml, exactly (the splice
+// base SPEC-121/122's writers build on).
 //
 // What is read:
+// - styles (ods/styles.ts): styles.xml's default, common and font-face
+//   declarations, and content.xml's `office:font-face-decls` and
+//   `office:automatic-styles` — sliced out of the scan by offset (they
+//   precede the body) and parsed whole — flattened into `styles` (index 0
+//   the "Default" style, then every referenced cell style name in
+//   first-reference order);
 // - `table:table` elements in order (each one a grid sheet); a table whose
-//   automatic style has `table:display="false"` is hidden;
-// - rows — including those nested in header rows, row groups and
-//   `table:table-rows` — in document order; `table:number-rows-repeated` /
-//   `table:number-columns-repeated` honoured without ever materialising a
-//   repeated EMPTY row or cell (LibreOffice's trailing 1048553-row and
-//   16380-column runs cost nothing); a repeated non-empty row or cell is
-//   expanded, every copy counted against MAX_WORKBOOK_CELLS before it is
-//   built; `table:covered-table-cell` occupies its column and stores nothing;
+//   style has `table:display="false"` is hidden, its
+//   `tableooo:tab-color` is the tab colour;
+// - each table's columns, rows and cells (ods/tableXml.ts): column widths,
+//   visibility and default cell styles; row heights, custom heights,
+//   visibility and default cell styles, the defaults taken from the last
+//   column and row runs; cell values and style ids; styled empty cells
+//   (stored only where they differ from the effective default, a run to XFD
+//   becoming the row's style); covered cells with a value or a style; spans
+//   → merges. `table:number-rows-repeated` / `table:number-columns-repeated`
+//   are honoured without ever materialising a repeated run that holds
+//   nothing to store (LibreOffice's trailing 1048553-row and 16380-column
+//   runs, styled or not, cost nothing); everything materialised is counted
+//   against MAX_WORKBOOK_CELLS before it is built;
+// - rows nested in header rows, row groups and `table:table-rows`, in
+//   document order; a table in the sheet's drawing layer is not the sheet's;
 // - values by `office:value-type` (float/percentage/currency → number,
 //   date/time → serial, boolean, string → `office:string-value` or the
 //   `text:p` text with paragraphs joined by "\n" and `text:s`/`text:tab`/
-//   `text:line-break` expanded); `calcext:value-type="error"` → the error code
-//   from the text; a formula cell contributes its cached value;
-// - `table:null-date` → the date system (see serial.ts); settings.xml's
-//   `ActiveTable` → the active sheet; meta.xml → properties.
+//   `text:line-break` expanded); `calcext:value-type="error"` → the error
+//   code from the text; a formula cell contributes its cached value; a
+//   string whose paragraphs hold `text:span`s with a font of their own gets
+//   `runs` (each span's font from its automatic text style);
+// - `table:null-date` → the date system (see serial.ts); settings.xml
+//   (ods/settings.ts) → the active table and each table's frozen panes,
+//   scroll position, gridlines, zero display, zoom and cursor; meta.xml →
+//   properties.
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
-import { DRAW_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
+import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
+import { XmlParseError } from "../../core/xml";
 import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { unzip, ZipError } from "../../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
-import { MAX_COLS, MAX_ROWS, toCellError, type Cell, type CellValue, type Row, type Sheet } from "../model";
+import { toCellError, type CellFont, type CellStyle, type CellValue, type Sheet, type TextRun } from "../model";
 import {
   addressText,
   CellBudget,
   encodeOpaque,
-  outOfGridError,
   parseError,
   partText,
   resolveActiveSheet,
   type ParsedSpreadsheet,
 } from "../parsed";
 import { odsDateValueToSerial, odsTimeValueToSerial } from "../serial";
+import { readOdsSettings, type OdsSettings } from "./settings";
+import {
+  emptyOdsStyleSheet,
+  namespaceDeclarations,
+  OdsStyleBook,
+  readOdsContentStyles,
+  readOdsStyleSheet,
+  type OdsStyleSheet,
+} from "./styles";
+import { OdsTableReader } from "./tableXml";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
 const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
-const CONFIG_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:config:1.0";
 
 /** The null date ODF assumes when a document declares none. */
 const DEFAULT_NULL_DATE = "1899-12-30";
 
-/** A repeat count attribute (`table:number-rows-repeated`, …): 1 when absent
- * or unreadable. */
-function repeatCount(attrs: readonly XmlScanAttribute[], local: string): number {
-  const value = Number(scanAttr(attrs, local, TABLE_NAMESPACE));
-  return Number.isInteger(value) && value > 1 ? value : 1;
-}
-
 interface PendingTable {
   name: string;
   hidden: boolean;
+  tabColor?: string;
   /** Where this sheet's sourceXml starts in content.xml. */
   start: number;
   level: number;
-  rows: Row[];
-  /** The 0-based index the next row lands on. */
-  rowIndex: number;
+  reader: OdsTableReader;
 }
 
-interface PendingRow {
-  level: number;
-  repeat: number;
-  cells: Cell[];
-  /** The 0-based column the next cell lands on. */
-  colIndex: number;
+/** A stretch of a cell's text sharing one span font. */
+interface RunDraft {
+  text: string;
+  font: CellFont | undefined;
 }
 
 interface PendingCell {
   level: number;
   covered: boolean;
-  repeat: number;
   attrs: readonly XmlScanAttribute[];
   paragraphs: string[];
   /** The text:p being collected, or null. */
@@ -88,6 +104,12 @@ interface PendingCell {
   /** >0 while inside a subtree whose text is not the cell's (an annotation,
    * a drawing). */
   skipDepth: number;
+  /** The cell's text as runs (paragraphs separated by "\n"). */
+  runs: RunDraft[];
+  /** The open `text:span`s, innermost last, with the font each gives. */
+  spans: { level: number; font: CellFont | undefined }[];
+  /** Whether any span gave a font — only then are runs kept. */
+  hasSpanFont: boolean;
 }
 
 /** The date system a declared null date selects (see serial.ts). */
@@ -160,91 +182,119 @@ function odsCellValue(
   }
 }
 
+/** Appends text to a cell's runs, in the innermost open span's font. */
+function appendRunText(cell: PendingCell, text: string, font: CellFont | undefined): void {
+  const last = cell.runs.at(-1);
+  if (last && last.font === font) {
+    last.text += text;
+  } else {
+    cell.runs.push({ text, font });
+  }
+}
+
+/** Appends text to the paragraph being collected and to the runs. */
+function appendText(cell: PendingCell, text: string): void {
+  cell.paragraph += text;
+  appendRunText(cell, text, cell.spans.at(-1)?.font);
+}
+
+/** A string cell's rich-text runs — only when a span gave a font and the
+ * runs spell the value exactly. Fonts are copied: the model shares nothing
+ * with the style book. */
+function cellRuns(cell: PendingCell, value: CellValue): TextRun[] | undefined {
+  if (!cell.hasSpanFont || typeof value !== "string") {
+    return undefined;
+  }
+  const runs: TextRun[] = [];
+  let lastFont: CellFont | undefined;
+  for (const draft of cell.runs) {
+    if (draft.text.length === 0) {
+      continue;
+    }
+    const last = runs.at(-1);
+    if (last && lastFont === draft.font) {
+      last.text += draft.text;
+      continue;
+    }
+    runs.push(draft.font ? { text: draft.text, font: { ...draft.font } } : { text: draft.text });
+    lastFont = draft.font;
+  }
+  if (!runs.some((run) => run.font) || runs.map((run) => run.text).join("") !== value) {
+    return undefined;
+  }
+  return runs;
+}
+
 interface OdsContent {
   sheets: Sheet[];
+  styles: CellStyle[];
   prefix: string;
   suffix: string;
   dates: { dateSystem: "1900" | "1904"; odsNullDate?: string };
 }
 
-/** Reads content.xml. Returns null when the cell ceiling stopped the scan. */
-export function readOdsContent(xml: string, budget: CellBudget): OdsContent | null {
+/** Reads content.xml, `sheetStyles` being styles.xml's declarations.
+ * Returns null when the cell ceiling stopped the scan. */
+export function readOdsContent(
+  xml: string,
+  budget: CellBudget,
+  sheetStyles: OdsStyleSheet = emptyOdsStyleSheet(),
+): OdsContent | null {
   const sheets: Sheet[] = [];
-  const hiddenStyles = new Set<string>();
   let dates: OdsContent["dates"] = { dateSystem: "1900" };
   let depth = 0;
-  let automaticStylesLevel = -1;
-  let tableStyle: string | null = null;
   let spreadsheetLevel = -1;
   let firstTableStart = -1;
   let previousTableEnd = -1;
   let table: PendingTable | null = null;
-  let row: PendingRow | null = null;
+  /** Whether a `table:table-row` is open, and its level. */
+  let inRow = false;
+  let rowLevel = -1;
   let cell: PendingCell | null = null;
   /** >0 while inside a table's drawing layer (`table:shapes`, a draw:*
    * element): a text box there may hold a table of its own, whose rows are
    * not the sheet's. */
   let drawingDepth = 0;
   let tooLarge = false;
+  /** content.xml's style sections, sliced verbatim, and the namespace
+   * declarations they need to parse on their own. */
+  const styleSlices: string[] = [];
+  let declarations = "";
+  let sliceLevel = -1;
+  let sliceStart = -1;
+  let book: OdsStyleBook | null = null;
+  const styleBook = (): OdsStyleBook => (book ??= new OdsStyleBook(sheetStyles, readOdsContentStyles(styleSlices, declarations)));
 
   const finishCell = (done: PendingCell): boolean => {
-    const current = row!;
-    if (done.covered) {
-      current.colIndex += done.repeat;
-      return true;
-    }
-    const where = `"${table!.name}"!${addressText(table!.rowIndex, current.colIndex)}`;
+    const reader = table!.reader;
+    const where = `"${table!.name}"!${addressText(reader.rowIndex, reader.colIndex)}`;
     const value = odsCellValue(done, dates, where);
-    if (value === null) {
-      current.colIndex += done.repeat;
-      return true;
-    }
-    if (table!.rowIndex >= MAX_ROWS) {
-      throw outOfGridError(table!.name, addressText(table!.rowIndex, current.colIndex));
-    }
-    if (current.colIndex + done.repeat > MAX_COLS) {
-      throw outOfGridError(table!.name, addressText(table!.rowIndex, Math.max(current.colIndex, MAX_COLS)));
-    }
-    if (!budget.take(done.repeat)) {
-      return false;
-    }
-    for (let k = 0; k < done.repeat; k += 1) {
-      current.cells.push({ col: current.colIndex + k, value });
-    }
-    current.colIndex += done.repeat;
-    return true;
+    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value));
   };
 
-  const finishRow = (done: PendingRow): boolean => {
-    const owner = table!;
-    if (done.cells.length === 0) {
-      owner.rowIndex += done.repeat;
-      return true;
-    }
-    if (owner.rowIndex + done.repeat > MAX_ROWS) {
-      throw outOfGridError(owner.name, addressText(MAX_ROWS, done.cells[0]!.col));
-    }
-    if (done.repeat > 1 && !budget.take((done.repeat - 1) * done.cells.length)) {
+  const finishTable = (done: PendingTable, end: number): boolean => {
+    const layout = done.reader.finish();
+    if (layout === null) {
       return false;
     }
-    owner.rows.push({ index: owner.rowIndex, cells: done.cells });
-    for (let k = 1; k < done.repeat; k += 1) {
-      owner.rows.push({ index: owner.rowIndex + k, cells: done.cells.map((stored) => ({ ...stored })) });
-    }
-    owner.rowIndex += done.repeat;
-    return true;
-  };
-
-  const finishTable = (done: PendingTable, end: number): void => {
-    sheets.push({
+    const sheet: Sheet = {
       id: crypto.randomUUID(),
       name: done.name,
       visibility: done.hidden ? "hidden" : "visible",
       kind: "grid",
-      rows: done.rows,
+      rows: layout.rows,
       sourceXml: xml.slice(done.start, end),
-    });
+      columns: layout.columns,
+      defaultColWidthPx: layout.defaultColWidthPx,
+      defaultRowHeightPt: layout.defaultRowHeightPt,
+      merges: layout.merges,
+    };
+    if (done.tabColor !== undefined) {
+      sheet.tabColor = done.tabColor;
+    }
+    sheets.push(sheet);
     previousTableEnd = end;
+    return true;
   };
 
   scanXml(xml, (event) => {
@@ -252,7 +302,7 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
       const inside = cell;
       if (event.type === "text") {
         if (inside.paragraph !== null && inside.skipDepth === 0) {
-          inside.paragraph += event.text;
+          appendText(inside, event.text);
         }
         return undefined;
       }
@@ -268,6 +318,8 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
         }
         if (inside.skipDepth > 0) {
           inside.skipDepth -= 1;
+        } else if (inside.spans.length > 0 && depth === inside.spans.at(-1)!.level) {
+          inside.spans.pop();
         } else if (inside.paragraph !== null && depth === inside.paragraphLevel) {
           inside.paragraphs.push(inside.paragraph);
           inside.paragraph = null;
@@ -286,6 +338,9 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
         }
       } else if (event.ns === TEXT_NAMESPACE && inside.paragraph === null && level === inside.level + 1) {
         if (event.local === "p" || event.local === "h") {
+          if (inside.paragraphs.length > 0) {
+            appendRunText(inside, "\n", undefined);
+          }
           if (event.selfClosing) {
             inside.paragraphs.push("");
           } else {
@@ -296,11 +351,17 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
       } else if (event.ns === TEXT_NAMESPACE && inside.paragraph !== null) {
         if (event.local === "s") {
           const count = Number(scanAttr(event.attrs, "c", TEXT_NAMESPACE) ?? 1);
-          inside.paragraph += " ".repeat(Number.isInteger(count) && count > 0 ? Math.min(count, 10_000) : 1);
+          appendText(inside, " ".repeat(Number.isInteger(count) && count > 0 ? Math.min(count, 10_000) : 1));
         } else if (event.local === "tab") {
-          inside.paragraph += "\t";
+          appendText(inside, "\t");
         } else if (event.local === "line-break") {
-          inside.paragraph += "\n";
+          appendText(inside, "\n");
+        } else if (event.local === "span" && !event.selfClosing) {
+          const outer = inside.spans.at(-1)?.font;
+          const styleName = scanAttr(event.attrs, "style-name", TEXT_NAMESPACE);
+          const own = styleName === undefined ? undefined : styleBook().textFont(styleName);
+          inside.hasSpanFont ||= own !== undefined;
+          inside.spans.push({ level, font: own && outer ? { ...outer, ...own } : (own ?? outer) });
         }
       }
       if (!event.selfClosing) {
@@ -310,6 +371,20 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
     }
 
     if (event.type === "text") {
+      return undefined;
+    }
+
+    if (sliceLevel > 0) {
+      // Inside a style section being sliced out whole.
+      if (event.type === "open") {
+        depth += event.selfClosing ? 0 : 1;
+      } else {
+        if (depth === sliceLevel) {
+          styleSlices.push(xml.slice(sliceStart, event.end));
+          sliceLevel = -1;
+        }
+        depth -= 1;
+      }
       return undefined;
     }
 
@@ -337,19 +412,19 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
 
     if (event.type === "open") {
       const level = depth + 1;
-      if (event.ns === OFFICE_NAMESPACE) {
-        if (event.local === "automatic-styles") {
-          automaticStylesLevel = level;
-        } else if (event.local === "spreadsheet") {
-          spreadsheetLevel = level;
-        }
-      } else if (event.ns === STYLE_NAMESPACE && automaticStylesLevel > 0) {
-        if (event.local === "style" && scanAttr(event.attrs, "family", STYLE_NAMESPACE) === "table") {
-          tableStyle = scanAttr(event.attrs, "name", STYLE_NAMESPACE) ?? null;
-        } else if (event.local === "table-properties" && tableStyle !== null) {
-          if (scanAttr(event.attrs, "display", TABLE_NAMESPACE) === "false") {
-            hiddenStyles.add(tableStyle);
+      if (level === 1) {
+        declarations = namespaceDeclarations(event.attrs);
+      } else if (event.ns === OFFICE_NAMESPACE) {
+        if (level === 2 && (event.local === "font-face-decls" || event.local === "automatic-styles")) {
+          if (!event.selfClosing) {
+            sliceLevel = level;
+            sliceStart = event.start;
+            depth += 1;
           }
+          return undefined;
+        }
+        if (event.local === "spreadsheet") {
+          spreadsheetLevel = level;
         }
       } else if (event.ns === TABLE_NAMESPACE) {
         if (event.local === "null-date" && spreadsheetLevel > 0 && table === null) {
@@ -364,37 +439,53 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
             }
             firstTableStart = start;
           }
-          const styleName = scanAttr(event.attrs, "style-name", TABLE_NAMESPACE);
+          const name = scanAttr(event.attrs, "name", TABLE_NAMESPACE) ?? `Sheet${sheets.length + 1}`;
+          const tableStyle = styleBook().tableStyle(scanAttr(event.attrs, "style-name", TABLE_NAMESPACE));
           const pending: PendingTable = {
-            name: scanAttr(event.attrs, "name", TABLE_NAMESPACE) ?? `Sheet${sheets.length + 1}`,
-            hidden: styleName !== undefined && hiddenStyles.has(styleName),
+            name,
+            hidden: tableStyle.hidden,
             start,
             level,
-            rows: [],
-            rowIndex: 0,
+            reader: new OdsTableReader(name, styleBook(), budget),
           };
+          if (tableStyle.tabColor !== undefined) {
+            pending.tabColor = tableStyle.tabColor;
+          }
           if (event.selfClosing) {
-            finishTable(pending, event.end);
+            if (!finishTable(pending, event.end)) {
+              tooLarge = true;
+              return "stop";
+            }
           } else {
             table = pending;
           }
-        } else if (event.local === "table-row" && table !== null && row === null) {
-          const pending: PendingRow = { level, repeat: repeatCount(event.attrs, "number-rows-repeated"), cells: [], colIndex: 0 };
+        } else if (event.local === "table-column" && table !== null && !inRow) {
+          table.reader.column(event.attrs);
+        } else if (event.local === "table-row" && table !== null && !inRow) {
+          table.reader.startRow(event.attrs);
           if (event.selfClosing) {
-            finishRow(pending);
+            if (!table.reader.endRow()) {
+              tooLarge = true;
+              return "stop";
+            }
           } else {
-            row = pending;
+            inRow = true;
+            depth += 1;
+            rowLevel = level;
+            return undefined;
           }
-        } else if ((event.local === "table-cell" || event.local === "covered-table-cell") && row !== null) {
+        } else if ((event.local === "table-cell" || event.local === "covered-table-cell") && inRow) {
           const pending: PendingCell = {
             level,
             covered: event.local === "covered-table-cell",
-            repeat: repeatCount(event.attrs, "number-columns-repeated"),
             attrs: event.attrs,
             paragraphs: [],
             paragraph: null,
             paragraphLevel: -1,
             skipDepth: 0,
+            runs: [],
+            spans: [],
+            hasSpanFont: false,
           };
           if (event.selfClosing) {
             if (!finishCell(pending)) {
@@ -414,26 +505,24 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
 
     // A close tag.
     if (event.ns === TABLE_NAMESPACE) {
-      if (event.local === "table-row" && row !== null && depth === row.level) {
-        const done = row;
-        row = null;
-        if (!finishRow(done)) {
+      if (event.local === "table-row" && inRow && depth === rowLevel) {
+        inRow = false;
+        if (!table!.reader.endRow()) {
           tooLarge = true;
           depth -= 1;
           return "stop";
         }
       } else if (event.local === "table" && table !== null && depth === table.level) {
-        finishTable(table, event.end);
+        const done = table;
         table = null;
+        if (!finishTable(done, event.end)) {
+          tooLarge = true;
+          depth -= 1;
+          return "stop";
+        }
       }
-    } else if (event.ns === STYLE_NAMESPACE && event.local === "style") {
-      tableStyle = null;
-    } else if (event.ns === OFFICE_NAMESPACE) {
-      if (event.local === "automatic-styles") {
-        automaticStylesLevel = -1;
-      } else if (event.local === "spreadsheet") {
-        spreadsheetLevel = -1;
-      }
+    } else if (event.ns === OFFICE_NAMESPACE && event.local === "spreadsheet") {
+      spreadsheetLevel = -1;
     }
     depth -= 1;
     return undefined;
@@ -447,6 +536,7 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
   }
   return {
     sheets,
+    styles: styleBook().styles,
     prefix: xml.slice(0, firstTableStart),
     suffix: xml.slice(previousTableEnd),
     dates,
@@ -455,43 +545,27 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
 
 /** settings.xml's `ActiveTable` (a table name), or undefined. */
 export function readActiveTableName(xml: string): string | undefined {
-  let collecting = false;
-  let text = "";
-  let found: string | undefined;
-  scanXml(xml, (event) => {
-    if (event.type === "open" && event.ns === CONFIG_NAMESPACE && event.local === "config-item") {
-      if (scanAttr(event.attrs, "name", CONFIG_NAMESPACE) === "ActiveTable") {
-        if (event.selfClosing) {
-          found = "";
-          return "stop";
-        }
-        collecting = true;
-        text = "";
-      }
-      return undefined;
-    }
-    if (event.type === "text" && collecting) {
-      text += event.text;
-      return undefined;
-    }
-    if (event.type === "close" && collecting) {
-      found = text;
-      return "stop";
-    }
-    return undefined;
-  });
-  return found;
+  return readOdsSettings(xml).activeTable;
 }
 
-/** Wraps a scanner failure in a part as the workbook's parse error. */
+/** Wraps a malformed part's failure (from the scanner or the platform
+ * parser) as the workbook's parse error. */
 function scanned<T>(partName: string, read: () => T): T {
   try {
     return read();
   } catch (error) {
-    if (error instanceof XmlScanError) {
+    if (error instanceof XmlScanError || error instanceof XmlParseError) {
       throw parseError(partName, `the part is not well-formed XML — ${error.message}`);
     }
     throw error;
+  }
+}
+
+/** Gives each sheet the view fields settings.xml holds for its table (the
+ * view-level items for a table it does not list). */
+function applyViewSettings(sheets: readonly Sheet[], settings: OdsSettings): void {
+  for (const sheet of sheets) {
+    Object.assign(sheet, settings.tables.get(sheet.name) ?? settings.defaultView);
   }
 }
 
@@ -520,17 +594,26 @@ export async function parseOds(
   if (!contentBytes) {
     throw parseError("content.xml", "the spreadsheet's content part is missing");
   }
-  const content = scanned("content.xml", () => readOdsContent(partText(contentBytes), new CellBudget()));
+  const stylesBytes = parts.get("styles.xml");
+  const sheetStyles = stylesBytes
+    ? scanned("styles.xml", () => readOdsStyleSheet(partText(stylesBytes)))
+    : emptyOdsStyleSheet();
+  const content = scanned("content.xml", () => readOdsContent(partText(contentBytes), new CellBudget(), sheetStyles));
   if (content === null) {
     throw new SpreadsheetOpenError(WORKBOOK_TOO_LARGE_MESSAGE);
   }
-  const settings = parts.get("settings.xml");
-  const activeName = settings ? scanned("settings.xml", () => readActiveTableName(partText(settings))) : undefined;
+  const settingsBytes = parts.get("settings.xml");
+  const settings = settingsBytes ? scanned("settings.xml", () => readOdsSettings(partText(settingsBytes))) : undefined;
+  if (settings) {
+    applyViewSettings(content.sheets, settings);
+  }
+  const activeName = settings?.activeTable;
   const activeIndex = activeName === undefined ? 0 : content.sheets.findIndex((sheet) => sheet.name === activeName);
   const meta = parts.get("meta.xml");
 
   const parsed: ParsedSpreadsheet = {
     sheets: content.sheets,
+    styles: content.styles,
     activeSheetIndex: resolveActiveSheet(Math.max(activeIndex, 0), content.sheets),
     dateSystem: content.dates.dateSystem,
     odsContentEnvelope: { prefix: content.prefix, suffix: content.suffix },

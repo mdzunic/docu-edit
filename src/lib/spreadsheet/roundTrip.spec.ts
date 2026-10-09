@@ -1,4 +1,5 @@
-// SPEC-116's round-trip promise, over every fixture (the six built here and
+// SPEC-116's round-trip promise (kept by SPEC-117's readers, whose two styles
+// fixtures join the list), over every fixture (the ones built here and
 // the Numbers export a person committed): downloading an untouched workbook
 // re-emits every source part byte-identical, in source order — the ZIP
 // container itself is rebuilt, so the relation is part-level equalBytes, as
@@ -20,6 +21,8 @@ import {
   buildSpecMacrosXlsmBytes,
   buildSpecTemplateXltxBytes,
   buildSpecWideOdsBytes,
+  buildSpec117StylesOdsBytes,
+  buildSpec117StylesXlsxBytes,
   SPEC116_VBA_PROJECT,
 } from "./fixtures/build";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
@@ -88,6 +91,22 @@ const FIXTURES: Fixture[] = [
     extension: "xlsx",
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     bytes: async () => NUMBERS_XLSX,
+  },
+  // SPEC-117: reading every style, size, merge and view setting writes
+  // nothing — both styles fixtures still download byte-identical.
+  {
+    file: "spec117-styles.xlsx",
+    format: "xlsx",
+    extension: "xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    bytes: buildSpec117StylesXlsxBytes,
+  },
+  {
+    file: "spec117-styles.ods",
+    format: "ods",
+    extension: "ods",
+    mimeType: "application/vnd.oasis.opendocument.spreadsheet",
+    bytes: buildSpec117StylesOdsBytes,
   },
 ];
 
@@ -201,8 +220,11 @@ describe("the Numbers export reads (e2e/fixtures/spec116-numbers.md)", () => {
     // The dynamic-array formula contributes its cached value.
     expect(at(figures, "B5")).toBe(850.5);
     expect(at(figures, "B6")).toBe("Plain text, with a comma");
-    // Cells with a style and no value store nothing.
-    expect(getCell(figures, 3, 2)).toBeUndefined();
+    // Cells with a style and no value are stored as style-only cells
+    // (SPEC-117; SPEC-116's reader dropped them).
+    const styleOnly = getCell(figures, 3, 2);
+    expect(styleOnly?.value).toBeNull();
+    expect(styleOnly?.styleId).toEqual(expect.any(Number));
 
     const notes = model.sheets[2]!;
     expect(at(notes, "B3")).toBe(42);

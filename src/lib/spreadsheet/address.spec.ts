@@ -23,7 +23,7 @@ import { MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet } from "./model";
 
 /** A grid sheet over the given rows. */
 function sheetOf(rows: Row[]): Sheet {
-  return { id: "sheet-1", name: "Sheet1", visibility: "visible", kind: "grid", rows };
+  return { id: "sheet-1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 }
 
 /** A row storing a value at each listed column (value = row * 1000 + col, so

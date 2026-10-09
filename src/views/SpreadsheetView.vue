@@ -1,30 +1,43 @@
 <script setup lang="ts">
-// The workbook view at /sheets/:id (SPEC-116): a read-only wiring hub under
-// the same rule as the other views (SpreadsheetView.size.spec.ts holds the
-// line budget). Loading, the kind guard, the reader-version upgrade and the
-// sheet on show live in useWorkbookLoad; the grid's viewport in
-// useSheetViewport (inside SheetGrid); the surfaces in components/
-// spreadsheet/*. This file only wires them under SPEC-058's app bar with
-// SPEC-060's Close. Nothing here edits — no autosave session, no undo.
+// The workbook view at /sheets/:id (SPEC-116, SPEC-117): a read-only wiring
+// hub under the same rule as the other views (SpreadsheetView.size.spec.ts
+// holds the line budget). Loading, the kind guard, the reader-version upgrade
+// and the sheet on show live in useWorkbookLoad; view state (selection, zoom,
+// gridlines, scroll, active sheet — never a change to the file) in
+// useSheetViewState; geometry in useSheetMetrics; zoom, selection and the
+// menu bar's routing in useSheetZoom, useSheetSelection and
+// useSpreadsheetMenu; the surfaces in components/spreadsheet/*. This file
+// only wires them under SPEC-058's app bar with SPEC-060's Close.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import SpreadsheetAppBar from "../components/spreadsheet/SpreadsheetAppBar.vue";
-import SheetGrid from "../components/spreadsheet/SheetGrid.vue";
-import SheetTabs from "../components/spreadsheet/SheetTabs.vue";
+import SpreadsheetMenuBar from "../components/spreadsheet/SpreadsheetMenuBar.vue";
+import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar.vue";
+import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import { useTheme } from "../composables/useTheme";
+import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
+import { useSheetSelection } from "./spreadsheet/useSheetSelection";
+import { useSheetViewState } from "./spreadsheet/useSheetViewState";
+import { useSheetZoom } from "./spreadsheet/useSheetZoom";
+import { useSpreadsheetMenu } from "./spreadsheet/useSpreadsheetMenu";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
 const route = useRoute();
 const router = useRouter();
 
-// No menu bar here — the shared theme composable keeps the view themed by
-// the app tokens and following the OS live (SPEC-059).
+// The shared theme composable keeps the view themed by the app tokens and
+// following the OS live (SPEC-059).
 useTheme();
 
 const workbookId = computed(() => String(route.params.id ?? ""));
 const book = useWorkbookLoad({ workbookId, router });
-const panelId = "sheet-panel";
+const viewState = useSheetViewState({ workbook: book.workbook, activeIndex: book.activeIndex });
+const sheetMetrics = useSheetMetrics(() => book.activeSheet.value);
+const zoom = useSheetZoom({ viewState });
+const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState });
+const menu = useSpreadsheetMenu({ book, viewState, zoom });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState }));
 </script>
 
 <template>
@@ -39,38 +52,20 @@ const panelId = "sheet-panel";
         @close="book.close()"
       />
     </template>
-    <div
+    <template
       v-if="book.workbook.value"
-      class="workbook"
-      data-testid="spreadsheet-workspace"
+      #menubar
     >
-      <div
-        :id="panelId"
-        class="workbook-sheet"
-        role="tabpanel"
-        :aria-labelledby="book.activeSheet.value ? `sheet-tab-${book.activeSheet.value.id}` : undefined"
-      >
-        <div
-          v-if="book.activeSheet.value?.kind === 'foreign'"
-          class="sheet-foreign"
-          data-testid="sheet-foreign"
-        >
-          {{ book.foreignMessage.value }}
-        </div>
-        <SheetGrid
-          v-else-if="book.activeSheet.value"
-          :key="book.activeSheet.value.id"
-          :sheet="book.activeSheet.value"
-          @cycle-sheet="book.cycleSheet"
-        />
-      </div>
-      <SheetTabs
-        :tabs="book.tabs.value"
-        :active-index="book.activeIndex.value"
-        :panel-id="panelId"
-        @select="book.selectSheet"
+      <SpreadsheetMenuBar
+        :state="menu.state.value"
+        @command="menu.run"
       />
-    </div>
+    </template>
+    <WorkbookBody
+      v-if="book.workbook.value"
+      :book="book"
+      :grid="grid"
+    />
     <div
       v-else
       class="workbook-missing"
@@ -79,23 +74,26 @@ const panelId = "sheet-panel";
     >
       <p>This workbook doesn't exist in your library.</p>
     </div>
+    <template
+      v-if="book.workbook.value"
+      #status-bar
+    >
+      <SpreadsheetStatusBar
+        :average="selection.statusTexts.value.average"
+        :count="selection.statusTexts.value.count"
+        :sum="selection.statusTexts.value.sum"
+        :zoom-percent="zoom.percent.value"
+        :zoom-disabled="book.activeSheet.value?.kind !== 'grid'"
+        @zoom-in="zoom.zoomIn"
+        @zoom-out="zoom.zoomOut"
+        @apply-zoom="zoom.applyInput"
+        @set-zoom="zoom.set"
+      />
+    </template>
   </AppShell>
 </template>
 
 <style scoped>
-.workbook {
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.workbook-sheet {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.sheet-foreign,
 .workbook-missing {
   height: 100%;
   display: flex;

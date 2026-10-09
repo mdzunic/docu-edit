@@ -3,6 +3,11 @@
 // `_xHHHH_` escapes, phonetic runs), every cell type, sequential placement
 // without `r`, cached formula values, the date system, the active tab, core
 // properties, package variants, out-of-grid addresses and the cell ceiling.
+// SPEC-117 changes three of those rules, asserted here in their new form:
+// rich runs carry their `<rPr>` as `font`, a `<c>` carrying only a style is
+// stored as a style-only cell, and a row with a height is stored even with no
+// cells. (The layout, view and style reading itself is in sheetXml.spec.ts
+// and styles.spec.ts.)
 import { describe, expect, it } from "vitest";
 import { getCell, parseA1 } from "../address";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
@@ -109,7 +114,7 @@ describe("mini-book.xlsx (Excel-shaped)", () => {
     for (const [a1, expected] of Object.entries(MINI_BOOK_XLSX.summary)) {
       expect(at(summary, a1), a1).toEqual(expected);
     }
-    // Style-only header cells and absent cells store nothing.
+    // An absent cell stores nothing.
     expect(getCell(summary, 3, 4)).toBeUndefined(); // E4
   });
 
@@ -117,7 +122,13 @@ describe("mini-book.xlsx (Excel-shaped)", () => {
     const summary = (await parseXlsx(await buildMiniBookXlsxBytes())).sheets[0]!;
     const a1 = getCell(summary, 0, 0)!;
     expect(a1.value).toBe("Q3 report");
-    expect(a1.runs).toEqual([{ text: "Q3 " }, { text: "report" }]);
+    // SPEC-117: each run carries its <rPr> as a font (scheme minor wins over
+    // rFont; theme="1" is dk1 by Excel's swap).
+    const runFont = { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } };
+    expect(a1.runs).toEqual([
+      { text: "Q3 ", font: { ...runFont, bold: true } },
+      { text: "report", font: runFont },
+    ]);
     expect(getCell(summary, 1, 1)!.runs).toBeUndefined();
   });
 
@@ -227,7 +238,7 @@ describe("shared strings", () => {
     expect(decodeXmlEscapes("_x12_")).toBe("_x12_");
   });
 
-  it("reads plain items, rich runs (rPr ignored) and skips phonetic runs", () => {
+  it("reads plain items, rich runs (their rPr as the run font, SPEC-117) and skips phonetic runs", () => {
     const strings = readSharedStrings(
       `<sst xmlns="${MAIN}"><si><t>plain</t></si><si/><si><r><t>Bo</t></r><r><rPr><b/></rPr><t xml:space="preserve">ld </t></r></si>` +
         `<si><t>漢字</t><rPh sb="0" eb="2"><t>カンジ</t></rPh><phoneticPr fontId="0"/></si><si><t>a_x005F_x0042_</t></si></sst>`,
@@ -235,7 +246,7 @@ describe("shared strings", () => {
     expect(strings).toEqual([
       { text: "plain" },
       { text: "" },
-      { text: "Bold ", runs: [{ text: "Bo" }, { text: "ld " }] },
+      { text: "Bold ", runs: [{ text: "Bo" }, { text: "ld ", font: { bold: true } }] },
       { text: "漢字" },
       { text: "a_x0042_" },
     ]);
@@ -268,7 +279,8 @@ describe("cells", () => {
       dateToSerial(2026, 10, 8, "1900") + 0.5,
       { error: "#SPILL!" },
     ]);
-    expect(getCell(sheet, 0, 5)!.runs).toEqual([{ text: "ri" }, { text: "ch" }]);
+    // SPEC-117: an inline run's <rPr> is its font.
+    expect(getCell(sheet, 0, 5)!.runs).toEqual([{ text: "ri" }, { text: "ch", font: { italic: true } }]);
   });
 
   it("converts t=\"d\" in the workbook's date system", async () => {
@@ -276,11 +288,16 @@ describe("cells", () => {
     expect(at(sheet, "A1")).toBe(dateToSerial(2026, 10, 8, "1904"));
   });
 
-  it("stores no cell for an empty <v>, a style alone or a formula without a cached value", async () => {
+  it("stores no cell for an empty <v> or a formula without a cached value; a style alone is a style-only cell (SPEC-117)", async () => {
     const sheet = await oneSheet(
       `<row r="1"><c r="A1"><v></v></c><c r="B1" s="3"/><c r="C1"><f>1+1</f></c><c r="D1"><v>4</v></c></row><row r="2" ht="30" customHeight="1"/>`,
     );
-    expect(sheet.rows).toEqual([{ index: 0, cells: [{ col: 3, value: 4 }] }]);
+    // SPEC-116 stored neither B1 nor row 2; SPEC-117 keeps the style-only
+    // cell and the row with a height (and nothing for A1 or C1).
+    expect(sheet.rows).toEqual([
+      { index: 0, cells: [{ col: 1, value: null, styleId: 3 }, { col: 3, value: 4 }] },
+      { index: 1, cells: [], heightPt: 30, customHeight: true },
+    ]);
   });
 
   it("places rows and cells without r after the previous one", async () => {

@@ -14,6 +14,11 @@
 // - spec116-macros.xlsm     — a dummy xl/vbaProject.bin
 // - spec116-template.xltx   — the SpreadsheetML template content type
 // - spec116-wide.ods        — one cell at column 16,000 of row 900,000
+// - spec117-styles.xlsx     — SPEC-117, Excel-shaped: every style, size,
+//                             merge, freeze, hidden row/column and view
+//                             setting the reader models
+// - spec117-styles.ods      — SPEC-117, LibreOffice-shaped: the same
+//                             constructs in Calc's own shapes
 // spec116-numbers.xlsx is NOT generated here: Apple Numbers exported it
 // (scripts/make-numbers-fixture.applescript, e2e/fixtures/spec116-numbers.md).
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -26,6 +31,8 @@ import {
   buildSpecMacrosXlsmBytes,
   buildSpecTemplateXltxBytes,
   buildSpecWideOdsBytes,
+  buildSpec117StylesOdsBytes,
+  buildSpec117StylesXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -37,6 +44,8 @@ writeFileSync(join(fixturesDir, "spec116-1904.xlsx"), await buildSpec1904XlsxByt
 writeFileSync(join(fixturesDir, "spec116-macros.xlsm"), await buildSpecMacrosXlsmBytes());
 writeFileSync(join(fixturesDir, "spec116-template.xltx"), await buildSpecTemplateXltxBytes());
 writeFileSync(join(fixturesDir, "spec116-wide.ods"), await buildSpecWideOdsBytes());
+writeFileSync(join(fixturesDir, "spec117-styles.xlsx"), await buildSpec117StylesXlsxBytes());
+writeFileSync(join(fixturesDir, "spec117-styles.ods"), await buildSpec117StylesOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

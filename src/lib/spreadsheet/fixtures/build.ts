@@ -27,6 +27,15 @@
 //   `xl/vbaProject.bin` with its relationship and content type),
 //   spec116-template.xltx (the template main content type), spec116-wide.ods
 //   (one cell at column 16,000 of row 900,000, reached by empty runs).
+// - spec117-styles.xlsx (SPEC-117) — Excel 365 on the classic Office theme
+//   (Calibri): a styles part with every font, fill (pattern, tinted, indexed
+//   with an `<indexedColors>` override, gradient), border (all thirteen
+//   styles and a diagonal), alignment, protection and quotePrefix construct,
+//   named styles, a dxf and Excel's extLst; sheets "Styled" (custom, best-fit,
+//   hidden and styled columns, custom-height, hidden and styled rows,
+//   style-only cells, a merge, a frozen pane, 85% zoom, a two-range
+//   selection, a theme tab colour, a rich string), "Plain" (no gridlines) and
+//   "Split" (a split, not frozen, pane). SPEC117_STYLES_XLSX records the facts.
 // spec116-numbers.xlsx is NOT built here — Apple Numbers exported it (see
 // e2e/fixtures/spec116-numbers.md); the specs read the committed file.
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
@@ -181,6 +190,10 @@ async function excelPackage(options: {
   /** Extra parts (name → bytes), their workbook relationship and content
    * type declaration — the VBA project. */
   extra?: { name: string; data: Uint8Array; relationship: string; contentType: string };
+  /** The theme and styles parts (default: EXCEL_THEME and EXCEL_STYLES —
+   * every SPEC-116 fixture's bytes). */
+  theme?: string;
+  styles?: string;
 }): Promise<Uint8Array> {
   const overrides = [
     `<Override PartName="/xl/workbook.xml" ContentType="${options.mainContentType}"/>`,
@@ -245,8 +258,8 @@ async function excelPackage(options: {
     part("xl/workbook.xml", workbook),
     part("xl/_rels/workbook.xml.rels", XML_DECLARATION + `<Relationships xmlns="${PKG_REL_NS}">${workbookRels.join("")}</Relationships>`),
     ...options.sheets.map((sheet, index) => part(`xl/worksheets/sheet${index + 1}.xml`, sheet.xml)),
-    part("xl/theme/theme1.xml", EXCEL_THEME),
-    part("xl/styles.xml", EXCEL_STYLES),
+    part("xl/theme/theme1.xml", options.theme ?? EXCEL_THEME),
+    part("xl/styles.xml", options.styles ?? EXCEL_STYLES),
   ];
   if (options.sharedStrings) {
     entries.push(part("xl/sharedStrings.xml", options.sharedStrings));
@@ -466,6 +479,401 @@ export async function buildSpecTemplateXltxBytes(): Promise<Uint8Array> {
     sheets: [{ name: "Template", xml: sheet }],
     sharedStrings: sharedStringsXml(["Invoice", "Amount"]),
     workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+  });
+}
+
+// --- spec117-styles.xlsx (SPEC-117 "Fixtures") --------------------------------
+// Excel 365 on the classic Office theme (Calibri 11, defaultThemeVersion
+// 166925): every construct SPEC-117 reads, in the shape Excel writes it.
+
+/** The classic Office theme (2013–2022): Calibri / Calibri Light and exactly
+ * the scheme core/theme.ts's DEFAULT_THEME carries. */
+const SPEC117_THEME =
+  XML_DECLARATION +
+  `<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme"><a:themeElements>` +
+  `<a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>` +
+  `<a:dk2><a:srgbClr val="44546A"/></a:dk2><a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1>` +
+  `<a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4>` +
+  `<a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink>` +
+  `<a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>` +
+  `<a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri Light" panose="020F0302020204030204"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>` +
+  `<a:minorFont><a:latin typeface="Calibri" panose="020F0502020204030204"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>` +
+  `<a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>` +
+  `<a:gradFill rotWithShape="1"><a:gsLst><a:gs pos="0"><a:schemeClr val="phClr"><a:lumMod val="110000"/><a:satMod val="105000"/><a:tint val="67000"/></a:schemeClr></a:gs>` +
+  `<a:gs pos="100000"><a:schemeClr val="phClr"><a:lumMod val="105000"/><a:satMod val="109000"/><a:tint val="81000"/></a:schemeClr></a:gs></a:gsLst><a:lin ang="5400000" scaled="0"/></a:gradFill>` +
+  `<a:solidFill><a:schemeClr val="phClr"><a:shade val="80000"/></a:schemeClr></a:solidFill></a:fillStyleLst>` +
+  `<a:lnStyleLst><a:ln w="6350" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>` +
+  `<a:ln w="12700" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>` +
+  `<a:ln w="19050" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln></a:lnStyleLst>` +
+  `<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>` +
+  `<a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"><a:tint val="95000"/><a:satMod val="170000"/></a:schemeClr></a:solidFill>` +
+  `<a:solidFill><a:schemeClr val="phClr"><a:shade val="98000"/><a:satMod val="102000"/></a:schemeClr></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements>` +
+  `<a:objectDefaults/><a:extraClrSchemeLst/><a:extLst><a:ext uri="{05A4C25C-085E-4340-85A3-A5531E510DB2}">` +
+  `<thm15:themeFamily xmlns:thm15="http://schemas.microsoft.com/office/thememl/2012/main" name="Office Theme" ` +
+  `id="{62F939B6-93AF-4DB8-9C6B-D6C7DFDC589F}" vid="{4A3C46E8-61CC-4603-A589-7422A47A8E4A}"/></a:ext></a:extLst></a:theme>`;
+
+/** The thirteen SpreadsheetML border styles, in ST_BorderStyle order — one
+ * border (1–13), one xf (SPEC117_XF.borders + k) and one row-16 cell each. */
+export const SPEC117_BORDER_STYLES = [
+  "thin",
+  "medium",
+  "dashed",
+  "dotted",
+  "thick",
+  "double",
+  "hair",
+  "mediumDashed",
+  "dashDot",
+  "mediumDashDot",
+  "dashDotDot",
+  "mediumDashDotDot",
+  "slantDashDot",
+] as const;
+
+/** Each border style's colour element: Excel's automatic `indexed="64"`,
+ * with a theme colour, an rgb and an `auto="1"` among them. */
+const SPEC117_BORDER_COLORS: Partial<Record<(typeof SPEC117_BORDER_STYLES)[number], string>> = {
+  medium: `<color theme="4"/>`,
+  thick: `<color rgb="FFFF0000"/>`,
+  hair: `<color auto="1"/>`,
+};
+
+/** spec117-styles.xlsx's cellXfs indices — a cell's `s`. */
+export const SPEC117_XF = {
+  normal: 0,
+  header: 1, // bold red (FFFF0000) on solid yellow (FFFFFF00)
+  title: 2, // Heading 1, centred
+  trellis: 3, // darkTrellis fill
+  tinted: 4, // solid accent1, lighter 40%
+  gradient: 5, // linear gradient, 90°
+  indexed: 6, // indexed font colour + an overridden indexed fill
+  wrap: 7,
+  rotate90: 8,
+  indent: 9,
+  diagonal: 10,
+  quotePrefix: 11,
+  italicTint: 12, // italic accent1, darker 25%
+  doubleUnderline: 13,
+  good: 14, // the "Good" named style
+  column: 15, // columns J:L — 0.0% on the tint fill
+  row: 16, // row 18 (customFormat)
+  borders: 17, // 17 + k: SPEC117_BORDER_STYLES[k] on all four edges
+  unlocked: 30,
+  shrink: 31,
+  stacked: 32, // textRotation 255
+  strike: 33, // strike + superscript
+} as const;
+
+/** The 64-entry legacy palette as Excel writes `<indexedColors>`, entry 44
+ * (#99ccff in the legacy table) overridden to light pink. */
+const SPEC117_INDEXED_COLORS = [
+  "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF",
+  "000000", "FFFFFF", "FF0000", "00FF00", "0000FF", "FFFF00", "FF00FF", "00FFFF",
+  "800000", "008000", "000080", "808000", "800080", "008080", "C0C0C0", "808080",
+  "9999FF", "993366", "FFFFCC", "CCFFFF", "660066", "FF8080", "0066CC", "CCCCFF",
+  "000080", "FF00FF", "FFFF00", "00FFFF", "800080", "800000", "008080", "0000FF",
+  "00CCFF", "CCFFFF", "CCFFCC", "FFFF99", "FFB6C1", "FF99CC", "CC99FF", "FFCC99",
+  "3366FF", "33CCCC", "99CC00", "FFCC00", "FF9900", "FF6600", "666699", "969696",
+  "003366", "339966", "003300", "333300", "993300", "993366", "333399", "333333",
+];
+
+const SPEC117_FONT_TAIL = `<name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`;
+
+const SPEC117_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts>` +
+  `<fonts count="8" x14ac:knownFonts="1">` +
+  `<font><sz val="11"/><color theme="1"/>${SPEC117_FONT_TAIL}` + // 0 Normal
+  `<font><b/><sz val="11"/><color rgb="FFFF0000"/>${SPEC117_FONT_TAIL}` + // 1 bold red
+  `<font><i/><sz val="11"/><color theme="4" tint="-0.249977111117893"/>${SPEC117_FONT_TAIL}` + // 2 italic accent1 darker 25%
+  `<font><u val="double"/><sz val="11"/><color theme="1"/>${SPEC117_FONT_TAIL}` + // 3 double underline
+  `<font><b/><sz val="15"/><color theme="3"/>${SPEC117_FONT_TAIL}` + // 4 Heading 1
+  `<font><sz val="11"/><color indexed="10"/>${SPEC117_FONT_TAIL}` + // 5 indexed red
+  `<font><sz val="11"/><color rgb="FF006100"/>${SPEC117_FONT_TAIL}` + // 6 Good
+  `<font><strike/><vertAlign val="superscript"/><sz val="11"/><color theme="1"/>${SPEC117_FONT_TAIL}` + // 7 strike superscript
+  `</fonts>` +
+  `<fills count="8"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor theme="4" tint="0.39997558519241921"/><bgColor indexed="64"/></patternFill></fill>` +
+  `<fill><patternFill patternType="darkTrellis"><fgColor theme="5"/><bgColor rgb="FFFFFFCC"/></patternFill></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor indexed="44"/><bgColor indexed="64"/></patternFill></fill>` +
+  `<fill><gradientFill degree="90"><stop position="0"><color theme="0"/></stop><stop position="1"><color theme="4"/></stop></gradientFill></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/></patternFill></fill></fills>` +
+  `<borders count="16"><border><left/><right/><top/><bottom/><diagonal/></border>` +
+  SPEC117_BORDER_STYLES.map((style) => {
+    const color = SPEC117_BORDER_COLORS[style] ?? `<color indexed="64"/>`;
+    const edge = (name: string) => `<${name} style="${style}">${color}</${name}>`;
+    return `<border>${edge("left")}${edge("right")}${edge("top")}${edge("bottom")}<diagonal/></border>`;
+  }).join("") +
+  `<border><left/><right/><top/><bottom style="thick"><color theme="4"/></bottom><diagonal/></border>` + // 14 Heading 1
+  `<border diagonalUp="1" diagonalDown="1"><left/><right/><top/><bottom/><diagonal style="thin"><color rgb="FFFF0000"/></diagonal></border>` + // 15
+  `</borders>` +
+  `<cellStyleXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="0" fontId="6" fillId="7" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="0" fontId="4" fillId="0" borderId="14" applyNumberFormat="0" applyFill="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+  `<cellXfs count="34"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>` +
+  `<xf numFmtId="0" fontId="4" fillId="0" borderId="14" xfId="2" applyAlignment="1"><alignment horizontal="center"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="4" borderId="0" xfId="0" applyFill="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="6" borderId="0" xfId="0" applyFill="1"/>` +
+  `<xf numFmtId="0" fontId="5" fillId="5" borderId="0" xfId="0" applyFont="1" applyFill="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment textRotation="90"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="left" indent="2"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="15" xfId="0" applyBorder="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" quotePrefix="1"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+  `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+  `<xf numFmtId="0" fontId="6" fillId="7" borderId="0" xfId="1"/>` +
+  `<xf numFmtId="164" fontId="0" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="7" borderId="0" xfId="0" applyFill="1"/>` +
+  SPEC117_BORDER_STYLES.map((_, k) => `<xf numFmtId="0" fontId="0" fillId="0" borderId="${k + 1}" xfId="0" applyBorder="1"/>`).join("") +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyProtection="1"><protection locked="0" hidden="1"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" shrinkToFit="1"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" textRotation="255"/></xf>` +
+  `<xf numFmtId="0" fontId="7" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>` +
+  `<cellStyles count="3"><cellStyle name="Good" xfId="1" builtinId="26"/><cellStyle name="Heading 1" xfId="2" builtinId="16"/>` +
+  `<cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
+  `<colors><indexedColors>${SPEC117_INDEXED_COLORS.map((rgb) => `<rgbColor rgb="00${rgb}"/>`).join("")}</indexedColors>` +
+  `<mruColors><color rgb="FFFFB6C1"/><color rgb="FF66FF33"/></mruColors></colors>` +
+  `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">` +
+  `<x14:slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext>` +
+  `<ext uri="{9260A510-F301-46a8-8635-F512D64BE5F5}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main">` +
+  `<x15:timelineStyles defaultTimelineStyle="TimeSlicerStyleLight1"/></ext></extLst></styleSheet>`;
+
+/** spec117-styles.xlsx's plain shared strings, in index order after the rich
+ * item 0 (A1). */
+const SPEC117_STRINGS = [
+  "Header",
+  "Merged title",
+  "Tinted",
+  "Gradient",
+  "Indexed",
+  "Good",
+  "Wrapped text that runs over several lines",
+  "Rotated",
+  "Indented",
+  "Italic accent",
+  "Diagonal",
+  "Double underline",
+  "Shrink this text to fit",
+  "Stacked",
+  "Unlocked",
+  "Strike",
+  "hidden row",
+  ...SPEC117_BORDER_STYLES,
+  "007",
+  "Styled row",
+  "Name",
+  "Score",
+  "Ada",
+  "Grace",
+  "Split panes",
+];
+
+/** spec117-styles.xlsx's rich shared string (item 0): two runs, two fonts. */
+const SPEC117_RICH_STRING =
+  `<si><r><rPr><b/><sz val="11"/><color theme="1"/><rFont val="Calibri"/><family val="2"/><scheme val="minor"/></rPr><t xml:space="preserve">Styled </t></r>` +
+  `<r><rPr><i/><sz val="14"/><color rgb="FFC00000"/><rFont val="Cambria"/><family val="1"/></rPr><t>workbook</t></r></si>`;
+
+/** A shared-string cell for one of SPEC117_STRINGS. */
+function spec117Text(ref: string, text: string, style?: number): string {
+  const index = SPEC117_STRINGS.indexOf(text);
+  if (index < 0) {
+    throw new Error(`"${text}" is not one of spec117-styles.xlsx's strings`);
+  }
+  return sharedCell(ref, index + 1, style);
+}
+
+/** A style-only cell, as Excel writes a formatted empty cell. */
+const styleOnlyCell = (ref: string, style: number): string => `<c r="${ref}" s="${style}"/>`;
+
+/** One Calibri-era row in Excel's attribute order (r, spans, s, customFormat,
+ * ht, hidden, customHeight, …, x14ac:dyDescent). `spans` covers the row's
+ * 16-row block: A:Z for rows 1–16, A:A below. */
+function spec117Row(r: number, attrs: string, cells: string): string {
+  return `<row r="${r}" spans="${r <= 16 ? "1:26" : "1:1"}"${attrs} x14ac:dyDescent="0.25">${cells}</row>`;
+}
+
+/** The columns row 16's border cells sit in (every other one, skipping the
+ * hidden G, so each cell's four edges show). */
+const SPEC117_BORDER_COLUMNS = ["A", "C", "E", "H", "J", "L", "N", "P", "R", "T", "V", "X", "Z"] as const;
+
+/** How many shared-string cells (`t="s"`) a worksheet part holds — the sst's `count`. */
+function sharedStringReferences(worksheetPart: string): number {
+  return worksheetPart.split(` t="s"`).length - 1;
+}
+
+const SPEC117_PAGE_MARGINS = `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>`;
+const SPEC117_FORMAT_PR = `<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>`;
+
+/** What spec117-styles.xlsx holds, for the unit and e2e specs. */
+export const SPEC117_STYLES_XLSX = {
+  sheetNames: ["Styled", "Plain", "Split"],
+  activeSheetIndex: 0,
+  themeName: "Office Theme",
+  /** The Normal font — Calibri 11, so the maximum digit width is 7 px. */
+  defaultFont: { family: "Calibri", sizePt: 11, mdw: 7 },
+  /** B2: the shared string "Header" — bold red text on a solid yellow fill. */
+  header: { ref: "B2", value: "Header", styleId: SPEC117_XF.header, color: "#ff0000", fill: "#ffff00" },
+  /** B3:B12 = 10, 20, …, 100; nothing in column B below row 12. */
+  columnB: { first: "B3", last: "B12", values: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] },
+  /** B3:B5 = 10, 20, 30: the status-bar aggregates of that selection. */
+  b3b5: { range: "B3:B5", average: 20, count: 3, sum: 60 },
+  /** C5:E5 merged; C5 "Merged title" (Heading 1, centred), D5 and E5
+   * style-only members. */
+  merge: { ref: "C5:E5", range: { top: 4, left: 2, bottom: 4, right: 4 }, value: "Merged title", styleId: SPEC117_XF.title },
+  /** D3: a style-only cell with the darkTrellis fill. */
+  styleOnly: { ref: "D3", styleId: SPEC117_XF.trellis },
+  /** Column G (index 6) is hidden — G2 holds a value; F and H are visible. */
+  hiddenColumn: { index: 6, letter: "G", markerTitle: "Hidden column G", valueRef: "G2", value: 7 },
+  /** Row 14 (index 13) is hidden and holds A14 = "hidden row". */
+  hiddenRow: { index: 13, ref: "A14", value: "hidden row" },
+  /** Rows with `ht` + `customHeight`: row 2 (20.25 pt) and row 5 (24 pt). */
+  rowHeightsPt: { 2: 20.25, 5: 24 },
+  /** Column widths in px for Calibri 11 (MDW 7); the default is 64 px. */
+  columnWidthsPx: { A: 131, B: 89, F: 97 },
+  /** Columns J:L (indices 9–11) carry style 15. */
+  styledColumns: { min: 9, max: 11, styleId: SPEC117_XF.column },
+  /** Row 18 (index 17): s="16" customFormat="1". */
+  styledRow: { index: 17, styleId: SPEC117_XF.row },
+  /** A17: "007" entered with a leading apostrophe. */
+  quotePrefix: { ref: "A17", value: "007", styleId: SPEC117_XF.quotePrefix },
+  /** Row 16: one cell per border style, in SPEC117_BORDER_STYLES order. */
+  borderRow: { index: 15, columns: SPEC117_BORDER_COLUMNS },
+  frozen: { rows: 2, cols: 1 },
+  zoomPercent: 85,
+  topLeftCell: "B3",
+  /** The bottomRight pane's selection (the active pane). */
+  selection: {
+    active: "B3",
+    sqref: "B3:B5 D7:E8",
+    ranges: [
+      { top: 2, left: 1, bottom: 4, right: 1 },
+      { top: 6, left: 3, bottom: 7, right: 4 },
+    ],
+    activeRangeIndex: 0,
+  },
+  /** sheetPr/tabColor theme="5" (accent2) tint="0.39997558519241921". */
+  tabColorTint: "0.39997558519241921",
+  /** The rich shared string at A1. */
+  rich: { ref: "A1", value: "Styled workbook", runs: ["Styled ", "workbook"] },
+  /** `<indexedColors>` entry 44 differs from the legacy palette. */
+  indexedOverride: { index: 44, color: "#ffb6c1" },
+  /** "Plain": showGridLines="0". */
+  plain: { showGridLines: false, selection: "B2" },
+  /** "Split": a split (not frozen) pane, its active pane's selection D6. */
+  split: { topLeftCell: "C5", selection: "D6" },
+} as const;
+
+export async function buildSpec117StylesXlsxBytes(): Promise<Uint8Array> {
+  const X = SPEC117_XF;
+  const columnB = SPEC117_STYLES_XLSX.columnB.values;
+  const rows = [
+    spec117Row(1, "", sharedCell("A1", 0)),
+    spec117Row(2, ` ht="20.25" customHeight="1"`, spec117Text("B2", "Header", X.header) + numberCell("G2", 7)),
+    spec117Row(3, "", numberCell("B3", columnB[0]) + styleOnlyCell("D3", X.trellis)),
+    spec117Row(4, "", numberCell("B4", columnB[1])),
+    spec117Row(
+      5,
+      ` ht="24" customHeight="1"`,
+      numberCell("B5", columnB[2]) + spec117Text("C5", "Merged title", X.title) + styleOnlyCell("D5", X.title) + styleOnlyCell("E5", X.title),
+    ),
+    spec117Row(6, "", numberCell("B6", columnB[3])),
+    spec117Row(
+      7,
+      "",
+      numberCell("B7", columnB[4]) + spec117Text("C7", "Tinted", X.tinted) + spec117Text("D7", "Gradient", X.gradient) +
+        spec117Text("E7", "Indexed", X.indexed) + spec117Text("F7", "Good", X.good),
+    ),
+    spec117Row(
+      8,
+      "",
+      numberCell("B8", columnB[5]) + spec117Text("C8", "Wrapped text that runs over several lines", X.wrap) +
+        spec117Text("D8", "Rotated", X.rotate90) + spec117Text("E8", "Indented", X.indent) + spec117Text("F8", "Italic accent", X.italicTint),
+    ),
+    spec117Row(
+      9,
+      "",
+      numberCell("B9", columnB[6]) + spec117Text("C9", "Diagonal", X.diagonal) + spec117Text("D9", "Double underline", X.doubleUnderline) +
+        spec117Text("E9", "Shrink this text to fit", X.shrink) + spec117Text("F9", "Stacked", X.stacked),
+    ),
+    spec117Row(10, "", numberCell("B10", columnB[7]) + spec117Text("C10", "Unlocked", X.unlocked) + spec117Text("D10", "Strike", X.strike)),
+    spec117Row(11, "", numberCell("B11", columnB[8]) + numberCell("C11", 0.256, X.column)),
+    spec117Row(12, "", numberCell("B12", columnB[9])),
+    spec117Row(14, ` hidden="1"`, spec117Text("A14", "hidden row")),
+    spec117Row(
+      16,
+      "",
+      SPEC117_BORDER_STYLES.map((style, k) => spec117Text(`${SPEC117_BORDER_COLUMNS[k]}16`, style, X.borders + k)).join(""),
+    ),
+    spec117Row(17, "", spec117Text("A17", "007", X.quotePrefix)),
+    spec117Row(18, ` s="${X.row}" customFormat="1"`, spec117Text("A18", "Styled row", X.row)),
+  ].join("");
+  const styled =
+    XML_DECLARATION +
+    worksheetOpen("A3C1E5F7-9B2D-4F6A-8C1E-3D5F7A9B1C17") +
+    `<sheetPr><tabColor theme="5" tint="${SPEC117_STYLES_XLSX.tabColorTint}"/></sheetPr><dimension ref="A1:Z18"/>` +
+    `<sheetViews><sheetView tabSelected="1" zoomScale="85" zoomScaleNormal="85" workbookViewId="0">` +
+    `<pane xSplit="1" ySplit="2" topLeftCell="B3" activePane="bottomRight" state="frozen"/>` +
+    `<selection pane="topRight" activeCell="B1" sqref="B1"/><selection pane="bottomLeft" activeCell="A3" sqref="A3"/>` +
+    `<selection pane="bottomRight" activeCell="B3" sqref="B3:B5 D7:E8"/></sheetView></sheetViews>` +
+    SPEC117_FORMAT_PR +
+    `<cols><col min="1" max="1" width="18.7109375" customWidth="1"/><col min="2" max="2" width="12.7109375" customWidth="1"/>` +
+    `<col min="6" max="6" width="13.8515625" bestFit="1" customWidth="1"/><col min="7" max="7" width="9.140625" hidden="1"/>` +
+    `<col min="10" max="12" width="9.140625" style="${X.column}"/></cols>` +
+    `<sheetData>${rows}</sheetData><mergeCells count="1"><mergeCell ref="C5:E5"/></mergeCells>${SPEC117_PAGE_MARGINS}</worksheet>`;
+
+  const plain =
+    XML_DECLARATION +
+    worksheetOpen("B4D2F6A8-0C3E-4A7B-9D2F-4E6A8B0C2D27") +
+    `<dimension ref="A1:B3"/><sheetViews><sheetView showGridLines="0" workbookViewId="0"><selection activeCell="B2" sqref="B2"/></sheetView></sheetViews>` +
+    SPEC117_FORMAT_PR +
+    `<sheetData>` +
+    `<row r="1" spans="1:2" x14ac:dyDescent="0.25">${spec117Text("A1", "Name")}${spec117Text("B1", "Score")}</row>` +
+    `<row r="2" spans="1:2" x14ac:dyDescent="0.25">${spec117Text("A2", "Ada")}${numberCell("B2", 95)}</row>` +
+    `<row r="3" spans="1:2" x14ac:dyDescent="0.25">${spec117Text("A3", "Grace")}${numberCell("B3", 88)}</row>` +
+    `</sheetData>${SPEC117_PAGE_MARGINS}</worksheet>`;
+
+  const split =
+    XML_DECLARATION +
+    worksheetOpen("C5E3A7B9-1D4F-4B8C-8E3A-5F7B9C1D3E37") +
+    `<dimension ref="A1:D6"/><sheetViews><sheetView workbookViewId="0">` +
+    `<pane xSplit="2010" ySplit="1500" topLeftCell="C5" activePane="bottomRight" state="split"/>` +
+    `<selection pane="topRight" activeCell="C1" sqref="C1"/><selection pane="bottomLeft" activeCell="A5" sqref="A5"/>` +
+    `<selection pane="bottomRight" activeCell="D6" sqref="D6"/></sheetView></sheetViews>` +
+    SPEC117_FORMAT_PR +
+    `<sheetData>` +
+    `<row r="1" spans="1:4" x14ac:dyDescent="0.25">${spec117Text("A1", "Split panes")}${numberCell("C1", 1)}</row>` +
+    `<row r="5" spans="1:4" x14ac:dyDescent="0.25">${numberCell("A5", 2)}</row>` +
+    `<row r="6" spans="1:4" x14ac:dyDescent="0.25">${numberCell("D6", 42)}</row>` +
+    `</sheetData>${SPEC117_PAGE_MARGINS}</worksheet>`;
+
+  const count = sharedStringReferences(styled) + sharedStringReferences(plain) + sharedStringReferences(split);
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${count}" uniqueCount="${SPEC117_STRINGS.length + 1}">` +
+    SPEC117_RICH_STRING +
+    SPEC117_STRINGS.map((text) => `<si><t>${text}</t></si>`).join("") +
+    `</sst>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: "Styles",
+    sheets: [
+      { name: "Styled", xml: styled },
+      { name: "Plain", xml: plain },
+      { name: "Split", xml: split },
+    ],
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="166925"/>`,
+    theme: SPEC117_THEME,
+    styles: SPEC117_STYLES,
   });
 }
 
@@ -803,4 +1211,331 @@ export async function buildSpecWideOdsBytes(): Promise<Uint8Array> {
     loRow(loEmpty(16384), "ro1", 1_048_576 - SPEC116_WIDE.row - 1) +
     `</table:table>`;
   return loPackage(loContent(table), loMeta("Wide", 1, 2), loSettings([SPEC116_WIDE.tableName], SPEC116_WIDE.tableName));
+}
+
+// ============================================================================
+// SPEC-117: spec117-styles.ods (LibreOffice 24-shaped)
+// ============================================================================
+// Every construct SPEC-117 reads from an .ods, in the shape Calc writes it:
+// `co…`/`ro…`/`ta…`/`ce…`/`T…` automatic styles in Calc's order (`ta1` with
+// `tableooo:tab-color`, every `ce…` parented to "Default" but the merged
+// title's, parented to the common "Heading"); styles.xml's table-cell
+// default-style (Liberation Sans 10pt) and "Default"/"Heading" common styles
+// (LO_STYLES — Calc writes no table-column default-style); column runs with
+// `table:default-cell-style-name` "Default" and a `ce…` name, a wider column
+// and column G `table:visibility="collapse"`; rows with custom heights
+// (`use-optimal-row-height="false"`) and a hidden one; a whole-row format
+// written as a styled `number-columns-repeated="16380"` run to XFD; a 3×1
+// span over styled covered cells; a `text:span` run; borders, wrap,
+// rotation, repeat-content, indent, vertical alignment, shrink-to-fit and a
+// diagonal; the trailing `number-rows-repeated` run to row 1,048,576; and
+// settings.xml with both split modes 2 on "Styled", ShowGrid false on
+// "Plain", a split (mode 1, not a freeze) on "Split", zoom 85 and a cursor.
+
+/** The automatic styles Calc writes for spec117-styles.ods. */
+const SPEC117_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="co2" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="1.2in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ro2" style:family="table-row"><style:table-row-properties style:row-height="0.3in" fo:break-before="auto" style:use-optimal-row-height="false"/></style:style>` +
+  `<style:style style:name="ro3" style:family="table-row"><style:table-row-properties style:row-height="0.45in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ro4" style:family="table-row"><style:table-row-properties style:row-height="0.6in" fo:break-before="auto" style:use-optimal-row-height="false"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb" tableooo:tab-color="#729fcf"/></style:style>` +
+  `<style:style style:name="ta2" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:background-color="#ffff00"/>` +
+  `<style:text-properties fo:color="#ff0000" fo:font-weight="bold" style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>` +
+  `<style:style style:name="ce2" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:border="0.74pt solid #000000"/></style:style>` +
+  `<style:style style:name="ce3" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:border="1.75pt solid #000000"/></style:style>` +
+  `<style:style style:name="ce4" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:border="2.5pt solid #000000"/></style:style>` +
+  `<style:style style:name="ce5" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:border="0.74pt dashed #000000"/></style:style>` +
+  `<style:style style:name="ce6" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:border="0.74pt fine-dashed #000000"/></style:style>` +
+  `<style:style style:name="ce7" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:border-line-width="0.0102in 0.0071in 0.0102in" ` +
+  `fo:border="1.1pt double #000000"/></style:style>` +
+  `<style:style style:name="ce8" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:wrap-option="wrap"/></style:style>` +
+  `<style:style style:name="ce9" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-style="italic" ` +
+  `style:font-style-asian="italic" style:font-style-complex="italic"/></style:style>` +
+  `<style:style style:name="ce10" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:background-color="#dddddd"/>` +
+  `<style:text-properties fo:font-weight="bold" style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>` +
+  `<style:style style:name="ce11" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:rotation-angle="90" style:rotation-align="none"/></style:style>` +
+  `<style:style style:name="ce12" style:family="table-cell" style:parent-style-name="Heading"><style:table-cell-properties style:text-align-source="fix" style:repeat-content="false"/>` +
+  `<style:paragraph-properties fo:text-align="center" fo:margin-left="0in"/></style:style>` +
+  `<style:style style:name="ce13" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:text-align-source="fix" style:repeat-content="true"/>` +
+  `<style:paragraph-properties fo:margin-left="0in"/></style:style>` +
+  `<style:style style:name="ce14" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:text-align-source="fix" style:repeat-content="false"/>` +
+  `<style:paragraph-properties fo:text-align="start" fo:margin-left="0.1874in"/></style:style>` +
+  `<style:style style:name="ce15" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:vertical-align="middle" style:shrink-to-fit="true"/></style:style>` +
+  `<style:style style:name="ce16" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:diagonal-bl-tr="0.74pt solid #ff0000" ` +
+  `style:diagonal-tl-br="none" fo:border-bottom="1.75pt dashed #0000ff" fo:border-left="none" fo:border-right="none" fo:border-top="none"/></style:style>` +
+  `<style:style style:name="T1" style:family="text"><style:text-properties fo:color="#c9211e" fo:font-weight="bold" style:font-weight-asian="bold" ` +
+  `style:font-weight-complex="bold"/></style:style>` +
+  `</office:automatic-styles>`;
+
+function spec117OdsContent(tables: string): string {
+  return (
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC117_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet><table:calculation-settings table:automatic-find-labels="false" ` +
+    `table:use-regular-expressions="false" table:use-wildcards="true"/>${tables}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`
+  );
+}
+
+const loConfigItem = (name: string, type: string, value: string | number | boolean): string =>
+  `<config:config-item config:name="${name}" config:type="${type}">${value}</config:config-item>`;
+
+/** One table's entry in settings.xml's Tables map, as Calc writes it. */
+function spec117TableSettings(
+  name: string,
+  view: {
+    cursor: [number, number];
+    split: [number, number];
+    splitPosition: [number, number];
+    activeSplitRange: number;
+    position: { left: number; right: number; top: number; bottom: number };
+    zoom: number;
+    showGrid: boolean;
+  },
+): string {
+  return (
+    `<config:config-item-map-entry config:name="${name}">` +
+    loConfigItem("CursorPositionX", "int", view.cursor[0]) +
+    loConfigItem("CursorPositionY", "int", view.cursor[1]) +
+    loConfigItem("HorizontalSplitMode", "short", view.split[0]) +
+    loConfigItem("VerticalSplitMode", "short", view.split[1]) +
+    loConfigItem("HorizontalSplitPosition", "int", view.splitPosition[0]) +
+    loConfigItem("VerticalSplitPosition", "int", view.splitPosition[1]) +
+    loConfigItem("ActiveSplitRange", "short", view.activeSplitRange) +
+    loConfigItem("PositionLeft", "int", view.position.left) +
+    loConfigItem("PositionRight", "int", view.position.right) +
+    loConfigItem("PositionTop", "int", view.position.top) +
+    loConfigItem("PositionBottom", "int", view.position.bottom) +
+    loConfigItem("ZoomType", "short", 0) +
+    loConfigItem("ZoomValue", "int", view.zoom) +
+    loConfigItem("PageViewZoomValue", "int", 60) +
+    loConfigItem("ShowGrid", "boolean", view.showGrid) +
+    loConfigItem("AnchoredTextOverflowLegacy", "boolean", false) +
+    loConfigItem("LegacySingleLineFontwork", "boolean", false) +
+    loConfigItem("ConnectorUseSnapRect", "boolean", false) +
+    loConfigItem("IgnoreBreakAfterMultilineField", "boolean", false) +
+    `</config:config-item-map-entry>`
+  );
+}
+
+function spec117OdsSettings(): string {
+  const tables =
+    spec117TableSettings("Styled", {
+      cursor: [1, 2],
+      split: [2, 2],
+      splitPosition: [1, 2],
+      activeSplitRange: 3,
+      position: { left: 0, right: 1, top: 0, bottom: 2 },
+      zoom: 85,
+      showGrid: true,
+    }) +
+    spec117TableSettings("Plain", {
+      cursor: [0, 0],
+      split: [0, 0],
+      splitPosition: [0, 0],
+      activeSplitRange: 2,
+      position: { left: 0, right: 0, top: 0, bottom: 0 },
+      zoom: 100,
+      showGrid: false,
+    }) +
+    spec117TableSettings("Split", {
+      cursor: [0, 0],
+      split: [1, 0],
+      splitPosition: [3216, 0],
+      activeSplitRange: 2,
+      position: { left: 0, right: 4, top: 0, bottom: 0 },
+      zoom: 100,
+      showGrid: true,
+    });
+  return (
+    ODF_XML_DECLARATION +
+    `<office:document-settings xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0" ` +
+    `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:ooo="http://openoffice.org/2004/office" office:version="1.3">` +
+    `<office:settings><config:config-item-set config:name="ooo:view-settings">` +
+    loConfigItem("VisibleAreaTop", "int", 0) +
+    loConfigItem("VisibleAreaLeft", "int", 0) +
+    loConfigItem("VisibleAreaWidth", "int", 13544) +
+    loConfigItem("VisibleAreaHeight", "int", 4516) +
+    `<config:config-item-map-indexed config:name="Views"><config:config-item-map-entry>` +
+    loConfigItem("ViewId", "string", "view1") +
+    `<config:config-item-map-named config:name="Tables">${tables}</config:config-item-map-named>` +
+    loConfigItem("ActiveTable", "string", SPEC117_STYLES_ODS.activeTable) +
+    loConfigItem("HorizontalScrollbarWidth", "int", 1309) +
+    loConfigItem("ZoomType", "short", 0) +
+    loConfigItem("ZoomValue", "int", 85) +
+    loConfigItem("PageViewZoomValue", "int", 60) +
+    loConfigItem("ShowPageBreakPreview", "boolean", false) +
+    loConfigItem("ShowZeroValues", "boolean", true) +
+    loConfigItem("ShowNotes", "boolean", true) +
+    loConfigItem("ShowGrid", "boolean", true) +
+    loConfigItem("GridColor", "int", 12632256) +
+    loConfigItem("ShowPageBreaks", "boolean", true) +
+    loConfigItem("HasColumnRowHeaders", "boolean", true) +
+    loConfigItem("HasSheetTabs", "boolean", true) +
+    loConfigItem("IsOutlineSymbolsSet", "boolean", true) +
+    loConfigItem("IsValueHighlightingEnabled", "boolean", false) +
+    loConfigItem("IsSnapToRaster", "boolean", false) +
+    loConfigItem("RasterIsVisible", "boolean", false) +
+    loConfigItem("RasterResolutionX", "int", 1000) +
+    loConfigItem("RasterResolutionY", "int", 1000) +
+    loConfigItem("RasterSubdivisionX", "int", 1) +
+    loConfigItem("RasterSubdivisionY", "int", 1) +
+    loConfigItem("IsRasterAxisSynchronized", "boolean", true) +
+    loConfigItem("AnchoredTextOverflowLegacy", "boolean", false) +
+    loConfigItem("LegacySingleLineFontwork", "boolean", false) +
+    loConfigItem("ConnectorUseSnapRect", "boolean", false) +
+    loConfigItem("IgnoreBreakAfterMultilineField", "boolean", false) +
+    `</config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set>` +
+    `<config:config-item-set config:name="ooo:configuration-settings">` +
+    loConfigItem("IsDocumentShared", "boolean", false) +
+    loConfigItem("SaveVersionOnClose", "boolean", false) +
+    loConfigItem("ShowGrid", "boolean", true) +
+    loConfigItem("ShowZeroValues", "boolean", true) +
+    `</config:config-item-set></office:settings></office:document-settings>`
+  );
+}
+
+/** What spec117-styles.ods holds, for the unit and e2e specs. Row and column
+ * numbers here are 1-based / A1 unless named `index` (0-based). */
+export const SPEC117_STYLES_ODS = {
+  tableNames: ["Styled", "Plain", "Split"],
+  activeTable: "Styled",
+  /** "Styled": the active table — every construct the spec reads. */
+  styled: {
+    /** B2: bold red text on yellow (ce1, parented to "Default"). */
+    header: { a1: "B2", value: "Header", styleName: "ce1", bold: true, color: "#ff0000", fill: "#ffff00" },
+    /** B3:B12 hold 10, 20, …, 100; B13 and everything below is empty. */
+    numbers: { from: "B3", to: "B12", values: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100] },
+    /** C5 spans C5:E5 (3×1); the covered D5 and E5 carry its style. */
+    merge: { range: "C5:E5", anchor: "C5", value: "Merged title", styleName: "ce12", covered: ["D5", "E5"] },
+    /** ce12 = the common "Heading" (24pt bold) + centred. */
+    titleFont: { family: "Liberation Sans", sizePt: 24, bold: true },
+    /** Column G (`table:visibility="collapse"`); F and H are visible. */
+    hiddenColumn: { index: 6, letter: "G" },
+    /** Column B is wider (co2, 1.2in). */
+    wideColumn: { index: 1, widthPx: 115.2, styleName: "co2" },
+    /** Column A's default cell style is ce9 (italic). */
+    styledColumn: { index: 0, styleName: "ce9" },
+    /** co1 (0.889in) is the last column run's style; ro1 (0.178in) the last row run's. */
+    defaultColWidthPx: 85.344,
+    defaultRowHeightPt: 12.816,
+    /** Row 1: four headings in ce10 and a ce10 run of 16380 cells to XFD —
+     * the row's style, storing no cell of its own. */
+    bannerRow: { index: 0, styleName: "ce10", values: ["Region", "Amount", "Title", "Notes"], repeatedRun: 16380 },
+    /** Rows with heights of their own (index → pt; custom = use-optimal false). */
+    sizedRows: [
+      { index: 0, heightPt: 21.6, customHeight: true },
+      { index: 4, heightPt: 32.4 },
+      { index: 6, heightPt: 43.2, customHeight: true },
+      { index: 15, heightPt: 21.6, customHeight: true },
+    ],
+    /** Row 14 is hidden (it holds D14); row 16 is stored for its height alone. */
+    hiddenRow: { index: 13, a1: "D14", value: "Hidden row" },
+    emptySizedRow: { index: 15 },
+    /** C3: "Mixed bold run", the middle word a text:span in T1. */
+    richText: {
+      a1: "C3",
+      value: "Mixed bold run",
+      runs: [{ text: "Mixed " }, { text: "bold", font: { bold: true, color: "#c9211e" } }, { text: " run" }],
+    },
+    borders: { D7: "thin", D8: "medium", D9: "thick", D10: "dashed", D11: "hair", D12: "double" },
+    /** D6: a red thin diagonal (bottom-left → top-right) over a blue 1.75pt dashed bottom edge. */
+    diagonal: { a1: "D6", diagonal: { style: "thin", color: "#ff0000", up: true }, bottom: { style: "mediumDashed", color: "#0000ff" } },
+    alignment: {
+      F7: { wrap: true },
+      F8: { textRotation: 90 },
+      F9: { horizontal: "fill" },
+      F10: { horizontal: "left", indent: 2 },
+      F11: { vertical: "center", shrinkToFit: true },
+    },
+    tabColor: "#729fcf",
+    /** settings.xml: both split modes 2 → rows 2 and column A frozen; the
+     * scrolled pane starts at B3; zoom 85; the cursor on B3. */
+    frozen: { rows: 2, cols: 1 },
+    topLeftCell: "B3",
+    zoomPercent: 85,
+    cursor: "B3",
+    /** 16 rows written, then the trailing run to the grid's edge. */
+    trailingRowRun: 1_048_576 - 16,
+  },
+  /** "Plain": ShowGrid false, zoom 100 (→ no zoomPercent). */
+  plain: { showGridLines: false },
+  /** "Split": a split (mode 1) — not a freeze; the normal view. */
+  split: { a1: "A1", value: "Split view" },
+} as const;
+
+/** A styled empty run, as Calc writes a format reaching past the data. */
+const loStyledRun = (styleName: string, repeat: number): string =>
+  `<table:table-cell table:style-name="${styleName}" table:number-columns-repeated="${repeat}"/>`;
+
+export async function buildSpec117StylesOdsBytes(): Promise<Uint8Array> {
+  /** A row of `B` = value, `D` and `F` optional styled strings. */
+  const numberRow = (value: number, d?: [string, string], f?: [string, string], style = "ro1"): string =>
+    loRow(
+      loEmpty(1) +
+        loFloat(value) +
+        (d || f ? loEmpty(1) + (d ? loString(d[0], d[1]) : loEmpty(1)) : "") +
+        (f ? loEmpty(1) + loString(f[0], f[1]) + loEmpty(16378) : d ? loEmpty(16380) : loEmpty(16382)),
+      style,
+    );
+  const styled =
+    `<table:table table:name="Styled" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:default-cell-style-name="ce9"/>` +
+    `<table:table-column table:style-name="co2" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="4" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:visibility="collapse" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16377" table:default-cell-style-name="Default"/>` +
+    // Row 1: a whole-row format — four headings, then the style run to XFD.
+    loRow(SPEC117_STYLES_ODS.styled.bannerRow.values.map((text) => loString(text, "ce10")).join("") + loStyledRun("ce10", 16380), "ro2") +
+    loRow(loEmpty(1) + loString("Header", "ce1") + loEmpty(16382)) +
+    loRow(
+      loEmpty(1) +
+        loFloat(10) +
+        `<table:table-cell office:value-type="string" calcext:value-type="string"><text:p>Mixed <text:span text:style-name="T1">bold</text:span> run</text:p>` +
+        `</table:table-cell>` +
+        loEmpty(16381),
+    ) +
+    numberRow(20) +
+    loRow(
+      loEmpty(1) +
+        loFloat(30) +
+        `<table:table-cell table:style-name="ce12" table:number-columns-spanned="3" table:number-rows-spanned="1" office:value-type="string" ` +
+        `calcext:value-type="string"><text:p>Merged title</text:p></table:table-cell>` +
+        `<table:covered-table-cell table:style-name="ce12" table:number-columns-repeated="2"/>` +
+        loEmpty(16379),
+      "ro3",
+    ) +
+    numberRow(40, ["Diagonal", "ce16"]) +
+    numberRow(50, ["Thin", "ce2"], ["Wrapped text in a narrow column", "ce8"], "ro4") +
+    numberRow(60, ["Medium", "ce3"], ["Up", "ce11"]) +
+    numberRow(70, ["Thick", "ce4"], ["=", "ce13"]) +
+    numberRow(80, ["Dashed", "ce5"], ["Indented", "ce14"]) +
+    numberRow(90, ["Hair", "ce6"], ["Middle", "ce15"]) +
+    numberRow(100, ["Double", "ce7"]) +
+    loRow(loEmpty(16384)) +
+    `<table:table-row table:style-name="ro1" table:visibility="collapse">${loEmpty(3)}${loString("Hidden row")}${loEmpty(16380)}</table:table-row>` +
+    loRow(loEmpty(16384)) +
+    loRow(loEmpty(16384), "ro2") +
+    loRow(loEmpty(16384), "ro1", SPEC117_STYLES_ODS.styled.trailingRowRun) +
+    `</table:table>`;
+
+  const plain =
+    `<table:table table:name="Plain" table:style-name="ta2">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString("Plain sheet") + loFloat(1) + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 1_048_575) +
+    `</table:table>`;
+
+  const split =
+    `<table:table table:name="Split" table:style-name="ta2">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString(SPEC117_STYLES_ODS.split.value) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 1_048_575) +
+    `</table:table>`;
+
+  return loPackage(spec117OdsContent(styled + plain + split), loMeta("Spec 117 styles", 3, 36), spec117OdsSettings());
 }
