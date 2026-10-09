@@ -367,12 +367,21 @@ above), `XLSB_MAIN_CONTENT_TYPE`, `ODS_MIMETYPES` (the two above) and
 `spreadsheetFormatOf(info): { format: SpreadsheetFormat; packageVariant?:
 PackageVariant } | "xlsb" | null`. `openFile` dispatches it right after
 `presentationFormatOf`. Numbers is told apart from Keynote inside the IWA
-branch: an iWork package containing an `Index/CalculationEngine.iwa` entry
-and no `Index/Slide` entries is Numbers (confirm both markers against
-`spec116-numbers`'s Numbers source document on the operator's Mac before
-implementing; a `.numbers`-named ZIP with neither marker also gets the
-Numbers message, the one place the extension steers — and only toward a
-better message, as `.key` already does).
+branch: an iWork package containing an entry named exactly
+`Index/CalculationEngine.iwa` and no entry starting `Index/Slide` is Numbers
+(a `.numbers`-named ZIP with neither marker also gets the Numbers message,
+the one place the extension steers — and only toward a better message, as
+`.key` already does). Both markers were confirmed on 2026-10-09 against real
+14.4 documents (`e2e/fixtures/spec116-numbers.md` has the entry lists):
+Numbers writes `Index/CalculationEngine.iwa` and no `Index/Slide…`; Keynote
+writes the same engine entry plus `Index/Slide.iwa`/`Index/Slide-<id>.iwa`
+(`mini-deck.key`); Pages writes no `Index/Slide…` either but names its engine
+`Index/CalculationEngine-<id>.iwa` — so the engine match is on the exact name,
+never a prefix, or a Pages document would get the Numbers message. Pages keeps
+`NOT_KEYNOTE_MESSAGE`. The unit tests cover all three: the committed
+`spec116-numbers.numbers` → `NUMBERS_UNSUPPORTED_MESSAGE`, `mini-deck.key` →
+still imported, and a Pages-shaped package (suffixed engine, no slides) →
+`NOT_KEYNOTE_MESSAGE`.
 
 | Constant | String |
 | --- | --- |
@@ -490,11 +499,20 @@ fixture shaped like our own writer's output proves nothing:
 - `spec116-1904.xlsx` (`date1904="1"`), `spec116-macros.xlsm` (a dummy
   `xl/vbaProject.bin` and its relationship/content type), `spec116-template.xltx`,
   `spec116-wide.ods` (a cell at column 16,000 and row 900,000).
-- `spec116-numbers.xlsx` — human-generated, see the AC. The AppleScript
+- `spec116-numbers.xlsx` — human-generated, see the AC; committed on
+  2026-10-09 with `spec116-numbers.numbers` (the Numbers document it was
+  exported from, for the detection tests) and `spec116-numbers.md` (Numbers
+  14.4, and every producer shape the export carries). The AppleScript
   (`scripts/make-numbers-fixture.applescript`) builds a two-table document
   with text, numbers, a date, a formula and a hidden-free second sheet, and
   exports it with Numbers' "Export To ▸ Excel"; like the Keynote fixture,
-  `open -a Numbers` first or the script's `activate` fails with -600.
+  `open -a Numbers` first or the script's `activate` fails with -600. The
+  export is not shaped like the script's input — Numbers prepends an "Export
+  Summary" worksheet, names table worksheets `"<sheet> - <table>"`, puts the
+  table name in a merged row 1, writes the formula as a dynamic-array `<f
+  t="array">` with `xl/metadata.xml`, a boolean as the number 1 and the date
+  with a timezone hour — so its tests assert the values the note records,
+  read from the committed file.
 
 ### Tests
 - `core/xmlScanner.spec.ts` — events, offsets, namespaces (default and
