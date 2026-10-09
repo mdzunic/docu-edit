@@ -22,7 +22,7 @@ const MS_PER_DAY = 86_400_000;
 
 /** Days from 1970-01-01 to the given proleptic-Gregorian date (H. Hinnant's
  * days_from_civil). Out-of-range days/months roll over linearly. */
-function daysFromCivil(year: number, month: number, day: number): number {
+export function daysFromCivil(year: number, month: number, day: number): number {
   const y = month <= 2 ? year - 1 : year;
   const era = Math.floor(y / 400);
   const yoe = y - era * 400;
@@ -33,7 +33,7 @@ function daysFromCivil(year: number, month: number, day: number): number {
 }
 
 /** The inverse of daysFromCivil. */
-function civilFromDays(days: number): { year: number; month: number; day: number } {
+export function civilFromDays(days: number): { year: number; month: number; day: number } {
   const z = days + 719_468;
   const era = Math.floor(z / 146_097);
   const doe = z - era * 146_097;

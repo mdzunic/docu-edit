@@ -65,6 +65,20 @@ export function baseColWidthToPx(baseColWidth: number, mdw: number): number {
   return Math.ceil(px / 8) * 8;
 }
 
+const NARROW_CHARACTERS: ReadonlySet<string> = new Set([".", ",", ":", " "]);
+
+/** A text's estimated width in px: Σ per-character weights × MDW, weight 0.5
+ * for `.` `,` `:` and space and 1 for everything else — an estimate, never a
+ * measurement (SPEC-117 "Alignment"; SPEC-118's General fitting and ####
+ * decisions reuse it). */
+export function estimateTextWidth(text: string, mdw: number): number {
+  let units = 0;
+  for (const character of text) {
+    units += NARROW_CHARACTERS.has(character) ? 0.5 : 1;
+  }
+  return units * mdw;
+}
+
 /** A height in pt as the grid's integer px. */
 export function ptToPx(pt: number): number {
   return Math.round((pt * 4) / 3);

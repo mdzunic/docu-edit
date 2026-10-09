@@ -22,7 +22,7 @@
 //   (and SPEC-118's #### decisions) — an estimate, never a measurement.
 import { findRow } from "./address";
 import type { GridRange } from "./address";
-import { CELL_PADDING_PX, INDENT_PX_PER_LEVEL } from "./geometry";
+import { CELL_PADDING_PX, estimateTextWidth, INDENT_PX_PER_LEVEL } from "./geometry";
 import type { GridMetrics } from "./geometry";
 import { generalText } from "./general";
 import { mergeAt, mergesIn } from "./merges";
@@ -904,18 +904,9 @@ export function offscreenSpillCandidate(
 
 // --- text width, shrink and fill ---------------------------------------------
 
-const NARROW_CHARACTERS: ReadonlySet<string> = new Set([".", ",", ":", " "]);
-
-/** A text's estimated width in px: Σ per-character weights × MDW, weight 0.5
- * for `.` `,` `:` and space and 1 for everything else — an estimate, never a
- * measurement (SPEC-117 "Alignment"; SPEC-118 reuses it). */
-export function estimateTextWidth(text: string, mdw: number): number {
-  let units = 0;
-  for (const character of text) {
-    units += NARROW_CHARACTERS.has(character) ? 0.5 : 1;
-  }
-  return units * mdw;
-}
+/** A text's estimated width in px (geometry.ts — SPEC-117 "Alignment";
+ * SPEC-118's General fitting and #### decisions share it). */
+export { estimateTextWidth };
 
 /** The shrink-to-fit font scale: min(1, available / estimated width) — 1 for
  * text with no width. */
