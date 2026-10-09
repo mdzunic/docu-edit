@@ -1,16 +1,21 @@
 <script setup lang="ts">
 // The read-only formula bar (SPEC-117): above the grid, the Name Box — a
 // read-only input showing the active cell's address (a merge's top-left), or
-// "3R × 2C" while a drag is in progress — and the active cell's content, its
-// edit text (SPEC-118's editText: the value as the cell editor would hold it,
-// in the user's locale) with line breaks preserved. Nothing here edits:
-// SPEC-121 makes both editable. Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
+// "3R × 2C" while a drag is in progress — and the active cell's content,
+// SPEC-119's formulaBarText: "=" + its formula, an array's "{=…}", a data
+// table's "{=TABLE(…)}", else its edit text (SPEC-118's editText: the value
+// as the cell editor would hold it, in the user's locale), line breaks
+// preserved. A dynamic array's member shows its anchor's formula muted, with
+// data-spill-member="true". Nothing here edits: SPEC-121/122 make both
+// editable. Runtime prop declarations per the espree constraint (see
+// AppShell.vue).
 const props = defineProps({
   /** The Name Box text: "B3", or "3R × 2C" during a drag. */
   address: { type: String, default: "" },
   /** The active cell's content. */
   content: { type: String, default: "" },
+  /** The content is a dynamic-array member's anchor formula (muted). */
+  spillMember: { type: Boolean, default: false },
 });
 </script>
 
@@ -33,11 +38,13 @@ const props = defineProps({
     >fx</span>
     <div
       class="formula-bar-content"
+      :class="{ 'is-spill-member': props.spillMember }"
       data-testid="formula-bar-content"
       role="textbox"
       aria-readonly="true"
       aria-label="Cell content"
       aria-multiline="true"
+      :data-spill-member="props.spillMember ? 'true' : undefined"
       v-text="props.content"
     />
   </div>
@@ -89,5 +96,10 @@ const props = defineProps({
   overflow: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A spilled cell's formula belongs to its anchor: shown, muted. */
+.formula-bar-content.is-spill-member {
+  color: var(--text-secondary);
 }
 </style>

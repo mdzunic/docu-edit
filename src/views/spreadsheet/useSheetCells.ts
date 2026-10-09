@@ -28,7 +28,8 @@
 //   the locale the view hands in: the format's colour overrides the font
 //   colour, its alignHint drives General alignment, a `*x` fill becomes a
 //   flexible run of its character between the text either side, and a value
-//   that does not fit is "####", which never spills.
+//   that does not fit is "####", which never spills. SPEC-119: with Show
+//   formulas on, lib's showFormulasDisplay decides the text instead.
 import { computed, type ComputedRef } from "vue";
 import { findRow, formatA1, getCell, type GridRange } from "../../lib/spreadsheet/address";
 import {
@@ -38,11 +39,13 @@ import {
   cellText,
   diagonalLines,
   edgeElementCss,
+  leftAligned,
   offscreenSpillCandidate,
   overflowAlignment,
   overflowExtent,
   resolveEdges,
   runCss,
+  showFormulasDisplay,
   valueKind,
   type CellText,
   type CssDeclarations,
@@ -125,6 +128,8 @@ export interface SheetCellsDeps {
   /** The number locale values render in (useSpreadsheetLocale); absent =
    * the default locale. */
   locale?: () => SpreadsheetLocale | undefined;
+  /** View ▸ Show formulas (SPEC-119); absent = values. */
+  showFormulas?: () => boolean;
 }
 
 /** The border element for one resolved edge, region-relative. */
@@ -155,11 +160,11 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     return cellStyle(deps.model(), id);
   }
 
-  function cssFor(id: number, kind: ReturnType<typeof valueKind>, alignHint: FormattedValue["alignHint"]): ReturnType<typeof cellCss> {
-    const key = `${id}|${kind}|${alignHint ?? ""}`;
+  function cssFor(id: number, kind: ReturnType<typeof valueKind>, alignHint: FormattedValue["alignHint"], left = false): ReturnType<typeof cellCss> {
+    const key = `${id}|${kind}|${alignHint ?? ""}|${left ? "left" : ""}`;
     let css = cssCache.value.get(key);
     if (!css) {
-      css = cellCss(styleOf(id), theme.value, kind, alignHint);
+      css = cellCss(left ? leftAligned(styleOf(id)) : styleOf(id), theme.value, kind, alignHint);
       cssCache.value.set(key, css);
     }
     return css;
@@ -191,18 +196,20 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
   ): CellItem {
     const sheet = deps.sheet();
     const styleId = styleIdAt(row, cell, at.col);
-    const style = styleOf(styleId);
     const value = cell?.value ?? null;
-    const kind = valueKind(value);
+    // Showing formulas: a formula as left-aligned text, a value's General text.
+    const shown = deps.showFormulas?.() ? showFormulasDisplay(sheet, at.row, at.col, value, deps.model().format) : null;
+    const style = shown?.formula ? leftAligned(styleOf(styleId)) : styleOf(styleId);
+    const kind = shown?.formula ? "string" : valueKind(value);
     const mdw = mdwFor(styleId);
     // The value through its number format, fitted to the cell (or merge);
     // a shrink-to-fit cell shrinks its font instead of fitting the text.
-    const formatted = cellDisplay(value, style, sheet, {
+    const formatted = shown?.formatted ?? cellDisplay(value, style, sheet, {
       ...formatContext.value,
       ...(style.alignment?.shrinkToFit ? {} : { widthPx: place.width }),
       digitWidthPx: mdw,
     });
-    const css = cssFor(styleId, kind, formatted.alignHint);
+    const css = cssFor(styleId, kind, formatted.alignHint, shown?.formula);
     const textStyle: CssDeclarations = {};
     const contentStyle: CssDeclarations = {};
     for (const [key, val] of Object.entries(css.text)) {
@@ -218,7 +225,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     let raised = false;
     let textLeft = 0;
     let textWidth = place.width;
-    const spill = merge || formatted.overflow === "hash" ? null : overflowAlignment(style, value);
+    const spill = merge || formatted.overflow === "hash" ? null : overflowAlignment(style, shown?.formula ? formatted.text : value);
     if (spill && text.length > 0) {
       const room = overflowExtent(sheet, at.row, at.col, spill, deps.metrics(), deps.merges(), deps.viewport.frozenCols.value);
       if (room.left > 0 || room.right > 0) {
@@ -230,7 +237,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     textStyle.left = `${textLeft}px`;
     textStyle.width = `${textWidth}px`;
     const boxStyle = cellBoxCss(css.box, place, merge !== undefined);
-    const runs = cell?.runs && typeof value === "string" && horizontal !== "fill" ? cell.runs.map((run) => ({ text: run.text, style: run.font ? runCss(run.font, theme.value) : {} })) : null;
+    const runs = cell?.runs && typeof value === "string" && horizontal !== "fill" && !shown?.formula ? cell.runs.map((run) => ({ text: run.text, style: run.font ? runCss(run.font, theme.value) : {} })) : null;
     return {
       key: merge ? `m${merge.top}:${merge.left}` : `${at.row}:${at.col}`,
       ref: formatA1(at),

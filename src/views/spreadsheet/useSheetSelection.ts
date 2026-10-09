@@ -1,6 +1,6 @@
 // The sheet on show's selection (SPEC-117 "Selection", "Keyboard map",
 // "Pointer", "Aggregates"): the state the grid draws, the formula bar's Name
-// Box and content, and the status bar's aggregates all read, and the actions
+// Box and the status bar's aggregates all read, and the actions
 // the grid's keyboard and pointer handlers call. Every rule lives in the
 // pure functions of lib/spreadsheet/selection.ts — this composable only
 // holds the state, maps events onto them and stores the result as view state
@@ -20,14 +20,15 @@
 //   (core/idleScheduler.ts) rather than on the keystroke. SPEC-118: Sum and
 //   Average render with the number format of the selection's first numeric
 //   cell (row-major), in the view's locale; Count stays a plain integer.
-// - SPEC-118: the formula bar shows the active cell's editText — its value
-//   as the cell editor would hold it, in the view's locale, through the
-//   cell's effective style.
+// - SPEC-118: the selection's format context (the workbook's, in the view's
+//   locale) and each position's effective style, which the status bar's
+//   aggregates render through — and which useFormulaDisplay's formula-bar
+//   text (SPEC-119, formulaBarText → editText) reads too.
 import { computed, shallowRef, watch } from "vue";
 import { isMacPlatform } from "../../lib/core/platform";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { isOutsideDocumentInput } from "../../lib/shortcuts";
-import { formatA1, getCell, type CellRef } from "../../lib/spreadsheet/address";
+import { formatA1, type CellRef } from "../../lib/spreadsheet/address";
 import {
   firstNumericCell,
   formatAggregates,
@@ -39,7 +40,7 @@ import {
 import type { CellStyle, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { formatCodeOf } from "../../lib/spreadsheet/numberFormat/builtin";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
-import { editText, formatValue, plainText, workbookFormatContext, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
+import { formatValue, plainText, workbookFormatContext, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
 import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import {
   addRange,
@@ -191,18 +192,6 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     return model ? cellStyle(model, effectiveStyleId(sheet, row, col)) : undefined;
   }
 
-  /** The formula bar's content: the active cell's edit text (SPEC-118),
-   * line breaks preserved. */
-  const activeContent = computed(() => {
-    const sheet = deps.sheet();
-    const active = selection.value.active;
-    const cell = sheet ? getCell(sheet, active.row, active.col) : undefined;
-    if (!sheet || !cell) {
-      return "";
-    }
-    return editText(cell, { ...formatContext.value, style: styleAt(sheet, active.row, active.col) });
-  });
-
   const aggregates = shallowRef<SelectionAggregates | null>(null);
   /** The selection's first numeric cell (row-major), whose format Sum and
    * Average take. */
@@ -261,7 +250,8 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     set,
     dragSize,
     nameBoxText,
-    activeContent,
+    formatContext,
+    styleAt,
     aggregates,
     statusTexts,
   };

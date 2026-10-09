@@ -4,8 +4,10 @@
 // slotted menus, every item emitting a command id that useSpreadsheetMenu
 // routes, its state coerced by lib/spreadsheet/menuState.ts. This spec's
 // items: File — Download (the same action as the app bar's) and Close;
-// View — Gridlines (a menuitemcheckbox) and Zoom ▸ the ZOOM_PRESETS ladder,
-// Zoom in and Zoom out. Later specs append menus and items; item test ids
+// View — Gridlines (a menuitemcheckbox), SPEC-119's Show formulas (another,
+// with its Ctrl+` shortcut — Control on every platform) and Zoom ▸ the
+// ZOOM_PRESETS ladder, Zoom in and Zoom out. Later specs append menus and
+// items; item test ids
 // keep the `sheet-menu-` prefix. Runtime prop declarations per the espree
 // constraint (see AppShell.vue).
 import { computed } from "vue";
@@ -60,6 +62,14 @@ const MENUS = [
         :checked="s.gridLines"
         :disabled="!s.hasGrid"
         @select="emit('command', SHEET_MENU_COMMANDS.gridLines)"
+      />
+      <MenuCheckItem
+        label="Show formulas"
+        testid="sheet-menu-show-formulas"
+        shortcut="Ctrl+`"
+        :checked="s.showFormulas"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.showFormulas)"
       />
       <MenuSubmenu
         label="Zoom"

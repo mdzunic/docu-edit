@@ -8,6 +8,9 @@
 export interface SpreadsheetMenuState {
   /** View → Gridlines, checked from the sheet's `showGridLines`. */
   gridLines: boolean;
+  /** View → Show formulas (SPEC-119), checked from the sheet's
+   * `showFormulas`. */
+  showFormulas: boolean;
   /** The active sheet's zoom — its preset (if any) shows checked. */
   zoomPercent: number;
   /** Whether a grid sheet is on show (the View items need one). */
@@ -20,6 +23,7 @@ export const SHEET_MENU_COMMANDS = {
   download: "file.download",
   close: "file.close",
   gridLines: "view.gridlines",
+  showFormulas: "view.show-formulas",
   zoomIn: "view.zoom-in",
   zoomOut: "view.zoom-out",
 } as const;
@@ -36,11 +40,13 @@ export function zoomPresetOf(command: string): number | null {
 }
 
 /** Coerces the untyped `state` prop into the typed shape the template reads;
- * a bar mounted without state shows gridlines on and 100%. */
+ * a bar mounted without state shows gridlines on, values (not formulas) and
+ * 100%. */
 export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
   const state = (value ?? {}) as Partial<SpreadsheetMenuState>;
   return {
     gridLines: state.gridLines !== false,
+    showFormulas: state.showFormulas === true,
     zoomPercent: typeof state.zoomPercent === "number" ? state.zoomPercent : 100,
     hasGrid: state.hasGrid !== false,
   };
