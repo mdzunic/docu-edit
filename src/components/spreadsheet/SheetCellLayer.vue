@@ -16,11 +16,12 @@
 // cellAttributes — none on a merge's paint-only copy in a further frozen
 // pane. A number format's `*x` fill (SPEC-118) is a flex row: the text
 // before it, a run of the fill character taking the remaining width (clipped,
-// hidden from assistive technology), the text after it. Runtime prop
+// hidden from assistive technology), the text after it. SPEC-120: a stale
+// cell carries data-stale and its title (`staleTitle`). Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems, cellAttributes } from "../../views/spreadsheet/sheetLayerProps";
+import { asBandItems, asStaleTitle, cellAttributes } from "../../views/spreadsheet/sheetLayerProps";
 
 const props = defineProps({
   /** The bands to draw (useSheetCells' BandItem[]). */
@@ -29,9 +30,12 @@ const props = defineProps({
   gridLines: { type: Boolean, default: true },
   /** The frozen columns' width, unscaled px (0 without a freeze). */
   frozenWidth: { type: Number, default: 0 },
+  /** A stale cell's title by position (SPEC-120; useSheetGrid's). */
+  staleTitle: { type: Function, default: undefined },
 });
 
 const items = computed(() => asBandItems(props.bands));
+const staleTitleOf = computed(() => asStaleTitle(props.staleTitle));
 
 /** The text box's style, its family wrapped in the substitution stack. */
 function textStyle(style = {}) {
@@ -107,7 +111,7 @@ function px(value = 0) {
             :key="cell.key"
             class="sheet-cell"
             :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
-            v-bind="cellAttributes(cell)"
+            v-bind="cellAttributes(cell, staleTitleOf)"
             :style="cell.boxStyle"
           >
             <div

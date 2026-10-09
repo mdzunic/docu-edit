@@ -6,8 +6,12 @@
 // are selected and no error is, in the number format of the first numeric
 // cell, SPEC-118), then the number-locale control (SheetLocaleControl,
 // SPEC-118) and SPEC-063's ZoomControl at its right, with its fit entries
-// hidden (a sheet has no page to fit). Runtime prop declarations per the
-// espree constraint (see AppShell.vue).
+// hidden (a sheet has no page to fit). SPEC-120 adds two regions after the
+// aggregates: the circular-reference warning ("Circular reference:
+// Loop!A1") while the workbook has a cycle, and "Calculating…" while a long
+// recalculation runs (useRecalc). Runtime prop declarations per the espree
+// constraint (see AppShell.vue).
+import { CALCULATING_TEXT } from "../../views/spreadsheet/useRecalc";
 import ZoomControl from "../ZoomControl.vue";
 import SheetLocaleControl from "./SheetLocaleControl.vue";
 
@@ -18,6 +22,10 @@ const props = defineProps({
   count: { type: String, default: "" },
   /** "Sum: 60" — empty hides it. */
   sum: { type: String, default: "" },
+  /** "Circular reference: Loop!A1" (SPEC-120) — empty hides it. */
+  circular: { type: String, default: "" },
+  /** A recalculation has run past CALCULATING_STATUS_DELAY_MS (SPEC-120). */
+  calculating: { type: Boolean, default: false },
   /** The sheet's zoom in percent. */
   zoomPercent: { type: Number, default: 100 },
   /** No grid on show (a foreign sheet): the zoom is disabled. */
@@ -50,6 +58,21 @@ const emit = defineEmits(["zoom-in", "zoom-out", "apply-zoom", "set-zoom"]);
         data-testid="sheet-status-sum"
       >{{ props.sum }}</span>
     </div>
+    <div
+      class="sheet-status-calc"
+      role="status"
+      aria-live="polite"
+    >
+      <span
+        v-if="props.circular"
+        class="sheet-status-circular"
+        data-testid="sheet-status-circular"
+      >{{ props.circular }}</span>
+      <span
+        v-if="props.calculating"
+        data-testid="sheet-status-calculating"
+      >{{ CALCULATING_TEXT }}</span>
+    </div>
     <SheetLocaleControl class="sheet-status-locale" />
     <ZoomControl
       :zoom-percent="props.zoomPercent"
@@ -81,6 +104,17 @@ const emit = defineEmits(["zoom-in", "zoom-out", "apply-zoom", "set-zoom"]);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+}
+
+.sheet-status-calc {
+  display: flex;
+  flex: none;
+  gap: var(--space-4);
+  white-space: nowrap;
+}
+
+.sheet-status-circular {
+  color: var(--text-danger);
 }
 
 .sheet-status-locale {

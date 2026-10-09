@@ -5,11 +5,12 @@
 // bar's own actions (useWorkbookLoad); Gridlines writes the sheet's
 // `showGridLines` as view state (useSheetViewState); Show formulas toggles
 // the sheet's `showFormulas` (useFormulaDisplay, SPEC-119); the zoom items
-// step or set the sheet's zoom (useSheetZoom). Later specs append commands
-// here.
+// step or set the sheet's zoom (useSheetZoom); Data ▸ Recalculate runs a full
+// recalculation (useRecalc, SPEC-120). Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { FormulaDisplay } from "./useFormulaDisplay";
+import type { Recalc } from "./useRecalc";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
 
@@ -19,6 +20,8 @@ export interface SpreadsheetMenuDeps {
   zoom: Pick<SheetZoom, "percent" | "set" | "zoomIn" | "zoomOut">;
   /** View → Show formulas (SPEC-119); absent: the item never shows checked. */
   formulas?: Pick<FormulaDisplay, "showFormulas" | "toggle">;
+  /** Data → Recalculate (SPEC-120). */
+  recalc?: Pick<Recalc, "recalculate">;
 }
 
 export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
@@ -62,6 +65,9 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.zoomOut:
         deps.zoom.zoomOut();
+        break;
+      case SHEET_MENU_COMMANDS.recalculate:
+        deps.recalc?.recalculate();
         break;
       default:
         break;

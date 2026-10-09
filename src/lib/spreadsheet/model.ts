@@ -250,6 +250,21 @@ export interface Sheet {
   showFormulas?: true;
 }
 
+/** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
+ * from the file and never written back by this product: the file's own
+ * setting is preserved verbatim in the retained source. Each field is
+ * present only when the file sets it. */
+export interface CalcSettings {
+  fullCalcOnLoad?: true; // xlsx calcPr@fullCalcOnLoad="1"
+  manual?: true; // xlsx calcPr@calcMode="manual"; ods settings.xml AutoCalculate=false
+  iterate?: true; // xlsx calcPr@iterate="1"; ods table:iteration@table:status="enable"
+  caseSensitive?: true; // ods table:case-sensitive (ODF default "true"); never for xlsx
+  /** ods: regex when use-regular-expressions is in effect, plain when
+   * neither it nor use-wildcards is. */
+  criteria?: "regex" | "plain";
+  partialCellMatch?: true; // ods table:search-criteria-must-apply-to-whole-cell="false"
+}
+
 export interface SheetPreview {
   sheetName: string;
   /** Up to PREVIEW_ROWS (12) × PREVIEW_COLS (6) display strings from the
@@ -279,6 +294,11 @@ export interface SpreadsheetModel {
   defaultStyleId: 0;
   theme?: DocumentTheme; // xlsx: the workbook's theme part; ods: none
   indexedColors?: string[]; // the file's 64-entry override palette, lowercase #rrggbb
+  // --- SPEC-120 ---
+  calc?: CalcSettings;
+  /** Set by a recalculation pass that left a stale (uncomputable) cell, and
+   * never cleared: SPEC-122's xlsx writer emits calcPr@fullCalcOnLoad="1". */
+  forceFullCalcOnLoad?: true;
 }
 
 /** The error codes a cell can hold, for readers validating what a file

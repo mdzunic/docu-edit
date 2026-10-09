@@ -96,6 +96,7 @@ function px(value = 0) {
             :bands="grid.bands.value"
             :grid-lines="grid.showGridLines.value"
             :frozen-width="vp.frozenW.value"
+            :stale-title="grid.staleTitle"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
           />
           <div

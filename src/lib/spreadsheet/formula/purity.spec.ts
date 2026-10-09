@@ -9,6 +9,11 @@
 // print(parse()) — which would discard the user's whitespace: printFormula is
 // a test oracle and a builder (SPEC-125, SPEC-140), so no runtime module of
 // the spreadsheet layer calls it yet.
+// SPEC-120 extends the scan to the calculation engine — evaluate.ts,
+// values.ts, areas.ts, registry.ts, functions/*.ts, dependencies.ts and
+// recalc.ts are listed below and held to every rule above — and adds one:
+// the engine never imports core/idleScheduler.ts (time slicing is the view's
+// job, so a pass can move into a worker unchanged).
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +77,37 @@ describe("the formula layer's purity", () => {
     expect(modules.map((path) => path.slice(formulaDir.length + 1)).toSorted()).toEqual(
       expect.arrayContaining(["anchors.ts", "ast.ts", "dialect.ts", "functionNames.ts", "parse.ts", "print.ts", "references.ts", "tokens.ts"]),
     );
+  });
+
+  it("has SPEC-120's engine modules to check — the evaluator, values, registry, every functions file, the graph and recalculation", () => {
+    expect(modules.map((path) => path.slice(formulaDir.length + 1).split(sep).join("/")).toSorted()).toEqual(
+      expect.arrayContaining([
+        "areas.ts",
+        "dependencies.ts",
+        "evaluate.ts",
+        "functions/aggregate.ts",
+        "functions/common.ts",
+        "functions/criteria.ts",
+        "functions/dateTime.ts",
+        "functions/index.ts",
+        "functions/information.ts",
+        "functions/logical.ts",
+        "functions/lookup.ts",
+        "functions/math.ts",
+        "functions/text.ts",
+        "recalc.ts",
+        "registry.ts",
+        "values.ts",
+      ]),
+    );
+  });
+
+  it("never imports core/idleScheduler.ts (SPEC-120: the view drives the time slices)", () => {
+    const scheduler = resolve(coreDir, "idleScheduler");
+    const violations = modules.filter((path) =>
+      importSpecifiers(readFileSync(path, "utf8")).some((specifier) => resolve(dirname(path), specifier).replace(/\.ts$/, "") === scheduler),
+    );
+    expect(violations).toEqual([]);
   });
 
   it("imports only spreadsheet siblings and src/lib/core", () => {

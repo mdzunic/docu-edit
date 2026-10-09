@@ -28,6 +28,10 @@
 // 4 — SPEC-119: formulas (xlsx `<f>` — normal, shared, array, data table,
 //     dynamic array — and `c@cm`; ODS `table:formula` and matrix spans) and
 //     `sheetView@showFormulas`.
+// 5 — SPEC-120: the calculation settings (`calc`): xlsx `calcPr`
+//     fullCalcOnLoad, calcMode and iterate; ODS `table:calculation-settings`
+//     and settings.xml's AutoCalculate. A re-read keeps the stored model's
+//     `forceFullCalcOnLoad` (set by recalculation, never cleared).
 import { decodedPartBytes } from "../core/packageParts";
 import type { Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
@@ -35,7 +39,7 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/
 import { buildPreview } from "./preview";
 import { defaultStyles } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 4;
+export const SPREADSHEET_READER_VERSION = 5;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -81,6 +85,16 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       throw new Error("SPEC-119 upgrade: a sheet cannot be dirty before SPEC-121");
     },
   },
+  {
+    // SPEC-120 (4 → 5): calculation settings, which are the workbook's, not a
+    // sheet's — a re-read gains them from the retained source. The step keeps
+    // the registry contiguous and refuses the impossible dirty sheet, as
+    // SPEC-119's does.
+    from: 4,
+    upgradeDirtySheet() {
+      throw new Error("SPEC-120 upgrade: a sheet cannot be dirty before SPEC-121");
+    },
+  },
 ];
 
 /** The title a workbook gets when nothing names it. */
@@ -121,6 +135,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   }
   if (Object.keys(parsed.properties).length > 0) {
     model.properties = parsed.properties;
+  }
+  if (parsed.calc !== undefined && Object.keys(parsed.calc).length > 0) {
+    model.calc = parsed.calc;
   }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
@@ -168,6 +185,9 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   const sourceParts = decodedPartBytes(model.opaque);
   const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, sourceParts);
   fresh.id = model.id;
+  if (model.forceFullCalcOnLoad) {
+    fresh.forceFullCalcOnLoad = true;
+  }
   const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
   fresh.sheets = fresh.sheets.map((sheet, index) => {
     const stored = model.sheets[index];

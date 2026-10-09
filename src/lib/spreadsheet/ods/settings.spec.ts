@@ -165,3 +165,17 @@ describe("spec117-styles.ods (LibreOffice-shaped)", () => {
     }
   });
 });
+
+/** settings.xml with only `ooo:configuration-settings` items. */
+const configuration = (items: string): string =>
+  `<office:document-settings xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+  `xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"><office:settings>` +
+  `<config:config-item-set config:name="ooo:configuration-settings">${items}</config:config-item-set></office:settings></office:document-settings>`;
+
+describe("AutoCalculate (SPEC-120)", () => {
+  it("reads ooo:configuration-settings' AutoCalculate, absent when the file does not say", () => {
+    expect(readOdsSettings(configuration(item("AutoCalculate", true, "boolean"))).autoCalculate).toBe(true);
+    expect(readOdsSettings(configuration(item("AutoCalculate", false, "boolean"))).autoCalculate).toBe(false);
+    expect(readOdsSettings(configuration(item("SaveVersionOnClose", false, "boolean"))).autoCalculate).toBeUndefined();
+  });
+});

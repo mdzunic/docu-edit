@@ -67,8 +67,18 @@
 //   COM.MICROSOFT.CONCAT, a matrix formula with both span attributes, a
 //   repeated formula cell, an `oooc:=` and an `msoxl:=` formula and a formula
 //   cell without a cached value. SPEC119_FORMULAS_ODS records the facts.
-// spec116-numbers.xlsx is NOT built here — Apple Numbers exported it (see
-// e2e/fixtures/spec116-numbers.md); the specs read the committed file.
+// - spec120-calc.xlsx (SPEC-120) — Excel-shaped: "Calc" with a SUM cached
+//   999 (wrong on purpose: the cache is trusted until F9), TODAY() cached
+//   with an old date, an `_xll.` add-in call and the self-contained
+//   conformance rows with Excel's values; "Loop", a two-cell cycle; no
+//   fullCalcOnLoad. spec120-fullcalc.xlsx — XlsxWriter-shaped, every formula
+//   cached 0 and `fullCalcOnLoad="1"`. spec120-manual.xlsx — Excel-shaped,
+//   `calcMode="manual"`. spec120-calc.ods — LibreOffice-shaped, explicit
+//   `table:calculation-settings` (case-sensitive, wildcards), AutoCalculate in
+//   settings.xml and two formula cells without cached values.
+// spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
+// Numbers exported them (see e2e/fixtures/spec116-numbers.md and
+// spec120-numbers.md); the specs read the committed files.
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { dateToSerial } from "../serial";
 
@@ -218,6 +228,8 @@ async function excelPackage(options: {
   calcChain?: string;
   workbookPr: string;
   activeTab?: number;
+  /** SPEC-120: the workbook's `<calcPr>` (default Excel's `calcId` alone). */
+  calcPr?: string;
   /** Extra parts (name → bytes), their workbook relationship and content
    * type declaration — the VBA project. */
   extra?: { name: string; data: Uint8Array; relationship: string; contentType: string };
@@ -287,7 +299,7 @@ async function excelPackage(options: {
     `xr6:coauthVersionMax="47" xr10:uidLastSave="{00000000-0000-0000-0000-000000000000}"/>` +
     `<bookViews><workbookView xWindow="-110" yWindow="-110" windowWidth="19420" windowHeight="10300"` +
     `${options.activeTab ? ` activeTab="${options.activeTab}"` : ""} xr2:uid="{1E0B4C7A-5D2F-4C9B-8E3A-7F6D5C4B3A21}"/></bookViews>` +
-    `<sheets>${sheetsXml}</sheets>${options.additions?.workbookAfterSheets ?? ""}<calcPr calcId="191029"/></workbook>`;
+    `<sheets>${sheetsXml}</sheets>${options.additions?.workbookAfterSheets ?? ""}${options.calcPr ?? `<calcPr calcId="191029"/>`}</workbook>`;
 
   const entries: ZipEntryInput[] = [
     part("[Content_Types].xml", contentTypes),
@@ -986,12 +998,14 @@ const loEmpty = (repeat: number): string => `<table:table-cell table:number-colu
 const loRow = (cells: string, style = "ro1", repeat?: number): string =>
   `<table:table-row table:style-name="${style}"${repeat ? ` table:number-rows-repeated="${repeat}"` : ""}>${cells}</table:table-row>`;
 
-function loContent(tables: string, namespaces = LO_CONTENT_NAMESPACES): string {
+/** The `table:calculation-settings` Calc 24.8 writes for its defaults. */
+const LO_CALCULATION_SETTINGS = `<table:calculation-settings table:automatic-find-labels="false" table:use-regular-expressions="false" table:use-wildcards="true"/>`;
+
+function loContent(tables: string, namespaces = LO_CONTENT_NAMESPACES, calculationSettings = LO_CALCULATION_SETTINGS): string {
   return (
     ODF_XML_DECLARATION +
     `<office:document-content ${namespaces}><office:scripts/>${LO_FONT_FACES}${LO_AUTOMATIC_STYLES}` +
-    `<office:body><office:spreadsheet><table:calculation-settings table:automatic-find-labels="false" ` +
-    `table:use-regular-expressions="false" table:use-wildcards="true"/>${tables}<table:named-expressions/>` +
+    `<office:body><office:spreadsheet>${calculationSettings}${tables}<table:named-expressions/>` +
     `</office:spreadsheet></office:body></office:document-content>`
   );
 }
@@ -1025,7 +1039,9 @@ function loMeta(title: string, tableCount: number, cellCount: number): string {
   );
 }
 
-function loSettings(tables: readonly string[], active: string): string {
+/** settings.xml as Calc writes it; `configuration` adds items to
+ * `ooo:configuration-settings` (SPEC-120's AutoCalculate). */
+function loSettings(tables: readonly string[], active: string, configuration = ""): string {
   const entries = tables
     .map(
       (name) =>
@@ -1050,6 +1066,7 @@ function loSettings(tables: readonly string[], active: string): string {
     `<config:config-item config:name="ZoomValue" config:type="int">100</config:config-item>` +
     `</config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set>` +
     `<config:config-item-set config:name="ooo:configuration-settings">` +
+    configuration +
     `<config:config-item config:name="IsDocumentShared" config:type="boolean">false</config:config-item>` +
     `<config:config-item config:name="SaveVersionOnClose" config:type="boolean">false</config:config-item>` +
     `</config:config-item-set></office:settings></office:document-settings>`
@@ -2302,5 +2319,280 @@ export async function buildSpec119FormulasOdsBytes(): Promise<Uint8Array> {
     loContent(calc + mySheet + sheet2, SPEC119_CONTENT_NAMESPACES),
     loMeta("Formulas", 3, 34),
     loSettings(SPEC119_FORMULAS_ODS.tableNames, "Calc"),
+  );
+}
+
+// --- SPEC-120 -----------------------------------------------------------------------
+
+/** spec120-calc.xlsx's conformance rows (SPEC-120 "Conformance"): the
+ * self-contained ones — no cell inputs — one per row of "Calc"'s column G,
+ * each cached with the value Excel gives it. */
+export const SPEC120_CONFORMANCE: readonly { ref: string; formula: string; value: number | string | boolean | { error: "#VALUE!" | "#NUM!" | "#N/A" } }[] = [
+  { ref: "G1", formula: '"1"+"2"', value: 3 },
+  { ref: "G2", formula: '"1"+"$4.00"', value: 5 },
+  { ref: "G3", formula: '"6/1/2001"-"5/1/2001"', value: 31 },
+  { ref: "G4", formula: 'SQRT("8+1")', value: { error: "#VALUE!" } },
+  { ref: "G5", formula: '"A"&TRUE', value: "ATRUE" },
+  { ref: "G6", formula: '1+""', value: { error: "#VALUE!" } },
+  { ref: "G7", formula: "TRUE+TRUE", value: 2 },
+  { ref: "G8", formula: '1="1"', value: false },
+  { ref: "G9", formula: '1<"1"', value: true },
+  { ref: "G10", formula: '"z"<TRUE', value: true },
+  { ref: "G11", formula: '"A"="a"', value: true },
+  { ref: "G12", formula: "0.1+0.2=0.3", value: true },
+  { ref: "G13", formula: "0.1+0.2-0.3", value: 0 },
+  { ref: "G14", formula: "-2^2", value: 4 },
+  { ref: "G15", formula: "2^3^2", value: 64 },
+  { ref: "G16", formula: "0^0", value: { error: "#NUM!" } },
+  { ref: "G17", formula: '1/3&""', value: "0.333333333333333" },
+  { ref: "G18", formula: "#N/A+1/0", value: { error: "#N/A" } },
+  { ref: "G19", formula: "IF(TRUE,1,1/0)", value: 1 },
+  { ref: "G20", formula: 'SUM("3",TRUE)', value: 4 },
+  { ref: "G21", formula: 'MAX("a")', value: { error: "#VALUE!" } },
+  { ref: "G22", formula: "ROUND(2.5,0)", value: 3 },
+  { ref: "G23", formula: "ROUND(1.005,2)", value: 1.01 },
+  { ref: "G24", formula: "MOD(-3,2)", value: 1 },
+  { ref: "G25", formula: "INT(-8.9)", value: -9 },
+  { ref: "G26", formula: "CEILING(-2.5,2)", value: -2 },
+  { ref: "G27", formula: "FLOOR(0.3,0.1)", value: 0.3 },
+  { ref: "G28", formula: "DATE(2008,14,2)", value: 39846 },
+  { ref: "G29", formula: "DATE(1900,2,29)", value: 60 },
+  { ref: "G30", formula: "WEEKDAY(46303)", value: 5 },
+  { ref: "G31", formula: 'VLOOKUP("a",{"c",1;"a",2},2,)', value: 2 },
+  { ref: "G32", formula: 'MATCH("B*",{"apple","banana"},0)', value: 2 },
+  { ref: "G33", formula: 'LEN("😀")', value: 2 },
+  { ref: "G34", formula: "PROPER(\"it's\")", value: "It'S" },
+  { ref: "G35", formula: 'TRIM("  a   b  ")', value: "a b" },
+  { ref: "G36", formula: 'TEXT(0.5,"0%")', value: "50%" },
+];
+
+/** What spec120-calc.xlsx holds (Excel-shaped): "Calc" — A1:A3 1, 2, 3; B2
+ * `SUM(A1:A3)` cached 999, deliberately wrong (the cache is trusted until
+ * F9); D2 `TODAY()` (built-in format 14) cached 45000; E2 `_xll.CUSTOM(B2)`
+ * cached 42, an add-in function no registry will have; the conformance rows
+ * in column G — and "Loop": A1 `B1+1`, B1 `A1+1`, cached 0. Its calcPr has
+ * no fullCalcOnLoad. */
+export const SPEC120_CALC_XLSX = {
+  sheetNames: ["Calc", "Loop"],
+  sum: { ref: "B2", formula: "SUM(A1:A3)", cached: 999, computed: 6 },
+  today: { ref: "D2", formula: "TODAY()", cached: 45000 },
+  addIn: { ref: "E2", wire: "_xll.CUSTOM(B2)", cached: 42 },
+  loop: { A1: "B1+1", B1: "A1+1" },
+  conformance: SPEC120_CONFORMANCE,
+} as const;
+
+/** A conformance row's `<c>` as Excel writes it: `t` for text, boolean and
+ * error results. */
+function conformanceCell(row: (typeof SPEC120_CONFORMANCE)[number]): string {
+  const { value } = row;
+  if (typeof value === "string") {
+    return formulaCell(row.ref, normalF(row.formula), xmlText(value), { t: "str" });
+  }
+  if (typeof value === "boolean") {
+    return `<c r="${row.ref}" t="b">${normalF(row.formula)}<v>${value ? 1 : 0}</v></c>`;
+  }
+  if (typeof value === "object") {
+    return formulaCell(row.ref, normalF(row.formula), value.error, { t: "e" });
+  }
+  return formulaCell(row.ref, normalF(row.formula), value);
+}
+
+export async function buildSpec120CalcXlsxBytes(): Promise<Uint8Array> {
+  const C = SPEC120_CALC_XLSX;
+  const g = (r: number): string => conformanceCell(SPEC120_CONFORMANCE[r - 1]!);
+  const rows = [
+    spec119Row(1, "1:7", numberCell("A1", 1) + g(1)),
+    spec119Row(
+      2,
+      "1:7",
+      numberCell("A2", 2) +
+        formulaCell(C.sum.ref, normalF(C.sum.formula), C.sum.cached) +
+        `<c r="${C.today.ref}" s="1"><f>${C.today.formula}</f><v>${C.today.cached}</v></c>` +
+        formulaCell(C.addIn.ref, normalF(C.addIn.wire), C.addIn.cached) +
+        g(2),
+    ),
+    spec119Row(3, "1:7", numberCell("A3", 3) + g(3)),
+    ...SPEC120_CONFORMANCE.slice(3).map((_, i) => spec119Row(i + 4, "7:7", g(i + 4))),
+  ].join("");
+  const sheet = (uid: string, dimension: string, selected: boolean, body: string): string =>
+    XML_DECLARATION +
+    worksheetOpen(uid) +
+    `<dimension ref="${dimension}"/><sheetViews><sheetView ${selected ? 'tabSelected="1" ' : ""}workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/><cols><col min="4" max="4" width="10.6328125" customWidth="1"/></cols>` +
+    `<sheetData>${body}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+  const loop = spec119Row(1, "1:2", formulaCell("A1", normalF(C.loop.A1), 0) + formulaCell("B1", normalF(C.loop.B1), 0));
+  const calcChain =
+    XML_DECLARATION +
+    `<calcChain xmlns="${MAIN_NS}"><c r="B2" i="1" l="1"/><c r="D2"/><c r="E2"/>` +
+    SPEC120_CONFORMANCE.map((row) => `<c r="${row.ref}"/>`).join("") +
+    `<c r="A1" i="2" l="1"/><c r="B1"/></calcChain>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: "Calculation",
+    sheets: [
+      { name: "Calc", xml: sheet("9F1B3D5E-7A9C-4E1B-8D3F-5A7C9E1B3D24", `A1:G${SPEC120_CONFORMANCE.length}`, true, rows) },
+      { name: "Loop", xml: sheet("0A2C4E6F-8B0D-4F2A-9C4E-6B8D0F2A4C25", "A1:B1", false, loop) },
+    ],
+    calcChain,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+  });
+}
+
+/** What spec120-fullcalc.xlsx holds: an XlsxWriter-shaped workbook — as a
+ * library that never calculates writes one — with `fullCalcOnLoad="1"` and
+ * every formula cached as 0. "Totals": A1:A3 labels, B1:B3 10/20/30,
+ * C1:C3 `B*2`, row 4 the totals. */
+export const SPEC120_FULLCALC_XLSX = {
+  sheetName: "Totals",
+  labels: ["North", "South", "West", "Total"],
+  numbers: { B1: 10, B2: 20, B3: 30 },
+  formulas: { C1: "B1*2", C2: "B2*2", C3: "B3*2", B4: "SUM(B1:B3)", C4: "SUM(C1:C3)", D4: "AVERAGE(B1:B3)" },
+  /** What each formula computes to (every one is cached 0). */
+  computed: { C1: 20, C2: 40, C3: 60, B4: 60, C4: 120, D4: 20 },
+} as const;
+
+/** XlsxWriter's declaration (no standalone attribute line break quirks). */
+const XLSXWRITER_DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n`;
+
+/** XlsxWriter's shared-string cell. */
+const xlsxWriterLabel = (ref: string, index: number): string => `<c r="${ref}" t="s"><v>${index}</v></c>`;
+
+export async function buildSpec120FullCalcXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC120_FULLCALC_XLSX;
+  const label = xlsxWriterLabel;
+  const zero = (ref: keyof typeof F.formulas): string => `<c r="${ref}"><f>${F.formulas[ref]}</f><v>0</v></c>`;
+  const sheet =
+    XLSXWRITER_DECLARATION +
+    `<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}"><dimension ref="A1:D4"/><sheetViews><sheetView tabSelected="1" workbookViewId="0"/></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="15"/><sheetData>` +
+    `<row r="1" spans="1:3">${label("A1", 0)}<c r="B1"><v>${F.numbers.B1}</v></c>${zero("C1")}</row>` +
+    `<row r="2" spans="1:3">${label("A2", 1)}<c r="B2"><v>${F.numbers.B2}</v></c>${zero("C2")}</row>` +
+    `<row r="3" spans="1:3">${label("A3", 2)}<c r="B3"><v>${F.numbers.B3}</v></c>${zero("C3")}</row>` +
+    `<row r="4" spans="1:4">${label("A4", 3)}${zero("B4")}${zero("C4")}${zero("D4")}</row>` +
+    `</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+  const strings =
+    XLSXWRITER_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${F.labels.length}" uniqueCount="${F.labels.length}">` +
+    F.labels.map((text) => `<si><t>${text}</t></si>`).join("") +
+    `</sst>`;
+  const styles =
+    XLSXWRITER_DECLARATION +
+    `<styleSheet xmlns="${MAIN_NS}"><fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+    `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+    `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+    `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+    `<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>` +
+    `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/>` +
+    `<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+  const workbook =
+    XLSXWRITER_DECLARATION +
+    `<workbook xmlns="${MAIN_NS}" xmlns:r="${REL_NS}"><fileVersion appName="xl" lastEdited="4" lowestEdited="4" rupBuild="4505"/>` +
+    `<workbookPr defaultThemeVersion="124226"/><bookViews><workbookView xWindow="240" yWindow="15" windowWidth="16095" windowHeight="9660"/></bookViews>` +
+    `<sheets><sheet name="${F.sheetName}" sheetId="1" r:id="rId1"/></sheets><calcPr calcId="124519" fullCalcOnLoad="1"/></workbook>`;
+  const contentTypes =
+    XLSXWRITER_DECLARATION +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>` +
+    `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+    `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+    `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="${WORKSHEET_CONTENT_TYPE}"/>` +
+    `<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`;
+  return zip([
+    part("[Content_Types].xml", contentTypes),
+    part(
+      "_rels/.rels",
+      XLSXWRITER_DECLARATION +
+        `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_TYPE}/officeDocument" Target="xl/workbook.xml"/>` +
+        `<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>` +
+        `<Relationship Id="rId3" Type="${REL_TYPE}/extended-properties" Target="docProps/app.xml"/></Relationships>`,
+    ),
+    part(
+      "docProps/app.xml",
+      XLSXWRITER_DECLARATION +
+        `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
+        `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>Microsoft Excel</Application>` +
+        `<DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop><AppVersion>12.0000</AppVersion></Properties>`,
+    ),
+    part(
+      "docProps/core.xml",
+      XLSXWRITER_DECLARATION +
+        `<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ` +
+        `xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" ` +
+        `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>${FIXTURE_WORKBOOK_AUTHOR}</dc:creator>` +
+        `<dcterms:created xsi:type="dcterms:W3CDTF">2026-10-08T12:00:00Z</dcterms:created>` +
+        `<dcterms:modified xsi:type="dcterms:W3CDTF">2026-10-08T12:00:00Z</dcterms:modified></cp:coreProperties>`,
+    ),
+    part("xl/workbook.xml", workbook),
+    part(
+      "xl/_rels/workbook.xml.rels",
+      XLSXWRITER_DECLARATION +
+        `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_TYPE}/worksheet" Target="worksheets/sheet1.xml"/>` +
+        `<Relationship Id="rId2" Type="${REL_TYPE}/styles" Target="styles.xml"/>` +
+        `<Relationship Id="rId3" Type="${REL_TYPE}/sharedStrings" Target="sharedStrings.xml"/></Relationships>`,
+    ),
+    part("xl/styles.xml", styles),
+    part("xl/sharedStrings.xml", strings),
+    part("xl/worksheets/sheet1.xml", sheet),
+  ]);
+}
+
+/** What spec120-manual.xlsx holds (Excel-shaped, `calcMode="manual"`):
+ * "Manual" — A1 5, A2 7, A3 `SUM(A1:A2)` cached 12. */
+export const SPEC120_MANUAL_XLSX = {
+  sheetName: "Manual",
+  calcPr: `<calcPr calcId="191029" calcMode="manual"/>`,
+} as const;
+
+export async function buildSpec120ManualXlsxBytes(): Promise<Uint8Array> {
+  const rows =
+    spec119Row(1, "1:1", numberCell("A1", 5)) + spec119Row(2, "1:1", numberCell("A2", 7)) + spec119Row(3, "1:1", formulaCell("A3", normalF("SUM(A1:A2)"), 12));
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: "Manual",
+    sheets: [
+      {
+        name: SPEC120_MANUAL_XLSX.sheetName,
+        xml: worksheetXml({ uid: "1B3D5F7A-9C1E-4A3B-8D5F-7A9C1E3B5D26", dimension: "A1:A3", selected: true, sheetData: rows }),
+      },
+    ],
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    calcPr: SPEC120_MANUAL_XLSX.calcPr,
+  });
+}
+
+/** What spec120-calc.ods holds (LibreOffice-shaped): explicit
+ * `table:calculation-settings` — case-sensitive and wildcards — settings.xml's
+ * AutoCalculate, and "Calc": A1:A3 1/2/3, B1:B3 "Apple"/"apple"/"APPLE", and
+ * two formula cells without cached values, A4 `SUM(A1:A3)` and B4
+ * `COUNTIF(B1:B3,"apple")` (1 when case-sensitive). */
+export const SPEC120_CALC_ODS = {
+  tableName: "Calc",
+  calculationSettings:
+    `<table:calculation-settings table:case-sensitive="true" table:automatic-find-labels="false" ` +
+    `table:use-regular-expressions="false" table:use-wildcards="true"/>`,
+  wire: { A4: "of:=SUM([.A1:.A3])", B4: 'of:=COUNTIF([.B1:.B3];"apple")' },
+  formulas: { A4: "SUM(A1:A3)", B4: 'COUNTIF(B1:B3,"apple")' },
+  computed: { A4: 6, B4: 1 },
+} as const;
+
+export async function buildSpec120CalcOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC120_CALC_ODS;
+  const uncached = (wire: string): string => `<table:table-cell table:formula="${xmlEscape(wire)}"/>`;
+  const calc =
+    `<table:table table:name="${O.tableName}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loFloat(1) + loString("Apple") + loEmpty(16382)) +
+    loRow(loFloat(2) + loString("apple") + loEmpty(16382)) +
+    loRow(loFloat(3) + loString("APPLE") + loEmpty(16382)) +
+    loRow(uncached(O.wire.A4) + uncached(O.wire.B4) + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 1048572) +
+    `</table:table>`;
+  return loPackage(
+    loContent(calc, LO_CONTENT_NAMESPACES, O.calculationSettings),
+    loMeta("Calculation", 1, 8),
+    loSettings([O.tableName], O.tableName, `<config:config-item config:name="AutoCalculate" config:type="boolean">true</config:config-item>`),
   );
 }

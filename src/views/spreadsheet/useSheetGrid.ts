@@ -13,6 +13,7 @@ import { mergeAt } from "../../lib/spreadsheet/merges";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import type { FormulaDisplay } from "./useFormulaDisplay";
+import type { Recalc } from "./useRecalc";
 import type { SheetMetrics } from "./useSheetMetrics";
 import { useSheetCells } from "./useSheetCells";
 import { useSheetOverlays } from "./useSheetOverlays";
@@ -34,6 +35,8 @@ export interface SheetGridContext {
   locale?: SpreadsheetLocale;
   /** The formula bar's text and View ▸ Show formulas (SPEC-119). */
   formulas: FormulaDisplay;
+  /** Recalculation's stale cells (SPEC-120); absent = none. */
+  recalc?: Pick<Recalc, "staleTitleAt">;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -66,6 +69,8 @@ export function useSheetGrid(
   const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection });
 
   const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
+  /** A stale cell's title on this sheet (SPEC-120), for the paper. */
+  const staleTitle = (row: number, col: number): string | undefined => context().recalc?.staleTitleAt(sheet().id, row, col);
   /** The id of the active cell's element (a merge's anchor), for
    * aria-activedescendant. */
   const activeDescendant = computed(() => {
@@ -141,6 +146,7 @@ export function useSheetGrid(
     overlays,
     pointer,
     showGridLines,
+    staleTitle,
     activeDescendant,
     onKeydown,
     onWheel,

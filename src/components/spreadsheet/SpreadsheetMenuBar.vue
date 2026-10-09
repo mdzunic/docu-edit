@@ -6,9 +6,12 @@
 // items: File — Download (the same action as the app bar's) and Close;
 // View — Gridlines (a menuitemcheckbox), SPEC-119's Show formulas (another,
 // with its Ctrl+` shortcut — Control on every platform) and Zoom ▸ the
-// ZOOM_PRESETS ladder, Zoom in and Zoom out. Later specs append menus and
-// items; item test ids keep the `sheet-menu-` prefix. Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// ZOOM_PRESETS ladder, Zoom in and Zoom out. SPEC-120's Data menu ends, after
+// a separator, with Recalculate (F9) — SPEC-128 puts Sort and Filter above
+// that separator; until then nothing is, so a leading separator is not drawn.
+// Later specs append menus and items; item test ids keep the `sheet-menu-`
+// prefix. Runtime prop declarations per the espree constraint (see
+// AppShell.vue).
 import { computed } from "vue";
 import MenuBar from "../MenuBar.vue";
 import MenuCheckItem from "../MenuCheckItem.vue";
@@ -30,6 +33,7 @@ const s = computed(() => asSpreadsheetMenuState(props.state));
 const MENUS = [
   { id: "file", label: "File" },
   { id: "view", label: "View" },
+  { id: "data", label: "Data" },
 ];
 </script>
 
@@ -98,5 +102,25 @@ const MENUS = [
         />
       </MenuSubmenu>
     </template>
+
+    <template #data>
+      <hr class="menu-separator data-recalculate-separator">
+      <MenuItem
+        label="Recalculate"
+        testid="sheet-menu-recalculate"
+        shortcut="F9"
+        @select="emit('command', SHEET_MENU_COMMANDS.recalculate)"
+      />
+    </template>
   </MenuBar>
 </template>
+
+<style scoped>
+/* The separator before Recalculate divides it from the Data commands above
+   it (SPEC-128's); with nothing above it yet — first in the popup, or right
+   under the compact sheet's heading — it is not drawn. */
+.data-recalculate-separator:first-child,
+.menu-section-label + .data-recalculate-separator {
+  display: none;
+}
+</style>
