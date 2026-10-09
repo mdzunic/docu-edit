@@ -97,8 +97,7 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
   },
 ];
 
-/** The title a workbook gets when nothing names it. */
-export const DEFAULT_SPREADSHEET_TITLE = "Untitled workbook";
+export { DEFAULT_SPREADSHEET_TITLE } from "./model";
 
 /** Assembles a parsed package into a fresh SpreadsheetModel — the shared
  * tail of every workbook open path, minting a new id the way

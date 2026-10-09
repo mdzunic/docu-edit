@@ -11,8 +11,7 @@ import { decodedPartBytes } from "../core/packageParts";
 import { triggerBlobDownload } from "../core/triggerDownload";
 import { zip, type ZipEntryInput } from "../core/zipWriter";
 import { spreadsheetFileExtension, spreadsheetMimeType } from "./fileTypes";
-import type { SpreadsheetModel } from "./model";
-import { DEFAULT_SPREADSHEET_TITLE } from "./open";
+import { DEFAULT_SPREADSHEET_TITLE, type SpreadsheetModel } from "./model";
 
 /** The file name a workbook downloads under: its title plus the extension
  * of its format and variant (`.xlsx`, `.xlsm`, `.xltx`, `.xltm`, `.ods`,
