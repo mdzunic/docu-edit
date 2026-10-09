@@ -37,7 +37,8 @@ const props = defineProps({
       aria-readonly="true"
       aria-label="Cell content"
       aria-multiline="true"
-    >{{ props.content }}</div>
+      v-text="props.content"
+    />
   </div>
 </template>
 

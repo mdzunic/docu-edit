@@ -201,8 +201,11 @@ describe("the Numbers export reads (e2e/fixtures/spec116-numbers.md)", () => {
     // The dynamic-array formula contributes its cached value.
     expect(at(figures, "B5")).toBe(850.5);
     expect(at(figures, "B6")).toBe("Plain text, with a comma");
-    // Cells with a style and no value store nothing.
-    expect(getCell(figures, 3, 2)).toBeUndefined();
+    // Cells with a style and no value are stored as style-only cells
+    // (SPEC-117; SPEC-116's reader dropped them).
+    const styleOnly = getCell(figures, 3, 2);
+    expect(styleOnly?.value).toBeNull();
+    expect(styleOnly?.styleId).toEqual(expect.any(Number));
 
     const notes = model.sheets[2]!;
     expect(at(notes, "B3")).toBe(42);

@@ -61,7 +61,7 @@ export function mergesIn(index: MergeIndex, range: GridRange): GridRange[] {
       out.push(merge);
     }
   }
-  return out.reverse();
+  return out.toReversed();
 }
 
 /** The merge covering (row, col), or undefined. */

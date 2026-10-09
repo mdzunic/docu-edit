@@ -262,20 +262,30 @@ export interface HiddenRun {
 }
 
 /** The hidden column runs touching [first − 1, last + 1] — where a header
- * boundary marker belongs ("Hidden columns C–D"). */
+ * boundary marker belongs ("Hidden columns C–D"). Adjacent hidden spans join
+ * into one run, reported whole even where it reaches past the window (as
+ * hiddenRowRuns does), so the marker's title names the entire run. */
 export function hiddenColumnRuns(sheet: Sheet, first: number, last: number): HiddenRun[] {
   const out: HiddenRun[] = [];
+  let run: HiddenRun | undefined;
+  const flush = (): void => {
+    if (run && run.end >= first - 1 && run.start <= last + 1) {
+      out.push(run);
+    }
+    run = undefined;
+  };
   for (const span of sheet.columns ?? []) {
-    if (!span.hidden || span.max < first - 1 || span.min > last + 1) {
+    if (!span.hidden) {
       continue;
     }
-    const previous = out.at(-1);
-    if (previous && previous.end + 1 === span.min) {
-      previous.end = span.max;
+    if (run && run.end + 1 === span.min) {
+      run.end = span.max;
     } else {
-      out.push({ start: span.min, end: span.max });
+      flush();
+      run = { start: span.min, end: span.max };
     }
   }
+  flush();
   return out;
 }
 

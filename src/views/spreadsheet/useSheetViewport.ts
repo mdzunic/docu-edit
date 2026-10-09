@@ -87,6 +87,21 @@ export function scrollFor(mapping: AxisMapping, offset: number, z: number): numb
   return maxOffset > 0 ? (clamped / maxOffset) * mapping.range : 0;
 }
 
+/** The scroll offset that shows the item spanning content px begin..end
+ * inside a scrolled area of `size` px past a frozen band of `frozenSize`,
+ * currently scrolled to `offset` — unchanged when it is already in view. */
+export function revealOffset(begin: number, end: number, frozenSize: number, size: number, offset: number): number {
+  const from = begin - frozenSize;
+  const to = end - frozenSize;
+  if (from < offset) {
+    return from;
+  }
+  if (to > offset + size) {
+    return Math.min(from, to - size);
+  }
+  return offset;
+}
+
 /** A row or column in a window: its index, its leading edge relative to its
  * band (frozen items: the sheet origin; scrolled items: the scrolled area's
  * edge) and its size, unscaled px. */
@@ -240,20 +255,6 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
       element.scrollTop = top;
       element.scrollLeft = left;
     }
-  }
-
-  /** The scroll offset that shows the item at `start..end` inside a scrolled
-   * area of `size` px currently at `offset`. */
-  function revealOffset(begin: number, end: number, frozenSize: number, size: number, offset: number): number {
-    const from = begin - frozenSize;
-    const to = end - frozenSize;
-    if (from < offset) {
-      return from;
-    }
-    if (to > offset + size) {
-      return Math.min(from, to - size);
-    }
-    return offset;
   }
 
   /** Scrolls the cell (or range) into view, clear of the frozen panes. */

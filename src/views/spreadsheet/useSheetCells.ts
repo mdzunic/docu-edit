@@ -298,7 +298,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     if (scrolled) {
       const spill = offscreenSpillCandidate(sheet, row.index, firstCol, lastCol);
       for (const candidate of [spill.left, spill.right]) {
-        if (candidate) {
+        if (candidate && candidate.col >= deps.viewport.frozenCols.value) {
           mount(candidate.col, candidate);
         }
       }

@@ -195,6 +195,7 @@ test("spec117-styles.xlsx renders, navigates, remembers its view and downloads b
   await expect(columnHeader(page, "H")).not.toHaveClass(/is-selected/);
   await page.keyboard.press("ControlOrMeta+a");
   await expectWholeSheetSelected(page);
+  const activeBeforeReload = await page.getByTestId("name-box").inputValue();
 
   // View → Gridlines off.
   await expect(page.locator(".sheet-gridline").first()).toBeAttached();
@@ -211,7 +212,7 @@ test("spec117-styles.xlsx renders, navigates, remembers its view and downloads b
   await expect(grid).toHaveAttribute("aria-label", "Styled");
   await expect(page.getByTestId("zoom-percent")).toHaveValue("85%");
   await expect(page.locator(".sheet-gridline")).toHaveCount(0);
-  await expect(page.getByTestId("name-box")).toHaveValue("B3");
+  await expect(page.getByTestId("name-box")).toHaveValue(activeBeforeReload);
   await expectWholeSheetSelected(page);
   await openView(page);
   await expect(page.getByTestId("sheet-menu-gridlines")).toHaveAttribute("aria-checked", "false");
