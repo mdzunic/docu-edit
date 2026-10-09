@@ -21,6 +21,7 @@ import {
   edgeInDirection,
   extendBy,
   extendTo,
+  extendToLine,
   headerSelection,
   isCellSelected,
   moveActive,
@@ -575,6 +576,20 @@ describe("addRange, selectRows, selectColumns and headerSelection", () => {
     // Rows 8:9 are crossed by A9:A10.
     expect(show(headerSelection("row", 7, 8, nav, base))).toBe("A8 B2:C3 [A8:XFD10]");
     expect(base).toEqual(sel("B2", ["B2:C3"]));
+  });
+
+  it("extendToLine (Shift+header press) extends the active range to whole rows or columns, as Shift does for a cell", () => {
+    // From B3 to row 6, and up to row 1: the active cell stays B3.
+    expect(show(extendToLine(sel("B3"), "row", 5, nav))).toBe("B3 [A3:XFD6]");
+    expect(show(extendToLine(sel("B3"), "row", 0, nav))).toBe("B3 [A1:XFD3]");
+    expect(show(extendToLine(sel("B3"), "column", 6, nav))).toBe("B3 [B1:G1048576]");
+    // The other ranges are kept; only the active one changes.
+    const two = sel("H8", ["B2:C3", "H8"], 1);
+    expect(show(extendToLine(two, "column", 9, nav))).toBe("H8 B2:C3 [H1:J1048576]");
+    expect(two).toEqual(sel("H8", ["B2:C3", "H8"], 1));
+    // From inside a merge the band covers the whole merge; snapped.
+    expect(show(extendToLine(sel("C5", ["C5:E6"]), "row", 6, nav))).toBe("C5 [A5:XFD7]");
+    expect(show(extendToLine(sel("B2"), "row", 8, nav))).toBe("B2 [A2:XFD10]");
   });
 });
 

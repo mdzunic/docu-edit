@@ -839,8 +839,7 @@ export function selectColumns(sel: SheetSelection, nav: NavContext): SheetSelect
  * header, `to` the current one): the whole rows or columns between them,
  * snapped, with the first visible cell of the `from` row (column) active.
  * With `base` (Mod+press) the band is appended to base's ranges and becomes
- * the active range; Shift+press is the caller passing the anchor's row or
- * column as `from`. */
+ * the active range. Shift+press is extendToLine. */
 export function headerSelection(axis: "row" | "column", from: number, to: number, nav: NavContext, base?: SheetSelection): SheetSelection {
   const byRow = axis === "row";
   const band = snapToMerges(byRow ? wholeRows(from, to) : wholeColumns(from, to), nav.merges);
@@ -855,6 +854,19 @@ export function headerSelection(axis: "row" | "column", from: number, to: number
   const active = landing(byRow ? { row: line, col: crossing } : { row: crossing, col: line }, nav.merges);
   const ranges = base ? [...base.ranges.map(copyRange), band] : [band];
   return { active, ranges, activeRangeIndex: ranges.length - 1 };
+}
+
+/** Shift+press on a row or column header, and the drag it starts — Shift as
+ * extendTo has it for a cell: the active range becomes the whole rows
+ * (columns) from the active cell's unit to `to`, snapped; the active cell
+ * and every other range are kept. */
+export function extendToLine(sel: SheetSelection, axis: "row" | "column", to: number, nav: NavContext): SheetSelection {
+  const anchor = unitOf(clampRef(sel.active), nav.merges);
+  const band =
+    axis === "row"
+      ? wholeRows(Math.min(anchor.top, to), Math.max(anchor.bottom, to))
+      : wholeColumns(Math.min(anchor.left, to), Math.max(anchor.right, to));
+  return withActiveRange(sel, snapToMerges(band, nav.merges));
 }
 
 // --- validation -------------------------------------------------------------

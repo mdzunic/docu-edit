@@ -178,6 +178,34 @@ describe("useSheetSelection", () => {
     expect(selection.selection.value.ranges).toEqual([{ top: 0, left: 0, bottom: 1_048_575, right: 16_383 }]);
   });
 
+  it("extends to whole rows or columns with Shift+header press, keeping the active cell and the other ranges", () => {
+    const { selection } = setup(styledSheet());
+    selection.press({ row: 9, col: 6 }, { shift: false, mod: false });
+    selection.release();
+    selection.press({ row: 2, col: 1 }, { shift: false, mod: true });
+    selection.release();
+    // B3 active (Mod-added beside G10); Shift+press row 6's header.
+    selection.pressHeader("row", 5, { shift: true, mod: false });
+    expect(selection.selection.value.active).toEqual({ row: 2, col: 1 });
+    expect(selection.selection.value.ranges).toEqual([
+      { top: 9, left: 6, bottom: 9, right: 6 },
+      { top: 2, left: 0, bottom: 5, right: 16_383 },
+    ]);
+    expect(selection.nameBoxText.value).toBe("4R × 16384C");
+    // Dragging on extends from the active cell, still keeping G10.
+    selection.dragTo({ row: 0, col: 3 });
+    expect(range(selection.selection.value)).toEqual({ top: 0, left: 0, bottom: 2, right: 16_383 });
+    selection.release();
+    expect(selection.nameBoxText.value).toBe("B3");
+    expect(selection.selection.value.ranges).toHaveLength(2);
+    // Columns the same way; from B3 to column C crosses C5:E5, so it snaps to E.
+    selection.press({ row: 2, col: 1 }, { shift: false, mod: false });
+    selection.release();
+    selection.pressHeader("column", 2, { shift: true, mod: false });
+    expect(selection.selection.value.active).toEqual({ row: 2, col: 1 });
+    expect(range(selection.selection.value)).toEqual({ top: 0, left: 1, bottom: 1_048_575, right: 4 });
+  });
+
   it("navigates by the keyboard map with Ctrl as the primary modifier off macOS", () => {
     const { selection } = setup(styledSheet());
     selection.press({ row: 2, col: 1 }, { shift: false, mod: false });

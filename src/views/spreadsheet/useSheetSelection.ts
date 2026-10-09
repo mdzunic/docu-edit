@@ -35,6 +35,7 @@ import type { Sheet } from "../../lib/spreadsheet/model";
 import {
   addRange,
   extendTo,
+  extendToLine,
   headerSelection,
   navigateByKey,
   normaliseSelection,
@@ -74,8 +75,9 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     return normaliseSelection(deps.viewState.active.value.selection, deps.sheetMetrics.nav());
   });
 
-  /** A pointer drag in progress: what it extends and from where. */
-  const drag = shallowRef<{ axis: "cell" | "row" | "column"; from: number; base?: SheetSelection } | null>(null);
+  /** A pointer drag in progress: what it extends and from where — a header
+   * drag begun with Shift (`extend`) extends from the active cell. */
+  const drag = shallowRef<{ axis: "cell" | "row" | "column"; from: number; base?: SheetSelection; extend?: true } | null>(null);
 
   function set(next: SheetSelection): void {
     deps.viewState.updateActive({ selection: next });
@@ -94,9 +96,8 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     const nav = deps.sheetMetrics.nav();
     const current = selection.value;
     if (mods.shift) {
-      const from = axis === "row" ? current.active.row : current.active.col;
-      set(headerSelection(axis, from, index, nav));
-      drag.value = { axis, from };
+      set(extendToLine(current, axis, index, nav));
+      drag.value = { axis, from: index, extend: true };
     } else if (mods.mod) {
       set(headerSelection(axis, index, index, nav, current));
       drag.value = { axis, from: index, base: current };
@@ -115,6 +116,8 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     const nav = deps.sheetMetrics.nav();
     if (current.axis === "cell") {
       set(extendTo(selection.value, at, nav));
+    } else if (current.extend) {
+      set(extendToLine(selection.value, current.axis, current.axis === "row" ? at.row : at.col, nav));
     } else {
       set(headerSelection(current.axis, current.from, current.axis === "row" ? at.row : at.col, nav, current.base));
     }
