@@ -89,6 +89,14 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
   return zip(mimetypeFirst(buildSubstitution(model, parts)));
 }
 
+/** The substitution path's parts for any model with a retained package —
+ * what a reader upgrade re-reads an edited workbook's clean sheets from
+ * (open.ts). */
+export function substitutedOdsParts(model: SpreadsheetModel): Map<string, Uint8Array> {
+  const entries = buildSubstitution(model, decodedPartBytes(model.opaque));
+  return new Map(entries.map((entry) => [entry.name, entry.data] as const));
+}
+
 /** ODF's rule: `mimetype` first and STOREd. */
 function mimetypeFirst(entries: ZipEntryInput[]): ZipEntryInput[] {
   const mimetype = entries.find((entry) => entry.name === "mimetype");

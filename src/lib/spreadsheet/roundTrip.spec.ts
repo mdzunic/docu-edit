@@ -228,7 +228,7 @@ describe("package rules", () => {
     for (const [format, packageVariant, extension] of cases) {
       expect(spreadsheetFileName({ ...model, format, packageVariant })).toBe(`Budget 2026.${extension}`);
     }
-    expect(spreadsheetFileName({ ...model, title: "  " })).toBe("Untitled workbook.xlsx");
+    expect(spreadsheetFileName({ ...model, title: "  " })).toBe("Untitled spreadsheet.xlsx");
   });
 });
 

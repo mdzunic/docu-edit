@@ -109,6 +109,16 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
   return zip(buildSubstitution(model, parts, options));
 }
 
+/** The substitution path's parts for any model with a retained package —
+ * what a reader upgrade re-reads an edited workbook's clean sheets from
+ * (open.ts): every model sheet laid out in order with the retained
+ * sheet-reference pass applied. `interim: false` leaves the source's
+ * calculation flag alone. */
+export function substitutedXlsxParts(model: SpreadsheetModel): Map<string, Uint8Array> {
+  const entries = buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, false);
+  return new Map(entries.map((entry) => [entry.name, entry.data] as const));
+}
+
 // --- from scratch ------------------------------------------------------------------------
 
 const encode = (text: string): Uint8Array => encodeUtf8(text);
@@ -238,7 +248,7 @@ function planSheets(model: SpreadsheetModel, parts: Map<string, Uint8Array>, wor
   });
 }
 
-function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions): ZipEntryInput[] {
+function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, interim = true): ZipEntryInput[] {
   const workbook = readSourceWorkbook(parts);
   if (!workbook) {
     throw new Error("The workbook's retained package has no workbook part");
@@ -280,7 +290,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   }
 
   const anyDirty = model.sheets.some((sheet) => sheet.dirty && !isGenerated(plans, sheet));
-  const fullCalc = options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true || anyDirty;
+  const fullCalc = interim && (options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true || anyDirty);
   const activeIndex = model.activeSheetIndex;
   const out: ZipEntryInput[] = [];
   const contentTypesName = "[Content_Types].xml";
