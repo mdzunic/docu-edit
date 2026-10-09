@@ -48,11 +48,18 @@
 //   candidates in document order, clamped to the grid; `acceptMerges`
 //   decides (two or more cells, overlapping no earlier merge), run per
 //   band of rows no merge crosses so a long sheet is never quadratic.
+// - SPEC-119: a formula cell (reader.ts translates `table:formula`) is
+//   stored even with no value; every repetition — repeated columns or a
+//   repeated row — gets the formula text VERBATIM (ODF formula text names
+//   absolute addresses, so it is never shifted), and a matrix formula's
+//   `table:number-matrix-columns-spanned`/`-rows-spanned` become each
+//   repetition's own `arrayRange`, clamped to the grid.
 import { scanAttr, type XmlScanAttribute } from "../../core/xmlScanner";
 import { TABLE_NAMESPACE } from "../../core/odfXml";
 import type { GridRange } from "../address";
 import { ODS_DEFAULT_COL_WIDTH_PX, ODS_DEFAULT_ROW_HEIGHT_PT } from "../geometry";
 import { acceptMerges } from "../merges";
+import type { FormulaFields } from "../formula/dialect";
 import { MAX_COLS, MAX_ROWS, type Cell, type CellValue, type ColumnSpan, type Row, type TextRun } from "../model";
 import { addressText, type CellBudget, outOfGridError } from "../parsed";
 import type { OdsRowHeight } from "./styles";
@@ -68,6 +75,12 @@ export interface OdsLayoutStyles {
   /** The style a value with an implied format `code` shows over the base
    * style `baseId` (SPEC-118 "Implied formats"). */
   impliedStyleId(baseId: number, code: string): number;
+}
+
+/** A cell's formula as reader.ts read it (SPEC-119): the model's fields and
+ * the matrix extent its spans declare. */
+export interface OdsCellFormula extends FormulaFields {
+  matrix?: { cols: number; rows: number };
 }
 
 /** A table's layout, as the sheet stores it. */
@@ -137,8 +150,18 @@ function copyRun(run: TextRun): TextRun {
   return run.font ? { text: run.text, font: { ...run.font } } : { text: run.text };
 }
 
-function copyCell(cell: Cell): Cell {
-  return cell.runs ? { ...cell, runs: cell.runs.map(copyRun) } : { ...cell };
+/** A repeated row's copy of a cell, `rowOffset` rows below it: a matrix
+ * formula's range moves with it. */
+function copyCell(cell: Cell, rowOffset: number): Cell {
+  const copy: Cell = cell.runs ? { ...cell, runs: cell.runs.map(copyRun) } : { ...cell };
+  if (cell.arrayRange) {
+    copy.arrayRange = {
+      ...cell.arrayRange,
+      top: cell.arrayRange.top + rowOffset,
+      bottom: Math.min(cell.arrayRange.bottom + rowOffset, MAX_ROWS - 1),
+    };
+  }
+  return copy;
 }
 
 /** acceptMerges over candidates sorted by top row, run per band of rows: a
@@ -333,10 +356,18 @@ export class OdsTableReader {
   }
 
   /** One cell element of the current row, repeated as declared: `value` is
-   * its value (null for none), `runs` its rich text and `impliedCode` the
-   * format its value type implies when its style gives none (SPEC-118).
-   * Returns false when the cell ceiling stops the read. */
-  cell(attrs: readonly XmlScanAttribute[], covered: boolean, value: CellValue, runs?: TextRun[], impliedCode?: string): boolean {
+   * its value (null for none), `runs` its rich text, `impliedCode` the
+   * format its value type implies when its style gives none (SPEC-118) and
+   * `formula` its formula (SPEC-119). Returns false when the cell ceiling
+   * stops the read. */
+  cell(
+    attrs: readonly XmlScanAttribute[],
+    covered: boolean,
+    value: CellValue,
+    runs?: TextRun[],
+    impliedCode?: string,
+    formula?: OdsCellFormula,
+  ): boolean {
     const row = this.row!;
     const repeat = repeatCount(attrs, "number-columns-repeated");
     const first = row.col;
@@ -346,8 +377,8 @@ export class OdsTableReader {
     if (!covered) {
       this.collectSpan(row, attrs, first, repeat);
     }
-    if (value !== null) {
-      return this.storeValues(row, first, repeat, value, runs, styleId, impliedCode);
+    if (value !== null || formula !== undefined) {
+      return this.storeValues(row, first, repeat, value, runs, styleId, impliedCode, formula);
     }
     if (styleId !== undefined) {
       return this.storeStyled(row, first, repeat, styleId);
@@ -374,6 +405,7 @@ export class OdsTableReader {
     runs: TextRun[] | undefined,
     styleId: number | undefined,
     impliedCode: string | undefined,
+    formula?: OdsCellFormula,
   ): boolean {
     if (row.index >= MAX_ROWS) {
       throw outOfGridError(this.name, addressText(row.index, first));
@@ -397,6 +429,21 @@ export class OdsTableReader {
         const shown = this.styles.impliedStyleId(base, impliedCode);
         if (shown !== base) {
           cell.styleId = shown;
+        }
+      }
+      if (formula) {
+        cell.formula = formula.formula;
+        if (formula.formulaUnparsed) {
+          cell.formulaUnparsed = true;
+        }
+        if (formula.matrix) {
+          const left = first + k;
+          cell.arrayRange = {
+            top: row.index,
+            left,
+            bottom: Math.min(row.index + formula.matrix.rows, MAX_ROWS) - 1,
+            right: Math.min(left + formula.matrix.cols, MAX_COLS) - 1,
+          };
         }
       }
       row.cells.push(cell);
@@ -538,7 +585,7 @@ export class OdsTableReader {
       }
       const rows: Row[] = [];
       for (let k = 0; k < repeat; k += 1) {
-        rows.push(this.rowObject(entry, start + k, k === 0 ? row.cells : row.cells.map(copyCell)));
+        rows.push(this.rowObject(entry, start + k, k === 0 ? row.cells : row.cells.map((cell) => copyCell(cell, k))));
       }
       entry.rows = rows;
     }

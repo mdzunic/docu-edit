@@ -97,16 +97,20 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2 and SPEC-118 to 3, with one contiguous step each (from 1, from 2)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(3);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3 and SPEC-119 to 4, with one contiguous step each (from 1, 2, 3)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(4);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3]);
   });
 
-  it("SPEC-117's and SPEC-118's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
+  it("SPEC-117's, SPEC-118's and SPEC-119's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
     const model = await readSpreadsheetBytes(await buildMiniBookXlsxBytes(), "xlsx", "mini-book");
-    for (const step of READER_UPGRADES) {
+    const [spec117, spec118, spec119] = READER_UPGRADES;
+    for (const step of [spec117!, spec118!]) {
       expect(() => step.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow("unreachable: no sheet is dirty before SPEC-121");
     }
+    expect(() => spec119!.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow(
+      new Error("SPEC-119 upgrade: a sheet cannot be dirty before SPEC-121"),
+    );
   });
 
   it("stamps every fresh read with the current version and a card preview", async () => {
@@ -203,7 +207,8 @@ describe("reader versions", () => {
       expect(stored.styles.some((style) => style.numberFormat !== undefined)).toBe(false);
       const fresh = await readSpreadsheetBytes(await build(), format, "Stored by SPEC-117");
       const upgraded = await upgradeSpreadsheetModel(stored);
-      expect(upgraded.readerVersion).toBe(3);
+      // SPEC-119 has moved the current version on; the upgrade lands there.
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
       expect(upgraded.id).toBe(stored.id);
       expect(upgraded.title).toBe("Stored by SPEC-117");
       expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(stored.sheets.map((sheet) => sheet.id));

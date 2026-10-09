@@ -288,14 +288,16 @@ describe("cells", () => {
     expect(at(sheet, "A1")).toBe(dateToSerial(2026, 10, 8, "1904"));
   });
 
-  it("stores no cell for an empty <v> or a formula without a cached value; a style alone is a style-only cell (SPEC-117)", async () => {
+  it("stores no cell for an empty <v>; a style alone is a style-only cell (SPEC-117); a formula without a cached value is stored with value null (SPEC-119)", async () => {
     const sheet = await oneSheet(
       `<row r="1"><c r="A1"><v></v></c><c r="B1" s="3"/><c r="C1"><f>1+1</f></c><c r="D1"><v>4</v></c></row><row r="2" ht="30" customHeight="1"/>`,
     );
     // SPEC-116 stored neither B1 nor row 2; SPEC-117 keeps the style-only
-    // cell and the row with a height (and nothing for A1 or C1).
+    // cell and the row with a height (and nothing for A1). SPEC-116 and
+    // SPEC-117 stored nothing for C1 either; SPEC-119 reads its formula and
+    // keeps it with no cached value.
     expect(sheet.rows).toEqual([
-      { index: 0, cells: [{ col: 1, value: null, styleId: 3 }, { col: 3, value: 4 }] },
+      { index: 0, cells: [{ col: 1, value: null, styleId: 3 }, { col: 2, value: null, formula: "1+1" }, { col: 3, value: 4 }] },
       { index: 1, cells: [], heightPt: 30, customHeight: true },
     ]);
   });

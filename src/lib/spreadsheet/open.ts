@@ -25,6 +25,9 @@
 // 3 — SPEC-118: number formats (xlsx numFmts and built-in ids, ODS data
 //     styles) and the implied formats of unformatted dates, times and
 //     percentages.
+// 4 — SPEC-119: formulas (xlsx `<f>` — normal, shared, array, data table,
+//     dynamic array — and `c@cm`; ODS `table:formula` and matrix spans) and
+//     `sheetView@showFormulas`.
 import { decodedPartBytes } from "../core/packageParts";
 import type { Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
@@ -32,7 +35,7 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/
 import { buildPreview } from "./preview";
 import { defaultStyles } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 3;
+export const SPREADSHEET_READER_VERSION = 4;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -65,6 +68,17 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
     from: 2,
     upgradeDirtySheet() {
       throw new Error("unreachable: no sheet is dirty before SPEC-121");
+    },
+  },
+  {
+    // SPEC-119 (3 → 4): formulas. A record from version 3 re-reads its
+    // (necessarily clean) sheets from the retained source and gains its
+    // formulas: a sheet can only become dirty under a build that has
+    // SPEC-121, and such a build has upgraded the record past this step on
+    // load. The step keeps the registry contiguous.
+    from: 3,
+    upgradeDirtySheet() {
+      throw new Error("SPEC-119 upgrade: a sheet cannot be dirty before SPEC-121");
     },
   },
 ];

@@ -39,6 +39,12 @@
 //   gets its implied format (SPEC-118); a formula cell contributes its
 //   cached value; a string whose paragraphs hold `text:span`s with a font of
 //   their own gets `runs` (each span's font from its automatic text style);
+// - SPEC-119: `table:formula` → `formula` through fromOdsFormula, its
+//   dialect prefix resolved against the `xmlns:*` declarations on
+//   `office:document-content` (a formula that does not parse keeps the whole
+//   attribute value, prefix included, `formulaUnparsed`); a formula cell with
+//   no `office:value-type` keeps `value: null`; the matrix spans →
+//   `arrayRange` (tableXml.ts);
 // - `table:null-date` → the date system (see serial.ts); settings.xml
 //   (ods/settings.ts) → the active table and each table's frozen panes,
 //   scroll position, gridlines, zero display, zoom and cursor; meta.xml →
@@ -62,6 +68,7 @@ import {
 } from "../parsed";
 import { IMPLIED_PERCENTAGE, IMPLIED_TIME, impliedDateCode } from "../impliedFormats";
 import { odsDateValueToSerial, odsTimeValueToSerial } from "../serial";
+import { readOdsFormula } from "../formula/dialect";
 import { readOdsSettings, type OdsSettings } from "./settings";
 import {
   emptyOdsStyleSheet,
@@ -71,7 +78,7 @@ import {
   readOdsStyleSheet,
   type OdsStyleSheet,
 } from "./styles";
-import { OdsTableReader } from "./tableXml";
+import { OdsTableReader, repeatCount, type OdsCellFormula } from "./tableXml";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
 const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
@@ -112,6 +119,26 @@ interface PendingCell {
   spans: { level: number; font: CellFont | undefined }[];
   /** Whether any span gave a font — only then are runs kept. */
   hasSpanFont: boolean;
+}
+
+/** A cell's formula (SPEC-119), read at the position its first repetition
+ * takes; undefined for a cell without one. */
+function cellFormula(
+  attrs: readonly XmlScanAttribute[],
+  namespaces: ReadonlyMap<string, string>,
+  host: { row: number; col: number },
+): OdsCellFormula | undefined {
+  const wire = scanAttr(attrs, "formula", TABLE_NAMESPACE);
+  if (wire === undefined) {
+    return undefined;
+  }
+  const formula: OdsCellFormula = readOdsFormula(wire, namespaces, host);
+  const cols = repeatCount(attrs, "number-matrix-columns-spanned");
+  const rows = repeatCount(attrs, "number-matrix-rows-spanned");
+  if (scanAttr(attrs, "number-matrix-columns-spanned", TABLE_NAMESPACE) !== undefined || scanAttr(attrs, "number-matrix-rows-spanned", TABLE_NAMESPACE) !== undefined) {
+    formula.matrix = { cols, rows };
+  }
+  return formula;
 }
 
 /** The date system a declared null date selects (see serial.ts). */
@@ -281,6 +308,9 @@ export function readOdsContent(
    * declarations they need to parse on their own. */
   const styleSlices: string[] = [];
   let declarations = "";
+  /** The root's prefix → namespace URI declarations, which a formula's
+   * dialect prefix resolves against (SPEC-119). */
+  let namespaces: ReadonlyMap<string, string> = new Map();
   let sliceLevel = -1;
   let sliceStart = -1;
   let book: OdsStyleBook | null = null;
@@ -289,8 +319,11 @@ export function readOdsContent(
   const finishCell = (done: PendingCell): boolean => {
     const reader = table!.reader;
     const where = `"${table!.name}"!${addressText(reader.rowIndex, reader.colIndex)}`;
-    const value = odsCellValue(done, dates, where);
-    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value));
+    const formula = cellFormula(done.attrs, namespaces, { row: reader.rowIndex, col: reader.colIndex });
+    const typed = scanAttr(done.attrs, "value-type", OFFICE_NAMESPACE) !== undefined || scanAttr(done.attrs, "value-type", CALCEXT_NAMESPACE) !== undefined;
+    // A formula with no value type has no cached value (SPEC-119).
+    const value = formula && !typed ? null : odsCellValue(done, dates, where);
+    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula);
   };
 
   const finishTable = (done: PendingTable, end: number): boolean => {
@@ -435,6 +468,7 @@ export function readOdsContent(
       const level = depth + 1;
       if (level === 1) {
         declarations = namespaceDeclarations(event.attrs);
+        namespaces = new Map(event.attrs.flatMap((attr) => (attr.name.startsWith("xmlns:") ? [[attr.name.slice(6), attr.value] as const] : [])));
       } else if (event.ns === OFFICE_NAMESPACE) {
         if (level === 2 && (event.local === "font-face-decls" || event.local === "automatic-styles")) {
           if (!event.selfClosing) {

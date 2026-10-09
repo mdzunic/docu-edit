@@ -200,13 +200,14 @@ describe("cells", () => {
   });
 
   it("stores a <c> carrying only a style as a style-only cell; one with neither stays unstored", () => {
+    // SPEC-119: D4's formula is read too — with no cached value, `value: null`.
     expect(rowsOf(`<row r="4"><c r="A4" s="2"/><c r="B4"/><c r="C4" s="0"></c><c r="D4" s="3"><f>1+1</f></c></row>`)).toEqual([
       {
         index: 3,
         cells: [
           { col: 0, value: null, styleId: 2 },
           { col: 2, value: null, styleId: 0 },
-          { col: 3, value: null, styleId: 3 },
+          { col: 3, value: null, styleId: 3, formula: "1+1" },
         ],
       },
     ]);
