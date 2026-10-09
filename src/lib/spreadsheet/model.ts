@@ -186,7 +186,27 @@ export interface Cell {
   /** Index into `SpreadsheetModel.styles` (SPEC-117). A style-only cell —
    * `value: null` with a `styleId` — is stored. */
   styleId?: number;
-  // Later specs add optional fields only: formula (119), …
+  // --- SPEC-119: formulas (formula/*.ts is the normative source) ---
+  /** Canonical formula text without the leading "=" (Excel's en-US syntax).
+   *  When `formulaUnparsed`, the WIRE text instead (xlsx <f> text; ods the
+   *  whole table:formula value, prefix included). `value` stays the
+   *  producer's cached result. A formula cell is stored even with
+   *  `value: null` (no cached value). */
+  formula?: string;
+  formulaUnparsed?: true;
+  /** Legacy array (CSE) formula: the range it fills. On the anchor only —
+   *  the top-left cell, which holds `formula`; member cells hold values. */
+  arrayRange?: GridRange;
+  /** xlsx: the anchor's array formula is a dynamic-array (spill) formula —
+   *  `t="array"` plus a `cm` attribute. arrayRange is its last spill extent. */
+  dynamicArray?: true;
+  /** xlsx `c@cm` verbatim (index into xl/metadata.xml cellMetadata), so the
+   *  sheet writer (SPEC-122) re-emits it. */
+  cm?: number;
+  /** xlsx What-If data table: the anchor's `<f t="dataTable" …/>` element,
+   *  verbatim. No `formula`; members hold cached values. Never evaluated. */
+  dataTableXml?: string;
+  // Later specs add optional fields only.
 }
 
 export interface Row {
@@ -225,6 +245,9 @@ export interface Sheet {
   tabColor?: ModelColor;
   selection?: SheetSelection; // view state (SPEC-117 "View state")
   topLeftCell?: CellRef;
+  /** View ▸ Show formulas for this sheet (xlsx sheetView@showFormulas,
+   * SPEC-119). View state: never marks the sheet dirty. */
+  showFormulas?: true;
 }
 
 export interface SheetPreview {

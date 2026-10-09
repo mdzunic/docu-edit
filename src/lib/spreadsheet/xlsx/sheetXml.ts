@@ -7,13 +7,32 @@
 //
 // Cells (SPEC-116): rows and cells without `r` are placed sequentially; `t`
 // absent/n, s, str, inlineStr, b, e, d; a formula's cached `<v>` is the
-// value (`<f>` is SPEC-119's). SPEC-117: `s` → `styleId` (as written, even
+// value. SPEC-117: `s` → `styleId` (as written, even
 // 0), and a `<c>` carrying a style but no value is stored as a style-only
 // cell, counted against MAX_WORKBOOK_CELLS like any other. Shared-string and
 // inline `<r>` runs carry their `<rPr>` as `font` (xlsx/styles.ts's font
 // mapping); a plain `<t>` item stays `{ text }`. SPEC-118: a `t="d"` value
 // whose style is General points at a derived style with the implied
 // `yyyy-mm-dd` (+ ` hh:mm:ss`) format (impliedFormats.ts).
+//
+// Formulas (SPEC-119 "Reading formulas from .xlsx"): a `<f>` gives the cell
+// `formula` = fromXlsxFormula(text), checked with parseFormulaAt — a formula
+// that does not parse keeps its `<f>` text verbatim, `formulaUnparsed`. A
+// formula cell is stored even with no `<v>` (`value: null`, no cached value).
+// - `t="shared"`: the master (the `<f>` with text) reads as above; each
+//   follower (`<f t="shared" si="…"/>`) is shiftFormula of the master's
+//   canonical text by its offset from the master — an out-of-grid shift
+//   yields `#REF!`, as Excel's own expansion does — and a follower met before
+//   its master is resolved at the end of the sheet. A follower whose `si` is
+//   never defined keeps its value and no formula. (The followers of a master
+//   that does not parse get its wire text shifted, still unparsed.)
+// - `t="array"`: the anchor's `formula` plus `arrayRange` (its `ref`; one
+//   cell when absent); members keep their cached values only. With `c@cm`
+//   (Excel's dynamic-array metadata) it is a dynamic array: `dynamicArray`.
+// - `t="dataTable"`: the anchor's `dataTableXml` — the `<f>` element's
+//   source text, sliced by the scanner's offsets. No formula.
+// - `c@cm` → `cm` on any cell. `ca`, `aca`, `bx` and xl/calcChain.xml are
+//   not read; the retained source keeps them.
 //
 // Layout and view (SPEC-117, only the root's own children are read):
 // - `sheetFormatPr`: `defaultRowHeight` (absent element → 15 pt);
@@ -39,7 +58,7 @@
 //   columns) and its `topLeftCell`; a `split` pane (or one with no state) is
 //   not a freeze. The `selection` of the active pane (`pane@activePane`,
 //   default topLeft) → `selection`, normalised so the active cell lies in
-//   its active range.
+//   its active range. SPEC-119: `showFormulas="1"` → `showFormulas`.
 // Everything else — the split panes, the other panes' selections, outline
 // levels, `zeroHeight` — stays in the retained part, untouched.
 import type { ModelColor } from "../../core/theme";
@@ -60,6 +79,9 @@ import {
   type TextRun,
 } from "../model";
 import { impliedDateCode, type ImpliedFormatStyles } from "../impliedFormats";
+import { readXlsxFormula, type FormulaFields } from "../formula/dialect";
+import { FormulaSyntaxError, parseFormulaAt } from "../formula/parse";
+import { shiftFormula } from "../formula/references";
 import { addressText, normaliseCells, normaliseRows, outOfGridError, parseError, type CellBudget } from "../parsed";
 import type { SheetSelection } from "../selection";
 import { odsDateValueToSerial } from "../serial";
@@ -250,6 +272,42 @@ interface PendingCell {
   /** Nesting inside the cell: >0 while inside `<v>`, `<is>`, `<f>`, … */
   depth: number;
   inV: boolean;
+  /** `c@cm` (SPEC-119). */
+  cm: number | undefined;
+  /** The cell's `<f>`: its attributes, text and source offsets. */
+  f: PendingFormula | null;
+  inF: boolean;
+}
+
+/** One `<f>` being read (SPEC-119). */
+interface PendingFormula {
+  attrs: readonly XmlScanAttribute[];
+  text: string;
+  start: number;
+  end: number;
+}
+
+/** A shared formula's master, for its followers (SPEC-119). */
+interface SharedMaster {
+  wire: string;
+  read: FormulaFields;
+  row: number;
+  col: number;
+}
+
+/** A follower's formula: the master's canonical text shifted by the
+ * follower's offset (parse-checked); an unparsed master's wire text shifted,
+ * unparsed. */
+function followerFormula(master: SharedMaster, row: number, col: number): FormulaFields {
+  const dRow = row - master.row;
+  const dCol = col - master.col;
+  if (!master.read.formulaUnparsed) {
+    const formula = shiftFormula(master.read.formula, dRow, dCol);
+    if (!(parseFormulaAt(formula, { row, col }) instanceof FormulaSyntaxError)) {
+      return { formula };
+    }
+  }
+  return { formula: shiftFormula(master.wire, dRow, dCol), formulaUnparsed: true };
 }
 
 /** A cell value from its type and cached text; null for "no value".
@@ -562,6 +620,7 @@ function selectionFrom(raw: RawSelection): SheetSelection {
 interface ViewState {
   showGridLines?: false;
   showZeros?: false;
+  showFormulas?: true;
   zoomPercent?: number;
   topLeftCell?: CellRef;
   pane?: { state: string | undefined; xSplit: number | undefined; ySplit: number | undefined; topLeftCell: CellRef | undefined; activePane: string };
@@ -579,6 +638,9 @@ function readSheetView(attrs: readonly XmlScanAttribute[], view: ViewState): voi
   const zeros = scanAttr(attrs, "showZeros");
   if (zeros === "0" || zeros === "false") {
     view.showZeros = false;
+  }
+  if (isOn(scanAttr(attrs, "showFormulas"))) {
+    view.showFormulas = true;
   }
   // A zero (or negative) scale is not a zoom a producer meant — it reads as
   // the default; anything else is clamped into Excel's 10–400%.
@@ -601,13 +663,39 @@ function splitCount(value: number | undefined, limit: number): number {
   return value === undefined ? 0 : Math.min(limit, Math.max(0, Math.trunc(value)));
 }
 
+/** Resolves the shared-formula followers met before their master, at the
+ * end of the sheet: each gets its shifted formula; one whose `si` no master
+ * defined keeps its value and no formula — and is dropped when that leaves
+ * it empty (as is its row, then). */
+function resolveFollowers(
+  rows: Row[],
+  waiting: ReadonlyArray<{ si: string; row: Row; cell: Cell }>,
+  masters: ReadonlyMap<string, SharedMaster>,
+): void {
+  const emptied = new Set<Row>();
+  for (const { si, row, cell } of waiting) {
+    const master = masters.get(si);
+    if (master) {
+      Object.assign(cell, followerFormula(master, row.index, cell.col));
+    } else if (cell.value === null && cell.styleId === undefined && cell.cm === undefined) {
+      row.cells.splice(row.cells.indexOf(cell), 1);
+      emptied.add(row);
+    }
+  }
+  for (const row of emptied) {
+    if (row.cells.length === 0 && row.heightPt === undefined && !row.hidden && row.styleId === undefined) {
+      rows.splice(rows.indexOf(row), 1);
+    }
+  }
+}
+
 // --- the worksheet --------------------------------------------------------------------
 
 /** What readWorksheet extracts from a worksheet part: the sheet's rows and
  * SPEC-117 layout and view fields (optional ones only when the part has
  * them). */
 export type WorksheetContent = Pick<Sheet, "rows" | "columns" | "defaultColWidthPx" | "defaultRowHeightPt" | "merges"> &
-  Partial<Pick<Sheet, "frozen" | "showGridLines" | "showZeros" | "zoomPercent" | "tabColor" | "selection" | "topLeftCell">>;
+  Partial<Pick<Sheet, "frozen" | "showGridLines" | "showZeros" | "zoomPercent" | "tabColor" | "selection" | "topLeftCell" | "showFormulas">>;
 
 export interface WorksheetReadOptions {
   sharedStrings: readonly SharedString[];
@@ -647,6 +735,10 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   let tooLarge = false;
   /** The last row's sourceAttrs, shared by the rows that spell the same. */
   let lastRowAttrs: string | undefined;
+  /** SPEC-119: shared-formula masters by `si`, and the followers met before
+   * theirs (resolved when the sheet ends). */
+  const sharedMasters = new Map<string, SharedMaster>();
+  const waitingFollowers: Array<{ si: string; row: Row; cell: Cell }> = [];
 
   // layout and view
   let defaultRowHeightPt = DEFAULT_ROW_HEIGHT_PT;
@@ -663,9 +755,47 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   const columnStyleAt = (col: number): number | undefined =>
     columnCandidates.find((candidate) => candidate.min <= col && col <= candidate.max)?.styleId;
 
+  /** What a `<c>`'s `<f>` gives the stored cell (see the module header);
+   * "wait" for a follower whose master is still to come. */
+  const formulaOf = (cell: PendingCell, rowIndex: number): Partial<Cell> | "wait" | null => {
+    const f = cell.f!;
+    const type = scanAttr(f.attrs, "t");
+    const host = { row: rowIndex, col: cell.col };
+    if (type === "dataTable") {
+      return { dataTableXml: xml.slice(f.start, f.end) };
+    }
+    if (type === "shared") {
+      const si = scanAttr(f.attrs, "si");
+      if (f.text.length > 0) {
+        const read = readXlsxFormula(f.text, host);
+        if (si !== undefined) {
+          sharedMasters.set(si, { wire: f.text, read, row: rowIndex, col: cell.col });
+        }
+        return read;
+      }
+      const master = si === undefined ? undefined : sharedMasters.get(si);
+      if (master) {
+        return followerFormula(master, rowIndex, cell.col);
+      }
+      return si === undefined ? null : "wait";
+    }
+    if (f.text.length === 0) {
+      return null;
+    }
+    const read: Partial<Cell> = readXlsxFormula(f.text, host);
+    if (type === "array") {
+      read.arrayRange = parseRange(scanAttr(f.attrs, "ref")?.trim() ?? "") ?? { top: rowIndex, left: cell.col, bottom: rowIndex, right: cell.col };
+      if (cell.cm !== undefined) {
+        read.dynamicArray = true;
+      }
+    }
+    return read;
+  };
+
   const finishCell = (cell: PendingCell): "stop" | undefined => {
     const current = row!;
     const { value, runs } = cellValue(cell, sharedStrings, dateSystem, () => `"${sheetName}"!${addressText(current.index, cell.col)}`);
+    const formula = cell.f === null ? null : formulaOf(cell, current.index);
     let styleId = cell.styleId;
     if (cell.type === "d" && typeof value === "number" && implied) {
       // A date its producer left General shows as a date (SPEC-118).
@@ -675,7 +805,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
         styleId = shown;
       }
     }
-    if (value === null && styleId === undefined) {
+    if (value === null && styleId === undefined && formula === null && cell.cm === undefined) {
       return undefined;
     }
     if (!budget.take(1)) {
@@ -688,6 +818,14 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       stored = styleId === undefined ? { col: cell.col, value, runs } : { col: cell.col, value, runs, styleId };
     } else {
       stored = styleId === undefined ? { col: cell.col, value } : { col: cell.col, value, styleId };
+    }
+    if (formula === "wait") {
+      waitingFollowers.push({ si: scanAttr(cell.f!.attrs, "si")!, row: current, cell: stored });
+    } else if (formula !== null) {
+      Object.assign(stored, formula);
+    }
+    if (cell.cm !== undefined) {
+      stored.cm = cell.cm;
     }
     const cells = current.cells;
     if (cells.length > 0 && cells[cells.length - 1]!.col >= cell.col) {
@@ -766,6 +904,9 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       inlineString: null,
       depth: 0,
       inV: false,
+      cm: parseIndex(scanAttr(event.attrs, "cm")),
+      f: null,
+      inF: false,
     };
     if (event.selfClosing) {
       lastCol = col;
@@ -819,6 +960,9 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
         cell.inV = !event.selfClosing;
       } else if (event.local === "is") {
         cell.inlineString = new StringItemReader(indexedColors);
+      } else if (event.local === "f") {
+        cell.f = { attrs: event.attrs, text: "", start: event.start, end: event.end };
+        cell.inF = !event.selfClosing;
       }
     } else if (cell.inlineString !== null && cell.depth > 0) {
       cell.inlineString.feed(event);
@@ -906,6 +1050,10 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       pending.depth -= 1;
       if (pending.depth === 0) {
         pending.inV = false;
+        if (pending.inF) {
+          pending.f!.end = event.end;
+          pending.inF = false;
+        }
       } else if (pending.inlineString !== null) {
         pending.inlineString.feed(event);
       }
@@ -937,6 +1085,8 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
     if (pending !== null) {
       if (pending.inV) {
         pending.v += event.text;
+      } else if (pending.inF) {
+        pending.f!.text += event.text;
       } else if (pending.inlineString !== null && pending.depth > 1) {
         pending.inlineString.feed(event);
       }
@@ -947,6 +1097,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   if (tooLarge) {
     return null;
   }
+  resolveFollowers(rows, waitingFollowers, sharedMasters);
   if (!rowsOrdered) {
     normaliseRows(rows);
   }
@@ -970,6 +1121,9 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   }
   if (view.showZeros === false) {
     content.showZeros = false;
+  }
+  if (view.showFormulas) {
+    content.showFormulas = true;
   }
   if (view.zoomPercent !== undefined) {
     content.zoomPercent = view.zoomPercent;

@@ -1,5 +1,6 @@
 // A workbook's view state (SPEC-117 "View state"): which sheet is on show
-// and, per sheet, its selection, zoom, gridlines toggle and top-left cell.
+// and, per sheet, its selection, zoom, gridlines toggle and top-left cell —
+// and SPEC-119's View ▸ Show formulas toggle.
 // It is remembered across reloads but is never a change to the file:
 //
 // - The fields live here, keyed by sheet id and seeded from the model the
@@ -26,15 +27,17 @@ import type { SheetSelection } from "../../lib/spreadsheet/selection";
 export const VIEW_STATE_PERSIST_DELAY_MS = 1000;
 
 /** One sheet's view fields, in the model's own encoding: `zoomPercent`
- * absent = 100, `showGridLines` absent = shown. */
+ * absent = 100, `showGridLines` absent = shown, `showFormulas` absent =
+ * values shown (SPEC-119). */
 export interface SheetViewFields {
   selection?: SheetSelection;
   zoomPercent?: number;
   showGridLines?: false;
   topLeftCell?: CellRef;
+  showFormulas?: true;
 }
 
-const VIEW_KEYS = ["selection", "zoomPercent", "showGridLines", "topLeftCell"] as const;
+const VIEW_KEYS = ["selection", "zoomPercent", "showGridLines", "topLeftCell", "showFormulas"] as const;
 
 /** A sheet's view fields as stored on the sheet. */
 export function viewFieldsOf(sheet: Sheet): SheetViewFields {
@@ -51,11 +54,14 @@ export function viewFieldsOf(sheet: Sheet): SheetViewFields {
   if (sheet.topLeftCell !== undefined) {
     fields.topLeftCell = sheet.topLeftCell;
   }
+  if (sheet.showFormulas === true) {
+    fields.showFormulas = true;
+  }
   return fields;
 }
 
-/** `fields` normalised to the model's encoding (100% and shown gridlines
- * are absences). */
+/** `fields` normalised to the model's encoding (100%, shown gridlines and
+ * shown values are absences). */
 function normalised(fields: SheetViewFields): SheetViewFields {
   const out: SheetViewFields = { ...fields };
   if (out.zoomPercent === undefined || out.zoomPercent === 100) {
@@ -63,6 +69,9 @@ function normalised(fields: SheetViewFields): SheetViewFields {
   }
   if (out.showGridLines !== false) {
     delete out.showGridLines;
+  }
+  if (out.showFormulas !== true) {
+    delete out.showFormulas;
   }
   for (const key of VIEW_KEYS) {
     if (out[key] === undefined) {

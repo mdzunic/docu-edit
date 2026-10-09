@@ -26,6 +26,8 @@ import {
   buildSpec118FormatsOdsBytes,
   buildSpec118FormatsXlsxBytes,
   buildSpec118GeneratedXlsxBytes,
+  buildSpec119FormulasOdsBytes,
+  buildSpec119FormulasXlsxBytes,
   SPEC116_VBA_PROJECT,
 } from "./fixtures/build";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
@@ -134,6 +136,22 @@ const FIXTURES: Fixture[] = [
     mimeType: "application/vnd.oasis.opendocument.spreadsheet",
     bytes: buildSpec118FormatsOdsBytes,
   },
+  // SPEC-119: reading formulas — shared, array, data-table, dynamic-array and
+  // external ones, the three ODS dialects — changes the model, never a byte.
+  {
+    file: "spec119-formulas.xlsx",
+    format: "xlsx",
+    extension: "xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    bytes: buildSpec119FormulasXlsxBytes,
+  },
+  {
+    file: "spec119-formulas.ods",
+    format: "ods",
+    extension: "ods",
+    mimeType: "application/vnd.oasis.opendocument.spreadsheet",
+    bytes: buildSpec119FormulasOdsBytes,
+  },
 ];
 
 /** The 0-based stored cell at an A1 address of a sheet (undefined = empty). */
@@ -215,7 +233,7 @@ describe("package rules", () => {
 });
 
 describe(".ods splice equality at read", () => {
-  for (const build of [buildMiniBookOdsBytes, buildSpecWideOdsBytes]) {
+  for (const build of [buildMiniBookOdsBytes, buildSpecWideOdsBytes, buildSpec119FormulasOdsBytes]) {
     it(`${build.name}: prefix + every sheet's sourceXml + suffix is content.xml exactly`, async () => {
       const bytes = await build();
       const model = await readSpreadsheetBytes(bytes, "ods", "book");

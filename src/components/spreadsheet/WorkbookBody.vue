@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // The workbook view's body (SPEC-116's layout, SPEC-117's surfaces): the
-// read-only formula bar above the sheet panel — the grid, or a foreign
+// read-only formula bar (its text from SPEC-119's useFormulaDisplay) above
+// the sheet panel — the grid (in Show formulas mode or not), or a foreign
 // sheet's placeholder — and the sheet tabs below it. It only lays the
 // surfaces out and binds them to the view-level composables the view hands
 // in (`book` = useWorkbookLoad, `grid` = the SheetGridContext of the sheet on
@@ -32,7 +33,8 @@ const panelId = "sheet-panel";
   >
     <FormulaBar
       :address="grid.selection.nameBoxText.value"
-      :content="grid.selection.activeContent.value"
+      :content="grid.formulas.barText.value"
+      :spill-member="grid.formulas.spillMember.value"
     />
     <div
       :id="panelId"
@@ -52,6 +54,7 @@ const panelId = "sheet-panel";
         :key="`${book.activeSheet.value.id}:${book.generation.value}`"
         :sheet="book.activeSheet.value"
         :context="grid"
+        :show-formulas="grid.formulas.showFormulas.value"
         @cycle-sheet="book.cycleSheet"
       />
     </div>

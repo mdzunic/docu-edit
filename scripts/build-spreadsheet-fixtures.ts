@@ -1,4 +1,4 @@
-// Regenerates the checked-in SPEC-116 workbook e2e fixtures from the same
+// Regenerates the checked-in workbook e2e fixtures (SPEC-116 on) from the same
 // DOM-free builders the unit specs use, so e2e and unit assertions can never
 // drift apart:
 //   npx vite-node scripts/build-spreadsheet-fixtures.ts
@@ -26,6 +26,15 @@
 //                             a General style
 // - spec118-formats.ods     — SPEC-118, LibreOffice-shaped data styles and
 //                             unstyled dates, times and percentages
+// - spec119-formulas.xlsx   — SPEC-119, Excel-shaped: normal, shared (both
+//                             orders, an off-grid shift), array, dynamic-
+//                             array, data-table and external formulas, the
+//                             `_xlfn.`/`_xlpm.` wire forms, an unparseable
+//                             LAMBDA call and a sheet with showFormulas="1"
+// - spec119-formulas.ods    — SPEC-119, LibreOffice-shaped: OpenFormula,
+//                             oooc: and msoxl: formulas, unions,
+//                             intersections, an inline array, a matrix and a
+//                             repeated formula cell
 // spec116-numbers.xlsx is NOT generated here: Apple Numbers exported it
 // (scripts/make-numbers-fixture.applescript, e2e/fixtures/spec116-numbers.md).
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -43,6 +52,8 @@ import {
   buildSpec118FormatsOdsBytes,
   buildSpec118FormatsXlsxBytes,
   buildSpec118GeneratedXlsxBytes,
+  buildSpec119FormulasOdsBytes,
+  buildSpec119FormulasXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -59,6 +70,8 @@ writeFileSync(join(fixturesDir, "spec117-styles.ods"), await buildSpec117StylesO
 writeFileSync(join(fixturesDir, "spec118-formats.xlsx"), await buildSpec118FormatsXlsxBytes());
 writeFileSync(join(fixturesDir, "spec118-generated.xlsx"), await buildSpec118GeneratedXlsxBytes());
 writeFileSync(join(fixturesDir, "spec118-formats.ods"), await buildSpec118FormatsOdsBytes());
+writeFileSync(join(fixturesDir, "spec119-formulas.xlsx"), await buildSpec119FormulasXlsxBytes());
+writeFileSync(join(fixturesDir, "spec119-formulas.ods"), await buildSpec119FormulasOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

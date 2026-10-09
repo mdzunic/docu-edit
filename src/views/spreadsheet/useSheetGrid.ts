@@ -5,12 +5,14 @@
 // handed (useSheetMetrics, useSheetSelection, useSheetZoom,
 // useSheetViewState). SheetGrid.vue binds what this returns; .vue scripts
 // cannot carry TS syntax (the espree constraint), so the narrowing and the
-// event logic live here.
+// event logic live here. SPEC-119: in Show formulas mode the paper shows
+// formula text (useSheetCells).
 import { computed, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { SheetMetrics } from "./useSheetMetrics";
 import { useSheetCells } from "./useSheetCells";
 import { useSheetOverlays } from "./useSheetOverlays";
@@ -30,6 +32,8 @@ export interface SheetGridContext {
   /** The number locale values render in (useSpreadsheetLocale, SPEC-118);
    * absent = the default locale. */
   locale?: SpreadsheetLocale;
+  /** The formula bar's text and View ▸ Show formulas (SPEC-119). */
+  formulas: FormulaDisplay;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -42,6 +46,8 @@ export function useSheetGrid(
   sheet: () => Sheet,
   context: () => SheetGridContext,
   onCycleSheet: (delta: number) => void,
+  /** Show formulas mode (SPEC-119) — SheetGrid's prop. */
+  showFormulas: () => boolean = () => false,
 ) {
   const metrics = () => context().sheetMetrics.metrics.value;
   const merges = () => context().sheetMetrics.merges.value;
@@ -55,7 +61,7 @@ export function useSheetGrid(
     initialTopLeft: () => context().viewState.active.value.topLeftCell ?? sheet().topLeftCell,
     onTopLeftChange: (cell) => context().viewState.updateActive({ topLeftCell: cell }),
   });
-  const cells = useSheetCells({ model: () => context().model, sheet, metrics, merges, selection, viewport, locale: () => context().locale });
+  const cells = useSheetCells({ model: () => context().model, sheet, metrics, merges, selection, viewport, locale: () => context().locale, showFormulas });
   const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport });
   const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection });
 

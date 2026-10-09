@@ -7,6 +7,7 @@ import { mount } from "@vue/test-utils";
 import { computed, defineComponent, h, nextTick, shallowRef } from "vue";
 import type { Cell, CellStyle, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { SPREADSHEET_LOCALES, type SpreadsheetLocaleTag } from "../../lib/spreadsheet/numberFormat/locale";
+import { useFormulaDisplay } from "../../views/spreadsheet/useFormulaDisplay";
 import { useSheetMetrics } from "../../views/spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "../../views/spreadsheet/useSheetSelection";
 import type { SheetViewFields } from "../../views/spreadsheet/useSheetViewState";
@@ -40,6 +41,17 @@ describe("FormulaBar", () => {
     expect(content.classes()).toContain("formula-bar-content");
   });
 
+  it("mutes a dynamic array member's formula (SPEC-119): data-spill-member and the muted class, only then", async () => {
+    const wrapper = mount(FormulaBar, { props: { address: "H3", content: "=SORT(A2:A6)", spillMember: true } });
+    const content = wrapper.get('[data-testid="formula-bar-content"]');
+    expect(content.text()).toBe("=SORT(A2:A6)");
+    expect(content.attributes("data-spill-member")).toBe("true");
+    expect(content.classes()).toContain("is-spill-member");
+    await wrapper.setProps({ address: "H2", spillMember: false });
+    expect(content.attributes("data-spill-member")).toBeUndefined();
+    expect(content.classes()).not.toContain("is-spill-member");
+  });
+
   it("is empty for an empty active cell", () => {
     const wrapper = mount(FormulaBar, { props: { address: "Z99", content: "" } });
     expect(wrapper.get('[data-testid="formula-bar-content"]').element.textContent).toBe("");
@@ -48,7 +60,8 @@ describe("FormulaBar", () => {
 
 // SPEC-118: what the bar shows is the active cell's edit text — editText
 // through the cell's effective style, in the view's locale — wired the way
-// the workbook view wires it (useSheetSelection's activeContent).
+// the workbook view wires it (since SPEC-119, useFormulaDisplay's barText:
+// formulaBarText falls back to editText for a cell with no formula).
 describe("FormulaBar edit text (SPEC-118)", () => {
   const styles: CellStyle[] = [
     {},
@@ -93,7 +106,7 @@ describe("FormulaBar edit text (SPEC-118)", () => {
     defaultStyleId: 0,
   };
 
-  /** The bar over `model`, its content the selection's activeContent. */
+  /** The bar over `model`, its content useFormulaDisplay's barText. */
   function mountBar() {
     const locale = shallowRef<SpreadsheetLocaleTag>("en-US");
     const fields = shallowRef<SheetViewFields>({});
@@ -119,7 +132,8 @@ describe("FormulaBar edit text (SPEC-118)", () => {
             selection.press({ row, col: 0 }, { shift: false, mod: false });
             selection.release();
           };
-          return () => h(FormulaBar, { address: selection.nameBoxText.value, content: selection.activeContent.value });
+          const formulas = useFormulaDisplay({ sheet: () => sheet, model: () => model, viewState, selection });
+          return () => h(FormulaBar, { address: selection.nameBoxText.value, content: formulas.barText.value });
         },
       }),
     );

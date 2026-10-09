@@ -1,13 +1,11 @@
 <script setup lang="ts">
 // The workbook view at /sheets/:id (SPEC-116, SPEC-117): a read-only wiring
-// hub under the same rule as the other views (SpreadsheetView.size.spec.ts
-// holds the line budget). Loading, the kind guard, the reader-version upgrade
-// and the sheet on show live in useWorkbookLoad; view state (selection, zoom,
-// gridlines, scroll, active sheet — never a change to the file) in
-// useSheetViewState; geometry in useSheetMetrics; zoom, selection and the
-// menu bar's routing in useSheetZoom, useSheetSelection and
-// useSpreadsheetMenu; the number locale (SPEC-118) in useSpreadsheetLocale;
-// the surfaces in components/spreadsheet/*. This file only wires them.
+// hub (SpreadsheetView.size.spec.ts holds its line budget). Loading, the kind
+// guard, the reader upgrade and the sheet on show: useWorkbookLoad; view state
+// (never a change to the file): useSheetViewState; geometry, zoom, selection,
+// menu routing, the number locale (SPEC-118) and formula display (SPEC-119):
+// the spreadsheet/ composables imported below; the surfaces:
+// components/spreadsheet/*. This file only wires them.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -16,6 +14,7 @@ import SpreadsheetMenuBar from "../components/spreadsheet/SpreadsheetMenuBar.vue
 import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar.vue";
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import { useTheme } from "../composables/useTheme";
+import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
 import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
 import { useSheetViewState } from "./spreadsheet/useSheetViewState";
@@ -38,8 +37,9 @@ const sheetMetrics = useSheetMetrics(() => book.activeSheet.value);
 const zoom = useSheetZoom({ viewState });
 const sheetLocale = useSpreadsheetLocale();
 const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState, model: () => book.workbook.value, locale: () => sheetLocale.locale.value });
-const menu = useSpreadsheetMenu({ book, viewState, zoom });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value }));
+const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model: () => book.workbook.value, viewState, selection });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas }));
 </script>
 
 <template>

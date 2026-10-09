@@ -50,6 +50,23 @@
 //   date, an elapsed time style, fraction, scientific, percentage, boolean,
 //   text, quarter + year, week-of-year and era styles, and unstyled date,
 //   time and percentage cells — 1899-12-25 among them (an ODS-only date).
+// - spec119-formulas.xlsx (SPEC-119) — Excel 365-shaped: sheet "Calc" with
+//   a normal formula, a shared block in Excel's order (master first), a
+//   shared block as a non-Excel producer writes it (a follower before its
+//   master, the last follower's shift running off the grid → #REF!), a CSE
+//   array, `_xlfn.` and `_xlfn._xlws.` functions, a dynamic array with
+//   `cm="1"` and xl/metadata.xml, LET with `_xlpm.` parameters, SINGLE, a
+//   data table, a 3-D sum over Jan:Mar, 'O''Brien'!A1, A:A and 1:1, an
+//   external reference with xl/externalLinks/externalLink1.xml, Sheet2!#REF!,
+//   a multi-line formula with indentation and the immediately-invoked LAMBDA
+//   Excel writes but this grammar does not parse; "Jan" (the second sheet)
+//   has `showFormulas="1"`. SPEC119_FORMULAS_XLSX records the facts.
+// - spec119-formulas.ods (SPEC-119) — LibreOffice-shaped, `xmlns:of`,
+//   `xmlns:oooc` and `xmlns:msoxl` on the root: bracketed references (another
+//   sheet's quoted name included), `~` and `!`, an inline array,
+//   COM.MICROSOFT.CONCAT, a matrix formula with both span attributes, a
+//   repeated formula cell, an `oooc:=` and an `msoxl:=` formula and a formula
+//   cell without a cached value. SPEC119_FORMULAS_ODS records the facts.
 // spec116-numbers.xlsx is NOT built here — Apple Numbers exported it (see
 // e2e/fixtures/spec116-numbers.md); the specs read the committed file.
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
@@ -208,6 +225,10 @@ async function excelPackage(options: {
    * every SPEC-116 fixture's bytes). */
   theme?: string;
   styles?: string;
+  /** SPEC-119: further parts (after the shared strings), their workbook
+   * relationships (with their own ids), content type overrides, and what the
+   * workbook part holds between `</sheets>` and `<calcPr>`. */
+  additions?: { parts: ZipEntryInput[]; relationships: string[]; overrides: string[]; workbookAfterSheets?: string };
 }): Promise<Uint8Array> {
   const overrides = [
     `<Override PartName="/xl/workbook.xml" ContentType="${options.mainContentType}"/>`,
@@ -220,6 +241,7 @@ async function excelPackage(options: {
     ...(options.calcChain
       ? [`<Override PartName="/xl/calcChain.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/>`]
       : []),
+    ...(options.additions?.overrides ?? []),
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>`,
     `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>`,
   ];
@@ -244,6 +266,7 @@ async function excelPackage(options: {
     ...(options.sharedStrings ? [`<Relationship Id="rId${n + 3}" Type="${REL_TYPE}/sharedStrings" Target="sharedStrings.xml"/>`] : []),
     ...(options.calcChain ? [`<Relationship Id="rId${n + 4}" Type="${REL_TYPE}/calcChain" Target="calcChain.xml"/>`] : []),
     ...(options.extra ? [options.extra.relationship] : []),
+    ...(options.additions?.relationships ?? []),
   ];
   const sheetsXml = options.sheets
     .map((sheet, index) => `<sheet name="${sheet.name}" sheetId="${index + 1}"${sheet.state ? ` state="${sheet.state}"` : ""} r:id="rId${index + 1}"/>`)
@@ -264,7 +287,7 @@ async function excelPackage(options: {
     `xr6:coauthVersionMax="47" xr10:uidLastSave="{00000000-0000-0000-0000-000000000000}"/>` +
     `<bookViews><workbookView xWindow="-110" yWindow="-110" windowWidth="19420" windowHeight="10300"` +
     `${options.activeTab ? ` activeTab="${options.activeTab}"` : ""} xr2:uid="{1E0B4C7A-5D2F-4C9B-8E3A-7F6D5C4B3A21}"/></bookViews>` +
-    `<sheets>${sheetsXml}</sheets><calcPr calcId="191029"/></workbook>`;
+    `<sheets>${sheetsXml}</sheets>${options.additions?.workbookAfterSheets ?? ""}<calcPr calcId="191029"/></workbook>`;
 
   const entries: ZipEntryInput[] = [
     part("[Content_Types].xml", contentTypes),
@@ -278,6 +301,7 @@ async function excelPackage(options: {
   if (options.sharedStrings) {
     entries.push(part("xl/sharedStrings.xml", options.sharedStrings));
   }
+  entries.push(...(options.additions?.parts ?? []));
   if (options.calcChain) {
     entries.push(part("xl/calcChain.xml", options.calcChain));
   }
@@ -962,10 +986,10 @@ const loEmpty = (repeat: number): string => `<table:table-cell table:number-colu
 const loRow = (cells: string, style = "ro1", repeat?: number): string =>
   `<table:table-row table:style-name="${style}"${repeat ? ` table:number-rows-repeated="${repeat}"` : ""}>${cells}</table:table-row>`;
 
-function loContent(tables: string): string {
+function loContent(tables: string, namespaces = LO_CONTENT_NAMESPACES): string {
   return (
     ODF_XML_DECLARATION +
-    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${LO_AUTOMATIC_STYLES}` +
+    `<office:document-content ${namespaces}><office:scripts/>${LO_FONT_FACES}${LO_AUTOMATIC_STYLES}` +
     `<office:body><office:spreadsheet><table:calculation-settings table:automatic-find-labels="false" ` +
     `table:use-regular-expressions="false" table:use-wildcards="true"/>${tables}<table:named-expressions/>` +
     `</office:spreadsheet></office:body></office:document-content>`
@@ -1961,4 +1985,322 @@ export async function buildSpec118FormatsOdsBytes(): Promise<Uint8Array> {
     `table:use-regular-expressions="false" table:use-wildcards="true"/>${table}<table:named-expressions/>` +
     `</office:spreadsheet></office:body></office:document-content>`;
   return loPackage(content, loMeta("Spec 118 formats", 1, 34), loSettings([SPEC118_FORMATS_ODS.tableName], SPEC118_FORMATS_ODS.tableName));
+}
+
+// ============================================================================
+// SPEC-119 — formulas
+// ============================================================================
+
+/** An XML attribute value / element text as Excel and LibreOffice escape it. */
+function xmlEscape(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+/** Excel writes `"` literally in element text, and `>` as `&gt;`. */
+function xmlText(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+const SPEC119_STRINGS = ["Value", "Amount"] as const;
+
+/** spec119-formulas.xlsx's "Calc" `<f>` texts, as Excel wrote them. */
+const SPEC119_WIRE = {
+  B5: "SUM(B2:B4)",
+  C2: "B2*$F$1",
+  D3: "A1048575*2",
+  E2: "A2:A4*2",
+  G2: '_xlfn.IFS(A2>1,"big",TRUE,"small")',
+  H2: "_xlfn._xlws.SORT(A2:A6)",
+  I2: "_xlfn.LET(_xlpm.x,5,_xlpm.x*2)",
+  J2: "_xlfn.SINGLE(A2:A4)",
+  L2: "F2*10",
+  M2: "SUM(Jan:Mar!B2)",
+  N2: "'O''Brien'!A1*2",
+  O2: "SUM(A:A)+SUM(1:1)",
+  P2: "[1]Sheet1!$A$1+1",
+  Q2: "SUM(Sheet2!#REF!)",
+  R2: 'IF(B2>15,\n    "high",\n    "low")',
+  S2: "_xlfn.LAMBDA(_xlpm.x,_xlpm.x+1)(2)",
+} as const;
+
+/** What spec119-formulas.xlsx holds, for the unit and e2e specs. */
+export const SPEC119_FORMULAS_XLSX = {
+  sheetNames: ["Calc", "Jan", "Feb", "Mar", "O'Brien"],
+  /** "Calc"'s `<f>` texts as written. */
+  wire: SPEC119_WIRE,
+  /** "Calc"'s formula cells → the canonical formula the reader must give. */
+  formulas: {
+    B5: "SUM(B2:B4)",
+    C2: "B2*$F$1",
+    C3: "B3*$F$1",
+    C4: "B4*$F$1",
+    C5: "B5*$F$1",
+    C6: "B6*$F$1",
+    C7: "B7*$F$1",
+    C8: "B8*$F$1",
+    C9: "B9*$F$1",
+    D2: "A1048574*2",
+    D3: "A1048575*2",
+    D4: "A1048576*2",
+    D5: "#REF!*2",
+    E2: "A2:A4*2",
+    G2: 'IFS(A2>1,"big",TRUE,"small")',
+    H2: "SORT(A2:A6)",
+    I2: "LET(x,5,x*2)",
+    J2: "SINGLE(A2:A4)",
+    L2: "F2*10",
+    M2: "SUM(Jan:Mar!B2)",
+    N2: "'O''Brien'!A1*2",
+    O2: "SUM(A:A)+SUM(1:1)",
+    P2: "[1]Sheet1!$A$1+1",
+    Q2: "SUM(Sheet2!#REF!)",
+    R2: 'IF(B2>15,\n    "high",\n    "low")',
+  },
+  /** The formula this grammar does not parse: kept as its `<f>` text. */
+  unparsed: { S2: SPEC119_WIRE.S2 },
+  /** The cached values of the formula cells the specs look at. */
+  values: { B5: 60, C3: 40, C5: 120, D5: { error: "#REF!" }, E2: 6, E3: 2, E4: 10, G2: "big", H2: 1, H6: 5, I2: 10, L3: 10, S2: 3 },
+  arrays: { E2: { top: 1, left: 4, bottom: 3, right: 4 }, H2: { top: 1, left: 7, bottom: 5, right: 7 } },
+  /** The data table's `<f>`, verbatim, on L3 (L3:L5, column input F2). */
+  dataTable: { L3: `<f t="dataTable" ref="L3:L5" dt2D="0" dtr="0" r1="F2"/>` },
+  /** The formula bar's text for the e2e journey's cells. */
+  formulaBar: { B5: "=SUM(B2:B4)", C3: "=B3*$F$1", E3: "{=A2:A4*2}", G2: '=IFS(A2>1,"big",TRUE,"small")', H4: "=SORT(A2:A6)", L4: "{=TABLE(,F2)}" },
+} as const;
+
+/** Excel's dynamic-array cell metadata part (the XLDAPR future metadata). */
+const SPEC119_METADATA =
+  XML_DECLARATION +
+  `<metadata xmlns="${MAIN_NS}" xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray">` +
+  `<metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" ` +
+  `splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/></metadataTypes>` +
+  `<futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}">` +
+  `<xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata>` +
+  `<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>`;
+
+/** The external workbook "[1]" names: Rates.xlsx, its Sheet1!A1 cached. */
+const SPEC119_EXTERNAL_LINK =
+  XML_DECLARATION +
+  `<externalLink xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14" ` +
+  `xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><externalBook xmlns:r="${REL_NS}" r:id="rId1">` +
+  `<sheetNames><sheetName val="Sheet1"/></sheetNames><sheetDataSet><sheetData sheetId="0"><row r="1"><cell r="A1"><v>100</v></cell></row>` +
+  `</sheetData></sheetDataSet></externalBook></externalLink>`;
+
+const SPEC119_EXTERNAL_LINK_RELS =
+  XML_DECLARATION +
+  `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_TYPE}/externalLinkPath" Target="Rates.xlsx" TargetMode="External"/></Relationships>`;
+
+/** One of spec119-formulas.xlsx's Excel-shaped rows. */
+const spec119Row = (r: number, spans: string, cells: string): string => `<row r="${r}" spans="${spans}" x14ac:dyDescent="0.35">${cells}</row>`;
+
+/** A formula cell as Excel writes it: `t` for a string or error result. */
+function formulaCell(ref: string, f: string, v: string | number, options: { t?: "str" | "e"; cm?: number } = {}): string {
+  return `<c r="${ref}"${options.cm === undefined ? "" : ` cm="${options.cm}"`}${options.t ? ` t="${options.t}"` : ""}>${f}<v>${v}</v></c>`;
+}
+
+/** A shared formula's follower, as Excel writes one. */
+const follower = (ref: string, si: number, v: number | string, t?: "e"): string =>
+  `<c r="${ref}"${t ? ` t="${t}"` : ""}><f t="shared" si="${si}"/><v>${v}</v></c>`;
+
+/** A normal formula's `<f>`. */
+const normalF = (text: string): string => `<f>${xmlText(text)}</f>`;
+
+export async function buildSpec119FormulasXlsxBytes(): Promise<Uint8Array> {
+  const W = SPEC119_WIRE;
+  const text = (ref: string, value: (typeof SPEC119_STRINGS)[number]): string => sharedCell(ref, SPEC119_STRINGS.indexOf(value));
+  const calcRows = [
+    spec119Row(1, "1:19", text("A1", "Value") + text("B1", "Amount") + numberCell("F1", 2)),
+    spec119Row(
+      2,
+      "1:19",
+      numberCell("A2", 3) + numberCell("B2", 10) +
+        `<c r="C2"><f t="shared" ref="C2:C9" si="0">${xmlText(W.C2)}</f><v>20</v></c>` +
+        // A non-Excel producer's order: this follower comes before its master (D3).
+        follower("D2", 1, 0) +
+        `<c r="E2"><f t="array" ref="E2:E4">${xmlText(W.E2)}</f><v>6</v></c>` +
+        numberCell("F2", 1) +
+        formulaCell("G2", normalF(W.G2), "big", { t: "str" }) +
+        formulaCell("H2", `<f t="array" ref="H2:H6">${xmlText(W.H2)}</f>`, 1, { cm: 1 }) +
+        formulaCell("I2", normalF(W.I2), 10) +
+        formulaCell("J2", normalF(W.J2), 3) +
+        formulaCell("L2", normalF(W.L2), 10) +
+        formulaCell("M2", normalF(W.M2), 6) +
+        formulaCell("N2", normalF(W.N2), 42) +
+        formulaCell("O2", normalF(W.O2), 17) +
+        formulaCell("P2", normalF(W.P2), 101) +
+        formulaCell("Q2", normalF(W.Q2), "#REF!", { t: "e" }) +
+        formulaCell("R2", normalF(W.R2), "low", { t: "str" }) +
+        formulaCell("S2", normalF(W.S2), 3),
+    ),
+    spec119Row(
+      3,
+      "1:12",
+      numberCell("A3", 1) + numberCell("B3", 20) + follower("C3", 0, 40) +
+        `<c r="D3"><f t="shared" ref="D2:D5" si="1">${xmlText(W.D3)}</f><v>0</v></c>` +
+        numberCell("E3", 2) + numberCell("H3", 2) + numberCell("K3", 1) +
+        `<c r="L3">${SPEC119_FORMULAS_XLSX.dataTable.L3}<v>10</v></c>`,
+    ),
+    spec119Row(4, "1:12", numberCell("A4", 5) + numberCell("B4", 30) + follower("C4", 0, 60) + follower("D4", 1, 0) + numberCell("E4", 10) + numberCell("H4", 3) + numberCell("K4", 2) + numberCell("L4", 20)),
+    spec119Row(5, "1:12", numberCell("A5", 2) + formulaCell("B5", normalF(W.B5), 60) + follower("C5", 0, 120) + follower("D5", 1, "#REF!", "e") + numberCell("H5", 4) + numberCell("K5", 3) + numberCell("L5", 30)),
+    spec119Row(6, "1:8", numberCell("A6", 4) + follower("C6", 0, 0) + numberCell("H6", 5)),
+    spec119Row(7, "3:3", follower("C7", 0, 0)),
+    spec119Row(8, "3:3", follower("C8", 0, 0)),
+    spec119Row(9, "3:3", follower("C9", 0, 0)),
+  ].join("");
+  const sheet = (uid: string, dimension: string, view: string, rows: string): string =>
+    XML_DECLARATION +
+    worksheetOpen(uid) +
+    `<dimension ref="${dimension}"/><sheetViews>${view}</sheetViews><sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/>` +
+    `<sheetData>${rows}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+  const calc = sheet(
+    "4A6C8E0B-2D4F-4A6C-8E0B-2D4F6A8C0E19",
+    "A1:S9",
+    `<sheetView tabSelected="1" workbookViewId="0"><selection activeCell="B5" sqref="B5"/></sheetView>`,
+    calcRows,
+  );
+  const jan = sheet(
+    "5B7D9F1C-3E5A-4B7D-9F1C-3E5A7B9D1F20",
+    "B2:C2",
+    `<sheetView showFormulas="1" workbookViewId="0"><selection activeCell="C2" sqref="C2"/></sheetView>`,
+    spec119Row(2, "2:3", numberCell("B2", 1) + formulaCell("C2", normalF("B2*2"), 2)),
+  );
+  const plain = (uid: string, ref: string, value: number): string =>
+    sheet(uid, ref, `<sheetView workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView>`, spec119Row(Number(ref.slice(1)), `${ref.charCodeAt(0) - 64}:${ref.charCodeAt(0) - 64}`, numberCell(ref, value)));
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${SPEC119_STRINGS.length}" uniqueCount="${SPEC119_STRINGS.length}">` +
+    SPEC119_STRINGS.map((value) => `<si><t>${value}</t></si>`).join("") +
+    `</sst>`;
+  const calcChain =
+    XML_DECLARATION +
+    `<calcChain xmlns="${MAIN_NS}"><c r="C2" i="1" l="1"/><c r="C3"/><c r="C4"/><c r="B5"/><c r="C5"/><c r="C6"/><c r="C7"/><c r="C8"/><c r="C9"/>` +
+    `<c r="D3"/><c r="D2"/><c r="D4"/><c r="D5"/><c r="E2" a="1"/><c r="G2"/><c r="H2" a="1"/><c r="I2"/><c r="J2"/><c r="L2"/><c r="L3"/>` +
+    `<c r="M2"/><c r="N2"/><c r="O2"/><c r="P2"/><c r="Q2"/><c r="R2"/><c r="S2"/><c r="C2" i="2"/></calcChain>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: "Formulas",
+    sheets: [
+      { name: "Calc", xml: calc },
+      { name: "Jan", xml: jan },
+      { name: "Feb", xml: plain("6C8E0A2D-4F6B-4C8E-8A2D-4F6B8C0E2A21", "B2", 2) },
+      { name: "Mar", xml: plain("7D9F1B3E-5A7C-4D9F-9B3E-5A7C9D1F3B22", "B2", 3) },
+      { name: "O'Brien", xml: plain("8E0A2C4F-6B8D-4E0A-8C4F-6B8D0E2A4C23", "A1", 21) },
+    ],
+    sharedStrings,
+    calcChain,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    additions: {
+      parts: [
+        part("xl/externalLinks/externalLink1.xml", SPEC119_EXTERNAL_LINK),
+        part("xl/externalLinks/_rels/externalLink1.xml.rels", SPEC119_EXTERNAL_LINK_RELS),
+        part("xl/metadata.xml", SPEC119_METADATA),
+      ],
+      relationships: [
+        `<Relationship Id="rId20" Type="${REL_TYPE}/externalLink" Target="externalLinks/externalLink1.xml"/>`,
+        `<Relationship Id="rId21" Type="${REL_TYPE}/sheetMetadata" Target="metadata.xml"/>`,
+      ],
+      overrides: [
+        `<Override PartName="/xl/externalLinks/externalLink1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml"/>`,
+        `<Override PartName="/xl/metadata.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"/>`,
+      ],
+      workbookAfterSheets: `<externalReferences><externalReference r:id="rId20"/></externalReferences>`,
+    },
+  });
+}
+
+/** spec119-formulas.ods's "Calc" `table:formula` values, as Calc wrote them. */
+const SPEC119_ODS_WIRE = {
+  B5: "of:=SUM([.B2:.B4])",
+  B6: "of:=SUM([.B2:.B3]~[.B4])",
+  C6: "of:=SUM([.A2:.B4]![.B2:.C3])",
+  B7: "of:=[$'My Sheet'.A1]+[$Sheet2.B1]",
+  B8: "of:=SUM({1;2|3;4})",
+  C8: 'of:=COM.MICROSOFT.CONCAT([.A2];"-";[.B2])',
+  B9: "of:=[.B2:.B4]*2",
+  B12: "of:=[.B2]*3",
+  B13: "oooc:=SUM([.B2:.B3])",
+  C13: "msoxl:=SUM(B2:B4)",
+  B14: "of:=[.B2]+1",
+} as const;
+
+/** What spec119-formulas.ods holds, for the unit and e2e specs. */
+export const SPEC119_FORMULAS_ODS = {
+  tableNames: ["Calc", "My Sheet", "Sheet2"],
+  wire: SPEC119_ODS_WIRE,
+  /** "Calc"'s formula cells → the canonical formula the reader must give
+   * (B12:C12 is one cell repeated: the text is copied, never shifted). */
+  formulas: {
+    B5: "SUM(B2:B4)",
+    B6: "SUM((B2:B3,B4))",
+    C6: "SUM(A2:B4 B2:C3)",
+    B7: "'My Sheet'!A1+Sheet2!B1",
+    B8: "SUM({1,2;3,4})",
+    C8: 'CONCAT(A2,"-",B2)',
+    B9: "B2:B4*2",
+    B12: "B2*3",
+    C12: "B2*3",
+    B13: "SUM(B2:B3)",
+    C13: "SUM(B2:B4)",
+    B14: "B2+1",
+  },
+  values: { B5: 60, B6: 60, C6: 30, B7: 12, B8: 10, C8: "3-10", B9: 20, B10: 40, B11: 60, B12: 30, C12: 30, B13: 30, C13: 60, B14: null },
+  /** The matrix formula B9:B11. */
+  matrix: { B9: { top: 8, left: 1, bottom: 10, right: 1 } },
+  formulaBar: { B5: "=SUM(B2:B4)", B7: "='My Sheet'!A1+Sheet2!B1", B10: "{=B2:B4*2}" },
+} as const;
+
+/** LibreOffice's root declarations plus `xmlns:msoxl`, which Calc declares
+ * for formulas in Excel's syntax. */
+const SPEC119_CONTENT_NAMESPACES = LO_CONTENT_NAMESPACES.replace(
+  `xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2"`,
+  `xmlns:of="urn:oasis:names:tc:opendocument:xmlns:of:1.2" xmlns:msoxl="http://schemas.microsoft.com/office/excel/formula"`,
+);
+
+/** A LibreOffice formula cell with a float result. */
+const loFormula = (formula: string, value: number, extra = ""): string =>
+  `<table:table-cell${extra} table:formula="${xmlEscape(formula)}" office:value-type="float" office:value="${value}" calcext:value-type="float"><text:p>${value}</text:p></table:table-cell>`;
+
+export async function buildSpec119FormulasOdsBytes(): Promise<Uint8Array> {
+  const W = SPEC119_ODS_WIRE;
+  const skip = loEmpty(1);
+  const calc =
+    `<table:table table:name="Calc" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString("Value") + loString("Amount") + loEmpty(16382)) +
+    loRow(loFloat(3) + loFloat(10) + loEmpty(16382)) +
+    loRow(loFloat(1) + loFloat(20) + loEmpty(16382)) +
+    loRow(loFloat(5) + loFloat(30) + loEmpty(16382)) +
+    loRow(skip + loFormula(W.B5, 60) + loEmpty(16382)) +
+    loRow(skip + loFormula(W.B6, 60) + loFormula(W.C6, 30) + loEmpty(16381)) +
+    loRow(skip + loFormula(W.B7, 12) + loEmpty(16382)) +
+    loRow(
+      skip +
+        loFormula(W.B8, 10) +
+        `<table:table-cell table:formula="${xmlEscape(W.C8)}" office:value-type="string" office:string-value="3-10" calcext:value-type="string"><text:p>3-10</text:p></table:table-cell>` +
+        loEmpty(16381),
+    ) +
+    loRow(skip + loFormula(W.B9, 20, ` table:number-matrix-columns-spanned="1" table:number-matrix-rows-spanned="3"`) + loEmpty(16382)) +
+    loRow(skip + loFloat(40) + loEmpty(16382)) +
+    loRow(skip + loFloat(60) + loEmpty(16382)) +
+    loRow(skip + loFormula(W.B12, 30, ` table:number-columns-repeated="2"`) + loEmpty(16381)) +
+    loRow(skip + loFormula(W.B13, 30) + loFormula(W.C13, 60) + loEmpty(16381)) +
+    loRow(skip + `<table:table-cell table:formula="${xmlEscape(W.B14)}"/>` + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 1048562) +
+    `</table:table>`;
+  const mySheet =
+    `<table:table table:name="My Sheet" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loFloat(5) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 1048575) +
+    `</table:table>`;
+  const sheet2 =
+    `<table:table table:name="Sheet2" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(skip + loFloat(7) + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 1048575) +
+    `</table:table>`;
+  return loPackage(
+    loContent(calc + mySheet + sheet2, SPEC119_CONTENT_NAMESPACES),
+    loMeta("Formulas", 3, 34),
+    loSettings(SPEC119_FORMULAS_ODS.tableNames, "Calc"),
+  );
 }

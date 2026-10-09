@@ -23,6 +23,10 @@
 // - cellDisplay (SPEC-118): a value through its style's number format in the
 //   cell's width — the text, the format's colour, the alignment General
 //   follows, a fill and the "####" overflow.
+// - showFormulasDisplay (SPEC-119, View ▸ Show formulas): a position a
+//   formula covers shows it as the formula bar writes it, left-aligned (its
+//   style's horizontal alignment overridden by leftAligned); a constant shows
+//   the General text of its value, with no number format.
 import { findRow } from "./address";
 import type { GridRange } from "./address";
 import { CELL_PADDING_PX, estimateTextWidth, INDENT_PX_PER_LEVEL } from "./geometry";
@@ -40,7 +44,10 @@ import type {
   CellValue,
   Sheet,
   SheetBorderStyle,
+  SpreadsheetFormat,
 } from "./model";
+import { formulaTextAt } from "./formula/print";
+import { generalText } from "./general";
 import { formatCodeOf } from "./numberFormat/builtin";
 import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { formatValue, type FormatContext, type FormattedValue } from "./numberFormat/render";
@@ -1030,4 +1037,31 @@ const GENERAL_DISPLAY: FormatContext = { locale: SPREADSHEET_LOCALES["en-US"], d
  * zero on a sheet with `showZeros: false` — cellDisplay with no format. */
 export function displayText(value: CellValue, sheet: Pick<Sheet, "showZeros">): string {
   return cellDisplay(value, {}, sheet, GENERAL_DISPLAY).text;
+}
+
+/** A style with its horizontal alignment overridden to left (Show formulas'
+ * formula text); everything else — vertical alignment, wrap, font, fill —
+ * kept. */
+export function leftAligned(style: CellStyle): CellStyle {
+  return { ...style, alignment: { ...style.alignment, horizontal: "left" } };
+}
+
+/** What a position shows with View ▸ Show formulas on (SPEC-119): the
+ * formula covering it as the formula bar writes it ("=…", an array's "{=…}",
+ * a data table's "{=TABLE(…)}", an unparsed formula as stored) — `formula`
+ * true, to be laid out left-aligned as text — or, for a constant (a dynamic
+ * array's spilled member included), the General text of its value, no
+ * number format applied. */
+export function showFormulasDisplay(
+  sheet: Sheet,
+  row: number,
+  col: number,
+  value: CellValue,
+  format: SpreadsheetFormat,
+): { formatted: FormattedValue; formula: boolean } {
+  const formula = formulaTextAt(sheet, row, col, format);
+  if (formula && !formula.spillMember) {
+    return { formatted: { text: formula.text }, formula: true };
+  }
+  return { formatted: { text: generalText(value) }, formula: false };
 }

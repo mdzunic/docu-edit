@@ -4,7 +4,9 @@
 // selection restored, a press snapped to its merge, a drag shown as
 // "<rows>R × <cols>C" until release, the keyboard map behind the platform's
 // primary modifier (inputs ignored), and the aggregates over stored cells,
-// deferred to idle time for a selection over 100,000 stored cells.
+// deferred to idle time for a selection over 100,000 stored cells. (The
+// formula bar's text is useFormulaDisplay's since SPEC-119; the bar's
+// assertions here read it there, over this selection.)
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computed, effectScope, nextTick, shallowRef, type EffectScope } from "vue";
 import type { Cell, Row, Sheet } from "../../lib/spreadsheet/model";
@@ -27,6 +29,7 @@ vi.mock("../../lib/core/platform", async (importOriginal) => ({
 
 const { useSheetMetrics } = await import("./useSheetMetrics");
 const { useSheetSelection, AGGREGATE_DEFER_THRESHOLD } = await import("./useSheetSelection");
+const { useFormulaDisplay } = await import("./useFormulaDisplay");
 
 /** A sheet from [row, col, value] triples (0-based), plus layout extras. */
 function sheetOf(cells: ReadonlyArray<readonly [number, number, Cell["value"]]>, extra: Partial<Sheet> = {}): Sheet {
@@ -76,9 +79,10 @@ function setup(sheet: Sheet, initial: SheetViewFields = {}) {
   const sheetRef = shallowRef(sheet);
   const result = scope.run(() => {
     const sheetMetrics = useSheetMetrics(() => sheetRef.value);
-    return useSheetSelection({ sheet: () => sheetRef.value, sheetMetrics, viewState });
+    const selection = useSheetSelection({ sheet: () => sheetRef.value, sheetMetrics, viewState });
+    return { selection, formulas: useFormulaDisplay({ sheet: () => sheetRef.value, model: () => null, viewState, selection }) };
   })!;
-  return { selection: result, updates, fields, sheetRef };
+  return { selection: result.selection, formulas: result.formulas, updates, fields, sheetRef };
 }
 
 function key(init: KeyboardEventInit & { key: string }, target?: EventTarget): KeyboardEvent {
@@ -144,21 +148,21 @@ describe("useSheetSelection", () => {
   });
 
   it("makes a merge's top-left the active cell when any member is pressed", () => {
-    const { selection } = setup(styledSheet());
+    const { selection, formulas } = setup(styledSheet());
     selection.press({ row: 4, col: 3 }, { shift: false, mod: false });
     selection.release();
     expect(selection.selection.value.active).toEqual({ row: 4, col: 2 });
     expect(selection.nameBoxText.value).toBe("C5");
-    expect(selection.activeContent.value).toBe("Merged title");
+    expect(formulas.barText.value).toBe("Merged title");
   });
 
   it("shows the active cell's General text in the formula bar, line breaks preserved", () => {
-    const { selection } = setup(styledSheet());
-    expect(selection.activeContent.value).toBe("Line one\nLine two");
+    const { selection, formulas } = setup(styledSheet());
+    expect(formulas.barText.value).toBe("Line one\nLine two");
     selection.press({ row: 2, col: 1 }, { shift: false, mod: false });
-    expect(selection.activeContent.value).toBe("10");
+    expect(formulas.barText.value).toBe("10");
     selection.press({ row: 50, col: 50 }, { shift: false, mod: false });
-    expect(selection.activeContent.value).toBe("");
+    expect(formulas.barText.value).toBe("");
   });
 
   it("selects whole rows and columns from the headers, and everything from the corner", () => {

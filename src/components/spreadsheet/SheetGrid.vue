@@ -20,8 +20,10 @@
 // (useSheetSelection's keyboard map, GridMetrics hit-testing);
 // Ctrl+PageUp/Ctrl+PageDown asks the view for the previous/next sheet — a
 // convenience only where the browser does not keep the keys; the sheet tabs
-// are the keyboard path that always works. Runtime prop declarations per the
-// espree constraint (see AppShell.vue).
+// are the keyboard path that always works. SPEC-119: `showFormulas` (View ▸
+// Show formulas) has the paper show formula text, and the grid carries
+// data-show-formulas="true". Runtime prop declarations per the espree
+// constraint (see AppShell.vue).
 import { useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
@@ -33,6 +35,8 @@ const props = defineProps({
   sheet: { type: Object, required: true },
   /** The view-level state of the sheet on show (SheetGridContext). */
   context: { type: Object, required: true },
+  /** View ▸ Show formulas for the sheet on show (SPEC-119). */
+  showFormulas: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["cycle-sheet"]);
@@ -43,6 +47,7 @@ const grid = useSheetGrid(
   () => asSheet(props.sheet),
   () => asSheetGridContext(props.context),
   (delta = 1) => emit("cycle-sheet", delta),
+  () => props.showFormulas,
 );
 const vp = grid.viewport;
 const RH = ROW_HEADER_WIDTH_PX;
@@ -64,6 +69,7 @@ function px(value = 0) {
     :aria-colcount="MAX_COLS + 1"
     :aria-label="props.sheet.name"
     :aria-activedescendant="grid.activeDescendant.value"
+    :data-show-formulas="props.showFormulas ? 'true' : undefined"
     data-testid="spreadsheet-grid"
     tabindex="0"
     @scroll="vp.onScroll"

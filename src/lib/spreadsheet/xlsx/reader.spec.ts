@@ -7,20 +7,26 @@
 // rich runs carry their `<rPr>` as `font`, a `<c>` carrying only a style is
 // stored as a style-only cell, and a row with a height is stored even with no
 // cells. (The layout, view and style reading itself is in sheetXml.spec.ts
-// and styles.spec.ts.)
+// and styles.spec.ts.) SPEC-119 adds formulas: every "Reading formulas from
+// .xlsx" row over spec119-formulas.xlsx and synthetic sheets, and the
+// Numbers export's formula reading without formulaUnparsed.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { getCell, parseA1 } from "../address";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import {
   buildMiniBookXlsxBytes,
   buildSpec1904XlsxBytes,
+  buildSpec119FormulasXlsxBytes,
   buildSpecMacrosXlsmBytes,
   buildSpecTemplateXltxBytes,
   FIXTURE_WORKBOOK_AUTHOR,
   MINI_BOOK_XLSX,
   SPEC116_1904,
+  SPEC119_FORMULAS_XLSX,
 } from "../fixtures/build";
-import { MAX_WORKBOOK_CELLS, type Sheet } from "../model";
+import { MAX_WORKBOOK_CELLS, type Cell, type Sheet } from "../model";
 import { dateToSerial } from "../serial";
 import { decodeXmlEscapes, parseXlsx, readSharedStrings } from "./reader";
 
@@ -288,14 +294,16 @@ describe("cells", () => {
     expect(at(sheet, "A1")).toBe(dateToSerial(2026, 10, 8, "1904"));
   });
 
-  it("stores no cell for an empty <v> or a formula without a cached value; a style alone is a style-only cell (SPEC-117)", async () => {
+  it("stores no cell for an empty <v>; a style alone is a style-only cell (SPEC-117); a formula without a cached value is stored with value null (SPEC-119)", async () => {
     const sheet = await oneSheet(
       `<row r="1"><c r="A1"><v></v></c><c r="B1" s="3"/><c r="C1"><f>1+1</f></c><c r="D1"><v>4</v></c></row><row r="2" ht="30" customHeight="1"/>`,
     );
     // SPEC-116 stored neither B1 nor row 2; SPEC-117 keeps the style-only
-    // cell and the row with a height (and nothing for A1 or C1).
+    // cell and the row with a height (and nothing for A1). SPEC-116 and
+    // SPEC-117 stored nothing for C1 either; SPEC-119 reads its formula and
+    // keeps it with no cached value.
     expect(sheet.rows).toEqual([
-      { index: 0, cells: [{ col: 1, value: null, styleId: 3 }, { col: 3, value: 4 }] },
+      { index: 0, cells: [{ col: 1, value: null, styleId: 3 }, { col: 2, value: null, formula: "1+1" }, { col: 3, value: 4 }] },
       { index: 1, cells: [], heightPt: 30, customHeight: true },
     ]);
   });
@@ -386,5 +394,110 @@ describe("refusals", () => {
     expect(parsed.sheets.reduce((sum, sheet) => sum + sheet.rows.reduce((n, r) => n + r.cells.length, 0), 0)).toBe(MAX_WORKBOOK_CELLS);
     const over = synthetic({ sheets: [{ name: "A", data: half }, { name: "B", data: half + "<row><c><v>1</v></c></row>" }] });
     expect((await failure(over)).message).toBe(WORKBOOK_TOO_LARGE_MESSAGE);
+  });
+});
+
+/** The stored cell at an A1 address. */
+function cellAt(sheet: Sheet, a1: string): Cell | undefined {
+  const ref = parseA1(a1)!;
+  return getCell(sheet, ref.row, ref.col);
+}
+
+describe("formulas (SPEC-119 \"Reading formulas from .xlsx\")", () => {
+  it("reads every formula of spec119-formulas.xlsx: canonical text, cached values as before", async () => {
+    const calc = (await parseXlsx(await buildSpec119FormulasXlsxBytes())).sheets[0]!;
+    for (const [a1, formula] of Object.entries(SPEC119_FORMULAS_XLSX.formulas)) {
+      expect(cellAt(calc, a1)?.formula, a1).toBe(formula);
+      expect(cellAt(calc, a1)?.formulaUnparsed, a1).toBeUndefined();
+    }
+    for (const [a1, value] of Object.entries(SPEC119_FORMULAS_XLSX.values)) {
+      expect(cellAt(calc, a1)?.value, a1).toEqual(value);
+    }
+  });
+
+  it("expands shared formulas per follower — Excel's order, a follower before its master, and an off-grid shift to #REF!", async () => {
+    const calc = (await parseXlsx(await buildSpec119FormulasXlsxBytes())).sheets[0]!;
+    expect(["C2", "C3", "C9"].map((a1) => cellAt(calc, a1)?.formula)).toEqual(["B2*$F$1", "B3*$F$1", "B9*$F$1"]);
+    expect(["D2", "D3", "D4", "D5"].map((a1) => cellAt(calc, a1)?.formula)).toEqual(["A1048574*2", "A1048575*2", "A1048576*2", "#REF!*2"]);
+    expect(cellAt(calc, "D5")?.value).toEqual({ error: "#REF!" });
+  });
+
+  it("reads t=\"array\" as the anchor's formula + arrayRange — members keep their cached values only — and cm as a dynamic array", async () => {
+    const calc = (await parseXlsx(await buildSpec119FormulasXlsxBytes())).sheets[0]!;
+    expect(cellAt(calc, "E2")).toEqual({ col: 4, value: 6, formula: "A2:A4*2", arrayRange: SPEC119_FORMULAS_XLSX.arrays.E2 });
+    expect(cellAt(calc, "E3")).toEqual({ col: 4, value: 2 });
+    expect(cellAt(calc, "H2")).toEqual({ col: 7, value: 1, formula: "SORT(A2:A6)", arrayRange: SPEC119_FORMULAS_XLSX.arrays.H2, dynamicArray: true, cm: 1 });
+    expect(cellAt(calc, "H6")).toEqual({ col: 7, value: 5 });
+  });
+
+  it("keeps a data table's <f t=\"dataTable\"> element verbatim on its anchor, with no formula", async () => {
+    const calc = (await parseXlsx(await buildSpec119FormulasXlsxBytes())).sheets[0]!;
+    expect(cellAt(calc, "L3")).toEqual({ col: 11, value: 10, dataTableXml: SPEC119_FORMULAS_XLSX.dataTable.L3 });
+    expect(cellAt(calc, "L4")).toEqual({ col: 11, value: 20 });
+  });
+
+  it("keeps the immediately-invoked LAMBDA Excel writes as its <f> text, formulaUnparsed", async () => {
+    const calc = (await parseXlsx(await buildSpec119FormulasXlsxBytes())).sheets[0]!;
+    expect(cellAt(calc, "S2")).toEqual({ col: 18, value: 3, formula: SPEC119_FORMULAS_XLSX.unparsed.S2, formulaUnparsed: true });
+  });
+
+  it("reads sheetView@showFormulas=\"1\" as Sheet.showFormulas (the second sheet only)", async () => {
+    const sheets = (await parseXlsx(await buildSpec119FormulasXlsxBytes())).sheets;
+    expect(sheets.map((sheet) => sheet.name)).toEqual(SPEC119_FORMULAS_XLSX.sheetNames);
+    expect(sheets.map((sheet) => sheet.showFormulas)).toEqual([undefined, true, undefined, undefined, undefined]);
+    expect(cellAt(sheets[1]!, "C2")).toEqual({ col: 2, value: 2, formula: "B2*2" });
+  });
+
+  it("keeps a formula with no <v> as value: null; drops one stray leading =; reads c@cm on any cell", async () => {
+    const sheet = await oneSheet(
+      `<row r="1"><c r="A1"><f>=SUM(B1:B2)</f></c><c r="B1" cm="2"><v>4</v></c><c r="C1" t="str"><f t="array" ref="C1">_xlfn.CONCAT(A1,"x")</f><v>4x</v></c></row>`,
+    );
+    expect(sheet.rows[0]!.cells).toEqual([
+      { col: 0, value: null, formula: "SUM(B1:B2)" },
+      { col: 1, value: 4, cm: 2 },
+      { col: 2, value: "4x", formula: 'CONCAT(A1,"x")', arrayRange: { top: 0, left: 2, bottom: 0, right: 2 } },
+    ]);
+  });
+
+  it("keeps a follower whose si no master defines as its value alone — and stores nothing for an empty one", async () => {
+    const sheet = await oneSheet(
+      `<row r="1"><c r="A1"><f t="shared" si="7"/><v>3</v></c><c r="B1"><f t="shared" si="8"/></c></row><row r="2"><c r="A2"><f t="shared" si="9"/></c></row>`,
+    );
+    expect(sheet.rows).toEqual([{ index: 0, cells: [{ col: 0, value: 3 }] }]);
+  });
+
+  it("resolves a follower met before its master at the end of the sheet, and parses a shared block once", async () => {
+    const sheet = await oneSheet(
+      `<row r="1"><c r="B1"><f t="shared" si="0"/><v>2</v></c></row>` +
+        `<row r="2"><c r="B2"><f t="shared" ref="B1:B3" si="0">A2*2</f><v>4</v></c></row>` +
+        `<row r="3"><c r="B3"><f t="shared" si="0"/><v>6</v></c></row>`,
+    );
+    expect(sheet.rows.map((row) => row.cells[0]!.formula)).toEqual(["A1*2", "A2*2", "A3*2"]);
+  });
+
+  it("shifts an unparsed master's wire text for its followers, still unparsed", async () => {
+    const sheet = await oneSheet(
+      `<row r="1"><c r="B1"><f t="shared" ref="B1:B2" si="0">_xlfn.LAMBDA(_xlpm.x,_xlpm.x+A1)(2)</f><v>2</v></c></row>` +
+        `<row r="2"><c r="B2"><f t="shared" si="0"/><v>3</v></c></row>`,
+    );
+    expect(sheet.rows.map((row) => row.cells[0])).toEqual([
+      { col: 1, value: 2, formula: "_xlfn.LAMBDA(_xlpm.x,_xlpm.x+A1)(2)", formulaUnparsed: true },
+      { col: 1, value: 3, formula: "_xlfn.LAMBDA(_xlpm.x,_xlpm.x+A2)(2)", formulaUnparsed: true },
+    ]);
+  });
+
+  it("reads every formula cell of the Numbers export without formulaUnparsed", async () => {
+    const bytes = new Uint8Array(readFileSync(join(__dirname, "../../../../e2e/fixtures/spec116-numbers.xlsx")));
+    const parsed = await parseXlsx(bytes);
+    const formulaCells = parsed.sheets.flatMap((sheet) => sheet.rows.flatMap((row) => row.cells.filter((cell) => cell.formula !== undefined)));
+    expect(formulaCells.length).toBeGreaterThan(0);
+    expect(formulaCells.filter((cell) => cell.formulaUnparsed)).toEqual([]);
+    expect(cellAt(parsed.sheets[1]!, "B5")).toMatchObject({
+      value: 850.5,
+      formula: "B3-B4",
+      arrayRange: { top: 4, left: 1, bottom: 4, right: 1 },
+      dynamicArray: true,
+      cm: 1,
+    });
   });
 });
