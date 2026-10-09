@@ -59,7 +59,7 @@ a worker without changing any contract here.
 - [ ] `formula/recalc.ts` exports `changedCellsBetween(sheetId, beforeRows, afterRows)` (the identity diff: `core/arrayWindow.ts`'s `windowOf` over rows, then over each changed row's cells), `recalculate(model, changed, options?)`, `startRecalc(model, changed, options?)` and `RecalcResult` per "Recalculation": the dirty set is the transitive dependents of `changed` plus every volatile cell and its dependents, evaluated in a deterministic topological order; results are written copy-on-write (one new `Row` per touched row per step, one new `rows` array per touched sheet), an unchanged value writes nothing, and untouched rows keep their identity
 - [ ] Cycles follow "Cycles": every cell of a cycle evaluates to 0 and its dependents compute from that 0; `RecalcResult.circular` lists the first cell of each cycle in sheet order then row-major; the status bar shows `sheet-status-circular` reading "Circular reference: Sheet1!A1" (sheet name quoted per SPEC-119) while any cycle exists — at open too, where cycles are found from the graph but their cached values are left alone — and there is no iterative calculation
 - [ ] The open-time policy follows "Opening a workbook": cached values are trusted and painted first; a full recalculation runs only when `model.calc.fullCalcOnLoad` is set or some formula cell has `value === null`; otherwise, once idle, one pass recomputes the volatile cells and their dependents (so TODAY is today, as Excel does on open); no open-time pass sets `dirty` (SPEC-121) or changes the downloaded bytes of an untouched workbook (`equalBytes`)
-- [ ] Uncomputable cells follow "Stale cells": a formula using a function not in the registry, a name, a structured or external reference, a dynamic array, an unparsed formula, or a cycle in an iterating workbook keeps its cached value, and other cells compute from that value; when such a cell is a transitive dependent of anything that changed in a pass it is **stale** — its `sheet-cell` gets `data-stale="true"` and a `title` from the "Stale cells" table, and the pass sets `model.forceFullCalcOnLoad`, which SPEC-122's xlsx writer turns into `<calcPr fullCalcOnLoad="1"/>`
+- [ ] Uncomputable cells follow "Stale cells": a formula using a function not in the registry, a name, a structured or external reference, a dynamic array that spills (per "Array mode" — a single-cell one whose result fits its cell computes), an unparsed formula, or a cycle in an iterating workbook keeps its cached value, and other cells compute from that value; when such a cell is a transitive dependent of anything that changed in a pass it is **stale** — its `sheet-cell` gets `data-stale="true"` and a `title` from the "Stale cells" table, and the pass sets `model.forceFullCalcOnLoad`, which SPEC-122's xlsx writer turns into `<calcPr fullCalcOnLoad="1"/>`
 - [ ] The readers bump `SPREADSHEET_READER_VERSION` (to the next integer) and append their `ReaderUpgrade` (a dirty-sheet step that throws, as SPEC-119's does) to read `model.calc` per "Calculation settings" — xlsx `calcPr@fullCalcOnLoad`, `@calcMode`, `@iterate`; ods `table:calculation-settings` (`table:case-sensitive`, `table:use-regular-expressions`, `table:use-wildcards`, `table:search-criteria-must-apply-to-whole-cell`, `table:iteration@table:status`) and the `settings.xml` AutoCalculate item
 - [ ] A workbook saved in manual calculation mode is recalculated automatically all the same, and opening it raises one toast: "This workbook was set to calculate manually. It recalculates automatically here." — the file's own setting is preserved verbatim
 - [ ] Large recalculations are time-sliced per "Time slicing": `startRecalc` returns a `RecalcPass` whose `step(budgetMs)` does at most that much work (`performance.now()`), the view drives it in `RECALC_SLICE_MS = 12` slices through `core/idleScheduler.ts`'s `scheduleEagerWork`, and `sheet-status-calculating` reads "Calculating…" only once a pass has run longer than `CALCULATING_STATUS_DELAY_MS = 250`; a pass started while another runs cancels it and inherits its unevaluated cells; a pass driven in 0 ms steps produces a result `toEqual` to the synchronous `recalculate`
@@ -75,7 +75,9 @@ until then they are "unsupported" and their cells keep cached values). CELL
 and INFO (volatile, registered by SPEC-127). Defined names and structured
 references (SPEC-133 supplies `resolveName`; until then they are
 uncomputable). Dynamic arrays and spilling (FILTER, SORT, UNIQUE, SEQUENCE,
-LET, LAMBDA — backlog; their cached spill values show). Iterative
+LET, LAMBDA — backlog; their cached spill values show — a single-cell
+dynamic-array formula whose result fits its cell is in scope, per "Array
+mode"). Iterative
 calculation, manual calculation mode, multi-threaded calculation, "precision
 as displayed" (`calcPr@fullPrecision="0"`, ODS `table:precision-as-shown`) —
 backlog. External workbook links (cached values only). What-If data tables
@@ -268,6 +270,15 @@ in each dimension and positions outside an operand are `#N/A`. The anchor's
 result is distributed over `arrayRange` by the same rule; `EMPTY` elements
 store as 0. `ROW()`/`COLUMN()` of a multi-cell range in array mode return
 the vertical/horizontal array of indices.
+
+A dynamic-array anchor (`dynamicArray`) whose `arrayRange` is its own single
+cell is an `arrayRange` anchor like any other: it evaluates in array mode and
+stores its 1×1 result. Excel 365 writes an array-evaluated formula that does
+not spill this way, and Numbers 14.4 writes **every** formula this way (see
+"The Numbers oracle"). If the result is larger than 1×1, the formula would
+spill, so `evaluateCell` returns `{ uncomputable: { kind: "dynamicArray" } }`
+and the cell keeps its cached value. A dynamic-array anchor over more than
+one cell, and its members, are uncomputable without being evaluated.
 
 ### Evaluation (`formula/evaluate.ts`)
 ```ts
@@ -655,13 +666,29 @@ input values in columns A–C and, one per row in column E, a formula from
 this spec's list that Numbers also implements (arithmetic, rounding,
 aggregates, *IF(S), text, dates, VLOOKUP/MATCH/INDEX), with column D holding
 the formula text for the report; it exports with "Export To ▸ Excel".
-`open -a Numbers` first, or `activate` fails with -600 (the SPEC-087/116
-precedent). Before scripting a run, confirm on the operator's Mac that a
-value beginning with `=` set through AppleScript becomes a formula; if not,
-the script pastes each formula through the clipboard. Numbers' cached
+`open -a Numbers --args -AppleLocale en_US` first, or `activate` fails with
+-600 (the SPEC-087/116 precedent). The locale argument makes Numbers parse and
+compute as en-US whatever the Mac's region. Numbers' cached
 results are a third-party engine's arithmetic, which is the point: rows
 where Numbers is known to differ from Excel are listed in the test with
 their reason, not "fixed".
+
+The fixture is committed (2026-10-09, Numbers 14.4; a value set through
+AppleScript with a leading `=` does become a formula).
+`e2e/fixtures/spec120-numbers.md` records its layout, and it is normative for
+what the test reads. Three facts of the export bind `numbersOracle.spec.ts`:
+- All 147 formula cells are single-cell dynamic-array formulas (`c@cm` plus
+  `<f t="array" ref>` naming the cell itself). They compute through the
+  single-cell rule in "Array mode", so the test recalculates the workbook
+  exactly as the product does, with no special case. A dynamic-array cell
+  left uncomputable fails the test.
+- Numbers writes no error codes. A formula cell with no `<v>` (fourteen of
+  them) is one Numbers evaluated to an error, and it matches when the
+  engine's value is any `CellError`. A `t="b"` result compares as a boolean,
+  `t="str"` as exact text and a number under `roundTo15`.
+- The nine rows in the note's "Where Numbers differs from Excel" table are the
+  test's listed exceptions, each with that table's reason. For those rows the
+  test asserts the Excel / SPEC-120 value the table gives.
 
 ### Fixtures
 Built by `spreadsheet/fixtures/build.ts` (Excel-shaped per SPEC-116):
@@ -684,7 +711,9 @@ Built by `spreadsheet/fixtures/build.ts` (Excel-shaped per SPEC-116):
   `caseSensitive`.
 - `conformance.spec.ts` — every row above, plus the `.ods` settings
   variants. `evaluate.spec.ts` — operators, intersection, union, `#NULL!`,
-  3-D sums, array mode and broadcasting, lazy branches, `MAX_EVAL_DEPTH`
+  3-D sums, array mode and broadcasting, a single-cell dynamic-array anchor
+  (computes; uncomputable once its result is larger than 1×1; a multi-cell
+  one is never evaluated), lazy branches, `MAX_EVAL_DEPTH`
   re-queueing, `MAX_ARRAY_CELLS`, origin offsets on a shared AST.
 - `functions/*.spec.ts` — each function's documented examples plus its
   edge rows; `criteria.spec.ts` — the criteria table and a pathological
