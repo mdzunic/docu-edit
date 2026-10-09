@@ -57,12 +57,20 @@
 //                    paying for the useSlideTextDepth wiring call, the
 //                    <TextPanel> mount and the Text toggle prop pair; the spec
 //                    mandates a drop of at least 10 (view at 360 lines)
+//   2026-10-08  335  SPEC-099 — extracted the deck-navigation block (slide
+//                    commands, derived facts, Add slide, the filmstrip
+//                    command/reorder dispatch) into useDeckNavigation and the
+//                    "not found" state into PresentationNotFound, paying for
+//                    the useSlideSorter wiring call, the <SlideSorter> /
+//                    <ReuseSlidesDialog> mounts and the Sorter toggle prop
+//                    pair; the spec mandates a drop of at least 15
+//                    (view at 329 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 365;
+const LINE_BUDGET = 335;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

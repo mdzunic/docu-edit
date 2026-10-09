@@ -58,6 +58,7 @@ import {
   DEFAULT_SLIDE_WIDTH_CM,
   DEFAULT_TABLE_CELL_PADDING_CM,
   type DeckHeaderFooter,
+  type DeckSection,
   type LayoutSlot,
   type ParsedPresentation,
   type MediaFrame,
@@ -82,6 +83,7 @@ import { classifyLayout } from "../layouts";
 import { DEFAULT_THEME, type ModelColor } from "../../core/theme";
 import { readOdpTheme, themeParentSlot } from "./theme";
 import { ODP_MIMETYPE, OTP_MIMETYPE } from "../detect";
+import { decodeSectionsValue, SECTIONS_PROPERTY_NAME, sectionsValueOf } from "./sections";
 
 export class OdpOpenError extends Error {}
 
@@ -1934,8 +1936,18 @@ export async function parseOdp(
   const metaBytes = parts.get("meta.xml");
   const metaText = metaBytes ? decodeUtf8(metaBytes) : undefined;
   const properties: DocumentProperties = metaText ? parseOdfMeta(metaText) : {};
+  // Deck sections (SPEC-099) ride one custom property; a decodable one is
+  // modelled (and leaves the custom-property list — the model is the single
+  // source), anything else stays an ordinary custom property.
+  let sections: DeckSection[] | undefined;
   if (metaText) {
-    const { customProperties, unsupportedCustomProperties } = parseOdfCustomProperties(metaText);
+    const parsedCustom = parseOdfCustomProperties(metaText);
+    const { unsupportedCustomProperties } = parsedCustom;
+    const sectionsValue = sectionsValueOf(parsedCustom.customProperties);
+    sections = sectionsValue !== undefined ? decodeSectionsValue(sectionsValue, slides) : undefined;
+    const customProperties = sections
+      ? parsedCustom.customProperties.filter((property) => property.name !== SECTIONS_PROPERTY_NAME)
+      : parsedCustom.customProperties;
     if (customProperties.length > 0) {
       properties.customProperties = customProperties;
     }
@@ -1964,6 +1976,9 @@ export async function parseOdp(
   };
   if (theme) {
     parsed.theme = theme;
+  }
+  if (sections) {
+    parsed.sections = sections;
   }
   return parsed;
 }

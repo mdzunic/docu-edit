@@ -10,7 +10,7 @@
 // siblings and src/lib/core.
 import type { PageSize } from "../core/pageSetup";
 import type { DocumentProperties } from "../core/documentProperties";
-import type { PresentationModel, SlideFrame, SlideParagraph } from "./model";
+import type { PresentationModel, Slide, SlideFrame, SlideParagraph } from "./model";
 import { DEFAULT_SIZE_PT, markSlideEdited } from "./text";
 
 /** How a resize treats existing content. `"scale"` scales-and-centres every
@@ -50,6 +50,18 @@ export function applyDeckSize(model: PresentationModel, size: PageSize, mode: Re
   model.slideWidthCm = r3(size.widthCm);
   model.slideHeightCm = r3(size.heightCm);
   model.deckDirty = true;
+}
+
+/** A copy of `slide` with every frame's bounds (group children included) and
+ * text scaled by `factor` and translated by the offsets — the per-slide half
+ * of the rescale maths, shared with SPEC-099's slide import (a slide arriving
+ * from a deck of another size). Pure: the argument is not mutated. */
+export function scaleSlideGeometry(slide: Slide, factor: number, offsetXCm: number, offsetYCm: number): Slide {
+  const copy = structuredClone(slide);
+  for (const frame of copy.frames) {
+    scaleFrame(frame, factor, offsetXCm, offsetYCm);
+  }
+  return copy;
 }
 
 /** Scales one frame's bounds and text, recursing into group children (already

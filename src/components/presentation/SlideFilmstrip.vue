@@ -6,11 +6,24 @@
 // thumbnail) with New slide / Duplicate / Delete / Move up / Move down, and
 // pointer drag-reorder with a visible drop indicator (dropping outside
 // cancels). Structural intents are emitted up to PresentationView, which owns
-// the commands + undo. Runtime prop/emit declarations, not
-// defineProps<{...}>() generics (espree lints .vue scripts).
+// the commands + undo. SPEC-099: the thumbnails are the shared SlideThumb and
+// the menu the shared SlideContextMenu, and when the view hands in the shared
+// slide `selection` (useSlideSelection) clicks and the selection keys go
+// through it — the same multi-selection the slide sorter shows — with
+// `selectedIndexes` driving aria-selected. Runtime prop/emit declarations,
+// not defineProps<{...}>() generics (espree lints .vue scripts).
 import { computed, nextTick, ref, useTemplateRef } from "vue";
-import SlideStage from "./SlideStage.vue";
-import { anchorPoint, asSlides, asStageFieldsBySlide, filmstripLabel, filmstripThumbScale, focusSelector, menuButtons } from "./slideRender";
+import SlideThumb from "./SlideThumb.vue";
+import SlideContextMenu from "./SlideContextMenu.vue";
+import {
+  anchorPoint,
+  asSlides,
+  asStageFieldsBySlide,
+  filmstripLabel,
+  filmstripThumbScale,
+  gestureModifiers,
+  SLIDE_MENU_ITEMS,
+} from "./slideRender";
 
 const props = defineProps({
   slides: { type: Array, default: () => [] },
@@ -24,6 +37,11 @@ const props = defineProps({
    * thumbnail's number agrees with the live slide index after a structural
    * change. Indexed to match `slides`. */
   fieldsBySlide: { type: Array, default: () => [] },
+  /** SPEC-099: the selected slide indexes (the shared multi-selection). Empty
+   * = just the current slide. */
+  selectedIndexes: { type: Array, default: () => [] },
+  /** SPEC-099: the shared useSlideSelection controller, when the view has one. */
+  selection: { type: Object, default: null },
 });
 
 const emit = defineEmits(["select", "add", "command", "reorder"]);
@@ -31,22 +49,12 @@ const emit = defineEmits(["select", "add", "command", "reorder"]);
 /** Target thumbnail width in px; the stage scales down to fit it. */
 const THUMB_WIDTH_PX = 168;
 
-const MENU_ITEMS = [
-  { action: "new", label: "New slide", testid: "slide-menu-new" },
-  { action: "new-with-layout", label: "New slide with layout…", testid: "slide-menu-new-with-layout" },
-  { action: "duplicate", label: "Duplicate slide", testid: "slide-menu-duplicate" },
-  { action: "layout", label: "Change layout…", testid: "slide-menu-layout" },
-  { action: "delete", label: "Delete slide", testid: "slide-menu-delete" },
-  { action: "move-up", label: "Move up", testid: "slide-menu-move-up" },
-  { action: "move-down", label: "Move down", testid: "slide-menu-move-down" },
-];
-
 const slides = computed(() => asSlides(props.slides));
 const fieldsBySlide = computed(() => asStageFieldsBySlide(props.fieldsBySlide));
 const scale = computed(() => filmstripThumbScale(props.widthCm, THUMB_WIDTH_PX));
+const selected = computed(() => (props.selectedIndexes.length > 0 ? props.selectedIndexes : [props.currentIndex]));
 
 const listboxRef = useTemplateRef("listbox");
-const menuRef = useTemplateRef("menu");
 
 // The slide whose context menu is open (-1 = none), and where to place it.
 const menuIndex = ref(-1);
@@ -70,6 +78,14 @@ function select(index = 0) {
   }
 }
 
+function onOptionClick(index = 0, event = new MouseEvent("click")) {
+  if (props.selection) {
+    props.selection.click(index, gestureModifiers(event));
+  } else {
+    select(index);
+  }
+}
+
 function onKeydown(event = new KeyboardEvent("keydown")) {
   // Shift+F10 / the Menu (ContextMenu) key opens the current thumbnail's menu
   // (AC-24). Handled here on the focusable listbox — the options themselves
@@ -79,6 +95,15 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
     const index = props.currentIndex;
     const pos = anchorPoint(listboxRef.value, `#${optionId(index)}`);
     openMenuAt(index, pos.x, pos.y);
+    return;
+  }
+  // The shared selection keys (SPEC-099): arrows/Home/End (Shift extends),
+  // Cmd/Ctrl+A, Escape — kept from the stage's own window-level shortcuts.
+  if (props.selection) {
+    if (props.selection.onKeydown(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
     return;
   }
   let next = null;
@@ -109,10 +134,15 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
 // --- context menu ----------------------------------------------------------
 
 function openMenuAt(index = 0, x = 0, y = 0) {
-  select(index);
+  if (!selected.value.includes(index)) {
+    if (props.selection) {
+      props.selection.click(index);
+    } else {
+      select(index);
+    }
+  }
   menuIndex.value = index;
   menuPos.value = { x, y };
-  void nextTick(() => focusSelector(menuRef.value, '[role="menuitem"]'));
 }
 
 function openMenuFromButton(index = 0, event = new MouseEvent("click")) {
@@ -144,29 +174,7 @@ function runMenu(action = "") {
   emit("command", { action, index });
 }
 
-function onMenuKeydown(event = new KeyboardEvent("keydown")) {
-  const items = menuButtons(menuRef.value);
-  const active = items.findIndex((item) => item === document.activeElement);
-  if (event.key === "ArrowDown") {
-    event.preventDefault();
-    items[(active + 1) % items.length]?.focus();
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault();
-    items[(active - 1 + items.length) % items.length]?.focus();
-  } else if (event.key === "Escape") {
-    event.preventDefault();
-    closeMenu();
-  } else if (event.key === "Home") {
-    event.preventDefault();
-    items[0]?.focus();
-  } else if (event.key === "End") {
-    event.preventDefault();
-    items[items.length - 1]?.focus();
-  }
-}
-
 // --- drag reorder ----------------------------------------------------------
-
 function onDragStart(index = 0, event = new DragEvent("dragstart")) {
   dragFrom.value = index;
   dropTarget.value = index;
@@ -218,6 +226,7 @@ function announceMove(from = 0, to = 0) {
       role="listbox"
       tabindex="0"
       aria-label="Slides"
+      :aria-multiselectable="selection ? 'true' : undefined"
       :aria-activedescendant="optionId(currentIndex)"
       data-testid="slide-filmstrip"
       @keydown="onKeydown"
@@ -227,35 +236,33 @@ function announceMove(from = 0, to = 0) {
         :id="optionId(index)"
         :key="slide.id"
         class="filmstrip-option"
-        :class="{ selected: index === currentIndex, 'drop-target': index === dropTarget && dragFrom !== index }"
+        :class="{
+          selected: index === currentIndex,
+          'multi-selected': index !== currentIndex && selected.includes(index),
+          'drop-target': index === dropTarget && dragFrom !== index,
+        }"
         role="option"
-        :aria-selected="index === currentIndex"
+        :aria-selected="selected.includes(index)"
         :aria-label="label(slide, index)"
         data-testid="filmstrip-slide"
         draggable="true"
-        @click="select(index)"
+        @click="onOptionClick(index, $event)"
         @contextmenu="onContextMenu(index, $event)"
         @dragstart="onDragStart(index, $event)"
         @dragover="onDragOver(index, $event)"
         @drop="onDrop(index, $event)"
         @dragend="onDragEnd"
       >
-        <span
-          class="thumb-number"
-          aria-hidden="true"
-        >{{ index + 1 }}</span>
-        <div class="thumb-stage">
-          <SlideStage
-            :slide="slide"
-            :width-cm="widthCm"
-            :height-cm="heightCm"
-            :media="media"
-            :scale="scale"
-            :interactive="false"
-            :fields="fieldsBySlide[index] || []"
-            :theme="theme"
-          />
-        </div>
+        <SlideThumb
+          :slide="slide"
+          :index="index"
+          :width-cm="widthCm"
+          :height-cm="heightCm"
+          :media="media"
+          :scale="scale"
+          :fields="fieldsBySlide[index] || []"
+          :theme="theme"
+        />
         <button
           type="button"
           class="slide-menu-button"
@@ -279,34 +286,13 @@ function announceMove(from = 0, to = 0) {
       + Add slide
     </button>
 
-    <div
+    <SlideContextMenu
       v-if="menuIndex >= 0"
-      ref="menu"
-      class="slide-context-menu"
-      role="menu"
-      data-testid="slide-context-menu"
-      :style="{ left: `${menuPos.x}px`, top: `${menuPos.y}px` }"
-      tabindex="-1"
-      @keydown="onMenuKeydown"
-    >
-      <button
-        v-for="item in MENU_ITEMS"
-        :key="item.action"
-        type="button"
-        class="slide-context-menu-item"
-        role="menuitem"
-        :data-testid="item.testid"
-        @click="runMenu(item.action)"
-      >
-        {{ item.label }}
-      </button>
-    </div>
-    <div
-      v-if="menuIndex >= 0"
-      class="menu-backdrop"
-      data-testid="slide-menu-backdrop"
-      @click="closeMenu(false)"
-      @contextmenu.prevent="closeMenu(false)"
+      :items="SLIDE_MENU_ITEMS"
+      :x="menuPos.x"
+      :y="menuPos.y"
+      @run="runMenu"
+      @close="closeMenu"
     />
 
     <div
@@ -358,23 +344,13 @@ function announceMove(from = 0, to = 0) {
   background: var(--surface-raised);
 }
 
+.filmstrip-option.multi-selected {
+  border-color: var(--accent);
+}
+
 .filmstrip-option.drop-target {
   border-top-color: var(--accent);
   background: var(--surface-raised);
-}
-
-.thumb-number {
-  flex: none;
-  width: 1.5rem;
-  text-align: right;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
-}
-
-.thumb-stage {
-  /* The thumbnail stage is decorative and non-interactive. */
-  pointer-events: none;
 }
 
 .slide-menu-button {
@@ -408,47 +384,6 @@ function announceMove(from = 0, to = 0) {
 
 .add-slide:hover {
   background: var(--surface-raised);
-}
-
-.slide-context-menu {
-  position: fixed;
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-  min-width: 10rem;
-  padding: var(--space-1);
-  background: var(--surface-raised);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-2);
-}
-
-.slide-context-menu-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
-.slide-context-menu-item:hover {
-  background: var(--surface-sunken);
-}
-
-.slide-context-menu-item:focus-visible {
-  background: var(--surface-sunken);
-  outline: var(--border-width) solid var(--focus-ring);
-  outline-offset: calc(-1 * var(--border-width));
-}
-
-.menu-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 39;
 }
 
 .sr-only {

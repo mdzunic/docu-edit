@@ -586,6 +586,34 @@ export interface Slide {
    *  in `preserved["p:ph:ftr"|"p:ph:sldNum"|"p:ph:dt"]` so save re-emits it
    *  with only its cached `a:t` refreshed. */
   fields?: SlideFieldPlaceholder[];
+  /** The `DeckSection.key` of the section this slide belongs to (SPEC-099).
+   *  Present on every slide exactly when the deck has `sections`; sections are
+   *  contiguous runs in deck order, so membership is this key alone. */
+  sectionKey?: string;
+}
+
+/** A named deck section (SPEC-099, the normative section model): an ordered
+ * run of slides. pptx `p14:section`; odp has no counterpart and carries them in
+ * a `meta.xml` custom property (see `sections.ts`). */
+export interface DeckSection {
+  /** Deck-stable — pptx: the source `p14:section@id` (a brace GUID), else a
+   *  minted `de-sec{n}`. Deliberately NOT named `id`, which equalStructural's
+   *  IGNORED_KEYS drops. */
+  key: string;
+  /** Trimmed, 1..MAX_SECTION_NAME_LENGTH characters. */
+  name: string;
+  /** Editor view state only (the sorter's collapsed run) — serialised to
+   *  neither format. */
+  collapsed?: true;
+}
+
+/** One section's run of slides, as `sectionsOf` reports it: slides
+ * `startIndex` up to (not including) `endIndex`; an empty section has
+ * `startIndex === endIndex`. */
+export interface SectionRun {
+  section: DeckSection;
+  startIndex: number;
+  endIndex: number;
 }
 
 /** The root of a presentation. `kind` is the literal discriminant that
@@ -661,6 +689,10 @@ export interface PresentationModel {
    * content.xml byte-for-byte for an untouched deck. Absent for pptx and
    * from-scratch decks (SPEC-080). */
   odpContentEnvelope?: { prefix: string; suffix: string };
+  /** The deck's sections in deck order (SPEC-099). Absent = a deck with none;
+   *  `[]` is never stored. Invariant: absent, or `slides[0].sectionKey` names
+   *  one of these entries — a leading unsectioned run is impossible. */
+  sections?: DeckSection[];
 }
 
 export const DEFAULT_PRESENTATION_TITLE = "Untitled presentation";
@@ -703,6 +735,9 @@ export interface ParsedPresentation {
   /** odp only: content.xml split around its `draw:page`s (SPEC-080) — the
    * writer's splice-equality envelope. Absent for pptx. */
   odpContentEnvelope?: { prefix: string; suffix: string };
+  /** The deck's sections (SPEC-099), each slide's `sectionKey` already set;
+   *  absent when the package declares none. */
+  sections?: DeckSection[];
 }
 
 /** How many slides the library/preview surfaces report for a model. */

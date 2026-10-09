@@ -86,6 +86,7 @@ import { readPptxTransition } from "../transitions";
 import { readPptxTiming } from "./timing";
 import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
 import { PPTX_MAIN_CONTENT_TYPE } from "../detect";
+import { readSections } from "./sections";
 
 export class PptxOpenError extends Error {}
 
@@ -1741,6 +1742,9 @@ export async function parsePptx(
   // forward, so every slide part's 1-based position is known before any
   // slide is built. Only parts that become model slides are numbered.
   const slidePaths: string[] = [];
+  // Each kept slide's `p:sldId/@id`, parallel to slidePaths — what a
+  // `p14:sectionLst` names its members by (SPEC-099).
+  const slideIds: (string | null)[] = [];
   const sldIdLst = pChild(mainDoc.documentElement, "sldIdLst");
   for (const sldId of sldIdLst ? childElements(sldIdLst, P_NAMESPACE, "sldId") : []) {
     const relId = sldId.getAttributeNS(R_ATTRIBUTE_NAMESPACE, "id");
@@ -1751,6 +1755,7 @@ export async function parsePptx(
     const slidePath = resolvePartPath(info.mainPartPath, rel.target);
     if (parts.has(slidePath)) {
       slidePaths.push(slidePath);
+      slideIds.push(sldId.getAttribute("id"));
     }
   }
   const slideNumberOf = new Map<string, number>();
@@ -1771,12 +1776,14 @@ export async function parsePptx(
   };
 
   const slides: Slide[] = [];
+  const keptSlideIds: (string | null)[] = [];
   let deckDateFormat: string | undefined;
-  for (const slidePath of slidePaths) {
+  for (const [slideIndex, slidePath] of slidePaths.entries()) {
     const slideText = readPart(slidePath);
     if (slideText === undefined) {
       continue;
     }
+    keptSlideIds.push(slideIds[slideIndex]);
     let slideDoc: Document;
     try {
       slideDoc = parseXml(slideText);
@@ -1793,6 +1800,9 @@ export async function parsePptx(
   }
 
   const headerFooter = assembleHeaderFooter(slides, deckDateFormat, showSpecialPlsRaw);
+
+  // Deck sections (SPEC-099): any p14:sectionLst is modelled, never preserved.
+  const sections = readSections(mainDoc.documentElement, slides, keptSlideIds);
 
   // The read-derived layout catalogue (SPEC-089 AC-2).
   const layouts = buildLayoutCatalogue(mainDoc, mainRels, info.mainPartPath, slides, deps);
@@ -1839,6 +1849,9 @@ export async function parsePptx(
   };
   if (deps.themeHolder.theme) {
     parsed.theme = deps.themeHolder.theme;
+  }
+  if (sections) {
+    parsed.sections = sections;
   }
   return parsed;
 }

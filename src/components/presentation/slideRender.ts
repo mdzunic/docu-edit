@@ -743,6 +743,37 @@ export function filmstripThumbScale(widthCm: number, thumbWidthPx: number): numb
   return thumbWidthPx / Math.max(1, cmToPx(widthCm));
 }
 
+/** One context-menu entry (the slide menu, the sorter's section menu). */
+export interface SlideMenuItem {
+  action: string;
+  label: string;
+  testid: string;
+  disabled?: boolean;
+}
+
+/** Typed pass-through for a menu-items prop (espree bars the cast in .vue). */
+export function asMenuItems(value: unknown): SlideMenuItem[] {
+  return value as SlideMenuItem[];
+}
+
+/** The slide context menu's items (SPEC-080) — one list the filmstrip and
+ * the slide sorter's cards both render (SPEC-099), so the two never fork. */
+export const SLIDE_MENU_ITEMS: SlideMenuItem[] = [
+  { action: "new", label: "New slide", testid: "slide-menu-new" },
+  { action: "new-with-layout", label: "New slide with layout…", testid: "slide-menu-new-with-layout" },
+  { action: "duplicate", label: "Duplicate slide", testid: "slide-menu-duplicate" },
+  { action: "layout", label: "Change layout…", testid: "slide-menu-layout" },
+  { action: "delete", label: "Delete slide", testid: "slide-menu-delete" },
+  { action: "move-up", label: "Move up", testid: "slide-menu-move-up" },
+  { action: "move-down", label: "Move down", testid: "slide-menu-move-down" },
+];
+
+/** The modifier state of a pointer/keyboard event, as a plain object the
+ * shared slide selection reads (SPEC-099). */
+export function gestureModifiers(event: MouseEvent | KeyboardEvent): { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean } {
+  return { shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey };
+}
+
 // --- filmstrip menu / drag DOM helpers (SPEC-080) --------------------------
 // The .vue script is espree-linted (no TS casts/generics), so the typed DOM
 // queries the context menu needs live here.

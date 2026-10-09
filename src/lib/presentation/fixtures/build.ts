@@ -16,10 +16,12 @@ import { zip } from "../../core/zipWriter";
 import { writePptxTiming } from "../pptx/timing";
 import { writeOdpAnim } from "../odp/anim";
 import { GOLDEN_PAGE_LAYOUT_NAMES, LAYOUT_GOLDEN } from "../odp/layoutGolden";
-import { createBlankPresentation } from "../slides";
+import { addSlide, createBlankPresentation } from "../slides";
+import { addSection } from "../sections";
+import { bytesToBase64 } from "../../core/packageParts";
 import { defaultFieldRect } from "../headerFooter";
 import { createTableFrame } from "../tables";
-import { insertMediaFrame, setMediaPoster } from "../frames";
+import { insertImageFrame, insertMediaFrame, setMediaPoster } from "../frames";
 import { POSTER_PNG_BASE64, SYNTHETIC_MP4_BASE64, WAV_BASE64 } from "./mediaBytes";
 import { writePptx } from "../pptx/writer";
 import { writeOdp } from "../odp/writer";
@@ -2114,4 +2116,83 @@ export async function buildOdpTextDepthFixtureBytes(): Promise<Uint8Array> {
   parts.set("content.xml", encoder.encode(content));
   const ordered = [...parts].toSorted(([a], [b]) => (a === "mimetype" ? -1 : b === "mimetype" ? 1 : 0));
   return zip(ordered.map(([name, data]) => ({ name, data, store: name === "mimetype" })));
+}
+
+// ============================================================================
+// SPEC-099 deck-section fixtures (spec099-sections)
+// ============================================================================
+// Six slides in two named sections — slide 3 carries an image, slide 5 an
+// animation — built through the from-scratch writers (the SPEC-097 precedent),
+// then given one deliberately out-of-subset deck-level extra to pin the
+// preserve path: a second, unrelated `p:ext` in presentation.xml's `p:extLst`
+// (pptx) and an unrelated `meta:user-defined` in meta.xml (odp). The four
+// mini-deck slides above are not touched.
+
+/** The fixtures' expectation table: section names in deck order, each with
+ * the titles of the slides in its run. */
+export const SPEC099_SECTIONS: { name: string; titles: string[] }[] = [
+  { name: "Opening", titles: ["Welcome", "Agenda", "Team photo"] },
+  { name: "Details", titles: ["Budget", "Timeline", "Next steps"] },
+];
+/** Every slide title, in deck order. */
+export const SPEC099_TITLES = SPEC099_SECTIONS.flatMap((section) => section.titles);
+/** The 0-based slide carrying the image, and the one carrying an animation. */
+export const SPEC099_IMAGE_SLIDE = 2;
+export const SPEC099_ANIMATED_SLIDE = 4;
+/** The out-of-subset deck-level extras the preserve path must keep verbatim. */
+export const SPEC099_PPTX_EXTRA_EXT =
+  `<p:ext uri="{EFAFB233-063F-42B5-8137-9DF3F51BA10A}">` +
+  `<p15:sldGuideLst xmlns:p15="http://schemas.microsoft.com/office/powerpoint/2012/main"/></p:ext>`;
+export const SPEC099_ODP_EXTRA_PROPERTY = { name: "Reviewer", type: "text" as const, value: "Ada Lovelace" };
+
+const SPEC099_FIXTURE_INSTANT = new Date("2026-10-01T09:00:00Z");
+
+function spec099Model(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Sections fixture";
+  for (let i = 1; i < SPEC099_TITLES.length; i++) {
+    addSlide(model, i - 1);
+  }
+  model.slides.forEach((slide, index) => {
+    const title = slide.frames[0] as TextFrame;
+    title.paragraphs = [{ runs: [{ text: SPEC099_TITLES[index] }] }];
+    const body = slide.frames[1] as TextFrame;
+    body.paragraphs = [{ runs: [{ text: `Slide ${index + 1} notes` }] }];
+  });
+  insertImageFrame(
+    model,
+    SPEC099_IMAGE_SLIDE,
+    { mediaId: "", contentType: "image/png", data: bytesToBase64(IMAGE_PNG) },
+    { xCm: 20, yCm: 8, widthCm: 6, heightCm: 6 },
+  );
+  const animated = model.slides[SPEC099_ANIMATED_SLIDE];
+  animated.animations = [{ frameId: animated.frames[1].id, effect: "fadeIn", trigger: "click" }];
+  addSection(model, 0, SPEC099_SECTIONS[0].name);
+  addSection(model, SPEC099_SECTIONS[0].titles.length, SPEC099_SECTIONS[1].name);
+  if (format === "odp") {
+    model.properties = { customProperties: [SPEC099_ODP_EXTRA_PROPERTY] };
+  }
+  delete model.structureDirty;
+  return model;
+}
+
+/** `spec099-sections.pptx`: the section list in `p:extLst` beside an
+ * unrelated `p:ext`. */
+export async function buildSpec099PptxFixtureBytes(): Promise<Uint8Array> {
+  const bytes = (
+    await writePptx(spec099Model("pptx"), { now: SPEC099_FIXTURE_INSTANT, modified: SPEC099_FIXTURE_INSTANT })
+  ).bytes;
+  const parts = await unzip(bytes);
+  const presentation = new TextDecoder()
+    .decode(parts.get("ppt/presentation.xml")!)
+    .replace("<p:extLst>", `<p:extLst>${SPEC099_PPTX_EXTRA_EXT}`);
+  parts.set("ppt/presentation.xml", encoder.encode(presentation));
+  return zip([...parts].map(([name, data]) => ({ name, data })));
+}
+
+/** `spec099-sections.odp`: the sections custom property beside an unrelated
+ * `meta:user-defined`. */
+export async function buildSpec099OdpFixtureBytes(): Promise<Uint8Array> {
+  return (await writeOdp(spec099Model("odp"), { now: SPEC099_FIXTURE_INSTANT, modified: SPEC099_FIXTURE_INSTANT })).bytes;
 }

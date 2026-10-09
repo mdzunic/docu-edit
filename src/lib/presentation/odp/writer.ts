@@ -17,7 +17,8 @@
 //     is spliced only when parts were added/removed (never, this spec — pages
 //     live inside content.xml).
 import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
-import { buildMetaXml, type OdfMetaInput } from "../../core/odfMeta";
+import { buildMetaXml, parseOdfCustomProperties, type OdfMetaInput } from "../../core/odfMeta";
+import { customPropertiesWithSections, encodeSectionsValue, sectionsValueOf } from "./sections";
 import { orientationOf } from "../../core/pageSetup";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { MediaPart } from "../../core/media";
@@ -396,9 +397,19 @@ function metaInputFor(model: PresentationModel): OdfMetaInput {
     comments: props.comments,
     created: props.created,
     extraFields: props.extraFields,
-    customProperties: props.customProperties,
+    // SPEC-099: the deck's sections ride one custom property after the others.
+    customProperties: customPropertiesWithSections(props.customProperties, model),
     unsupportedCustomProperties: props.unsupportedCustomProperties,
   };
+}
+
+/** Whether the deck's sections differ from what the retained meta.xml carries
+ * (SPEC-099) — only then is meta.xml rebuilt for them, so a deck whose
+ * sections did not change re-emits it byte-verbatim. */
+function sectionsChanged(model: PresentationModel, metaBytes: Uint8Array | undefined): boolean {
+  const wanted = encodeSectionsValue(model);
+  const stored = metaBytes ? sectionsValueOf(parseOdfCustomProperties(decoder.decode(metaBytes)).customProperties) : undefined;
+  return wanted !== stored;
 }
 
 /** The `style:page-layout-name` on each `style:master-page` START tag (a notes
@@ -579,8 +590,11 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   // meta.xml is rebuilt from the deck metadata on a deck change (SPEC-090),
   // passing custom/unsupported/extra fields straight back so nothing is lost;
   // firstSlideNumber is deliberately NOT written to odp (Decisions).
-  const metaXml =
-    deckDirty && parts.has("meta.xml") ? buildMetaXml(metaInputFor(model), options.modified ?? new Date()) : undefined;
+  // SPEC-099: a section change (a structural command) rebuilds it the same way.
+  const metaChanged =
+    (deckDirty && parts.has("meta.xml")) || (model.structureDirty === true && sectionsChanged(model, parts.get("meta.xml")));
+  const metaXml = metaChanged ? buildMetaXml(metaInputFor(model), options.modified ?? new Date()) : undefined;
+  const metaAdded = metaXml !== undefined && !parts.has("meta.xml");
 
   // Inserted images: model.media is the source of truth (overrides an opaque
   // twin), new `Pictures/…` parts are appended, and the manifest gains their
@@ -597,7 +611,7 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
   const orphanCharts = structural
     ? orphanedOdpChartParts(model, parts)
     : { parts: new Set<string>(), dirs: new Set<string>() };
-  const manifestChanged = appended.length > 0 || chartManifest.length > 0 || orphanCharts.dirs.size > 0;
+  const manifestChanged = appended.length > 0 || chartManifest.length > 0 || orphanCharts.dirs.size > 0 || metaAdded;
 
   for (const [name, data] of parts) {
     if (name === "mimetype") {
@@ -620,6 +634,12 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
       if (chartManifest.length > 0) {
         manifestXml = manifestXml.replace(/<\/manifest:manifest>/, `${chartManifest}</manifest:manifest>`);
       }
+      if (metaAdded) {
+        manifestXml = manifestXml.replace(
+          /<\/manifest:manifest>/,
+          `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/></manifest:manifest>`,
+        );
+      }
       entries.push({ name, data: encode(manifestXml) });
     } else if (charts.partBytes.has(name)) {
       entries.push({ name, data: charts.partBytes.get(name)! });
@@ -628,6 +648,9 @@ export async function writeOdp(model: PresentationModel, options: WriteOdpOption
     } else {
       entries.push({ name, data });
     }
+  }
+  if (metaAdded) {
+    entries.push({ name: "meta.xml", data: encode(metaXml) });
   }
   for (const part of appended) {
     entries.push({ name: part.mediaId, data: mediaBytes.get(part.mediaId)! });
