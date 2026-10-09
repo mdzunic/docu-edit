@@ -1,10 +1,15 @@
 // SPEC-116: the library card's preview (buildPreview — the active sheet's
-// top-left 12 × 6 through the General display, trimmed to what is used) and
-// the foreign-sheet placeholder's text.
+// top-left 12 × 6, trimmed to what is used) and the foreign-sheet
+// placeholder's text. SPEC-118: values through their number formats at full
+// width, in the locale the caller hands in.
 import { describe, expect, it } from "vitest";
 import { foreignSheetMessage, isChartSheet } from "./foreign";
-import type { Row, Sheet, SpreadsheetModel } from "./model";
+import type { CellStyle, Row, Sheet, SpreadsheetModel } from "./model";
+import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { buildPreview, PREVIEW_COLS, PREVIEW_ROWS } from "./preview";
+
+const EN_US = SPREADSHEET_LOCALES["en-US"];
+const DE_DE = SPREADSHEET_LOCALES["de-DE"];
 
 function sheet(name: string, rows: Row[], kind: Sheet["kind"] = "grid", partName?: string): Sheet {
   return { id: name, name, visibility: "visible", kind, rows, partName, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
@@ -32,7 +37,7 @@ describe("buildPreview", () => {
       { index: 0, cells: [{ col: 0, value: "Name" }, { col: 2, value: 123456789012 }] },
       { index: 2, cells: [{ col: 1, value: true }, { col: 2, value: { error: "#N/A" } }] },
     ];
-    expect(buildPreview(model([sheet("Other", []), sheet("Main", rows)], 1))).toEqual({
+    expect(buildPreview(model([sheet("Other", []), sheet("Main", rows)], 1), EN_US)).toEqual({
       sheetName: "Main",
       cells: [
         ["Name", "", "1.23457E+11"],
@@ -47,7 +52,7 @@ describe("buildPreview", () => {
       index,
       cells: Array.from({ length: 10 }, (_cell, col) => ({ col, value: index * 10 + col })),
     }));
-    const preview = buildPreview(model([sheet("Big", rows)]));
+    const preview = buildPreview(model([sheet("Big", rows)]), EN_US);
     expect(PREVIEW_ROWS).toBe(12);
     expect(PREVIEW_COLS).toBe(6);
     expect(preview.cells).toHaveLength(12);
@@ -56,8 +61,34 @@ describe("buildPreview", () => {
   });
 
   it("has no cells for an empty or foreign active sheet", () => {
-    expect(buildPreview(model([sheet("Empty", [])]))).toEqual({ sheetName: "Empty", cells: [] });
-    expect(buildPreview(model([sheet("Chart", [], "foreign")]))).toEqual({ sheetName: "Chart", cells: [] });
+    expect(buildPreview(model([sheet("Empty", [])]), EN_US)).toEqual({ sheetName: "Empty", cells: [] });
+    expect(buildPreview(model([sheet("Chart", [], "foreign")]), EN_US)).toEqual({ sheetName: "Chart", cells: [] });
+  });
+
+  it("formats each value with its cell's number format at full width, in the locale it is given (SPEC-118)", () => {
+    const styles: CellStyle[] = [{}, { numberFormat: "0.00%" }, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }, { numberFormat: '_("$"* #,##0.00_)' }];
+    const rows: Row[] = [
+      {
+        index: 0,
+        cells: [
+          { col: 0, value: 0.125, styleId: 1 },
+          { col: 1, value: 46303.5729166667, styleId: 2 },
+          { col: 2, value: 123456789012 }, // General never fits a card's cell: full width
+          { col: 3, value: 5, styleId: 3 }, // the fill as one character
+          { col: 4, value: true, styleId: 1 },
+        ],
+      },
+    ];
+    const workbook = { ...model([sheet("Main", rows)]), styles };
+    expect(buildPreview(workbook, EN_US).cells).toEqual([["12.50%", "10/8/2026", "1.23457E+11", " $ 5.00 ", "TRUE"]]);
+    expect(buildPreview(workbook, DE_DE).cells).toEqual([["12,50%", "08.10.2026", "1,23457E+11", " $ 5,00 ", "TRUE"]]);
+  });
+
+  it("renders an ods-born workbook's dates before 1900 as the calendar's (proleptic Gregorian)", () => {
+    const rows: Row[] = [{ index: 0, cells: [{ col: 0, value: -6, styleId: 1 }] }];
+    const ods = { ...model([sheet("Main", rows)]), format: "ods" as const, styles: [{}, { numberFormat: "yyyy-mm-dd" }] };
+    expect(buildPreview(ods, EN_US).cells).toEqual([["1899-12-25"]]);
+    expect(buildPreview({ ...ods, format: "xlsx" }, EN_US).cells).toEqual([["########"]]);
   });
 });
 

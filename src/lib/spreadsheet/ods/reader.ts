@@ -35,9 +35,10 @@
 //   date/time → serial, boolean, string → `office:string-value` or the
 //   `text:p` text with paragraphs joined by "\n" and `text:s`/`text:tab`/
 //   `text:line-break` expanded); `calcext:value-type="error"` → the error
-//   code from the text; a formula cell contributes its cached value; a
-//   string whose paragraphs hold `text:span`s with a font of their own gets
-//   `runs` (each span's font from its automatic text style);
+//   code from the text; a date, time or percentage value with no data style
+//   gets its implied format (SPEC-118); a formula cell contributes its
+//   cached value; a string whose paragraphs hold `text:span`s with a font of
+//   their own gets `runs` (each span's font from its automatic text style);
 // - `table:null-date` → the date system (see serial.ts); settings.xml
 //   (ods/settings.ts) → the active table and each table's frozen panes,
 //   scroll position, gridlines, zero display, zoom and cursor; meta.xml →
@@ -59,6 +60,7 @@ import {
   resolveActiveSheet,
   type ParsedSpreadsheet,
 } from "../parsed";
+import { IMPLIED_PERCENTAGE, IMPLIED_TIME, impliedDateCode } from "../impliedFormats";
 import { odsDateValueToSerial, odsTimeValueToSerial } from "../serial";
 import { readOdsSettings, type OdsSettings } from "./settings";
 import {
@@ -182,6 +184,25 @@ function odsCellValue(
   }
 }
 
+/** The format a cell's value type implies when its style gives none
+ * (SPEC-118 "Implied formats"): dates `yyyy-mm-dd` (+ time), times
+ * `[hh]:mm:ss`, percentages `0.00%`. */
+function impliedCodeOf(cell: PendingCell, value: CellValue): string | undefined {
+  if (typeof value !== "number") {
+    return undefined;
+  }
+  switch (scanAttr(cell.attrs, "value-type", OFFICE_NAMESPACE)) {
+    case "date":
+      return impliedDateCode(value);
+    case "time":
+      return IMPLIED_TIME;
+    case "percentage":
+      return IMPLIED_PERCENTAGE;
+    default:
+      return undefined;
+  }
+}
+
 /** Appends text to a cell's runs, in the innermost open span's font. */
 function appendRunText(cell: PendingCell, text: string, font: CellFont | undefined): void {
   const last = cell.runs.at(-1);
@@ -269,7 +290,7 @@ export function readOdsContent(
     const reader = table!.reader;
     const where = `"${table!.name}"!${addressText(reader.rowIndex, reader.colIndex)}`;
     const value = odsCellValue(done, dates, where);
-    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value));
+    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value));
   };
 
   const finishTable = (done: PendingTable, end: number): boolean => {

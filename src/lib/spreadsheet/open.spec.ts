@@ -67,16 +67,16 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moves the reader to version 2 with one contiguous step from 1", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(2);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1]);
+  it("SPEC-117 moved the reader to version 2 and SPEC-118 to 3, with one contiguous step each (from 1, from 2)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(3);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2]);
   });
 
-  it("SPEC-117's step refuses a dirty sheet loudly — none can exist before SPEC-121", async () => {
+  it("SPEC-117's and SPEC-118's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
     const model = await readSpreadsheetBytes(await buildMiniBookXlsxBytes(), "xlsx", "mini-book");
-    expect(() => READER_UPGRADES[0]!.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow(
-      "unreachable: no sheet is dirty before SPEC-121",
-    );
+    for (const step of READER_UPGRADES) {
+      expect(() => step.upgradeDirtySheet(model, model.sheets[0]!, new Map())).toThrow("unreachable: no sheet is dirty before SPEC-121");
+    }
   });
 
   it("stamps every fresh read with the current version and a card preview", async () => {

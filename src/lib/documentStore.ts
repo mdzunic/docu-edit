@@ -8,7 +8,8 @@ import { createDocument, type DocumentModel } from "./documentModel";
 import { kindOfFormat, type DocumentKind, type LibraryFormat } from "./documentKinds";
 import type { PresentationModel } from "./presentation/model";
 import type { MediaModel } from "./media/model";
-import type { PackageVariant, Row, SpreadsheetModel } from "./spreadsheet/model";
+import type { PackageVariant, Row, SheetPreview, SpreadsheetModel } from "./spreadsheet/model";
+import { spreadsheetLocaleFor } from "./spreadsheet/numberFormat/locale";
 import { SPREADSHEET_READER_VERSION, upgradeSpreadsheetModel } from "./spreadsheet/open";
 import { buildPreview } from "./spreadsheet/preview";
 import type { OpenedFile } from "./openDocument";
@@ -353,6 +354,13 @@ function shellModel<M extends StoredModel>(model: M): M {
   return shell;
 }
 
+/** A workbook's card preview in the user's number locale (SPEC-118: the
+ * app layer hands buildPreview the current preference; a later change of it
+ * leaves stored previews alone until their next rebuild). */
+function workbookPreview(model: SpreadsheetModel): SheetPreview {
+  return buildPreview(model, spreadsheetLocaleFor(loadPreferences().spreadsheetLocale));
+}
+
 /** Writes a workbook's sheet rows as their own records — only the sheets
  * whose `rows` reference differs from the last one written (SPEC-116's
  * copy-on-write invariant makes that sound) — and deletes the record of any
@@ -392,7 +400,7 @@ function persistSheetRows(docId: string, model: StoredModel, onFailure: (error: 
   }
   sheetRowsKeys.set(docId, current);
   if (writes.length > 0) {
-    model.preview = buildPreview(model);
+    model.preview = workbookPreview(model);
   }
   return writes;
 }
@@ -1144,6 +1152,7 @@ export function storeMedia(model: MediaModel): void {
  * through the same record machinery, its sheets' rows split into their own
  * records like every other kind's payload. */
 export function storeSpreadsheet(model: SpreadsheetModel): void {
+  model.preview = workbookPreview(model);
   storeRecord(model, model.format);
 }
 

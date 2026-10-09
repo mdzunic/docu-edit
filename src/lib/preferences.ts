@@ -28,6 +28,11 @@ import {
   loadDimPage,
   loadThemePreference,
 } from "./themePrefs";
+import {
+  DEFAULT_SPREADSHEET_LOCALE,
+  SPREADSHEET_LOCALE_TAGS,
+  type SpreadsheetLocaleTag,
+} from "./spreadsheet/numberFormat/locale";
 
 /** The one key every preference lives under (AC-9). */
 export const PREFERENCES_STORAGE_KEY = "docu-edit:preferences";
@@ -156,6 +161,10 @@ export interface Preferences {
   snapToGrid: boolean;
   /** The snap-to-grid spacing in centimetres (SPEC-072). Default 0.25cm. */
   gridSpacingCm: number;
+  /** How a workbook's numbers and dates look — decimal and group separators,
+   * date order, month names (SPEC-118). A preference, never a property of a
+   * file: it changes no stored or downloaded byte. Default en-US. */
+  spreadsheetLocale: SpreadsheetLocaleTag;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -226,6 +235,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   snapToGuides: true,
   snapToGrid: false,
   gridSpacingCm: 0.25,
+  spreadsheetLocale: DEFAULT_SPREADSHEET_LOCALE,
 };
 
 /** The snap-to-grid spacing bounds (SPEC-072): fine enough to be useful, never
@@ -307,6 +317,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
     typeof raw === "number" && Number.isFinite(raw) && raw >= MIN_GRID_SPACING_CM && raw <= MAX_GRID_SPACING_CM
       ? raw
       : undefined,
+  spreadsheetLocale: oneOf<"spreadsheetLocale">(SPREADSHEET_LOCALE_TAGS),
 };
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];

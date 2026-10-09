@@ -7,7 +7,7 @@
 // (core/xmlScanner.ts, in xlsx/sheetXml.ts) — a million-cell sheet as a DOM
 // costs an order of magnitude more memory than its text.
 //
-// What is read (everything else — number formats, named cell styles, dxfs,
+// What is read (everything else — named cell styles, dxfs,
 // drawings, comments, tables, calcChain, VBA, custom XML — stays in `opaque`,
 // untouched; nothing here writes, so a download stays byte-identical):
 // - sheets in `<sheets>` order: name, `state` → visibility, and the
@@ -19,6 +19,9 @@
 //   cellXfs → `styles` one-to-one, `<indexedColors>` → `indexedColors`, and
 //   the Normal style's font, whose maximum digit width (geometry.ts) turns
 //   every column width into px;
+//   SPEC-118: each xf's number format (`numFmts`, the built-ins), and a
+//   derived style per implied format a `t="d"` value with a General style
+//   needs (impliedFormats.ts), appended to `styles`;
 // - shared strings: `<t>` or a run of `<r>`s with their `<rPr>` fonts,
 //   phonetic `rPh`/`phoneticPr` skipped, `_xHHHH_` escapes decoded;
 // - each worksheet (xlsx/sheetXml.ts): cells (rows and cells without `r`
@@ -43,6 +46,7 @@ import { unzip, ZipError } from "../../core/zip";
 import type { DocumentProperties } from "../../core/documentProperties";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, maxDigitWidthPx } from "../geometry";
+import { ImpliedFormatStyles } from "../impliedFormats";
 import type { Sheet } from "../model";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
@@ -232,6 +236,7 @@ export async function parseXlsx(
     : [];
 
   const budget = new CellBudget();
+  const implied = new ImpliedFormatStyles(styleTable.styles);
   const sheets: Sheet[] = [];
   for (const entry of workbook.sheets) {
     const sheet: Sheet = {
@@ -249,7 +254,7 @@ export async function parseXlsx(
     const bytes = parts.get(entry.partName);
     if (entry.kind === "grid" && bytes) {
       const content = scanned(entry.partName, () =>
-        readWorksheet(partText(bytes), entry.name, { sharedStrings, dateSystem, budget, mdw, indexedColors }),
+        readWorksheet(partText(bytes), entry.name, { sharedStrings, dateSystem, budget, mdw, indexedColors, implied }),
       );
       if (content === null) {
         throw new SpreadsheetOpenError(WORKBOOK_TOO_LARGE_MESSAGE);

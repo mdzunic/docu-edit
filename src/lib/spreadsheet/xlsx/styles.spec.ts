@@ -419,10 +419,10 @@ describe("cellXfs", () => {
     expect(JSON.parse(JSON.stringify(styles))).toEqual(styles);
   });
 
-  it("copies a font equal to the default style's, ignores the apply* flags, xfId and the number format (SPEC-118)", () => {
+  it("copies a font equal to the default style's, ignores the apply* flags and xfId; numFmtId 14 is the locale-dependent built-in (SPEC-118)", () => {
     const { styles } = readXlsxStyles(xml, undefined);
     expect(styles[0]).toEqual({ font: { family: { theme: "minor" }, sizePt: 11 }, sourceXf: 0 });
-    expect(styles[3]).toEqual({ font: { family: { theme: "minor" }, sizePt: 11 }, sourceXf: 3 });
+    expect(styles[3]).toEqual({ font: { family: { theme: "minor" }, sizePt: 11 }, numberFormat: "m/d/yyyy", builtinFormatId: 14, sourceXf: 3 });
     expect(styles[3]!.font).not.toBe(styles[0]!.font);
   });
 
@@ -458,6 +458,54 @@ describe("cellXfs", () => {
   });
 });
 
+describe("number formats (SPEC-118 \"Reading xlsx number formats\")", () => {
+  /** The number-format fields of each xf, over a part declaring `numFmts`
+   * (`<numFmt>` elements) and one xf per `numFmtId` attribute text. */
+  function formatsOf(numFmtIds: Array<string | null>, numFmts = ""): Array<Pick<CellStyle, "numberFormat" | "builtinFormatId">> {
+    const xfs = numFmtIds.map((id) => `<xf${id === null ? "" : ` numFmtId="${id}"`} fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="0"/>`);
+    const xml = stylesXml({ xfs }).replace("<fonts", `${numFmts ? `<numFmts count="1">${numFmts}</numFmts>` : ""}<fonts`);
+    return readXlsxStyles(xml, undefined).styles.map(({ numberFormat, builtinFormatId }) => ({
+      ...(numberFormat !== undefined ? { numberFormat } : {}),
+      ...(builtinFormatId !== undefined ? { builtinFormatId } : {}),
+    }));
+  }
+
+  it("a locale-dependent built-in sets builtinFormatId with its en-US code; another built-in sets only its code", () => {
+    expect(formatsOf(["14", "22", "5", "44", "10", "49", "46", "2"])).toEqual([
+      { numberFormat: "m/d/yyyy", builtinFormatId: 14 },
+      { numberFormat: "m/d/yyyy h:mm", builtinFormatId: 22 },
+      { numberFormat: '"$"#,##0_);\\("$"#,##0\\)', builtinFormatId: 5 },
+      { numberFormat: '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)', builtinFormatId: 44 },
+      { numberFormat: "0.00%" },
+      { numberFormat: "@" },
+      { numberFormat: "[h]:mm:ss" },
+      { numberFormat: "0.00" },
+    ]);
+  });
+
+  it("General, an absent numFmtId, an unknown id and the CJK ids leave both fields absent", () => {
+    expect(formatsOf(["0", null, "163", "200", "23", "36", "50", "81"])).toEqual([{}, {}, {}, {}, {}, {}, {}, {}]);
+  });
+
+  it("an explicit numFmt wins for any id — Excel writes 43 and 44 itself — and never sets builtinFormatId", () => {
+    const numFmts =
+      `<numFmt numFmtId="44" formatCode="_-* #,##0.00\\ &quot;€&quot;_-;\\-* #,##0.00\\ &quot;€&quot;_-;_-* &quot;-&quot;??\\ &quot;€&quot;_-;_-@_-"/>` +
+      `<numFmt numFmtId="14" formatCode="dd/mm/yy"/><numFmt numFmtId="164" formatCode="[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy"/>`;
+    expect(formatsOf(["44", "14", "164"], numFmts)).toEqual([
+      { numberFormat: '_-* #,##0.00\\ "€"_-;\\-* #,##0.00\\ "€"_-;_-* "-"??\\ "€"_-;_-@_-' },
+      { numberFormat: "dd/mm/yy" },
+      { numberFormat: "[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy" },
+    ]);
+  });
+
+  it("a code equal to General (any case) is stored absent; applyNumberFormat is ignored", () => {
+    expect(formatsOf(["164", "165"], `<numFmt numFmtId="164" formatCode="GENERAL"/><numFmt numFmtId="165" formatCode="0.0"/>`)).toEqual([
+      {},
+      { numberFormat: "0.0" },
+    ]);
+  });
+});
+
 describe("the parts left unread and the override palette", () => {
   const unread =
     `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
@@ -467,12 +515,13 @@ describe("the parts left unread and the override palette", () => {
     `<colors><mruColors><color rgb="FF66FF33"/></mruColors></colors>` +
     `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}"><slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext></extLst>`;
 
-  it("leaves numFmts, cellStyleXfs/cellStyles, dxfs, tableStyles, extLst and mruColors unread", () => {
+  it("leaves cellStyleXfs/cellStyles, dxfs, tableStyles, extLst and mruColors unread; numFmts are SPEC-118's and read", () => {
     const xfs = [`<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`];
-    const bare = readXlsxStyles(stylesXml({ xfs }), undefined);
-    const full = readXlsxStyles(stylesXml({ xfs, extra: unread }).replace("<fonts", `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts`), undefined);
+    const numFmts = `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts`;
+    const bare = readXlsxStyles(stylesXml({ xfs }).replace("<fonts", numFmts), undefined);
+    const full = readXlsxStyles(stylesXml({ xfs, extra: unread }).replace("<fonts", numFmts), undefined);
     expect(full).toEqual(bare);
-    expect(full.styles[0]!.numberFormat).toBeUndefined();
+    expect(full.styles[0]!.numberFormat).toBe("0.0%");
     expect(full.styles[0]!.namedStyle).toBeUndefined();
     expect(full.indexedColors).toBeUndefined();
   });
@@ -544,9 +593,11 @@ describe("spec117-styles.xlsx (Excel-shaped)", () => {
     styles.forEach((style, i) => expect(style.sourceXf).toBe(i));
     expect(styles[0]).toEqual({ font: { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } }, sourceXf: 0 });
     for (const style of styles) {
-      expect(style.numberFormat).toBeUndefined();
       expect(style.namedStyle).toBeUndefined();
     }
+    // SPEC-118: the one custom numFmt (164, "0.0%") is the only format.
+    expect(styles.filter((style) => style.numberFormat !== undefined).map((style) => style.numberFormat)).toEqual(["0.0%"]);
+    expect(styles.some((style) => style.builtinFormatId !== undefined)).toBe(false);
   });
 
   it("makes B2's style bold red on a solid yellow fill", async () => {
