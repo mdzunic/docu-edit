@@ -241,6 +241,59 @@ function persisted(model: SpreadsheetModel, extra: Record<string, unknown> = {})
   return { shell, rows };
 }
 
+describe("view state (SPEC-117)", () => {
+  it("storeSpreadsheetViewState writes the shell only, keeping lastModified — no rows record, nothing dirty", async () => {
+    const { store, idb, workbook } = await loadStore();
+    const model = await workbook();
+    store.storeSpreadsheet(model);
+    await flushWrites();
+    const lastModified = store.getStoredRecord(model.id)!.lastModified;
+    idb.putRecord.mockClear();
+
+    // A view-state change replaces the sheet objects' view fields; every
+    // sheet keeps its rows array.
+    const viewed: SpreadsheetModel = {
+      ...model,
+      activeSheetIndex: 1,
+      sheets: model.sheets.map((sheet, index) =>
+        index === 0
+          ? {
+              ...sheet,
+              zoomPercent: 150,
+              showGridLines: false,
+              topLeftCell: { row: 40, col: 2 },
+              selection: { active: { row: 41, col: 2 }, ranges: [{ top: 41, left: 2, bottom: 43, right: 3 }], activeRangeIndex: 0 },
+            }
+          : { ...sheet },
+      ),
+    };
+    await store.storeSpreadsheetViewState(viewed);
+    await flushWrites();
+
+    expect(rowsWrites(idb)).toEqual([]);
+    const shells = written(idb).filter((record) => record.id === model.id);
+    expect(shells).toHaveLength(1);
+    const shell = shells[0]!.model!;
+    expect(shell.activeSheetIndex).toBe(1);
+    expect(shell.sheets[0]).toMatchObject({ zoomPercent: 150, showGridLines: false, topLeftCell: { row: 40, col: 2 } });
+    expect(shell.sheets[0]!.selection?.ranges).toEqual([{ top: 41, left: 2, bottom: 43, right: 3 }]);
+    expect(shell.sheets.some((sheet) => "dirty" in sheet)).toBe(false);
+    expect(store.getStoredRecord(model.id)!.lastModified).toBe(lastModified);
+    expect(store.getSpreadsheet(model.id)).toBe(viewed);
+    // The workbook's opaque package — what Download hands back — is untouched.
+    expect(store.getSpreadsheet(model.id)!.opaque).toBe(model.opaque);
+  });
+
+  it("is a no-op for an id the store does not hold as a workbook", async () => {
+    const { store, idb, workbook } = await loadStore();
+    const model = await workbook();
+    await store.storeSpreadsheetViewState(model);
+    await flushWrites();
+    expect(idb.putRecord).not.toHaveBeenCalled();
+    expect(store.getSpreadsheet(model.id)).toBeUndefined();
+  });
+});
+
 describe("every read path rejoins the rows", () => {
   it("initLibrary rejoins each sheet's rows and seeds the latch (no rewrite on the next persist)", async () => {
     const { workbook } = await loadStore();

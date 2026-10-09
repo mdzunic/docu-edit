@@ -33,6 +33,12 @@ export function asSheetPreview(value: unknown): SheetPreview {
   return { sheetName: preview?.sheetName ?? "", cells: Array.isArray(preview?.cells) ? preview.cells : [] };
 }
 
+/** Narrows WorkbookBody's runtime-typed `book` prop (useWorkbookLoad's
+ * return; the .vue parser bars casts). */
+export function asWorkbookBook(value: unknown): ReturnType<typeof useWorkbookLoad> {
+  return value as ReturnType<typeof useWorkbookLoad>;
+}
+
 export interface WorkbookLoadDeps {
   workbookId: ComputedRef<string>;
   router: Router;
@@ -42,6 +48,10 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
   const workbook = shallowRef<SpreadsheetModel | null>(null);
   /** The model index of the sheet on show. */
   const activeIndex = ref(0);
+  /** Bumped whenever a different model object is shown (another workbook,
+   * or the reader-version upgrade's re-read), so the grid re-mounts and
+   * re-applies that model's view settings (SPEC-117). */
+  const generation = ref(0);
 
   function show(model: SpreadsheetModel | null): void {
     if (model === workbook.value) {
@@ -49,6 +59,7 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     }
     workbook.value = model;
     activeIndex.value = model?.activeSheetIndex ?? 0;
+    generation.value += 1;
   }
 
   function load(): void {
@@ -113,6 +124,7 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
   return {
     workbook,
     activeIndex,
+    generation,
     activeSheet,
     tabs,
     title: computed(() => workbook.value?.title ?? "No document"),

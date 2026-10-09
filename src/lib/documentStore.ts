@@ -1147,6 +1147,24 @@ export function storeSpreadsheet(model: SpreadsheetModel): void {
   storeRecord(model, model.format);
 }
 
+/** Writes a workbook's view state (SPEC-117 "View state": each sheet's
+ * selection, zoom, gridlines and top-left cell, and the active sheet) back
+ * to its stored record — the shell record only, keeping the existing
+ * `lastModified`: viewing is not editing, so it never touches the document
+ * (no touchDocument), never marks a sheet dirty and, because a view-state
+ * change replaces sheet objects but keeps each sheet's `rows` array, never
+ * writes a rows record (persistSheetRows skips an unchanged reference).
+ * `model` replaces the record's model; a missing or non-workbook id is a
+ * no-op. Resolves once the write has settled (never rejects). */
+export function storeSpreadsheetViewState(model: SpreadsheetModel): Promise<void> {
+  const record = records.get(model.id);
+  if (!record || !isSpreadsheetModel(record.model)) {
+    return Promise.resolve();
+  }
+  record.model = model;
+  return persist(record);
+}
+
 /** Stores whatever the kind-agnostic open path returned, dispatching on
  * `kind` — the shared tail of the picker, drag-drop and URL open paths. A
  * Keynote import's non-blocking notice (SPEC-087 AC-37) is handed to

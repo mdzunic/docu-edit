@@ -74,13 +74,15 @@ body,
 }
 
 /* ---- Dim page for on-screen reading in dark theme (SPEC-059 AC-13) --------
-   A container-level luminance reduction on the page boxes, applied only when
-   the resolved theme is dark AND the opt-in is on. It touches no model value
+   A container-level luminance reduction on the page boxes — and on a
+   workbook's cell area, the sheet paper (SPEC-117 "Dark mode") — applied
+   only when the resolved theme is dark AND the opt-in is on. It touches no model value
    and is not persisted into the document (AC-15). It is screen-only: the
    print stylesheet and print preview reset it (AC-16/32/73), so print, print
    preview and PDF export never dim — the same on-screen-only exclusion the
    view already uses for its chrome. */
-:root[data-theme="dark"][data-dim-page="1"] .page {
+:root[data-theme="dark"][data-dim-page="1"] .page,
+:root[data-theme="dark"][data-dim-page="1"] .sheet-paper {
   filter: brightness(0.82);
 }
 
