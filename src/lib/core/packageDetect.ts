@@ -3,7 +3,7 @@
 // inside the package — an ODF package in its `mimetype` entry, an OPC
 // package in `[Content_Types].xml` plus the root relationships — so the
 // open funnel can classify an unzipped package here and hand the original
-// bytes to the right reader (.docx/.odt/.pptx/.odp), instead of each format
+// bytes to the right reader (.docx/.odt/.pptx/.odp/.xlsx/.ods), instead of each format
 // re-implementing "is this file mine". Detection never trusts a file
 // extension (SPEC-004/005's rule); everything here reads package contents.
 import { parseRelationships, parseXml, resolvePartPath, XmlParseError, type Relationship } from "./xml";
@@ -59,7 +59,7 @@ export function readOdfMimetype(parts: Map<string, Uint8Array>): string | undefi
 /** The declared content type of `partPath` per `[Content_Types].xml`:
  * an exact `Override` wins, else the `Default` for the part's extension.
  * Undefined when the part (or a readable content-types part) has neither. */
-function contentTypeOf(parts: Map<string, Uint8Array>, partPath: string): string | undefined {
+export function contentTypeOf(parts: Map<string, Uint8Array>, partPath: string): string | undefined {
   const contentTypesEntry = parts.get("[Content_Types].xml");
   if (!contentTypesEntry) {
     return undefined;
@@ -273,6 +273,73 @@ export function detectMedia(bytes: Uint8Array): DetectedMediaFormat | null {
   // SVG last: the only structural (non-magic-number) check.
   if (sniffSvg(bytes)) {
     return "svg";
+  }
+  return null;
+}
+
+// --- workbook detection (SPEC-116) -----------------------------------------
+
+/** The spreadsheet formats a package can declare itself as, and the package
+ * variants within them. Structurally identical to spreadsheet/model.ts's
+ * SpreadsheetFormat and PackageVariant — core cannot import the product
+ * layer, so the unions are restated here and stay assignable (as
+ * DetectedMediaFormat does for media). */
+export type DetectedSpreadsheetFormat = "xlsx" | "ods";
+export type DetectedPackageVariant = "macroEnabled" | "template" | "macroEnabledTemplate";
+
+/** The four SpreadsheetML main-part content types, keyed by the package
+ * variant each declares ("workbook" is the plain `.xlsx`). */
+export const SPREADSHEETML_MAIN_CONTENT_TYPES: Readonly<Record<"workbook" | DetectedPackageVariant, string>> = {
+  workbook: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+  template: "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+  macroEnabled: "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+  macroEnabledTemplate: "application/vnd.ms-excel.template.macroEnabled.main+xml",
+};
+
+/** An Excel binary workbook's main content type — an `.xlsb`, which is an
+ * OPC package too but whose parts are BIFF12 records, not XML. */
+export const XLSB_MAIN_CONTENT_TYPE = "application/vnd.ms-excel.sheet.binary.macroEnabled.main";
+
+/** The two package mimetypes of an OpenDocument spreadsheet. */
+export const ODS_MIMETYPES: Readonly<Record<"spreadsheet" | "template", string>> = {
+  spreadsheet: "application/vnd.oasis.opendocument.spreadsheet",
+  template: "application/vnd.oasis.opendocument.spreadsheet-template",
+};
+
+/** Which spreadsheet format (and package variant) a detected package
+ * declares itself as — from its own declarations, never a file name: an OPC
+ * main part with one of the SpreadsheetML content types is `"xlsx"`, an ODF
+ * package with a spreadsheet mimetype `"ods"`. `"xlsb"` names the binary
+ * workbook the open path refuses; null means not a workbook at all. */
+export function spreadsheetFormatOf(
+  info: PackageInfo,
+): { format: DetectedSpreadsheetFormat; packageVariant?: DetectedPackageVariant } | "xlsb" | null {
+  if (info.container === "odf") {
+    if (info.mimetype === ODS_MIMETYPES.spreadsheet) {
+      return { format: "ods" };
+    }
+    if (info.mimetype === ODS_MIMETYPES.template) {
+      return { format: "ods", packageVariant: "template" };
+    }
+    return null;
+  }
+  if (info.container === "opc") {
+    const declared = info.mainContentType;
+    if (declared === SPREADSHEETML_MAIN_CONTENT_TYPES.workbook) {
+      return { format: "xlsx" };
+    }
+    if (declared === SPREADSHEETML_MAIN_CONTENT_TYPES.template) {
+      return { format: "xlsx", packageVariant: "template" };
+    }
+    if (declared === SPREADSHEETML_MAIN_CONTENT_TYPES.macroEnabled) {
+      return { format: "xlsx", packageVariant: "macroEnabled" };
+    }
+    if (declared === SPREADSHEETML_MAIN_CONTENT_TYPES.macroEnabledTemplate) {
+      return { format: "xlsx", packageVariant: "macroEnabledTemplate" };
+    }
+    if (declared === XLSB_MAIN_CONTENT_TYPE) {
+      return "xlsb";
+    }
   }
   return null;
 }
