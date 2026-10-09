@@ -498,7 +498,8 @@ export const LOOKUP_FUNCTIONS: FunctionSpec[] = [
       }
       const tokens = tokenize(text.trim()).filter((token) => token.kind !== "end");
       const only = tokens[0];
-      if (tokens.length !== 1 || only?.kind !== "ref" || !only.ref) {
+      // One reference, at most one sheet: a 3-D reference is no single sheet's.
+      if (tokens.length !== 1 || only?.kind !== "ref" || !only.ref || only.ref.sheetEnd !== undefined) {
         return REF_ERROR;
       }
       // The text names absolute positions: no shift from the host.
