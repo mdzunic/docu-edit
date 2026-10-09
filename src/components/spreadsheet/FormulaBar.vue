@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // The read-only formula bar (SPEC-117): above the grid, the Name Box — a
 // read-only input showing the active cell's address (a merge's top-left), or
-// "3R × 2C" while a drag is in progress — and the active cell's content
-// (its General text with line breaks preserved; SPEC-118 refines it to the
-// edit text). Nothing here edits: SPEC-121 makes both editable. Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// "3R × 2C" while a drag is in progress — and the active cell's content, its
+// edit text (SPEC-118's editText: the value as the cell editor would hold it,
+// in the user's locale) with line breaks preserved. Nothing here edits:
+// SPEC-121 makes both editable. Runtime prop declarations per the espree
+// constraint (see AppShell.vue).
 const props = defineProps({
   /** The Name Box text: "B3", or "3R × 2C" during a drag. */
   address: { type: String, default: "" },
