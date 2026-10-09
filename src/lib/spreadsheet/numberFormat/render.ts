@@ -1022,11 +1022,6 @@ function formatNumber(n: number, parsed: ParsedFormat, ctx: FormatContext): Form
   }
   const { section, autoMinus } = choice;
   const color = sectionColor(section, ctx);
-  if (numeric.length === 1 && section.kind === "general" && section.tokens.length === 1) {
-    // `[Red]General`: General, fitted, in the section's colour.
-    const general = formatGeneral(n, ctx);
-    return color === undefined ? general : { ...general, color };
-  }
   const out = new Output();
   if (isDateSection(section)) {
     if (!renderDate(section, n, ctx, out)) {

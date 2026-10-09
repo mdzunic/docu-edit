@@ -7,7 +7,9 @@
 // text fits, an upper-case E and a signed exponent of at least two digits.
 import { describe, expect, it } from "vitest";
 import { generalText } from "./general";
-import type { ErrorCode } from "./model";
+import type { CellValue, ErrorCode } from "./model";
+import { SPREADSHEET_LOCALE_TAGS, SPREADSHEET_LOCALES, type SpreadsheetLocaleTag } from "./numberFormat/locale";
+import { formatGeneral, type FormatContext } from "./numberFormat/render";
 
 /** The General format's width at a standard column. */
 const WIDTH = 11;
@@ -204,5 +206,132 @@ describe("generalText — rounding off decimals until the text fits", () => {
     [1.000_000_001_5, "1.000000002"],
   ])("rounds off the decimals of the 15-significant-digit text: %s → %j", (value, text) => {
     expect(generalText(value)).toBe(text);
+  });
+});
+
+// SPEC-118 "General": formatGeneral subsumes generalText — at full width in
+// en-US it IS generalText (which now delegates to it); with ctx.widthPx it
+// fits the text to available = widthPx − 2 × CELL_PADDING_PX − 1 by
+// SPEC-117's width estimate × digitWidthPx (default 7): first fixed notation
+// with decimals dropped one at a time (half away from zero) while the
+// integer part fits, then scientific with mantissa decimals 5 down to 0,
+// then `#` × max(1, floor(available / digitWidthPx)) with overflow "hash";
+// and it writes the locale's decimal separator.
+/** A 1900-system FormatContext in `tag`, with an optional width and MDW. */
+function context(tag: SpreadsheetLocaleTag, widthPx?: number, digitWidthPx?: number): FormatContext {
+  const ctx: FormatContext = { locale: SPREADSHEET_LOCALES[tag], dateSystem: "1900" };
+  if (widthPx !== undefined) {
+    ctx.widthPx = widthPx;
+  }
+  if (digitWidthPx !== undefined) {
+    ctx.digitWidthPx = digitWidthPx;
+  }
+  return ctx;
+}
+
+describe("formatGeneral — width fitting and the locale's decimal separator", () => {
+  it.each<[value: number, widthPx: number, text: string]>([
+    // The Reference's worked examples: 64 px, MDW 7 (8.43 digits).
+    [123_456_789_012, 64, "1.23E+11"],
+    [1234.56789, 64, "1234.568"],
+    [123_456_789, 64, "1.23E+08"],
+    [0.000_123_456, 64, "0.000123"],
+    // (1) Fixed notation, decimals dropped while the integer part fits.
+    [-1234.56789, 64, "-1234.57"],
+    [12_345_678.9, 64, "12345679"],
+    [12_345.6, 40, "12346"],
+    [-0.000_123_456, 64, "-0.00012"],
+    // … rounding half away from zero.
+    [2.5, 22, "3"],
+    [-2.5, 22, "-3"],
+    // (2) Scientific, mantissa decimals 5 down to 0.
+    [123_456_789_012, 100, "1.23457E+11"],
+    [123_456_789_012, 40, "1E+11"],
+    [99_999_999_999, 64, "1E+11"],
+    // Texts that fit stay as they are.
+    [1e-10, 64, "1E-10"],
+    [0.1 + 0.2, 26, "0.3"],
+    [0, 26, "0"],
+  ])("%d at %i px, MDW 7 → %j", (value, widthPx, text) => {
+    expect(formatGeneral(value, context("en-US", widthPx, 7))).toEqual({ text, alignHint: "right" });
+  });
+
+  it.each<[value: number, widthPx: number, digitWidthPx: number, hashes: number]>([
+    // (3) The # fill: 26 px holds three digits.
+    [12_345, 26, 7, 3],
+    [123_456_789_012, 39, 7, 4],
+    [12_345, 26, 9, 2],
+    [5, 10, 7, 1],
+  ])("%d at %i px, MDW %i → %i × #", (value, widthPx, digitWidthPx, hashes) => {
+    expect(formatGeneral(value, context("en-US", widthPx, digitWidthPx))).toEqual({
+      text: "#".repeat(hashes),
+      alignHint: "right",
+      overflow: "hash",
+    });
+  });
+
+  it("measures with the cell font's MDW, 7 by default", () => {
+    expect(formatGeneral(1_234_567, context("en-US", 64, 9)).text).toBe("1.2E+06");
+    expect(formatGeneral(1234.56789, context("en-US", 64)).text).toBe("1234.568");
+    expect(formatGeneral(12_345, context("en-US", 26)).text).toBe("###");
+  });
+
+  it("fits nothing without widthPx", () => {
+    expect(formatGeneral(123_456_789_012, context("en-US")).text).toBe("1.23457E+11");
+    expect(formatGeneral(1234.56789, context("en-US")).text).toBe("1234.56789");
+    expect(formatGeneral(-12_345_678_901, context("en-US")).text).toBe("-1.2346E+10");
+  });
+
+  it("writes the locale's decimal separator", () => {
+    expect(formatGeneral(1234.5, context("de-DE")).text).toBe("1234,5");
+    expect(formatGeneral(1234.56789, context("de-DE", 64, 7)).text).toBe("1234,568");
+    expect(formatGeneral(123_456_789_012, context("de-DE", 64, 7)).text).toBe("1,23E+11");
+    expect(formatGeneral(1 / 3, context("de-DE")).text).toBe("0,333333333");
+    expect(formatGeneral(1.5e15, context("de-DE")).text).toBe("1,5E+15");
+    expect(formatGeneral(0.5, context("fr-FR")).text).toBe("0,5");
+    expect(formatGeneral(1234.5, context("es-ES")).text).toBe("1234,5");
+    expect(formatGeneral(1234.5, context("cs-CZ")).text).toBe("1234,5");
+    expect(formatGeneral(1234.5, context("en-GB")).text).toBe("1234.5");
+    // Never a group separator.
+    expect(formatGeneral(1_234_567, context("fr-FR")).text).toBe("1234567");
+  });
+
+  it("never fits or localises a value that is not a number", () => {
+    for (const tag of SPREADSHEET_LOCALE_TAGS) {
+      const narrow = context(tag, 10, 7);
+      expect(formatGeneral("a long string that does not fit", narrow)).toEqual({ text: "a long string that does not fit", alignHint: "left" });
+      expect(formatGeneral(true, narrow)).toEqual({ text: "TRUE", alignHint: "center" });
+      expect(formatGeneral(false, narrow)).toEqual({ text: "FALSE", alignHint: "center" });
+      expect(formatGeneral({ error: "#DIV/0!" }, narrow)).toEqual({ text: "#DIV/0!", alignHint: "center" });
+      expect(formatGeneral(null, narrow).text).toBe("");
+    }
+  });
+
+  it("is generalText at full width in en-US — generalText delegates to it", () => {
+    const fullWidth: FormatContext = { locale: SPREADSHEET_LOCALES["en-US"], dateSystem: "1900" };
+    const values: CellValue[] = [
+      ...SAMPLE,
+      null,
+      "",
+      "text",
+      "  padded  ",
+      true,
+      false,
+      { error: "#N/A" },
+      0,
+      -0,
+      0.1 + 0.2,
+      1 / 3,
+      123_456_789_012,
+      -12_345_678_901,
+      1e-10,
+      12_345_678_901.7,
+      0.123_456_789_5,
+      Number.MAX_VALUE,
+      Number.MIN_VALUE,
+    ];
+    for (const value of values) {
+      expect(generalText(value), String(value)).toBe(formatGeneral(value, fullWidth).text);
+    }
   });
 });
