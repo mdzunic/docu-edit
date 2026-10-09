@@ -364,15 +364,22 @@ function isDateToken(token: FormatToken): boolean {
   return token.type === "date" || token.type === "elapsed" || token.type === "ampm";
 }
 
+function isHour(token: FormatToken): boolean {
+  return (token.type === "date" && token.part === "hour") || (token.type === "elapsed" && token.unit === "h");
+}
+
+function isSecond(token: FormatToken): boolean {
+  return (token.type === "date" && token.part === "second") || (token.type === "elapsed" && token.unit === "s");
+}
+
+function isTimeOrDate(token: FormatToken): boolean {
+  return token.type === "date" || token.type === "elapsed";
+}
+
 /** The minute rule over a date section's tokens: each `m`/`mm` whose nearest
  * preceding date/time token is an hour, or whose nearest following one is a
  * second, becomes a minute token. */
 function applyMinuteRule(tokens: FormatToken[]): void {
-  const isHour = (token: FormatToken): boolean =>
-    (token.type === "date" && token.part === "hour") || (token.type === "elapsed" && token.unit === "h");
-  const isSecond = (token: FormatToken): boolean =>
-    (token.type === "date" && token.part === "second") || (token.type === "elapsed" && token.unit === "s");
-  const isTimeOrDate = (token: FormatToken): boolean => token.type === "date" || token.type === "elapsed";
   tokens.forEach((token, index) => {
     if (token.type !== "date" || token.part !== "month" || token.length > 2) {
       return;

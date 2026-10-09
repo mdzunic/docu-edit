@@ -4,6 +4,7 @@ import {
 } from "./core/autocorrect";
 import { COMMENT_AUTHOR_STORAGE_KEY } from "./core/commentIdentity";
 import { DIM_PAGE_STORAGE_KEY, THEME_STORAGE_KEY } from "./themePrefs";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALE_TAGS } from "./spreadsheet/numberFormat/locale";
 import {
   PREFERENCES_STORAGE_KEY,
   PREFERENCE_DEFAULTS,
@@ -283,5 +284,46 @@ describe("preferences store (SPEC-066)", () => {
       savePreference("theme", "dark");
       expect(handler).toHaveBeenCalled();
     });
+  });
+});
+
+describe("spreadsheetLocale (SPEC-118 \"The preference\")", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetPreferencesSession();
+  });
+
+  it("defaults to en-US, the default spreadsheet locale", () => {
+    expect(PREFERENCE_DEFAULTS.spreadsheetLocale).toBe("en-US");
+    expect(PREFERENCE_DEFAULTS.spreadsheetLocale).toBe(DEFAULT_SPREADSHEET_LOCALE);
+    expect(loadPreferences().spreadsheetLocale).toBe("en-US");
+  });
+
+  it("keeps any of the six tags it is stored with", () => {
+    for (const tag of SPREADSHEET_LOCALE_TAGS) {
+      localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ spreadsheetLocale: tag }));
+      expect(loadPreferences().spreadsheetLocale).toBe(tag);
+    }
+  });
+
+  it("repairs a tag outside SPREADSHEET_LOCALE_TAGS to the default alone, every other field intact", () => {
+    for (const bad of ["de-AT", "de", "DE-de", "", 407, null, ["de-DE"], { tag: "de-DE" }]) {
+      localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ spreadsheetLocale: bad, theme: "dark", authorName: "Ada" }));
+      const prefs = loadPreferences();
+      expect(prefs.spreadsheetLocale, JSON.stringify(bad)).toBe("en-US");
+      expect(prefs.theme).toBe("dark");
+      expect(prefs.authorName).toBe("Ada");
+    }
+  });
+
+  it("saves a valid tag, coerces an invalid one to the default, and notifies listeners", () => {
+    const seen: string[] = [];
+    const off = onPreferencesChange((prefs) => seen.push(prefs.spreadsheetLocale));
+    savePreference("spreadsheetLocale", "cs-CZ");
+    expect(stored().spreadsheetLocale).toBe("cs-CZ");
+    savePreference("spreadsheetLocale", "xx-XX" as never);
+    expect(stored().spreadsheetLocale).toBe("en-US");
+    off();
+    expect(seen).toEqual(["cs-CZ", "en-US"]);
   });
 });

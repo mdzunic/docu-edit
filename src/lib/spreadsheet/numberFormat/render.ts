@@ -247,9 +247,9 @@ function conditionHolds(condition: NonNullable<FormatSection["condition"]>, v: n
  * minus; null when a conditioned code has no section for it (→ hash). */
 function chooseSection(numeric: readonly FormatSection[], v: number): { section: FormatSection; autoMinus: boolean } | null {
   const negative = v < 0;
-  if (numeric.slice(0, 2).some((section) => section.condition !== undefined)) {
-    const matched = numeric.find((section) => section.condition !== undefined && conditionHolds(section.condition, v));
-    const section = matched ?? numeric.find((section) => section.condition === undefined);
+  if (numeric.slice(0, 2).some((candidate) => candidate.condition !== undefined)) {
+    const matched = numeric.find((candidate) => candidate.condition !== undefined && conditionHolds(candidate.condition, v));
+    const section = matched ?? numeric.find((candidate) => candidate.condition === undefined);
     return section ? { section, autoMinus: negative } : null;
   }
   if (numeric.length === 1) {
@@ -624,6 +624,10 @@ function renderScientific(section: FormatSection, magnitude: number, ctx: Format
   });
 }
 
+function abs(value: bigint): bigint {
+  return value < 0n ? -value : value;
+}
+
 /** The best rational approximation p/q of n/d (exact, as BigInts) with
  * q ≤ maxDen: continued-fraction convergents and semiconvergents; a tie goes
  * to the smaller denominator. */
@@ -646,7 +650,6 @@ function bestRational(n: bigint, d: bigint, maxDen: bigint): [bigint, bigint] {
   const [pa, qa] = [p0 + k * p1, q0 + k * q1]; // the best semiconvergent
   const [pb, qb] = [p1, q1]; // the last convergent
   // |pa/qa − n/d| vs |pb/qb − n/d|, cross-multiplied.
-  const abs = (value: bigint): bigint => (value < 0n ? -value : value);
   const errorA = abs(pa * d - n * qa) * qb;
   const errorB = abs(pb * d - n * qb) * qa;
   if (errorA < errorB || (errorA === errorB && qa < qb)) {
