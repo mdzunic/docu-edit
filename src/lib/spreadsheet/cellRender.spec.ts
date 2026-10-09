@@ -15,9 +15,13 @@ import {
   borderCss,
   borderRank,
   borderShorthand,
+  cellBoxCss,
   cellCss,
+  cellDisplay,
+  cellText,
   diagonalLines,
   displayText,
+  edgeElementCss,
   estimateTextWidth,
   fillCss,
   fillRepeat,
@@ -48,6 +52,8 @@ import type {
   SheetBorderStyle,
 } from "./model";
 import { DEFAULT_THEME, hexToRgb, resolveColor, type DocumentTheme, type ModelColor } from "../core/theme";
+import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
+import type { FormatContext } from "./numberFormat/render";
 
 function sheetWith(partial: Partial<Sheet> = {}): Sheet {
   return {
@@ -1062,5 +1068,53 @@ describe("SPEC-117 Rendering: values show through generalText; showZeros: false 
     expect(displayText("0", hidden)).toBe("0");
     expect(displayText(false, hidden)).toBe("FALSE");
     expect(displayText(0.0001, hidden)).toBe("0.0001");
+  });
+});
+
+describe("SPEC-118: a cell's formatted display and its layout", () => {
+  const ctx = (widthPx?: number, tag: keyof typeof SPREADSHEET_LOCALES = "en-US"): FormatContext => ({
+    locale: SPREADSHEET_LOCALES[tag],
+    dateSystem: "1900",
+    digitWidthPx: 7,
+    ...(widthPx === undefined ? {} : { widthPx }),
+  });
+
+  it("renders a value through formatCodeOf(style, locale), fitted to the width; showZeros: false still blanks zeros", () => {
+    expect(cellDisplay(46303, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }, {}, ctx(100))).toMatchObject({ text: "10/8/2026", alignHint: "right" });
+    expect(cellDisplay(46303, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }, {}, ctx(100, "de-DE")).text).toBe("08.10.2026");
+    expect(cellDisplay(46303, { numberFormat: "m/d/yyyy" }, {}, ctx(30))).toMatchObject({ text: "###", overflow: "hash" });
+    expect(cellDisplay(-5, { numberFormat: "0;[Red]-0" }, {}, ctx())).toMatchObject({ text: "-5", color: "#ff0000" });
+    expect(cellDisplay(0, { numberFormat: "0.00" }, { showZeros: false }, ctx())).toEqual({ text: "" });
+    expect(cellDisplay("text", { numberFormat: "0.00" }, {}, ctx(10))).toMatchObject({ text: "text", alignHint: "left" });
+  });
+
+  it("lays a format fill out as the text either side of a run long enough for the cell", () => {
+    const formatted = cellDisplay(5, { numberFormat: '_("$"* #,##0.00_)' }, {}, ctx(100));
+    const laid = cellText(formatted, {}, "number", 100, 7);
+    expect(laid.text).toBe(" $ 5.00 ");
+    expect(laid.fill).toEqual({ before: " $", run: " ".repeat(Math.ceil(100 / 3.5) + 1), after: "5.00 " });
+    expect(laid.horizontal).toBe("right");
+    expect(cellText({ text: "x", alignHint: "left" }, {}, "number", 64, 7)).toEqual({ text: "x", fill: null, horizontal: "left" });
+  });
+
+  it("keeps SPEC-117's fill alignment and shrink-to-fit", () => {
+    expect(cellText({ text: "ab" }, { alignment: { horizontal: "fill" } }, "string", 64, 7).text).toBe("ab".repeat(Math.ceil(64 / 14)));
+    const shrunk = cellText({ text: "a long text that cannot fit" }, { alignment: { shrinkToFit: true }, font: { sizePt: 11 } }, "string", 64, 7);
+    expect(shrunk.shrunkFontSize).toMatch(/^\d+\.\d{2}pt$/);
+    expect(cellText({ text: "ok" }, { alignment: { shrinkToFit: true } }, "string", 64, 7).shrunkFontSize).toBeUndefined();
+  });
+
+  it("places a cell's box, a merge without a fill painting over its interior gridlines", () => {
+    const place = { left: 10, top: 0, width: 64, height: 20 };
+    expect(cellBoxCss({ "text-align": "left" }, place, false)).toEqual({ "text-align": "left", left: "10px", top: "0px", width: "64px", height: "20px" });
+    expect(cellBoxCss({}, place, true)).toMatchObject({ "background-image": "linear-gradient(#ffffff, #ffffff)", "background-size": "calc(100% - 1px) calc(100% - 1px)" });
+    expect(cellBoxCss({ "background-color": "#ffff00" }, place, true)["background-image"]).toBeUndefined();
+  });
+
+  it("centres an edge's line on it, the hair style at 60%", () => {
+    const thick = edgeElementCss({ x: 64, y: 20, length: 64, orientation: "horizontal", style: "thick", color: "#000000" }, 0, 0);
+    expect(thick).toEqual({ left: "64px", top: "18px", width: "64px", "border-top": "3px solid #000000" });
+    const hair = edgeElementCss({ x: 64, y: 20, length: 20, orientation: "vertical", style: "hair", color: "#ff0000" }, 10, 5);
+    expect(hair).toEqual({ left: "53px", top: "15px", height: "20px", "border-left": "1px dotted #ff0000", opacity: "0.6" });
   });
 });

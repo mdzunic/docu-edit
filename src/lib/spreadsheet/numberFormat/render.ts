@@ -1060,17 +1060,23 @@ export function formatValue(value: CellValue, code: string | undefined, ctx: For
   if (parsed === null) {
     return formatGeneral(value, ctx);
   }
-  if (typeof value === "string") {
-    const textIndex = textSectionIndex(parsed.sections);
-    if (textIndex < 0) {
-      return { text: value, alignHint: "left" };
+  try {
+    if (typeof value === "string") {
+      const textIndex = textSectionIndex(parsed.sections);
+      if (textIndex < 0) {
+        return { text: value, alignHint: "left" };
+      }
+      const section = parsed.sections[textIndex]!;
+      const out = new Output();
+      renderText(section, value, out);
+      return finish(out, "left", sectionColor(section, ctx));
     }
-    const section = parsed.sections[textIndex]!;
-    const out = new Output();
-    renderText(section, value, out);
-    return finish(out, "left", sectionColor(section, ctx));
+    return formatNumber(value, parsed, ctx);
+  } catch {
+    // A code the grammar accepts but no rendering rule anticipated: General,
+    // as for an invalid one — a format never takes a cell down.
+    return formatGeneral(value, ctx);
   }
-  return formatNumber(value, parsed, ctx);
 }
 
 /** A formatted value as plain text: the text with one fill character

@@ -32,29 +32,28 @@
 import { computed, type ComputedRef } from "vue";
 import { findRow, formatA1, getCell, type GridRange } from "../../lib/spreadsheet/address";
 import {
-  borderCss,
+  cellBoxCss,
   cellCss,
   cellDisplay,
+  cellText,
   diagonalLines,
-  estimateTextWidth,
-  fillRepeat,
+  edgeElementCss,
   offscreenSpillCandidate,
   overflowAlignment,
   overflowExtent,
   resolveEdges,
-  resolvedHorizontal,
   runCss,
-  shrinkScale,
   valueKind,
+  type CellText,
   type CssDeclarations,
   type EdgeSegment,
 } from "../../lib/spreadsheet/cellRender";
-import { CELL_PADDING_PX, type GridMetrics } from "../../lib/spreadsheet/geometry";
+import type { GridMetrics } from "../../lib/spreadsheet/geometry";
 import { mergeAt, paneMerges, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selection";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
-import { plainText, workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
+import { workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
 import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
@@ -75,9 +74,8 @@ export interface CellItem {
   height: number;
   text: string;
   runs: { text: string; style: CssDeclarations }[] | null;
-  /** A number format's `*x` fill (SPEC-118): the text before and after a
-   * flexible run of the fill character, which takes the remaining width. */
-  fill: { before: string; run: string; after: string } | null;
+  /** A number format's `*x` fill (SPEC-118, cellText). */
+  fill: CellText["fill"];
   boxStyle: CssDeclarations;
   textStyle: CssDeclarations;
   contentStyle: CssDeclarations;
@@ -131,17 +129,7 @@ export interface SheetCellsDeps {
 
 /** The border element for one resolved edge, region-relative. */
 function borderItem(segment: EdgeSegment, shiftX: number, shiftY: number, index: number): BorderItem {
-  const css = borderCss(segment.style);
-  const half = Math.ceil(css.width / 2);
-  const line = `${css.width}px ${css.lineStyle} ${segment.color}`;
-  const style: CssDeclarations =
-    segment.orientation === "horizontal"
-      ? { left: `${segment.x - shiftX}px`, top: `${segment.y - shiftY - half}px`, width: `${segment.length}px`, "border-top": line }
-      : { left: `${segment.x - shiftX - half}px`, top: `${segment.y - shiftY}px`, height: `${segment.length}px`, "border-left": line };
-  if (css.opacity !== undefined) {
-    style.opacity = String(css.opacity);
-  }
-  return { key: `${segment.orientation}:${segment.x}:${segment.y}:${index}`, style };
+  return { key: `${segment.orientation}:${segment.x}:${segment.y}:${index}`, style: edgeElementCss(segment, shiftX, shiftY) };
 }
 
 export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandItem[]> } {
@@ -223,22 +211,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     if (formatted.color !== undefined) {
       textStyle.color = formatted.color;
     }
-    let text = plainText(formatted);
-    const horizontal = resolvedHorizontal(style, kind, formatted.alignHint);
-    let fill: CellItem["fill"] = null;
-    if (formatted.fill && horizontal !== "fill") {
-      const { char, index } = formatted.fill;
-      const repeat = Math.ceil(place.width / Math.max(1, estimateTextWidth(char, mdw))) + 1;
-      fill = { before: formatted.text.slice(0, index), run: char.repeat(repeat), after: formatted.text.slice(index) };
-    }
-    if (horizontal === "fill" && text.length > 0) {
-      text = fillRepeat(text, place.width, mdw);
-    }
-    if (style.alignment?.shrinkToFit && text.length > 0) {
-      const scale = shrinkScale(text, Math.max(1, place.width - 2 * CELL_PADDING_PX), mdw);
-      if (scale < 1) {
-        textStyle["font-size"] = `${((style.font?.sizePt ?? 11) * scale).toFixed(2)}pt`;
-      }
+    const { text, fill, horizontal, shrunkFontSize } = cellText(formatted, style, kind, place.width, mdw);
+    if (shrunkFontSize !== undefined) {
+      textStyle["font-size"] = shrunkFontSize;
     }
     let raised = false;
     let textLeft = 0;
@@ -254,20 +229,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     }
     textStyle.left = `${textLeft}px`;
     textStyle.width = `${textWidth}px`;
-    const boxStyle: CssDeclarations = {
-      ...css.box,
-      left: `${place.left}px`,
-      top: `${place.top}px`,
-      width: `${place.width}px`,
-      height: `${place.height}px`,
-    };
-    if (merge && boxStyle["background-color"] === undefined && boxStyle["background-image"] === undefined) {
-      // A merged range hides the gridlines inside it, as Excel draws it, but
-      // not its own right and bottom ones (its last pixel column and row).
-      boxStyle["background-image"] = "linear-gradient(#ffffff, #ffffff)";
-      boxStyle["background-size"] = "calc(100% - 1px) calc(100% - 1px)";
-      boxStyle["background-repeat"] = "no-repeat";
-    }
+    const boxStyle = cellBoxCss(css.box, place, merge !== undefined);
     const runs = cell?.runs && typeof value === "string" && horizontal !== "fill" ? cell.runs.map((run) => ({ text: run.text, style: run.font ? runCss(run.font, theme.value) : {} })) : null;
     return {
       key: merge ? `m${merge.top}:${merge.left}` : `${at.row}:${at.col}`,

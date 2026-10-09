@@ -939,6 +939,80 @@ export function fillRepeat(text: string, widthPx: number, mdw: number): string {
   return text.repeat(Math.max(1, Math.ceil(widthPx / unit)));
 }
 
+/** A cell element's box declarations: its style's box at `place` — and, for
+ * a merged range with no fill of its own, white inside its last pixel row
+ * and column, hiding the gridlines within it (not its own right and bottom
+ * ones) as Excel draws a merge. */
+export function cellBoxCss(
+  box: CssDeclarations,
+  place: { left: number; top: number; width: number; height: number },
+  merged: boolean,
+): CssDeclarations {
+  const css: CssDeclarations = { ...box, left: `${place.left}px`, top: `${place.top}px`, width: `${place.width}px`, height: `${place.height}px` };
+  if (merged && css["background-color"] === undefined && css["background-image"] === undefined) {
+    css["background-image"] = "linear-gradient(#ffffff, #ffffff)";
+    css["background-size"] = "calc(100% - 1px) calc(100% - 1px)";
+    css["background-repeat"] = "no-repeat";
+  }
+  return css;
+}
+
+/** The element of one resolved border edge, relative to (shiftX, shiftY):
+ * its line centred on the edge, the hair style's opacity on the element. */
+export function edgeElementCss(segment: EdgeSegment, shiftX: number, shiftY: number): CssDeclarations {
+  const css = borderCss(segment.style);
+  const half = Math.ceil(css.width / 2);
+  const line = `${css.width}px ${css.lineStyle} ${segment.color}`;
+  const style: CssDeclarations =
+    segment.orientation === "horizontal"
+      ? { left: `${segment.x - shiftX}px`, top: `${segment.y - shiftY - half}px`, width: `${segment.length}px`, "border-top": line }
+      : { left: `${segment.x - shiftX - half}px`, top: `${segment.y - shiftY}px`, height: `${segment.length}px`, "border-left": line };
+  if (css.opacity !== undefined) {
+    style.opacity = String(css.opacity);
+  }
+  return style;
+}
+
+/** A cell's text as the paper lays it out. */
+export interface CellText {
+  /** The text (a format fill as one character; fill alignment repeated). */
+  text: string;
+  /** A number format's `*x` fill (SPEC-118): the text either side of a
+   * flexible run of the fill character, long enough for the cell. */
+  fill: { before: string; run: string; after: string } | null;
+  horizontal: ResolvedHorizontal;
+  /** The shrink-to-fit font size ("8.25pt"), when the text must shrink. */
+  shrunkFontSize?: string;
+}
+
+/** Lays a formatted value out in a cell `widthPx` wide (font MDW `mdw`):
+ * SPEC-118's format fill as a flexible run, SPEC-117's fill alignment
+ * (fillRepeat) and shrink-to-fit (shrinkScale). */
+export function cellText(formatted: FormattedValue, style: CellStyle, kind: ValueKind, widthPx: number, mdw: number): CellText {
+  let text = formatted.text;
+  if (formatted.fill) {
+    const { char, index } = formatted.fill;
+    text = text.slice(0, index) + char + text.slice(index);
+  }
+  const horizontal = resolvedHorizontal(style, kind, formatted.alignHint);
+  const laid: CellText = { text, fill: null, horizontal };
+  if (formatted.fill && horizontal !== "fill") {
+    const { char, index } = formatted.fill;
+    const repeat = Math.ceil(widthPx / Math.max(1, estimateTextWidth(char, mdw))) + 1;
+    laid.fill = { before: formatted.text.slice(0, index), run: char.repeat(repeat), after: formatted.text.slice(index) };
+  }
+  if (horizontal === "fill" && text.length > 0) {
+    laid.text = fillRepeat(text, widthPx, mdw);
+  }
+  if (style.alignment?.shrinkToFit && laid.text.length > 0) {
+    const scale = shrinkScale(laid.text, Math.max(1, widthPx - 2 * CELL_PADDING_PX), mdw);
+    if (scale < 1) {
+      laid.shrunkFontSize = `${((style.font?.sizePt ?? 11) * scale).toFixed(2)}pt`;
+    }
+  }
+  return laid;
+}
+
 /** What a cell shows (SPEC-118): its value through its style's number
  * format (formatCodeOf in the context's locale) at the context's width —
  * except that a numeric zero shows "" on a sheet with `showZeros: false`. */
