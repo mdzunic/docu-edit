@@ -5,8 +5,11 @@
 // - The fields live here, keyed by sheet id and seeded from the model the
 //   view loaded (the file's own view settings, or what an earlier session
 //   left). A change schedules a write; writes happen at most once per
-//   VIEW_STATE_PERSIST_DELAY_MS, and are flushed on close (unmount) and on
-//   `pagehide`.
+//   VIEW_STATE_PERSIST_DELAY_MS, and are flushed on close (unmount) and when
+//   the page goes away. That flush starts at `beforeunload`, as the
+//   editor's autosave does, while the page still has the lifetime for the
+//   store's yield-then-put to land (a write begun at `pagehide` is lost to
+//   a reload); `pagehide` is the fallback where `beforeunload` never fires.
 // - A write builds a new model whose changed sheets are NEW sheet objects
 //   carrying the new view fields — sheet objects are never mutated in place,
 //   and every sheet keeps its `rows` array, so the store's row split writes
@@ -183,13 +186,15 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
     }
   });
 
-  const onPageHide = (): void => flush();
+  const onLeave = (): void => flush();
   if (typeof window !== "undefined") {
-    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("beforeunload", onLeave);
+    window.addEventListener("pagehide", onLeave);
   }
   onBeforeUnmount(() => {
     if (typeof window !== "undefined") {
-      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("beforeunload", onLeave);
+      window.removeEventListener("pagehide", onLeave);
     }
     flush();
   });
