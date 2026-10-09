@@ -2,7 +2,7 @@
 // the buttons walk SPEC-063's preset ladder, Cmd/Ctrl +/-/0 is the keyboard
 // vocabulary, and double-click toggles fit ⇄ 100%.
 import { describe, expect, it } from "vitest";
-import { useImageViewport, FIT_MARGIN_PX } from "./useImageViewport";
+import { useImageViewport, FIT_MARGIN_PX, FIT_MIN_PERCENT } from "./useImageViewport";
 
 function sized(): ReturnType<typeof useImageViewport> {
   const viewport = useImageViewport();
@@ -24,6 +24,38 @@ describe("useImageViewport", () => {
     const viewport = sized();
     viewport.setContainerSize(400 + FIT_MARGIN_PX * 2, 600 + FIT_MARGIN_PX * 2);
     expect(viewport.percent.value).toBe(25);
+  });
+
+  it("fits a large photo below the 25% manual floor, so it really fits", () => {
+    const viewport = useImageViewport();
+    viewport.setContainerSize(1000 + FIT_MARGIN_PX * 2, 640 + FIT_MARGIN_PX * 2);
+    viewport.setImageSize(4032, 3024);
+    // min(1000 / 4032, 640 / 3024) = 21.16% — floored, never rounded up.
+    expect(viewport.percent.value).toBe(21);
+    expect(4032 * viewport.scale.value).toBeLessThanOrEqual(1000);
+    expect(3024 * viewport.scale.value).toBeLessThanOrEqual(640);
+    expect(FIT_MIN_PERCENT).toBeLessThan(25);
+  });
+
+  it("never steps the wrong way from a fit outside the preset ladder", () => {
+    const large = useImageViewport();
+    large.setContainerSize(500 + FIT_MARGIN_PX * 2, 500 + FIT_MARGIN_PX * 2);
+    large.setImageSize(5000, 5000);
+    expect(large.percent.value).toBe(10);
+    large.zoomOut(); // no preset below 10%: stays put, still fitting
+    expect(large.mode.value).toBe("fit");
+    expect(large.percent.value).toBe(10);
+    large.zoomIn();
+    expect(large.percent.value).toBe(50);
+
+    const icon = useImageViewport();
+    icon.setContainerSize(800 + FIT_MARGIN_PX * 2, 800 + FIT_MARGIN_PX * 2);
+    icon.setImageSize(16, 16);
+    expect(icon.percent.value).toBe(400); // the input band's ceiling
+    icon.zoomIn(); // nothing above: stays put
+    expect(icon.mode.value).toBe("fit");
+    icon.zoomOut();
+    expect(icon.percent.value).toBe(200);
   });
 
   it("defaults to 100% before sizes are known", () => {

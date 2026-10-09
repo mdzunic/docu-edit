@@ -135,13 +135,10 @@ const storedLabel = computed(() =>
             {{ pdf.linearised ? "Yes" : "No" }}
           </dd>
         </div>
-        <div
-          v-if="pdf.reconstructed"
-          class="details-row"
-        >
-          <dt>Recovered</dt>
+        <div class="details-row">
+          <dt>Reconstructed</dt>
           <dd data-testid="detail-reconstructed">
-            The file's index was rebuilt to open it
+            {{ pdf.reconstructed ? "Yes — the file's index was rebuilt to open it" : "No" }}
           </dd>
         </div>
       </template>

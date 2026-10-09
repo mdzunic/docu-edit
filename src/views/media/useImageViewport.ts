@@ -8,6 +8,11 @@ import { clampZoom, stepZoomDown, stepZoomUp } from "../../lib/zoom";
 /** Breathing room the fit computation leaves around the image, per side. */
 export const FIT_MARGIN_PX = 16;
 
+/** The floor a fit may land on. A fit must FIT: a 4032 × 3024 phone photo
+ * in a laptop window needs ~20%, below the 25% floor of SPEC-063's input
+ * band, which still bounds every manual step. */
+export const FIT_MIN_PERCENT = 1;
+
 export interface ImageViewport {
   /** "fit" tracks the window live; "manual" holds a chosen percentage. */
   mode: Ref<"fit" | "manual">;
@@ -44,7 +49,8 @@ export function useImageViewport(): ImageViewport {
     if (!(cw > 0) || !(ch > 0) || !(iw > 0) || !(ih > 0)) {
       return 100;
     }
-    return clampZoom(Math.round(Math.min(cw / iw, ch / ih) * 100));
+    // Floored, so the image never overhangs the stage by a rounding pixel.
+    return clampZoom(Math.floor(Math.min(cw / iw, ch / ih) * 100), FIT_MIN_PERCENT);
   });
 
   const percent = computed(() => (mode.value === "fit" ? fitPercent.value : manualPercent.value));
@@ -63,12 +69,20 @@ export function useImageViewport(): ImageViewport {
     mode.value = "manual";
   }
 
+  // A fit can sit outside the preset ladder (12% for a large photo, 400% for
+  // an icon); a step that would move the wrong way from there does nothing.
   function zoomIn(): void {
-    toManual(stepZoomUp(percent.value));
+    const next = stepZoomUp(percent.value);
+    if (next > percent.value) {
+      toManual(next);
+    }
   }
 
   function zoomOut(): void {
-    toManual(stepZoomDown(percent.value));
+    const next = stepZoomDown(percent.value);
+    if (next < percent.value) {
+      toManual(next);
+    }
   }
 
   function zoomActual(): void {

@@ -2,15 +2,15 @@
 // no typed arrays, no class instances — so the store persists it through the
 // same IndexedDB machinery as the other two products, and the summaries an
 // open computes survive the round trip.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assembleMediaModel } from "./open";
 import { MEDIA_CONTENT_TYPES } from "./model";
-import {
-  buildPagesPdfBytes,
-  buildPngFixtureBytes,
-  PNG_FIXTURE_HEIGHT,
-  PNG_FIXTURE_WIDTH,
-} from "./fixtures/build";
+import { buildPngFixtureBytes, PNG_FIXTURE_HEIGHT, PNG_FIXTURE_WIDTH } from "./fixtures/build";
+
+// The checked-in spec107-pages.pdf (the app's own buildPdf output).
+const PAGES_PDF = new Uint8Array(readFileSync(join(__dirname, "../../../e2e/fixtures/spec107-pages.pdf")));
 
 describe("MediaModel", () => {
   it("is plain JSON: JSON.parse(JSON.stringify(model)) deep-equals it (image)", async () => {
@@ -19,7 +19,7 @@ describe("MediaModel", () => {
   });
 
   it("is plain JSON for a PDF, summaries included", async () => {
-    const model = await assembleMediaModel("pages", "pdf", buildPagesPdfBytes());
+    const model = await assembleMediaModel("pages", "pdf", PAGES_PDF);
     expect(JSON.parse(JSON.stringify(model))).toEqual(model);
   });
 
@@ -37,7 +37,7 @@ describe("MediaModel", () => {
   });
 
   it("assembles a PDF model: structural summary and /Info properties", async () => {
-    const model = await assembleMediaModel("pages", "pdf", buildPagesPdfBytes());
+    const model = await assembleMediaModel("pages", "pdf", PAGES_PDF);
     expect(model.pdf?.pageCount).toBe(3);
     expect(model.pdf?.version).toBe("1.7");
     expect(model.pdf?.reconstructed).toBe(false);

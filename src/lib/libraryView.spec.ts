@@ -1,7 +1,21 @@
 import { describe, it, expect } from "vitest";
 import type { LibraryEntry } from "./documentStore";
 import { kindOfFormat } from "./documentKinds";
-import { FORMAT_CHIPS, chipUnavailable, filterCounts, filterLibrary, highlightSegments, searchLibrary, sortLibrary, subsequenceMatch } from "./libraryView";
+import {
+  FILTERABLE_FORMATS,
+  FORMAT_CHIPS,
+  chipActive,
+  chipCount,
+  chipUnavailable,
+  filterCounts,
+  filterLibrary,
+  highlightSegments,
+  searchLibrary,
+  sortLibrary,
+  subsequenceMatch,
+  toggleChip,
+} from "./libraryView";
+import { formatBadgeLabel } from "./format";
 import type { DocumentFormat } from "./documentStore";
 
 function entry(over: Partial<LibraryEntry> & { id: string }): LibraryEntry {
@@ -186,5 +200,41 @@ describe("chipUnavailable", () => {
     for (const format of images.formats) {
       expect(chipUnavailable(images, new Set(), { ...empty, [format]: 2 })).toBe(false);
     }
+  });
+});
+
+describe("media in the library view (SPEC-107)", () => {
+  const MEDIA = ["pdf", "png", "jpeg", "gif", "svg", "webp"] as const;
+
+  it("makes every media format filterable, behind two kind-grouped chips", () => {
+    for (const format of MEDIA) {
+      expect(FILTERABLE_FORMATS).toContain(format);
+    }
+    const pdfs = FORMAT_CHIPS.find((chip) => chip.id === "pdf");
+    const images = FORMAT_CHIPS.find((chip) => chip.id === "images");
+    expect(pdfs).toMatchObject({ label: "PDFs", formats: ["pdf"] });
+    expect(images).toMatchObject({ label: "Images", formats: ["png", "jpeg", "gif", "svg", "webp"] });
+    // No media format gets a chip of its own.
+    expect(FORMAT_CHIPS.filter((chip) => chip.formats.some((format) => (MEDIA as readonly string[]).includes(format)))).toHaveLength(2);
+  });
+
+  it('one click on "Images" filters to every image format, and a second clears it', () => {
+    const images = FORMAT_CHIPS.find((chip) => chip.id === "images")!;
+    const entries = [
+      entry({ id: "d", format: "docx" }),
+      entry({ id: "p", format: "pdf" }),
+      entry({ id: "a", format: "png" }),
+      entry({ id: "b", format: "webp" }),
+      entry({ id: "c", format: "svg" }),
+    ];
+    const on = toggleChip(images, new Set());
+    expect(chipActive(images, on)).toBe(true);
+    expect(filterLibrary(entries, { search: "", formats: on, starredOnly: false }).map((e) => e.id)).toEqual(["a", "b", "c"]);
+    expect(chipCount(images, filterCounts(entries, "").formats)).toBe(3);
+    expect(toggleChip(images, on).size).toBe(0);
+  });
+
+  it("badges each media format", () => {
+    expect(MEDIA.map((format) => formatBadgeLabel(format))).toEqual(["PDF", "PNG", "JPEG", "GIF", "SVG", "WEBP"]);
   });
 });

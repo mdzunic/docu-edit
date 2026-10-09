@@ -12,12 +12,15 @@
 //
 // Ratchet ledger:
 //   2026-08-30  170  Opening entry: the view lands at 124 lines
+//   2026-10-08  125  SPEC-107 rework: the ledger opens AT the count the view
+//                    lands on (AC-48), measured as this test measures it —
+//                    124 lines plus the final newline — with no headroom
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 170;
+const LINE_BUDGET = 125;
 
 describe("MediaView size budget", () => {
   it(`MediaView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

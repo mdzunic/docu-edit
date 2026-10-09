@@ -224,6 +224,30 @@ describe("buildPdf", () => {
     expect(await build({ title: "Café" })).toContain("/Title <FEFF00430061006600E9>");
   });
 
+  it("writes the optional author and dates into Info, and nothing when absent", async () => {
+    const pdf = await build({
+      title: "Pages",
+      info: {
+        author: "Ana",
+        creationDate: new Date(Date.UTC(2026, 7, 30, 12, 0, 5)),
+        modDate: new Date(Date.UTC(2026, 9, 1, 9, 30, 0)),
+      },
+    });
+    expect(pdf).toContain(
+      "<< /Title (Pages) /Author (Ana) /Producer (docu-edit) /CreationDate (D:20260830120005Z) /ModDate (D:20261001093000Z) >>",
+    );
+    expect(await build({ title: "Pages" })).toContain("<< /Title (Pages) /Producer (docu-edit) >>");
+  });
+
+  it("writes a page's /Rotate only when it is turned (SPEC-107)", async () => {
+    const pdf = await build({
+      pages: [page({ items: [] }), page({ items: [], rotate: 90 }), page({ items: [], rotate: 0 })],
+      fonts: new Map(),
+    });
+    expect(pdf.split("/Rotate").length - 1).toBe(1);
+    expect(pdf).toContain("/MediaBox [0 0 595.28 841.89] /Rotate 90 /Resources");
+  });
+
   it("builds a nested outline tree from headings in document order", async () => {
     const pdf = await build({
       pages: [

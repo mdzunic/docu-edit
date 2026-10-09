@@ -325,6 +325,15 @@ describe("decodeImageDimensions — WebP (SPEC-107)", () => {
     expect(decodeImageDimensions(riff("ANMF", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), "image/webp")).toBeNull();
   });
 
+  it("returns null for a VP8L header with a bad signature or a non-zero version", () => {
+    const packed = (48 - 1) | ((30 - 1) << 14);
+    const header = [packed & 0xff, (packed >> 8) & 0xff, (packed >> 16) & 0xff, (packed >>> 24) & 0xff];
+    expect(decodeImageDimensions(riff("VP8L", [0x2e, ...header, 0]), "image/webp")).toBeNull();
+    const versioned = [...header];
+    versioned[3] |= 0x20; // version 1
+    expect(decodeImageDimensions(riff("VP8L", [0x2f, ...versioned, 0]), "image/webp")).toBeNull();
+  });
+
   it("returns null for a truncated RIFF container", () => {
     expect(decodeImageDimensions(utf8("RIFF1234WEBP"), "image/webp")).toBeNull();
   });

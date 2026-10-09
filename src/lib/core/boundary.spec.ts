@@ -24,6 +24,18 @@ function coreModules(): string[] {
   return runtimeModules(coreDir);
 }
 
+/** Runtime modules under `dir` and its subdirectories, as paths relative to
+ * `dir`. */
+function nestedRuntimeModules(dir: string, prefix = ""): string[] {
+  return readdirSync(join(dir, prefix), { withFileTypes: true }).flatMap((entry) =>
+    entry.isDirectory()
+      ? nestedRuntimeModules(dir, join(prefix, entry.name))
+      : entry.name.endsWith(".ts") && !entry.name.endsWith(".spec.ts")
+        ? [join(prefix, entry.name)]
+        : [],
+  );
+}
+
 /** Every import/export specifier in a module's source: static imports,
  * re-exports and dynamic import() calls alike. */
 function importSpecifiers(source: string): string[] {
@@ -151,17 +163,19 @@ describe("format layer boundaries", () => {
   });
 
   // The media product (SPEC-107), reverse direction: nothing in core, the
-  // text product's layers or the presentation layer may import media/ — the
-  // media layer's own side of the rule (only siblings and core) is
-  // media/boundary.spec.ts. Note the trailing slash in the banned segment:
-  // core/media.ts ("./media", SPEC-024's media-part module) is a core
-  // sibling, not the media product, and stays importable everywhere.
-  it("no core, format-layer, presentation or model-layer module imports from media/", () => {
-    const dirs = ["core", "docx", "odf", "presentation"].map((name) => join(libDir, name));
+  // text product (its model layer, its .docx/.odt/.md format layers and its
+  // PDF writer) or the presentation layer may import media/ — the media
+  // layer's own side of the rule (only siblings and core) is
+  // media/boundary.spec.ts. Subdirectories count (presentation/pptx/,
+  // presentation/keynote/, …). Note the trailing slash in the banned
+  // segment: core/media.ts ("./media", SPEC-024's media-part module) is a
+  // core sibling, not the media product, and stays importable everywhere.
+  it("no core, text-product or presentation module imports from media/", () => {
+    const dirs = ["core", "docx", "odf", "md", "pdf", "presentation"].map((name) => join(libDir, name));
+    const scanned = dirs.flatMap((dir) => nestedRuntimeModules(dir).map((name) => ({ dir, name })));
+    expect(scanned.some(({ name }) => name.includes("/"))).toBe(true);
     const violations = [
-      ...dirs.flatMap((dir) =>
-        runtimeModules(dir).flatMap((name) => formatImportViolations(dir, name, "media")),
-      ),
+      ...scanned.flatMap(({ dir, name }) => formatImportViolations(dir, name, "media")),
       ...MODEL_LAYER_MODULES.flatMap((name) => formatImportViolations(libDir, name, "media")),
     ];
     expect(violations).toEqual([]);

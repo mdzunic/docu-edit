@@ -155,23 +155,62 @@ export function pdfHeaderOffset(bytes: Uint8Array): number {
   return -1;
 }
 
+/** The index just past the `<!DOCTYPE …>` declaration starting at `pos`,
+ * or -1 when it does not close inside `text`. Quoted literals and an
+ * internal subset (`[ … ]` — where Illustrator declares its entities) may
+ * themselves contain `>`. */
+function skipDoctype(text: string, pos: number): number {
+  let quote = "";
+  let depth = 0;
+  for (let i = pos + 2; i < text.length; i += 1) {
+    const char = text[i];
+    if (quote) {
+      if (char === quote) {
+        quote = "";
+      }
+    } else if (depth > 0 && text.startsWith("<!--", i)) {
+      const end = text.indexOf("-->", i + 4);
+      if (end < 0) {
+        return -1;
+      }
+      i = end + 2;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth = Math.max(0, depth - 1);
+    } else if (char === ">" && depth === 0) {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
 /** Whether the leading bytes are an XML document whose ROOT element is
  * `<svg>` — the one media sniff that is structural rather than a magic
- * number (an SVG has none). Skips an optional BOM, the XML declaration,
- * doctype and comments, then requires the first real element to be `svg`
- * (optionally namespace-prefixed). A comment or doctype that merely mentions
- * svg is not a match. */
+ * number (an SVG has none). Skips an optional BOM (UTF-8 or UTF-16), the
+ * XML declaration, doctype and comments, then requires the first real
+ * element to be `svg` (optionally namespace-prefixed). A comment or doctype
+ * that merely mentions svg is not a match. */
 function sniffSvg(bytes: Uint8Array): boolean {
   const limit = Math.min(bytes.length, SVG_SCAN_BYTES);
+  const encoding =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? "utf-16le"
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? "utf-16be"
+        : "utf-8";
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, limit));
+    // The decoder drops a leading BOM itself.
+    text = new TextDecoder(encoding, { fatal: false }).decode(bytes.subarray(0, limit));
   } catch {
     return false;
   }
   let pos = 0;
   if (text.charCodeAt(0) === 0xfeff) {
-    pos = 1; // BOM
+    pos = 1; // a BOM the decoder kept
   }
   for (;;) {
     while (pos < text.length && /\s/.test(text[pos])) {
@@ -197,13 +236,11 @@ function sniffSvg(bytes: Uint8Array): boolean {
       continue;
     }
     if (text.startsWith("<!", pos)) {
-      // A doctype; internal subsets ([]…) do not appear in real SVG files —
-      // scan to the closing angle bracket.
-      const end = text.indexOf(">", pos);
+      const end = skipDoctype(text, pos);
       if (end < 0) {
         return false;
       }
-      pos = end + 1;
+      pos = end;
       continue;
     }
     // The first real element: `<svg` or `<prefix:svg`, followed by a name

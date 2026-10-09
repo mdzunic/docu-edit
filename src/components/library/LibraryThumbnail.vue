@@ -84,14 +84,15 @@ function produceMediaThumbnail() {
       thumbnail.value = { lines: [], failed: true };
       return;
     }
-    // A real first-page raster (pdf.js, loaded lazily). Hosts that cannot
-    // rasterise — and any parse/render failure — keep the aspect-true paper
-    // placeholder: the card degrades, it never lies.
+    // The aspect-true paper placeholder (SPEC-107: the first page's real
+    // aspect ratio, page count and page size) shows at once. A real
+    // first-page raster (pdf.js, loaded lazily) replaces it where the host
+    // can rasterise; elsewhere — and on any parse/render failure — the
+    // placeholder stays: the card degrades, it never lies.
+    pdfInfo.value = pdfCardPlaceholder(model.pdf);
     if (!pdfRasterSupported()) {
-      pdfInfo.value = pdfCardPlaceholder(model.pdf);
       return;
     }
-    const summary = model.pdf;
     rasterisePdfFirstPage(mediaSourceBytes(model), MEDIA_THUMBNAIL_MAX_EDGE_PX)
       .then((dataUrl) => {
         if (unmounted) {
@@ -101,9 +102,7 @@ function produceMediaThumbnail() {
         mediaRaster.value = dataUrl;
       })
       .catch(() => {
-        if (!unmounted) {
-          pdfInfo.value = pdfCardPlaceholder(summary);
-        }
+        // The placeholder already shows.
       });
     return;
   }
@@ -313,7 +312,8 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
       >
     </div>
     <!-- A PDF card: a paper-shaped placeholder at the first page's REAL
-         aspect ratio, with the page count and size. No page is rasterised. -->
+         aspect ratio, with the page count and size — shown until (and
+         unless) the pdf.js raster above arrives. -->
     <div
       v-else-if="pdfInfo.pageCount > 0"
       class="thumbnail-pdf"
@@ -321,7 +321,8 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
     >
       <div
         class="thumbnail-pdf-paper"
-        :style="{ aspectRatio: String(pdfInfo.aspectRatio) }"
+        data-testid="pdf-paper"
+        :style="{ '--paper-aspect': String(pdfInfo.aspectRatio) }"
       >
         <span class="thumbnail-pdf-pages">{{ pdfInfo.pageCount }} {{ pdfInfo.pageCount === 1 ? "page" : "pages" }}</span>
         <span class="thumbnail-pdf-size">{{ pdfInfo.pageSize }}</span>
@@ -742,25 +743,37 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
 }
 
 /* The PDF placeholder: an honest paper shape at the first page's real
-   aspect ratio (SPEC-107 — no page is ever rasterised). */
+   aspect ratio (SPEC-107), shown wherever no first-page raster is (yet).
+   The well fills the thumbnail (absolute, like the deck, so its padding
+   stays inside the box) and is a size container, so the paper is sized from
+   the WELL: the largest box at the page's ratio that fits. Sized from its
+   content instead, the labels' widths and the paper's automatic minimum
+   size overrode aspect-ratio and pulled the paper off the page's shape. */
 .thumbnail-pdf {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: absolute;
+  inset: 0;
+  container-type: size;
+  display: grid;
+  place-items: center;
   background: var(--surface-raised);
   padding: var(--space-3);
 }
 
 .thumbnail-pdf-paper {
-  max-width: 100%;
-  max-height: 100%;
+  box-sizing: border-box;
+  width: min(100cqw, 100cqh * var(--paper-aspect));
+  height: min(100cqh, 100cqw / var(--paper-aspect));
+  /* The labels wrap and clip inside the paper; they never size it. */
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   gap: var(--space-1);
-  padding: var(--space-3);
+  padding: var(--space-2);
+  text-align: center;
   background: var(--surface-base);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
@@ -768,12 +781,16 @@ function paintThumbnailShape(el = Object(), shapeLine = Object()) {
 }
 
 .thumbnail-pdf-pages {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: var(--weight-bold);
 }
 
 .thumbnail-pdf-size {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-size: calc(var(--text-sm) * 0.85);
 }

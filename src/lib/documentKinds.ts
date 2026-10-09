@@ -8,7 +8,7 @@
 // is an edit here plus a new product layer, not a hunt across the app.
 import type { DocumentFormat as TextDocumentFormat } from "./documentModel";
 import type { PresentationFormat } from "./presentation/model";
-import type { MediaFormat } from "./media/model";
+import { MEDIA_CONTENT_TYPES, type MediaFormat } from "./media/model";
 
 export type DocumentKind = "text" | "presentation" | "media";
 
@@ -26,6 +26,13 @@ const PRESENTATION_FORMATS: ReadonlySet<string> = new Set(["pptx", "odp"]);
 export const MEDIA_FORMATS: readonly MediaFormat[] = ["pdf", "png", "jpeg", "gif", "svg", "webp"];
 
 const MEDIA_FORMAT_SET: ReadonlySet<string> = new Set(MEDIA_FORMATS);
+
+/** The content types a media file is served under (application/pdf,
+ * image/png, …), so the open-from-URL check admits the media kind without
+ * knowing any of them itself. */
+export const MEDIA_FORMAT_CONTENT_TYPES: readonly string[] = MEDIA_FORMATS.map(
+  (format) => MEDIA_CONTENT_TYPES[format],
+);
 
 /** The product a library record with this format belongs to. Accepts a
  * plain string (formats often arrive via runtime-typed `.vue` props). */
