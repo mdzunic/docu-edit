@@ -25,6 +25,7 @@ import {
   estimateTextWidth,
   fillCss,
   fillRepeat,
+  leftAligned,
   OVERFLOW_SCAN_COLS,
   offscreenSpillCandidate,
   overflowAlignment,
@@ -33,6 +34,7 @@ import {
   resolveEdges,
   runCss,
   shrinkScale,
+  showFormulasDisplay,
   valueKind,
   type EdgeSegment,
   type ValueKind,
@@ -1114,5 +1116,47 @@ describe("SPEC-118: a cell's formatted display and its layout", () => {
     expect(thick).toEqual({ left: "64px", top: "18px", width: "64px", "border-top": "3px solid #000000" });
     const hair = edgeElementCss({ x: 64, y: 20, length: 20, orientation: "vertical", style: "hair", color: "#ff0000" }, 10, 5);
     expect(hair).toEqual({ left: "53px", top: "15px", height: "20px", "border-left": "1px dotted #ff0000", opacity: "0.6" });
+  });
+});
+
+describe("SPEC-119 Show formulas: showFormulasDisplay and leftAligned", () => {
+  const sheet = sheetWith({
+    rows: [
+      {
+        index: 0,
+        cells: [
+          { col: 0, value: 60, formula: "SUM(B2:B4)" },
+          { col: 1, value: 6, formula: "A2:A4*2", arrayRange: { top: 0, left: 1, bottom: 1, right: 1 } },
+          { col: 2, value: 1, formula: "SORT(A1:A2)", arrayRange: { top: 0, left: 2, bottom: 1, right: 2 }, dynamicArray: true },
+          { col: 3, value: 10, dataTableXml: `<f t="dataTable" ref="D1:D2" r1="F1"/>` },
+          { col: 4, value: 3, formula: "of:=BAD(", formulaUnparsed: true },
+          { col: 5, value: 1234.5 },
+          { col: 6, value: true },
+        ],
+      },
+      { index: 1, cells: [{ col: 1, value: 2 }, { col: 2, value: 2 }, { col: 3, value: 20 }] },
+    ],
+  });
+
+  it("shows a position a formula covers as the formula bar writes it — marked to lay out as text", () => {
+    expect(showFormulasDisplay(sheet, 0, 0, 60, "xlsx")).toEqual({ formatted: { text: "=SUM(B2:B4)" }, formula: true });
+    expect(showFormulasDisplay(sheet, 1, 1, 2, "xlsx")).toEqual({ formatted: { text: "{=A2:A4*2}" }, formula: true });
+    expect(showFormulasDisplay(sheet, 0, 2, 1, "xlsx")).toEqual({ formatted: { text: "=SORT(A1:A2)" }, formula: true });
+    expect(showFormulasDisplay(sheet, 1, 3, 20, "xlsx")).toEqual({ formatted: { text: "{=TABLE(,F1)}" }, formula: true });
+    expect(showFormulasDisplay(sheet, 0, 4, 3, "ods")).toEqual({ formatted: { text: "=BAD(" }, formula: true });
+  });
+
+  it("shows a constant — a dynamic array's spilled member included — as the General text of its value, no number format", () => {
+    expect(showFormulasDisplay(sheet, 0, 5, 1234.5, "xlsx")).toEqual({ formatted: { text: "1234.5" }, formula: false });
+    expect(showFormulasDisplay(sheet, 0, 6, true, "xlsx")).toEqual({ formatted: { text: "TRUE" }, formula: false });
+    expect(showFormulasDisplay(sheet, 1, 2, 2, "xlsx")).toEqual({ formatted: { text: "2" }, formula: false });
+    expect(showFormulasDisplay(sheet, 9, 9, null, "xlsx")).toEqual({ formatted: { text: "" }, formula: false });
+  });
+
+  it("overrides only the horizontal alignment", () => {
+    const style: CellStyle = { alignment: { horizontal: "right", vertical: "top", wrap: true }, font: { bold: true } };
+    expect(leftAligned(style)).toEqual({ alignment: { horizontal: "left", vertical: "top", wrap: true }, font: { bold: true } });
+    expect(style.alignment?.horizontal).toBe("right");
+    expect(leftAligned({})).toEqual({ alignment: { horizontal: "left" } });
   });
 });

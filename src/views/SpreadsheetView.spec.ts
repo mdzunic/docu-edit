@@ -4,8 +4,9 @@
 // state; the view's own kind hand-off; the sheet tabs (the ARIA tablist
 // pattern, and Ctrl+PageUp/PageDown from the grid); the DOM-virtualised
 // read-only grid — its ARIA, headers, the General display and alignment, and
-// a million-row sheet's bounded DOM; foreign sheets; and the reader-version
-// upgrade path through the view. Same harness as MediaView.spec.ts: fresh
+// a million-row sheet's bounded DOM; foreign sheets; the reader-version
+// upgrade path through the view; and SPEC-119's wiring — the formula bar's
+// text and View ▸ Show formulas / Ctrl+` through the real view. Same harness as MediaView.spec.ts: fresh
 // modules per test (the store is module state), idb mocked, the view mounted
 // at its route through a memory router — attached to the document so focus
 // is real.
@@ -26,7 +27,7 @@ import type {
   SpreadsheetModel,
 } from "../lib/spreadsheet/model";
 
-type FixtureName = "mini-book.xlsx" | "mini-book.ods" | "spec116-macros.xlsm" | "spec116-template.xltx";
+type FixtureName = "mini-book.xlsx" | "mini-book.ods" | "spec116-macros.xlsm" | "spec116-template.xltx" | "spec119-formulas.xlsx";
 
 /** What a test reads off a rendered wrapper (VueWrapper and DOMWrapper alike). */
 interface Finder {
@@ -74,6 +75,7 @@ async function loadModules() {
     "mini-book.ods": fixtures.buildMiniBookOdsBytes,
     "spec116-macros.xlsm": fixtures.buildSpecMacrosXlsmBytes,
     "spec116-template.xltx": fixtures.buildSpecTemplateXltxBytes,
+    "spec119-formulas.xlsx": fixtures.buildSpec119FormulasXlsxBytes,
   };
   /** A fixture read as the open funnel reads it, titled by its base name. */
   async function readFixture(name: FixtureName) {
@@ -614,5 +616,71 @@ describe("SpreadsheetView reader versions", () => {
     expect(upgraded?.title).toBe("mini-book");
     expect(upgraded?.sheets.map((sheet) => sheet.id)).toEqual(stale.sheets.map((sheet) => sheet.id));
     expect(upgraded?.sheets.map((sheet) => sheet.rows.length)).toEqual(model.sheets.map((sheet) => sheet.rows.length));
+  });
+});
+
+/** Ctrl+` from the grid, as a user presses it (SPEC-119). */
+function controlBackquote(target: Element): void {
+  target.dispatchEvent(new KeyboardEvent("keydown", { code: "Backquote", key: "`", ctrlKey: true, bubbles: true, cancelable: true }));
+}
+
+describe("SpreadsheetView formulas (SPEC-119)", () => {
+  it("shows the active cell's formula in the read-only bar; Ctrl+` and View ▸ Show formulas switch the grid to formulas as view state", async () => {
+    const { store, readFixture, mountSheets } = await loadModules();
+    const { bytes, model } = await readFixture("spec119-formulas.xlsx");
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+    const grid = wrapper.get('[data-testid="spreadsheet-grid"]');
+    const bar = () => wrapper.get('[data-testid="formula-bar-content"]');
+
+    // The file's selection opens on B5; the bar shows its formula, read-only.
+    expect(wrapper.get('[data-testid="name-box"]').element).toHaveProperty("value", "B5");
+    expect(bar().text()).toBe("=SUM(B2:B4)");
+    expect(bar().attributes("aria-readonly")).toBe("true");
+    expect(bar().attributes("contenteditable")).toBeUndefined();
+    await grid.trigger("keydown", { key: "ArrowRight" });
+    await grid.trigger("keydown", { key: "ArrowUp" });
+    await grid.trigger("keydown", { key: "ArrowUp" });
+    expect(bar().text()).toBe("=B3*$F$1");
+    await grid.trigger("keydown", { key: "ArrowRight" });
+    await grid.trigger("keydown", { key: "ArrowRight" });
+    expect(bar().text()).toBe("{=A2:A4*2}");
+    expect(grid.get('[data-ref="B5"]').text()).toBe("60");
+    expect(grid.attributes("data-show-formulas")).toBeUndefined();
+
+    // Ctrl+`: formulas in the grid, the menu item checked.
+    controlBackquote(grid.element);
+    await flushPromises();
+    expect(grid.attributes("data-show-formulas")).toBe("true");
+    expect(grid.get('[data-ref="B5"]').text()).toBe("=SUM(B2:B4)");
+    expect(grid.get('[data-ref="A2"]').text()).toBe("3");
+    await wrapper.get('[role="menubar"]').findAll("button").find((button) => button.text() === "View")!.trigger("click");
+    const item = wrapper.get('[data-testid="sheet-menu-show-formulas"]');
+    expect(item.attributes("role")).toBe("menuitemcheckbox");
+    expect(item.attributes("aria-checked")).toBe("true");
+
+    // The menu item toggles back: values again.
+    await item.trigger("click");
+    await flushPromises();
+    expect(grid.attributes("data-show-formulas")).toBeUndefined();
+    expect(grid.get('[data-ref="B5"]').text()).toBe("60");
+
+    // View state only: the file downloads part for part.
+    controlBackquote(grid.element);
+    await flushPromises();
+    await wrapper.get('[data-testid="spreadsheet-download"]').trigger("click");
+    await vi.waitFor(() => expect(downloads).toHaveLength(1));
+    await expectSameParts(downloads[0]!.bytes, bytes);
+  });
+
+  it("opens a sheet the file shows formulas on in that mode (sheetView@showFormulas)", async () => {
+    const { store, readFixture, mountSheets } = await loadModules();
+    const { model } = await readFixture("spec119-formulas.xlsx");
+    store.storeSpreadsheet({ ...model, activeSheetIndex: 1 });
+    const { wrapper } = await mountSheets(model.id);
+    const grid = wrapper.get('[data-testid="spreadsheet-grid"]');
+    expect(grid.attributes("aria-label")).toBe("Jan");
+    expect(grid.attributes("data-show-formulas")).toBe("true");
+    expect(grid.get('[data-ref="C2"]').text()).toBe("=B2*2");
   });
 });

@@ -6,7 +6,10 @@
 // string spills into its empty neighbours whenever it has room, never
 // gated on an estimate of its width. Mounted over the real metrics and
 // viewport (jsdom has no layout, so the viewport is its 1280 × 720 fallback:
-// 64 px columns and 20 px rows at 100%).
+// 64 px columns and 20 px rows at 100%). SPEC-119: with Show formulas on, a
+// formula cell shows "=" + formula left-aligned whatever its style says, an
+// array member its anchor's "{=…}", and a constant its General text with no
+// number format.
 import { afterEach, describe, expect, it } from "vitest";
 import { defineComponent, h, ref, type ComputedRef } from "vue";
 import { mount } from "@vue/test-utils";
@@ -66,7 +69,7 @@ function bookOf(sheet: Sheet, styles: CellStyle[] = [{}]): SpreadsheetModel {
 
 /** The composable over `sheet` at `zoom`, mounted so the viewport's
  * lifecycle hooks have an instance. */
-function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[] } = {}) {
+function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; showFormulas?: boolean } = {}) {
   const model = bookOf(sheet, options.styles);
   let bands!: ComputedRef<BandItem[]>;
   let viewport!: SheetViewport;
@@ -88,6 +91,7 @@ function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[] } = 
           merges: () => sheetMetrics.merges.value,
           selection: () => singleCell({ row: 0, col: 0 }),
           viewport,
+          showFormulas: () => options.showFormulas === true,
         }).bands;
         return () => h(SheetCellLayer, { bands: bands.value, frozenWidth: viewport.frozenW.value });
       },
@@ -299,5 +303,52 @@ describe("cellAttributes", () => {
     const sheet = sheetOf([[1, 0, "Tall"]], { merges: [{ top: 1, left: 0, bottom: 3, right: 0 }], frozen: { rows: 2, cols: 0 } });
     const { bands } = setup(sheet);
     expect(cellAttributes(drawn(bands.value, "A2").copies[0]!.cell)).toEqual({ "aria-hidden": "true" });
+  });
+});
+
+describe("useSheetCells — Show formulas (SPEC-119)", () => {
+  /** A1 a right-aligned "0.00" formula cell, B1 the same style on a
+   * constant, C1 a date serial, A2:A3 an array (A3 a member), D1 text. */
+  function formulaSheet(): Sheet {
+    const rows: Row[] = [
+      {
+        index: 0,
+        cells: [
+          { col: 0, value: 60, formula: "SUM(B2:B4)", styleId: 1 },
+          { col: 1, value: 1234.5, styleId: 1 },
+          { col: 2, value: 46303, styleId: 2 },
+          { col: 3, value: "text" },
+        ],
+      },
+      { index: 1, cells: [{ col: 0, value: 6, formula: "B2:B3*2", arrayRange: { top: 1, left: 0, bottom: 2, right: 0 } }] },
+      { index: 2, cells: [{ col: 0, value: 4 }] },
+    ];
+    return { ...sheetOf([]), rows };
+  }
+  const STYLES: CellStyle[] = [{}, { numberFormat: "0.00", alignment: { horizontal: "right" } }, { numberFormat: "m/d/yyyy", builtinFormatId: 14 }];
+
+  const text = (bands: BandItem[], address: string): CellItem => drawn(bands, address).elements[0]!.cell;
+
+  it("shows each formula as '=' + formula, left-aligned as text, and each constant's General text", () => {
+    const { bands } = setup(formulaSheet(), { styles: STYLES, showFormulas: true });
+    const a1 = text(bands.value, "A1");
+    expect(a1.text).toBe("=SUM(B2:B4)");
+    expect(a1.boxStyle["text-align"]).toBe("left");
+    expect(a1.kindClass).toBe("is-text");
+    expect(text(bands.value, "A2").text).toBe("{=B2:B3*2}");
+    expect(text(bands.value, "A3").text).toBe("{=B2:B3*2}");
+    expect(text(bands.value, "B1").text).toBe("1234.5");
+    expect(text(bands.value, "B1").boxStyle["text-align"]).toBe("right");
+    expect(text(bands.value, "C1").text).toBe("46303");
+    expect(text(bands.value, "D1").text).toBe("text");
+  });
+
+  it("shows the formatted values when it is off", () => {
+    const { bands } = setup(formulaSheet(), { styles: STYLES });
+    expect(text(bands.value, "A1").text).toBe("60.00");
+    expect(text(bands.value, "A1").boxStyle["text-align"]).toBe("right");
+    expect(text(bands.value, "B1").text).toBe("1234.50");
+    expect(text(bands.value, "C1").text).toMatch(/^#+$/); // a date never shrinks: too narrow, it is #
+    expect(text(bands.value, "A3").text).toBe("4");
   });
 });

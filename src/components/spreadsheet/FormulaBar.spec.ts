@@ -41,6 +41,17 @@ describe("FormulaBar", () => {
     expect(content.classes()).toContain("formula-bar-content");
   });
 
+  it("mutes a dynamic array member's formula (SPEC-119): data-spill-member and the muted class, only then", async () => {
+    const wrapper = mount(FormulaBar, { props: { address: "H3", content: "=SORT(A2:A6)", spillMember: true } });
+    const content = wrapper.get('[data-testid="formula-bar-content"]');
+    expect(content.text()).toBe("=SORT(A2:A6)");
+    expect(content.attributes("data-spill-member")).toBe("true");
+    expect(content.classes()).toContain("is-spill-member");
+    await wrapper.setProps({ address: "H2", spillMember: false });
+    expect(content.attributes("data-spill-member")).toBeUndefined();
+    expect(content.classes()).not.toContain("is-spill-member");
+  });
+
   it("is empty for an empty active cell", () => {
     const wrapper = mount(FormulaBar, { props: { address: "Z99", content: "" } });
     expect(wrapper.get('[data-testid="formula-bar-content"]').element.textContent).toBe("");
