@@ -79,7 +79,10 @@ describe("Content-Security-Policy", () => {
     // Nothing in the app submits a form or rewrites the document base.
     expect(sources("base-uri")).toEqual(["'none'"]);
     expect(sources("form-action")).toEqual(["'none'"]);
-    expect(sources("frame-src")).toEqual(["'none'"]);
+    // The only frame the app causes is Chromium's PDF viewer over a blob: URL
+    // (pinned with its reason below). Nothing remote is ever framed, so no
+    // host, no network scheme and no wildcard may join it.
+    expect(sources("frame-src")).toEqual(["blob:"]);
   });
 
   it("allows the Google Fonts pair index.html actually loads, and nothing else remote", () => {
@@ -95,6 +98,10 @@ describe("Content-Security-Policy", () => {
     // blob: URL (components/media/MediaPdfEmbed.vue), so object-src cannot
     // be 'none' here the way it usually would be.
     expect(sources("object-src")).toContain("blob:");
+    // Chromium hosts that viewer in a frame inside the <object> and checks
+    // the frame against frame-src too, so frame-src cannot be 'none' either:
+    // it refused every PDF (e2e/SPEC-107.pdf-viewer.spec.ts).
+    expect(sources("frame-src")).toContain("blob:");
     // Downloads, image rasters and the media surfaces are all blob:/data:.
     expect(sources("img-src")).toEqual(expect.arrayContaining(["'self'", "data:", "blob:"]));
     expect(sources("media-src")).toEqual(expect.arrayContaining(["'self'", "data:", "blob:"]));
