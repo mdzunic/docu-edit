@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { equalBytes } from "../src/lib/core/equality";
 import { unzip } from "../src/lib/core/zip";
+import { zip } from "../src/lib/core/zipWriter";
 
 // SPEC-116 — workbooks in the library: the full journey (AC-82..84). Drop
 // mini-book.xlsx (Excel-shaped) → its library row carries an XLSX badge and
@@ -150,4 +151,58 @@ test("workbooks are first-class: drop, open, tabs, download, kind guard, filter 
   await page.getByTestId("filter-ods").click();
   await expect(page.getByTestId("library-row")).toHaveCount(1);
   await expect(page.getByTestId("library-row").getByTestId("row-format")).toHaveText("ODS");
+});
+
+/** A 1,000,000-row workbook in a few hundred bytes: LibreOffice's repeat
+ * attributes expand into 999,950 one-cell rows and then 50 rows of 30 cells
+ * (1,001,450 cells, under the 2,000,000 ceiling) — so the last used row's
+ * neighbourhood is as full as a viewport can get. */
+async function millionRowOds(): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const cell = (value: number, repeat = 1) =>
+    `<table:table-cell office:value-type="float" office:value="${value}"${repeat > 1 ? ` table:number-columns-repeated="${repeat}"` : ""}/>`;
+  const content =
+    `<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+    `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.3"><office:body><office:spreadsheet>` +
+    `<table:table table:name="Million"><table:table-row table:number-rows-repeated="999950">${cell(1)}</table:table-row>` +
+    `<table:table-row table:number-rows-repeated="50">${cell(7, 30)}</table:table-row></table:table>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
+    { name: "content.xml", data: encoder.encode(content) },
+  ]);
+}
+
+test("a 1,000,000-row sheet scrolled to its last used row keeps fewer than 2,000 cells mounted (AC-69)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("app-bar")).toBeVisible();
+  const transfer = await page.evaluateHandle(
+    (base64) => {
+      const dt = new DataTransfer();
+      const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+      dt.items.add(new File([bytes], "million.ods", { type: "application/vnd.oasis.opendocument.spreadsheet" }));
+      return dt;
+    },
+    Buffer.from(await millionRowOds()).toString("base64"),
+  );
+  await page.dispatchEvent("body", "drop", { dataTransfer: transfer });
+  await expect(page).toHaveURL(/\/sheets\/.+/);
+  const grid = page.getByTestId("spreadsheet-grid");
+  await expect(cell(page, "A1")).toHaveText("1");
+
+  // Scroll to the last used row (1,000,000). The extent runs past it, and
+  // above 15,000,000 px the scroll offset maps onto rows proportionally — so
+  // aim the viewport's middle at that row through the same mapping.
+  await grid.evaluate((element) => {
+    const rowHeight = 20;
+    const view = element.clientHeight - rowHeight;
+    const canvas = parseFloat((element.querySelector(".grid-canvas") as HTMLElement).style.height);
+    const totalPx = (999_999 + 100) * rowHeight;
+    const virtual = 999_999 * rowHeight - view / 2;
+    element.scrollTop = Math.round((virtual / (totalPx - view)) * (canvas - view));
+  });
+  await expect(cell(page, "A1000000")).toBeVisible();
+  await expect(cell(page, "P1000000")).toHaveText("7");
+  expect(await page.getByTestId("sheet-cell").count()).toBeLessThan(2000);
+  await expect(page.locator('[role="rowheader"]').filter({ hasText: /^1000000$/ })).toBeVisible();
 });
