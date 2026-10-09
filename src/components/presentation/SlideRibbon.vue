@@ -74,6 +74,8 @@ const props = defineProps({
   headerFooterOpen: { type: Boolean, default: false },
   /** SPEC-097: the Text panel (lists, spacing, autofit, text body). */
   textOpen: { type: Boolean, default: false },
+  /** SPEC-099: the slide sorter is showing in place of filmstrip + stage. */
+  sorterOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -88,6 +90,7 @@ const emit = defineEmits([
   "media-toggle",
   "header-footer-toggle",
   "text-toggle",
+  "sorter-toggle",
 ]);
 
 /** Which slotted strip is showing. Both stay mounted (v-show, not v-if): the
@@ -113,6 +116,9 @@ const PANELS = [
   { id: "design", label: "Design", testid: "slides-theme-toggle", open: () => props.themeOpen, toggle: () => emit("theme-toggle") },
   { id: "text", label: "Text", testid: "slides-text-toggle", open: () => props.textOpen, toggle: () => emit("text-toggle") },
   { id: "transition", label: "Transitions", testid: "slides-transition-toggle", open: () => props.transitionOpen, toggle: () => emit("transition-toggle") },
+  // SPEC-099: not a side panel but the slide sorter view, which swaps in for
+  // the filmstrip + stage — a pressed toggle all the same, beside Transitions.
+  { id: "sorter", label: "Sorter", testid: "slides-sorter-toggle", open: () => props.sorterOpen, toggle: () => emit("sorter-toggle") },
   { id: "animate", label: "Animate", testid: "slides-animate-toggle", open: () => props.animateOpen, toggle: () => emit("animate-toggle") },
   { id: "table", label: "Table", testid: "slides-table-toggle", open: () => props.tableOpen, toggle: () => emit("table-toggle") },
   { id: "media", label: "Media", testid: "slides-media-toggle", open: () => props.mediaOpen, toggle: () => emit("media-toggle") },

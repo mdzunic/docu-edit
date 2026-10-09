@@ -146,6 +146,10 @@ export interface Preferences {
    * and text-body controls) is expanded (SPEC-097). Per-device, default
    * collapsed. */
   presentationTextOpen: boolean;
+  /** Whether the presentation editor shows the slide sorter (the grid of
+   * every slide, SPEC-099) in place of the filmstrip + stage. Per-device,
+   * default off. */
+  presentationSorterOpen: boolean;
   /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
   snapToGuides: boolean;
   /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
@@ -217,6 +221,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationMediaOpen: false,
   presentationThemeOpen: false, // SPEC-094 Design panel
   presentationTextOpen: false, // SPEC-097 Text panel
+  presentationSorterOpen: false, // SPEC-099 slide sorter
   presentationTableOpen: false,
   snapToGuides: true,
   snapToGrid: false,
@@ -294,6 +299,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationMediaOpen: isBoolean,
   presentationThemeOpen: isBoolean,
   presentationTextOpen: isBoolean,
+  presentationSorterOpen: isBoolean,
   presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,
   snapToGrid: isBoolean,

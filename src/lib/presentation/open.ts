@@ -63,6 +63,10 @@ export function assemblePresentation(
   if (parsed.odpContentEnvelope) {
     model.odpContentEnvelope = parsed.odpContentEnvelope;
   }
+  // Absent unless the package declares sections (SPEC-099); `[]` never stored.
+  if (parsed.sections && parsed.sections.length > 0) {
+    model.sections = parsed.sections;
+  }
   return model;
 }
 

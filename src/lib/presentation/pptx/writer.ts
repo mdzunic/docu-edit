@@ -51,6 +51,7 @@ import { spliceThemeXml } from "./theme";
 import { now as clockNow } from "../../core/clock";
 import { chartPartXml } from "../../core/chartPartOoxml";
 import { bulletImageIdsOf, collectRelNeeds, HYPERLINK_RELATIONSHIP } from "./textDepthWire";
+import { spliceSectionLst } from "./sections";
 
 const IMAGE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 
@@ -850,13 +851,15 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
   const notesMasterIdLst = anyNotes ? `<p:notesMasterIdLst><p:notesMasterId r:id="${notesMasterRelId}"/></p:notesMasterIdLst>` : "";
   const firstSlideNumAttr = model.firstSlideNumber !== undefined ? ` firstSlideNum="${model.firstSlideNumber}"` : "";
   const showSpecialAttr = model.headerFooter?.showOnTitleSlide === false ? ` showSpecialPlsOnTitleSld="0"` : "";
-  const presentation =
+  const presentation = spliceSectionLst(
     `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"${firstSlideNumAttr}${showSpecialAttr}>` +
-    `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
-    notesMasterIdLst +
-    `<p:sldIdLst>${sldIdLst}</p:sldIdLst>` +
-    `<p:sldSz cx="${cmToEmu(model.slideWidthCm)}" cy="${cmToEmu(model.slideHeightCm)}"/>` +
-    `<p:notesSz cx="6858000" cy="9144000"/></p:presentation>`;
+      `<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>` +
+      notesMasterIdLst +
+      `<p:sldIdLst>${sldIdLst}</p:sldIdLst>` +
+      `<p:sldSz cx="${cmToEmu(model.slideWidthCm)}" cy="${cmToEmu(model.slideHeightCm)}"/>` +
+      `<p:notesSz cx="6858000" cy="9144000"/></p:presentation>`,
+    model,
+  );
 
   const core = buildCorePropertiesXml(coreInputFor(model), modified);
 
@@ -1102,6 +1105,8 @@ function buildSubstitution(model: PresentationModel, parts: Map<string, Uint8Arr
   // then (deck-level change only) the slide size and first-slide-number origin.
   const sldIdLstInner = emitted.map((entry, index) => `<p:sldId id="${256 + index}" r:id="${entry.relId}"/>`).join("");
   let rebuiltPresXml = spliceSldIdLst(origPresXml, `<p:sldIdLst>${sldIdLstInner}</p:sldIdLst>`);
+  // Section membership is recomputed against those fresh ids (SPEC-099).
+  rebuiltPresXml = spliceSectionLst(rebuiltPresXml, model);
   if (deckDirty) {
     rebuiltPresXml = spliceSldSz(rebuiltPresXml, model);
     rebuiltPresXml = applyFirstSlideNum(rebuiltPresXml, model.firstSlideNumber);

@@ -10,10 +10,10 @@
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import UiButton from "../components/ui/UiButton.vue";
+import PresentationNotFound from "../components/presentation/PresentationNotFound.vue";
 import DeckBody from "../components/presentation/DeckBody.vue";
-import { stageFields } from "../components/presentation/slideRender";
-import { now } from "../lib/clock";
+import SlideSorter from "../components/presentation/SlideSorter.vue";
+import ReuseSlidesDialog from "../components/presentation/ReuseSlidesDialog.vue";
 import SlideToolbarHost from "../components/presentation/SlideToolbarHost.vue";
 import SlideRibbon from "../components/presentation/SlideRibbon.vue";
 import DeckAppBar from "../components/presentation/DeckAppBar.vue";
@@ -23,18 +23,16 @@ import ThemesPanel from "../components/presentation/ThemesPanel.vue";
 import TextPanel from "../components/presentation/TextPanel.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
-import { formatBadgeLabel, presentationFormatLabel } from "../lib/format";
 import { useDeckLoad } from "./presentation/useDeckLoad";
 import { usePresentationUndo } from "./presentation/usePresentationUndo";
-import { useSlideCommands } from "./presentation/useSlideCommands";
+import { useDeckNavigation } from "./presentation/useDeckNavigation";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useNotes } from "./presentation/useNotes";
 import { useEditingPanels } from "./presentation/useEditingPanels";
 import { useDeckTheme } from "./presentation/useDeckTheme";
-import { useFilmstripCommands } from "./presentation/useFilmstripCommands";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
-import { useDeckFacts } from "./presentation/useDeckFacts";
+import { useSlideSorter } from "./presentation/useSlideSorter";
 import { usePresentationMenu } from "./presentation/usePresentationMenu";
 import PresentationMenuBar from "../components/presentation/PresentationMenuBar.vue";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
@@ -78,21 +76,10 @@ const { commit, refresh, bumpMedia, saveState, saveStateText } = useSlideRender(
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
 const canUndo = slideUndo.canUndo;
 const canRedo = slideUndo.canRedo;
-const slideCommands = useSlideCommands({
-  model: presentation,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-});
-
-function addSlideAction() {
-  slideCommands.add(currentIndex.value);
-}
-
-// The deck's derived facts (title/badge/counts/fields) live in a composable so
-// this file stays a wiring hub within its budget.
-const { title, badge, formatName, slideTotal, slideCountLabel, currentSlide, liveLabel, deckMedia, deckFields, selectSlide } =
-  useDeckFacts({ presentation, currentIndex });
+// Deck navigation — slide commands, derived facts, Add slide and the filmstrip
+// dispatch — lives in useDeckNavigation (SPEC-099 extraction).
+const { slideCommands, title, badge, formatName, slideTotal, slideCountLabel, currentSlide, liveLabel, deckMedia, deckFields, selectSlide, addSlideAction, onFilmstripCommand, onFilmstripReorder } =
+  useDeckNavigation({ presentation, currentIndex, record: slideUndo.record, commit, openLayoutForNew: () => layouts.openForNew(), openLayoutForChange: () => layouts.openForChange() });
 
 // --- deck header actions: download + playback entry (SPEC-080/084) ---------
 const deckActions = useDeckActions({
@@ -159,13 +146,8 @@ const layouts = useSlideLayouts({
   addSlide: slideCommands.add,
 });
 
-// --- filmstrip structural commands (SPEC-080) ------------------------------
-const filmstrip = useFilmstripCommands({
-  commands: slideCommands,
-  selectSlide,
-  openLayoutForNew: layouts.openForNew,
-  openLayoutForChange: layouts.openForChange,
-});
+// --- slide sorter, sections, slide clipboard, Reuse slides (SPEC-099) -----
+const sorter = useSlideSorter({ model: presentation, currentIndex, record: slideUndo.record, commit, reportError: (message) => addToast(message) });
 
 // --- deck setup: slide size, first slide number, metadata (SPEC-090) -------
 const deckSetup = useDeckSetup({
@@ -186,7 +168,7 @@ const menu = usePresentationMenu({
 });
 
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
-useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut]);
+useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut]);
 </script>
 
 <template>
@@ -214,6 +196,7 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
         :header-footer-open="headerFooter.open.value"
         :theme-open="themePanel.open.value"
         :text-open="textDepth.panelOpen.value"
+        :sorter-open="sorter.open.value"
         @undo="slideUndo.undo()"
         @redo="slideUndo.redo()"
         @notes-toggle="notes.toggle()"
@@ -225,6 +208,7 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
         @table-toggle="tables.toggle()"
         @media-toggle="media.toggle()"
         @header-footer-toggle="headerFooter.show()"
+        @sorter-toggle="sorter.toggle()"
       >
         <template #menu>
           <PresentationMenuBar
@@ -265,20 +249,10 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
         :deck-actions="deckActions"
       />
     </template>
-    <div
+    <PresentationNotFound
       v-if="!presentation"
-      class="state-panel"
-      data-testid="presentation-not-found"
-    >
-      <h2>Presentation not found</h2>
-      <p>This link doesn't match a presentation in your library.</p>
-      <UiButton
-        data-testid="presentation-back"
-        @click="router.push('/')"
-      >
-        Back to library
-      </UiButton>
-    </div>
+      @back="router.push('/')"
+    />
 
     <div
       v-else
@@ -286,6 +260,7 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
       data-testid="presentation-view"
     >
       <DeckBody
+        v-if="!sorter.open.value"
         :slides="presentation.slides"
         :width-cm="presentation.slideWidthCm"
         :height-cm="presentation.slideHeightCm"
@@ -302,10 +277,22 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
         :media-panel="media"
         :fields-by-slide="deckFields"
         :theme="themePanel.displayTheme.value"
+        :selection="sorter.selection"
         @select="selectSlide"
         @add="addSlideAction"
-        @command="filmstrip.onCommand"
-        @reorder="filmstrip.onReorder"
+        @command="onFilmstripCommand"
+        @reorder="onFilmstripReorder"
+      />
+      <SlideSorter
+        v-else
+        :controller="sorter"
+        :width-cm="presentation.slideWidthCm"
+        :height-cm="presentation.slideHeightCm"
+        :current-index="currentIndex"
+        :media="deckMedia"
+        :theme="themePanel.displayTheme.value"
+        :fields-by-slide="deckFields"
+        @command="onFilmstripCommand"
       />
       <ThemesPanel :controller="themePanel" />
       <TextPanel
@@ -319,6 +306,10 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
       :deck-setup="deckSetup"
       :slide-number="currentIndex + 1"
     />
+    <ReuseSlidesDialog
+      v-if="sorter.reuse.open.value"
+      :controller="sorter.reuse"
+    />
     <HeaderFooterDialog
       v-if="headerFooter.open.value"
       :controller="headerFooter"
@@ -328,32 +319,10 @@ useWindowKeys([stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onP
 </template>
 
 <style scoped>
-.state-panel {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  color: var(--text-primary);
-  text-align: center;
-  padding: var(--space-6);
-}
-
-.state-panel h2 {
-  margin: 0;
-}
-
-.state-panel p {
-  margin: 0;
-  color: var(--text-secondary);
-}
-
 .presentation {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
 }
-
 </style>
