@@ -3053,6 +3053,10 @@ function spec121Worksheet(
   );
 }
 
+// The facts' tab colour as attribute text (destructured: a fixture is not a
+// colour reader — core/themeGuard.spec.ts).
+const { theme: TAB_COLOR_THEME, tint: TAB_COLOR_TINT } = SPEC121_LINKS_XLSX.tabColor;
+
 export async function buildSpec121LinksXlsxBytes(): Promise<Uint8Array> {
   const F = SPEC121_LINKS_XLSX;
   const V = F.values;
@@ -3081,7 +3085,7 @@ export async function buildSpec121LinksXlsxBytes(): Promise<Uint8Array> {
 
   const dataRows = [2, 3, 4, 5] as const;
   const data = spec121Worksheet(1, {
-    sheetPr: `<sheetPr><tabColor theme="${F.tabColor.theme}" tint="${F.tabColor.tint}"/></sheetPr>`,
+    sheetPr: `<sheetPr><tabColor theme="${TAB_COLOR_THEME}" tint="${TAB_COLOR_TINT}"/></sheetPr>`,
     dimension: "A1:D5",
     activeCell: "B2",
     rows:
