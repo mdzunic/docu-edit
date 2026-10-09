@@ -3,7 +3,8 @@
 // plain GridRanges (model.ts); this module sorts them by top row and keeps a
 // running maximum of their bottom rows, so "which merges touch this window"
 // is a binary search plus a walk back over the candidates — O(log n + k) —
-// never a scan of every merge per cell.
+// never a scan of every merge per cell. paneMerges is that query as the
+// grid's cell layer asks it, pane by pane.
 import type { GridRange } from "./address";
 
 export interface MergeIndex {
@@ -73,6 +74,46 @@ export function mergeAt(index: MergeIndex, row: number, col: number): GridRange 
     }
   }
   return undefined;
+}
+
+/** A merge one pane of the grid draws, and the row whose element hosts it. */
+export interface PaneMerge<T> {
+  range: GridRange;
+  host: T;
+}
+
+/** The merges one pane of the grid draws (SPEC-117 "Merges", "Frozen panes
+ * and hidden rows and columns"): each merge sharing a cell with the pane's
+ * `window` that shows some of itself there, hosted by the first of the
+ * pane's `rendered` rows (its rows of non-zero height, ascending by index)
+ * inside the merge — so an anchor row that is hidden, or scrolled above the
+ * window, hands the merge to the first row that shows it. A merge whose rows
+ * or columns inside the window are all hidden is not drawn there. */
+export function paneMerges<T extends { index: number }>(
+  index: MergeIndex,
+  window: GridRange,
+  rendered: readonly T[],
+  colLeft: (col: number) => number,
+): PaneMerge<T>[] {
+  const out: PaneMerge<T>[] = [];
+  for (const range of mergesIn(index, window)) {
+    let lo = 0;
+    let hi = rendered.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (rendered[mid]!.index < range.top) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    const host = rendered[lo];
+    const shown = colLeft(Math.min(range.right, window.right) + 1) - colLeft(Math.max(range.left, window.left));
+    if (host !== undefined && host.index <= range.bottom && shown > 0) {
+      out.push({ range, host });
+    }
+  }
+  return out;
 }
 
 /** The merges a reader keeps, in source order (SPEC-117 "Model additions"):

@@ -11,11 +11,18 @@
 //   GRID_MAX_MOUNTED_CELLS positions; beyond that (zoomed far out) only
 //   stored cells, merge anchors and the active cell. Empty cells are
 //   transparent, so only a fill hides the gridlines under it.
-// - A merge intersecting the window renders once, as one element at its
-//   anchor sized to the range; its member cells render nothing.
-// - A string spills into empty neighbours by overflowExtent; the nearest
-//   string stored left (or right) of the window is mounted too, so a long
-//   title anchored off-screen still paints into view.
+// - A merge intersecting the window renders once, as one element sized to
+//   the range and hosted by the first rendered row it covers (paneMerges),
+//   so a hidden or scrolled-off anchor row still shows it; its member cells
+//   render nothing. The frozen panes scroll independently, so a merge that
+//   crosses a freeze line is that one element in the first pane showing it
+//   (its anchor's) plus, in each further pane, a `paintOnly` copy — the
+//   same paint, with no id, data-ref, role or ARIA.
+// - A string spills into empty neighbours by overflowExtent whenever it has
+//   room (its width is never measured, so the text box takes all the room
+//   and keeps its alignment); the nearest string stored left (or right) of
+//   the window is mounted too, so a long title anchored off-screen still
+//   paints into view.
 import { computed, type ComputedRef } from "vue";
 import { findRow, formatA1, getCell, type GridRange } from "../../lib/spreadsheet/address";
 import {
@@ -23,7 +30,6 @@ import {
   cellCss,
   diagonalLines,
   displayText,
-  estimateTextWidth,
   fillRepeat,
   offscreenSpillCandidate,
   overflowAlignment,
@@ -37,7 +43,7 @@ import {
   type EdgeSegment,
 } from "../../lib/spreadsheet/cellRender";
 import { CELL_PADDING_PX, type GridMetrics } from "../../lib/spreadsheet/geometry";
-import { mergeAt, mergesIn, type MergeIndex } from "../../lib/spreadsheet/merges";
+import { mergeAt, paneMerges, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selection";
 import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
@@ -67,6 +73,8 @@ export interface CellItem {
   rowSpan: number;
   colSpan: number;
   merged: boolean;
+  /** A merge's paint in a further frozen pane; its element is elsewhere. */
+  paintOnly: boolean;
   raised: boolean;
   selected: boolean;
   diagonal: ReturnType<typeof diagonalLines>;
@@ -201,7 +209,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     let textLeft = 0;
     let textWidth = place.width;
     const spill = merge ? null : overflowAlignment(style, value);
-    if (spill && text.length > 0 && estimateTextWidth(text, mdw) + 2 * CELL_PADDING_PX > place.width) {
+    if (spill && text.length > 0) {
       const room = overflowExtent(sheet, at.row, at.col, spill, deps.metrics(), deps.merges(), deps.viewport.frozenCols.value);
       if (room.left > 0 || room.right > 0) {
         raised = true;
@@ -219,8 +227,11 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       height: `${place.height}px`,
     };
     if (merge && boxStyle["background-color"] === undefined && boxStyle["background-image"] === undefined) {
-      // A merged range hides the gridlines inside it, as Excel draws it.
-      boxStyle["background-color"] = "#ffffff";
+      // A merged range hides the gridlines inside it, as Excel draws it, but
+      // not its own right and bottom ones (its last pixel column and row).
+      boxStyle["background-image"] = "linear-gradient(#ffffff, #ffffff)";
+      boxStyle["background-size"] = "calc(100% - 1px) calc(100% - 1px)";
+      boxStyle["background-repeat"] = "no-repeat";
     }
     const runs = cell?.runs && typeof value === "string" && horizontal !== "fill" ? cell.runs.map((run) => ({ text: run.text, style: run.font ? runCss(run.font, theme.value) : {} })) : null;
     return {
@@ -238,22 +249,31 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       rowSpan: merge ? merge.bottom - merge.top + 1 : 1,
       colSpan: merge ? merge.right - merge.left + 1 : 1,
       merged: merge !== undefined,
+      paintOnly: false,
       raised,
       selected: isCellSelected(deps.selection(), at.row, at.col),
       diagonal: diagonalLines(style, theme.value),
     };
   }
 
-  /** The cells of one row in one column window. */
-  function rowCells(
-    row: RowItem,
-    cols: AxisItem[],
-    dense: boolean,
-    colShift: number,
-    rowShift: number,
-    firstRow: number,
-    scrolled: boolean,
-  ): CellItem[] {
+  /** A merge's element hosted by `host` — or, `paintOnly`, its paint in a
+   * further pane. */
+  function mergeItem(range: GridRange, host: RowItem, colShift: number, paintOnly: boolean): CellItem {
+    const sheet = deps.sheet();
+    const m = deps.metrics();
+    const place = {
+      left: m.colLeft(range.left) - colShift,
+      top: m.rowTop(range.top) - m.rowTop(host.index),
+      width: m.colLeft(range.right + 1) - m.colLeft(range.left),
+      height: m.rowTop(range.bottom + 1) - m.rowTop(range.top),
+    };
+    const anchor = { row: range.top, col: range.left };
+    return { ...cellItem(findRow(sheet, range.top), getCell(sheet, range.top, range.left), anchor, place, range), paintOnly };
+  }
+
+  /** The unmerged cells of one row in one column window (the merge pass in
+   * `bands` draws the merges). */
+  function rowCells(row: RowItem, cols: AxisItem[], dense: boolean, colShift: number, scrolled: boolean): CellItem[] {
     if (cols.length === 0) {
       return [];
     }
@@ -266,29 +286,8 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     const lastCol = cols.at(-1)!.index;
     const active = deps.selection().active;
     const out: CellItem[] = [];
-    const placed = new Set<string>();
     const mount = (col: number, cell: Cell | undefined): void => {
-      const merge = mergeAt(merges, row.index, col);
-      if (merge) {
-        // The anchor renders once: in its own row, or in the band's first
-        // row when the anchor row is above the window.
-        const host = Math.max(merge.top, firstRow);
-        if (host !== row.index || placed.has(`${merge.top}:${merge.left}`)) {
-          return;
-        }
-        placed.add(`${merge.top}:${merge.left}`);
-        const anchorCell = merge.top === row.index && merge.left === col ? cell : getCell(sheet, merge.top, merge.left);
-        out.push(
-          cellItem(findRow(sheet, merge.top), anchorCell, { row: merge.top, col: merge.left }, {
-            left: m.colLeft(merge.left) - colShift,
-            top: m.rowTop(merge.top) - rowShift - row.top,
-            width: m.colLeft(merge.right + 1) - m.colLeft(merge.left),
-            height: m.rowTop(merge.bottom + 1) - m.rowTop(merge.top),
-          }, merge),
-        );
-        return;
-      }
-      if (m.colWidth(col) === 0) {
+      if (m.colWidth(col) === 0 || mergeAt(merges, row.index, col) !== undefined) {
         return;
       }
       out.push(cellItem(stored, cell, { row: row.index, col }, { left: m.colLeft(col) - colShift, top: 0, width: m.colWidth(col), height: row.height }, undefined));
@@ -318,9 +317,6 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       for (; i < cells.length && cells[i]!.col <= lastCol; i += 1) {
         mount(cells[i]!.col, cells[i]);
       }
-      for (const merge of mergesIn(merges, { top: row.index, left: firstCol, bottom: row.index, right: lastCol })) {
-        mount(Math.max(merge.left, firstCol), undefined);
-      }
       if (active.row === row.index && active.col >= firstCol && active.col <= lastCol && !cells.some((c) => c.col === active.col)) {
         mount(active.col, undefined);
       }
@@ -342,6 +338,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       { kind: "main" as const, items: rows.scrolled, top: vp.frozenH.value, height: Math.max(0, vp.viewRows.value - vp.frozenH.value), rowShift: vp.sy.value + vp.frozenH.value },
     ];
     const scrolledShift = vp.sx.value + vp.frozenW.value;
+    /** The merges given their one element so far, by anchor — the panes are
+     * visited top-left first, so an anchor that shows hosts its element. */
+    const placed = new Set<string>();
     for (const spec of specs) {
       if (spec.items.length === 0 || spec.height <= 0) {
         continue;
@@ -354,12 +353,20 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       }
       const firstRow = rowItems[0]!.index;
       for (const row of rowItems) {
-        row.frozen = rowCells(row, cols.frozen, dense, 0, spec.rowShift, firstRow, false);
-        row.scrolled = rowCells(row, cols.scrolled, dense, scrolledShift, spec.rowShift, firstRow, true);
+        row.frozen = rowCells(row, cols.frozen, dense, 0, false);
+        row.scrolled = rowCells(row, cols.scrolled, dense, scrolledShift, true);
       }
       const lastRow = spec.items.at(-1)!.index;
       const edgeWindow = (items: AxisItem[]): GridRange | null =>
         items.length > 0 ? { top: firstRow, left: items[0]!.index, bottom: lastRow, right: items.at(-1)!.index } : null;
+      for (const region of [{ key: "frozen" as const, cols: cols.frozen, shift: 0 }, { key: "scrolled" as const, cols: cols.scrolled, shift: scrolledShift }]) {
+        const window = edgeWindow(region.cols);
+        for (const { range, host } of window ? paneMerges(deps.merges(), window, rowItems, m.colLeft) : []) {
+          const anchor = `${range.top}:${range.left}`;
+          host[region.key].push(mergeItem(range, host, region.shift, placed.has(anchor)));
+          placed.add(anchor);
+        }
+      }
       const styleAt = (r: number, c: number): CellStyle => styleOf(effectiveStyleId(sheet, r, c));
       const borders = (items: AxisItem[], shiftX: number): BorderItem[] => {
         const window = edgeWindow(items);

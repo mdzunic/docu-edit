@@ -12,11 +12,13 @@
 // `bands` is useSheetCells' BandItem[] — the frozen rows, then the scrolled
 // rows — each split into the frozen-column and scrolled-column regions. A
 // cell's family is the resolved name; it is wrapped in SPEC-048's fontStack
-// here. Runtime prop declarations per the espree constraint (see
+// here. Each cell element's id, role, data-ref and ARIA come from
+// cellAttributes — none on a merge's paint-only copy in a further frozen
+// pane. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems } from "../../views/spreadsheet/sheetLayerProps";
+import { asBandItems, cellAttributes } from "../../views/spreadsheet/sheetLayerProps";
 
 const props = defineProps({
   /** The bands to draw (useSheetCells' BandItem[]). */
@@ -100,18 +102,10 @@ function px(value = 0) {
         >
           <div
             v-for="cell in region.cells"
-            :id="`sheet-cell-${cell.ref}`"
             :key="cell.key"
             class="sheet-cell"
-            :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised }]"
-            role="gridcell"
-            data-testid="sheet-cell"
-            :data-ref="cell.ref"
-            :aria-rowindex="cell.row + 2"
-            :aria-colindex="cell.col + 2"
-            :aria-rowspan="cell.rowSpan > 1 ? cell.rowSpan : undefined"
-            :aria-colspan="cell.colSpan > 1 ? cell.colSpan : undefined"
-            :aria-selected="cell.selected ? 'true' : 'false'"
+            :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
+            v-bind="cellAttributes(cell)"
             :style="cell.boxStyle"
           >
             <div
