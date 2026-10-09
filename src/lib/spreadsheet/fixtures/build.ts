@@ -36,6 +36,20 @@
 //   style-only cells, a merge, a frozen pane, 85% zoom, a two-range
 //   selection, a theme tab colour, a rich string), "Plain" (no gridlines) and
 //   "Split" (a split, not frozen, pane). SPEC117_STYLES_XLSX records the facts.
+// - spec118-formats.xlsx (SPEC-118) — Excel 365: `numFmts` with custom ids
+//   ≥ 164 ([$-F800] long date, [$€-407], red parentheses, # ??/??, a
+//   conditional pair, `;;;`, d-mmm-yyyy) and the explicit 43/44 Excel always
+//   writes; cells on built-ins 4, 9, 10, 11, 14, 22, 46 and 49; A2:A4 the
+//   same date-time under 14, 22 and the F800 code; serials 0, 60, 61; a
+//   narrow F (60 px — General drops to "1.23E+11") and G (30 px — a date
+//   shows only #). SPEC118_FORMATS_XLSX records the facts.
+// - spec118-generated.xlsx — openpyxl-shaped: inline strings, `t="d"` ISO
+//   dates under a General style, no theme, no numFmts (implied formats).
+// - spec118-formats.ods — LibreOffice-shaped data styles: N2/N2P0 (a red
+//   negative through style:map), a de-DE currency, a German long textual
+//   date, an elapsed time style, fraction, scientific, percentage, boolean,
+//   text, quarter + year, week-of-year and era styles, and unstyled date,
+//   time and percentage cells — 1899-12-25 among them (an ODS-only date).
 // spec116-numbers.xlsx is NOT built here — Apple Numbers exported it (see
 // e2e/fixtures/spec116-numbers.md); the specs read the committed file.
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
@@ -1538,4 +1552,404 @@ export async function buildSpec117StylesOdsBytes(): Promise<Uint8Array> {
     `</table:table>`;
 
   return loPackage(spec117OdsContent(styled + plain + split), loMeta("Spec 117 styles", 3, 36), spec117OdsSettings());
+}
+
+// ============================================================================
+// SPEC-118: number formats
+// ============================================================================
+
+/** The serial every SPEC-118 date fixture holds: 2026-10-08 13:45:00. */
+export const SPEC118_SERIAL = 46303.5729166667;
+
+/** spec118-formats.xlsx's custom number formats (ids ≥ 164), as Excel 365
+ * writes them, and the explicit entries it writes for 43 and 44. */
+export const SPEC118_NUMFMTS: Readonly<Record<number, string>> = {
+  43: '_(* #,##0.00_);_(* \\(#,##0.00\\);_(* "-"??_);_(@_)',
+  44: '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)',
+  164: "[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy",
+  165: "[$€-407]#,##0.00",
+  166: "0.00;[Red]\\(0.00\\)",
+  167: "# ??/??",
+  168: "[>100][Red]0;[Blue]0",
+  169: ";;;",
+  170: "#,##0.00_);[Red]\\(#,##0.00\\)",
+  171: "d-mmm-yyyy",
+};
+
+/** spec118-formats.xlsx's cellXfs, index → numFmtId (xf 1 is the bold header). */
+const SPEC118_XF_NUMFMTS = [0, 0, 14, 22, 164, 170, 4, 10, 46, 171, 9, 11, 49, 165, 166, 167, 168, 169, 43, 44] as const;
+
+/** The xf index of each format the "Formats" sheet uses. */
+export const SPEC118_XF = {
+  header: 1,
+  shortDate: 2, // 14
+  dateTime: 3, // 22
+  systemLongDate: 4, // 164 [$-F800]…
+  accountingRed: 5, // 170
+  number2: 6, // 4
+  percent2: 7, // 10
+  elapsed: 8, // 46
+  dMmmYyyy: 9, // 171
+  percent0: 10, // 9
+  scientific: 11, // 11
+  text: 12, // 49
+  euro: 13, // 165
+  redParens: 14, // 166
+  fraction: 15, // 167
+  conditional: 16, // 168
+  hidden: 17, // 169
+  comma: 18, // 43
+  currency: 19, // 44
+} as const;
+
+/** An attribute value as Excel escapes it (`&`, `<`, `"`). */
+function excelAttr(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;");
+}
+
+const SPEC118_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<numFmts count="${Object.keys(SPEC118_NUMFMTS).length}">` +
+  Object.entries(SPEC118_NUMFMTS)
+    .map(([id, code]) => `<numFmt numFmtId="${id}" formatCode="${excelAttr(code)}"/>`)
+    .join("") +
+  `</numFmts>` +
+  `<fonts count="2" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/>${SPEC117_FONT_TAIL}` +
+  `<font><b/><sz val="11"/><color theme="1"/>${SPEC117_FONT_TAIL}</fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="43" fontId="0" fillId="0" borderId="0" applyFont="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="44" fontId="0" fillId="0" borderId="0" applyFont="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+  `<cellXfs count="${SPEC118_XF_NUMFMTS.length}">` +
+  SPEC118_XF_NUMFMTS.map((numFmtId, index) => {
+    if (index === SPEC118_XF.header) {
+      return `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>`;
+    }
+    const xfId = numFmtId === 43 ? 1 : numFmtId === 44 ? 2 : 0;
+    return `<xf numFmtId="${numFmtId}" fontId="0" fillId="0" borderId="0" xfId="${xfId}"${numFmtId === 0 ? "" : ` applyNumberFormat="1"`}/>`;
+  }).join("") +
+  `</cellXfs>` +
+  `<cellStyles count="3"><cellStyle name="Comma" xfId="1" builtinId="3"/><cellStyle name="Currency" xfId="2" builtinId="4"/>` +
+  `<cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
+  `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">` +
+  `<x14:slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext></extLst></styleSheet>`;
+
+const SPEC118_STRINGS = ["Date", "Amount", "Ratio", "Hours", "Other", "Big", "Day", "Text value"] as const;
+
+/** What spec118-formats.xlsx holds (sheet "Formats", Calibri 11 — MDW 7), for
+ * the unit and e2e specs: each cell's value, xf and what en-US shows. */
+export const SPEC118_FORMATS_XLSX = {
+  sheetName: "Formats",
+  /** Column widths in px: A and B wide enough for the long texts, F narrow
+   * enough that General drops to "1.23E+11", G too narrow for any date. */
+  columnWidthsPx: { A: 200, B: 100, E: 100, F: 60, G: 30 },
+  cells: {
+    A2: { value: SPEC118_SERIAL, xf: SPEC118_XF.shortDate, enUS: "10/8/2026", deDE: "08.10.2026" },
+    A3: { value: SPEC118_SERIAL, xf: SPEC118_XF.dateTime, enUS: "10/8/2026 13:45", deDE: "08.10.2026 13:45" },
+    A4: { value: SPEC118_SERIAL, xf: SPEC118_XF.systemLongDate, enUS: "Thursday, October 8, 2026", deDE: "Donnerstag, 8. Oktober 2026" },
+    A6: { value: 0, xf: SPEC118_XF.dMmmYyyy, enUS: "0-Jan-1900" },
+    A7: { value: 60, xf: SPEC118_XF.dMmmYyyy, enUS: "29-Feb-1900" },
+    A8: { value: 61, xf: SPEC118_XF.dMmmYyyy, enUS: "1-Mar-1900" },
+    B2: { value: -1234.5, xf: SPEC118_XF.accountingRed, enUS: "(1,234.50)", deDE: "(1.234,50)", color: "#ff0000" },
+    B3: { value: 1234.5, xf: SPEC118_XF.euro, enUS: "€1,234.50" },
+    B4: { value: -3, xf: SPEC118_XF.redParens, enUS: "(3.00)", color: "#ff0000" },
+    B5: { value: 1234.5, xf: SPEC118_XF.number2, enUS: "1,234.50", deDE: "1.234,50" },
+    B6: { value: 150, xf: SPEC118_XF.conditional, enUS: "150", color: "#ff0000" },
+    B7: { value: -5, xf: SPEC118_XF.conditional, enUS: "-5", color: "#0000ff" },
+    C2: { value: 0.125, xf: SPEC118_XF.percent2, enUS: "12.50%", deDE: "12,50%" },
+    D2: { value: 1.5, xf: SPEC118_XF.elapsed, enUS: "36:00:00" },
+    E2: { value: 0.25, xf: SPEC118_XF.percent0, enUS: "25%" },
+    E3: { value: 12345, xf: SPEC118_XF.scientific, enUS: "1.23E+04" },
+    E4: { value: "Text value", xf: SPEC118_XF.text, enUS: "Text value" },
+    E5: { value: 3.14159265358979, xf: SPEC118_XF.fraction, enUS: "3 14/99" },
+    E6: { value: 42, xf: SPEC118_XF.hidden, enUS: "" },
+    E7: { value: 1234.5, xf: SPEC118_XF.comma },
+    E8: { value: -1234.5, xf: SPEC118_XF.currency },
+    F2: { value: 123456789012, xf: 0, enUS: "1.23E+11" },
+    G2: { value: 46303, xf: SPEC118_XF.shortDate, enUS: "###" },
+  },
+  /** The formula bar for A2:A4 (the same serial). */
+  editText: { enUS: "10/8/2026 1:45:00 PM", deDE: "08.10.2026 13:45:00" },
+} as const;
+
+export async function buildSpec118FormatsXlsxBytes(): Promise<Uint8Array> {
+  const X = SPEC118_XF;
+  const C = SPEC118_FORMATS_XLSX.cells;
+  const text = (ref: string, value: (typeof SPEC118_STRINGS)[number], style?: number): string => sharedCell(ref, SPEC118_STRINGS.indexOf(value), style);
+  const row = (r: number, cells: string): string => `<row r="${r}" spans="1:7" x14ac:dyDescent="0.25">${cells}</row>`;
+  const rows = [
+    row(
+      1,
+      text("A1", "Date", X.header) + text("B1", "Amount", X.header) + text("C1", "Ratio", X.header) + text("D1", "Hours", X.header) +
+        text("E1", "Other", X.header) + text("F1", "Big", X.header) + text("G1", "Day", X.header),
+    ),
+    row(
+      2,
+      numberCell("A2", C.A2.value, C.A2.xf) + numberCell("B2", C.B2.value, C.B2.xf) + numberCell("C2", C.C2.value, C.C2.xf) +
+        numberCell("D2", C.D2.value, C.D2.xf) + numberCell("E2", C.E2.value, C.E2.xf) + numberCell("F2", C.F2.value) + numberCell("G2", C.G2.value, C.G2.xf),
+    ),
+    row(3, numberCell("A3", C.A3.value, C.A3.xf) + numberCell("B3", C.B3.value, C.B3.xf) + numberCell("E3", C.E3.value, C.E3.xf)),
+    row(4, numberCell("A4", C.A4.value, C.A4.xf) + numberCell("B4", C.B4.value, C.B4.xf) + text("E4", "Text value", C.E4.xf)),
+    row(5, numberCell("B5", C.B5.value, C.B5.xf) + numberCell("E5", C.E5.value, C.E5.xf)),
+    row(6, numberCell("A6", C.A6.value, C.A6.xf) + numberCell("B6", C.B6.value, C.B6.xf) + numberCell("E6", C.E6.value, C.E6.xf)),
+    row(7, numberCell("A7", C.A7.value, C.A7.xf) + numberCell("B7", C.B7.value, C.B7.xf) + numberCell("E7", C.E7.value, C.E7.xf)),
+    row(8, numberCell("A8", C.A8.value, C.A8.xf) + numberCell("E8", C.E8.value, C.E8.xf)),
+  ].join("");
+  // Widths through Excel's own px → characters inverse at MDW 7.
+  const width = (px: number): number => pxToXlsxWidthMdw7(px);
+  const W = SPEC118_FORMATS_XLSX.columnWidthsPx;
+  const sheet =
+    XML_DECLARATION +
+    worksheetOpen("D6F4B8C0-2E5A-4C9D-9F4B-6A8C0E2F4A18") +
+    `<dimension ref="A1:G8"/><sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    SPEC117_FORMAT_PR +
+    `<cols><col min="1" max="1" width="${width(W.A)}" customWidth="1"/><col min="2" max="2" width="${width(W.B)}" customWidth="1"/>` +
+    `<col min="5" max="5" width="${width(W.E)}" customWidth="1"/><col min="6" max="6" width="${width(W.F)}" customWidth="1"/>` +
+    `<col min="7" max="7" width="${width(W.G)}" customWidth="1"/></cols>` +
+    `<sheetData>${rows}</sheetData>${SPEC117_PAGE_MARGINS}</worksheet>`;
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${sharedStringReferences(sheet)}" uniqueCount="${SPEC118_STRINGS.length}">` +
+    SPEC118_STRINGS.map((value) => `<si><t>${value}</t></si>`).join("") +
+    `</sst>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: "Formats",
+    sheets: [{ name: SPEC118_FORMATS_XLSX.sheetName, xml: sheet }],
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="166925"/>`,
+    theme: SPEC117_THEME,
+    styles: SPEC118_STYLES,
+  });
+}
+
+/** Excel's px → `<col width>` inverse for a 7 px maximum digit width
+ * (geometry.ts pxToXlsxWidth, restated so the builders stay self-contained). */
+function pxToXlsxWidthMdw7(px: number): number {
+  const mdw = 7;
+  const characters = Math.trunc(((px - 5) / mdw) * 100 + 0.5) / 100;
+  return Math.trunc(((characters * mdw + 5) / mdw) * 256) / 256;
+}
+
+// --- openpyxl -----------------------------------------------------------------
+
+const OPENPYXL_DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n`;
+
+/** What spec118-generated.xlsx holds: an openpyxl-shaped workbook whose
+ * dates are `t="d"` ISO values under a General style (no theme, no numFmts)
+ * — the reader gives them the implied `yyyy-mm-dd` (+ time) format. */
+export const SPEC118_GENERATED_XLSX = {
+  sheetName: "Generated",
+  cells: {
+    A1: "Created",
+    B1: { iso: "2026-10-08T13:45:00", shows: "2026-10-08 13:45:00" },
+    A2: "Due",
+    B2: { iso: "2026-10-08T00:00:00", shows: "2026-10-08", styleId: 0 },
+    A3: "Centred",
+    B3: { iso: "2026-10-09T00:00:00", shows: "2026-10-09", styleId: 1 },
+  },
+} as const;
+
+export async function buildSpec118GeneratedXlsxBytes(): Promise<Uint8Array> {
+  const G = SPEC118_GENERATED_XLSX.cells;
+  const inline = (ref: string, value: string): string => `<c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c>`;
+  const sheet =
+    OPENPYXL_DECLARATION +
+    `<worksheet xmlns="${MAIN_NS}"><sheetPr><outlinePr summaryBelow="1" summaryRight="1"/><pageSetUpPr/></sheetPr><dimension ref="A1:B3"/>` +
+    `<sheetViews><sheetView workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr baseColWidth="8" defaultRowHeight="15"/><cols><col min="2" max="2" width="22" customWidth="1"/></cols><sheetData>` +
+    `<row r="1">${inline("A1", G.A1)}<c r="B1" t="d"><v>${G.B1.iso}</v></c></row>` +
+    `<row r="2">${inline("A2", G.A2)}<c r="B2" s="0" t="d"><v>${G.B2.iso}</v></c></row>` +
+    `<row r="3">${inline("A3", G.A3)}<c r="B3" s="1" t="d"><v>${G.B3.iso}</v></c></row>` +
+    `</sheetData><pageMargins left="0.75" right="0.75" top="1" bottom="1" header="0.5" footer="0.5"/></worksheet>`;
+  const styles =
+    OPENPYXL_DECLARATION +
+    `<styleSheet xmlns="${MAIN_NS}"><fonts count="1"><font><name val="Calibri"/><family val="2"/><color theme="1"/><sz val="11"/><scheme val="minor"/></font></fonts>` +
+    `<fills count="2"><fill><patternFill/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+    `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+    `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+    `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" pivotButton="0" quotePrefix="0" xfId="0"/>` +
+    `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1" pivotButton="0" quotePrefix="0" xfId="0"><alignment horizontal="center"/></xf></cellXfs>` +
+    `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0" hidden="0"/></cellStyles>` +
+    `<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+  const workbook =
+    OPENPYXL_DECLARATION +
+    `<workbook xmlns="${MAIN_NS}"><workbookPr/><workbookProtection/><bookViews><workbookView visibility="visible" minimized="0" ` +
+    `showHorizontalScroll="1" showVerticalScroll="1" showSheetTabs="1" tabRatio="600" firstSheet="0" activeTab="0" autoFilterDateGrouping="1"/>` +
+    `</bookViews><sheets><sheet xmlns:r="${REL_NS}" name="${SPEC118_GENERATED_XLSX.sheetName}" sheetId="1" state="visible" r:id="rId1"/></sheets>` +
+    `<definedNames/><calcPr calcId="124519" fullCalcOnLoad="1"/></workbook>`;
+  const contentTypes =
+    OPENPYXL_DECLARATION +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
+    `<Default Extension="xml" ContentType="application/xml"/>` +
+    `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
+    `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="${WORKSHEET_CONTENT_TYPE}"/>` +
+    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+    `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
+    `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
+  return zip([
+    part(
+      "docProps/app.xml",
+      OPENPYXL_DECLARATION +
+        `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>Microsoft Excel</Application>` +
+        `<AppVersion>3.1</AppVersion></Properties>`,
+    ),
+    part(
+      "docProps/core.xml",
+      OPENPYXL_DECLARATION +
+        `<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ` +
+        `xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" ` +
+        `xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:creator>openpyxl</dc:creator>` +
+        `<dcterms:created xsi:type="dcterms:W3CDTF">2026-10-08T12:00:00Z</dcterms:created>` +
+        `<dcterms:modified xsi:type="dcterms:W3CDTF">2026-10-08T12:00:00Z</dcterms:modified></cp:coreProperties>`,
+    ),
+    part("xl/worksheets/sheet1.xml", sheet),
+    part("xl/styles.xml", styles),
+    part("xl/workbook.xml", workbook),
+    part(
+      "xl/_rels/workbook.xml.rels",
+      OPENPYXL_DECLARATION +
+        `<Relationships xmlns="${PKG_REL_NS}"><Relationship Type="${REL_TYPE}/worksheet" Target="/xl/worksheets/sheet1.xml" Id="rId1"/>` +
+        `<Relationship Type="${REL_TYPE}/styles" Target="styles.xml" Id="rId2"/></Relationships>`,
+    ),
+    part(
+      "_rels/.rels",
+      OPENPYXL_DECLARATION +
+        `<Relationships xmlns="${PKG_REL_NS}"><Relationship Type="${REL_TYPE}/officeDocument" Target="xl/workbook.xml" Id="rId1"/>` +
+        `<Relationship Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml" Id="rId2"/>` +
+        `<Relationship Type="${REL_TYPE}/extended-properties" Target="docProps/app.xml" Id="rId3"/></Relationships>`,
+    ),
+    part("[Content_Types].xml", contentTypes),
+  ]);
+}
+
+// --- LibreOffice data styles ----------------------------------------------------
+
+/** spec118-formats.ods's data styles (Calc 24.8 shapes, content.xml's
+ * automatic styles), each with the table-cell style ceN that names it. */
+const SPEC118_ODS_DATA_STYLES =
+  // N2: 0.00;[Red]-0.00 — LibreOffice's red negative, the positive half a P0 sub-style.
+  `<number:number-style style:name="N2P0" style:volatile="true"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/></number:number-style>` +
+  `<number:number-style style:name="N2"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text>` +
+  `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+  `<style:map style:condition="value()&gt;=0" style:apply-style-name="N2P0"/></number:number-style>` +
+  // N3: euro, German — #,##0.00 [$€-407] with a red negative.
+  `<number:currency-style style:name="N3P0" style:volatile="true" number:language="de" number:country="DE">` +
+  `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1" number:grouping="true"/>` +
+  `<number:text> </number:text><number:currency-symbol number:language="de" number:country="DE">€</number:currency-symbol></number:currency-style>` +
+  `<number:currency-style style:name="N3" number:language="de" number:country="DE"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text>` +
+  `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1" number:grouping="true"/>` +
+  `<number:text> </number:text><number:currency-symbol number:language="de" number:country="DE">€</number:currency-symbol>` +
+  `<style:map style:condition="value()&gt;=0" style:apply-style-name="N3P0"/></number:currency-style>` +
+  // N4: a long textual date in German, whatever the reader's locale.
+  `<number:date-style style:name="N4" number:language="de" number:country="DE"><number:day-of-week number:style="long"/><number:text>, </number:text>` +
+  `<number:day/><number:text>. </number:text><number:month number:style="long" number:textual="true"/><number:text> </number:text>` +
+  `<number:year number:style="long"/></number:date-style>` +
+  // N5: [HH]:MM:SS — elapsed hours.
+  `<number:time-style style:name="N5" number:truncate-on-overflow="false"><number:hours number:style="long"/><number:text>:</number:text>` +
+  `<number:minutes number:style="long"/><number:text>:</number:text><number:seconds number:style="long"/></number:time-style>` +
+  // N6: # ??/??
+  `<number:number-style style:name="N6"><number:fraction number:min-integer-digits="0" number:min-numerator-digits="2" ` +
+  `number:min-denominator-digits="2" loext:max-numerator-digits="2" number:max-denominator-value="99"/></number:number-style>` +
+  // N7: 0.00E+00
+  `<number:number-style style:name="N7"><number:scientific-number number:decimal-places="2" number:min-decimal-places="2" ` +
+  `number:min-integer-digits="1" number:min-exponent-digits="2" number:exponent-interval="1" number:forced-exponent-sign="true"/></number:number-style>` +
+  // N8: 0.00%
+  `<number:percentage-style style:name="N8"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+  `<number:text>%</number:text></number:percentage-style>` +
+  // N9: BOOLEAN
+  `<number:boolean-style style:name="N9"><number:boolean/></number:boolean-style>` +
+  // N10: "Note: "@
+  `<number:text-style style:name="N10"><number:text>Note: </number:text><number:text-content/></number:text-style>` +
+  // N11: Q YYYY
+  `<number:date-style style:name="N11"><number:quarter/><number:text> </number:text><number:year number:style="long"/></number:date-style>` +
+  // N12: "Week "WW
+  `<number:date-style style:name="N12"><number:text>Week </number:text><number:week-of-year/></number:date-style>` +
+  // N13: an era — out of scope, read as General.
+  `<number:date-style style:name="N13" number:language="ja" number:country="JP"><number:era number:style="long"/><number:year/></number:date-style>`;
+
+/** What spec118-formats.ods holds (table "Formats": a label in A, the value
+ * in the wide B), for the unit and e2e specs. */
+export const SPEC118_FORMATS_ODS = {
+  tableName: "Formats",
+  rows: {
+    2: { label: "Red negative", style: "ce1", code: "0.00;[Red]-0.00", enUS: "-1.00", deDE: "-1,00", color: "#ff0000" },
+    3: { label: "Currency", style: "ce2", code: "#,##0.00 [$€-407];[Red]-#,##0.00 [$€-407]", enUS: "1,234.50 €", deDE: "1.234,50 €" },
+    4: { label: "Long date", style: "ce3", code: "[$-407]dddd, d. mmmm yyyy", enUS: "Donnerstag, 8. Oktober 2026" },
+    5: { label: "Elapsed", style: "ce4", code: "[hh]:mm:ss", enUS: "36:00:00" },
+    6: { label: "Fraction", style: "ce5", code: "# ??/??", enUS: "3 14/99" },
+    7: { label: "Scientific", style: "ce6", code: "0.00E+00", enUS: "1.23E+04" },
+    8: { label: "Percent", style: "ce7", code: "0.00%", enUS: "12.50%" },
+    9: { label: "Boolean", style: "ce8", code: '"TRUE";"TRUE";"FALSE"', enUS: "TRUE" },
+    10: { label: "Text", style: "ce9", code: '"Note: "@', enUS: "Note: ok" },
+    11: { label: "Quarter", style: "ce10", code: "Q yyyy", enUS: "Q4 2026" },
+    12: { label: "Week", style: "ce11", code: '"Week "WW', enUS: "Week 41" },
+    13: { label: "Era", style: "ce12", code: undefined, enUS: "46303" },
+    14: { label: "Unstyled date", style: undefined, code: "yyyy-mm-dd", enUS: "1899-12-25" },
+    15: { label: "Unstyled date and time", style: undefined, code: "yyyy-mm-dd hh:mm:ss", enUS: "2026-10-08 13:45:00" },
+    16: { label: "Unstyled time", style: undefined, code: "[hh]:mm:ss", enUS: "01:30:00" },
+    17: { label: "Unstyled percentage", style: undefined, code: "0.00%", enUS: "50.00%" },
+  },
+} as const;
+
+const SPEC118_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="1.5in"/></style:style>` +
+  `<style:style style:name="co2" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="2.5in"/></style:style>` +
+  `<style:style style:name="co3" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  SPEC118_ODS_DATA_STYLES +
+  Array.from({ length: 12 }, (_, k) => `<style:style style:name="ce${k + 1}" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N${k + 2}"/>`).join("") +
+  `</office:automatic-styles>`;
+
+export async function buildSpec118FormatsOdsBytes(): Promise<Uint8Array> {
+  const R = SPEC118_FORMATS_ODS.rows;
+  const cell = (style: string | undefined, attrs: string, text: string): string =>
+    `<table:table-cell${style ? ` table:style-name="${style}"` : ""} ${attrs}><text:p>${text}</text:p></table:table-cell>`;
+  const valueRow = (label: string, value: string): string => loRow(loString(label) + value + loEmpty(16382));
+  const date = (style: string | undefined, iso: string, text: string): string =>
+    cell(style, `office:value-type="date" office:date-value="${iso}" calcext:value-type="date"`, text);
+  const float = (style: string | undefined, value: number, text: string): string =>
+    cell(style, `office:value-type="float" office:value="${value}" calcext:value-type="float"`, text);
+  const table =
+    `<table:table table:name="${SPEC118_FORMATS_ODS.tableName}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co2" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co3" table:number-columns-repeated="16382" table:default-cell-style-name="Default"/>` +
+    loRow(loString("Format") + loString("Value") + loEmpty(16382)) +
+    valueRow(R[2].label, float(R[2].style, -1, "-1.00")) +
+    valueRow(
+      R[3].label,
+      cell(R[3].style, `office:value-type="currency" office:currency="EUR" office:value="1234.5" calcext:value-type="currency"`, "1.234,50 €"),
+    ) +
+    valueRow(R[4].label, date(R[4].style, "2026-10-08T13:45:00", "Donnerstag, 8. Oktober 2026")) +
+    valueRow(R[5].label, cell(R[5].style, `office:value-type="time" office:time-value="PT36H00M00S" calcext:value-type="time"`, "36:00:00")) +
+    valueRow(R[6].label, float(R[6].style, 3.14159265358979, "3 14/99")) +
+    valueRow(R[7].label, float(R[7].style, 12345, "1.23E+04")) +
+    valueRow(R[8].label, cell(R[8].style, `office:value-type="percentage" office:value="0.125" calcext:value-type="percentage"`, "12.50%")) +
+    valueRow(R[9].label, cell(R[9].style, `office:value-type="boolean" office:boolean-value="true" calcext:value-type="boolean"`, "TRUE")) +
+    valueRow(R[10].label, cell(R[10].style, `office:value-type="string" calcext:value-type="string"`, "ok")) +
+    valueRow(R[11].label, date(R[11].style, "2026-10-08", "Q4 2026")) +
+    valueRow(R[12].label, date(R[12].style, "2026-10-08", "Week 41")) +
+    valueRow(R[13].label, date(R[13].style, "2026-10-08", "Reiwa 8")) +
+    valueRow(R[14].label, date(undefined, "1899-12-25", "12/25/99")) +
+    valueRow(R[15].label, date(undefined, "2026-10-08T13:45:00", "10/08/26 13:45")) +
+    valueRow(R[16].label, cell(undefined, `office:value-type="time" office:time-value="PT01H30M00S" calcext:value-type="time"`, "01:30:00")) +
+    valueRow(R[17].label, cell(undefined, `office:value-type="percentage" office:value="0.5" calcext:value-type="percentage"`, "50.00%")) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - 17) +
+    `</table:table>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC118_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet><table:calculation-settings table:automatic-find-labels="false" ` +
+    `table:use-regular-expressions="false" table:use-wildcards="true"/>${table}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  return loPackage(content, loMeta("Spec 118 formats", 1, 34), loSettings([SPEC118_FORMATS_ODS.tableName], SPEC118_FORMATS_ODS.tableName));
 }

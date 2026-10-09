@@ -8,7 +8,15 @@
 // SPEC-116 reader stored reopens with its styles, sizes, merges and views.
 import { afterEach, describe, expect, it } from "vitest";
 import { getCell } from "./address";
-import { buildMiniBookOdsBytes, buildMiniBookXlsxBytes, buildSpec117StylesOdsBytes, buildSpec117StylesXlsxBytes } from "./fixtures/build";
+import {
+  buildMiniBookOdsBytes,
+  buildMiniBookXlsxBytes,
+  buildSpec117StylesOdsBytes,
+  buildSpec117StylesXlsxBytes,
+  buildSpec118FormatsOdsBytes,
+  buildSpec118FormatsXlsxBytes,
+  buildSpec118GeneratedXlsxBytes,
+} from "./fixtures/build";
 import type { Sheet, SpreadsheetModel } from "./model";
 import {
   assembleSpreadsheet,
@@ -60,6 +68,28 @@ async function spec116Record(build: () => Promise<Uint8Array>, format: "xlsx" | 
   }));
   plain.readerVersion = 1;
   return plain as unknown as SpreadsheetModel;
+}
+
+/** A record exactly as SPEC-117's reader stored it (version 2): styles,
+ * layout and views, but no number format on any style and none of the
+ * styles SPEC-118 derives for implied formats (nor the cells pointing at
+ * them). */
+async function spec117Record(build: () => Promise<Uint8Array>, format: "xlsx" | "ods"): Promise<SpreadsheetModel> {
+  const model = JSON.parse(JSON.stringify(await readSpreadsheetBytes(await build(), format, "Stored by SPEC-117"))) as SpreadsheetModel;
+  const derived = new Set(model.styles.flatMap((style, index) => (index > 0 && style.sourceXf === undefined && style.sourceStyleName === undefined ? [index] : [])));
+  model.styles = model.styles
+    .filter((_, index) => !derived.has(index))
+    .map(({ numberFormat: _format, builtinFormatId: _builtin, ...style }) => style);
+  model.sheets = model.sheets.map((sheet, index) => ({
+    ...sheet,
+    id: `stored-sheet-${index}`,
+    rows: sheet.rows.map((row) => ({
+      ...row,
+      cells: row.cells.map(({ styleId, ...cell }) => (styleId === undefined || derived.has(styleId) ? cell : { ...cell, styleId })),
+    })),
+  }));
+  model.readerVersion = 2;
+  return model;
 }
 
 afterEach(() => {
@@ -159,6 +189,30 @@ describe("reader versions", () => {
         const { id: _upgradedId, ...layout } = sheet;
         const { id: _freshId, ...expected } = fresh.sheets[index]!;
         expect(layout, sheet.name).toEqual(expected);
+      });
+    });
+  }
+
+  for (const [format, build] of [
+    ["xlsx", buildSpec118FormatsXlsxBytes],
+    ["xlsx", buildSpec118GeneratedXlsxBytes],
+    ["ods", buildSpec118FormatsOdsBytes],
+  ] as const) {
+    it(`a ${format} workbook (${build.name}) stored by SPEC-117's reader reopens with its number formats`, async () => {
+      const stored = await spec117Record(build, format);
+      expect(stored.styles.some((style) => style.numberFormat !== undefined)).toBe(false);
+      const fresh = await readSpreadsheetBytes(await build(), format, "Stored by SPEC-117");
+      const upgraded = await upgradeSpreadsheetModel(stored);
+      expect(upgraded.readerVersion).toBe(3);
+      expect(upgraded.id).toBe(stored.id);
+      expect(upgraded.title).toBe("Stored by SPEC-117");
+      expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(stored.sheets.map((sheet) => sheet.id));
+      // The formats (and the derived implied-format styles) come back from
+      // the retained source, exactly as a fresh read has them.
+      expect(upgraded.styles).toEqual(fresh.styles);
+      expect(upgraded.styles.some((style) => style.numberFormat !== undefined)).toBe(true);
+      upgraded.sheets.forEach((sheet, index) => {
+        expect(sheet.rows).toEqual(fresh.sheets[index]!.rows);
       });
     });
   }
