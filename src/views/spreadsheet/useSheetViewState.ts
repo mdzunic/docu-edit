@@ -189,6 +189,14 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
     }
   }
 
+  /** SPEC-121: writes the current view fields and active sheet into the
+   * live model before a command records its undo step (so a snapshot holds
+   * each sheet's selection) — new sheet objects, every `rows` kept. */
+  function syncInto(model: SpreadsheetModel): void {
+    model.activeSheetIndex = deps.activeIndex.value;
+    model.sheets = model.sheets.map((sheet) => withViewFields(sheet, fields.value[sheet.id] ?? viewFieldsOf(sheet)));
+  }
+
   watch(deps.activeIndex, (next) => {
     if (deps.workbook.value && next !== storedActiveIndex) {
       schedule();
@@ -208,7 +216,7 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
     flush();
   });
 
-  return { fields, active, activeSheet, update, updateActive, flush };
+  return { fields, active, activeSheet, update, updateActive, flush, syncInto };
 }
 
 export type SheetViewState = ReturnType<typeof useSheetViewState>;

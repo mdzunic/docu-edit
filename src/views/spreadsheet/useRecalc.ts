@@ -16,6 +16,10 @@
 //   and "Calculating…" shows only once a pass has run longer than
 //   CALCULATING_STATUS_DELAY_MS. A pass started while another runs cancels it
 //   and inherits the cells it had not evaluated.
+// - SPEC-121's edit pipeline drives `edit(changed, done)`: an "edit" pass
+//   whose `done` receives the pass's changedSheetIds when it completes, and
+//   `settle()`, which completes a running pass at once so the next command,
+//   undo or redo never interleaves with it.
 // - "Recalculate" (Data menu) and F9 run a full recalculation of every
 //   formula cell, ignoring cached values. F9 from an input, textarea, select
 //   or dialog is not a shortcut (isOutsideDocumentInput, SPEC-021), leaving
@@ -109,6 +113,8 @@ export function useRecalc(deps: RecalcDeps) {
   const stale = shallowRef<ReadonlyMap<CellKey, UncomputableReason>>(new Map());
   let pass: RecalcPass | null = null;
   let passModel: SpreadsheetModel | null = null;
+  /** SPEC-121: the edit pipeline's callback for the running pass. */
+  let passDone: ((changedSheetIds: string[]) => void) | null = null;
   let slot: IdleHandle | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -140,6 +146,9 @@ export function useRecalc(deps: RecalcDeps) {
       stale.value = next;
     }
     reportCycles(model);
+    const done = passDone;
+    passDone = null;
+    done?.(current.result.changedSheetIds);
   }
 
   /** One slice; true when the pass is done. */
@@ -156,6 +165,9 @@ export function useRecalc(deps: RecalcDeps) {
       pass = null;
       passModel = null;
       stopDriving();
+      const callback = passDone;
+      passDone = null;
+      callback?.([]);
       return true;
     }
     if (model.sheets !== sheets && deps.book.workbook.value === model) {
@@ -177,20 +189,31 @@ export function useRecalc(deps: RecalcDeps) {
   }
 
   /** Starts a pass — cancelling a running one, whose unevaluated cells it
-   * inherits — and runs its first slice now. */
-  function run(changed: CellKey[], options: RecalcOptions): void {
+   * inherits (and whose edit callback it carries) — and runs its first
+   * slice now. */
+  function run(changed: CellKey[], options: RecalcOptions, done?: (changedSheetIds: string[]) => void): void {
     const model = deps.book.workbook.value;
     if (!model) {
+      done?.([]);
       return;
     }
     let inherited: CellKey[] = [];
+    let carried: ((changedSheetIds: string[]) => void) | null = null;
     if (pass && passModel === model) {
       inherited = pass.cancel();
+      carried = passDone;
     }
     stopDriving();
     const current = startRecalc(model, [...new Set([...inherited, ...changed])], { ...options, settings: { locale: deps.locale() } });
     pass = current;
     passModel = model;
+    passDone =
+      carried && done
+        ? (ids) => {
+            carried(ids);
+            done(ids);
+          }
+        : (done ?? carried);
     if (slice(current, model)) {
       return;
     }
@@ -206,6 +229,27 @@ export function useRecalc(deps: RecalcDeps) {
   /** Data ▸ Recalculate and F9: every formula cell, cached values ignored. */
   function recalculate(): void {
     run([], { reason: "manual", full: true });
+  }
+
+  /** SPEC-121's edit pipeline: a pass of reason "edit" over `changed`
+   * (possibly sliced) that calls `done` with its changedSheetIds when it
+   * completes. */
+  function edit(changed: CellKey[], done: (changedSheetIds: string[]) => void): void {
+    run(changed, { reason: "edit" }, done);
+  }
+
+  /** Completes a running pass now — the next command, undo or redo waits
+   * for it, so steps never interleave. */
+  function settle(): void {
+    const current = pass;
+    const model = passModel;
+    if (!current || !model) {
+      return;
+    }
+    stopDriving();
+    while (pass === current && !slice(current, model)) {
+      // each slice ends at a flush; keep going
+    }
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -246,6 +290,7 @@ export function useRecalc(deps: RecalcDeps) {
       pass?.cancel();
       pass = null;
       passModel = null;
+      passDone = null;
       stopDriving();
       stale.value = new Map();
       circular.value = "";
@@ -282,6 +327,8 @@ export function useRecalc(deps: RecalcDeps) {
     status: computed(() => ({ circular: circular.value, calculating: calculating.value })),
     staleTitleAt,
     recalculate,
+    edit,
+    settle,
     onKeydown,
   };
 }

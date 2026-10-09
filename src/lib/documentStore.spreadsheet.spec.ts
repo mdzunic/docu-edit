@@ -395,3 +395,32 @@ describe("the reader-version upgrade on load", () => {
     expect(store.getSpreadsheet(model.id)!.title).toBe("Q3 numbers");
   });
 });
+
+describe("sheet commands write through (SPEC-121 AC-13)", () => {
+  it("a rename of a sheet nobody references writes zero rows records; one that rewrites formulas writes exactly those sheets'", async () => {
+    const { store, idb, workbook } = await loadStore();
+    const { renameSheet } = await import("./spreadsheet/sheets");
+    const model = await workbook();
+    store.storeSpreadsheet(model);
+    await flushWrites();
+    idb.putRecord.mockClear();
+
+    // "Hidden" is named by no formula: only the shell is written.
+    renameSheet(model, 2, "Stash");
+    await store.storeSpreadsheetEdit(model);
+    expect(rowsWrites(idb)).toEqual([]);
+    expect(written(idb).map((record) => record.id)).toEqual([model.id]);
+    expect(written(idb)[0]!.model!.sheets[2]!.name).toBe("Stash");
+
+    // A rename that rewrites a formula writes that sheet's rows and no other.
+    idb.putRecord.mockClear();
+    const data = model.sheets[1]!;
+    const summary = model.sheets[0]!;
+    model.sheets = [{ ...summary, rows: [{ index: 9, cells: [{ col: 0, value: 1, formula: `${data.name}!A1` }] }] }, ...model.sheets.slice(1)];
+    await store.storeSpreadsheetEdit(model);
+    idb.putRecord.mockClear();
+    renameSheet(model, 1, "Facts");
+    await store.storeSpreadsheetEdit(model);
+    expect(rowsWrites(idb).map((record) => record.sheetId)).toEqual([summary.id]);
+  });
+});
