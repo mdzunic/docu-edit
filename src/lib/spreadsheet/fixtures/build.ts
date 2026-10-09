@@ -2454,9 +2454,12 @@ export const SPEC120_FULLCALC_XLSX = {
 /** XlsxWriter's declaration (no standalone attribute line break quirks). */
 const XLSXWRITER_DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n`;
 
+/** XlsxWriter's shared-string cell. */
+const xlsxWriterLabel = (ref: string, index: number): string => `<c r="${ref}" t="s"><v>${index}</v></c>`;
+
 export async function buildSpec120FullCalcXlsxBytes(): Promise<Uint8Array> {
   const F = SPEC120_FULLCALC_XLSX;
-  const label = (ref: string, index: number): string => `<c r="${ref}" t="s"><v>${index}</v></c>`;
+  const label = xlsxWriterLabel;
   const zero = (ref: keyof typeof F.formulas): string => `<c r="${ref}"><f>${F.formulas[ref]}</f><v>0</v></c>`;
   const sheet =
     XLSXWRITER_DECLARATION +

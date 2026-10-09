@@ -86,9 +86,11 @@ function unescapePattern(pattern: string): string {
   return out;
 }
 
-/** A wildcard pattern as units: STAR, ANY or a literal (after `~`). */
-function compilePattern(pattern: string, caseSensitive: boolean): Int32Array {
-  const out: number[] = [];
+/** A wildcard pattern as units: STAR, ANY or a literal (after `~`) — with a
+ * `*` before and/or after it as units, never as appended text (a lone
+ * trailing `~` stays a literal `~`). */
+function compilePattern(pattern: string, caseSensitive: boolean, around: { before?: boolean; after?: boolean } = {}): Int32Array {
+  const out: number[] = around.before ? [STAR] : [];
   for (let i = 0; i < pattern.length; i += 1) {
     const ch = pattern[i]!;
     if (ch === "~" && i + 1 < pattern.length && (pattern[i + 1] === "*" || pattern[i + 1] === "?" || pattern[i + 1] === "~")) {
@@ -104,6 +106,9 @@ function compilePattern(pattern: string, caseSensitive: boolean): Int32Array {
       const code = pattern.charCodeAt(i);
       out.push(caseSensitive ? code : foldUnit(code));
     }
+  }
+  if (around.after && out.at(-1) !== STAR) {
+    out.push(STAR);
   }
   return Int32Array.from(out);
 }
@@ -182,7 +187,7 @@ export function textMatcher(
   const caseSensitive = settings.caseSensitive;
   const mode = textMode(pattern, settings);
   if (mode.wildcards) {
-    const compiled = compilePattern(partial ? `*${pattern}*` : pattern, caseSensitive);
+    const compiled = compilePattern(pattern, caseSensitive, { before: partial, after: partial });
     return (text) => matchFrom(units(text, caseSensitive), 0, compiled);
   }
   const fold = (text: string): string => (caseSensitive ? text : foldText(text));
@@ -202,7 +207,7 @@ export function searchText(within: string, find: string, start: number, settings
     return foldText(within).indexOf(foldText(mode.literal), start);
   }
   const text = units(within, false);
-  const pattern = compilePattern(`${find}*`, false);
+  const pattern = compilePattern(find, false, { after: true });
   for (let i = start; i <= text.length; i += 1) {
     if (matchFrom(text, i, pattern)) {
       return i;

@@ -73,6 +73,24 @@ function edit(model: SpreadsheetModel, a1: string, spec: Partial<Cell>, sheetNam
   return changedCellsBetween(sheet.id, before, rows);
 }
 
+/** Three independent RAND() cells on two sheets, Sheet2 first. */
+function randomBook(): SpreadsheetModel {
+  return calcWorkbook({ Sheet2: { A1: "=RAND()" }, Sheet1: { B2: "=RAND()", A3: "=RAND()" } });
+}
+
+/** A computable chain read by an add-in call, and an unrelated unknown
+ * function. */
+function staleBook(): SpreadsheetModel {
+  return calcWorkbook({
+    Sheet1: {
+      A1: 1,
+      B1: { formula: "A1*2", value: 2 },
+      C1: { formula: "_xll.CUSTOM(B1)", value: 42 },
+      D1: { formula: "ZZZ.UNKNOWN(5)", value: 7 },
+    },
+  });
+}
+
 describe("the constants", () => {
   it("slices of RECALC_SLICE_MS = 12 and the Calculating… delay CALCULATING_STATUS_DELAY_MS = 250", () => {
     expect(RECALC_SLICE_MS).toBe(12);
@@ -113,7 +131,7 @@ describe("edit passes", () => {
   });
 
   it("draws random numbers in sheet order, then row-major, among independent cells — reproducibly", () => {
-    const build = () => calcWorkbook({ Sheet2: { A1: "=RAND()" }, Sheet1: { B2: "=RAND()", A3: "=RAND()" } });
+    const build = randomBook;
     const first = build();
     recalculate(first, [], { full: true, reason: "manual", random: mulberry32(7) });
     const draws = mulberry32(7);
@@ -174,15 +192,7 @@ describe("cycles", () => {
 });
 
 describe("stale cells", () => {
-  const book = (): SpreadsheetModel =>
-    calcWorkbook({
-      Sheet1: {
-        A1: 1,
-        B1: { formula: "A1*2", value: 2 },
-        C1: { formula: "_xll.CUSTOM(B1)", value: 42 },
-        D1: { formula: "ZZZ.UNKNOWN(5)", value: 7 },
-      },
-    });
+  const book = staleBook;
 
   it("an uncomputable dependent of a changed value keeps its cached value, goes stale and sets forceFullCalcOnLoad", () => {
     const model = book();
