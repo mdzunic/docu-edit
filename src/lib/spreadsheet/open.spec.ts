@@ -8,7 +8,7 @@
 // SPEC-116 reader stored reopens with its styles, sizes, merges and views.
 import { afterEach, describe, expect, it } from "vitest";
 import { getCell } from "./address";
-import { buildMiniBookOdsBytes, buildMiniBookXlsxBytes } from "./fixtures/build";
+import { buildMiniBookOdsBytes, buildMiniBookXlsxBytes, buildSpec117StylesOdsBytes, buildSpec117StylesXlsxBytes } from "./fixtures/build";
 import type { Sheet, SpreadsheetModel } from "./model";
 import {
   assembleSpreadsheet,
@@ -125,8 +125,10 @@ describe("reader versions", () => {
   for (const [format, build] of [
     ["xlsx", buildMiniBookXlsxBytes],
     ["ods", buildMiniBookOdsBytes],
+    ["xlsx", buildSpec117StylesXlsxBytes],
+    ["ods", buildSpec117StylesOdsBytes],
   ] as const) {
-    it(`re-reads a version-0 ${format} record from opaque, keeping id, title and sheet ids`, async () => {
+    it(`re-reads a version-0 ${format} record (${build.name}) from opaque, keeping id, title and sheet ids`, async () => {
       const stored = await versionZero(build, format);
       const upgraded = await upgradeSpreadsheetModel(stored);
       expect(upgraded).not.toBe(stored);
@@ -140,7 +142,7 @@ describe("reader versions", () => {
       expect(upgraded.preview?.cells.length).toBeGreaterThan(0);
     });
 
-    it(`a ${format} workbook stored by SPEC-116's reader reopens with its styles, sizes, merges and views`, async () => {
+    it(`a ${format} workbook (${build.name}) stored by SPEC-116's reader reopens with its styles, sizes, merges and views`, async () => {
       const stored = await spec116Record(build, format);
       const fresh = await readSpreadsheetBytes(await build(), format, "Stored by SPEC-116");
       const upgraded = await upgradeSpreadsheetModel(stored);

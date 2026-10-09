@@ -175,7 +175,7 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
     [() => deps.sheet(), selection],
     ([sheet, sel]) => {
       generation += 1;
-      if (!sheet || !selectionSpansMultipleCells(sel.ranges)) {
+      if (!sheet || !selectionSpansMultipleCells(sel.ranges, deps.sheetMetrics.merges.value)) {
         aggregates.value = null;
         return;
       }
@@ -197,7 +197,9 @@ export function useSheetSelection(deps: SheetSelectionDeps) {
 
   /** The status bar's texts ({} when nothing is shown). */
   const statusTexts = computed(() =>
-    aggregates.value ? formatAggregates(aggregates.value, selectionSpansMultipleCells(selection.value.ranges)) : {},
+    aggregates.value
+      ? formatAggregates(aggregates.value, selectionSpansMultipleCells(selection.value.ranges, deps.sheetMetrics.merges.value))
+      : {},
   );
 
   return {
