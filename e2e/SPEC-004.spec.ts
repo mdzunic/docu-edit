@@ -13,11 +13,12 @@ test("'Open document' opens a file picker limited to supported formats (AC-1)", 
   // accepts .odt alongside .docx"), SPEC-050's AC-1 ("opening a .md
   // or .markdown file — from the library, the file picker, or a drop") and
   // SPEC-107's AC-1 (pdf and the five image formats join OPENABLE_EXTENSIONS)
+  // and SPEC-116's AC-1 (xlsx, xlsm, xltx, xltm, ods and ots join it)
   // supersede that exact value. The picker must still be limited to formats
   // the app can open.
   await expect(input).toHaveAttribute(
     "accept",
-    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
+    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.xlsx,.xlsm,.xltx,.xltm,.ods,.ots,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
   );
 });
 

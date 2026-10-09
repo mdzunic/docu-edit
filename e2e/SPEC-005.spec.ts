@@ -9,12 +9,13 @@ const writerFixture = join(fixturesDir, "libreoffice-writer.odt");
 test("'Open document' accepts .odt alongside .docx (AC-1)", async ({ page }) => {
   await page.goto("/");
   const input = page.getByTestId("open-document-input");
-  // SPEC-050's AC-1 adds .md/.markdown and SPEC-107's AC-1 adds .pdf and the
-  // image extensions to the same picker; .odt must still be there alongside
-  // .docx, which is what this AC is about.
+  // SPEC-050's AC-1 adds .md/.markdown, SPEC-107's AC-1 adds .pdf and the
+  // image extensions and SPEC-116's AC-1 adds the workbook extensions to the
+  // same picker; .odt must still be there alongside .docx, which is what this
+  // AC is about.
   await expect(input).toHaveAttribute(
     "accept",
-    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
+    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.xlsx,.xlsm,.xltx,.xltm,.ods,.ots,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
   );
 });
 
