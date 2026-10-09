@@ -127,7 +127,7 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     argKinds: ["any"],
     repeat: { from: 0, count: 1 },
     summary: "Adds its arguments.",
-    args: [arg("number1", "A number, or a range or array whose numbers are added."), repeating("number2", "More numbers, ranges or arrays.")],
+    args: [repeating("number", "A number, or a range or array whose numbers are added.")],
     impl(args, ctx) {
       let total = 0;
       return eachNumber(args, ctx, (n) => {
@@ -186,10 +186,8 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     summary: "Adds the cells that meet every criterion.",
     args: [
       arg("sum_range", "The cells to add."),
-      arg("criteria_range1", "The cells the first criterion is tested against."),
-      arg("criteria1", "The first criterion."),
-      repeating("criteria_range2", "More ranges to test."),
-      repeating("criteria2", "Their criteria."),
+      repeating("criteria_range", "The cells a criterion is tested against."),
+      repeating("criteria", "The criterion for that range."),
     ],
     impl(args, ctx) {
       const sum = singleArea(args.get(0));
@@ -223,7 +221,7 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     argKinds: ["array"],
     repeat: { from: 0, count: 1 },
     summary: "Multiplies corresponding elements of arrays and adds the products.",
-    args: [arg("array1", "The first array or range."), repeating("array2", "More arrays of the same dimensions.")],
+    args: [repeating("array", "An array or range, all of the same dimensions.")],
     impl(args, ctx) {
       const arrays: ArrayValue[] = [];
       for (let i = 0; i < args.length; i += 1) {
@@ -263,7 +261,7 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     argKinds: ["any"],
     repeat: { from: 0, count: 1 },
     summary: "Multiplies its arguments.",
-    args: [arg("number1", "A number, or a range or array whose numbers are multiplied."), repeating("number2", "More numbers, ranges or arrays.")],
+    args: [repeating("number", "A number, or a range or array whose numbers are multiplied.")],
     impl(args, ctx) {
       let product = 1;
       let count = 0;

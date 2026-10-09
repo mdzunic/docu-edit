@@ -44,7 +44,7 @@ import {
   topLeft,
   type Shape,
 } from "./areas";
-// Loading the core library registers its 100 functions.
+// Loading the core library registers its functions.
 import "./functions";
 import { FormulaSyntaxError, parseFormulaAt } from "./parse";
 import { argKindAt, getFunction, UncomputableError, type ArgKind, type ArgList, type FunctionSpec } from "./registry";

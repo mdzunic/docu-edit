@@ -386,13 +386,13 @@ function monthTable(locale: SpreadsheetLocale): ReadonlyMap<string, number> {
   return table;
 }
 
-/** A one- or two-digit year as Excel reads it: 00–29 → 2000s, 30–99 →
- * 1900s; four digits as written; anything else is no year. */
+/** A two-digit year as Excel reads it — 00–29 → 2000s, 30–99 → 1900s —
+ * or four digits as written; anything else is no year. */
 function fullYear(digits: string): number | null {
   if (digits.length === 4) {
     return Number(digits);
   }
-  if (digits.length === 1 || digits.length === 2) {
+  if (digits.length === 2) {
     const year = Number(digits);
     return year < 30 ? 2000 + year : 1900 + year;
   }
@@ -424,51 +424,34 @@ function currentYear(): number {
   return now().getFullYear();
 }
 
-/** A numeric date (`6/1/2001`, `10-8-26`, `8.10.`, `2026-10-08`) in the
- * locale's order, or null. */
+/** A numeric date in the locale's order — day, month and year (two or four
+ * digits) separated by `/`, `-` or `.` (`6/1/2001`, `10-8-26`), or day and
+ * month of the current year (`6/1`) — or ISO `yyyy-mm-dd`; else null. */
 function numericDate(text: string, locale: SpreadsheetLocale, dateSystem: "1900" | "1904"): number | null {
-  const match = /^(\d{1,4})([/.-])(\d{1,4})(?:\2(\d{1,4}))?(\2?)$/.exec(text);
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+  if (iso) {
+    return dateSerial(Number(iso[1]), Number(iso[2]), Number(iso[3]), dateSystem);
+  }
+  const match = /^(\d{1,4})([/.-])(\d{1,2})(?:\2(\d{1,4}))?$/.exec(text);
   if (!match) {
     return null;
   }
-  const [, a, , b, c, trailing] = match as unknown as [string, string, string, string, string | undefined, string];
-  if (c !== undefined) {
-    if (trailing) {
+  const [, a, , b, c] = match as unknown as [string, string, string, string, string | undefined];
+  if (c === undefined) {
+    if (a.length > 2) {
       return null;
     }
-    if (a.length === 4) {
-      return dateSerial(Number(a), Number(b), Number(c), dateSystem);
-    }
-    if (a.length > 2 || b.length > 2) {
-      return null;
-    }
-    switch (locale.dateOrder) {
-      case "MDY":
-        return dateSerial(fullYear(c), Number(a), Number(b), dateSystem);
-      case "DMY":
-        return dateSerial(fullYear(c), Number(b), Number(a), dateSystem);
-      default:
-        return dateSerial(fullYear(a), Number(b), Number(c), dateSystem);
-    }
+    const [month, day] = locale.dateOrder === "DMY" ? [b, a] : [a, b];
+    return dateSerial(currentYear(), Number(month), Number(day), dateSystem);
   }
-  // Two parts: a year and a month (the 1st), or a month and a day of the
-  // current year — or, month first, a month and a two-digit year when the
-  // second part is no day of that month ("2/30" is February 1930).
-  if (a.length === 4 || b.length === 4) {
-    if (trailing) {
-      return null;
-    }
-    return a.length === 4 ? dateSerial(Number(a), Number(b), 1, dateSystem) : dateSerial(Number(b), Number(a), 1, dateSystem);
+  switch (locale.dateOrder) {
+    case "MDY":
+      return a.length > 2 ? null : dateSerial(fullYear(c), Number(a), Number(b), dateSystem);
+    case "DMY":
+      return a.length > 2 ? null : dateSerial(fullYear(c), Number(b), Number(a), dateSystem);
+    default:
+      return c.length > 2 ? null : dateSerial(fullYear(a), Number(b), Number(c), dateSystem);
   }
-  if (a.length > 2 || b.length > 2) {
-    return null;
-  }
-  const [month, day] = locale.dateOrder === "DMY" ? [b, a] : [a, b];
-  const thisYear = dateSerial(currentYear(), Number(month), Number(day), dateSystem);
-  if (thisYear !== null || locale.dateOrder === "DMY" || trailing) {
-    return thisYear;
-  }
-  return dateSerial(fullYear(day), Number(month), 1, dateSystem);
 }
 
 /** A date spelling its month (`8-Oct-2026`, `Oct 8, 2026`, `8 October 2026`,
@@ -489,16 +472,12 @@ function monthNameDate(text: string, locale: SpreadsheetLocale, dateSystem: "190
   }
   const numbers = parts.filter((_, i) => i !== index);
   if (index === 0 && numbers.length === 1) {
-    // "Oct-2026" / "Oct 8" / "Oct-45": a year, else a day this year, else a
-    // two-digit year.
+    // "Oct-2026" (the 1st of that month) or "Oct 8" (this year).
     const only = numbers[0]!;
     if (only.length === 4) {
       return dateSerial(Number(only), month, 1, dateSystem);
     }
-    if (only.length > 2) {
-      return null;
-    }
-    return dateSerial(currentYear(), month, Number(only), dateSystem) ?? dateSerial(fullYear(only), month, 1, dateSystem);
+    return only.length > 2 ? null : dateSerial(currentYear(), month, Number(only), dateSystem);
   }
   if (index === 0 || index === 1) {
     const day = numbers[0]!;

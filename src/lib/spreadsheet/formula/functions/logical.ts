@@ -59,7 +59,7 @@ function logicalFold(name: string, summary: string, start: boolean, step: (acc: 
     argKinds: ["any"],
     repeat: { from: 0, count: 1 },
     summary,
-    args: [arg("logical1", "A condition, or a range or array of logicals."), repeating("logical2", "More conditions, ranges or arrays.")],
+    args: [repeating("logical", "A condition, or a range or array of logicals.")],
     impl(args, ctx) {
       return logicals(args, ctx, start, step);
     },
@@ -138,12 +138,7 @@ export const LOGICAL_FUNCTIONS: FunctionSpec[] = [
     repeat: { from: 0, count: 2 },
     lazy: true,
     summary: "Returns the value of the first condition that is TRUE.",
-    args: [
-      arg("logical_test1", "The first condition."),
-      arg("value_if_true1", "Its result."),
-      repeating("logical_test2", "More conditions."),
-      repeating("value_if_true2", "Their results."),
-    ],
+    args: [repeating("logical_test", "A condition, tested in order."), repeating("value_if_true", "The result when it is the first TRUE one.")],
     impl(args) {
       if (args.length % 2 !== 0) {
         return VALUE_ERROR;
@@ -191,10 +186,8 @@ export const LOGICAL_FUNCTIONS: FunctionSpec[] = [
     summary: "Returns the result paired with the first value that equals an expression.",
     args: [
       arg("expression", "The value to match."),
-      arg("value1", "The first value to compare it with."),
-      arg("result1", "The result when it matches."),
-      repeating("default_or_value2", "More values and results; a last unpaired argument is the default."),
-      repeating("result2", "Their results."),
+      repeating("value", "A value to compare it with; a last unpaired argument is the default."),
+      repeating("result", "The result when it matches."),
     ],
     impl(args, ctx) {
       const expression = scalarArg(args, 0);
@@ -223,7 +216,7 @@ export const LOGICAL_FUNCTIONS: FunctionSpec[] = [
     repeat: { from: 1, count: 1 },
     lazy: true,
     summary: "Returns one of its values by position.",
-    args: [arg("index_num", "Which value to return, from 1."), arg("value1", "The first value."), repeating("value2", "More values.")],
+    args: [arg("index_num", "Which value to return, from 1."), repeating("value", "A value to choose from.")],
     impl(args, ctx) {
       const index = toNumber(scalarArg(args, 0) as ScalarValue, ctx.settings);
       if (isError(index)) {

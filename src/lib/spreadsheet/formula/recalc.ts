@@ -128,6 +128,13 @@ export function needsFullCalcOnOpen(model: SpreadsheetModel): boolean {
   return model.sheets.some((sheet) => sheet.rows.some((row) => row.cells.some((cell) => cell.formula !== undefined && cell.value === null)));
 }
 
+/** Every formula cell's key, sheet order then row-major. */
+function formulaCellKeys(model: SpreadsheetModel): CellKey[] {
+  return model.sheets.flatMap((sheet) =>
+    sheet.rows.flatMap((row) => row.cells.flatMap((cell) => (cell.formula === undefined ? [] : [cellKey(sheet.id, row.index, cell.col)]))),
+  );
+}
+
 /** Every data-table range of the workbook, with its anchor's sheet. */
 function dataTableAreas(model: SpreadsheetModel): Area[] {
   const areas: Area[] = [];
@@ -320,6 +327,9 @@ class Pass implements RecalcPass {
       left = [...this.front, ...this.order.slice(this.position)].filter((key) => !this.done.has(key));
     } else if (this.phase === "done") {
       left = [];
+    } else if (this.full) {
+      // Nothing evaluated yet, and every formula cell was to be.
+      left = formulaCellKeys(this.model);
     } else {
       // Nothing evaluated yet: the whole job carries over.
       left = [...this.changed, ...this.dirty];

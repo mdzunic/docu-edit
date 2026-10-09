@@ -55,7 +55,7 @@ function serialOf(year: number, month: number, day: number, settings: Dates): nu
 /** The calendar date of a whole-day serial (Excel's 1900-01-00 for 0). */
 function dateOf(serial: number, settings: Dates): { year: number; month: number; day: number } {
   const days = Math.floor(serial);
-  if (settings.dateSystem === "1900" && days === 0) {
+  if (lotus(settings) && days === 0) {
     return { year: 1900, month: 1, day: 0 };
   }
   if (settings.dateSystem === "1900" && !lotus(settings) && days >= 60) {
@@ -300,11 +300,11 @@ export const DATE_TIME_FUNCTIONS: FunctionSpec[] = [
     summary: "Returns the number of days between two dates.",
     args: [arg("end_date", "The later date."), arg("start_date", "The earlier date.")],
     impl(args, ctx) {
-      const end = numberArg(args, 0, ctx);
+      const end = serialArg(args, 0, ctx);
       if (isError(end)) {
         return end;
       }
-      const start = numberArg(args, 1, ctx);
+      const start = serialArg(args, 1, ctx);
       return isError(start) ? start : Math.floor(end) - Math.floor(start);
     },
   },

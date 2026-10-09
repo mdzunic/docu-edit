@@ -33,9 +33,11 @@ export function optional(name: string, description: string): ArgMeta {
   return { name, description, optional: true };
 }
 
-/** A repeating (optional) argument's metadata. */
+/** The metadata of an argument in a function's repeating group (`repeat`):
+ * one entry per argument kind, as `argKinds` has, the group required once
+ * (SUM's `number`, SUMIFS' `criteria_range` and `criteria`). */
 export function repeating(name: string, description: string): ArgMeta {
-  return { name, description, optional: true, repeating: true };
+  return { name, description, repeating: true };
 }
 
 /** A value-kind argument as the scalar the evaluator made it. */

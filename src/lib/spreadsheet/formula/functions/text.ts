@@ -188,7 +188,7 @@ export const TEXT_FUNCTIONS: FunctionSpec[] = [
     argKinds: ["any"],
     repeat: { from: 0, count: 1 },
     summary: "Joins texts, reading ranges row by row.",
-    args: [arg("text1", "A text, or a range or array of texts."), repeating("text2", "More texts, ranges or arrays.")],
+    args: [repeating("text", "A text, or a range or array of texts.")],
     impl(args, ctx) {
       const parts: string[] = [];
       for (let i = 0; i < args.length; i += 1) {
@@ -208,7 +208,7 @@ export const TEXT_FUNCTIONS: FunctionSpec[] = [
     argKinds: ["value"],
     repeat: { from: 0, count: 1 },
     summary: "Joins texts.",
-    args: [arg("text1", "The first text."), repeating("text2", "More texts.")],
+    args: [repeating("text", "A text to join.")],
     impl(args) {
       const parts: string[] = [];
       for (let i = 0; i < args.length; i += 1) {
@@ -225,33 +225,39 @@ export const TEXT_FUNCTIONS: FunctionSpec[] = [
     name: "TEXTJOIN",
     category: "Text",
     minArgs: 3,
-    maxArgs: 252,
-    argKinds: ["value", "value", "any"],
+    maxArgs: 254,
+    argKinds: ["any", "value", "any"],
     repeat: { from: 2, count: 1 },
     summary: "Joins texts with a delimiter, optionally skipping empty ones.",
     args: [
-      arg("delimiter", "The text placed between the items."),
+      arg("delimiter", "The text placed between the items, or a range of them used in turn."),
       arg("ignore_empty", "TRUE skips empty items."),
-      arg("text1", "A text, or a range or array of texts."),
-      repeating("text2", "More texts, ranges or arrays."),
+      repeating("text", "A text, or a range or array of texts (up to 252)."),
     ],
     impl(args, ctx) {
-      const delimiter = textArg(args, 0);
-      if (isError(delimiter)) {
-        return delimiter;
+      // A range or array of delimiters is used in turn (Excel's TEXTJOIN).
+      const delimiters: string[] = [];
+      const failed = readTexts(ctx, args.get(0), true, delimiters);
+      if (failed) {
+        return failed;
       }
       const ignoreEmpty = toLogical(scalarArg(args, 1));
       if (isError(ignoreEmpty)) {
         return ignoreEmpty;
       }
       const parts: string[] = [];
+      const keepEmpty = !ignoreEmpty && delimiters.some((delimiter) => delimiter.length > 0);
       for (let i = 2; i < args.length; i += 1) {
-        const failure = readTexts(ctx, args.get(i), !ignoreEmpty && delimiter.length > 0, parts);
+        const failure = readTexts(ctx, args.get(i), keepEmpty, parts);
         if (failure) {
           return failure;
         }
       }
-      return joined(ignoreEmpty ? parts.filter((part) => part.length > 0) : parts, delimiter);
+      const items = ignoreEmpty ? parts.filter((part) => part.length > 0) : parts;
+      if (delimiters.length <= 1) {
+        return joined(items, delimiters[0] ?? "");
+      }
+      return joined(items.flatMap((item, i) => (i === 0 ? [item] : [delimiters[(i - 1) % delimiters.length]!, item])));
     },
   },
   textual("LEN", "Returns the number of characters in a text.", "The text to measure.", (text) => text.length),

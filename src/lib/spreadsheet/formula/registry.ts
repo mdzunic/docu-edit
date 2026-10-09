@@ -1,6 +1,6 @@
 // The function registry (SPEC-120 "The registry") — the one table every
-// worksheet function is looked up in: this spec registers its 100 core
-// functions (formula/functions/*.ts, loaded through functions/index.ts) and
+// worksheet function is looked up in: this spec registers its core functions
+// (formula/functions/*.ts, loaded through functions/index.ts) and
 // SPEC-127 registers the rest of the library through the same
 // registerFunction.
 //
@@ -53,7 +53,8 @@ export interface FunctionSpec {
   minArgs: number;
   /** 255 for variadic. */
   maxArgs: number;
-  /** One per entry of `args`. */
+  /** One per entry of `args` — a variadic function's repeating group once
+   * in each (marked `repeating` in `args`). */
   argKinds: ArgKind[];
   /** args[from … from + count − 1] repeat as a group up to maxArgs (SPEC-127's
    *  field, defined here because argument kinds cycle the same way). */

@@ -1,7 +1,9 @@
-// The core library (SPEC-120 "The core functions"): exactly 100 functions in
-// seven files, registered once when this module loads (evaluate.ts imports
-// it). SPEC-127 registers the rest of the library through the same
-// registerFunction.
+// The core library (SPEC-120 "The core functions"): exactly the functions of
+// the spec's table, in the seven files it names, registered once when this
+// module loads (evaluate.ts imports it). The spec's prose calls them "the
+// 100 core functions"; its table lists 101 (math.ts has 25), and the table is
+// what registeredFunctionNames() equals. SPEC-127 registers the rest of the
+// library through the same registerFunction.
 import { registerFunction, type FunctionSpec } from "../registry";
 import { AGGREGATE_FUNCTIONS } from "./aggregate";
 import { DATE_TIME_FUNCTIONS } from "./dateTime";
