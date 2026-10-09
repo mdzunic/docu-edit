@@ -171,6 +171,19 @@ describe("rows, cells and values", () => {
     expect(sheet.rows[0]!.cells.map((cell) => cell.value)).toEqual(["declared", "ab c   d\n", "no type"]);
   });
 
+  it("ignores a table nested in the sheet's drawing layer", async () => {
+    const sheet = await oneTable(
+      row(float(1)) +
+        `<table:shapes><draw:frame><draw:text-box><table:table table:name="Inner">${row(float(99))}${row(float(98))}</table:table>` +
+        `</draw:text-box></draw:frame></table:shapes>` +
+        row(float(2)),
+    );
+    expect(sheet.rows.map((r) => [r.index, r.cells[0]!.value])).toEqual([
+      [0, 1],
+      [1, 2],
+    ]);
+  });
+
   it("leaves an annotation's text out of the cell", async () => {
     const sheet = await oneTable(
       row(

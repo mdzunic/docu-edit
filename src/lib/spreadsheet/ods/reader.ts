@@ -181,6 +181,10 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
   let table: PendingTable | null = null;
   let row: PendingRow | null = null;
   let cell: PendingCell | null = null;
+  /** >0 while inside a table's drawing layer (`table:shapes`, a draw:*
+   * element): a text box there may hold a table of its own, whose rows are
+   * not the sheet's. */
+  let drawingDepth = 0;
   let tooLarge = false;
 
   const finishCell = (done: PendingCell): boolean => {
@@ -306,6 +310,28 @@ export function readOdsContent(xml: string, budget: CellBudget): OdsContent | nu
     }
 
     if (event.type === "text") {
+      return undefined;
+    }
+
+    if (drawingDepth > 0) {
+      if (event.type === "open" && !event.selfClosing) {
+        drawingDepth += 1;
+        depth += 1;
+      } else if (event.type === "close") {
+        drawingDepth -= 1;
+        depth -= 1;
+      }
+      return undefined;
+    }
+    if (
+      event.type === "open" &&
+      table !== null &&
+      (event.ns === DRAW_NAMESPACE || (event.ns === TABLE_NAMESPACE && event.local === "shapes"))
+    ) {
+      if (!event.selfClosing) {
+        drawingDepth = 1;
+        depth += 1;
+      }
       return undefined;
     }
 
