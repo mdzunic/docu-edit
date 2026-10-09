@@ -1666,7 +1666,7 @@ export const SPEC118_FORMATS_XLSX = {
     E2: { value: 0.25, xf: SPEC118_XF.percent0, enUS: "25%" },
     E3: { value: 12345, xf: SPEC118_XF.scientific, enUS: "1.23E+04" },
     E4: { value: "Text value", xf: SPEC118_XF.text, enUS: "Text value" },
-    E5: { value: 3.14159265358979, xf: SPEC118_XF.fraction, enUS: "3 14/99" },
+    E5: { value: Math.PI, xf: SPEC118_XF.fraction, enUS: "3 14/99" },
     E6: { value: 42, xf: SPEC118_XF.hidden, enUS: "" },
     E7: { value: 1234.5, xf: SPEC118_XF.comma },
     E8: { value: -1234.5, xf: SPEC118_XF.currency },
@@ -1677,11 +1677,14 @@ export const SPEC118_FORMATS_XLSX = {
   editText: { enUS: "10/8/2026 1:45:00 PM", deDE: "08.10.2026 13:45:00" },
 } as const;
 
+/** One of spec118-formats.xlsx's Excel-shaped rows (A:G). */
+const spec118Row = (r: number, cells: string): string => `<row r="${r}" spans="1:7" x14ac:dyDescent="0.25">${cells}</row>`;
+
 export async function buildSpec118FormatsXlsxBytes(): Promise<Uint8Array> {
   const X = SPEC118_XF;
   const C = SPEC118_FORMATS_XLSX.cells;
   const text = (ref: string, value: (typeof SPEC118_STRINGS)[number], style?: number): string => sharedCell(ref, SPEC118_STRINGS.indexOf(value), style);
-  const row = (r: number, cells: string): string => `<row r="${r}" spans="1:7" x14ac:dyDescent="0.25">${cells}</row>`;
+  const row = spec118Row;
   const rows = [
     row(
       1,
@@ -1755,9 +1758,12 @@ export const SPEC118_GENERATED_XLSX = {
   },
 } as const;
 
+/** openpyxl's inline string cell. */
+const openpyxlInline = (ref: string, value: string): string => `<c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c>`;
+
 export async function buildSpec118GeneratedXlsxBytes(): Promise<Uint8Array> {
   const G = SPEC118_GENERATED_XLSX.cells;
-  const inline = (ref: string, value: string): string => `<c r="${ref}" t="inlineStr"><is><t>${value}</t></is></c>`;
+  const inline = openpyxlInline;
   const sheet =
     OPENPYXL_DECLARATION +
     `<worksheet xmlns="${MAIN_NS}"><sheetPr><outlinePr summaryBelow="1" summaryRight="1"/><pageSetUpPr/></sheetPr><dimension ref="A1:B3"/>` +
@@ -1909,10 +1915,13 @@ const SPEC118_ODS_AUTOMATIC_STYLES =
   Array.from({ length: 12 }, (_, k) => `<style:style style:name="ce${k + 1}" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N${k + 2}"/>`).join("") +
   `</office:automatic-styles>`;
 
+/** A LibreOffice value cell: its style (if any), value attributes and text. */
+const loValueCell = (style: string | undefined, attrs: string, text: string): string =>
+  `<table:table-cell${style ? ` table:style-name="${style}"` : ""} ${attrs}><text:p>${text}</text:p></table:table-cell>`;
+
 export async function buildSpec118FormatsOdsBytes(): Promise<Uint8Array> {
   const R = SPEC118_FORMATS_ODS.rows;
-  const cell = (style: string | undefined, attrs: string, text: string): string =>
-    `<table:table-cell${style ? ` table:style-name="${style}"` : ""} ${attrs}><text:p>${text}</text:p></table:table-cell>`;
+  const cell = loValueCell;
   const valueRow = (label: string, value: string): string => loRow(loString(label) + value + loEmpty(16382));
   const date = (style: string | undefined, iso: string, text: string): string =>
     cell(style, `office:value-type="date" office:date-value="${iso}" calcext:value-type="date"`, text);
@@ -1931,7 +1940,7 @@ export async function buildSpec118FormatsOdsBytes(): Promise<Uint8Array> {
     ) +
     valueRow(R[4].label, date(R[4].style, "2026-10-08T13:45:00", "Donnerstag, 8. Oktober 2026")) +
     valueRow(R[5].label, cell(R[5].style, `office:value-type="time" office:time-value="PT36H00M00S" calcext:value-type="time"`, "36:00:00")) +
-    valueRow(R[6].label, float(R[6].style, 3.14159265358979, "3 14/99")) +
+    valueRow(R[6].label, float(R[6].style, Math.PI, "3 14/99")) +
     valueRow(R[7].label, float(R[7].style, 12345, "1.23E+04")) +
     valueRow(R[8].label, cell(R[8].style, `office:value-type="percentage" office:value="0.125" calcext:value-type="percentage"`, "12.50%")) +
     valueRow(R[9].label, cell(R[9].style, `office:value-type="boolean" office:boolean-value="true" calcext:value-type="boolean"`, "TRUE")) +
