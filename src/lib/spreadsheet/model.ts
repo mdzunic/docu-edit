@@ -366,6 +366,26 @@ export function isOriginal(sheet: Pick<Sheet, "partName" | "sourceXml" | "copied
   return hasSource(sheet) && sheet.copiedFrom === undefined;
 }
 
+const VM_ATTRIBUTE = /\s+vm\s*=\s*(?:"[^"]*"|'[^']*')/g;
+
+/** Removes, from a cell copy about to take a new value or runs, what the
+ * value invalidates (the drop rules, SPEC-122): `runs`, `sstIndex`,
+ * `preservedText` and a ` vm="…"` in `preservedAttrs` — whoever sets the
+ * value, a command or a recalculation. */
+export function dropValueBound(cell: Cell): void {
+  delete cell.runs;
+  delete cell.sstIndex;
+  delete cell.preservedText;
+  if (cell.preservedAttrs !== undefined) {
+    const rest = cell.preservedAttrs.replace(VM_ATTRIBUTE, "");
+    if (rest.length === 0) {
+      delete cell.preservedAttrs;
+    } else {
+      cell.preservedAttrs = rest;
+    }
+  }
+}
+
 const ROW_LAYOUT_CACHE_ATTRIBUTE = /^(?:spans|(?:[\w.-]+:)?dyDescent)$/;
 const SOURCE_ATTRIBUTE = /([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')/g;
 

@@ -64,7 +64,7 @@
 import { findRow, getCell, usedRange, type CellRef, type GridRange } from "./address";
 import { shiftFormula } from "./formula/references";
 import { buildMergeIndex, mergeAt, rangesIntersect } from "./merges";
-import { MAX_COLS, MAX_ROWS, isCellError, rowSourceAttrsHoldProperties, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetModel } from "./model";
+import { MAX_COLS, MAX_ROWS, dropValueBound, isCellError, rowSourceAttrsHoldProperties, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { BUILTIN_NUMBER_FORMATS } from "./numberFormat/builtin";
 import type { ParsedInput } from "./numberFormat/input";
 import { cellStyle, columnSpanAt, effectiveStyleId, internStyle, styleKey } from "./styles";
@@ -172,29 +172,6 @@ export function isEmptyRow(row: Row): boolean {
   return Object.keys(record).every(
     (key) => key === "index" || key === "cells" || key === "sourceAttrs" || key === "sourceStyleName" || record[key] === undefined,
   );
-}
-
-const VM_ATTRIBUTE = /\s+vm\s*=\s*(?:"[^"]*"|'[^']*')/g;
-
-/** `preservedAttrs` without its value-metadata ` vm="…"` attribute. */
-function withoutVm(cell: Cell): void {
-  if (cell.preservedAttrs === undefined) {
-    return;
-  }
-  const rest = cell.preservedAttrs.replace(VM_ATTRIBUTE, "");
-  if (rest.length === 0) {
-    delete cell.preservedAttrs;
-  } else {
-    cell.preservedAttrs = rest;
-  }
-}
-
-/** Removes the fields a changed value invalidates. */
-function dropValueBound(cell: Cell): void {
-  delete cell.runs;
-  delete cell.sstIndex;
-  delete cell.preservedText;
-  withoutVm(cell);
 }
 
 /** Removes the fields a changed or removed formula invalidates. */

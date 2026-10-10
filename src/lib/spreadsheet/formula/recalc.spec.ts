@@ -6,7 +6,8 @@
 // the workbook iterates) and reported by their first cell in sheet order;
 // stale cells and forceFullCalcOnLoad; copy-on-write writes that leave
 // untouched rows (and an unchanged value) alone; array results distributed
-// with broadcasting; a pass driven in 0 ms steps equal to the synchronous
+// with broadcasting, a changed value dropping what was bound to the old one
+// (SPEC-122's drop rules); a pass driven in 0 ms steps equal to the synchronous
 // one; cancel-and-inherit; MAX_EVAL_DEPTH re-queueing of a long dynamic
 // chain; dynamic dependencies replaced on re-evaluation. Random draws come
 // from a seeded mulberry32 and the clock is injected — nothing reads the
@@ -242,6 +243,20 @@ describe("writes", () => {
     expect(rows[3]).toBe(fourth);
     expect(rows[0]).not.toBe(first); // the edit's own row
     expect(model.sheets[1]).toBe(other);
+  });
+
+  it("drop what was bound to a changed value (SPEC-122's drop rules) and keep it with an unchanged one", () => {
+    const model = calcWorkbook({ Sheet1: { A1: 1, B1: { formula: '"site "&A1', value: "site 1" }, C1: { formula: "A1*2", value: 2 }, D1: { formula: "LEN(B1)", value: 6 } } });
+    // A string result whose text:p carries a link, value metadata and runs on a number, a kept paragraph.
+    const [, b1, c1, d1] = model.sheets[0]!.rows[0]!.cells;
+    Object.assign(b1!, { preservedText: `<text:p><text:a xlink:href="https://example.com/">site 1</text:a></text:p>` });
+    Object.assign(c1!, { preservedAttrs: ` vm="1" ph="1"`, sstIndex: 3, runs: [{ text: "2" }] });
+    Object.assign(d1!, { preservedText: "<text:p>6</text:p>" });
+    recalculate(model, edit(model, "A1", { value: 2 }), { now: NOW });
+    const row = model.sheets[0]!.rows[0]!;
+    expect(row.cells[1]).toEqual({ col: 1, formula: '"site "&A1', value: "site 2" });
+    expect(row.cells[2]).toEqual({ col: 2, formula: "A1*2", value: 4, preservedAttrs: ` ph="1"` });
+    expect(row.cells[3]).toBe(d1);
   });
 
   it("write nothing for an unchanged value — a full pass that confirms every cache replaces nothing", () => {
