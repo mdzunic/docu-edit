@@ -32,6 +32,17 @@ export function cmToPx(cm: number): number {
   return (cm / CM_PER_INCH) * PX_PER_INCH;
 }
 
+/** Centimetres to PDF points (72 per inch) — the PDF writer's unit, spelled
+ * out because every PDF path converts with it (SPEC-108). */
+export function cmToPt(cm: number): number {
+  return (cm / CM_PER_INCH) * POINTS_PER_INCH;
+}
+
+/** PDF points to centimetres, the inverse of cmToPt. */
+export function ptToCm(pt: number): number {
+  return (pt / POINTS_PER_INCH) * CM_PER_INCH;
+}
+
 // --- display units (the Page setup dialog's selector) -----------------------
 
 /** The unit a size/margin dialog displays values in (SPEC-027 AC-4, AC-6).
