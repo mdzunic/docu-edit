@@ -588,6 +588,34 @@ export function fillWithEntry(model: SpreadsheetModel, sheetIndex: number, range
   applyEdits(model, sheetIndex, writer.edits);
 }
 
+/** SPEC-125's plain-text paste: writes each position's entry in one batch,
+ * exactly as setCellEntry would (the destination's style kept, the entry's
+ * number format applied only over General); a null entry clears the
+ * position's value and formula as Clear contents does. Positions the batch
+ * writes dissolve any array they cover (the caller refused partial ones). */
+export function writeEntries(model: SpreadsheetModel, sheetIndex: number, entries: Iterable<{ row: number; col: number; entry: CellEntry | null }>): void {
+  const sheet = model.sheets[sheetIndex];
+  if (!sheet) {
+    return;
+  }
+  const writer = new EntryWriter(model, sheet, new Map());
+  const written = new Set<number>();
+  for (const { row, col, entry } of entries) {
+    written.add(positionKey(row, col));
+    const cell = getCell(sheet, row, col);
+    if (entry) {
+      writer.write(row, col, entry, cell?.arrayRange !== undefined);
+    } else if (cell) {
+      if (cell.arrayRange) {
+        writer.memberClears.push(cell.arrayRange);
+      }
+      setEdit(writer.edits, row, col, clearedCell(cell));
+    }
+  }
+  clearMembers(sheet, writer.memberClears, writer.edits, (row, col) => written.has(positionKey(row, col)));
+  applyEdits(model, sheetIndex, writer.edits);
+}
+
 /** Delete / Backspace: clears the values and formulas of every stored cell
  * in `ranges` (see the module header). */
 export function clearContents(model: SpreadsheetModel, sheetIndex: number, ranges: GridRange[]): void {
