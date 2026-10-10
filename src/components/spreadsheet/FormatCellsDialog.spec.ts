@@ -72,4 +72,33 @@ describe("SPEC-123 FormatCellsDialog", () => {
     expect(entries.slice(1).map((entry) => Object.keys(entry.patch.borders ?? {})[0])).toEqual(["bottom", "top", "right", "left"]);
     wrapper.unmount();
   });
+
+  // A colour or border edge the dialog holds must stay the plain object the
+  // picker emitted: held in a deep `ref` it came back out as a Vue reactive
+  // Proxy, which patchStyle's clone (and IndexedDB's) refuses — the preview
+  // threw instead of showing the colour, and OK applied nothing.
+  it("previews and applies theme colours and a coloured outline as plain data", async () => {
+    const { wrapper, apply } = open({ font: { bold: true } }, "Total");
+    const accent = { theme: "accent1", lumMod: 0.6, lumOff: 0.4 };
+    await wrapper.get('[data-testid="format-cells-tab-fill"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-fill-theme-swatch"][aria-label="Accent 1, lighter 40%"]').trigger("click");
+    const preview = wrapper.get('[data-testid="format-cells-preview"]');
+    expect(preview.attributes("style")).toContain("background");
+    await wrapper.get('[data-testid="format-cells-tab-font"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-font-color"] [data-testid="text-color-button"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-font-color"] [data-testid="text-color-theme-swatch"][aria-label="Accent 2"]').trigger("click");
+    expect(preview.get("span").attributes("style")).toContain("color");
+    await wrapper.get('[data-testid="format-cells-tab-border"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-border-color"] [data-testid="text-color-button"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-border-color"] [data-testid="text-color-theme-swatch"][aria-label="Accent 6"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-border-preset-outline"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-ok"]').trigger("click");
+    const entries = apply.mock.calls[0]![0];
+    // What the model receives must survive the structured clone IndexedDB
+    // persistence runs on it.
+    expect(() => structuredClone(entries)).not.toThrow();
+    expect(entries[0]).toEqual({ range: { top: 0, left: 0, bottom: 2, right: 1 }, patch: { font: { color: { theme: "accent2" } }, fill: { kind: "solid", color: accent } } });
+    expect(entries.find((entry) => entry.patch.borders?.top)?.patch.borders).toEqual({ top: { style: "thin", color: { theme: "accent6" } } });
+    wrapper.unmount();
+  });
 });

@@ -11,6 +11,7 @@
 // Format Cells code builders' round trip over every category's whole option
 // set in every locale.
 import { describe, expect, it, vi } from "vitest";
+import type { ThemeColorRef } from "../core/theme";
 import type { GridRange } from "./address";
 import { ARRAY_PART_MESSAGE, clearContents, PROTECTED_CELL_MESSAGE } from "./cells";
 import {
@@ -26,7 +27,7 @@ import {
   patchStyle,
   type StylePatch,
 } from "./formatting";
-import { MAX_COLS, MAX_ROWS, type Cell, type CellBorderEdge, type CellStyle, type CellValue, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
+import { MAX_COLS, MAX_ROWS, type Cell, type CellBorderEdge, type CellFill, type CellStyle, type CellValue, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import {
   buildNumberCode,
   commaButtonFormat,
@@ -163,6 +164,8 @@ const BOLD: StylePatch = { font: { bold: true } };
 /** The style a position shows (cell → row → column → 0). */
 const shown = (model: SpreadsheetModel, row: number, col: number): CellStyle => styles.cellStyle(model, styles.effectiveStyleId(sheetOf(model), row, col));
 const storedCells = (model: SpreadsheetModel): number => sheetOf(model).rows.reduce((sum, row) => sum + row.cells.length, 0);
+/** A value as a Vue `ref` hands it back: wrapped in a Proxy. */
+const reactiveish = <T extends object>(value: T): T => new Proxy(value, {});
 
 describe("SPEC-123 patchStyle", () => {
   it("is pure, merges key by key and returns the input itself when nothing changes", () => {
@@ -204,6 +207,21 @@ describe("SPEC-123 patchStyle", () => {
       borders: { bottom: { style: "double" }, diagonal: { style: "thin", up: true } },
       namedStyle: "Good",
     });
+  });
+
+  // The model holds plain data only: IndexedDB structured-clones it, and a
+  // Vue reactive Proxy — what a value kept in a `ref` comes back as — throws
+  // DataCloneError there (and threw in patchStyle's own clone, so a colour
+  // picked in Format Cells was never applied).
+  it("copies patch values handed in as a Proxy into plain data", () => {
+    const color = reactiveish<ThemeColorRef>({ theme: "accent1", lumMod: 0.6, lumOff: 0.4 });
+    const patched = patchStyle(
+      { font: { bold: true } },
+      { font: reactiveish({ color }), fill: reactiveish<CellFill>({ kind: "solid", color }), borders: reactiveish({ top: reactiveish<CellBorderEdge>({ style: "thin", color }) }) },
+    );
+    expect(() => structuredClone(patched)).not.toThrow();
+    const plain = { theme: "accent1", lumMod: 0.6, lumOff: 0.4 };
+    expect(patched).toEqual({ font: { bold: true, color: plain }, fill: { kind: "solid", color: plain }, borders: { top: { style: "thin", color: plain } } });
   });
 });
 

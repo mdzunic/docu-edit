@@ -49,12 +49,16 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
   const open = ref(false);
   const tab = ref<FormatCellsTab>("number");
   const target = shallowRef<FormatCellsTarget | null>(null);
-  const fields = ref<FormatCellsFields>(fieldsOf({}, "", 11));
-  const touched = ref(new Set<keyof FormatCellsFields>());
-  const number = ref<NumberCodeSpec>({ category: "general" });
+  // Shallow, and replaced rather than mutated: a picked colour or border edge
+  // must reach patchStyle as the plain object the picker emitted — a deep ref
+  // hands back a reactive Proxy, which no structured clone (patchStyle's,
+  // IndexedDB's) accepts.
+  const fields = shallowRef<FormatCellsFields>(fieldsOf({}, "", 11));
+  const touched = shallowRef(new Set<keyof FormatCellsFields>());
+  const number = shallowRef<NumberCodeSpec>({ category: "general" });
   const numberTouched = ref(false);
   const customCode = ref("");
-  const edges = ref<Partial<Record<DialogEdge, CellBorderEdge | null>>>({});
+  const edges = shallowRef<Partial<Record<DialogEdge, CellBorderEdge | null>>>({});
   const lineStyle = ref<SheetBorderStyle>("thin");
   const lineColor = shallowRef<ModelColor | null>(null);
 

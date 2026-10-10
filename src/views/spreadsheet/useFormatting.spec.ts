@@ -6,6 +6,7 @@
 // SPEC-122's Delete; a refusal records nothing and shows a toast.
 import { describe, expect, it, vi } from "vitest";
 import { computed, effectScope, ref, shallowRef } from "vue";
+import { DEFAULT_THEME, resolveColor, type ThemeColorRef } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import { MAX_ROWS, type CellStyle, type Row, type SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { SPREADSHEET_LOCALES } from "../../lib/spreadsheet/numberFormat/locale";
@@ -85,6 +86,23 @@ describe("SPEC-123 useFormatting", () => {
     expect(g.shown(0, 0).fill).toBeUndefined();
     expect(g.formatting.toolbar.value.numberFormatLabel).toBe("Currency");
     g.scope.stop();
+  });
+
+  it("applies a theme fill and font colour picked in Format Cells as one step, the model kept plain", () => {
+    const h = harness([{ index: 0, cells: [{ col: 0, value: 1, styleId: 1 }, { col: 1, value: 2 }] }], [{}, { font: { bold: true } }]);
+    const accent: ThemeColorRef = { theme: "accent1", lumMod: 0.6, lumOff: 0.4 };
+    h.formatting.dialog.show("fill");
+    h.formatting.dialog.set("fillColor", accent);
+    h.formatting.dialog.set("fontColor", { theme: "accent2" });
+    expect(h.formatting.dialog.preview.value.box["background-color"]).toBe(resolveColor(accent, DEFAULT_THEME));
+    h.formatting.dialog.ok();
+    expect([h.labels, h.toasts]).toEqual([["Format cells"], []]);
+    // The mixed selection is not flattened: only B1 stays without bold.
+    expect(h.shown(0, 0)).toEqual({ font: { bold: true, color: { theme: "accent2" } }, fill: { kind: "solid", color: accent } });
+    expect(h.shown(0, 1)).toEqual({ font: { color: { theme: "accent2" } }, fill: { kind: "solid", color: accent } });
+    // What the write-through hands IndexedDB.
+    expect(() => structuredClone(h.model.value)).not.toThrow();
+    h.scope.stop();
   });
 
   it("Clear contents is SPEC-122's Delete, and a refusal shows a toast", () => {

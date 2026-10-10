@@ -14,7 +14,8 @@
 //   builtinFormatId clears the style's built-in id (SPEC-118's rule;
 //   "General" is no format). A result that differs from its input never
 //   carries sourceXf/sourceStyleName — it is not the source's style; a patch
-//   that changes nothing returns the input object itself.
+//   that changes nothing returns the input object itself. Patch values are
+//   copied in as plain data, a caller's reactive Proxy included.
 // - applyStylePatch interns each changed style once per base style id within
 //   one command (a 200,000-cell range sharing one base style calls internStyle
 //   once), writes the sheet copy-on-write with `dirty: true` (that sheet
@@ -131,6 +132,20 @@ const FONT_KEYS: readonly (keyof CellFont)[] = ["family", "sizePt", "bold", "ita
 const ALIGNMENT_KEYS: readonly (keyof CellAlignment)[] = ["horizontal", "vertical", "wrap", "indent", "textRotation", "shrinkToFit"];
 const EDGE_KEYS = ["top", "right", "bottom", "left", "diagonal"] as const;
 
+/** A plain-data copy of a patch value. The model holds plain data only
+ * (model.ts), and a value a view kept in a Vue `ref` arrives as a reactive
+ * Proxy, which structuredClone refuses — read key by key, it copies plain
+ * whatever the caller hands in. */
+function plainCopy<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item: unknown) => plainCopy(item)) as T;
+  }
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, plainCopy(item)])) as T;
+  }
+  return value;
+}
+
 /** `current` with `patch` merged key by key (null removes a key); undefined
  * when nothing is left. */
 function mergeKeys<T extends object>(current: T | undefined, patch: Nullable<T>): T | undefined {
@@ -142,7 +157,7 @@ function mergeKeys<T extends object>(current: T | undefined, patch: Nullable<T>)
     if (value === null) {
       delete next[key];
     } else {
-      next[key] = structuredClone(value);
+      next[key] = plainCopy(value);
     }
   }
   return Object.keys(next).length > 0 ? (next as T) : undefined;
@@ -169,7 +184,7 @@ export function patchStyle(style: CellStyle, patch: StylePatch): CellStyle {
   const next: CellStyle = { ...style };
   setOrDelete(next, "font", patchAspect(style.font, patch.font));
   if (patch.fill !== undefined) {
-    setOrDelete(next, "fill", patch.fill === null ? undefined : structuredClone(patch.fill));
+    setOrDelete(next, "fill", patch.fill === null ? undefined : plainCopy(patch.fill));
   }
   setOrDelete(next, "borders", patchAspect(style.borders, patch.borders));
   let alignment = patchAspect(style.alignment, patch.alignment);
