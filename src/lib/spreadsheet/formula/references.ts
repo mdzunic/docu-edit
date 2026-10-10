@@ -7,9 +7,11 @@
 // - rewriteReferences tokenizes once, asks `rewrite` about each `ref`
 //   token, replaces only the text of the tokens it rewrote (through
 //   formatReference; `null` becomes the token's sheet prefix as written plus
-//   `#REF!`), and joins: whitespace and every untouched token survive
-//   byte-for-byte, and a formula nothing touched comes back as the identical
-//   string. No rewrite here is print(parse()).
+//   `#REF!`; a replacement naming the same sheet(s) as the token keeps the
+//   prefix as written — `'Sheet1'!B2` moves to `'Sheet1'!B3`, its quotes
+//   kept — SPEC-124), and joins: whitespace and every untouched token
+//   survive byte-for-byte, and a formula nothing touched comes back as the
+//   identical string. No rewrite here is print(parse()).
 // - shiftFormula: a relative row part moves by dRow, a relative column part
 //   by dCol (whole-column references have no row part, whole-row ones no
 //   column part); any part leaving the grid turns the whole reference into
@@ -82,7 +84,14 @@ export function rewriteReferences(text: string, rewrite: RefRewrite): string {
     if (next === undefined) {
       return undefined;
     }
-    return next === null ? `${sheetPrefixOf(token.text)}#REF!` : formatReference(next);
+    const prefix = sheetPrefixOf(token.text);
+    if (next === null) {
+      return `${prefix}#REF!`;
+    }
+    if (prefix !== "" && next.sheet === token.ref.sheet && next.sheetEnd === token.ref.sheetEnd) {
+      return prefix + formatReference({ start: next.start, ...(next.end ? { end: next.end } : {}) });
+    }
+    return formatReference(next);
   });
 }
 

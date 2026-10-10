@@ -75,7 +75,9 @@
 // like any other. `sheetProtection@sheet` "1"/"true" → `protection`, with
 // SPEC-123's permits: `formatCells`/`formatColumns`/`formatRows` "0"/"false"
 // → `allowFormatCells`/`allowFormatColumns`/`allowFormatRows` (absent = not
-// permitted, Excel's default).
+// permitted, Excel's default), and SPEC-124's `insertRows`/`insertColumns`/
+// `deleteRows`/`deleteColumns` "0"/"false" → `allowInsertRows`/
+// `allowInsertColumns`/`allowDeleteRows`/`allowDeleteColumns`.
 //
 // The worksheet writer (SPEC-122 "The worksheet writer", normative there):
 // serializeWorksheet(sheet, base, ctx) rebuilds `dimension`, `sheetViews`,
@@ -1109,6 +1111,19 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
         }
         if (isOff(scanAttr(event.attrs, "formatRows"))) {
           protection.allowFormatRows = true;
+        }
+        // SPEC-124: the structural permits, read the same way.
+        if (isOff(scanAttr(event.attrs, "insertRows"))) {
+          protection.allowInsertRows = true;
+        }
+        if (isOff(scanAttr(event.attrs, "insertColumns"))) {
+          protection.allowInsertColumns = true;
+        }
+        if (isOff(scanAttr(event.attrs, "deleteRows"))) {
+          protection.allowDeleteRows = true;
+        }
+        if (isOff(scanAttr(event.attrs, "deleteColumns"))) {
+          protection.allowDeleteColumns = true;
         }
       }
       section = !event.selfClosing && SECTIONS.has(event.local) ? (event.local as Section) : null;
