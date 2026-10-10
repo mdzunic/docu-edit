@@ -41,10 +41,13 @@ import {
   buildSpec120CalcXlsxBytes,
   buildSpec121LinksOdsBytes,
   buildSpec121LinksXlsxBytes,
+  buildSpec122ShapesOdsBytes,
+  buildSpec122ShapesXlsxBytes,
   SPEC116_VBA_PROJECT,
 } from "./fixtures/build";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
+import { parseFormatCode } from "./numberFormat/parse";
 import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { formatValue, plainText, workbookFormatContext } from "./numberFormat/render";
 import { readSpreadsheetBytes } from "./open";
@@ -419,6 +422,8 @@ const EDIT_FIXTURES: Pick<Fixture, "file" | "format" | "bytes">[] = [
   { file: "spec120-calc.ods", format: "ods", bytes: buildSpec120CalcOdsBytes },
   { file: "spec121-links.xlsx", format: "xlsx", bytes: buildSpec121LinksXlsxBytes },
   { file: "spec121-links.ods", format: "ods", bytes: buildSpec121LinksOdsBytes },
+  { file: "spec122-shapes.xlsx", format: "xlsx", bytes: buildSpec122ShapesXlsxBytes },
+  { file: "spec122-shapes.ods", format: "ods", bytes: buildSpec122ShapesOdsBytes },
 ];
 
 /** A number as the comparisons hold it: an .ods date-time is exact to the
@@ -588,7 +593,10 @@ describe("SPEC-122: forcing every .ods sheet dirty without an edit reads back to
 });
 
 /** What a user sees of a sheet: per stored cell with content, its displayed
- * text in en-US, its formula and its number format code. */
+ * text in en-US, its formula and its number format — compared by meaning
+ * (SPEC-118's parseFormatCode), since a copy in the other format carries a
+ * format's meaning, not its spelling: an .ods number style writes Excel's
+ * `[Red]\-#,##0.00` as text "-" and reads back `[Red]-#,##0.00`. */
 function displayedCells(model: SpreadsheetModel, sheet: Sheet) {
   const ctx = workbookFormatContext(model, EN_US);
   return sheet.rows.flatMap((row) =>
@@ -600,7 +608,7 @@ function displayedCells(model: SpreadsheetModel, sheet: Sheet) {
           ref: formatA1({ row: row.index, col: cell.col }),
           text: plainText(formatValue(cell.value, code, ctx)),
           formula: cell.formula ?? null,
-          code: code ?? "General",
+          format: parseFormatCode(code ?? "General"),
         };
       }),
   );

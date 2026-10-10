@@ -55,6 +55,16 @@
 //                             conditional format, annotation, internal link,
 //                             an embedded chart object, settings.xml
 //                             per-table entries with TabColor
+// - spec122-shapes.xlsx     — SPEC-122, Excel-shaped: "Edit" (shared, array,
+//                             dynamic-array and data-table formulas, rich,
+//                             phonetic and _x000D_ strings, a vm picture,
+//                             outlines, a merge, a freeze, x14 extensions),
+//                             "Locked" (sheetProtection, one unlocked cell),
+//                             "Inline" (inline strings)
+// - spec122-shapes.ods      — SPEC-122, LibreOffice-shaped: the tails, repeated
+//                             runs, a span, an annotation, a link, header rows
+//                             and a row group, local names and conditional
+//                             formats, a validation, de-ce1, a protected table
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -82,6 +92,8 @@ import {
   buildSpec120ManualXlsxBytes,
   buildSpec121LinksOdsBytes,
   buildSpec121LinksXlsxBytes,
+  buildSpec122ShapesOdsBytes,
+  buildSpec122ShapesXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -106,6 +118,8 @@ writeFileSync(join(fixturesDir, "spec120-manual.xlsx"), await buildSpec120Manual
 writeFileSync(join(fixturesDir, "spec120-calc.ods"), await buildSpec120CalcOdsBytes());
 writeFileSync(join(fixturesDir, "spec121-links.xlsx"), await buildSpec121LinksXlsxBytes());
 writeFileSync(join(fixturesDir, "spec121-links.ods"), await buildSpec121LinksOdsBytes());
+writeFileSync(join(fixturesDir, "spec122-shapes.xlsx"), await buildSpec122ShapesXlsxBytes());
+writeFileSync(join(fixturesDir, "spec122-shapes.ods"), await buildSpec122ShapesOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);
