@@ -182,7 +182,7 @@ export function useSheetGrid(
    * character (SPEC-122). */
   function onDblClick(event: MouseEvent): void {
     // SPEC-125: a double-click on the fill handle fills down.
-    if (event.button === 0 && event.target instanceof Element && event.target.closest('[data-testid="sheet-fill-handle"]')) {
+    if (event.button === 0 && pointer.pressedOnHandle()) {
       context().fillHandle?.doubleClick();
       return;
     }

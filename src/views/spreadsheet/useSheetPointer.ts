@@ -98,6 +98,9 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   let resizeAxis: "row" | "col" = "col";
   let last = { x: 0, y: 0 };
   let frame: number | null = null;
+  /** The last press began on the fill handle (SPEC-125): a double-click's
+   * target is the capturing grid, so this is what tells it apart. */
+  let pressOnHandle = false;
 
   /** A client point → unscaled px from the grid's top-left, and how far it
    * lies outside the scrolled area (for auto-scroll). */
@@ -218,6 +221,7 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   }
 
   function onPointerDown(event: PointerEvent): void {
+    pressOnHandle = onFillHandle(event.target);
     const element = deps.scroller.value;
     const rect = element?.getBoundingClientRect();
     // A press on the scroller's own scrollbars is the browser's.
@@ -374,5 +378,5 @@ export function useSheetPointer(deps: SheetPointerDeps) {
 
   onBeforeUnmount(stopAutoScroll);
 
-  return { onPointerDown, onPointerMove, onPointerUp, boundaryAtClient };
+  return { onPointerDown, onPointerMove, onPointerUp, boundaryAtClient, pressedOnHandle: (): boolean => pressOnHandle };
 }
