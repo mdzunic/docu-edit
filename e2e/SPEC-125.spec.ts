@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { unzip } from "../src/lib/core/zip";
 
 // SPEC-125 — copy, paste, fill and move (AC-118, AC-119), with the real
 // keyboard, pointer and clipboard (Chromium, clipboard-read/clipboard-write
@@ -16,9 +17,24 @@ import { fileURLToPath } from "node:url";
 // in the chip → every cell reads "Mon" → double-click the fill handle beside
 // a 20-row column → it fills 20 rows → Ctrl/Cmd+D → Alt/Option-drag a block
 // to copy it → undo three times → download → reopen → the cells as left.
+//
+// The tests after the chain drive, the same way, what the chain does not
+// reach: the refusals — over 1,000,000 cells to copy (spec116-wide.ods), past
+// the grid's edge, part of an array (spec119-formulas.xlsx), a protected
+// sheet (spec122-shapes.xlsx) — AC-7, AC-27, AC-29, AC-30; another workbook
+// open in a second tab (spec116-1904.xlsx): formulas naming a sheet it lacks
+// paste as values, dates convert between the 1900 and 1904 systems both
+// ways, styles intern there and keep their ids at home, and a cut pastes
+// there as a copy — as it does at home once an edit has cancelled it —
+// AC-36, AC-37, AC-38, AC-45; the menu's Paste recognising the view's own
+// copy by its text (AC-21); LibreOffice's HTML, and plain text over a styled
+// cell (AC-57, AC-64); date and counter series, and Fill down/right of one
+// row and one column (AC-73, AC-76, AC-88); the row refit after pastes and
+// a fill (AC-96).
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const EXCEL_CAPTURE = join(fixtures, "spec125-clipboard", "excel.html");
+const FILL_FIXTURE = join(fixtures, "spec125-fill.xlsx");
 
 test.use({ viewport: { width: 1440, height: 900 }, permissions: ["clipboard-read", "clipboard-write"] });
 
@@ -75,6 +91,67 @@ async function download(page: Page, fileName: string): Promise<string> {
 
 const formulaBar = (page: Page): Locator => page.getByTestId("formula-bar-content");
 
+function toast(page: Page, message: string): Locator {
+  return page.getByTestId("toast").filter({ hasText: message });
+}
+
+async function select(page: Page, from: string, to: string): Promise<void> {
+  await clickCell(page, from);
+  await clickCell(page, to, ["Shift"]);
+}
+
+/** Puts flavours on the clipboard, as another application's copy does. */
+async function writeClipboard(page: Page, flavours: Record<string, string>): Promise<void> {
+  await page.evaluate(async (items) => {
+    const blobs: Record<string, Blob> = {};
+    for (const [type, text] of Object.entries(items)) {
+      blobs[type] = new Blob([text], { type });
+    }
+    await navigator.clipboard.write([new ClipboardItem(blobs)]);
+  }, flavours);
+}
+
+/** Drags the selection's fill handle to `to`, then dismisses the chip. */
+async function dragFill(page: Page, to: string): Promise<void> {
+  const grip = (await page.getByTestId("sheet-fill-handle").boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  const target = await centre(page, to);
+  await page.mouse.move(target.x, target.y, { steps: 8 });
+  await page.mouse.up();
+  await expect(page.getByTestId("sheet-fill-options")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("sheet-fill-options")).toHaveCount(0);
+}
+
+/** Sets columns `from`:`to` to `chars` characters through the header menu's
+ * "Column width…". */
+async function widenColumns(page: Page, from: string, to: string, chars: string): Promise<void> {
+  await colHeader(page, from).click();
+  await colHeader(page, to).click({ modifiers: ["Shift"] });
+  await colHeader(page, to).click({ button: "right" });
+  await page.getByTestId("sheet-size-band").click();
+  await page.getByTestId("sheet-column-width-input").fill(chars);
+  await page.getByTestId("sheet-size-ok").click();
+  await expect(page.getByTestId("sheet-column-width-dialog")).toHaveCount(0);
+}
+
+/** A date cell's value, as the formula bar shows it (the fixture's columns
+ * are too narrow for some dates, which then show as "########"). */
+async function expectDate(page: Page, ref: string, date: string): Promise<void> {
+  await clickCell(page, ref);
+  await expect(formulaBar(page)).toHaveText(date);
+}
+
+async function rowHeight(page: Page, row: number): Promise<number> {
+  return (await rowHeader(page, row).boundingBox())!.height;
+}
+
+/** A cell's `s` attribute in a sheet part. */
+function styleAttribute(xml: string, ref: string): string | undefined {
+  return new RegExp(`<c r="${ref}"(?: [^>]*?)? s="(\\d+)"`).exec(xml)?.[1];
+}
+
 test("copy, paste, cut, fill, move and undo on spec125-fill.xlsx, then download and reopen (AC-118, AC-119)", async ({ page }) => {
   await open(page, join(fixtures, "spec125-fill.xlsx"));
   const ants = page.getByTestId("sheet-copy-marquee");
@@ -122,12 +199,15 @@ test("copy, paste, cut, fill, move and undo on spec125-fill.xlsx, then download 
     await page.evaluate(async (html) => {
       await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }) })]);
     }, readFileSync(EXCEL_CAPTURE, "utf8"));
-    await clickCell(page, "A40");
+    // Rows the grid shows at this viewport (it ends at row 35); column C wide
+    // enough for "$1,234.50", which its default width can show as "########".
+    await widenColumns(page, "C", "C", "14");
+    await clickCell(page, "A25");
     await page.keyboard.press("ControlOrMeta+v");
-    await clickCell(page, "C40");
+    await clickCell(page, "C25");
     await expect(formulaBar(page)).toHaveText("1234.5");
-    await expect(cell(page, "C40")).toHaveText(/\$1,234\.50/);
-    await clickCell(page, "A45");
+    await expect(cell(page, "C25")).toHaveText(/\$1,234\.50/);
+    await clickCell(page, "A27");
     await page.keyboard.press("ControlOrMeta+Shift+v");
     const dialog = page.getByTestId("sheet-paste-special-dialog");
     await expect(dialog).toBeVisible();
@@ -135,7 +215,7 @@ test("copy, paste, cut, fill, move and undo on spec125-fill.xlsx, then download 
     await page.getByTestId("sheet-paste-special-transpose").check();
     await page.getByTestId("sheet-paste-special-ok").click();
     await expect(dialog).toHaveCount(0);
-    await clickCell(page, "A47");
+    await clickCell(page, "A29");
     await expect(formulaBar(page)).toHaveText("1234.5");
   } else {
     test.info().annotations.push({ type: "fixture", description: "fixture not yet captured: excel.html" });
@@ -229,12 +309,340 @@ test("copy, paste, cut, fill, move and undo on spec125-fill.xlsx, then download 
   await expect(cell(page, "N6")).toHaveText("");
   await expect(cell(page, "P2")).toHaveText("");
   if (captured) {
-    await clickCell(page, "C40");
+    await clickCell(page, "C25");
     await expect(formulaBar(page)).toHaveText("1234.5");
-    await clickCell(page, "A47");
+    await clickCell(page, "A29");
     await expect(formulaBar(page)).toHaveText("1234.5");
   }
   await sheetTab(page, "Sheet2").click();
   await clickCell(page, "A1");
   await expect(formulaBar(page)).toHaveText("=SUM(Sheet1!H10:H12)");
+});
+
+test("refusals: too many cells to copy, past the grid's edge, part of an array, a protected sheet (AC-7, AC-27, AC-29, AC-30)", async ({ page }) => {
+  // spec116-wide.ods's one value sits at row 900,000, so columns A:B copy
+  // 1,800,000 cells: refused, and no ants.
+  await open(page, join(fixtures, "spec116-wide.ods"));
+  await colHeader(page, "A").click();
+  await colHeader(page, "B").click({ modifiers: ["Shift"] });
+  await page.keyboard.press("ControlOrMeta+c");
+  await expect(toast(page, "That's too many cells to copy — select fewer than 1,000,000 cells")).toBeVisible();
+  await expect(page.getByTestId("sheet-copy-marquee")).toHaveCount(0);
+
+  // B2:C3 pasted at the last column, then at the last row.
+  const edge = "The paste area goes past the edge of the sheet";
+  await open(page, FILL_FIXTURE);
+  await select(page, "B2", "C3");
+  await page.keyboard.press("ControlOrMeta+c");
+  await clickCell(page, "A30");
+  await page.keyboard.press("ControlOrMeta+ArrowRight");
+  await expect(page.getByTestId("name-box")).toHaveValue("XFD30");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(toast(page, edge)).toBeVisible();
+  await expect(toast(page, edge)).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+ArrowLeft");
+  await page.keyboard.press("ControlOrMeta+ArrowDown");
+  await expect(page.getByTestId("name-box")).toHaveValue("A1048576");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(toast(page, edge)).toBeVisible();
+  await expect(page.getByTestId("name-box")).toHaveValue("A1048576");
+
+  // spec119-formulas.xlsx's "Calc" holds the array E2:E4: a paste onto part
+  // of it is refused; onto all of it, it lands.
+  await open(page, join(fixtures, "spec119-formulas.xlsx"));
+  await writeClipboard(page, { "text/plain": "7" });
+  await clickCell(page, "E3");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(toast(page, "You can't change part of an array")).toBeVisible();
+  await expect(cell(page, "E3")).not.toHaveText("7");
+  await select(page, "E2", "E4");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "E2")).toHaveText("7");
+  await expect(cell(page, "E4")).toHaveText("7");
+
+  // spec122-shapes.xlsx's "Locked" is protected: its locked A1 refuses the
+  // paste with SPEC-122's message; its one unlocked cell, B2, takes it.
+  await open(page, join(fixtures, "spec122-shapes.xlsx"));
+  await sheetTab(page, "Locked").click();
+  const before = await cell(page, "A1").textContent();
+  await writeClipboard(page, { "text/plain": "7" });
+  await clickCell(page, "A1");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(toast(page, "This cell is on a protected sheet")).toBeVisible();
+  await expect(cell(page, "A1")).toHaveText(before ?? "");
+  await clickCell(page, "B2");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "B2")).toHaveText("7");
+});
+
+test("another workbook: formulas naming its missing sheets paste as values, 1900/1904 dates convert, styles intern, a cut pastes as a copy (AC-36, AC-37, AC-38, AC-45)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  const other = await page.context().newPage();
+  await open(other, join(fixtures, "spec116-1904.xlsx"));
+
+  // Sheet2's two formulas both read Sheet1, which spec116-1904.xlsx lacks:
+  // they paste there as their cached values, with the toast.
+  await page.bringToFront();
+  await sheetTab(page, "Sheet2").click();
+  await select(page, "A1", "A2");
+  await page.keyboard.press("ControlOrMeta+c");
+  await other.bringToFront();
+  await clickCell(other, "D1");
+  await other.keyboard.press("ControlOrMeta+v");
+  await expect(toast(other, "2 formulas referring to other sheets were pasted as values")).toBeVisible();
+  await expect(cell(other, "D1")).toHaveText("18");
+  await expect(cell(other, "D2")).toHaveText("30");
+  await expect(formulaBar(other)).toHaveText("18");
+
+  // A 1904 date (B1, 2026-10-08) pasted into the 1900 workbook is the same
+  // date — the formula bar shows it as typed…
+  await clickCell(other, "B1");
+  await expect(formulaBar(other)).toHaveText("10/8/2026");
+  await other.keyboard.press("ControlOrMeta+c");
+  await page.bringToFront();
+  await sheetTab(page, "Sheet1").click();
+  await clickCell(page, "P20");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(formulaBar(page)).toHaveText("10/8/2026");
+  // …and a 1900 date (Series!E2, 2026-01-31) pasted into the 1904 one too.
+  await sheetTab(page, "Series").click();
+  await clickCell(page, "E2");
+  await expect(formulaBar(page)).toHaveText("1/31/2026");
+  await page.keyboard.press("ControlOrMeta+c");
+  await other.bringToFront();
+  await clickCell(other, "D5");
+  await other.keyboard.press("ControlOrMeta+v");
+  await expect(formulaBar(other)).toHaveText("1/31/2026");
+
+  // Sheet1's bold A1 pasted there is interned as a bold style; pasted at
+  // home, it keeps its own style id.
+  await page.bringToFront();
+  await sheetTab(page, "Sheet1").click();
+  await clickCell(page, "A1");
+  await page.keyboard.press("ControlOrMeta+c");
+  await clickCell(page, "A28");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "A28")).toHaveText("Amounts");
+  await expect(page.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+  await other.bringToFront();
+  await clickCell(other, "E1");
+  await other.keyboard.press("ControlOrMeta+v");
+  await expect(cell(other, "E1")).toHaveText("Amounts");
+  await expect(other.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+
+  // A cut of A10:A12 pasted into the other workbook is a copy: the cells
+  // land there, and nothing moves at home.
+  await page.bringToFront();
+  await select(page, "A10", "A12");
+  await page.keyboard.press("ControlOrMeta+x");
+  await expect(page.getByTestId("sheet-copy-marquee")).toHaveAttribute("data-mode", "cut");
+  await other.bringToFront();
+  await clickCell(other, "F1");
+  await other.keyboard.press("ControlOrMeta+v");
+  await expect(cell(other, "F1")).toHaveText("5");
+  await expect(cell(other, "F3")).toHaveText("7");
+  await page.bringToFront();
+  await expect(cell(page, "A10")).toHaveText("5");
+  await expect(cell(page, "A12")).toHaveText("7");
+
+  // At home an edit cancels the pending cut (the ants go), so its paste is
+  // a copy too: A10:A12 stay, and Sheet2's SUM still reads them.
+  await clickCell(page, "P1");
+  await page.keyboard.type("x");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("sheet-copy-marquee")).toHaveCount(0);
+  await clickCell(page, "H10");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "H10")).toHaveText("5");
+  await expect(cell(page, "H12")).toHaveText("7");
+  await expect(cell(page, "A10")).toHaveText("5");
+  await expect(cell(page, "A12")).toHaveText("7");
+  await sheetTab(page, "Sheet2").click();
+  await clickCell(page, "A1");
+  await expect(formulaBar(page)).toHaveText("=SUM(Sheet1!A10:A12)");
+
+  // Saved: A28 has A1's style index and no style was added at home; the
+  // other workbook's E1 is still bold after a reopen.
+  const home = await unzip(new Uint8Array(readFileSync(await download(page, "home.xlsx"))));
+  const sheet1 = new TextDecoder().decode(home.get("xl/worksheets/sheet1.xml")!);
+  expect(styleAttribute(sheet1, "A28")).toBeDefined();
+  expect(styleAttribute(sheet1, "A28")).toBe(styleAttribute(sheet1, "A1"));
+  const xfCount = (bytes: Uint8Array): string | undefined => /<cellXfs count="(\d+)"/.exec(new TextDecoder().decode(bytes))?.[1];
+  const fixture = await unzip(new Uint8Array(readFileSync(FILL_FIXTURE)));
+  expect(xfCount(home.get("xl/styles.xml")!)).toBe(xfCount(fixture.get("xl/styles.xml")!));
+  await other.bringToFront();
+  const saved = await download(other, "other.xlsx");
+  await open(other, saved);
+  await clickCell(other, "E1");
+  await expect(other.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+  await clickCell(other, "D5");
+  await expect(formulaBar(other)).toHaveText("1/31/2026");
+  await clickCell(other, "D1");
+  await expect(formulaBar(other)).toHaveText("18");
+});
+
+test("the menu's Paste takes the view's own copy by its text when the HTML lacks the payload (AC-21)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  await select(page, "B2", "C3");
+  await page.keyboard.press("ControlOrMeta+c");
+  const tsv = await page.evaluate(() => navigator.clipboard.readText());
+  expect(tsv).toBe("10\t20\r\n20\t30");
+
+  // HTML without the attribute, and the copy's text: the copy's payload
+  // pastes — E6 holds the shifted formula, not the number 20.
+  await writeClipboard(page, {
+    "text/html": "<table><tr><td>10</td><td>20</td></tr><tr><td>20</td><td>30</td></tr></table>",
+    "text/plain": tsv,
+  });
+  await clickCell(page, "E5");
+  const e5 = await centre(page, "E5");
+  await page.mouse.click(e5.x, e5.y, { button: "right" });
+  await page.getByTestId("sheet-cell-menu-paste").click();
+  await expect(cell(page, "F6")).toHaveText("30");
+  await clickCell(page, "E6");
+  await expect(formulaBar(page)).toHaveText("=E5*2");
+
+  // No HTML at all, the same text: the same rule.
+  await writeClipboard(page, { "text/plain": tsv });
+  await clickCell(page, "E20");
+  const e20 = await centre(page, "E20");
+  await page.mouse.click(e20.x, e20.y, { button: "right" });
+  await page.getByTestId("sheet-cell-menu-paste").click();
+  await expect(cell(page, "F21")).toHaveText("30");
+  await clickCell(page, "F21");
+  await expect(formulaBar(page)).toHaveText("=E20+F20");
+});
+
+test("LibreOffice's HTML imports through sdval and sdnum; plain text keeps the destination's style (AC-57, AC-64)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  // Columns A:I wide enough for every format to show in full.
+  await widenColumns(page, "A", "I", "14");
+  await writeClipboard(page, {
+    "text/html":
+      `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN"><html><head>` +
+      `<meta http-equiv="content-type" content="text/html; charset=utf-8"/><meta name="generator" content="LibreOffice 24.8.4.2 (MacOSX)"/>` +
+      `<style type="text/css">body,div,table,thead,tbody,tfoot,tr,th,td,p { font-family:"Liberation Sans"; font-size:x-small }</style></head>` +
+      `<body><table cellspacing="0" border="0"><colgroup span="9" width="85"></colgroup><tr>` +
+      `<td height="17" align="left"><b>Widget</b></td>` +
+      `<td align="right" sdval="1234567" sdnum="1033;0;#,##0">1,234,567</td>` +
+      `<td align="right" sdval="1234.5" sdnum="1033;0;[$$-409]#,##0.00;[RED]-[$$-409]#,##0.00">$1,234.50</td>` +
+      `<td align="right" sdval="0.25" sdnum="1033;0;0%">25%</td>` +
+      `<td align="right" sdval="46096" sdnum="1033;0;MM/DD/YY">03/15/26</td>` +
+      `<td align="right" sdval="1" sdnum="1033;0;BOOLEAN">TRUE</td>` +
+      `<td align="right" sdval="1235801.5" sdnum="1033;0;General">1235801.5</td>` +
+      `<td colspan=2 align="left"><font color="#C9211E"><i><u>Merged</u></i></font></td>` +
+      `</tr></table></body></html>`,
+    "text/plain": "Widget\t1,234,567\t$1,234.50\t25%\t03/15/26\tTRUE\t1235801.5\tMerged",
+  });
+  await clickCell(page, "A24");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "A24")).toHaveText("Widget");
+  await expect(page.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+  await expect(cell(page, "B24")).toHaveText("1,234,567");
+  await clickCell(page, "B24");
+  await expect(formulaBar(page)).toHaveText("1234567");
+  await expect(cell(page, "C24")).toHaveText(/\$1,234\.50/);
+  await clickCell(page, "C24");
+  await expect(formulaBar(page)).toHaveText("1234.5");
+  await expect(cell(page, "D24")).toHaveText("25%");
+  await expect(cell(page, "E24")).toHaveText("03/15/26");
+  await expect(cell(page, "F24")).toHaveText("TRUE");
+  await expect(cell(page, "G24")).toHaveText("1235801.5");
+  await expect(cell(page, "H24")).toHaveText("Merged");
+  await expect(cell(page, "H24")).toHaveAttribute("aria-colspan", "2");
+  await clickCell(page, "H24");
+  await expect(page.getByTestId("sheet-italic")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("sheet-underline")).toHaveAttribute("aria-pressed", "true");
+
+  // A bold A26 takes "1,234.50" as the number 1234.5 in the format the
+  // text implies, and stays bold.
+  await clickCell(page, "A26");
+  await page.keyboard.press("ControlOrMeta+b");
+  await expect(page.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+  await writeClipboard(page, { "text/plain": "1,234.50" });
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "A26")).toHaveText("1,234.50");
+  await expect(formulaBar(page)).toHaveText("1234.5");
+  await expect(page.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("date and counter series, and Fill down/right of one row and one column (AC-73, AC-76, AC-88)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  await sheetTab(page, "Series").click();
+  // Dates by day, by month-end, by month (EDATE), by year and by week.
+  await clickCell(page, "E2");
+  await dragFill(page, "E4");
+  await expectDate(page, "E3", "2/1/2026");
+  await expectDate(page, "E4", "2/2/2026");
+  await select(page, "F2", "F3");
+  await dragFill(page, "F5");
+  await expectDate(page, "F4", "3/31/2026");
+  await expectDate(page, "F5", "4/30/2026");
+  await select(page, "G2", "G3");
+  await dragFill(page, "G5");
+  await expectDate(page, "G4", "3/15/2026");
+  await expectDate(page, "G5", "4/15/2026");
+  await select(page, "H2", "H3");
+  await dragFill(page, "H4");
+  await expectDate(page, "H4", "3/1/2026");
+  await select(page, "I2", "I3");
+  await dragFill(page, "I4");
+  await expectDate(page, "I4", "1/15/2026");
+  // Counters: a trailing integer (its zero padding kept, a step of two) and
+  // ordinals.
+  await clickCell(page, "O2");
+  await dragFill(page, "O4");
+  await expect(cell(page, "O3")).toHaveText("Item 10");
+  await expect(cell(page, "O4")).toHaveText("Item 11");
+  await clickCell(page, "P2");
+  await dragFill(page, "P3");
+  await expect(cell(page, "P3")).toHaveText("Item 010");
+  await select(page, "Q2", "Q3");
+  await dragFill(page, "Q5");
+  await expect(cell(page, "Q4")).toHaveText("Item 5");
+  await expect(cell(page, "Q5")).toHaveText("Item 7");
+  await clickCell(page, "R2");
+  await dragFill(page, "R5");
+  await expect(cell(page, "R3")).toHaveText("2nd");
+  await expect(cell(page, "R4")).toHaveText("3rd");
+  await expect(cell(page, "R5")).toHaveText("4th");
+
+  // One row, M3:N3: Fill down copies the row above (M2's formula shifted).
+  await sheetTab(page, "Sheet1").click();
+  await select(page, "M3", "N3");
+  await page.keyboard.press("ControlOrMeta+d");
+  await expect(cell(page, "M3")).toHaveText("4");
+  await expect(cell(page, "N3")).toHaveText("Total");
+  await clickCell(page, "M3");
+  await expect(formulaBar(page)).toHaveText("=L3*2");
+  // One column, K2: Fill right copies the column to its left.
+  await clickCell(page, "K2");
+  await page.keyboard.press("ControlOrMeta+r");
+  await expect(cell(page, "K2")).toHaveText("Mon");
+});
+
+test("pastes and fills refit the rows they write (AC-96)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  const normal = await rowHeight(page, 30);
+  // A 24 pt cell pasted from a web table makes its row taller.
+  await writeClipboard(page, { "text/html": `<table><tr><td style="font-size:24pt">Big</td></tr></table>`, "text/plain": "Big" });
+  await clickCell(page, "A30");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "A30")).toHaveText("Big");
+  await expect.poll(() => rowHeight(page, 30)).toBeGreaterThan(normal + 10);
+  const tall = await rowHeight(page, 30);
+  // Fill down brings the style, and the refit, to row 31.
+  await select(page, "A30", "A31");
+  await page.keyboard.press("ControlOrMeta+d");
+  await expect(cell(page, "A31")).toHaveText("Big");
+  await expect.poll(() => rowHeight(page, 31)).toBe(tall);
+  // The view's own copy pasted at A33: the same; undo puts row 33 back.
+  await clickCell(page, "A30");
+  await page.keyboard.press("ControlOrMeta+c");
+  await clickCell(page, "A33");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect.poll(() => rowHeight(page, 33)).toBe(tall);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(cell(page, "A33")).toHaveText("");
+  await expect.poll(() => rowHeight(page, 33)).toBe(normal);
 });
