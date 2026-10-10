@@ -68,6 +68,17 @@ describe("repointFormula — the re-point table", () => {
     const across: RangeMove = { fromSheetId: "s1", from: range(0, 0, 0, 0), toSheetId: "s3", toTop: 0, toLeft: 0 };
     expect(repointFormula("B1+A1", "s1", across, nameOf, "s3")).toBe("Sheet1!B1+A1");
   });
+
+  it("gives a moved formula's whole rows and columns its old sheet's prefix too, so they keep pointing where they did", () => {
+    const across: RangeMove = { fromSheetId: "s1", from: range(0, 0, 0, 0), toSheetId: "s3", toTop: 0, toLeft: 0 };
+    expect(repointFormula("SUM(B:B)+B1", "s1", across, nameOf, "s3")).toBe("SUM(Sheet1!B:B)+Sheet1!B1");
+    expect(repointFormula("SUM($2:$3)+SUM(Sheet2!C:C)+SUM(Sheet1:Sheet2!A1)", "s1", across, nameOf, "s3")).toBe("SUM(Sheet1!$2:$3)+SUM(Sheet2!C:C)+SUM(Sheet1:Sheet2!A1)");
+    // On its own sheet a moved formula's whole rows and columns stay as written.
+    expect(repointFormula("SUM(B:B)", "s1", DOWN, nameOf, "s1")).toBe("SUM(B:B)");
+    const m = model([sheet("s1", "Sheet1", { rows: [row(0, [value(0, 3, { formula: "SUM(B:B)+B1" })])] }), sheet("s2", "Sheet2")]);
+    moveRange(m, { fromSheetId: "s1", from: range(0, 0, 0, 0), toSheetId: "s2", toTop: 4, toLeft: 4 });
+    expect(cellOf(m, "s2", 4, 4)?.formula).toBe("SUM(Sheet1!B:B)+Sheet1!B1");
+  });
 });
 
 describe("moveRange", () => {

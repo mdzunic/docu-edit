@@ -214,30 +214,31 @@ export function repointFormula(text: string, hostSheetId: string, move: RangeMov
   const { dRow, dCol } = offsetOf(move);
   const dest = moveDestination(move);
   return rewriteReferences(text, (ref) => {
+    // Whole rows and columns and 3-D references have no area: never moved.
     const area = ref.sheetEnd === undefined ? areaOf(ref) : null;
-    if (!area) {
-      return undefined;
-    }
-    const on = (ref.sheet ?? hostName).toUpperCase();
-    if (on === fromName && contains(move.from, area)) {
-      const moved: ReferenceNode = { start: movedPart(ref.start, dRow, dCol) };
-      if (ref.end) {
-        moved.end = movedPart(ref.end, dRow, dCol);
-      }
-      if (!crossSheet) {
-        if (ref.sheet !== undefined) {
-          moved.sheet = ref.sheet;
+    if (area) {
+      const on = (ref.sheet ?? hostName).toUpperCase();
+      if (on === fromName && contains(move.from, area)) {
+        const moved: ReferenceNode = { start: movedPart(ref.start, dRow, dCol) };
+        if (ref.end) {
+          moved.end = movedPart(ref.end, dRow, dCol);
         }
-      } else if (move.toSheetId !== newHost) {
-        moved.sheet = sheetNameOf(move.toSheetId);
+        if (!crossSheet) {
+          if (ref.sheet !== undefined) {
+            moved.sheet = ref.sheet;
+          }
+        } else if (move.toSheetId !== newHost) {
+          moved.sheet = sheetNameOf(move.toSheetId);
+        }
+        return moved;
       }
-      return moved;
-    }
-    if (on === toName && contains(dest, area)) {
-      return null;
+      if (on === toName && contains(dest, area)) {
+        return null;
+      }
     }
     if (movedTo !== undefined && movedTo !== hostSheetId && ref.sheet === undefined) {
-      // A moved formula keeps pointing at its old sheet's cells.
+      // A moved formula keeps pointing at its old sheet's cells — whole rows
+      // and columns included (`B:B` must not become the new sheet's B:B).
       return { ...ref, sheet: hostName };
     }
     return undefined;
