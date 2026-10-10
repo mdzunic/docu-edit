@@ -52,17 +52,17 @@ import {
   type NumberFormatChoice,
   type StylePatch,
   type StylePatchEntry,
+  patchChangesRowHeight,
 } from "../../lib/spreadsheet/formatting";
 import type { CellBorderEdge, Sheet, SheetBorderStyle, SpreadsheetModel } from "../../lib/spreadsheet/model";
-import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
 import { formatCodeOf } from "../../lib/spreadsheet/numberFormat/builtin";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import { cellColorHex, cellFontName, cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import type { CellEditing } from "./useCellEditing";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
-import { headerAt, selectionAxis } from "./headerMenu";
-import { SHEET_SHORTCUTS } from "./sheetShortcuts";
+import { headerAt, inGrid, selectionAxis } from "./headerMenu";
+import { NUMBER_SHORTCUTS, SHEET_SHORTCUTS, TOGGLE_LABELS, TOGGLE_SHORTCUTS } from "./sheetShortcuts";
 import { cellStyleGroups, documentFonts, numberFormatItems, numberFormatLabel, type SheetToolbarCommand, type SheetToolbarState } from "./sheetToolbar";
 import { useFormatCellsDialog } from "./useFormatCellsDialog";
 import type { SheetSelectionController } from "./useSheetSelection";
@@ -85,42 +85,6 @@ const DEFAULT_FILL = "#ffff00";
 const FONT_SIZE_RANGE = [1, 409] as const;
 const MAX_INDENT = 250;
 
-/** The number-format shortcut ids → their format. */
-const NUMBER_SHORTCUTS: Readonly<Record<string, NumberShortcutId>> = {
-  "sheet.formatGeneral": "general",
-  "sheet.formatNumber": "number",
-  "sheet.formatTime": "time",
-  "sheet.formatDate": "date",
-  "sheet.formatCurrency": "currency",
-  "sheet.formatPercent": "percent",
-  "sheet.formatScientific": "scientific",
-};
-const TOGGLE_SHORTCUTS: Readonly<Record<string, "bold" | "italic" | "underline" | "strikethrough">> = {
-  "sheet.bold": "bold",
-  "sheet.italic": "italic",
-  "sheet.underline": "underline",
-  "sheet.strikethrough": "strikethrough",
-};
-const TOGGLE_LABELS = { bold: "Bold", italic: "Italic", underline: "Underline", strikethrough: "Strikethrough" } as const;
-
-/** Whether a patch can change a row's autofit height (SPEC-124: a font
- * family or size, wrap or rotation) — the formatting commands that refit. */
-function changesRowHeight(patch: StylePatch): boolean {
-  const font = patch.font;
-  const alignment = patch.alignment;
-  return (
-    font === null ||
-    alignment === null ||
-    (font !== undefined && (font.family !== undefined || font.sizePt !== undefined)) ||
-    (alignment !== undefined && (alignment.wrap !== undefined || alignment.textRotation !== undefined))
-  );
-}
-
-/** Whether a keydown's target is the grid (its in-cell editor included),
- * outside any dialog. */
-function inGrid(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest('[data-testid="spreadsheet-grid"]') !== null && target.closest('[role="dialog"]') === null;
-}
 
 export function useFormatting(deps: FormattingDeps) {
   const toast = deps.toast ?? useToasts().addToast;
@@ -171,7 +135,7 @@ export function useFormatting(deps: FormattingDeps) {
     }
   }
 
-  const patch = (label: string, value: StylePatch): void => command(label, (m, id, ranges) => applyStylePatch(m, id, ranges, value), changesRowHeight(value));
+  const patch = (label: string, value: StylePatch): void => command(label, (m, id, ranges) => applyStylePatch(m, id, ranges, value), patchChangesRowHeight(value));
   const numberFormat = (choice: NumberFormatChoice): void => patch("Number format", { numberFormat: choice.numberFormat, builtinFormatId: choice.builtinFormatId ?? null });
 
   function remember(color: ModelColor | null): void {
@@ -208,7 +172,7 @@ export function useFormatting(deps: FormattingDeps) {
         recentColors: recentColors.value,
       };
     },
-    apply: (entries) => command("Format cells", (m, id) => applyStylePatches(m, id, entries), entries.some((entry) => changesRowHeight(entry.patch))),
+    apply: (entries) => command("Format cells", (m, id) => applyStylePatches(m, id, entries), entries.some((entry) => patchChangesRowHeight(entry.patch))),
   });
 
   function run(cmd: SheetToolbarCommand): void {

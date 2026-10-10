@@ -32,6 +32,7 @@
 // view.zoomIn/zoomOut).
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
+import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
 
 export type SheetShortcutId =
   | "sheet.formatCells"
@@ -87,3 +88,23 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
  * for another platform (a test, a preview) takes sheetShortcutDefinitions
  * with that same `isMac` instead — the strikethrough binding differs. */
 export const SHEET_SHORTCUTS: ShortcutDefinition[] = sheetShortcutDefinitions(isMacPlatform());
+
+/** The number-format shortcut ids → their format (useFormatting runs them). */
+export const NUMBER_SHORTCUTS: Readonly<Record<string, NumberShortcutId>> = {
+  "sheet.formatGeneral": "general",
+  "sheet.formatNumber": "number",
+  "sheet.formatTime": "time",
+  "sheet.formatDate": "date",
+  "sheet.formatCurrency": "currency",
+  "sheet.formatPercent": "percent",
+  "sheet.formatScientific": "scientific",
+};
+
+/** The toggle shortcut ids → their format, and the toggles' undo labels. */
+export const TOGGLE_SHORTCUTS: Readonly<Record<string, "bold" | "italic" | "underline" | "strikethrough">> = {
+  "sheet.bold": "bold",
+  "sheet.italic": "italic",
+  "sheet.underline": "underline",
+  "sheet.strikethrough": "strikethrough",
+};
+export const TOGGLE_LABELS = { bold: "Bold", italic: "Italic", underline: "Underline", strikethrough: "Strikethrough" } as const;

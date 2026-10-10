@@ -441,13 +441,13 @@ function unscroll(event = new Event("scroll")) {
 .sheet-resize-guide.is-vertical {
   top: 0;
   width: 0;
-  border-left-width: 1px;
+  border-left-width: var(--border-width);
 }
 
 .sheet-resize-guide.is-horizontal {
   left: 0;
   height: 0;
-  border-top-width: 1px;
+  border-top-width: var(--border-width);
 }
 
 .sheet-resize-tooltip {

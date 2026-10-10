@@ -730,6 +730,19 @@ function idRuns(from: number, to: number, idAt: (index: number) => number): { mi
   return runs;
 }
 
+/** Whether a patch can change a row's autofit height — a font family or
+ * size, wrap or rotation (SPEC-124: the formatting commands that run
+ * SPEC-122's refitRows inside their step). */
+export function patchChangesRowHeight(patch: StylePatch): boolean {
+  const { font, alignment } = patch;
+  return (
+    font === null ||
+    alignment === null ||
+    (font !== undefined && (font.family !== undefined || font.sizePt !== undefined)) ||
+    (alignment !== undefined && (alignment.wrap !== undefined || alignment.textRotation !== undefined))
+  );
+}
+
 /** Applies a captured pattern to `target` (see the module header). */
 export function applyPattern(model: SpreadsheetModel, sheetId: string, target: GridRange, pattern: StylePattern): FormatResult {
   const found = sheetFor(model, sheetId);
