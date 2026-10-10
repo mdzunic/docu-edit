@@ -16,6 +16,12 @@ import { useFormatting } from "./useFormatting";
 
 const EN_US = SPREADSHEET_LOCALES["en-US"];
 
+function press(target: Element, init: KeyboardEventInit): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(event);
+  return event;
+}
+
 function harness(rows: Row[], styles: CellStyle[], ranges: GridRange[] = [{ top: 0, left: 0, bottom: 1, right: 1 }]) {
   const model: SpreadsheetModel = createBlankWorkbook();
   model.sheets = [{ ...model.sheets[0]!, rows }];
@@ -96,11 +102,6 @@ describe("SPEC-123 useFormatting", () => {
     grid.dataset.testid = "spreadsheet-grid";
     const editor = grid.appendChild(document.createElement("div"));
     document.body.append(grid);
-    const press = (target: Element, init: KeyboardEventInit): KeyboardEvent => {
-      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
-      target.dispatchEvent(event);
-      return event;
-    };
     expect(press(editor, { key: "b", ctrlKey: true }).defaultPrevented).toBe(true);
     expect([h.labels, h.toasts, h.model.value!.sheets[0]!.columns]).toEqual([["Bold"], [], [{ min: 0, max: 0, styleId: 1 }]]);
     expect(press(document.body, { key: "i", ctrlKey: true }).defaultPrevented).toBe(false);

@@ -1622,6 +1622,10 @@ function colsXml(sheet: Sheet, ctx: XlsxSheetContext, p: string): string {
     let attrs = ` min="${span.min + 1}" max="${span.max + 1}"`;
     if (span.widthPx !== undefined) {
       attrs += ` width="${numberText(span.sourceWidthChars ?? xlsxWidthForPx(span.widthPx, ctx.mdw))}"`;
+    } else if (span.styleId !== undefined && !span.hidden) {
+      // SPEC-123: a styled default-width column (a whole-column format) still
+      // states its width — Excel reads a <col> without one as zero wide.
+      attrs += ` width="${numberText(xlsxWidthForPx(sheet.defaultColWidthPx, ctx.mdw))}"`;
     }
     if (span.styleId !== undefined) {
       attrs += ` style="${ctx.styles.xfFor(span.styleId)}"`;
