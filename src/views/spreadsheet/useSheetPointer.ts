@@ -5,9 +5,16 @@
 // range), a drag extends to the cell under the pointer and auto-scrolls by
 // AUTO_SCROLL_PX_PER_FRAME while the pointer is outside the viewport; header
 // presses and drags select whole rows or columns; the corner selects all.
+// SPEC-122: a press focuses the in-cell editor (the grid's focus holder);
+// while a cell is being edited a press goes through useCellEditing first —
+// inside the editor it is the browser's (the caret moves), on a cell it
+// points (and a drag extends the point) when point mode allows, otherwise
+// the edit commits before the selection moves (a formula error keeps the
+// editor open and the selection where it is).
 import { onBeforeUnmount, type Ref } from "vue";
 import type { CellRef } from "../../lib/spreadsheet/address";
 import type { GridMetrics } from "../../lib/spreadsheet/geometry";
+import type { CellEditing } from "./useCellEditing";
 import { primaryModifier, type SheetSelectionController } from "./useSheetSelection";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, type SheetViewport } from "./useSheetViewport";
 
@@ -48,10 +55,15 @@ export interface SheetPointerDeps {
   metrics: () => GridMetrics;
   viewport: SheetViewport;
   selection: () => SheetSelectionController;
+  /** Cell entry (SPEC-122); absent = a read-only grid. */
+  editing?: () => CellEditing | undefined;
+  /** Focuses the grid's focus holder (the in-cell editor); default: the
+   * scroller. */
+  focus?: () => void;
 }
 
 export function useSheetPointer(deps: SheetPointerDeps) {
-  let dragging: "cell" | "row" | "column" | null = null;
+  let dragging: "cell" | "row" | "column" | "point" | null = null;
   let last = { x: 0, y: 0 };
   let frame: number | null = null;
 
@@ -119,6 +131,20 @@ export function useSheetPointer(deps: SheetPointerDeps) {
     const point = local(event.clientX, event.clientY);
     const hit = hitAt(point.x, point.y);
     const mods = { shift: event.shiftKey, mod: primaryModifier(event) };
+    const editing = deps.editing?.();
+    if (editing) {
+      const inEditor = event.target instanceof Element && event.target.closest('[data-testid="cell-editor"]') !== null;
+      const outcome = hit.area === "cell" ? editing.pressCell(hit.cell, mods.shift, inEditor) : editing.pressOutside() ? "select" : "handled";
+      if (outcome === "native") {
+        return;
+      }
+      if (outcome === "handled") {
+        dragging = "point";
+        (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+        return;
+      }
+    }
     const selection = deps.selection();
     if (hit.area === "corner") {
       selection.selectEverything();
@@ -135,7 +161,11 @@ export function useSheetPointer(deps: SheetPointerDeps) {
       dragging = "cell";
     }
     last = { x: event.clientX, y: event.clientY };
-    deps.scroller.value?.focus({ preventScroll: true });
+    if (deps.focus) {
+      deps.focus();
+    } else {
+      deps.scroller.value?.focus({ preventScroll: true });
+    }
     (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
     event.preventDefault();
   }
@@ -146,6 +176,13 @@ export function useSheetPointer(deps: SheetPointerDeps) {
     }
     last = { x: event.clientX, y: event.clientY };
     const point = local(event.clientX, event.clientY);
+    if (dragging === "point") {
+      const hit = hitAt(Math.max(point.x, ROW_HEADER_WIDTH_PX), Math.max(point.y, COLUMN_HEADER_HEIGHT_PX));
+      if (hit.area === "cell") {
+        deps.editing?.()?.pointDrag(hit.cell);
+      }
+      return;
+    }
     if (dragging === "cell") {
       extendTo(point.x, point.y);
     } else {
@@ -162,6 +199,11 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   }
 
   function onPointerUp(): void {
+    if (dragging === "point") {
+      dragging = null;
+      deps.editing?.()?.pointRelease();
+      return;
+    }
     if (dragging) {
       dragging = null;
       stopAutoScroll();

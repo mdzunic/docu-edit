@@ -6,8 +6,10 @@
 //   stored, SPEC-118's editText for every other cell — in the view's locale
 //   through the cell's effective style (useSheetSelection's format context).
 //   A dynamic array's member shows its anchor's formula with `spillMember`,
-//   which the bar renders muted. The bar stays read-only (editing is
-//   SPEC-122's).
+//   which the bar renders muted. SPEC-122 makes the bar editable (the cell
+//   editor's draft replaces this text while a cell is edited) and honours
+//   protection: a cell whose effective style hides its formula
+//   (`protection.hidden`) on a protected sheet shows an empty bar.
 // - Show formulas is the sheet's `showFormulas` view state
 //   (useSheetViewState): toggled from the View menu or with Ctrl+` — matched
 //   on `event.code === "Backquote"` so a layout where ` is a dead key still
@@ -74,7 +76,11 @@ export function useFormulaDisplay(deps: FormulaDisplayDeps) {
     }
     const { row, col } = deps.selection.selection.value.active;
     const ctx = { ...deps.selection.formatContext.value, format: deps.model()?.format ?? "xlsx" };
-    return formulaBarContent(sheet, row, col, deps.selection.styleAt(sheet, row, col), ctx);
+    const style = deps.selection.styleAt(sheet, row, col);
+    if (sheet.protection && style?.protection?.hidden) {
+      return { text: "", spillMember: false };
+    }
+    return formulaBarContent(sheet, row, col, style, ctx);
   });
 
   return {

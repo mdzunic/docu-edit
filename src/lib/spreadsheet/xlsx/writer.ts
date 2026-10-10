@@ -1,16 +1,20 @@
-// The .xlsx writer (SPEC-121 "From scratch", "The .xlsx substitution path").
-// THIS FILE, with SPEC-121, is the normative source for how a workbook's
-// package is rebuilt. Three paths, chosen by what the model holds (SPEC-080's
-// for decks):
+// The .xlsx writer (SPEC-121 "From scratch", "The .xlsx substitution path";
+// SPEC-122 "The worksheet writer", "Shared strings", "Styles", "calcChain and
+// calcPr"). THIS FILE, with SPEC-121 and SPEC-122, is the normative source
+// for how a workbook's package is rebuilt. Three paths, chosen by what the
+// model holds (SPEC-080's for decks):
 //
 //  1. No retained package (`opaque` empty — a new workbook, or a
 //     stripRetention'ed copy): the minimal package from the model, parts in
 //     this order: [Content_Types].xml, _rels/.rels, docProps/core.xml,
 //     docProps/app.xml (Application only — no TitlesOfParts to go stale),
 //     xl/workbook.xml, its rels, xl/theme/theme1.xml (core's
-//     OFFICE_THEME_XML), xl/styles.xml (one font, the two reserved fills,
-//     one border, one xf, the Normal style) and one empty
-//     xl/worksheets/sheetN.xml per sheet.
+//     OFFICE_THEME_XML), xl/styles.xml (xlsx/styles.ts's from-scratch base —
+//     font 0 and xf 0 built from `model.styles[0]` — with every other style a
+//     cell, row or column uses appended), xl/sharedStrings.xml when a cell
+//     holds a string, and one xl/worksheets/sheetN.xml per sheet, written by
+//     sheetXml.ts's serializeWorksheet (SPEC-121's empty-sheet template, byte
+//     for byte, for an empty sheet).
 //  2. Retained package, nothing changed (no `structureDirty`, no dirty
 //     sheet): every part verbatim, in source order.
 //  3. Otherwise the substitution path: xl/workbook.xml gets a spliced
@@ -21,38 +25,41 @@
 //     never re-serialised; xl/calcChain.xml is dropped with its relationship
 //     and Override; docProps/app.xml's sheet titles are rebuilt or removed;
 //     a deleted sheet's part and everything reachable only through it are
-//     skipped; each sheet part gets the retained sheet-reference pass
+//     skipped. A clean sheet part gets the retained sheet-reference pass
 //     (sheetNamePass.ts, with a copy's own remap), its `<tabColor>` spliced
 //     when the model's colour differs from the source's, and the first
-//     sheetView's `tabSelected` made to agree with the active sheet; a new
-//     sheet is written empty at the next free `xl/worksheets/sheet<N>.xml`.
-//     Every other part is verbatim — the pass touches only the parts that
-//     mention a remapped name.
+//     sheetView's `tabSelected` made to agree with the active sheet — the
+//     same bytes when none of them changes anything. A dirty sheet's
+//     retained text gets the pass and the tab-colour splice FIRST; then
+//     serializeWorksheet splices the model's rebuilt elements into it (the
+//     model's formulas already name sheets as the model does, so they are
+//     never passed twice). A new sheet is serialised from the template at the
+//     next free `xl/worksheets/sheet<N>.xml`. One SharedStringsWriter and
+//     one XlsxStyleWriter serve the whole save: both parts are only ever
+//     appended to — clean parts reference their items by number — and are
+//     rewritten only when something was appended; a workbook without one
+//     gains it with its relationship and Override. Every other part is
+//     verbatim — the pass touches only the parts that mention a remapped
+//     name.
 //
-// Interim until SPEC-122 (which replaces this paragraph): a dirty sheet with
-// a source is written exactly as a clean one — its retained part plus the
-// pass and the splices. Its formulas are right (the pass rewrites `<f>`),
-// but cached values the edit pipeline recalculated are not refreshed here,
-// so whenever a dirty sheet is written this way the workbook gets
-// `calcPr@fullCalcOnLoad="1"` and the consumer recomputes on open. New sheets
-// are always empty here; SPEC-122 serialises cells.
-//
-// `fullCalcOnLoad="1"` is also written when the caller asks
-// (`options.fullCalcOnLoad`), when a recalculation left a stale cell
-// (`model.forceFullCalcOnLoad`, SPEC-120) and, from scratch, when the
-// model's own `calc.fullCalcOnLoad` says so.
+// `calcPr@fullCalcOnLoad="1"` is written (SPEC-122 "calcChain and calcPr")
+// when the caller asks (`options.fullCalcOnLoad`) or a recalculation left a
+// stale cell (`model.forceFullCalcOnLoad`, SPEC-120 — set, never cleared),
+// and from scratch also when the model's own `calc.fullCalcOnLoad` says so;
+// a source `fullCalcOnLoad="1"` stays. Dirty sheets are written from the
+// model with the values the edit pipeline recalculated (a stale cell's last
+// value as it is), so an edit alone never asks the consumer to recalculate.
 import { now as clockNow } from "../../core/clock";
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { OFFICE_THEME_XML } from "../../core/officeThemeXml";
 import { decodedPartBytes } from "../../core/packageParts";
 import { SPREADSHEETML_MAIN_CONTENT_TYPES } from "../../core/packageDetect";
-import { sameModelColor } from "../../core/theme";
+import { DEFAULT_THEME, resolveFont, sameModelColor } from "../../core/theme";
 import { relsPathFor } from "../../core/xml";
 import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { isEmptyRemap, type SheetRemap } from "../formula/sheetRefs";
-import { pxToXlsxWidth } from "../geometry";
-import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT } from "../geometry";
+import { maxDigitWidthPx } from "../geometry";
 import type { Sheet, SpreadsheetModel } from "../model";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
@@ -77,8 +84,13 @@ import {
   type SourceSheet,
   type SourceWorkbook,
 } from "./package";
+import { SharedStringsWriter } from "./sharedStrings";
 import { mentionsAnyName, passFor, remapXlsxFormula, remappedNames } from "./sheetNamePass";
+import { emptyWorksheetXml, serializeWorksheet, type XlsxSheetContext } from "./sheetXml";
+import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
+
+export { emptyWorksheetXml } from "./sheetXml";
 
 export interface WriteXlsxOptions {
   /** The `modified` stamp of a from-scratch docProps/core.xml (defaults to
@@ -106,18 +118,32 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
   if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty)) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
-  return zip(buildSubstitution(model, parts, options));
+  return zip(buildSubstitution(model, parts, options, "write"));
 }
 
 /** The substitution path's parts for any model with a retained package —
  * what a reader upgrade re-reads an edited workbook's clean sheets from
  * (open.ts): every model sheet laid out in order with the retained
- * sheet-reference pass applied. `interim: false` leaves the source's
- * calculation flag alone. */
+ * sheet-reference pass applied, a dirty sheet's retained part included (the
+ * upgrade keeps the stored dirty sheets, so nothing is serialised from the
+ * model), the shared strings, styles and calculation flag left as the
+ * source has them. */
 export function substitutedXlsxParts(model: SpreadsheetModel): Map<string, Uint8Array> {
-  const entries = buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, false);
+  const entries = buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, "layout");
   return new Map(entries.map((entry) => [entry.name, entry.data] as const));
 }
+
+/** The maximum digit width column widths convert with: the default style's
+ * font, resolved as the reader resolves the Normal font (Calibri 11 when it
+ * names no face or size). */
+function workbookMdw(model: SpreadsheetModel): number {
+  const font = model.styles[0]?.font;
+  const family = font?.family !== undefined ? resolveFont(font.family, model.theme ?? DEFAULT_THEME) : DEFAULT_XLSX_FONT.family;
+  return maxDigitWidthPx(family, font?.sizePt ?? DEFAULT_XLSX_FONT.sizePt);
+}
+
+const SHARED_STRINGS_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml";
+const STYLES_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml";
 
 // --- from scratch ------------------------------------------------------------------------
 
@@ -125,21 +151,6 @@ const encode = (text: string): Uint8Array => encodeUtf8(text);
 
 function sheetStateAttr(sheet: Sheet): string {
   return sheet.visibility === "visible" ? "" : ` state="${sheet.visibility}"`;
-}
-
-/** An empty worksheet part (SPEC-121 "From scratch"): the tab colour, the
- * selected flag on the active sheet, the default sizes. */
-export function emptyWorksheetXml(sheet: Sheet, active: boolean, model: SpreadsheetModel): string {
-  const tabColor = sheet.tabColor === undefined ? "" : `<sheetPr><tabColor${modelColorToXlsxAttrs(sheet.tabColor, model.theme)}/></sheetPr>`;
-  const colWidth =
-    sheet.defaultColWidthPx === DEFAULT_COL_WIDTH_PX ? "" : ` defaultColWidth="${pxToXlsxWidth(sheet.defaultColWidthPx, 7)}"`;
-  const rowHeight = Number.isFinite(sheet.defaultRowHeightPt) ? sheet.defaultRowHeightPt : DEFAULT_ROW_HEIGHT_PT;
-  return (
-    `${XML_DECLARATION}<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${tabColor}<dimension ref="A1"/>` +
-    `<sheetViews><sheetView workbookViewId="0"${active ? ` tabSelected="1"` : ""}/></sheetViews>` +
-    `<sheetFormatPr${colWidth} defaultRowHeight="${rowHeight}"/><sheetData/>` +
-    `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`
-  );
 }
 
 /** The minimal styles part: one font (Calibri 11 through the minor theme
@@ -166,6 +177,14 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const mainType = SPREADSHEETML_MAIN_CONTENT_TYPES[model.packageVariant ?? "workbook"];
   const sheetParts = model.sheets.map((_, index) => `xl/worksheets/sheet${index + 1}.xml`);
   const n = model.sheets.length;
+  // The sheets first: they fill the string and style tables.
+  const strings = new SharedStringsWriter(undefined, model.theme);
+  const styles = new XlsxStyleWriter(undefined, model);
+  const mdw = workbookMdw(model);
+  const worksheets = model.sheets.map((sheet, index) =>
+    serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles }),
+  );
+  const sharedStrings = strings.xml();
   const contentTypes =
     `${XML_DECLARATION}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -173,7 +192,8 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     `<Override PartName="/xl/workbook.xml" ContentType="${mainType}"/>` +
     sheetParts.map((part) => `<Override PartName="/${part}" ContentType="${WORKSHEET_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
-    `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
+    `<Override PartName="/xl/styles.xml" ContentType="${STYLES_CONTENT_TYPE}"/>` +
+    (sharedStrings === undefined ? "" : `<Override PartName="/xl/sharedStrings.xml" ContentType="${SHARED_STRINGS_CONTENT_TYPE}"/>`) +
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
     `<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
   const rootRels =
@@ -194,6 +214,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     sheetParts.map((part, index) => relationshipXml(`rId${index + 1}`, `${RELATIONSHIP_TYPE}/worksheet`, part.slice("xl/".length))).join("") +
     relationshipXml(`rId${n + 1}`, `${RELATIONSHIP_TYPE}/theme`, "theme/theme1.xml") +
     relationshipXml(`rId${n + 2}`, `${RELATIONSHIP_TYPE}/styles`, "styles.xml") +
+    (sharedStrings === undefined ? "" : relationshipXml(`rId${n + 3}`, `${RELATIONSHIP_TYPE}/sharedStrings`, "sharedStrings.xml")) +
     `</Relationships>`;
   return [
     { name: "[Content_Types].xml", data: encode(contentTypes) },
@@ -203,11 +224,9 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     { name: "xl/workbook.xml", data: encode(workbook) },
     { name: "xl/_rels/workbook.xml.rels", data: encode(workbookRels) },
     { name: "xl/theme/theme1.xml", data: encode(OFFICE_THEME_XML) },
-    { name: "xl/styles.xml", data: encode(FROM_SCRATCH_STYLES_XML) },
-    ...model.sheets.map((sheet, index) => ({
-      name: sheetParts[index]!,
-      data: encode(emptyWorksheetXml(sheet, index === model.activeSheetIndex, model)),
-    })),
+    { name: "xl/styles.xml", data: encode(styles.xml()) },
+    ...(sharedStrings === undefined ? [] : [{ name: "xl/sharedStrings.xml", data: encode(sharedStrings) }]),
+    ...worksheets.map((xml, index) => ({ name: sheetParts[index]!, data: encode(xml) })),
   ];
 }
 
@@ -248,7 +267,20 @@ function planSheets(model: SpreadsheetModel, parts: Map<string, Uint8Array>, wor
   });
 }
 
-function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, interim = true): ZipEntryInput[] {
+/** "write" serialises dirty and new sheets from the model through the
+ * save's string and style writers; "layout" (substitutedXlsxParts) only lays
+ * the retained parts out — dirty ones included — with new sheets empty. */
+type SubstitutionMode = "write" | "layout";
+
+/** A part the save adds: its bytes, relationship and Override. */
+interface AddedPart {
+  name: string;
+  data: Uint8Array;
+  rel: string;
+  contentType: string;
+}
+
+function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, mode: SubstitutionMode): ZipEntryInput[] {
   const workbook = readSourceWorkbook(parts);
   if (!workbook) {
     throw new Error("The workbook's retained package has no workbook part");
@@ -289,15 +321,80 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
   }
 
-  const anyDirty = model.sheets.some((sheet) => sheet.dirty && !isGenerated(plans, sheet));
-  const fullCalc = interim && (options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true || anyDirty);
+  const write = mode === "write";
+  const fullCalc = write && (options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true);
   const activeIndex = model.activeSheetIndex;
+
+  // The sheet parts first: a rebuilt sheet appends to the string and style
+  // tables, which are written after them.
+  const tablePart = (kind: string): string | undefined => {
+    const rel = workbook.rels.find((entry) => relationshipKind(entry.type) === kind && !entry.external);
+    const name = rel ? targetPart(workbook.path, rel) : undefined;
+    return name !== undefined && parts.has(name) ? name : undefined;
+  };
+  const stringsPath = tablePart("sharedStrings");
+  const stylesPath = tablePart("styles");
+  const strings = new SharedStringsWriter(stringsPath === undefined ? undefined : decodeUtf8(parts.get(stringsPath)!), model.theme);
+  const styles = new XlsxStyleWriter(stylesPath === undefined ? undefined : decodeUtf8(parts.get(stylesPath)!), model);
+  const mdw = workbookMdw(model);
+  const context = (plan: SheetPlan): XlsxSheetContext => ({ active: plan.index === activeIndex, theme: model.theme, mdw, strings, styles });
+  const sheetBytes = new Map<string, Uint8Array>();
+  for (const plan of plans) {
+    const active = plan.index === activeIndex;
+    if (plan.generated) {
+      const xml = write && plan.sheet.kind === "grid" ? serializeWorksheet(plan.sheet, undefined, context(plan)) : emptyWorksheetXml(plan.sheet, active, model);
+      sheetBytes.set(plan.partName, encode(xml));
+      continue;
+    }
+    const bytes = parts.get(plan.partName);
+    if (bytes === undefined || skipped.has(plan.partName)) {
+      continue;
+    }
+    const sheetRemap = ownerRemap.get(plan.partName) ?? remap;
+    sheetBytes.set(
+      plan.partName,
+      write && plan.sheet.dirty && plan.sheet.kind === "grid"
+        ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan)))
+        : sheetPartFor(bytes, plan, active, sheetRemap, model),
+    );
+  }
+
+  // The string and style tables, appended to (or added) when a sheet needed it.
+  const replaced = new Map<string, Uint8Array>();
+  const added: AddedPart[] = [];
+  const relIds = new Set([...workbook.rels.map((rel) => rel.id), ...plans.map((plan) => plan.rId)]);
+  const relType = (kind: string): string => {
+    const worksheetType = workbook.rels.find((rel) => relationshipKind(rel.type) === "worksheet")?.type ?? `${RELATIONSHIP_TYPE}/worksheet`;
+    return `${worksheetType.slice(0, worksheetType.lastIndexOf("/"))}/${kind}`;
+  };
+  const taken = new Set([...parts.keys(), ...plans.map((plan) => plan.partName)]);
+  const table = (path: string | undefined, kind: string, like: string, contentType: string, xml: string): void => {
+    if (path !== undefined) {
+      replaced.set(path, encode(xml));
+      return;
+    }
+    const name = taken.has(like) ? nextFreePartName(taken, like) : like;
+    taken.add(name);
+    const id = nextRelationshipId(relIds);
+    relIds.add(id);
+    added.push({ name, data: encode(xml), rel: relationshipXml(id, relType(kind), relativeTarget(workbook.path, name)), contentType });
+  };
+  if (write && strings.changed) {
+    table(stringsPath, "sharedStrings", "xl/sharedStrings.xml", SHARED_STRINGS_CONTENT_TYPE, strings.xml()!);
+  }
+  if (write && styles.changed) {
+    table(stylesPath, "styles", "xl/styles.xml", STYLES_CONTENT_TYPE, styles.xml());
+  }
+
   const out: ZipEntryInput[] = [];
   const contentTypesName = "[Content_Types].xml";
   const appPath = appPropertiesPath(parts);
   const lastWorksheet = [...parts.keys()].filter((name) => name.startsWith("xl/worksheets/") && !skipped.has(name)).at(-1);
   const generated = plans.filter((plan) => plan.generated);
-  const planByPart = new Map(plans.map((plan) => [plan.partName, plan] as const));
+  const appended = (): ZipEntryInput[] => [
+    ...generated.map((plan) => ({ name: plan.partName, data: sheetBytes.get(plan.partName)! })),
+    ...added.map((part) => ({ name: part.name, data: part.data })),
+  ];
 
   for (const [name, bytes] of parts) {
     if (skipped.has(name)) {
@@ -308,34 +405,33 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
     let data = bytes;
     if (name === contentTypesName) {
-      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels));
+      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added));
     } else if (name === workbook.path) {
       data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc));
     } else if (name === workbook.relsPath) {
-      data = encode(workbookRelsFor(workbook, plans, droppedRelIds));
+      data = encode(workbookRelsFor(workbook, plans, droppedRelIds, added));
     } else if (name === appPath) {
       data = encode(appXmlFor(decodeUtf8(bytes), workbook, plans, remap));
     } else {
-      const plan = planByPart.get(name);
-      if (plan) {
-        data = sheetPartFor(bytes, plan, plan.index === activeIndex, ownerRemap.get(name) ?? remap, model);
-      } else {
-        data = passed(name, bytes, ownerRemap.get(name) ?? remap);
-      }
+      data = sheetBytes.get(name) ?? replaced.get(name) ?? passed(name, bytes, ownerRemap.get(name) ?? remap);
     }
     out.push({ name, data });
     if (name === lastWorksheet) {
-      out.push(...generated.map((plan) => ({ name: plan.partName, data: encode(emptyWorksheetXml(plan.sheet, plan.index === activeIndex, model)) })));
+      out.push(...appended());
     }
   }
   if (lastWorksheet === undefined) {
-    out.push(...generated.map((plan) => ({ name: plan.partName, data: encode(emptyWorksheetXml(plan.sheet, plan.index === activeIndex, model)) })));
+    out.push(...appended());
   }
   return out;
 }
 
-function isGenerated(plans: readonly SheetPlan[], sheet: Sheet): boolean {
-  return plans.some((plan) => plan.sheet === sheet && plan.generated);
+/** A dirty sheet's retained text with the pass and its tab colour applied —
+ * the base serializeWorksheet splices the model's elements into. */
+function retainedBase(bytes: Uint8Array, plan: SheetPlan, remap: SheetRemap, model: SpreadsheetModel): string {
+  const xml = decodeUtf8(bytes);
+  const pass = !isEmptyRemap(remap) && mentionsAnyName(bytes, remappedNames(remap)) ? passFor(plan.partName) : undefined;
+  return spliceTabColor(pass ? pass(xml, remap) : xml, plan.sheet, model);
 }
 
 /** A retained part through the pass, when it is a pass location that
@@ -694,13 +790,13 @@ function escapeText(text: string): string {
 
 // --- relationships and content types ----------------------------------------------------------
 
-function workbookRelsFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], dropped: ReadonlySet<string>): string {
+function workbookRelsFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], dropped: ReadonlySet<string>, parts: readonly AddedPart[]): string {
   const sourceIds = new Set(workbook.rels.map((rel) => rel.id));
   const worksheetType = workbook.rels.find((rel) => relationshipKind(rel.type) === "worksheet")?.type ?? `${RELATIONSHIP_TYPE}/worksheet`;
   const added = plans
     .filter((plan) => !plan.source && !sourceIds.has(plan.rId))
     .map((plan) => relationshipXml(plan.rId, worksheetType, relativeTarget(workbook.path, plan.partName)));
-  return spliceRels(workbook.relsXml, dropped, added);
+  return spliceRels(workbook.relsXml, dropped, [...added, ...parts.map((part) => part.rel)]);
 }
 
 /** The content type a part added by duplication takes: that of a part in
@@ -718,6 +814,7 @@ function contentTypesFor(
   plans: readonly SheetPlan[],
   workbook: SourceWorkbook,
   calcChainRels: readonly { target: string; external: boolean; id: string; type: string; start: number; end: number }[],
+  addedParts: readonly AddedPart[],
 ): string {
   const types = readContentTypes(xml);
   const remove = new Set<string>();
@@ -740,6 +837,9 @@ function contentTypesFor(
     if (plan.generated) {
       add.push({ partName: plan.partName, contentType: worksheetType });
     }
+  }
+  for (const part of addedParts) {
+    add.push({ partName: part.name, contentType: part.contentType });
   }
   // A part a duplicate added takes its origin's Override (the extension's
   // Default — application/xml for every .xml — would misdeclare it).

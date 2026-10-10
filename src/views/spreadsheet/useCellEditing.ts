@@ -1,0 +1,372 @@
+// Cell entry (SPEC-122 "Editor keys", "Editor DOM", "Protection"): THIS
+// composable owns the editing state machine — Ready, Enter, Edit (and Point,
+// usePointMode's, shown while a reference is being pointed at) — and the
+// draft (`text`, `caret`) the in-cell editor (CellEditor.vue) and the
+// editable formula bar share; both render it and report input through
+// useDraftSurface, so typing in either updates both.
+//
+// - Ready: the first printable character or IME composition lands natively
+//   in the (empty) editor and opens Enter mode with that input replacing the
+//   cell's content; F2 (or a double-click, or a click in the formula bar)
+//   opens Edit mode on the cell's edit text, caret at the end (or at the
+//   clicked character); Delete/Backspace clear the selection's contents;
+//   Enter/Tab move (SPEC-117's cycle within a multi-cell selection); every
+//   other key is SPEC-117's navigation, on the editor proxy unchanged.
+// - Enter/Edit: Enter/Shift+Enter commit and move down/up, Tab/Shift+Tab
+//   right/left; Enter after a run of Tabs returns to the run's starting
+//   column one row down (any other navigation, a click included, forgets
+//   the run); inside a multi-cell selection Enter and Tab cycle within it
+//   without collapsing it. Enter-mode arrows point when usePointMode allows,
+//   else commit and move; Edit-mode arrows move the caret. Escape cancels;
+//   Alt/Option+Enter inserts a line break; Ctrl/Cmd+Enter fills the
+//   selection ("Fill"); F2 toggles Enter ↔ Edit; F4 cycles `$`. Cmd/Ctrl+Z/Y
+//   undo the draft's own text edits — never the workbook (the editor's
+//   handler takes them first, so useSpreadsheetUndo's listener never fires
+//   mid-edit). Enter, Tab, arrows and Escape are ignored while an IME
+//   composition is active.
+// - Commit (cellEntry.ts): parse, validate, one undo step, refit, move; a
+//   formula error keeps the editor open with the message and the caret at
+//   the error; an unchanged text records nothing. Protection and arrays are
+//   checked before the editor opens and before Delete or Fill (a toast).
+// - Sheets: a tab clicked while pointing shows that sheet and keeps editing;
+//   commit or cancel returns to the edited sheet.
+import { computed, nextTick, ref, shallowRef, type Ref, type ShallowRef } from "vue";
+import { useToasts } from "../../composables/useToasts";
+import type { CellRef } from "../../lib/spreadsheet/address";
+import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
+import type { CellEntry } from "../../lib/spreadsheet/cells";
+import { MAX_TEXT_LENGTH } from "../../lib/spreadsheet/formula/values";
+import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
+import { createDraft, type SurfaceKind } from "./cellDraft";
+import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
+import { cellEditText, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
+import { createCanvasCellMeasurer } from "./cellMeasurer";
+import { usePointMode } from "./usePointMode";
+import type { SheetMetrics } from "./useSheetMetrics";
+import type { SheetSelectionController } from "./useSheetSelection";
+import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
+
+export type { EditMode } from "./cellEditorKeys";
+export type { DraftSurface, SurfaceKind } from "./cellDraft";
+
+export interface CellEditingDeps {
+  book: {
+    workbook: ShallowRef<SpreadsheetModel | null>;
+    activeIndex: Ref<number>;
+    activeSheet: Readonly<Ref<Sheet | null>>;
+    selectSheet(index: number): void;
+  };
+  selection: Pick<SheetSelectionController, "selection" | "set" | "formatContext" | "styleAt">;
+  sheetMetrics: Pick<SheetMetrics, "nav">;
+  undo: Pick<SpreadsheetUndo, "record" | "commit">;
+  locale: () => SpreadsheetLocale;
+  /** Shows a toast — default: useToasts' addToast. */
+  toast?: (message: string) => void;
+  /** Row autofit's measurer — default: the canvas one. */
+  measurer?: CellTextMeasurer;
+}
+
+const MODE_LABELS: Readonly<Record<EditMode, string>> = { ready: "Ready", enter: "Enter", edit: "Edit" };
+
+export function useCellEditing(deps: CellEditingDeps) {
+  const toast = deps.toast ?? useToasts().addToast;
+  let measurer = deps.measurer;
+  const mode = ref<EditMode>("ready");
+  const draft = createDraft();
+  /** The cell being edited. */
+  const target = shallowRef<{ sheetId: string; at: CellRef } | null>(null);
+  /** Bumped when a key moved the active cell, so the grid reveals it. */
+  const revealTick = ref(0);
+  let original = "";
+  let composing = false;
+
+  const editing = computed(() => mode.value !== "ready");
+  const model = (): SpreadsheetModel | null => deps.book.workbook.value;
+  const point = usePointMode({
+    text: () => draft.text.value,
+    caret: () => draft.caret.value,
+    setDraft: draft.set,
+    editing: () => editing.value,
+    editedSheet: () => model()?.sheets.find((sheet) => sheet.id === target.value?.sheetId) ?? null,
+    shownSheet: () => deps.book.activeSheet.value,
+    shownSelection: () => deps.selection.selection.value,
+    nav: () => deps.sheetMetrics.nav(),
+  });
+  const moves = createCellMoves({
+    sheetId: () => deps.book.activeSheet.value?.id ?? "",
+    selection: () => deps.selection.selection.value,
+    set: (next) => deps.selection.set(next),
+    nav: () => deps.sheetMetrics.nav(),
+  });
+
+  /** "Ready", "Enter", "Edit" or "Point" — the status bar's mode. */
+  const modeLabel = computed(() => (editing.value && point.pointing.value ? "Point" : MODE_LABELS[mode.value]));
+
+  /** Opens the editor on the active cell, unless protection or an array
+   * refuses it (a toast). */
+  function open(next: EditMode, typed: string | null, at: number | "end"): boolean {
+    const m = model();
+    const sheet = deps.book.activeSheet.value;
+    if (!m || !sheet || sheet.kind !== "grid") {
+      return false;
+    }
+    const active = deps.selection.selection.value.active;
+    const refusal = refusalFor(m, deps.book.activeIndex.value, [{ top: active.row, left: active.col, bottom: active.row, right: active.col }]);
+    if (refusal) {
+      toast(refusal);
+      return false;
+    }
+    original = cellEditText(m, sheet, active, deps.selection.styleAt(sheet, active.row, active.col), deps.selection.formatContext.value);
+    target.value = { sheetId: sheet.id, at: { ...active } };
+    mode.value = next;
+    const text = typed ?? original;
+    draft.reset(text, at === "end" ? text.length : at);
+    return true;
+  }
+
+  /** A host's input, read back: opens Enter mode from Ready (the input
+   * replaces the content); false when refused (the host re-renders). */
+  function input(next: string, at: number): boolean {
+    if (mode.value === "ready") {
+      return open("enter", next, at);
+    }
+    if (next.length > MAX_TEXT_LENGTH) {
+      return false;
+    }
+    point.end();
+    draft.set(next, at);
+    return true;
+  }
+
+  /** An IME composition starts: from Ready it opens Enter mode (the
+   * composition replaces the content once it ends). */
+  function compositionStart(): boolean {
+    composing = true;
+    return mode.value === "ready" ? open("enter", "", 0) : true;
+  }
+
+  /** F2, a double-click (`point`: the caret goes to the character there),
+   * a click in the formula bar (`at`). */
+  function openEdit(options: { at?: number; point?: { x: number; y: number } } = {}): boolean {
+    if (editing.value) {
+      mode.value = "edit";
+      point.end();
+      return true;
+    }
+    if (!open("edit", null, options.at ?? "end")) {
+      return false;
+    }
+    const where = options.point;
+    if (where) {
+      void nextTick(() => {
+        const offset = draft.caretAt(where.x, where.y);
+        if (offset !== null) {
+          draft.caret.value = offset;
+          draft.revision.value += 1;
+        }
+      });
+    }
+    return true;
+  }
+
+  /** Back to Ready, on the edited sheet. */
+  function finish(): void {
+    const sheetId = target.value?.sheetId;
+    mode.value = "ready";
+    target.value = null;
+    composing = false;
+    point.end();
+    draft.reset();
+    const index = model()?.sheets.findIndex((sheet) => sheet.id === sheetId) ?? -1;
+    if (index >= 0 && index !== deps.book.activeIndex.value) {
+      draft.requestFocus();
+      deps.book.selectSheet(index);
+    }
+  }
+
+  /** The edited cell's write context and the draft as its entry — or null
+   * after showing why it cannot be written (the error, or for a Fill a
+   * protection toast). */
+  function prepared(forFill: boolean): { ctx: CellWriteContext; at: CellRef; entry: CellEntry } | null {
+    const m = model();
+    const at = target.value?.at;
+    const sheetIndex = m?.sheets.findIndex((sheet) => sheet.id === target.value?.sheetId) ?? -1;
+    const sheet = m?.sheets[sheetIndex];
+    if (!m || !at || !sheet) {
+      return null;
+    }
+    const refusal = forFill ? refusalFor(m, sheetIndex, deps.selection.selection.value.ranges) : null;
+    if (refusal) {
+      toast(refusal);
+      return null;
+    }
+    const style = cellStyle(m, effectiveStyleId(sheet, at.row, at.col));
+    const outcome = entryFromText(draft.text.value, { locale: deps.locale(), dateSystem: m.dateSystem, style });
+    if ("error" in outcome) {
+      draft.fail(outcome.error, outcome.caret);
+      return null;
+    }
+    measurer ??= createCanvasCellMeasurer();
+    return { ctx: { model: m, sheetIndex, undo: deps.undo, measurer, format: deps.selection.formatContext.value }, at, entry: outcome.entry };
+  }
+
+  /** Writes the draft into the edited cell (an unchanged text writes
+   * nothing) and moves on; false when it cannot be written (kept open). */
+  function commit(move: Move | null): boolean {
+    if (target.value && draft.text.value !== original) {
+      const ready = prepared(false);
+      if (!ready) {
+        return false;
+      }
+      writeEntry(ready.ctx, ready.at, ready.entry, draft.text.value);
+    }
+    finish();
+    if (move && moves.apply(move)) {
+      revealTick.value += 1;
+    }
+    return true;
+  }
+
+  /** Ctrl/Cmd+Enter: the entry into every cell of the selection ("Fill"). */
+  function fill(): void {
+    const ready = prepared(true);
+    if (ready) {
+      writeFill(ready.ctx, deps.selection.selection.value.ranges, ready.at, ready.entry);
+      finish();
+    }
+  }
+
+  /** Delete/Backspace in Ready: "Clear contents" over the selection. */
+  function clearSelection(): void {
+    const m = model();
+    const ranges = deps.selection.selection.value.ranges;
+    if (!m || deps.book.activeSheet.value?.kind !== "grid") {
+      return;
+    }
+    const refusal = refusalFor(m, deps.book.activeIndex.value, ranges);
+    if (refusal) {
+      toast(refusal);
+      return;
+    }
+    measurer ??= createCanvasCellMeasurer();
+    writeClear({ model: m, sheetIndex: deps.book.activeIndex.value, undo: deps.undo, measurer, format: deps.selection.formatContext.value }, ranges);
+  }
+
+  const actions: EditorKeyActions = {
+    mode,
+    point,
+    moves,
+    revealed: () => {
+      revealTick.value += 1;
+    },
+    openEdit: () => openEdit(),
+    focusCell: draft.focusCell,
+    clearSelection,
+    cancel: finish,
+    commit,
+    fill,
+    insertText: (text) => {
+      point.end();
+      draft.replaceSelection(text, MAX_TEXT_LENGTH);
+    },
+    historyStep: (back) => {
+      if (draft.step(back)) {
+        point.end();
+      }
+    },
+  };
+
+  /** The editor hosts' keydown. True when the key is the editor's: the
+   * caller stops it there (no grid navigation, no window shortcut). */
+  function onKeydown(event: KeyboardEvent): boolean {
+    if (event.isComposing || composing || event.keyCode === 229) {
+      return editing.value || composing;
+    }
+    draft.syncCaret();
+    return editing.value ? editKey(event, actions) : readyKey(event, actions);
+  }
+
+  /** A press on a grid cell: "native" inside the editor (the caret moves;
+   * Enter mode becomes Edit), "handled" when it pointed (or a failed commit
+   * kept the editor open), "select" when the grid selects as usual. */
+  function pressCell(cell: CellRef, shift: boolean, inEditor: boolean): "native" | "handled" | "select" {
+    moves.forget();
+    if (!editing.value) {
+      return "select";
+    }
+    if (inEditor) {
+      mode.value = "edit";
+      point.end();
+      return "native";
+    }
+    if (point.press(cell, shift)) {
+      return "handled";
+    }
+    return commit(null) ? "select" : "handled";
+  }
+
+  /** A sheet tab chosen (SheetTabs' select): while pointing the sheet is
+   * shown and editing goes on; otherwise an edit commits first. */
+  function selectSheet(index: number): void {
+    if (editing.value && point.allowed()) {
+      draft.requestFocus();
+      deps.book.selectSheet(index);
+      draft.focusCell();
+      return;
+    }
+    if (!editing.value || commit(null)) {
+      deps.book.selectSheet(index);
+    }
+  }
+
+  return {
+    mode,
+    modeLabel,
+    editing,
+    draft,
+    text: draft.text,
+    caret: draft.caret,
+    error: draft.error,
+    revision: draft.revision,
+    target,
+    revealTick,
+    point,
+    /** Whether the edited cell is on the sheet on show (Ready: true). */
+    onShownSheet: computed(() => target.value === null || target.value.sheetId === deps.book.activeSheet.value?.id),
+    input,
+    compositionStart,
+    compositionEnd: (): void => {
+      composing = false;
+    },
+    openEdit,
+    commit: (): boolean => commit(null),
+    cancel: finish,
+    fill,
+    clearSelection,
+    /** Replaces the focused host's selection (paste, Alt+Enter). */
+    insertText: actions.insertText,
+    onKeydown,
+    pressCell,
+    /** A press on a header or the corner: an edit commits first (false:
+     * it could not, the editor stays open). */
+    pressOutside: (): boolean => {
+      moves.forget();
+      return !editing.value || commit(null);
+    },
+    pointDrag: point.drag,
+    pointRelease: point.release,
+    selectSheet,
+    register: (kind: SurfaceKind, surface: Parameters<typeof draft.register>[1]): (() => void) => draft.register(kind, surface),
+    focusCell: draft.focusCell,
+  };
+}
+
+export type CellEditing = ReturnType<typeof useCellEditing>;
+
+/** Narrows a component's runtime-typed `editor` prop (the .vue parser bars
+ * casts). */
+export function asCellEditing(value: unknown): CellEditing {
+  return value as CellEditing;
+}

@@ -4,8 +4,11 @@
 // selection covers them), the `sheet-hidden-marker` on the header boundary
 // where a hidden run sits ("Hidden column G", "Hidden rows 4–6"), the
 // `sheet-freeze-line`s, one `sheet-selection` rectangle per range and the
-// `sheet-active-cell` outline. All of it follows the app theme (tokens) —
-// only the paper underneath keeps the file's colours.
+// `sheet-active-cell` outline — and, while a formula is being entered
+// (SPEC-122), one `sheet-ref-highlight` per reference on the sheet on show,
+// outlined in its `--sheet-ref-N` colour (the pointed one dashed). All of it
+// follows the app theme (tokens) — only the paper underneath keeps the
+// file's colours.
 //
 // Positions are unscaled px relative to the paper's origin (the top-left of
 // the cell area, past the headers): a frozen row or column sits at its
@@ -17,6 +20,7 @@ import { hiddenColumnRuns, hiddenRowRuns, type GridMetrics } from "../../lib/spr
 import { mergeAt, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Sheet } from "../../lib/spreadsheet/model";
 import type { SheetSelection } from "../../lib/spreadsheet/selection";
+import type { RefHighlight } from "./usePointMode";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
 
 export interface HeaderItem {
@@ -47,6 +51,14 @@ export interface SheetOverlaysDeps {
   merges: () => MergeIndex;
   selection: () => SheetSelection;
   viewport: SheetViewport;
+  /** The references of a formula being entered (SPEC-122); absent = none. */
+  highlights?: () => RefHighlight[];
+}
+
+/** A reference's outline: its rectangle, colour index and dash. */
+export interface RefHighlightItem extends RectItem {
+  colorIndex: number;
+  dashed: boolean;
 }
 
 /** The on-screen interval of items start..end (inclusive) along one axis, in
@@ -186,5 +198,13 @@ export function useSheetOverlays(deps: SheetOverlaysDeps) {
     horizontal: vp.frozenRows.value > 0 ? vp.frozenH.value : null,
   }));
 
-  return { columnHeaders, rowHeaders, hiddenMarkers, selectionRects, activeRect, freezeLines };
+  /** The formula's references on this sheet, as outlines (SPEC-122). */
+  const refHighlights = computed((): RefHighlightItem[] =>
+    (deps.highlights?.() ?? []).flatMap((highlight, i) => {
+      const rect = rectOf(highlight.range, `ref:${i}`);
+      return rect ? [{ ...rect, colorIndex: highlight.colorIndex, dashed: highlight.dashed }] : [];
+    }),
+  );
+
+  return { columnHeaders, rowHeaders, hiddenMarkers, selectionRects, activeRect, freezeLines, refHighlights };
 }

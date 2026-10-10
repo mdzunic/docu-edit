@@ -6,12 +6,22 @@
 // useSheetViewState). SheetGrid.vue binds what this returns; .vue scripts
 // cannot carry TS syntax (the espree constraint), so the narrowing and the
 // event logic live here. SPEC-119: in Show formulas mode the paper shows
-// formula text (useSheetCells).
-import { computed, type Ref } from "vue";
+// formula text (useSheetCells). SPEC-122: the in-cell editor (CellEditor)
+// sits over the active cell and holds the grid's focus — keys reach this
+// handler from it once the editor's key table has passed them on, and
+// pointer presses go through useCellEditing first while a cell is being
+// edited (pointing, or committing before the selection moves); a double-click
+// opens Edit mode at the clicked character; the editing composable's moves
+// are revealed here; the references of a formula being entered are outlined
+// (useSheetOverlays' refHighlights).
+import { computed, watch, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
+import { DEFAULT_THEME } from "../../lib/core/theme";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { cellEditorView } from "./cellEditorView";
+import type { CellEditing } from "./useCellEditing";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { Recalc } from "./useRecalc";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -37,6 +47,8 @@ export interface SheetGridContext {
   formulas: FormulaDisplay;
   /** Recalculation's stale cells (SPEC-120); absent = none. */
   recalc?: Pick<Recalc, "staleTitleAt">;
+  /** Cell entry (SPEC-122); absent = the grid is read-only. */
+  cellEditing?: CellEditing;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -65,8 +77,49 @@ export function useSheetGrid(
     onTopLeftChange: (cell) => context().viewState.updateActive({ topLeftCell: cell }),
   });
   const cells = useSheetCells({ model: () => context().model, sheet, metrics, merges, selection, viewport, locale: () => context().locale, showFormulas });
-  const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport });
-  const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection });
+  const editing = (): CellEditing | undefined => context().cellEditing;
+  const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport, highlights: () => editing()?.point.highlights.value ?? [] });
+  /** Focus goes to the in-cell editor (the grid itself without one). */
+  function focusEditor(): void {
+    const host = scroller.value?.querySelector<HTMLElement>('[data-testid="cell-editor"]');
+    (host ?? scroller.value)?.focus({ preventScroll: true });
+  }
+  const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection, editing, focus: focusEditor });
+
+  /** The in-cell editor's box, text style and name (SPEC-122). */
+  const editor = computed(() => {
+    const ctx = context();
+    const active = selection().active;
+    const style = ctx.selection.styleAt(sheet(), active.row, active.col) ?? {};
+    return cellEditorView({
+      sheet: sheet(),
+      active,
+      style,
+      rect: overlays.activeRect.value,
+      room: viewport.viewCols.value,
+      theme: ctx.model.theme ?? DEFAULT_THEME,
+      format: ctx.selection.formatContext.value,
+    });
+  });
+  // A move the editor made (a commit's Enter/Tab, Ready's Enter/Tab) brings
+  // the new active cell into view.
+  watch(
+    () => editing()?.revealTick.value,
+    () => viewport.ensureVisible(focusTarget(selection().active)),
+  );
+
+  /** A double-click on a cell opens Edit mode, caret at the clicked
+   * character (SPEC-122). */
+  function onDblClick(event: MouseEvent): void {
+    const cellEditing = editing();
+    if (!cellEditing || cellEditing.editing.value || event.button !== 0) {
+      return;
+    }
+    viewport.ensureVisible(focusTarget(selection().active));
+    if (cellEditing.openEdit({ point: { x: event.clientX, y: event.clientY } })) {
+      focusEditor();
+    }
+  }
 
   const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
   /** A stale cell's title on this sheet (SPEC-120), for the paper. */
@@ -107,6 +160,11 @@ export function useSheetGrid(
   }
 
   function onKeydown(event: KeyboardEvent): void {
+    // A key on the grid element itself (not through the editor, whose own
+    // handler ran first) still meets the editor's key table.
+    if (event.target === scroller.value && editing()?.onKeydown(event)) {
+      return;
+    }
     if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && (event.key === "PageDown" || event.key === "PageUp")) {
       event.preventDefault();
       onCycleSheet(event.key === "PageDown" ? 1 : -1);
@@ -145,6 +203,9 @@ export function useSheetGrid(
     bands: cells.bands,
     overlays,
     pointer,
+    editor,
+    onDblClick,
+    focusEditor,
     showGridLines,
     staleTitle,
     activeDescendant,

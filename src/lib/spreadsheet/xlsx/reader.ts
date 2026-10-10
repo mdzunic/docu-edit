@@ -34,6 +34,10 @@
 //   `docProps/core.xml`;
 // - SPEC-120: `calcPr@fullCalcOnLoad`, `@calcMode="manual"` and `@iterate`
 //   → `calc` (read only: the element stays in the retained part, verbatim).
+// - SPEC-122: `workbookProtection@lockStructure` "1"/"true" →
+//   `structureProtected`; each worksheet's `sheetProtection@sheet` →
+//   `protection`, its cells' `sstIndex`, `preservedAttrs` and `preservedXml`
+//   (xlsx/sheetXml.ts). Read only: the protection XML stays verbatim.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -115,6 +119,8 @@ interface WorkbookInfo {
   activeTab: number;
   /** SPEC-120: calcPr's fullCalcOnLoad, calcMode and iterate. */
   calc: CalcSettings;
+  /** SPEC-122: workbookProtection@lockStructure. */
+  structureProtected: boolean;
   sharedStringsPath: string | undefined;
   themePath: string | undefined;
   stylesPath: string | undefined;
@@ -196,6 +202,7 @@ function readWorkbook(parts: Map<string, Uint8Array>, workbookPath: string): Wor
     date1904: date1904Attr === "1" || date1904Attr === "true",
     activeTab: Number.isFinite(activeTab) ? activeTab : 0,
     calc: readCalcPr(childElements(root, "calcPr")[0]),
+    structureProtected: isTrue(childElements(root, "workbookProtection")[0]?.getAttribute("lockStructure") ?? null),
     sharedStringsPath: target("/sharedStrings"),
     themePath: target("/theme"),
     stylesPath: target("/styles"),
@@ -312,6 +319,9 @@ export async function parseXlsx(
   }
   if (Object.keys(workbook.calc).length > 0) {
     parsed.calc = workbook.calc;
+  }
+  if (workbook.structureProtected) {
+    parsed.structureProtected = true;
   }
   return parsed;
 }
