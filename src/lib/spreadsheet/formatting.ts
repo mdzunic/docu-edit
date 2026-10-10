@@ -729,3 +729,25 @@ export function applyPattern(model: SpreadsheetModel, sheetId: string, target: G
   commitSheet(model, found.index, sheet, holder.styles);
   return { ok: true };
 }
+
+// --- number formats ------------------------------------------------------------------
+// The presets, decimal stepping and the Format Cells code builders live in
+// numberCodes.ts; the formatting layer is their public face.
+export {
+  buildNumberCode,
+  commaButtonFormat,
+  currencyButtonFormat,
+  describeNumberCode,
+  LOCALE_CURRENCY,
+  numberFormatChoiceOf,
+  NUMBER_FORMAT_PRESETS,
+  percentButtonFormat,
+  presetIdOf,
+  presetNumberFormat,
+  shortcutNumberFormat,
+  stepDecimals,
+  type LocaleCurrency,
+  type NumberCodeSpec,
+  type NumberFormatChoice,
+  type NumberPresetId,
+} from "./numberCodes";

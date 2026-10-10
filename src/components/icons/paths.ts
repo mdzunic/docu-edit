@@ -54,6 +54,29 @@ export const ICON_PATHS: Record<string, string[]> = {
   "clear-formatting": ["M6 5h9", "M11 5l-3 9", "M4 17h6", "M13 12l4 4", "M17 12l-4 4"],
   "format-painter": ["M4 5h9v3H4z", "M13 6.5h2v3H9v2", "M8 11h3v6H8z"],
 
+  // ---- Sheet formatting (SPEC-123) -------------------------------------------
+  // A paint bucket tipping onto a swatch bar; the bucket's lip is the spout.
+  "fill-color": ["M5 9l5-5 5 5-5 5z", "M15 9l1.5 3a1.5 1.5 0 0 1-3 0z", "M4 17h12"],
+  // A cell grid with its outer box drawn heavier by a second stroke inset.
+  borders: ["M4 4h12v12H4z", "M4 10h12", "M10 4v12", "M6 6h8v8H6z"],
+  "align-top": ["M4 4h12", "M10 7v9", "M7 10l3-3 3 3"],
+  "align-middle": ["M4 10h12", "M10 4v3", "M10 13v3", "M8 5l2 2 2-2", "M8 15l2-2 2 2"],
+  "align-bottom": ["M4 16h12", "M10 4v9", "M7 10l3 3 3-3"],
+  // Text lines wrapping back round at the right edge.
+  "wrap-text": ["M4 5h12", "M4 10h9a2.5 2.5 0 0 1 0 5h-3", "M12 13l-2 2 2 2", "M4 15h3"],
+  // An "ab" baseline tilted up, with the angle's arc.
+  "text-rotation": ["M5 15l7-7", "M9 8l3 0 0 3", "M5 9a6 6 0 0 1 6 6", "M4 16h12"],
+  currency: ["M10 4v12", "M13 7a3 3 0 0 0-3-1.5c-1.7 0-3 1-3 2.3S8.3 9.6 10 10s3 1 3 2.2-1.3 2.3-3 2.3a3 3 0 0 1-3-1.5"],
+  percent: ["M15 5L5 15", "M7 5.5a1.5 1.5 0 1 1-1.5 1.5A1.5 1.5 0 0 1 7 5.5z", "M13 11.5a1.5 1.5 0 1 1-1.5 1.5 1.5 1.5 0 0 1 1.5-1.5z"],
+  // A thousands comma between digit marks.
+  "comma-style": ["M6 6v8", "M14 6v8", "M10 12.5v1.5a1.5 1.5 0 0 1-1.5 1.5"],
+  "decimals-increase": ["M4 14h.01", "M7 9v5", "M10 9v5", "M13 9v5", "M15 5h4", "M17 3v4"],
+  "decimals-decrease": ["M4 14h.01", "M7 9v5", "M10 9v5", "M15 5h4"],
+  // A stack of three style chips.
+  "cell-styles": ["M4 4h12v4H4z", "M4 10h12v3H4z", "M4 15h7v2H4z"],
+  // Two cells joined under one span arrow (SPEC-124's Merge & Centre).
+  "merge-cells": ["M3 5h14v10H3z", "M6 10h8", "M8 8l-2 2 2 2", "M12 8l2 2-2 2"],
+
   // ---- History -------------------------------------------------------------
   undo: ["M7 7L4 10l3 3", "M4 10h8a4 4 0 0 1 0 8H9"],
   redo: ["M13 7l3 3-3 3", "M16 10H8a4 4 0 0 0 0 8h3"],
