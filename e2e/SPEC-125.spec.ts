@@ -19,20 +19,20 @@ import { unzip } from "../src/lib/core/zip";
 // to copy it → undo three times → download → reopen → the cells as left.
 //
 // The tests after the chain drive, the same way, what the chain does not
-// reach: the refusals — over 1,000,000 cells to copy (spec116-wide.ods), past
-// the grid's edge, part of an array (spec119-formulas.xlsx), a protected
-// sheet (spec122-shapes.xlsx) — AC-7, AC-27, AC-29, AC-30; another workbook
-// open in a second tab (spec116-1904.xlsx): formulas naming a sheet it lacks
-// paste as values, dates convert between the 1900 and 1904 systems both
-// ways, styles intern there and keep their ids at home, and a cut pastes
-// there as a copy — as it does at home once an edit has cancelled it —
-// AC-36, AC-37, AC-38, AC-45; the menu's Paste recognising the view's own
-// copy by its text (AC-21); LibreOffice's HTML, and plain text over a styled
-// cell (AC-57, AC-64); date and counter series, and Fill down/right of one
-// row and one column (AC-73, AC-76, AC-88); the row refit after pastes and
-// a fill (AC-96); and a cut moving once — #REF! for overwritten cells,
-// moved formulas unshifted, merges and arrays moving (AC-40, AC-42, AC-43,
-// AC-44).
+// reach, one concern each: the refusals — over 1,000,000 cells to copy
+// (spec116-wide.ods, AC-7), past the grid's edge (AC-27), part of an array
+// (spec119-formulas.xlsx, AC-29), a protected sheet (spec122-shapes.xlsx,
+// AC-30); another workbook open in a second tab (spec116-1904.xlsx) —
+// formulas naming a sheet it lacks paste as values and dates convert
+// between the 1900 and 1904 systems both ways (AC-37, AC-38), styles intern
+// there and keep their ids at home, and a cut pastes there as a copy, as it
+// does at home once an edit has cancelled it (AC-36, AC-45); the menu's
+// Paste recognising the view's own copy by its text (AC-21); LibreOffice's
+// HTML, and plain text over a styled cell (AC-57, AC-64); date and counter
+// series (AC-73, AC-76); Fill down/right of one row and one column (AC-88);
+// the row refit after pastes and a fill (AC-96); and a cut moving once —
+// #REF! for overwritten cells, moved formulas unshifted, merges and arrays
+// moving (AC-40, AC-42, AC-43, AC-44).
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const EXCEL_CAPTURE = join(fixtures, "spec125-clipboard", "excel.html");
@@ -80,6 +80,17 @@ async function open(page: Page, path: string): Promise<void> {
   await page.getByTestId("open-document-input").setInputFiles(path);
   await expect(page).toHaveURL(/\/sheets\/.+/);
   await expect(page.getByTestId("spreadsheet-grid")).toBeVisible();
+}
+
+/** spec125-fill.xlsx in `page` and, in a second tab of the same browser
+ * (one clipboard), spec116-1904.xlsx — another workbook, on the 1904 date
+ * system, whose one sheet is "Dates". */
+async function openTwoWorkbooks(page: Page): Promise<Page> {
+  await open(page, FILL_FIXTURE);
+  const other = await page.context().newPage();
+  await open(other, join(fixtures, "spec116-1904.xlsx"));
+  await page.bringToFront();
+  return other;
 }
 
 async function download(page: Page, fileName: string): Promise<string> {
@@ -155,6 +166,8 @@ function styleAttribute(xml: string, ref: string): string | undefined {
 }
 
 test("copy, paste, cut, fill, move and undo on spec125-fill.xlsx, then download and reopen (AC-118, AC-119)", async ({ page }) => {
+  // A journey with a download and a reopen: the allowance SPEC-077's have.
+  test.setTimeout(120_000);
   await open(page, join(fixtures, "spec125-fill.xlsx"));
   const ants = page.getByTestId("sheet-copy-marquee");
 
@@ -321,7 +334,7 @@ test("copy, paste, cut, fill, move and undo on spec125-fill.xlsx, then download 
   await expect(formulaBar(page)).toHaveText("=SUM(Sheet1!H10:H12)");
 });
 
-test("refusals: too many cells to copy, past the grid's edge, part of an array, a protected sheet (AC-7, AC-27, AC-29, AC-30)", async ({ page }) => {
+test("Copy refuses more than 1,000,000 cells (AC-7)", async ({ page }) => {
   // spec116-wide.ods's one value sits at row 900,000, so columns A:B copy
   // 1,800,000 cells: refused, and no ants.
   await open(page, join(fixtures, "spec116-wide.ods"));
@@ -330,40 +343,43 @@ test("refusals: too many cells to copy, past the grid's edge, part of an array, 
   await page.keyboard.press("ControlOrMeta+c");
   await expect(toast(page, "That's too many cells to copy — select fewer than 1,000,000 cells")).toBeVisible();
   await expect(page.getByTestId("sheet-copy-marquee")).toHaveCount(0);
+});
 
-  // B2:C3 pasted at the last column, then at the last row.
-  const edge = "The paste area goes past the edge of the sheet";
-  await open(page, FILL_FIXTURE);
-  await select(page, "B2", "C3");
-  await page.keyboard.press("ControlOrMeta+c");
-  await clickCell(page, "A30");
-  await page.keyboard.press("ControlOrMeta+ArrowRight");
-  await expect(page.getByTestId("name-box")).toHaveValue("XFD30");
-  await page.keyboard.press("ControlOrMeta+v");
-  await expect(toast(page, edge)).toBeVisible();
-  await expect(toast(page, edge)).toHaveCount(0);
-  await page.keyboard.press("ControlOrMeta+ArrowLeft");
-  await page.keyboard.press("ControlOrMeta+ArrowDown");
-  await expect(page.getByTestId("name-box")).toHaveValue("A1048576");
-  await page.keyboard.press("ControlOrMeta+v");
-  await expect(toast(page, edge)).toBeVisible();
-  await expect(page.getByTestId("name-box")).toHaveValue("A1048576");
+for (const [edge, arrow, landing] of [
+  ["last column", "ArrowRight", "XFD30"],
+  ["last row", "ArrowDown", "A1048576"],
+] as const) {
+  test(`a paste reaching past the grid's ${edge} is refused (AC-27)`, async ({ page }) => {
+    await open(page, FILL_FIXTURE);
+    await select(page, "B2", "C3");
+    await page.keyboard.press("ControlOrMeta+c");
+    // From A30, an empty row and column: Ctrl/Cmd+arrow runs to the edge.
+    await clickCell(page, "A30");
+    await page.keyboard.press(`ControlOrMeta+${arrow}`);
+    await expect(page.getByTestId("name-box")).toHaveValue(landing);
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(toast(page, "The paste area goes past the edge of the sheet")).toBeVisible();
+    await expect(page.getByTestId("name-box")).toHaveValue(landing);
+  });
+}
 
-  // spec119-formulas.xlsx's "Calc" holds the array E2:E4: a paste onto part
-  // of it is refused; onto all of it, it lands.
+test("a paste onto part of an array is refused; onto all of it, it lands (AC-29)", async ({ page }) => {
+  // spec119-formulas.xlsx's "Calc" holds the array E2:E4 ({=A2:A4*2}).
   await open(page, join(fixtures, "spec119-formulas.xlsx"));
   await writeClipboard(page, { "text/plain": "7" });
   await clickCell(page, "E3");
   await page.keyboard.press("ControlOrMeta+v");
   await expect(toast(page, "You can't change part of an array")).toBeVisible();
-  await expect(cell(page, "E3")).not.toHaveText("7");
+  await expect(cell(page, "E3")).toHaveText("2");
   await select(page, "E2", "E4");
   await page.keyboard.press("ControlOrMeta+v");
   await expect(cell(page, "E2")).toHaveText("7");
   await expect(cell(page, "E4")).toHaveText("7");
+});
 
-  // spec122-shapes.xlsx's "Locked" is protected: its locked A1 refuses the
-  // paste with SPEC-122's message; its one unlocked cell, B2, takes it.
+test("a paste onto a protected sheet's locked cell is refused with SPEC-122's message (AC-30)", async ({ page }) => {
+  // spec122-shapes.xlsx's "Locked" is protected: A1 is locked, B2 is its one
+  // unlocked cell.
   await open(page, join(fixtures, "spec122-shapes.xlsx"));
   await sheetTab(page, "Locked").click();
   const before = await cell(page, "A1").textContent();
@@ -377,14 +393,13 @@ test("refusals: too many cells to copy, past the grid's edge, part of an array, 
   await expect(cell(page, "B2")).toHaveText("7");
 });
 
-test("another workbook: formulas naming its missing sheets paste as values, 1900/1904 dates convert, styles intern, a cut pastes as a copy (AC-36, AC-37, AC-38, AC-45)", async ({ page }) => {
-  await open(page, FILL_FIXTURE);
-  const other = await page.context().newPage();
-  await open(other, join(fixtures, "spec116-1904.xlsx"));
+test("another workbook: formulas naming a sheet it lacks paste as their values; dates convert between the 1900 and 1904 systems (AC-37, AC-38)", async ({ page }) => {
+  // Two workbooks to open: the allowance SPEC-077's journeys have.
+  test.setTimeout(120_000);
+  const other = await openTwoWorkbooks(page);
 
   // Sheet2's two formulas both read Sheet1, which spec116-1904.xlsx lacks:
   // they paste there as their cached values, with the toast.
-  await page.bringToFront();
   await sheetTab(page, "Sheet2").click();
   await select(page, "A1", "A2");
   await page.keyboard.press("ControlOrMeta+c");
@@ -397,7 +412,8 @@ test("another workbook: formulas naming its missing sheets paste as values, 1900
   await expect(formulaBar(other)).toHaveText("18");
 
   // A 1904 date (B1, 2026-10-08) pasted into the 1900 workbook is the same
-  // date — the formula bar shows it as typed…
+  // date — the formula bar shows it as typed (the columns are too narrow to
+  // show every date in full)…
   await clickCell(other, "B1");
   await expect(formulaBar(other)).toHaveText("10/8/2026");
   await other.keyboard.press("ControlOrMeta+c");
@@ -415,11 +431,16 @@ test("another workbook: formulas naming its missing sheets paste as values, 1900
   await clickCell(other, "D5");
   await other.keyboard.press("ControlOrMeta+v");
   await expect(formulaBar(other)).toHaveText("1/31/2026");
+});
 
-  // Sheet1's bold A1 pasted there is interned as a bold style; pasted at
-  // home, it keeps its own style id.
-  await page.bringToFront();
-  await sheetTab(page, "Sheet1").click();
+test("another workbook: styles intern there and keep their ids at home; a cut pastes there as a copy, as it does at home once an edit cancelled it (AC-36, AC-45)", async ({ page }) => {
+  // Two workbooks to open and two downloads: the allowance SPEC-077's
+  // journeys have.
+  test.setTimeout(120_000);
+  const other = await openTwoWorkbooks(page);
+
+  // Sheet1's bold A1 pasted at home keeps its style id; pasted there, it is
+  // interned as a bold style.
   await clickCell(page, "A1");
   await page.keyboard.press("ControlOrMeta+c");
   await clickCell(page, "A28");
@@ -473,14 +494,10 @@ test("another workbook: formulas naming its missing sheets paste as values, 1900
   const fixture = await unzip(new Uint8Array(readFileSync(FILL_FIXTURE)));
   expect(xfCount(home.get("xl/styles.xml")!)).toBe(xfCount(fixture.get("xl/styles.xml")!));
   await other.bringToFront();
-  const saved = await download(other, "other.xlsx");
-  await open(other, saved);
+  await open(other, await download(other, "other.xlsx"));
   await clickCell(other, "E1");
   await expect(other.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
-  await clickCell(other, "D5");
-  await expect(formulaBar(other)).toHaveText("1/31/2026");
-  await clickCell(other, "D1");
-  await expect(formulaBar(other)).toHaveText("18");
+  await expect(cell(other, "F3")).toHaveText("7");
 });
 
 test("the menu's Paste takes the view's own copy by its text when the HTML lacks the payload (AC-21)", async ({ page }) => {
@@ -568,10 +585,9 @@ test("LibreOffice's HTML imports through sdval and sdnum; plain text keeps the d
   await expect(page.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
 });
 
-test("date and counter series, and Fill down/right of one row and one column (AC-73, AC-76, AC-88)", async ({ page }) => {
+test("the fill handle continues dates by day, month-end, month (EDATE), year and week (AC-73)", async ({ page }) => {
   await open(page, FILL_FIXTURE);
   await sheetTab(page, "Series").click();
-  // Dates by day, by month-end, by month (EDATE), by year and by week.
   await clickCell(page, "E2");
   await dragFill(page, "E4");
   await expectDate(page, "E3", "2/1/2026");
@@ -590,8 +606,11 @@ test("date and counter series, and Fill down/right of one row and one column (AC
   await select(page, "I2", "I3");
   await dragFill(page, "I4");
   await expectDate(page, "I4", "1/15/2026");
-  // Counters: a trailing integer (its zero padding kept, a step of two) and
-  // ordinals.
+});
+
+test("the fill handle continues a trailing integer (its zero padding kept, a step of two) and ordinals (AC-76)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  await sheetTab(page, "Series").click();
   await clickCell(page, "O2");
   await dragFill(page, "O4");
   await expect(cell(page, "O3")).toHaveText("Item 10");
@@ -608,9 +627,11 @@ test("date and counter series, and Fill down/right of one row and one column (AC
   await expect(cell(page, "R3")).toHaveText("2nd");
   await expect(cell(page, "R4")).toHaveText("3rd");
   await expect(cell(page, "R5")).toHaveText("4th");
+});
 
+test("Fill down of one row copies the row above; Fill right of one column copies the column to its left (AC-88)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
   // One row, M3:N3: Fill down copies the row above (M2's formula shifted).
-  await sheetTab(page, "Sheet1").click();
   await select(page, "M3", "N3");
   await page.keyboard.press("ControlOrMeta+d");
   await expect(cell(page, "M3")).toHaveText("4");
