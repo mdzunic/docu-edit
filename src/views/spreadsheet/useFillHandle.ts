@@ -14,7 +14,11 @@
 //   Copy cells, Fill series, Fill formatting only and Fill without
 //   formatting, the applied one pressed; choosing one re-applies the fill as
 //   the SAME undo step (the fill is undone and made again under the same
-//   label). Escape, any key or press elsewhere, or another sheet dismisses it.
+//   label). The chip only ever undoes its own fill's step: a fill that
+//   changed nothing recorded none, so its option is the fill's first step,
+//   and a chip whose fill is no longer the latest change is dismissed
+//   instead. Escape, any key or press elsewhere, or another sheet dismisses
+//   it.
 // - Double-clicking the handle fills down to doubleClickFillTarget's extent,
 //   and does nothing without adjacent data.
 // - Ctrl/Cmd+D and Ctrl/Cmd+R (SHEET_SHORTCUTS sheet.fillDown /
@@ -43,7 +47,7 @@ export interface FillHandleDeps {
   book: { workbook: ShallowRef<SpreadsheetModel | null>; activeSheet: Readonly<Ref<Sheet | null>> };
   viewState: Pick<SheetViewState, "syncInto">;
   selection: Pick<SheetSelectionController, "selection" | "set" | "formatContext">;
-  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit" | "undo">; cell: Pick<CellEditing, "editing"> };
+  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit" | "undo" | "revision">; cell: Pick<CellEditing, "editing"> };
   locale: () => SpreadsheetLocale;
   /** Shows a toast — default: useToasts' addToast. */
   toast?: (message: string) => void;
@@ -75,7 +79,10 @@ export function useFillHandle(deps: FillHandleDeps) {
   const toast = deps.toast ?? useToasts().addToast;
   let measurer = deps.measurer;
   const drag = shallowRef<{ sheetId: string; seed: GridRange; target: GridRange } | null>(null);
-  const chip = shallowRef<{ sheetId: string; seed: GridRange; target: GridRange; applied: AppliedFill } | null>(null);
+  /** The chip, for the fill it re-applies. `revision`: the undo revision
+   * that fill left; `recorded`: whether the fill is the top undo step (one
+   * that changed nothing recorded none). */
+  const chip = shallowRef<{ sheetId: string; seed: GridRange; target: GridRange; applied: AppliedFill; revision: number; recorded: boolean } | null>(null);
 
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
   const gridSheet = (): Sheet | null => {
@@ -112,12 +119,15 @@ export function useFillHandle(deps: FillHandleDeps) {
     return result;
   }
 
-  /** Runs a fill from the handle and shows the chip for it. */
+  /** Runs a fill from the handle and shows the chip for it, noting whether
+   * the fill recorded a step (one that changed nothing records none). */
   function fillWithChip(from: GridRange, to: GridRange, mode: FillMode): void {
     const sheetId = gridSheet()?.id;
+    const before = deps.editing.undo.revision.value;
     const result = fill("Fill", from, to, mode);
+    const revision = deps.editing.undo.revision.value;
     if (result?.ok && !result.cleared && sheetId) {
-      chip.value = { sheetId, seed: from, target: result.range, applied: result.applied };
+      chip.value = { sheetId, seed: from, target: result.range, applied: result.applied, revision, recorded: revision !== before };
     }
   }
 
@@ -159,15 +169,25 @@ export function useFillHandle(deps: FillHandleDeps) {
     }
   }
 
-  /** A chip option: the fill made again, as the same undo step. */
+  /** A chip option: the fill made again, as the same undo step — its own
+   * step undone first (never another: a chip whose fill is no longer the
+   * latest change is stale, and is dismissed instead). */
   function choose(mode: AppliedFill): void {
     const current = chip.value;
     if (!current || current.applied === mode || gridSheet()?.id !== current.sheetId) {
       return;
     }
-    deps.editing.undo.undo();
+    if (deps.editing.undo.revision.value !== current.revision) {
+      chip.value = null;
+      return;
+    }
+    if (current.recorded) {
+      deps.editing.undo.undo();
+    }
+    const before = deps.editing.undo.revision.value;
     const result = fill("Fill", current.seed, current.target, mode);
-    chip.value = result?.ok ? { ...current, applied: mode } : null;
+    const revision = deps.editing.undo.revision.value;
+    chip.value = result?.ok ? { ...current, applied: mode, revision, recorded: revision !== before } : null;
   }
 
   function fillDirection(direction: "down" | "right"): void {

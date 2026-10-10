@@ -178,6 +178,46 @@ describe("SPEC-125 useFillHandle — the drag and the chip", () => {
     expect(h.column(4, 2, 3)).toEqual([undefined, undefined]);
   });
 
+  it("a fill that changes nothing records no step, so its chip's options never undo an earlier one", () => {
+    const h = harness();
+    h.select(range(1, 5, 3, 5));
+    h.fill.fillDown(); // F3:F4 = "x": an earlier, unrelated step
+    expect(h.undo.undoLabel.value).toBe("Fill down");
+    h.select(range(0, 7, 0, 7)); // H1 is empty, and so is H2:H5
+    h.dragFill({ row: 4, col: 7 });
+    expect(h.fill.chip.value).toMatchObject({ target: range(0, 7, 4, 7), recorded: false });
+    h.fill.choose("series");
+    h.fill.choose("formats");
+    expect(h.undo.undoLabel.value).toBe("Fill down");
+    expect(h.column(5, 1, 3)).toEqual(["x", "x", "x"]);
+    expect(h.fill.chip.value?.applied).toBe("formats");
+  });
+
+  it("a chip option that changes nothing records no step, and the next option undoes nothing else; a stale chip is dismissed", () => {
+    const h = harness();
+    h.dragFill({ row: 3, col: 3 }); // D2 "Mon" → Tue, Wed
+    expect(h.fill.chip.value?.applied).toBe("series");
+    h.fill.choose("formats"); // D2 is unstyled: nothing to fill
+    expect(h.column(3, 1, 3)).toEqual(["Mon", undefined, undefined]);
+    expect(h.fill.chip.value?.applied).toBe("formats");
+    h.fill.choose("series");
+    expect(h.column(3, 1, 3)).toEqual(["Mon", "Tue", "Wed"]);
+    expect(h.undo.undoLabel.value).toBe("Fill");
+    h.undo.undo();
+    expect(h.undo.canUndo.value).toBe(false);
+    expect(h.column(3, 2, 3)).toEqual([undefined, undefined]);
+    // The chip's fill is no longer the latest change: the option is refused.
+    h.select(range(1, 3, 1, 3));
+    h.dragFill({ row: 3, col: 3 });
+    h.select(range(1, 5, 3, 5));
+    h.fill.fillDown();
+    h.fill.choose("copy");
+    expect(h.fill.chip.value).toBeNull();
+    expect(h.undo.undoLabel.value).toBe("Fill down");
+    expect(h.column(3, 1, 3)).toEqual(["Mon", "Tue", "Wed"]);
+    expect(h.column(5, 1, 3)).toEqual(["x", "x", "x"]);
+  });
+
   it("Escape cancels a drag; Escape, any other key, a press elsewhere or another sheet dismisses the chip", async () => {
     const h = harness();
     expect(h.fill.begin()).toBe(true);
