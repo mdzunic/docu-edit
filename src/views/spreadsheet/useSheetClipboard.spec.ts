@@ -21,6 +21,7 @@ import {
   copyFlavours,
   MULTIPLE_SELECTIONS_MESSAGE,
   PAYLOAD_ATTRIBUTE,
+  TOO_MANY_TO_CHANGE_MESSAGE,
 } from "../../lib/spreadsheet/clipboard";
 import type { Row, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { SPREADSHEET_LOCALES } from "../../lib/spreadsheet/numberFormat/locale";
@@ -230,6 +231,36 @@ describe("SPEC-125 useSheetClipboard — paste", () => {
     expect(h.clipboard.marquee.value).toBeNull();
   });
 
+  it("an external paste is an edit like any other: it ends the ants and cancels a pending cut", async () => {
+    const h = harness();
+    const data = copied(h, true);
+    const text = new FakeData();
+    text.setData("text/plain", "external");
+    h.select(range(12, 0, 12, 0));
+    h.clipboard.onPaste(clipboardEvent(text, h.target));
+    expect(h.cellAt(12, 0)?.value).toBe("external");
+    await nextTick();
+    expect(h.clipboard.marquee.value).toBeNull();
+    h.select(range(8, 1, 8, 1));
+    h.clipboard.onPaste(clipboardEvent(data, h.target));
+    expect(h.undo.undoLabel.value).toBe("Paste"); // cancelled: a copy
+    expect(h.cellAt(1, 1)?.value).toBe(1);
+    expect(h.cellAt(8, 1)?.value).toBe(1);
+  });
+
+  it("refuses an external table whose spans pass MAX_COPY_CELLS with a toast, changing nothing", () => {
+    const h = harness();
+    const sheets = h.workbook.value!.sheets;
+    const data = new FakeData();
+    data.setData("text/html", '<table><tr><td rowspan="20000" colspan="1000">x</td></tr></table>');
+    data.setData("text/plain", "x");
+    h.select(range(10, 0, 10, 0));
+    h.clipboard.onPaste(clipboardEvent(data, h.target));
+    expect(h.toasts).toEqual([TOO_MANY_TO_CHANGE_MESSAGE]);
+    expect(h.workbook.value!.sheets).toBe(sheets);
+    expect(h.undo.canUndo.value).toBe(false);
+  });
+
   it("imports an external HTML table, and plain text through parseInput", () => {
     const h = harness();
     const html = new FakeData();
@@ -301,6 +332,35 @@ describe("SPEC-125 useSheetClipboard — the cell menu and Paste special", () =>
     expect(h.clipboard.pasteSpecial.value).toBeNull();
     expect(h.undo.undoLabel.value).toBe("Paste special");
     expect([h.cellAt(10, 10)?.value, h.cellAt(10, 11)?.value, h.cellAt(11, 10)?.value]).toEqual([1, 3, 2]);
+  });
+
+  it("Paste special of a pending cut pastes a copy and is an edit: the ants end and the cut is cancelled; of the view's own copy the ants stay", async () => {
+    let flavours: { html?: string; text?: string } = {};
+    const h = harness({ clipboard: { read: async () => asyncClipboard(flavours).read() } as unknown as Clipboard });
+    const cut = new FakeData();
+    h.clipboard.onCut(clipboardEvent(cut, h.target));
+    flavours = { html: cut.getData("text/html"), text: cut.getData("text/plain") };
+    h.select(range(20, 0, 20, 0));
+    await h.clipboard.openPasteSpecial();
+    h.clipboard.confirmPasteSpecial({ what: "values" });
+    expect(h.undo.undoLabel.value).toBe("Paste special");
+    expect([h.cellAt(20, 0)?.value, h.cellAt(1, 1)?.value]).toEqual([1, 1]);
+    await nextTick();
+    expect(h.clipboard.marquee.value).toBeNull();
+    h.select(range(8, 1, 8, 1));
+    h.clipboard.onPaste(clipboardEvent(cut, h.target));
+    expect(h.undo.undoLabel.value).toBe("Paste"); // cancelled: a copy
+    expect(h.cellAt(1, 1)?.value).toBe(1);
+
+    h.select(range(1, 1, 2, 2));
+    const copy = new FakeData();
+    h.clipboard.onCopy(clipboardEvent(copy, h.target));
+    flavours = { html: copy.getData("text/html"), text: copy.getData("text/plain") };
+    h.select(range(30, 0, 30, 0));
+    await h.clipboard.openPasteSpecial();
+    h.clipboard.confirmPasteSpecial({ what: "values" });
+    await nextTick();
+    expect(h.clipboard.marquee.value?.mode).toBe("copy");
   });
 
   it("Ctrl+Shift+V and Ctrl+Alt+V in the grid open Paste special (jsdom is not a Mac)", async () => {

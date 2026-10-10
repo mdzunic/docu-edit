@@ -81,10 +81,12 @@ export interface SheetClipboardDeps {
 export type ClipboardMenuAction = "cut" | "copy" | "paste" | "paste-special";
 
 /** A block about to be pasted, with the source style ids of this view's own
- * copy (a same-workbook paste keeps them by identity). */
+ * copy (a same-workbook paste keeps them by identity); `own`: it is this
+ * view's last copy. */
 interface Source {
   block: PasteBlock;
   styleIds?: readonly number[];
+  own?: true;
 }
 
 export function useSheetClipboard(deps: SheetClipboardDeps) {
@@ -96,8 +98,9 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
   const pasteSpecial = shallowRef<(Source & { capabilities: PasteCapabilities }) | null>(null);
   let lastCopy: { copy: ClipboardCopy; text: string; attribute: string } | null = null;
   let pendingCut: { token: string; sheetId: string; range: GridRange } | null = null;
-  /** The undo revision this view's own paste of a copy left (the ants stay). */
-  let ownRevision = -1;
+  /** The undo revision the ants were drawn at, or kept at by this view's own
+   * paste of its copy: any other revision is an edit made since. */
+  let antsRevision = -1;
 
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
   const gridSheet = (): Sheet | null => {
@@ -112,11 +115,13 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
   }
 
   // Any edit ends the ants and cancels a pending cut — but this view's own
-  // paste of a copy (Excel keeps the ants so the copy pastes again).
+  // paste of a copy (Excel keeps the ants so the copy pastes again). The
+  // watcher runs after the edit's task, so it compares against the revision
+  // the ants were drawn at: a copy made after an edit keeps its ants.
   watch(
     () => deps.editing.undo.revision.value,
     (revision) => {
-      if (revision !== ownRevision) {
+      if (revision !== antsRevision) {
         clearAnts();
       }
     },
@@ -150,6 +155,7 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
     lastCopy = { copy, text, attribute };
     marquee.value = { sheetId: sheet.id, range: copy.area.range, mode: cut ? "cut" : "copy" };
     pendingCut = token ? { token, sheetId: sheet.id, range: copy.area.range } : null;
+    antsRevision = deps.editing.undo.revision.value;
   }
 
   /** What the clipboard's flavours hold (see the module header): a source, a
@@ -160,7 +166,7 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
     if (!m) {
       return null;
     }
-    const own = lastCopy ? { block: blockFromPayload(lastCopy.copy.payload), styleIds: lastCopy.copy.styleIds } : null;
+    const own: Source | null = lastCopy ? { block: blockFromPayload(lastCopy.copy.payload), styleIds: lastCopy.copy.styleIds, own: true } : null;
     const ctx = { locale: deps.locale(), dateSystem: m.dateSystem, canonical: canonicalFormula };
     if (html) {
       const attribute = payloadAttribute(html);
@@ -231,7 +237,12 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
       toast(result.message);
       return;
     }
-    ownRevision = deps.editing.undo.revision.value;
+    if (source.own && source.block.cut === undefined) {
+      // This view's own copy pasted: the ants stay, so it pastes again.
+      // Any other paste is an edit like the rest — it ends the ants and
+      // cancels a pending cut (the revision watcher above).
+      antsRevision = deps.editing.undo.revision.value;
+    }
     deps.selection.set(selectionOf(result.range));
     if (result.formulasAsValues > 0) {
       toast(formulasAsValuesMessage(result.formulasAsValues));
