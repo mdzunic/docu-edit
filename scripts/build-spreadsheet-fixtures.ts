@@ -75,6 +75,19 @@
 //                             Invoice_20_total), parented ce styles, N1xx data
 //                             styles with style:map, a column default cell
 //                             style and a row formatted to XFD
+// - spec124-structure.xlsx  — SPEC-124, Excel-shaped: a frozen first column,
+//                             a shared-formula total, a plain and an array
+//                             formula, a table with its own autoFilter, two
+//                             merges, a workbook autoFilter, a conditional
+//                             format, a validation, a hyperlink, a drawing
+//                             (a picture and a chart), a legacy comment and
+//                             its VML note, an x14 list validation,
+//                             calcChain and TitlesOfParts
+// - spec124-structure.ods   — SPEC-124, LibreOffice-shaped twin: a content
+//                             validation, a formula column, a chart frame
+//                             embedded directly in a cell, a merge, a named
+//                             range, a named expression, a database range
+//                             and a table-local conditional format
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -106,6 +119,8 @@ import {
   buildSpec122ShapesXlsxBytes,
   buildSpec123StylesOdsBytes,
   buildSpec123StylesXlsxBytes,
+  buildSpec124StructureOdsBytes,
+  buildSpec124StructureXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -134,6 +149,8 @@ writeFileSync(join(fixturesDir, "spec122-shapes.xlsx"), await buildSpec122Shapes
 writeFileSync(join(fixturesDir, "spec122-shapes.ods"), await buildSpec122ShapesOdsBytes());
 writeFileSync(join(fixturesDir, "spec123-styles.xlsx"), await buildSpec123StylesXlsxBytes());
 writeFileSync(join(fixturesDir, "spec123-styles.ods"), await buildSpec123StylesOdsBytes());
+writeFileSync(join(fixturesDir, "spec124-structure.xlsx"), await buildSpec124StructureXlsxBytes());
+writeFileSync(join(fixturesDir, "spec124-structure.ods"), await buildSpec124StructureOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);
