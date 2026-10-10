@@ -59,7 +59,7 @@ function download() {
         :can-edit="media !== null && isEditableImage(media)"
         :editing="editor.active.value"
         @edit="editor.enter()"
-        @close="close"
+        @close="editor.leave(close)"
       />
     </template>
     <div

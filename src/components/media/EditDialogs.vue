@@ -118,7 +118,7 @@ function setQuality(event = new Event("change")) {
       <UiButton
         variant="danger"
         data-testid="edit-discard-confirm"
-        @click="e.exit()"
+        @click="e.confirmDiscard()"
       >
         Discard
       </UiButton>

@@ -259,6 +259,30 @@ describe("useImageEditor — undo granularity", () => {
   });
 });
 
+describe("useImageEditor — leaving", () => {
+  it("asks before dropping unsaved edits, then runs the caller's next step", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    const closed = vi.fn();
+    // Nothing unsaved: Close leaves at once.
+    editor.leave(closed);
+    expect(editor.active.value).toBe(false);
+    expect(closed).toHaveBeenCalledTimes(1);
+
+    await editor.enter();
+    editor.commands.rotate(1);
+    editor.leave(closed);
+    expect(editor.discardPending.value).toBe(true);
+    expect(closed).toHaveBeenCalledTimes(1);
+    editor.cancelDiscard();
+    expect(editor.active.value).toBe(true);
+    editor.leave(closed);
+    editor.confirmDiscard();
+    expect(editor.active.value).toBe(false);
+    expect(closed).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("useImageEditor — objects from the keyboard", () => {
   it("adds, nudges (1 px, Shift 10 px), resizes (Alt) and deletes, one step per key", async () => {
     const { editor } = await setup();

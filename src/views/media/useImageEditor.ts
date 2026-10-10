@@ -8,15 +8,11 @@
 // until Save, Save as a copy or Flatten (useImageEditActions.ts); during the
 // session the preview — renderEditedImage at screen scale — is the current
 // image, which `liveMedia` hands the details panel.
-//
-// Keyboard: Escape leaves (Done), Cmd/Ctrl+Z / Shift+Cmd/Ctrl+Z / Cmd/Ctrl+Y
-// undo and redo (SPEC-015's bindings, from the shortcut registry), and
-// Cmd/Ctrl+[ / Cmd/Ctrl+] rotate left and right.
+// The keyboard (Escape, undo/redo, Cmd/Ctrl+[ ]) is useEditKeys.ts's.
 import { computed, onScopeDispose, ref, shallowRef, watch, type Ref } from "vue";
 import { describeEdit, normaliseStack, type ImageEdit, type PixelSize } from "../../lib/core/imageEdits";
 import { gifFrameCount } from "../../lib/core/imageDimensions";
 import { removeAt } from "../../lib/core/imageEditHistory";
-import { findShortcut } from "../../lib/shortcuts";
 import { canvasCeilingRefusal } from "../../lib/media/canvasCeiling";
 import { mediaPartBytes } from "../../lib/media/download";
 import { editBasePart, isEditableImage, savedStack, type RenderedImage } from "../../lib/media/editModel";
@@ -24,6 +20,7 @@ import type { MediaModel } from "../../lib/media/model";
 import { BROWSER_EDIT_STEPS, createDecodeCache, type EditSource, type ImageEditSteps } from "../../lib/media/renderEdits";
 import { createEditSession } from "./editSession";
 import { useCropTool } from "./useCropTool";
+import { useEditKeys } from "./useEditKeys";
 import { useEditCommands } from "./useEditCommands";
 import { sameHistory, useEditUndo } from "./useEditUndo";
 import { useImageEditActions } from "./useImageEditActions";
@@ -57,13 +54,6 @@ export interface ImageEditorDeps {
   /** After Save or Flatten stored a new model under this id. */
   onStored?: () => void;
   steps?: ImageEditSteps;
-}
-
-/** Whether a key event comes from a field where Cmd/Ctrl+Z edits text. */
-function inTextField(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return true;
-  return target.tagName === "INPUT" && !["range", "checkbox", "radio", "button", "color"].includes((target as HTMLInputElement).type);
 }
 
 function noBytes(): Uint8Array {
@@ -203,15 +193,38 @@ export function useImageEditor(deps: ImageEditorDeps) {
   /** Whether the session's stack differs from the one last saved. */
   const dirty = computed(() => !sameHistory(stack.value, normaliseStack(savedHistory.value)));
 
-  /** Done / Escape: leaves at once, or asks first when edits are unsaved. */
-  function done(): void {
+  // What to do once unsaved edits are discarded (Close leaves the document).
+  let afterDiscard: (() => void) | null = null;
+
+  /** Leaves edit mode and then runs `then` — at once, or after asking when
+   * edits are unsaved. Done and Escape leave to the viewer; Close passes
+   * its own navigation. */
+  function leave(then: () => void = () => {}): void {
+    if (!active.value) {
+      then();
+      return;
+    }
     if (actions.busy.value) return;
     session.end();
+    commands.release();
     if (phase.value === "ready" && dirty.value) {
+      afterDiscard = then;
       discardPending.value = true;
       return;
     }
     exit();
+    then();
+  }
+
+  function done(): void {
+    leave();
+  }
+
+  function confirmDiscard(): void {
+    const then = afterDiscard;
+    afterDiscard = null;
+    exit();
+    then?.();
   }
 
   const actions = useImageEditActions({
@@ -265,41 +278,15 @@ export function useImageEditor(deps: ImageEditorDeps) {
     undo.redo();
   }
 
-  function handleKeydown(event: KeyboardEvent): boolean {
-    if (!active.value || event.defaultPrevented) return false;
-    const target = event.target;
-    if (target instanceof Element && target.closest('[role="dialog"]')) return false;
-    const mod = event.metaKey || event.ctrlKey;
-    if (event.key === "Escape" && !mod) {
-      done();
-      return true;
-    }
-    if (phase.value !== "ready" || actions.busy.value) return false;
-    if (mod && !event.altKey && (event.key === "[" || event.key === "]" || event.code === "BracketLeft" || event.code === "BracketRight")) {
-      commands.rotate(event.key === "]" || event.code === "BracketRight" ? 1 : -1);
-      return true;
-    }
-    const shortcut = findShortcut(event);
-    if ((shortcut?.id === "edit.undo" || shortcut?.id === "edit.redo") && !inTextField(target)) {
-      if (shortcut.id === "edit.undo") undoStep();
-      else redoStep();
-      return true;
-    }
-    return false;
-  }
-
-  function onWindowKeydown(event: KeyboardEvent): void {
-    if (handleKeydown(event)) event.preventDefault();
-  }
-  watch(active, (on) => {
-    if (typeof window === "undefined") return;
-    if (on) window.addEventListener("keydown", onWindowKeydown);
-    else window.removeEventListener("keydown", onWindowKeydown);
+  const handleKeydown = useEditKeys({
+    active,
+    ready: () => phase.value === "ready" && !actions.busy.value,
+    done,
+    rotate: (delta) => commands.rotate(delta),
+    undo: undoStep,
+    redo: redoStep,
   });
-  onScopeDispose(() => {
-    if (typeof window !== "undefined") window.removeEventListener("keydown", onWindowKeydown);
-    decodes.clear();
-  });
+  onScopeDispose(() => decodes.clear());
 
   // Leaving the document (a route change to another id) ends the session.
   watch(
@@ -353,6 +340,7 @@ export function useImageEditor(deps: ImageEditorDeps) {
     enter,
     startSvg,
     done,
+    leave,
     exit,
     removeEntry,
     requestRevert: () => {
@@ -362,7 +350,9 @@ export function useImageEditor(deps: ImageEditorDeps) {
       revertPending.value = false;
     },
     confirmRevert,
+    confirmDiscard,
     cancelDiscard: () => {
+      afterDiscard = null;
       discardPending.value = false;
     },
     undoStep,
