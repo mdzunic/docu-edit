@@ -377,3 +377,9 @@ export function useImageEditor(deps: ImageEditorDeps) {
 }
 
 export type ImageEditor = ReturnType<typeof useImageEditor>;
+
+/** Typed pass-through for the editor arriving through a `.vue` prop
+ * (runtime-typed `Object`; espree bars the annotation in `.vue` scripts). */
+export function asImageEditor(value: unknown): ImageEditor {
+  return value as ImageEditor;
+}

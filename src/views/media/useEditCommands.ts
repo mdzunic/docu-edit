@@ -11,6 +11,19 @@ import { findEntry, removeKind, rotateBy, setAdjustChannel, toggleFlip, upsertEn
 import { MAX_EDIT_EDGE_PX, MAX_STRAIGHTEN_DEGREES, type ImageEdit } from "../../lib/core/imageEdits";
 import type { EditSession } from "./editSession";
 
+/** The adjust tool's sliders and toggles, in ADJUST_CHANNELS order. */
+export const ADJUST_SLIDERS: ReadonlyArray<{ channel: "brightness" | "contrast" | "saturation" | "exposure"; label: string }> = [
+  { channel: "brightness", label: "Brightness" },
+  { channel: "contrast", label: "Contrast" },
+  { channel: "saturation", label: "Saturation" },
+  { channel: "exposure", label: "Exposure" },
+];
+
+export const ADJUST_TOGGLES: ReadonlyArray<{ channel: "grayscale" | "invert"; label: string }> = [
+  { channel: "grayscale", label: "Grayscale" },
+  { channel: "invert", label: "Invert" },
+];
+
 export interface EditCommands {
   rotate: (delta: 1 | -1) => void;
   flip: (axis: "horizontal" | "vertical") => void;

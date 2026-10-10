@@ -15,12 +15,16 @@
 //   2026-10-08  125  SPEC-107 rework: the ledger opens AT the count the view
 //                    lands on (AC-48), measured as this test measures it —
 //                    124 lines plus the final newline — with no headroom
+//   2026-10-10  117  SPEC-112: the app-bar actions (Close, and the image
+//                    editor's Edit) move out to components/media/
+//                    MediaBarActions.vue; the view gains only the
+//                    useImageEditor wiring and the editor's template hookup
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 125;
+const LINE_BUDGET = 117;
 
 describe("MediaView size budget", () => {
   it(`MediaView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
