@@ -45,9 +45,23 @@ export function decodeXmlEscapes(text: string): string {
   return text.replace(/_x([0-9A-Fa-f]{4})_/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 }
 
-/** Text that needs the slow path: an encoded character, a surrogate (lone
- * ones are encoded, pairs kept) or something shaped like an escape. */
-const NEEDS_ENCODING = /[\x00-\x08\x0B-\x1F\uD800-\uDFFF￾￿]|_x[0-9A-Fa-f]{4}/;
+/** Whether `text` needs the slow path: a character the encoding may write as
+ * `_xHHHH_` (a control character but tab and line feed, a surrogate — lone
+ * ones are encoded, pairs kept — U+FFFE, U+FFFF) or an `_x` that may begin
+ * a literal escape. One pass over the code units; most cell text has none. */
+function needsEncoding(text: string): boolean {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20) {
+      if (code !== 0x09 && code !== 0x0a) {
+        return true;
+      }
+    } else if ((code >= 0xd800 && code <= 0xdfff) || code >= 0xfffe || (code === 0x5f && text.charCodeAt(i + 1) === 0x78)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function isHexDigit(code: number): boolean {
   return (code >= 0x30 && code <= 0x39) || (code >= 0x41 && code <= 0x46) || (code >= 0x61 && code <= 0x66);
@@ -96,7 +110,7 @@ function escapeCode(code: number): string {
 /** A cell string as SpreadsheetML text content (see the module header): the
  * `_xHHHH_` encoding, then `&`, `<` and `>` escaped. */
 export function encodeXlsxText(text: string): string {
-  if (!NEEDS_ENCODING.test(text)) {
+  if (!needsEncoding(text)) {
     return escapeElementText(text);
   }
   let out = "";

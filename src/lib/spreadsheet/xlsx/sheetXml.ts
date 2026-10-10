@@ -1505,14 +1505,25 @@ function paneAndSelections(xml: string, children: readonly ViewChild[], sheet: S
   return pane + kept.join("") + (sheet.selection ? selectionXml(sheet.selection, active, p) : "");
 }
 
-/** The rebuilt `<sheetViews>` (see the module header). */
+/** The rebuilt `<sheetViews>` (see the module header). A part without one
+ * gains a generated element; one whose `<sheetViews>` holds no `<sheetView>`
+ * gets the generated view first inside it, the rest kept. */
 function sheetViewsXml(xml: string, element: RootChild | undefined, layout: WorksheetLayout, sheet: Sheet, ctx: XlsxSheetContext): string {
   const p = layout.prefix;
   const view = layout.view;
   if (element === undefined || view === null || view.start < element.start || view.end > element.end) {
     const tag = viewTag(`<${p}sheetView workbookViewId="0"/>`, sheet, ctx);
     const block = paneAndSelections(xml, [], sheet, p);
-    return `<${p}sheetViews>${block === "" ? tag : `${tag.slice(0, -2)}>${block}</${p}sheetView>`}</${p}sheetViews>`;
+    const generated = block === "" ? tag : `${tag.slice(0, -2)}>${block}</${p}sheetView>`;
+    if (element === undefined) {
+      return `<${p}sheetViews>${generated}</${p}sheetViews>`;
+    }
+    const open = startTagAt(xml, element.start);
+    if (open.endsWith("/>")) {
+      const name = /^<([^\s/>]+)/.exec(open)![1]!;
+      return `${open.replace(/\s*\/>$/, ">")}${generated}</${name}>`;
+    }
+    return open + generated + xml.slice(element.start + open.length, element.end);
   }
   const tag = viewTag(startTagAt(xml, view.start), sheet, ctx);
   const block = paneAndSelections(xml, view.children, sheet, p);

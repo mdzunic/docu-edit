@@ -751,15 +751,13 @@ function definedNameSplices(
   };
   const tagText = xml.slice(element.start, element.textStart);
   const closeText = xml.slice(element.textEnd, element.end);
-  const withIndex = (tag: string, index: number | undefined): string =>
-    index === undefined ? tag : setAttribute(tag, "localSheetId", String(index));
   if (sourceIndex !== undefined && Number.isInteger(sourceIndex)) {
     const modelIndex = sourceIndexToModel.get(sourceIndex);
     if (modelIndex === undefined) {
       splices.push({ start: element.start, end: element.end, text: copiesFor(sourceIndex) });
       return;
     }
-    const tag = withIndex(tagText, modelIndex);
+    const tag = withLocalSheetId(tagText, modelIndex);
     const body = text(remap);
     const own = tag === tagText && body === raw ? xml.slice(element.start, element.end) : `${tag}${body}${closeText}`;
     const copies = copiesFor(sourceIndex);
@@ -775,9 +773,15 @@ function definedNameSplices(
 
   function copiesFor(index: number): string {
     return (copiesBySourceIndex.get(index) ?? [])
-      .map((plan) => `${withIndex(tagText, plan.index)}${text(copyRemap(remap, plan.sheet))}${closeText}`)
+      .map((plan) => `${withLocalSheetId(tagText, plan.index)}${text(copyRemap(remap, plan.sheet))}${closeText}`)
       .join("");
   }
+}
+
+/** A definedName start tag with `localSheetId` set to `index` (unchanged
+ * when there is none). */
+function withLocalSheetId(tag: string, index: number | undefined): string {
+  return index === undefined ? tag : setAttribute(tag, "localSheetId", String(index));
 }
 
 function decodeEntities(raw: string): string {
@@ -802,9 +806,14 @@ function workbookRelsFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], 
 /** The content type a part added by duplication takes: that of a part in
  * the same folder with the same stem (its origin's). */
 function stemContentType(types: ReturnType<typeof readContentTypes>, partName: string): string | undefined {
-  const stem = (name: string): string => name.replace(/(?:_\d+|\d+)(\.[^./]*)$/, "$1");
-  const key = stem(partName);
-  return types.overrides.find((entry) => stem(entry.partName) === key)?.contentType;
+  const key = partStem(partName);
+  return types.overrides.find((entry) => partStem(entry.partName) === key)?.contentType;
+}
+
+/** A part name without the number before its extension (`chart2.xml`,
+ * `table1_2.xml` → `chart.xml`, `table1.xml`). */
+function partStem(name: string): string {
+  return name.replace(/(?:_\d+|\d+)(\.[^./]*)$/, "$1");
 }
 
 function contentTypesFor(
@@ -919,12 +928,20 @@ function appXmlFor(xml: string, workbook: SourceWorkbook, plans: readonly SheetP
     `</${vt}:vector>`;
   const allTitles = kept.flatMap((group) => group.items);
   const titlesBody = `<${vt}:vector size="${allTitles.length}" baseType="lpstr">${allTitles.map((title) => `<${vt}:lpstr>${escape(title)}</${vt}:lpstr>`).join("")}</${vt}:vector>`;
-  const open = (match: RegExpExecArray): string => match[0].slice(0, match[0].indexOf(">") + 1);
-  const close = (match: RegExpExecArray): string => match[0].slice(match[0].lastIndexOf("</"));
   return applySplices(xml, [
-    { start: heading.index, end: heading.index + heading[0].length, text: `${open(heading)}${headingBody}${close(heading)}` },
-    { start: titles.index, end: titles.index + titles[0].length, text: `${open(titles)}${titlesBody}${close(titles)}` },
+    { start: heading.index, end: heading.index + heading[0].length, text: `${openTagOf(heading)}${headingBody}${closeTagOf(heading)}` },
+    { start: titles.index, end: titles.index + titles[0].length, text: `${openTagOf(titles)}${titlesBody}${closeTagOf(titles)}` },
   ]);
+}
+
+/** The start tag of a matched `<x …>…</x>` element. */
+function openTagOf(match: RegExpExecArray): string {
+  return match[0].slice(0, match[0].indexOf(">") + 1);
+}
+
+/** The close tag of a matched `<x …>…</x>` element. */
+function closeTagOf(match: RegExpExecArray): string {
+  return match[0].slice(match[0].lastIndexOf("</"));
 }
 
 function sameNames(a: readonly string[], b: readonly string[]): boolean {

@@ -1,8 +1,13 @@
 // SPEC-121's .xlsx writer: the from-scratch goldens ("From scratch"), the
 // verbatim path, the substitution rules ("The .xlsx substitution path",
-// "Deleting a sheet", "Duplicating a sheet", "Interim: dirty sheets before
-// SPEC-122"), the retained sheet-reference pass ("Sheet references in
-// formulas") and package integrity over every fixture × every command.
+// "Deleting a sheet", "Duplicating a sheet"), the retained sheet-reference
+// pass ("Sheet references in formulas") and package integrity over every
+// fixture × every command. SPEC-122 replaces SPEC-121's "Interim: dirty
+// sheets" with its "calcChain and calcPr" rules, rebuilds dirty sheets
+// (a dirty part rebuilt, every untouched part equalBytes, write → read →
+// write stable) and makes the string and style tables append-only (their
+// source bytes unchanged outside the appends and counts), and serialises
+// cells from scratch.
 import { describe, expect, it } from "vitest";
 import { setClock } from "../../core/clock";
 import { equalBytes } from "../../core/equality";
@@ -98,6 +103,15 @@ const strip = (xml: string): string =>
 
 /** A part's Override content type in a [Content_Types].xml text. */
 const typeOf = (xml: string, name: string): string | undefined => new RegExp(`PartName="/${name.replace(/[.]/g, "\\.")}" ContentType="([^"]*)"`).exec(xml)?.[1];
+
+/** A worksheet part as SPEC-122's serializeWorksheet rebuilds it from a model
+ * that still says what the part says: the source with every row's `spans`
+ * and `x14ac:dyDescent` (Excel's layout caches) dropped — the only bytes the
+ * row rule changes; every other byte is the source's. */
+const rebuiltRows = (xml: string): string => xml.replace(/<row\b[^>]*>/g, (tag) => tag.replace(/ spans="[^"]*"/, "").replace(/ x14ac:dyDescent="[^"]*"/, ""));
+
+/** The workbook part's calcPr element, as written. */
+const calcPrOf = (xml: string): string | undefined => /<calcPr\b[^>]*\/>/.exec(xml)?.[0];
 
 // --- from scratch -------------------------------------------------------------------------
 
@@ -450,12 +464,19 @@ describe("substitution: sheet parts", () => {
 });
 
 describe("substitution: the retained sheet-reference pass", () => {
+  // SPEC-122: a rename that rewrites a sheet's cell formulas dirties that
+  // sheet (SPEC-121), so its part is rebuilt by serializeWorksheet: the
+  // source with the formulas the model now holds, its rows without Excel's
+  // layout caches — every other byte verbatim.
   it('renaming "Data" to "Facts" rewrites <f>, chart c:f and definedName text — every other byte verbatim', async () => {
     const { source, model } = await links();
     renameSheet(model, indexOf(model, "Data"), "Facts");
+    expect(model.sheets[indexOf(model, "Summary")]!.dirty).toBe(true);
     const { bytes, parts } = await save(model);
     expect(text(parts, "xl/worksheets/sheet1.xml")).toBe(
-      text(source, "xl/worksheets/sheet1.xml").replace("<f>Data!B2*2</f>", "<f>Facts!B2*2</f>").replace("<f>SUM(Data:Lookup!A1)</f>", "<f>SUM(Facts:Lookup!A1)</f>"),
+      rebuiltRows(text(source, "xl/worksheets/sheet1.xml"))
+        .replace("<f>Data!B2*2</f>", "<f>Facts!B2*2</f>")
+        .replace("<f>SUM(Data:Lookup!A1)</f>", "<f>SUM(Facts:Lookup!A1)</f>"),
     );
     expect(text(parts, "xl/charts/chart1.xml")).toBe(text(source, "xl/charts/chart1.xml").replaceAll("<c:f>Data!", "<c:f>Facts!"));
     for (const name of ["xl/worksheets/sheet2.xml", "xl/worksheets/sheet3.xml", "xl/tables/table1.xml", "xl/drawings/drawing1.xml", "xl/sharedStrings.xml", "docProps/core.xml"]) {
@@ -474,6 +495,9 @@ describe("substitution: the retained sheet-reference pass", () => {
   it('renaming "Lookup" to a name that needs quoting rewrites the cfRule, the validation, the hyperlink location and the names', async () => {
     const { source, model } = await links();
     renameSheet(model, indexOf(model, "Lookup"), "Look Up");
+    // Data's cells name no other sheet: it stays clean and only the pass touches it.
+    expect(model.sheets[indexOf(model, "Data")]!.dirty).toBeUndefined();
+    expect(model.sheets[indexOf(model, "Summary")]!.dirty).toBe(true);
     const { bytes, parts } = await save(model);
     expect(text(parts, "xl/worksheets/sheet2.xml")).toBe(
       text(source, "xl/worksheets/sheet2.xml")
@@ -482,7 +506,7 @@ describe("substitution: the retained sheet-reference pass", () => {
         .replace(`location="Lookup!A1"`, `location="'Look Up'!A1"`),
     );
     expect(text(parts, "xl/worksheets/sheet1.xml")).toBe(
-      text(source, "xl/worksheets/sheet1.xml")
+      rebuiltRows(text(source, "xl/worksheets/sheet1.xml"))
         .replace("<f>VLOOKUP(A2,Lookup!$A$1:$B$5,2,FALSE)</f>", "<f>VLOOKUP(A2,'Look Up'!$A$1:$B$5,2,FALSE)</f>")
         .replace("<f>SUM(Data:Lookup!A1)</f>", "<f>SUM('Data:Look Up'!A1)</f>")
         .replace("<f>Lookup!B2</f>", "<f>'Look Up'!B2</f>"),
@@ -496,9 +520,10 @@ describe("substitution: the retained sheet-reference pass", () => {
     renameSheet(model, indexOf(model, "Data"), "tmp");
     renameSheet(model, indexOf(model, "Lookup"), "Data");
     renameSheet(model, indexOf(model, "tmp"), "Lookup");
+    expect(model.sheets[indexOf(model, "Summary")]!.dirty).toBe(true);
     const { bytes, parts } = await save(model);
     expect(text(parts, "xl/worksheets/sheet1.xml")).toBe(
-      text(source, "xl/worksheets/sheet1.xml")
+      rebuiltRows(text(source, "xl/worksheets/sheet1.xml"))
         .replace("<f>VLOOKUP(A2,Lookup!$A$1:$B$5,2,FALSE)</f>", "<f>VLOOKUP(A2,Data!$A$1:$B$5,2,FALSE)</f>")
         .replace("<f>Data!B2*2</f>", "<f>Lookup!B2*2</f>")
         .replace("<f>SUM(Data:Lookup!A1)</f>", "<f>SUM(Lookup:Data!A1)</f>")
@@ -515,12 +540,13 @@ describe("substitution: the retained sheet-reference pass", () => {
   it('deleting "Lookup" turns its references into #REF! and skips its part, relationship and Override', async () => {
     const { source, model } = await links();
     deleteSheet(model, indexOf(model, "Lookup"));
+    expect(model.sheets[indexOf(model, "Summary")]!.dirty).toBe(true);
     const { bytes, parts } = await save(model);
     expect(parts.has("xl/worksheets/sheet3.xml")).toBe(false);
     expect(text(parts, "xl/_rels/workbook.xml.rels")).not.toContain("sheet3.xml");
     expect(text(parts, "[Content_Types].xml")).not.toContain("sheet3.xml");
     expect(text(parts, "xl/worksheets/sheet1.xml")).toBe(
-      text(source, "xl/worksheets/sheet1.xml")
+      rebuiltRows(text(source, "xl/worksheets/sheet1.xml"))
         .replace("<f>VLOOKUP(A2,Lookup!$A$1:$B$5,2,FALSE)</f>", "<f>VLOOKUP(A2,#REF!,2,FALSE)</f>")
         .replace("<f>SUM(Data:Lookup!A1)</f>", "<f>SUM(Data!A1)</f>")
         .replace("<f>Lookup!B2</f>", "<f>#REF!</f>"),
@@ -565,31 +591,71 @@ describe("substitution: the retained sheet-reference pass", () => {
   });
 });
 
-describe("interim: dirty sheets before SPEC-122", () => {
-  it("a dirty sheet is written from its retained source and the workbook gets calcPr@fullCalcOnLoad", async () => {
-    const { source, model } = await links();
-    const lookup = indexOf(model, "Lookup");
-    model.sheets[lookup] = { ...model.sheets[lookup]!, dirty: true };
-    const { parts } = await save(model);
-    expect(equalBytes(parts.get("xl/worksheets/sheet3.xml")!, source.get("xl/worksheets/sheet3.xml")!)).toBe(true);
-    expect(text(parts, "xl/workbook.xml")).toContain(`<calcPr calcId="191029" fullCalcOnLoad="1"/>`);
+// SPEC-122 "calcChain and calcPr" replaces SPEC-121's interim (a dirty sheet
+// re-emitted from its retained source + fullCalcOnLoad): dirty sheets are
+// rebuilt from the model with the values the edit pipeline recalculated, so
+// an edit alone never asks the consumer to recalculate.
+describe("calcChain and calcPr", () => {
+  /** spec121-links.xlsx with Lookup dirty (its model unchanged). */
+  async function lookupDirty(): Promise<{ source: Parts; model: SpreadsheetModel }> {
+    const opened = await links();
+    const lookup = indexOf(opened.model, "Lookup");
+    opened.model.sheets[lookup] = { ...opened.model.sheets[lookup]!, dirty: true };
+    return opened;
+  }
+
+  it("a dirty sheet is rebuilt from the model; calcPr stays as the source wrote it; calcChain goes with its relationship and Override", async () => {
+    const { source, model } = await lookupDirty();
+    const { bytes, parts } = await save(model);
+    expect(text(parts, "xl/worksheets/sheet3.xml")).toBe(rebuiltRows(text(source, "xl/worksheets/sheet3.xml")));
+    expect(text(parts, "xl/worksheets/sheet3.xml")).not.toBe(text(source, "xl/worksheets/sheet3.xml"));
+    for (const name of ["xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml", "xl/worksheets/sheet4.xml", "xl/worksheets/sheet5.xml", "xl/sharedStrings.xml", "xl/styles.xml"]) {
+      expect(equalBytes(parts.get(name)!, source.get(name)!), name).toBe(true);
+    }
+    expect(calcPrOf(text(source, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029"/>`);
+    expect(calcPrOf(text(parts, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029"/>`);
+    expect(source.has("xl/calcChain.xml")).toBe(true);
+    expect(text(source, "xl/_rels/workbook.xml.rels")).toContain("calcChain");
+    expect(text(source, "[Content_Types].xml")).toContain("calcChain");
     expect(parts.has("xl/calcChain.xml")).toBe(false);
+    expect(text(parts, "xl/_rels/workbook.xml.rels")).not.toContain("calcChain");
+    expect(text(parts, "[Content_Types].xml")).not.toContain("calcChain");
+    expect(await packageIntegrity(bytes)).toEqual([]);
   });
 
-  it("a rename that rewrites another sheet's formulas dirties it, so fullCalcOnLoad; an add alone does not", async () => {
+  it('model.forceFullCalcOnLoad (a pass left a stale cell) writes calcPr@fullCalcOnLoad="1"; so does the writer\'s option', async () => {
+    const forced = (await lookupDirty()).model;
+    forced.forceFullCalcOnLoad = true;
+    expect(calcPrOf(text((await save(forced)).parts, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029" fullCalcOnLoad="1"/>`);
+    const asked = (await lookupDirty()).model;
+    expect(calcPrOf(text((await save(asked, { fullCalcOnLoad: true })).parts, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029" fullCalcOnLoad="1"/>`);
+  });
+
+  it("an absent calcPr is created in CT_Workbook position: before the first later sibling, else before </workbook>", async () => {
+    const { model } = await lookupDirty();
+    model.forceFullCalcOnLoad = true;
+    editPart(model, "xl/workbook.xml", (xml) => xml.replace(`<calcPr calcId="191029"/>`, ""));
+    expect(text((await save(model)).parts, "xl/workbook.xml")).toMatch(/<\/definedNames><calcPr fullCalcOnLoad="1"\/><\/workbook>$/);
+    editPart(model, "xl/workbook.xml", (xml) => xml.replace(`</workbook>`, `<fileRecoveryPr repairLoad="1"/></workbook>`));
+    expect(text((await save(model)).parts, "xl/workbook.xml")).toMatch(/<\/definedNames><calcPr fullCalcOnLoad="1"\/><fileRecoveryPr repairLoad="1"\/><\/workbook>$/);
+  });
+
+  it('a source fullCalcOnLoad="1" stays when nothing asks for it', async () => {
+    const { source, model } = await open(F.buildSpec120FullCalcXlsxBytes);
+    model.sheets[0] = { ...model.sheets[0]!, dirty: true };
+    const sourceCalcPr = calcPrOf(text(source, "xl/workbook.xml"))!;
+    expect(sourceCalcPr).toContain(`fullCalcOnLoad="1"`);
+    expect(calcPrOf(text((await save(model)).parts, "xl/workbook.xml"))).toBe(sourceCalcPr);
+  });
+
+  it("a rename that rewrites another sheet's formulas dirties it — rebuilt, with no fullCalcOnLoad; an add alone neither", async () => {
     const renamed = (await links()).model;
     renameSheet(renamed, indexOf(renamed, "Data"), "Facts");
-    expect(text((await save(renamed)).parts, "xl/workbook.xml")).toContain(`<calcPr calcId="191029" fullCalcOnLoad="1"/>`);
+    expect(renamed.sheets[indexOf(renamed, "Summary")]!.dirty).toBe(true);
+    expect(calcPrOf(text((await save(renamed)).parts, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029"/>`);
     const added = (await links()).model;
     addSheet(added, 0);
-    expect(text((await save(added)).parts, "xl/workbook.xml")).toContain(`<calcPr calcId="191029"/>`);
-  });
-
-  it("an absent calcPr is created (here before </workbook>)", async () => {
-    const { model } = await links();
-    editPart(model, "xl/workbook.xml", (xml) => xml.replace(`<calcPr calcId="191029"/>`, ""));
-    model.sheets[0] = { ...model.sheets[0]!, dirty: true };
-    expect(text((await save(model)).parts, "xl/workbook.xml")).toMatch(/<\/definedNames><calcPr fullCalcOnLoad="1"\/><\/workbook>$/);
+    expect(calcPrOf(text((await save(added)).parts, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029"/>`);
   });
 });
 
