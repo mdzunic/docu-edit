@@ -504,13 +504,18 @@ interface Placed {
  * positions they cover); null past MAX_COPY_CELLS. The table's area is
  * checked as each cell is placed, before its span is marked, so the
  * positions marked never outnumber MAX_COPY_CELLS — a hostile
- * `rowspan=20000 colspan=1000` is refused, never walked. */
+ * `rowspan=20000 colspan=1000` is refused, never walked. So is the walk
+ * itself: spans that do not overlap cover at most the table's area, so
+ * spans walking more positions than MAX_COPY_CELLS in all overlap — a
+ * malformed table whose staircase of spans would mark the same positions
+ * hundreds of times over — and are refused too. */
 function placeCells(table: HTMLTableElement): { cells: Placed[]; rows: number; cols: number } | null {
   const taken = new Set<number>();
   const cells: Placed[] = [];
   let rows = 0;
   let cols = 0;
   let row = 0;
+  let walked = 0;
   for (const tr of Array.from(table.rows)) {
     let col = 0;
     for (const element of Array.from(tr.cells)) {
@@ -526,6 +531,10 @@ function placeCells(table: HTMLTableElement): { cells: Placed[]; rows: number; c
       }
       cells.push({ element, row, col, rowspan, colspan });
       if (rowspan > 1 || colspan > 1) {
+        walked += rowspan * colspan;
+        if (walked > MAX_COPY_CELLS) {
+          return null;
+        }
         for (let r = row; r < bottom; r += 1) {
           for (let c = col; c < right; c += 1) {
             taken.add(r * MAX_COLS + c);

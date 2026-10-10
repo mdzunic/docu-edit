@@ -601,6 +601,15 @@ describe("external sources — each producer's markers (inline snippets)", () =>
     expect(imported('<table><tr><td rowspan="2" colspan="3">x</td><td>y</td></tr></table>')).toMatchObject({ rows: 2, cols: 4, merges: [range(0, 0, 1, 2)] });
   });
 
+  it("refuses spans that overlap past MAX_COPY_CELLS positions walked, though the table's area stays inside it", () => {
+    // Each row's 500 × 500 span starts one column left of the last, inside a
+    // 999 × 1,000 area: walked in full, 125 million positions.
+    const staircase = Array.from({ length: 500 }, (_, r) => `<tr><td colspan="${500 - r}">f</td><td rowspan="500" colspan="500">x</td></tr>`).join("");
+    expect(importClipboardHtml(`<table>${staircase}</table>`, CTX)).toBe(TOO_MANY_TO_CHANGE_MESSAGE);
+    // Spans that do not overlap walk at most the area: exactly the cap lands.
+    expect(imported('<table><tr><td rowspan="1000" colspan="1000">x</td></tr></table>')).toMatchObject({ rows: 1000, cols: 1000, merges: [range(0, 0, 999, 999)] });
+  });
+
   it("holds what attributes give to the payload's bounds: XML-legal text of at most 32,767 characters, format codes of at most 255, a Sheets formula of at most 8,192", () => {
     const excel = imported(
       `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table><tr><td x:str="a\u0001b">t</td><td x:str="${"x".repeat(40_000)}">t</td>` +
