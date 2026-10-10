@@ -8,11 +8,13 @@
 //
 // Reader versions. A spec that teaches the readers to extract something new
 // bumps SPREADSHEET_READER_VERSION and appends its ReaderUpgrade. On load, a
-// record behind the current version is upgraded: if no sheet is dirty
-// (SPEC-121 adds `Sheet.dirty`) it is simply re-read from `opaque`, keeping
-// `id`, `title`, the library's starred/trash state (which live on the store
-// record, not the model) and each sheet's `id` (matched by position);
-// otherwise clean sheets are re-read and each dirty sheet runs every pending
+// record behind the current version is upgraded: if nothing was edited (no
+// `structureDirty`, no dirty sheet — SPEC-121) it is simply re-read from
+// `opaque`, keeping `id`, `title`, the library's starred/trash state (which
+// live on the store record, not the model) and each sheet's `id` (matched by
+// position); otherwise (SPEC-121 "Reader upgrades after edits") the model's
+// sheet list is kept and each clean sheet — a copy included — is re-read
+// from its own retained source, while each dirty sheet runs every pending
 // step in order. The store writes the upgraded record back once. (The same
 // move SPEC-079 made with upgradePresentationModel, made general up front
 // because this queue grows the readers fourteen times.)
@@ -97,8 +99,7 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
   },
 ];
 
-/** The title a workbook gets when nothing names it. */
-export const DEFAULT_SPREADSHEET_TITLE = "Untitled workbook";
+export { DEFAULT_SPREADSHEET_TITLE } from "./model";
 
 /** Assembles a parsed package into a fresh SpreadsheetModel — the shared
  * tail of every workbook open path, minting a new id the way
@@ -169,38 +170,92 @@ export async function readSpreadsheetBytes(
   return assembleSpreadsheet(title, format, await parse(bytes, format, parts));
 }
 
-/** Whether a sheet carries edits its source does not (SPEC-121 adds the
- * flag; until then no sheet is ever dirty). */
-function isDirty(sheet: Sheet): boolean {
-  return (sheet as Sheet & { dirty?: boolean }).dirty === true;
-}
-
 /** Brings a stored workbook up to SPREADSHEET_READER_VERSION (see the module
  * header). A current record comes back as the same object; an older one is
- * re-read from its retained package. */
+ * re-read from its retained package — wholesale when nothing was edited,
+ * sheet by sheet when something was (upgradeEdited). */
 export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<SpreadsheetModel> {
   if (model.readerVersion >= SPREADSHEET_READER_VERSION) {
     return model;
   }
   const sourceParts = decodedPartBytes(model.opaque);
+  const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
+  if (model.structureDirty || model.sheets.some((sheet) => sheet.dirty)) {
+    return upgradeEdited(model, sourceParts, pending);
+  }
   const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, sourceParts);
   fresh.id = model.id;
   if (model.forceFullCalcOnLoad) {
     fresh.forceFullCalcOnLoad = true;
   }
-  const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
   fresh.sheets = fresh.sheets.map((sheet, index) => {
     const stored = model.sheets[index];
-    if (!stored) {
-      return sheet;
-    }
-    if (isDirty(stored)) {
-      for (const step of pending) {
-        step.upgradeDirtySheet(fresh, stored, sourceParts);
+    return stored ? { ...sheet, id: stored.id } : sheet;
+  });
+  fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
+  return fresh;
+}
+
+/** SPEC-121 "Reader upgrades after edits": a record with `structureDirty` or
+ * a dirty sheet is never re-read wholesale — the source's sheet list is no
+ * longer the workbook's. The model's sheet list, order, names, visibility,
+ * tab colours and ids are kept; each clean sheet (copies included) is
+ * re-read from its own retained source, replacing only its cell content and
+ * per-sheet properties. The read goes through the writer's substitution
+ * layout of the model — every sheet at its own part (or its own table text)
+ * with sourceSheetRemap applied, a copy's own remap included — so the
+ * formulas read name the sheets as the model does, while the record keeps
+ * its retained package untouched. Dirty sheets run the pending steps (a step
+ * never runs on a sheet with no source). */
+async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, Uint8Array>, pending: readonly ReaderUpgrade[]): Promise<SpreadsheetModel> {
+  const layout =
+    model.format === "xlsx"
+      ? (await import("./xlsx/writer")).substitutedXlsxParts(model)
+      : (await import("./ods/writer")).substitutedOdsParts(model);
+  const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, layout);
+  fresh.id = model.id;
+  fresh.opaque = model.opaque;
+  if (model.odsContentEnvelope) {
+    fresh.odsContentEnvelope = model.odsContentEnvelope;
+  } else {
+    delete fresh.odsContentEnvelope;
+  }
+  fresh.activeSheetIndex = model.activeSheetIndex;
+  fresh.structureDirty = true;
+  if (!model.structureDirty) {
+    delete fresh.structureDirty;
+  }
+  if (model.forceFullCalcOnLoad) {
+    fresh.forceFullCalcOnLoad = true;
+  }
+  fresh.sheets = model.sheets.map((stored, index) => {
+    if (stored.dirty) {
+      if (stored.partName !== undefined || stored.sourceXml !== undefined) {
+        for (const step of pending) {
+          step.upgradeDirtySheet(fresh, stored, sourceParts);
+        }
       }
       return stored;
     }
-    return { ...sheet, id: stored.id };
+    const read = fresh.sheets[index];
+    if (!read) {
+      return stored;
+    }
+    const { id: _id, name: _name, visibility: _visibility, kind: _kind, tabColor: _tab, partName: _part, sourceXml: _source, copiedFrom: _copied, ...content } = read;
+    const sheet: Sheet = { ...content, id: stored.id, name: stored.name, visibility: stored.visibility, kind: stored.kind };
+    if (stored.tabColor !== undefined) {
+      sheet.tabColor = stored.tabColor;
+    }
+    if (stored.partName !== undefined) {
+      sheet.partName = stored.partName;
+    }
+    if (stored.sourceXml !== undefined) {
+      sheet.sourceXml = stored.sourceXml;
+    }
+    if (stored.copiedFrom !== undefined) {
+      sheet.copiedFrom = stored.copiedFrom;
+    }
+    return sheet;
   });
   fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
   return fresh;

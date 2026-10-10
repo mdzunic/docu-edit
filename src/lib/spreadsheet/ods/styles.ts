@@ -879,3 +879,94 @@ export class OdsStyleBook {
     return merged;
   }
 }
+
+// --- generated styles (SPEC-121, extended by SPEC-122) ------------------------------------
+
+/** A generated table style's properties: the master page (the source table
+ * style's, else "Default"), whether the table shows, and its tab colour as
+ * hex. */
+export interface GeneratedTableStyle {
+  masterPage: string;
+  display: boolean;
+  tabColor?: string;
+}
+
+/** The writers' automatic styles (SPEC-121 "Generated ODS styles"): `de-ta<n>`
+ * (family table: master page, `table:display`, `style:writing-mode`,
+ * `tableooo:tab-color`), `de-co<n>` (a column width in inches from px at
+ * 96 dpi, 4 decimals) and `de-ro<n>` (a row height in pt and
+ * `style:use-optimal-row-height`), deduplicated by properties. Each prefix's
+ * counter starts past every `de-` name of that prefix already in
+ * content.xml or styles.xml, so no generated name ever collides; xml()
+ * is spliced before `</office:automatic-styles>`. */
+export class OdsStyleRegistry {
+  private readonly counters = new Map<string, number>();
+  private readonly byKey = new Map<string, string>();
+  private readonly elements: string[] = [];
+
+  constructor(existingXml: readonly string[] = []) {
+    for (const xml of existingXml) {
+      for (const match of xml.matchAll(/style:name="de-([a-z]+)(\d+)"/g)) {
+        const prefix = match[1]!;
+        this.counters.set(prefix, Math.max(this.counters.get(prefix) ?? 0, Number(match[2])));
+      }
+    }
+  }
+
+  private add(prefix: string, key: string, element: (name: string) => string): string {
+    const known = this.byKey.get(`${prefix}|${key}`);
+    if (known !== undefined) {
+      return known;
+    }
+    const next = (this.counters.get(prefix) ?? 0) + 1;
+    this.counters.set(prefix, next);
+    const name = `de-${prefix}${next}`;
+    this.byKey.set(`${prefix}|${key}`, name);
+    this.elements.push(element(name));
+    return name;
+  }
+
+  tableStyle(style: GeneratedTableStyle): string {
+    const key = `${style.masterPage}|${style.display}|${style.tabColor ?? ""}`;
+    return this.add(
+      "ta",
+      key,
+      (name) =>
+        `<style:style style:name="${name}" style:family="table" style:master-page-name="${escapeOdsAttribute(style.masterPage)}">` +
+        `<style:table-properties table:display="${style.display}" style:writing-mode="lr-tb"` +
+        `${style.tabColor === undefined ? "" : ` tableooo:tab-color="${style.tabColor}"`}/></style:style>`,
+    );
+  }
+
+  columnStyle(widthPx: number): string {
+    const inches = (widthPx / 96).toFixed(4);
+    return this.add(
+      "co",
+      inches,
+      (name) => `<style:style style:name="${name}" style:family="table-column"><style:table-column-properties style:column-width="${inches}in"/></style:style>`,
+    );
+  }
+
+  rowStyle(heightPt: number, optimal: boolean): string {
+    const height = `${Number(heightPt.toFixed(4))}pt`;
+    return this.add(
+      "ro",
+      `${height}|${optimal}`,
+      (name) =>
+        `<style:style style:name="${name}" style:family="table-row"><style:table-row-properties style:row-height="${height}" style:use-optimal-row-height="${optimal}"/></style:style>`,
+    );
+  }
+
+  /** Every style generated so far, in order. */
+  xml(): string {
+    return this.elements.join("");
+  }
+
+  get size(): number {
+    return this.elements.length;
+  }
+}
+
+function escapeOdsAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}

@@ -13,6 +13,10 @@ const props = defineProps({
   /** The action name the next redo would report (AC-8) — blank while
    * canRedo is false. */
   redoLabel: { type: String, default: "" },
+  /** The buttons' test ids — the text editor's defaults; the workbook's app
+   * bar passes `spreadsheet-undo`/`spreadsheet-redo` (SPEC-121). */
+  undoTestid: { type: String, default: "undo-button" },
+  redoTestid: { type: String, default: "redo-button" },
 });
 
 const emit = defineEmits(["undo", "redo"]);
@@ -42,7 +46,7 @@ function redoTitle() {
       caption="Undo"
       :label="undoTitle()"
       :disabled="!canUndo"
-      data-testid="undo-button"
+      :data-testid="undoTestid"
       @mousedown.prevent
       @click="emit('undo')"
     />
@@ -51,7 +55,7 @@ function redoTitle() {
       caption="Redo"
       :label="redoTitle()"
       :disabled="!canRedo"
-      data-testid="redo-button"
+      :data-testid="redoTestid"
       @mousedown.prevent
       @click="emit('redo')"
     />

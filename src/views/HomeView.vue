@@ -2,10 +2,11 @@
 // The landing page: a thin wiring hub over the library module
 // (src/views/library/* + useLibrary + lib/libraryView), the same
 // hub-and-composables shape DocumentView has. Product knowledge stays here
-// — what can be created (text documents, templates), which file kinds open,
-// and where each kind routes (documentKinds.ts) — while the library
-// components stay product-neutral. HomeView.size.spec.ts holds the line
-// budget that keeps it this way.
+// — what can be created (a blank document, deck or workbook through
+// lib/newDocument.ts; templates), which file kinds open, and where each kind
+// routes (documentKinds.ts) — while the library components stay
+// product-neutral. HomeView.size.spec.ts holds the line budget that keeps it
+// this way.
 import { useRouter } from "vue-router";
 import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import { useTheme } from "../composables/useTheme";
@@ -30,18 +31,11 @@ import { openAnyDocumentFile } from "../lib/openDocument";
 import { editorPathFor, OPEN_FILE_ACCEPT } from "../lib/documentKinds";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { COMMANDS, loadRecentCommands, pushRecentCommand } from "../lib/commandCatalogue";
-import {
-  getOrCreateDocument,
-  initLibrary,
-  renameDocument,
-  storeDocument,
-  storeOpenedFile,
-  storePresentation,
-} from "../lib/documentStore";
+import { initLibrary, renameDocument, storeDocument, storeOpenedFile } from "../lib/documentStore";
 import { BUILTIN_TEMPLATES } from "../lib/builtinTemplates";
 import { instantiateTemplate } from "../lib/templateStore";
 import { createDocument } from "../lib/documentModel";
-import { createBlankPresentation } from "../lib/presentation/slides";
+import { BLANK_DOCUMENT_KINDS, createBlankDocument } from "../lib/newDocument";
 import { useTier } from "../composables/useResponsiveTier";
 import { motionBaseMs, prefersReducedMotion } from "../lib/core/motion";
 
@@ -231,24 +225,19 @@ function confirmEmptyTrash() {
 
 const showGallery = ref(false);
 
-function createNewDocument() {
-  const doc = getOrCreateDocument(crypto.randomUUID());
-  router.push(`/doc/${doc.id}`);
-}
-// A blank deck (SPEC-080): stored via storePresentation, carrying "pptx" from
-// birth, then straight to the presentation view.
-function createNewPresentation() {
-  const model = createBlankPresentation();
-  storePresentation(model);
-  router.push(`/slides/${model.id}`);
+// New document / presentation / spreadsheet, the gallery's Blank document and
+// the palette's library.new-document: lib/newDocument stores the blank model
+// of that kind (SPEC-121) and returns where it opens. (The default only types
+// `kind` — .vue scripts take no annotations.)
+function create(kind = BLANK_DOCUMENT_KINDS[0]) {
+  router.push(createBlankDocument(kind));
 }
 function openTemplateGallery() {
   showGallery.value = true;
 }
 function chooseBlankDocument() {
   showGallery.value = false;
-  const doc = getOrCreateDocument(crypto.randomUUID());
-  router.push(`/doc/${doc.id}`);
+  create("text");
 }
 function chooseBuiltinTemplate(id = "") {
   showGallery.value = false;
@@ -313,7 +302,7 @@ function runLibraryCommand(id = "") {
   paletteRecentIds.value = pushRecentCommand(id, paletteRecentIds.value);
   commandPaletteOpen.value = false;
   if (id === "library.new-document") {
-    createNewDocument();
+    create("text");
   } else if (id === "library.new-from-template") {
     openTemplateGallery();
   } else if (id === "library.open") {
@@ -370,16 +359,22 @@ onMounted(async () => {
     <!-- First-run: no documents anywhere (AC-51..53). -->
     <LibraryEmptyState
       v-if="lib.libraryEmpty.value && lib.trashCount.value === 0 && !lib.showTrash.value"
-      @new-document="createNewDocument"
+      @new-document="create('text')"
       @new-from-template="openTemplateGallery"
       @open-file="pickFile"
     >
       <template #extra-actions>
         <UiButton
           data-testid="new-presentation"
-          @click="createNewPresentation"
+          @click="create('presentation')"
         >
           New presentation
+        </UiButton>
+        <UiButton
+          data-testid="new-spreadsheet"
+          @click="create('spreadsheet')"
+        >
+          New spreadsheet
         </UiButton>
       </template>
     </LibraryEmptyState>
@@ -410,8 +405,9 @@ onMounted(async () => {
         <template #actions>
           <LibraryHeaderActions
             :compact="false"
-            @new-document="createNewDocument"
-            @new-presentation="createNewPresentation"
+            @new-document="create('text')"
+            @new-presentation="create('presentation')"
+            @new-spreadsheet="create('spreadsheet')"
             @new-from-template="openTemplateGallery"
             @open-document="pickFile"
           />
@@ -432,8 +428,9 @@ onMounted(async () => {
           >
             <LibraryHeaderActions
               :compact="compact"
-              @new-document="createNewDocument"
-              @new-presentation="createNewPresentation"
+              @new-document="create('text')"
+              @new-presentation="create('presentation')"
+              @new-spreadsheet="create('spreadsheet')"
               @new-from-template="openTemplateGallery"
               @open-document="pickFile"
             />

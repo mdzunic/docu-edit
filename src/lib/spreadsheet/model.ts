@@ -42,6 +42,10 @@ import type { SheetSelection } from "./selection";
 export type SpreadsheetFormat = "xlsx" | "ods"; // SPEC-126 widens with "csv" | "tsv"
 export type PackageVariant = "macroEnabled" | "template" | "macroEnabledTemplate";
 
+/** The title a workbook gets when nothing names it — a new workbook's, and
+ * the download name of an untitled one (SPEC-121). */
+export const DEFAULT_SPREADSHEET_TITLE = "Untitled spreadsheet";
+
 export const MAX_ROWS = 1_048_576;
 export const MAX_COLS = 16_384; // A..XFD
 export const MAX_WORKBOOK_CELLS = 2_000_000; // stored cells, all sheets (SPEC-137 revisits)
@@ -248,6 +252,17 @@ export interface Sheet {
   /** View ▸ Show formulas for this sheet (xlsx sheetView@showFormulas,
    * SPEC-119). View state: never marks the sheet dirty. */
   showFormulas?: true;
+  // --- SPEC-121 ---
+  /** The sheet's own content changed since open: SPEC-122's writer rebuilds
+   *  it. Born true on a sheet with no source (new). Never set by a view
+   *  change (selection, scroll, tab switch). */
+  dirty?: true;
+  /** Set by "Duplicate sheet": the origin's name in the SOURCE file (its
+   *  `copiedFrom` when the origin is itself a copy). The copy's own retained
+   *  text (its `partName` part in `opaque`, or its `sourceXml`) is a copy of
+   *  the origin's source-time text, so the writer maps that name to the
+   *  copy's when remapping it. A copy is never an "original". */
+  copiedFrom?: string;
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -299,6 +314,22 @@ export interface SpreadsheetModel {
   /** Set by a recalculation pass that left a stale (uncomputable) cell, and
    * never cleared: SPEC-122's xlsx writer emits calcPr@fullCalcOnLoad="1". */
   forceFullCalcOnLoad?: true;
+  // --- SPEC-121 ---
+  /** The sheet list or a sheet's workbook-level properties (name,
+   *  visibility, tab colour, order) changed since open. Absent on a freshly
+   *  opened workbook; a from-scratch workbook is always fully built. */
+  structureDirty?: true;
+}
+
+/** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or
+ * an ods `<table:table>` text. A sheet with no source is always `dirty`. */
+export function hasSource(sheet: Pick<Sheet, "partName" | "sourceXml">): boolean {
+  return sheet.partName !== undefined || sheet.sourceXml !== undefined;
+}
+
+/** An original (SPEC-121): a sheet with a source and no `copiedFrom`. */
+export function isOriginal(sheet: Pick<Sheet, "partName" | "sourceXml" | "copiedFrom">): boolean {
+  return hasSource(sheet) && sheet.copiedFrom === undefined;
 }
 
 /** The error codes a cell can hold, for readers validating what a file

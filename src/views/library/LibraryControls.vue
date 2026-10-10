@@ -269,6 +269,7 @@ const subtitle = computed(() => {
 
 .library-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 

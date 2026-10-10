@@ -76,6 +76,16 @@
 //   `calcMode="manual"`. spec120-calc.ods — LibreOffice-shaped, explicit
 //   `table:calculation-settings` (case-sensitive, wildcards), AutoCalculate in
 //   settings.xml and two formula cells without cached values.
+// - spec121-links.xlsx (SPEC-121) — Excel 365-shaped: the reference web the
+//   sheet commands rewrite — cross-sheet, 3-D and VLOOKUP formulas, defined
+//   names (workbook- and sheet-scoped, _xlnm.Print_Area), a chart, legacy +
+//   threaded comments with VML and persons, a table, conditional formatting,
+//   a validation and a hyperlink naming another sheet, a theme tab colour, a
+//   hidden and a very hidden sheet, calcChain, TitlesOfParts.
+//   spec121-links.ods — its LibreOffice-shaped twin (named range/expression,
+//   database range, validation, conditional format, annotation, link, an
+//   embedded chart object, settings.xml TabColor). SPEC121_LINKS_XLSX /
+//   SPEC121_LINKS_ODS record the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -241,6 +251,11 @@ async function excelPackage(options: {
    * relationships (with their own ids), content type overrides, and what the
    * workbook part holds between `</sheets>` and `<calcPr>`. */
   additions?: { parts: ZipEntryInput[]; relationships: string[]; overrides: string[]; workbookAfterSheets?: string };
+  /** SPEC-121: content-type Defaults Excel writes before `rels` (the `vml`
+   * extension), and the docProps/app.xml text (default: appXml of the sheet
+   * names). */
+  defaults?: string[];
+  app?: string;
 }): Promise<Uint8Array> {
   const overrides = [
     `<Override PartName="/xl/workbook.xml" ContentType="${options.mainContentType}"/>`,
@@ -261,6 +276,7 @@ async function excelPackage(options: {
     XML_DECLARATION +
     `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     (options.extra ? options.extra.contentType : "") +
+    (options.defaults ?? []).join("") +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>${overrides.join("")}</Types>`;
   const rootRels =
@@ -320,7 +336,10 @@ async function excelPackage(options: {
   if (options.extra) {
     entries.push({ name: options.extra.name, data: options.extra.data });
   }
-  entries.push(part("docProps/core.xml", coreXml(options.title)), part("docProps/app.xml", appXml(options.sheets.map((sheet) => sheet.name))));
+  entries.push(
+    part("docProps/core.xml", coreXml(options.title)),
+    part("docProps/app.xml", options.app ?? appXml(options.sheets.map((sheet) => sheet.name))),
+  );
   return zip(entries);
 }
 
@@ -1025,7 +1044,7 @@ const LO_STYLES =
   `<style:header><text:p><text:sheet-name>???</text:sheet-name></text:p></style:header>` +
   `<style:footer><text:p>Page <text:page-number>1</text:page-number></text:p></style:footer></style:master-page></office:master-styles></office:document-styles>`;
 
-function loMeta(title: string, tableCount: number, cellCount: number): string {
+function loMeta(title: string, tableCount: number, cellCount: number, objectCount = 0): string {
   return (
     ODF_XML_DECLARATION +
     `<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
@@ -1035,7 +1054,7 @@ function loMeta(title: string, tableCount: number, cellCount: number): string {
     `<meta:editing-duration>PT12M34S</meta:editing-duration><meta:editing-cycles>3</meta:editing-cycles>` +
     `<meta:generator>LibreOffice/24.8.2.1$Linux_X86_64 LibreOffice_project/0f794b6e29741098670a3b95d60478a65d05ef13</meta:generator>` +
     `<dc:title>${title}</dc:title><meta:initial-creator>${FIXTURE_WORKBOOK_AUTHOR}</meta:initial-creator><dc:creator>${FIXTURE_WORKBOOK_AUTHOR}</dc:creator>` +
-    `<meta:document-statistic meta:table-count="${tableCount}" meta:cell-count="${cellCount}" meta:object-count="0"/></office:meta></office:document-meta>`
+    `<meta:document-statistic meta:table-count="${tableCount}" meta:cell-count="${cellCount}" meta:object-count="${objectCount}"/></office:meta></office:document-meta>`
   );
 }
 
@@ -2595,4 +2614,926 @@ export async function buildSpec120CalcOdsBytes(): Promise<Uint8Array> {
     loMeta("Calculation", 1, 8),
     loSettings([O.tableName], O.tableName, `<config:config-item config:name="AutoCalculate" config:type="boolean">true</config:config-item>`),
   );
+}
+
+// ============================================================================
+// SPEC-121 — spec121-links.xlsx / spec121-links.ods: the reference web
+// ============================================================================
+// The workbooks the sheet commands are proven on: every place a sheet name
+// lives outside a cell, in the shape its producer writes it.
+// - spec121-links.xlsx — Excel 365-shaped. "Summary" (the active tab:
+//   cross-sheet, 3-D and VLOOKUP formulas, every cached value what the
+//   formula computes); "Data" (a theme + tint tab colour; a drawing whose
+//   chart's `c:f` texts name Data, with Excel's chart style and colour parts;
+//   a threaded comment, its legacy placeholder comment and VML shape, and the
+//   workbook's persons part; Table1 over A1:B5; conditional formatting and a
+//   list validation naming Lookup; an internal hyperlink); "Lookup";
+//   "Archive" (hidden); "Vault" (veryHidden). workbook.xml carries
+//   workbook-scoped names on Data and Lookup, a Data-scoped name and
+//   `_xlnm.Print_Area`, sorted as Excel sorts them; calcChain.xml; app.xml
+//   with the Worksheets and Named Ranges heading pairs.
+// - spec121-links.ods — the LibreOffice 24.8-shaped twin: `of:=` formulas
+//   with `[$Data.B2]` references; a named range, a named expression and a
+//   database range (and a Data-local named range); a content validation in
+//   the prefix; on Data a conditional format naming Lookup, an annotation, a
+//   `text:a` internal link and an embedded chart (Object 1/,
+//   ObjectReplacements/Object 1) framed in `table:shapes` with
+//   `xml:id`/`draw:id`; Archive hidden by its table style; settings.xml's
+//   ActiveTable and per-table entries, Data's carrying TabColor beside the
+//   style's `tableooo:tab-color`.
+// SPEC121_LINKS_XLSX and SPEC121_LINKS_ODS record the facts the specs use.
+
+/** spec121-links.xlsx's shared strings, in index order. */
+const SPEC121_STRINGS = ["Code", "Target", "Double", "3-D sum", "Direct", "Amount", "Lookup!A1", "Archived", "Secret"] as const;
+
+/** The threaded comment's id — Excel gives the legacy placeholder comment
+ * the same GUID as its `xr:uid` and its author `tc=…`. */
+const SPEC121_THREAD_ID = "{B0D2F4B5-9B1D-4FD0-8CF4-B59B1DD05C3B}";
+const SPEC121_PERSON_ID = "{C1E3A5C6-AC2E-4A1E-9DA5-C6AC2E1E6D3C}";
+const SPEC121_COMMENT_TEXT = "Checked against the ledger.";
+
+const SPEC121_THREADED_COMMENT_REL = "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment";
+const SPEC121_PERSON_REL = "http://schemas.microsoft.com/office/2017/10/relationships/person";
+const SPEC121_CHART_STYLE_REL = "http://schemas.microsoft.com/office/2011/relationships/chartStyle";
+const SPEC121_CHART_COLORS_REL = "http://schemas.microsoft.com/office/2011/relationships/chartColorStyle";
+
+/** What spec121-links.xlsx holds, for the unit and e2e specs. Cell
+ * addresses are A1; `sheetId`s and `localSheetId`s as written. */
+export const SPEC121_LINKS_XLSX = {
+  title: "Links",
+  sheets: [
+    { name: "Summary", sheetId: 1, rId: "rId1", partName: "xl/worksheets/sheet1.xml", visibility: "visible", uid: "{1C3E5A7B-9D1F-4B3C-8E5A-7B9D1F3C5E31}" },
+    { name: "Data", sheetId: 2, rId: "rId2", partName: "xl/worksheets/sheet2.xml", visibility: "visible", uid: "{2D4F6B8C-0E2A-4C4D-9F6B-8C0E2A4D6F32}" },
+    { name: "Lookup", sheetId: 3, rId: "rId3", partName: "xl/worksheets/sheet3.xml", visibility: "visible", uid: "{3E5A7C9D-1F3B-4D5E-8A7C-9D1F3B5E7A33}" },
+    { name: "Archive", sheetId: 4, rId: "rId4", partName: "xl/worksheets/sheet4.xml", visibility: "hidden", uid: "{4F6B8DAE-2A4C-4E6F-9B8D-AE2A4C6F8B34}" },
+    { name: "Vault", sheetId: 5, rId: "rId5", partName: "xl/worksheets/sheet5.xml", visibility: "veryHidden", uid: "{5A7C9EBF-3B5D-4F7A-8C9E-BF3B5D7A9C35}" },
+  ],
+  sheetNames: ["Summary", "Data", "Lookup", "Archive", "Vault"],
+  /** Summary — the only sheetView with tabSelected="1"; no workbookView@activeTab. */
+  activeSheetIndex: 0,
+  /** Every stored cell, per sheet (a formula cell's value is its cache). */
+  values: {
+    Summary: { A1: "Code", B1: "Target", C1: "Double", D1: "3-D sum", E1: "Direct", A2: 103, B2: 360, C2: 200, D2: 101, E2: 240 },
+    Data: { A1: "Code", B1: "Amount", D1: "Lookup!A1", A2: 101, B2: 100, A3: 102, B3: 200, A4: 103, B4: 300, A5: 104, B5: 400 },
+    Lookup: { A1: 101, B1: 120, A2: 102, B2: 240, A3: 103, B3: 360, A4: 104, B4: 480, A5: 105, B5: 600 },
+    Archive: { A1: "Archived", B1: 2019 },
+    Vault: { A1: "Secret", B1: 42 },
+  },
+  /** Summary's formula cells: the `<f>` text, the canonical formula, the
+   * cached value (= what it computes; A2 holds the key 103). */
+  formulas: {
+    B2: { wire: "VLOOKUP(A2,Lookup!$A$1:$B$5,2,FALSE)", formula: "VLOOKUP(A2,Lookup!$A$1:$B$5,2,FALSE)", value: 360 },
+    C2: { wire: "Data!B2*2", formula: "Data!B2*2", value: 200 },
+    D2: { wire: "SUM(Data:Lookup!A1)", formula: "SUM(Data:Lookup!A1)", value: 101 },
+    E2: { wire: "Lookup!B2", formula: "Lookup!B2", value: 240 },
+  },
+  /** Data's `<sheetPr><tabColor theme="5" tint="…"/>` (theme 5 = accent2 after Excel's swap). */
+  tabColor: { sheet: "Data", theme: 5, slot: "accent2", tint: "0.39997558519241921" },
+  /** workbook.xml's definedNames, in file order (Excel's sort). */
+  definedNames: [
+    { name: "_xlnm.Print_Area", localSheetId: 1, text: "Data!$A$1:$B$5" },
+    { name: "Amounts", localSheetId: 1, text: "Data!$B$2:$B$5" },
+    { name: "LookupRange", text: "Lookup!$A$1:$B$5" },
+    { name: "Rate", text: "Data!$B$2" },
+  ],
+  calcPr: `<calcPr calcId="191029"/>`,
+  /** docProps/app.xml: HeadingPairs and TitlesOfParts. */
+  headingPairs: [
+    ["Worksheets", 5],
+    ["Named Ranges", 4],
+  ],
+  titlesOfParts: ["Summary", "Data", "Lookup", "Archive", "Vault", "Data!Print_Area", "Data!Amounts", "LookupRange", "Rate"],
+  /** xl/calcChain.xml's cells (`i` = Summary's sheetId, written on the first). */
+  calcChain: [
+    { r: "B2", i: 1 },
+    { r: "C2", i: 1 },
+    { r: "D2", i: 1 },
+    { r: "E2", i: 1 },
+  ],
+  /** xl/worksheets/_rels/sheet2.xml.rels, by id. */
+  dataRelationships: {
+    rId1: { type: `${REL_TYPE}/drawing`, target: "../drawings/drawing1.xml" },
+    rId2: { type: `${REL_TYPE}/vmlDrawing`, target: "../drawings/vmlDrawing1.vml" },
+    rId3: { type: `${REL_TYPE}/table`, target: "../tables/table1.xml" },
+    rId4: { type: `${REL_TYPE}/comments`, target: "../comments1.xml" },
+    rId5: { type: SPEC121_THREADED_COMMENT_REL, target: "../threadedComments/threadedComment1.xml" },
+  },
+  drawing: { partName: "xl/drawings/drawing1.xml", from: "D3", to: "F12", chartRId: "rId1" },
+  chart: {
+    partName: "xl/charts/chart1.xml",
+    style: "xl/charts/style1.xml",
+    colors: "xl/charts/colors1.xml",
+    /** Every `c:f` text, in document order: series name, categories, values. */
+    formulas: ["Data!$B$1", "Data!$A$2:$A$5", "Data!$B$2:$B$5"],
+  },
+  table: {
+    partName: "xl/tables/table1.xml",
+    id: 1,
+    name: "Table1",
+    displayName: "Table1",
+    ref: "A1:B5",
+    columns: ["Code", "Amount"],
+    uid: "{8DAFC1E2-6E8A-4CAD-9FC1-E26E8AAD2F38}",
+  },
+  comment: { partName: "xl/comments1.xml", ref: "B2", uid: SPEC121_THREAD_ID, author: `tc=${SPEC121_THREAD_ID}`, text: SPEC121_COMMENT_TEXT },
+  /** The legacy comment's VML: `o:idmap data` and the shape's id (also its `o:spid`). */
+  vml: { partName: "xl/drawings/vmlDrawing1.vml", idmap: 1, shapeIds: ["_x0000_s1025"] },
+  threadedComment: {
+    partName: "xl/threadedComments/threadedComment1.xml",
+    ref: "B2",
+    id: SPEC121_THREAD_ID,
+    personId: SPEC121_PERSON_ID,
+    text: SPEC121_COMMENT_TEXT,
+  },
+  /** Related from the WORKBOOK, not from a sheet. */
+  person: { partName: "xl/persons/person.xml", id: SPEC121_PERSON_ID, rId: "rId10", type: SPEC121_PERSON_REL },
+  conditionalFormatting: { sheet: "Data", sqref: "B2:B5", formula: "B2>Lookup!$B$1", dxfId: 0 },
+  dataValidation: { sheet: "Data", sqref: "A2:A5", formula1: "Lookup!$A$1:$A$5", uid: "{6B8DAFC0-4C6E-4A8B-9DAF-C04C6E8B0D36}" },
+  hyperlink: { sheet: "Data", ref: "D1", location: "Lookup!A1", display: "Lookup!A1", uid: "{7C9EB0D1-5D7F-4B9C-8EB0-D15D7F9C1E37}" },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/worksheets/sheet3.xml",
+    "xl/worksheets/sheet4.xml",
+    "xl/worksheets/sheet5.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/worksheets/_rels/sheet2.xml.rels",
+    "xl/drawings/drawing1.xml",
+    "xl/drawings/_rels/drawing1.xml.rels",
+    "xl/charts/chart1.xml",
+    "xl/charts/style1.xml",
+    "xl/charts/colors1.xml",
+    "xl/charts/_rels/chart1.xml.rels",
+    "xl/tables/table1.xml",
+    "xl/drawings/vmlDrawing1.vml",
+    "xl/comments1.xml",
+    "xl/threadedComments/threadedComment1.xml",
+    "xl/persons/person.xml",
+    "xl/calcChain.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** Excel's styles part for the links workbook: Normal, a bold xf (1), the
+ * Hyperlink cell style's xf (2) and the conditional format's dxf 0 (light
+ * red fill, dark red text — Excel's preset). */
+const SPEC121_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="3" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><u/><sz val="11"/><color theme="10"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="0" applyNumberFormat="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+  `<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="1"/></cellXfs>` +
+  `<cellStyles count="2"><cellStyle name="Hyperlink" xfId="1" builtinId="8"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+/** A chart text block as Excel writes one (`c:txPr`), in the minor font. */
+function spec121ChartText(size: number, lumMod: number, lumOff: number): string {
+  return (
+    `<c:txPr><a:bodyPr rot="-60000000" spcFirstLastPara="1" vertOverflow="ellipsis" vert="horz" wrap="square" anchor="ctr" anchorCtr="1"/><a:lstStyle/>` +
+    `<a:p><a:pPr><a:defRPr sz="${size}" b="0" i="0" u="none" strike="noStrike" kern="1200" baseline="0"><a:solidFill><a:schemeClr val="tx1">` +
+    `<a:lumMod val="${lumMod}"/><a:lumOff val="${lumOff}"/></a:schemeClr></a:solidFill><a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/>` +
+    `<a:cs typeface="+mn-cs"/></a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>`
+  );
+}
+
+/** Excel's thin grey chart line (`c:spPr`). */
+const SPEC121_CHART_LINE =
+  `<c:spPr><a:noFill/><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="15000"/>` +
+  `<a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr>`;
+
+/** A `c:numCache` over numbers. */
+function spec121NumCache(values: readonly number[]): string {
+  return (
+    `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${values.length}"/>` +
+    values.map((value, idx) => `<c:pt idx="${idx}"><c:v>${value}</c:v></c:pt>`).join("") +
+    `</c:numCache>`
+  );
+}
+
+/** xl/charts/chart1.xml: a clustered column chart over Data!B2:B5 by
+ * Data!A2:A5, its series named by Data!B1 — Excel 365's chartSpace. */
+function spec121ChartXml(): string {
+  const [name, categories, values] = SPEC121_LINKS_XLSX.chart.formulas;
+  const data = SPEC121_LINKS_XLSX.values.Data;
+  return (
+    XML_DECLARATION +
+    `<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
+    `xmlns:r="${REL_NS}" xmlns:c16r2="http://schemas.microsoft.com/office/drawing/2015/06/chart">` +
+    `<c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/>` +
+    `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">` +
+    `<mc:Choice Requires="c14" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart"><c14:style val="102"/></mc:Choice>` +
+    `<mc:Fallback><c:style val="2"/></mc:Fallback></mc:AlternateContent>` +
+    `<c:chart><c:title><c:overlay val="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>${spec121ChartText(1400, 65000, 35000)}</c:title>` +
+    `<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>` +
+    `<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>${name}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${data.B1}</c:v></c:pt>` +
+    `</c:strCache></c:strRef></c:tx><c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>` +
+    `<c:invertIfNegative val="0"/>` +
+    `<c:cat><c:numRef><c:f>${categories}</c:f>${spec121NumCache([data.A2, data.A3, data.A4, data.A5])}</c:numRef></c:cat>` +
+    `<c:val><c:numRef><c:f>${values}</c:f>${spec121NumCache([data.B2, data.B3, data.B4, data.B5])}</c:numRef></c:val>` +
+    `<c:extLst><c:ext uri="{C3380CC4-5D6E-409C-BE32-E72D297353CC}" xmlns:c16="http://schemas.microsoft.com/office/drawing/2014/chart">` +
+    `<c16:uniqueId val="{00000000-5E7A-4B9C-8D1E-2F3A4B5C6D7E}"/></c:ext></c:extLst></c:ser>` +
+    `<c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/>` +
+    `<c:showBubbleSize val="0"/></c:dLbls><c:gapWidth val="219"/><c:overlap val="-27"/><c:axId val="1146207512"/><c:axId val="1146212312"/></c:barChart>` +
+    `<c:catAx><c:axId val="1146207512"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>` +
+    `<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>` +
+    `${SPEC121_CHART_LINE}${spec121ChartText(900, 65000, 35000)}<c:crossAx val="1146212312"/><c:crosses val="autoZero"/><c:auto val="1"/>` +
+    `<c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>` +
+    `<c:valAx><c:axId val="1146212312"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/>` +
+    `<c:majorGridlines>${SPEC121_CHART_LINE}</c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/>` +
+    `<c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>` +
+    `${spec121ChartText(900, 65000, 35000)}<c:crossAx val="1146207512"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>` +
+    `<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr></c:plotArea><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart>` +
+    `<c:spPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1">` +
+    `<a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr>` +
+    `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>` +
+    `<c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings>` +
+    `</c:chartSpace>`
+  );
+}
+
+const spec121StyleFont = (lumMod: number, lumOff: number): string =>
+  `<cs:fontRef idx="minor"><a:schemeClr val="tx1"><a:lumMod val="${lumMod}"/><a:lumOff val="${lumOff}"/></a:schemeClr></cs:fontRef>`;
+const spec121StyleRefs = (fill = `<cs:fillRef idx="0"/>`): string => `<cs:lnRef idx="0"/>${fill}<cs:effectRef idx="0"/>`;
+
+/** xl/charts/style1.xml — Excel's chart style 201: one entry per chart
+ * element, in CT_ChartStyle order. */
+function spec121ChartStyleXml(): string {
+  const font = spec121StyleFont;
+  const refs = spec121StyleRefs;
+  const text = (size: number): string => `${refs()}${font(65000, 35000)}<cs:defRPr sz="${size}" kern="1200"/>`;
+  const line = `<cs:spPr><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln></cs:spPr>`;
+  const series = `${refs(`<cs:fillRef idx="1"><cs:styleClr val="auto"/></cs:fillRef>`)}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>`;
+  const entries: [string, string][] = [
+    ["axisTitle", text(1000)],
+    ["categoryAxis", `${text(900)}${line}`],
+    ["chartArea", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef><cs:spPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill></cs:spPr><cs:defRPr sz="1000"/>`],
+    ["dataLabel", text(900)],
+    ["dataLabelCallout", text(900)],
+    ["dataPoint", `${series}<cs:spPr><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></cs:spPr>`],
+    ["dataPoint3D", `${series}<cs:spPr><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></cs:spPr>`],
+    ["dataPointLine", `${series}<cs:spPr><a:ln w="28575" cap="rnd"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:round/></a:ln></cs:spPr>`],
+    ["dataPointMarker", `${series}<cs:spPr><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></cs:spPr>`],
+    ["dataPointWireframe", `${series}<cs:spPr><a:ln w="9525" cap="rnd"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:round/></a:ln></cs:spPr>`],
+    ["dataTable", `${text(900)}${line}`],
+    ["downBar", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="dk1"/></cs:fontRef><cs:spPr><a:solidFill><a:schemeClr val="dk1"><a:lumMod val="65000"/><a:lumOff val="35000"/></a:schemeClr></a:solidFill></cs:spPr>`],
+    ["dropLine", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["errorBar", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["floor", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>`],
+    ["gridlineMajor", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["gridlineMinor", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["hiLoLine", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["leaderLine", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["legend", text(900)],
+    ["plotArea", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>`],
+    ["plotArea3D", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>`],
+    ["seriesAxis", `${text(900)}${line}`],
+    ["seriesLine", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>${line}`],
+    ["title", `${refs()}${font(65000, 35000)}<cs:defRPr sz="1400" b="0" kern="1200" spc="0" baseline="0"/>`],
+    ["trendline", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef><cs:spPr><a:ln w="19050" cap="rnd"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="sysDot"/></a:ln></cs:spPr>`],
+    ["trendlineLabel", text(900)],
+    ["upBar", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="dk1"/></cs:fontRef><cs:spPr><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></cs:spPr>`],
+    ["valueAxis", text(900)],
+    ["wall", `${refs()}<cs:fontRef idx="minor"><a:schemeClr val="tx1"/></cs:fontRef>`],
+  ];
+  return (
+    XML_DECLARATION +
+    `<cs:chartStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" id="201">` +
+    entries
+      .map(([element, body]) => (element === "dataPointWireframe" ? `<cs:dataPointMarkerLayout symbol="circle" size="5"/>` : "") + `<cs:${element}>${body}</cs:${element}>`)
+      .join("") +
+    `</cs:chartStyle>`
+  );
+}
+
+/** xl/charts/colors1.xml — Excel's "colorful" palette 10. */
+const SPEC121_CHART_COLORS =
+  XML_DECLARATION +
+  `<cs:colorStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" meth="cycle" id="10">` +
+  `<a:schemeClr val="accent1"/><a:schemeClr val="accent2"/><a:schemeClr val="accent3"/><a:schemeClr val="accent4"/><a:schemeClr val="accent5"/>` +
+  `<a:schemeClr val="accent6"/><cs:variation/><cs:variation><a:lumMod val="60000"/></cs:variation><cs:variation><a:lumMod val="80000"/>` +
+  `<a:lumOff val="20000"/></cs:variation><cs:variation><a:lumMod val="80000"/></cs:variation><cs:variation><a:lumMod val="60000"/>` +
+  `<a:lumOff val="40000"/></cs:variation><cs:variation><a:lumMod val="50000"/></cs:variation><cs:variation><a:lumMod val="70000"/>` +
+  `<a:lumOff val="30000"/></cs:variation><cs:variation><a:lumMod val="70000"/></cs:variation><cs:variation><a:lumMod val="50000"/>` +
+  `<a:lumOff val="50000"/></cs:variation></cs:colorStyle>`;
+
+/** xl/drawings/drawing1.xml: the chart's graphicFrame, anchored D3 → F12. */
+const SPEC121_DRAWING =
+  XML_DECLARATION +
+  `<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+  `<xdr:twoCellAnchor><xdr:from><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>2</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
+  `<xdr:to><xdr:col>5</xdr:col><xdr:colOff>609600</xdr:colOff><xdr:row>11</xdr:row><xdr:rowOff>184150</xdr:rowOff></xdr:to>` +
+  `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 1"><a:extLst><a:ext uri="{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}">` +
+  `<a16:creationId xmlns:a16="http://schemas.microsoft.com/office/drawing/2014/main" id="{D2F4B6D7-BD3F-4B2F-8EB6-D7BD3F2F7E3D}"/></a:ext></a:extLst>` +
+  `</xdr:cNvPr><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>` +
+  `<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">` +
+  `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="${REL_NS}" r:id="${SPEC121_LINKS_XLSX.drawing.chartRId}"/>` +
+  `</a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`;
+
+/** xl/drawings/vmlDrawing1.vml — the legacy comment's note shape, as Excel
+ * writes VML: no declaration, CRLF line breaks. */
+const SPEC121_VML = [
+  `<xml xmlns:v="urn:schemas-microsoft-com:vml"`,
+  ` xmlns:o="urn:schemas-microsoft-com:office:office"`,
+  ` xmlns:x="urn:schemas-microsoft-com:office:excel">`,
+  ` <o:shapelayout v:ext="edit">`,
+  `  <o:idmap v:ext="edit" data="${SPEC121_LINKS_XLSX.vml.idmap}"/>`,
+  ` </o:shapelayout><v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202"`,
+  `  path="m,l,21600r21600,l21600,xe">`,
+  `  <v:stroke joinstyle="miter"/>`,
+  `  <v:path gradientshapeok="t" o:connecttype="rect"/>`,
+  ` </v:shapetype><v:shape id="_x0000_s1025" o:spid="_x0000_s1025" type="#_x0000_t202" style='position:absolute;`,
+  `  margin-left:107.25pt;margin-top:16pt;width:108pt;height:59.25pt;z-index:1;`,
+  `  visibility:hidden' fillcolor="infoBackground [80]" o:insetmode="auto">`,
+  `  <v:fill color2="infoBackground [80]"/>`,
+  `  <v:shadow color="none [81]" obscured="t"/>`,
+  `  <v:path o:connecttype="none"/>`,
+  `  <v:textbox style='mso-direction-alt:auto'>`,
+  `   <div style='text-align:left'></div>`,
+  `  </v:textbox>`,
+  `  <x:ClientData ObjectType="Note">`,
+  `   <x:MoveWithCells/>`,
+  `   <x:SizeWithCells/>`,
+  `   <x:Anchor>`,
+  `    2, 15, 1, 2, 4, 15, 5, 4</x:Anchor>`,
+  `   <x:AutoFill>False</x:AutoFill>`,
+  `   <x:Row>1</x:Row>`,
+  `   <x:Column>1</x:Column>`,
+  `  </x:ClientData>`,
+  ` </v:shape></xml>`,
+].join("\r\n");
+
+/** xl/comments1.xml — the placeholder Excel writes beside a threaded
+ * comment for older readers. */
+const SPEC121_COMMENTS =
+  XML_DECLARATION +
+  `<comments xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="xr" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision"><authors><author>${SPEC121_LINKS_XLSX.comment.author}</author></authors>` +
+  `<commentList><comment ref="${SPEC121_LINKS_XLSX.comment.ref}" authorId="0" shapeId="0" xr:uid="${SPEC121_LINKS_XLSX.comment.uid}"><text><t>` +
+  `[Threaded comment]\n\nYour version of Excel allows you to read this threaded comment; however, any edits to it will get removed if the file ` +
+  `is opened in a newer version of Excel. Learn more: https://go.microsoft.com/fwlink/?linkid=870924\n\nComment:\n    ${SPEC121_COMMENT_TEXT}` +
+  `</t></text></comment></commentList></comments>`;
+
+const SPEC121_THREADED_COMMENTS =
+  XML_DECLARATION +
+  `<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments" xmlns:x="${MAIN_NS}">` +
+  `<threadedComment ref="${SPEC121_LINKS_XLSX.threadedComment.ref}" dT="2026-10-08T17:20:00.00" personId="${SPEC121_PERSON_ID}" ` +
+  `id="${SPEC121_THREAD_ID}"><text>${SPEC121_COMMENT_TEXT}</text></threadedComment></ThreadedComments>`;
+
+const SPEC121_PERSONS =
+  XML_DECLARATION +
+  `<personList xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments" xmlns:x="${MAIN_NS}">` +
+  `<person displayName="${FIXTURE_WORKBOOK_AUTHOR}" id="${SPEC121_PERSON_ID}" userId="${FIXTURE_WORKBOOK_AUTHOR}" providerId="None"/></personList>`;
+
+/** xl/tables/table1.xml — Table1 over Data!A1:B5, header row on, no filter buttons. */
+function spec121TableXml(): string {
+  const T = SPEC121_LINKS_XLSX.table;
+  return (
+    XML_DECLARATION +
+    `<table xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="xr xr3" ` +
+    `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3" ` +
+    `id="${T.id}" xr:uid="${T.uid}" name="${T.name}" displayName="${T.displayName}" ref="${T.ref}" totalsRowShown="0">` +
+    `<tableColumns count="${T.columns.length}"><tableColumn id="1" xr3:uid="{9EB0D2F3-7F9B-4DBE-8AD2-F37F9BBE3A39}" name="${T.columns[0]}"/>` +
+    `<tableColumn id="2" xr3:uid="{AFC1E3A4-8A0C-4ECF-9BE3-A48A0CCF4B3A}" name="${T.columns[1]}"/></tableColumns>` +
+    `<tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>`
+  );
+}
+
+/** docProps/app.xml with both heading pairs Excel writes when a workbook
+ * has defined names: the sheets, then the named ranges. */
+function spec121AppXml(): string {
+  const F = SPEC121_LINKS_XLSX;
+  const pairs = F.headingPairs.map(([heading, count]) => `<vt:variant><vt:lpstr>${heading}</vt:lpstr></vt:variant><vt:variant><vt:i4>${count}</vt:i4></vt:variant>`);
+  return (
+    XML_DECLARATION +
+    `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
+    `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">` +
+    `<Application>Microsoft Excel</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop>` +
+    `<HeadingPairs><vt:vector size="${pairs.length * 2}" baseType="variant">${pairs.join("")}</vt:vector></HeadingPairs>` +
+    `<TitlesOfParts><vt:vector size="${F.titlesOfParts.length}" baseType="lpstr">${F.titlesOfParts.map((title) => `<vt:lpstr>${title}</vt:lpstr>`).join("")}` +
+    `</vt:vector></TitlesOfParts><Company></Company><LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc>` +
+    `<HyperlinksChanged>false</HyperlinksChanged><AppVersion>16.0300</AppVersion></Properties>`
+  );
+}
+
+/** A links-workbook worksheet in Excel 365's element order (CT_Worksheet:
+ * sheetPr, dimension, sheetViews, sheetFormatPr, sheetData, …,
+ * conditionalFormatting, dataValidations, hyperlinks, pageMargins, …,
+ * drawing, legacyDrawing, tableParts). */
+function spec121Worksheet(
+  index: number,
+  body: { sheetPr?: string; dimension: string; activeCell: string; rows: string; afterData?: string; tail?: string },
+): string {
+  const sheet = SPEC121_LINKS_XLSX.sheets[index]!;
+  return (
+    XML_DECLARATION +
+    worksheetOpen(sheet.uid.slice(1, -1)) +
+    (body.sheetPr ?? "") +
+    `<dimension ref="${body.dimension}"/><sheetViews><sheetView ${index === SPEC121_LINKS_XLSX.activeSheetIndex ? 'tabSelected="1" ' : ""}workbookViewId="0">` +
+    `<selection activeCell="${body.activeCell}" sqref="${body.activeCell}"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/><sheetData>${body.rows}</sheetData>${body.afterData ?? ""}` +
+    `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>${body.tail ?? ""}</worksheet>`
+  );
+}
+
+// The facts' tab colour as attribute text (destructured: a fixture is not a
+// colour reader — core/themeGuard.spec.ts).
+const { theme: TAB_COLOR_THEME, tint: TAB_COLOR_TINT } = SPEC121_LINKS_XLSX.tabColor;
+
+export async function buildSpec121LinksXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC121_LINKS_XLSX;
+  const V = F.values;
+  /** A literal cell: a number, or one of SPEC121_STRINGS by shared index. */
+  const cell = (ref: string, value: number | string, style?: number): string => {
+    if (typeof value === "number") {
+      return numberCell(ref, value, style);
+    }
+    const index = SPEC121_STRINGS.indexOf(value as (typeof SPEC121_STRINGS)[number]);
+    if (index < 0) {
+      throw new Error(`"${value}" is not one of spec121-links.xlsx's strings`);
+    }
+    return sharedCell(ref, index, style);
+  };
+  const formula = (ref: keyof typeof F.formulas): string => formulaCell(ref, normalF(F.formulas[ref].wire), F.formulas[ref].value);
+  const BOLD = 1;
+  const HYPERLINK = 2;
+
+  const summary = spec121Worksheet(0, {
+    dimension: "A1:E2",
+    activeCell: "C2",
+    rows:
+      excelRow(1, "1:5", (["A1", "B1", "C1", "D1", "E1"] as const).map((ref) => cell(ref, V.Summary[ref], BOLD)).join("")) +
+      excelRow(2, "1:5", cell("A2", V.Summary.A2) + formula("B2") + formula("C2") + formula("D2") + formula("E2")),
+  });
+
+  const dataRows = [2, 3, 4, 5] as const;
+  const data = spec121Worksheet(1, {
+    sheetPr: `<sheetPr><tabColor theme="${TAB_COLOR_THEME}" tint="${TAB_COLOR_TINT}"/></sheetPr>`,
+    dimension: "A1:D5",
+    activeCell: "B2",
+    rows:
+      excelRow(1, "1:4", cell("A1", V.Data.A1) + cell("B1", V.Data.B1) + cell("D1", V.Data.D1, HYPERLINK)) +
+      dataRows.map((r) => excelRow(r, "1:4", cell(`A${r}`, V.Data[`A${r}`]) + cell(`B${r}`, V.Data[`B${r}`]))).join(""),
+    afterData:
+      `<conditionalFormatting sqref="${F.conditionalFormatting.sqref}"><cfRule type="expression" dxfId="${F.conditionalFormatting.dxfId}" priority="1">` +
+      `<formula>${xmlText(F.conditionalFormatting.formula)}</formula></cfRule></conditionalFormatting>` +
+      `<dataValidations count="1"><dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="${F.dataValidation.sqref}" ` +
+      `xr:uid="${F.dataValidation.uid}"><formula1>${F.dataValidation.formula1}</formula1></dataValidation></dataValidations>` +
+      `<hyperlinks><hyperlink ref="${F.hyperlink.ref}" location="${F.hyperlink.location}" display="${F.hyperlink.display}" xr:uid="${F.hyperlink.uid}"/></hyperlinks>`,
+    tail: `<drawing r:id="rId1"/><legacyDrawing r:id="rId2"/><tableParts count="1"><tablePart r:id="rId3"/></tableParts>`,
+  });
+
+  const lookupRows = [1, 2, 3, 4, 5] as const;
+  const lookup = spec121Worksheet(2, {
+    dimension: "A1:B5",
+    activeCell: "A1",
+    rows: lookupRows.map((r) => excelRow(r, "1:2", cell(`A${r}`, V.Lookup[`A${r}`]) + cell(`B${r}`, V.Lookup[`B${r}`]))).join(""),
+  });
+  const archive = spec121Worksheet(3, { dimension: "A1:B1", activeCell: "A1", rows: excelRow(1, "1:2", cell("A1", V.Archive.A1) + cell("B1", V.Archive.B1)) });
+  const vault = spec121Worksheet(4, { dimension: "A1:B1", activeCell: "A1", rows: excelRow(1, "1:2", cell("A1", V.Vault.A1) + cell("B1", V.Vault.B1)) });
+  const worksheets = [summary, data, lookup, archive, vault];
+
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${SPEC121_STRINGS.length}">` +
+    SPEC121_STRINGS.map((text) => `<si><t>${text}</t></si>`).join("") +
+    `</sst>`;
+  const calcChain =
+    XML_DECLARATION +
+    `<calcChain xmlns="${MAIN_NS}">` +
+    F.calcChain.map((entry, index) => (index === 0 ? `<c r="${entry.r}" i="${entry.i}" l="1"/>` : `<c r="${entry.r}"/>`)).join("") +
+    `</calcChain>`;
+  const definedNames =
+    `<definedNames>` +
+    F.definedNames
+      .map((name) => `<definedName name="${name.name}"${"localSheetId" in name ? ` localSheetId="${name.localSheetId}"` : ""}>${name.text}</definedName>`)
+      .join("") +
+    `</definedNames>`;
+  const rels = (relationships: string): string => XML_DECLARATION + `<Relationships xmlns="${PKG_REL_NS}">${relationships}</Relationships>`;
+  const R = F.dataRelationships;
+  const relationship = (id: keyof typeof R): string => `<Relationship Id="${id}" Type="${R[id].type}" Target="${R[id].target}"/>`;
+
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheets.map((sheet, index) => ({
+      name: sheet.name,
+      ...(sheet.visibility === "visible" ? {} : { state: sheet.visibility }),
+      xml: worksheets[index]!,
+    })),
+    sharedStrings,
+    calcChain,
+    calcPr: F.calcPr,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC121_STYLES,
+    defaults: [`<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>`],
+    app: spec121AppXml(),
+    additions: {
+      parts: [
+        part("xl/worksheets/_rels/sheet2.xml.rels", rels(relationship("rId3") + relationship("rId2") + relationship("rId1") + relationship("rId5") + relationship("rId4"))),
+        part(F.drawing.partName, SPEC121_DRAWING),
+        part("xl/drawings/_rels/drawing1.xml.rels", rels(`<Relationship Id="${F.drawing.chartRId}" Type="${REL_TYPE}/chart" Target="../charts/chart1.xml"/>`)),
+        part(F.chart.partName, spec121ChartXml()),
+        part(F.chart.style, spec121ChartStyleXml()),
+        part(F.chart.colors, SPEC121_CHART_COLORS),
+        part(
+          "xl/charts/_rels/chart1.xml.rels",
+          rels(
+            `<Relationship Id="rId2" Type="${SPEC121_CHART_COLORS_REL}" Target="colors1.xml"/>` +
+              `<Relationship Id="rId1" Type="${SPEC121_CHART_STYLE_REL}" Target="style1.xml"/>`,
+          ),
+        ),
+        part(F.table.partName, spec121TableXml()),
+        part(F.vml.partName, SPEC121_VML),
+        part(F.comment.partName, SPEC121_COMMENTS),
+        part(F.threadedComment.partName, SPEC121_THREADED_COMMENTS),
+        part(F.person.partName, SPEC121_PERSONS),
+      ],
+      relationships: [`<Relationship Id="${F.person.rId}" Type="${F.person.type}" Target="persons/person.xml"/>`],
+      overrides: [
+        `<Override PartName="/${F.drawing.partName}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`,
+        `<Override PartName="/${F.chart.partName}" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`,
+        `<Override PartName="/${F.chart.style}" ContentType="application/vnd.ms-office.chartstyle+xml"/>`,
+        `<Override PartName="/${F.chart.colors}" ContentType="application/vnd.ms-office.chartcolorstyle+xml"/>`,
+        `<Override PartName="/${F.table.partName}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>`,
+        `<Override PartName="/${F.comment.partName}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`,
+        `<Override PartName="/${F.threadedComment.partName}" ContentType="application/vnd.ms-excel.threadedcomments+xml"/>`,
+        `<Override PartName="/${F.person.partName}" ContentType="application/vnd.ms-excel.person+xml"/>`,
+      ],
+      workbookAfterSheets: definedNames,
+    },
+  });
+}
+
+// --- spec121-links.ods ---------------------------------------------------------
+
+/** What spec121-links.ods holds, for the unit and e2e specs. */
+export const SPEC121_LINKS_ODS = {
+  title: "Links",
+  tableNames: ["Summary", "Data", "Lookup", "Archive"],
+  visibility: ["visible", "visible", "visible", "hidden"],
+  /** Each table's automatic table style: ta2 carries the tab colour, ta3 `table:display="false"`. */
+  tableStyles: ["ta1", "ta2", "ta1", "ta3"],
+  activeTable: "Summary",
+  activeSheetIndex: 0,
+  /** Data's `tableooo:tab-color`, and the same colour as settings.xml's TabColor int. */
+  tabColor: { table: "Data", styleName: "ta2", hex: "#f1a983", settingsValue: 0xf1a983 },
+  values: {
+    Summary: { A1: "Code", B1: "Target", C1: "Double", D1: "3-D sum", E1: "Direct", A2: 103, B2: 360, C2: 200, D2: 101, E2: 240 },
+    Data: { A1: "Code", B1: "Amount", D1: "Lookup!A1", A2: 101, B2: 100, A3: 102, B3: 200, A4: 103, B4: 300, A5: 104, B5: 400 },
+    Lookup: { A1: 101, B1: 120, A2: 102, B2: 240, A3: 103, B3: 360, A4: 104, B4: 480, A5: 105, B5: 600 },
+    Archive: { A1: "Archived", B1: 2019 },
+  },
+  /** Summary's formula cells: `table:formula`, canonical formula, cached value. */
+  formulas: {
+    B2: { wire: "of:=VLOOKUP([.A2];[$Lookup.$A$1:.$B$5];2;0)", formula: "VLOOKUP(A2,Lookup!$A$1:$B$5,2,0)", value: 360 },
+    C2: { wire: "of:=[$Data.B2]*2", formula: "Data!B2*2", value: 200 },
+    D2: { wire: "of:=SUM([$Data.A1:$Lookup.A1])", formula: "SUM(Data:Lookup!A1)", value: 101 },
+    E2: { wire: "of:=[$Lookup.B2]", formula: "Lookup!B2", value: 240 },
+  },
+  /** content.xml's suffix: `table:named-expressions`, then `table:database-ranges`. */
+  namedRange: { name: "LookupRange", baseCellAddress: "$Lookup.$A$1", cellRangeAddress: "$Lookup.$A$1:.$B$5" },
+  namedExpression: { name: "Rate", baseCellAddress: "$Data.$B$2", expression: "of:=[$Data.$B$2]" },
+  databaseRange: { name: "Table1", targetRangeAddress: "Data.A1:Data.B5" },
+  /** Data's own (sheet-local) named range, inside its table text. */
+  localNamedRange: { table: "Data", name: "Amounts", baseCellAddress: "$Data.$B$2", cellRangeAddress: "$Data.$B$2:.$B$5" },
+  /** content.xml's prefix: the list validation Data!A2:A5 use. */
+  contentValidation: {
+    name: "val1",
+    condition: "of:cell-content-is-in-list([$Lookup.$A$1:.$A$5])",
+    baseCellAddress: "Data.A2",
+    cells: ["A2", "A3", "A4", "A5"],
+  },
+  conditionalFormat: {
+    table: "Data",
+    targetRangeAddress: "Data.B2:Data.B5",
+    value: "formula-is([.B2]>[$Lookup.$B$1])",
+    baseCellAddress: "Data.B2",
+    applyStyleName: "Bad",
+  },
+  annotation: { table: "Data", a1: "B2", creator: FIXTURE_WORKBOOK_AUTHOR, date: "2026-10-08T17:20:00", text: SPEC121_COMMENT_TEXT },
+  link: { table: "Data", a1: "D1", href: "#Lookup.A1", text: "Lookup!A1" },
+  /** The embedded chart: its frame in Data's `table:shapes`, the object's
+   * parts and the ranges its content.xml names. */
+  chart: {
+    frame: { xmlId: "id1", drawId: "id1", name: "Object 1", endCellAddress: "Data.F12" },
+    notifyOnUpdateOfRanges: "Data.A1:Data.B5",
+    href: "./Object 1",
+    replacementHref: "./ObjectReplacements/Object 1",
+    objectParts: ["Object 1/content.xml", "Object 1/styles.xml", "Object 1/meta.xml"],
+    replacement: "ObjectReplacements/Object 1",
+    plotAreaRange: "Data.A1:Data.B5",
+    categoriesRange: "Data.A2:Data.A5",
+    valuesRange: "Data.B2:Data.B5",
+    labelCell: "Data.B1",
+  },
+  /** settings.xml's Tables map entries, in order (Data's carries TabColor). */
+  settingsTables: ["Summary", "Data", "Lookup", "Archive"],
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: [
+    "mimetype",
+    "meta.xml",
+    "settings.xml",
+    "content.xml",
+    "Thumbnails/thumbnail.png",
+    "Object 1/content.xml",
+    "Object 1/styles.xml",
+    "Object 1/meta.xml",
+    "ObjectReplacements/Object 1",
+    "styles.xml",
+    "manifest.rdf",
+    "META-INF/manifest.xml",
+  ],
+} as const;
+
+/** content.xml's automatic styles: columns, rows, the three table styles,
+ * the bold header, the chart frame's and the annotation's graphic and
+ * paragraph styles — in Calc's order. */
+const SPEC121_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="ta2" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb" ` +
+  `tableooo:tab-color="${SPEC121_LINKS_ODS.tabColor.hex}"/></style:style>` +
+  `<style:style style:name="ta3" style:family="table" style:master-page-name="Default"><style:table-properties table:display="false" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold" ` +
+  `style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>` +
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="none" draw:fill="none" draw:textarea-horizontal-align="center" ` +
+  `draw:textarea-vertical-align="middle" draw:color-mode="standard" draw:luminance="0%" draw:contrast="0%" draw:gamma="100%" draw:red="0%" draw:green="0%" ` +
+  `draw:blue="0%" fo:clip="rect(0in, 0in, 0in, 0in)" draw:image-opacity="100%" style:mirror="none"/></style:style>` +
+  `<style:style style:name="gr2" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#000000" draw:fill="solid" ` +
+  `draw:fill-color="#ffffc0" draw:auto-grow-height="true" draw:auto-grow-width="false" fo:padding-top="0.0398in" fo:padding-bottom="0.0398in" ` +
+  `fo:padding-left="0.0398in" fo:padding-right="0.0398in" draw:shadow="visible" draw:shadow-offset-x="0.0236in" draw:shadow-offset-y="0.0236in" ` +
+  `draw:shadow-color="#000000"/><style:paragraph-properties style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:style>` +
+  `<style:style style:name="P2" style:family="paragraph"><style:paragraph-properties fo:margin-left="0in" fo:margin-right="0in" fo:margin-top="0in" ` +
+  `fo:margin-bottom="0in" fo:text-indent="0in" fo:border="none"/><style:text-properties style:font-name="Liberation Sans" fo:font-size="9pt"/></style:style>` +
+  `</office:automatic-styles>`;
+
+/** styles.xml: Calc's common styles plus "Status" and its child "Bad", the
+ * style the conditional format applies. */
+const SPEC121_ODS_STYLES = LO_STYLES.replace(
+  `</office:styles>`,
+  `<style:style style:name="Status" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold" ` +
+    `style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>` +
+    `<style:style style:name="Bad" style:family="table-cell" style:parent-style-name="Status"><style:table-cell-properties fo:background-color="#ffcccc"/>` +
+    `<style:text-properties fo:color="#cc0000"/></style:style></office:styles>`,
+);
+
+/** The chart object's content.xml: a bar chart over Data, its plot area,
+ * categories, series values and label naming the sheet, and the local
+ * table of cached values Calc writes beside it. */
+function spec121OdsChartContent(): string {
+  const C = SPEC121_LINKS_ODS.chart;
+  const D = SPEC121_LINKS_ODS.values.Data;
+  const localRows = ([2, 3, 4, 5] as const)
+    .map(
+      (r) =>
+        `<table:table-row><table:table-cell office:value-type="string"><text:p>${D[`A${r}`]}</text:p></table:table-cell>` +
+        `<table:table-cell office:value-type="float" office:value="${D[`B${r}`]}"><text:p>${D[`B${r}`]}</text:p></table:table-cell></table:table-row>`,
+    )
+    .join("");
+  return (
+    ODF_XML_DECLARATION +
+    `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
+    `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+    `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
+    `xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" ` +
+    `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" ` +
+    `xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" xmlns:chartooo="http://openoffice.org/2010/chart" office:version="1.3">` +
+    `<office:automatic-styles><number:number-style style:name="N0"><number:number number:min-integer-digits="1"/></number:number-style>` +
+    `<style:style style:name="ch1" style:family="chart"><style:graphic-properties draw:stroke="none" draw:fill-color="#ffffff"/></style:style>` +
+    `<style:style style:name="ch2" style:family="chart"><style:chart-properties chart:include-hidden-cells="false" chart:auto-position="true" ` +
+    `chart:auto-size="true" chart:treat-empty-cells="leave-gap" chart:right-angled-axes="true"/></style:style>` +
+    `<style:style style:name="ch3" style:family="chart" style:data-style-name="N0"><style:chart-properties chart:display-label="true" ` +
+    `chart:logarithmic="false" chart:reverse-direction="false" text:line-break="false" chart:link-data-style-to-source="true" chart:axis-position="0" ` +
+    `chart:axis-label-position="outside-start" chart:tick-mark-position="at-labels"/><style:graphic-properties svg:stroke-color="#b3b3b3"/>` +
+    `<style:text-properties fo:font-size="10pt"/></style:style>` +
+    `<style:style style:name="ch4" style:family="chart" style:data-style-name="N0"><style:chart-properties chart:display-label="true" ` +
+    `chart:logarithmic="false" chart:reverse-direction="false" chart:link-data-style-to-source="true" chart:axis-position="start"/>` +
+    `<style:graphic-properties svg:stroke-color="#b3b3b3"/><style:text-properties fo:font-size="10pt"/></style:style>` +
+    `<style:style style:name="ch5" style:family="chart"><style:graphic-properties svg:stroke-color="#b3b3b3"/></style:style>` +
+    `<style:style style:name="ch6" style:family="chart" style:data-style-name="N0"><style:chart-properties chart:link-data-style-to-source="true"/>` +
+    `<style:graphic-properties draw:fill-color="#004586"/></style:style>` +
+    `<style:style style:name="ch7" style:family="chart"><style:graphic-properties draw:stroke="none" draw:fill="none"/></style:style>` +
+    `<style:style style:name="ch8" style:family="chart"><style:graphic-properties svg:stroke-color="#b3b3b3" draw:fill="none"/></style:style>` +
+    `</office:automatic-styles><office:body><office:chart>` +
+    `<chart:chart svg:width="2.5in" svg:height="1.8in" xlink:href=".." xlink:type="simple" chart:class="chart:bar" chart:style-name="ch1">` +
+    `<chart:plot-area chart:style-name="ch2" table:cell-range-address="${C.plotAreaRange}" chart:data-source-has-labels="both" ` +
+    `svg:x="0.1in" svg:y="0.1in" svg:width="2.3in" svg:height="1.6in">` +
+    `<chart:axis chart:dimension="x" chart:name="primary-x" chart:style-name="ch3"><chart:categories table:cell-range-address="${C.categoriesRange}"/></chart:axis>` +
+    `<chart:axis chart:dimension="y" chart:name="primary-y" chart:style-name="ch4"><chart:grid chart:style-name="ch5" chart:class="major"/></chart:axis>` +
+    `<chart:series chart:style-name="ch6" chart:values-cell-range-address="${C.valuesRange}" chart:label-cell-address="${C.labelCell}" ` +
+    `chart:class="chart:bar"><chart:data-point chart:repeated="4"/></chart:series>` +
+    `<chart:wall chart:style-name="ch7"/><chart:floor chart:style-name="ch8"/></chart:plot-area>` +
+    `<table:table table:name="local-table"><table:table-header-columns><table:table-column/></table:table-header-columns>` +
+    `<table:table-columns><table:table-column/></table:table-columns><table:table-header-rows><table:table-row>` +
+    `<table:table-cell><text:p/></table:table-cell><table:table-cell office:value-type="string"><text:p>${D.B1}</text:p></table:table-cell>` +
+    `</table:table-row></table:table-header-rows><table:table-rows>${localRows}</table:table-rows></table:table>` +
+    `</chart:chart></office:chart></office:body></office:document-content>`
+  );
+}
+
+const SPEC121_ODS_CHART_STYLES =
+  ODF_XML_DECLARATION +
+  `<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
+  `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
+  `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" office:version="1.3"><office:styles>` +
+  `<style:default-style style:family="graphic"><style:graphic-properties svg:stroke-color="#3465a4" draw:fill-color="#729fcf" fo:wrap-option="no-wrap"/>` +
+  `<style:paragraph-properties style:text-autospace="ideograph-alpha" style:punctuation-wrap="simple" style:line-break="strict" ` +
+  `style:writing-mode="page" style:font-independent-line-spacing="false"/><style:text-properties style:use-window-font-color="true" ` +
+  `fo:font-family="&apos;Liberation Sans&apos;" style:font-family-generic="swiss" fo:font-size="10pt" fo:language="en" fo:country="US"/>` +
+  `</style:default-style></office:styles></office:document-styles>`;
+
+const SPEC121_ODS_CHART_META =
+  ODF_XML_DECLARATION +
+  `<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+  `xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" ` +
+  `xmlns:ooo="http://openoffice.org/2004/office" xmlns:grddl="http://www.w3.org/2003/g/data-view#" office:version="1.3"><office:meta>` +
+  `<meta:generator>LibreOffice/24.8.2.1$Linux_X86_64 LibreOffice_project/0f794b6e29741098670a3b95d60478a65d05ef13</meta:generator>` +
+  `</office:meta></office:document-meta>`;
+
+/** The chart's replacement image: a stand-in for the GDI metafile Calc
+ * stores (its "VCLMTF" signature, then a few bytes). */
+const SPEC121_ODS_REPLACEMENT = new Uint8Array([0x56, 0x43, 0x4c, 0x4d, 0x54, 0x46, 0x01, 0x00, 0x31, 0x00, 0x00, 0x00, 0x53, 0x50, 0x45, 0x43, 0x2d, 0x31, 0x32, 0x31]);
+
+/** META-INF/manifest.xml: Calc's entries plus the chart object's, in
+ * Calc's order (the object's files, its directory, its replacement). */
+const SPEC121_ODS_MANIFEST = LO_MANIFEST.replace(
+  `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>`,
+  `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="Object 1/content.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="Object 1/styles.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="Object 1/meta.xml" manifest:media-type="text/xml"/>` +
+    `<manifest:file-entry manifest:full-path="Object 1/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.chart"/>` +
+    `<manifest:file-entry manifest:full-path="ObjectReplacements/Object 1" ` +
+    `manifest:media-type="application/x-openoffice-gdimetafile;windows_formatname=&quot;GDIMetaFile&quot;"/>`,
+);
+
+/** settings.xml: ActiveTable and one Tables entry per table — Data's
+ * carrying TabColor (an RGB int) after ShowGrid. */
+function spec121OdsSettings(): string {
+  const O = SPEC121_LINKS_ODS;
+  const view = {
+    cursor: [0, 0] as [number, number],
+    split: [0, 0] as [number, number],
+    splitPosition: [0, 0] as [number, number],
+    activeSplitRange: 2,
+    position: { left: 0, right: 0, top: 0, bottom: 0 },
+    zoom: 100,
+    showGrid: true,
+  };
+  const showGrid = loConfigItem("ShowGrid", "boolean", true);
+  const tables = O.settingsTables
+    .map((name) => {
+      const entry = spec117TableSettings(name, view);
+      return name === O.tabColor.table ? entry.replace(showGrid, showGrid + loConfigItem("TabColor", "int", O.tabColor.settingsValue)) : entry;
+    })
+    .join("");
+  return (
+    ODF_XML_DECLARATION +
+    `<office:document-settings xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0" ` +
+    `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:ooo="http://openoffice.org/2004/office" office:version="1.3">` +
+    `<office:settings><config:config-item-set config:name="ooo:view-settings">` +
+    loConfigItem("VisibleAreaTop", "int", 0) +
+    loConfigItem("VisibleAreaLeft", "int", 0) +
+    loConfigItem("VisibleAreaWidth", "int", 13544) +
+    loConfigItem("VisibleAreaHeight", "int", 4516) +
+    `<config:config-item-map-indexed config:name="Views"><config:config-item-map-entry>` +
+    loConfigItem("ViewId", "string", "view1") +
+    `<config:config-item-map-named config:name="Tables">${tables}</config:config-item-map-named>` +
+    loConfigItem("ActiveTable", "string", O.activeTable) +
+    loConfigItem("HorizontalScrollbarWidth", "int", 1309) +
+    loConfigItem("ZoomType", "short", 0) +
+    loConfigItem("ZoomValue", "int", 100) +
+    loConfigItem("PageViewZoomValue", "int", 60) +
+    loConfigItem("ShowPageBreakPreview", "boolean", false) +
+    loConfigItem("ShowZeroValues", "boolean", true) +
+    loConfigItem("ShowNotes", "boolean", true) +
+    loConfigItem("ShowGrid", "boolean", true) +
+    loConfigItem("GridColor", "int", 12632256) +
+    loConfigItem("ShowPageBreaks", "boolean", true) +
+    loConfigItem("HasColumnRowHeaders", "boolean", true) +
+    loConfigItem("HasSheetTabs", "boolean", true) +
+    `</config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set>` +
+    `<config:config-item-set config:name="ooo:configuration-settings">` +
+    loConfigItem("IsDocumentShared", "boolean", false) +
+    loConfigItem("SaveVersionOnClose", "boolean", false) +
+    `</config:config-item-set></office:settings></office:document-settings>`
+  );
+}
+
+export async function buildSpec121LinksOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC121_LINKS_ODS;
+  const V = O.values;
+  const formula = (ref: keyof typeof O.formulas): string => loFormula(O.formulas[ref].wire, O.formulas[ref].value);
+  const cell = (value: number | string, style?: string): string => (typeof value === "number" ? loFloat(value) : loString(value, style));
+  const columns = `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>`;
+  const tail = (rowsWritten: number): string => loRow(loEmpty(16384), "ro1", 1_048_576 - rowsWritten);
+  const table = (index: number, inner: string): string =>
+    `<table:table table:name="${O.tableNames[index]}" table:style-name="${O.tableStyles[index]}">${inner}</table:table>`;
+
+  const summary = table(
+    0,
+    columns +
+      loRow((["A1", "B1", "C1", "D1", "E1"] as const).map((ref) => cell(V.Summary[ref], "ce1")).join("") + loEmpty(16379)) +
+      loRow(cell(V.Summary.A2) + formula("B2") + formula("C2") + formula("D2") + formula("E2") + loEmpty(16379)) +
+      tail(2),
+  );
+
+  const C = O.chart;
+  const frame =
+    `<draw:frame table:end-cell-address="${C.frame.endCellAddress}" table:end-x="0.5in" table:end-y="0.1in" draw:z-index="0" ` +
+    `xml:id="${C.frame.xmlId}" draw:id="${C.frame.drawId}" draw:name="${C.frame.name}" draw:style-name="gr1" draw:text-style-name="P1" ` +
+    `svg:width="2.5in" svg:height="1.8in" svg:x="2.67in" svg:y="0.36in">` +
+    `<draw:object draw:notify-on-update-of-ranges="${C.notifyOnUpdateOfRanges}" xlink:href="${C.href}" xlink:type="simple" xlink:show="embed" ` +
+    `xlink:actuate="onLoad"><loext:p/></draw:object>` +
+    `<draw:image xlink:href="${C.replacementHref}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame>`;
+  const validated = (value: number): string =>
+    `<table:table-cell table:content-validation-name="${O.contentValidation.name}" office:value-type="float" office:value="${value}" ` +
+    `calcext:value-type="float"><text:p>${value}</text:p></table:table-cell>`;
+  const A = O.annotation;
+  const annotated =
+    `<table:table-cell office:value-type="float" office:value="${V.Data.B2}" calcext:value-type="float">` +
+    `<office:annotation draw:style-name="gr2" draw:text-style-name="P2" svg:width="1.6in" svg:height="0.5in" svg:x="2.1in" svg:y="0.05in" ` +
+    `draw:caption-point-x="-0.1in" draw:caption-point-y="0.12in"><dc:creator>${A.creator}</dc:creator><dc:date>${A.date}</dc:date>` +
+    `<text:p text:style-name="P2">${A.text}</text:p></office:annotation><text:p>${V.Data.B2}</text:p></table:table-cell>`;
+  const link =
+    `<table:table-cell office:value-type="string" calcext:value-type="string"><text:p>` +
+    `<text:a xlink:href="${O.link.href}" xlink:type="simple">${O.link.text}</text:a></text:p></table:table-cell>`;
+  const L = O.localNamedRange;
+  const F = O.conditionalFormat;
+  const data = table(
+    1,
+    `<office:forms form:automatic-focus="false" form:apply-design-mode="false"/><table:shapes>${frame}</table:shapes>` +
+      columns +
+      loRow(cell(V.Data.A1) + cell(V.Data.B1) + loEmpty(1) + link + loEmpty(16380)) +
+      loRow(validated(V.Data.A2) + annotated + loEmpty(16382)) +
+      ([3, 4, 5] as const).map((r) => loRow(validated(V.Data[`A${r}`]) + cell(V.Data[`B${r}`]) + loEmpty(16382))).join("") +
+      tail(5) +
+      `<table:named-expressions><table:named-range table:name="${L.name}" table:base-cell-address="${L.baseCellAddress}" ` +
+      `table:cell-range-address="${L.cellRangeAddress}"/></table:named-expressions>` +
+      `<calcext:conditional-formats><calcext:conditional-format calcext:target-range-address="${F.targetRangeAddress}">` +
+      `<calcext:condition calcext:apply-style-name="${F.applyStyleName}" calcext:value="${xmlEscape(F.value)}" calcext:base-cell-address="${F.baseCellAddress}"/>` +
+      `</calcext:conditional-format></calcext:conditional-formats>`,
+  );
+
+  const lookup = table(
+    2,
+    columns + ([1, 2, 3, 4, 5] as const).map((r) => loRow(cell(V.Lookup[`A${r}`]) + cell(V.Lookup[`B${r}`]) + loEmpty(16382))).join("") + tail(5),
+  );
+  const archive = table(3, columns + loRow(cell(V.Archive.A1) + cell(V.Archive.B1) + loEmpty(16382)) + tail(1));
+
+  const V1 = O.contentValidation;
+  const validations =
+    `<table:content-validations><table:content-validation table:name="${V1.name}" table:condition="${xmlEscape(V1.condition)}" ` +
+    `table:allow-empty-cell="true" table:display-list="unsorted" table:base-cell-address="${V1.baseCellAddress}">` +
+    `<table:error-message table:message-type="stop" table:display="true"/></table:content-validation></table:content-validations>`;
+  const N = O.namedRange;
+  const E = O.namedExpression;
+  const suffix =
+    `<table:named-expressions><table:named-range table:name="${N.name}" table:base-cell-address="${N.baseCellAddress}" ` +
+    `table:cell-range-address="${N.cellRangeAddress}"/><table:named-expression table:name="${E.name}" table:base-cell-address="${E.baseCellAddress}" ` +
+    `table:expression="${xmlEscape(E.expression)}"/></table:named-expressions>` +
+    `<table:database-ranges><table:database-range table:name="${O.databaseRange.name}" ` +
+    `table:target-range-address="${O.databaseRange.targetRangeAddress}"/></table:database-ranges>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC121_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${validations}${summary}${data}${lookup}${archive}${suffix}` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+
+  const cellCount = Object.values(V).reduce((sum, cells) => sum + Object.keys(cells).length, 0);
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
+    part("meta.xml", loMeta(O.title, O.tableNames.length, cellCount, 1)),
+    part("settings.xml", spec121OdsSettings()),
+    part("content.xml", content),
+    { name: "Thumbnails/thumbnail.png", data: THUMBNAIL_PNG },
+    part("Object 1/content.xml", spec121OdsChartContent()),
+    part("Object 1/styles.xml", SPEC121_ODS_CHART_STYLES),
+    part("Object 1/meta.xml", SPEC121_ODS_CHART_META),
+    { name: C.replacement, data: SPEC121_ODS_REPLACEMENT },
+    part("styles.xml", SPEC121_ODS_STYLES),
+    part("manifest.rdf", LO_MANIFEST_RDF),
+    part("META-INF/manifest.xml", SPEC121_ODS_MANIFEST),
+  ]);
 }

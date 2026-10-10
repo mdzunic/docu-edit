@@ -1,10 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, onTestFinished } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import HomeView from "./HomeView.vue";
-import { getDocument, getPresentation } from "../lib/documentStore";
+import { deleteDocument, getDocument, getPresentation, getSpreadsheet, listDocuments } from "../lib/documentStore";
 import { DEFAULT_TITLE } from "../lib/documentModel";
 import { DEFAULT_PRESENTATION_TITLE } from "../lib/presentation/model";
+import { DEFAULT_SPREADSHEET_TITLE } from "../lib/spreadsheet/model";
 import { routes } from "../router";
 
 function mountHome() {
@@ -38,6 +39,35 @@ describe("HomeView", () => {
     expect(templateButton.isVisible()).toBe(true);
     expect(newButton.isVisible()).toBe(true);
     expect(openButton.isVisible()).toBe(true);
+  });
+
+  // SPEC-121 AC-1: "New spreadsheet" sits right after "New presentation" on
+  // the first-run empty state. Like the 'New presentation' test below, it
+  // needs a genuinely empty library, so it runs before any doc-creating test
+  // and permanently deletes what it created when it finishes — the library is
+  // genuinely empty again for that test.
+  it("offers 'New spreadsheet' on the genuinely empty first-run state, storing a blank workbook (SPEC-121 AC-1)", async () => {
+    onTestFinished(() => {
+      for (const entry of listDocuments()) {
+        deleteDocument(entry.id);
+      }
+    });
+    const { wrapper, router } = mountHome();
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
+    const emptyState = wrapper.get('[data-testid="empty-state"]');
+    const actions = emptyState.findAll("button").map((button) => button.attributes("data-testid"));
+    expect(actions.indexOf("new-spreadsheet")).toBe(actions.indexOf("new-presentation") + 1);
+    const button = emptyState.get('[data-testid="new-spreadsheet"]');
+    expect(button.text()).toBe("New spreadsheet");
+    await button.trigger("click");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toMatch(/^\/sheets\/.+/);
+    const id = router.currentRoute.value.params.id as string;
+    const model = getSpreadsheet(id);
+    expect(model?.title).toBe(DEFAULT_SPREADSHEET_TITLE);
+    expect(model?.format).toBe("xlsx");
+    expect(model?.sheets.map((sheet) => sheet.name)).toEqual(["Sheet1"]);
   });
 
   // SPEC-080 AC-1: "New presentation" sits beside "New document" on the
@@ -78,6 +108,30 @@ describe("HomeView", () => {
     expect(model?.title).toBe(DEFAULT_PRESENTATION_TITLE);
     expect(model?.format).toBe("pptx");
     expect(model?.slides).toHaveLength(1);
+  });
+
+  // SPEC-121 AC-1/AC-2: the library header's "New spreadsheet" (the library
+  // holds documents by now, so the header renders rather than the empty
+  // state); the stored workbook is badged XLSX — no new library format.
+  it("stores a blank workbook and navigates to /sheets/:id on the library header's 'New spreadsheet' (SPEC-121 AC-1)", async () => {
+    const { wrapper, router } = mountHome();
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(false);
+    const button = wrapper.get('[data-testid="library"]').get('[data-testid="new-spreadsheet"]');
+    expect(button.text()).toBe("New spreadsheet");
+    await button.trigger("click");
+    await router.isReady();
+
+    expect(router.currentRoute.value.path).toMatch(/^\/sheets\/.+/);
+    const id = router.currentRoute.value.params.id as string;
+    const model = getSpreadsheet(id);
+    expect(model?.title).toBe(DEFAULT_SPREADSHEET_TITLE);
+    expect(model?.format).toBe("xlsx");
+    expect(model?.sheets.map((sheet) => sheet.name)).toEqual(["Sheet1"]);
+
+    const { wrapper: library } = mountHome();
+    const row = library.get(`[data-testid="library-row"][data-doc-id="${id}"]`);
+    expect(row.get('[data-testid="row-title"]').text()).toBe(DEFAULT_SPREADSHEET_TITLE);
+    expect(row.get('[data-testid="row-format"]').text()).toBe("XLSX");
   });
 
   it("'New from template…' opens the template gallery, offering 'Blank document' alongside templates (SPEC-046 AC-1)", async () => {

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// The workbook view at /sheets/:id (SPEC-116, SPEC-117): a read-only wiring
+// The workbook view at /sheets/:id (SPEC-116, SPEC-117, SPEC-121): a wiring
 // hub (SpreadsheetView.size.spec.ts holds its line budget). Loading, the kind
 // guard, the reader upgrade and the sheet on show: useWorkbookLoad; view state
 // (never a change to the file): useSheetViewState; geometry, zoom, selection,
-// menus, the locale (SPEC-118), formula display (SPEC-119) and recalculation
-// (SPEC-120): the spreadsheet/ composables imported below; the surfaces:
-// components/spreadsheet/*. This file only wires them.
+// menus, the locale (SPEC-118), formula display (SPEC-119), recalculation
+// (SPEC-120) and the sheet commands, undo and downloads (SPEC-121,
+// useWorkbookEditing): the spreadsheet/ composables imported below; the
+// surfaces: components/spreadsheet/*. This file only wires them.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -13,6 +14,7 @@ import SpreadsheetAppBar from "../components/spreadsheet/SpreadsheetAppBar.vue";
 import SpreadsheetMenuBar from "../components/spreadsheet/SpreadsheetMenuBar.vue";
 import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar.vue";
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
+import WorkbookNotFound from "../components/spreadsheet/WorkbookNotFound.vue";
 import { useTheme } from "../composables/useTheme";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
 import { useRecalc } from "./spreadsheet/useRecalc";
@@ -22,6 +24,7 @@ import { useSheetViewState } from "./spreadsheet/useSheetViewState";
 import { useSheetZoom } from "./spreadsheet/useSheetZoom";
 import { useSpreadsheetLocale } from "./spreadsheet/useSpreadsheetLocale";
 import { useSpreadsheetMenu } from "./spreadsheet/useSpreadsheetMenu";
+import { useWorkbookEditing } from "./spreadsheet/useWorkbookEditing";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
 const route = useRoute();
@@ -40,7 +43,8 @@ const sheetLocale = useSpreadsheetLocale();
 const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState, model: () => book.workbook.value, locale: () => sheetLocale.locale.value });
 const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model: () => book.workbook.value, viewState, selection });
 const recalc = useRecalc({ book, locale: () => sheetLocale.locale.value });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc });
+const editing = useWorkbookEditing({ book, viewState, recalc });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing });
 const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc }));
 </script>
 
@@ -52,7 +56,11 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
     <template #app-bar-actions>
       <SpreadsheetAppBar
         :format-label="book.formatLabel.value"
-        @download="book.download()"
+        v-bind="editing.appBar.value"
+        @undo="editing.undo.undo()"
+        @redo="editing.undo.redo()"
+        @download="editing.download.download()"
+        @download-copy="editing.download.downloadCopy()"
         @close="book.close()"
       />
     </template>
@@ -69,15 +77,9 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       v-if="book.workbook.value"
       :book="book"
       :grid="grid"
+      :editing="editing"
     />
-    <div
-      v-else
-      class="workbook-missing"
-      data-testid="spreadsheet-not-found"
-      role="alert"
-    >
-      <p>This workbook doesn't exist in your library.</p>
-    </div>
+    <WorkbookNotFound v-else />
     <template
       v-if="book.workbook.value"
       #status-bar
@@ -94,13 +96,3 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
     </template>
   </AppShell>
 </template>
-
-<style scoped>
-.workbook-missing {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
-}
-</style>

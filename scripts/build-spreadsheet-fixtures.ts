@@ -43,6 +43,18 @@
 // - spec120-manual.xlsx     — SPEC-120, Excel-shaped: calcMode="manual"
 // - spec120-calc.ods        — SPEC-120, LibreOffice-shaped: case-sensitive,
 //                             wildcards, AutoCalculate, uncached formulas
+// - spec121-links.xlsx      — SPEC-121, Excel-shaped: cross-sheet, 3-D and
+//                             VLOOKUP formulas, workbook- and sheet-scoped
+//                             names, a chart, legacy + threaded comments,
+//                             a table, conditional formatting, a validation
+//                             and a hyperlink naming another sheet, a tab
+//                             colour, a hidden and a very hidden sheet,
+//                             calcChain and TitlesOfParts
+// - spec121-links.ods       — SPEC-121, LibreOffice-shaped twin: named
+//                             range/expression, database range, validation,
+//                             conditional format, annotation, internal link,
+//                             an embedded chart object, settings.xml
+//                             per-table entries with TabColor
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -68,6 +80,8 @@ import {
   buildSpec120CalcXlsxBytes,
   buildSpec120FullCalcXlsxBytes,
   buildSpec120ManualXlsxBytes,
+  buildSpec121LinksOdsBytes,
+  buildSpec121LinksXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -90,6 +104,8 @@ writeFileSync(join(fixturesDir, "spec120-calc.xlsx"), await buildSpec120CalcXlsx
 writeFileSync(join(fixturesDir, "spec120-fullcalc.xlsx"), await buildSpec120FullCalcXlsxBytes());
 writeFileSync(join(fixturesDir, "spec120-manual.xlsx"), await buildSpec120ManualXlsxBytes());
 writeFileSync(join(fixturesDir, "spec120-calc.ods"), await buildSpec120CalcOdsBytes());
+writeFileSync(join(fixturesDir, "spec121-links.xlsx"), await buildSpec121LinksXlsxBytes());
+writeFileSync(join(fixturesDir, "spec121-links.ods"), await buildSpec121LinksOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

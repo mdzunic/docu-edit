@@ -32,6 +32,9 @@ import {
 } from "./fixtures/build";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import { readSpreadsheetBytes } from "./open";
+import { packageIntegrity } from "./fixtures/packageIntegrity";
+import { workbookForCompare } from "./fixtures/workbookForCompare";
+import { addSheet, createBlankWorkbook, duplicateSheet, moveSheet, renameSheet, setSheetHidden, setTabColor } from "./sheets";
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
 const NUMBERS_XLSX = new Uint8Array(readFileSync(join(E2E_FIXTURES, "spec116-numbers.xlsx")));
@@ -228,7 +231,7 @@ describe("package rules", () => {
     for (const [format, packageVariant, extension] of cases) {
       expect(spreadsheetFileName({ ...model, format, packageVariant })).toBe(`Budget 2026.${extension}`);
     }
-    expect(spreadsheetFileName({ ...model, title: "  " })).toBe("Untitled workbook.xlsx");
+    expect(spreadsheetFileName({ ...model, title: "  " })).toBe("Untitled spreadsheet.xlsx");
   });
 });
 
@@ -279,4 +282,111 @@ describe("the Numbers export reads (e2e/fixtures/spec116-numbers.md)", () => {
     expect(at(summary, "B3")).toMatch(/^This document was exported from Numbers/);
     expect(at(summary, "D10")).toBe("Summary - Figures");
   });
+});
+
+// --- SPEC-121 ("Tests": roundTrip.spec.ts) -----------------------------------------------
+
+/** Puts every model field back as `snapshot` had it — what undoing every
+ * command restores (structureDirty and each sheet's dirty included). */
+function restore(model: SpreadsheetModel, snapshot: SpreadsheetModel): void {
+  for (const key of Object.keys(model) as (keyof SpreadsheetModel)[]) {
+    if (!(key in snapshot)) {
+      delete model[key];
+    }
+  }
+  Object.assign(model, structuredClone(snapshot));
+}
+
+describe("SPEC-121: from-scratch write → read", () => {
+  for (const format of ["xlsx", "ods"] as const) {
+    it(`.${format}: a new workbook and an edited one read back to the same workbook (ids masked)`, async () => {
+      const blank: SpreadsheetModel = { ...createBlankWorkbook(), format };
+      const edited: SpreadsheetModel = { ...createBlankWorkbook(), format };
+      addSheet(edited, 0);
+      addSheet(edited, 1);
+      renameSheet(edited, 1, "Budget");
+      setTabColor(edited, 1, { theme: "accent5", lumMod: 0.75 });
+      setSheetHidden(edited, [0], true);
+      for (const model of [blank, edited]) {
+        const { bytes } = await spreadsheetDownload(model);
+        expect(await packageIntegrity(bytes)).toEqual([]);
+        expect(workbookForCompare(await readSpreadsheetBytes(bytes, format, "copy"))).toEqual(workbookForCompare(model));
+      }
+    });
+  }
+});
+
+describe("SPEC-121: no-op and undo-to-origin saves are equalBytes per part", () => {
+  for (const fixture of FIXTURES) {
+    it(`${fixture.file}`, async () => {
+      const source = await fixture.bytes();
+      const original = await unzip(source);
+      const model = await readSpreadsheetBytes(source, fixture.format, "fixture");
+      const expectVerbatim = async (): Promise<void> => {
+        const out = await unzip((await spreadsheetDownload(model)).bytes);
+        expect([...out.keys()]).toEqual([...original.keys()]);
+        for (const [name, bytes] of original) {
+          expect(equalBytes(out.get(name)!, bytes), name).toBe(true);
+        }
+      };
+      await expectVerbatim();
+      const snapshot = structuredClone(model);
+      addSheet(model, model.activeSheetIndex);
+      renameSheet(model, 0, "Renamed by a test");
+      duplicateSheet(model, model.activeSheetIndex);
+      moveSheet(model, model.activeSheetIndex, 0);
+      setTabColor(model, 0, "#336699");
+      setSheetHidden(model, [0], true);
+      expect(model.structureDirty).toBe(true);
+      restore(model, snapshot);
+      await expectVerbatim();
+    });
+  }
+});
+
+describe("SPEC-121: untouched parts survive structural commands", () => {
+  for (const fixture of FIXTURES.filter((each) => each.format === "xlsx")) {
+    it(`${fixture.file}: every worksheet part the commands did not touch is equalBytes its source`, async () => {
+      const source = await fixture.bytes();
+      const original = await unzip(source);
+      const model = await readSpreadsheetBytes(source, "xlsx", "fixture");
+      const active = model.sheets[model.activeSheetIndex]!;
+      addSheet(model, model.sheets.length - 1);
+      const others = model.sheets.flatMap((sheet, index) => (sheet !== active && sheet.visibility === "visible" && sheet.partName !== undefined ? [index] : []));
+      if (others.length > 1) {
+        setSheetHidden(model, [others[0]!], true);
+      }
+      model.activeSheetIndex = model.sheets.indexOf(active); // view state: the same sheet stays active
+      const bytes = (await spreadsheetDownload(model)).bytes;
+      expect(await packageIntegrity(bytes)).toEqual([]);
+      const out = await unzip(bytes);
+      for (const sheet of model.sheets.filter((each) => each.partName !== undefined)) {
+        const before = new TextDecoder().decode(original.get(sheet.partName!));
+        const selected = /^(1|true)$/.test(/<(?:\w+:)?sheetView\b[^>]*\btabSelected="([^"]*)"/.exec(before)?.[1] ?? "");
+        if (selected === (sheet === active)) {
+          expect(equalBytes(out.get(sheet.partName!)!, original.get(sheet.partName!)!), sheet.partName).toBe(true);
+        }
+      }
+    });
+  }
+
+  for (const fixture of FIXTURES.filter((each) => each.format === "ods")) {
+    it(`${fixture.file}: content.xml is the prefix (+ generated styles) + every untouched table's source + the new table + the suffix`, async () => {
+      const model = await readSpreadsheetBytes(await fixture.bytes(), "ods", "fixture");
+      const envelope = model.odsContentEnvelope!;
+      const tables = model.sheets.map((sheet) => sheet.sourceXml!).join("");
+      const active = model.activeSheetIndex;
+      addSheet(model, model.sheets.length - 1);
+      model.activeSheetIndex = active;
+      const bytes = (await spreadsheetDownload(model)).bytes;
+      expect(await packageIntegrity(bytes)).toEqual([]);
+      const content = new TextDecoder().decode((await unzip(bytes)).get("content.xml"));
+      const start = content.indexOf(tables);
+      expect(start).toBeGreaterThan(0);
+      expect(content.slice(0, start).replace(/<style:style style:name="de-[a-z]+\d+"[\s\S]*?<\/style:style>/g, "")).toBe(envelope.prefix);
+      const rest = content.slice(start + tables.length);
+      expect(rest.endsWith(envelope.suffix)).toBe(true);
+      expect(rest.slice(0, rest.length - envelope.suffix.length)).toMatch(/^<table:table table:name="Sheet\d+" table:style-name="de-ta\d+">.*<\/table:table>$/);
+    });
+  }
 });

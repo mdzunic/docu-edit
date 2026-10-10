@@ -19,11 +19,12 @@ export type DocumentKind = "text" | "presentation" | "media" | "spreadsheet";
 /** Every format the library can hold: the text formats, the presentation
  * formats, the media formats, the spreadsheet formats, and "new" (a text
  * document created in the app, never opened from or saved to a file). Blank
- * presentations do NOT use "new": they carry `"pptx"` from birth
- * (`createBlankPresentation`, SPEC-080), so `kindOfFormat` routes and the
- * library badges them as presentations with no new format. A workbook's
- * template and macro-enabled variants are package variants of "xlsx"/"ods",
- * not formats of their own. */
+ * presentations and blank workbooks do NOT use "new": a blank presentation
+ * carries `"pptx"` from birth (`createBlankPresentation`, SPEC-080) and a
+ * blank workbook `"xlsx"` (`createBlankWorkbook`, SPEC-121), so
+ * `kindOfFormat` routes them and the library badges them PPTX / XLSX with no
+ * new format. A workbook's template and macro-enabled variants are package
+ * variants of "xlsx"/"ods", not formats of their own. */
 export type LibraryFormat = TextDocumentFormat | PresentationFormat | MediaFormat | SpreadsheetFormat | "new";
 
 const PRESENTATION_FORMATS: ReadonlySet<string> = new Set(["pptx", "odp"]);
