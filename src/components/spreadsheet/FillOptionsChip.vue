@@ -60,7 +60,7 @@ const OPTIONS = [
   background: var(--surface-raised);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-md, 0 2px 6px rgb(0 0 0 / 20%));
+  box-shadow: var(--shadow-2);
   white-space: nowrap;
 }
 
