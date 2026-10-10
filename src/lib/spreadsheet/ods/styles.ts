@@ -826,6 +826,31 @@ export class OdsStyleBook {
     return this.sheet.common.has(styleKey("table-cell", name));
   }
 
+  /** SPEC-122: the text styles a rich run can be written back in, so a run
+   * read from the file keeps its span's style name — every text-family
+   * style of content.xml's automatic styles, then of styles.xml's common
+   * styles (a common one an automatic one shadows left out), in document
+   * order, that holds only what a run's font models (textStyleModelled) and
+   * gives a font, with that font. */
+  runTextStyles(): { name: string; font: CellFont }[] {
+    const found: { name: string; font: CellFont }[] = [];
+    const seen = new Set<string>();
+    for (const styles of [this.automatic, this.sheet.common]) {
+      for (const [key, definition] of styles) {
+        const name = key.slice(key.indexOf("\u0000") + 1);
+        if (definition.family !== "text" || seen.has(name)) {
+          continue;
+        }
+        seen.add(name);
+        const font = this.textStyleModelled(name) ? this.textFont(name) : undefined;
+        if (font) {
+          found.push({ name, font });
+        }
+      }
+    }
+    return found;
+  }
+
   /** A column style's `style:column-width` in px (unrounded) — the
    * table-column default-style's when the style sets none — or undefined. */
   columnWidthPx(name: string | undefined): number | undefined {
@@ -1216,8 +1241,21 @@ export class OdsStyleRegistry {
     );
   }
 
-  /** SPEC-122: a `de-T<n>` text style for a rich run's font, or undefined
-   * for a font that sets nothing (the run is plain text). */
+  /** SPEC-122: makes an existing text style (a `runTextStyles` entry of the
+   * retained package) the name of the property set its font writes, so a
+   * run read from the file keeps its span's style and write → read → write
+   * is stable. The first style adopted for a set wins; nothing is written. */
+  adoptTextStyle(name: string, font: CellFont, theme: DocumentTheme): void {
+    const attributes = odsFontAttributes(font, theme);
+    const key = `T|${attributes}`;
+    if (attributes !== "" && !this.byKey.has(key)) {
+      this.byKey.set(key, name);
+    }
+  }
+
+  /** SPEC-122: a `de-T<n>` text style for a rich run's font — an adopted
+   * style of the file when one gives an equal font — or undefined for a
+   * font that sets nothing (the run is plain text). */
   textStyle(font: CellFont | undefined, theme: DocumentTheme): string | undefined {
     const attributes = odsFontAttributes(font, theme);
     if (attributes === "") {

@@ -961,8 +961,11 @@ function attributeText(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\t/g, "&#9;").replace(/\n/g, "&#10;").replace(/\r/g, "&#13;");
 }
 
+/** Character data: XML-escaped, a carriage return as `&#13;` — a literal one
+ * would reach the reader as a line feed (XML's end-of-line normalisation),
+ * so "\r\n" would read back as two line breaks. */
 function elementText(text: string): string {
-  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r/g, "&#13;");
 }
 
 type NumberValueType = "float" | "percentage" | "currency" | "date" | "time";
@@ -1075,8 +1078,10 @@ function lineXml(pieces: readonly TextPiece[]): string {
   return out;
 }
 
-/** Text as `text:p` paragraphs, one per line ("" → none). XML-illegal
- * characters are dropped and CR line ends become line breaks. */
+/** Text as `text:p` paragraphs, one per "\n"-separated line ("" → none),
+ * which the reader joins back with "\n". XML-illegal characters are
+ * dropped (sanitizeXmlText: U+000B/U+000C become line breaks); a carriage
+ * return is kept, as a character reference (elementText). */
 function paragraphsXml(pieces: readonly TextPiece[]): string {
   const clean = pieces.map((piece) => ({ ...piece, text: sanitizeXmlText(piece.text) }));
   if (clean.every((piece) => piece.text === "")) {
@@ -1358,14 +1363,15 @@ class TableWriter {
     return found;
   }
 
-  /** One cell element (see serializeTable, "Cells"). */
+  /** One cell element (see serializeTable, "Cells"). The style name is part
+   * of the head, so a repeat count follows it, as LibreOffice writes. */
   private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number): Repeatable {
-    const head = covered ? "<table:covered-table-cell" : "<table:table-cell";
+    let head = covered ? "<table:covered-table-cell" : "<table:table-cell";
     const close = covered ? "</table:covered-table-cell>" : "</table:table-cell>";
     let attrs = "";
     const positionDefault = row?.styleId ?? columnSpanAt(this.sheet.columns, col)?.styleId ?? 0;
     if (cell?.styleId !== undefined && cell.styleId !== positionDefault) {
-      attrs += ` table:style-name="${attributeText(this.styleName(cell.styleId))}"`;
+      head += ` table:style-name="${attributeText(this.styleName(cell.styleId))}"`;
     }
     if (anchor) {
       attrs += ` table:number-columns-spanned="${anchor.right - anchor.left + 1}" table:number-rows-spanned="${anchor.bottom - anchor.top + 1}"`;

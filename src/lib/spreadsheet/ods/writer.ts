@@ -325,6 +325,10 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const namespaces = rootNamespaces(envelope.prefix);
   const registry = new OdsStyleRegistry([envelope.prefix, envelope.suffix, stylesXml ?? ""]);
   const book = sourceStyleBook(envelope.prefix, stylesXml);
+  // A rich run read from the file is written in its span's own text style.
+  for (const { name, font } of book.runTextStyles()) {
+    registry.adoptTextStyle(name, font, model.theme ?? DEFAULT_THEME);
+  }
   const recoloured = new Set<string>();
   const context: OdsTableContext = {
     model,
