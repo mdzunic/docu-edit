@@ -14,6 +14,8 @@
 //   error with the caret offset to show; a valid one is stored canonical
 //   (SPEC-119's printFormula). A text holding a line break asks for wrap
 //   (lib's entryFromInput; setCellEntry interns it).
+// - Each write refits the rows it touched (lib's refitRows given the rows
+//   before it) inside its own undo step.
 // - Refusals: a locked cell on a protected sheet ("This cell is on a
 //   protected sheet") before part of an array ("You can't change part of an
 //   array" — lib's arrayRangeTouched lets the anchor alone be edited).
@@ -127,8 +129,11 @@ function oneStep(ctx: CellWriteContext, label: string, ranges: GridRange[], muta
     return;
   }
   ctx.undo.record(label, { sheetId });
+  const before = ctx.model.sheets[ctx.sheetIndex]!.rows;
   mutate();
-  refitRows(ctx.model, sheetId, ranges, ctx.measurer, ctx.format);
+  // Only the rows the command touched refit: an unchanged entry refits (and
+  // records) nothing, and an untouched row keeps the height its file gave it.
+  refitRows(ctx.model, sheetId, ranges, ctx.measurer, ctx.format, before);
   ctx.undo.commit();
 }
 

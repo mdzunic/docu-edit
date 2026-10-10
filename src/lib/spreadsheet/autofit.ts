@@ -34,7 +34,12 @@
 //   copy-on-write (absent when it equals the default; a changed height drops
 //   the row's ods `sourceStyleName`, the drop rule) and never
 //   `customHeight`. A row whose height does not change keeps its identity; a
-//   row left storing nothing (cells.ts isEmptyRow) is removed.
+//   row left storing nothing (cells.ts isEmptyRow) is removed. Given
+//   `before` — the sheet's rows before the command — it refits only the rows
+//   the command touched: those whose object it replaced or added (copy-on-
+//   write keeps every other row's identity). So a command that changed
+//   nothing refits nothing and records no step, and a row it did not touch
+//   keeps the height its file gave it, measured or not.
 // - Measuring is injected (CellTextMeasurer): the view's canvas measurer
 //   (src/views/spreadsheet/cellMeasurer.ts), or fixedMeasurer in tests.
 import { DEFAULT_THEME, resolveFont } from "../core/theme";
@@ -220,12 +225,52 @@ function holdsContentIn(row: Row, ranges: readonly GridRange[]): boolean {
   });
 }
 
-/** The automatic refit of the rows `ranges` touched (see the module
- * header). */
-export function refitRows(model: SpreadsheetModel, sheetId: string, ranges: GridRange[], measurer: CellTextMeasurer, ctx: FormatContext): void {
+/** The first stored row at or after `index` (an index into `rows`). */
+function firstRowAtOrAfter(rows: readonly Row[], index: number): number {
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (rows[mid]!.index < index) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+/** The indices in [top, bottom] of the rows `after` holds as objects
+ * `before` did not — replaced or added by a command. */
+function touchedRows(before: readonly Row[], after: readonly Row[], top: number, bottom: number): Set<number> {
+  const touched = new Set<number>();
+  let i = firstRowAtOrAfter(before, top);
+  for (let j = firstRowAtOrAfter(after, top); j < after.length && after[j]!.index <= bottom; j += 1) {
+    const row = after[j]!;
+    while (i < before.length && before[i]!.index < row.index) {
+      i += 1;
+    }
+    if (before[i] !== row) {
+      touched.add(row.index);
+    }
+  }
+  return touched;
+}
+
+/** The automatic refit of the rows `ranges` touched — only the rows the
+ * command replaced or added when `before` (the sheet's rows before it) is
+ * given (see the module header). */
+export function refitRows(
+  model: SpreadsheetModel,
+  sheetId: string,
+  ranges: GridRange[],
+  measurer: CellTextMeasurer,
+  ctx: FormatContext,
+  before?: readonly Row[],
+): void {
   const sheetIndex = model.sheets.findIndex((sheet) => sheet.id === sheetId);
   const sheet = model.sheets[sheetIndex];
-  if (!sheet || ranges.length === 0) {
+  if (!sheet || ranges.length === 0 || before === sheet.rows) {
     return;
   }
   const top = Math.min(...ranges.map((range) => range.top));
@@ -233,22 +278,13 @@ export function refitRows(model: SpreadsheetModel, sheetId: string, ranges: Grid
   const replaced = new Map<number, Row | undefined>();
   let refitted = 0;
   const rows = sheet.rows;
-  let lo = 0;
-  let hi = rows.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (rows[mid]!.index < top) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  for (let r = lo; r < rows.length; r += 1) {
+  const touched = before === undefined ? undefined : touchedRows(before, rows, top, bottom);
+  for (let r = firstRowAtOrAfter(rows, top); r < rows.length; r += 1) {
     const row = rows[r]!;
     if (row.index > bottom || refitted >= AUTOFIT_MAX_ROWS_PER_COMMAND) {
       break;
     }
-    if (row.customHeight || !ranges.some((range) => row.index >= range.top && row.index <= range.bottom)) {
+    if (row.customHeight || (touched !== undefined && !touched.has(row.index)) || !ranges.some((range) => row.index >= range.top && row.index <= range.bottom)) {
       continue;
     }
     if (!holdsContentIn(row, ranges) && row.heightPt === undefined) {

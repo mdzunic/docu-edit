@@ -518,6 +518,22 @@ describe("Ctrl/Cmd+Enter and Delete", () => {
     expect(undo.undoLabel.value).toBe("Clear contents");
   });
 
+  it("Delete over a whole column refits only the rows it cleared; a row it did not touch keeps the height its file gave it", () => {
+    // 16.5 pt from the file; the measurer finds one 20 px line (the default 15 pt).
+    const rows: Row[] = [
+      { index: 0, cells: [{ col: 0, value: "a" }, { col: 1, value: "b" }], heightPt: 16.5 },
+      { index: 1, cells: [{ col: 1, value: "c" }], heightPt: 16.5 },
+    ];
+    const { undo, press, select, model } = setup(book({}, { sheet: { rows } }));
+    select("A1:A1048576");
+    press("Delete");
+    expect(model.sheets[0]!.rows[0]).toEqual({ index: 0, cells: [{ col: 1, value: "b" }] });
+    expect(model.sheets[0]!.rows[1]).toBe(rows[1]);
+    expect(undo.undoLabel.value).toBe("Clear contents");
+    undo.undo();
+    expect(model.sheets[0]!.rows).toEqual(rows);
+  });
+
   it("Delete and Backspace inside the editor are text editing, not Clear contents", () => {
     const { editing, undo, type, press, select, cell } = setup(book({ A1: "keep" }));
     select("A1");
@@ -700,6 +716,17 @@ describe("commit", () => {
     expect(model.sheets).toBe(sheets);
     expect([undo.canUndo.value, recalls.length, model.sheets[0]!.dirty]).toEqual([false, 0, undefined]);
     expect([cell("A1")?.value, cell("A2")?.value]).toEqual(["abc", 5]);
+  });
+
+  it("an unchanged commit records nothing, even on a row whose own height is not the measured one", () => {
+    // 16.5 pt from the file; the measurer finds one 20 px line (the default 15 pt).
+    const { undo, recalls, type, press, select, model } = setup(book({}, { sheet: { rows: [{ index: 1, cells: [{ col: 0, value: 5 }], heightPt: 16.5 }] } }));
+    const sheets = model.sheets;
+    select("A2");
+    type("5.0");
+    press("Enter");
+    expect(model.sheets).toBe(sheets);
+    expect([undo.canUndo.value, recalls.length, model.sheets[0]!.rows[0]!.heightPt]).toEqual([false, 0, 16.5]);
   });
 
   it("a changed rich-text cell stores plain text; an unchanged one keeps its runs", () => {

@@ -8,8 +8,9 @@
 // stored non-empty cell in the ranges (or a height of their own, so a
 // cleared row shrinks back), heightPt absent when it equals the default,
 // customHeight never set, untouched rows keeping their identity, the ods row
-// style dropped with a changed height, and the AUTOFIT_MAX_ROWS_PER_COMMAND
-// cap (the first 10,000 rows only).
+// style dropped with a changed height, the AUTOFIT_MAX_ROWS_PER_COMMAND
+// cap (the first 10,000 rows only), and — given the rows before a command —
+// only the rows it replaced or added refitting, none when it changed nothing.
 import { describe, expect, it } from "vitest";
 import type { GridRange } from "./address";
 import { AUTOFIT_MAX_ROWS_PER_COMMAND, autofitRowHeightPt, fixedMeasurer, refitRows } from "./autofit";
@@ -203,6 +204,24 @@ describe("refitRows", () => {
     refitRows(model, "no-such-sheet", [all], MEASURER, CTX);
     refitRows(model, model.sheets[0]!.id, [], MEASURER, CTX);
     expect(model.sheets).toBe(sheets);
+  });
+
+  it("given the rows before the command, refits only the rows it replaced or added — none when it changed nothing", () => {
+    // Heights a file gave its rows (16.5 pt), not what the measurer finds (one 20 px line: 15 pt).
+    const kept: Row = { index: 0, cells: [{ col: 0, value: "x" }], heightPt: 16.5 };
+    const edited: Row = { index: 1, cells: [{ col: 0, value: "y" }], heightPt: 16.5 };
+    const model = book([kept, edited], { styles });
+    const before = model.sheets[0]!.rows;
+    const sheets = model.sheets;
+    refitRows(model, model.sheets[0]!.id, [all], MEASURER, CTX, before);
+    expect(model.sheets).toBe(sheets);
+    // A command replaced row 1 and added row 3 (a wrapped two-line text).
+    const replaced: Row = { ...edited, cells: [{ col: 0, value: "z" }] };
+    const added: Row = { index: 3, cells: [twoLines()] };
+    model.sheets = [{ ...model.sheets[0]!, rows: [kept, replaced, added] }];
+    refitRows(model, model.sheets[0]!.id, [all], MEASURER, CTX, before);
+    expect(model.sheets[0]!.rows).toEqual([kept, { index: 1, cells: [{ col: 0, value: "z" }] }, { ...added, heightPt: 30 }]);
+    expect(model.sheets[0]!.rows[0]).toBe(kept);
   });
 
   it(`refits the first ${AUTOFIT_MAX_ROWS_PER_COMMAND} rows of one command only`, () => {
