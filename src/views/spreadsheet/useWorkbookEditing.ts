@@ -68,10 +68,13 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     locale: deps.locale,
     syncViewState: (model) => deps.viewState.syncInto(model),
   });
-  /** SpreadsheetAppBar's undo/redo and split-download props, bound as one. */
+  /** SpreadsheetAppBar's undo/redo and split-download props, bound as one
+   * (the Edit menu reads the same). While a cell is being edited the
+   * workbook's undo and redo are off — the editor's own text undo has
+   * Cmd/Ctrl+Z, and the workbook's applies only after the commit (SPEC-122). */
   const appBar = computed(() => ({
-    canUndo: undo.canUndo.value,
-    canRedo: undo.canRedo.value,
+    canUndo: undo.canUndo.value && !cell.editing.value,
+    canRedo: undo.canRedo.value && !cell.editing.value,
     undoLabel: undo.undoLabel.value,
     redoLabel: undo.redoLabel.value,
     copyLabel: download.copyLabel.value,
