@@ -43,14 +43,20 @@
 //   keeps the height its file gave it, measured or not.
 // - Measuring is injected (CellTextMeasurer): the view's canvas measurer
 //   (src/views/spreadsheet/cellMeasurer.ts), or fixedMeasurer in tests.
+// - SPEC-124: autofitColumnWidthPx, the width a column's content needs —
+//   ceil(the widest full-width display text of its stored cells) + 5 px (the
+//   per-column padding of SPEC-117's chars→px formula), skipping wrapped
+//   cells and cells in merges; the sheet's default width when no cell has
+//   text; capped at the width of 255 characters.
 import { DEFAULT_THEME, resolveFont } from "../core/theme";
 import { findRow, type GridRange } from "./address";
 import { isEmptyRow, replaceRows } from "./cells";
+import { INDENT_PX_PER_LEVEL, xlsxWidthToPx } from "./geometry";
 import { buildMergeIndex, mergeAt, type MergeIndex } from "./merges";
 import type { Cell, CellAlignment, CellFont, Row, Sheet, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
 import { formatValue, plainText, type FormatContext } from "./numberFormat/render";
-import { cellStyle, columnSpanAt, effectiveStyleId } from "./styles";
+import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "./styles";
 
 export interface MeasuredFont {
   family: string;
@@ -198,6 +204,58 @@ function mergeIndexOf(sheet: Sheet): MergeIndex {
 /** px → pt, rounded up to a 0.75 pt step (one whole px). */
 function pxToRowPt(px: number): number {
   return Math.ceil(px - 1e-7) * PT_PER_PX;
+}
+
+/** The px a cell's one-line display text needs, or 0 when autofit skips it
+ * (a wrapped cell, or one inside a merge). */
+function cellWidthPx(model: SpreadsheetModel, sheet: Sheet, row: number, cell: Cell, measurer: CellTextMeasurer, ctx: FormatContext): number {
+  const style = cellStyle(model, effectiveStyleId(sheet, row, cell.col));
+  if ((typeof cell.value === "string" && wrapsText(style.alignment)) || (cell.value === null && cell.formula === undefined)) {
+    return 0;
+  }
+  const font = measuredFont(model, style.font);
+  const text = displayText(cell, formatCodeOf(style, ctx.locale), ctx).replaceAll("\n", "");
+  return text === "" ? 0 : measurer.widthPx(text, font) + (style.alignment?.indent ?? 0) * INDENT_PX_PER_LEVEL;
+}
+
+/** The width (px) column `col`'s content needs (SPEC-124 "Autofit"): the
+ * widest full-width display text among its stored cells, rounded up, plus
+ * WRAP_PADDING_PX — wrapped cells and cells in merges skipped; the sheet's
+ * default width when no cell has text; never wider than 255 characters. */
+export function autofitColumnWidthPx(model: SpreadsheetModel, sheet: Sheet, col: number, measurer: CellTextMeasurer, ctx: FormatContext): number {
+  return autofitColumnWidthsPx(model, sheet, col, col, measurer, ctx).get(col)!;
+}
+
+/** autofitColumnWidthPx for every column of [left, right] in one pass over
+ * the stored cells. */
+export function autofitColumnWidthsPx(
+  model: SpreadsheetModel,
+  sheet: Sheet,
+  left: number,
+  right: number,
+  measurer: CellTextMeasurer,
+  ctx: FormatContext,
+): Map<number, number> {
+  const widest = new Map<number, number>();
+  const merges = mergeIndexOf(sheet);
+  for (const row of sheet.rows) {
+    for (const cell of row.cells) {
+      if (cell.col < left || cell.col > right || (merges.ranges.length > 0 && mergeAt(merges, row.index, cell.col))) {
+        continue;
+      }
+      const px = cellWidthPx(model, sheet, row.index, cell, measurer, ctx);
+      if (px > (widest.get(cell.col) ?? 0)) {
+        widest.set(cell.col, px);
+      }
+    }
+  }
+  const cap = xlsxWidthToPx(255, fontMaxDigitWidth(model.styles[0]?.font, model.theme ?? DEFAULT_THEME));
+  const widths = new Map<number, number>();
+  for (let col = left; col <= right; col += 1) {
+    const px = widest.get(col);
+    widths.set(col, px === undefined ? sheet.defaultColWidthPx : Math.min(cap, Math.ceil(px - 1e-7) + WRAP_PADDING_PX));
+  }
+  return widths;
 }
 
 /** The height (pt) row `row`'s content needs (see the module header). */

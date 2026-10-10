@@ -7,6 +7,11 @@ import type { GridRange } from "./address";
 import { PROTECTED_CELL_MESSAGE } from "./cells";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { MAX_FORMAT_MATERIALISED } from "./restyle";
+import { autofitColumnWidthPx, fixedMeasurer } from "./autofit";
+import { autofitColumns, autofitRows, freezePanes, MAX_ROW_HEIGHT_PT, resizeColumns, resizeRows, setColumnsHidden, setRowsHidden, TOO_MANY_ROWS_MESSAGE } from "./bands";
+import { applyPattern, capturePattern, clearRange } from "./formatting";
+import { applyPatternMerges, mergeCells, mergeDiscardsValues, patternMerges, unmergeCells } from "./mergeCells";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import {
   adjustIndex,
   adjustRange,
@@ -357,6 +362,187 @@ describe("applyStructuralEdit — the other adjusters", () => {
     applyStructuralEdit(m, colsEdit("deleteCols", 0, 1));
     expect(s).toEqual(snapshot);
     expect(sheetOf(m)).not.toBe(s);
+  });
+});
+
+// --- the band commands (bands.ts) and merges (mergeCells.ts) ---------------------------------
+
+const CTX = { locale: SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE], dateSystem: "1900" as const };
+
+describe("resize, hide, unhide (SPEC-124 \"Sizes\")", () => {
+  it("resizeRows writes heightPt rounded to 0.75 pt with customHeight, creating property-only rows", () => {
+    const stored = row(1, [value(0, 1)], { sourceStyleName: "ro2" });
+    const m = model([sheet("s1", "Sheet1", { rows: [stored] })]);
+    expect(resizeRows(m, "s1", [{ start: 1, end: 2 }], 20.2)).toEqual({ ok: true });
+    expect(sheetOf(m).rows).toEqual([row(1, [value(0, 1)], { heightPt: 20.25, customHeight: true }), row(2, [], { heightPt: 20.25, customHeight: true })]);
+    expect(sheetOf(m).dirty).toBe(true);
+    resizeRows(m, "s1", [{ start: 1, end: 1 }], 1000);
+    expect(sheetOf(m).rows[0]!.heightPt).toBe(MAX_ROW_HEIGHT_PT);
+  });
+
+  it("a height of 0 (or under 4 px) hides the rows and keeps their size", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(3, [], { heightPt: 30, customHeight: true })] })]);
+    resizeRows(m, "s1", [{ start: 3, end: 3 }], 0);
+    expect(sheetOf(m).rows).toEqual([row(3, [], { heightPt: 30, customHeight: true, hidden: true })]);
+    resizeRows(m, "s1", [{ start: 3, end: 3 }], 18);
+    expect(sheetOf(m).rows).toEqual([row(3, [], { heightPt: 18, customHeight: true })]);
+  });
+
+  it("resizeColumns writes widthPx and drops sourceWidthChars unless the typed width is given; under 4 px hides", () => {
+    const m = model([sheet("s1", "Sheet1", { columns: [{ min: 1, max: 3, widthPx: 90, sourceWidthChars: 12.7109375 }] })]);
+    resizeColumns(m, "s1", [{ start: 2, end: 2 }], 120);
+    expect(sheetOf(m).columns).toEqual([
+      { min: 1, max: 1, widthPx: 90, sourceWidthChars: 12.7109375 },
+      { min: 2, max: 2, widthPx: 120 },
+      { min: 3, max: 3, widthPx: 90, sourceWidthChars: 12.7109375 },
+    ]);
+    resizeColumns(m, "s1", [{ start: 5, end: 5 }], 78, 11.2109375);
+    expect(sheetOf(m).columns.at(-1)).toEqual({ min: 5, max: 5, widthPx: 78, sourceWidthChars: 11.2109375 });
+    resizeColumns(m, "s1", [{ start: 2, end: 2 }], 3);
+    expect(sheetOf(m).columns[1]).toEqual({ min: 2, max: 2, widthPx: 120, hidden: true });
+  });
+
+  it("hide and unhide touch only `hidden`; unhiding stores nothing new", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(4, [], { heightPt: 40, customHeight: true })], columns: [{ min: 2, max: 2, widthPx: 100 }] })]);
+    setRowsHidden(m, "s1", [{ start: 4, end: 5 }], true);
+    expect(sheetOf(m).rows).toEqual([row(4, [], { heightPt: 40, customHeight: true, hidden: true }), row(5, [], { hidden: true })]);
+    setRowsHidden(m, "s1", [{ start: 0, end: 10 }], false);
+    expect(sheetOf(m).rows).toEqual([row(4, [], { heightPt: 40, customHeight: true })]);
+    setColumnsHidden(m, "s1", [{ start: 1, end: 2 }], true);
+    expect(sheetOf(m).columns).toEqual([{ min: 1, max: 1, hidden: true }, { min: 2, max: 2, widthPx: 100, hidden: true }]);
+    setColumnsHidden(m, "s1", [{ start: 1, end: 2 }], false);
+    expect(sheetOf(m).columns).toEqual([{ min: 2, max: 2, widthPx: 100 }]);
+  });
+
+  it("refuses hiding more than MAX_FORMAT_MATERIALISED rows that store nothing, and a protected sheet without the format permit", () => {
+    const m = model([sheet("s1", "Sheet1")]);
+    expect(setRowsHidden(m, "s1", [{ start: 0, end: MAX_FORMAT_MATERIALISED }], true)).toEqual({ ok: false, message: TOO_MANY_ROWS_MESSAGE });
+    expect(setRowsHidden(m, "s1", [{ start: 0, end: MAX_FORMAT_MATERIALISED - 1 }], true).ok).toBe(true);
+    const locked = model([sheet("s1", "Sheet1", { protection: { sheet: true, allowFormatColumns: true } })]);
+    expect(resizeRows(locked, "s1", [{ start: 0, end: 0 }], 30)).toEqual({ ok: false, message: PROTECTED_CELL_MESSAGE });
+    expect(resizeColumns(locked, "s1", [{ start: 0, end: 0 }], 30).ok).toBe(true);
+  });
+
+  it("freezePanes sets and clears Sheet.frozen", () => {
+    const m = model([sheet("s1", "Sheet1")]);
+    freezePanes(m, "s1", 1, 0);
+    expect(sheetOf(m).frozen).toEqual({ rows: 1, cols: 0 });
+    freezePanes(m, "s1", 0, 0);
+    expect(sheetOf(m).frozen).toBeUndefined();
+  });
+});
+
+describe("autofit (SPEC-124 \"Autofit\") through fixedMeasurer", () => {
+  const measurer = fixedMeasurer(7, 20);
+
+  it("autofitColumnWidthPx: the widest display text + 5 px, skipping wrapped and merged cells; no text → the default", () => {
+    const m = model([
+      sheet("s1", "Sheet1", {
+        rows: [row(0, [value(0, "abcdefghij"), value(1, "x".repeat(40), { styleId: 1 }), value(2, "merged text here")]), row(1, [value(0, 12345)])],
+        merges: [range(0, 2, 0, 3)],
+      }),
+    ]);
+    m.styles = [{}, { alignment: { wrap: true } }];
+    const s = sheetOf(m);
+    expect(autofitColumnWidthPx(m, s, 0, measurer, CTX)).toBe(10 * 7 + 5);
+    expect(autofitColumnWidthPx(m, s, 1, measurer, CTX)).toBe(64);
+    expect(autofitColumnWidthPx(m, s, 2, measurer, CTX)).toBe(64);
+    expect(autofitColumnWidthPx(m, s, 9, measurer, CTX)).toBe(64);
+  });
+
+  it("caps a column at the width of 255 characters", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(0, [value(0, "w".repeat(2000))])] })]);
+    // 255 characters at the default font's MDW (7 px): trunc((255 + trunc(128/7)/256) × 7).
+    expect(autofitColumnWidthPx(m, sheetOf(m), 0, measurer, CTX)).toBe(1785);
+  });
+
+  it("autofitColumns writes the measured widths; autofitRows the measured height with customHeight cleared", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(0, [value(0, "abcdefghijklmn")], { heightPt: 40, customHeight: true })] })]);
+    autofitColumns(m, "s1", [{ start: 0, end: 1 }], measurer, CTX);
+    expect(sheetOf(m).columns).toEqual([{ min: 0, max: 0, widthPx: 14 * 7 + 5 }]);
+    autofitRows(m, "s1", [{ start: 0, end: 0 }], fixedMeasurer(7, 40), CTX);
+    expect(sheetOf(m).rows[0]).toEqual(row(0, [value(0, "abcdefghijklmn")], { heightPt: 30 }));
+    // A measured height at or under the default stores none.
+    autofitRows(m, "s1", [{ start: 0, end: 0 }], fixedMeasurer(7, 10), CTX);
+    expect(sheetOf(m).rows[0]).toEqual(row(0, [value(0, "abcdefghijklmn")]));
+  });
+});
+
+describe("merges (SPEC-124 \"Merges\")", () => {
+  const filled = (): SpreadsheetModel => {
+    const m = model([
+      sheet("s1", "Sheet1", {
+        rows: [row(0, [value(0, "Title"), value(1, "B1", { styleId: 1 }), value(2, null, { formula: "1+1" })]), row(1, [value(0, "a"), value(1, "b")])],
+      }),
+    ]);
+    m.styles = [{}, { font: { bold: true } }];
+    return m;
+  };
+
+  it("mergeCells 'cells' keeps the upper-left value, clears the others' values and formulas, keeps their styles", () => {
+    const m = filled();
+    expect(mergeDiscardsValues(m, "s1", [range(0, 0, 0, 2)], "cells")).toBe(true);
+    expect(mergeCells(m, "s1", [range(0, 0, 0, 2)], "cells")).toEqual({ ok: true });
+    const s = sheetOf(m);
+    expect(s.merges).toEqual([range(0, 0, 0, 2)]);
+    expect(s.rows[0]!.cells).toEqual([value(0, "Title"), value(1, null, { styleId: 1 })]);
+    expect(s.dirty).toBe(true);
+  });
+
+  it("'centre' adds horizontal center alignment to the upper-left cell", () => {
+    const m = filled();
+    mergeCells(m, "s1", [range(0, 0, 0, 1)], "centre");
+    const anchor = sheetOf(m).rows[0]!.cells[0]!;
+    expect(m.styles[anchor.styleId!]!.alignment).toEqual({ horizontal: "center" });
+  });
+
+  it("'across' merges each row separately; a single cell is a no-op", () => {
+    const m = filled();
+    mergeCells(m, "s1", [range(0, 0, 1, 1)], "across");
+    expect(sheetOf(m).merges).toEqual([range(0, 0, 0, 1), range(1, 0, 1, 1)]);
+    const single = filled();
+    const sheets = single.sheets;
+    expect(mergeCells(single, "s1", [range(1, 1, 1, 1)], "cells")).toEqual({ ok: true });
+    expect(single.sheets).toBe(sheets);
+  });
+
+  it("a range partially overlapping a merge extends to cover it, and the merges inside are replaced", () => {
+    const m = model([sheet("s1", "Sheet1", { merges: [range(1, 1, 2, 2), range(5, 5, 6, 6)] })]);
+    expect(mergeCells(m, "s1", [range(0, 0, 1, 1)], "cells")).toEqual({ ok: true });
+    expect(sheetOf(m).merges).toEqual([range(5, 5, 6, 6), range(0, 0, 2, 2)]);
+  });
+
+  it("refuses a merge partly over an array range", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(0, [value(1, 2, { formula: "A1:A2*2", arrayRange: range(0, 1, 1, 1) })])] })]);
+    expect(mergeCells(m, "s1", [range(0, 0, 0, 1)], "cells")).toEqual({ ok: false, message: PARTIAL_ARRAY_MESSAGE });
+  });
+
+  it("unmergeCells removes every intersecting merge, content and styles kept", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(0, [value(0, "x", { styleId: 0 })])], merges: [range(0, 0, 1, 1), range(4, 4, 5, 5)] })]);
+    const rows = sheetOf(m).rows;
+    unmergeCells(m, "s1", [range(1, 1, 1, 1)]);
+    expect(sheetOf(m).merges).toEqual([range(4, 4, 5, 5)]);
+    expect(sheetOf(m).rows).toBe(rows);
+  });
+
+  it("Clear formats and Clear all unmerge the merges inside the cleared ranges", () => {
+    const m = model([sheet("s1", "Sheet1", { merges: [range(0, 0, 0, 1), range(3, 0, 3, 5)] })]);
+    clearRange(m, "s1", [range(0, 0, 1, 2)], "formats");
+    expect(sheetOf(m).merges).toEqual([range(3, 0, 3, 5)]);
+    clearRange(m, "s1", [range(3, 0, 3, 5)], "all");
+    expect(sheetOf(m).merges).toEqual([]);
+  });
+
+  it("the format painter reproduces the source's merges in the target", () => {
+    const m = model([sheet("s1", "Sheet1", { merges: [range(0, 0, 0, 1)], rows: [row(0, [value(0, "x")]), row(5, [value(3, "keep"), value(4, "lost")])] })]);
+    const pattern = capturePattern(sheetOf(m), range(0, 0, 0, 1))!;
+    expect(pattern.merges).toEqual([range(0, 0, 0, 1)]);
+    expect(patternMerges(range(5, 3, 5, 6), pattern)).toEqual([range(5, 3, 5, 4), range(5, 5, 5, 6)]);
+    expect(mergeDiscardsValues(m, "s1", patternMerges(range(5, 3, 5, 6), pattern), "cells")).toBe(true);
+    applyPattern(m, "s1", range(5, 3, 5, 6), pattern);
+    applyPatternMerges(m, "s1", range(5, 3, 5, 6), pattern);
+    expect(sheetOf(m).merges).toEqual([range(0, 0, 0, 1), range(5, 3, 5, 4), range(5, 5, 5, 6)]);
+    expect(sheetOf(m).rows[1]!.cells).toEqual([value(3, "keep")]);
   });
 });
 

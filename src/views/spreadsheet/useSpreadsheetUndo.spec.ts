@@ -74,13 +74,15 @@ describe("snapshots are by reference", () => {
     expect(snapshot.sheets[0]!.rows).toBe(model.sheets[0]!.rows);
     expect(snapshot.workbook.opaque).toBe(model.opaque);
     expect(snapshot.workbook.styles).toBe(model.styles);
+    // SPEC-124: columns, merges and frozen are copy-on-write, kept by reference.
+    expect(snapshot.sheets[0]!.columns).toBe(model.sheets[0]!.columns);
+    expect(snapshot.sheets[0]!.merges).toBe(model.sheets[0]!.merges);
     // Small fields are copies, not the live objects.
-    expect(snapshot.sheets[0]!.columns).not.toBe(model.sheets[0]!.columns);
     expect(snapshot.sheets[0]).not.toBe(model.sheets[0]);
   });
 
   it("names the by-reference fields the spec lists", () => {
-    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml"]);
+    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen"]);
     expect(WORKBOOK_SNAPSHOT_FIELDS).toEqual(["activeSheetIndex", "structureDirty", "styles", "opaque", "odsContentEnvelope"]);
   });
 });
