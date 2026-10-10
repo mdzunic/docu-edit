@@ -200,8 +200,8 @@ export function fillRange(
   let usedSeries = false;
   lines.forEach((line, k) => {
     const series = detectSeries(line, locale, { axis, dateSystem: model.dateSystem });
-    const extends_ = series.kind !== "repeat" && (mode === "series" || (mode === "toggle" ? !series.byDefault : mode === "auto" || mode === "no-formats" ? series.byDefault : false));
-    usedSeries ||= extends_;
+    const useSeries = series.kind !== "repeat" && (mode === "series" || (mode === "toggle" ? !series.byDefault : mode === "auto" || mode === "no-formats" ? series.byDefault : false));
+    usedSeries ||= useSeries;
     const from = axis === "row" ? band.top : band.left;
     const to = axis === "row" ? band.bottom : band.right;
     for (let at = from; at <= to; at += 1) {
@@ -211,7 +211,7 @@ export function fillRange(
       const source = line[mod(i, n)]!;
       const change: CellChange = {};
       if (mode !== "formats") {
-        const value = extends_ ? series.at(i) : copyAt(line, i, axis);
+        const value = useSeries ? series.at(i) : copyAt(line, i, axis);
         change.content = { value: value.value };
         if (value.formula !== undefined) {
           change.content.formula = value.formula;

@@ -1,8 +1,6 @@
 <script setup lang="ts">
-// The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget):
-// loading (useWorkbookLoad), view state, geometry, zoom, selection, menus, locale, formulas,
-// recalculation, sheet commands, undo, downloads and cell entry (useWorkbookEditing), formatting
-// and the painter (SPEC-123), rows, columns, resizing and merges (SPEC-124); surfaces: components/.
+// The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget): each composable owns its feature —
+// loading, view state, selection, editing, formatting, rows and columns, merges, clipboard, fill and move; surfaces: components/.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -12,12 +10,15 @@ import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import WorkbookCommandBar from "../components/spreadsheet/WorkbookCommandBar.vue";
 import WorkbookNotFound from "../components/spreadsheet/WorkbookNotFound.vue";
 import { useTheme } from "../composables/useTheme";
+import { useFillHandle } from "./spreadsheet/useFillHandle";
 import { useFormatPainter } from "./spreadsheet/useFormatPainter";
 import { useFormatting } from "./spreadsheet/useFormatting";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
 import { useHeaderResize } from "./spreadsheet/useHeaderResize";
 import { useMerges } from "./spreadsheet/useMerges";
 import { useRecalc } from "./spreadsheet/useRecalc";
+import { useRangeMove } from "./spreadsheet/useRangeMove";
+import { useSheetClipboard } from "./spreadsheet/useSheetClipboard";
 import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
 import { useSheetViewState } from "./spreadsheet/useSheetViewState";
@@ -29,11 +30,9 @@ import { useWorkbookEditing } from "./spreadsheet/useWorkbookEditing";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
 const route = useRoute();
-// The shared theme composable keeps the view themed by the app tokens, following the OS (SPEC-059).
-useTheme();
+useTheme(); // the app tokens' theme, following the OS (SPEC-059)
 
-const workbookId = computed(() => String(route.params.id ?? ""));
-const book = useWorkbookLoad({ workbookId, router: useRouter() });
+const book = useWorkbookLoad({ workbookId: computed(() => String(route.params.id ?? "")), router: useRouter() });
 const viewState = useSheetViewState({ workbook: book.workbook, activeIndex: book.activeIndex });
 const sheetMetrics = useSheetMetrics(() => book.activeSheet.value);
 const zoom = useSheetZoom({ viewState });
@@ -47,8 +46,11 @@ const structure = useStructure({ book, viewState, selection, sheetMetrics, editi
 const headerResize = useHeaderResize({ book, structure, selection, sheetMetrics, zoom });
 const merges = useMerges({ book, viewState, selection, sheetMetrics, editing });
 const painter = useFormatPainter({ book, selection, formatting, merges });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter, structure, headerResize, merges }));
+const clipboard = useSheetClipboard({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
+const fillHandle = useFillHandle({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
+const rangeMove = useRangeMove({ book, viewState, selection, editing });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove }));
 </script>
 
 <template>
@@ -85,9 +87,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       #status-bar
     >
       <SpreadsheetStatusBar
-        v-bind="{ ...selection.statusTexts.value, ...recalc.status.value, mode: editing.cell.modeLabel.value }"
-        :zoom-percent="zoom.percent.value"
-        :zoom-disabled="book.activeSheet.value?.kind !== 'grid'"
+        v-bind="{ ...selection.statusTexts.value, ...recalc.status.value, mode: editing.cell.modeLabel.value, zoomPercent: zoom.percent.value, zoomDisabled: book.activeSheet.value?.kind !== 'grid' }"
         @zoom-in="zoom.zoomIn"
         @zoom-out="zoom.zoomOut"
         @apply-zoom="zoom.applyInput"

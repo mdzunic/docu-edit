@@ -30,6 +30,13 @@
 // `Minus`, so Option's dead characters on macOS do not matter). Ctrl/Cmd+=,
 // Ctrl/Cmd+- and Ctrl/Cmd+Shift+= stay the sheet zoom (SPEC-063's
 // view.zoomIn/zoomOut).
+//
+// SPEC-125 adds paste special — Ctrl/Cmd+Shift+V, alternate Ctrl+Alt+V
+// (Control+Option+V on macOS), both by physical key (`KeyV`) — and fill down
+// / right, Ctrl/Cmd+D and Ctrl/Cmd+R. D and R are the browser's bookmark and
+// reload keys: useFillHandle claims them only while the grid has focus (as
+// Google Sheets does); Edit ▸ Fill ▸ Down/Right is the menu path. Copy, cut
+// and paste are the native clipboard events, not entries here.
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -48,10 +55,14 @@ export type SheetShortcutId =
   | "sheet.formatPercent"
   | "sheet.formatScientific"
   | "sheet.insertCells"
-  | "sheet.deleteCells";
+  | "sheet.deleteCells"
+  | "sheet.pasteSpecial"
+  | "sheet.fillDown"
+  | "sheet.fillRight";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
+const PASTE_CATEGORY = "Paste and fill";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -80,6 +91,18 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // SPEC-124: Ctrl/Cmd + Alt/Option + a physical key.
     { id: "sheet.insertCells", label: "Insert rows or columns", category: STRUCTURE_CATEGORY, bindings: [{ key: "=", code: "Equal", mod: true, alt: true }] },
     { id: "sheet.deleteCells", label: "Delete rows or columns", category: STRUCTURE_CATEGORY, bindings: [{ key: "-", code: "Minus", mod: true, alt: true }] },
+    // SPEC-125: paste special by physical key, fill down and right.
+    {
+      id: "sheet.pasteSpecial",
+      label: "Paste special",
+      category: PASTE_CATEGORY,
+      bindings: [
+        { key: "V", code: "KeyV", mod: true, shift: true },
+        { key: "V", code: "KeyV", ctrl: true, alt: true },
+      ],
+    },
+    { id: "sheet.fillDown", label: "Fill down", category: PASTE_CATEGORY, bindings: [{ key: "d", mod: true }] },
+    { id: "sheet.fillRight", label: "Fill right", category: PASTE_CATEGORY, bindings: [{ key: "r", mod: true }] },
   ];
   return definitions;
 }
@@ -88,6 +111,12 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
  * for another platform (a test, a preview) takes sheetShortcutDefinitions
  * with that same `isMac` instead — the strikethrough binding differs. */
 export const SHEET_SHORTCUTS: ShortcutDefinition[] = sheetShortcutDefinitions(isMacPlatform());
+
+/** Whether a shortcut is one of the formatting commands useFormatting runs
+ * (the others are useStructure's, useSheetClipboard's and useFillHandle's). */
+export function isFormattingShortcut(id: string): boolean {
+  return SHEET_SHORTCUTS.find((definition) => definition.id === id)?.category === CATEGORY;
+}
 
 /** The number-format shortcut ids → their format (useFormatting runs them). */
 export const NUMBER_SHORTCUTS: Readonly<Record<string, NumberShortcutId>> = {

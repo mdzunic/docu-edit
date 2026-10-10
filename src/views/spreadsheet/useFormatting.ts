@@ -62,7 +62,7 @@ import { cellColorHex, cellFontName, cellStyle, effectiveStyleId } from "../../l
 import type { CellEditing } from "./useCellEditing";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { headerAt, inGrid, selectionAxis } from "./headerMenu";
-import { NUMBER_SHORTCUTS, SHEET_SHORTCUTS, TOGGLE_LABELS, TOGGLE_SHORTCUTS } from "./sheetShortcuts";
+import { isFormattingShortcut, NUMBER_SHORTCUTS, SHEET_SHORTCUTS, TOGGLE_LABELS, TOGGLE_SHORTCUTS } from "./sheetShortcuts";
 import { cellStyleGroups, documentFonts, numberFormatItems, numberFormatLabel, type SheetToolbarCommand, type SheetToolbarState } from "./sheetToolbar";
 import { useFormatCellsDialog } from "./useFormatCellsDialog";
 import type { SheetSelectionController } from "./useSheetSelection";
@@ -334,8 +334,8 @@ export function useFormatting(deps: FormattingDeps) {
       return;
     }
     const id = findShortcut(event, isMacPlatform(), SHEET_SHORTCUTS)?.id;
-    // SPEC-124's insert/delete keys are useStructure's.
-    if (id === undefined || id === "sheet.insertCells" || id === "sheet.deleteCells") {
+    // Insert/delete (SPEC-124), paste special and fills (SPEC-125) are others'.
+    if (id === undefined || !isFormattingShortcut(id)) {
       return;
     }
     event.preventDefault();

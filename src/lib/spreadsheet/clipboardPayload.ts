@@ -138,8 +138,8 @@ function isRecord(value: unknown): value is Data {
 }
 
 /** An own property only — never one inherited through a prototype. */
-function own(record: Data, key: string): unknown {
-  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+function own(data: Data, key: string): unknown {
+  return Object.prototype.hasOwnProperty.call(data, key) ? data[key] : undefined;
 }
 
 function record(value: unknown): Data {
@@ -174,7 +174,20 @@ function list(value: unknown, max: number): unknown[] {
   return Array.isArray(value) && value.length <= max ? value : fail();
 }
 
-const PRINTABLE = /^[^\u0000-\u001f\u007f-\u009f]+$/;
+/** Non-empty and free of C0 and C1 control characters. */
+export function isPrintable(candidate: string): boolean {
+  if (candidate.length === 0) {
+    return false;
+  }
+  for (let i = 0; i < candidate.length; i += 1) {
+    const code = candidate.charCodeAt(i);
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 const ERROR_CODE_SET: ReadonlySet<string> = new Set(ERROR_CODES);
@@ -210,7 +223,7 @@ function validColor(value: unknown): ModelColor {
 
 function validFamily(value: unknown): ModelFont {
   if (typeof value === "string") {
-    return value.length <= MAX_NAME_LENGTH && PRINTABLE.test(value) ? value : fail();
+    return value.length <= MAX_NAME_LENGTH && isPrintable(value) ? value : fail();
   }
   return { theme: oneOf(own(record(value), "theme"), ["major", "minor"] as const) };
 }

@@ -32,12 +32,11 @@
 import { parseColorInput } from "../core/colors";
 import type { GridRange } from "./address";
 import { TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
-import { MAX_COPY_CELLS } from "./clipboardPayload";
+import { isPrintable, MAX_COPY_CELLS } from "./clipboardPayload";
 import { MAX_COLS, MAX_ROWS, toCellError, type CellBorderEdge, type CellBorders, type CellStyle, type CellValue, type SheetBorderStyle } from "./model";
 import { BUILTIN_NUMBER_FORMATS } from "./numberFormat/builtin";
-import type { SpreadsheetLocale } from "./numberFormat/locale";
 import { parseFormatCode } from "./numberFormat/parse";
-import { parsedField, type PasteBlock, type PasteCell, type PasteSource } from "./paste";
+import { parsedField, type PasteBlock, type PasteCell, type PasteSource, type TextContext } from "./paste";
 import { dateKindOf, DATE_SYSTEM_OFFSET } from "./series";
 import { styleKey } from "./styles";
 
@@ -46,10 +45,9 @@ export const MAX_IMPORT_HTML_LENGTH = 64 * 1024 * 1024;
 const MAX_COLSPAN = 1000;
 const MAX_ROWSPAN = 65534;
 
-export interface ImportContext {
-  locale: SpreadsheetLocale;
-  dateSystem: "1900" | "1904";
-}
+/** parseInput's locale and date system, and the view's canonical formula
+ * form (paste.ts TextContext). */
+export type ImportContext = TextContext;
 
 type Declarations = Map<string, string>;
 
@@ -222,11 +220,10 @@ interface TagFormat {
 }
 
 const FONT_SIZES_PT = [0, 7.5, 10, 12, 13.5, 18, 24, 36];
-const PRINTABLE_FAMILY = /^[^\u0000-\u001f\u007f-\u009f()\\<>{};]+$/;
-
+/** A font family: printable, and nothing that could leave a CSS value. */
 function cssFamily(value: string): string | undefined {
   const first = decodeCssString(value.split(",")[0] ?? "").trim();
-  return first.length > 0 && first.length <= 255 && PRINTABLE_FAMILY.test(first) ? first : undefined;
+  return first.length <= 255 && isPrintable(first) && !/[()\\<>{};]/.test(first) ? first : undefined;
 }
 
 /** The whitelisted CSS and tag formats as a cell style (see the header). */
@@ -516,7 +513,7 @@ interface Reading {
 }
 
 function fromText(text: string, ctx: ImportContext): Reading {
-  const field = parsedField(text, ctx.locale, ctx.dateSystem);
+  const field = parsedField(text, ctx);
   const reading: Reading = { value: field.value };
   if (field.formula !== undefined) {
     reading.formula = field.formula;

@@ -318,7 +318,8 @@ function ordinalSeries(texts: readonly string[]): Series | null {
   if (matches.some((m) => !m)) {
     return null;
   }
-  const upper = matches[0]![2]! === matches[0]![2]!.toUpperCase();
+  const suffix = matches[0]![2] ?? "";
+  const upper = suffix === suffix.toUpperCase();
   return steppedSeries(
     matches.map((m) => Number(m![1])),
     "ordinal",

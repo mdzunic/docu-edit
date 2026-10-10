@@ -388,9 +388,10 @@ export function cellCss(style: CellStyle, theme: DocumentTheme): string {
   return css.join(";");
 }
 
-/** The two flavours of a copy (see the module header); `ctx` is the view's
- * format context (default: the workbook's in en-US). */
-export function copyFlavours(model: SpreadsheetModel, sheetId: string, copy: ClipboardCopy, ctx?: FormatContext): { text: string; html: string } {
+/** The two flavours of a copy (see the module header) and the payload
+ * attribute inside the HTML; `ctx` is the view's format context (default:
+ * the workbook's in en-US). */
+export function copyFlavours(model: SpreadsheetModel, sheetId: string, copy: ClipboardCopy, ctx?: FormatContext): { text: string; html: string; attribute: string } {
   const sheet = model.sheets.find((each) => each.id === sheetId);
   if (!sheet) {
     throw new RangeError(`No sheet ${sheetId}`);
@@ -441,9 +442,11 @@ export function copyFlavours(model: SpreadsheetModel, sheetId: string, copy: Cli
   });
   lines.push(line);
   html.push("</tr>");
+  const attribute = encodePayload(copy.payload);
   return {
     text: tsvText(lines),
-    html: `<meta charset="utf-8"><table ${PAYLOAD_ATTRIBUTE}="${encodePayload(copy.payload)}">${html.join("")}</table>`,
+    html: `<meta charset="utf-8"><table ${PAYLOAD_ATTRIBUTE}="${attribute}">${html.join("")}</table>`,
+    attribute,
   };
 }
 
@@ -455,7 +458,8 @@ export function clipboardFlavours(
   cutToken?: string,
   ctx?: FormatContext,
 ): { text: string; html: string } {
-  return copyFlavours(model, sheetId, buildClipboardCopy(model, sheetId, range, cutToken), ctx);
+  const { text, html } = copyFlavours(model, sheetId, buildClipboardCopy(model, sheetId, range, cutToken), ctx);
+  return { text, html };
 }
 
 // --- TSV in ------------------------------------------------------------------------------

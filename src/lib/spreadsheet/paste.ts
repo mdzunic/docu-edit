@@ -59,7 +59,6 @@ import {
 import { MAX_CLIPBOARD_FORMULA_LENGTH, MAX_COPY_CELLS, type ClipboardCell, type ClipboardColProps, type ClipboardRowProps, type SheetClipboardPayload } from "./clipboardPayload";
 import { patchStyle } from "./formatting";
 import { parseFormula } from "./formula/parse";
-import { printFormula } from "./formula/print";
 import { r1c1ToA1 } from "./formula/r1c1";
 import { rewriteReferences, shiftFormula, type RefPart, type ReferenceNode } from "./formula/references";
 import { parseSheetPrefix, sheetPrefixOf, tokenize } from "./formula/tokens";
@@ -142,12 +141,35 @@ export interface ParsedField {
   quotePrefix?: true;
 }
 
+/** How pasted text is read: parseInput's locale and date system, and the
+ * view's canonical form of a formula body (SPEC-122's commit — cellEntry.ts
+ * canonicalFormula; null: no formula). Without one a formula body SPEC-119
+ * parses is kept as written. */
+export interface TextContext {
+  locale: SpreadsheetLocale;
+  dateSystem: "1900" | "1904";
+  canonical?: (body: string) => string | null;
+}
+
+/** A body kept as written when parseFormula accepts it. */
+function parsesAsWritten(body: string): string | null {
+  if (body.length > MAX_CLIPBOARD_FORMULA_LENGTH) {
+    return null;
+  }
+  try {
+    parseFormula(body);
+    return body;
+  } catch {
+    return null;
+  }
+}
+
 /** A field of pasted text as SPEC-122 reads typed text (parseInput in the
- * locale and date system), a formula stored canonical; text that starts
- * with "=" but is no formula SPEC-119 parses stays text. */
-export function parsedField(text: string, locale: SpreadsheetLocale, dateSystem: "1900" | "1904"): ParsedField {
+ * locale and date system), a formula in the context's canonical form; text
+ * that starts with "=" but is no formula SPEC-119 parses stays text. */
+export function parsedField(text: string, ctx: TextContext): ParsedField {
   const clean = sanitizeXmlText(text).slice(0, MAX_TEXT_LENGTH);
-  const parsed = parseInput(clean, locale, dateSystem);
+  const parsed = parseInput(clean, ctx.locale, ctx.dateSystem);
   if (parsed.formula === undefined) {
     const field: ParsedField = { value: parsed.value };
     if (parsed.numberFormat !== undefined) {
@@ -161,19 +183,14 @@ export function parsedField(text: string, locale: SpreadsheetLocale, dateSystem:
     }
     return field;
   }
-  if (parsed.formula.length <= MAX_CLIPBOARD_FORMULA_LENGTH) {
-    try {
-      return { value: null, formula: printFormula(parseFormula(parsed.formula)) };
-    } catch {
-      // Not a formula after all: the text as typed.
-    }
-  }
-  return { value: clean };
+  const formula = (ctx.canonical ?? parsesAsWritten)(parsed.formula);
+  // Not a formula after all: the text as typed.
+  return formula === null ? { value: clean } : { value: null, formula };
 }
 
 /** Plain text as a block of entries (see the module header); null for no
  * text, a refusal past MAX_COPY_CELLS. */
-export function blockFromText(text: string, ctx: { locale: SpreadsheetLocale; dateSystem: "1900" | "1904" }): PasteBlock | string | null {
+export function blockFromText(text: string, ctx: TextContext): PasteBlock | string | null {
   const rows = parseTsv(text);
   const cols = rows.reduce((most, fields) => Math.max(most, fields.length), 0);
   if (rows.length === 0 || cols === 0) {
@@ -188,7 +205,7 @@ export function blockFromText(text: string, ctx: { locale: SpreadsheetLocale; da
       if (field === "") {
         return;
       }
-      const parsed = parsedField(field, ctx.locale, ctx.dateSystem);
+      const parsed = parsedField(field, ctx);
       const cell: PasteCell = { r, c, v: parsed.value, entry: entryFromInput(parsed) };
       if (parsed.formula !== undefined) {
         cell.f = parsed.formula;

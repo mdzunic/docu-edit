@@ -2,14 +2,14 @@
 // `data-sheets-formula` a Sheets clipboard table carries, converted to
 // canonical A1 text relative to each destination cell — `R[-1]C[0]` relative
 // to the cell, `R2C3` absolute, `RC` the cell itself — string literals and
-// quoted sheet names kept as written. A reference leaving the grid, a whole
-// row or column (`R1:R3`, `C[1]`), or a result SPEC-119's parseFormula
-// rejects makes the formula unconvertible: null, and the paste takes the
-// cell's value instead.
+// quoted sheet names and every other character kept as written (so this is
+// a token-level conversion, never print(parse())). A reference leaving the
+// grid, a whole row or column (`R1:R3`, `C[1]`), or a result SPEC-119's
+// parseFormula rejects makes the formula unconvertible: null, and the paste
+// takes the cell's value instead.
 import { colToLetters, type CellRef } from "../address";
 import { MAX_COLS, MAX_ROWS } from "../model";
 import { parseFormula } from "./parse";
-import { printFormula } from "./print";
 
 const R1C1_CELL = /^R(?:\[(-?\d+)\]|(\d+))?C(?:\[(-?\d+)\]|(\d+))?/i;
 const R1C1_BAND = /^[RC](?:\[-?\d+\]|\d+)/i;
@@ -56,7 +56,8 @@ export function r1c1ToA1(formula: string, at: CellRef): string | null {
     i += 1;
   }
   try {
-    return printFormula(parseFormula(out));
+    parseFormula(out);
+    return out;
   } catch {
     return null;
   }

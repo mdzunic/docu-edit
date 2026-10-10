@@ -84,6 +84,9 @@ export interface SpreadsheetUndo {
   canRedo: Ref<boolean>;
   undoLabel: Ref<string>;
   redoLabel: Ref<string>;
+  /** SPEC-125: bumped by every committed step, undo, redo and reset — "any
+   * edit" (the marching ants and a pending cut end on it). */
+  revision: Ref<number>;
 }
 
 /** A stored state: every sheet (small fields cloned, the by-reference
@@ -164,6 +167,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
   const canRedo = ref(false);
   const undoLabel = ref("");
   const redoLabel = ref("");
+  const revision = ref(0);
   /** The step being recorded, and what the model held when it was. */
   let pending: { step: Step; sheets: Sheet[]; fields: unknown[] } | null = null;
 
@@ -172,6 +176,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     canRedo.value = redoStack.length > 0;
     undoLabel.value = undoStack.at(-1)?.label ?? "";
     redoLabel.value = redoStack.at(-1)?.label ?? "";
+    revision.value += 1;
   }
 
   /** The edit pipeline (see the module header). */
@@ -304,5 +309,5 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     }
   });
 
-  return { record, commit, undo, redo, reset, canUndo, canRedo, undoLabel, redoLabel };
+  return { record, commit, undo, redo, reset, canUndo, canRedo, undoLabel, redoLabel, revision };
 }

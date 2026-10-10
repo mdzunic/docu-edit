@@ -34,15 +34,23 @@
 // `data-index` (the header menu reads it); near a header boundary the grid
 // shows the col-resize/row-resize cursor, and while a boundary is dragged the
 // guide line (`sheet-resize-guide`) and the size tooltip
-// (`sheet-resize-tooltip`). Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
+// (`sheet-resize-tooltip`). SPEC-125: the marching ants (SheetCopyMarquee),
+// the fill handle (SheetFillHandle) and the fill and drag-move previews
+// (`sheet-fill-preview`, `sheet-move-preview` with the destination's address
+// in `sheet-move-tooltip`) among the overlays, the fill options chip
+// (FillOptionsChip) above them, and the move cursor over the selection's
+// outline. Runtime prop declarations per the espree constraint (see
+// AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
 import { asSheet, COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "../../views/spreadsheet/useSheetViewport";
 import { refColor } from "../../views/spreadsheet/cellEditorDom";
 import CellEditor from "./CellEditor.vue";
+import FillOptionsChip from "./FillOptionsChip.vue";
 import SheetCellLayer from "./SheetCellLayer.vue";
+import SheetCopyMarquee from "./SheetCopyMarquee.vue";
+import SheetFillHandle from "./SheetFillHandle.vue";
 
 const props = defineProps({
   /** The grid Sheet on show. */
@@ -74,6 +82,8 @@ const painterMode = computed(() => asSheetGridContext(props.context).painter?.mo
 const resizeCursor = computed(() => grid.resize.value?.cursor.value ?? "");
 const resizeGuide = computed(() => grid.resize.value?.guide.value ?? null);
 const resizeTooltip = computed(() => grid.resize.value?.tooltip.value ?? null);
+/** SPEC-125: the ants, the fill handle, the previews, the chip, the cursor. */
+const transfer = computed(() => grid.transfer.value);
 
 function px(value = 0) {
   return `${value}px`;
@@ -110,7 +120,7 @@ function unscroll(event = new Event("scroll")) {
     :aria-activedescendant="grid.activeDescendant.value"
     :data-show-formulas="props.showFormulas ? 'true' : undefined"
     :data-format-painter="painterMode || undefined"
-    :style="{ cursor: resizeCursor || undefined }"
+    :style="{ cursor: resizeCursor || transfer.cursor || undefined }"
     data-testid="spreadsheet-grid"
     tabindex="0"
     @scroll="vp.onScroll"
@@ -174,6 +184,28 @@ function unscroll(event = new Event("scroll")) {
               data-testid="sheet-ref-highlight"
               :data-ref-index="mark.colorIndex"
               :style="{ left: px(mark.left), top: px(mark.top), width: px(mark.width), height: px(mark.height), borderColor: refColor(mark.colorIndex) }"
+            />
+            <SheetCopyMarquee
+              v-if="transfer.ants"
+              v-bind="transfer.ants"
+            />
+            <div
+              v-if="transfer.fillPreview"
+              class="sheet-transfer-preview"
+              data-testid="sheet-fill-preview"
+              :style="{ left: px(transfer.fillPreview.left), top: px(transfer.fillPreview.top), width: px(transfer.fillPreview.width), height: px(transfer.fillPreview.height) }"
+            />
+            <div
+              v-if="transfer.movePreview"
+              class="sheet-transfer-preview"
+              data-testid="sheet-move-preview"
+              :title="transfer.movePreview.address"
+              :style="{ left: px(transfer.movePreview.left), top: px(transfer.movePreview.top), width: px(transfer.movePreview.width), height: px(transfer.movePreview.height) }"
+            />
+            <SheetFillHandle
+              v-if="transfer.handle"
+              :left="transfer.handle.left"
+              :top="transfer.handle.top"
             />
             <div
               v-if="grid.overlays.freezeLines.value.vertical !== null"
@@ -319,6 +351,22 @@ function unscroll(event = new Event("scroll")) {
             :style="resizeGuide.axis === 'col' ? { left: px(RH + resizeGuide.at), height: px(vp.viewH.value) } : { top: px(CH + resizeGuide.at), width: px(vp.viewW.value) }"
           />
           <div
+            v-if="transfer.movePreview"
+            class="sheet-resize-tooltip"
+            role="status"
+            data-testid="sheet-move-tooltip"
+            :style="{ left: px(RH + transfer.movePreview.left), top: px(CH + transfer.movePreview.top + transfer.movePreview.height + 4) }"
+          >
+            {{ transfer.movePreview.address }}
+          </div>
+          <FillOptionsChip
+            v-if="transfer.chip && grid.fillChip.value"
+            :x="RH + transfer.chip.x"
+            :y="CH + transfer.chip.y"
+            :applied="transfer.chip.applied"
+            @choose="grid.fillChip.value.choose"
+          />
+          <div
             v-if="resizeTooltip"
             class="sheet-resize-tooltip"
             role="status"
@@ -427,6 +475,13 @@ function unscroll(event = new Event("scroll")) {
 .sheet-freeze-line {
   position: absolute;
   background: var(--border-default);
+}
+
+/* SPEC-125: the target of a fill drag and the destination of a drag-move. */
+.sheet-transfer-preview {
+  position: absolute;
+  box-sizing: border-box;
+  border: var(--space-1) dashed var(--accent);
 }
 
 /* SPEC-124: the boundary being dragged, across the whole viewport, and its

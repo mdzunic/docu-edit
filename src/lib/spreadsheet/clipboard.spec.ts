@@ -568,7 +568,6 @@ describe("external sources — each producer's markers (inline snippets)", () =>
   });
 
   it("passes SPEC-016's sanitisation list: script, style with url(), on*, javascript:, remote <img>, iframe", () => {
-    const w = window as unknown as { __xss?: number };
     const html =
       '<html><head><style>td { background: url(https://evil.example/bg) }</style><script>window.__xss = 1</script></head><body>' +
       '<table onmouseover="window.__xss = 2"><tr>' +
@@ -582,7 +581,7 @@ describe("external sources — each producer's markers (inline snippets)", () =>
     for (const hostile of ["script", "__xss", "iframe", "evil.example", "javascript:", "url(", "onclick", "expression"]) {
       expect(serialised).not.toContain(hostile);
     }
-    expect(w.__xss).toBeUndefined();
+    expect(Reflect.get(window, "__xss")).toBeUndefined();
   });
 });
 
