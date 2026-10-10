@@ -1,14 +1,25 @@
 <script setup lang="ts">
 // Bulk action bar (SPEC-067 AC-27..32). Pure-lib actions (download,
 // duplicate, star, clear) run directly on the controller; "Move to trash"
-// emits so HomeView can raise the Undo toast it owns.
+// emits so HomeView can raise the Undo toast it owns, and "Convert to PDF…"
+// (SPEC-108) emits the one selected id for HomeView's dialog. That action
+// shows only while every selected entry is an image, and converts exactly
+// one: with more selected it stays visible but disabled, saying why.
+import { computed } from "vue";
 import UiButton from "../../components/ui/UiButton.vue";
+import { isImageFormat } from "../../lib/libraryMenu";
 
 const props = defineProps({
   lib: { type: Object, required: true },
 });
 
-const emit = defineEmits(["trash"]);
+const emit = defineEmits(["trash", "convert-pdf"]);
+
+const allImages = computed(() => {
+  const ids = props.lib.selectedIds.value;
+  return ids.length > 0 && ids.every((id = "") => isImageFormat(props.lib.formatOf(id)));
+});
+const convertOne = computed(() => allImages.value && props.lib.selectedIds.value.length === 1);
 </script>
 
 <template>
@@ -44,6 +55,16 @@ const emit = defineEmits(["trash"]);
       @click="props.lib.starDocuments(props.lib.selectedIds.value)"
     >
       Star
+    </UiButton>
+    <UiButton
+      v-if="allImages"
+      size="sm"
+      data-testid="bulk-convert-pdf"
+      :disabled="!convertOne"
+      :title="convertOne ? undefined : 'Convert to PDF works on one image at a time'"
+      @click="emit('convert-pdf', props.lib.selectedIds.value[0])"
+    >
+      Convert to PDF…
     </UiButton>
     <UiButton
       size="sm"

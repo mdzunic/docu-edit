@@ -16,6 +16,7 @@ import type { MeasurementUnit } from "./core/units";
 import type { Margins } from "./core/pageSetup";
 import { PAPER_SIZE_NAMES } from "./core/pageSetup";
 import { AUTOSAVE_DEBOUNCE_MS } from "./core/autosaveScheduler";
+import { DEFAULT_SHEET_DPI, SHEET_DPI_CHOICES, SHEET_PAPER_NAMES } from "./core/sheetLayout";
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from "./core/language";
 import { STANDARD_FONT_FAMILIES } from "./core/fonts";
 import { MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT } from "./fonts";
@@ -165,6 +166,15 @@ export interface Preferences {
    * date order, month names (SPEC-118). A preference, never a property of a
    * file: it changes no stored or downloaded byte. Default en-US. */
   spreadsheetLocale: SpreadsheetLocaleTag;
+  /** The assembly sheet's paper (SPEC-108): a named size or "Fit to
+   * content". Null until the user picks one — the sheet then follows
+   * `defaultPageSizeId`, so a user who works in Letter assembles on Letter. */
+  assemblyPaper: string | null;
+  /** The assembly sheet's margins (SPEC-108), in centimetres. Null until the
+   * user sets them — the sheet then follows `defaultMarginsId`'s preset. */
+  assemblyMargins: Margins | null;
+  /** The assembly sheet's resolution, one of SHEET_DPI_CHOICES (SPEC-108). */
+  assemblyDpi: number;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -236,6 +246,9 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   snapToGrid: false,
   gridSpacingCm: 0.25,
   spreadsheetLocale: DEFAULT_SPREADSHEET_LOCALE,
+  assemblyPaper: null,
+  assemblyMargins: null,
+  assemblyDpi: DEFAULT_SHEET_DPI,
 };
 
 /** The snap-to-grid spacing bounds (SPEC-072): fine enough to be useful, never
@@ -266,6 +279,20 @@ function nonEmptyString(raw: unknown): string | undefined {
 
 function inSet(raw: unknown, values: readonly string[]): string | undefined {
   return typeof raw === "string" && values.includes(raw) ? raw : undefined;
+}
+
+/** A stored margin set: four finite, non-negative centimetre values. */
+function marginsValue(raw: unknown): Margins | undefined {
+  if (raw === null || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const edges = ["topCm", "rightCm", "bottomCm", "leftCm"].map((key) => record[key]);
+  if (!edges.every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+    return undefined;
+  }
+  const [topCm, rightCm, bottomCm, leftCm] = edges as number[];
+  return { topCm, rightCm, bottomCm, leftCm };
 }
 
 const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
@@ -318,7 +345,22 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
       ? raw
       : undefined,
   spreadsheetLocale: oneOf<"spreadsheetLocale">(SPREADSHEET_LOCALE_TAGS),
+  // "Custom" is not a preference: its size belongs to the one sheet.
+  assemblyPaper: (raw) => inSet(raw, SHEET_PAPER_NAMES.filter((name) => name !== "Custom")),
+  assemblyMargins: marginsValue,
+  assemblyDpi: (raw) => (typeof raw === "number" && SHEET_DPI_CHOICES.includes(raw) ? raw : undefined),
 };
+
+/** The assembly sheet's starting paper and margins (SPEC-108): the user's
+ * own assembly choices where they made them, else their page-setup
+ * defaults (`defaultPageSizeId`, `defaultMarginsId`). */
+export function assemblySheetDefaults(prefs: Preferences): { paper: string; margins: Margins; dpi: number } {
+  return {
+    paper: prefs.assemblyPaper ?? prefs.defaultPageSizeId,
+    margins: { ...(prefs.assemblyMargins ?? MARGIN_PRESETS[prefs.defaultMarginsId] ?? MARGIN_PRESETS.Normal) },
+    dpi: prefs.assemblyDpi,
+  };
+}
 
 const PREFERENCE_KEYS = Object.keys(PREFERENCE_DEFAULTS) as (keyof Preferences)[];
 

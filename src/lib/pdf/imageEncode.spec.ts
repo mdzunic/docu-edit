@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dataUriBytes, parseJpegHeader } from "./imageEncode";
+import { DEFAULT_MAX_DPI, dataUriBytes, parseJpegHeader, sampleSize } from "./imageEncode";
 
 /** Assembles a JPEG far enough to carry a frame header: SOI, an APP0 segment
  * that must be skipped by its length, then the frame. */
@@ -63,5 +63,21 @@ describe("dataUriBytes", () => {
     expect(dataUriBytes("blob:http://localhost/abc")).toBeNull();
     expect(dataUriBytes("https://example.com/a.png")).toBeNull();
     expect(dataUriBytes("data:image/svg+xml,<svg/>")).toBeNull();
+  });
+});
+
+describe("sampleSize", () => {
+  it("caps at 300 dpi of the printed size by default (SPEC-034)", () => {
+    expect(DEFAULT_MAX_DPI).toBe(300);
+    // A 3000 × 1500 px photo printed 72 pt (1 in) wide: 300 px across.
+    expect(sampleSize(3000, 1500, 72, 36)).toEqual({ width: 300, height: 150 });
+  });
+
+  it("takes a higher ceiling when asked, so 600 dpi is not downsampled to 300 (SPEC-108)", () => {
+    expect(sampleSize(3000, 1500, 72, 36, 600)).toEqual({ width: 600, height: 300 });
+  });
+
+  it("never upscales past the image's own pixels", () => {
+    expect(sampleSize(64, 40, 595, 842, 600)).toEqual({ width: 64, height: 40 });
   });
 });

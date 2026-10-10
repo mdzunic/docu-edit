@@ -380,6 +380,12 @@ export function useLibrary() {
     return entryById.value.get(id)?.kind ?? "text";
   }
 
+  /** An entry's format ("png", "pdf", "docx", …) — which per-format row
+   * actions apply (SPEC-108's Convert to PDF). Undefined for unknown ids. */
+  function formatOf(id: string): DocumentFormat | undefined {
+    return entryById.value.get(id)?.format;
+  }
+
   /** Roving tabindex for a row/card (AC-57): the focused row is tabbable;
    * with no focus yet, the first row is. Shared by the list, grid and trash
    * renderings so keyboard entry behaves identically in each. */
@@ -454,6 +460,7 @@ export function useLibrary() {
     focusFirst,
     titleOf,
     kindOf,
+    formatOf,
     rowTabindex,
     // lifecycle
     refresh,
