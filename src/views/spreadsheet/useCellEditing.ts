@@ -66,6 +66,12 @@ export interface CellEditingDeps {
   toast?: (message: string) => void;
   /** Row autofit's measurer — default: the canvas one. */
   measurer?: CellTextMeasurer;
+  /** Writes the view state (each sheet's selection) into the live model
+   * (useSheetViewState's syncInto) — SPEC-121's rule for every command:
+   * before a write records its undo step, so the step holds the selection
+   * it was made from, and after a commit's move, since applying a step
+   * re-reads the view state from the model. */
+  syncViewState?: (model: SpreadsheetModel) => void;
 }
 
 const MODE_LABELS: Readonly<Record<EditMode, string>> = { ready: "Ready", enter: "Enter", edit: "Edit" };
@@ -84,6 +90,13 @@ export function useCellEditing(deps: CellEditingDeps) {
 
   const editing = computed(() => mode.value !== "ready");
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
+  /** The view state into the live model (see `syncViewState`). */
+  const syncViewState = (): void => {
+    const m = model();
+    if (m) {
+      deps.syncViewState?.(m);
+    }
+  };
   const point = usePointMode({
     text: () => draft.text.value,
     caret: () => draft.caret.value,
@@ -209,6 +222,7 @@ export function useCellEditing(deps: CellEditingDeps) {
       return null;
     }
     measurer ??= createCanvasCellMeasurer();
+    syncViewState();
     return { ctx: { model: m, sheetIndex, undo: deps.undo, measurer, format: deps.selection.formatContext.value }, at, entry: outcome.entry };
   }
 
@@ -226,6 +240,7 @@ export function useCellEditing(deps: CellEditingDeps) {
     if (move && moves.apply(move)) {
       revealTick.value += 1;
     }
+    syncViewState();
     return true;
   }
 
@@ -251,6 +266,7 @@ export function useCellEditing(deps: CellEditingDeps) {
       return;
     }
     measurer ??= createCanvasCellMeasurer();
+    syncViewState();
     writeClear({ model: m, sheetIndex: deps.book.activeIndex.value, undo: deps.undo, measurer, format: deps.selection.formatContext.value }, ranges);
   }
 

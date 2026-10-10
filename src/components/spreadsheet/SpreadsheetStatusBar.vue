@@ -9,13 +9,17 @@
 // hidden (a sheet has no page to fit). SPEC-120 adds two regions after the
 // aggregates: the circular-reference warning ("Circular reference:
 // Loop!A1") while the workbook has a cycle, and "Calculating…" while a long
-// recalculation runs (useRecalc). Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
+// recalculation runs (useRecalc). SPEC-122 puts the cell editor's mode at
+// its left, as Excel does: "Ready", "Enter", "Edit" or "Point"
+// (`sheet-status-mode`, useCellEditing's modeLabel; empty hides it). Runtime
+// prop declarations per the espree constraint (see AppShell.vue).
 import { CALCULATING_TEXT } from "../../views/spreadsheet/useRecalc";
 import ZoomControl from "../ZoomControl.vue";
 import SheetLocaleControl from "./SheetLocaleControl.vue";
 
 const props = defineProps({
+  /** The cell editor's mode (SPEC-122): "Ready", "Enter", "Edit", "Point" — empty hides it. */
+  mode: { type: String, default: "" },
   /** "Average: 20" — empty hides it. */
   average: { type: String, default: "" },
   /** "Count: 3" — empty hides it. */
@@ -40,6 +44,11 @@ const emit = defineEmits(["zoom-in", "zoom-out", "apply-zoom", "set-zoom"]);
     class="spreadsheet-status-bar"
     data-testid="spreadsheet-status-bar"
   >
+    <span
+      v-if="props.mode"
+      class="sheet-status-mode"
+      data-testid="sheet-status-mode"
+    >{{ props.mode }}</span>
     <div
       class="sheet-status-aggregates"
       role="status"
@@ -94,6 +103,12 @@ const emit = defineEmits(["zoom-in", "zoom-out", "apply-zoom", "set-zoom"]);
   justify-content: space-between;
   gap: var(--space-4);
   min-width: 0;
+}
+
+/* The editing mode: one word, never squeezed. */
+.sheet-status-mode {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* The aggregates take what the locale and the zoom leave. */

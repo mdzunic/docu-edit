@@ -2,7 +2,8 @@
 // useCellEditing's onKeydown — and the moves Enter and Tab make, with the
 // Tab-run return: Tab (in a single-cell selection) remembers the column a
 // run of Tabs started in, and Enter after it lands one row down in that
-// column; any other move, a click included, forgets it. Inside a multi-cell
+// column; any other navigation — a navigation key, a click — forgets it,
+// while typing the next entry does not. Inside a multi-cell
 // selection Enter and Tab cycle within it (SPEC-117's cycleWithin) without
 // collapsing it. These are conventions of the editor, not registry
 // commands, so Ctrl/Cmd+Enter never meets the text product's
@@ -19,7 +20,9 @@ export type EditMode = "ready" | "enter" | "edit";
  * SPEC-117's map applies (an arrow in Enter mode). */
 export type Move = { kind: "enter" | "tab"; back: boolean } | { kind: "key"; event: KeyboardEvent };
 
-const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "CapsLock", "AltGraph"]);
+/** SPEC-117's navigation keys: in Ready they move the selection, which
+ * forgets a Tab-run's return column (typing the next entry does not). */
+const NAVIGATION_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
 
 function singleCell(sel: SheetSelection): boolean {
   const range = sel.ranges[0];
@@ -111,7 +114,7 @@ export function readyKey(event: KeyboardEvent, actions: EditorKeyActions): boole
     }
     return true;
   }
-  if (!MODIFIER_KEYS.has(event.key)) {
+  if (NAVIGATION_KEYS.has(event.key)) {
     actions.moves.forget();
   }
   return false;

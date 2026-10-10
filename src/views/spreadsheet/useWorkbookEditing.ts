@@ -3,10 +3,14 @@
 // stack and edit pipeline (useSpreadsheetUndo) over the view's model, driving
 // SPEC-120's recalculation with reason "edit" and writing each step through
 // the store (storeSpreadsheetEdit → touchDocument); the tab bar's commands
-// (useSheetCommands); and the downloads (useWorkbookDownload).
+// (useSheetCommands); the downloads (useWorkbookDownload); and SPEC-122's
+// cell entry (useCellEditing) over the same undo pipeline — `cell` is what
+// the grid, the formula bar, the sheet tabs and the status bar bind.
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
-import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { useCellEditing, type CellEditingDeps } from "./useCellEditing";
 import type { Recalc } from "./useRecalc";
 import { useSheetCommands } from "./useSheetCommands";
 import type { SheetViewState } from "./useSheetViewState";
@@ -17,11 +21,16 @@ export interface WorkbookEditingDeps {
   book: {
     workbook: ShallowRef<SpreadsheetModel | null>;
     activeIndex: Ref<number>;
+    activeSheet: Readonly<Ref<Sheet | null>>;
     selectSheet(index: number): void;
     sheetsChanged(): void;
   };
   viewState: Pick<SheetViewState, "syncInto">;
   recalc: Pick<Recalc, "edit" | "settle">;
+  /** Cell entry's view inputs (SPEC-122). */
+  selection: CellEditingDeps["selection"];
+  sheetMetrics: CellEditingDeps["sheetMetrics"];
+  locale: () => SpreadsheetLocale;
 }
 
 export function useWorkbookEditing(deps: WorkbookEditingDeps) {
@@ -51,6 +60,14 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncViewState: (model) => deps.viewState.syncInto(model),
   });
   const download = useWorkbookDownload({ book: deps.book });
+  const cell = useCellEditing({
+    book: deps.book,
+    selection: deps.selection,
+    sheetMetrics: deps.sheetMetrics,
+    undo,
+    locale: deps.locale,
+    syncViewState: (model) => deps.viewState.syncInto(model),
+  });
   /** SpreadsheetAppBar's undo/redo and split-download props, bound as one. */
   const appBar = computed(() => ({
     canUndo: undo.canUndo.value,
@@ -60,7 +77,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     copyLabel: download.copyLabel.value,
     copyDisabledReason: download.copyDisabledReason.value,
   }));
-  return { undo, commands, download, appBar };
+  return { undo, commands, download, appBar, cell };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

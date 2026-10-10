@@ -10,8 +10,11 @@ import { unzip } from "../src/lib/core/zip";
 // keyboard: New spreadsheet → "Revenue" in A1, Enter → A2 is active →
 // "1,200", Tab → A2 reads "1,200" (#,##0 applied) → "=A2*2" in B2, Enter →
 // "2400" → in B3 "=SUM(", ArrowUp twice, Shift+ArrowDown, ")" → the editor
-// reads "=SUM(B1:B2)", Enter → "2400" → C1 "10%" → C2 "2026-10-08" reads
-// "10/8/2026" → C3 two lines with Alt+Enter wraps (its row grows) → D1:D3
+// reads "=SUM(B1:B2)", Enter → "2400" → C1 "10%" → C2 "2026-10-08" is the
+// en-US short date "10/8/2026" (its formula bar; the default 64 px column is
+// narrower than SPEC-118's width estimate of that text, so the cell shows
+// SPEC-118's "#" fill — widening a column on entry is SPEC-124's) → C3 two
+// lines with Alt+Enter wraps (its row grows) → D1:D3
 // "x" with Ctrl+Enter → Delete → undo → "=1+" in E1 shows the formula error
 // → Escape → download and re-open: everything as left, B2's formula bar
 // "=A2*2" → a copy as .ods re-opens with the same displayed values. Then
@@ -24,6 +27,12 @@ const shapesFixture = join(dirname(fileURLToPath(import.meta.url)), "fixtures", 
 
 function cell(page: Page, ref: string): Locator {
   return page.locator(`[data-testid="sheet-cell"][data-ref="${ref}"]`);
+}
+
+/** A position shows nothing: no cell element there with any text (the
+ * grid mounts empty positions too while it renders densely). */
+async function expectEmpty(page: Page, ref: string): Promise<void> {
+  await expect(cell(page, ref).filter({ hasText: /\S/ })).toHaveCount(0);
 }
 
 function editor(page: Page): Locator {
@@ -49,7 +58,7 @@ async function clickCell(page: Page, ref: string): Promise<void> {
   const column = await page.getByTestId("sheet-col-header").filter({ hasText: new RegExp(`^${letters}$`) }).boundingBox();
   const row = await rowHeader(page, Number(digits)).boundingBox();
   await page.mouse.click(column!.x + column!.width / 2, row!.y + row!.height / 2);
-  await expect(page.getByTestId("name-box")).toHaveText(ref);
+  await expect(page.getByTestId("name-box")).toHaveValue(ref);
 }
 
 /** Types an entry into the active cell and commits it with `key`. */
@@ -74,6 +83,15 @@ async function reopen(page: Page, path: string): Promise<void> {
   await expect(page).toHaveURL(/\/sheets\/.+/);
 }
 
+/** C2 holds the date 2026-10-08 as the en-US short date: the formula bar
+ * shows "10/8/2026"; the cell, in a default-width column, SPEC-118's "#"
+ * overflow fill (its width estimate of "10/8/2026" is 63 px of 59). */
+async function expectDateInC2(page: Page): Promise<void> {
+  await expect(cell(page, "C2")).toHaveText(/^#+$/);
+  await clickCell(page, "C2");
+  await expect(page.getByTestId("formula-bar-content")).toHaveText("10/8/2026");
+}
+
 /** A1–D3 as the flow leaves them. */
 async function expectEnteredValues(page: Page): Promise<void> {
   await expect(cell(page, "A1")).toHaveText("Revenue");
@@ -81,7 +99,7 @@ async function expectEnteredValues(page: Page): Promise<void> {
   await expect(cell(page, "B2")).toHaveText("2400");
   await expect(cell(page, "B3")).toHaveText("2400");
   await expect(cell(page, "C1")).toHaveText("10%");
-  await expect(cell(page, "C2")).toHaveText("10/8/2026");
+  await expectDateInC2(page);
   await expect(cell(page, "C3")).toContainText("line one");
   await expect(cell(page, "C3")).toContainText("line two");
   for (const ref of ["D1", "D2", "D3"]) {
@@ -102,19 +120,19 @@ test("type values and formulas, point at a range, fill, clear, undo, and round-t
   await expect(editor(page)).toHaveText("Revenue");
   await page.keyboard.press("Enter");
   await expect(cell(page, "A1")).toHaveText("Revenue");
-  await expect(page.getByTestId("name-box")).toHaveText("A2");
+  await expect(page.getByTestId("name-box")).toHaveValue("A2");
   await expect(mode(page)).toHaveText("Ready");
 
   await enter(page, "1,200", "Tab");
   await expect(cell(page, "A2")).toHaveText("1,200");
-  await expect(page.getByTestId("name-box")).toHaveText("B2");
+  await expect(page.getByTestId("name-box")).toHaveValue("B2");
 
   await enter(page, "=A2*2");
   await expect(cell(page, "B2")).toHaveText("2400");
   // Enter after the Tab returns to the run's starting column, one row down.
-  await expect(page.getByTestId("name-box")).toHaveText("A3");
+  await expect(page.getByTestId("name-box")).toHaveValue("A3");
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByTestId("name-box")).toHaveText("B3");
+  await expect(page.getByTestId("name-box")).toHaveValue("B3");
 
   // Point mode: the arrows insert, then replace, the reference at the caret.
   await page.keyboard.type("=SUM(");
@@ -130,9 +148,11 @@ test("type values and formulas, point at a range, fill, clear, undo, and round-t
   await clickCell(page, "C1");
   await enter(page, "10%");
   await expect(cell(page, "C1")).toHaveText("10%");
-  await expect(page.getByTestId("name-box")).toHaveText("C2");
+  await expect(page.getByTestId("name-box")).toHaveValue("C2");
   await enter(page, "2026-10-08");
-  await expect(cell(page, "C2")).toHaveText("10/8/2026");
+  await expectDateInC2(page);
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("name-box")).toHaveValue("C3");
 
   // Alt+Enter breaks the line; the committed cell wraps and its row grows.
   const rowBefore = (await rowHeader(page, 3).boundingBox())!.height;
@@ -154,7 +174,7 @@ test("type values and formulas, point at a range, fill, clear, undo, and round-t
   }
   await page.keyboard.press("Delete");
   for (const ref of ["D1", "D2", "D3"]) {
-    await expect(cell(page, ref)).toHaveCount(0);
+    await expectEmpty(page, ref);
   }
   await page.keyboard.press("Control+z");
   for (const ref of ["D1", "D2", "D3"]) {
@@ -169,7 +189,7 @@ test("type values and formulas, point at a range, fill, clear, undo, and round-t
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("cell-editor-error")).toHaveCount(0);
   await expect(mode(page)).toHaveText("Ready");
-  await expect(cell(page, "E1")).toHaveCount(0);
+  await expectEmpty(page, "E1");
   const blankUrl = page.url();
 
   const xlsx = await download(page, () => page.getByTestId("spreadsheet-download").click(), "entry.xlsx");
