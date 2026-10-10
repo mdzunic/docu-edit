@@ -13,7 +13,9 @@
 // edited (pointing, or committing before the selection moves); a double-click
 // opens Edit mode at the clicked character; the editing composable's moves
 // are revealed here; the references of a formula being entered are outlined
-// (useSheetOverlays' refHighlights).
+// (useSheetOverlays' refHighlights). SPEC-124: header-boundary resizing
+// (useHeaderResize, through the pointer) and a double-click on a boundary
+// autofitting; the grid binds the resize guide, tooltip and cursor.
 import { computed, watch, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
@@ -23,6 +25,9 @@ import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/local
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
 import type { FormatPainter } from "./useFormatPainter";
+import type { HeaderResize } from "./useHeaderResize";
+import type { Merges } from "./useMerges";
+import type { Structure } from "./useStructure";
 import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { Recalc } from "./useRecalc";
@@ -55,6 +60,12 @@ export interface SheetGridContext {
    * format painter (the grid's data-format-painter); absent = none. */
   formatting?: Formatting;
   painter?: Pick<FormatPainter, "mode">;
+  /** SPEC-124: rows and columns (the header menu and the dialogs), header
+   * resizing (the cursor, guide, tooltip and drags) and merges; absent =
+   * none. */
+  structure?: Structure;
+  headerResize?: HeaderResize;
+  merges?: Merges;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -90,7 +101,7 @@ export function useSheetGrid(
     const host = scroller.value?.querySelector<HTMLElement>('[data-testid="cell-editor"]');
     (host ?? scroller.value)?.focus({ preventScroll: true });
   }
-  const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection, editing, focus: focusEditor });
+  const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection, editing, focus: focusEditor, resize: () => context().headerResize });
 
   /** The in-cell editor's box, text style and name (SPEC-122). */
   const editor = computed(() => {
@@ -117,6 +128,12 @@ export function useSheetGrid(
   /** A double-click on a cell opens Edit mode, caret at the clicked
    * character (SPEC-122). */
   function onDblClick(event: MouseEvent): void {
+    // SPEC-124: a double-click on a header boundary autofits.
+    const boundary = event.button === 0 ? pointer.boundaryAtClient(event.clientX, event.clientY) : null;
+    if (boundary) {
+      context().headerResize?.autofit(boundary.axis, boundary.index);
+      return;
+    }
     const cellEditing = editing();
     if (!cellEditing || cellEditing.editing.value || event.button !== 0) {
       return;
@@ -220,5 +237,7 @@ export function useSheetGrid(
     contentStyle,
     areaStyle,
     canvasStyle,
+    /** SPEC-124: header resizing (guide, tooltip, cursor), absent = none. */
+    resize: computed(() => context().headerResize ?? null),
   };
 }

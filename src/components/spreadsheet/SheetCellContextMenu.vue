@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // The cell context menu (SPEC-123): opened by a right-click in the grid,
 // Shift+F10 or the Menu key (useFormatting) at the pointer or under the
-// active cell, with "Format cells…" and "Clear contents" — SPEC-124, SPEC-125
-// and later specs append their entries. UiMenuSurface owns outside-click and
-// Escape dismissal. Runtime prop declarations per the espree constraint (see
+// active cell, with "Format cells…" and "Clear contents" — SPEC-124 adds
+// "Insert…" and "Delete…" (`structure`: whole rows or columns act at once,
+// any other selection opens SheetInsertDeleteDialog); SPEC-125 and later
+// specs append theirs. UiMenuSurface owns outside-click and Escape
+// dismissal. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
 
@@ -13,11 +15,16 @@ const props = defineProps({
   y: { type: Number, default: 0 },
 });
 
-const emit = defineEmits(["run", "close"]);
+const emit = defineEmits(["run", "structure", "close"]);
 
 function choose(command = Object()) {
   emit("close");
   emit("run", command);
+}
+
+function structure(mode = "insert") {
+  emit("close");
+  emit("structure", mode);
 }
 </script>
 
@@ -49,6 +56,24 @@ function choose(command = Object()) {
       @click="choose({ kind: 'clear', what: 'contents' })"
     >
       Clear contents
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      data-testid="sheet-cell-menu-insert"
+      @mousedown.prevent
+      @click="structure('insert')"
+    >
+      Insert…
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      data-testid="sheet-cell-menu-delete"
+      @mousedown.prevent
+      @click="structure('delete')"
+    >
+      Delete…
     </button>
   </UiMenuSurface>
 </template>

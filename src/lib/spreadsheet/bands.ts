@@ -51,6 +51,24 @@ export const MAX_ROW_HEIGHT_PT = 409;
 /** The column width dialog's limit, in characters. */
 export const MAX_COLUMN_WIDTH_CHARS = 255;
 
+/** Characters (the column-width dialog's unit) → the xlsx `<col width>`
+ * they stand for: trunc((chars · mdw + 5) / mdw · 256) / 256, Excel's inverse
+ * of SPEC-117's MDW formula (8.43 → 9.140625 → 64 px at MDW 7). */
+export function charsToXlsxWidth(chars: number, mdw: number): number {
+  return Math.trunc(((chars * mdw + 5) / mdw) * 256) / 256;
+}
+
+/** A column's px as the characters Excel shows: trunc((px − 5) / mdw · 100 +
+ * 0.5) / 100, never below 0 (64 px → 8.43 at MDW 7). */
+export function pxToChars(px: number, mdw: number): number {
+  return Math.max(0, Math.trunc(((px - 5) / mdw) * 100 + 0.5) / 100);
+}
+
+/** An xlsx `<col width>` as the characters Excel shows. */
+export function xlsxWidthToChars(width: number, mdw: number): number {
+  return Math.max(0, Math.trunc(((width * mdw - 5) / mdw) * 100 + 0.5) / 100);
+}
+
 /** A height in points rounded to the nearest 0.75 pt (one whole px). */
 export function roundRowHeightPt(pt: number): number {
   return Math.round(pt / 0.75) * 0.75;
@@ -267,7 +285,7 @@ export function patchColumns(columns: readonly ColumnSpan[], bands: readonly Ban
     cuts.add(band.start);
     cuts.add(band.end + 1);
   }
-  const points = [...cuts].filter((p) => p >= 0 && p <= MAX_COLS).toSorted((a, b) => a - b);
+  const points = [...cuts].filter((p) => p >= 0 && p <= MAX_COLS).toSorted((x, y) => x - y);
   let s = 0;
   for (let k = 0; k + 1 < points.length; k += 1) {
     const min = points[k]!;

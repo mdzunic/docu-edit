@@ -21,6 +21,11 @@
 // - The cell context menu opens on a right-click in the grid, Shift+F10 or
 //   the Menu key; Format Cells (useFormatCellsDialog) on Ctrl/Cmd+1, the
 //   Format menu, the context menu and "More formats…".
+// - SPEC-124: a header's right-click, and Shift+F10 / the Menu key on whole
+//   rows or columns, are the header menu's (useStructure), as are the
+//   sheet.insertCells / sheet.deleteCells keys. A command changing a font
+//   family or size, wrap or rotation (a patch, Format Cells, a cell style,
+//   Clear formats/all) runs SPEC-122's refitRows inside its step.
 import { computed, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
@@ -28,6 +33,7 @@ import { isMacPlatform } from "../../lib/core/platform";
 import { DEFAULT_THEME, type ModelColor } from "../../lib/core/theme";
 import { findShortcut } from "../../lib/shortcuts";
 import { getCell } from "../../lib/spreadsheet/address";
+import { refitRows, type CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import {
   applyNamedStyle,
   applyStylePatch,
@@ -54,6 +60,8 @@ import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/local
 import type { GridRange } from "../../lib/spreadsheet/address";
 import { cellColorHex, cellFontName, cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import type { CellEditing } from "./useCellEditing";
+import { createCanvasCellMeasurer } from "./cellMeasurer";
+import { headerAt, selectionAxis } from "./headerMenu";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 import { cellStyleGroups, documentFonts, numberFormatItems, numberFormatLabel, type SheetToolbarCommand, type SheetToolbarState } from "./sheetToolbar";
 import { useFormatCellsDialog } from "./useFormatCellsDialog";
@@ -67,6 +75,8 @@ export interface FormattingDeps {
   selection: Pick<SheetSelectionController, "selection" | "formatContext">;
   editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing" | "clearSelection"> };
   locale: () => SpreadsheetLocale;
+  /** SPEC-124: row refit's measurer — default: the canvas one. */
+  measurer?: CellTextMeasurer;
   /** Shows a toast — default: useToasts' addToast. */
   toast?: (message: string) => void;
 }
@@ -93,6 +103,19 @@ const TOGGLE_SHORTCUTS: Readonly<Record<string, "bold" | "italic" | "underline" 
 };
 const TOGGLE_LABELS = { bold: "Bold", italic: "Italic", underline: "Underline", strikethrough: "Strikethrough" } as const;
 
+/** Whether a patch can change a row's autofit height (SPEC-124: a font
+ * family or size, wrap or rotation) — the formatting commands that refit. */
+function changesRowHeight(patch: StylePatch): boolean {
+  const font = patch.font;
+  const alignment = patch.alignment;
+  return (
+    font === null ||
+    alignment === null ||
+    (font !== undefined && (font.family !== undefined || font.sizePt !== undefined)) ||
+    (alignment !== undefined && (alignment.wrap !== undefined || alignment.textRotation !== undefined))
+  );
+}
+
 /** Whether a keydown's target is the grid (its in-cell editor included),
  * outside any dialog. */
 function inGrid(target: EventTarget | null): boolean {
@@ -105,6 +128,7 @@ export function useFormatting(deps: FormattingDeps) {
   const lastBorder = ref<BorderPreset>("bottom");
   const lineStyle = ref<SheetBorderStyle>("thin");
   const lineColor = shallowRef<ModelColor | null>(null);
+  let measurer = deps.measurer;
   const recentColors = ref<string[]>(loadRecentColors());
   /** The cell context menu's position (null: closed). */
   const contextMenu = ref<{ x: number; y: number } | null>(null);
@@ -123,8 +147,10 @@ export function useFormatting(deps: FormattingDeps) {
     return { style: cellStyle(m, effectiveStyleId(sheet, at.row, at.col)), value: getCell(sheet, at.row, at.col)?.value ?? null };
   });
 
-  /** Runs one formatting command as ONE undo step (see the module header). */
-  function command(label: string, mutate: (m: SpreadsheetModel, sheetId: string, ranges: GridRange[]) => FormatResult): void {
+  /** Runs one formatting command as ONE undo step (see the module header);
+   * `refit` (SPEC-124): the command can change a row's height, so SPEC-122's
+   * refitRows runs inside the step over the rows it touched. */
+  function command(label: string, mutate: (m: SpreadsheetModel, sheetId: string, ranges: GridRange[]) => FormatResult, refit = false): void {
     const m = model();
     const sheet = deps.book.activeSheet.value;
     if (!m || !sheet || sheet.kind !== "grid" || deps.editing.cell.editing.value) {
@@ -132,14 +158,20 @@ export function useFormatting(deps: FormattingDeps) {
     }
     deps.viewState.syncInto(m);
     deps.editing.undo.record(label, { sheetId: sheet.id });
-    const result = mutate(m, sheet.id, deps.selection.selection.value.ranges);
+    const ranges = deps.selection.selection.value.ranges;
+    const before = m.sheets.find((each) => each.id === sheet.id)?.rows;
+    const result = mutate(m, sheet.id, ranges);
+    if (result.ok && refit) {
+      measurer ??= createCanvasCellMeasurer();
+      refitRows(m, sheet.id, ranges, measurer, deps.selection.formatContext.value, before);
+    }
     deps.editing.undo.commit();
     if (!result.ok) {
       toast(result.message);
     }
   }
 
-  const patch = (label: string, value: StylePatch): void => command(label, (m, id, ranges) => applyStylePatch(m, id, ranges, value));
+  const patch = (label: string, value: StylePatch): void => command(label, (m, id, ranges) => applyStylePatch(m, id, ranges, value), changesRowHeight(value));
   const numberFormat = (choice: NumberFormatChoice): void => patch("Number format", { numberFormat: choice.numberFormat, builtinFormatId: choice.builtinFormatId ?? null });
 
   function remember(color: ModelColor | null): void {
@@ -176,7 +208,7 @@ export function useFormatting(deps: FormattingDeps) {
         recentColors: recentColors.value,
       };
     },
-    apply: (entries) => command("Format cells", (m, id) => applyStylePatches(m, id, entries)),
+    apply: (entries) => command("Format cells", (m, id) => applyStylePatches(m, id, entries), entries.some((entry) => changesRowHeight(entry.patch))),
   });
 
   function run(cmd: SheetToolbarCommand): void {
@@ -265,13 +297,13 @@ export function useFormatting(deps: FormattingDeps) {
         break;
       }
       case "cell-style":
-        command("Cell style", (m, id, ranges) => applyNamedStyle(m, id, ranges, cmd.name));
+        command("Cell style", (m, id, ranges) => applyNamedStyle(m, id, ranges, cmd.name), true);
         break;
       case "clear":
         if (cmd.what === "contents") {
           deps.editing.cell.clearSelection();
         } else {
-          command(cmd.what === "all" ? "Clear all" : "Clear formats", (m, id, ranges) => clearRange(m, id, ranges, cmd.what));
+          command(cmd.what === "all" ? "Clear all" : "Clear formats", (m, id, ranges) => clearRange(m, id, ranges, cmd.what), true);
         }
         break;
     }
@@ -329,12 +361,17 @@ export function useFormatting(deps: FormattingDeps) {
       return;
     }
     if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey)) {
+      // SPEC-124: on whole rows or columns these keys open the header menu.
+      if (selectionAxis(deps.selection.selection.value) !== null) {
+        return;
+      }
       event.preventDefault();
       openContextMenu();
       return;
     }
     const id = findShortcut(event, isMacPlatform(), SHEET_SHORTCUTS)?.id;
-    if (id === undefined) {
+    // SPEC-124's insert/delete keys are useStructure's.
+    if (id === undefined || id === "sheet.insertCells" || id === "sheet.deleteCells") {
       return;
     }
     event.preventDefault();
@@ -348,7 +385,8 @@ export function useFormatting(deps: FormattingDeps) {
   }
 
   function onContextMenu(event: MouseEvent): void {
-    if (!inGrid(event.target) || active.value === null) {
+    // A header's right-click opens SPEC-124's header menu (useStructure).
+    if (!inGrid(event.target) || active.value === null || headerAt(event.target) !== null) {
       return;
     }
     event.preventDefault();

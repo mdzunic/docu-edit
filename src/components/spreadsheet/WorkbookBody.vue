@@ -11,8 +11,11 @@
 // view-level composables the view hands in (`book` = useWorkbookLoad, `grid`
 // = the SheetGridContext of the sheet on show, `editing` =
 // useWorkbookEditing); SpreadsheetView keeps only the wiring. SPEC-123: the
-// cell context menu and Format Cells, from the grid context's `formatting`. Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// cell context menu and Format Cells, from the grid context's `formatting`.
+// SPEC-124: the header menu, the insert/delete and size dialogs (the grid
+// context's `structure`) and the merge warning (`merges`); the cell menu's
+// Insert…/Delete… go to the structure. Runtime prop declarations per the
+// espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
@@ -21,6 +24,10 @@ import FormatCellsDialog from "./FormatCellsDialog.vue";
 import FormulaBar from "./FormulaBar.vue";
 import SheetCellContextMenu from "./SheetCellContextMenu.vue";
 import SheetGrid from "./SheetGrid.vue";
+import SheetHeaderContextMenu from "./SheetHeaderContextMenu.vue";
+import SheetInsertDeleteDialog from "./SheetInsertDeleteDialog.vue";
+import SheetMergeWarningDialog from "./SheetMergeWarningDialog.vue";
+import SheetSizeDialog from "./SheetSizeDialog.vue";
 import SheetTabColorPicker from "./SheetTabColorPicker.vue";
 import SheetTabDeleteDialog from "./SheetTabDeleteDialog.vue";
 import SheetTabMenu from "./SheetTabMenu.vue";
@@ -37,6 +44,11 @@ const props = defineProps({
 });
 
 const book = computed(() => asWorkbookBook(props.book));
+
+/** The cell menu's Insert…/Delete… (SPEC-124). */
+function insertOrDelete(mode = "insert") {
+  grid.value.structure?.insertOrDelete(mode === "delete" ? "delete" : "insert");
+}
 const grid = computed(() => asSheetGridContext(props.grid));
 const commands = computed(() => asWorkbookEditing(props.editing).commands);
 const cellEditing = computed(() => asWorkbookEditing(props.editing).cell);
@@ -127,6 +139,7 @@ const tabs = computed(() => {
         :x="grid.formatting.contextMenu.value?.x ?? 0"
         :y="grid.formatting.contextMenu.value?.y ?? 0"
         @run="grid.formatting.run"
+        @structure="insertOrDelete"
         @close="grid.formatting.closeContextMenu()"
       />
       <FormatCellsDialog
@@ -134,6 +147,35 @@ const tabs = computed(() => {
         :dialog="grid.formatting.dialog"
       />
     </template>
+    <template v-if="grid.structure">
+      <SheetHeaderContextMenu
+        :open="grid.structure.headerMenu.value !== null"
+        :x="grid.structure.headerMenu.value?.x ?? 0"
+        :y="grid.structure.headerMenu.value?.y ?? 0"
+        :items="grid.structure.headerItems.value"
+        @run="grid.structure.runHeaderMenu"
+        @close="grid.structure.closeHeaderMenu()"
+      />
+      <SheetInsertDeleteDialog
+        v-if="grid.structure.insertDelete.value"
+        :mode="grid.structure.insertDelete.value"
+        @choose="grid.structure.chooseInsertDelete"
+        @cancel="grid.structure.closeInsertDelete()"
+      />
+      <SheetSizeDialog
+        v-if="grid.structure.sizeDialog.value"
+        :axis="grid.structure.sizeDialog.value.axis"
+        :initial="grid.structure.sizeDialog.value.initial"
+        :mdw="grid.structure.sizeDialog.value.mdw"
+        @confirm="grid.structure.applySize"
+        @cancel="grid.structure.closeSize()"
+      />
+    </template>
+    <SheetMergeWarningDialog
+      v-if="grid.merges?.warning.value"
+      @confirm="grid.merges.confirm()"
+      @cancel="grid.merges.cancel()"
+    />
     <SheetTabColorPicker
       v-if="commands.coloring.value"
       :x="commands.coloring.value.x"

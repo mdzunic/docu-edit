@@ -15,6 +15,9 @@
 // copy as …" after Download (disabled, with the reason, until the copy can be
 // made). SPEC-123 adds the Format menu after View: Format cells…, Number
 // format ▸ (the presets and More formats…), Cell styles ▸ and Clear ▸.
+// SPEC-124 adds View ▸ Freeze ▸ (Top row, First column, Freeze at current
+// cell — disabled at A1 — and Unfreeze, enabled only when frozen) and, at the
+// Format menu's end, Row height…, Column width… and the two autofits.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -55,6 +58,14 @@ const CLEARS = [
   { label: "Clear all", command: SHEET_MENU_COMMANDS.clearAll, testid: "sheet-menu-clear-all" },
   { label: "Clear formats", command: SHEET_MENU_COMMANDS.clearFormats, testid: "sheet-menu-clear-formats" },
   { label: "Clear contents", command: SHEET_MENU_COMMANDS.clearContents, testid: "sheet-menu-clear-contents" },
+];
+
+// SPEC-124: the Format menu's rows and columns.
+const SIZES = [
+  { label: "Row height…", command: SHEET_MENU_COMMANDS.rowHeight, testid: "sheet-menu-row-height" },
+  { label: "Column width…", command: SHEET_MENU_COMMANDS.columnWidth, testid: "sheet-menu-column-width" },
+  { label: "Autofit row height", command: SHEET_MENU_COMMANDS.autofitRows, testid: "sheet-menu-autofit-rows" },
+  { label: "Autofit column width", command: SHEET_MENU_COMMANDS.autofitColumns, testid: "sheet-menu-autofit-columns" },
 ];
 
 const MENUS = [
@@ -156,6 +167,36 @@ const MENUS = [
           @select="emit('command', SHEET_MENU_COMMANDS.zoomOut)"
         />
       </MenuSubmenu>
+      <MenuSubmenu
+        label="Freeze"
+        testid="sheet-menu-freeze"
+      >
+        <MenuItem
+          label="Top row"
+          testid="sheet-menu-freeze-top-row"
+          :disabled="!s.hasGrid"
+          @select="emit('command', SHEET_MENU_COMMANDS.freezeTopRow)"
+        />
+        <MenuItem
+          label="First column"
+          testid="sheet-menu-freeze-first-column"
+          :disabled="!s.hasGrid"
+          @select="emit('command', SHEET_MENU_COMMANDS.freezeFirstColumn)"
+        />
+        <MenuItem
+          label="Freeze at current cell"
+          testid="sheet-menu-freeze-at-cell"
+          :disabled="!s.hasGrid || s.freezeAtCellDisabled"
+          @select="emit('command', SHEET_MENU_COMMANDS.freezeAtCell)"
+        />
+        <hr class="menu-separator">
+        <MenuItem
+          label="Unfreeze"
+          testid="sheet-menu-unfreeze"
+          :disabled="!s.hasGrid || !s.frozen"
+          @select="emit('command', SHEET_MENU_COMMANDS.unfreeze)"
+        />
+      </MenuSubmenu>
     </template>
 
     <template #format>
@@ -212,6 +253,15 @@ const MENUS = [
           @select="emit('command', clear.command)"
         />
       </MenuSubmenu>
+      <hr class="menu-separator">
+      <MenuItem
+        v-for="size in SIZES"
+        :key="size.command"
+        :label="size.label"
+        :testid="size.testid"
+        :disabled="!s.hasGrid"
+        @select="emit('command', size.command)"
+      />
     </template>
 
     <template #data>

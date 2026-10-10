@@ -1,12 +1,8 @@
 <script setup lang="ts">
-// The workbook view at /sheets/:id (SPEC-116, SPEC-117, SPEC-121): a wiring
-// hub (SpreadsheetView.size.spec.ts holds its line budget). Loading, the kind
-// guard, the reader upgrade and the sheet on show: useWorkbookLoad; view state
-// (never a change to the file): useSheetViewState; geometry, zoom, selection,
-// menus, the locale (SPEC-118), formula display (SPEC-119), recalculation
-// (SPEC-120), the sheet commands, undo, downloads (SPEC-121) and cell entry
-// (SPEC-122) — useWorkbookEditing; formatting and the format painter
-// (SPEC-123); the surfaces: components/spreadsheet/*. This file only wires.
+// The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget):
+// loading (useWorkbookLoad), view state, geometry, zoom, selection, menus, locale, formulas,
+// recalculation, sheet commands, undo, downloads and cell entry (useWorkbookEditing), formatting
+// and the painter (SPEC-123), rows, columns, resizing and merges (SPEC-124); surfaces: components/.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -19,6 +15,8 @@ import { useTheme } from "../composables/useTheme";
 import { useFormatPainter } from "./spreadsheet/useFormatPainter";
 import { useFormatting } from "./spreadsheet/useFormatting";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
+import { useHeaderResize } from "./spreadsheet/useHeaderResize";
+import { useMerges } from "./spreadsheet/useMerges";
 import { useRecalc } from "./spreadsheet/useRecalc";
 import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
@@ -26,13 +24,12 @@ import { useSheetViewState } from "./spreadsheet/useSheetViewState";
 import { useSheetZoom } from "./spreadsheet/useSheetZoom";
 import { useSpreadsheetLocale } from "./spreadsheet/useSpreadsheetLocale";
 import { useSpreadsheetMenu } from "./spreadsheet/useSpreadsheetMenu";
+import { useStructure } from "./spreadsheet/useStructure";
 import { useWorkbookEditing } from "./spreadsheet/useWorkbookEditing";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
 const route = useRoute();
-
-// The shared theme composable keeps the view themed by the app tokens and
-// following the OS live (SPEC-059).
+// The shared theme composable keeps the view themed by the app tokens, following the OS (SPEC-059).
 useTheme();
 
 const workbookId = computed(() => String(route.params.id ?? ""));
@@ -46,9 +43,12 @@ const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model:
 const recalc = useRecalc({ book, locale: () => sheetLocale.locale.value });
 const editing = useWorkbookEditing({ book, viewState, recalc, selection, sheetMetrics, locale: () => sheetLocale.locale.value });
 const formatting = useFormatting({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
-const painter = useFormatPainter({ book, selection, formatting });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter }));
+const structure = useStructure({ book, viewState, selection, sheetMetrics, editing });
+const headerResize = useHeaderResize({ book, structure, selection, sheetMetrics, zoom });
+const merges = useMerges({ book, viewState, selection, sheetMetrics, editing });
+const painter = useFormatPainter({ book, selection, formatting, merges });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter, structure, headerResize, merges }));
 </script>
 
 <template>
@@ -71,7 +71,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       v-if="book.workbook.value"
       #menubar
     >
-      <WorkbookCommandBar v-bind="{ menu, formatting, painter }" />
+      <WorkbookCommandBar v-bind="{ menu, formatting, painter, merges }" />
     </template>
     <WorkbookBody
       v-if="book.workbook.value"

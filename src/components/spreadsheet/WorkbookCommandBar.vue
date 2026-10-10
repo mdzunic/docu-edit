@@ -15,6 +15,8 @@ const props = defineProps({
   formatting: { type: Object, required: true },
   /** useFormatPainter's return. */
   painter: { type: Object, required: true },
+  /** SPEC-124: useMerges' return (the strip's merge split button). */
+  merges: { type: Object, default: null },
 });
 
 const state = computed(() => Object(props.menu).state.value);
@@ -32,5 +34,6 @@ function run(command = "") {
   <SheetFormatToolbar
     :formatting="props.formatting"
     :painter="props.painter"
+    :merges="props.merges"
   />
 </template>

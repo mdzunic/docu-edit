@@ -10,7 +10,9 @@
 // workbook's undo stack, and File ▸ Download and "Download a copy as …" are
 // useWorkbookDownload's (through useWorkbookEditing) — the bar's state carries
 // their enabled states and labels. SPEC-123: the Format menu runs
-// useFormatting's commands. Later specs append commands here.
+// useFormatting's commands. SPEC-124: View ▸ Freeze and the Format menu's
+// row height, column width and autofits are useStructure's. Later specs
+// append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -19,6 +21,7 @@ import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { Recalc } from "./useRecalc";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
+import type { Structure } from "./useStructure";
 import type { WorkbookEditing } from "./useWorkbookEditing";
 
 export interface SpreadsheetMenuDeps {
@@ -33,6 +36,8 @@ export interface SpreadsheetMenuDeps {
   editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar">;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
+  /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
+  structure?: Pick<Structure, "freeze" | "freezeState" | "formatBands">;
 }
 
 /** A Format menu command as useFormatting's (null: not one). */
@@ -77,6 +82,8 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         copyDisabledReason: "",
       }),
       cellStyleNames: deps.formatting?.toolbar.value.cellStyles.flatMap((group) => group.styles.map((style) => style.name)) ?? [],
+      frozen: deps.structure?.freezeState.value.frozen === true,
+      freezeAtCellDisabled: deps.structure?.freezeState.value.atA1 !== false,
     }),
   );
 
@@ -130,6 +137,30 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.recalculate:
         deps.recalc?.recalculate();
+        break;
+      case SHEET_MENU_COMMANDS.freezeTopRow:
+        deps.structure?.freeze("top-row");
+        break;
+      case SHEET_MENU_COMMANDS.freezeFirstColumn:
+        deps.structure?.freeze("first-column");
+        break;
+      case SHEET_MENU_COMMANDS.freezeAtCell:
+        deps.structure?.freeze("at-cell");
+        break;
+      case SHEET_MENU_COMMANDS.unfreeze:
+        deps.structure?.freeze("unfreeze");
+        break;
+      case SHEET_MENU_COMMANDS.rowHeight:
+        deps.structure?.formatBands("row", "size");
+        break;
+      case SHEET_MENU_COMMANDS.columnWidth:
+        deps.structure?.formatBands("col", "size");
+        break;
+      case SHEET_MENU_COMMANDS.autofitRows:
+        deps.structure?.formatBands("row", "autofit");
+        break;
+      case SHEET_MENU_COMMANDS.autofitColumns:
+        deps.structure?.formatBands("col", "autofit");
         break;
       default:
         break;

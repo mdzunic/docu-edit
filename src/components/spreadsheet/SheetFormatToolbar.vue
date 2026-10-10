@@ -36,12 +36,16 @@ import CellStylesGallery from "./CellStylesGallery.vue";
 import SheetBordersMenu from "./SheetBordersMenu.vue";
 import SheetFillPicker from "./SheetFillPicker.vue";
 import SheetMenuButton from "./SheetMenuButton.vue";
+import SheetMergeButton from "./SheetMergeButton.vue";
 
 const props = defineProps({
   /** useFormatting's return. */
   formatting: { type: Object, required: true },
   /** useFormatPainter's return. */
   painter: { type: Object, required: true },
+  /** SPEC-124: useMerges' return — the band-6 merge split button; absent:
+   * the slot stays empty. */
+  merges: { type: Object, default: null },
 });
 
 const formatting = computed(() => asFormatting(props.formatting));
@@ -427,11 +431,16 @@ onBeforeUnmount(() => {
           @mousedown.prevent
           @click="run({ kind: 'wrap' })"
         />
-        <!-- SPEC-124's Merge & Centre (`sheet-merge`) takes this slot. -->
+        <!-- SPEC-124's Merge & Centre split button (`sheet-merge`). -->
         <span
           class="merge-slot"
           data-slot="sheet-merge"
-        />
+        >
+          <SheetMergeButton
+            v-if="props.merges"
+            :merges="props.merges"
+          />
+        </span>
       </Teleport>
     </div>
     <div
