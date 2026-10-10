@@ -740,8 +740,11 @@ export interface OdsTableContext {
    * From scratch every style is generated. */
   sourceStyleNames?: boolean;
   /** Whether styles.xml defines a common table-cell style (a generated
-   * style's parent). */
+   * style's parent, for a named style the workbook does not define). */
   commonCellStyle?: (name: string) => boolean;
+  /** SPEC-123: the common style a named style the workbook defines is
+   * written under (a generated style's parent; OdsNamedStyles.parent). */
+  namedStyleParent?: (name: string) => string | undefined;
   /** The source's column and row styles as the reader measured them — how
    * the source's default (last-run) column and row styles are recognised and
    * reused for default-sized columns and rows. */
@@ -1139,6 +1142,9 @@ class TableWriter {
     this.env = { theme: ctx.model.theme ?? DEFAULT_THEME, locale: ctx.locale };
     if (ctx.commonCellStyle) {
       this.env.commonCellStyle = ctx.commonCellStyle;
+    }
+    if (ctx.namedStyleParent) {
+      this.env.namedStyleParent = ctx.namedStyleParent;
     }
     this.merges = sheet.merges.toSorted((a, b) => a.top - b.top || a.left - b.left);
     this.measure();

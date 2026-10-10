@@ -614,6 +614,21 @@ describe("SPEC-122 reader captures", () => {
     expect(read(`<sheetData/><sheetProtection objects="1"/>`)).not.toHaveProperty("protection");
     expect(read(`<sheetData/>`)).not.toHaveProperty("protection");
   });
+
+  it('reads SPEC-123\'s format permits: formatCells/formatColumns/formatRows "0"/"false" allow formatting; absent (Excel\'s default) or "1" does not', () => {
+    expect(read(`<sheetData/><sheetProtection sheet="1" formatCells="0" formatColumns="false" formatRows="0"/>`).protection).toEqual({
+      sheet: true,
+      allowFormatCells: true,
+      allowFormatColumns: true,
+      allowFormatRows: true,
+    });
+    expect(read(`<sheetData/><sheetProtection sheet="1" objects="1" formatCells="false"/>`).protection).toEqual({ sheet: true, allowFormatCells: true });
+    expect(read(`<sheetData/><sheetProtection sheet="1" formatColumns="0" formatRows="1"/>`).protection).toEqual({ sheet: true, allowFormatColumns: true });
+    expect(read(`<sheetData/><sheetProtection sheet="true" formatRows="0" formatCells="1" formatColumns="true"/>`).protection).toEqual({ sheet: true, allowFormatRows: true });
+    expect(read(`<sheetData/><sheetProtection sheet="1" formatCells="" formatColumns="no"/>`).protection).toEqual({ sheet: true });
+    // A permit means nothing on a sheet that is not protected.
+    expect(read(`<sheetData/><sheetProtection sheet="0" formatCells="0" formatColumns="0" formatRows="0"/>`)).not.toHaveProperty("protection");
+  });
 });
 
 // --- SPEC-122: the worksheet writer ----------------------------------------------------

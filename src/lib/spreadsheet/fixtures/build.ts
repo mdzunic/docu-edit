@@ -103,6 +103,25 @@
 //   cell, a red-negative `style:map` pair, a `de-ce1` style, and a protected
 //   table with one `style:cell-protect="none"` cell. SPEC122_SHAPES_XLSX /
 //   SPEC122_SHAPES_ODS record the facts.
+// - spec123-styles.xlsx (SPEC-123) — Excel 365-shaped (Aptos, the 2023
+//   theme): named cell styles as Excel writes them — cellStyleXfs Normal,
+//   Good, Heading 1, the workbook's own "Invoice total" and a hidden
+//   Followed Hyperlink with Excel's `applyX="0"` exclusions, cellStyles in
+//   Excel's alphabetical order with `builtinId`s (the custom one an
+//   `xr:uid` instead), cellXfs naming them by `xfId`; tinted theme colours,
+//   custom numFmt 164, a dxf and Excel's x14/x15 extLst. "Budget" (active):
+//   Heading 1 headers (F1 empty), 0.00 and 0.00% columns, Good and
+//   Good-centred texts, no row 5, row 6 a `<row s customFormat="1">` total
+//   with SUMs, column H a `<col style>`, and H6 — where the styled row
+//   meets the styled column — the style-only cell Excel stores there.
+//   "Notes": two texts no formatting flow touches.
+// - spec123-styles.ods — the LibreOffice 24.8-shaped twin: styles.xml's
+//   common Default, Heading, Heading_20_1 ("Heading 1"), Good and
+//   Invoice_20_total ("Invoice total"); content.xml's ce styles each
+//   parented to one of them, N104/N111 and the red-minus N105/N105P0 pair
+//   through `style:map`; column H's `table:default-cell-style-name`; row 6
+//   formatted to XFD as a styled `number-columns-repeated` run.
+//   SPEC123_STYLES_XLSX / SPEC123_STYLES_ODS record the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -1137,15 +1156,16 @@ const THUMBNAIL_PNG = new Uint8Array([
 ]);
 
 /** Assembles a LibreOffice-shaped package in Calc's own entry order, with
- * `mimetype` first and STOREd. */
-function loPackage(content: string, meta: string, settings: string): Promise<Uint8Array> {
+ * `mimetype` first and STOREd; `styles` is styles.xml (default LO_STYLES —
+ * every pre-SPEC-123 fixture's bytes). */
+function loPackage(content: string, meta: string, settings: string, styles = LO_STYLES): Promise<Uint8Array> {
   return zip([
     { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
     part("meta.xml", meta),
     part("settings.xml", settings),
     part("content.xml", content),
     { name: "Thumbnails/thumbnail.png", data: THUMBNAIL_PNG },
-    part("styles.xml", LO_STYLES),
+    part("styles.xml", styles),
     part("manifest.rdf", LO_MANIFEST_RDF),
     part("META-INF/manifest.xml", LO_MANIFEST),
   ]);
@@ -4409,4 +4429,480 @@ export async function buildSpec122ShapesOdsBytes(): Promise<Uint8Array> {
     part("manifest.rdf", LO_MANIFEST_RDF),
     part("META-INF/manifest.xml", LO_MANIFEST),
   ]);
+}
+
+// ============================================================================
+// SPEC-123 — spec123-styles.xlsx / spec123-styles.ods: named cell styles
+// ============================================================================
+// The workbooks the formatting commands, the cell styles gallery and the
+// named-style readers and writers are proven on (SPEC-123 "Fixtures"), in
+// the shapes their producers write them.
+// - spec123-styles.xlsx — Excel 365 (Aptos Narrow, the 2023 theme).
+//   styles.xml in CT_Stylesheet order: numFmt 164 (`#,##0.0;[Red]\-#,##0.0`,
+//   Excel's escape); fonts Normal, Good's #006100, Heading 1's 15 pt bold
+//   dk2, the bold "Invoice total", Followed Hyperlink's underlined folHlink
+//   and an italic accent1 darker 25% (a negative tint); fills none, gray125,
+//   Good's #C6EFCE (no bgColor — Excel's own shape for the style's fill) and
+//   accent1 lighter 80% (a positive tint); Heading 1's thick accent1 bottom
+//   and Invoice total's thin top + double bottom; cellStyleXfs Normal, Good,
+//   Heading 1, Invoice total and Followed Hyperlink, each excluding what it
+//   lacks with `applyX="0"`; cellXfs naming them by `xfId` (`applyX="1"`
+//   only where a cell differs from its style); cellStyles alphabetically,
+//   `builtinId` on the built-ins, `hidden="1"` on Followed Hyperlink and an
+//   `xr:uid` on the custom style; one dxf, the table-style defaults and
+//   Excel's x14/x15 extLst — none of which a formatting command may disturb.
+//   "Budget" (active): row 1 Heading 1 headers A1:E1 (F1 empty), B2:C4 on
+//   built-in 2 (0.00), D2:D4 on built-in 10 (0.00%), E2:E4 plain, F3 Good
+//   and F4 Good centred, no row 5, row 6 `s customFormat="1"` on Invoice
+//   total with "Total" and two SUMs, column H `<col style>` (the italic) —
+//   and H6, where the styled row meets the styled column, the style-only
+//   cell Excel stores there (the row's style, applied after the column's),
+//   which is why the dimension is A1:H6 and every row spans 1:8. "Notes":
+//   two texts, a part no formatting flow touches. No calcChain.
+// - spec123-styles.ods — LibreOffice 24.8: styles.xml's common table-cell
+//   styles Default, Heading, Heading_20_1 ("Heading 1"), Good and
+//   Invoice_20_total ("Invoice total") — LO_STYLES with its "Heading"
+//   restated as Calc writes it (colour, style and weight with their asian
+//   and complex twins) and the three others after it; content.xml's
+//   automatic styles in Calc's order — co/ro/ta, the data styles N104
+//   (0.00), N105P0 + N105 (#,##0.0, a red minus through `style:map`) and
+//   N111 (0.00%), then ce1–ce7, each `style:parent-style-name`d to a common
+//   style; column H (co2, wider) with `table:default-cell-style-name="ce6"`;
+//   the same values, an empty row 5, row 6 formatted to XFD as Calc writes a
+//   whole-row format (its cells, then a ce7 `number-columns-repeated="16381"`
+//   run — the reader's Row.styleId) and the trailing run to row 1,048,576.
+
+/** spec123-styles.xlsx's cellXfs indices — a cell's `s`. */
+export const SPEC123_XF = {
+  normal: 0,
+  numbers: 1, // built-in 2 (0.00)
+  heading: 2, // the Heading 1 style, as it is
+  good: 3, // the Good style, as it is
+  total: 4, // the workbook's own "Invoice total" (numFmt 164)
+  columnH: 5, // column H's style: italic accent1 darker 25%
+  percent: 6, // built-in 10 (0.00%)
+  goodCentred: 7, // Good + centred
+} as const;
+
+/** spec123-styles.xlsx's one custom number format (Excel escapes the minus). */
+export const SPEC123_NUMFMTS = { 164: "#,##0.0;[Red]\\-#,##0.0" } as const;
+
+/** "Budget"'s values, row-major (A1 notation) — both fixtures hold them;
+ * a formula cell's value is its cached result. */
+const SPEC123_BUDGET_VALUES = {
+  A1: "Item", B1: "Q1", C1: "Q2", D1: "Rate", E1: "Units",
+  A2: "Rent", B2: 1234.5, C2: 2500, D2: 0.125, E2: 10, F2: "paid",
+  A3: "Food", B3: 980.25, C3: 75, D3: 0.2, E3: 20, F3: "OK",
+  A4: "Travel", B4: 410, C4: 615.5, D4: 0.05, E4: 30, F4: "late",
+  A6: "Total", B6: 2624.75, C6: 3190.5,
+} as const;
+
+/** "Notes": two texts no formatting flow touches. */
+const SPEC123_NOTES_VALUES = { A1: "Prepared by the finance team", A2: "Figures in US dollars" } as const;
+
+/** The 1-based row number of an A1 reference. */
+const a1RowNumber = (ref: string): number => Number(/\d+$/.exec(ref)![0]);
+
+/** What spec123-styles.xlsx holds, for the unit, round-trip and e2e specs.
+ * Cells are A1 notation; `index` fields are 0-based. */
+export const SPEC123_STYLES_XLSX = {
+  title: "Budget",
+  sheets: [
+    { name: "Budget", sheetId: 1, partName: "xl/worksheets/sheet1.xml", uid: "{4B7D1E93-2C5A-4E8F-9A3B-6C1D8E2F4A31}" },
+    { name: "Notes", sheetId: 2, partName: "xl/worksheets/sheet2.xml", uid: "{5C8E2FA4-3D6B-4F9A-8B4C-7D2E9F3A5B42}" },
+  ],
+  sheetNames: ["Budget", "Notes"],
+  /** Budget — the only tabSelected sheetView; workbookView has no activeTab. */
+  activeSheetIndex: 0,
+  xf: SPEC123_XF,
+  numFmts: SPEC123_NUMFMTS,
+  /** cellXfs index → its `xfId` (the cellStyleXfs entry, i.e. the named style). */
+  xfIds: [0, 0, 2, 1, 3, 0, 0, 1],
+  /** The cellStyles, in file order (Excel's alphabetical one): `xfId` the
+   * cellStyleXfs index, `includes` the aspects the style xf does not
+   * exclude with `applyX="0"` (in STYLE_ASPECTS order). */
+  namedStyles: [
+    { name: "Followed Hyperlink", xfId: 4, builtinId: 9, hidden: true, includes: ["font"] },
+    { name: "Good", xfId: 1, builtinId: 26, includes: ["font", "fill"] },
+    { name: "Heading 1", xfId: 2, builtinId: 16, includes: ["font", "borders"] },
+    { name: "Invoice total", xfId: 3, uid: "{2E6A9C41-7B3D-4C5E-8F1A-9B4D6E2C8A53}", includes: ["numberFormat", "font", "fill", "borders"] },
+    { name: "Normal", xfId: 0, builtinId: 0, includes: ["numberFormat", "font", "fill", "borders", "alignment", "protection"] },
+  ],
+  /** The theme tints, as written: font 5 (column H) and fill 3 (Invoice total). */
+  tints: { columnHFont: "-0.249977111117893", totalFill: "0.79998168889431442" },
+  budget: {
+    dimension: "A1:H6",
+    spans: "1:8",
+    activeCell: "A1",
+    /** Every stored cell holding a value → the reader's value. */
+    values: SPEC123_BUDGET_VALUES,
+    /** Every stored cell's `s` (absent: xf 0). */
+    styles: {
+      A1: SPEC123_XF.heading, B1: SPEC123_XF.heading, C1: SPEC123_XF.heading, D1: SPEC123_XF.heading, E1: SPEC123_XF.heading,
+      B2: SPEC123_XF.numbers, C2: SPEC123_XF.numbers, D2: SPEC123_XF.percent,
+      B3: SPEC123_XF.numbers, C3: SPEC123_XF.numbers, D3: SPEC123_XF.percent, F3: SPEC123_XF.good,
+      B4: SPEC123_XF.numbers, C4: SPEC123_XF.numbers, D4: SPEC123_XF.percent, F4: SPEC123_XF.goodCentred,
+      A6: SPEC123_XF.total, B6: SPEC123_XF.total, C6: SPEC123_XF.total, H6: SPEC123_XF.total,
+    },
+    formulas: { B6: "SUM(B2:B4)", C6: "SUM(C2:C4)" },
+    /** Cells stored for their style alone (`<c r s/>`, value null): H6, the
+     * styled row × styled column intersection. */
+    styleOnly: ["H6"],
+    /** F1 holds nothing — the header row stops at E1. */
+    emptyCell: "F1",
+    /** Rows 1–6 are used; row 5 (index 4) is not written at all. */
+    usedRows: 6,
+    emptyRow: { index: 4 },
+    /** Column H: `<col min="8" max="8" width="12.7109375" style="5" customWidth="1"/>`. */
+    styledColumn: { index: 7, letter: "H", styleId: SPEC123_XF.columnH, sourceWidthChars: 12.7109375 },
+    /** Row 6: `s="4" customFormat="1"` — Invoice total from A6 to XFD6. */
+    styledRow: { index: 5, styleId: SPEC123_XF.total },
+    /** What a few positions show, en-US. */
+    looks: {
+      A1: { bold: true, sizePt: 15, bottomEdge: "thick" },
+      B2: { numberFormat: "0.00", text: "1234.50" },
+      D2: { numberFormat: "0.00%", text: "12.50%" },
+      F3: { color: "#006100", fill: "#c6efce" },
+      F4: { color: "#006100", fill: "#c6efce", horizontal: "center" },
+      H1: { italic: true },
+      B6: { numberFormat: SPEC123_NUMFMTS[164], text: "2,624.8", bold: true, topEdge: "thin", bottomEdge: "double" },
+    },
+  },
+  notes: { values: SPEC123_NOTES_VALUES },
+  partNames: {
+    styles: "xl/styles.xml",
+    theme: "xl/theme/theme1.xml",
+    sharedStrings: "xl/sharedStrings.xml",
+    budget: "xl/worksheets/sheet1.xml",
+    notes: "xl/worksheets/sheet2.xml",
+  },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** spec123-styles.xlsx's shared strings, in index order (first use,
+ * row-major, sheet order). */
+const SPEC123_STRINGS: readonly string[] = [
+  ...Object.values(SPEC123_BUDGET_VALUES).filter((value) => typeof value === "string"),
+  ...Object.values(SPEC123_NOTES_VALUES),
+];
+
+/** A shared-string cell for one of SPEC123_STRINGS. */
+function spec123Text(ref: string, text: string, style?: number): string {
+  const index = SPEC123_STRINGS.indexOf(text);
+  if (index < 0) {
+    throw new Error(`"${text}" is not one of spec123-styles.xlsx's strings`);
+  }
+  return sharedCell(ref, index, style);
+}
+
+/** spec123-styles.xlsx's styles part (see SPEC123_XF and the section header). */
+const SPEC123_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<numFmts count="1"><numFmt numFmtId="164" formatCode="${excelAttr(SPEC123_NUMFMTS[164])}"/></numFmts>` +
+  `<fonts count="6" x14ac:knownFonts="1">` +
+  `<font><sz val="11"/><color theme="1"/>${SPEC122_FONT_TAIL}` + // 0 Normal
+  `<font><sz val="11"/><color rgb="FF006100"/>${SPEC122_FONT_TAIL}` + // 1 Good
+  `<font><b/><sz val="15"/><color theme="3"/>${SPEC122_FONT_TAIL}` + // 2 Heading 1
+  `<font><b/><sz val="11"/><color theme="1"/>${SPEC122_FONT_TAIL}` + // 3 Invoice total
+  `<font><u/><sz val="11"/><color theme="11"/>${SPEC122_FONT_TAIL}` + // 4 Followed Hyperlink
+  `<font><i/><sz val="11"/><color theme="4" tint="${SPEC123_STYLES_XLSX.tints.columnHFont}"/>${SPEC122_FONT_TAIL}` + // 5 column H
+  `</fonts>` +
+  `<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/></patternFill></fill>` + // 2 Good
+  `<fill><patternFill patternType="solid"><fgColor theme="4" tint="${SPEC123_STYLES_XLSX.tints.totalFill}"/><bgColor indexed="64"/></patternFill></fill>` + // 3 Invoice total
+  `</fills>` +
+  `<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border>` +
+  `<border><left/><right/><top/><bottom style="thick"><color theme="4"/></bottom><diagonal/></border>` + // 1 Heading 1
+  `<border><left/><right/><top style="thin"><color theme="4"/></top><bottom style="double"><color theme="4"/></bottom><diagonal/></border>` + // 2 Invoice total
+  `</borders>` +
+  `<cellStyleXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="1" applyNumberFormat="0" applyFill="0" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="164" fontId="3" fillId="3" borderId="2" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="0" fontId="4" fillId="0" borderId="0" applyNumberFormat="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>` +
+  `</cellStyleXfs>` +
+  `<cellXfs count="8"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="2"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="1"/>` +
+  `<xf numFmtId="164" fontId="3" fillId="3" borderId="2" xfId="3"/>` +
+  `<xf numFmtId="0" fontId="5" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+  `<xf numFmtId="10" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="1" applyAlignment="1"><alignment horizontal="center"/></xf></cellXfs>` +
+  `<cellStyles count="5">` +
+  SPEC123_STYLES_XLSX.namedStyles
+    .map((style) => {
+      const builtin = "builtinId" in style ? ` builtinId="${style.builtinId}"` : "";
+      const hidden = "hidden" in style ? ` hidden="1"` : "";
+      const uid = "uid" in style ? ` xr:uid="${style.uid}"` : "";
+      return `<cellStyle name="${style.name}" xfId="${style.xfId}"${builtin}${hidden}${uid}/>`;
+    })
+    .join("") +
+  `</cellStyles>` +
+  `<dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
+  `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">` +
+  `<x14:slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext>` +
+  `<ext uri="{9260A510-F301-46a8-8635-F512D64BE5F5}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main">` +
+  `<x15:timelineStyles defaultTimelineStyle="TimeSlicerStyleLight1"/></ext></extLst></styleSheet>`;
+
+/** "Budget" — see the section header and SPEC123_STYLES_XLSX.budget. Its
+ * rows are written from the facts: each row's cells in their order, every
+ * row with the block's `spans`, row 6 with its style. */
+function spec123BudgetSheet(): string {
+  const F = SPEC123_STYLES_XLSX;
+  const B = F.budget;
+  const values: Readonly<Record<string, string | number>> = B.values;
+  const styles: Readonly<Record<string, number>> = B.styles;
+  const formulas: Readonly<Record<string, string>> = B.formulas;
+  const styleOnly: readonly string[] = B.styleOnly;
+  const cell = (ref: string): string => {
+    const style = styles[ref];
+    if (styleOnly.includes(ref)) {
+      return styleOnlyCell(ref, style!);
+    }
+    const value = values[ref]!;
+    const formula = formulas[ref];
+    if (formula !== undefined) {
+      return spec122Formula(ref, normalF(formula), value as number, style);
+    }
+    return typeof value === "number" ? spec122Number(ref, value, style) : spec123Text(ref, value, style);
+  };
+  const refs = [...Object.keys(values), ...styleOnly];
+  const rows = [...new Set(refs.map(a1RowNumber))].map((r) => {
+    const attrs = r === B.styledRow.index + 1 ? ` s="${B.styledRow.styleId}" customFormat="1"` : "";
+    return spec122Row(r, B.spans, attrs, refs.filter((ref) => a1RowNumber(ref) === r).map(cell).join(""));
+  });
+  const H = B.styledColumn;
+  return worksheetXml({
+    uid: F.sheets[0].uid.slice(1, -1),
+    dimension: B.dimension,
+    selected: true,
+    activeCell: B.activeCell,
+    cols: `<cols><col min="${H.index + 1}" max="${H.index + 1}" width="${H.sourceWidthChars}" style="${H.styleId}" customWidth="1"/></cols>`,
+    sheetData: rows.join(""),
+  });
+}
+
+export async function buildSpec123StylesXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC123_STYLES_XLSX;
+  const budget = spec123BudgetSheet();
+  const notes = worksheetXml({
+    uid: F.sheets[1].uid.slice(1, -1),
+    dimension: "A1:A2",
+    sheetData: Object.entries(F.notes.values)
+      .map(([ref, text]) => excelRow(a1RowNumber(ref), "1:1", spec123Text(ref, text)))
+      .join(""),
+  });
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: [
+      { name: F.sheetNames[0], xml: budget },
+      { name: F.sheetNames[1], xml: notes },
+    ],
+    sharedStrings: sharedStringsXml(SPEC123_STRINGS, sharedStringReferences(budget) + sharedStringReferences(notes)),
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC123_STYLES,
+  });
+}
+
+// --- spec123-styles.ods ---------------------------------------------------------
+
+/** What spec123-styles.ods holds, for the unit, round-trip and e2e specs.
+ * Cells are A1 notation; `index` fields are 0-based. */
+export const SPEC123_STYLES_ODS = {
+  title: "Budget",
+  tableNames: ["Budget", "Notes"],
+  activeTable: "Budget",
+  activeSheetIndex: 0,
+  budget: {
+    /** Every stored cell → the reader's value (the same as the xlsx's,
+     * whose H6 Calc does not store: row 6's style reaches it). */
+    values: SPEC123_BUDGET_VALUES,
+    /** Each value cell's automatic style (absent: none). */
+    styles: {
+      A1: "ce1", B1: "ce1", C1: "ce1", D1: "ce1", E1: "ce1",
+      B2: "ce2", C2: "ce2", D2: "ce3",
+      B3: "ce2", C3: "ce2", D3: "ce3", F3: "ce4",
+      B4: "ce2", C4: "ce2", D4: "ce3", F4: "ce5",
+      A6: "ce7", B6: "ce7", C6: "ce7",
+    },
+    /** Formula cells: `table:formula`, the canonical formula, the cached
+     * value and the text Calc wrote for it. */
+    formulas: {
+      B6: { wire: "of:=SUM([.B2:.B4])", formula: "SUM(B2:B4)", value: 2624.75, text: "2,624.8" },
+      C6: { wire: "of:=SUM([.C2:.C4])", formula: "SUM(C2:C4)", value: 3190.5, text: "3,190.5" },
+    },
+    emptyCell: "F1",
+    /** Rows 1–6 are written; row 5 (index 4) is an empty row; the trailing
+     * run reaches the grid's edge. */
+    usedRows: 6,
+    emptyRow: { index: 4 },
+    trailingRowRun: 1_048_576 - 6,
+    /** Column H: `table:style-name="co2"` (wider) and
+     * `table:default-cell-style-name="ce6"` (italic). */
+    columnDefault: { index: 7, letter: "H", styleName: "ce6", columnStyle: "co2" },
+    /** Row 6: A6:C6 in ce7, then a ce7 run of 16381 empty cells to XFD — the
+     * row's style, storing no cell of its own. */
+    styledRow: { index: 5, styleName: "ce7", repeatedRun: 16_381 },
+    /** What a few positions show, en-US. */
+    looks: {
+      A1: { bold: true, sizePt: 18 },
+      B2: { numberFormat: "0.00", text: "1234.50" },
+      D2: { numberFormat: "0.00%", text: "12.50%" },
+      F3: { color: "#006600", fill: "#ccffcc" },
+      F4: { color: "#006600", fill: "#ccffcc", horizontal: "center" },
+      H1: { italic: true },
+      B6: { numberFormat: "#,##0.0;[Red]-#,##0.0", text: "2,624.8", bold: true, topEdge: "thin", bottomEdge: "double", borderColor: "#156082" },
+    },
+  },
+  notes: { values: SPEC123_NOTES_VALUES },
+  /** styles.xml's common table-cell styles, in file order: `includes` the
+   * aspects each sets, itself or through its parents (STYLE_ASPECTS order). */
+  commonStyles: [
+    { name: "Default" },
+    { name: "Heading", parent: "Default", includes: ["font"] },
+    { name: "Heading_20_1", displayName: "Heading 1", parent: "Heading", includes: ["font"] },
+    { name: "Good", parent: "Default", includes: ["font", "fill"] },
+    { name: "Invoice_20_total", displayName: "Invoice total", parent: "Default", includes: ["font", "borders"] },
+  ],
+  /** content.xml's automatic cell styles: the common style each is
+   * parented to, its data style and what it adds of its own. */
+  cellStyles: {
+    ce1: { parent: "Heading_20_1" },
+    ce2: { parent: "Default", dataStyle: "N104" },
+    ce3: { parent: "Default", dataStyle: "N111" },
+    ce4: { parent: "Good" },
+    ce5: { parent: "Good", horizontal: "center" },
+    ce6: { parent: "Default", italic: true },
+    ce7: { parent: "Invoice_20_total", dataStyle: "N105" },
+  },
+  /** The data styles' codes as SPEC-118 reads them (N105 is the N105P0 pair). */
+  dataStyles: { N104: "0.00", N105: "#,##0.0;[Red]-#,##0.0", N111: "0.00%" },
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: ["mimetype", "meta.xml", "settings.xml", "content.xml", "Thumbnails/thumbnail.png", "styles.xml", "manifest.rdf", "META-INF/manifest.xml"],
+} as const;
+
+/** styles.xml: LO_STYLES with Calc's own "Heading" (its asian and complex
+ * twins) followed by "Heading 1", "Good" and the workbook's "Invoice total". */
+const SPEC123_ODS_STYLES = LO_STYLES.replace(
+  `<style:style style:name="Heading" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-size="24pt" fo:font-weight="bold"/></style:style>`,
+  `<style:style style:name="Heading" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:color="#000000" fo:font-size="24pt" ` +
+    `fo:font-style="normal" fo:font-weight="bold" style:font-size-asian="24pt" style:font-style-asian="normal" style:font-weight-asian="bold" ` +
+    `style:font-size-complex="24pt" style:font-style-complex="normal" style:font-weight-complex="bold"/></style:style>` +
+    `<style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="table-cell" style:parent-style-name="Heading">` +
+    `<style:text-properties fo:font-size="18pt" style:font-size-asian="18pt" style:font-size-complex="18pt"/></style:style>` +
+    `<style:style style:name="Good" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:background-color="#ccffcc"/>` +
+    `<style:text-properties fo:color="#006600"/></style:style>` +
+    `<style:style style:name="Invoice_20_total" style:display-name="Invoice total" style:family="table-cell" style:parent-style-name="Default">` +
+    `<style:table-cell-properties style:border-line-width-bottom="0.0102in 0.0157in 0.0102in" fo:border-bottom="2.6pt double #156082" ` +
+    `fo:border-left="none" fo:border-right="none" fo:border-top="0.74pt solid #156082"/>` +
+    `<style:text-properties fo:font-weight="bold" style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>`,
+);
+
+/** content.xml's automatic styles, in Calc's order: columns (co2 column H's
+ * wider width), the row, the table, the data styles, the cell styles. */
+const SPEC123_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="co2" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.9272in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<number:number-style style:name="N104"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/></number:number-style>` +
+  `<number:number-style style:name="N105P0" style:volatile="true"><number:number number:decimal-places="1" number:min-decimal-places="1" ` +
+  `number:min-integer-digits="1" number:grouping="true"/></number:number-style>` +
+  `<number:number-style style:name="N105"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text>` +
+  `<number:number number:decimal-places="1" number:min-decimal-places="1" number:min-integer-digits="1" number:grouping="true"/>` +
+  `<style:map style:condition="value()&gt;=0" style:apply-style-name="N105P0"/></number:number-style>` +
+  `<number:percentage-style style:name="N111"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+  `<number:text>%</number:text></number:percentage-style>` +
+  `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Heading_20_1"/>` +
+  `<style:style style:name="ce2" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N104"/>` +
+  `<style:style style:name="ce3" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N111"/>` +
+  `<style:style style:name="ce4" style:family="table-cell" style:parent-style-name="Good"/>` +
+  `<style:style style:name="ce5" style:family="table-cell" style:parent-style-name="Good"><style:table-cell-properties style:text-align-source="fix" ` +
+  `style:repeat-content="false"/><style:paragraph-properties fo:text-align="center" fo:margin-left="0in"/></style:style>` +
+  `<style:style style:name="ce6" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-style="italic" ` +
+  `style:font-style-asian="italic" style:font-style-complex="italic"/></style:style>` +
+  `<style:style style:name="ce7" style:family="table-cell" style:parent-style-name="Invoice_20_total" style:data-style-name="N105"/>` +
+  `</office:automatic-styles>`;
+
+/** "Budget" — see the section header and SPEC123_STYLES_ODS.budget: each
+ * written row's cells from the facts, then its run to XFD (row 6's styled). */
+function spec123OdsBudgetTable(): string {
+  const B = SPEC123_STYLES_ODS.budget;
+  const values: Readonly<Record<string, string | number>> = B.values;
+  const styles: Readonly<Record<string, string>> = B.styles;
+  const formulas: Readonly<Record<string, { wire: string; text: string }>> = B.formulas;
+  /** The text Calc shows for a number in its cell's data style. */
+  const shown = (ref: string, value: number): string => {
+    const formula = formulas[ref];
+    if (formula !== undefined) {
+      return formula.text;
+    }
+    const style = styles[ref];
+    return style === "ce2" ? value.toFixed(2) : style === "ce3" ? `${(value * 100).toFixed(2)}%` : String(value);
+  };
+  const cell = (ref: string): string => {
+    const value = values[ref]!;
+    const style = styles[ref];
+    if (typeof value === "string") {
+      return loString(value, style);
+    }
+    const type = style === "ce3" ? "percentage" : "float";
+    const formula = formulas[ref] === undefined ? "" : `table:formula="${formulas[ref].wire}" `;
+    return loValueCell(style, `${formula}office:value-type="${type}" office:value="${value}" calcext:value-type="${type}"`, shown(ref, value));
+  };
+  const H = B.columnDefault;
+  const R = B.styledRow;
+  const rows: string[] = [];
+  for (let r = 1; r <= B.usedRows; r += 1) {
+    const refs = Object.keys(values).filter((ref) => a1RowNumber(ref) === r);
+    const rest = 16_384 - refs.length;
+    rows.push(loRow(refs.map(cell).join("") + (r === R.index + 1 ? loStyledRun(R.styleName, rest) : loEmpty(rest))));
+  }
+  return (
+    `<table:table table:name="${SPEC123_STYLES_ODS.tableNames[0]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="${H.index}" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="${H.columnStyle}" table:default-cell-style-name="${H.styleName}"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="${16_384 - H.index - 1}" table:default-cell-style-name="Default"/>` +
+    rows.join("") +
+    loRow(loEmpty(16_384), "ro1", B.trailingRowRun) +
+    `</table:table>`
+  );
+}
+
+export async function buildSpec123StylesOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC123_STYLES_ODS;
+  const notesValues = Object.values(O.notes.values);
+  const notes =
+    `<table:table table:name="${O.tableNames[1]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    notesValues.map((text) => loRow(loString(text) + loEmpty(16_383))).join("") +
+    loRow(loEmpty(16_384), "ro1", 1_048_576 - notesValues.length) +
+    `</table:table>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC123_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${spec123OdsBudgetTable()}${notes}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.budget.values).length + notesValues.length;
+  return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable), SPEC123_ODS_STYLES);
 }

@@ -22,6 +22,8 @@ import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
+import type { FormatPainter } from "./useFormatPainter";
+import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { Recalc } from "./useRecalc";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -49,6 +51,10 @@ export interface SheetGridContext {
   recalc?: Pick<Recalc, "staleTitleAt">;
   /** Cell entry (SPEC-122); absent = the grid is read-only. */
   cellEditing?: CellEditing;
+  /** SPEC-123: formatting (the cell context menu and Format Cells) and the
+   * format painter (the grid's data-format-painter); absent = none. */
+  formatting?: Formatting;
+  painter?: Pick<FormatPainter, "mode">;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */

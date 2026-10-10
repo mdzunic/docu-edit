@@ -9,9 +9,12 @@
 // recalculation (useRecalc, SPEC-120). SPEC-121: Edit ▸ Undo/Redo step the
 // workbook's undo stack, and File ▸ Download and "Download a copy as …" are
 // useWorkbookDownload's (through useWorkbookEditing) — the bar's state carries
-// their enabled states and labels. Later specs append commands here.
+// their enabled states and labels. SPEC-123: the Format menu runs
+// useFormatting's commands. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
+import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
+import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { Recalc } from "./useRecalc";
 import type { SheetViewState } from "./useSheetViewState";
@@ -28,6 +31,32 @@ export interface SpreadsheetMenuDeps {
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
   editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar">;
+  /** SPEC-123: the Format menu. */
+  formatting?: Pick<Formatting, "run" | "toolbar">;
+}
+
+/** A Format menu command as useFormatting's (null: not one). */
+function formatCommand(command: string): Parameters<Formatting["run"]>[0] | null {
+  if (command.startsWith("format.number.")) {
+    return { kind: "number-format", preset: command.slice("format.number.".length) as NumberPresetId };
+  }
+  if (command.startsWith("format.style.")) {
+    return { kind: "cell-style", name: command.slice("format.style.".length) };
+  }
+  switch (command) {
+    case SHEET_MENU_COMMANDS.formatCells:
+      return { kind: "format-cells" };
+    case SHEET_MENU_COMMANDS.moreNumberFormats:
+      return { kind: "format-cells", tab: "number" };
+    case SHEET_MENU_COMMANDS.clearAll:
+      return { kind: "clear", what: "all" };
+    case SHEET_MENU_COMMANDS.clearFormats:
+      return { kind: "clear", what: "formats" };
+    case SHEET_MENU_COMMANDS.clearContents:
+      return { kind: "clear", what: "contents" };
+    default:
+      return null;
+  }
 }
 
 export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
@@ -47,6 +76,7 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         copyLabel: "Download a copy as …",
         copyDisabledReason: "",
       }),
+      cellStyleNames: deps.formatting?.toolbar.value.cellStyles.flatMap((group) => group.styles.map((style) => style.name)) ?? [],
     }),
   );
 
@@ -56,6 +86,11 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
   }
 
   function run(command = ""): void {
+    const format = formatCommand(command);
+    if (format) {
+      deps.formatting?.run(format);
+      return;
+    }
     const preset = zoomPresetOf(command);
     if (preset !== null) {
       deps.zoom.set(preset);

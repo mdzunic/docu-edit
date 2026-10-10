@@ -28,8 +28,10 @@
 // grid element itself is handed to it), a double-click opens it in Edit
 // mode, and a formula's references on this sheet are outlined
 // (`sheet-ref-highlight`, `data-ref-index` = the colour index, the colour
-// `--sheet-ref-<index + 1>`, the pointed one dashed). Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// `--sheet-ref-<index + 1>`, the pointed one dashed). SPEC-123: while the
+// format painter is armed the grid carries data-format-painter="once|locked"
+// and the copy cursor. Runtime prop declarations per the espree constraint
+// (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
@@ -61,6 +63,8 @@ const vp = grid.viewport;
 const RH = ROW_HEADER_WIDTH_PX;
 const CH = COLUMN_HEADER_HEIGHT_PX;
 const cellEditing = computed(() => asSheetGridContext(props.context).cellEditing);
+/** SPEC-123: the armed format painter ("once" | "locked"), "" when off. */
+const painterMode = computed(() => asSheetGridContext(props.context).painter?.mode.value ?? "");
 
 function px(value = 0) {
   return `${value}px`;
@@ -96,6 +100,7 @@ function unscroll(event = new Event("scroll")) {
     :aria-label="props.sheet.name"
     :aria-activedescendant="grid.activeDescendant.value"
     :data-show-formulas="props.showFormulas ? 'true' : undefined"
+    :data-format-painter="painterMode || undefined"
     data-testid="spreadsheet-grid"
     tabindex="0"
     @scroll="vp.onScroll"
@@ -496,5 +501,11 @@ function unscroll(event = new Event("scroll")) {
   height: 6px;
   border-left: none;
   border-right: none;
+}
+
+/* SPEC-123: the armed format painter's cursor, over every grid layer. */
+.sheet-grid[data-format-painter],
+.sheet-grid[data-format-painter] :deep(*) {
+  cursor: copy;
 }
 </style>

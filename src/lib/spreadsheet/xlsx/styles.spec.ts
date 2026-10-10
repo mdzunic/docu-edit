@@ -19,12 +19,27 @@
 // runs and count values, an absent collection inserted in CT_Stylesheet
 // order, nothing rewritten when nothing was appended); and the from-scratch
 // base built from model.styles[0].
+//
+// SPEC-123 "Named cell styles" › xlsx: reading cellStyles (file order, the
+// first per xfId, builtinId, hidden, sourceXfId) with their cellStyleXfs
+// definitions (applyX "0"/"false" excluding, absent including; an orphan
+// xfId an empty definition) and each cellXfs style's namedStyle (Normal —
+// builtinId 0, else the one named "Normal" — absent); writing a style's
+// xfId (a source sourceXfId reused, a definition the part lacks appended
+// once as a cellStyleXfs xf with applyX="0" for its excluded aspects plus a
+// cellStyle carrying a built-in's builtinId, Normal's xf and cellStyle
+// first in a part without them, from scratch too), write → read, append-only
+// over every collection, and a whole save of spec117-styles.xlsx.
 import { describe, expect, it } from "vitest";
 import { DEFAULT_THEME, hexToRgb, resolveColor, resolveFont, type DocumentTheme, type ModelColor } from "../../core/theme";
+import { unzip } from "../../core/zip";
+import { getCell } from "../address";
 import { buildSpec117StylesXlsxBytes, SPEC117_BORDER_STYLES, SPEC117_STYLES_XLSX, SPEC117_XF } from "../fixtures/build";
-import type { CellStyle, SheetColorRef } from "../model";
+import { packageIntegrity } from "../fixtures/packageIntegrity";
+import type { CellFont, CellStyle, SheetColorRef } from "../model";
+import { readSpreadsheetBytes } from "../open";
 import { createBlankWorkbook } from "../sheets";
-import { INDEXED_COLORS, styleKey } from "../styles";
+import { builtinCellStyle, cellStyle, INDEXED_COLORS, internStyle, STYLE_ASPECTS, styleKey, type NamedCellStyle, type StyleAspect } from "../styles";
 import { parseXlsx } from "./reader";
 import { readXlsxStyles, XlsxFontReader, XlsxStyleWriter } from "./styles";
 import {
@@ -36,7 +51,7 @@ import {
   xlsxThemeSlot,
   type XlsxColorAttributes,
 } from "./themeColor";
-import { FROM_SCRATCH_STYLES_XML } from "./writer";
+import { FROM_SCRATCH_STYLES_XML, writeXlsx } from "./writer";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const STRICT = "http://purl.oclc.org/ooxml/spreadsheetml/main";
@@ -521,15 +536,17 @@ describe("number formats (SPEC-118 \"Reading xlsx number formats\")", () => {
 });
 
 describe("the parts left unread and the override palette", () => {
-  const unread =
+  // SPEC-123 reads these two (see "SPEC-123 named cell styles" below).
+  const named =
     `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
-    `<cellStyles count="2"><cellStyle name="Good" xfId="0" builtinId="26"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+    `<cellStyles count="2"><cellStyle name="Good" xfId="0" builtinId="26"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>`;
+  const unread =
     `<dxfs count="1"><dxf><font><b/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>` +
     `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
     `<colors><mruColors><color rgb="FF66FF33"/></mruColors></colors>` +
     `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}"><slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext></extLst>`;
 
-  it("leaves cellStyleXfs/cellStyles, dxfs, tableStyles, extLst and mruColors unread; numFmts are SPEC-118's and read", () => {
+  it("leaves dxfs, tableStyles, extLst and mruColors unread; numFmts are SPEC-118's and read, cellStyleXfs/cellStyles SPEC-123's", () => {
     const xfs = [`<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`];
     const numFmts = `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts`;
     const bare = readXlsxStyles(stylesXml({ xfs }).replace("<fonts", numFmts), undefined);
@@ -538,6 +555,15 @@ describe("the parts left unread and the override palette", () => {
     expect(full.styles[0]!.numberFormat).toBe("0.0%");
     expect(full.styles[0]!.namedStyle).toBeUndefined();
     expect(full.indexedColors).toBeUndefined();
+    // SPEC-123: the named styles are read. Good, the first cellStyle on
+    // xfId 0, wins it (Normal's, on the same xfId, is skipped), so the xf
+    // pointing there is in Good — an absent applyX includes every aspect.
+    const withNamed = readXlsxStyles(stylesXml({ xfs, extra: named + unread }).replace("<fonts", numFmts), undefined);
+    expect(withNamed).toEqual({
+      ...bare,
+      styles: [{ ...bare.styles[0], namedStyle: "Good" }],
+      namedStyles: [{ name: "Good", builtinId: 26, style: { font: { family: "Calibri", sizePt: 11 } }, includes: [...STYLE_ASPECTS], sourceXfId: 0 }],
+    });
   });
 
   it("reads <colors><indexedColors> as 64 lowercase entries, the fonts and fills resolving through them", () => {
@@ -606,9 +632,12 @@ describe("spec117-styles.xlsx (Excel-shaped)", () => {
     expect(styles).toHaveLength(34);
     styles.forEach((style, i) => expect(style.sourceXf).toBe(i));
     expect(styles[0]).toEqual({ font: { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } }, sourceXf: 0 });
-    for (const style of styles) {
-      expect(style.namedStyle).toBeUndefined();
-    }
+    // SPEC-123: the two xfs whose xfId names a cell style carry its name;
+    // every other names xfId 0, Normal (absent).
+    expect(styles.flatMap((style, i) => (style.namedStyle === undefined ? [] : [[i, style.namedStyle]]))).toEqual([
+      [SPEC117_XF.title, "Heading 1"],
+      [SPEC117_XF.good, "Good"],
+    ]);
     // SPEC-118: the one custom numFmt (164, "0.0%") is the only format.
     expect(styles.filter((style) => style.numberFormat !== undefined).map((style) => style.numberFormat)).toEqual(["0.0%"]);
     expect(styles.some((style) => style.builtinFormatId !== undefined)).toBe(false);
@@ -897,5 +926,524 @@ describe("XlsxStyleWriter: from scratch", () => {
     const read = readXlsxStyles(xml, undefined);
     expect(read.defaultFont).toEqual({ family: "Arial", sizePt: 10 });
     expect(read.styles.map(styleKey)).toEqual(styles.map(styleKey));
+  });
+});
+
+// --- SPEC-123: named cell styles -------------------------------------------------------
+
+/** An Excel-shaped styles part with named styles: the built-ins Normal, Good
+ * and Heading 1; the custom "Invoice total" (a number format, font, borders
+ * and alignment — its fill excluded with "false", its protection with "0");
+ * a hidden built-in; a second cellStyle on Good's xfId (skipped). Its
+ * cellXfs: Normal, Good, Heading 1 centred, Invoice total, an xf without
+ * xfId. */
+const NAMED_SOURCE =
+  `${DECLARATION}\r\n<styleSheet xmlns="${MAIN}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac" xmlns:x14ac="${X14AC}">` +
+  `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts>` +
+  `<fonts count="4" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><sz val="11"/><color rgb="FF006100"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="15"/><color theme="3"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/><bgColor indexed="64"/></patternFill></fill></fills>` +
+  `<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border>` +
+  `<border><left/><right/><top/><bottom style="thick"><color theme="4"/></bottom><diagonal/></border>` +
+  `<border><left/><right/><top style="thin"><color theme="4"/></top><bottom style="double"><color theme="4"/></bottom><diagonal/></border></borders>` +
+  `<cellStyleXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="1" applyNumberFormat="0" applyFill="0" applyAlignment="0" applyProtection="0"/>` +
+  `<xf numFmtId="164" fontId="3" fillId="2" borderId="2" applyFill="false" applyProtection="0"><alignment horizontal="right"/></xf>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyFont="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+  `<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="1"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="2" applyAlignment="1"><alignment horizontal="center"/></xf>` +
+  `<xf numFmtId="164" fontId="3" fillId="0" borderId="2" xfId="3"><alignment horizontal="right"/></xf>` +
+  `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" applyFont="1"/></cellXfs>` +
+  `<cellStyles count="6"><cellStyle name="Good" xfId="1" builtinId="26"/><cellStyle name="Heading 1" xfId="2" builtinId="16"/>` +
+  `<cellStyle name="Invoice total" xfId="3"/><cellStyle name="Followed Hyperlink" xfId="4" builtinId="9" hidden="1"/>` +
+  `<cellStyle name="Good 2" xfId="1"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
+  `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext></extLst></styleSheet>`;
+
+const NORMAL_FONT: CellFont = { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } };
+const ACCENT1 = { theme: "accent1" as const };
+const INVOICE_TOTAL: CellStyle = {
+  numberFormat: "0.0%",
+  font: BOLD_MINOR,
+  borders: { top: { style: "thin", color: ACCENT1 }, bottom: { style: "double", color: ACCENT1 } },
+  alignment: { horizontal: "right" },
+};
+
+/** NAMED_SOURCE's named styles, as read. */
+const NAMED_SOURCE_STYLES: NamedCellStyle[] = [
+  {
+    name: "Good",
+    builtinId: 26,
+    style: { font: { ...NORMAL_FONT, color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } },
+    includes: ["font", "fill"],
+    sourceXfId: 1,
+  },
+  {
+    name: "Heading 1",
+    builtinId: 16,
+    style: { font: { family: { theme: "minor" }, sizePt: 15, bold: true, color: { theme: "dk2" } }, borders: { bottom: { style: "thick", color: ACCENT1 } } },
+    includes: ["font", "borders"],
+    sourceXfId: 2,
+  },
+  { name: "Invoice total", style: INVOICE_TOTAL, includes: ["numberFormat", "font", "borders", "alignment"], sourceXfId: 3 },
+  { name: "Followed Hyperlink", builtinId: 9, style: {}, includes: ["numberFormat"], hidden: true, sourceXfId: 4 },
+  { name: "Normal", builtinId: 0, style: { font: NORMAL_FONT }, includes: [...STYLE_ASPECTS], sourceXfId: 0 },
+];
+
+/** A built-in as formatting.ts appends it on first use: the pinned definition. */
+function appendedBuiltin(name: string): NamedCellStyle {
+  const builtin = builtinCellStyle(name)!;
+  return { name, builtinId: builtin.builtinId, style: structuredClone(builtin.style), includes: [...builtin.includes] };
+}
+
+/** A custom definition — an included number format, font, alignment and
+ * protection, its fill and borders excluded — with a name to escape. */
+const SUBTOTAL: NamedCellStyle = {
+  name: `Sub & "total"`,
+  style: { numberFormat: "#,##0.00", font: { italic: true }, alignment: { horizontal: "right" }, protection: { locked: false } },
+  includes: ["numberFormat", "font", "alignment", "protection"],
+};
+const SUBTOTAL_NAME_ATTR = `Sub &amp; &quot;total&quot;`;
+
+/** Cells in Bad and SUBTOTAL as applyNamedStyle leaves them (a font is the
+ * definition's over Normal's). */
+const BAD_CELL: CellStyle = { font: { ...NORMAL_FONT, color: "#9c0006" }, fill: { kind: "solid", color: "#ffc7ce" }, namedStyle: "Bad" };
+const SUBTOTAL_CELL: CellStyle = {
+  numberFormat: "#,##0.00",
+  font: { ...NORMAL_FONT, italic: true },
+  alignment: { horizontal: "right" },
+  protection: { locked: false },
+  namedStyle: SUBTOTAL.name,
+};
+
+/** A definition as it reads back once written at `sourceXfId`: its font
+ * completed by Normal's. */
+function writtenDefinition(definition: NamedCellStyle, sourceXfId: number): NamedCellStyle {
+  const { sourceXfId: _source, ...rest } = definition;
+  const style = definition.includes.includes("font") ? { ...rest.style, font: { ...NORMAL_FONT, ...rest.style.font } } : rest.style;
+  return { ...rest, style, sourceXfId };
+}
+
+/** A writer over `source` whose model holds the source's styles and named
+ * styles plus `added` and `named`; `first` is the first added style's id. */
+function namedWriter(added: CellStyle[], named: NamedCellStyle[] = [], source = NAMED_SOURCE): { writer: XlsxStyleWriter; first: number } {
+  const table = readXlsxStyles(source, undefined);
+  const model = { styles: [...table.styles, ...added], theme: undefined, namedStyles: [...(table.namedStyles ?? []), ...named] };
+  return { writer: new XlsxStyleWriter(source, model), first: table.styles.length };
+}
+
+/** A collection's content: the text between its start and close tags. */
+function contentOf(xml: string, local: string): string {
+  return new RegExp(`<${local}\\b[^>]*>(.*?)</${local}>`, "s").exec(xml)?.[1] ?? "";
+}
+
+/** The collections the writer appends to, and the child each counts. */
+const COLLECTION_CHILD: Readonly<Record<string, string>> = {
+  numFmts: "numFmt",
+  fonts: "font",
+  fills: "fill",
+  borders: "border",
+  cellStyleXfs: "xf",
+  cellXfs: "xf",
+  cellStyles: "cellStyle",
+};
+
+/** NAMED_SOURCE with `runs` appended to its collections, their counts updated. */
+function namedSourceWith(runs: Partial<Record<string, string>>): string {
+  let xml = NAMED_SOURCE;
+  for (const [local, run] of Object.entries(runs)) {
+    const total = (contentOf(xml, local) + run).match(new RegExp(`<${COLLECTION_CHILD[local]}\\b`, "g"))!.length;
+    xml = xml.replace(new RegExp(`(<${local}\\b[^>]*?count=")\\d+(")`), `$1${total}$2`).replace(`</${local}>`, () => `${run}</${local}>`);
+  }
+  return xml;
+}
+
+describe("SPEC-123 named cell styles: reading cellStyleXfs and cellStyles", () => {
+  it("reads one named style per cellStyle in file order — name, builtinId, hidden, sourceXfId = xfId — the first per xfId winning", () => {
+    const { namedStyles } = readXlsxStyles(NAMED_SOURCE, undefined);
+    expect(namedStyles).toEqual(NAMED_SOURCE_STYLES);
+    // "Good 2" names Good's xfId after Good: skipped.
+    expect(namedStyles!.map((entry) => entry.name)).not.toContain("Good 2");
+  });
+
+  it('defines each by its cellStyleXfs xf: an absent applyX includes the aspect, "0"/"false" excludes it; style keeps the included aspects with a value', () => {
+    /** One cellStyleXfs xf's definition, over fonts [Calibri 11, bold red],
+     * fills [none, gray125, yellow], borders [empty, bottom thin] and numFmt 164. */
+    const definitionOf = (styleXf: string): Pick<NamedCellStyle, "style" | "includes"> => {
+      const xml = stylesXml({
+        fonts: [`<font><sz val="11"/><name val="Calibri"/></font>`, `<font><b/><sz val="11"/><color rgb="FFFF0000"/></font>`],
+        fills: [`<fill><patternFill patternType="none"/></fill>`, `<fill><patternFill patternType="gray125"/></fill>`, `<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill>`],
+        borders: [`<border/>`, `<border><bottom style="thin"/></border>`],
+        xfs: [`<xf fontId="0" fillId="0" borderId="0" xfId="0"/>`],
+        extra: `<cellStyleXfs count="1">${styleXf}</cellStyleXfs><cellStyles count="1"><cellStyle name="S" xfId="0"/></cellStyles>`,
+      }).replace("<fonts", `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts`);
+      const { style, includes } = readXlsxStyles(xml, undefined).namedStyles![0]!;
+      return { style, includes };
+    };
+    const ids = `numFmtId="164" fontId="1" fillId="2" borderId="1"`;
+    const children = `<alignment horizontal="center"/><protection locked="0"/>`;
+    const everything: CellStyle = {
+      numberFormat: "0.0%",
+      font: { bold: true, sizePt: 11, color: "#ff0000" },
+      fill: { kind: "solid", color: "#ffff00" },
+      borders: { bottom: { style: "thin" } },
+      alignment: { horizontal: "center" },
+      protection: { locked: false },
+    };
+    expect(definitionOf(`<xf ${ids}>${children}</xf>`)).toEqual({ style: everything, includes: [...STYLE_ASPECTS] });
+    const flags: [StyleAspect, string][] = [
+      ["numberFormat", "applyNumberFormat"],
+      ["font", "applyFont"],
+      ["fill", "applyFill"],
+      ["borders", "applyBorder"],
+      ["alignment", "applyAlignment"],
+      ["protection", "applyProtection"],
+    ];
+    for (const [aspect, flag] of flags) {
+      const { [aspect]: _excluded, ...rest } = everything;
+      for (const off of ["0", "false"]) {
+        expect(definitionOf(`<xf ${ids} ${flag}="${off}">${children}</xf>`), `${flag}="${off}"`).toEqual({
+          style: rest,
+          includes: STYLE_ASPECTS.filter((other) => other !== aspect),
+        });
+      }
+      for (const on of ["1", "true"]) {
+        expect(definitionOf(`<xf ${ids} ${flag}="${on}">${children}</xf>`), `${flag}="${on}"`).toEqual({ style: everything, includes: [...STYLE_ASPECTS] });
+      }
+    }
+    // An included aspect without a value is listed and holds nothing; a
+    // locale-dependent built-in keeps its builtinFormatId; a style xf's
+    // quotePrefix is never read.
+    expect(definitionOf(`<xf numFmtId="0" fontId="9" fillId="0" borderId="0"/>`)).toEqual({ style: {}, includes: [...STYLE_ASPECTS] });
+    expect(definitionOf(`<xf numFmtId="14" fontId="9" fillId="0" borderId="0" quotePrefix="1"/>`).style).toEqual({ numberFormat: "m/d/yyyy", builtinFormatId: 14 });
+    expect(definitionOf(`<xf numFmtId="14" fontId="9" fillId="0" borderId="0" applyNumberFormat="0"/>`).style).toEqual({});
+  });
+
+  it('gives a cellStyle whose xfId has no cellStyleXfs entry an empty definition, skips one without a name or an xfId, and reads hidden "1"/"true"', () => {
+    const xml = stylesXml({
+      extra:
+        `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+        `<cellStyles count="6"><cellStyle name="Normal" xfId="0" builtinId="0" hidden="0"/><cellStyle xfId="2"/><cellStyle name="Two" xfId="2" hidden="true"/>` +
+        `<cellStyle name="No xfId"/><cellStyle name="Bad xfId" xfId="x"/><cellStyle name="Far" xfId="7" builtinId="53" customBuiltin="1" hidden="1"/></cellStyles>`,
+    });
+    expect(readXlsxStyles(xml, undefined).namedStyles).toEqual([
+      { name: "Normal", builtinId: 0, style: { font: { family: "Calibri", sizePt: 11 } }, includes: [...STYLE_ASPECTS], sourceXfId: 0 },
+      { name: "Two", style: {}, includes: [], hidden: true, sourceXfId: 2 },
+      { name: "Far", builtinId: 53, style: {}, includes: [], hidden: true, sourceXfId: 7 },
+    ]);
+  });
+
+  it("names each cellXfs style by its xfId — absent with no xfId, an xfId naming no cellStyle, or Normal's; the cellXfs apply flags stay ignored", () => {
+    const { styles } = readXlsxStyles(NAMED_SOURCE, undefined);
+    expect(styles.map((style) => style.namedStyle)).toEqual([undefined, "Good", "Heading 1", "Invoice total", undefined]);
+    expect(styles[3]).toEqual({ ...INVOICE_TOTAL, namedStyle: "Invoice total", sourceXf: 3 });
+    expect(styles[2]).toEqual({ ...NAMED_SOURCE_STYLES[1]!.style, alignment: { horizontal: "center" }, namedStyle: "Heading 1", sourceXf: 2 });
+    // An xfId with an entry but no cellStyle, one with neither, and one a
+    // cellStyle names without an entry (its empty definition's name).
+    const xfs = [3, 9, 7].map((xfId) => `<xf fontId="0" fillId="0" borderId="0" xfId="${xfId}"/>`);
+    const extra =
+      `<cellStyleXfs count="4"><xf/><xf/><xf/><xf/></cellStyleXfs>` +
+      `<cellStyles count="2"><cellStyle name="Normal" xfId="0" builtinId="0"/><cellStyle name="Far" xfId="7"/></cellStyles>`;
+    expect(readXlsxStyles(stylesXml({ xfs, extra }), undefined).styles.map((style) => style.namedStyle)).toEqual([undefined, undefined, "Far"]);
+  });
+
+  it('takes Normal to be builtinId 0 whatever its name, else — when no cellStyle has builtinId 0 — the one named "Normal"', () => {
+    const xfs = [`<xf fontId="0" fillId="0" borderId="0" xfId="0"/>`, `<xf fontId="0" fillId="0" borderId="0" xfId="1"/>`];
+    const styleXfs = `<cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyFont="0"/></cellStyleXfs>`;
+    const namesOf = (cellStyles: string): (string | undefined)[] =>
+      readXlsxStyles(stylesXml({ xfs, extra: `${styleXfs}<cellStyles>${cellStyles}</cellStyles>` }), undefined).styles.map((style) => style.namedStyle);
+    expect(namesOf(`<cellStyle name="Standard" xfId="0" builtinId="0"/><cellStyle name="Akzent" xfId="1"/>`)).toEqual([undefined, "Akzent"]);
+    expect(namesOf(`<cellStyle name="Normal" xfId="0"/><cellStyle name="Accent" xfId="1"/>`)).toEqual([undefined, "Accent"]);
+    expect(namesOf(`<cellStyle name="Accent" xfId="0"/><cellStyle name="Normal" xfId="1" builtinId="0"/>`)).toEqual(["Accent", undefined]);
+  });
+
+  it("reads no named styles and no namedStyle from a part without cellStyles", () => {
+    const table = readXlsxStyles(stylesXml({ xfs: [`<xf fontId="0" fillId="0" borderId="0" xfId="1"/>`], extra: `<cellStyleXfs count="2"><xf/><xf/></cellStyleXfs>` }), undefined);
+    expect(table).not.toHaveProperty("namedStyles");
+    expect(table.styles[0]!.namedStyle).toBeUndefined();
+  });
+
+  it("hands spec117-styles.xlsx's Good, Heading 1 and Normal on through parseXlsx", async () => {
+    const { namedStyles } = await parsed();
+    expect(namedStyles).toEqual([
+      {
+        name: "Good",
+        builtinId: 26,
+        style: { font: { ...NORMAL_FONT, color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } },
+        includes: ["font", "fill"],
+        sourceXfId: 1,
+      },
+      NAMED_SOURCE_STYLES[1],
+      { name: "Normal", builtinId: 0, style: { font: NORMAL_FONT }, includes: [...STYLE_ASPECTS], sourceXfId: 0 },
+    ]);
+  });
+});
+
+describe("SPEC-123 named cell styles: the style writer", () => {
+  it("writes a style naming a source style with its sourceXfId, the apply flags against that parent — appending no named style", () => {
+    const { writer, first } = namedWriter([
+      { font: { ...NORMAL_FONT, color: "#006100", bold: true }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" },
+      { ...INVOICE_TOTAL, numberFormat: "0.00%", namedStyle: "Invoice total" },
+      { font: NORMAL_FONT, namedStyle: "Heading 1" },
+    ]);
+    expect([0, 1, 2].map((k) => writer.xfFor(first + k))).toEqual([5, 6, 7]);
+    expect(writer.xml()).toBe(
+      namedSourceWith({
+        fonts: `<font><b/><sz val="11"/><color rgb="FF006100"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`,
+        cellXfs:
+          `<xf numFmtId="0" fontId="4" fillId="2" borderId="0" xfId="1" applyFont="1"/>` +
+          // The parent xf points at fill 2 (excluded there): the style's none fill differs.
+          `<xf numFmtId="10" fontId="3" fillId="0" borderId="2" xfId="3" applyNumberFormat="1" applyFill="1"><alignment horizontal="right"/></xf>` +
+          `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="2" applyFont="1" applyBorder="1"/>`,
+      }),
+    );
+  });
+
+  it('appends a built-in first applied: a cellStyleXfs xf (applyX="0" and Normal\'s ids for each excluded aspect) and a cellStyle with its builtinId, counts updated', () => {
+    const { writer, first } = namedWriter([BAD_CELL], [appendedBuiltin("Bad")]);
+    expect(writer.xfFor(first)).toBe(5);
+    expect(writer.changed).toBe(true);
+    expect(writer.xml()).toBe(
+      namedSourceWith({
+        fonts: `<font><sz val="11"/><color rgb="FF9C0006"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`,
+        fills: `<fill><patternFill patternType="solid"><fgColor rgb="FFFFC7CE"/><bgColor indexed="64"/></patternFill></fill>`,
+        cellStyleXfs: `<xf numFmtId="0" fontId="4" fillId="3" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>`,
+        // The style says what its parent says: no apply flag.
+        cellXfs: `<xf numFmtId="0" fontId="4" fillId="3" borderId="0" xfId="5"/>`,
+        cellStyles: `<cellStyle name="Bad" xfId="5" builtinId="27"/>`,
+      }),
+    );
+  });
+
+  it("appends a custom-named definition without builtinId — its number format, alignment and protection written, the excluded fill and border Normal's — and flags what a style formatted beyond it changes", () => {
+    const formatted: CellStyle = { ...SUBTOTAL_CELL, numberFormat: "0.000", fill: { kind: "solid", color: "#ffff00" } };
+    const { writer, first } = namedWriter([SUBTOTAL_CELL, formatted], [SUBTOTAL]);
+    expect([writer.xfFor(first), writer.xfFor(first + 1)]).toEqual([5, 6]);
+    const children = `<alignment horizontal="right"/><protection locked="0"/>`;
+    expect(writer.xml()).toBe(
+      namedSourceWith({
+        numFmts: `<numFmt numFmtId="165" formatCode="0.000"/>`,
+        fonts: `<font><i/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`,
+        fills: `<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>`,
+        cellStyleXfs: `<xf numFmtId="4" fontId="4" fillId="0" borderId="0" applyFill="0" applyBorder="0">${children}</xf>`,
+        cellXfs:
+          `<xf numFmtId="4" fontId="4" fillId="0" borderId="0" xfId="5">${children}</xf>` +
+          `<xf numFmtId="165" fontId="4" fillId="3" borderId="0" xfId="5" applyNumberFormat="1" applyFill="1">${children}</xf>`,
+        cellStyles: `<cellStyle name="${SUBTOTAL_NAME_ATTR}" xfId="5"/>`,
+      }),
+    );
+  });
+
+  it("appends a named style once, however many styles name it", () => {
+    const { writer, first } = namedWriter([BAD_CELL, { ...BAD_CELL, font: { ...BAD_CELL.font, bold: true } }, BAD_CELL], [appendedBuiltin("Bad")]);
+    expect([0, 1, 2].map((k) => writer.xfFor(first + k))).toEqual([5, 6, 5]);
+    const xml = writer.xml();
+    expect(contentOf(xml, "cellStyleXfs").match(/<xf\b/g)).toHaveLength(6);
+    expect(contentOf(xml, "cellStyles").match(/<cellStyle\b/g)).toHaveLength(7);
+    expect(contentOf(xml, "cellXfs").endsWith(`<xf numFmtId="0" fontId="5" fillId="3" borderId="0" xfId="5" applyFont="1"/>`)).toBe(true);
+  });
+
+  it('writes an absent or "Normal" namedStyle, or one whose definition has builtinId 0, with Normal\'s xfId — the builtinId-0 cellStyle\'s, wherever it is', () => {
+    const plain = namedWriter([{ font: BOLD_MINOR }, { font: BOLD_MINOR, namedStyle: "Normal" }]);
+    expect([plain.writer.xfFor(plain.first), plain.writer.xfFor(plain.first + 1)]).toEqual([5, 5]);
+    expect(plain.writer.xml()).toBe(namedSourceWith({ cellXfs: `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>` }));
+    // A localised Normal on xfId 1 (Heading 1 on 0): the apply flags compare against it.
+    const localised = SOURCE_STYLES.replace(
+      `<cellStyle name="Heading 1" xfId="1" builtinId="16"/><cellStyle name="Normal" xfId="0" builtinId="0"/>`,
+      `<cellStyle name="Heading 1" xfId="0" builtinId="16"/><cellStyle name="Standard" xfId="1" builtinId="0"/>`,
+    );
+    const moved = namedWriter(
+      [{ font: BOLD_MINOR }, { font: BOLD_MINOR, namedStyle: "Normal" }, { font: BOLD_MINOR, namedStyle: "Standard" }, { font: BOLD_MINOR, numberFormat: "0.000" }],
+      [],
+      localised,
+    );
+    expect([0, 1, 2, 3].map((k) => moved.writer.xfFor(moved.first + k))).toEqual([3, 3, 3, 4]);
+    expect(moved.writer.xml()).toBe(
+      localised
+        .replace(`<cellXfs count="3">`, `<cellXfs count="5">`)
+        .replace("</cellXfs>", `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="1"/><xf numFmtId="164" fontId="1" fillId="0" borderId="0" xfId="1" applyNumberFormat="1"/></cellXfs>`),
+    );
+  });
+
+  it("falls back, for a name the workbook does not define, to the source cellStyle of that name, else a built-in's pinned definition, else Normal", () => {
+    // A model without namedStyles (stored before they were read) still finds the source's cellStyle by name.
+    const styles = [...readXlsxStyles(NAMED_SOURCE, undefined).styles, { font: BOLD_MINOR, namedStyle: "Invoice total" }];
+    const unlisted = new XlsxStyleWriter(NAMED_SOURCE, { styles, theme: undefined });
+    expect(unlisted.xfFor(5)).toBe(5);
+    expect(unlisted.xml()).toBe(
+      namedSourceWith({ cellXfs: `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="3" applyNumberFormat="1" applyFill="1" applyBorder="1" applyAlignment="1"/>` }),
+    );
+    // A built-in nothing appended yet is written with its pinned definition;
+    // a name nothing defines is Normal's, and appends no named style.
+    const neutral: CellStyle = { font: { ...NORMAL_FONT, color: "#9c5700" }, fill: { kind: "solid", color: "#ffeb9c" }, namedStyle: "Neutral" };
+    const { writer, first } = namedWriter([neutral, { font: BOLD_MINOR, namedStyle: "Mystery" }]);
+    expect([writer.xfFor(first), writer.xfFor(first + 1)]).toEqual([5, 6]);
+    expect(writer.xml()).toBe(
+      namedSourceWith({
+        fonts: `<font><sz val="11"/><color rgb="FF9C5700"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>`,
+        fills: `<fill><patternFill patternType="solid"><fgColor rgb="FFFFEB9C"/><bgColor indexed="64"/></patternFill></fill>`,
+        cellStyleXfs: `<xf numFmtId="0" fontId="4" fillId="3" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>`,
+        cellXfs: `<xf numFmtId="0" fontId="4" fillId="3" borderId="0" xfId="5"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>`,
+        cellStyles: `<cellStyle name="Neutral" xfId="5" builtinId="28"/>`,
+      }),
+    );
+  });
+
+  it("gives a source without cellStyles one holding Normal first, and one without cellStyleXfs Normal's xf first — each in CT_Stylesheet order", () => {
+    const head =
+      `<styleSheet xmlns="${MAIN}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+      `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+      `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>`;
+    const styleXfs = `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>`;
+    const cellXfs = `<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>`;
+    const tail = `<dxfs count="0"/></styleSheet>`;
+    const good: CellStyle = { font: { family: "Calibri", sizePt: 11, color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" };
+    const expected =
+      `<styleSheet xmlns="${MAIN}"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><sz val="11"/><color rgb="FF006100"/><name val="Calibri"/></font></fonts>` +
+      `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+      `<fill><patternFill patternType="solid"><fgColor rgb="FFC6EFCE"/><bgColor indexed="64"/></patternFill></fill></fills>` +
+      `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+      `<cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+      `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+      `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="1"/></cellXfs>` +
+      `<cellStyles count="2"><cellStyle name="Normal" xfId="0" builtinId="0"/><cellStyle name="Good" xfId="1" builtinId="26"/></cellStyles>` +
+      tail;
+    for (const source of [head + styleXfs + cellXfs + tail, head + cellXfs + tail]) {
+      const { writer, first } = namedWriter([good], [appendedBuiltin("Good")], source);
+      expect(writer.xfFor(first)).toBe(1);
+      expect(writer.xml()).toBe(expected);
+    }
+  });
+
+  it("fills an index a source cellStyle or cellXfs xf names without an entry with an every-aspect-excluded xf before appending, so neither changes meaning", () => {
+    // "Orphan" names xfId 5 and a cellXfs xf xfId 6 — past the five entries.
+    const dangling = NAMED_SOURCE.replace(`<cellStyles count="6">`, `<cellStyles count="7">`)
+      .replace(`<cellStyle name="Normal" xfId="0"`, `<cellStyle name="Orphan" xfId="5"/><cellStyle name="Normal" xfId="0"`)
+      .replace(`<cellXfs count="5">`, `<cellXfs count="6">`)
+      .replace("</cellXfs>", `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="6"/></cellXfs>`);
+    const before = readXlsxStyles(dangling, undefined);
+    expect(before.namedStyles!.find((entry) => entry.name === "Orphan")).toEqual({ name: "Orphan", style: {}, includes: [], sourceXfId: 5 });
+    const { writer, first } = namedWriter([BAD_CELL], [appendedBuiltin("Bad")], dangling);
+    expect(writer.xfFor(first)).toBe(6);
+    const xml = writer.xml();
+    const empty = `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyNumberFormat="0" applyFont="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>`;
+    expect(contentOf(xml, "cellStyleXfs")).toBe(
+      `${contentOf(dangling, "cellStyleXfs")}${empty}${empty}<xf numFmtId="0" fontId="4" fillId="3" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>`,
+    );
+    expect(contentOf(xml, "cellStyles").endsWith(`<cellStyle name="Bad" xfId="7" builtinId="27"/>`)).toBe(true);
+    // Read back, the orphan keeps its empty definition and the dangling xf
+    // its absent namedStyle; Bad is not shadowed.
+    const after = readXlsxStyles(xml, undefined);
+    expect(after.namedStyles).toEqual([...before.namedStyles!, writtenDefinition(appendedBuiltin("Bad"), 7)]);
+    expect(after.styles.slice(0, before.styles.length)).toEqual(before.styles);
+    expect(after.styles[6]!.namedStyle).toBe("Bad");
+  });
+
+  it("from scratch, appends every definition used after the base's Normal — a read definition's sourceXfId names nothing of the new part", () => {
+    const goodRead = NAMED_SOURCE_STYLES[0]!; // sourceXfId 1, of another part
+    const model = { styles: [...createBlankWorkbook().styles, { ...goodRead.style, namedStyle: "Good" }, SUBTOTAL_CELL], theme: undefined, namedStyles: [goodRead, SUBTOTAL] };
+    const writer = new XlsxStyleWriter(undefined, model);
+    expect([0, 1, 2].map((id) => writer.xfFor(id))).toEqual([0, 1, 2]);
+    const xml = writer.xml();
+    const children = `<alignment horizontal="right"/><protection locked="0"/>`;
+    expect(contentOf(xml, "cellStyleXfs")).toBe(
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+        `<xf numFmtId="0" fontId="1" fillId="2" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>` +
+        `<xf numFmtId="4" fontId="2" fillId="0" borderId="0" applyFill="0" applyBorder="0">${children}</xf>`,
+    );
+    expect(contentOf(xml, "cellXfs")).toBe(
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="1"/>` +
+        `<xf numFmtId="4" fontId="2" fillId="0" borderId="0" xfId="2">${children}</xf>`,
+    );
+    expect(xml).toContain(
+      `<cellStyles count="3"><cellStyle name="Normal" xfId="0" builtinId="0"/><cellStyle name="Good" xfId="1" builtinId="26"/>` +
+        `<cellStyle name="${SUBTOTAL_NAME_ATTR}" xfId="2"/></cellStyles>`,
+    );
+    const reread = readXlsxStyles(xml, undefined);
+    expect(reread.namedStyles).toEqual([
+      { name: "Normal", builtinId: 0, style: { font: NORMAL_FONT }, includes: [...STYLE_ASPECTS], sourceXfId: 0 },
+      writtenDefinition(goodRead, 1),
+      writtenDefinition(SUBTOTAL, 2),
+    ]);
+    expect(reread.styles.map((style) => style.namedStyle)).toEqual([undefined, "Good", SUBTOTAL.name]);
+  });
+
+  it("appends a built-in a file named in its language under that name, with the file's builtinId, once for either name", () => {
+    const gut: NamedCellStyle = { ...NAMED_SOURCE_STYLES[0]!, name: "Gut" }; // builtinId 26, read from another part
+    const styles = [...createBlankWorkbook().styles, { ...gut.style, namedStyle: "Gut" }, { ...gut.style, namedStyle: "Good" }];
+    const writer = new XlsxStyleWriter(undefined, { styles, theme: undefined, namedStyles: [gut] });
+    expect([1, 2].map((id) => writer.xfFor(id))).toEqual([1, 1]);
+    const xml = writer.xml();
+    expect(contentOf(xml, "cellStyles")).toBe(`<cellStyle name="Normal" xfId="0" builtinId="0"/><cellStyle name="Gut" xfId="1" builtinId="26"/>`);
+    expect(readXlsxStyles(xml, undefined).styles[1]!.namedStyle).toBe("Gut");
+  });
+
+  it("writes what reads back: the named styles — each appended one at its new index, its font completed by Normal's — and every style's namedStyle; every source entry keeps its index and bytes", () => {
+    const named = [appendedBuiltin("Bad"), appendedBuiltin("Title"), SUBTOTAL];
+    const added: CellStyle[] = [
+      BAD_CELL,
+      { font: { family: { theme: "major" }, sizePt: 18, color: { theme: "dk2" } }, namedStyle: "Title" },
+      SUBTOTAL_CELL,
+      { ...SUBTOTAL_CELL, font: { ...SUBTOTAL_CELL.font, bold: true } }, // direct formatting over it
+      { ...NAMED_SOURCE_STYLES[0]!.style, alignment: { wrap: true }, namedStyle: "Good" }, // a source style
+      { ...INVOICE_TOTAL, fill: { kind: "solid", color: "#ffc7ce" }, namedStyle: "Invoice total" },
+      { font: BOLD_MINOR }, // Normal
+    ];
+    const { writer, first } = namedWriter(added, named);
+    const xfs = added.map((_, k) => writer.xfFor(first + k));
+    const xml = writer.xml();
+    const reread = readXlsxStyles(xml, undefined);
+    expect(reread.namedStyles).toEqual([...NAMED_SOURCE_STYLES, writtenDefinition(named[0]!, 5), writtenDefinition(named[1]!, 6), writtenDefinition(named[2]!, 7)]);
+    added.forEach((style, k) => {
+      expect(reread.styles[xfs[k]!]!.namedStyle, String(k)).toBe(style.namedStyle);
+      expect(styleKey(reread.styles[xfs[k]!]!), String(k)).toBe(styleKey(style));
+    });
+    // Append-only: each collection's source content heads the written one,
+    // its count is the new total, and nothing outside the collections moved.
+    for (const [local, child] of Object.entries(COLLECTION_CHILD)) {
+      const content = contentOf(xml, local);
+      expect(content.startsWith(contentOf(NAMED_SOURCE, local)), local).toBe(true);
+      expect(new RegExp(`<${local}\\b[^>]*?count="(\\d+)"`).exec(xml)![1], local).toBe(String(content.match(new RegExp(`<${child}\\b`, "g"))!.length));
+    }
+    const outside = (text: string): string => Object.keys(COLLECTION_CHILD).reduce((rest, local) => rest.replace(new RegExp(`<${local}\\b.*?</${local}>`, "s"), ""), text);
+    expect(outside(xml)).toBe(outside(NAMED_SOURCE));
+  });
+
+  it("survives a whole save: spec117-styles.xlsx with Bad first applied to B2 re-opens with Bad defined and B2 in it, Heading 1 and Good kept", async () => {
+    const source = await buildSpec117StylesXlsxBytes();
+    const model = await readSpreadsheetBytes(source, "xlsx", "book");
+    expect(model.namedStyles?.map((entry) => entry.name)).toEqual(["Good", "Heading 1", "Normal"]);
+    const bad = appendedBuiltin("Bad");
+    const namedStyles = [...model.namedStyles!, bad];
+    model.namedStyles = namedStyles;
+    const badId = internStyle(model, BAD_CELL);
+    const sheet = model.sheets[0]!;
+    expect(getCell(sheet, 1, 1)?.styleId).toBe(SPEC117_XF.header);
+    model.sheets[0] = {
+      ...sheet,
+      dirty: true,
+      rows: sheet.rows.map((row) => (row.index !== 1 ? row : { ...row, cells: row.cells.map((cell) => (cell.col === 1 ? { ...cell, styleId: badId } : cell)) })),
+    };
+    const bytes = await writeXlsx(model);
+    expect(await packageIntegrity(bytes)).toEqual([]);
+    const reread = await readSpreadsheetBytes(bytes, "xlsx", "reread");
+    expect(reread.namedStyles).toEqual([...namedStyles.slice(0, 3), writtenDefinition(bad, 3)]);
+    const styleAt = (row: number, col: number): CellStyle => cellStyle(reread, getCell(reread.sheets[0]!, row, col)?.styleId ?? 0);
+    expect(styleAt(1, 1).namedStyle).toBe("Bad");
+    expect(styleAt(4, 2).namedStyle).toBe("Heading 1"); // C5
+    expect(styleAt(6, 5).namedStyle).toBe("Good"); // F7
+    // The source's own entries are untouched.
+    const decoder = new TextDecoder();
+    const before = decoder.decode((await unzip(source)).get("xl/styles.xml"));
+    const after = decoder.decode((await unzip(bytes)).get("xl/styles.xml"));
+    for (const local of Object.keys(COLLECTION_CHILD)) {
+      expect(contentOf(after, local).startsWith(contentOf(before, local)), local).toBe(true);
+    }
+    expect(contentOf(after, "cellStyles")).toBe(`${contentOf(before, "cellStyles")}<cellStyle name="Bad" xfId="3" builtinId="27"/>`);
   });
 });

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { SHEET_SHORTCUTS, sheetShortcutDefinitions, type SheetShortcutId } from "../views/spreadsheet/sheetShortcuts";
+import { isMacPlatform } from "./core/platform";
 import {
   findShortcut,
   formatBinding,
@@ -8,6 +10,8 @@ import {
   searchShortcuts,
   SHORTCUTS,
   shortcutLabel,
+  type ShortcutBinding,
+  type ShortcutDefinition,
 } from "./shortcuts";
 
 function keydown(init: Partial<KeyboardEventInit> & { key: string }): KeyboardEvent {
@@ -219,5 +223,273 @@ describe("isOutsideDocumentInput (AC-12, AC-13, AC-14)", () => {
     document.body.append(div);
     expect(isOutsideDocumentInput(div)).toBe(false);
     div.remove();
+  });
+});
+
+// SPEC-123: a product's own table (the sheet's) through the same matcher, the
+// `code`/`ctrl` binding fields, and the text registry exactly as it was.
+
+const PLATFORMS = [
+  { isMac: false, name: "Windows/Linux" },
+  { isMac: true, name: "macOS" },
+];
+
+const SHEET_IDS: SheetShortcutId[] = [
+  "sheet.formatCells",
+  "sheet.bold",
+  "sheet.italic",
+  "sheet.underline",
+  "sheet.strikethrough",
+  "sheet.formatGeneral",
+  "sheet.formatNumber",
+  "sheet.formatTime",
+  "sheet.formatDate",
+  "sheet.formatCurrency",
+  "sheet.formatPercent",
+  "sheet.formatScientific",
+];
+
+/** The keydown a binding describes on one platform, for sweeping a whole
+ * table: `mod` presses Ctrl or Cmd, `ctrl` presses Control, and a `code`
+ * binding presses its physical key typing the character its label shows (a
+ * US layout). */
+function pressFor(binding: ShortcutBinding, isMac: boolean, shiftKey = !!binding.shift): KeyboardEvent {
+  return keydown({
+    key: binding.key,
+    code: binding.code,
+    ctrlKey: !!binding.ctrl || (!isMac && !!binding.mod),
+    metaKey: isMac && !!binding.mod,
+    altKey: !!binding.alt,
+    shiftKey,
+  });
+}
+
+/** The key presses a binding claims on one platform, normalised the way
+ * bindingMatchesEvent matches: `mod` becomes the key it means there and
+ * `ctrl` Control, one key on Windows/Linux. A binding without `ctrl` never
+ * looks at Control on macOS, so there it claims both states of Control, as
+ * shiftOptional claims both states of Shift. A `code` binding claims its
+ * physical key and the character its label shows, so it also collides with a
+ * key binding for that character. */
+function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
+  const controlStates = isMac ? (binding.ctrl ? [true] : [false, true]) : [!!(binding.ctrl || binding.mod)];
+  const shiftStates = binding.shiftOptional ? [false, true] : [!!binding.shift];
+  const targets = [`key:${binding.key.toLowerCase()}`, ...(binding.code ? [`code:${binding.code}`] : [])];
+  const presses: string[] = [];
+  for (const controlHeld of controlStates) {
+    for (const shiftHeld of shiftStates) {
+      const modifiers = `${controlHeld ? "ctrl+" : ""}${isMac && binding.mod ? "cmd+" : ""}${binding.alt ? "alt+" : ""}${shiftHeld ? "shift+" : ""}`;
+      presses.push(...targets.map((target) => modifiers + target));
+    }
+  }
+  return presses;
+}
+
+describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
+  it("declares the sheet's twelve commands, one binding each, under Sheet formatting", () => {
+    expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
+    for (const { isMac } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      expect(definitions.map((definition) => definition.id)).toEqual(SHEET_IDS);
+      for (const definition of definitions) {
+        expect(definition.category).toBe("Sheet formatting");
+        expect(definition.bindings).toHaveLength(1);
+      }
+    }
+  });
+
+  it("never binds the reserved browser shortcuts Ctrl/Cmd+T/W/N, on either platform", () => {
+    const reservedCodes = RESERVED_BROWSER_KEYS.map((key) => `Key${key.toUpperCase()}`);
+    for (const definitions of [SHEET_SHORTCUTS, sheetShortcutDefinitions(false), sheetShortcutDefinitions(true)]) {
+      for (const definition of definitions) {
+        for (const binding of definition.bindings) {
+          if (binding.mod || binding.ctrl) {
+            expect(RESERVED_BROWSER_KEYS).not.toContain(binding.key.toLowerCase());
+            expect(reservedCodes).not.toContain(binding.code);
+          }
+        }
+      }
+    }
+  });
+
+  it("declares no two commands sharing a key press, on either platform", () => {
+    for (const { isMac, name } of PLATFORMS) {
+      const seen = new Map<string, string>();
+      for (const definition of sheetShortcutDefinitions(isMac)) {
+        for (const binding of definition.bindings) {
+          for (const press of claimedPresses(binding, isMac)) {
+            const owner = seen.get(press);
+            expect(owner === undefined || owner === definition.id, `${name}: ${press} is ${owner} and ${definition.id}`).toBe(true);
+            seen.set(press, definition.id);
+          }
+        }
+      }
+    }
+  });
+
+  it("matches every binding to its own command on its own platform", () => {
+    for (const { isMac, name } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      for (const definition of definitions) {
+        for (const binding of definition.bindings) {
+          expect(findShortcut(pressFor(binding, isMac), isMac, definitions)?.id, `${name}: ${definition.id}`).toBe(definition.id);
+        }
+      }
+    }
+  });
+});
+
+describe("findShortcut with code and ctrl bindings (SPEC-123)", () => {
+  const windows = sheetShortcutDefinitions(false);
+  const mac = sheetShortcutDefinitions(true);
+
+  it("matches Ctrl+Shift+1 on Windows/Linux and Control+Shift+1 on macOS to the number format", () => {
+    const press = keydown({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+    expect(findShortcut(press, false, windows)?.id).toBe("sheet.formatNumber");
+    expect(findShortcut(press, true, mac)?.id).toBe("sheet.formatNumber");
+  });
+
+  it("never takes Cmd for Control on macOS: Cmd+Shift+1 and Control+Cmd+Shift+1 match nothing", () => {
+    // Either character a browser may report for Cmd+Shift+1.
+    expect(findShortcut(keydown({ key: "!", code: "Digit1", metaKey: true, shiftKey: true }), true, mac)).toBeUndefined();
+    expect(findShortcut(keydown({ key: "1", code: "Digit1", metaKey: true, shiftKey: true }), true, mac)).toBeUndefined();
+    expect(findShortcut(keydown({ key: "!", code: "Digit1", ctrlKey: true, metaKey: true, shiftKey: true }), true, mac)).toBeUndefined();
+  });
+
+  it("matches the number formats by physical key, whatever character the layout types there", () => {
+    // German QWERTZ: Shift+1 is still "!", but Shift+2 is '"', Shift+3 "§",
+    // Shift+6 "&", and the key left of 1 (Backquote) types "°".
+    const german = [
+      { key: "!", code: "Digit1", id: "sheet.formatNumber" },
+      { key: '"', code: "Digit2", id: "sheet.formatTime" },
+      { key: "§", code: "Digit3", id: "sheet.formatDate" },
+      { key: "&", code: "Digit6", id: "sheet.formatScientific" },
+      { key: "°", code: "Backquote", id: "sheet.formatGeneral" },
+    ];
+    for (const { key, code, id } of german) {
+      const press = keydown({ key, code, ctrlKey: true, shiftKey: true });
+      expect(findShortcut(press, false, windows)?.id, `${code} typing ${key}`).toBe(id);
+      expect(findShortcut(press, true, mac)?.id, `${code} typing ${key}`).toBe(id);
+    }
+    // ...and a "!" typed by some other key is not the 1 key.
+    expect(findShortcut(keydown({ key: "!", code: "Slash", ctrlKey: true, shiftKey: true }), false, windows)).toBeUndefined();
+  });
+
+  it("keeps Alt and Shift exact for ctrl bindings", () => {
+    // AltGr arrives as Ctrl+Alt on Windows; it never triggers a number format.
+    expect(findShortcut(keydown({ key: "!", code: "Digit1", ctrlKey: true, altKey: true, shiftKey: true }), false, windows)).toBeUndefined();
+    // Without Shift, Control+1 on macOS is nothing (Format cells is Cmd+1).
+    expect(findShortcut(keydown({ key: "1", code: "Digit1", ctrlKey: true }), true, mac)).toBeUndefined();
+  });
+
+  it("reads ctrl with mod as Control+Cmd on macOS and as plain Ctrl on Windows/Linux", () => {
+    const table: ShortcutDefinition[] = [{ id: "test.both", label: "Both", category: "Test", bindings: [{ key: "k", ctrl: true, mod: true }] }];
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true }), false, table)?.id).toBe("test.both");
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true, metaKey: true }), true, table)?.id).toBe("test.both");
+    expect(findShortcut(keydown({ key: "k", ctrlKey: true }), true, table)).toBeUndefined();
+    expect(findShortcut(keydown({ key: "k", metaKey: true }), true, table)).toBeUndefined();
+  });
+
+  it("matches Format cells on Ctrl+1 (Windows/Linux) and Cmd+1 (macOS)", () => {
+    expect(findShortcut(keydown({ key: "1", code: "Digit1", ctrlKey: true }), false, windows)?.id).toBe("sheet.formatCells");
+    expect(findShortcut(keydown({ key: "1", code: "Digit1", metaKey: true }), true, mac)?.id).toBe("sheet.formatCells");
+  });
+
+  it("tells Windows/Linux Ctrl+5 (strikethrough) from Ctrl+Shift+5 (percent)", () => {
+    expect(findShortcut(keydown({ key: "5", code: "Digit5", ctrlKey: true }), false, windows)?.id).toBe("sheet.strikethrough");
+    expect(findShortcut(keydown({ key: "%", code: "Digit5", ctrlKey: true, shiftKey: true }), false, windows)?.id).toBe("sheet.formatPercent");
+    // The text editor's Ctrl+Shift+X is not the sheet's strikethrough here.
+    expect(findShortcut(keydown({ key: "X", code: "KeyX", ctrlKey: true, shiftKey: true }), false, windows)).toBeUndefined();
+  });
+
+  it("matches macOS strikethrough on Cmd+Shift+X, not Cmd+5", () => {
+    expect(findShortcut(keydown({ key: "x", code: "KeyX", metaKey: true, shiftKey: true }), true, mac)?.id).toBe("sheet.strikethrough");
+    expect(findShortcut(keydown({ key: "5", code: "Digit5", metaKey: true }), true, mac)).toBeUndefined();
+  });
+
+  it("matches only the definitions it is given", () => {
+    const ctrlB = keydown({ key: "b", code: "KeyB", ctrlKey: true });
+    expect(findShortcut(ctrlB, false, windows)?.id).toBe("sheet.bold");
+    expect(findShortcut(ctrlB, false)?.id).toBe("format.bold");
+    expect(findShortcut(ctrlB, false, [])).toBeUndefined();
+  });
+});
+
+describe("the text registry after SPEC-123", () => {
+  it("still matches every binding to its own command on both platforms, by default and when passed explicitly", () => {
+    for (const { isMac, name } of PLATFORMS) {
+      for (const definition of SHORTCUTS) {
+        for (const binding of definition.bindings) {
+          for (const shiftHeld of binding.shiftOptional ? [false, true] : [!!binding.shift]) {
+            const press = pressFor(binding, isMac, shiftHeld);
+            expect(findShortcut(press, isMac)?.id, `${name}: ${definition.id}`).toBe(definition.id);
+            expect(findShortcut(press, isMac, SHORTCUTS)?.id, `${name}: ${definition.id}`).toBe(definition.id);
+          }
+        }
+      }
+    }
+  });
+
+  it("never answers with a sheet command: the sheet's presses are its own format.* or nothing", () => {
+    expect(SHORTCUTS.some((definition) => definition.id.startsWith("sheet."))).toBe(false);
+    // Ctrl/Cmd+B/I/U, and macOS Cmd+Shift+X, are the text editor's own
+    // commands on the same keys; no other sheet press means anything to it.
+    const sameKeys = new Map([
+      ["sheet.bold", "format.bold"],
+      ["sheet.italic", "format.italic"],
+      ["sheet.underline", "format.underline"],
+    ]);
+    for (const { isMac, name } of PLATFORMS) {
+      for (const definition of sheetShortcutDefinitions(isMac)) {
+        const expected = isMac && definition.id === "sheet.strikethrough" ? "format.strikethrough" : sameKeys.get(definition.id);
+        expect(findShortcut(pressFor(definition.bindings[0], isMac), isMac)?.id, `${name}: ${definition.id}`).toBe(expected);
+      }
+    }
+  });
+
+  it("does not match Ctrl+Shift+1 (the 1 key) on Windows/Linux or Control+Shift+1 on macOS", () => {
+    const press = keydown({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
+    expect(findShortcut(press, false)).toBeUndefined();
+    expect(findShortcut(press, true)).toBeUndefined();
+  });
+
+  it("still matches its bindings by the character typed, never the physical key", () => {
+    // Dvorak types "b" on the physical N key, and "x" on the physical B key.
+    expect(findShortcut(keydown({ key: "b", code: "KeyN", ctrlKey: true }), false)?.id).toBe("format.bold");
+    expect(findShortcut(keydown({ key: "x", code: "KeyB", ctrlKey: true }), false)).toBeUndefined();
+  });
+
+  it("still looks only at the platform's own modifier for a binding without ctrl, as SPEC-021 matched it", () => {
+    expect(findShortcut(keydown({ key: "b", ctrlKey: true, metaKey: true }), true)?.id).toBe("format.bold");
+    expect(findShortcut(keydown({ key: "b", ctrlKey: true, metaKey: true }), false)?.id).toBe("format.bold");
+  });
+});
+
+describe("formatBinding / shortcutLabel with ctrl (SPEC-123)", () => {
+  it("labels the number formats Ctrl+Shift+<key> on Windows/Linux and Control+Shift+<key> on macOS", () => {
+    expect(shortcutLabel("sheet.formatNumber", false, sheetShortcutDefinitions(false))).toBe("Ctrl+Shift+!");
+    expect(shortcutLabel("sheet.formatNumber", true, sheetShortcutDefinitions(true))).toBe("Control+Shift+!");
+    expect(shortcutLabel("sheet.formatGeneral", false, sheetShortcutDefinitions(false))).toBe("Ctrl+Shift+~");
+    expect(shortcutLabel("sheet.formatGeneral", true, sheetShortcutDefinitions(true))).toBe("Control+Shift+~");
+  });
+
+  it("labels each platform's own strikethrough and Format cells", () => {
+    expect(shortcutLabel("sheet.strikethrough", false, sheetShortcutDefinitions(false))).toBe("Ctrl+5");
+    expect(shortcutLabel("sheet.strikethrough", true, sheetShortcutDefinitions(true))).toBe("Cmd+Shift+X");
+    expect(shortcutLabel("sheet.formatCells", false, sheetShortcutDefinitions(false))).toBe("Ctrl+1");
+    expect(shortcutLabel("sheet.formatCells", true, sheetShortcutDefinitions(true))).toBe("Cmd+1");
+  });
+
+  it("puts Control first, and names Ctrl once when a binding has both ctrl and mod", () => {
+    expect(formatBinding({ key: "a", ctrl: true, alt: true, shift: true }, false)).toBe("Ctrl+Alt+Shift+A");
+    expect(formatBinding({ key: "a", ctrl: true, alt: true, shift: true }, true)).toBe("Control+Option+Shift+A");
+    expect(formatBinding({ key: "k", ctrl: true, mod: true }, false)).toBe("Ctrl+K");
+    expect(formatBinding({ key: "k", ctrl: true, mod: true }, true)).toBe("Control+Cmd+K");
+  });
+
+  it("labels from the definitions it is given; the text registry has no sheet ids", () => {
+    expect(shortcutLabel("sheet.bold", false)).toBe("");
+    expect(shortcutLabel("sheet.bold", false, sheetShortcutDefinitions(false))).toBe("Ctrl+B");
+    expect(shortcutLabel("format.bold", false, sheetShortcutDefinitions(false))).toBe("");
   });
 });

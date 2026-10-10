@@ -4,10 +4,10 @@
 // `styleId`, else its row's (present only when the source row carried a
 // format), else the column span covering it, else the default style 0 —
 // each step a binary search over sparse, sorted data, never a scan.
-import { resolveFont, type DocumentTheme } from "../core/theme";
+import { resolveColor, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../core/theme";
 import { findRow, getCell } from "./address";
 import { maxDigitWidthPx } from "./geometry";
-import type { CellFont, CellStyle, ColumnSpan, Sheet, SpreadsheetModel } from "./model";
+import type { CellBorderEdge, CellBorders, CellFont, CellStyle, ColumnSpan, Sheet, SpreadsheetModel } from "./model";
 
 /** The default style table: one empty ("Normal") style. */
 export function defaultStyles(): CellStyle[] {
@@ -160,6 +160,18 @@ export function internStyle(model: Pick<SpreadsheetModel, "styles">, style: Cell
   return next.length - 1;
 }
 
+/** A cell colour as the hex a picker shows ("" for automatic) — SPEC-123's
+ * formatting surfaces display document colours through here. */
+export function cellColorHex(color: ModelColor | null | undefined, theme: DocumentTheme): string {
+  return color === null || color === undefined ? "" : resolveColor(color, theme);
+}
+
+/** A cell font family's name (a theme font resolved), the minor font when
+ * the style names none. */
+export function cellFontName(family: ModelFont | undefined, theme: DocumentTheme): string {
+  return resolveFont(family ?? { theme: "minor" }, theme);
+}
+
 /** The maximum digit width of a cell font (the pinned MDW table — never a
  * measurement), for the text-width estimates of overflow, shrink-to-fit and
  * fill: its family resolved against the theme (the theme's minor font when
@@ -167,4 +179,189 @@ export function internStyle(model: Pick<SpreadsheetModel, "styles">, style: Cell
 export function fontMaxDigitWidth(font: CellFont | undefined, theme: DocumentTheme): number {
   const family = font?.family !== undefined ? resolveFont(font.family, theme) : theme.fonts.minor;
   return maxDigitWidthPx(family, font?.sizePt ?? 11);
+}
+
+// --- SPEC-123: named cell styles (THE normative source for NamedCellStyle and
+// BUILTIN_CELL_STYLES) ----------------------------------------------------------
+// A named style ("Good", "Heading 1", a workbook's own "Invoice total") is a
+// definition — only the aspects it includes — that a cell style names through
+// `CellStyle.namedStyle`. `model.namedStyles` holds the workbook's own, in
+// file order (xlsx `cellStyleXfs` + `cellStyles`, ods `office:styles` common
+// table-cell styles — xlsx/styles.ts and ods/styles.ts map the wire both
+// ways). A built-in the workbook defines (xlsx by `builtinId` or name, ods by
+// display name) renders and applies with the workbook's definition; one it
+// lacks renders with the pinned definition below — Office-theme colours as
+// ThemeColorRefs, so it follows the workbook's theme — and is appended to
+// `namedStyles` the first time it is applied (formatting.ts), after which the
+// writers add it to the file. Applying sets, for each included aspect, exactly
+// the definition's value (a font wholesale, its missing keys Normal's).
+
+/** The six aspects a named style can include (xlsx's `applyX` flags). */
+export type StyleAspect = "numberFormat" | "alignment" | "font" | "borders" | "fill" | "protection";
+
+/** Every aspect, in xlsx's `applyX` order. */
+export const STYLE_ASPECTS: readonly StyleAspect[] = ["numberFormat", "font", "fill", "borders", "alignment", "protection"];
+
+export interface NamedCellStyle {
+  /** The display name ("Good", "Heading 1", "Invoice total"). */
+  name: string;
+  /** xlsx `cellStyle@builtinId`. */
+  builtinId?: number;
+  /** The definition: only the included aspects; never `namedStyle`,
+   * `sourceXf` or `sourceStyleName`. */
+  style: CellStyle;
+  includes: StyleAspect[];
+  /** xlsx `cellStyle@hidden` — kept, never shown in the gallery. */
+  hidden?: true;
+  /** xlsx: the `cellStyleXfs` index the definition was read from. */
+  sourceXfId?: number;
+  /** ods: the common style's `style:name` ("Heading_20_1"). */
+  sourceStyleName?: string;
+}
+
+/** One pinned built-in: this product's definition for a workbook that lacks
+ * the style. Normal's definition is the workbook's own `styles[0]`. */
+export interface BuiltinCellStyle {
+  name: string;
+  builtinId: number;
+  includes: StyleAspect[];
+  style: CellStyle;
+}
+
+const DK1 = { theme: "dk1" } as const;
+const DK2 = { theme: "dk2" } as const;
+const LT1 = { theme: "lt1" } as const;
+const ACCENT1 = { theme: "accent1" } as const;
+
+/** All four outer edges in one line style and colour. */
+function allEdges(edge: CellBorderEdge): CellBorders {
+  return { top: { ...edge }, right: { ...edge }, bottom: { ...edge }, left: { ...edge } };
+}
+
+/** The eighteen built-ins the gallery offers (SPEC-123 "Named cell styles"). */
+export const BUILTIN_CELL_STYLES: readonly BuiltinCellStyle[] = [
+  { name: "Normal", builtinId: 0, includes: [...STYLE_ASPECTS], style: {} },
+  { name: "Good", builtinId: 26, includes: ["font", "fill"], style: { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } } },
+  { name: "Bad", builtinId: 27, includes: ["font", "fill"], style: { font: { color: "#9c0006" }, fill: { kind: "solid", color: "#ffc7ce" } } },
+  { name: "Neutral", builtinId: 28, includes: ["font", "fill"], style: { font: { color: "#9c5700" }, fill: { kind: "solid", color: "#ffeb9c" } } },
+  { name: "Title", builtinId: 15, includes: ["font"], style: { font: { family: { theme: "major" }, sizePt: 18, color: DK2 } } },
+  {
+    name: "Heading 1",
+    builtinId: 16,
+    includes: ["font", "borders"],
+    style: { font: { sizePt: 15, bold: true, color: DK2 }, borders: { bottom: { style: "thick", color: ACCENT1 } } },
+  },
+  {
+    name: "Heading 2",
+    builtinId: 17,
+    includes: ["font", "borders"],
+    style: { font: { sizePt: 13, bold: true, color: DK2 }, borders: { bottom: { style: "thick", color: { theme: "accent1", lumMod: 0.5, lumOff: 0.5 } } } },
+  },
+  {
+    name: "Heading 3",
+    builtinId: 18,
+    includes: ["font", "borders"],
+    style: { font: { bold: true, color: DK2 }, borders: { bottom: { style: "medium", color: { theme: "accent1", lumMod: 0.6, lumOff: 0.4 } } } },
+  },
+  { name: "Heading 4", builtinId: 19, includes: ["font"], style: { font: { bold: true, color: DK2 } } },
+  {
+    name: "Total",
+    builtinId: 25,
+    includes: ["font", "borders"],
+    style: { font: { bold: true, color: DK1 }, borders: { top: { style: "thin", color: ACCENT1 }, bottom: { style: "double", color: ACCENT1 } } },
+  },
+  {
+    name: "Input",
+    builtinId: 20,
+    includes: ["font", "fill", "borders"],
+    style: { font: { color: "#3f3f76" }, fill: { kind: "solid", color: "#ffcc99" }, borders: allEdges({ style: "thin", color: "#7f7f7f" }) },
+  },
+  {
+    name: "Output",
+    builtinId: 21,
+    includes: ["font", "fill", "borders"],
+    style: { font: { bold: true, color: "#3f3f3f" }, fill: { kind: "solid", color: "#f2f2f2" }, borders: allEdges({ style: "thin", color: "#3f3f3f" }) },
+  },
+  {
+    name: "Calculation",
+    builtinId: 22,
+    includes: ["font", "fill", "borders"],
+    style: { font: { bold: true, color: "#fa7d00" }, fill: { kind: "solid", color: "#f2f2f2" }, borders: allEdges({ style: "thin", color: "#7f7f7f" }) },
+  },
+  {
+    name: "Check Cell",
+    builtinId: 23,
+    includes: ["font", "fill", "borders"],
+    style: { font: { bold: true, color: LT1 }, fill: { kind: "solid", color: "#a5a5a5" }, borders: allEdges({ style: "double", color: "#3f3f3f" }) },
+  },
+  { name: "Note", builtinId: 10, includes: ["fill", "borders"], style: { fill: { kind: "solid", color: "#ffffcc" }, borders: allEdges({ style: "thin", color: "#b2b2b2" }) } },
+  { name: "Warning Text", builtinId: 11, includes: ["font"], style: { font: { color: "#ff0000" } } },
+  { name: "Explanatory Text", builtinId: 53, includes: ["font"], style: { font: { italic: true, color: "#7f7f7f" } } },
+  {
+    name: "Linked Cell",
+    builtinId: 24,
+    includes: ["font", "borders"],
+    style: { font: { color: "#fa7d00" }, borders: { bottom: { style: "double", color: "#ff8001" } } },
+  },
+];
+
+/** The gallery's groups, as Excel groups the built-ins; workbook-defined
+ * names follow in CUSTOM_CELL_STYLE_GROUP. */
+export const CELL_STYLE_GROUPS: readonly { label: string; names: readonly string[] }[] = [
+  { label: "Good, Bad and Neutral", names: ["Normal", "Bad", "Good", "Neutral"] },
+  {
+    label: "Data and model",
+    names: ["Calculation", "Check Cell", "Explanatory Text", "Input", "Linked Cell", "Note", "Output", "Warning Text"],
+  },
+  { label: "Titles and headings", names: ["Heading 1", "Heading 2", "Heading 3", "Heading 4", "Title", "Total"] },
+];
+
+export const CUSTOM_CELL_STYLE_GROUP = "Custom";
+
+/** The pinned built-in called `name`, or undefined. */
+export function builtinCellStyle(name: string): BuiltinCellStyle | undefined {
+  return BUILTIN_CELL_STYLES.find((entry) => entry.name === name);
+}
+
+/** The pinned built-in with an xlsx `builtinId`, or undefined. */
+export function builtinCellStyleById(builtinId: number): BuiltinCellStyle | undefined {
+  return BUILTIN_CELL_STYLES.find((entry) => entry.builtinId === builtinId);
+}
+
+/** The workbook's own definition of `name`: for a built-in name, the entry
+ * with its `builtinId` (an xlsx file names "Good" whatever its language) or
+ * its name; else the entry with that (display) name. */
+export function workbookNamedStyle(model: Pick<SpreadsheetModel, "namedStyles">, name: string): NamedCellStyle | undefined {
+  const styles = model.namedStyles ?? [];
+  const builtin = builtinCellStyle(name);
+  return (builtin !== undefined ? styles.find((entry) => entry.builtinId === builtin.builtinId) : undefined) ?? styles.find((entry) => entry.name === name);
+}
+
+/** A named style as it renders and applies: the workbook's definition when
+ * it has one, else the pinned built-in's (Normal's is `styles[0]`). */
+export interface ResolvedNamedStyle {
+  name: string;
+  builtinId?: number;
+  style: CellStyle;
+  includes: StyleAspect[];
+  /** The workbook defines it (in `namedStyles`). */
+  defined: boolean;
+}
+
+/** The definition `name` renders and applies with (see ResolvedNamedStyle);
+ * undefined for a name neither the workbook nor the built-ins know. */
+export function resolveNamedStyle(model: Pick<SpreadsheetModel, "namedStyles" | "styles">, name: string): ResolvedNamedStyle | undefined {
+  const own = workbookNamedStyle(model, name);
+  const builtin = builtinCellStyle(name);
+  if (name === "Normal" || own?.builtinId === 0 || builtin?.builtinId === 0) {
+    const { namedStyle: _named, sourceXf: _xf, sourceStyleName: _name, quotePrefix: _quote, ...normal } = cellStyle(model, 0);
+    return { name: "Normal", builtinId: 0, style: normal, includes: [...STYLE_ASPECTS], defined: own !== undefined };
+  }
+  if (own) {
+    return { name, ...(own.builtinId !== undefined ? { builtinId: own.builtinId } : {}), style: own.style, includes: [...own.includes], defined: true };
+  }
+  if (builtin) {
+    return { name, builtinId: builtin.builtinId, style: structuredClone(builtin.style), includes: [...builtin.includes], defined: false };
+  }
+  return undefined;
 }

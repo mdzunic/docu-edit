@@ -27,6 +27,9 @@
 //   writes for a `number:text` holding one.
 // Results are cached by code (FORMAT_CACHE_LIMIT entries, cleared whole on
 // overflow) — a sheet renders thousands of cells through a handful of codes.
+// formatCodeSections is the same scan with each token's source offset, for
+// an edit that must keep every other character as written (SPEC-123's
+// decimal stepping).
 
 export const FORMAT_CACHE_LIMIT = 1024;
 
@@ -573,6 +576,32 @@ export function parseFormatCode(code: string): ParsedFormat {
     throw entry;
   }
   return entry;
+}
+
+/** A body token as written, at the offset (UTF-16 index) of its first
+ * character. */
+export interface ScannedToken {
+  token: FormatToken;
+  offset: number;
+}
+
+/** One section of a code as written: its kind as parseFormatCode classifies
+ * it and its body tokens as scanned — before classification reads some as
+ * literals (a date section's placeholders, a text section's points). */
+export interface FormatCodeSection {
+  kind: FormatSection["kind"];
+  tokens: ScannedToken[];
+}
+
+/** A code's sections with their tokens' source offsets (calendar tokens
+ * left out). Throws FormatCodeError for an invalid code, as parseFormatCode
+ * does. */
+export function formatCodeSections(code: string): FormatCodeSection[] {
+  const { sections } = parseFormatCode(code);
+  return scan(code, { unsupported: false }).map((raw, index) => ({
+    kind: sections[index]!.kind,
+    tokens: raw.tokens.filter((entry): entry is ScannedToken => entry.token.type !== "era"),
+  }));
 }
 
 /** How many codes the parse cache holds (for the cache-limit test). */

@@ -2,16 +2,23 @@
 // substitution path" (content.xml = prefix + tables + suffix, settings.xml,
 // the manifest), the retained sheet-reference pass over content.xml and the
 // chart objects, deletes and duplicates, and integrity over every fixture ×
-// every command.
+// every command. SPEC-123: named styles through a save — appended to the
+// retained or the generated styles.xml (nothing else of it changed), the
+// de-ce parents, a self-closing or missing office:styles, write → read.
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../../core/equality";
 import { base64ToBytes, bytesToBase64 } from "../../core/packageParts";
+import { DEFAULT_THEME, resolveColor } from "../../core/theme";
 import { unzip } from "../../core/zip";
+import { zip } from "../../core/zipWriter";
+import { findRow, parseA1 } from "../address";
+import { replaceRows } from "../cells";
 import * as F from "../fixtures/build";
 import { packageIntegrity } from "../fixtures/packageIntegrity";
 import { workbookForCompare } from "../fixtures/workbookForCompare";
-import type { SpreadsheetModel } from "../model";
+import type { CellStyle, SpreadsheetModel } from "../model";
 import { readSpreadsheetBytes } from "../open";
+import { builtinCellStyle, cellStyle, effectiveStyleId, internStyle, type NamedCellStyle } from "../styles";
 import {
   addSheet,
   cannotDuplicateReason,
@@ -411,4 +418,174 @@ describe("package integrity: every ods fixture × every command, written and re-
       });
     }
   }
+});
+
+// --- SPEC-123: named cell styles --------------------------------------------------------------
+
+/** A pinned built-in as formatting.ts appends it to namedStyles on first use. */
+function builtin(name: string): NamedCellStyle {
+  const entry = builtinCellStyle(name)!;
+  return { name, builtinId: entry.builtinId, style: structuredClone(entry.style), includes: [...entry.includes] };
+}
+
+/** Gives the first sheet's cell at `a1` the interned `style` (a cell holding
+ * "x" when there is none) and marks the sheet dirty — what a formatting
+ * command leaves behind. */
+function styleCell(model: SpreadsheetModel, a1: string, style: CellStyle): void {
+  const at = parseA1(a1)!;
+  const styleId = internStyle(model, style);
+  const row = findRow(model.sheets[0]!, at.row);
+  const old = row?.cells.find((cell) => cell.col === at.col);
+  const cells = [...(row?.cells ?? []).filter((cell) => cell.col !== at.col), { ...(old ?? { col: at.col, value: "x" }), styleId }];
+  replaceRows(model, 0, new Map([[at.row, { ...(row ?? { index: at.row }), cells: cells.toSorted((a, b) => a.col - b.col) }]]));
+  model.sheets[0]!.dirty = true;
+}
+
+/** The style the first sheet shows at `a1`, where it was read from left out. */
+function styleAt(model: SpreadsheetModel, a1: string): CellStyle {
+  const at = parseA1(a1)!;
+  const { sourceStyleName: _name, ...style } = cellStyle(model, effectiveStyleId(model.sheets[0]!, at.row, at.col));
+  return style;
+}
+
+/** Every generated de-ce style's parent, in order. */
+const parentsIn = (content: string): string[] => [...content.matchAll(/style:name="de-ce\d+"[^>]*?style:parent-style-name="([^"]*)"/g)].map((match) => match[1]!);
+
+/** A fixture with its styles.xml edited, re-zipped. */
+async function withStylesXml(build: () => Promise<Uint8Array>, edit: (xml: string) => string): Promise<Uint8Array> {
+  const parts = await unzip(await build());
+  return zip([...parts].map(([name, data]) => ({ name, data: name === "styles.xml" ? encoder.encode(edit(decoder.decode(data))) : data, store: name === "mimetype" })));
+}
+
+const GOOD_XML =
+  `<style:style style:name="Good" style:display-name="Good" style:family="table-cell" style:parent-style-name="Default">` +
+  `<style:table-cell-properties fo:background-color="#c6efce"/><style:text-properties fo:color="#006100"/></style:style>`;
+const GOOD_READ: NamedCellStyle = {
+  name: "Good",
+  style: { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } },
+  includes: ["font", "fill"],
+  sourceStyleName: "Good",
+};
+const hexOf = (theme: "dk2" | "accent1"): string => resolveColor({ theme }, DEFAULT_THEME).toLowerCase();
+
+describe("SPEC-123 named cell styles through a save", () => {
+  it("substitution: a first-used built-in is appended to the retained styles.xml, otherwise byte-identical; de-ce styles parent on it, or on a sourced style's own name", async () => {
+    const { source, model } = await open(F.buildSpec117StylesOdsBytes);
+    const { merge } = F.SPEC117_STYLES_ODS.styled;
+    model.namedStyles = [...model.namedStyles!, builtin("Good")];
+    const good: CellStyle = { font: { family: "Liberation Sans", sizePt: 10, color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" };
+    styleCell(model, "B3", good);
+    // The merged title (ce12, under "Heading") made italic: a generated style, still under Heading.
+    const title = styleAt(model, merge.anchor);
+    expect(title.namedStyle).toBe("Heading");
+    styleCell(model, merge.anchor, { ...title, font: { ...title.font, italic: true } });
+    const { bytes, parts } = await save(model);
+
+    expect(text(parts, "styles.xml")).toBe(decoder.decode(source.get("styles.xml")).replace("</office:styles>", `${GOOD_XML}</office:styles>`));
+    expect(parentsIn(text(parts, "content.xml")).toSorted()).toEqual(["Good", "Heading"]);
+    for (const [name, data] of source) {
+      if (name !== "content.xml" && name !== "styles.xml") {
+        expect(equalBytes(parts.get(name)!, data), name).toBe(true);
+      }
+    }
+    expect(await packageIntegrity(bytes)).toEqual([]);
+
+    const reread = await readSpreadsheetBytes(bytes, "ods", "reread");
+    expect(reread.namedStyles!.map((style) => style.name)).toEqual(["Normal", "Heading", "Good"]);
+    expect(reread.namedStyles![2]).toEqual(GOOD_READ);
+    expect(styleAt(reread, "B3")).toEqual(good);
+    expect(styleAt(reread, merge.anchor)).toEqual({ ...title, font: { ...title.font, italic: true } });
+  });
+
+  it("substitution: nothing to append — every named style sourced, or none used — leaves styles.xml's bytes as they were", async () => {
+    const { source, model } = await open(F.buildSpec117StylesOdsBytes);
+    const title = styleAt(model, F.SPEC117_STYLES_ODS.styled.merge.anchor);
+    styleCell(model, "B3", { ...title, font: { ...title.font, strike: true } });
+    styleCell(model, "B4", { font: { family: "Liberation Sans", sizePt: 10, bold: true } });
+    const { parts } = await save(model);
+    expect(text(parts, "content.xml")).not.toBe(decoder.decode(source.get("content.xml")));
+    expect(parentsIn(text(parts, "content.xml"))).toEqual(["Heading", "Default"]);
+    expect(equalBytes(parts.get("styles.xml")!, source.get("styles.xml")!)).toBe(true);
+  });
+
+  for (const [label, edit, expected] of [
+    ["self-closing", (xml: string) => xml.replace(/<office:styles>[\s\S]*?<\/office:styles>/, "<office:styles/>"), (xml: string) => xml.replace("<office:styles/>", `<office:styles>${GOOD_XML}</office:styles>`)],
+    ["missing", (xml: string) => xml.replace(/<office:styles>[\s\S]*?<\/office:styles>/, ""), (xml: string) => xml.replace("<office:automatic-styles>", `<office:styles>${GOOD_XML}</office:styles><office:automatic-styles>`)],
+  ] as const) {
+    it(`substitution: a ${label} office:styles takes the appended style`, async () => {
+      const { source, model } = await open(() => withStylesXml(F.buildSpec117StylesOdsBytes, edit));
+      expect(model.namedStyles).toBeUndefined();
+      model.namedStyles = [builtin("Good")];
+      styleCell(model, "B3", { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" });
+      const { bytes, parts } = await save(model);
+      expect(text(parts, "styles.xml")).toBe(expected(decoder.decode(source.get("styles.xml"))));
+      expect(await packageIntegrity(bytes)).toEqual([]);
+      const reread = await readSpreadsheetBytes(bytes, "ods", "reread");
+      expect(reread.namedStyles).toEqual([GOOD_READ]);
+      expect(styleAt(reread, "B3").namedStyle).toBe("Good");
+    });
+  }
+
+  it("from scratch: the generated styles.xml gains the appended styles; write → read reproduces namedStyles and each cell's namedStyle", async () => {
+    const model = blank();
+    model.namedStyles = [builtin("Good"), builtin("Heading 1")];
+    styleCell(model, "A1", { font: { family: "Calibri", sizePt: 11, color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" });
+    styleCell(model, "B2", {
+      font: { family: "Calibri", sizePt: 15, bold: true, color: { theme: "dk2" } },
+      borders: { bottom: { style: "thick", color: { theme: "accent1" } } },
+      namedStyle: "Heading 1",
+    });
+    const { bytes, parts } = await save(model);
+    const heading =
+      `<style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="table-cell" style:parent-style-name="Default">` +
+      `<style:table-cell-properties fo:border-bottom="2.5pt solid ${hexOf("accent1")}"/>` +
+      `<style:text-properties fo:font-size="15pt" fo:font-weight="bold" fo:color="${hexOf("dk2")}"/></style:style>`;
+    expect(text(parts, "styles.xml")).toBe(GOLDEN["styles.xml"]!.replace("</office:styles>", `${GOOD_XML}${heading}</office:styles>`));
+    expect(parentsIn(text(parts, "content.xml"))).toEqual(["Good", "Heading_20_1"]);
+    await expectReopensAs(bytes, model);
+
+    const reread = await readSpreadsheetBytes(bytes, "ods", "reread");
+    expect(reread.namedStyles).toEqual([
+      { name: "Normal", style: { font: { family: "Calibri", sizePt: 11 } }, includes: ["numberFormat", "font", "fill", "borders", "alignment", "protection"], sourceStyleName: "Default" },
+      GOOD_READ,
+      {
+        name: "Heading 1",
+        style: { font: { sizePt: 15, bold: true, color: hexOf("dk2") }, borders: { bottom: { style: "thick", color: hexOf("accent1") } } },
+        includes: ["font", "borders"],
+        sourceStyleName: "Heading_20_1",
+      },
+    ]);
+    expect(styleAt(reread, "A1")).toEqual({ font: { family: "Calibri", sizePt: 11, color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" });
+    expect(styleAt(reread, "B2")).toEqual({
+      font: { family: "Calibri", sizePt: 15, bold: true, color: hexOf("dk2") },
+      borders: { bottom: { style: "thick", color: hexOf("accent1") } },
+      namedStyle: "Heading 1",
+    });
+    // Rebuilt from what was read (the substitution path), nothing is appended twice.
+    reread.sheets[0] = { ...reread.sheets[0]!, dirty: true };
+    const again = await save(reread);
+    expect(equalBytes(again.parts.get("styles.xml")!, parts.get("styles.xml")!)).toBe(true);
+    // Both cells keep their read styles' names: no de-ce beyond the retained two.
+    expect(parentsIn(text(again.parts, "content.xml"))).toEqual(["Good", "Heading_20_1"]);
+  });
+
+  it("a named style's number format: a common data style in styles.xml, its namespace declared on a root that lacked it", async () => {
+    const model = blank();
+    model.namedStyles = [{ name: "Rate", style: { numberFormat: "0.0%", alignment: { horizontal: "right" } }, includes: ["numberFormat"] }];
+    styleCell(model, "A1", { numberFormat: "0.0%", namedStyle: "Rate" });
+    const { bytes, parts } = await save(model);
+    const styles = text(parts, "styles.xml");
+    expect(GOLDEN["styles.xml"]).not.toContain("xmlns:number");
+    expect(styles).toContain(` xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0"`);
+    expect(styles).toContain(
+      `<number:percentage-style style:name="de-N1">` +
+        `<number:number number:decimal-places="1" number:min-decimal-places="1" number:min-integer-digits="1"/><number:text>%</number:text></number:percentage-style>` +
+        `<style:style style:name="Rate" style:display-name="Rate" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="de-N1"/>`,
+    );
+    // The cell's own generated style names its own data style, past de-N1.
+    expect(text(parts, "content.xml")).toContain(`style:parent-style-name="Rate" style:data-style-name="de-N2"`);
+    const reread = await readSpreadsheetBytes(bytes, "ods", "reread");
+    expect(reread.namedStyles![1]).toEqual({ name: "Rate", style: { numberFormat: "0.0%" }, includes: ["numberFormat"], sourceStyleName: "Rate" });
+    expect(styleAt(reread, "A1")).toMatchObject({ numberFormat: "0.0%", namedStyle: "Rate" });
+  });
 });

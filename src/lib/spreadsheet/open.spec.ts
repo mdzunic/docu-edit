@@ -16,6 +16,7 @@
 // value and formula are unchanged — and a dirty sheet's style ids move into
 // the re-read style table.
 import { afterEach, describe, expect, it } from "vitest";
+import { decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
 import { getCell } from "./address";
 import {
@@ -32,6 +33,8 @@ import {
   buildSpec120CalcXlsxBytes,
   buildSpec120FullCalcXlsxBytes,
   buildSpec120ManualXlsxBytes,
+  buildSpec123StylesXlsxBytes,
+  SPEC123_XF,
 } from "./fixtures/build";
 import type { Cell, Sheet, SpreadsheetModel } from "./model";
 import {
@@ -133,9 +136,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5 and SPEC-122 to 6, with one contiguous step each (from 1, 2, 3, 4, 5)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(6);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6 and SPEC-123 to 7, with one contiguous step each (from 1, 2, 3, 4, 5, 6)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(7);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -409,8 +412,8 @@ function setStoredValue(model: SpreadsheetModel, sheet: number, a1: [number, num
 
 describe("SPEC-122's reader step: a dirty sheet regains its preserved content and protection", () => {
   it("SPEC-122 moved the reader to version 6 with its step from 5 — the first that does real work on a dirty sheet", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(6);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(5);
+    expect(SPREADSHEET_READER_VERSION).toBeGreaterThanOrEqual(6);
+    expect(READER_UPGRADES.findIndex((step) => step.from === 5)).toBe(4);
   });
 
   it("xlsx: sstIndex and preserved attributes and children come back onto unchanged cells only; protection and structure protection come back", async () => {
@@ -442,7 +445,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(getCell(stored.sheets[0]!, 2, 0)!.sstIndex).toBeUndefined();
 
     const upgraded = await upgradeSpreadsheetModel(stored);
-    expect(upgraded.readerVersion).toBe(6);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.structureProtected).toBe(true);
     const sheet = upgraded.sheets[0]!;
     expect(sheet.id).toBe("stored-sheet-0");
@@ -523,7 +526,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     // Stored by SPEC-120's reader; then A3 was edited on the (dirty) Inventory.
     const stored = spec120Record(read, [1], (model) => setStoredValue(model, 1, [2, 0], "Gizmo"));
     const upgraded = await upgradeSpreadsheetModel(stored);
-    expect(upgraded.readerVersion).toBe(6);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.structureProtected).toBe(true);
     const sheet = upgraded.sheets[1]!;
     expect(sheet.id).toBe("stored-sheet-1");
@@ -537,5 +540,38 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     // The other (clean) tables are re-read, unprotected.
     expect(upgraded.sheets[0]!.protection).toBeUndefined();
     expect(upgraded.sheets[2]!.id).toBe("stored-sheet-2");
+  });
+});
+
+describe("SPEC-123's reader step: named cell styles and the protection's format permits", () => {
+  it("moved the reader to version 7 with its step from 6", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(7);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(6);
+  });
+
+  it("a dirty sheet's record regains namedStyles, keeps its source styles' ids, and the step is idempotent", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec123StylesXlsxBytes(), "xlsx", "spec123");
+    expect(read.namedStyles?.map((style) => style.name)).toEqual(["Followed Hyperlink", "Good", "Heading 1", "Invoice total", "Normal"]);
+    expect(read.styles[SPEC123_XF.good]!.namedStyle).toBe("Good");
+    // Stored by SPEC-122's reader (version 6): no named styles anywhere; then
+    // A2 was edited on the (dirty) Budget sheet.
+    const stored = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+    stored.readerVersion = 6;
+    delete stored.namedStyles;
+    stored.styles = stored.styles.map(({ namedStyle: _named, ...style }) => style);
+    stored.sheets = stored.sheets.map((sheet, index) => ({ ...sheet, id: `stored-sheet-${index}` }));
+    stored.sheets[0] = { ...stored.sheets[0]!, dirty: true };
+    getCell(stored.sheets[0]!, 1, 0)!.value = "Rent and rates";
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(7);
+    expect(upgraded.namedStyles).toEqual(read.namedStyles);
+    const sheet = upgraded.sheets[0]!;
+    expect(getCell(sheet, 1, 0)!.value).toBe("Rent and rates");
+    // F3 still names its source entry, now known to be "Good".
+    expect(getCell(sheet, 2, 5)!.styleId).toBe(SPEC123_XF.good);
+    expect(upgraded.styles[SPEC123_XF.good]!.namedStyle).toBe("Good");
+    const named = upgraded.namedStyles;
+    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(upgraded, sheet, decodedPartBytes(upgraded.opaque));
+    expect(upgraded.namedStyles).toBe(named);
   });
 });

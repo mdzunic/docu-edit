@@ -6,6 +6,14 @@
 // macOS", resolved at runtime via `isMacPlatform()` — never by sniffing the
 // user-agent string (AC-3, AC-4).
 //
+// SPEC-123: a product with commands of its own declares them beside its view
+// in this same shape — the sheet's SHEET_SHORTCUTS — and matches and labels
+// them here through findShortcut/shortcutLabel's `definitions` parameter,
+// which defaults to this registry. Bindings gain `code`, a physical key
+// (`KeyboardEvent.code`) so a command holds on every keyboard layout, and
+// `ctrl`, the Control key on every platform (on macOS Control itself, not
+// Cmd). A binding with neither matches exactly as it always has.
+//
 // Deliberately excluded: per-component dismissal conventions (Escape closes
 // a menu/popover/dialog, Enter confirms a text field) aren't registered
 // here. Those are a generic, universal UI convention every overlay in the
@@ -27,7 +35,16 @@ import { isMacPlatform } from "./core/platform";
  * `event.shiftKey` itself for the extend/move distinction. */
 export interface ShortcutBinding {
   key: string;
+  /** SPEC-123: a physical key (`KeyboardEvent.code`, e.g. "Digit1",
+   * "Backquote") matched instead of `key`, which then is only the display
+   * character ("!", "~") — so the binding is the same key position on every
+   * layout, as Excel binds its Ctrl+Shift+digit number formats. */
+  code?: string;
   mod?: boolean;
+  /** SPEC-123: the Control key on every platform. On macOS that is Control
+   * itself, with Cmd held exactly when `mod` is also set; on Windows/Linux
+   * `mod` already is Ctrl, so `ctrl` satisfies it. */
+  ctrl?: boolean;
   shift?: boolean;
   /** Alt on Windows/Linux, Option on macOS (SPEC-019's style shortcuts). */
   alt?: boolean;
@@ -49,7 +66,8 @@ export interface ShortcutDefinition {
 }
 
 /** Ctrl/Cmd+T/W/N (new tab, close tab, new window) must never be claimed by
- * the app (AC-11) — asserted against this registry in shortcuts.spec.ts. */
+ * the app (AC-11) — asserted against this registry, and SPEC-123's
+ * SHEET_SHORTCUTS, in shortcuts.spec.ts. */
 export const RESERVED_BROWSER_KEYS = ["t", "w", "n"];
 
 export const SHORTCUTS: ShortcutDefinition[] = [
@@ -219,9 +237,27 @@ function normalizeKey(key: string): string {
   return key.length === 1 ? key.toLowerCase() : key;
 }
 
+/** Whether the event is the binding's key: its physical `code` when it names
+ * one (SPEC-123), otherwise the character or named key it produced. */
+function keyMatches(binding: ShortcutBinding, event: KeyboardEvent): boolean {
+  return binding.code ? event.code === binding.code : normalizeKey(binding.key) === normalizeKey(event.key);
+}
+
+/** Ctrl/Cmd as the binding asks. Without `ctrl` it is SPEC-021's rule: the
+ * platform's own modifier is held exactly when `mod` is set, and the other
+ * key is not looked at. With `ctrl` (SPEC-123) Control must be held, and on
+ * macOS Cmd exactly when `mod` is also set; on Windows/Linux `mod` is Ctrl
+ * itself, so `ctrl` satisfies it. */
+function primaryModifiersMatch(binding: ShortcutBinding, event: KeyboardEvent, isMac: boolean): boolean {
+  if (!binding.ctrl) {
+    const modPressed = isMac ? event.metaKey : event.ctrlKey;
+    return modPressed === !!binding.mod;
+  }
+  return event.ctrlKey && (!isMac || event.metaKey === !!binding.mod);
+}
+
 function bindingMatchesEvent(binding: ShortcutBinding, event: KeyboardEvent, isMac: boolean): boolean {
-  const modPressed = isMac ? event.metaKey : event.ctrlKey;
-  if (normalizeKey(binding.key) !== normalizeKey(event.key) || modPressed !== !!binding.mod) {
+  if (!keyMatches(binding, event) || !primaryModifiersMatch(binding, event, isMac)) {
     return false;
   }
   if (event.altKey !== !!binding.alt) {
@@ -234,19 +270,30 @@ function bindingMatchesEvent(binding: ShortcutBinding, event: KeyboardEvent, isM
  * way any part of the app should decide "was a shortcut just pressed"
  * (AC-2). Platform defaults to the runtime-resolved current platform; a
  * caller may override it (tests, or a future preview of the other
- * platform's bindings). */
-export function findShortcut(event: KeyboardEvent, isMac: boolean = isMacPlatform()): ShortcutDefinition | undefined {
-  return SHORTCUTS.find((definition) => definition.bindings.some((binding) => bindingMatchesEvent(binding, event, isMac)));
+ * platform's bindings). `definitions` defaults to this registry; a product
+ * passes its own table (SPEC-123's SHEET_SHORTCUTS) to match that instead. */
+export function findShortcut(
+  event: KeyboardEvent,
+  isMac: boolean = isMacPlatform(),
+  definitions: ShortcutDefinition[] = SHORTCUTS,
+): ShortcutDefinition | undefined {
+  return definitions.find((definition) => definition.bindings.some((binding) => bindingMatchesEvent(binding, event, isMac)));
 }
 
 function displayKey(key: string): string {
   return key.length === 1 ? key.toUpperCase() : key;
 }
 
-/** Renders one binding as display text, e.g. "Ctrl+Shift+X" / "Cmd+Shift+X". */
+/** Renders one binding as display text, e.g. "Ctrl+Shift+X" / "Cmd+Shift+X".
+ * `ctrl` leads, as "Ctrl" or (macOS) "Control" — "Ctrl+Shift+~" /
+ * "Control+Shift+~" (SPEC-123); on Windows/Linux it is the same key as
+ * `mod`'s Ctrl, so a binding with both names it once. */
 export function formatBinding(binding: ShortcutBinding, isMac: boolean = isMacPlatform()): string {
   const parts: string[] = [];
-  if (binding.mod) {
+  if (binding.ctrl) {
+    parts.push(isMac ? "Control" : "Ctrl");
+  }
+  if (binding.mod && (isMac || !binding.ctrl)) {
     parts.push(isMac ? "Cmd" : "Ctrl");
   }
   if (binding.alt) {
@@ -261,9 +308,11 @@ export function formatBinding(binding: ShortcutBinding, isMac: boolean = isMacPl
 
 /** The display text for a command's primary binding — what toolbar tooltips
  * read (AC-15, AC-16). Returns "" for an unknown id rather than throwing, so
- * a stale id fails a visible test instead of crashing a render. */
-export function shortcutLabel(id: string, isMac: boolean = isMacPlatform()): string {
-  const definition = SHORTCUTS.find((entry) => entry.id === id);
+ * a stale id fails a visible test instead of crashing a render.
+ * `definitions` as findShortcut's: this registry unless a product passes its
+ * own table. */
+export function shortcutLabel(id: string, isMac: boolean = isMacPlatform(), definitions: ShortcutDefinition[] = SHORTCUTS): string {
+  const definition = definitions.find((entry) => entry.id === id);
   return definition ? formatBinding(definition.bindings[0], isMac) : "";
 }
 

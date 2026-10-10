@@ -69,6 +69,11 @@ import { BUILTIN_NUMBER_FORMATS } from "./numberFormat/builtin";
 import type { ParsedInput } from "./numberFormat/input";
 import { cellStyle, columnSpanAt, effectiveStyleId, internStyle, styleKey } from "./styles";
 
+/** The refusals checked before a cell or formatting command runs (SPEC-122
+ * "Protection"; SPEC-123's formatting commands refuse with the same text). */
+export const PROTECTED_CELL_MESSAGE = "This cell is on a protected sheet";
+export const ARRAY_PART_MESSAGE = "You can't change part of an array";
+
 /** What a commit writes into a cell (parseInput's result, plus `wrap` for a
  * text holding a line break). */
 export interface CellEntry {

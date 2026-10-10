@@ -22,7 +22,17 @@
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { formatA1, getCell } from "../../lib/spreadsheet/address";
 import { refitRows, type CellTextMeasurer } from "../../lib/spreadsheet/autofit";
-import { arrayRangeTouched, clearContents, entryFromInput, fillWithEntry, firstLockedCell, setCellEntry, type CellEntry } from "../../lib/spreadsheet/cells";
+import {
+  ARRAY_PART_MESSAGE,
+  arrayRangeTouched,
+  clearContents,
+  entryFromInput,
+  fillWithEntry,
+  firstLockedCell,
+  PROTECTED_CELL_MESSAGE,
+  setCellEntry,
+  type CellEntry,
+} from "../../lib/spreadsheet/cells";
 import { sanitizeXmlText } from "../../lib/core/xmlText";
 import { FormulaSyntaxError, parseFormula } from "../../lib/spreadsheet/formula/parse";
 import { formulaTextAt, printFormula } from "../../lib/spreadsheet/formula/print";
@@ -36,8 +46,7 @@ import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
 
 export const FORMULA_ERROR_MESSAGE = "There's a problem with this formula";
 export const FORMULA_TOO_LONG_MESSAGE = "Formulas can be at most 8,192 characters";
-export const PROTECTED_CELL_MESSAGE = "This cell is on a protected sheet";
-export const ARRAY_PART_MESSAGE = "You can't change part of an array";
+export { ARRAY_PART_MESSAGE, PROTECTED_CELL_MESSAGE };
 /** Excel's limit on a formula's length, "=" excluded. */
 export const MAX_FORMULA_LENGTH = 8192;
 export const FILL_LABEL = "Fill";

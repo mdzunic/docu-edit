@@ -65,6 +65,16 @@
 //                             runs, a span, an annotation, a link, header rows
 //                             and a row group, local names and conditional
 //                             formats, a validation, de-ce1, a protected table
+// - spec123-styles.xlsx     — SPEC-123, Excel-shaped: named cell styles
+//                             (cellStyleXfs, cellStyles with builtinIds, a
+//                             hidden and a custom one, cellXfs xfIds), tinted
+//                             theme colours, numFmt 164, a styled column, a
+//                             styled row, a dxf and the x14 extLst
+// - spec123-styles.ods      — SPEC-123, LibreOffice-shaped: common styles
+//                             (Default, Heading, Heading_20_1, Good,
+//                             Invoice_20_total), parented ce styles, N1xx data
+//                             styles with style:map, a column default cell
+//                             style and a row formatted to XFD
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -94,6 +104,8 @@ import {
   buildSpec121LinksXlsxBytes,
   buildSpec122ShapesOdsBytes,
   buildSpec122ShapesXlsxBytes,
+  buildSpec123StylesOdsBytes,
+  buildSpec123StylesXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -120,6 +132,8 @@ writeFileSync(join(fixturesDir, "spec121-links.xlsx"), await buildSpec121LinksXl
 writeFileSync(join(fixturesDir, "spec121-links.ods"), await buildSpec121LinksOdsBytes());
 writeFileSync(join(fixturesDir, "spec122-shapes.xlsx"), await buildSpec122ShapesXlsxBytes());
 writeFileSync(join(fixturesDir, "spec122-shapes.ods"), await buildSpec122ShapesOdsBytes());
+writeFileSync(join(fixturesDir, "spec123-styles.xlsx"), await buildSpec123StylesXlsxBytes());
+writeFileSync(join(fixturesDir, "spec123-styles.ods"), await buildSpec123StylesOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

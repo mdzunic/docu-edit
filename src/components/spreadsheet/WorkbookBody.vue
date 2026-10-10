@@ -10,13 +10,16 @@
 // commits first). It only lays the surfaces out and binds them to the
 // view-level composables the view hands in (`book` = useWorkbookLoad, `grid`
 // = the SheetGridContext of the sheet on show, `editing` =
-// useWorkbookEditing); SpreadsheetView keeps only the wiring. Runtime prop
+// useWorkbookEditing); SpreadsheetView keeps only the wiring. SPEC-123: the
+// cell context menu and Format Cells, from the grid context's `formatting`. Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
+import FormatCellsDialog from "./FormatCellsDialog.vue";
 import FormulaBar from "./FormulaBar.vue";
+import SheetCellContextMenu from "./SheetCellContextMenu.vue";
 import SheetGrid from "./SheetGrid.vue";
 import SheetTabColorPicker from "./SheetTabColorPicker.vue";
 import SheetTabDeleteDialog from "./SheetTabDeleteDialog.vue";
@@ -118,6 +121,19 @@ const tabs = computed(() => {
       @confirm="commands.confirmUnhide"
       @cancel="commands.cancelUnhide()"
     />
+    <template v-if="grid.formatting">
+      <SheetCellContextMenu
+        :open="grid.formatting.contextMenu.value !== null"
+        :x="grid.formatting.contextMenu.value?.x ?? 0"
+        :y="grid.formatting.contextMenu.value?.y ?? 0"
+        @run="grid.formatting.run"
+        @close="grid.formatting.closeContextMenu()"
+      />
+      <FormatCellsDialog
+        v-if="grid.formatting.dialog.open.value"
+        :dialog="grid.formatting.dialog"
+      />
+    </template>
     <SheetTabColorPicker
       v-if="commands.coloring.value"
       :x="commands.coloring.value.x"

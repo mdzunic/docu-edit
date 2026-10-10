@@ -4,7 +4,22 @@
 // cellStyle falls back to the default style for any id it cannot index.
 // INDEXED_COLORS is ECMA-376 §18.8.27's 64-entry legacy palette, lowercase.
 import { describe, expect, it } from "vitest";
-import { cellStyle, columnSpanAt, defaultStyles, effectiveStyleId, INDEXED_COLORS, internStyle, styleKey } from "./styles";
+import {
+  BUILTIN_CELL_STYLES,
+  builtinCellStyle,
+  builtinCellStyleById,
+  CELL_STYLE_GROUPS,
+  cellStyle,
+  columnSpanAt,
+  defaultStyles,
+  effectiveStyleId,
+  INDEXED_COLORS,
+  internStyle,
+  resolveNamedStyle,
+  STYLE_ASPECTS,
+  styleKey,
+  workbookNamedStyle,
+} from "./styles";
 import type { CellStyle, ColumnSpan, Row, Sheet } from "./model";
 
 function sheetWith(partial: Partial<Sheet> = {}): Sheet {
@@ -249,5 +264,49 @@ describe("SPEC-122 internStyle: structural equality, copy-on-write appends", () 
     const model = { styles: [{}, { numberFormat: "@" }] as CellStyle[] };
     expect(internStyle(model, { numberFormat: "@", quotePrefix: undefined })).toBe(1);
     expect(internStyle(model, { quotePrefix: undefined })).toBe(0);
+  });
+});
+
+describe("SPEC-123 named cell styles: the built-in table", () => {
+  it("pins the eighteen built-ins with Excel's builtinIds and grouped as Excel groups them", () => {
+    expect(BUILTIN_CELL_STYLES.map((style) => [style.name, style.builtinId])).toEqual([
+      ["Normal", 0],
+      ["Good", 26],
+      ["Bad", 27],
+      ["Neutral", 28],
+      ["Title", 15],
+      ["Heading 1", 16],
+      ["Heading 2", 17],
+      ["Heading 3", 18],
+      ["Heading 4", 19],
+      ["Total", 25],
+      ["Input", 20],
+      ["Output", 21],
+      ["Calculation", 22],
+      ["Check Cell", 23],
+      ["Note", 10],
+      ["Warning Text", 11],
+      ["Explanatory Text", 53],
+      ["Linked Cell", 24],
+    ]);
+    expect(CELL_STYLE_GROUPS.flatMap((group) => group.names).toSorted()).toEqual(BUILTIN_CELL_STYLES.map((style) => style.name).toSorted());
+    expect(builtinCellStyle("Heading 2")!.style).toEqual({
+      font: { sizePt: 13, bold: true, color: { theme: "dk2" } },
+      borders: { bottom: { style: "thick", color: { theme: "accent1", lumMod: 0.5, lumOff: 0.5 } } },
+    });
+    expect(builtinCellStyle("Input")!.includes).toEqual(["font", "fill", "borders"]);
+    expect(builtinCellStyleById(53)!.name).toBe("Explanatory Text");
+  });
+
+  it("resolves a name to the workbook's definition (xlsx by builtinId), else the pinned one; Normal is styles[0]", () => {
+    const model = {
+      styles: [{ font: { family: "Calibri", sizePt: 11 }, sourceXf: 0 }],
+      namedStyles: [{ name: "Gut", builtinId: 26, style: { fill: { kind: "solid" as const, color: "#00ff00" } }, includes: ["fill" as const], sourceXfId: 1 }],
+    };
+    expect(workbookNamedStyle(model, "Good")?.name).toBe("Gut");
+    expect(resolveNamedStyle(model, "Good")).toEqual({ name: "Good", builtinId: 26, style: { fill: { kind: "solid", color: "#00ff00" } }, includes: ["fill"], defined: true });
+    expect(resolveNamedStyle(model, "Bad")).toMatchObject({ builtinId: 27, defined: false, includes: ["font", "fill"] });
+    expect(resolveNamedStyle(model, "Normal")).toMatchObject({ style: { font: { family: "Calibri", sizePt: 11 } }, includes: STYLE_ASPECTS });
+    expect(resolveNamedStyle(model, "Nope")).toBeUndefined();
   });
 });
