@@ -167,6 +167,9 @@ const cellsAdjuster: MoveAdjuster = {
     }
     const fromRows = fromEdit.rows();
     const toRows = toEdit === fromEdit ? fromRows : toEdit.rows();
+    if (fromRows === from.rows && toRows === to.rows) {
+      return;
+    }
     model.sheets = model.sheets.map((sheet) => {
       if (sheet === from && fromRows !== from.rows) {
         return { ...sheet, rows: fromRows };

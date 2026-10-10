@@ -377,10 +377,10 @@ function entryStyle(model: SpreadsheetModel, effectiveId: number, entry: CellEnt
 }
 
 /** Writes per-position entries into one batch, caching each effective
- * style's outcome (every target of one command shares the entry's style
- * fields). */
+ * style's outcome per entry style (a Fill's targets share one entry; a
+ * plain-text paste's differ). */
 class EntryWriter {
-  private readonly styleOutcomes = new Map<number, StyleOutcome>();
+  private readonly styleOutcomes = new Map<string, StyleOutcome>();
   /** Array members to clear once every target is written. */
   readonly memberClears: GridRange[] = [];
 
@@ -396,10 +396,11 @@ class EntryWriter {
   write(row: number, col: number, entry: CellEntry, dissolveArray = false): void {
     const cell = getCell(this.sheet, row, col);
     const effectiveId = effectiveStyleId(this.sheet, row, col);
-    let outcome = this.styleOutcomes.get(effectiveId);
+    const key = `${effectiveId}|${entry.numberFormat ?? ""}|${entry.builtinFormatId ?? ""}|${entry.quotePrefix ? 1 : 0}|${entry.wrap ? 1 : 0}`;
+    let outcome = this.styleOutcomes.get(key);
     if (!outcome) {
       outcome = entryStyle(this.model, effectiveId, entry);
-      this.styleOutcomes.set(effectiveId, outcome);
+      this.styleOutcomes.set(key, outcome);
     }
     // What the position shows without a style of its own (row → column → 0).
     const inheritedId = findRow(this.sheet, row)?.styleId ?? columnSpanAt(this.sheet.columns, col)?.styleId ?? 0;
