@@ -24,6 +24,7 @@ import {
   parseClipboardPayload,
   parseTsv,
   PAYLOAD_ATTRIBUTE,
+  TOO_MANY_TO_CHANGE_MESSAGE,
   TOO_MANY_TO_COPY_MESSAGE,
   tsvField,
   tsvText,
@@ -562,9 +563,48 @@ describe("external sources — each producer's markers (inline snippets)", () =>
     });
   });
 
+  it("decodes Excel's escapes as Excel writes them: exactly four hex digits, no terminating space", () => {
+    expect(decodeCssString('"\\0022Dec\\0022"')).toBe('"Dec"');
+    expect(decodeCssString('"0\\0022 kg\\0022"')).toBe('0" kg"');
+    expect(decodeCssString('"\\0022Q\\00220"')).toBe('"Q"0');
+    expect(decodeCssString('"\\[$-409\\]mmm\\\\ d\\\\\\,\\\\ yyyy\\;\\@"')).toBe("[$-409]mmm\\ d\\,\\ yyyy;@");
+    const html =
+      '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><style>.xl70 {mso-number-format:"0\\.0\\0022 kg\\0022";} .xl71 {mso-number-format:"\\0022Dec \\00220";}</style></head>' +
+      '<body><table><tr><td class="xl70" x:num="12.5">12.5 kg</td><td class="xl71" x:num="3">Dec 3</td></tr></table></body></html>';
+    const block = imported(html);
+    expect(at(block, 0, 0)).toEqual({ v: 12.5, style: { numberFormat: '0.0" kg"' } });
+    expect(at(block, 0, 1)).toEqual({ v: 3, style: { numberFormat: '"Dec "0' } });
+  });
+
   it("refuses input over 64 MiB or over MAX_COPY_CELLS cells before parsing; HTML without a table is no block", () => {
     expect(importClipboardHtml(`<table><tr><td>x</td></tr></table>${" ".repeat(64 * 1024 * 1024)}`, CTX)).toBe("That's too many cells to change at once");
     expect(importClipboardHtml("<p>no table</p>", CTX)).toBeNull();
+  });
+
+  it("refuses a table whose spans reach past MAX_COPY_CELLS as it is laid out, never walking them", () => {
+    // 20,000 × 1,000 positions: past V8's Set limit, were they ever marked.
+    expect(importClipboardHtml('<table><tr><td rowspan="20000" colspan="1000">x</td></tr></table>', CTX)).toBe(TOO_MANY_TO_CHANGE_MESSAGE);
+    expect(importClipboardHtml('<table><tr><td colspan="1000">a</td></tr><tr><td rowspan="1001">b</td></tr></table>', CTX)).toBe(TOO_MANY_TO_CHANGE_MESSAGE);
+    expect(imported('<table><tr><td rowspan="2" colspan="3">x</td><td>y</td></tr></table>')).toMatchObject({ rows: 2, cols: 4, merges: [range(0, 0, 1, 2)] });
+  });
+
+  it("holds what attributes give to the payload's bounds: XML-legal text of at most 32,767 characters, format codes of at most 255, a Sheets formula of at most 8,192", () => {
+    const excel = imported(
+      `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><body><table><tr><td x:str="a\u0001b">t</td><td x:str="${"x".repeat(40_000)}">t</td>` +
+        `<td style="mso-number-format:'${"0".repeat(256)}'" x:num="1">1</td><td style="mso-number-format:'${"0".repeat(255)}'" x:num="1">1</td></tr></table></body></html>`,
+    );
+    expect(at(excel, 0, 0)!.v).toBe("ab");
+    expect(at(excel, 0, 1)!.v).toBe("x".repeat(32_767));
+    expect(at(excel, 0, 2)).toEqual({ v: 1 });
+    expect(at(excel, 0, 3)).toEqual({ v: 1, style: { numberFormat: "0".repeat(255) } });
+    const sheets = imported(
+      `<google-sheets-html-origin><table data-sheets-root="1"><tr><td data-sheets-value='{"1":2,"2":"a\\u0001b"}'>ab</td>` +
+        `<td data-sheets-value='{"1":3,"3":1}' data-sheets-formula="=${"1+".repeat(4096)}1">1</td>` +
+        `<td data-sheets-value='{"1":3,"3":1}' data-sheets-formula="=${"1+".repeat(4095)}1">1</td></tr></table></google-sheets-html-origin>`,
+    );
+    expect(at(sheets, 0, 0)!.v).toBe("ab");
+    expect(at(sheets, 0, 1)).toEqual({ v: 1 });
+    expect(at(sheets, 0, 2)!.r1c1).toHaveLength(8192);
   });
 
   it("passes SPEC-016's sanitisation list: script, style with url(), on*, javascript:, remote <img>, iframe", () => {

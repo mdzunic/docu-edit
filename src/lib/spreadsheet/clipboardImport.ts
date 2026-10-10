@@ -25,14 +25,20 @@
 // - colspan/rowspan become merges, laid out by HTML's table algorithm.
 // - Parsing is DOMParser("text/html") on a detached document, so nothing in
 //   the markup executes or loads. Input over MAX_IMPORT_HTML_LENGTH, or with
-//   more than MAX_COPY_CELLS cells, is refused before parsing.
+//   more than MAX_COPY_CELLS cells, is refused before parsing; a table whose
+//   area (spans included) passes MAX_COPY_CELLS is refused as it is laid out.
+// - What attributes give is held to the payload's bounds: text XML-legal and
+//   ≤ 32,767 characters, format codes ≤ 255 printable characters, a Sheets
+//   formula ≤ 8,192 characters (else its value pastes).
 // - Numbers from attributes (x:num, sdval, data-sheets-value) are serials of
 //   the 1900 date system; a date-formatted one is moved by 1462 days into a
 //   1904 workbook here, so the block is in the destination's date system.
 import { parseColorInput } from "../core/colors";
+import { hasIllegalXmlScalars, sanitizeXmlText } from "../core/xmlText";
 import type { GridRange } from "./address";
 import { TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
-import { isPrintable, MAX_COPY_CELLS } from "./clipboardPayload";
+import { isPrintable, MAX_CLIPBOARD_FORMULA_LENGTH, MAX_COPY_CELLS } from "./clipboardPayload";
+import { MAX_TEXT_LENGTH } from "./formula/values";
 import { MAX_COLS, MAX_ROWS, toCellError, type CellBorderEdge, type CellBorders, type CellStyle, type CellValue, type SheetBorderStyle } from "./model";
 import { BUILTIN_NUMBER_FORMATS } from "./numberFormat/builtin";
 import { parseFormatCode } from "./numberFormat/parse";
@@ -44,6 +50,14 @@ import { styleKey } from "./styles";
 export const MAX_IMPORT_HTML_LENGTH = 64 * 1024 * 1024;
 const MAX_COLSPAN = 1000;
 const MAX_ROWSPAN = 65534;
+/** The payload's bound on a number-format code (clipboardPayload.ts). */
+const MAX_FORMAT_CODE_LENGTH = 255;
+
+/** Text an attribute gives a cell, under the bounds typed and parsed text
+ * keeps (paste.ts parsedField): XML-legal, at most 32,767 characters. */
+function attributeText(text: string): string {
+  return sanitizeXmlText(text).slice(0, MAX_TEXT_LENGTH);
+}
 
 /** parseInput's locale and date system, and the view's canonical formula
  * form (paste.ts TextContext). */
@@ -121,15 +135,18 @@ export function cssRules(text: string): { base: Declarations; classes: Map<strin
   return { base, classes };
 }
 
-/** A CSS string's text: outer quotes removed, escapes decoded (`\0022` →
- * `"`, `\X` → `X`). */
+/** A CSS string's text: outer quotes removed, escapes decoded as Excel
+ * writes them (`\0022` → `"`, `\X` → `X`). Excel's hex escape is always
+ * exactly four digits with no terminating space — not CSS's one to six plus
+ * an optional space — so `\0022Dec\0022` is `"Dec"` and `0\0022 kg\0022`
+ * keeps its space. */
 export function decodeCssString(value: string): string {
   let text = value.trim();
   if (text.length >= 2 && (text[0] === '"' || text[0] === "'") && text.at(-1) === text[0]) {
     text = text.slice(1, -1);
   }
-  return text.replace(/\\([0-9a-fA-F]{1,6})\s?|\\([\s\S])/g, (_, hex: string | undefined, char: string | undefined) =>
-    hex !== undefined ? String.fromCodePoint(Math.min(Number.parseInt(hex, 16), 0x10ffff)) : (char ?? ""),
+  return text.replace(/\\([0-9a-fA-F]{4})|\\([\s\S])/g, (_, hex: string | undefined, char: string | undefined) =>
+    hex !== undefined ? String.fromCharCode(Number.parseInt(hex, 16)) : (char ?? ""),
   );
 }
 
@@ -323,7 +340,8 @@ const EXCEL_NAMED_FORMATS: Readonly<Record<string, { numberFormat: string; built
 type Format = { numberFormat: string; builtinFormatId?: number };
 
 /** A producer's format code as a style's format; undefined for General or
- * a code SPEC-118's grammar rejects. */
+ * a code the payload's bounds (≤ 255 printable characters) or SPEC-118's
+ * grammar reject. */
 function formatOf(code: string | undefined): Format | undefined {
   if (code === undefined || code.trim() === "") {
     return undefined;
@@ -331,6 +349,9 @@ function formatOf(code: string | undefined): Format | undefined {
   const named = EXCEL_NAMED_FORMATS[code.trim().toLowerCase()];
   if (named !== undefined) {
     return named ?? undefined;
+  }
+  if (code.length > MAX_FORMAT_CODE_LENGTH || !isPrintable(code) || hasIllegalXmlScalars(code)) {
+    return undefined;
   }
   try {
     parseFormatCode(code);
@@ -453,7 +474,10 @@ interface Placed {
 }
 
 /** The table's cells placed by HTML's table algorithm (spans occupying the
- * positions they cover); null past MAX_COPY_CELLS. */
+ * positions they cover); null past MAX_COPY_CELLS. The table's area is
+ * checked as each cell is placed, before its span is marked, so the
+ * positions marked never outnumber MAX_COPY_CELLS — a hostile
+ * `rowspan=20000 colspan=1000` is refused, never walked. */
 function placeCells(table: HTMLTableElement): { cells: Placed[]; rows: number; cols: number } | null {
   const taken = new Set<number>();
   const cells: Placed[] = [];
@@ -468,20 +492,22 @@ function placeCells(table: HTMLTableElement): { cells: Placed[]; rows: number; c
       }
       const colspan = Math.min(Math.max(1, element.colSpan || 1), MAX_COLSPAN);
       const rowspan = Math.min(Math.max(1, element.rowSpan || 1), MAX_ROWSPAN);
-      if (row + rowspan > MAX_ROWS || col + colspan > MAX_COLS || cells.length >= MAX_COPY_CELLS) {
+      const bottom = row + rowspan;
+      const right = col + colspan;
+      if (bottom > MAX_ROWS || right > MAX_COLS || cells.length >= MAX_COPY_CELLS || Math.max(rows, bottom) * Math.max(cols, right) > MAX_COPY_CELLS) {
         return null;
       }
       cells.push({ element, row, col, rowspan, colspan });
       if (rowspan > 1 || colspan > 1) {
-        for (let r = row; r < row + rowspan; r += 1) {
-          for (let c = col; c < col + colspan; c += 1) {
+        for (let r = row; r < bottom; r += 1) {
+          for (let c = col; c < right; c += 1) {
             taken.add(r * MAX_COLS + c);
           }
         }
       }
-      col += colspan;
+      col = right;
       cols = Math.max(cols, col);
-      rows = Math.max(rows, row + rowspan);
+      rows = Math.max(rows, bottom);
     }
     row += 1;
     rows = Math.max(rows, row);
@@ -545,7 +571,7 @@ function readExcel(cell: Element, text: string, css: Declarations, ctx: ImportCo
   }
   const str = cell.getAttribute("x:str");
   if (str !== null) {
-    return withFormat({ value: str !== "" ? str : text });
+    return withFormat({ value: attributeText(str !== "" ? str : text) });
   }
   const reading = fromText(text, ctx);
   return format && reading.formula === undefined ? { ...reading, format } : reading;
@@ -561,7 +587,7 @@ function readSheets(cell: Element, text: string, ctx: ImportContext): Reading {
   if (type === 3 && typeof data?.["3"] === "number" && Number.isFinite(data["3"])) {
     reading = { value: data["3"], fromAttribute: true };
   } else if (type === 2 && typeof data?.["2"] === "string") {
-    reading = { value: data["2"] };
+    reading = { value: attributeText(data["2"]) };
   } else if (type === 4 && (typeof data?.["4"] === "boolean" || typeof data?.["4"] === "number")) {
     reading = { value: Boolean(data["4"]) };
   } else {
@@ -571,8 +597,10 @@ function readSheets(cell: Element, text: string, ctx: ImportContext): Reading {
   if (format) {
     reading.format = format;
   }
+  // A formula past the payload's length bound, or holding what XML cannot,
+  // is no formula: the value pastes.
   const formula = cell.getAttribute("data-sheets-formula");
-  if (formula && formula.startsWith("=")) {
+  if (formula && formula.startsWith("=") && formula.length <= MAX_CLIPBOARD_FORMULA_LENGTH + 1 && !hasIllegalXmlScalars(formula)) {
     reading.r1c1 = formula;
   }
   return reading;
