@@ -182,3 +182,58 @@ test("format spec123-styles.ods, download and reopen (AC-74)", async ({ page }) 
   await open(page, path);
   await expectFormatted(page);
 });
+
+/** "#rrggbb" as getComputedStyle reports it. */
+function rgb(hex: string | null): string {
+  const [r, g, b] = [1, 3, 5].map((at) => parseInt(hex!.slice(at, at + 2), 16));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+// A theme colour picked inside Format Cells reached patchStyle as a Vue
+// reactive Proxy (the dialog held it in a deep ref): structuredClone threw
+// DataCloneError, the preview never showed the colour and OK silently
+// applied nothing.
+test("Format Cells applies theme colours to a mixed selection without flattening it (AC-42, AC-43)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      errors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, join(fixtures, "spec123-styles.xlsx"));
+  // B2 bold, the rest of B2:C3 not — B2 active.
+  await clickCell(page, "B2");
+  await page.getByTestId("sheet-bold").click();
+  await clickCell(page, "C3", ["Shift"]);
+  await page.keyboard.press("ControlOrMeta+1");
+  const dialog = page.getByTestId("format-cells-dialog");
+  await expect(dialog).toBeVisible();
+
+  await page.getByTestId("format-cells-tab-fill").click();
+  const fillSwatch = page.getByTestId("format-cells-fill-theme-swatch").and(page.getByLabel("Accent 2", { exact: true }));
+  const fill = rgb(await fillSwatch.getAttribute("data-color"));
+  await fillSwatch.click();
+  await expect(page.getByTestId("format-cells-preview")).toHaveCSS("background-color", fill);
+
+  await page.getByTestId("format-cells-tab-font").click();
+  const fontColor = page.getByTestId("format-cells-font-color");
+  await fontColor.getByTestId("text-color-button").click();
+  const textSwatch = fontColor.getByTestId("text-color-theme-swatch").and(page.getByLabel("Accent 6", { exact: true }));
+  const text = rgb(await textSwatch.getAttribute("data-color"));
+  await textSwatch.click();
+  await expect(page.getByTestId("format-cells-preview").locator("span")).toHaveCSS("color", text);
+
+  await page.getByTestId("format-cells-ok").click();
+  await expect(dialog).toHaveCount(0);
+  await clickCell(page, "A4");
+  for (const ref of ["B2", "C2", "B3", "C3"]) {
+    await expect(cell(page, ref)).toHaveCSS("background-color", fill);
+    await expect(cell(page, ref).locator(".sheet-cell-text")).toHaveCSS("color", text);
+  }
+  // Only the changed fields applied: B2 stays bold, C3 stays regular.
+  expect(Number(await fontWeight(page, "B2"))).toBeGreaterThanOrEqual(700);
+  expect(Number(await fontWeight(page, "C3"))).toBeLessThan(700);
+  await expect(page.getByTestId("spreadsheet-undo")).toHaveAttribute("title", /Format cells/);
+  expect(errors).toEqual([]);
+});
