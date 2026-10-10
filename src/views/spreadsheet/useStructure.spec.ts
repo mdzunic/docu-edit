@@ -46,8 +46,8 @@ function harness(sheetFields: Partial<Sheet>, initial: SheetSelection) {
   });
   scopes.push(scope);
   const { undo, structure } = scope.run(() => {
-    const undo = useSpreadsheetUndo({ model: workbook, recalc: (_keys, done) => done([]), onApplied: () => triggerRef(workbook), activateSheet: () => {} });
-    const structure = useStructure({
+    const stack = useSpreadsheetUndo({ model: workbook, recalc: (_keys, done) => done([]), onApplied: () => triggerRef(workbook), activateSheet: () => {} });
+    const commands = useStructure({
       book: { workbook, activeSheet },
       viewState: {
         syncInto: vi.fn(),
@@ -65,11 +65,11 @@ function harness(sheetFields: Partial<Sheet>, initial: SheetSelection) {
         formatContext: computed(() => ({ locale: EN_US, dateSystem: "1900" as const })),
       },
       sheetMetrics: { nav },
-      editing: { undo, cell: { editing: computed(() => editing.value) } },
+      editing: { undo: stack, cell: { editing: computed(() => editing.value) } },
       measurer: fixedMeasurer(7, 20),
       toast: (message) => toasts.push(message),
     });
-    return { undo, structure };
+    return { undo: stack, structure: commands };
   })!;
   const sheet = (): Sheet => workbook.value!.sheets[0]!;
   return { structure, undo, selection, toasts, editing, sheet, workbook, scope };
@@ -186,17 +186,19 @@ describe("SPEC-124 useStructure — the header menu", () => {
   });
 });
 
-describe("SPEC-124 useStructure — the shortcuts and the insert/delete dialog", () => {
-  function grid(): HTMLElement {
-    document.body.innerHTML = `<div data-testid="spreadsheet-grid"><div id="cell" tabindex="0"></div></div>`;
-    return document.getElementById("cell")!;
-  }
-  const press = (target: Element, init: KeyboardEventInit): KeyboardEvent => {
-    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
-    target.dispatchEvent(event);
-    return event;
-  };
+/** A focusable element inside a grid, for the keys. */
+function grid(): HTMLElement {
+  document.body.innerHTML = `<div data-testid="spreadsheet-grid"><div id="cell" tabindex="0"></div></div>`;
+  return document.getElementById("cell")!;
+}
 
+function press(target: Element, init: KeyboardEventInit): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(event);
+  return event;
+}
+
+describe("SPEC-124 useStructure — the shortcuts and the insert/delete dialog", () => {
   it("Ctrl+Alt+= on whole rows inserts as many above; Ctrl+Alt+- deletes them", () => {
     const h = harness({ rows: rows(4) }, sel([wholeRows(1, 2)]));
     const target = grid();

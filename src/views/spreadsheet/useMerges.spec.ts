@@ -27,16 +27,16 @@ function harness(rows: Row[], range: GridRange, merges: GridRange[] = []) {
   const scope = effectScope();
   scopes.push(scope);
   const { undo, merge } = scope.run(() => {
-    const undo = useSpreadsheetUndo({ model: workbook, recalc: (_keys, done) => done([]), onApplied: () => triggerRef(workbook), activateSheet: () => {} });
-    const merge = useMerges({
+    const stack = useSpreadsheetUndo({ model: workbook, recalc: (_keys, done) => done([]), onApplied: () => triggerRef(workbook), activateSheet: () => {} });
+    const merging = useMerges({
       book: { workbook, activeSheet },
       viewState: { syncInto: vi.fn() },
       selection: { selection: computed(() => selection.value) },
       sheetMetrics: { merges: computed(() => buildMergeIndex(activeSheet.value?.merges ?? [])) },
-      editing: { undo, cell: { editing: computed(() => false) } },
+      editing: { undo: stack, cell: { editing: computed(() => false) } },
       toast: (message) => toasts.push(message),
     });
-    return { undo, merge };
+    return { undo: stack, merge: merging };
   })!;
   const sheet = () => workbook.value!.sheets[0]!;
   return { merge, undo, sheet, workbook, selection, toasts };
