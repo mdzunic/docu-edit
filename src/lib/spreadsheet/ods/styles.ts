@@ -19,7 +19,17 @@
 //   (`table:default-cell-style-name`) or a covered cell — gets ONE entry, in
 //   first-reference order, with `sourceStyleName` set. Names are never
 //   deduplicated (two names are two entries, however alike); "Default" is
-//   always 0. `namedStyle` is SPEC-123's.
+//   always 0.
+// - SPEC-123 named styles. Every common table-cell style of `office:styles`
+//   is one (`namedStyles`, document order): named by its
+//   `style:display-name`, else its `style:name` with LibreOffice's `_xx_`
+//   hex escapes decoded ("Heading_20_1" → "Heading 1"); its definition what
+//   it and its ancestors set short of "Default" and the family
+//   default-style (the decoder below, its data style included), `includes`
+//   the aspects that sets. "Default" is Normal: styles[0]'s definition,
+//   every aspect. A cell style's `namedStyle` is the display name of the
+//   common style it is — a cell, row or column naming one directly — or of
+//   an automatic style's `style:parent-style-name`; "Default" names none.
 // - SPEC-118: `style:data-style-name` (inherited down the same chain, the
 //   nearest definition winning) names a `number:*-style` in content.xml's
 //   automatic styles or styles.xml's common styles; odsNumberStyleToCode
@@ -62,7 +72,9 @@ import type {
   CellFont,
   CellStyle,
   SheetBorderStyle,
+  SpreadsheetModel,
 } from "../model";
+import { STYLE_ASPECTS, workbookNamedStyle, type NamedCellStyle } from "../styles";
 
 /** OpenOffice's table extension namespace (`tableooo:tab-color`). */
 export const TABLEOOO_NAMESPACE = "http://openoffice.org/2009/table";
@@ -98,6 +110,8 @@ interface StyleDefinition {
   props: PropertySets;
   /** `style:data-style-name` (SPEC-118). */
   dataStyle?: string;
+  /** `style:display-name` (SPEC-123: a common style's named-style name). */
+  displayName?: string;
 }
 
 const EMPTY_PROPS: Props = new Map();
@@ -211,6 +225,10 @@ function readDefinition(el: Element, family: string): StyleDefinition {
   if (dataStyle) {
     definition.dataStyle = dataStyle;
   }
+  const displayName = el.getAttributeNS(STYLE_NAMESPACE, "display-name");
+  if (displayName) {
+    definition.displayName = displayName;
+  }
   return definition;
 }
 
@@ -318,6 +336,61 @@ export function readOdsContentStyles(slices: readonly string[], declarations: st
     }
   }
   return styles;
+}
+
+// --- style names (SPEC-123) -----------------------------------------------------
+
+/** Whether LibreOffice's style-name encoder (xmloff's
+ * SvXMLUnitConverter::encodeStyleName) keeps a UTF-16 unit as it is: an
+ * NCName character at its position, `_` (the escape) excepted. */
+function literalNameUnit(unit: string, first: boolean): boolean {
+  const c = unit.charCodeAt(0);
+  if (c < 0xff) {
+    return (
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      (c >= 0xc0 && c <= 0xd6) ||
+      (c >= 0xd8 && c <= 0xf6) ||
+      c >= 0xf8 ||
+      (!first && ((c >= 0x30 && c <= 0x39) || c === 0xb7 || c === 0x2d || c === 0x2e))
+    );
+  }
+  if ((c >= 0xf900 && c <= 0xfffe) || (c >= 0x20dd && c <= 0x20e0)) {
+    return false;
+  }
+  if ((c >= 0x2bb && c <= 0x2c1) || c === 0x559 || c === 0x6e5 || c === 0x6e6) {
+    return true;
+  }
+  if (c === 0x387) {
+    return !first;
+  }
+  if (/[\p{Lu}\p{Ll}\p{Lt}\p{Lo}\p{Nl}]/u.test(unit)) {
+    return true;
+  }
+  return !first && /[\p{Mn}\p{Me}\p{Mc}\p{Lm}\p{Nd}]/u.test(unit);
+}
+
+/** A display name as the common style name LibreOffice writes for it: each
+ * UTF-16 unit that is not an NCName character at its position (`_`
+ * included) as `_<hex>_`, lowercase and without leading zeros —
+ * "Heading 1" → "Heading_20_1", "A_B" → "A_5f_B". */
+export function encodeOdsStyleName(name: string): string {
+  let out = "";
+  for (let i = 0; i < name.length; i += 1) {
+    const unit = name[i]!;
+    out += literalNameUnit(unit, i === 0) ? unit : `_${unit.charCodeAt(0).toString(16)}_`;
+  }
+  return out;
+}
+
+/** A common style name with LibreOffice's `_<hex>_` escapes decoded — the
+ * display name of a style that writes none ("Heading_20_1" → "Heading 1").
+ * An escape naming a control character stays as written. */
+export function decodeOdsStyleName(name: string): string {
+  return name.replace(/_([0-9a-fA-F]{1,4})_/g, (escape, hex: string) => {
+    const code = Number.parseInt(hex, 16);
+    return code >= 0x20 && code < 0xfffe ? String.fromCharCode(code) : escape;
+  });
 }
 
 // --- lengths, angles and colours ---------------------------------------------
@@ -743,11 +816,66 @@ export class OdsStyleBook {
       id = this.styles.length;
       const style = cellStyleFrom(this.flatten("table-cell", name), this.fontFaces);
       this.applyDataStyle(style, id, this.dataStyleOf(name, false));
+      const named = this.namedStyleOf(name);
+      if (named !== undefined) {
+        style.namedStyle = named;
+      }
       style.sourceStyleName = name;
       this.styles.push(style);
       this.cellIds.set(name, id);
     }
     return id;
+  }
+
+  /** SPEC-123: the workbook's named styles — every common table-cell style,
+   * in document order (see the module header). */
+  namedStyles(): NamedCellStyle[] {
+    const named: NamedCellStyle[] = [];
+    for (const [key, definition] of this.sheet.common) {
+      if (definition.family !== "table-cell") {
+        continue;
+      }
+      const name = key.slice(key.indexOf("\u0000") + 1);
+      if (name === "Default") {
+        const { sourceStyleName: _name, ...normal } = this.styles[0]!;
+        named.push({ name: "Normal", style: structuredClone(normal), includes: [...STYLE_ASPECTS], sourceStyleName: name });
+        continue;
+      }
+      const style = cellStyleFrom(this.flatten("table-cell", name, { withDefault: false, commonOnly: true, stopAt: "Default" }), this.fontFaces);
+      const code = this.dataStyleCode(this.dataStyleOf(name, true, "Default"));
+      if (code !== undefined) {
+        style.numberFormat = code;
+      }
+      const includes = STYLE_ASPECTS.filter((aspect) => style[aspect] !== undefined);
+      named.push({ name: this.displayName(name), style, includes, sourceStyleName: name });
+    }
+    return named;
+  }
+
+  /** A common style's named-style name: its display name, else its decoded
+   * `style:name`. */
+  private displayName(name: string): string {
+    return this.sheet.common.get(styleKey("table-cell", name))?.displayName ?? decodeOdsStyleName(name);
+  }
+
+  /** The named style a table-cell style name shows: the first common style
+   * met walking up from it — itself when a cell names a common style
+   * directly, else its (automatic) style's parent — as its display name;
+   * undefined at "Default", or with no common style on the way. */
+  private namedStyleOf(name: string): string | undefined {
+    const seen = new Set<string>();
+    let current: string | undefined = name;
+    // The name as a cell references it: an automatic style first.
+    let automatic = this.automatic.get(styleKey("table-cell", name));
+    while (current !== undefined && current !== "Default" && !seen.has(current) && seen.size < MAX_STYLE_DEPTH) {
+      seen.add(current);
+      if (automatic === undefined) {
+        return this.sheet.common.has(styleKey("table-cell", current)) ? this.displayName(current) : undefined;
+      }
+      current = automatic.parent;
+      automatic = current === undefined || this.sheet.common.has(styleKey("table-cell", current)) ? undefined : this.automatic.get(styleKey("table-cell", current));
+    }
+    return undefined;
   }
 
   /** The style a date, time or percentage value with an implied `code`
@@ -758,8 +886,11 @@ export class OdsStyleBook {
   }
 
   /** The data style a table-cell style names, inherited down its parent
-   * chain (the nearest definition wins); undefined when none does. */
-  private dataStyleOf(name: string, commonOnly: boolean): string | undefined {
+   * chain (the nearest definition wins), else the family default-style's;
+   * undefined when none does. With `stopAt` (SPEC-123: a named style's own
+   * definition) the walk ends below that ancestor and the default-style is
+   * not consulted. */
+  private dataStyleOf(name: string, commonOnly: boolean, stopAt?: string): string | undefined {
     const seen = new Set<string>();
     let current = commonOnly ? this.sheet.common.get(styleKey("table-cell", name)) : this.lookup("table-cell", name, false);
     seen.add(name);
@@ -768,26 +899,33 @@ export class OdsStyleBook {
         return current.dataStyle;
       }
       const parent = current.parent;
-      if (parent === undefined || seen.has(parent)) {
+      if (parent === undefined || seen.has(parent) || parent === stopAt) {
         break;
       }
       seen.add(parent);
       current = this.lookup("table-cell", parent, true);
     }
-    return this.sheet.defaults.get("table-cell")?.dataStyle;
+    return stopAt === undefined ? this.sheet.defaults.get("table-cell")?.dataStyle : undefined;
   }
 
   /** Gives a cell style the number format its data style maps to. */
   private applyDataStyle(style: CellStyle, id: number, dataStyleName: string | undefined): void {
-    const element = dataStyleName === undefined ? undefined : this.dataStyles.get(dataStyleName);
-    if (!element) {
+    if (dataStyleName === undefined || !this.dataStyles.has(dataStyleName)) {
       return;
     }
     this.formatted.add(id);
-    const code = odsNumberStyleToCode(element, (name) => this.dataStyles.get(name));
-    if (code !== undefined && !/^general$/i.test(code.trim())) {
+    const code = this.dataStyleCode(dataStyleName);
+    if (code !== undefined) {
       style.numberFormat = code;
     }
+  }
+
+  /** The format code a data style maps to; undefined for General or a name
+   * no part defines. */
+  private dataStyleCode(dataStyleName: string | undefined): string | undefined {
+    const element = dataStyleName === undefined ? undefined : this.dataStyles.get(dataStyleName);
+    const code = element ? odsNumberStyleToCode(element, (name) => this.dataStyles.get(name)) : undefined;
+    return code !== undefined && !/^general$/i.test(code.trim()) ? code : undefined;
   }
 
   /** A `text:span`'s own font: its text style's `style:text-properties`
@@ -900,11 +1038,13 @@ export class OdsStyleBook {
   }
 
   /** The family's default-style, then the named style's ancestors from the
-   * root down, then the style itself — merged per property. */
+   * root down, then the style itself — merged per property. `stopAt` ends
+   * the chain below that ancestor (SPEC-123: a named style's definition
+   * leaves out "Default"). */
   private flatten(
     family: string,
     name: string | undefined,
-    options: { withDefault?: boolean; commonOnly?: boolean } = {},
+    options: { withDefault?: boolean; commonOnly?: boolean; stopAt?: string } = {},
   ): PropertySets {
     const chain: StyleDefinition[] = [];
     const seen = new Set<string>();
@@ -920,7 +1060,7 @@ export class OdsStyleBook {
     while (current && chain.length < MAX_STYLE_DEPTH) {
       chain.push(current);
       const parent = current.parent;
-      if (parent === undefined || seen.has(parent)) {
+      if (parent === undefined || seen.has(parent) || parent === options.stopAt) {
         break;
       }
       seen.add(parent);
@@ -951,13 +1091,28 @@ export interface GeneratedTableStyle {
 
 /** What a generated cell or text style resolves against (SPEC-122): theme
  * colours and fonts, the user's locale (a `builtinFormatId` is written as
- * that built-in's code in it — ODS has no locale-dependent ids) and which
- * common table-cell styles the target package defines (a `namedStyle` is a
- * style's parent only when one is; else "Default"). */
+ * that built-in's code in it — ODS has no locale-dependent ids) and the
+ * style's parent (see parentStyleName). */
 export interface OdsStyleEnv {
   theme: DocumentTheme;
   locale: SpreadsheetLocale;
+  /** SPEC-123: the common style a named style the workbook defines is
+   * written under (OdsNamedStyles.parent); undefined for one it does not. */
+  namedStyleParent?: (name: string) => string | undefined;
+  /** Whether the target package defines a common table-cell style. */
   commonCellStyle?: (name: string) => boolean;
+}
+
+/** A generated cell style's `style:parent-style-name`: "Default" for no
+ * `namedStyle` or Normal; the common style a named style the workbook
+ * defines is written under (SPEC-123); for a name the workbook does not
+ * define, the common style of that name when the package defines one,
+ * else "Default". */
+function parentStyleName(named: string | undefined, env: OdsStyleEnv): string {
+  if (named === undefined || named === "Normal") {
+    return "Default";
+  }
+  return env.namedStyleParent?.(named) ?? (env.commonCellStyle?.(named) ? named : "Default");
 }
 
 /** One generated style's property elements, as attribute lists. */
@@ -1150,8 +1305,8 @@ export function odsPropertyElements(properties: OdsCellStyleProperties): string 
  * `style:writing-mode`, `tableooo:tab-color`), `de-co<n>` (a column width in
  * inches from px at 96 dpi, 4 decimals), `de-ro<n>` (a row height in pt and
  * `style:use-optimal-row-height`), and SPEC-122's `de-ce<n>` (family
- * table-cell: odsCellStyleProperties, `style:parent-style-name` the style's
- * `namedStyle` when the package defines it, else "Default", and
+ * table-cell: odsCellStyleProperties, `style:parent-style-name` the common
+ * style of the style's `namedStyle` — parentStyleName, SPEC-123 — and
  * `style:data-style-name` = a `de-N<n>` for a code other than General),
  * `de-T<n>` (family text: a rich run's font) and `de-N<n>` (SPEC-118's
  * odsNumberStyleXml, its `de-N<n>P0`… sub-styles included; a
@@ -1179,12 +1334,19 @@ export class OdsStyleRegistry {
     if (known !== undefined) {
       return known;
     }
-    const next = (this.counters.get(prefix) ?? 0) + 1;
-    this.counters.set(prefix, next);
-    const name = `de-${prefix}${next}`;
+    const name = this.freshName(prefix);
     this.byKey.set(`${prefix}|${key}`, name);
     this.elements.push(element(name));
     return name;
+  }
+
+  /** The next `de-<prefix><n>` name, generating nothing — SPEC-123's
+   * common data styles in styles.xml take theirs from the same counters, so
+   * they never collide with a generated automatic one. */
+  freshName(prefix: string): string {
+    const next = (this.counters.get(prefix) ?? 0) + 1;
+    this.counters.set(prefix, next);
+    return `de-${prefix}${next}`;
   }
 
   tableStyle(style: GeneratedTableStyle): string {
@@ -1228,8 +1390,7 @@ export class OdsStyleRegistry {
    * the class comment); equal property sets share one name. A style read
    * from the file keeps its own name — the caller's choice, not this one's. */
   cellStyle(style: CellStyle, env: OdsStyleEnv): string {
-    const named = style.namedStyle;
-    const parent = named !== undefined && named !== "Normal" && env.commonCellStyle?.(named) ? named : "Default";
+    const parent = parentStyleName(style.namedStyle, env);
     const code = formatCodeOf(style, env.locale);
     const dataStyle = code === undefined || code.trim() === "" || /^general$/i.test(code.trim()) ? undefined : this.numberStyle(code);
     const body = odsPropertyElements(odsCellStyleProperties(style, env.theme));
@@ -1275,6 +1436,133 @@ export class OdsStyleRegistry {
 
   get size(): number {
     return this.elements.length;
+  }
+}
+
+// --- named styles on write (SPEC-123) -------------------------------------------
+
+/** A named style's definition restricted to the aspects it includes. */
+function includedDefinition(named: NamedCellStyle): CellStyle {
+  const definition = named.style;
+  const included = new Set(named.includes);
+  const style: CellStyle = {};
+  if (included.has("numberFormat")) {
+    if (definition.numberFormat !== undefined) {
+      style.numberFormat = definition.numberFormat;
+    }
+    if (definition.builtinFormatId !== undefined) {
+      style.builtinFormatId = definition.builtinFormatId;
+    }
+  }
+  if (included.has("font") && definition.font) {
+    style.font = definition.font;
+  }
+  if (included.has("fill") && definition.fill) {
+    style.fill = definition.fill;
+  }
+  if (included.has("borders") && definition.borders) {
+    style.borders = definition.borders;
+  }
+  if (included.has("alignment") && definition.alignment) {
+    style.alignment = definition.alignment;
+  }
+  if (included.has("protection") && definition.protection) {
+    style.protection = definition.protection;
+  }
+  return style;
+}
+
+/** Normal — the workbook's "Default" style, never written as a style of
+ * its own. */
+function isNormal(named: NamedCellStyle): boolean {
+  return named.builtinId === 0 || named.sourceStyleName === "Default" || (named.sourceStyleName === undefined && named.name === "Normal");
+}
+
+/** The target styles.xml a save writes named styles into. */
+export interface OdsNamedStyleTarget {
+  /** Whether it defines a common table-cell style of this name. */
+  defines(name: string): boolean;
+  /** Whether there is one to append to (a package may lack styles.xml). */
+  appendable: boolean;
+}
+
+/** One save's named styles (SPEC-123 "Named cell styles", ods write): the
+ * common style each of `model.namedStyles` is written under — Normal as
+ * "Default"; one whose `sourceStyleName` the target styles.xml defines,
+ * under it — and `xml`, every other one as a common style for styles.xml's
+ * `office:styles` ("" when there is none): `<style:style style:name
+ * style:display-name style:family="table-cell"
+ * style:parent-style-name="Default">` holding the property elements of its
+ * definition restricted to the aspects it includes (the font keys it lacks
+ * ODS inherits from Default, as applying takes Normal's), with, for a
+ * number format other than General, `style:data-style-name` naming a
+ * common data style written just before it (a `de-N<n>` from the
+ * registry's counter; equal codes share one). Its `style:name` is its
+ * `sourceStyleName` (a stale one, the target lacking it), else the display
+ * name as LibreOffice encodes it ("Heading 1" → "Heading_20_1"), with `_2`,
+ * `_3`… appended while the target or this save already uses that name.
+ * With no styles.xml to append to, such a style is written under
+ * "Default" (a generated style keeps its properties, not the name). */
+export class OdsNamedStyles {
+  readonly xml: string;
+  private readonly model: Pick<SpreadsheetModel, "namedStyles">;
+  private readonly written = new Map<NamedCellStyle, string>();
+  private readonly parents = new Map<string, string | undefined>();
+
+  constructor(model: Pick<SpreadsheetModel, "namedStyles" | "theme">, target: OdsNamedStyleTarget, registry: OdsStyleRegistry, locale: SpreadsheetLocale) {
+    this.model = model;
+    const theme = model.theme ?? DEFAULT_THEME;
+    const used = new Set<string>();
+    const dataStyles = new Map<string, string>();
+    let xml = "";
+    for (const named of model.namedStyles ?? []) {
+      if (isNormal(named)) {
+        this.written.set(named, "Default");
+        continue;
+      }
+      if (named.sourceStyleName !== undefined && target.defines(named.sourceStyleName)) {
+        this.written.set(named, named.sourceStyleName);
+        continue;
+      }
+      if (!target.appendable) {
+        this.written.set(named, "Default");
+        continue;
+      }
+      const base = named.sourceStyleName ?? (encodeOdsStyleName(named.name) || "Style");
+      let name = base;
+      for (let n = 2; target.defines(name) || used.has(name); n += 1) {
+        name = `${base}_${n}`;
+      }
+      used.add(name);
+      this.written.set(named, name);
+      const style = includedDefinition(named);
+      const code = formatCodeOf(style, locale);
+      let dataStyle: string | undefined;
+      if (code !== undefined && code.trim() !== "" && !/^general$/i.test(code.trim())) {
+        dataStyle = dataStyles.get(code);
+        if (dataStyle === undefined) {
+          dataStyle = registry.freshName("N");
+          dataStyles.set(code, dataStyle);
+          xml += odsNumberStyleXml(code, dataStyle);
+        }
+      }
+      const body = odsPropertyElements(odsCellStyleProperties(style, theme));
+      const attributes =
+        ` style:name="${escapeOdsAttribute(name)}" style:display-name="${escapeOdsAttribute(named.name)}" style:family="table-cell" style:parent-style-name="Default"` +
+        (dataStyle === undefined ? "" : ` style:data-style-name="${dataStyle}"`);
+      xml += body === "" ? `<style:style${attributes}/>` : `<style:style${attributes}>${body}</style:style>`;
+    }
+    this.xml = xml;
+  }
+
+  /** The common style a named style the workbook defines is written under
+   * (a generated style's parent); undefined for a name it does not define. */
+  parent(name: string): string | undefined {
+    if (!this.parents.has(name)) {
+      const named = workbookNamedStyle(this.model, name);
+      this.parents.set(name, named === undefined ? undefined : this.written.get(named));
+    }
+    return this.parents.get(name);
   }
 }
 

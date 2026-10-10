@@ -14,7 +14,8 @@
 //   `office:automatic-styles` — sliced out of the scan by offset (they
 //   precede the body) and parsed whole — flattened into `styles` (index 0
 //   the "Default" style, then every referenced cell style name in
-//   first-reference order);
+//   first-reference order); SPEC-123: styles.xml's common table-cell styles
+//   → `namedStyles`, and each cell style's `namedStyle`;
 // - `table:table` elements in order (each one a grid sheet); a table whose
 //   style has `table:display="false"` is hidden, its
 //   `tableooo:tab-color` is the tab colour;
@@ -90,6 +91,7 @@ import {
 import { IMPLIED_PERCENTAGE, IMPLIED_TIME, impliedDateCode } from "../impliedFormats";
 import { odsDateValueToSerial, odsTimeValueToSerial } from "../serial";
 import { readOdsFormula } from "../formula/dialect";
+import type { NamedCellStyle } from "../styles";
 import { readOdsSettings, type OdsSettings } from "./settings";
 import {
   emptyOdsStyleSheet,
@@ -413,6 +415,8 @@ function cellRuns(cell: PendingCell, value: CellValue): TextRun[] | undefined {
 interface OdsContent {
   sheets: Sheet[];
   styles: CellStyle[];
+  /** SPEC-123: the common table-cell styles, in document order. */
+  namedStyles: NamedCellStyle[];
   prefix: string;
   suffix: string;
   dates: { dateSystem: "1900" | "1904"; odsNullDate?: string };
@@ -792,6 +796,7 @@ export function readOdsContent(
   return {
     sheets,
     styles: styleBook().styles,
+    namedStyles: styleBook().namedStyles(),
     prefix: xml.slice(0, firstTableStart),
     suffix: xml.slice(previousTableEnd),
     dates,
@@ -892,6 +897,9 @@ export async function parseOds(
   }
   if (content.structureProtected) {
     parsed.structureProtected = true;
+  }
+  if (content.namedStyles.length > 0) {
+    parsed.namedStyles = content.namedStyles;
   }
   return parsed;
 }

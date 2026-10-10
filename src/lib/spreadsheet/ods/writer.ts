@@ -7,7 +7,8 @@
 //     `Default` cell style built from `model.styles[0]` — its font through a
 //     font-face declaration, a colour other than automatic black, and the
 //     rest of its properties as a generated cell style writes them; Calibri
-//     11 pt for a new workbook — page layout `pm1`, master page `Default`),
+//     11 pt for a new workbook — page layout `pm1`, master page `Default`;
+//     and SPEC-123's named styles, as the substitution path appends them),
 //     content.xml (`office:version="1.2"`; `table:calculation-settings` only
 //     for the 1904 system or a custom `odsNullDate`; the generated `de-`
 //     automatic styles; every sheet through serializeTable — its cells, rows,
@@ -36,8 +37,13 @@
 //     renames, deletions and duplicates (a recoloured table's TabColor item
 //     is dropped — the style attribute is authoritative). Embedded objects
 //     and pictures only a deleted table showed are dropped with their
-//     manifest entries; an object's chart ranges get the pass. Every other
-//     part is verbatim.
+//     manifest entries; an object's chart ranges get the pass. styles.xml
+//     is verbatim but for SPEC-123's named styles: one the workbook defines
+//     that the retained styles.xml does not (a built-in applied for the
+//     first time) is appended to its `office:styles` as a common table-cell
+//     style (OdsNamedStyles; the element created when self-closing or
+//     absent), which the generated `de-ce` styles name as their parent —
+//     the part re-encoded only then. Every other part is verbatim.
 //
 // A cell's informative `text:p` and a locale-dependent built-in format's
 // generated number style are written in the user's locale (`locale`,
@@ -75,6 +81,7 @@ import {
   odsCellStyleProperties,
   odsFontAttributes,
   odsFontFamilyValue,
+  OdsNamedStyles,
   odsPropertyElements,
   OdsStyleBook,
   OdsStyleRegistry,
@@ -229,7 +236,9 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const modified = options.modified ?? clockNow();
   const locale = localeOf(options);
   const registry = new OdsStyleRegistry();
-  const tables = model.sheets.map((sheet) => serializeTable(sheet, { model, registry, locale })).join("");
+  // The generated styles.xml defines "Default" alone: every other named style is appended.
+  const named = new OdsNamedStyles(model, { defines: (name) => name === "Default", appendable: true }, registry, locale);
+  const tables = model.sheets.map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name) })).join("");
   const styles = registry.xml();
   const content =
     `${ODF_DECLARATION}<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}" ` +
@@ -241,7 +250,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
     { name: "mimetype", data: encode(ODS_MIMETYPE), store: true },
     { name: "META-INF/manifest.xml", data: encode(FROM_SCRATCH_ODS_MANIFEST_XML) },
     { name: "meta.xml", data: encode(buildMetaXml({ title: model.title }, modified)) },
-    { name: "styles.xml", data: encode(fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale)) },
+    { name: "styles.xml", data: encode(withNamedStyles(fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale), named.xml)) },
     { name: "content.xml", data: encode(content) },
     { name: "settings.xml", data: encode(fromScratchSettingsXml(active?.name ?? "")) },
   ];
@@ -292,12 +301,12 @@ function withGeneratedStyles(prefix: string, styles: string): string {
   return `${prefix.slice(0, at)}<office:automatic-styles>${styles}</office:automatic-styles>${prefix.slice(at)}`;
 }
 
-/** The envelope prefix with an `xmlns` declaration added to its root for
- * every generated prefix `generated` uses that the root does not declare
- * (a producer that never needed, say, `calcext`); the same text when none is
- * missing. */
+/** A part's text (the content envelope's prefix, styles.xml) with an
+ * `xmlns` declaration added to its root for every generated prefix
+ * `generated` uses that the root does not declare (a producer that never
+ * needed, say, `calcext`); the same text when none is missing. */
 function withNamespaces(prefix: string, generated: string): string {
-  const root = /<[\w.-]+:document-content\b[^>]*>/.exec(prefix);
+  const root = /<[\w.-]+:document[\w-]*\b[^>]*>/.exec(prefix);
   if (!root) {
     return prefix;
   }
@@ -311,6 +320,33 @@ function withNamespaces(prefix: string, generated: string): string {
   const tag = root[0];
   const close = tag.endsWith("/>") ? tag.length - 2 : tag.length - 1;
   return prefix.slice(0, root.index) + tag.slice(0, close) + missing + tag.slice(close) + prefix.slice(root.index + tag.length);
+}
+
+/** styles.xml with SPEC-123's appended named styles (OdsNamedStyles.xml)
+ * spliced in before `</office:styles>` — the element expanded when
+ * self-closing, created where ODF puts it (before the automatic and master
+ * styles) when absent — and a namespace they use declared on the root;
+ * every other byte as it was. */
+function withNamedStyles(xml: string, styles: string): string {
+  if (styles === "") {
+    return xml;
+  }
+  let next: string;
+  const close = xml.lastIndexOf("</office:styles>");
+  const selfClosing = /<office:styles\b[^>]*?\/>/.exec(xml);
+  const emptyRoot = /<([\w.-]+:document-styles)\b([^>]*?)\/>/.exec(xml);
+  if (close >= 0) {
+    next = xml.slice(0, close) + styles + xml.slice(close);
+  } else if (selfClosing) {
+    next = `${xml.slice(0, selfClosing.index)}<office:styles>${styles}</office:styles>${xml.slice(selfClosing.index + selfClosing[0].length)}`;
+  } else if (emptyRoot) {
+    const root = emptyRoot[1]!;
+    next = `${xml.slice(0, emptyRoot.index)}<${root}${emptyRoot[2]!}><office:styles>${styles}</office:styles></${root}>${xml.slice(emptyRoot.index + emptyRoot[0].length)}`;
+  } else {
+    const at = /<office:(?:automatic-styles|master-styles)\b|<\/[\w.-]+:document-styles>/.exec(xml)?.index ?? xml.length;
+    next = `${xml.slice(0, at)}<office:styles>${styles}</office:styles>${xml.slice(at)}`;
+  }
+  return withNamespaces(next, styles);
 }
 
 function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteOdsOptions): ZipEntryInput[] {
@@ -329,6 +365,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   for (const { name, font } of book.runTextStyles()) {
     registry.adoptTextStyle(name, font, model.theme ?? DEFAULT_THEME);
   }
+  const named = new OdsNamedStyles(model, { defines: (name) => book.commonCellStyle(name), appendable: stylesXml !== undefined }, registry, localeOf(options));
   const recoloured = new Set<string>();
   const context: OdsTableContext = {
     model,
@@ -336,6 +373,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     locale: localeOf(options),
     sourceStyleNames: true,
     commonCellStyle: (name) => book.commonCellStyle(name),
+    namedStyleParent: (name) => named.parent(name),
     layoutStyles: book,
   };
   let rebuilt = "";
@@ -407,6 +445,8 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     let data = bytes;
     if (name === "content.xml") {
       data = encode(content);
+    } else if (name === "styles.xml" && named.xml !== "") {
+      data = encode(withNamedStyles(stylesXml!, named.xml));
     } else if (name === "settings.xml") {
       data = encode(settingsXmlFor(decodeUtf8(bytes), model, remap, recoloured, active?.name));
     } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0)) {

@@ -9,23 +9,33 @@
 // styles through odsNumberStyleXml with their P0 sub-styles, a built-in
 // written in the user's locale, equal property sets sharing one name, the
 // parent style, and a rich run keeping its span's own text style.
+// SPEC-123 "Named cell styles" (ods): the common table-cell styles read as
+// namedStyles (display names, LibreOffice's `_xx_` escapes, Default as
+// Normal, definitions short of Default, includes, document order) and each
+// style's namedStyle; on write the de-ce parents and the common styles
+// appended for named styles the target styles.xml lacks.
 import { describe, expect, it } from "vitest";
 import { DEFAULT_THEME, resolveColor, resolveFont } from "../../core/theme";
 import { parseA1 } from "../address";
-import { buildSpec117StylesOdsBytes, SPEC117_STYLES_ODS } from "../fixtures/build";
+import { buildSpec117StylesOdsBytes, buildSpec121LinksOdsBytes, SPEC117_STYLES_ODS } from "../fixtures/build";
 import type { CellFont, CellStyle, SheetBorderStyle } from "../model";
 import { formatCodeOf } from "../numberFormat/builtin";
 import { SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { odsNumberStyleXml } from "../numberFormat/odsNumberStyles";
-import { cellStyle, effectiveStyleId } from "../styles";
+import { builtinCellStyle, cellStyle, effectiveStyleId, STYLE_ASPECTS, type NamedCellStyle } from "../styles";
 import { parseOds } from "./reader";
 import {
+  decodeOdsStyleName,
   emptyOdsStyleSheet,
+  encodeOdsStyleName,
   ODS_BORDER_WRITE,
   odsBorderEdge,
   odsBorderString,
+  odsCellStyleProperties,
   odsLengthToPt,
   odsLengthToPx,
+  OdsNamedStyles,
+  odsPropertyElements,
   odsTextRotation,
   OdsStyleBook,
   OdsStyleRegistry,
@@ -336,14 +346,17 @@ describe("flattening along the parent chain", () => {
       LO_FONT_FACES,
     );
     // Heading's 24pt beats the default style's 10pt; ce1's weight beats Heading's bold.
+    // (SPEC-123: the common parent is the style's namedStyle.)
     expect(book.styles[book.cellStyleId("ce1")]).toEqual({
       font: { family: "Liberation Sans", sizePt: 24, color: "#ff0000" },
       fill: { kind: "solid", color: "#ffff00" },
+      namedStyle: "Heading",
       sourceStyleName: "ce1",
     });
-    // A common style named directly is flattened the same way.
+    // A common style named directly is flattened the same way (and is its own namedStyle).
     expect(book.styles[book.cellStyleId("Accent")]).toEqual({
       font: { family: "Liberation Sans", sizePt: 24, bold: true, italic: true },
+      namedStyle: "Accent",
       sourceStyleName: "Accent",
     });
   });
@@ -421,7 +434,9 @@ describe("the style table", () => {
     expect(book.styles.map((style) => style.sourceStyleName)).toEqual(["Default", "ce2", "ce1", "Heading", "ce9"]);
     expect(book.styles[1]).toEqual({ font: { family: "Liberation Sans", sizePt: 10, bold: true }, sourceStyleName: "ce2" });
     expect(book.styles[4]).toEqual({ font: { family: "Liberation Sans", sizePt: 10 }, sourceStyleName: "ce9" });
-    expect(book.styles.every((style) => style.namedStyle === undefined && style.numberFormat === undefined)).toBe(true);
+    // SPEC-123: only the common style named directly names a named style (ce1/ce2's parent is Default).
+    expect(book.styles.map((style) => style.namedStyle)).toEqual([undefined, undefined, undefined, "Heading", undefined]);
+    expect(book.styles.every((style) => style.numberFormat === undefined)).toBe(true);
   });
 
   it("a text:span's font is its text style's own properties, never the cell defaults", () => {
@@ -543,7 +558,8 @@ describe("spec117-styles.ods (LibreOffice-shaped)", () => {
   it("the merged title flattens the common Heading style and centres", async () => {
     const { at } = await read();
     const { merge, titleFont } = SPEC117_STYLES_ODS.styled;
-    expect(at(merge.anchor)).toEqual({ font: titleFont, alignment: { horizontal: "center" }, sourceStyleName: merge.styleName });
+    // SPEC-123: its parent, the common Heading style, is its namedStyle.
+    expect(at(merge.anchor)).toEqual({ font: titleFont, alignment: { horizontal: "center" }, namedStyle: "Heading", sourceStyleName: merge.styleName });
   });
 
   it("reads the six border cells, the diagonal and every alignment cell", async () => {
@@ -786,5 +802,271 @@ describe("SPEC-122 generated styles: names and sharing", () => {
     expect(registry.textStyle({ italic: true }, DEFAULT_THEME)).toBe("Strong");
     expect(registry.textStyle({ strike: true }, DEFAULT_THEME)).toBe("de-T1");
     expect(registry.xml()).toBe(`<style:style style:name="de-T1" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style>`);
+  });
+});
+
+// --- SPEC-123: named cell styles ------------------------------------------------------------------
+
+/** LibreOffice-shaped common styles: a Default with properties of its own, a
+ * chain (Heading → "Heading 1", display-named), an escaped name with no
+ * display name, one with a data style, a style of another family and a
+ * parentless one — in this document order. */
+const NAMED_COMMON =
+  `<style:default-style style:family="table-cell"><style:text-properties style:font-name="Liberation Sans" fo:font-size="10pt"/></style:default-style>` +
+  `<number:percentage-style style:name="N10"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+  `<number:text>%</number:text></number:percentage-style>` +
+  `<style:style style:name="Default" style:family="table-cell">${cell(`fo:wrap-option="wrap"`)}${text(`fo:color="#333333"`)}</style:style>` +
+  `<style:style style:name="Heading" style:family="table-cell" style:parent-style-name="Default">${text(`fo:font-size="24pt" fo:font-weight="bold"`)}</style:style>` +
+  `<style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="table-cell" style:parent-style-name="Heading">${text(`fo:font-size="18pt"`)}</style:style>` +
+  `<style:style style:name="Text" style:family="paragraph"/>` +
+  `<style:style style:name="Accent_20_3" style:family="table-cell" style:parent-style-name="Default">${cell(`fo:background-color="#DDDDDD" fo:border="0.74pt solid #000000"`)}</style:style>` +
+  `<style:style style:name="Percent" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N10">` +
+  `${cell(`style:text-align-source="fix" style:repeat-content="false" style:cell-protect="none"`)}${paragraph(`fo:text-align="end"`)}</style:style>` +
+  `<style:style style:name="Loose" style:family="table-cell">${text(`fo:font-style="italic"`)}</style:style>`;
+
+const THIN = { style: "thin", color: "#000000" } as const;
+
+describe("SPEC-123 named cell styles: read", () => {
+  it("reads every common table-cell style in document order: the display name, else the decoded style:name; Default as Normal", () => {
+    const book = styleBook("", NAMED_COMMON);
+    const named = book.namedStyles();
+    expect(named.map((style) => style.name)).toEqual(["Normal", "Heading", "Heading 1", "Accent 3", "Percent", "Loose"]);
+    expect(named.map((style) => style.sourceStyleName)).toEqual(["Default", "Heading", "Heading_20_1", "Accent_20_3", "Percent", "Loose"]);
+    // Normal: styles[0]'s definition (the default-style and Default flattened), every aspect.
+    const { sourceStyleName: _name, ...normal } = book.styles[0]!;
+    expect(named[0]).toEqual({ name: "Normal", style: normal, includes: [...STYLE_ASPECTS], sourceStyleName: "Default" });
+    expect(normal).toEqual({ font: { family: "Liberation Sans", sizePt: 10, color: "#333333" }, alignment: { wrap: true } });
+  });
+
+  it("a definition is what the style and its ancestors set short of Default and the default-style; includes the aspects it sets", () => {
+    expect(styleBook("", NAMED_COMMON).namedStyles().slice(1)).toEqual([
+      // Default's colour and wrap, the default-style's family and size: none of them.
+      { name: "Heading", style: { font: { sizePt: 24, bold: true } }, includes: ["font"], sourceStyleName: "Heading" },
+      // Heading's bold inherited, its own size winning.
+      { name: "Heading 1", style: { font: { sizePt: 18, bold: true } }, includes: ["font"], sourceStyleName: "Heading_20_1" },
+      {
+        name: "Accent 3",
+        style: { fill: { kind: "solid", color: "#dddddd" }, borders: { top: THIN, right: THIN, bottom: THIN, left: THIN } },
+        includes: ["fill", "borders"],
+        sourceStyleName: "Accent_20_3",
+      },
+      // The data style is the definition's number format; includes in STYLE_ASPECTS order.
+      {
+        name: "Percent",
+        style: { numberFormat: "0.00%", alignment: { horizontal: "right" }, protection: { locked: false } },
+        includes: ["numberFormat", "alignment", "protection"],
+        sourceStyleName: "Percent",
+      },
+      { name: "Loose", style: { font: { italic: true } }, includes: ["font"], sourceStyleName: "Loose" },
+    ]);
+  });
+
+  it("a file with no common table-cell style defines none", () => {
+    expect(new OdsStyleBook(emptyOdsStyleSheet()).namedStyles()).toEqual([]);
+    expect(styleBook("", `<style:style style:name="Text" style:family="paragraph"/>`).namedStyles()).toEqual([]);
+  });
+
+  it("each cell style's namedStyle: an automatic style's parent's display name, a common style named directly its own, Default none", () => {
+    const book = styleBook(
+      `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Heading_20_1">${text(`fo:font-style="italic"`)}</style:style>` +
+        `<style:style style:name="ce2" style:family="table-cell" style:parent-style-name="Accent_20_3"/>` +
+        `<style:style style:name="ce3" style:family="table-cell" style:parent-style-name="Default">${text(`fo:font-weight="bold"`)}</style:style>` +
+        `<style:style style:name="ce4" style:family="table-cell">${text(`fo:font-weight="bold"`)}</style:style>` +
+        `<style:style style:name="ce5" style:family="table-cell" style:parent-style-name="Nowhere"/>`,
+      NAMED_COMMON,
+    );
+    const namedOf = (name: string): string | undefined => book.styles[book.cellStyleId(name)]!.namedStyle;
+    // The cell style itself is still the whole flattened chain.
+    expect(book.styles[book.cellStyleId("ce1")]).toEqual({
+      font: { family: "Liberation Sans", sizePt: 18, bold: true, italic: true, color: "#333333" },
+      alignment: { wrap: true },
+      namedStyle: "Heading 1",
+      sourceStyleName: "ce1",
+    });
+    expect(namedOf("ce2")).toBe("Accent 3"); // no display name: the decoded style:name
+    expect(namedOf("ce3")).toBeUndefined(); // parent Default
+    expect(namedOf("ce4")).toBeUndefined(); // no parent
+    expect(namedOf("ce5")).toBeUndefined(); // a parent no part defines
+    expect(namedOf("ce404")).toBeUndefined(); // a name no part defines
+    // A cell, row or column naming a common style directly.
+    expect(namedOf("Heading")).toBe("Heading");
+    expect(namedOf("Heading_20_1")).toBe("Heading 1");
+    expect(namedOf("Default")).toBeUndefined();
+    expect(book.styles[0]!.namedStyle).toBeUndefined();
+    // A derived implied-format style keeps its base's.
+    expect(book.styles[book.impliedStyleId(book.cellStyleId("ce1"), "yyyy-mm-dd")]!.namedStyle).toBe("Heading 1");
+  });
+
+  it("parseOds hands them over: spec117-styles.ods's Default and Heading, spec121-links.ods's Status and its child Bad", async () => {
+    const spec117 = await parseOds(await buildSpec117StylesOdsBytes());
+    expect(spec117.namedStyles).toEqual([
+      { name: "Normal", style: { font: { family: "Liberation Sans", sizePt: 10 } }, includes: [...STYLE_ASPECTS], sourceStyleName: "Default" },
+      { name: "Heading", style: { font: { sizePt: 24, bold: true } }, includes: ["font"], sourceStyleName: "Heading" },
+    ]);
+    expect(spec117.styles.filter((style) => style.namedStyle !== undefined).map((style) => [style.sourceStyleName, style.namedStyle])).toEqual([
+      [SPEC117_STYLES_ODS.styled.merge.styleName, "Heading"],
+    ]);
+    const links = await parseOds(await buildSpec121LinksOdsBytes());
+    expect(links.namedStyles!.map((style) => style.name)).toEqual(["Normal", "Heading", "Status", "Bad"]);
+    expect(links.namedStyles![3]).toEqual({
+      name: "Bad",
+      style: { font: { bold: true, color: "#cc0000" }, fill: { kind: "solid", color: "#ffcccc" } },
+      includes: ["font", "fill"],
+      sourceStyleName: "Bad",
+    });
+  });
+});
+
+describe("SPEC-123 style names: LibreOffice's _xx_ escapes", () => {
+  const CASES: [string, string][] = [
+    ["Heading 1", "Heading_20_1"],
+    ["Good", "Good"],
+    ["Invoice total (net)", "Invoice_20_total_20__28_net_29_"],
+    ["A_B", "A_5f_B"], // the escape character itself
+    ["1st", "_31_st"], // a digit cannot start a name…
+    ["x-1.5·2", "x-1.5·2"], // …but may follow
+    ["-x", "_2d_x"],
+    ["50%", "_35_0_25_"],
+    ["Überschrift 1", "Überschrift_20_1"],
+    ["Nadpis Č", "Nadpis_20_Č"],
+    ["a–b", "a_2013_b"],
+  ];
+
+  it("encodes every unit that is not an NCName character at its position, `_` included, in lowercase hex", () => {
+    for (const [name, encoded] of CASES) {
+      expect(encodeOdsStyleName(name), name).toBe(encoded);
+    }
+  });
+
+  it("decodes what it encodes; an escape naming a control character, and a bare underscore, stay as written", () => {
+    for (const [name, encoded] of CASES) {
+      expect(decodeOdsStyleName(encoded), encoded).toBe(name);
+    }
+    expect(decodeOdsStyleName("Accent_20_3")).toBe("Accent 3");
+    expect(decodeOdsStyleName("A_9_B")).toBe("A_9_B");
+    expect(decodeOdsStyleName("Plain_name")).toBe("Plain_name");
+  });
+});
+
+/** A model holding these named styles (the writer's view of one). */
+const withNamed = (namedStyles: NamedCellStyle[]): { namedStyles: NamedCellStyle[]; theme: typeof DEFAULT_THEME } => ({ namedStyles, theme: DEFAULT_THEME });
+
+/** A pinned built-in as formatting.ts appends it on first use. */
+function builtin(name: string): NamedCellStyle {
+  const entry = builtinCellStyle(name)!;
+  return { name, builtinId: entry.builtinId, style: structuredClone(entry.style), includes: [...entry.includes] };
+}
+
+/** A custom named style holding only a percentage format. */
+const percentStyle = (name: string): NamedCellStyle => ({ name, style: { numberFormat: "0.0%" }, includes: ["numberFormat"] });
+const parentsIn = (xml: string): string[] => [...xml.matchAll(/style:name="de-ce\d+"[^>]*?style:parent-style-name="([^"]*)"/g)].map((match) => match[1]!);
+const themeHex = (theme: "dk2" | "accent1"): string => resolveColor({ theme }, DEFAULT_THEME).toLowerCase();
+
+describe("SPEC-123 named cell styles: written", () => {
+  const TARGET = { defines: (name: string) => name === "Default" || name === "Heading_20_1", appendable: true };
+  const EN_US = SPREADSHEET_LOCALES["en-US"];
+
+  it("parents a generated style on the named style's sourceStyleName; Normal, and a name the workbook lacks, as SPEC-122 did", () => {
+    const sourced: NamedCellStyle = { name: "Heading 1", style: { font: { sizePt: 18, bold: true } }, includes: ["font"], sourceStyleName: "Heading_20_1" };
+    const registry = new OdsStyleRegistry();
+    const named = new OdsNamedStyles(withNamed([sourced]), TARGET, registry, EN_US);
+    expect(named.xml).toBe("");
+    const env: OdsStyleEnv = { ...ENV, namedStyleParent: (name) => named.parent(name), commonCellStyle: (name) => name === "Heading" };
+    registry.cellStyle({ namedStyle: "Heading 1", font: { italic: true } }, env);
+    registry.cellStyle({ namedStyle: "Normal", font: { strike: true } }, env);
+    registry.cellStyle({ namedStyle: "Heading", font: { bold: true } }, env); // no definition, but the package's common style
+    registry.cellStyle({ namedStyle: "Mystery", font: { underline: "single" } }, env);
+    registry.cellStyle({ font: { vertAlign: "subscript" } }, env);
+    expect(parentsIn(registry.xml())).toEqual(["Heading_20_1", "Default", "Heading", "Default", "Default"]);
+  });
+
+  it("appends a named style the target lacks — encoded name, display name, parent Default, its included aspects' properties — and parents its de-ce styles on it", () => {
+    const total: NamedCellStyle = {
+      name: "Invoice total",
+      style: { numberFormat: "#,##0.00", font: { bold: true }, alignment: { horizontal: "right" } },
+      includes: ["numberFormat", "font"], // the alignment is not part of it
+    };
+    const registry = new OdsStyleRegistry();
+    const named = new OdsNamedStyles(withNamed([builtin("Good"), builtin("Heading 2"), total]), TARGET, registry, EN_US);
+    expect(named.xml).toBe(
+      `<style:style style:name="Good" style:display-name="Good" style:family="table-cell" style:parent-style-name="Default">` +
+        `<style:table-cell-properties fo:background-color="#c6efce"/><style:text-properties fo:color="#006100"/></style:style>` +
+        `<style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="table-cell" style:parent-style-name="Default">` +
+        `<style:table-cell-properties fo:border-bottom="${odsBorderString({ style: "thick", color: { theme: "accent1", lumMod: 0.5, lumOff: 0.5 } }).toLowerCase()}"/>` +
+        `<style:text-properties fo:font-size="13pt" fo:font-weight="bold" fo:color="${themeHex("dk2")}"/></style:style>` +
+        `${odsNumberStyleXml("#,##0.00", "de-N1")}` +
+        `<style:style style:name="Invoice_20_total" style:display-name="Invoice total" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="de-N1">` +
+        `<style:text-properties fo:font-weight="bold"/></style:style>`,
+    );
+    const env: OdsStyleEnv = { ...ENV, namedStyleParent: (name) => named.parent(name) };
+    registry.cellStyle({ font: { family: "Calibri", color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" }, env);
+    registry.cellStyle({ font: { sizePt: 13, bold: true }, namedStyle: "Heading 2" }, env);
+    registry.cellStyle({ font: { bold: true }, numberFormat: "#,##0.00", namedStyle: "Invoice total" }, env);
+    // Equal properties under no named style are another style: the parent is part of the key.
+    registry.cellStyle({ font: { bold: true }, numberFormat: "#,##0.00" }, env);
+    expect(parentsIn(registry.xml())).toEqual(["Good", "Heading_20_2", "Invoice_20_total", "Default"]);
+  });
+
+  it("names the data styles from the registry's counter, past every de-N already in the package; equal codes share one", () => {
+    const registry = new OdsStyleRegistry([`<number:number-style style:name="de-N4"/>`]);
+    const named = new OdsNamedStyles(withNamed([percentStyle("Rate"), percentStyle("Share")]), TARGET, registry, EN_US);
+    expect([...named.xml.matchAll(/style:data-style-name="([^"]*)"/g)].map((match) => match[1])).toEqual(["de-N5", "de-N5"]);
+    expect(named.xml.match(/<number:percentage-style style:name="de-N5"/g)).toHaveLength(1);
+    registry.cellStyle({ numberFormat: "0.000" }, ENV);
+    expect(registry.xml()).toContain(`style:data-style-name="de-N6"`);
+  });
+
+  it("suffixes a name the target or the save already uses; a stale sourceStyleName is appended under that name", () => {
+    const target = { defines: (name: string) => ["Default", "Heading", "Heading_2"].includes(name), appendable: true };
+    const fromXlsx: NamedCellStyle = { name: "Heading", sourceXfId: 3, style: { font: { bold: true } }, includes: ["font"] };
+    const twin: NamedCellStyle = { name: "Heading", sourceXfId: 4, style: { font: { italic: true } }, includes: ["font"] };
+    const stale: NamedCellStyle = { name: "Note", style: { fill: { kind: "solid", color: "#ffffcc" } }, includes: ["fill"], sourceStyleName: "Note_20_old" };
+    const named = new OdsNamedStyles(withNamed([fromXlsx, twin, stale]), target, new OdsStyleRegistry(), EN_US);
+    expect([...named.xml.matchAll(/<style:style style:name="([^"]*)" style:display-name="([^"]*)"/g)].map((match) => [match[1], match[2]])).toEqual([
+      ["Heading_3", "Heading"],
+      ["Heading_4", "Heading"],
+      ["Note_20_old", "Note"],
+    ]);
+    expect(named.parent("Heading")).toBe("Heading_3"); // the workbook's first definition of the name
+    expect(named.parent("Note")).toBe("Note_20_old");
+  });
+
+  it("writes Normal as Default, never appended; with no styles.xml to append to, a named style's de-ce styles parent on Default", () => {
+    const normals: NamedCellStyle[] = [
+      { name: "Normal", style: {}, includes: [...STYLE_ASPECTS], sourceStyleName: "Default" },
+      { name: "Standard", builtinId: 0, sourceXfId: 0, style: {}, includes: [...STYLE_ASPECTS] },
+      { name: "Normal", style: {}, includes: [...STYLE_ASPECTS] },
+    ];
+    const named = new OdsNamedStyles(withNamed(normals), { defines: () => false, appendable: true }, new OdsStyleRegistry(), EN_US);
+    expect(named.xml).toBe("");
+    expect(named.parent("Normal")).toBe("Default");
+    const bare = new OdsNamedStyles(withNamed([builtin("Good")]), { defines: () => false, appendable: false }, new OdsStyleRegistry(), EN_US);
+    expect(bare.xml).toBe("");
+    expect(bare.parent("Good")).toBe("Default");
+  });
+
+  it("an appended style reads back as the named style it was written from, and each de-ce's namedStyle as its name", () => {
+    const total: NamedCellStyle = { name: "Invoice total", style: { numberFormat: "#,##0.00", font: { bold: true } }, includes: ["numberFormat", "font"] };
+    const registry = new OdsStyleRegistry();
+    const target = { defines: (name: string) => name === "Default" || name === "Heading", appendable: true };
+    const named = new OdsNamedStyles(withNamed([builtin("Good"), builtin("Heading 1"), total]), target, registry, EN_US);
+    const env: OdsStyleEnv = { ...ENV, namedStyleParent: (name) => named.parent(name) };
+    const good = registry.cellStyle({ font: { italic: true }, fill: { kind: "solid", color: "#c6efce" }, namedStyle: "Good" }, env);
+    const heading = registry.cellStyle({ font: { sizePt: 15, bold: true }, namedStyle: "Heading 1" }, env);
+    const book = styleBook(registry.xml(), LO_COMMON + named.xml);
+    expect(book.namedStyles().slice(2)).toEqual([
+      { name: "Good", style: { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } }, includes: ["font", "fill"], sourceStyleName: "Good" },
+      {
+        name: "Heading 1",
+        style: { font: { sizePt: 15, bold: true, color: themeHex("dk2") }, borders: { bottom: { style: "thick", color: themeHex("accent1") } } },
+        includes: ["font", "borders"],
+        sourceStyleName: "Heading_20_1",
+      },
+      { name: "Invoice total", style: { numberFormat: "#,##0.00", font: { bold: true } }, includes: ["numberFormat", "font"], sourceStyleName: "Invoice_20_total" },
+    ]);
+    expect(book.styles[book.cellStyleId(good)]!.namedStyle).toBe("Good");
+    expect(book.styles[book.cellStyleId(heading)]!.namedStyle).toBe("Heading 1");
+    // The properties written are exactly the definition's.
+    expect(named.xml).toContain(odsPropertyElements(odsCellStyleProperties(builtin("Good").style, DEFAULT_THEME)));
   });
 });
