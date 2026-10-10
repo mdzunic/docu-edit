@@ -7,9 +7,9 @@
 // (core/xmlScanner.ts, in xlsx/sheetXml.ts) — a million-cell sheet as a DOM
 // costs an order of magnitude more memory than its text.
 //
-// What is read (everything else — named cell styles, dxfs,
-// drawings, comments, tables, calcChain, VBA, custom XML — stays in `opaque`,
-// untouched; nothing here writes, so a download stays byte-identical):
+// What is read (everything else — dxfs, drawings, comments, tables,
+// calcChain, VBA, custom XML — stays in `opaque`, untouched; nothing here
+// writes, so a download stays byte-identical):
 // - sheets in `<sheets>` order: name, `state` → visibility, and the
 //   relationship type → kind (worksheet → "grid"; chartsheet, dialogsheet,
 //   macrosheet → "foreign", shown as a placeholder and carried verbatim);
@@ -22,6 +22,8 @@
 //   SPEC-118: each xf's number format (`numFmts`, the built-ins), and a
 //   derived style per implied format a `t="d"` value with a General style
 //   needs (impliedFormats.ts), appended to `styles`;
+//   SPEC-123: `cellStyleXfs` + `cellStyles` → `namedStyles`, and each
+//   cellXfs xf's `xfId` → its style's `namedStyle`;
 // - shared strings: `<t>` or a run of `<r>`s with their `<rPr>` fonts,
 //   phonetic `rPh`/`phoneticPr` skipped, `_xHHHH_` escapes decoded;
 // - each worksheet (xlsx/sheetXml.ts): cells (rows and cells without `r`
@@ -313,6 +315,9 @@ export async function parseXlsx(
   }
   if (indexedColors !== undefined) {
     parsed.indexedColors = indexedColors;
+  }
+  if (styleTable.namedStyles !== undefined) {
+    parsed.namedStyles = styleTable.namedStyles;
   }
   if (detected.packageVariant) {
     parsed.packageVariant = detected.packageVariant;

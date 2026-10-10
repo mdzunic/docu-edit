@@ -72,7 +72,10 @@
 // `preservedAttrs` (` vm="2"`, ` ph="1"` — each with its leading space);
 // every child but f, v and is verbatim in `preservedXml`, in source order. A
 // cell holding only such content is stored, and counted against the ceiling
-// like any other. `sheetProtection@sheet` "1"/"true" → `protection`.
+// like any other. `sheetProtection@sheet` "1"/"true" → `protection`, with
+// SPEC-123's permits: `formatCells`/`formatColumns`/`formatRows` "0"/"false"
+// → `allowFormatCells`/`allowFormatColumns`/`allowFormatRows` (absent = not
+// permitted, Excel's default).
 //
 // The worksheet writer (SPEC-122 "The worksheet writer", normative there):
 // serializeWorksheet(sheet, base, ctx) rebuilds `dimension`, `sheetViews`,
@@ -157,6 +160,10 @@ export { decodeXmlEscapes };
 
 function isOn(value: string | undefined): boolean {
   return value === "1" || value === "true";
+}
+
+function isOff(value: string | undefined): boolean {
+  return value === "0" || value === "false";
 }
 
 function parseNumber(text: string | undefined): number | undefined {
@@ -819,7 +826,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   const columnCandidates: ColumnCandidate[] = [];
   const mergeCandidates: GridRange[] = [];
   let tabColor: ModelColor | undefined;
-  let protectedSheet = false;
+  let protection: Sheet["protection"];
   let sheetViews = 0;
   let inFirstView = false;
   const view: ViewState = { selections: [] };
@@ -1091,7 +1098,18 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
           baseColWidth = base;
         }
       } else if (event.local === "sheetProtection" && isOn(scanAttr(event.attrs, "sheet"))) {
-        protectedSheet = true;
+        // SPEC-123: what the protection still permits — an absent
+        // attribute is Excel's default, not permitted.
+        protection = { sheet: true };
+        if (isOff(scanAttr(event.attrs, "formatCells"))) {
+          protection.allowFormatCells = true;
+        }
+        if (isOff(scanAttr(event.attrs, "formatColumns"))) {
+          protection.allowFormatColumns = true;
+        }
+        if (isOff(scanAttr(event.attrs, "formatRows"))) {
+          protection.allowFormatRows = true;
+        }
       }
       section = !event.selfClosing && SECTIONS.has(event.local) ? (event.local as Section) : null;
       return undefined;
@@ -1235,8 +1253,8 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   if (tabColor !== undefined) {
     content.tabColor = tabColor;
   }
-  if (protectedSheet) {
-    content.protection = { sheet: true };
+  if (protection !== undefined) {
+    content.protection = protection;
   }
   const activePane = pane?.activePane ?? "topLeft";
   const selection = view.selections.find((candidate) => candidate.pane === activePane);

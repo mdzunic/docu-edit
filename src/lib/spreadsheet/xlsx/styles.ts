@@ -17,8 +17,8 @@
 //   (`styles[i].sourceXf === i`, so `<c s="7">` is styleId 7), each holding
 //   COPIES of its font, fill and border (plain data, no shared objects), its
 //   `alignment` and `protection` children and `quotePrefix`. The `apply*`
-//   flags are ignored (Excel writes cellXfs fully resolved) and `xfId` (the
-//   named style) is SPEC-123's.
+//   flags are ignored (Excel writes cellXfs fully resolved); `xfId` names the
+//   style's `namedStyle` (SPEC-123, below).
 // - `<colors><indexedColors>` → the 64-entry override palette.
 // - SPEC-118 "Reading xlsx number formats": `numFmts/numFmt@numFmtId` +
 //   `@formatCode` (attribute-decoded) are read into a map; each
@@ -27,8 +27,22 @@
 //   built-in → `builtinFormatId` and the en-US code; else another built-in →
 //   its code; 0, unknown and CJK ids → absent. A code equal to `General` is
 //   stored absent; `applyNumberFormat` is ignored like every `apply*`.
-// cellStyleXfs/cellStyles (SPEC-123), dxfs (SPEC-129), tableStyles
-// (SPEC-133), extLst and colors/mruColors stay unread in the retained part.
+// - SPEC-123 "Named cell styles" › xlsx: `cellStyles/cellStyle` → one
+//   NamedCellStyle per element, in file order — `name`, `builtinId`,
+//   `hidden` ("1"/"true"), `sourceXfId` = `xfId`; the first cellStyle per
+//   xfId wins (a later one naming the same xfId is skipped), `customBuiltin`
+//   is not modelled. Its definition is `cellStyleXfs/xf[xfId]` decoded by the
+//   same xf mapping as cellXfs (never quotePrefix): here an ABSENT `applyX`
+//   means the aspect is included and "0"/"false" excludes it (numberFormat,
+//   font, fill, borders, alignment, protection), `includes` lists the
+//   included aspects in STYLE_ASPECTS order and `style` holds those of them
+//   with a value; an xfId with no cellStyleXfs entry is an empty definition.
+//   A cellXfs style's `namedStyle` is the name of the named style whose
+//   `sourceXfId` is its `xfId` — absent when the xf has no xfId, the xfId
+//   names no cellStyle, or it names Normal (builtinId 0; the one named
+//   "Normal" when no cellStyle has builtinId 0).
+// dxfs (SPEC-129), tableStyles (SPEC-133), extLst and colors/mruColors stay
+// unread in the retained part.
 // Colours map through themeColor.ts, the only module that interprets them.
 //
 // The style writer (SPEC-122 "Styles" › xlsx, normative there): one
@@ -44,12 +58,40 @@
 //   numFmt with the same code; else a new numFmt with id max(163, highest
 //   numFmt id) + 1.
 // - The xf: `<xf numFmtId fontId fillId borderId xfId>` (xfId the
-//   cellStyleXfs index of `namedStyle` through cellStyles; absent or
-//   "Normal" → 0), `quotePrefix="1"`, then `applyNumberFormat`/`applyFont`/
-//   `applyFill`/`applyBorder`/`applyAlignment`/`applyProtection="1"` where
-//   the xf differs from that parent xf; children `<alignment>` and
-//   `<protection>` (`locked="0"` only when false, `hidden="1"` only when
-//   true). Equal appended xfs are one entry.
+//   cellStyleXfs index of `namedStyle`, below), `quotePrefix="1"`, then
+//   `applyNumberFormat`/`applyFont`/`applyFill`/`applyBorder`/
+//   `applyAlignment`/`applyProtection="1"` where the xf differs from that
+//   parent xf; children `<alignment>` and `<protection>` (`locked="0"` only
+//   when false, `hidden="1"` only when true). Equal appended xfs are one
+//   entry.
+// - SPEC-123, the xfId: an absent or "Normal" namedStyle (or one whose
+//   definition has builtinId 0) → Normal's cellStyleXfs index (the xfId of
+//   the source's builtinId-0 cellStyle, else of its "Normal" one, else 0).
+//   Otherwise the workbook's definition (styles.ts workbookNamedStyle): its
+//   `sourceXfId` when the source part holds that cellStyleXfs entry; else
+//   the source cellStyle of its name; else — a built-in first applied by
+//   the user, any definition in a from-scratch save, or a built-in the
+//   model does not list yet (its pinned definition) — one appended
+//   cellStyleXfs `xf` plus a `cellStyle` under the definition's own name (a
+//   built-in a file names in its language, "Gut", keeps it), once per
+//   name. The style xf's
+//   numFmt, font, fill and border reuse-or-append as a cellXfs entry's do
+//   (the font is the definition's keys over Normal's — `styles[0].font`, or
+//   a from-scratch base's font 0 when that is empty — so it is complete);
+//   an excluded aspect writes Normal's id (numFmt 0, font 0, the first none
+//   fill, the first empty border) and `applyX="0"`, an included one no
+//   flag; alignment/protection children are written as cellXfs writes them.
+//   The cellStyle is `<cellStyle name xfId>` + `builtinId` (BUILTIN_CELL_
+//   STYLES' id for one of its names, else the definition's own, read from a
+//   file) + `hidden="1"`, never `customBuiltin`. A source without
+//   cellStyleXfs entries gains Normal's `<xf numFmtId="0" fontId="0"
+//   fillId="0" borderId="0"/>` first, one without cellStyles `<cellStyle
+//   name="Normal" xfId="0" builtinId="0"/>` first; an index past the part's
+//   entries that a source cellStyle or cellXfs xf already names is filled
+//   with an every-aspect-excluded xf before an append lands on it (neither
+//   changes meaning); every appended style xf is a parent the apply flags
+//   compare against. A name with no definition and no source cellStyle →
+//   Normal's.
 // - XML: fonts in Excel's child order (b, i, strike, u, vertAlign, sz, color,
 //   name, family, scheme — a theme font writes its theme typeface, family 2
 //   and `<scheme val>`); solid fills `<patternFill patternType="solid">
@@ -60,8 +102,9 @@
 //   set to the new total; an absent collection is inserted in CT_Stylesheet
 //   order (numFmts, fonts, fills, borders, cellStyleXfs, cellXfs, cellStyles,
 //   dxfs, tableStyles, colors, extLst); the part is rewritten only when
-//   something was appended — every source entry and every other element
-//   stays byte-verbatim.
+//   something was appended — every source entry (numFmts, fonts, fills,
+//   borders, cellStyleXfs, cellXfs, cellStyles: each keeps its index) and
+//   every other element stays byte-verbatim.
 // - From scratch (no source part) the base is a minimal styles part whose
 //   font 0 is built from `model.styles[0]` and whose xf 0 IS style 0, so
 //   unstyled cells keep the workbook's own default font in either direction;
@@ -71,7 +114,7 @@ import { parseXml } from "../../core/xml";
 import { scanXml } from "../../core/xmlScanner";
 import type { CellAlignment, CellBorderEdge, CellBorders, CellFill, CellFont, CellStyle, SheetBorderStyle, SpreadsheetModel } from "../model";
 import { BUILTIN_NUMBER_FORMATS, LOCALE_DEPENDENT_BUILTINS } from "../numberFormat/builtin";
-import { defaultStyles, INDEXED_COLORS, styleKey } from "../styles";
+import { builtinCellStyle, defaultStyles, INDEXED_COLORS, styleKey, workbookNamedStyle, type NamedCellStyle, type StyleAspect } from "../styles";
 import { applySplices, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { elementAttributes, modelColorToXlsxAttrs, xlsxColorFrom, xlsxColorFromElement, xlsxRgbToHex, type AttributeGetter } from "./themeColor";
 
@@ -100,6 +143,9 @@ export interface XlsxStyleTable {
   /** The Normal style's font, its family resolved against the theme — the
    * font the maximum digit width (geometry.ts) is looked up for. */
   defaultFont: { family: string; sizePt: number };
+  /** SPEC-123: the named cell styles, one per `cellStyles/cellStyle` (the
+   * first per xfId) in file order — absent when the part names none. */
+  namedStyles?: NamedCellStyle[];
 }
 
 function isOn(value: string | null | undefined): boolean {
@@ -429,14 +475,18 @@ export function xfNumberFormat(numFmtId: number, numFmts: ReadonlyMap<number, st
   return { numberFormat: code };
 }
 
-function readXf(
-  xf: Element,
-  index: number,
-  fonts: readonly CellFont[],
-  fills: readonly (CellFill | undefined)[],
-  borders: readonly (CellBorders | undefined)[],
-  numFmts: ReadonlyMap<number, string>,
-): CellStyle {
+/** The records an xf points into, parsed once per part. */
+interface XfRecords {
+  fonts: readonly CellFont[];
+  fills: readonly (CellFill | undefined)[];
+  borders: readonly (CellBorders | undefined)[];
+  numFmts: ReadonlyMap<number, string>;
+}
+
+/** What an xf formats — its font, fill and border (copies), its alignment
+ * and protection children and its number format — decoded alike for a
+ * cellXfs and a cellStyleXfs entry. */
+function readXfFormatting(xf: Element, { fonts, fills, borders, numFmts }: XfRecords): CellStyle {
   const style: CellStyle = {};
   // A missing id is the first record, as every producer means it.
   const font = fonts[parseIndex(xf.getAttribute("fontId")) ?? 0];
@@ -460,11 +510,115 @@ function readXf(
     style.protection = protection;
   }
   Object.assign(style, xfNumberFormat(parseIndex(xf.getAttribute("numFmtId")) ?? 0, numFmts));
+  return style;
+}
+
+/** One cellXfs entry: its formatting, `quotePrefix`, the named style its
+ * `xfId` names (`names`: xfId → name, Normal left out) and its index. */
+function readXf(xf: Element, index: number, records: XfRecords, names: ReadonlyMap<number, string>): CellStyle {
+  const style = readXfFormatting(xf, records);
   if (isOn(xf.getAttribute("quotePrefix"))) {
     style.quotePrefix = true;
   }
+  const xfId = parseIndex(xf.getAttribute("xfId"));
+  const named = xfId !== undefined ? names.get(xfId) : undefined;
+  if (named !== undefined) {
+    style.namedStyle = named;
+  }
   style.sourceXf = index;
   return style;
+}
+
+// --- named cell styles (SPEC-123) ----------------------------------------------
+
+/** Each aspect's `applyX` flag, in STYLE_ASPECTS order. */
+const APPLY_FLAGS: readonly (readonly [StyleAspect, string])[] = [
+  ["numberFormat", "applyNumberFormat"],
+  ["font", "applyFont"],
+  ["fill", "applyFill"],
+  ["borders", "applyBorder"],
+  ["alignment", "applyAlignment"],
+  ["protection", "applyProtection"],
+];
+
+/** The CellStyle fields each aspect covers. */
+const ASPECT_FIELDS: Readonly<Record<StyleAspect, readonly (keyof CellStyle)[]>> = {
+  numberFormat: ["numberFormat", "builtinFormatId"],
+  font: ["font"],
+  fill: ["fill"],
+  borders: ["borders"],
+  alignment: ["alignment"],
+  protection: ["protection"],
+};
+
+/** A cellStyleXfs entry as a named style's definition: an absent `applyX`
+ * includes the aspect, "0"/"false" excludes it; `style` keeps the included
+ * aspects that have a value. */
+function readStyleXf(xf: Element, records: XfRecords): Pick<NamedCellStyle, "style" | "includes"> {
+  const decoded = readXfFormatting(xf, records);
+  const style: CellStyle = {};
+  const includes: StyleAspect[] = [];
+  const keep = <K extends keyof CellStyle>(field: K): void => {
+    if (decoded[field] !== undefined) {
+      style[field] = decoded[field];
+    }
+  };
+  for (const [aspect, flag] of APPLY_FLAGS) {
+    const value = xf.getAttribute(flag);
+    if (value === "0" || value === "false") {
+      continue;
+    }
+    includes.push(aspect);
+    ASPECT_FIELDS[aspect].forEach(keep);
+  }
+  return { style, includes };
+}
+
+/** `cellStyles/cellStyle` → the named styles, in file order, the first per
+ * xfId winning; each defined by its cellStyleXfs entry (an empty
+ * definition when the part has none at that index). A cellStyle without a
+ * name or an xfId names nothing a cell could use, and is skipped. */
+function readNamedStyles(root: Element, records: XfRecords): NamedCellStyle[] {
+  const styleXfsElement = childNamed(root, "cellStyleXfs");
+  const styleXfs = styleXfsElement ? childrenNamed(styleXfsElement, "xf") : [];
+  const cellStyles = childNamed(root, "cellStyles");
+  const named: NamedCellStyle[] = [];
+  const claimed = new Set<number>();
+  for (const element of cellStyles ? childrenNamed(cellStyles, "cellStyle") : []) {
+    const name = element.getAttribute("name");
+    const xfId = parseIndex(element.getAttribute("xfId"));
+    if (name === null || xfId === undefined || claimed.has(xfId)) {
+      continue;
+    }
+    claimed.add(xfId);
+    const xf = styleXfs[xfId];
+    const { style, includes } = xf ? readStyleXf(xf, records) : { style: {}, includes: [] };
+    const builtinId = parseIndex(element.getAttribute("builtinId"));
+    named.push({
+      name,
+      ...(builtinId !== undefined ? { builtinId } : {}),
+      style,
+      includes,
+      ...(isOn(element.getAttribute("hidden")) ? { hidden: true as const } : {}),
+      sourceXfId: xfId,
+    });
+  }
+  return named;
+}
+
+/** xfId → the name a cellXfs xf pointing there gets as its `namedStyle`;
+ * Normal (builtinId 0, or — when none has builtinId 0 — the style named
+ * "Normal") is the absent namedStyle and left out. */
+function namedStyleNames(named: readonly NamedCellStyle[]): Map<number, string> {
+  const builtinNormal = named.some((entry) => entry.builtinId === 0);
+  const names = new Map<number, string>();
+  for (const entry of named) {
+    const normal = entry.builtinId === 0 || (!builtinNormal && entry.name === "Normal");
+    if (!normal && entry.sourceXfId !== undefined) {
+      names.set(entry.sourceXfId, entry.name);
+    }
+  }
+  return names;
 }
 
 /** `<colors><indexedColors>`: up to 64 `rgbColor@rgb` entries, lowercase;
@@ -511,8 +665,10 @@ export function readXlsxStyles(xml: string | undefined, theme: DocumentTheme | u
   const borders = bordersElement ? childrenNamed(bordersElement, "border").map((border) => readBorder(border, indexedColors)) : [];
   const xfsElement = childNamed(root, "cellXfs");
   const xfs = xfsElement ? childrenNamed(xfsElement, "xf") : [];
-  const numFmts = readNumFmts(root);
-  const styles = xfs.map((xf, index) => readXf(xf, index, fonts, fills, borders, numFmts));
+  const records: XfRecords = { fonts, fills, borders, numFmts: readNumFmts(root) };
+  const namedStyles = readNamedStyles(root, records);
+  const names = namedStyleNames(namedStyles);
+  const styles = xfs.map((xf, index) => readXf(xf, index, records, names));
 
   // The Normal style's font: cellXfs[0]'s (fonts[0] when there is no xf).
   const normalFont = fonts[xfs[0] ? (parseIndex(xfs[0].getAttribute("fontId")) ?? 0) : 0];
@@ -523,6 +679,9 @@ export function readXlsxStyles(xml: string | undefined, theme: DocumentTheme | u
   };
   if (indexedColors !== undefined) {
     table.indexedColors = indexedColors;
+  }
+  if (namedStyles.length > 0) {
+    table.namedStyles = namedStyles;
   }
   return table;
 }
@@ -655,7 +814,10 @@ function protectionXml(protection: CellStyle["protection"], p: string): string {
 }
 
 /** The collections the writer appends to. */
-type StyleCollection = "numFmts" | "fonts" | "fills" | "borders" | "cellXfs";
+type StyleCollection = "numFmts" | "fonts" | "fills" | "borders" | "cellStyleXfs" | "cellXfs" | "cellStyles";
+
+/** Those collections, in CT_Stylesheet order. */
+const STYLE_COLLECTIONS: readonly StyleCollection[] = ["numFmts", "fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "cellStyles"];
 
 /** CT_Stylesheet's children, in schema order. */
 const STYLESHEET_ORDER = ["numFmts", "fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "cellStyles", "dxfs", "tableStyles", "colors", "extLst"];
@@ -683,6 +845,9 @@ interface ParentXf {
 }
 
 const NO_PARENT: ParentXf = { numFmtId: 0, fontId: 0, fillId: 0, borderId: 0, alignment: styleKey({}), protection: styleKey({}) };
+
+/** A cellStyleXfs xf's flags excluding every aspect. */
+const EXCLUDE_EVERY_ASPECT = APPLY_FLAGS.map(([, flag]) => ` ${flag}="0"`).join("");
 
 /** The default font a from-scratch font 0 falls back to: the blank
  * workbook's (SPEC-121 "The blank workbook"). */
@@ -716,8 +881,8 @@ export class XlsxStyleWriter {
   private readonly spans = new Map<string, ElementSpan>();
   private readonly order: ElementSpan[] = [];
   private rootCloseStart = -1;
-  private readonly counts: Record<StyleCollection, number> = { numFmts: 0, fonts: 0, fills: 0, borders: 0, cellXfs: 0 };
-  private readonly appends: Record<StyleCollection, string[]> = { numFmts: [], fonts: [], fills: [], borders: [], cellXfs: [] };
+  private readonly counts: Record<StyleCollection, number> = { numFmts: 0, fonts: 0, fills: 0, borders: 0, cellStyleXfs: 0, cellXfs: 0, cellStyles: 0 };
+  private readonly appends: Record<StyleCollection, string[]> = { numFmts: [], fonts: [], fills: [], borders: [], cellStyleXfs: [], cellXfs: [], cellStyles: [] };
   /** styleKey → index, per collection (the first source entry, then appends). */
   private readonly fontIds = new Map<string, number>();
   private readonly fillIds = new Map<string, number>();
@@ -725,8 +890,16 @@ export class XlsxStyleWriter {
   private readonly numFmtCodes = new Map<number, string>();
   private readonly numFmtByCode = new Map<string, number>();
   private highestNumFmt = 0;
+  /** cellStyleXfs index → the entry, source and appended. */
   private readonly parents: ParentXf[] = [];
+  /** cellStyle name → its xfId: the first source cellStyle of the name, then
+   * the named styles appended this save. */
   private readonly namedXf = new Map<string, number>();
+  /** Every cellStyleXfs index a source cellStyle or cellXfs xf names — the
+   * ones past the part's entries an append must not land on. */
+  private readonly sourceXfIds = new Set<number>();
+  /** Normal's cellStyleXfs index. */
+  private normalXfId = 0;
   private readonly xfByXml = new Map<string, number>();
   private readonly xfByStyle = new Map<number, number>();
   private readonly baseAppends: number;
@@ -735,7 +908,7 @@ export class XlsxStyleWriter {
    * from-scratch base from `model.styles[0]` (xf 0 is style 0). */
   constructor(
     source: string | undefined,
-    private readonly model: Pick<SpreadsheetModel, "styles" | "theme" | "indexedColors">,
+    private readonly model: Pick<SpreadsheetModel, "styles" | "theme" | "indexedColors" | "namedStyles">,
   ) {
     this.fromSource = source !== undefined;
     this.text = source ?? fromScratchBase(model.styles[0], model.theme);
@@ -814,10 +987,19 @@ export class XlsxStyleWriter {
       }
       this.highestNumFmt = Math.max(this.highestNumFmt, id);
     }
-    const cellXfs = childNamed(root, "cellXfs");
-    this.counts.cellXfs = cellXfs ? childrenNamed(cellXfs, "xf").length : 0;
-    const styleXfs = childNamed(root, "cellStyleXfs");
-    for (const xf of styleXfs ? childrenNamed(styleXfs, "xf") : []) {
+    const cellXfsElement = childNamed(root, "cellXfs");
+    const cellXfs = cellXfsElement ? childrenNamed(cellXfsElement, "xf") : [];
+    this.counts.cellXfs = cellXfs.length;
+    for (const xf of cellXfs) {
+      const xfId = parseIndex(xf.getAttribute("xfId"));
+      if (xfId !== undefined) {
+        this.sourceXfIds.add(xfId);
+      }
+    }
+    const styleXfsElement = childNamed(root, "cellStyleXfs");
+    const styleXfs = styleXfsElement ? childrenNamed(styleXfsElement, "xf") : [];
+    this.counts.cellStyleXfs = styleXfs.length;
+    for (const xf of styleXfs) {
       this.parents.push({
         numFmtId: intAttr(xf, "numFmtId"),
         fontId: intAttr(xf, "fontId"),
@@ -827,13 +1009,21 @@ export class XlsxStyleWriter {
         protection: styleKey({ protection: readProtection(childNamed(xf, "protection")) }),
       });
     }
-    const cellStyles = childNamed(root, "cellStyles");
-    for (const cellStyle of cellStyles ? childrenNamed(cellStyles, "cellStyle") : []) {
+    const cellStylesElement = childNamed(root, "cellStyles");
+    const cellStyles = cellStylesElement ? childrenNamed(cellStylesElement, "cellStyle") : [];
+    this.counts.cellStyles = cellStyles.length;
+    let builtinNormal: number | undefined;
+    for (const cellStyle of cellStyles) {
       const name = cellStyle.getAttribute("name");
       if (name !== null && !this.namedXf.has(name)) {
         this.namedXf.set(name, intAttr(cellStyle, "xfId"));
       }
+      this.sourceXfIds.add(intAttr(cellStyle, "xfId"));
+      if (builtinNormal === undefined && parseIndex(cellStyle.getAttribute("builtinId")) === 0) {
+        builtinNormal = intAttr(cellStyle, "xfId");
+      }
     }
+    this.normalXfId = builtinNormal ?? this.namedXf.get("Normal") ?? 0;
   }
 
   private appendCount(): number {
@@ -896,15 +1086,102 @@ export class XlsxStyleWriter {
     return xf;
   }
 
+  /** A font's fonts index: font 0 when absent, else the first equal entry,
+   * else an append. */
+  private fontIdFor(font: CellFont | undefined): number {
+    const p = this.prefix;
+    return font === undefined ? 0 : this.entryId(this.fontIds, "fonts", styleKey({ font }), () => `<${p}font>${xlsxFontProperties(font, this.model.theme, "name", p)}</${p}font>`);
+  }
+
+  /** A fill's fills index (none: the first entry that reads as none). */
+  private fillIdFor(fill: CellFill | undefined): number {
+    return this.entryId(this.fillIds, "fills", styleKey({ fill }), () => fillXml(fill, this.model.theme, this.prefix));
+  }
+
+  /** A border's borders index (none: the first entry that reads as empty). */
+  private borderIdFor(borders: CellBorders | undefined): number {
+    return this.entryId(this.borderIds, "borders", styleKey({ borders }), () => borderXml(borders, this.model.theme, this.prefix));
+  }
+
+  /** The cellStyleXfs index a cellXfs xf names for `namedStyle` (see the
+   * module header). */
+  private styleXfFor(namedStyle: string | undefined): number {
+    if (namedStyle === undefined || namedStyle === "Normal") {
+      return this.normalXfId;
+    }
+    const own = workbookNamedStyle(this.model, namedStyle);
+    if (own?.builtinId === 0) {
+      return this.normalXfId;
+    }
+    if (this.fromSource && own?.sourceXfId !== undefined && own.sourceXfId < this.counts.cellStyleXfs) {
+      return own.sourceXfId;
+    }
+    // The definition's own name: a built-in the workbook names in its
+    // language ("Gut" for Good) keeps it.
+    const name = own?.name ?? namedStyle;
+    const known = this.namedXf.get(name);
+    if (known !== undefined) {
+      return known;
+    }
+    const definition = own ?? builtinCellStyle(namedStyle);
+    return definition === undefined ? this.normalXfId : this.appendNamedStyle(name, definition);
+  }
+
+  /** Appends a named style the part lacks: its cellStyleXfs xf (a parent
+   * from now on) and its cellStyle; the xf's index. */
+  private appendNamedStyle(name: string, definition: Pick<NamedCellStyle, "builtinId" | "style" | "includes" | "hidden">): number {
+    const p = this.prefix;
+    const { style, includes } = definition;
+    const has = (aspect: StyleAspect): boolean => includes.includes(aspect);
+    const numFmtId = has("numberFormat") ? this.numFmtIdFor(style) : 0;
+    // A complete font: the definition's keys over Normal's — font 0's, which
+    // a from-scratch base built from the blank workbook's when style 0 has none.
+    const ownFont = this.model.styles[0]?.font;
+    const normalFont = ownFont !== undefined && Object.keys(ownFont).length > 0 ? ownFont : this.fromSource ? undefined : BLANK_DEFAULT_FONT;
+    const font: CellFont = { ...normalFont, ...style.font };
+    const fontId = has("font") && Object.keys(font).length > 0 ? this.fontIdFor(font) : 0;
+    const fillId = this.fillIdFor(has("fill") ? style.fill : undefined);
+    const borderId = this.borderIdFor(has("borders") ? style.borders : undefined);
+    const alignment = has("alignment") ? style.alignment : undefined;
+    const protection = has("protection") ? style.protection : undefined;
+    let attrs = `numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}"`;
+    for (const [aspect, flag] of APPLY_FLAGS) {
+      if (!has(aspect)) {
+        attrs += ` ${flag}="0"`;
+      }
+    }
+    const children = alignmentXml(alignment, p) + protectionXml(protection, p);
+    if (this.counts.cellStyleXfs + this.appends.cellStyleXfs.length === 0) {
+      // Normal's xf first: every xfId="0" of the part already means Normal.
+      this.parents[this.append("cellStyleXfs", `<${p}xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>`)] = NO_PARENT;
+    }
+    // An index a source cellStyle or cellXfs xf names without an entry gets
+    // an empty definition (every aspect excluded): neither changes meaning,
+    // and no earlier cellStyle on the xfId shadows the appended one.
+    while (this.sourceXfIds.has(this.counts.cellStyleXfs + this.appends.cellStyleXfs.length)) {
+      this.parents[this.append("cellStyleXfs", `<${p}xf numFmtId="0" fontId="0" fillId="0" borderId="0"${EXCLUDE_EVERY_ASPECT}/>`)] = NO_PARENT;
+    }
+    const index = this.append("cellStyleXfs", children === "" ? `<${p}xf ${attrs}/>` : `<${p}xf ${attrs}>${children}</${p}xf>`);
+    this.parents[index] = { numFmtId, fontId, fillId, borderId, alignment: styleKey({ alignment }), protection: styleKey({ protection }) };
+    if (this.counts.cellStyles + this.appends.cellStyles.length === 0) {
+      this.append("cellStyles", `<${p}cellStyle name="Normal" xfId="${this.normalXfId}" builtinId="0"/>`);
+    }
+    const builtinId = builtinCellStyle(name)?.builtinId ?? definition.builtinId;
+    const hidden = definition.hidden ? ` hidden="1"` : "";
+    this.append("cellStyles", `<${p}cellStyle name="${escapeAttributeValue(name)}" xfId="${index}"${builtinId !== undefined ? ` builtinId="${builtinId}"` : ""}${hidden}/>`);
+    this.namedXf.set(name, index);
+    return index;
+  }
+
   private xfIndexOf(style: CellStyle): number {
     const p = this.prefix;
-    const theme = this.model.theme;
+    // The parent first: a named style the part lacks appends its records
+    // before the xf's own.
+    const xfId = this.styleXfFor(style.namedStyle);
     const numFmtId = this.numFmtIdFor(style);
-    const fontId =
-      style.font === undefined ? 0 : this.entryId(this.fontIds, "fonts", styleKey({ font: style.font }), () => `<${p}font>${xlsxFontProperties(style.font!, theme, "name", p)}</${p}font>`);
-    const fillId = this.entryId(this.fillIds, "fills", styleKey({ fill: style.fill }), () => fillXml(style.fill, theme, p));
-    const borderId = this.entryId(this.borderIds, "borders", styleKey({ borders: style.borders }), () => borderXml(style.borders, theme, p));
-    const xfId = style.namedStyle === undefined || style.namedStyle === "Normal" ? 0 : (this.namedXf.get(style.namedStyle) ?? 0);
+    const fontId = this.fontIdFor(style.font);
+    const fillId = this.fillIdFor(style.fill);
+    const borderId = this.borderIdFor(style.borders);
     const parent = this.parents[xfId] ?? NO_PARENT;
     let attrs = `numFmtId="${numFmtId}" fontId="${fontId}" fillId="${fillId}" borderId="${borderId}" xfId="${xfId}"`;
     if (style.quotePrefix) {
@@ -953,7 +1230,7 @@ export class XlsxStyleWriter {
     }
     const splices: Splice[] = [];
     const p = this.prefix;
-    for (const collection of ["numFmts", "fonts", "fills", "borders", "cellXfs"] as const) {
+    for (const collection of STYLE_COLLECTIONS) {
       const items = this.appends[collection];
       if (items.length === 0) {
         continue;
