@@ -134,7 +134,7 @@ describe("convertImageToPdf", () => {
     const bytes = await convertImageToPdf(source, setup({ margins: MARGIN_PRESETS.Narrow }), "Shot", steps);
     expect(steps.crop).not.toHaveBeenCalled();
     expect(steps.encode).toHaveBeenCalledTimes(1);
-    const [src, widthPt, heightPt, maxDpi] = steps.encode.mock.calls[0] as unknown as [string, number, number, number];
+    const [src, widthPt, heightPt, maxDpi] = vi.mocked(steps.encode).mock.calls[0] as unknown as [string, number, number, number];
     expect(src.startsWith("data:image/png;base64,")).toBe(true);
     expect([widthPt, heightPt, maxDpi]).toEqual([cmToPt(18.46), cmToPt(11.538), 150]);
     const pdf = await parsePdf(bytes);
@@ -147,7 +147,7 @@ describe("convertImageToPdf", () => {
     const source = await pngModel();
     const steps = fakeSteps();
     await convertImageToPdf(source, setup({ dpi: 600 }), "Shot", steps);
-    expect(steps.encode.mock.calls[0][3]).toBe(600);
+    expect(vi.mocked(steps.encode).mock.calls[0][3]).toBe(600);
   });
 
   it("crops a cover/actual overflow BEFORE encoding, so the cut-away region never reaches the file", async () => {
@@ -155,11 +155,11 @@ describe("convertImageToPdf", () => {
     const steps = fakeSteps();
     await convertImageToPdf(source, setup({ fit: "cover", align: "left" }), "Shot", steps);
     expect(steps.crop).toHaveBeenCalledTimes(1);
-    const [, crop] = steps.crop.mock.calls[0] as unknown as [string, unknown];
+    const [, crop] = vi.mocked(steps.crop).mock.calls[0] as unknown as [string, unknown];
     // A4 Normal's 15.92 × 24.62 cm box, covered by a 64 × 40 image: the left
     // edge survives, 25.865 of 64 pixels across.
     expect(crop).toEqual({ xPx: 0, yPx: 0, widthPx: 25.865, heightPx: 40 });
-    expect(steps.encode.mock.calls[0][0]).toBe(CROPPED_SRC);
+    expect(vi.mocked(steps.encode).mock.calls[0][0]).toBe(CROPPED_SRC);
   });
 
   it("rasterises an SVG at its placed size first", async () => {
@@ -167,8 +167,8 @@ describe("convertImageToPdf", () => {
     const steps = fakeSteps();
     await convertImageToPdf(source, SHEET_DEFAULTS, "Mark", steps);
     // 96 × 72 px contained in 15.92 × 24.62 cm → 15.92 × 11.94 cm → 940 × 705 px at 150 dpi.
-    expect(steps.rasteriseSvg.mock.calls[0][1]).toEqual({ widthPx: 940, heightPx: 705 });
-    expect(steps.encode.mock.calls[0][0]).toBe("data:image/png;base64,AQID");
+    expect(vi.mocked(steps.rasteriseSvg).mock.calls[0][1]).toEqual({ widthPx: 940, heightPx: 705 });
+    expect(vi.mocked(steps.encode).mock.calls[0][0]).toBe("data:image/png;base64,AQID");
   });
 
   it("yields byte-identical PDFs for the same image and setup", async () => {
