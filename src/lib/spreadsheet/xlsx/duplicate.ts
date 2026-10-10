@@ -54,17 +54,36 @@ export const SAFE_SHEET_RELATIONSHIPS: ReadonlySet<string> = new Set([
   "hyperlink",
 ]);
 
-/** Whether every relationship of a worksheet part is on the safe list
- * (`hyperlink` only as an external link). */
-export function hasOnlySafeRelationships(parts: PartLookup, partName: string): boolean {
+/** What a copied drawing (charts, chart styles/colours, images) and a
+ * copied chart may relate to. */
+const SAFE_NESTED_RELATIONSHIPS: Readonly<Record<string, ReadonlySet<string>>> = {
+  drawing: new Set(["chart", "image", "hyperlink"]),
+  chart: new Set(["chartStyle", "chartColorStyle", "image", "package", "themeOverride"]),
+};
+
+/** Whether a part's relationships are all on `safe` (a hyperlink only as
+ * an external link), checking a drawing's and a chart's own in turn. */
+function onlySafe(parts: PartLookup, partName: string, safe: ReadonlySet<string>): boolean {
   const xml = partTextOf(parts, relsPathFor(partName));
   if (xml === undefined) {
     return true;
   }
   return readRels(xml).every((rel) => {
     const kind = relationshipKind(rel.type);
-    return SAFE_SHEET_RELATIONSHIPS.has(kind) && (kind !== "hyperlink" || rel.external);
+    if (!safe.has(kind) || (kind === "hyperlink" && !rel.external)) {
+      return false;
+    }
+    const nested = SAFE_NESTED_RELATIONSHIPS[kind];
+    const target = targetPart(partName, rel);
+    return nested === undefined || target === undefined || onlySafe(parts, target, nested);
   });
+}
+
+/** Whether every relationship of a worksheet part is on the safe list
+ * (`hyperlink` only as an external link; a drawing holding only charts,
+ * their styles and colours, and images). */
+export function hasOnlySafeRelationships(parts: PartLookup, partName: string): boolean {
+  return onlySafe(parts, partName, SAFE_SHEET_RELATIONSHIPS);
 }
 
 /** The parts reachable from `start` that nothing outside that set refers

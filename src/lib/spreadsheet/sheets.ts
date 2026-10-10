@@ -339,12 +339,13 @@ export function addSheet(model: SpreadsheetModel, afterIndex: number): SheetComm
  * unchanged name changes nothing. */
 export function renameSheet(model: SpreadsheetModel, index: number, name: string): SheetCommandResult {
   const sheet = sheetAt(model, index);
+  if (sheet.name === name) {
+    // Unchanged — even a name read from a file that breaks the rules.
+    return { activeIndex: model.activeSheetIndex, alsoRecalc: [] };
+  }
   const error = validateSheetName(model, name, index);
   if (error !== null) {
     throw new Error(error);
-  }
-  if (sheet.name === name) {
-    return { activeIndex: model.activeSheetIndex, alsoRecalc: [] };
   }
   const before = orderOf(model);
   model.sheets = model.sheets.map((each, at) => {
@@ -536,7 +537,8 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     return { ...fields, rows: crossRows(sheet.rows, model.format) };
   });
   if (sheets.length === 0) {
-    sheets.push(emptySheet("Sheet1"));
+    const { dirty: _dirty, ...fallback } = emptySheet("Sheet1");
+    sheets.push(fallback);
   }
   if (!sheets.some((sheet) => sheet.visibility === "visible")) {
     sheets[0] = { ...sheets[0]!, visibility: "visible" };
