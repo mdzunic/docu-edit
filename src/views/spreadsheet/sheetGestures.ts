@@ -38,3 +38,11 @@ export function outsideCells(box: DOMRect | undefined, clientX: number, clientY:
 export function onFillHandle(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest('[data-testid="sheet-fill-handle"]') !== null;
 }
+
+/** Whether a press (or hover) on the outline band, with these modifiers, is
+ * a drag-move's: not under Shift, nor Cmd on a Mac — those extend or add to
+ * the selection (Shift-drag insert is backlog) — while Alt/Option, and Ctrl
+ * on Windows/Linux, are the move's own copy modifiers, as in Excel. */
+export function outlinePressMoves(event: { shiftKey: boolean; metaKey: boolean }, mac: boolean): boolean {
+  return !event.shiftKey && !(mac && event.metaKey);
+}

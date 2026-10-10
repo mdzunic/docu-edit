@@ -16,9 +16,11 @@
 // double-click there autofits (useSheetGrid). SPEC-125: a press on the fill
 // handle drags a fill (useFillHandle) and one within MOVE_HIT_PX of a
 // single-range selection's outline (sheetGestures.ts) a drag-move
-// (useRangeMove, whose cursor the hover sets); both auto-scroll like a
-// selection drag, the release reads the modifiers held at it, a drop outside
-// the grid cancels a move, and a cancelled pointer cancels either.
+// (useRangeMove, whose cursor the hover sets) — neither while the format
+// painter is armed, nor a move under outlinePressMoves' selection modifiers;
+// both auto-scroll like a selection drag, the release reads the modifiers
+// held at it, a drop outside the grid cancels a move, and a cancelled
+// pointer cancels either.
 import { onBeforeUnmount, type Ref } from "vue";
 import { isMacPlatform } from "../../lib/core/platform";
 import type { CellRef } from "../../lib/spreadsheet/address";
@@ -27,7 +29,7 @@ import type { CellEditing } from "./useCellEditing";
 import type { FillHandle } from "./useFillHandle";
 import type { HeaderResize } from "./useHeaderResize";
 import type { RangeMoveController } from "./useRangeMove";
-import { nearOutline, onFillHandle, outsideCells } from "./sheetGestures";
+import { nearOutline, onFillHandle, outlinePressMoves, outsideCells } from "./sheetGestures";
 import type { RectItem } from "./useSheetOverlays";
 import { primaryModifier, type SheetSelectionController } from "./useSheetSelection";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, type SheetViewport } from "./useSheetViewport";
@@ -81,6 +83,8 @@ export interface SheetPointerDeps {
   fill?: () => FillHandle | undefined;
   move?: () => RangeMoveController | undefined;
   outline?: () => RectItem | null;
+  /** Whether the format painter is armed (SPEC-123): a press is its. */
+  painting?: () => boolean;
 }
 
 /** A header-area point's position along its axis, in content px, and the
@@ -241,12 +245,12 @@ export function useSheetPointer(deps: SheetPointerDeps) {
       return;
     }
     // SPEC-125: the fill handle, then the selection's outline (drag-move).
-    if (hit.area === "cell" && !editing?.editing.value) {
+    if (hit.area === "cell" && !editing?.editing.value && !deps.painting?.()) {
       if (onFillHandle(event.target) && deps.fill?.()?.begin()) {
         startGesture("fill", event);
         return;
       }
-      if (onOutline(point.x, point.y) && deps.move?.()?.begin(hit.cell)) {
+      if (outlinePressMoves(event, isMacPlatform()) && onOutline(point.x, point.y) && deps.move?.()?.begin(hit.cell)) {
         startGesture("move", event);
         return;
       }
@@ -307,7 +311,8 @@ export function useSheetPointer(deps: SheetPointerDeps) {
       // SPEC-125: the move cursor over the selection's outline.
       const move = deps.move?.();
       if (move) {
-        const hover = !onFillHandle(event.target) && !deps.editing?.()?.editing.value && hitAt(at.x, at.y).area === "cell" && onOutline(at.x, at.y);
+        const free = !deps.painting?.() && outlinePressMoves(event, isMacPlatform()) && !onFillHandle(event.target) && !deps.editing?.()?.editing.value;
+        const hover = free && hitAt(at.x, at.y).area === "cell" && onOutline(at.x, at.y);
         if (hover !== move.hover.value) {
           move.setHover(hover);
         }

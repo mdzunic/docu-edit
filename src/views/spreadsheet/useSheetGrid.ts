@@ -132,6 +132,7 @@ export function useSheetGrid(
     fill: () => context().fillHandle,
     move: () => context().rangeMove,
     outline: () => outline.value,
+    painting: () => Boolean(context().painter?.mode.value),
   });
 
   /** SPEC-125's overlays, in paper px (see the module header). */
