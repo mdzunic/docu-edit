@@ -704,6 +704,9 @@ test("a cut moves once: references to overwritten cells become #REF!, moved form
   await clickCell(page, "A1");
   await expect(formulaBar(page)).toHaveText("=SUM(Sheet1!B1:B3)");
   await sheetTab(page, "Sheet1").click();
+  // E20 (=B2*2, moved there above) read the overwritten B2 too.
+  await clickCell(page, "E20");
+  await expect(formulaBar(page)).toHaveText("=#REF!*2");
 
   // The merge E1:F1 moves to E30 whole.
   await clickCell(page, "E1");
@@ -725,4 +728,122 @@ test("a cut moves once: references to overwritten cells become #REF!, moved form
   await clickCell(page, "E21");
   await expect(formulaBar(page)).toHaveText("{=A2:A4*2}");
   await expect(cell(page, "E2")).toHaveText("");
+});
+
+test("the ants end at a paste that is not the view's own copy; the move cursor is only the outline's, without Shift (AC-5, AC-89)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  const ants = page.getByTestId("sheet-copy-marquee");
+  await select(page, "B2", "C3");
+  await page.keyboard.press("ControlOrMeta+c");
+  await clickCell(page, "E5");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "E5")).toHaveText("10");
+  await expect(ants).toHaveCount(1);
+  // Another application's text: the paste is an edit, and the ants go.
+  await writeClipboard(page, { "text/plain": "ext" });
+  await clickCell(page, "H1");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "H1")).toHaveText("ext");
+  await expect(ants).toHaveCount(0);
+
+  const grid = page.getByTestId("spreadsheet-grid");
+  await select(page, "B2", "C3");
+  const outline = (await page.getByTestId("sheet-selection").boundingBox())!;
+  const edge = { x: outline.x + 1, y: outline.y + outline.height / 2 };
+  await page.mouse.move(edge.x, edge.y);
+  await expect(grid).toHaveCSS("cursor", "move");
+  await page.mouse.move(outline.x + outline.width / 2, outline.y + outline.height / 2);
+  await expect(grid).not.toHaveCSS("cursor", "move");
+  await page.keyboard.down("Shift");
+  await page.mouse.move(edge.x, edge.y + 1);
+  await expect(grid).not.toHaveCSS("cursor", "move");
+  await page.keyboard.up("Shift");
+  await page.mouse.move(edge.x, edge.y + 2);
+  await expect(grid).toHaveCSS("cursor", "move");
+  const grip = (await page.getByTestId("sheet-fill-handle").boundingBox())!;
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await expect(grid).not.toHaveCSS("cursor", "move");
+  await expect(page.getByTestId("sheet-fill-handle")).toHaveCSS("cursor", "crosshair");
+});
+
+test("external HTML is inert, and a paste or fill over 1,000,000 cells is refused (AC-8, AC-61)", async ({ page }) => {
+  const dialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    dialogs.push(dialog.message());
+    void dialog.dismiss();
+  });
+  await open(page, FILL_FIXTURE);
+  await writeClipboard(page, {
+    "text/html":
+      `<table><tr><td><script>window.spec125Ran=1</script>s</td>` +
+      `<td><img src="http://example.invalid/a.png" onerror="window.spec125Ran=2">i</td>` +
+      `<td style="background:url(http://example.invalid/b.png)">st</td>` +
+      `<td><a href="javascript:window.spec125Ran=3">j</a></td>` +
+      `<td><iframe src="http://example.invalid/"></iframe>f</td>` +
+      `<td onmouseover="window.spec125Ran=4">o</td></tr></table>`,
+    "text/plain": "x",
+  });
+  await clickCell(page, "A30");
+  await page.keyboard.press("ControlOrMeta+v");
+  for (const [ref, text] of [["A30", "s"], ["B30", "i"], ["C30", "st"], ["D30", "j"], ["E30", "f"], ["F30", "o"]] as const) {
+    await expect(cell(page, ref)).toHaveText(text);
+  }
+  await page.mouse.move((await centre(page, "F30")).x, (await centre(page, "F30")).y);
+  expect(await page.evaluate(() => (window as unknown as { spec125Ran?: number }).spec125Ran)).toBeUndefined();
+  expect(await page.locator('[data-testid="spreadsheet-grid"] img, [data-testid="spreadsheet-grid"] iframe').count()).toBe(0);
+  expect(dialogs).toEqual([]);
+
+  // One value tiled over columns P:Q (2,097,152 cells): refused.
+  const tooMany = "That's too many cells to change at once";
+  await writeClipboard(page, { "text/plain": "z" });
+  await colHeader(page, "P").click();
+  await colHeader(page, "Q").click({ modifiers: ["Shift"] });
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(toast(page, tooMany)).toBeVisible();
+  await expect(cell(page, "P1")).toHaveText("");
+  // A table whose spans cover 20,000,000 cells: refused (a fresh view, so
+  // the toast is this paste's).
+  await open(page, FILL_FIXTURE);
+  await writeClipboard(page, { "text/html": `<table><tr><td rowspan="20000" colspan="1000">x</td></tr></table>`, "text/plain": "x" });
+  await clickCell(page, "A25");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(toast(page, tooMany)).toBeVisible();
+  await expect(cell(page, "A25")).toHaveText("");
+  // Fill down over columns A:B of spec116-wide.ods (used to row 900,000): refused.
+  await open(page, join(fixtures, "spec116-wide.ods"));
+  await colHeader(page, "A").click();
+  await colHeader(page, "B").click({ modifiers: ["Shift"] });
+  await page.keyboard.press("ControlOrMeta+d");
+  await expect(toast(page, tooMany)).toBeVisible();
+});
+
+test("paste special with Skip blanks leaves the destination where the source is blank (AC-50)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  // P1:Q2 holds s1 and s2 on its diagonal; P2 and Q1 are blank.
+  for (const [ref, text] of [["P1", "s1"], ["Q2", "s2"], ["S1", "d"], ["T1", "d"], ["S2", "d"], ["T2", "d"], ["S4", "d"], ["T4", "d"], ["S5", "d"], ["T5", "d"]] as const) {
+    await clickCell(page, ref);
+    await page.keyboard.type(text);
+    await page.keyboard.press("Enter");
+  }
+  await select(page, "P1", "Q2");
+  await page.keyboard.press("ControlOrMeta+c");
+  const dialog = page.getByTestId("sheet-paste-special-dialog");
+  await clickCell(page, "S1");
+  await page.keyboard.press("ControlOrMeta+Shift+v");
+  await page.getByTestId("sheet-paste-special-skip-blanks").check();
+  await page.getByTestId("sheet-paste-special-ok").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cell(page, "S1")).toHaveText("s1");
+  await expect(cell(page, "T1")).toHaveText("d");
+  await expect(cell(page, "S2")).toHaveText("d");
+  await expect(cell(page, "T2")).toHaveText("s2");
+  // Without it, the blanks clear their destinations.
+  await clickCell(page, "S4");
+  await page.keyboard.press("ControlOrMeta+Shift+v");
+  await page.getByTestId("sheet-paste-special-ok").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cell(page, "S4")).toHaveText("s1");
+  await expect(cell(page, "T4")).toHaveText("");
+  await expect(cell(page, "S5")).toHaveText("");
+  await expect(cell(page, "T5")).toHaveText("s2");
 });
