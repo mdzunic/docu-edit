@@ -98,7 +98,9 @@ describe("MediaView — the image editor", () => {
     const { wrapper: view } = await openPhoto();
     expect(byTestId(view, "media-edit-open").text()).toBe("Edit");
     await enterEditor(view);
-    // The viewer gives way to the editor; the Edit action hides; Done leaves.
+    // The viewer gives way to the editor; the Edit action hides — and the
+    // keyboard focus it held lands on the active tool; Done leaves.
+    expect(document.activeElement).toBe(byTestId(view, "tool-crop").element);
     expect(byTestId(view, "media-image").exists()).toBe(false);
     expect(byTestId(view, "media-edit-open").exists()).toBe(false);
     await byTestId(view, "edit-done").trigger("click");

@@ -6,7 +6,7 @@
 // uses). Every control is native and keyboard-operable; the logic is the
 // composables', this file only lays it out.
 // Runtime prop declarations — see AppShell.vue.
-import { computed } from "vue";
+import { computed, nextTick, useTemplateRef, watch } from "vue";
 import { asImageEditor } from "../../views/media/useImageEditor";
 import UiButton from "../ui/UiButton.vue";
 import EditActionBar from "./EditActionBar.vue";
@@ -27,10 +27,26 @@ const props = defineProps({
 
 const e = computed(() => asImageEditor(props.editor));
 const ready = computed(() => e.value.phase.value === "ready");
+
+// The Edit action that opened the editor is gone from the page, so focus
+// would fall to <body>: a keyboard user lands on the active tool instead.
+const root = useTemplateRef("root");
+watch(
+  ready,
+  async (isReady) => {
+    await nextTick();
+    const tool = isReady ? root.value?.querySelector('[role="toolbar"] [aria-pressed="true"]') : null;
+    if (tool instanceof HTMLElement) {
+      tool.focus();
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <section
+    ref="root"
     class="image-editor"
     data-testid="media-edit"
     aria-label="Edit image"
