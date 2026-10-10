@@ -310,6 +310,18 @@ describe("SPEC-125 useSheetClipboard — the cell menu and Paste special", () =>
     expect(h.cellAt(6, 6)?.styleId).toBe(1);
   });
 
+  it("the snapshot rule holds when the read offers no HTML at all", async () => {
+    let flavours: { html?: string; text?: string } = {};
+    const h = harness({ clipboard: { read: async () => asyncClipboard(flavours).read() } as unknown as Clipboard });
+    const data = new FakeData();
+    h.clipboard.onCopy(clipboardEvent(data, h.target));
+    flavours = { text: data.getData("text/plain") };
+    h.select(range(6, 6, 6, 6));
+    h.clipboard.menu("paste");
+    await vi.waitFor(() => expect(h.cellAt(7, 6)?.formula).toBe("G7*10"));
+    expect(h.cellAt(6, 6)?.styleId).toBe(1);
+  });
+
   it("the menu's Copy and Cut fire the native events through execCommand", () => {
     const h = harness();
     const execCommand = vi.fn();

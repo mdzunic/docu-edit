@@ -23,9 +23,10 @@
 //   else pastes as a copy ("Paste"), then selects what it pasted.
 // - The cell menu's Copy and Cut fire the same events through
 //   document.execCommand, as the text product's menu does; its Paste reads
-//   the async API (sheetClipboardIo.ts) — HTML without the attribute whose
-//   text/plain equals this view's last copy's TSV is that copy (SPEC-016's
-//   snapshot rule) — and an unavailable clipboard toasts SPEC-016's message.
+//   the async API (sheetClipboardIo.ts) — HTML without the attribute (or no
+//   HTML) whose text/plain equals this view's last copy's TSV is that copy
+//   (SPEC-016's snapshot rule) — and an unavailable clipboard toasts
+//   SPEC-016's message.
 // - Paste special (Ctrl/Cmd+Shift+V, Ctrl+Alt+V, the Edit and cell menus)
 //   reads the async API — refused: CLIPBOARD_BLOCKED_MESSAGE — and opens
 //   PasteSpecialDialog with what the source can supply ("Paste special").
@@ -168,19 +169,21 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
     }
     const own: Source | null = lastCopy ? { block: blockFromPayload(lastCopy.copy.payload), styleIds: lastCopy.copy.styleIds, own: true } : null;
     const ctx = { locale: deps.locale(), dateSystem: m.dateSystem, canonical: canonicalFormula };
-    if (html) {
-      const attribute = payloadAttribute(html);
-      if (attribute !== null) {
-        if (own && attribute === lastCopy?.attribute) {
-          return own;
-        }
-        const payload = parseClipboardPayload(attribute);
-        if (payload) {
-          return { block: blockFromPayload(payload) };
-        }
-      } else if (viaMenu && own && text !== "" && text === lastCopy?.text) {
+    const attribute = html ? payloadAttribute(html) : null;
+    if (attribute !== null) {
+      if (own && attribute === lastCopy?.attribute) {
         return own;
       }
+      const payload = parseClipboardPayload(attribute);
+      if (payload) {
+        return { block: blockFromPayload(payload) };
+      }
+    } else if (viaMenu && own && text !== "" && text === lastCopy?.text) {
+      // The snapshot rule: HTML without the attribute — or no HTML at all,
+      // as a read may offer — whose text is the last copy's is that copy.
+      return own;
+    }
+    if (html) {
       const imported = importClipboardHtml(html, ctx);
       if (imported !== null) {
         return typeof imported === "string" ? imported : { block: imported };
