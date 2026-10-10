@@ -486,3 +486,56 @@ describe("arrayRangeTouched", () => {
     expect(arrayRangeTouched(model, 0, [range(0, 0, MAX_ROWS - 1, MAX_COLS - 1)])).toBeNull();
   });
 });
+
+describe("SPEC-122 review fixes", () => {
+  it("stores a changed style's interned id even when a row or column lends the same style, leaving only the default 0 absent", () => {
+    const styles: CellStyle[] = [{}, { font: { bold: true } }, { font: { bold: true }, quotePrefix: true }];
+    const model = book([{ index: 0, cells: [{ col: 0, value: "x", styleId: 2 }, { col: 1, value: "y", styleId: 3 }], styleId: 1 }], {
+      styles: [...styles, { quotePrefix: true }],
+    });
+    setCellEntry(model, 0, { row: 0, col: 0 }, value("plain"));
+    expect(cellAt(model, 0, 0)).toEqual({ col: 0, value: "plain", styleId: 1 });
+    const free = book([{ index: 0, cells: [{ col: 0, value: "x", styleId: 1 }] }], { styles: [{}, { quotePrefix: true }] });
+    setCellEntry(free, 0, { row: 0, col: 0 }, value("plain"));
+    expect(cellAt(free, 0, 0)).toEqual({ col: 0, value: "plain" });
+  });
+
+  it("drops the value-bound fields with a changed formula even when its cached value stays", () => {
+    const model = book([{ index: 0, cells: [{ col: 0, value: 5, formula: "A2", preservedAttrs: ' vm="1"', preservedText: "<text:p>5</text:p>" }] }]);
+    setCellEntry(model, 0, { row: 0, col: 0 }, { value: 5, formula: "A3" });
+    expect(cellAt(model, 0, 0)).toEqual({ col: 0, value: 5, formula: "A3" });
+  });
+
+  it("replaces a whole array with plain cells when a Fill covers it, keeping it when the anchor alone is written", () => {
+    const rows = (): Row[] => [
+      { index: 0, cells: [{ col: 0, value: 2, formula: "B1:B2*2", arrayRange: range(0, 0, 1, 0), dynamicArray: true, cm: 1 }] },
+      { index: 1, cells: [{ col: 0, value: 4 }] },
+    ];
+    const whole = book(rows());
+    fillWithEntry(whole, 0, [range(0, 0, 1, 0)], { row: 0, col: 0 }, { value: null, formula: "B1*2" });
+    expect(sheetOf(whole).rows).toEqual([
+      { index: 0, cells: [{ col: 0, value: null, formula: "B1*2" }] },
+      { index: 1, cells: [{ col: 0, value: null, formula: "B2*2" }] },
+    ]);
+    const anchor = book(rows());
+    fillWithEntry(anchor, 0, [range(0, 0), range(5, 5)], { row: 0, col: 0 }, { value: null, formula: "B1:B2*3" });
+    expect(cellAt(anchor, 0, 0)).toEqual({ col: 0, value: null, formula: "B1:B2*3", arrayRange: range(0, 0, 1, 0) });
+    expect(cellAt(anchor, 1, 0)).toEqual({ col: 0, value: 4 });
+  });
+
+  it("removes an emptied row whose only extras are layout caches or an ods row style, keeping one with an outline level", () => {
+    const model = book([
+      { index: 0, cells: [{ col: 0, value: 1 }], sourceAttrs: ' spans="1:3" x14ac:dyDescent="0.25"' },
+      { index: 1, cells: [{ col: 0, value: 1 }], sourceStyleName: "ro1" },
+      { index: 2, cells: [{ col: 0, value: 1 }], sourceAttrs: ' spans="1:3" outlineLevel="1"' },
+    ]);
+    clearContents(model, 0, [range(0, 0, 2, 0)]);
+    expect(sheetOf(model).rows).toEqual([{ index: 2, cells: [], sourceAttrs: ' spans="1:3" outlineLevel="1"' }]);
+  });
+
+  it("judges General by the code a style renders with", () => {
+    expect(isGeneralFormat({ builtinFormatId: 30 })).toBe(true); // a CJK built-in with no entry renders General
+    expect(isGeneralFormat({ builtinFormatId: 30, numberFormat: "0.0" })).toBe(false);
+    expect(isGeneralFormat({ builtinFormatId: 22, numberFormat: "m/d/yyyy h:mm" })).toBe(false);
+  });
+});

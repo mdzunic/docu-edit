@@ -9,7 +9,10 @@
 // a day.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setClock } from "../../core/clock";
-import type { CellValue } from "../model";
+import { entryFromInput, setCellEntry } from "../cells";
+import { getCell } from "../address";
+import type { CellStyle, CellValue } from "../model";
+import { createBlankWorkbook } from "../sheets";
 import { SPREADSHEET_LOCALE_TAGS, SPREADSHEET_LOCALES, type SpreadsheetLocale, type SpreadsheetLocaleTag } from "./locale";
 import { parseInput, type ParsedInput } from "./input";
 
@@ -260,5 +263,32 @@ describe("parseInput — format steering", () => {
       numberFormat: "m/d/yyyy",
       builtinFormatId: 14,
     });
+  });
+});
+
+describe("parseInput — format steering in all six locales (AC-25)", () => {
+  it.each(SPREADSHEET_LOCALE_TAGS)("%s: Text stores verbatim, a percent cell divides a plain number, a suggestion lands on General only", (tag) => {
+    const locale = SPREADSHEET_LOCALES[tag];
+    const d = locale.decimal;
+    for (const text of ["=A1", "42", `1${d}5`, "'x", "TRUE", "2026-10-08", "10%"]) {
+      expect(parseInput(text, locale, "1900", { existingFormat: "@" })).toEqual({ value: text });
+    }
+    expect(parseInput("10", locale, "1900", { existingFormat: "0%" })).toEqual({ value: 0.1 });
+    expect(parseInput(`12${d}5`, locale, "1900", { existingFormat: "0.00%" })).toEqual({ value: 0.125 });
+    expect(parseInput(`0${d}5`, locale, "1900", { existingFormat: "0%" })).toEqual({ value: 0.5 });
+    expect(parseInput("10%", locale, "1900", { existingFormat: "0%" })).toEqual({ value: 0.1, numberFormat: "0%" });
+
+    // The caller (cells.ts) applies the returned format to a General cell only.
+    const model = createBlankWorkbook();
+    const styles: CellStyle[] = [{}, { numberFormat: "0.00" }];
+    model.styles = styles;
+    model.sheets = [{ ...model.sheets[0]!, rows: [{ index: 1, cells: [{ col: 0, value: 1, styleId: 1 }] }] }];
+    setCellEntry(model, 0, { row: 0, col: 0 }, entryFromInput(parseInput("2026-10-08", locale, "1900")));
+    setCellEntry(model, 0, { row: 1, col: 0 }, entryFromInput(parseInput("2026-10-08", locale, "1900", { existingFormat: "0.00" })));
+    const general = getCell(model.sheets[0]!, 0, 0)!;
+    expect(general.value).toBe(OCT_8_2026);
+    expect(model.styles[general.styleId!]).toEqual({ numberFormat: "m/d/yyyy", builtinFormatId: 14 });
+    expect(getCell(model.sheets[0]!, 1, 0)).toEqual({ col: 0, value: OCT_8_2026, styleId: 1 });
+    expect(model.styles[1]).toBe(styles[1]);
   });
 });

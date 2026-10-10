@@ -12,35 +12,49 @@
 //   pipeline's identity diff records nothing. `model.styles` grows only
 //   through internStyle. Marking the sheet dirty is the undo pipeline's job
 //   (SPEC-121's commit), never this module's.
-// - Sparse (invariant 2): a cell left with nothing but `col` and a null
-//   value is removed — any style, formula or preserved field keeps it — and
-//   a row left with no cells and no properties is removed.
+// - Sparse (invariant 2): a cell left with no value, formula, style or
+//   preserved content is removed — any style, formula or preserved field
+//   keeps it (a cell holding only preserved content is content) — and a row
+//   left with no cells and no properties is removed. A row's properties are
+//   what the readers store an empty row for — a height, `hidden`, a
+//   `styleId` — and any unmodelled source attribute other than Excel's
+//   layout caches (`spans`, `x14ac:dyDescent`, which the writer drops); an
+//   ods row's `sourceStyleName` alone is no property (its height is
+//   `heightPt`), so an emptied row reads back the way it is stored.
 // - Styles: the new style is the position's effective style (effectiveStyleId
 //   → cellStyle) with the entry's `numberFormat`/`builtinFormatId` applied
-//   only when that style's format is General (a `numberFormat` without a
+//   only when that style's format is General (isGeneralFormat: the code it
+//   renders with is General — `parseInput` only suggests; this is where the
+//   General-only rule is applied; a `numberFormat` without a
 //   `builtinFormatId` clears it, SPEC-118's rule), `quotePrefix` set when the
-//   entry has it and removed otherwise, and `alignment.wrap` set for
-//   `wrap` — interned through internStyle. An unchanged style keeps the
+//   entry has it and removed otherwise, and `alignment.wrap` set for `wrap` —
+//   interned through internStyle. An unchanged effective style keeps the
 //   cell's `styleId` exactly as it was (absent stays absent); a changed one
-//   equal to what the position inherits (row → column → 0) is not stored.
-// - Drop rules ("Model additions"): a changed value or runs removes
+//   is the interned index, stored on the cell — except the default style 0
+//   where the position inherits 0 anyway (no row or column style), which is
+//   left absent (the same thing to every reader and writer).
+// - Drop rules ("Model additions"): a changed value or runs — or a changed
+//   or removed formula, whose result the cached value was — removes
 //   `sstIndex`, `preservedText` and ` vm="…"` (and `runs`: a changed text on
 //   a rich-text cell stores plain text, an unchanged one keeps its runs); a
 //   changed or removed formula removes `cm`, `dynamicArray`, `dataTableXml`
-//   and `formulaUnparsed`. A literal typed over a data-table anchor replaces
-//   its formula. An unchanged formula keeps the cell's cached value (the
-//   entry of a formula carries no value; recalculation computes it).
+//   and `formulaUnparsed` (the new one is canonical). A literal typed over a
+//   data-table anchor replaces its formula. An unchanged formula keeps the
+//   cell's cached value (the entry of a formula carries no value;
+//   recalculation computes it).
 // - Arrays: entering a formula into an array anchor keeps its `arrayRange`
 //   (an edited dynamic array becomes a legacy array: `cm` and `dynamicArray`
 //   go). An anchor that loses its formula — a literal typed over it, or
 //   Clear contents — loses `arrayRange` too, and the members' cached values
-//   (the array's results) are cleared with it. Editing a member alone is
-//   refused before any command runs (arrayRangeTouched).
+//   (the array's results) are cleared with it; a Fill that writes the anchor
+//   and other cells of its range replaces the whole array with plain cells.
+//   Editing a member alone is refused before any command runs
+//   (arrayRangeTouched).
 // - fillWithEntry writes each target the entry with its formula shifted
 //   relatively by shiftFormula(formula, row − origin.row, col − origin.col);
 //   a merged range receives it in its anchor only; a whole-row or
-//   whole-column target is clipped to the used range (grown to include the
-//   origin, so the active cell is always filled).
+//   whole-column target is clipped to the used range — the used range the
+//   active cell's own entry leaves, so the origin is always filled.
 // - clearContents removes values and formulas of the STORED cells in the
 //   ranges — never iterating empty positions, so a whole column costs its
 //   stored cells — keeping styles, `preservedXml` (notes, annotations) and
@@ -110,13 +124,13 @@ export function cellEntryEquals(a: CellEntry, b: CellEntry): boolean {
   );
 }
 
-/** Whether a style's number format is General: no built-in id (or one that
- * stands for General) and no code other than "General". */
+/** Whether a style's number format is General: the code it renders with
+ * (formatCodeOf's choice — a built-in id with an entry, else `numberFormat`)
+ * is absent or "General". Locale-dependent built-ins are never General, so
+ * the answer is the same in every locale. */
 export function isGeneralFormat(style: Pick<CellStyle, "numberFormat" | "builtinFormatId">): boolean {
-  if (style.builtinFormatId !== undefined) {
-    return BUILTIN_NUMBER_FORMATS[style.builtinFormatId] === "General";
-  }
-  return style.numberFormat === undefined || style.numberFormat.toLowerCase() === "general";
+  const code = (style.builtinFormatId === undefined ? undefined : BUILTIN_NUMBER_FORMATS[style.builtinFormatId]) ?? style.numberFormat;
+  return code === undefined || code.toLowerCase() === "general";
 }
 
 // --- structural helpers -------------------------------------------------------------
@@ -147,13 +161,36 @@ function isEmptyCell(cell: Cell): boolean {
   return Object.keys(record).every((key) => key === "col" || key === "value" || record[key] === undefined);
 }
 
-/** A row storing nothing: no cells and no property. */
-function isEmptyRow(row: Row): boolean {
-  if (row.cells.length > 0) {
+/** Row attributes that are Excel's layout caches, not properties (the xlsx
+ * writer drops them; the reader stores no empty row for them). */
+const ROW_CACHE_ATTRIBUTE = /^(?:spans|(?:[\w.-]+:)?dyDescent)$/;
+const RAW_ATTRIBUTE = /([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')/g;
+
+/** Whether a row's unmodelled source attributes hold anything but layout
+ * caches (an `outlineLevel`, `thickBot` …: content the writer re-emits). */
+function holdsSourceAttributes(attrs: string | undefined): boolean {
+  if (attrs === undefined) {
+    return false;
+  }
+  for (const match of attrs.matchAll(RAW_ATTRIBUTE)) {
+    if (!ROW_CACHE_ATTRIBUTE.test(match[1]!)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** A row storing nothing (see the module header): no cells, no height,
+ * `hidden` or `styleId` (nor any later field), no unmodelled source attribute
+ * but layout caches; an ods row style name alone does not count. */
+export function isEmptyRow(row: Row): boolean {
+  if (row.cells.length > 0 || holdsSourceAttributes(row.sourceAttrs)) {
     return false;
   }
   const record = row as unknown as Record<string, unknown>;
-  return Object.keys(record).every((key) => key === "index" || key === "cells" || record[key] === undefined);
+  return Object.keys(record).every(
+    (key) => key === "index" || key === "cells" || key === "sourceAttrs" || key === "sourceStyleName" || record[key] === undefined,
+  );
 }
 
 const VM_ATTRIBUTE = /\s+vm\s*=\s*(?:"[^"]*"|'[^']*')/g;
@@ -390,7 +427,10 @@ class EntryWriter {
     readonly edits: Edits,
   ) {}
 
-  write(row: number, col: number, entry: CellEntry): void {
+  /** Writes `entry` at a position; `dissolveArray`: the same command writes
+   * other cells of an array anchored here, so the array becomes plain
+   * cells. */
+  write(row: number, col: number, entry: CellEntry, dissolveArray = false): void {
     const cell = getCell(this.sheet, row, col);
     const effectiveId = effectiveStyleId(this.sheet, row, col);
     let outcome = this.styleOutcomes.get(effectiveId);
@@ -400,7 +440,7 @@ class EntryWriter {
     }
     // What the position shows without a style of its own (row → column → 0).
     const inheritedId = findRow(this.sheet, row)?.styleId ?? columnSpanAt(this.sheet.columns, col)?.styleId ?? 0;
-    const next = entryCell(cell, col, entry, outcome, inheritedId);
+    const next = entryCell(cell, col, entry, outcome, inheritedId, dissolveArray);
     if (cell?.arrayRange && next?.arrayRange === undefined) {
       this.memberClears.push(cell.arrayRange);
     }
@@ -409,10 +449,17 @@ class EntryWriter {
 }
 
 /** The cell an entry leaves (see the module header): `cell` itself when
- * nothing changes, undefined when it stores nothing. A changed style equal
- * to the one the position inherits (`inheritedId`) is left to inheritance
- * rather than stored on the cell. */
-function entryCell(cell: Cell | undefined, col: number, entry: CellEntry, style: StyleOutcome, inheritedId: number): Cell | undefined {
+ * nothing changes, undefined when it stores nothing. A changed style is the
+ * interned index, left absent only when it is the default 0 the position
+ * inherits anyway (`inheritedId`). */
+function entryCell(
+  cell: Cell | undefined,
+  col: number,
+  entry: CellEntry,
+  style: StyleOutcome,
+  inheritedId: number,
+  dissolveArray: boolean,
+): Cell | undefined {
   const formula = entry.formula;
   const formulaChanged = formula !== cell?.formula || cell?.dataTableXml !== undefined;
   // An unchanged formula keeps its cached result.
@@ -431,11 +478,17 @@ function entryCell(cell: Cell | undefined, col: number, entry: CellEntry, style:
       delete next.arrayRange;
     }
   }
-  if (valueChanged) {
+  if (dissolveArray && next.arrayRange !== undefined) {
+    delete next.arrayRange;
+    dropFormulaBound(next);
+  }
+  // A changed formula's cached value was its old result: what is bound to
+  // the value goes with it, as with a changed literal.
+  if (valueChanged || formulaChanged) {
     dropValueBound(next);
   }
   if (!style.keep) {
-    if (style.styleId === inheritedId) {
+    if (style.styleId === 0 && inheritedId === 0) {
       delete next.styleId;
     } else {
       next.styleId = style.styleId;
@@ -511,7 +564,8 @@ function clipWhole(range: GridRange, bounds: GridRange | null): GridRange | null
 }
 
 /** The ranges a Fill writes: whole rows and columns clipped to the used
- * range grown to include `origin`. */
+ * range the origin's own entry leaves — the used range grown to include
+ * `origin`, so the active cell is always filled. */
 export function fillTargets(sheet: Sheet, ranges: readonly GridRange[], origin: CellRef): GridRange[] {
   const used = usedRange(sheet);
   const bounds: GridRange = used
@@ -530,6 +584,20 @@ function positionKey(row: number, col: number): number {
   return row * MAX_COLS + col;
 }
 
+/** Whether `ranges` hold a cell of `array` other than its anchor. */
+function touchesBeyondAnchor(ranges: readonly GridRange[], array: GridRange): boolean {
+  return ranges.some((range) => {
+    if (!rangesIntersect(range, array)) {
+      return false;
+    }
+    const top = Math.max(range.top, array.top);
+    const left = Math.max(range.left, array.left);
+    const bottom = Math.min(range.bottom, array.bottom);
+    const right = Math.min(range.right, array.right);
+    return !(top === array.top && left === array.left && bottom === array.top && right === array.left);
+  });
+}
+
 /** Ctrl/Cmd+Enter: writes `entry` into every target, its formula shifted
  * relatively from `origin` (see the module header). */
 export function fillWithEntry(model: SpreadsheetModel, sheetIndex: number, ranges: GridRange[], origin: CellRef, entry: CellEntry): void {
@@ -540,7 +608,8 @@ export function fillWithEntry(model: SpreadsheetModel, sheetIndex: number, range
   const merges = buildMergeIndex(sheet.merges);
   const writer = new EntryWriter(model, sheet, new Map());
   const written = new Set<number>();
-  for (const range of fillTargets(sheet, ranges, origin)) {
+  const targets = fillTargets(sheet, ranges, origin);
+  for (const range of targets) {
     for (const { row, col } of positions(range)) {
       const merge = mergeAt(merges, row, col);
       if ((merge && (merge.top !== row || merge.left !== col)) || written.has(positionKey(row, col))) {
@@ -548,7 +617,8 @@ export function fillWithEntry(model: SpreadsheetModel, sheetIndex: number, range
       }
       written.add(positionKey(row, col));
       const formula = entry.formula === undefined ? undefined : shiftFormula(entry.formula, row - origin.row, col - origin.col);
-      writer.write(row, col, formula === undefined ? entry : { ...entry, formula });
+      const array = getCell(sheet, row, col)?.arrayRange;
+      writer.write(row, col, formula === undefined ? entry : { ...entry, formula }, array !== undefined && touchesBeyondAnchor(targets, array));
     }
   }
   clearMembers(sheet, writer.memberClears, writer.edits, (row, col) => written.has(positionKey(row, col)));
@@ -740,18 +810,7 @@ export function arrayRangeTouched(model: SpreadsheetModel, sheetIndex: number, r
     return null;
   }
   for (const array of arraysOf(sheet)) {
-    const touchesMember = ranges.some((range) => {
-      if (!rangesIntersect(range, array)) {
-        return false;
-      }
-      const top = Math.max(range.top, array.top);
-      const left = Math.max(range.left, array.left);
-      const bottom = Math.min(range.bottom, array.bottom);
-      const right = Math.min(range.right, array.right);
-      // Anything but exactly the anchor cell.
-      return !(top === array.top && left === array.left && bottom === array.top && right === array.left);
-    });
-    if (touchesMember && !covers(ranges, array)) {
+    if (touchesBeyondAnchor(ranges, array) && !covers(ranges, array)) {
       return array;
     }
   }

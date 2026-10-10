@@ -3,14 +3,18 @@
 // Clear contents runs inside its undo step. SPEC-124's AutoFit commands
 // reuse autofitRowHeightPt (and add autofitColumnWidthPx beside it).
 //
-// - A row is as tall as its tallest stored cell. A cell is one line of its
-//   font per explicit "\n" line (unwrapped text never wraps otherwise);
-//   wrapped text (alignment.wrap) wraps greedily at word boundaries — a word
-//   wider than the line breaks between characters — at the column width
-//   (the covering span's widthPx, else the sheet default) less
-//   WRAP_PADDING_PX; rotated text (1–180) takes the height of its lines'
-//   bounding box rotated by the angle (91–180: clockwise by r − 90);
-//   stacked text (255) is its longest line's characters × the line height.
+// - autofitRowHeightPt: a row is as tall as its tallest stored cell. A cell
+//   unwrapped is one line of its font — one per explicit "\n" line, as the
+//   grid shows them (`white-space: pre`); wrapped text wraps greedily at word
+//   boundaries — a word wider than the line breaks between characters, as
+//   Excel's does — at the column width (the covering span's widthPx, else
+//   the sheet default) less WRAP_PADDING_PX (5); rotated text (1–180) takes
+//   the height of its lines' bounding box rotated by the angle (91–180:
+//   clockwise by r − 90, as the grid draws it); stacked text (255) is its
+//   longest line's characters × the line height. "Wrapped" is the grid's
+//   rule (cellRender.ts): `alignment.wrap`, or a justify/distributed
+//   horizontal or vertical alignment — and only text wraps: a number,
+//   boolean or error shows on one line (Excel shows # rather than wrap one).
 //   A rich-text run in a larger font raises the cell's line height. Cells in
 //   a merged range are skipped (Excel's rule: autofit ignores merges).
 // - The text measured is what the cell displays: SPEC-118's formatValue
@@ -22,20 +26,22 @@
 // - px → pt is × 0.75, rounded UP to a 0.75 pt step (one whole px), never
 //   below the sheet's defaultRowHeightPt.
 // - refitRows is the automatic refit: for the stored rows without
-//   `customHeight` in `ranges` that hold a stored non-empty cell there — or
-//   carry a height of their own, so a row whose content was cleared shrinks
-//   back — up to AUTOFIT_MAX_ROWS_PER_COMMAND of them in row order, it sets
-//   `heightPt` copy-on-write (absent when it equals the default; a changed
-//   height drops the row's ods `sourceStyleName`, the drop rule) and never
+//   `customHeight` in `ranges` that hold a stored non-empty cell (a value or
+//   a formula) there — and, so that a row Clear contents emptied shrinks
+//   back (AC: every row a commit, Fill or Clear contents touched refits), the
+//   ones there that carry a height of their own — up to
+//   AUTOFIT_MAX_ROWS_PER_COMMAND of them in row order, it sets `heightPt`
+//   copy-on-write (absent when it equals the default; a changed height drops
+//   the row's ods `sourceStyleName`, the drop rule) and never
 //   `customHeight`. A row whose height does not change keeps its identity; a
-//   row left with no cells and no properties is removed.
+//   row left storing nothing (cells.ts isEmptyRow) is removed.
 // - Measuring is injected (CellTextMeasurer): the view's canvas measurer
 //   (src/views/spreadsheet/cellMeasurer.ts), or fixedMeasurer in tests.
 import { DEFAULT_THEME, resolveFont } from "../core/theme";
 import { findRow, type GridRange } from "./address";
-import { replaceRows } from "./cells";
+import { isEmptyRow, replaceRows } from "./cells";
 import { buildMergeIndex, mergeAt, type MergeIndex } from "./merges";
-import type { Cell, CellFont, Row, Sheet, SpreadsheetModel } from "./model";
+import type { Cell, CellAlignment, CellFont, Row, Sheet, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
 import { formatValue, plainText, type FormatContext } from "./numberFormat/render";
 import { cellStyle, columnSpanAt, effectiveStyleId } from "./styles";
@@ -116,6 +122,21 @@ function wrappedLineCount(paragraph: string, availablePx: number, font: Measured
   return count + 1;
 }
 
+/** Whether an alignment wraps text: `wrap`, or a justified/distributed
+ * alignment (which Excel always wraps) — the grid's rule (cellRender.ts). */
+function wrapsText(alignment: CellAlignment | undefined): boolean {
+  if (!alignment) {
+    return false;
+  }
+  return (
+    alignment.wrap === true ||
+    alignment.horizontal === "justify" ||
+    alignment.horizontal === "distributed" ||
+    alignment.vertical === "justify" ||
+    alignment.vertical === "distributed"
+  );
+}
+
 /** The text a cell displays (formula cells: their value). */
 function displayText(cell: Cell, code: string | undefined, ctx: FormatContext): string {
   return plainText(formatValue(cell.value, code, { ...ctx, widthPx: undefined }));
@@ -143,7 +164,7 @@ function cellHeightPx(model: SpreadsheetModel, sheet: Sheet, row: number, cell: 
     const angle = ((rotation <= 90 ? rotation : rotation - 90) * Math.PI) / 180;
     return Math.abs(width * Math.sin(angle)) + Math.abs(height * Math.cos(angle));
   }
-  if (style.alignment?.wrap) {
+  if (typeof cell.value === "string" && wrapsText(style.alignment)) {
     const columnPx = columnSpanAt(sheet.columns, cell.col)?.widthPx ?? sheet.defaultColWidthPx;
     const available = Math.max(1, columnPx - WRAP_PADDING_PX);
     let count = 0;
@@ -246,8 +267,7 @@ export function refitRows(model: SpreadsheetModel, sheetId: string, ranges: Grid
       next.heightPt = heightPt;
     }
     delete next.sourceStyleName;
-    const empty = next.cells.length === 0 && Object.entries(next).every(([key, value]) => key === "index" || key === "cells" || value === undefined);
-    replaced.set(row.index, empty ? undefined : next);
+    replaced.set(row.index, isEmptyRow(next) ? undefined : next);
   }
   if (replaced.size > 0) {
     replaceRows(model, sheetIndex, replaced);

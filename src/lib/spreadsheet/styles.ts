@@ -74,7 +74,18 @@ export function cellStyle(model: Pick<SpreadsheetModel, "styles">, id: number): 
   return (Number.isInteger(id) && id >= 0 ? styles[id] : undefined) ?? styles[0]!;
 }
 
-// --- SPEC-122: interning -------------------------------------------------------------------
+// --- SPEC-122: interning (THE normative source for internStyle) -----------------------------
+// internStyle(model, style): the key is the style as JSON with keys sorted
+// (at every level) and `sourceXf`/`sourceStyleName` omitted, an absent and an
+// undefined field alike; the key → index table is cached in a WeakMap keyed
+// by the `styles` array (arrays are replaced, never mutated, so a table never
+// goes stale). An equal entry's index is returned — a source-backed one
+// (`sourceXf`/`sourceStyleName`) first, else the first equal one — else
+// `model.styles = [...model.styles, style]` and the new index. An appended
+// entry never carries `sourceXf`/`sourceStyleName`: a style equal to no
+// entry is not the source's, so a style passed with them (a source style
+// copied and changed) is appended without them, and the writers never
+// mistake it for the source entry. Entries are immutable once interned.
 
 /** A style's interning key: the style as JSON with keys sorted at every
  * level, `sourceXf`/`sourceStyleName` omitted (where a style was read from
@@ -136,7 +147,11 @@ export function internStyle(model: Pick<SpreadsheetModel, "styles">, style: Cell
   if (found !== undefined) {
     return found;
   }
-  const { sourceXf: _xf, sourceStyleName: _name, ...fresh } = style;
+  let fresh = style;
+  if (isSourceBacked(style)) {
+    const { sourceXf: _xf, sourceStyleName: _name, ...rest } = style;
+    fresh = rest;
+  }
   const next = [...styles, fresh];
   const nextTable = new Map(table);
   nextTable.set(key, next.length - 1);

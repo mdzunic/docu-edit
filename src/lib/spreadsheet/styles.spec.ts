@@ -232,6 +232,19 @@ describe("SPEC-122 internStyle: structural equality, copy-on-write appends", () 
     expect(model.styles).toHaveLength(2);
   });
 
+  it("appends the style object itself when it names no source, and caches per styles array", () => {
+    const model = { styles: [{}] as CellStyle[] };
+    const style: CellStyle = { borders: { top: { style: "thin" } }, font: { italic: true } };
+    expect(internStyle(model, style)).toBe(1);
+    expect(model.styles[1]).toBe(style);
+    const appended = model.styles;
+    // Another array with the same entries has its own table and answers alike.
+    const copy = { styles: [...appended] };
+    expect(internStyle(copy, { font: { italic: true }, borders: { top: { style: "thin" } } })).toBe(1);
+    expect(copy.styles).toHaveLength(2);
+    expect(styleKey({ font: { sizePt: 11, bold: true } })).toBe(styleKey({ font: { bold: true, sizePt: 11 } }));
+  });
+
   it("treats an absent field and an undefined one alike", () => {
     const model = { styles: [{}, { numberFormat: "@" }] as CellStyle[] };
     expect(internStyle(model, { numberFormat: "@", quotePrefix: undefined })).toBe(1);
