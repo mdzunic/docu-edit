@@ -8,6 +8,7 @@ import type { DocumentTheme } from "../core/theme";
 import { colToLetters } from "./address";
 import { SpreadsheetOpenError } from "./errors";
 import { MAX_WORKBOOK_CELLS, type CalcSettings, type CellStyle, type PackageVariant, type Sheet } from "./model";
+import type { NamedCellStyle } from "./styles";
 
 export interface ParsedSpreadsheet {
   sheets: Sheet[];
@@ -26,6 +27,8 @@ export interface ParsedSpreadsheet {
   calc?: CalcSettings;
   /** SPEC-122: the workbook's structure is protected. */
   structureProtected?: true;
+  /** SPEC-123: the named cell styles (absent: the file defines none). */
+  namedStyles?: NamedCellStyle[];
 }
 
 /** Counts stored cells across every sheet of one read against

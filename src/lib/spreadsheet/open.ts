@@ -332,6 +332,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   if (parsed.structureProtected) {
     model.structureProtected = true;
   }
+  if (parsed.namedStyles !== undefined && parsed.namedStyles.length > 0) {
+    model.namedStyles = parsed.namedStyles;
+  }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
 }

@@ -38,6 +38,7 @@ import type { OpaquePart } from "../core/packageParts";
 import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "../core/theme";
 import type { CellRef, GridRange } from "./address";
 import type { SheetSelection } from "./selection";
+import type { NamedCellStyle } from "./styles";
 
 export type SpreadsheetFormat = "xlsx" | "ods"; // SPEC-126 widens with "csv" | "tsv"
 export type PackageVariant = "macroEnabled" | "template" | "macroEnabledTemplate";
@@ -289,8 +290,11 @@ export interface Sheet {
   // --- SPEC-122 ---
   /** The sheet is protected (xlsx `sheetProtection@sheet="1"`, ods
    *  `table:protected="true"`): a locked cell refuses entry. Read only — the
-   *  protection XML stays in the retained source, never changed. */
-  protection?: { sheet: true };
+   *  protection XML stays in the retained source, never changed. SPEC-123
+   *  adds what the protection still permits: xlsx `formatCells="0"`,
+   *  `formatColumns="0"` and `formatRows="0"` (ods has no equivalent), which
+   *  let formatting reach locked cells of the matching range class. */
+  protection?: { sheet: true; allowFormatCells?: true; allowFormatColumns?: true; allowFormatRows?: true };
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -353,6 +357,11 @@ export interface SpreadsheetModel {
    *  `office:spreadsheet@table:structure-protected="true"`): the sheet
    *  commands are disabled. Read only, never written. */
   structureProtected?: true;
+  // --- SPEC-123 ---
+  /** The workbook's named cell styles, in file order (styles.ts
+   *  "Named cell styles"); a built-in applied for the first time is appended
+   *  and stays (undo never removes one — an unused definition is harmless). */
+  namedStyles?: NamedCellStyle[];
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or
