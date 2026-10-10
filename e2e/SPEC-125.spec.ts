@@ -30,7 +30,9 @@ import { unzip } from "../src/lib/core/zip";
 // copy by its text (AC-21); LibreOffice's HTML, and plain text over a styled
 // cell (AC-57, AC-64); date and counter series, and Fill down/right of one
 // row and one column (AC-73, AC-76, AC-88); the row refit after pastes and
-// a fill (AC-96).
+// a fill (AC-96); and a cut moving once — #REF! for overwritten cells,
+// moved formulas unshifted, merges and arrays moving (AC-40, AC-42, AC-43,
+// AC-44).
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const EXCEL_CAPTURE = join(fixtures, "spec125-clipboard", "excel.html");
@@ -645,4 +647,61 @@ test("pastes and fills refit the rows they write (AC-96)", async ({ page }) => {
   await page.keyboard.press("ControlOrMeta+z");
   await expect(cell(page, "A33")).toHaveText("");
   await expect.poll(() => rowHeight(page, 33)).toBe(normal);
+});
+
+test("a cut moves once: references to overwritten cells become #REF!, moved formulas keep their references, merges and arrays move (AC-40, AC-42, AC-43, AC-44)", async ({ page }) => {
+  await open(page, FILL_FIXTURE);
+  const ants = page.getByTestId("sheet-copy-marquee");
+  // B3:C3 (=B2*2, =B2+C2) moved to E20: their references, outside what
+  // moved, stay as they were — not shifted as a copy would be.
+  await select(page, "B3", "C3");
+  await page.keyboard.press("ControlOrMeta+x");
+  await clickCell(page, "E20");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "B3")).toHaveText("");
+  await clickCell(page, "E20");
+  await expect(formulaBar(page)).toHaveText("=B2*2");
+  await clickCell(page, "F20");
+  await expect(formulaBar(page)).toHaveText("=B2+C2");
+
+  // A10:A12 moved onto B1:B3 overwrites B2, which Sheet2!A2 read: #REF!.
+  await select(page, "A10", "A12");
+  await page.keyboard.press("ControlOrMeta+x");
+  await clickCell(page, "B1");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "B2")).toHaveText("6");
+  await expect(cell(page, "A10")).toHaveText("");
+  await expect(ants).toHaveCount(0);
+  // The cut pasted once: pasting again lands a copy and moves nothing.
+  await clickCell(page, "H20");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "H21")).toHaveText("6");
+  await expect(cell(page, "B2")).toHaveText("6");
+  await sheetTab(page, "Sheet2").click();
+  await clickCell(page, "A2");
+  await expect(formulaBar(page)).toHaveText("=Sheet1!#REF!*3");
+  await clickCell(page, "A1");
+  await expect(formulaBar(page)).toHaveText("=SUM(Sheet1!B1:B3)");
+  await sheetTab(page, "Sheet1").click();
+
+  // The merge E1:F1 moves to E30 whole.
+  await clickCell(page, "E1");
+  await page.keyboard.press("ControlOrMeta+x");
+  await clickCell(page, "E30");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "E30")).toHaveText("Merged");
+  await expect(cell(page, "E30")).toHaveAttribute("aria-colspan", "2");
+  await expect(cell(page, "E1")).toHaveText("");
+  await expect(cell(page, "E1")).not.toHaveAttribute("aria-colspan", "2");
+
+  // spec119-formulas.xlsx's array E2:E4 ({=A2:A4*2}) moves to E20 whole.
+  await open(page, join(fixtures, "spec119-formulas.xlsx"));
+  await select(page, "E2", "E4");
+  await page.keyboard.press("ControlOrMeta+x");
+  await clickCell(page, "E20");
+  await page.keyboard.press("ControlOrMeta+v");
+  await expect(cell(page, "E21")).toHaveText("2");
+  await clickCell(page, "E21");
+  await expect(formulaBar(page)).toHaveText("{=A2:A4*2}");
+  await expect(cell(page, "E2")).toHaveText("");
 });
