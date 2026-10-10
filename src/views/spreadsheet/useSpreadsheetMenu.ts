@@ -6,13 +6,17 @@
 // `showGridLines` as view state (useSheetViewState); Show formulas toggles
 // the sheet's `showFormulas` (useFormulaDisplay, SPEC-119); the zoom items
 // step or set the sheet's zoom (useSheetZoom); Data ▸ Recalculate runs a full
-// recalculation (useRecalc, SPEC-120). Later specs append commands here.
+// recalculation (useRecalc, SPEC-120). SPEC-121: Edit ▸ Undo/Redo step the
+// workbook's undo stack, and File ▸ Download and "Download a copy as …" are
+// useWorkbookDownload's (through useWorkbookEditing) — the bar's state carries
+// their enabled states and labels. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { Recalc } from "./useRecalc";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
+import type { WorkbookEditing } from "./useWorkbookEditing";
 
 export interface SpreadsheetMenuDeps {
   book: { download(): void; close(): void };
@@ -22,6 +26,8 @@ export interface SpreadsheetMenuDeps {
   formulas?: Pick<FormulaDisplay, "showFormulas" | "toggle">;
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
+  /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar">;
 }
 
 export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
@@ -33,6 +39,14 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       showFormulas: deps.formulas?.showFormulas.value === true,
       zoomPercent: deps.zoom.percent.value,
       hasGrid: deps.viewState.activeSheet.value?.kind === "grid",
+      ...(deps.editing?.appBar.value ?? {
+        canUndo: false,
+        canRedo: false,
+        undoLabel: "",
+        redoLabel: "",
+        copyLabel: "Download a copy as …",
+        copyDisabledReason: "",
+      }),
     }),
   );
 
@@ -49,7 +63,20 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
     }
     switch (command) {
       case SHEET_MENU_COMMANDS.download:
-        deps.book.download();
+        if (deps.editing) {
+          deps.editing.download.download();
+        } else {
+          deps.book.download();
+        }
+        break;
+      case SHEET_MENU_COMMANDS.downloadCopy:
+        deps.editing?.download.downloadCopy();
+        break;
+      case SHEET_MENU_COMMANDS.undo:
+        deps.editing?.undo.undo();
+        break;
+      case SHEET_MENU_COMMANDS.redo:
+        deps.editing?.undo.redo();
         break;
       case SHEET_MENU_COMMANDS.close:
         deps.book.close();

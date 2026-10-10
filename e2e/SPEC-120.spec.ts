@@ -71,7 +71,7 @@ test("spec120-calc.xlsx trusts its cache, recomputes TODAY at open, reports its 
 
   // The Data menu, after View, ends with Recalculate (F9).
   const titles = page.getByRole("menubar").locator("[data-menu-title]");
-  await expect(titles).toHaveText(["File", "View", "Data"]);
+  await expect(titles).toHaveText(["File", "Edit", "View", "Data"]); // SPEC-121 adds Edit
   await page.getByTestId("menu-title-data").click();
   const recalculate = page.getByTestId("sheet-menu-recalculate");
   await expect(recalculate).toBeVisible();

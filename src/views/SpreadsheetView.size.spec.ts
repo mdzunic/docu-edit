@@ -15,12 +15,15 @@
 //   2026-10-09  107  SPEC-116 opening entry: the ledger opens at the count the
 //                    view lands on, measured as this test measures it — 106
 //                    lines plus the final newline — with no headroom
+//   2026-10-09   99  SPEC-121: the not-found state moved into
+//                    WorkbookNotFound.vue and the editing wiring arrived as
+//                    one useWorkbookEditing call (106 -> 98 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 107;
+const LINE_BUDGET = 99;
 
 describe("SpreadsheetView size budget", () => {
   it(`SpreadsheetView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

@@ -1,33 +1,57 @@
 <script setup lang="ts">
-// The workbook's app-bar cluster (SPEC-116 on SPEC-058's app bar): the
-// format name ("Excel workbook (.xlsx)", …), Download — the file that came
-// in, part for part — and SPEC-060's Close. AppShell's #app-bar-actions slot
-// is where every editor puts its cluster; the title and the format badge are
+// The workbook's app-bar cluster (SPEC-116 on SPEC-058's app bar): SPEC-121's
+// undo/redo pair (`spreadsheet-undo`/`spreadsheet-redo`, tooltips "Undo
+// Rename sheet (⌘Z)"), the format name ("Excel workbook (.xlsx)", …), the
+// split Download — the file in its own format, or "Download a copy as …" the
+// other — and SPEC-060's Close. AppShell's #app-bar-actions slot is where
+// every editor puts its cluster; the title and the format badge are
 // AppShell's own props. Runtime declarations per the espree constraint.
-import UiButton from "../ui/UiButton.vue";
+import UndoRedoControls from "../UndoRedoControls.vue";
 import UiIconButton from "../ui/UiIconButton.vue";
+import SpreadsheetDownloadButton from "./SpreadsheetDownloadButton.vue";
 
 const props = defineProps({
   /** e.g. "Excel workbook (.xlsx)"; empty for a missing workbook. */
   formatLabel: { type: String, default: "" },
+  canUndo: { type: Boolean, default: false },
+  canRedo: { type: Boolean, default: false },
+  /** The step the next undo/redo would report ("Rename sheet"). */
+  undoLabel: { type: String, default: "" },
+  redoLabel: { type: String, default: "" },
+  /** The copy item's text, e.g. "Download a copy as OpenDocument
+   * Spreadsheet (.ods)…". */
+  copyLabel: { type: String, default: "" },
+  /** Why the copy is unavailable; "" when it is available. */
+  copyDisabledReason: { type: String, default: "" },
 });
 
-const emit = defineEmits(["download", "close"]);
+const emit = defineEmits(["undo", "redo", "download", "download-copy", "close"]);
 </script>
 
 <template>
   <div class="workbook-actions">
     <template v-if="props.formatLabel">
+      <UndoRedoControls
+        class="workbook-undo-redo"
+        :can-undo="props.canUndo"
+        :can-redo="props.canRedo"
+        :undo-label="props.undoLabel"
+        :redo-label="props.redoLabel"
+        undo-testid="spreadsheet-undo"
+        redo-testid="spreadsheet-redo"
+        @undo="emit('undo')"
+        @redo="emit('redo')"
+      />
       <span
         class="workbook-format"
         data-testid="spreadsheet-format"
       >{{ props.formatLabel }}</span>
-      <UiButton
-        data-testid="spreadsheet-download"
-        @click="emit('download')"
-      >
-        Download
-      </UiButton>
+      <SpreadsheetDownloadButton
+        :copy-label="props.copyLabel"
+        :copy-disabled-reason="props.copyDisabledReason"
+        @download="emit('download')"
+        @download-copy="emit('download-copy')"
+      />
     </template>
     <UiIconButton
       class="close-button"
@@ -63,18 +87,27 @@ const emit = defineEmits(["download", "close"]);
   white-space: nowrap;
 }
 
-/* On the brand bar the icon button takes the on-brand foreground and a
-   translucent wash, the treatment every editor's Close gets. */
-.workbook-actions .close-button {
+/* On the brand bar the icon buttons — Close and the undo/redo pair — take
+   the on-brand foreground and a translucent wash, the treatment every
+   editor's Close gets. The pair's toolbar captions are dropped: the bar is a
+   row of bare icons, each named by its tooltip. */
+.workbook-actions .close-button,
+.workbook-undo-redo :deep(.ui-icon-button) {
   color: var(--text-on-brand);
 }
 
-.workbook-actions .close-button:not(:disabled):hover {
+.workbook-undo-redo {
+  --toolbar-caption-display: none;
+}
+
+.workbook-actions .close-button:not(:disabled):hover,
+.workbook-undo-redo :deep(.ui-icon-button:not(:disabled):hover) {
   color: var(--text-on-brand);
   background: color-mix(in srgb, var(--text-on-brand) 12%, transparent);
 }
 
-.workbook-actions .close-button:not(:disabled):active {
+.workbook-actions .close-button:not(:disabled):active,
+.workbook-undo-redo :deep(.ui-icon-button:not(:disabled):active) {
   background: color-mix(in srgb, var(--text-on-brand) 20%, transparent);
 }
 </style>

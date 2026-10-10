@@ -711,7 +711,7 @@ describe("SpreadsheetView recalculation (SPEC-120)", () => {
 
     // The Data menu, after View: a separator, then Recalculate with its F9 hint.
     const titles = wrapper.get('[role="menubar"]').findAll("[data-menu-title]").map((title) => title.text());
-    expect(titles).toEqual(["File", "View", "Data"]);
+    expect(titles).toEqual(["File", "Edit", "View", "Data"]); // SPEC-121 adds Edit
     await wrapper.get('[data-testid="menu-title-data"]').trigger("click");
     const recalculate = wrapper.get('[data-testid="sheet-menu-recalculate"]');
     expect(recalculate.text()).toContain("Recalculate");
@@ -732,5 +732,94 @@ describe("SpreadsheetView recalculation (SPEC-120)", () => {
     await recalculate.trigger("click");
     await flushPromises();
     expect(text("B2")).toBe("6");
+  });
+});
+
+/** Tab names in order. */
+function names(wrapper: Finder): string[] {
+  return wrapper.findAll('[data-testid="sheet-tab"]').map((tab) => tab.text());
+}
+
+describe("SpreadsheetView sheet management (SPEC-121)", () => {
+  it("adds a sheet, renames it in place, and undoes and redoes through the app bar, the Edit menu and the keyboard", async () => {
+    const { store, mountSheets } = await loadModules();
+    const model = handBuiltBook([gridSheet("Sheet1", [[0, 0, "a"]])]);
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+
+    await wrapper.get('[data-testid="sheet-add"]').trigger("click");
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["Sheet1", "Sheet2"]);
+    expect(wrapper.get('[data-testid="spreadsheet-undo"]').attributes("title")).toContain("Undo Add sheet");
+
+    // Rename in place: an invalid name keeps the input open with its message.
+    await wrapper.findAll('[data-testid="sheet-tab"]')[1]!.trigger("dblclick");
+    const input = wrapper.get('[data-testid="sheet-tab-rename-input"]');
+    await input.setValue("Sheet1");
+    await input.trigger("keydown", { key: "Enter" });
+    expect(wrapper.get('[data-testid="sheet-name-error"]').text()).toBe('There\'s already a sheet called "Sheet1"');
+    await wrapper.get('[data-testid="sheet-tab-rename-input"]').setValue("Budget");
+    await wrapper.get('[data-testid="sheet-tab-rename-input"]').trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["Sheet1", "Budget"]);
+
+    await wrapper.get('[data-testid="spreadsheet-undo"]').trigger("click");
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["Sheet1", "Sheet2"]);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true }));
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["Sheet1"]);
+    await wrapper.get('[data-testid="menu-title-edit"]').trigger("click");
+    await wrapper.get('[data-testid="sheet-menu-redo"]').trigger("click");
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["Sheet1", "Sheet2"]);
+    expect(store.getSpreadsheet(model.id)?.sheets.map((sheet) => sheet.name)).toEqual(["Sheet1", "Sheet2"]);
+  });
+
+  it("opens a tab's menu from the keyboard, disables what cannot apply with a reason, and confirms deleting a sheet with content", async () => {
+    const { store, mountSheets } = await loadModules();
+    const model = handBuiltBook([gridSheet("One", [[0, 0, 1]]), gridSheet("Two", [[0, 0, 2]])]);
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+
+    const first = wrapper.findAll('[data-testid="sheet-tab"]')[0]!;
+    await first.trigger("keydown", { key: "F10", shiftKey: true });
+    await flushPromises();
+    const menu = wrapper.get('[data-testid="sheet-tab-menu"]');
+    const moveLeft = menu.get('[data-testid="sheet-tab-menu-move-left"]');
+    expect(moveLeft.attributes("disabled")).toBeDefined();
+    expect(moveLeft.attributes("title")).toBe("This sheet is already first");
+    expect(menu.get('[data-testid="sheet-tab-menu-unhide"]').attributes("title")).toBe("No sheets are hidden");
+    await menu.get('[data-testid="sheet-tab-menu-delete"]').trigger("click");
+    await flushPromises();
+    const dialog = wrapper.get('[data-testid="sheet-tab-delete-dialog"]');
+    expect(dialog.text()).toContain('Delete "One"? Its cells and anything on it will be removed.');
+    await wrapper.get('[data-testid="sheet-tab-delete-confirm"]').trigger("click");
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["Two"]);
+
+    // The last visible sheet cannot be deleted or hidden.
+    await wrapper.findAll('[data-testid="sheet-tab"]')[0]!.trigger("keydown", { key: "F10", shiftKey: true });
+    await flushPromises();
+    expect(wrapper.get('[data-testid="sheet-tab-menu-delete"]').attributes("title")).toBe("A workbook must keep at least one visible sheet");
+    expect(wrapper.get('[data-testid="sheet-tab-menu-hide"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("unhides hidden — never very hidden — sheets through the dialog, the last chosen becoming active", async () => {
+    const { store, mountSheets } = await loadModules();
+    const model = bookWithHiddenSheets();
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+
+    await wrapper.findAll('[data-testid="sheet-tab"]')[0]!.trigger("contextmenu");
+    await wrapper.get('[data-testid="sheet-tab-menu-unhide"]').trigger("click");
+    await flushPromises();
+    const options = wrapper.findAll('[data-testid="sheet-unhide-option"]');
+    expect(options.map((option) => option.text())).toEqual(["Stash"]);
+    await options[0]!.trigger("click");
+    await wrapper.get('[data-testid="sheet-unhide-confirm"]').trigger("click");
+    await flushPromises();
+    expect(names(wrapper)).toEqual(["One", "Two", "Stash", "Three"]);
+    expect(tabStrip(wrapper)).toContain("Stash:true:0");
   });
 });

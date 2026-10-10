@@ -26,9 +26,15 @@ const props = defineProps({
    * ABOVE the standard palette — ten scheme swatches with five lumMod/lumOff
    * variants each; picking one emits the ThemeColorRef, not its hex. */
   theme: { type: Object, default: null },
+  /** Where the menu opens relative to the trigger: "below" (the toolbar's
+   * dropdown) or "above" — for a picker anchored at the foot of the view,
+   * such as SPEC-121's sheet tab colour. */
+  placement: { type: String, default: "below" },
 });
 
-const emit = defineEmits(["select"]);
+// `close` (SPEC-121): the menu was dismissed without a pick — an outside
+// click, Escape, or the trigger toggling it shut.
+const emit = defineEmits(["select", "close"]);
 
 const open = ref(false);
 const customDraft = ref("");
@@ -45,6 +51,7 @@ const { menuStyle } = useFloatingMenu({
   open: () => open.value,
   anchor: () => triggerEl.value,
   menu: () => menuSurface.value?.$el ?? null,
+  placement: props.placement === "above" ? "above" : "below",
 });
 
 // The runtime Array prop arrives untyped; String() gives the template the
@@ -95,6 +102,9 @@ function toggle() {
   open.value = !open.value;
   customDraft.value = "";
   customInvalid.value = false;
+  if (!open.value) {
+    emit("close");
+  }
 }
 
 // Opened by the Format menu's "Text colour" entry (SPEC-049): the control is
@@ -141,6 +151,10 @@ function handleCustomKeydown(event = new KeyboardEvent("keydown")) {
 // Outside-click and Escape dismissal (and focus return to the trigger) are
 // owned by UiMenuSurface — the shared, tested implementation — so this
 // component no longer hand-rolls a document listener or a root Escape handler.
+function dismiss() {
+  open.value = false;
+  emit("close");
+}
 </script>
 
 <template>
@@ -181,8 +195,11 @@ function handleCustomKeydown(event = new KeyboardEvent("keydown")) {
       role="dialog"
       aria-label="Text colour"
       :style="menuStyle"
-      @dismiss="open = false"
+      @dismiss="dismiss"
     >
+      <!-- SPEC-121: an optional host row at the top of the menu (the sheet
+           tab colour's "No colour"). -->
+      <slot name="extra" />
       <!-- Theme row (SPEC-094): scheme swatches ABOVE the standard palette;
            each stores its ThemeColorRef, so the colour follows the theme. -->
       <template v-if="themeRows.length > 0">

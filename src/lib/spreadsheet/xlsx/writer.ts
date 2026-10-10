@@ -597,7 +597,10 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
           tag = setAttribute(tag, "state", plan.sheet.visibility === "visible" ? null : plan.sheet.visibility);
           return tag;
         }
-        return `<${sheetName} name="${escapeAttributeValue(plan.sheet.name)}" sheetId="${plan.sheetId}"${sheetStateAttr(plan.sheet)} ${relPrefix}id="${plan.rId}"/>`;
+        // A root that binds no prefix to the relationships namespace (an
+        // openpyxl workbook declares it per <sheet>) gets it declared here.
+        const declare = relPrefix === null ? ` xmlns:r="${REL_NS}"` : "";
+        return `<${sheetName} name="${escapeAttributeValue(plan.sheet.name)}" sheetId="${plan.sheetId}"${sheetStateAttr(plan.sheet)}${declare} ${relPrefix ?? "r:"}id="${plan.rId}"/>`;
       })
       .join("");
     const open = sourceSheetsTag.endsWith("/>") ? sourceSheetsTag.replace(/\s*\/>$/, ">") : sourceSheetsTag;
@@ -620,14 +623,14 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
 }
 
 /** The prefix bound to the relationships namespace on the root, colon
- * included (`r:` by default). */
-function relationshipPrefix(rootStartTag: string): string {
+ * included; null when the root binds none. */
+function relationshipPrefix(rootStartTag: string): string | null {
   for (const match of rootStartTag.matchAll(/\sxmlns:([\w.-]+)\s*=\s*"([^"]*)"/g)) {
     if (match[2] === REL_NS || match[2] === "http://purl.oclc.org/ooxml/officeDocument/relationships") {
       return `${match[1]}:`;
     }
   }
-  return "r:";
+  return null;
 }
 
 /** One definedName: its text through the pass; a sheet-scoped name

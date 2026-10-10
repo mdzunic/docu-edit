@@ -30,7 +30,7 @@
 //   their text did not: 3-D references whose span gained, lost or reordered
 //   a sheet, and references to a name that did not exist before.
 import { relsPathFor } from "../core/xml";
-import { DEFAULT_THEME, sameModelColor, type ModelColor } from "../core/theme";
+import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
 import { cellKey, type CellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
@@ -506,6 +506,12 @@ export function setSheetHidden(model: SpreadsheetModel, indices: number[], hidde
   model.structureDirty = true;
   model.activeSheetIndex = activeIndex;
   return { activeIndex, alsoRecalc: [] };
+}
+
+/** A tab colour as the tab bar paints it: hex against the workbook's theme,
+ * "" for none. */
+export function tabColorHex(model: SpreadsheetModel, color: ModelColor | undefined): string {
+  return color === undefined ? "" : resolveColor(color, model.theme ?? DEFAULT_THEME);
 }
 
 /** Tab colour: sets or clears `tabColor` (theme references kept as
