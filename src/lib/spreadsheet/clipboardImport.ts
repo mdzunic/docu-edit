@@ -111,14 +111,36 @@ export function cssDeclarations(text: string): Declarations {
   return out;
 }
 
-/** A `<style>` sheet's `td {…}` and `.class {…}` rules, read as data. */
+/** A `<style>` sheet's `td {…}` and `.class {…}` rules, read as data: a
+ * rule is the text since the last `{`, `}` or `@` before a `{`, and a body
+ * that reaches its `}` with no `{` (an at-rule's own block is no rule).
+ * Found in one linear pass — a regex over hostile, brace-less text
+ * backtracks quadratically. */
 export function cssRules(text: string): { base: Declarations; classes: Map<string, Declarations> } {
   const base: Declarations = new Map();
   const classes = new Map<string, Declarations>();
   const clean = text.replace(/<!--|-->/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ");
-  for (const match of clean.matchAll(/([^{}@]+)\{([^{}]*)\}/g)) {
-    const declarations = cssDeclarations(match[2]!);
-    for (const selector of match[1]!.split(",")) {
+  const rules: [selectors: string, body: string][] = [];
+  let selectorStart = 0;
+  for (let i = 0; i < clean.length; i += 1) {
+    const ch = clean[i];
+    if (ch === "@" || ch === "}") {
+      selectorStart = i + 1;
+    } else if (ch === "{") {
+      let end = i + 1;
+      while (end < clean.length && clean[end] !== "{" && clean[end] !== "}") {
+        end += 1;
+      }
+      if (clean[end] === "}" && i > selectorStart) {
+        rules.push([clean.slice(selectorStart, i), clean.slice(i + 1, end)]);
+        i = end;
+      }
+      selectorStart = i + 1;
+    }
+  }
+  for (const [selectors, body] of rules) {
+    const declarations = cssDeclarations(body);
+    for (const selector of selectors.split(",")) {
       const name = selector.trim().toLowerCase();
       const target = name === "td" ? base : /^\.[\w-]+$/.test(name) ? classes.get(name.slice(1)) ?? new Map<string, string>() : null;
       if (!target) {
@@ -177,9 +199,14 @@ export function cssColor(value: string): string | undefined {
   return CSS_BASIC_COLORS[text] ?? parseColorInput(text);
 }
 
+/** A CSS number with an optional pt/px unit. Its digit runs never overlap
+ * (unlike `\d*\.?\d+`, which backtracks quadratically over a long run of
+ * digits that does not match). */
+const CSS_LENGTH = /^(\d+(?:\.\d+)?|\.\d+)(pt|px)?$/i;
+
 /** A CSS length in points: `pt`, `px` (× 0.75), or a bare number of pt. */
 function lengthPt(value: string): number | undefined {
-  const match = /^(\d*\.?\d+)(pt|px)?$/i.exec(value.trim());
+  const match = CSS_LENGTH.exec(value.trim());
   if (!match) {
     return undefined;
   }
@@ -206,7 +233,7 @@ function cssEdge(value: string): CellBorderEdge | null | undefined {
       style = keyword;
     } else if (token === "solid") {
       style ??= "thin";
-    } else if (/^\d*\.?\d+(pt|px)?$/.test(token)) {
+    } else if (CSS_LENGTH.test(token)) {
       width = lengthPt(token);
       pixels = token.endsWith("px");
     } else if (token === "thin" || token === "medium" || token === "thick") {

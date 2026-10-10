@@ -585,6 +585,14 @@ describe("external sources — each producer's markers (inline snippets)", () =>
     expect(importClipboardHtml("<p>no table</p>", CTX)).toBeNull();
   });
 
+  it("reads hostile CSS in linear time: brace-less style text, long digit runs (quadratic regexes took minutes)", () => {
+    const digits = "1".repeat(100_000);
+    const html =
+      `<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><style>${"a".repeat(400_000)}} @page {margin:1in} .xl65 {font-weight:700}</style></head>` +
+      `<body><table><tr><td class="xl65" style="font-size:${digits}x;border-top:${digits}x solid red">x</td></tr></table></body></html>`;
+    expect(at(imported(html), 0, 0)).toEqual({ v: "x", style: { font: { bold: true }, borders: { top: { style: "thin", color: "#ff0000" } } } });
+  });
+
   it("refuses a table whose spans reach past MAX_COPY_CELLS as it is laid out, never walking them", () => {
     // 20,000 × 1,000 positions: past V8's Set limit, were they ever marked.
     expect(importClipboardHtml('<table><tr><td rowspan="20000" colspan="1000">x</td></tr></table>', CTX)).toBe(TOO_MANY_TO_CHANGE_MESSAGE);
