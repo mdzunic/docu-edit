@@ -395,6 +395,38 @@ describe("buildPdf", () => {
   });
 });
 
+describe("filled rects (SPEC-108)", () => {
+  it("fills a #rrggbb rect beneath the images, flipping y into PDF space", async () => {
+    const pdf = await build({
+      pages: [
+        page({
+          items: [],
+          rects: [{ xPt: 0, yPt: 0, widthPt: 595.28, heightPt: 841.89, fill: "#ff8000" }],
+          images: [imageItem()],
+        }),
+      ],
+      images: imageMap(),
+    });
+    const fill = pdf.indexOf("q 1 0.5 0 rg 0 0 595.28 841.89 re f Q");
+    expect(fill).toBeGreaterThan(-1);
+    expect(fill).toBeLessThan(pdf.indexOf("/Im1 Do"));
+  });
+
+  it("measures a rect from the page top, like an image", async () => {
+    const pdf = await build({
+      pages: [page({ items: [], rects: [{ xPt: 10, yPt: 100, widthPt: 20, heightPt: 50, fill: "#000000" }] })],
+    });
+    expect(pdf).toContain("q 0 0 0 rg 10 691.89 20 50 re f Q");
+  });
+
+  it("paints nothing for a fill that is not #rrggbb, or for a page with no rects", async () => {
+    const pdf = await build({
+      pages: [page({ items: [], rects: [{ xPt: 0, yPt: 0, widthPt: 5, heightPt: 5, fill: "transparent" }] }), page({ items: [] })],
+    });
+    expect(pdf).not.toContain(" re f");
+  });
+});
+
 describe("pdfFileName", () => {
   it("appends .pdf to the trimmed title, falling back when blank", async () => {
     expect(pdfFileName("Report ", "Untitled document")).toBe("Report.pdf");

@@ -112,16 +112,21 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Samples an image at no more than 300 DPI of the size it is printed at:
- * enough for print, and it keeps a huge source photo from becoming a huge
- * PDF. Never upscales past the image's own pixels. */
-function sampleSize(
+/** SPEC-034's sampling ceiling: enough for print. */
+export const DEFAULT_MAX_DPI = 300;
+
+/** Samples an image at no more than `maxDpi` (300 unless the caller asks —
+ * SPEC-108's 600 dpi sheet does) of the size it is printed at: enough for
+ * print, and it keeps a huge source photo from becoming a huge PDF. Never
+ * upscales past the image's own pixels. */
+export function sampleSize(
   naturalWidth: number,
   naturalHeight: number,
   maxWidthPt: number,
   maxHeightPt: number,
+  maxDpi: number = DEFAULT_MAX_DPI,
 ): { width: number; height: number } {
-  const capPx = Math.max(1, Math.ceil((Math.max(maxWidthPt, maxHeightPt) / 72) * 300));
+  const capPx = Math.max(1, Math.ceil((Math.max(maxWidthPt, maxHeightPt) / 72) * maxDpi));
   const longEdge = Math.max(naturalWidth, naturalHeight);
   const scale = longEdge > capPx ? capPx / longEdge : 1;
   return {
@@ -133,11 +138,13 @@ function sampleSize(
 /** Encodes one image for embedding, or null when it cannot be decoded (a
  * broken src must not fail the whole export — the page still exports without
  * it). `maxWidthPt`/`maxHeightPt` are the largest printed size the document
- * gives this image, which sets the sampling ceiling. */
+ * gives this image, which sets the sampling ceiling together with `maxDpi`
+ * (default 300, SPEC-034's cap). */
 export async function encodeImage(
   src: string,
   maxWidthPt: number,
   maxHeightPt: number,
+  maxDpi: number = DEFAULT_MAX_DPI,
 ): Promise<PdfImageData | null> {
   try {
     // A baseline JPEG rides into the PDF as-is.
@@ -161,6 +168,7 @@ export async function encodeImage(
       image.naturalHeight || image.height,
       maxWidthPt,
       maxHeightPt,
+      maxDpi,
     );
     const canvas = document.createElement("canvas");
     canvas.width = width;

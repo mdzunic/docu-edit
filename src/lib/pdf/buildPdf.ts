@@ -114,6 +114,18 @@ export interface PdfPathItem {
   onTop?: boolean;
 }
 
+/** A filled rectangle — SPEC-108's sheet background. Coordinates match
+ * PdfImageItem: the box's top-left, in points from the page's TOP-left.
+ * Rects paint first, beneath every image, path and text item. */
+export interface PdfRectItem {
+  xPt: number;
+  yPt: number;
+  widthPt: number;
+  heightPt: number;
+  /** "#rrggbb"; anything else paints nothing. */
+  fill: string;
+}
+
 export interface PdfPageInput {
   widthPt: number;
   heightPt: number;
@@ -124,6 +136,9 @@ export interface PdfPageInput {
   /** Vector paths (SPEC-070 connectors). Optional: a page input built before
    * this existed draws none. */
   paths?: PdfPathItem[];
+  /** Filled rectangles under everything else (SPEC-108). Optional: a page
+   * input built before this existed draws none. */
+  rects?: PdfRectItem[];
   /** The page's /Rotate — how a viewer turns it for display, clockwise.
    * Absent or 0 writes no entry. SPEC-107's fixture needs a rotated page. */
   rotate?: 0 | 90 | 180 | 270;
@@ -611,6 +626,22 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
     return ops;
   };
 
+  /** The fill operators for one page's rects, flipped into PDF space. */
+  const drawRects = (page: PdfPageInput): string => {
+    let ops = "";
+    for (const rect of page.rects ?? []) {
+      const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(rect.fill);
+      if (!hex) {
+        continue;
+      }
+      const rgb = hex.slice(1).map((channel) => fmt(parseInt(channel, 16) / 255));
+      const y = page.heightPt - rect.yPt - rect.heightPt;
+      ops +=
+        `q ${rgb.join(" ")} rg ${fmt(rect.xPt)} ${fmt(y)} ${fmt(rect.widthPt)} ${fmt(rect.heightPt)} re f Q\n`;
+    }
+    return ops;
+  };
+
   const outlineEntries: OutlineEntry[] = [];
   const pageAnnotIds: number[][] = [];
   const contentIds: number[] = [];
@@ -620,7 +651,7 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
   for (const [pageIndex, page] of input.pages.entries()) {
     // Behind-the-text images first, then the text, then the images that sit
     // in front of it — PDF paints in content-stream order.
-    let content = drawImages(page, false) + drawPaths(page, false);
+    let content = drawRects(page) + drawImages(page, false) + drawPaths(page, false);
     for (const item of page.items) {
       if (item.text.length === 0) {
         continue;
