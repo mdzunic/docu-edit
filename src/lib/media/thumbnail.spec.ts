@@ -3,7 +3,7 @@
 // the paper from that ratio, so a degenerate page must still yield a usable
 // one. The rendered geometry itself is e2e's (e2e/SPEC-107.spec.ts).
 import { describe, expect, it } from "vitest";
-import { pdfCardPlaceholder } from "./thumbnail";
+import { pdfCardPlaceholder, pdfPageSizesLabel } from "./thumbnail";
 import type { PdfSummary } from "./model";
 
 function summary(pages: PdfSummary["pages"]): PdfSummary {
@@ -38,5 +38,21 @@ describe("pdfCardPlaceholder", () => {
     const placeholder = pdfCardPlaceholder(summary([]));
     expect(placeholder.aspectRatio).toBeCloseTo(612 / 792);
     expect(placeholder.pageSize).toBe("612 × 792 pt");
+  });
+});
+
+describe("pdfPageSizesLabel (SPEC-108: the size in the user's unit too)", () => {
+  const a4 = { widthPt: 595.28, heightPt: 841.89, rotate: 0 as const };
+  const letter = { widthPt: 612, heightPt: 792, rotate: 0 as const };
+
+  it("reads in points alone without a unit, as before", () => {
+    expect(pdfPageSizesLabel(summary([a4]))).toBe("595 × 842 pt");
+  });
+
+  it("adds the size in the measurement unit", () => {
+    expect(pdfPageSizesLabel(summary([a4]), "cm")).toBe("595 × 842 pt · 21 × 29.7 cm");
+    expect(pdfPageSizesLabel(summary([letter]), "in")).toBe("612 × 792 pt · 8.5 × 11 in");
+    expect(pdfPageSizesLabel(summary([letter, a4]), "mm")).toBe("mixed (first 612 × 792 pt · 215.9 × 279.4 mm)");
+    expect(pdfPageSizesLabel(summary([a4]), "pt")).toBe("595 × 842 pt");
   });
 });

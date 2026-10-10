@@ -4,6 +4,7 @@
 // figures. The DOM half — decoding the image and painting the downscaled
 // raster — lives in the LibraryThumbnail component behind its existing
 // IntersectionObserver + idle-scheduler gating.
+import { formatLength, ptToCm, type MeasurementUnit } from "../core/units";
 import type { MediaModel, PdfSummary } from "./model";
 
 /** The longest edge a cached media thumbnail raster may have. */
@@ -67,10 +68,16 @@ export function pageSizeLabel(page: { widthPt: number; heightPt: number }): stri
   return `${Math.round(page.widthPt)} × ${Math.round(page.heightPt)} pt`;
 }
 
+/** A page's size in a SPEC-064 measurement unit, e.g. "21 × 29.7 cm". */
+export function pageSizeInUnitLabel(page: { widthPt: number; heightPt: number }, unit: MeasurementUnit): string {
+  return `${formatLength(ptToCm(page.widthPt), unit)} × ${formatLength(ptToCm(page.heightPt), unit)} ${unit}`;
+}
+
 /** The details panel's per-page size line: one size when every page shares
  * it, else "mixed" qualified with the first page's size (AC: per-page size
- * or "mixed" with the first page's size). */
-export function pdfPageSizesLabel(pdf: PdfSummary): string {
+ * or "mixed" with the first page's size). Given a measurement unit, the
+ * size also reads in it — "595 × 842 pt · 21 × 29.7 cm" (SPEC-108). */
+export function pdfPageSizesLabel(pdf: PdfSummary, unit?: MeasurementUnit): string {
   const first = pdf.pages[0];
   if (!first) {
     return "";
@@ -78,7 +85,8 @@ export function pdfPageSizesLabel(pdf: PdfSummary): string {
   const uniform = pdf.pages.every(
     (page) => page.widthPt === first.widthPt && page.heightPt === first.heightPt,
   );
-  return uniform ? pageSizeLabel(first) : `mixed (first ${pageSizeLabel(first)})`;
+  const size = unit && unit !== "pt" ? `${pageSizeLabel(first)} · ${pageSizeInUnitLabel(first, unit)}` : pageSizeLabel(first);
+  return uniform ? size : `mixed (first ${size})`;
 }
 
 /** What the PDF card's paper-shaped placeholder shows wherever no first-page

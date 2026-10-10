@@ -8,6 +8,8 @@
 import { computed } from "vue";
 import { formatBadgeLabel, formatFileSize, formatTimestamp } from "../../lib/format";
 import { pdfPageSizesLabel } from "../../lib/media/thumbnail";
+import { asMeasurementUnit } from "../../lib/core/units";
+import { usePreferences } from "../../composables/usePreferences";
 
 const props = defineProps({
   /** The MediaModel being viewed. */
@@ -23,7 +25,11 @@ const properties = computed(() => props.media.properties ?? {});
 const pageCountLabel = computed(() =>
   pdf.value ? `${pdf.value.pageCount} ${pdf.value.pageCount === 1 ? "page" : "pages"}` : "",
 );
-const pageSizeLabel = computed(() => (pdf.value ? pdfPageSizesLabel(pdf.value) : ""));
+// The page size reads in points and, beside them, in the user's own unit.
+const { preferences } = usePreferences();
+const pageSizeLabel = computed(() =>
+  pdf.value ? pdfPageSizesLabel(pdf.value, asMeasurementUnit(preferences.measurementUnit)) : "",
+);
 const producer = computed(() => {
   const extras = properties.value.extraFields ?? [];
   const entry = extras.find((field = { name: "", value: "" }) => field.name === "Producer");

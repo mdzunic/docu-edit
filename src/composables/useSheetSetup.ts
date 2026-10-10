@@ -198,7 +198,7 @@ export function useSheetSetup(deps: SheetSetupDeps): SheetSetupController {
   watch(
     [setup, marginsLinked],
     () => sessions.set(deps.surface, { setup: cloneSetup(setup.value), linked: marginsLinked.value }),
-    { deep: true, immediate: true },
+    { deep: true, immediate: true, flush: "sync" },
   );
 
   const display = (cm: number): string => formatLength(cm, unit.value);
