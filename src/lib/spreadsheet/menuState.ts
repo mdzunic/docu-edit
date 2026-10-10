@@ -3,8 +3,9 @@
 // as one runtime `Object` prop (the espree constraint on .vue scripts bars a
 // typed PropType there), so it coerces that prop through here. SPEC-121 adds
 // the Edit menu's undo/redo state and File ▸ "Download a copy as …" (its
-// label names the other format; a reason disables it). Later spreadsheet
-// specs append fields as they append menus and items.
+// label names the other format; a reason disables it). SPEC-124 adds View ▸
+// Freeze's state and the Format menu's rows-and-columns commands. Later
+// spreadsheet specs append fields as they append menus and items.
 
 /** What the bar needs in order to render: what is checked, what applies. */
 export interface SpreadsheetMenuState {
@@ -30,6 +31,10 @@ export interface SpreadsheetMenuState {
   copyDisabledReason: string;
   /** SPEC-123: Format ▸ Cell styles' names (the gallery's, in its order). */
   cellStyleNames: string[];
+  /** SPEC-124: View ▸ Freeze — Unfreeze is enabled only when the sheet is
+   * frozen; "Freeze at current cell" is disabled at A1. */
+  frozen: boolean;
+  freezeAtCellDisabled: boolean;
 }
 
 /** The command ids the bar emits — routed by useSpreadsheetMenu. Item test
@@ -55,6 +60,15 @@ export const SHEET_MENU_COMMANDS = {
   clearAll: "format.clear-all",
   clearFormats: "format.clear-formats",
   clearContents: "format.clear-contents",
+  /** SPEC-124: View ▸ Freeze ▸ and the Format menu's rows and columns. */
+  freezeTopRow: "view.freeze-top-row",
+  freezeFirstColumn: "view.freeze-first-column",
+  freezeAtCell: "view.freeze-at-cell",
+  unfreeze: "view.unfreeze",
+  rowHeight: "format.row-height",
+  columnWidth: "format.column-width",
+  autofitRows: "format.autofit-rows",
+  autofitColumns: "format.autofit-columns",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
@@ -103,5 +117,7 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     copyLabel: typeof state.copyLabel === "string" && state.copyLabel !== "" ? state.copyLabel : DEFAULT_COPY_LABEL,
     copyDisabledReason: typeof state.copyDisabledReason === "string" ? state.copyDisabledReason : "",
     cellStyleNames: Array.isArray(state.cellStyleNames) ? state.cellStyleNames : [],
+    frozen: state.frozen === true,
+    freezeAtCellDisabled: state.freezeAtCellDisabled === true,
   };
 }

@@ -9,11 +9,15 @@
 // application, across sheets if the user switches tabs (style ids are the
 // workbook's). A multi-range source disables the painter; a source over
 // MAX_FORMAT_MATERIALISED positions is refused with FORMAT_TOO_LARGE_MESSAGE.
+// SPEC-124: the source's merges are reproduced in the target, in the same
+// step — after useMerges' warning when that clears a value or formula.
 import { computed, onScopeDispose, ref, shallowRef, watch, type Ref } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { applyPattern, capturePattern, FORMAT_TOO_LARGE_MESSAGE, type StylePattern } from "../../lib/spreadsheet/formatting";
 import type { Sheet } from "../../lib/spreadsheet/model";
+import { applyPatternMerges, patternMerges, targetsDiscardValues } from "../../lib/spreadsheet/mergeCells";
 import type { Formatting } from "./useFormatting";
+import type { Merges } from "./useMerges";
 import type { SheetSelectionController } from "./useSheetSelection";
 
 export type PainterMode = "" | "once" | "locked";
@@ -22,6 +26,8 @@ export interface FormatPainterDeps {
   book: { activeSheet: Readonly<Ref<Sheet | null>> };
   selection: Pick<SheetSelectionController, "selection" | "drag">;
   formatting: Pick<Formatting, "command">;
+  /** SPEC-124: the merge warning, before painted merges clear a value. */
+  merges?: Pick<Merges, "confirmDiscard">;
   toast?: (message: string) => void;
 }
 
@@ -62,15 +68,28 @@ export function useFormatPainter(deps: FormatPainterDeps) {
     if (mode.value === "once") {
       disarm();
     }
-    deps.formatting.command("Format painter", (model, sheetId, ranges) => {
-      for (const range of ranges) {
-        const result = applyPattern(model, sheetId, range, source);
-        if (!result.ok) {
-          return result;
+    const run = (): void =>
+      deps.formatting.command("Format painter", (model, sheetId, ranges) => {
+        for (const range of ranges) {
+          const result = applyPattern(model, sheetId, range, source);
+          if (!result.ok) {
+            return result;
+          }
+          // SPEC-124: the source's merges, reproduced in the target.
+          const merged = applyPatternMerges(model, sheetId, range, source);
+          if (!merged.ok) {
+            return merged;
+          }
         }
-      }
-      return { ok: true };
-    });
+        return { ok: true };
+      });
+    const sheet = deps.book.activeSheet.value;
+    const discards = source.merges !== undefined && sheet !== null && deps.selection.selection.value.ranges.some((range) => targetsDiscardValues(sheet, patternMerges(range, source)));
+    if (deps.merges) {
+      deps.merges.confirmDiscard(discards, run);
+    } else {
+      run();
+    }
   }
 
   // A pointer selection completes when its drag is released.

@@ -23,8 +23,16 @@
 // (Format cells) and Windows/Linux Ctrl+5 (strikethrough) are best effort:
 // the Format menu and the toolbar's strikethrough button
 // (`sheet-strikethrough`) are the guaranteed paths.
+//
+// SPEC-124 adds the rows-and-columns pair, Google Sheets' binding: Ctrl+Alt+=
+// / Cmd+Option+= inserts (`sheet.insertCells`) and Ctrl+Alt+- /
+// Cmd+Option+- deletes (`sheet.deleteCells`), by physical key (`Equal`,
+// `Minus`, so Option's dead characters on macOS do not matter). Ctrl/Cmd+=,
+// Ctrl/Cmd+- and Ctrl/Cmd+Shift+= stay the sheet zoom (SPEC-063's
+// view.zoomIn/zoomOut).
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
+import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
 
 export type SheetShortcutId =
   | "sheet.formatCells"
@@ -38,9 +46,12 @@ export type SheetShortcutId =
   | "sheet.formatDate"
   | "sheet.formatCurrency"
   | "sheet.formatPercent"
-  | "sheet.formatScientific";
+  | "sheet.formatScientific"
+  | "sheet.insertCells"
+  | "sheet.deleteCells";
 
 const CATEGORY = "Sheet formatting";
+const STRUCTURE_CATEGORY = "Rows and columns";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -66,6 +77,9 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     { id: "sheet.formatCurrency", label: "Currency format", category: CATEGORY, bindings: [{ key: "$", code: "Digit4", ctrl: true, shift: true }] },
     { id: "sheet.formatPercent", label: "Percent format", category: CATEGORY, bindings: [{ key: "%", code: "Digit5", ctrl: true, shift: true }] },
     { id: "sheet.formatScientific", label: "Scientific format", category: CATEGORY, bindings: [{ key: "^", code: "Digit6", ctrl: true, shift: true }] },
+    // SPEC-124: Ctrl/Cmd + Alt/Option + a physical key.
+    { id: "sheet.insertCells", label: "Insert rows or columns", category: STRUCTURE_CATEGORY, bindings: [{ key: "=", code: "Equal", mod: true, alt: true }] },
+    { id: "sheet.deleteCells", label: "Delete rows or columns", category: STRUCTURE_CATEGORY, bindings: [{ key: "-", code: "Minus", mod: true, alt: true }] },
   ];
   return definitions;
 }
@@ -74,3 +88,23 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
  * for another platform (a test, a preview) takes sheetShortcutDefinitions
  * with that same `isMac` instead — the strikethrough binding differs. */
 export const SHEET_SHORTCUTS: ShortcutDefinition[] = sheetShortcutDefinitions(isMacPlatform());
+
+/** The number-format shortcut ids → their format (useFormatting runs them). */
+export const NUMBER_SHORTCUTS: Readonly<Record<string, NumberShortcutId>> = {
+  "sheet.formatGeneral": "general",
+  "sheet.formatNumber": "number",
+  "sheet.formatTime": "time",
+  "sheet.formatDate": "date",
+  "sheet.formatCurrency": "currency",
+  "sheet.formatPercent": "percent",
+  "sheet.formatScientific": "scientific",
+};
+
+/** The toggle shortcut ids → their format, and the toggles' undo labels. */
+export const TOGGLE_SHORTCUTS: Readonly<Record<string, "bold" | "italic" | "underline" | "strikethrough">> = {
+  "sheet.bold": "bold",
+  "sheet.italic": "italic",
+  "sheet.underline": "underline",
+  "sheet.strikethrough": "strikethrough",
+};
+export const TOGGLE_LABELS = { bold: "Bold", italic: "Italic", underline: "Underline", strikethrough: "Strikethrough" } as const;

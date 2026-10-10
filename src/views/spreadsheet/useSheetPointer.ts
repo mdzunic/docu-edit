@@ -10,11 +10,15 @@
 // inside the editor it is the browser's (the caret moves), on a cell it
 // points (and a drag extends the point) when point mode allows, otherwise
 // the edit commits before the selection moves (a formula error keeps the
-// editor open and the selection where it is).
+// editor open and the selection where it is). SPEC-124: within
+// RESIZE_HIT_PX of a header boundary the cursor is col-resize/row-resize, a
+// press drags the boundary (useHeaderResize) instead of selecting, and a
+// double-click there autofits (useSheetGrid).
 import { onBeforeUnmount, type Ref } from "vue";
 import type { CellRef } from "../../lib/spreadsheet/address";
 import type { GridMetrics } from "../../lib/spreadsheet/geometry";
 import type { CellEditing } from "./useCellEditing";
+import type { HeaderResize } from "./useHeaderResize";
 import { primaryModifier, type SheetSelectionController } from "./useSheetSelection";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, type SheetViewport } from "./useSheetViewport";
 
@@ -60,10 +64,23 @@ export interface SheetPointerDeps {
   /** Focuses the grid's focus holder (the in-cell editor); default: the
    * scroller. */
   focus?: () => void;
+  /** SPEC-124: header-boundary resizing; absent = none. */
+  resize?: () => HeaderResize | undefined;
+}
+
+/** A header-area point's position along its axis, in content px, and the
+ * boundary under it — what a resize press, drag or hover reads. */
+export interface HeaderPoint {
+  axis: "row" | "col";
+  pos: number;
+  view: number;
+  across: number;
 }
 
 export function useSheetPointer(deps: SheetPointerDeps) {
-  let dragging: "cell" | "row" | "column" | "point" | null = null;
+  let dragging: "cell" | "row" | "column" | "point" | "resize" | null = null;
+  /** The axis of a resize drag (SPEC-124). */
+  let resizeAxis: "row" | "col" = "col";
   let last = { x: 0, y: 0 };
   let frame: number | null = null;
 
@@ -86,6 +103,49 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   function hitAt(x: number, y: number): GridHit {
     const vp = deps.viewport;
     return hitTest(x, y, deps.metrics(), { frozenW: vp.frozenW.value, frozenH: vp.frozenH.value, sx: vp.sx.value, sy: vp.sy.value });
+  }
+
+  /** A viewport point on an axis (unscaled px, header included) → content
+   * px, the frozen band taken into account. */
+  function contentAlong(axis: "row" | "col", view: number): number {
+    const vp = deps.viewport;
+    const offset = view - (axis === "col" ? ROW_HEADER_WIDTH_PX : COLUMN_HEADER_HEIGHT_PX);
+    const frozen = axis === "col" ? vp.frozenW.value : vp.frozenH.value;
+    return offset < frozen ? offset : offset + (axis === "col" ? vp.sx.value : vp.sy.value);
+  }
+
+  /** The header point under (x, y) — a column header gives the column
+   * axis, a row header the row axis; null elsewhere (SPEC-124). */
+  function headerPoint(x: number, y: number): HeaderPoint | null {
+    const hit = hitAt(x, y);
+    if (hit.area === "column") {
+      return { axis: "col", pos: contentAlong("col", x), view: x - ROW_HEADER_WIDTH_PX, across: y };
+    }
+    if (hit.area === "row") {
+      return { axis: "row", pos: contentAlong("row", y), view: y - COLUMN_HEADER_HEIGHT_PX, across: x };
+    }
+    return null;
+  }
+
+  /** A press on a header boundary starts a resize (SPEC-124). */
+  function pressBoundary(x: number, y: number): boolean {
+    const resize = deps.resize?.();
+    const point = headerPoint(x, y);
+    const index = resize && point ? resize.boundaryAt(point.axis, point.pos) : null;
+    if (!resize || !point || index === null) {
+      return false;
+    }
+    resize.begin(point.axis, index, point.pos, point.view, point.across);
+    return true;
+  }
+
+  /** The boundary a double-click landed on, or null (SPEC-124). */
+  function boundaryAtClient(clientX: number, clientY: number): { axis: "row" | "col"; index: number } | null {
+    const resize = deps.resize?.();
+    const at = local(clientX, clientY);
+    const point = headerPoint(at.x, at.y);
+    const index = resize && point ? resize.boundaryAt(point.axis, point.pos) : null;
+    return point && index !== null ? { axis: point.axis, index } : null;
   }
 
   function extendTo(x: number, y: number): void {
@@ -132,6 +192,14 @@ export function useSheetPointer(deps: SheetPointerDeps) {
     const hit = hitAt(point.x, point.y);
     const mods = { shift: event.shiftKey, mod: primaryModifier(event) };
     const editing = deps.editing?.();
+    // SPEC-124: a press on a header boundary resizes (never while editing).
+    if ((hit.area === "column" || hit.area === "row") && !editing?.editing.value && pressBoundary(point.x, point.y)) {
+      dragging = "resize";
+      resizeAxis = hit.area === "column" ? "col" : "row";
+      (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+      return;
+    }
     if (editing) {
       const inEditor = event.target instanceof Element && event.target.closest('[data-testid="cell-editor"]') !== null;
       const outcome = hit.area === "cell" ? editing.pressCell(hit.cell, mods.shift, inEditor) : editing.pressOutside() ? "select" : "handled";
@@ -171,7 +239,20 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   }
 
   function onPointerMove(event: PointerEvent): void {
+    if (dragging === "resize") {
+      const at = local(event.clientX, event.clientY);
+      const view = resizeAxis === "col" ? at.x : at.y;
+      deps.resize?.()?.move(contentAlong(resizeAxis, view), view - (resizeAxis === "col" ? ROW_HEADER_WIDTH_PX : COLUMN_HEADER_HEIGHT_PX), resizeAxis === "col" ? at.y : at.x);
+      return;
+    }
     if (!dragging) {
+      // SPEC-124: the resize cursor over a header boundary.
+      const resize = deps.resize?.();
+      if (resize) {
+        const at = local(event.clientX, event.clientY);
+        const header = headerPoint(at.x, at.y);
+        resize.setHover(header && resize.boundaryAt(header.axis, header.pos) !== null ? header.axis : null);
+      }
       return;
     }
     last = { x: event.clientX, y: event.clientY };
@@ -199,6 +280,11 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   }
 
   function onPointerUp(): void {
+    if (dragging === "resize") {
+      dragging = null;
+      deps.resize?.()?.finish();
+      return;
+    }
     if (dragging === "point") {
       dragging = null;
       deps.editing?.()?.pointRelease();
@@ -213,5 +299,5 @@ export function useSheetPointer(deps: SheetPointerDeps) {
 
   onBeforeUnmount(stopAutoScroll);
 
-  return { onPointerDown, onPointerMove, onPointerUp };
+  return { onPointerDown, onPointerMove, onPointerUp, boundaryAtClient };
 }

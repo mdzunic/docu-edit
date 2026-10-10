@@ -39,6 +39,7 @@
 //   and array refusals); formats removes the stored cells' style ids (and the
 //   rows' and spans' for whole rows and columns — everything for the whole
 //   sheet) and flattens rich-text runs, the value unchanged; all does both.
+//   SPEC-124: formats and all also unmerge the merges inside the ranges.
 // - Named styles: applyNamedStyle sets, for each aspect the style includes,
 //   exactly the definition's value (a font wholesale, keys it lacks falling
 //   back to Normal's), leaves the others, and sets namedStyle; Normal is Clear
@@ -49,6 +50,8 @@
 //   applyPattern tiles it from the target's top-left — a single-cell target
 //   grows to the source's size (to whole rows or columns for such a source),
 //   a larger target repeats the pattern, a smaller one takes what fits.
+//   SPEC-124: an ordinary source's pattern also records the merges inside
+//   it, which mergeCells.ts's applyPatternMerges reproduces in the target.
 import { ARRAY_PART_MESSAGE, arrayRangeTouched, clearContents, firstLockedCell, isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import type { GridRange } from "./address";
 import { findRow } from "./address";
@@ -565,6 +568,11 @@ export function clearRange(model: SpreadsheetModel, sheetId: string, ranges: rea
     for (const range of list) {
       sheet = clearFormatsIn(sheet, range);
     }
+    // SPEC-124: clearing formats also unmerges the merges inside the ranges.
+    const merges = sheet.merges.filter((merge) => !list.some((range) => rangeContains(range, merge)));
+    if (merges.length !== sheet.merges.length) {
+      sheet = { ...sheet, merges };
+    }
   }
   if (sheet !== found.sheet) {
     // clearContents may already have replaced the sheet: commit against the
@@ -641,6 +649,8 @@ export interface StylePattern {
   cols: number;
   ids: number[];
   axis?: "rows" | "columns";
+  /** SPEC-124: the source's merges, relative to its top-left. */
+  merges?: GridRange[];
 }
 
 /** The source's pattern (see the module header); null for a source of more
@@ -675,10 +685,35 @@ export function capturePattern(sheet: Sheet, range: GridRange): StylePattern | n
       ids.push(effectiveStyleId(sheet, row, col));
     }
   }
-  return { rows, cols, ids };
+  // SPEC-124: the merges inside the source, relative to its top-left — the
+  // painter reproduces them in the target (mergeCells.ts applyPatternMerges).
+  const merges = sheet.merges
+    .filter((merge) => rangeContains(range, merge))
+    .map((merge) => ({ top: merge.top - range.top, left: merge.left - range.left, bottom: merge.bottom - range.top, right: merge.right - range.left }));
+  return merges.length > 0 ? { rows, cols, ids, merges } : { rows, cols, ids };
 }
 
 const singleCell = (range: GridRange): boolean => range.top === range.bottom && range.left === range.right;
+
+/** Whether `outer` contains all of `inner`. */
+function rangeContains(outer: GridRange, inner: GridRange): boolean {
+  return outer.top <= inner.top && outer.left <= inner.left && outer.bottom >= inner.bottom && outer.right >= inner.right;
+}
+
+/** The range a pattern lands on: a single-cell target grows to the source's
+ * size (to whole rows or columns for such a source). */
+export function patternTarget(target: GridRange, pattern: StylePattern): GridRange {
+  if (!singleCell(target)) {
+    return target;
+  }
+  if (pattern.axis === "columns") {
+    return { top: 0, bottom: MAX_ROWS - 1, left: target.left, right: Math.min(MAX_COLS - 1, target.left + pattern.cols - 1) };
+  }
+  if (pattern.axis === "rows") {
+    return { top: target.top, bottom: Math.min(MAX_ROWS - 1, target.top + pattern.rows - 1), left: 0, right: MAX_COLS - 1 };
+  }
+  return { ...target, bottom: Math.min(MAX_ROWS - 1, target.top + pattern.rows - 1), right: Math.min(MAX_COLS - 1, target.left + pattern.cols - 1) };
+}
 
 /** Runs of consecutive equal ids along [from, to] of a tiled axis pattern. */
 function idRuns(from: number, to: number, idAt: (index: number) => number): { min: number; max: number; id: number }[] {
@@ -695,22 +730,26 @@ function idRuns(from: number, to: number, idAt: (index: number) => number): { mi
   return runs;
 }
 
+/** Whether a patch can change a row's autofit height — a font family or
+ * size, wrap or rotation (SPEC-124: the formatting commands that run
+ * SPEC-122's refitRows inside their step). */
+export function patchChangesRowHeight(patch: StylePatch): boolean {
+  const { font, alignment } = patch;
+  return (
+    font === null ||
+    alignment === null ||
+    (font !== undefined && (font.family !== undefined || font.sizePt !== undefined)) ||
+    (alignment !== undefined && (alignment.wrap !== undefined || alignment.textRotation !== undefined))
+  );
+}
+
 /** Applies a captured pattern to `target` (see the module header). */
 export function applyPattern(model: SpreadsheetModel, sheetId: string, target: GridRange, pattern: StylePattern): FormatResult {
   const found = sheetFor(model, sheetId);
   if ("message" in found) {
     return { ok: false, message: found.message };
   }
-  let range = target;
-  if (singleCell(target)) {
-    if (pattern.axis === "columns") {
-      range = { top: 0, bottom: MAX_ROWS - 1, left: target.left, right: Math.min(MAX_COLS - 1, target.left + pattern.cols - 1) };
-    } else if (pattern.axis === "rows") {
-      range = { top: target.top, bottom: Math.min(MAX_ROWS - 1, target.top + pattern.rows - 1), left: 0, right: MAX_COLS - 1 };
-    } else {
-      range = { ...target, bottom: Math.min(MAX_ROWS - 1, target.top + pattern.rows - 1), right: Math.min(MAX_COLS - 1, target.left + pattern.cols - 1) };
-    }
-  }
+  const range = patternTarget(target, pattern);
   if (formattingRefused(model, found.index, range)) {
     return { ok: false, message: PROTECTED_CELL_MESSAGE };
   }

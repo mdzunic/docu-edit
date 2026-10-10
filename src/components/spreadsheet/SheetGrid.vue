@@ -30,8 +30,12 @@
 // (`sheet-ref-highlight`, `data-ref-index` = the colour index, the colour
 // `--sheet-ref-<index + 1>`, the pointed one dashed). SPEC-123: while the
 // format painter is armed the grid carries data-format-painter="once|locked"
-// and the copy cursor. Runtime prop declarations per the espree constraint
-// (see AppShell.vue).
+// and the copy cursor. SPEC-124: every header carries its 0-based
+// `data-index` (the header menu reads it); near a header boundary the grid
+// shows the col-resize/row-resize cursor, and while a boundary is dragged the
+// guide line (`sheet-resize-guide`) and the size tooltip
+// (`sheet-resize-tooltip`). Runtime prop declarations per the espree
+// constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
@@ -65,6 +69,11 @@ const CH = COLUMN_HEADER_HEIGHT_PX;
 const cellEditing = computed(() => asSheetGridContext(props.context).cellEditing);
 /** SPEC-123: the armed format painter ("once" | "locked"), "" when off. */
 const painterMode = computed(() => asSheetGridContext(props.context).painter?.mode.value ?? "");
+/** SPEC-124: header resizing — the cursor, and while dragging the guide line
+ * and the size tooltip (unscaled px from the cell area's edge). */
+const resizeCursor = computed(() => grid.resize.value?.cursor.value ?? "");
+const resizeGuide = computed(() => grid.resize.value?.guide.value ?? null);
+const resizeTooltip = computed(() => grid.resize.value?.tooltip.value ?? null);
 
 function px(value = 0) {
   return `${value}px`;
@@ -101,6 +110,7 @@ function unscroll(event = new Event("scroll")) {
     :aria-activedescendant="grid.activeDescendant.value"
     :data-show-formulas="props.showFormulas ? 'true' : undefined"
     :data-format-painter="painterMode || undefined"
+    :style="{ cursor: resizeCursor || undefined }"
     data-testid="spreadsheet-grid"
     tabindex="0"
     @scroll="vp.onScroll"
@@ -215,6 +225,7 @@ function unscroll(event = new Event("scroll")) {
                 :class="{ 'is-selected': col.selected }"
                 role="columnheader"
                 data-testid="sheet-col-header"
+                :data-index="col.index"
                 :aria-colindex="col.index + 2"
                 :style="{ left: px(col.start), width: px(col.size) }"
               >
@@ -232,6 +243,7 @@ function unscroll(event = new Event("scroll")) {
                 :class="{ 'is-selected': col.selected }"
                 role="columnheader"
                 data-testid="sheet-col-header"
+                :data-index="col.index"
                 :aria-colindex="col.index + 2"
                 :style="{ left: px(col.start), width: px(col.size) }"
               >
@@ -263,6 +275,7 @@ function unscroll(event = new Event("scroll")) {
                 :class="{ 'is-selected': row.selected }"
                 role="rowheader"
                 data-testid="sheet-row-header"
+                :data-index="row.index"
                 aria-colindex="1"
                 :style="{ top: px(row.start), height: px(row.size), lineHeight: px(row.size - 1) }"
               >
@@ -280,6 +293,7 @@ function unscroll(event = new Event("scroll")) {
                 :class="{ 'is-selected': row.selected }"
                 role="rowheader"
                 data-testid="sheet-row-header"
+                :data-index="row.index"
                 aria-colindex="1"
                 :style="{ top: px(row.start), height: px(row.size), lineHeight: px(row.size - 1) }"
               >
@@ -295,6 +309,23 @@ function unscroll(event = new Event("scroll")) {
               :aria-label="marker.title"
               :style="{ top: px(marker.at - 3) }"
             />
+          </div>
+          <div
+            v-if="resizeGuide"
+            class="sheet-resize-guide"
+            :class="resizeGuide.axis === 'col' ? 'is-vertical' : 'is-horizontal'"
+            data-testid="sheet-resize-guide"
+            aria-hidden="true"
+            :style="resizeGuide.axis === 'col' ? { left: px(RH + resizeGuide.at), height: px(vp.viewH.value) } : { top: px(CH + resizeGuide.at), width: px(vp.viewW.value) }"
+          />
+          <div
+            v-if="resizeTooltip"
+            class="sheet-resize-tooltip"
+            role="status"
+            data-testid="sheet-resize-tooltip"
+            :style="{ left: px(resizeTooltip.x), top: px(resizeTooltip.y) }"
+          >
+            {{ resizeTooltip.text }}
           </div>
         </div>
       </div>
@@ -396,6 +427,41 @@ function unscroll(event = new Event("scroll")) {
 .sheet-freeze-line {
   position: absolute;
   background: var(--border-default);
+}
+
+/* SPEC-124: the boundary being dragged, across the whole viewport, and its
+   size tooltip. */
+.sheet-resize-guide {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  border: 0 dashed var(--accent);
+}
+
+.sheet-resize-guide.is-vertical {
+  top: 0;
+  width: 0;
+  border-left-width: var(--border-width);
+}
+
+.sheet-resize-guide.is-horizontal {
+  left: 0;
+  height: 0;
+  border-top-width: var(--border-width);
+}
+
+.sheet-resize-tooltip {
+  position: absolute;
+  z-index: 7;
+  padding: var(--space-1) var(--space-2);
+  white-space: nowrap;
+  pointer-events: none;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
 }
 
 .sheet-freeze-line.is-vertical {

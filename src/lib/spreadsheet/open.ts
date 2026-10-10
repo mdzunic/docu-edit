@@ -63,6 +63,10 @@
 //     source. A dirty sheet's styles were stored without `namedStyle`, so
 //     adopting them treats a stored style that is the re-read one's source
 //     entry, but for the `namedStyle` it could not know, as that style.
+// 8 — SPEC-124: the structural edits a protected sheet still permits (xlsx
+//     `sheetProtection@insertRows|insertColumns|deleteRows|deleteColumns="0"`).
+//     Every re-read gains them; the step refreshes a dirty sheet's
+//     protection from its own retained source (SPEC-123's move).
 //
 // Since SPEC-122 the writers rebuild a dirty sheet from the model, so the
 // layout a record re-reads its clean sheets from numbers its styles afresh:
@@ -76,7 +80,7 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/
 import { buildPreview } from "./preview";
 import { cellStyle, defaultStyles, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 7;
+export const SPREADSHEET_READER_VERSION = 8;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -163,6 +167,16 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
           model.namedStyles = named;
         }
       }
+      const source = await retainedSheetRead(model, sheet, sourceParts);
+      if (source?.protection) {
+        sheet.protection = { ...source.protection };
+      }
+    },
+  },
+  {
+    // SPEC-124 (7 → 8): the protection's structural permits.
+    from: 7,
+    async upgradeDirtySheet(model, sheet, sourceParts) {
       const source = await retainedSheetRead(model, sheet, sourceParts);
       if (source?.protection) {
         sheet.protection = { ...source.protection };

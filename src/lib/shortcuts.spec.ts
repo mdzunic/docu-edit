@@ -247,6 +247,8 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.formatCurrency",
   "sheet.formatPercent",
   "sheet.formatScientific",
+  "sheet.insertCells",
+  "sheet.deleteCells",
 ];
 
 /** The keydown a binding describes on one platform, for sweeping a whole
@@ -286,15 +288,30 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's twelve commands, one binding each, under Sheet formatting", () => {
+  it("declares the sheet's fourteen commands, one binding each — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
     for (const { isMac } of PLATFORMS) {
       const definitions = sheetShortcutDefinitions(isMac);
       expect(definitions.map((definition) => definition.id)).toEqual(SHEET_IDS);
       for (const definition of definitions) {
-        expect(definition.category).toBe("Sheet formatting");
+        const structural = definition.id === "sheet.insertCells" || definition.id === "sheet.deleteCells";
+        expect(definition.category).toBe(structural ? "Rows and columns" : "Sheet formatting");
         expect(definition.bindings).toHaveLength(1);
       }
+    }
+  });
+
+  it("binds SPEC-124's insert and delete to Ctrl+Alt+= / Ctrl+Alt+- (Cmd+Option on macOS) by physical key, apart from the zoom keys", () => {
+    for (const { isMac } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      const mod = isMac ? { metaKey: true } : { ctrlKey: true };
+      // Option's dead characters on macOS: the key still matches by code.
+      expect(findShortcut(keydown({ key: isMac ? "≠" : "=", code: "Equal", altKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.insertCells");
+      expect(findShortcut(keydown({ key: isMac ? "–" : "-", code: "Minus", altKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.deleteCells");
+      // Ctrl/Cmd+= and Ctrl/Cmd+- without Alt stay the zoom.
+      expect(findShortcut(keydown({ key: "=", code: "Equal", ...mod }), isMac, definitions)).toBeUndefined();
+      expect(findShortcut(keydown({ key: "=", code: "Equal", ...mod }), isMac)?.id).toBe("view.zoomIn");
+      expect(findShortcut(keydown({ key: "-", code: "Minus", ...mod }), isMac)?.id).toBe("view.zoomOut");
     }
   });
 

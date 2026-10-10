@@ -136,9 +136,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6 and SPEC-123 to 7, with one contiguous step each (from 1, 2, 3, 4, 5, 6)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(7);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7 and SPEC-124 to 8, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(8);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -544,9 +544,9 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
 });
 
 describe("SPEC-123's reader step: named cell styles and the protection's format permits", () => {
-  it("moved the reader to version 7 with its step from 6", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(7);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(6);
+  it("moved the reader to version 7 with its step from 6 (SPEC-124's from 7 follows it)", () => {
+    expect(READER_UPGRADES.map((step) => step.from)).toContain(6);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(7);
   });
 
   it("a dirty sheet's record regains namedStyles, keeps its source styles' ids, and the step is idempotent", async () => {
@@ -563,7 +563,7 @@ describe("SPEC-123's reader step: named cell styles and the protection's format 
     stored.sheets[0] = { ...stored.sheets[0]!, dirty: true };
     getCell(stored.sheets[0]!, 1, 0)!.value = "Rent and rates";
     const upgraded = await upgradeSpreadsheetModel(stored);
-    expect(upgraded.readerVersion).toBe(7);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.namedStyles).toEqual(read.namedStyles);
     const sheet = upgraded.sheets[0]!;
     expect(getCell(sheet, 1, 0)!.value).toBe("Rent and rates");

@@ -293,8 +293,19 @@ export interface Sheet {
    *  protection XML stays in the retained source, never changed. SPEC-123
    *  adds what the protection still permits: xlsx `formatCells="0"`,
    *  `formatColumns="0"` and `formatRows="0"` (ods has no equivalent), which
-   *  let formatting reach locked cells of the matching range class. */
-  protection?: { sheet: true; allowFormatCells?: true; allowFormatColumns?: true; allowFormatRows?: true };
+   *  let formatting reach locked cells of the matching range class; SPEC-124
+   *  the structural edits it permits: xlsx `insertRows="0"`,
+   *  `insertColumns="0"`, `deleteRows="0"` and `deleteColumns="0"`. */
+  protection?: {
+    sheet: true;
+    allowFormatCells?: true;
+    allowFormatColumns?: true;
+    allowFormatRows?: true;
+    allowInsertRows?: true;
+    allowInsertColumns?: true;
+    allowDeleteRows?: true;
+    allowDeleteColumns?: true;
+  };
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
