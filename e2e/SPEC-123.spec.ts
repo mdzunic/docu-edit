@@ -237,3 +237,89 @@ test("Format Cells applies theme colours to a mixed selection without flattening
   await expect(page.getByTestId("spreadsheet-undo")).toHaveAttribute("title", /Format cells/);
   expect(errors).toEqual([]);
 });
+
+// The Border tab's colour went through the same deep ref as the Fill and Font
+// tabs' (AC-40, AC-42): a theme line colour and a thick outline preview in
+// the box and land on the range; Cancel after a pick applies nothing.
+test("Format Cells' Border tab previews and applies a theme-coloured outline; Cancel applies nothing (AC-40, AC-42)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      errors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => errors.push(error.message));
+  await open(page, join(fixtures, "spec123-styles.xlsx"));
+
+  await clickCell(page, "A9");
+  await clickCell(page, "B10", ["Shift"]);
+  await page.keyboard.press("ControlOrMeta+1");
+  const dialog = page.getByTestId("format-cells-dialog");
+  await expect(dialog).toBeVisible();
+  await page.getByTestId("format-cells-tab-border").click();
+  await page.getByTestId("format-cells-border-style").selectOption("thick");
+  const lineColor = page.getByTestId("format-cells-border-color");
+  await lineColor.getByTestId("text-color-button").click();
+  const swatch = lineColor.getByTestId("text-color-theme-swatch").and(page.getByLabel("Accent 1", { exact: true }));
+  const color = rgb(await swatch.getAttribute("data-color"));
+  await swatch.click();
+  await page.getByTestId("format-cells-border-preset-outline").click();
+  const preview = page.getByTestId("format-cells-preview");
+  await expect(preview).toHaveCSS("border-top-color", color);
+  await expect(preview).toHaveCSS("border-left-style", "solid");
+  await page.getByTestId("format-cells-ok").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByTestId("spreadsheet-undo")).toHaveAttribute("title", /Format cells/);
+  // The outline is drawn on the grid's border layer in the picked colour.
+  await expect(page.getByTestId("spreadsheet-grid").locator(".sheet-border").filter({ visible: true })).not.toHaveCount(0);
+  const thick = await page
+    .getByTestId("spreadsheet-grid")
+    .locator(".sheet-border")
+    .evaluateAll((borders, wanted) => borders.filter((border) => (border as HTMLElement).style.cssText.includes(`3px solid ${wanted}`)).length, color);
+  expect(thick).toBeGreaterThanOrEqual(4);
+
+  // Cancel after picking a fill leaves D4 and the undo stack as they were.
+  await clickCell(page, "D4");
+  await page.keyboard.press("ControlOrMeta+1");
+  await page.getByTestId("format-cells-tab-fill").click();
+  await page.getByTestId("format-cells-fill-swatch").nth(13).click();
+  await expect(preview).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await page.getByTestId("format-cells-cancel").click();
+  await expect(dialog).toHaveCount(0);
+  await expect(cell(page, "D4")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.getByTestId("spreadsheet-undo")).toHaveAttribute("title", /Format cells/);
+  expect(errors).toEqual([]);
+});
+
+// AC-47–AC-49: a click arms the painter once, a double-click locks it across
+// several selections until Escape.
+test("format painter: a click arms it once, a double-click locks it until Escape (AC-47, AC-48, AC-49)", async ({ page }) => {
+  await open(page, join(fixtures, "spec123-styles.xlsx"));
+  const grid = page.getByTestId("spreadsheet-grid");
+  const painter = page.getByTestId("sheet-format-painter");
+
+  await clickCell(page, "B2");
+  await page.getByTestId("sheet-bold").click();
+  await painter.click();
+  await expect(grid).toHaveAttribute("data-format-painter", "once");
+  await expect(grid).toHaveCSS("cursor", "copy");
+  await clickCell(page, "A8");
+  await expect(grid).not.toHaveAttribute("data-format-painter", /.+/);
+  await expect(page.getByTestId("spreadsheet-undo")).toHaveAttribute("title", /Format painter/);
+
+  await clickCell(page, "B2");
+  await painter.dblclick();
+  await expect(grid).toHaveAttribute("data-format-painter", "locked");
+  await expect(painter).toHaveAttribute("aria-pressed", "true");
+  await expect(painter).toHaveAttribute("data-locked", "true");
+  await clickCell(page, "A9");
+  await clickCell(page, "A10");
+  await expect(grid).toHaveAttribute("data-format-painter", "locked");
+  for (const ref of ["A8", "A9", "A10"]) {
+    expect(Number(await fontWeight(page, ref))).toBeGreaterThanOrEqual(700);
+  }
+  await page.keyboard.press("Escape");
+  await expect(grid).not.toHaveAttribute("data-format-painter", /.+/);
+  await expect(painter).toHaveAttribute("aria-pressed", "false");
+  await expect(painter).not.toHaveAttribute("data-locked", "true");
+});
