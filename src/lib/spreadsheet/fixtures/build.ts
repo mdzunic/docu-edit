@@ -5911,7 +5911,7 @@ function spec125Rows(cells: Map<string, Spec125Seed>): Map<number, [string, Spec
   for (const entries of rows.values()) {
     entries.sort((a, b) => a[0].length - b[0].length || a[0].localeCompare(b[0]));
   }
-  return new Map([...rows.entries()].sort((a, b) => a[0] - b[0]));
+  return new Map([...rows.entries()].toSorted((a, b) => a[0] - b[0]));
 }
 
 function spec125XlsxCell(ref: string, seed: Spec125Seed, str: (value: string) => number, header: boolean): string {
