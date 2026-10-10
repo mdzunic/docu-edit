@@ -48,7 +48,7 @@
 // code; [15]–[21] and [46] are locale-independent codes, returned as codes.
 // The current year of a yearless date comes from core now() inside
 // valueFromText (tests pin it with setClock).
-import { valueFromText, roundTo15 } from "../formula/values";
+import { isMonthName, valueFromText, roundTo15 } from "../formula/values";
 import { ERROR_CODES, type CellError, type CellValue, type ErrorCode } from "../model";
 import { BUILTIN_NUMBER_FORMATS } from "./builtin";
 import type { SpreadsheetLocale } from "./locale";
@@ -301,8 +301,10 @@ function timeShape(text: string, locale: SpreadsheetLocale): { meridiem: boolean
 }
 
 /** The built-in a date-only text suggests (formula/values.ts numericDate
- * and monthNameDate's shapes), or null when the text has neither shape. */
-function dateFormatId(text: string): 14 | 15 | 16 | 17 | null {
+ * and monthNameDate's shapes — the month a name the locale or English
+ * spells, so "10/8 1PM" is a date and a time), or null when the text has
+ * neither shape. */
+function dateFormatId(text: string, locale: SpreadsheetLocale): 14 | 15 | 16 | 17 | null {
   if (ISO_DATE.test(text)) {
     return 14;
   }
@@ -315,7 +317,7 @@ function dateFormatId(text: string): 14 | 15 | 16 | 17 | null {
     return null;
   }
   const index = parts.findIndex((part) => !/^\d+$/.test(part));
-  if (index < 0 || parts.some((part, i) => i !== index && !/^\d+$/.test(part))) {
+  if (index < 0 || parts.some((part, i) => i !== index && !/^\d+$/.test(part)) || !isMonthName(parts[index]!, locale)) {
     return null;
   }
   const numbers = parts.filter((_, i) => i !== index);
@@ -340,7 +342,7 @@ function dateTimeSuggestion(text: string, locale: SpreadsheetLocale): Pick<Parse
     }
     return builtin(time.seconds ? 21 : 20);
   }
-  const date = dateFormatId(text);
+  const date = dateFormatId(text, locale);
   // Neither a time nor a date alone: valueFromText's remaining form, a date
   // followed by a time.
   return builtin(date ?? 22);

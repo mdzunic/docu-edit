@@ -399,6 +399,12 @@ function fullYear(digits: string): number | null {
   return null;
 }
 
+/** Whether `name` spells a month a date may name in `locale` (its own names
+ * or English, case-insensitively) — the month-name date's own test. */
+export function isMonthName(name: string, locale: SpreadsheetLocale): boolean {
+  return monthTable(locale).has(name.toLowerCase());
+}
+
 /** Days in a month, February 1900 having Excel's 29 in the 1900 system. */
 function daysInMonth(year: number, month: number, dateSystem: "1900" | "1904"): number {
   if (month === 2) {

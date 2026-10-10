@@ -142,6 +142,10 @@ describe("parseInput — the rules table in every locale", () => {
   it("reads a month-name date with a time as a date and time", () => {
     expect(parseInput("Oct 8, 2026 1:45 PM", SPREADSHEET_LOCALES["en-US"], "1900").builtinFormatId).toBe(22);
   });
+
+  it("reads a numeric date with a compact AM/PM time as a date and time, never the time as a month name", () => {
+    expect(parseInput("10/8 1PM", SPREADSHEET_LOCALES["en-US"], "1900")).toEqual({ value: OCT_8_2026 + 13 / 24, numberFormat: "m/d/yyyy h:mm", builtinFormatId: 22 });
+  });
 });
 
 describe("parseInput — what is not a value", () => {
