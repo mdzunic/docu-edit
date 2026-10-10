@@ -1,12 +1,809 @@
 // The .ods half of SPEC-124's retained references (see
-// ../retainedReferences.ts). Stub until the table below is implemented.
-import type { SpreadsheetModel } from "../model";
+// ../retainedReferences.ts for the mapper contract): every reference-bearing
+// attribute of the table below, in retained text this product does not model
+// yet, moved through the RetainedReferenceMapper by exact offsets — only the
+// changed attribute values are spliced (and the elements and attributes the
+// rules remove); every other byte stays verbatim.
+//
+// | Where | Element@attribute | Kind |
+// | envelope prefix | `table:content-validation@table:base-cell-address`, `@table:condition` | anchor; formula |
+// | envelope prefix | `table:label-range@table:label-cell-range-address`, `@table:data-cell-range-address` | list, emptied → element removed |
+// | suffix, inside tables | `table:named-range@table:cell-range-address` (emptied → removed), `@table:base-cell-address`; `table:named-expression@table:expression`, `@table:base-cell-address` | list; anchor; formula |
+// | suffix | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
+// | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
+// | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
+// | table start tag | `table:table@table:print-ranges` (emptied → the attribute removed) | list |
+// | inside tables | `calcext:conditional-format@calcext:target-range-address` (emptied → removed, and so is an emptied `calcext:conditional-formats`); `calcext:condition@calcext:value`, `@calcext:base-cell-address`; `calcext:formatting-entry@calcext:value` | list; formula; anchor |
+// | inside tables, `Cell.preservedXml` | `draw:*@table:end-cell-address`; `draw:object@draw:notify-on-update-of-ranges` | anchor; list |
+// | inside tables | `table:scenario@table:scenario-ranges` | list |
+// | `Object N/content.xml` | `chart:plot-area@table:cell-range-address`, `chart:series@chart:values-cell-range-address`, `@chart:label-cell-address`, `chart:domain@table:cell-range-address`, `chart:categories@table:cell-range-address` | list |
+//
+// - A list is rangeAddress.ts's grammar, split keeping its space runs. Each
+//   entry is parsed; its sheet as written (source time) resolved through
+//   resolveRetainedSheetName — a sheet-less `.A1` is on the host — and moved
+//   by `mapper.range(<model name>, range)`. A 3-D entry, one that does not
+//   parse or names no model sheet, and every entry the mapper does not move
+//   keep their exact bytes. A moved entry has only its cell parts rewritten:
+//   the sheet text as written, each part's `$` kept, letters upper-case, a
+//   part that did not move verbatim; a whole column ignores the row axis and
+//   a whole row the column axis. An entry mapped to null is dropped (with
+//   one space run); a list emptied that way removes its element or attribute
+//   where the table says so and keeps its original text everywhere else.
+// - An anchor is one cell: when its cell is gone it becomes the cell the band
+//   now starts at — `mapper.index` per axis.
+// - A formula: every bracketed `[…]` outside a string literal is an address
+//   of one entry, adjusted on its own; one whose area is gone becomes
+//   `[<its first sheet as written>.#REF!]`. Brackets that hold no address (an
+//   external `['file:…'#$S.A1]`, `[.#REF!]`) and everything outside the
+//   brackets keep their bytes.
+// - Hosts. Inside a table, the table's sheet: for content.xml's source
+//   tables the sheet resolveRetainedSheetName gives the table's name, for a
+//   sheet's own sourceXml and its cells' preservedXml that sheet, its id
+//   selecting a copy's override. In the envelope, the sheet of the element's
+//   own base-cell-address, else none (a sheet-less entry is then left
+//   alone). An `Object N`: the sheet whose sourceXml shows it
+//   (`objectsReferenced`), a copy's override only for a copy that alone
+//   shows it (the writer's rule).
+// - `table:tracked-changes` is history: nothing inside it is touched.
+// - Elements and attributes are matched by their qualified names as written
+//   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
+// - Where it lives, replaced copy-on-write: content.xml is the envelope
+//   prefix + the source tables + the suffix — the envelope scanned as one
+//   document (the tables between are whole elements), then each table that
+//   names a location; it gets a new OpaquePart, and a new
+//   `odsContentEnvelope` when its prefix or suffix changed, so content.xml
+//   is always exactly prefix + tables + suffix. A sheet gets a new object
+//   for a new sourceXml (a copy's is not in content.xml) or rows — only the
+//   rows and cells whose preservedXml changed are replaced. An `Object N`
+//   gets a new OpaquePart; `opaque` a new array when any part changed. Text
+//   naming none of the table's attributes is never scanned.
+import { bytesToBase64, type OpaquePart } from "../../core/packageParts";
+import { scanXml, XmlScanError } from "../../core/xmlScanner";
+import { colToLetters, type GridRange } from "../address";
+import type { RefPart, ReferenceNode } from "../formula/references";
+import { scanQuoted } from "../formula/tokens";
+import { isOriginal, MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "../model";
 import type { RetainedReferenceMapper } from "../retainedReferences";
+import { resolveRetainedSheetName } from "../sourceNames";
+import { applySplices, findAttribute, type Splice } from "../xmlSplice";
+import { decodeUtf8, encodeUtf8, LazyParts } from "../xlsx/package";
+import { objectsReferenced, sourceTables } from "./package";
+import { parseOdsRangeAddress, splitOdsRangeAddressList } from "./rangeAddress";
 
-/** Adjusts every retained ods reference through `mapper`; returns the ids
- * of the sheets whose own retained text changed. */
+// --- the location table -----------------------------------------------------------------
+
+type Kind = "list" | "anchor" | "formula";
+
+interface Location {
+  attribute: string;
+  kind: Kind;
+  /** What an emptied list removes; absent: the list keeps its text. */
+  emptied?: "element" | "attribute";
+}
+
+const list = (attribute: string, emptied?: "element" | "attribute"): Location =>
+  emptied === undefined ? { attribute, kind: "list" } : { attribute, kind: "list", emptied };
+const anchor = (attribute: string): Location => ({ attribute, kind: "anchor" });
+const formula = (attribute: string): Location => ({ attribute, kind: "formula" });
+
+const END_CELL = anchor("table:end-cell-address");
+/** Every `draw:*` shape: its end anchor. */
+const SHAPE_LOCATIONS: readonly Location[] = [END_CELL];
+
+const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
+  ["table:content-validation", [anchor("table:base-cell-address"), formula("table:condition")]],
+  ["table:label-range", [list("table:label-cell-range-address", "element"), list("table:data-cell-range-address", "element")]],
+  ["table:named-range", [list("table:cell-range-address", "element"), anchor("table:base-cell-address")]],
+  ["table:named-expression", [formula("table:expression"), anchor("table:base-cell-address")]],
+  ["table:database-range", [list("table:target-range-address", "element")]],
+  ["table:filter", [list("table:condition-source-range-address")]],
+  ["table:data-pilot-table", [list("table:target-range-address")]],
+  ["table:source-cell-range", [list("table:cell-range-address")]],
+  ["table:consolidation", [list("table:source-cell-range-addresses"), anchor("table:target-cell-address")]],
+  ["table:table", [list("table:print-ranges", "attribute")]],
+  ["calcext:conditional-format", [list("calcext:target-range-address", "element")]],
+  ["calcext:condition", [formula("calcext:value"), anchor("calcext:base-cell-address")]],
+  ["calcext:formatting-entry", [formula("calcext:value")]],
+  ["table:scenario", [list("table:scenario-ranges")]],
+  ["draw:object", [list("draw:notify-on-update-of-ranges"), END_CELL]],
+]);
+
+const CHART_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
+  ["chart:plot-area", [list("table:cell-range-address")]],
+  ["chart:series", [list("chart:values-cell-range-address"), list("chart:label-cell-address")]],
+  ["chart:domain", [list("table:cell-range-address")]],
+  ["chart:categories", [list("table:cell-range-address")]],
+]);
+
+type LocationTable = (element: string) => readonly Location[] | undefined;
+
+const contentLocations: LocationTable = (element) => CONTENT_LOCATIONS.get(element) ?? (element.startsWith("draw:") ? SHAPE_LOCATIONS : undefined);
+const chartLocations: LocationTable = (element) => CHART_LOCATIONS.get(element);
+
+/** The prefilter: any of a table's attribute names followed by its `=` —
+ * one pass (a bare name would match `calcext:value-type`, on every
+ * LibreOffice cell). */
+function attributePattern(table: ReadonlyMap<string, readonly Location[]>): RegExp {
+  const names = new Set([...table.values()].flat().map((location) => location.attribute));
+  return new RegExp(`(?:${[...names].map((name) => name.replace(/[.-]/g, "\\$&")).join("|")})\\s*=`);
+}
+
+const CONTENT_ATTRIBUTES = attributePattern(CONTENT_LOCATIONS);
+const CHART_ATTRIBUTES = attributePattern(CHART_LOCATIONS);
+
+/** Whether `text` holds an attribute the pattern names (never scanned when not). */
+function mentions(text: string, attributes: RegExp): boolean {
+  return attributes.test(text);
+}
+
+/** A part's text and the byte-order mark it began with: the decoder drops
+ * one (as the reader's does), and a rewrite writes it back. */
+function decodedPart(bytes: Uint8Array): { bom: string; xml: string } {
+  return { bom: bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? "\uFEFF" : "", xml: decodeUtf8(bytes) };
+}
+
+const TRACKED_CHANGES = "table:tracked-changes";
+const CONDITIONAL_FORMATS = "calcext:conditional-formats";
+const CONTENT_XML = "content.xml";
+const OBJECT_CONTENT = /^(Object [^/]+)\/content\.xml$/;
+
+// --- raw attribute text -----------------------------------------------------------------
+
+/** An attribute value as an XML parser reads it — entities decoded, a
+ * literal tab or line end a space — and the raw offset each decoded index
+ * starts at (`at(text.length)` is the raw length), so a rewrite can keep
+ * every raw byte it does not replace. */
+interface Decoded {
+  text: string;
+  at(index: number): number;
+}
+
+const ENTITY = /&(?:#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/y;
+const NAMED_ENTITIES: Readonly<Record<string, string>> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/** One entity's text, undefined when it names nothing. */
+function entityText(entity: string): string | undefined {
+  const body = entity.slice(1, -1);
+  if (!body.startsWith("#")) {
+    return Object.hasOwn(NAMED_ENTITIES, body) ? NAMED_ENTITIES[body] : undefined;
+  }
+  const code = body.startsWith("#x") ? Number.parseInt(body.slice(2), 16) : Number.parseInt(body.slice(1), 10);
+  return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : undefined;
+}
+
+/** A raw (still-escaped) attribute value decoded (see Decoded). */
+function decodeRaw(raw: string): Decoded {
+  if (!/[&\t\n\r]/.test(raw)) {
+    return { text: raw, at: (index) => index };
+  }
+  let text = "";
+  const offsets: number[] = [];
+  let i = 0;
+  while (i < raw.length) {
+    const code = raw.charCodeAt(i);
+    if (code === 0x26) {
+      ENTITY.lastIndex = i;
+      const entity = ENTITY.exec(raw)?.[0];
+      const decoded = entity === undefined ? undefined : entityText(entity);
+      if (entity !== undefined && decoded !== undefined) {
+        for (let unit = 0; unit < decoded.length; unit += 1) {
+          offsets.push(i);
+        }
+        text += decoded;
+        i += entity.length;
+        continue;
+      }
+    }
+    offsets.push(i);
+    text += code === 0x09 || code === 0x0a || code === 0x0d ? " " : raw[i];
+    i += 1;
+  }
+  offsets.push(raw.length);
+  return { text, at: (index) => offsets[index]! };
+}
+
+// --- one address ------------------------------------------------------------------------
+
+/** A raw slice of an address by decoded offsets into it. */
+type RawOf = (from: number, to: number) => string;
+
+/** Where a moved address's parts go. */
+interface Moved {
+  start: RefPart;
+  end?: RefPart;
+}
+
+/** Where the CELL part of the endpoint at `i` sits: after its sheet's `.`
+ * (the address has parsed, so the shape is known), up to a `:` or the end. */
+function cellSpan(address: string, i: number): { start: number; end: number } {
+  let j = i;
+  if (address.charCodeAt(j) !== 0x2e) {
+    if (address.charCodeAt(j) === 0x24) {
+      j += 1;
+    }
+    if (address.charCodeAt(j) === 0x27) {
+      j = scanQuoted(address, j)?.end ?? address.length;
+    } else {
+      while (j < address.length && address.charCodeAt(j) !== 0x2e) {
+        j += 1;
+      }
+    }
+  }
+  const start = j + 1;
+  let end = start;
+  while (end < address.length && address.charCodeAt(end) !== 0x3a) {
+    end += 1;
+  }
+  return { start, end };
+}
+
+function partText(part: RefPart): string {
+  const col = part.col === undefined ? "" : `${part.colAbs ? "$" : ""}${colToLetters(part.col)}`;
+  const row = part.row === undefined ? "" : `${part.rowAbs ? "$" : ""}${part.row + 1}`;
+  return col + row;
+}
+
+const samePosition = (a: RefPart, b: RefPart | undefined): boolean => b !== undefined && a.row === b.row && a.col === b.col;
+
+/** The grid area an address covers (a whole column or row spans its axis). */
+function gridOf(ref: ReferenceNode): GridRange {
+  const end = ref.end ?? ref.start;
+  const rows = ref.start.row === undefined || end.row === undefined ? [0, MAX_ROWS - 1] : [ref.start.row, end.row];
+  const cols = ref.start.col === undefined || end.col === undefined ? [0, MAX_COLS - 1] : [ref.start.col, end.col];
+  return { top: Math.min(rows[0]!, rows[1]!), bottom: Math.max(rows[0]!, rows[1]!), left: Math.min(cols[0]!, cols[1]!), right: Math.max(cols[0]!, cols[1]!) };
+}
+
+/** An address's parts placed on `to`, each axis keeping its orientation; a
+ * part with no row (a whole column) or no column (a whole row) gains none. */
+function placed(ref: ReferenceNode, to: GridRange): Moved {
+  const start: RefPart = { ...ref.start };
+  const end: RefPart | undefined = ref.end && { ...ref.end };
+  if (ref.start.row !== undefined) {
+    const reversed = ref.end?.row !== undefined && ref.start.row > ref.end.row;
+    start.row = reversed ? to.bottom : to.top;
+    if (end?.row !== undefined) {
+      end.row = reversed ? to.top : to.bottom;
+    }
+  }
+  if (ref.start.col !== undefined) {
+    const reversed = ref.end?.col !== undefined && ref.start.col > ref.end.col;
+    start.col = reversed ? to.right : to.left;
+    if (end?.col !== undefined) {
+      end.col = reversed ? to.left : to.right;
+    }
+  }
+  return end ? { start, end } : { start };
+}
+
+/** The address with its moved cell parts rewritten — its sheet text, the
+ * `:` and every part that did not move as written. */
+function rewriteParts(address: string, rawOf: RawOf, ref: ReferenceNode, moved: Moved): string {
+  const part = (before: RefPart | undefined, after: RefPart | undefined, span: { start: number; end: number }): string =>
+    before && after && !samePosition(before, after) ? partText(after) : rawOf(span.start, span.end);
+  const first = cellSpan(address, 0);
+  let out = rawOf(0, first.start) + part(ref.start, moved.start, first);
+  if (first.end < address.length) {
+    const second = cellSpan(address, first.end + 1);
+    out += rawOf(first.end, second.start) + part(ref.end, moved.end, second) + rawOf(second.end, address.length);
+  }
+  return out;
+}
+
+/** The `]` closing a bracket whose content starts at `i` (quoted names
+ * skipped), or -1. */
+function closingBracket(text: string, i: number): number {
+  let j = i;
+  while (j < text.length) {
+    const code = text.charCodeAt(j);
+    if (code === 0x5d) {
+      return j;
+    }
+    if (code === 0x5b) {
+      return -1;
+    }
+    if (code === 0x27) {
+      const quoted = scanQuoted(text, j);
+      if (!quoted) {
+        return -1;
+      }
+      j = quoted.end;
+      continue;
+    }
+    j += 1;
+  }
+  return -1;
+}
+
+/** A list's pieces rejoined without the dropped entries (null): each kept
+ * entry after the first preceded by the run written before it, a leading and
+ * a trailing run kept; null when no entry is left. */
+function joinList(pieces: readonly string[], out: readonly (string | null)[]): string | null {
+  const last = pieces.length - 1;
+  let text = pieces[0] === "" && last > 0 ? out[1]! : "";
+  let kept = 0;
+  for (let k = 0; k <= last; k += 2) {
+    const entry = out[k];
+    if (pieces[k] === "" || entry === null || entry === undefined) {
+      continue;
+    }
+    if (kept > 0) {
+      text += out[k - 1]!;
+    }
+    text += entry;
+    kept += 1;
+  }
+  if (kept === 0) {
+    return null;
+  }
+  return last > 0 && pieces[last] === "" ? text + out[last - 1]! : text;
+}
+
+// --- the rewrite --------------------------------------------------------------------------
+
+/** What a sheet-less address is on, and how source-time names resolve. */
+interface Host {
+  sheet?: Sheet;
+  /** The id resolveRetainedSheetName selects a copy's override by. */
+  id?: string;
+  /** Envelope text: each element's host is the sheet of its own
+   * base-cell-address. */
+  byBaseCell?: true;
+}
+
+const ENVELOPE_HOST: Host = { byBaseCell: true };
+
+interface Frame {
+  start: number;
+  /** The element is removed when it closes. */
+  remove: boolean;
+  /** Nothing inside is adjusted (tracked changes, a removed element). */
+  quiet: boolean;
+  /** `calcext:conditional-formats`: its element children, and how many of
+   * them are removed. */
+  children?: number;
+  removedChildren?: number;
+}
+
+class OdsRetainedRewrite {
+  private readonly model: SpreadsheetModel;
+  private readonly mapper: RetainedReferenceMapper;
+  private readonly parts: LazyParts;
+  private readonly resolved = new Map<string, Sheet | null>();
+  private readonly shown = new Map<Sheet, string[]>();
+
+  constructor(model: SpreadsheetModel, mapper: RetainedReferenceMapper) {
+    this.model = model;
+    this.mapper = mapper;
+    this.parts = new LazyParts(model.opaque);
+  }
+
+  run(): Set<string> {
+    const model = this.model;
+    const changed = new Set<string>();
+    const ownSplices = new Map<Sheet, Splice[]>();
+    let sheetsChanged = false;
+    const sheets = model.sheets.map((sheet) => {
+      const next = this.sheet(sheet, ownSplices);
+      if (next !== sheet) {
+        sheetsChanged = true;
+        changed.add(sheet.id);
+      }
+      return next;
+    });
+    const replaced = this.objects(changed);
+    const content = this.content(ownSplices);
+    if (content) {
+      replaced.set(CONTENT_XML, { name: CONTENT_XML, data: bytesToBase64(encodeUtf8(content.bom + content.xml)) });
+      if (content.envelope) {
+        model.odsContentEnvelope = content.envelope;
+      }
+    }
+    if (replaced.size > 0) {
+      model.opaque = model.opaque.map((part) => replaced.get(part.name) ?? part);
+    }
+    if (sheetsChanged) {
+      model.sheets = sheets;
+    }
+    return changed;
+  }
+
+  /** A sheet with its sourceXml and its cells' preservedXml adjusted (the
+   * same object when neither changes); records the sourceXml's splices. */
+  private sheet(sheet: Sheet, ownSplices: Map<Sheet, Splice[]>): Sheet {
+    const host: Host = { sheet, id: sheet.id };
+    let next = sheet;
+    if (sheet.sourceXml !== undefined && mentions(sheet.sourceXml, CONTENT_ATTRIBUTES)) {
+      const splices = this.splices(sheet.sourceXml, host, contentLocations);
+      ownSplices.set(sheet, splices);
+      const sourceXml = applySplices(sheet.sourceXml, splices);
+      if (sourceXml !== sheet.sourceXml) {
+        next = { ...next, sourceXml };
+      }
+    }
+    const rows = this.rows(sheet.rows, host);
+    return rows === sheet.rows ? next : { ...next, rows };
+  }
+
+  /** Rows with every cell's preservedXml adjusted, copy-on-write. */
+  private rows(rows: Row[], host: Host): Row[] {
+    let out: Row[] | undefined;
+    for (let r = 0; r < rows.length; r += 1) {
+      const row = rows[r]!;
+      let cells: Cell[] | undefined;
+      for (let c = 0; c < row.cells.length; c += 1) {
+        const cell = row.cells[c]!;
+        const xml = cell.preservedXml;
+        if (xml === undefined || !mentions(xml, CONTENT_ATTRIBUTES)) {
+          continue;
+        }
+        // A fragment: scanned inside a dummy root.
+        const splices = this.splices(`<w>${xml}</w>`, host, contentLocations).map((splice) => ({ ...splice, start: splice.start - 3, end: splice.end - 3 }));
+        const preservedXml = applySplices(xml, splices);
+        if (preservedXml !== xml) {
+          cells ??= row.cells.slice();
+          cells[c] = { ...cell, preservedXml };
+        }
+      }
+      if (cells) {
+        out ??= rows.slice();
+        out[r] = { ...row, cells };
+      }
+    }
+    return out ?? rows;
+  }
+
+  /** The adjusted content.xml and, when its prefix or suffix changed, the
+   * new envelope; undefined when nothing changed (or the part does not hold
+   * the envelope, which is then not touched either). */
+  private content(ownSplices: ReadonlyMap<Sheet, Splice[]>): { bom: string; xml: string; envelope?: { prefix: string; suffix: string } } | undefined {
+    const envelope = this.model.odsContentEnvelope;
+    const bytes = envelope && this.parts.get(CONTENT_XML);
+    if (!envelope || !bytes) {
+      return undefined;
+    }
+    const { bom, xml } = decodedPart(bytes);
+    const { prefix, suffix } = envelope;
+    const tail = xml.length - suffix.length;
+    if (tail < prefix.length || !xml.startsWith(prefix) || !xml.endsWith(suffix)) {
+      return undefined;
+    }
+    const prefixSplices: Splice[] = [];
+    const suffixSplices: Splice[] = [];
+    const outside = prefix + suffix;
+    if (mentions(outside, CONTENT_ATTRIBUTES)) {
+      for (const splice of this.splices(outside, ENVELOPE_HOST, contentLocations)) {
+        // One straddling the two would be an ancestor of the tables: never a location.
+        if (splice.end <= prefix.length) {
+          prefixSplices.push(splice);
+        } else if (splice.start >= prefix.length) {
+          suffixSplices.push({ ...splice, start: splice.start - prefix.length, end: splice.end - prefix.length });
+        }
+      }
+    }
+    const tableSplices: Splice[] = [];
+    for (const table of sourceTables(xml, prefix.length, suffix.length)) {
+      const text = xml.slice(table.start, table.end);
+      if (!mentions(text, CONTENT_ATTRIBUTES)) {
+        continue;
+      }
+      const sheet = this.sheetNamed(table.name, undefined);
+      // An original's sourceXml is this text, already adjusted with the same host.
+      const splices = (sheet?.sourceXml === text ? ownSplices.get(sheet) : undefined) ?? this.splices(text, sheet ? { sheet, id: sheet.id } : {}, contentLocations);
+      const shift = table.start - prefix.length;
+      for (const splice of splices) {
+        tableSplices.push({ ...splice, start: splice.start + shift, end: splice.end + shift });
+      }
+    }
+    if (prefixSplices.length + suffixSplices.length + tableSplices.length === 0) {
+      return undefined;
+    }
+    const nextPrefix = applySplices(prefix, prefixSplices);
+    const nextSuffix = applySplices(suffix, suffixSplices);
+    const next = nextPrefix + applySplices(xml.slice(prefix.length, tail), tableSplices) + nextSuffix;
+    if (next === xml) {
+      return undefined;
+    }
+    return nextPrefix === prefix && nextSuffix === suffix ? { bom, xml: next } : { bom, xml: next, envelope: { prefix: nextPrefix, suffix: nextSuffix } };
+  }
+
+  /** Each embedded object's chart ranges adjusted: the replaced parts, and
+   * the sheets showing a changed one added to `changed`. */
+  private objects(changed: Set<string>): Map<string, OpaquePart> {
+    const replaced = new Map<string, OpaquePart>();
+    for (const part of this.model.opaque) {
+      const object = OBJECT_CONTENT.exec(part.name)?.[1];
+      const bytes = object === undefined ? undefined : this.parts.get(part.name);
+      if (object === undefined || !bytes) {
+        continue;
+      }
+      const { bom, xml } = decodedPart(bytes);
+      if (!mentions(xml, CHART_ATTRIBUTES)) {
+        continue;
+      }
+      const showing = this.model.sheets.filter((sheet) => this.objectsOf(sheet).includes(object));
+      const only = showing.length === 1 ? showing[0] : undefined;
+      const shared = showing.find(isOriginal) ?? showing[0];
+      const host: Host = only ? { sheet: only, id: only.id } : shared ? { sheet: shared } : {};
+      const next = applySplices(xml, this.splices(xml, host, chartLocations));
+      if (next === xml) {
+        continue;
+      }
+      replaced.set(part.name, { name: part.name, data: bytesToBase64(encodeUtf8(bom + next)) });
+      for (const sheet of showing) {
+        changed.add(sheet.id);
+      }
+    }
+    return replaced;
+  }
+
+  private objectsOf(sheet: Sheet): string[] {
+    let objects = this.shown.get(sheet);
+    if (!objects) {
+      objects = sheet.sourceXml === undefined ? [] : objectsReferenced(sheet.sourceXml);
+      this.shown.set(sheet, objects);
+    }
+    return objects;
+  }
+
+  /** The model sheet a source-time name in retained text means. */
+  private sheetNamed(name: string, hostId: string | undefined): Sheet | undefined {
+    const key = `${hostId ?? ""}\u0000${name.toUpperCase()}`;
+    let sheet = this.resolved.get(key);
+    if (sheet === undefined) {
+      sheet = resolveRetainedSheetName(this.model, this.parts, name, hostId) ?? null;
+      this.resolved.set(key, sheet);
+    }
+    return sheet ?? undefined;
+  }
+
+  /** The splices adjusting every location of `xml` (a document, scanned
+   * once), in its offsets; none when it does not scan. */
+  private splices(xml: string, host: Host, table: LocationTable): Splice[] {
+    const splices: Splice[] = [];
+    const stack: Frame[] = [];
+    let quiet = 0;
+    const removeElement = (start: number, end: number): void => {
+      // Everything recorded since the element opened lies inside it.
+      while (splices.length > 0 && splices[splices.length - 1]!.start >= start) {
+        splices.pop();
+      }
+      splices.push({ start, end, text: "" });
+    };
+    try {
+      scanXml(xml, (event) => {
+        if (event.type === "text") {
+          return undefined;
+        }
+        if (event.type === "close") {
+          const frame = stack.pop();
+          if (!frame) {
+            return undefined;
+          }
+          if (frame.quiet) {
+            quiet -= 1;
+          }
+          const emptied = frame.children !== undefined && frame.children > 0 && frame.removedChildren === frame.children;
+          if (frame.remove || emptied) {
+            removeElement(frame.start, event.end);
+          }
+          return undefined;
+        }
+        const parent = stack.at(-1);
+        if (parent?.children !== undefined) {
+          parent.children += 1;
+        }
+        const tracked = event.name === TRACKED_CHANGES;
+        let remove = false;
+        const locations = quiet > 0 || tracked ? undefined : table(event.name);
+        if (locations) {
+          const result = this.element(xml.slice(event.start, event.end), event.start, locations, host);
+          if (result === "remove") {
+            remove = true;
+          } else {
+            splices.push(...result);
+          }
+        }
+        if (remove && parent?.removedChildren !== undefined) {
+          parent.removedChildren += 1;
+        }
+        if (event.selfClosing) {
+          if (remove) {
+            removeElement(event.start, event.end);
+          }
+          return undefined;
+        }
+        const frame: Frame = { start: event.start, remove, quiet: tracked || remove };
+        if (event.name === CONDITIONAL_FORMATS) {
+          frame.children = 0;
+          frame.removedChildren = 0;
+        }
+        if (frame.quiet) {
+          quiet += 1;
+        }
+        stack.push(frame);
+        return undefined;
+      });
+    } catch (error) {
+      if (error instanceof XmlScanError) {
+        return [];
+      }
+      throw error;
+    }
+    return splices;
+  }
+
+  /** One location element's start tag (at `tagStart`): the splices of its
+   * changed attributes, or "remove" when an emptied list removes it. */
+  private element(tag: string, tagStart: number, locations: readonly Location[], host: Host): Splice[] | "remove" {
+    const own = host.byBaseCell ? this.baseCellHost(tag) : host;
+    const splices: Splice[] = [];
+    for (const location of locations) {
+      const span = findAttribute(tag, location.attribute);
+      if (!span) {
+        continue;
+      }
+      const next = location.kind === "formula" ? this.formula(span.raw, own) : this.list(span.raw, own, location.kind);
+      if (next === undefined) {
+        continue;
+      }
+      if (next === null) {
+        if (location.emptied === "element") {
+          return "remove";
+        }
+        if (location.emptied === "attribute") {
+          splices.push({ start: tagStart + span.start, end: tagStart + span.end, text: "" });
+        }
+        continue;
+      }
+      splices.push({ start: tagStart + span.valueStart, end: tagStart + span.valueEnd, text: next });
+    }
+    return splices;
+  }
+
+  /** An envelope element's host: the sheet its base-cell-address names. */
+  private baseCellHost(tag: string): Host {
+    const span = findAttribute(tag, "table:base-cell-address") ?? findAttribute(tag, "calcext:base-cell-address");
+    if (!span) {
+      return {};
+    }
+    const first = splitOdsRangeAddressList(decodeRaw(span.raw).text).find((piece, k) => k % 2 === 0 && piece !== "");
+    const ref = first === undefined ? null : parseOdsRangeAddress(first);
+    const sheet = ref?.sheet === undefined ? undefined : this.sheetNamed(ref.sheet, undefined);
+    return sheet ? { sheet } : {};
+  }
+
+  /** A raw address list adjusted: undefined when nothing moved, null when
+   * every entry is gone. */
+  private list(raw: string, host: Host, kind: Kind): string | null | undefined {
+    const value = decodeRaw(raw);
+    const pieces = splitOdsRangeAddressList(value.text);
+    const out: (string | null)[] = [];
+    let changed = false;
+    let pos = 0;
+    for (let k = 0; k < pieces.length; k += 1) {
+      const piece = pieces[k]!;
+      const start = pos;
+      pos += piece.length;
+      const next = k % 2 === 1 || piece === "" ? undefined : this.address(piece, (from, to) => raw.slice(value.at(start + from), value.at(start + to)), host, kind);
+      if (next === undefined) {
+        out.push(raw.slice(value.at(start), value.at(pos)));
+      } else {
+        changed = true;
+        out.push(next);
+      }
+    }
+    return changed ? joinList(pieces, out) : undefined;
+  }
+
+  /** A formula's raw text with every bracketed address outside a string
+   * adjusted; undefined when none moved. */
+  private formula(raw: string, host: Host): string | undefined {
+    if (!raw.includes("[")) {
+      return undefined;
+    }
+    const value = decodeRaw(raw);
+    const text = value.text;
+    let out = "";
+    let from = 0;
+    let changed = false;
+    let inString = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i);
+      if (code === 0x22) {
+        inString = !inString;
+        continue;
+      }
+      if (inString || code !== 0x5b) {
+        continue;
+      }
+      const close = closingBracket(text, i + 1);
+      if (close < 0) {
+        continue;
+      }
+      const base = i + 1;
+      const next = this.address(text.slice(base, close), (a, b) => raw.slice(value.at(base + a), value.at(base + b)), host, "formula");
+      if (typeof next === "string") {
+        out += raw.slice(from, value.at(base)) + next;
+        from = value.at(close);
+        changed = true;
+      }
+      i = close;
+    }
+    return changed ? out + raw.slice(from) : undefined;
+  }
+
+  /** One address's raw replacement: undefined when it stays as written;
+   * null when its area is gone (a formula's becomes `<sheet>.#REF!`). */
+  private address(text: string, rawOf: RawOf, host: Host, kind: Kind): string | null | undefined {
+    const ref = parseOdsRangeAddress(text);
+    if (!ref || ref.sheetEnd !== undefined) {
+      return undefined;
+    }
+    const sheet = ref.sheet === undefined ? host.sheet : this.sheetNamed(ref.sheet, host.id);
+    if (!sheet) {
+      return undefined;
+    }
+    const moved = this.move(sheet.name, ref, kind === "anchor");
+    if (moved === undefined) {
+      return undefined;
+    }
+    if (moved === null) {
+      return kind === "formula" ? `${rawOf(0, cellSpan(text, 0).start)}#REF!` : null;
+    }
+    return rewriteParts(text, rawOf, ref, moved);
+  }
+
+  /** Where an address's parts go: undefined when nowhere new, null when its
+   * area is gone (an anchor's cell then goes where its band now starts). */
+  private move(sheetName: string, ref: ReferenceNode, isAnchor: boolean): Moved | null | undefined {
+    const range = gridOf(ref);
+    const mapped = this.mapper.range(sheetName, range);
+    if (mapped === range) {
+      return undefined;
+    }
+    let moved: Moved;
+    if (mapped !== null) {
+      moved = placed(ref, mapped);
+    } else if (!isAnchor) {
+      return null;
+    } else {
+      const start = this.indexed(sheetName, ref.start);
+      const end = ref.end && this.indexed(sheetName, ref.end);
+      if (!start || end === null) {
+        return undefined;
+      }
+      moved = end ? { start, end } : { start };
+    }
+    const same = samePosition(ref.start, moved.start) && (ref.end === undefined || samePosition(ref.end, moved.end));
+    return same ? undefined : moved;
+  }
+
+  /** A part moved axis by axis through `mapper.index`; null when an axis
+   * has nowhere to go. */
+  private indexed(sheetName: string, part: RefPart): RefPart | null {
+    const out: RefPart = { ...part };
+    if (part.row !== undefined) {
+      const row = this.mapper.index(sheetName, "row", part.row);
+      if (row === null) {
+        return null;
+      }
+      out.row = row;
+    }
+    if (part.col !== undefined) {
+      const col = this.mapper.index(sheetName, "col", part.col);
+      if (col === null) {
+        return null;
+      }
+      out.col = col;
+    }
+    return out;
+  }
+}
+
+/** Adjusts every retained ods reference through `mapper` (see the module
+ * header); returns the ids of the sheets whose own retained text changed —
+ * their sourceXml, a cell's preservedXml, or a chart object their table
+ * shows. */
 export function rewriteOdsRetainedReferences(model: SpreadsheetModel, mapper: RetainedReferenceMapper): Set<string> {
-  void model;
-  void mapper;
-  return new Set();
+  return new OdsRetainedRewrite(model, mapper).run();
 }
