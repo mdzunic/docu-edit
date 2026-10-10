@@ -8,6 +8,7 @@
 import { computed } from "vue";
 import { formatBadgeLabel, formatFileSize, formatTimestamp } from "../../lib/format";
 import { pdfPageSizesLabel } from "../../lib/media/thumbnail";
+import { asMediaModel, currentImageSize, hasEdits } from "../../lib/media/editModel";
 import { asMeasurementUnit } from "../../lib/core/units";
 import { usePreferences } from "../../composables/usePreferences";
 
@@ -19,7 +20,11 @@ const props = defineProps({
 });
 
 const pdf = computed(() => props.media.pdf ?? null);
-const image = computed(() => props.media.image ?? null);
+// The current image's size (SPEC-112): an edited image reports what its
+// stack produces — during an edit session, the live stack the preview shows
+// — with the original's size beside it.
+const image = computed(() => currentImageSize(asMediaModel(props.media)));
+const original = computed(() => (hasEdits(asMediaModel(props.media)) ? props.media.image ?? null : null));
 const properties = computed(() => props.media.properties ?? {});
 
 const pageCountLabel = computed(() =>
@@ -69,6 +74,15 @@ const storedLabel = computed(() =>
         <dt>Dimensions</dt>
         <dd data-testid="detail-dimensions">
           {{ image.widthPx }} × {{ image.heightPx }} px
+        </dd>
+      </div>
+      <div
+        v-if="original"
+        class="details-row"
+      >
+        <dt>Original</dt>
+        <dd data-testid="detail-original-dimensions">
+          {{ original.widthPx }} × {{ original.heightPx }} px · edited
         </dd>
       </div>
       <template v-if="pdf">

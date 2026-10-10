@@ -1148,6 +1148,41 @@ export function storeMedia(model: MediaModel): void {
   storeRecord(model, model.format);
 }
 
+/** Writes an edited media document through (SPEC-112's Save and Flatten):
+ * `model` — a new model object, the image editor never mutates the stored
+ * one — becomes the record's model (its format too: a flattened SVG is a
+ * PNG now), `lastModified` bumps (so the library thumbnail, keyed by id +
+ * lastModified, rebuilds), and the media record then the shell are written.
+ * One write-through, and a STRICT one: unlike touchDocument's
+ * fire-and-forget persist, a failed write rejects and puts the previous
+ * model back, so "Saved" or "Flattened" is never reported over storage that
+ * still holds the old state. The media record goes first: if the shell
+ * write then fails, storage holds the new pixels under the old shell (an
+ * edited shell whose render is gone fails closed), never a flattened shell
+ * over the original's bytes. A missing or non-media id is a no-op. */
+export async function storeMediaEdit(model: MediaModel): Promise<void> {
+  const record = records.get(model.id);
+  if (!record || !isMediaModel(record.model)) {
+    return;
+  }
+  const previous = { model: record.model, format: record.format, lastModified: record.lastModified };
+  record.model = model;
+  record.format = model.format;
+  record.lastModified = Date.now();
+  try {
+    await persistMedia(model.id, model.media);
+    await putRecordYielding({ ...record, model: shellModel(model) });
+  } catch (error) {
+    markStorageUnavailable();
+    if (records.get(model.id) === record && record.model === model) {
+      record.model = previous.model;
+      record.format = previous.format;
+      record.lastModified = previous.lastModified;
+    }
+    throw error;
+  }
+}
+
 /** The workbook counterpart (SPEC-116) — an opened `.xlsx`/`.ods` stores
  * through the same record machinery, its sheets' rows split into their own
  * records like every other kind's payload. */

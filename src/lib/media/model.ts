@@ -11,6 +11,7 @@
 // IndexedDB machinery and `JSON.parse(JSON.stringify(model))` `toEqual`s the
 // model.
 import type { DocumentProperties } from "../core/documentProperties";
+import type { ImageEdit } from "../core/imageEdits";
 import type { MediaPart } from "../core/media";
 
 /** The media formats the library holds: the five image formats every target
@@ -45,13 +46,32 @@ export interface MediaModel {
   format: MediaFormat;
   /** "application/pdf", "image/png", … */
   contentType: string;
-  /** The MediaPart in `media` holding the source bytes, verbatim. */
+  /** The MediaPart in `media` holding the source bytes, verbatim. Never
+   * changes once written; only "Flatten and discard original" (SPEC-112)
+   * replaces the bytes it names. */
   sourceMediaId: string;
-  /** Exactly one part here; SPEC-112 adds a second. */
+  /** The source part, plus — for an edited image (SPEC-112) — the derived
+   * render and, for an SVG, the raster base the stack applies to. */
   media: MediaPart[];
+  /** SPEC-112: the saved, normalised edit stack (core/imageEdits.ts),
+   * applied to the source on demand. Absent or empty ⇒ the source is still
+   * the original file. */
+  edits?: ImageEdit[];
+  /** SPEC-112: the derived MediaPart holding the saved stack flattened — a
+   * PNG, or a JPEG for a JPEG source — regenerated only when the saved stack
+   * changes (Save, Save as a copy, Flatten), never during an edit session.
+   * Every consumer of "the current image" reads it when present. */
+  renderMediaId?: string;
+  /** SPEC-112: for an SVG source, the raster the stack applies to (made once,
+   * on the first edit, through core/svgToPng.ts) — the vector original stays
+   * the source. Absent for raster sources, whose base is the source. */
+  baseMediaId?: string;
   /** The source length in bytes, so a row renders without the payload. */
   byteLength: number;
-  /** Absent for pdf, and for an image whose dimensions could not be read. */
+  /** Absent for pdf, and for an image whose dimensions could not be read.
+   * For an edited image this stays the stack base's natural size — the size
+   * the edits' coordinates are in; the current image's size is derived
+   * (media/editModel.ts's currentImageSize). */
   image?: { widthPx: number; heightPx: number };
   /** pdf only. */
   pdf?: PdfSummary;

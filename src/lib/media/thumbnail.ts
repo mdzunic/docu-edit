@@ -5,6 +5,8 @@
 // raster — lives in the LibraryThumbnail component behind its existing
 // IntersectionObserver + idle-scheduler gating.
 import { formatLength, ptToCm, type MeasurementUnit } from "../core/units";
+import { ensureMediaEncoded } from "../core/media";
+import { currentImagePart } from "./editModel";
 import type { MediaModel, PdfSummary } from "./model";
 
 /** The longest edge a cached media thumbnail raster may have. */
@@ -109,9 +111,11 @@ export function pdfCardPlaceholder(
 }
 
 /** The image an <img> element should thumbnail from: the media document's
- * stored payload as a data: URI. Kept here (not in the component) so the
- * .vue file needs no base64 knowledge. */
+ * current image — its stored payload, or for an edited image (SPEC-112) its
+ * saved render — as a data: URI ("" when there is none). Kept here (not in
+ * the component) so the .vue file needs no base64 knowledge. */
 export function mediaImageDataUri(model: MediaModel): string {
-  const part = model.media.find((entry) => entry.mediaId === model.sourceMediaId);
-  return part ? `data:${part.contentType};base64,${part.data}` : "";
+  const part = currentImagePart(model);
+  ensureMediaEncoded(part);
+  return part && part.data ? `data:${part.contentType};base64,${part.data}` : "";
 }

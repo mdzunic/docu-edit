@@ -22,7 +22,7 @@
 //   /Encrypt entry alone, without touching the objects.
 // - spec107-photo.jpg, -shot.png, -mark.svg, -anim.gif, -shot.webp — the
 //   image builders in the same module; their header comment records how each
-//   is made (a real 64×40 PNG, a known-good 1×1 baseline JPEG, an SVG behind a
+//   is made (a real 64×40 PNG, a real 160×120 baseline JPEG, an SVG behind a
 //   comment and doctype, a 2-frame animated GIF89a, a VP8L WebP container).
 // The unit specs read these same checked-in bytes, so unit and e2e
 // assertions cannot drift apart.

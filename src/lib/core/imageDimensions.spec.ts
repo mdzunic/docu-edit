@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decodeImageDimensions } from "./imageDimensions";
+import { decodeImageDimensions, gifFrameCount } from "./imageDimensions";
 
 // --- byte-level fixture builders --------------------------------------------
 
@@ -336,5 +336,28 @@ describe("decodeImageDimensions — WebP (SPEC-107)", () => {
 
   it("returns null for a truncated RIFF container", () => {
     expect(decodeImageDimensions(utf8("RIFF1234WEBP"), "image/webp")).toBeNull();
+  });
+});
+
+/** A 1 × 1 GIF89a with `frames` image descriptors (no colour tables), a
+ * graphic-control extension before each frame, then the trailer. */
+function gif(frames: number): Uint8Array {
+  const bytes = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0, 0];
+  for (let i = 0; i < frames; i += 1) {
+    bytes.push(0x21, 0xf9, 4, 0, 10, 0, 0, 0);
+    bytes.push(0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 0x01, 0);
+  }
+  bytes.push(0x3b);
+  return new Uint8Array(bytes);
+}
+
+describe("gifFrameCount (SPEC-112: an animated GIF is edited as its first frame)", () => {
+  it("counts image descriptors by walking the blocks, not by scanning bytes", () => {
+    expect(gifFrameCount(gif(1))).toBe(1);
+    expect(gifFrameCount(gif(2))).toBe(2);
+    // A truncated file counts the frames seen before the cut.
+    expect(gifFrameCount(gif(3).subarray(0, 50))).toBe(2);
+    expect(gifFrameCount(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))).toBe(0);
+    expect(gifFrameCount(new Uint8Array(32))).toBe(0);
   });
 });

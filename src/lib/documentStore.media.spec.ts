@@ -109,4 +109,32 @@ describe("media documents in the store (SPEC-107)", () => {
     expect(store.getDocument(model.id)).toBeUndefined();
     expect(store.getPresentation(model.id)).toBeUndefined();
   });
+
+  it("keeps an edited image's stack in the shell and its render beside the untouched source, across a reload (SPEC-112)", async () => {
+    const seed = await loadStore();
+    const { withSavedStack } = await import("./media/editModel");
+    const model = await seed.assembleMediaModel("Shot", "png", await buildPngFixtureBytes());
+    seed.store.storeMedia(model);
+    await flushWrites();
+    const render = { bytes: new Uint8Array([1, 2, 3]), contentType: "image/png", widthPx: 40, heightPx: 64 };
+    const edited = withSavedStack(model, [{ kind: "rotate", quarterTurns: 1 }], render);
+    await seed.store.storeMediaEdit(edited);
+    expect(seed.store.getMedia(model.id)).toBe(edited);
+    // Save is a write-through: the shell carries the stack, the media record
+    // the source (unchanged) plus the render.
+    const shell = written(seed.idb).findLast((record) => record.id === model.id);
+    expect(JSON.stringify(shell)).toContain('"edits":[{"kind":"rotate","quarterTurns":1}]');
+    // IndexedDB keeps one record per key: the last put of each id.
+    const persisted = [...new Map(written(seed.idb).map((record) => [record.id, record])).values()];
+    vi.doUnmock("./idb");
+    vi.resetModules();
+
+    const { store } = await loadStore(persisted);
+    await store.initLibrary();
+    const loaded = store.getMedia(model.id)!;
+    expect(loaded.edits).toEqual([{ kind: "rotate", quarterTurns: 1 }]);
+    expect(loaded.sourceMediaId).toBe(model.sourceMediaId);
+    expect(loaded.media.find((part) => part.mediaId === model.sourceMediaId)?.data).toBe(model.media[0].data);
+    expect(loaded.media.find((part) => part.mediaId === loaded.renderMediaId)?.data).toBe("AQID");
+  });
 });

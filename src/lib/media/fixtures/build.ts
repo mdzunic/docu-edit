@@ -16,11 +16,15 @@
 // - spec107-shot.png     — buildPngFixtureBytes: a real 64×40 PNG written
 //                          chunk by chunk (IHDR/IDAT/IEND with CRCs), RGB
 //                          gradient scanlines deflated via CompressionStream.
-// - spec107-photo.jpg    — buildJpegFixtureBytes: a known-good minimal
-//                          baseline JPEG (1×1), embedded as base64 — this
-//                          repo has no JPEG encoder and needs none; the
-//                          fixture exists to exercise detection and
-//                          byte-fidelity, not decoding.
+// - spec107-photo.jpg    — buildJpegFixtureBytes: a real 160 × 120
+//                          baseline JPEG of four flat colour quadrants,
+//                          embedded as base64. This repo has no JPEG encoder:
+//                          the bytes were produced once by Chromium's own
+//                          canvas encoder (fillRect per quadrant, then
+//                          toDataURL("image/jpeg", 0.9)). SPEC-107 used it
+//                          for detection and byte fidelity at 1 × 1; SPEC-112
+//                          needs an image a 16:9 crop and a rotation can be
+//                          seen on, and pixels a test can sample.
 // - spec107-anim.gif     — buildGifFixtureBytes: a real 2-frame animated
 //                          GIF89a (8×8), LZW-coded with the classic
 //                          "clear-code per symbol" trick so no compressor is
@@ -148,19 +152,34 @@ export async function buildPngFixtureBytes(): Promise<Uint8Array> {
 
 // --- JPEG --------------------------------------------------------------------
 
-// A minimal known-good baseline JPEG (1×1) — see the production note above.
-const JPEG_1X1_BASE64 =
-  "/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0a" +
-  "HBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIy" +
-  "MjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIA" +
-  "AhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQA" +
-  "AAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3" +
-  "ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWm" +
-  "p6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oACAEB" +
-  "AAA/AL+B/9k=";
+// A real 160 × 120 baseline JPEG — see the production note above. Four flat
+// quadrants (top-left #c83c3c, top-right #3ca03c, bottom-left #3c50c8,
+// bottom-right #808080) so a sampled pixel is a known colour after decoding.
+const JPEG_PHOTO_BASE64 =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0ZJTEUAAQEAAAHIAAAAAAQwAABtbnRyUkdC" +
+  "IFhZWiAH4AABAAEAAAAAAABhY3NwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAA9tYAAQAA" +
+  "AADTLQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAlk" +
+  "ZXNjAAAA8AAAACRyWFlaAAABFAAAABRnWFlaAAABKAAAABRiWFlaAAABPAAAABR3dHB0AAABUAAA" +
+  "ABRyVFJDAAABZAAAAChnVFJDAAABZAAAAChiVFJDAAABZAAAAChjcHJ0AAABjAAAADxtbHVjAAAA" +
+  "AAAAAAEAAAAMZW5VUwAAAAgAAAAcAHMAUgBHAEJYWVogAAAAAAAAb6IAADj1AAADkFhZWiAAAAAA" +
+  "AABimQAAt4UAABjaWFlaIAAAAAAAACSgAAAPhAAAts9YWVogAAAAAAAA9tYAAQAAAADTLXBhcmEA" +
+  "AAAAAAQAAAACZmYAAPKnAAANWQAAE9AAAApbAAAAAAAAAABtbHVjAAAAAAAAAAEAAAAMZW5VUwAA" +
+  "ACAAAAAcAEcAbwBvAGcAbABlACAASQBuAGMALgAgADIAMAAxADb/2wBDAAMCAgMCAgMDAwMEAwME" +
+  "BQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQME" +
+  "BAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU" +
+  "FBQUFBT/wAARCAB4AKADASIAAhEBAxEB/8QAGAABAAMBAAAAAAAAAAAAAAAAAAQFBwb/xAAYEAEA" +
+  "AwEAAAAAAAAAAAAAAAAAFWOi4f/EABkBAQADAQEAAAAAAAAAAAAAAAAFBggJB//EACIRAQAAAwgD" +
+  "AAAAAAAAAAAAAAACBhUBBBZUoaLR0gVSU//aAAwDAQACEQMRAD8AzoB5+12AAAAAAAA60BDuagAA" +
+  "AAAAADkgEw6VgAAAAAAAOtAQ7moAAAAAAAA5IBMOlYAAAAAAADrQEO5qAAAAAAAAOSFZM064TNOu" +
+  "PUsDzBlt8HZu/HUvZnZH1WYrJmnXCZp1wwPMGW3wdjHUvZnZH1WYrJmnXCZp1wwPMGW3wdjHUvZn" +
+  "ZH1WYrJmnXCZp1wwPMGW3wdjHUvZnZH1WYrJmnXCZp1wwPMGW3wdjHUvZnZH1aAJkfZkj7MqHSr5" +
+  "6a2csWUTyHz1h5QxMj7MkfZkpV89NbOSieQ+esPKGJkfZkj7MlKvnprZyUTyHz1h5QxMj7MkfZkp" +
+  "V89NbOSieQ+esPKGJkfZkj7MlKvnprZyUTyHz1h5ZAA3UnwAAAAAAAG1gMrrqAAAAAAAAxQBqhSg" +
+  "AAAAAAAG1gMrrqAAAAAAAAxQBqhSgAAAAAAAG1gMrrqAAAAAAAAxQBqhSgAAAAAAAG1gMrrqAAAA" +
+  "AAAA/9k=";
 
 export function buildJpegFixtureBytes(): Uint8Array {
-  return base64ToBytes(JPEG_1X1_BASE64);
+  return base64ToBytes(JPEG_PHOTO_BASE64);
 }
 
 // --- GIF ---------------------------------------------------------------------

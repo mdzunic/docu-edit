@@ -218,3 +218,48 @@ export function decodeImageDimensions(bytes: Uint8Array, contentType: string): I
   }
   return decodePng(bytes) ?? decodeGif(bytes) ?? decodeJpeg(bytes) ?? decodeWebp(bytes);
 }
+
+/** How many frames (image descriptors) a GIF holds, walking its block
+ * structure rather than scanning for the 0x2C byte — the image editor
+ * (SPEC-112) edits an animated GIF's first frame only and says so before it
+ * starts. 0 for anything that is not a well-formed GIF; a truncated file
+ * counts the frames seen before the cut. */
+export function gifFrameCount(bytes: Uint8Array): number {
+  if (decodeGif(bytes) === null || bytes.length < 13) {
+    return 0;
+  }
+  let offset = 13;
+  const packed = bytes[10];
+  if (packed & 0x80) {
+    offset += 3 * (1 << ((packed & 0x07) + 1));
+  }
+  const skipSubBlocks = (from: number): number => {
+    let at = from;
+    while (at < bytes.length && bytes[at] !== 0) {
+      at += bytes[at] + 1;
+    }
+    return at + 1;
+  };
+  let frames = 0;
+  while (offset < bytes.length) {
+    const introducer = bytes[offset];
+    if (introducer === 0x2c) {
+      frames += 1;
+      if (offset + 10 > bytes.length) {
+        break;
+      }
+      const local = bytes[offset + 9];
+      offset += 10;
+      if (local & 0x80) {
+        offset += 3 * (1 << ((local & 0x07) + 1));
+      }
+      // The LZW minimum code size, then the data sub-blocks.
+      offset = skipSubBlocks(offset + 1);
+    } else if (introducer === 0x21) {
+      offset = skipSubBlocks(offset + 2);
+    } else {
+      break;
+    }
+  }
+  return frames;
+}

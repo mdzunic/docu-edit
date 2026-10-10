@@ -30,7 +30,9 @@ import {
 } from "../../lib/core/sheetLayout";
 import { getMedia, listDocuments, storeMedia, uniqueTitle } from "../../lib/documentStore";
 import type { MediaModel } from "../../lib/media/model";
-import { mediaSourceBytes } from "../../lib/media/download";
+import { currentImageBytes } from "../../lib/media/download";
+import { currentImageSize, hasEdits } from "../../lib/media/editModel";
+import { mediaImageDataUri } from "../../lib/media/thumbnail";
 import { assembleMediaModel } from "../../lib/media/open";
 import { useSheetSetup, type SheetSetupController } from "../../composables/useSheetSetup";
 
@@ -88,13 +90,16 @@ export function sheetPdfPage(geometry: SheetGeometry, placement: SheetPlacement,
   };
 }
 
-/** An image document's pixel size: the model's own record, else read from
- * the bytes. Null when neither knows. */
+/** An image document's pixel size — of its current image, so an edited
+ * image (SPEC-112) places its render: the model's own record, else read
+ * from the bytes. Null when neither knows. */
 export function sourceItemPx(source: MediaModel, bytes?: Uint8Array): ItemPx | null {
-  if (source.image) {
-    return { widthPx: source.image.widthPx, heightPx: source.image.heightPx };
+  const known = currentImageSize(source);
+  if (known) {
+    return known;
   }
-  const dimensions = decodeImageDimensions(bytes ?? mediaSourceBytes(source), source.contentType);
+  const current = bytes ? { bytes, contentType: source.contentType } : currentImageBytes(source);
+  const dimensions = decodeImageDimensions(current.bytes, current.contentType);
   return dimensions ? { widthPx: dimensions.widthPx, heightPx: dimensions.heightPx } : null;
 }
 
@@ -109,7 +114,8 @@ export async function convertImageToPdf(
   if (source.format === "pdf") {
     throw new Error("That document is already a PDF.");
   }
-  const bytes = mediaSourceBytes(source);
+  // The current image: an edited image converts from its saved render.
+  const { bytes, contentType } = currentImageBytes(source);
   const itemPx = sourceItemPx(source, bytes);
   if (!itemPx) {
     throw new Error("The image's size could not be read.");
@@ -120,9 +126,9 @@ export async function convertImageToPdf(
     throw new Error("The image has no visible area on this sheet.");
   }
 
-  let src = `data:${source.contentType};base64,${bytesToBase64(bytes)}`;
+  let src = `data:${contentType};base64,${bytesToBase64(bytes)}`;
   let crop = placement.crop;
-  if (source.format === "svg") {
+  if (contentType === "image/svg+xml") {
     // Vector in, raster out: the SVG is drawn at the size the sheet places
     // it at (at the chosen dpi), and the crop is scaled onto that raster.
     const size = {
@@ -209,14 +215,10 @@ export function useConvertToPdf(deps: ConvertToPdfDeps): ConvertToPdfController 
 
   const sheet = useSheetSetup({ surface: CONVERT_TO_PDF_SURFACE, output: "pdf", itemPx });
 
-  const isSvg = computed(() => source.value?.format === "svg");
-  const previewUrl = computed(() => {
-    const model = source.value;
-    const part = model?.media.find((entry) => entry.mediaId === model.sourceMediaId);
-    // A stored media part is already base64 (assembleMediaModel encodes it);
-    // reading `data` here leaves the part exactly as it is.
-    return part && part.data ? `data:${part.contentType};base64,${part.data}` : "";
-  });
+  const isSvg = computed(() => source.value?.format === "svg" && !hasEdits(source.value));
+  // The current image (an edited image's render); a stored media part is
+  // already base64, so reading it leaves the part exactly as it is.
+  const previewUrl = computed(() => (source.value ? mediaImageDataUri(source.value) : ""));
   const previewBackground = computed(() => effectiveBackground(sheet.setup.value.background, "pdf"));
 
   const blockedReason = computed(() => {
