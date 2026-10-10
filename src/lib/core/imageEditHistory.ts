@@ -10,9 +10,14 @@
 // per thing the user changed — while redactions and annotations accumulate.
 import { isNeutralAdjust, type AdjustChannel } from "./imageAdjust";
 import {
+  invertMatrix,
+  isObjectEdit,
+  mapObjectEdit,
   MAX_EDIT_STACK,
+  multiplyMatrix,
   normaliseStack,
   resolveEditGeometry,
+  sameMatrix,
   type ImageEdit,
   type PixelSize,
 } from "./imageEdits";
@@ -117,4 +122,40 @@ export function keepResizeScale(
   const widthPx = swapped ? after.heightPx : Math.max(1, Math.round((now.widthPx * after.widthPx) / was.widthPx));
   const heightPx = swapped ? after.widthPx : Math.max(1, Math.round((now.heightPx * after.heightPx) / was.heightPx));
   return upsertEntry(next, { ...after, widthPx, heightPx });
+}
+
+/** Keeps redactions and annotations on the picture: when `next` changed the
+ * geometry (crop, straighten, turn, flip, resize) under objects it carried
+ * over unchanged from `previous` (the same entries), each is mapped from the
+ * old output space to the new one — so a redaction drawn over an account
+ * number still covers it after a later crop or resize, rather than staying
+ * at its old pixel position over something else (or off the canvas). Objects
+ * the change itself made or edited are left as they are. */
+export function keepObjectsInPlace(
+  previous: readonly ImageEdit[],
+  next: readonly ImageEdit[],
+  naturalPx: PixelSize,
+): ImageEdit[] {
+  const carried = new Set<ImageEdit>(previous.filter(isObjectEdit));
+  if (carried.size === 0) {
+    return [...next];
+  }
+  const was = resolveEditGeometry(previous, naturalPx).transform;
+  const now = resolveEditGeometry(next, naturalPx).transform;
+  if (sameMatrix(was, now)) {
+    return [...next];
+  }
+  const matrix = multiplyMatrix(now, invertMatrix(was));
+  return next.map((edit) => (carried.has(edit) ? mapObjectEdit(edit, matrix) : edit));
+}
+
+/** Everything that depends on the geometry, carried through a change from
+ * `previous` to `next`: the resize keeps its scale, then the objects keep
+ * their place on the picture. */
+export function rebaseDependents(
+  previous: readonly ImageEdit[],
+  next: readonly ImageEdit[],
+  naturalPx: PixelSize,
+): ImageEdit[] {
+  return keepObjectsInPlace(previous, keepResizeScale(previous, next, naturalPx), naturalPx);
 }

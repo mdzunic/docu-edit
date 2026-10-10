@@ -259,6 +259,130 @@ describe("useImageEditor — undo granularity", () => {
   });
 });
 
+describe("useImageEditor — geometry under objects and resizes (review findings)", () => {
+  it("keeps a redaction over what it covers when the image is resized or turned later", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    editor.objects.startDraw("redact", 120, 90);
+    editor.objects.drawTo(150, 110);
+    editor.objects.endDraw();
+    editor.commands.setResizePercent(50);
+    expect(editor.geometry.value).toMatchObject({ widthPx: 80, heightPx: 60 });
+    expect(editor.stack.value.find((edit) => edit.kind === "redact")).toMatchObject({ x: 60, y: 45, width: 15, height: 10 });
+    editor.commands.rotate(1);
+    // 80 × 60 turned right: (x, y) → (60 − y, x); the 15 × 10 cover at
+    // (60, 45) becomes 10 × 15 at (5, 60).
+    expect(editor.stack.value.find((edit) => edit.kind === "redact")).toMatchObject({ x: 5, y: 60, width: 10, height: 15 });
+    // Undo puts both back exactly.
+    editor.undoStep();
+    expect(editor.stack.value.find((edit) => edit.kind === "redact")).toMatchObject({ x: 60, y: 45, width: 15, height: 10 });
+  });
+
+  it("keeps a resize's scale through a whole crop drag", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    editor.commands.setResizePercent(50);
+    expect(editor.geometry.value).toMatchObject({ widthPx: 80, heightPx: 60 });
+    editor.crop.startDrag("e");
+    for (let dx = -10; dx >= -80; dx -= 10) {
+      editor.crop.dragBy(dx, 0);
+    }
+    editor.crop.endDrag();
+    // Crop 80 × 120 at half scale: 40 × 60, not squashed.
+    expect(editor.crop.announcement.value).toBe("0, 0, 80 × 120");
+    expect(editor.geometry.value).toMatchObject({ widthPx: 40, heightPx: 60 });
+  });
+
+  it("turns the picture the way the user asked even with one flip on", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    editor.commands.flip("horizontal");
+    editor.commands.rotate(1);
+    const { applyMatrix } = await import("../../lib/core/imageEdits");
+    // The visible top-left after the flip is the source's top-right
+    // (160, 0); turned right it lands top-right of the 120-wide output.
+    expect(applyMatrix(editor.geometry.value!.transform, 160, 0)).toEqual({ x: 120, y: 0 });
+    expect(editor.undo.undoLabel.value).toBe("Rotate right");
+  });
+
+  it("keeps the resampling a saved resize was made with", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    editor.commands.setResample("nearest");
+    editor.commands.setResizePercent(50);
+    expect(await editor.actions.save()).toBe(true);
+    editor.exit();
+    editor.commands.setResample("bilinear");
+    await editor.enter();
+    expect(editor.commands.resample.value).toBe("nearest");
+    editor.commands.setResizeWidth(40);
+    expect(editor.stack.value.find((edit) => edit.kind === "resize")).toMatchObject({ widthPx: 40, heightPx: 30, resample: "nearest" });
+  });
+
+  it("counts as saved only what Save rendered, not edits made while it ran", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    editor.commands.rotate(1);
+    const saving = editor.actions.save();
+    editor.commands.flip("vertical");
+    expect(await saving).toBe(true);
+    expect(editor.dirty.value).toBe(true);
+    editor.done();
+    expect(editor.discardPending.value).toBe(true);
+  });
+
+  it("drops a load that finishes after the editor was left", async () => {
+    const { editor } = await setup();
+    const entering = editor.enter();
+    editor.exit();
+    await entering;
+    expect(editor.active.value).toBe(false);
+    expect(editor.phase.value).toBe("idle");
+    expect(editor.preview.value).toBeNull();
+  });
+});
+
+describe("useImageEditor — storage", () => {
+  it("reports a failed write and leaves the stored document as it was", async () => {
+    const { editor, store, model } = await setup();
+    await editor.enter();
+    editor.objects.add("redact");
+    const idb = await import("../../lib/idb");
+    vi.mocked(idb.putRecord).mockRejectedValue(new Error("quota exceeded"));
+    editor.actions.requestFlatten();
+    expect(await editor.actions.confirmFlatten()).toBe(false);
+    expect(editor.actions.failure.value).toBe("Could not flatten the image: quota exceeded");
+    expect(store.getMedia(model.id)).toBe(model);
+    expect(editor.history.value).toHaveLength(1);
+  });
+
+  it("re-badges a flattened SVG as a PNG in the library", async () => {
+    const { editor, store, model } = await setup({ format: "svg" });
+    await editor.enter();
+    editor.objects.add("redact");
+    editor.actions.requestFlatten();
+    expect(await editor.actions.confirmFlatten()).toBe(true);
+    expect(store.getMedia(model.id)?.format).toBe("png");
+    expect(store.listDocuments().find((entry) => entry.id === model.id)?.format).toBe("png");
+  });
+
+  it("stores an SVG's raster base again after a reverted save dropped it", async () => {
+    const { editor, store, model, steps } = await setup({ format: "svg" });
+    await editor.enter();
+    editor.commands.rotate(1);
+    expect(await editor.actions.save()).toBe(true);
+    expect(store.getMedia(model.id)?.baseMediaId).toBeDefined();
+    editor.requestRevert();
+    editor.confirmRevert();
+    expect(await editor.actions.save()).toBe(true);
+    expect(store.getMedia(model.id)?.baseMediaId).toBeUndefined();
+    editor.commands.rotate(-1);
+    expect(await editor.actions.save()).toBe(true);
+    expect(store.getMedia(model.id)?.baseMediaId).toBeDefined();
+    expect(steps.rasteriseSvg).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("useImageEditor — leaving", () => {
   it("asks before dropping unsaved edits, then runs the caller's next step", async () => {
     const { editor } = await setup();

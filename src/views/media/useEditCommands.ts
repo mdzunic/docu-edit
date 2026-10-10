@@ -39,7 +39,8 @@ export interface EditCommands {
   /** Ends a slider gesture (its `change`). */
   release: () => void;
   resizeLocked: Ref<boolean>;
-  resample: Ref<"nearest" | "bilinear">;
+  /** The resize's resampling — the stack's, else the one a new resize gets. */
+  resample: ComputedRef<"nearest" | "bilinear">;
   /** The size a resize would start from (the output before any resize). */
   resizeBase: ComputedRef<{ widthPx: number; heightPx: number } | null>;
   /** The output size now. */
@@ -57,7 +58,8 @@ function clampEdge(value: number): number {
 
 export function useEditCommands(session: EditSession): EditCommands {
   const resizeLocked = ref(true);
-  const resample = ref<"nearest" | "bilinear">("bilinear");
+  const preferredResample = ref<"nearest" | "bilinear">("bilinear");
+  const resample = computed(() => findEntry(session.stack.value, "resize")?.resample ?? preferredResample.value);
   let sliding: string | null = null;
 
   function release(): void {
@@ -133,7 +135,7 @@ export function useEditCommands(session: EditSession): EditCommands {
   }
 
   function setResample(value: "nearest" | "bilinear"): void {
-    resample.value = value;
+    preferredResample.value = value;
     const entry = findEntry(session.history.value, "resize");
     if (entry && entry.resample !== value) {
       once("Resize", () => upsertEntry(session.history.value, { ...entry, resample: value }));
@@ -141,7 +143,14 @@ export function useEditCommands(session: EditSession): EditCommands {
   }
 
   return {
-    rotate: (delta) => once(delta > 0 ? "Rotate right" : "Rotate left", () => rotateBy(session.history.value, delta)),
+    // The stack turns BEFORE it flips, and a mirror reverses a turn: with
+    // exactly one flip on, the picture turns the way the user asked only if
+    // the stored turn goes the other way.
+    rotate: (delta) =>
+      once(delta > 0 ? "Rotate right" : "Rotate left", () => {
+        const flips = session.stack.value.filter((edit) => edit.kind === "flip").length;
+        return rotateBy(session.history.value, flips === 1 ? -delta : delta);
+      }),
     flip: (axis) => once(axis === "horizontal" ? "Flip horizontal" : "Flip vertical", () => toggleFlip(session.history.value, axis)),
     adjustValue,
     adjustInput: (channel, value) =>

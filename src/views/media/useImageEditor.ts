@@ -66,8 +66,10 @@ export function useImageEditor(deps: ImageEditorDeps) {
   const phase = ref<"idle" | "loading" | "size" | "ready" | "refused">("idle");
   const refusal = ref("");
   const tool = ref<EditTool>("crop");
-  const history = ref<ImageEdit[]>([]);
-  const savedHistory = ref<ImageEdit[]>([]);
+  // Shallow: histories are immutable arrays replaced whole, and the gesture
+  // API relies on entry identity (a deep ref would hand back proxies).
+  const history = shallowRef<ImageEdit[]>([]);
+  const savedHistory = shallowRef<ImageEdit[]>([]);
   const naturalPx = ref<PixelSize | null>(null);
   const preview = shallowRef<EditSource | null>(null);
   const svgSize = ref<PixelSize>({ ...DEFAULT_SVG_SIZE });
@@ -75,7 +77,11 @@ export function useImageEditor(deps: ImageEditorDeps) {
   const isAnimatedGif = ref(false);
   const revertPending = ref(false);
   const discardPending = ref(false);
+  // The SVG raster base this session made (not yet stored).
   let raster: RenderedImage | null = null;
+  // Bumped on every exit: a load still in flight for an earlier session
+  // must not write its state into this one.
+  let generation = 0;
   let decodes = createDecodeCache(steps.decode);
   let baseKey = "";
   let baseBytes = noBytes;
@@ -95,13 +101,14 @@ export function useImageEditor(deps: ImageEditorDeps) {
   }
 
   /** Decodes the base, checks the ceiling and builds the preview buffer. */
-  async function load(model: MediaModel): Promise<void> {
+  async function load(model: MediaModel, mine: number): Promise<void> {
     const size = naturalPx.value ?? model.image ?? null;
     if (size) {
       const ceilingRefusal = canvasCeilingRefusal(size, steps.canvasCeiling(size.widthPx * size.heightPx));
       if (ceilingRefusal) throw new Error(ceilingRefusal);
     }
     const decoded = await decodes.get(baseKey, baseBytes, baseType);
+    if (mine !== generation) return;
     const decodedSize = { widthPx: decoded.widthPx, heightPx: decoded.heightPx };
     const ceilingRefusal = canvasCeilingRefusal(decodedSize, steps.canvasCeiling(decoded.widthPx * decoded.heightPx));
     if (ceilingRefusal) throw new Error(ceilingRefusal);
@@ -114,6 +121,7 @@ export function useImageEditor(deps: ImageEditorDeps) {
   }
 
   async function begin(model: MediaModel, rasterSize?: PixelSize): Promise<void> {
+    const mine = generation;
     phase.value = "loading";
     try {
       raster = null;
@@ -123,6 +131,7 @@ export function useImageEditor(deps: ImageEditorDeps) {
         // The SVG is rasterised once, here, and the raster becomes the
         // stack's base; the vector original stays the source.
         const png = await steps.rasteriseSvg(mediaPartBytes(base), rasterSize);
+        if (mine !== generation) return;
         raster = { bytes: png.data, contentType: "image/png", widthPx: png.widthPx, heightPx: png.heightPx };
         const bytes = png.data;
         baseKey = `${model.sourceMediaId}:raster`;
@@ -134,8 +143,17 @@ export function useImageEditor(deps: ImageEditorDeps) {
         baseType = base.contentType;
       }
       naturalPx.value = null;
-      await load(model);
+      await load(model, mine);
+      // (Widened: TS still narrows `naturalPx.value` to the null assigned
+      // before the await, though load() set it.)
+      const loaded = naturalPx.value as PixelSize | null;
+      if (isSvg.value && model.baseMediaId && loaded && mine === generation) {
+        // The stored raster stays this session's base: if a reverted save
+        // drops it from the model, the next save stores it again.
+        raster = { bytes: baseBytes(), contentType: baseType, ...loaded };
+      }
     } catch (error) {
+      if (mine !== generation) return;
       phase.value = "refused";
       refusal.value = error instanceof Error && error.message ? error.message : String(error);
     }
@@ -173,6 +191,7 @@ export function useImageEditor(deps: ImageEditorDeps) {
   }
 
   function exit(): void {
+    generation += 1;
     session.cancel();
     active.value = false;
     phase.value = "idle";
@@ -232,10 +251,13 @@ export function useImageEditor(deps: ImageEditorDeps) {
     session,
     steps,
     fullSource,
-    pendingRaster: () => raster,
+    // The session's raster goes to the model whenever the model has no base
+    // stored (the first save, or one after a reverted save dropped it).
+    pendingRaster: () => (deps.media.value?.baseMediaId ? null : raster),
     onSaved: (model) => {
-      savedHistory.value = history.value;
-      raster = null;
+      // What was saved is the stack that was rendered — not whatever the
+      // history holds by the time the write finished.
+      savedHistory.value = model.edits ? [...model.edits] : [];
       deps.media.value = model;
       deps.onStored?.();
     },

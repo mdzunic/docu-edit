@@ -3,11 +3,14 @@
 // — `begin(label)` records BEFORE the first change, `update(next)` replaces
 // the history live (the preview follows; no undo entry), `end()` commits one
 // step. A drag is begin → many updates → end; a click, a keypress or a typed
-// value is `apply(label, next)`, the same three in one. A resize keeps its
-// scale when a gesture changes the size under it (keepResizeScale), measured
-// from the gesture's start so a long drag never accumulates rounding.
+// value is `apply(label, next)`, the same three in one. What depends on the
+// geometry follows it (rebaseDependents): a resize keeps its scale, and
+// redactions and annotations keep their place on the picture, when a gesture
+// crops, turns or resizes under them — always measured from the gesture's
+// START, so a long drag never compounds: the entries an earlier update
+// derived are put back to the start's before the next derivation.
 import { computed, type ComputedRef, type Ref } from "vue";
-import { keepResizeScale } from "../../lib/core/imageEditHistory";
+import { rebaseDependents } from "../../lib/core/imageEditHistory";
 import {
   normaliseStack,
   resolveEditGeometry,
@@ -43,6 +46,9 @@ export function createEditSession(
   const stack = computed(() => normaliseStack(history.value));
   const geometry = computed(() => (naturalPx.value ? resolveEditGeometry(stack.value, naturalPx.value) : null));
   let start: ImageEdit[] | null = null;
+  // Entries this gesture derived (a rebased resize, a carried object) →
+  // the start's entry each was derived from.
+  let origin = new WeakMap<ImageEdit, ImageEdit>();
 
   function end(): void {
     if (start !== null) {
@@ -54,12 +60,20 @@ export function createEditSession(
   function begin(label: string): void {
     end();
     start = history.value;
+    origin = new WeakMap();
     undo.record(label);
   }
 
   function update(next: ImageEdit[]): void {
     const from = start ?? history.value;
-    history.value = naturalPx.value ? keepResizeScale(from, next, naturalPx.value) : [...next];
+    const base = next.map((edit) => origin.get(edit) ?? edit);
+    const derived = naturalPx.value ? rebaseDependents(from, base, naturalPx.value) : base;
+    derived.forEach((edit, index) => {
+      if (edit !== base[index]) {
+        origin.set(edit, base[index]);
+      }
+    });
+    history.value = derived;
   }
 
   function cancel(): void {

@@ -4,7 +4,9 @@
 import { describe, expect, it } from "vitest";
 import {
   canAddObject,
+  keepObjectsInPlace,
   keepResizeScale,
+  rebaseDependents,
   removeAt,
   replaceAt,
   rotateBy,
@@ -82,5 +84,31 @@ describe("imageEditHistory", () => {
     // An explicit new resize is left as the user set it.
     const explicit = upsertEntry(resized, { kind: "resize", widthPx: 10, heightPx: 10, resample: "bilinear" });
     expect(keepResizeScale(resized, explicit, PHOTO)).toEqual(explicit);
+  });
+
+  it("keeps a redaction on the picture when a later resize, crop or turn moves it", () => {
+    const big = { widthPx: 1000, heightPx: 800 };
+    const redaction: ImageEdit = { kind: "redact", x: 800, y: 600, width: 100, height: 100, color: "#000000" };
+    const before: ImageEdit[] = [redaction];
+    // Halved: the cover halves with the picture, rather than falling off it.
+    const halved = rebaseDependents(before, [redaction, { kind: "resize", widthPx: 500, heightPx: 400, resample: "bilinear" }], big);
+    expect(halved[0]).toEqual({ ...redaction, x: 400, y: 300, width: 50, height: 50 });
+    // Cropped from (500, 500): the cover moves with the content.
+    const cropped = keepObjectsInPlace(before, [redaction, { kind: "crop", x: 500, y: 500, width: 500, height: 300 }], big);
+    expect(cropped[0]).toMatchObject({ x: 300, y: 100, width: 100, height: 100 });
+    // Turned right in a 1000 × 800 frame: (x, y) → (800 − y, x).
+    const turned = keepObjectsInPlace(before, [redaction, { kind: "rotate", quarterTurns: 1 }], big);
+    expect(turned[0]).toMatchObject({ x: 100, y: 800, width: 100, height: 100 });
+    // Straightened: the mapped corners' bounding box, rounded outward — it
+    // may grow, it never uncovers.
+    const straightened = keepObjectsInPlace(before, [redaction, { kind: "straighten", degrees: 5 }], big);
+    const s0 = straightened[0] as Extract<ImageEdit, { kind: "redact" }>;
+    expect(s0.width).toBeGreaterThanOrEqual(100);
+    expect(s0.height).toBeGreaterThanOrEqual(100);
+    // An object the change itself added is left where it was drawn.
+    const fresh: ImageEdit = { kind: "redact", x: 1, y: 1, width: 2, height: 2, color: "#000000" };
+    expect(keepObjectsInPlace(before, [fresh, { kind: "rotate", quarterTurns: 1 }], big)[0]).toBe(fresh);
+    // No geometry change, nothing moves.
+    expect(keepObjectsInPlace(before, [redaction, { kind: "adjust", invert: true }], big)[0]).toBe(redaction);
   });
 });

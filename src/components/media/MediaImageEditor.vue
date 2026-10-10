@@ -97,6 +97,7 @@ watch(
     <div
       v-if="ready"
       class="edit-body"
+      :inert="e.actions.busy.value || undefined"
     >
       <EditToolRail :editor="e" />
       <div class="edit-main">

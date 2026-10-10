@@ -396,6 +396,27 @@ export function multiplyMatrix(left: AffineMatrix, right: AffineMatrix): AffineM
   };
 }
 
+/** The inverse transform (the identity for a degenerate matrix). */
+export function invertMatrix(m: AffineMatrix): AffineMatrix {
+  const det = m.a * m.d - m.b * m.c;
+  if (det === 0 || !Number.isFinite(det)) {
+    return IDENTITY;
+  }
+  return {
+    a: m.d / det,
+    b: -m.b / det,
+    c: -m.c / det,
+    d: m.a / det,
+    e: (m.c * m.f - m.d * m.e) / det,
+    f: (m.b * m.e - m.a * m.f) / det,
+  };
+}
+
+/** Whether two transforms are the same (to 1e-9). */
+export function sameMatrix(left: AffineMatrix, right: AffineMatrix): boolean {
+  return (["a", "b", "c", "d", "e", "f"] as const).every((key) => Math.abs(left[key] - right[key]) < 1e-9);
+}
+
 /** Applies a matrix to a point. */
 export function applyMatrix(matrix: AffineMatrix, x: number, y: number): { x: number; y: number } {
   return { x: matrix.a * x + matrix.c * y + matrix.e, y: matrix.b * x + matrix.d * y + matrix.f };
@@ -660,6 +681,63 @@ export function translateEdit(edit: ImageEdit, dx: number, dy: number): ImageEdi
     return { ...edit, shape: translateShape(edit.shape, dx, dy) };
   }
   return edit;
+}
+
+/** A redaction or annotation carried through a change of output space by
+ * `matrix` (old output pixels → new output pixels), so it stays on the
+ * picture content it was drawn over when a later crop, turn, flip, resize
+ * or straighten moves that content. A redaction becomes the bounding box of
+ * its mapped corners rounded OUTWARD — it may grow, never uncover; strokes
+ * and text scale with the picture. */
+export function mapObjectEdit(edit: ImageEdit, matrix: AffineMatrix): ImageEdit {
+  const at = (x: number, y: number) => applyMatrix(matrix, x, y);
+  const bounds = (x: number, y: number, width: number, height: number) => {
+    const corners = [at(x, y), at(x + width, y), at(x, y + height), at(x + width, y + height)];
+    const xs = corners.map((p) => p.x);
+    const ys = corners.map((p) => p.y);
+    return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+  };
+  const scale = Math.sqrt(Math.abs(matrix.a * matrix.d - matrix.b * matrix.c));
+  if (edit.kind === "redact") {
+    const box = bounds(edit.x, edit.y, edit.width, edit.height);
+    const x = Math.floor(box.x0 + EPSILON);
+    const y = Math.floor(box.y0 + EPSILON);
+    return {
+      ...edit,
+      x,
+      y,
+      width: Math.max(1, Math.ceil(box.x1 - EPSILON) - x),
+      height: Math.max(1, Math.ceil(box.y1 - EPSILON) - y),
+    };
+  }
+  if (edit.kind !== "annotate") {
+    return edit;
+  }
+  const shape = edit.shape;
+  let mapped: AnnotationShape;
+  switch (shape.shape) {
+    case "arrow":
+    case "line": {
+      const from = at(shape.x1, shape.y1);
+      const to = at(shape.x2, shape.y2);
+      mapped = { ...shape, x1: from.x, y1: from.y, x2: to.x, y2: to.y };
+      break;
+    }
+    case "freehand":
+      mapped = { ...shape, points: shape.points.map((p) => at(p.x, p.y)) };
+      break;
+    case "text": {
+      const anchor = at(shape.x, shape.y);
+      mapped = { ...shape, x: anchor.x, y: anchor.y, fontSize: Math.max(4, shape.fontSize * scale) };
+      break;
+    }
+    default: {
+      const box = bounds(shape.x, shape.y, shape.width, shape.height);
+      mapped = { ...shape, x: box.x0, y: box.y0, width: box.x1 - box.x0, height: box.y1 - box.y0 };
+      break;
+    }
+  }
+  return { ...edit, shape: mapped, strokeWidth: Math.max(0.5, edit.strokeWidth * scale) };
 }
 
 /** A redaction or annotation grown by (dw, dh) output pixels from its
