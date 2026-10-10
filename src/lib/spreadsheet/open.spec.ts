@@ -10,7 +10,11 @@
 // record SPEC-118's reader stored re-reads its clean sheets and gains its
 // formulas. SPEC-120 moves it to 5 (its step throws "SPEC-120 upgrade: …"): a
 // record SPEC-119's reader stored gains its calculation settings, and a
-// stored forceFullCalcOnLoad survives the re-read.
+// stored forceFullCalcOnLoad survives the re-read. SPEC-122 moves it to 6:
+// its step is the first to run on a dirty sheet — preserved cell content and
+// sheet protection come back from the retained source onto the cells whose
+// value and formula are unchanged — and a dirty sheet's style ids move into
+// the re-read style table.
 import { afterEach, describe, expect, it } from "vitest";
 import { getCell } from "./address";
 import {
@@ -128,9 +132,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4 and SPEC-120 to 5, with one contiguous step each (from 1, 2, 3, 4)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(5);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5 and SPEC-122 to 6, with one contiguous step each (from 1, 2, 3, 4, 5)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(6);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
