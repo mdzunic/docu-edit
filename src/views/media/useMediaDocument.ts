@@ -34,6 +34,8 @@ export function useMediaDocument(deps: MediaDocumentDeps): MediaDocumentControll
   const media = shallowRef<MediaModel | null>(null);
   const blobUrl = ref("");
   const storedAt = ref(0);
+  // The model the live blob URL was minted for.
+  let urlModel: MediaModel | null = null;
 
   function revokeBlobUrl(): void {
     if (blobUrl.value) {
@@ -53,12 +55,15 @@ export function useMediaDocument(deps: MediaDocumentDeps): MediaDocumentControll
     }
     const model = getMedia(id) ?? null;
     storedAt.value = getStoredRecord(id)?.lastModified ?? 0;
-    if (model !== null && model === media.value && blobUrl.value) {
+    if (model !== null && model === urlModel && blobUrl.value) {
       // The same document is already open (the post-initLibrary re-sync):
       // one object URL per open, so the embed never loads a URL that is
-      // then revoked under it.
+      // then revoked under it. A saved edit stores a NEW model, so it mints
+      // a fresh URL over the new current image.
+      media.value = model;
       return;
     }
+    urlModel = model;
     media.value = model;
     revokeBlobUrl();
     if (model) {
