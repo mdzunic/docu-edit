@@ -4,18 +4,20 @@
 // guard, the reader upgrade and the sheet on show: useWorkbookLoad; view state
 // (never a change to the file): useSheetViewState; geometry, zoom, selection,
 // menus, the locale (SPEC-118), formula display (SPEC-119), recalculation
-// (SPEC-120), the sheet commands, undo and downloads (SPEC-121) and cell entry
-// (SPEC-122) — useWorkbookEditing: the spreadsheet/ composables below; the
-// surfaces: components/spreadsheet/*. This file only wires them.
+// (SPEC-120), the sheet commands, undo, downloads (SPEC-121) and cell entry
+// (SPEC-122) — useWorkbookEditing; formatting and the format painter
+// (SPEC-123); the surfaces: components/spreadsheet/*. This file only wires.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import SpreadsheetAppBar from "../components/spreadsheet/SpreadsheetAppBar.vue";
-import SpreadsheetMenuBar from "../components/spreadsheet/SpreadsheetMenuBar.vue";
 import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar.vue";
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
+import WorkbookCommandBar from "../components/spreadsheet/WorkbookCommandBar.vue";
 import WorkbookNotFound from "../components/spreadsheet/WorkbookNotFound.vue";
 import { useTheme } from "../composables/useTheme";
+import { useFormatPainter } from "./spreadsheet/useFormatPainter";
+import { useFormatting } from "./spreadsheet/useFormatting";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
 import { useRecalc } from "./spreadsheet/useRecalc";
 import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
@@ -28,14 +30,13 @@ import { useWorkbookEditing } from "./spreadsheet/useWorkbookEditing";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
 const route = useRoute();
-const router = useRouter();
 
 // The shared theme composable keeps the view themed by the app tokens and
 // following the OS live (SPEC-059).
 useTheme();
 
 const workbookId = computed(() => String(route.params.id ?? ""));
-const book = useWorkbookLoad({ workbookId, router });
+const book = useWorkbookLoad({ workbookId, router: useRouter() });
 const viewState = useSheetViewState({ workbook: book.workbook, activeIndex: book.activeIndex });
 const sheetMetrics = useSheetMetrics(() => book.activeSheet.value);
 const zoom = useSheetZoom({ viewState });
@@ -44,8 +45,10 @@ const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheet
 const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model: () => book.workbook.value, viewState, selection });
 const recalc = useRecalc({ book, locale: () => sheetLocale.locale.value });
 const editing = useWorkbookEditing({ book, viewState, recalc, selection, sheetMetrics, locale: () => sheetLocale.locale.value });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell }));
+const formatting = useFormatting({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
+const painter = useFormatPainter({ book, selection, formatting });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter }));
 </script>
 
 <template>
@@ -68,10 +71,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       v-if="book.workbook.value"
       #menubar
     >
-      <SpreadsheetMenuBar
-        :state="menu.state.value"
-        @command="menu.run"
-      />
+      <WorkbookCommandBar v-bind="{ menu, formatting, painter }" />
     </template>
     <WorkbookBody
       v-if="book.workbook.value"

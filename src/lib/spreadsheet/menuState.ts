@@ -28,6 +28,8 @@ export interface SpreadsheetMenuState {
   copyLabel: string;
   /** Why the copy cannot be made yet; "" when it can. */
   copyDisabledReason: string;
+  /** SPEC-123: Format ▸ Cell styles' names (the gallery's, in its order). */
+  cellStyleNames: string[];
 }
 
 /** The command ids the bar emits — routed by useSpreadsheetMenu. Item test
@@ -46,7 +48,24 @@ export const SHEET_MENU_COMMANDS = {
   redo: "edit.redo",
   /** SPEC-121: File ▸ Download a copy as … the other format. */
   downloadCopy: "file.download-copy",
+  /** SPEC-123: Format ▸ Format cells…, Number format ▸ More formats… and
+   * Clear ▸ (numberFormatCommand / cellStyleCommand name the rest). */
+  formatCells: "format.cells",
+  moreNumberFormats: "format.number-more",
+  clearAll: "format.clear-all",
+  clearFormats: "format.clear-formats",
+  clearContents: "format.clear-contents",
 } as const;
+
+/** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
+export function numberFormatCommand(preset: string): string {
+  return `format.number.${preset}`;
+}
+
+/** `format.style.<name>`: Format ▸ Cell styles ▸ a style (SPEC-123). */
+export function cellStyleCommand(name: string): string {
+  return `format.style.${name}`;
+}
 
 /** The copy item's label until the view names the other format. */
 export const DEFAULT_COPY_LABEL = "Download a copy as …";
@@ -83,5 +102,6 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     redoLabel: typeof state.redoLabel === "string" ? state.redoLabel : "",
     copyLabel: typeof state.copyLabel === "string" && state.copyLabel !== "" ? state.copyLabel : DEFAULT_COPY_LABEL,
     copyDisabledReason: typeof state.copyDisabledReason === "string" ? state.copyDisabledReason : "",
+    cellStyleNames: Array.isArray(state.cellStyleNames) ? state.cellStyleNames : [],
   };
 }

@@ -13,7 +13,9 @@
 // naming its step ("Undo Rename sheet") with the registry's shortcut, and
 // disabled when there is nothing to undo or redo — and File ▸ "Download a
 // copy as …" after Download (disabled, with the reason, until the copy can be
-// made). Later specs append menus and items; item test ids keep the `sheet-menu-`
+// made). SPEC-123 adds the Format menu after View: Format cells…, Number
+// format ▸ (the presets and More formats…), Cell styles ▸ and Clear ▸.
+// Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
 import { computed } from "vue";
@@ -24,11 +26,16 @@ import MenuRadioItem from "../MenuRadioItem.vue";
 import MenuSubmenu from "../MenuSubmenu.vue";
 import {
   asSpreadsheetMenuState,
+  cellStyleCommand,
+  numberFormatCommand,
   SHEET_MENU_COMMANDS,
   undoRedoMenuLabel,
   zoomPresetCommand,
 } from "../../lib/spreadsheet/menuState";
+import { isMacPlatform } from "../../lib/core/platform";
 import { shortcutLabel } from "../../lib/shortcuts";
+import { NUMBER_FORMAT_PRESETS } from "../../lib/spreadsheet/numberCodes";
+import { SHEET_SHORTCUTS } from "../../views/spreadsheet/sheetShortcuts";
 import { ZOOM_PRESETS } from "../../lib/zoom";
 
 const props = defineProps({
@@ -43,11 +50,18 @@ const s = computed(() => asSpreadsheetMenuState(props.state));
 // Accelerators from the SPEC-021 registry, never restated here.
 const undoShortcut = shortcutLabel("edit.undo");
 const redoShortcut = shortcutLabel("edit.redo");
+const formatCellsShortcut = shortcutLabel("sheet.formatCells", isMacPlatform(), SHEET_SHORTCUTS);
+const CLEARS = [
+  { label: "Clear all", command: SHEET_MENU_COMMANDS.clearAll, testid: "sheet-menu-clear-all" },
+  { label: "Clear formats", command: SHEET_MENU_COMMANDS.clearFormats, testid: "sheet-menu-clear-formats" },
+  { label: "Clear contents", command: SHEET_MENU_COMMANDS.clearContents, testid: "sheet-menu-clear-contents" },
+];
 
 const MENUS = [
   { id: "file", label: "File" },
   { id: "edit", label: "Edit" },
   { id: "view", label: "View" },
+  { id: "format", label: "Format" },
   { id: "data", label: "Data" },
 ];
 </script>
@@ -140,6 +154,62 @@ const MENUS = [
           testid="sheet-menu-zoom-out"
           :disabled="!s.hasGrid"
           @select="emit('command', SHEET_MENU_COMMANDS.zoomOut)"
+        />
+      </MenuSubmenu>
+    </template>
+
+    <template #format>
+      <MenuItem
+        label="Format cells…"
+        testid="sheet-menu-format-cells"
+        :shortcut="formatCellsShortcut"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.formatCells)"
+      />
+      <MenuSubmenu
+        label="Number format"
+        testid="sheet-menu-number-format"
+      >
+        <MenuItem
+          v-for="preset in NUMBER_FORMAT_PRESETS"
+          :key="preset.id"
+          :label="preset.label"
+          :testid="`sheet-menu-number-format-${preset.id}`"
+          :disabled="!s.hasGrid"
+          @select="emit('command', numberFormatCommand(preset.id))"
+        />
+        <hr class="menu-separator">
+        <MenuItem
+          label="More formats…"
+          testid="sheet-menu-number-format-more"
+          :disabled="!s.hasGrid"
+          @select="emit('command', SHEET_MENU_COMMANDS.moreNumberFormats)"
+        />
+      </MenuSubmenu>
+      <MenuSubmenu
+        label="Cell styles"
+        testid="sheet-menu-cell-styles"
+      >
+        <MenuItem
+          v-for="name in s.cellStyleNames"
+          :key="name"
+          :label="name"
+          testid="sheet-menu-cell-style"
+          :disabled="!s.hasGrid"
+          @select="emit('command', cellStyleCommand(name))"
+        />
+      </MenuSubmenu>
+      <MenuSubmenu
+        label="Clear"
+        testid="sheet-menu-clear"
+      >
+        <MenuItem
+          v-for="clear in CLEARS"
+          :key="clear.command"
+          :label="clear.label"
+          :testid="clear.testid"
+          :disabled="!s.hasGrid"
+          @select="emit('command', clear.command)"
         />
       </MenuSubmenu>
     </template>
