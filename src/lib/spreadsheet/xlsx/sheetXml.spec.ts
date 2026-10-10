@@ -806,6 +806,19 @@ describe("the worksheet writer: rows, columns, merges, dimension", () => {
     expect(read2.rows).toEqual([edited.rows[0], { index: 1, cells: [], sourceAttrs: `outlineLevel="1"` }, ...edited.rows.slice(2)]);
   });
 
+  it("writes the spans of a part's several <cols> (schema-legal) into the first, removing the rest", () => {
+    const body = `<cols><col min="1" max="1" width="20" customWidth="1"/></cols><cols><col min="3" max="3" width="30" customWidth="1"/></cols><sheetData/>`;
+    const sheet = sheetOf(read(body));
+    expect(sheet.columns.map((span) => [span.min, span.max])).toEqual([
+      [0, 0],
+      [2, 2],
+    ]);
+    const out = serializeWorksheet(sheet, worksheet(body), stubContext());
+    expect(out.match(/<cols>/g)).toHaveLength(1);
+    expect(out).toContain(`<cols><col min="1" max="1" width="20" customWidth="1"/><col min="3" max="3" width="30" customWidth="1"/></cols><sheetData/>`);
+    expect(read(out.slice(out.indexOf(">") + 1, -"</worksheet>".length)).columns).toEqual(sheet.columns);
+  });
+
   it("xlsxWidthForPx is the smallest multiple of 1/256 SPEC-117's formula maps to the px, for every MDW", () => {
     for (const mdw of [5, 6, 7, 8, 9, 11, 13]) {
       for (let px = 1; px <= 400; px += 1) {

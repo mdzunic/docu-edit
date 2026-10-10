@@ -81,9 +81,10 @@
 // scanner (an absent one is inserted before the first source child that
 // comes later in CT_Worksheet order — an `mc:AlternateContent` ranks as the
 // element it wraps — and an empty `cols`/`mergeCells` is removed); the root
-// start tag and every other element stay byte-verbatim. A new sheet (no
-// base) starts from SPEC-121's empty-sheet template, reproduced byte for
-// byte for an empty sheet.
+// start tag and every other element stay byte-verbatim (but a second and
+// later `cols`, schema-legal and read into the same spans, which the first
+// now carries). A new sheet (no base) starts from SPEC-121's empty-sheet
+// template, reproduced byte for byte for an empty sheet.
 // - dimension: `ref` = the used range, "A1" when empty.
 // - sheetViews: the first sheetView's tabSelected, showGridLines,
 //   showFormulas, zoomScale and topLeftCell follow the model (an attribute
@@ -1781,6 +1782,11 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
       const at = layout.children.find((child) => child.order > rank)?.start ?? layout.rootClose;
       splices.push({ start: at, end: at, text });
     }
+  }
+  // CT_Worksheet allows several <cols>; the reader read every one into the
+  // model's spans, which the first now carries — the rest go.
+  for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
+    splices.push({ start: child.start, end: child.end, text: "" });
   }
   return applySplices(xml, splices);
 }
