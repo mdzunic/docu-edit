@@ -20,6 +20,11 @@
 // - Opening a tab's menu (right-click, Shift+F10, ContextMenu) shows that
 //   sheet first, as a spreadsheet does. Every item is present; one that
 //   cannot apply is disabled with its reason.
+// - SPEC-122 "Protection": a workbook whose structure is protected
+//   (`structureProtected`) disables every sheet command with the reason
+//   STRUCTURE_PROTECTED_MESSAGE — each menu item, and the gestures (the "+"
+//   button, double-click rename, drag) refuse with it as a toast. The
+//   protection XML itself is never changed.
 import { computed, ref, type ComputedRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
@@ -27,11 +32,9 @@ import { DEFAULT_THEME, type ModelColor } from "../../lib/core/theme";
 import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
 import {
   addSheet,
-  cannotDuplicateReason,
   deleteSheet,
   duplicateSheet,
   isLastVisibleSheet,
-  LAST_VISIBLE_SHEET_MESSAGE,
   moveSheet,
   renameSheet,
   setSheetHidden,
@@ -41,50 +44,8 @@ import {
   validateSheetName,
   type SheetCommandResult,
 } from "../../lib/spreadsheet/sheets";
-import type { SheetTabMenuItem } from "./sheetTabMenu";
+import { movedAnnouncement, sheetTabMenuItems, STRUCTURE_PROTECTED_MESSAGE, visibleNeighbour, type SheetTabMenuItem } from "./sheetTabMenu";
 import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
-
-export const FIRST_SHEET_MESSAGE = "This sheet is already first";
-export const LAST_SHEET_MESSAGE = "This sheet is already last";
-export const NO_HIDDEN_SHEETS_MESSAGE = "No sheets are hidden";
-
-/** `Sheet "<name>" moved to position <k>`. */
-export function movedAnnouncement(name: string, position: number): string {
-  return `Sheet "${name}" moved to position ${position}`;
-}
-
-/** The visible sheet before / after `index` in model order, or -1. */
-function visibleNeighbour(model: SpreadsheetModel, index: number, step: -1 | 1): number {
-  for (let i = index + step; i >= 0 && i < model.sheets.length; i += step) {
-    if (model.sheets[i]!.visibility === "visible") {
-      return i;
-    }
-  }
-  return -1;
-}
-
-/** One menu item: `sheet-tab-menu-<action>`, disabled with its reason. */
-function item(action: string, label: string, reason: string | null = null): SheetTabMenuItem {
-  return reason === null ? { action, label, testid: `sheet-tab-menu-${action}` } : { action, label, testid: `sheet-tab-menu-${action}`, disabled: true, reason };
-}
-
-/** The tab context menu's items for the sheet at `index` (SPEC-121 "UI"). */
-export function sheetTabMenuItems(model: SpreadsheetModel, index: number): SheetTabMenuItem[] {
-  const lastVisible = isLastVisibleSheet(model, index);
-  const duplicateReason = cannotDuplicateReason(model, index);
-  const hasHidden = model.sheets.some((sheet) => sheet.visibility === "hidden");
-  return [
-    item("insert", "Insert sheet"),
-    item("rename", "Rename"),
-    item("duplicate", "Duplicate", duplicateReason),
-    item("delete", "Delete", lastVisible ? LAST_VISIBLE_SHEET_MESSAGE : null),
-    item("move-left", "Move left", visibleNeighbour(model, index, -1) < 0 ? FIRST_SHEET_MESSAGE : null),
-    item("move-right", "Move right", visibleNeighbour(model, index, 1) < 0 ? LAST_SHEET_MESSAGE : null),
-    item("hide", "Hide", lastVisible ? LAST_VISIBLE_SHEET_MESSAGE : null),
-    item("unhide", "Unhide…", hasHidden ? null : NO_HIDDEN_SHEETS_MESSAGE),
-    item("tab-color", "Tab colour"),
-  ];
-}
 
 export interface SheetCommandsDeps {
   book: {
@@ -109,10 +70,20 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
 
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
 
+  /** Whether the workbook's structure is protected (SPEC-122) — and if so,
+   * says why as a toast: the gesture is refused. */
+  function refusedByProtection(): boolean {
+    if (!model()?.structureProtected) {
+      return false;
+    }
+    addToast(STRUCTURE_PROTECTED_MESSAGE);
+    return true;
+  }
+
   /** Runs one command as one undo step, then shows the sheet it names. */
   function run(label: string, command: (target: SpreadsheetModel) => SheetCommandResult | void): SheetCommandResult | undefined {
     const target = model();
-    if (!target) {
+    if (!target || refusedByProtection()) {
       return undefined;
     }
     deps.syncViewState(target);
@@ -155,7 +126,7 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
 
   function startRename(index: number): void {
     const sheet = model()?.sheets[index];
-    if (sheet) {
+    if (sheet && !refusedByProtection()) {
       renaming.value = { index, draft: sheet.name, error: "" };
     }
   }
@@ -210,7 +181,7 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
 
   function requestDelete(index: number): void {
     const target = model();
-    if (!target || isLastVisibleSheet(target, index)) {
+    if (!target || isLastVisibleSheet(target, index) || refusedByProtection()) {
       return;
     }
     if (sheetHasContent(target, index)) {
@@ -342,19 +313,25 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
         run("Hide sheet", (target) => setSheetHidden(target, [state.index], true));
         break;
       case "unhide":
-        unhiding.value = true;
+        unhiding.value = !refusedByProtection();
         break;
       case "tab-color":
-        coloring.value = { index: state.index, x: state.x, y: state.y };
+        if (!refusedByProtection()) {
+          coloring.value = { index: state.index, x: state.x, y: state.y };
+        }
         break;
       default:
         break;
     }
   }
 
+  /** Why the sheet commands are disabled (SPEC-122); "" when they apply. */
+  const structureReason = computed(() => (model()?.structureProtected ? STRUCTURE_PROTECTED_MESSAGE : ""));
+
   return {
     menu,
     menuItems,
+    structureReason,
     openMenu,
     closeMenu,
     runMenu,

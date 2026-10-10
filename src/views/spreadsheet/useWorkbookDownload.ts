@@ -4,16 +4,17 @@
 // picks the writer's path); the copy converts through stripRetention into
 // the other format and shows the notices it returns as toasts ("Not
 // included in the .ods copy: charts, comments"). Both write the sheet on
-// show as the active one. Until SPEC-122 serialises cells, a copy of a
-// workbook holding any stored cell is not offered ("Not available for this
-// workbook yet") — the from-scratch writers write empty sheets.
+// show as the active one, and an .ods in the user's number locale (SPEC-122:
+// a cell's informative text). SPEC-122's from-scratch writers serialise
+// every sheet's cells and styles, so the copy is offered for every workbook
+// (`copyDisabledReason` stays "" — the prop plumbing keeps a reason
+// possible for a later spec).
 import { computed, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { spreadsheetFormatLabel } from "../../lib/format";
 import { downloadSpreadsheet } from "../../lib/spreadsheet/download";
 import type { SpreadsheetFormat, SpreadsheetModel } from "../../lib/spreadsheet/model";
-
-export const COPY_UNAVAILABLE_MESSAGE = "Not available for this workbook yet";
+import { useSpreadsheetLocale } from "./useSpreadsheetLocale";
 
 /** "Download a copy as OpenDocument Spreadsheet (.ods)…" / "…as Excel workbook (.xlsx)…". */
 export function downloadCopyLabel(target: SpreadsheetFormat): string {
@@ -26,13 +27,11 @@ export interface WorkbookDownloadDeps {
 
 export function useWorkbookDownload(deps: WorkbookDownloadDeps) {
   const { addToast } = useToasts();
+  const { locale } = useSpreadsheetLocale();
 
   const otherFormat = computed((): SpreadsheetFormat => (deps.book.workbook.value?.format === "ods" ? "xlsx" : "ods"));
   const copyLabel = computed(() => downloadCopyLabel(otherFormat.value));
-  const copyDisabledReason = computed(() => {
-    const model = deps.book.workbook.value;
-    return model && model.sheets.some((sheet) => sheet.rows.some((row) => row.cells.length > 0)) ? COPY_UNAVAILABLE_MESSAGE : "";
-  });
+  const copyDisabledReason = computed(() => "");
 
   /** The model as the download writes it: the sheet on show active. */
   function viewed(model: SpreadsheetModel): SpreadsheetModel {
@@ -44,7 +43,7 @@ export function useWorkbookDownload(deps: WorkbookDownloadDeps) {
     if (!model) {
       return;
     }
-    void downloadSpreadsheet(viewed(model), target).then((notices) => {
+    void downloadSpreadsheet(viewed(model), target, locale.value).then((notices) => {
       for (const notice of notices) {
         addToast(notice);
       }
