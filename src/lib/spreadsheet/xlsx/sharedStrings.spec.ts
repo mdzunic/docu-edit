@@ -4,10 +4,10 @@
 // item), rich runs appended with their font XML and deduplicated among
 // appends, inline strings converted to shared ones — and the part it writes:
 // unchanged unless something was appended, else the source bytes with the
-// appends spliced before </sst>, uniqueCount = items and count removed (the
-// source <si> bytes untouched), and a workbook without the part gaining it
-// with its relationship and Override. (encodeXlsxText's round trip is
-// property-tested in sheetXml.spec.ts beside the cells it encodes.)
+// appends spliced before </sst> (before an <extLst>), uniqueCount = items and
+// count removed (the source <si> bytes untouched), and a workbook without the
+// part gaining it with its relationship and Override. (encodeXlsxText's round
+// trip is property-tested in sheetXml.spec.ts beside the cells it encodes.)
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../../core/equality";
 import { unzip } from "../../core/zip";
@@ -124,6 +124,13 @@ describe("the part", () => {
     expect(xml).toBe(`${DECLARATION}\r\n<sst xmlns="${MAIN}" uniqueCount="9">${ITEMS.join("")}<si><t>gamma</t></si></sst>`);
     // Removing the inserted run and restoring the counts gives the source exactly.
     expect(xml.replace(`<si><t>gamma</t></si>`, "").replace(` uniqueCount="9"`, ` count="12" uniqueCount="8"`)).toBe(SOURCE);
+  });
+
+  it("splices them before an <extLst>, which CT_Sst puts after the items", () => {
+    const ext = `<extLst><ext uri="{X}"><x:sst xmlns:x="urn:x"/></ext></extLst>`;
+    const writer = new SharedStringsWriter(`<sst xmlns="${MAIN}" count="1" uniqueCount="1"><si><t>a</t></si>${ext}</sst>`, undefined);
+    expect(writer.indexFor(plain("b"))).toBe(1);
+    expect(writer.xml()).toBe(`<sst xmlns="${MAIN}" uniqueCount="2"><si><t>a</t></si><si><t>b</t></si>${ext}</sst>`);
   });
 
   it("expands a self-closing root and writes a prefixed root's prefix on the appends", () => {

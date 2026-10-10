@@ -22,7 +22,8 @@
 //   `xml:space="preserve"` when its text has leading or trailing whitespace
 //   or a line break. Items are never removed.
 // - The part is rewritten only when something was appended: the source text
-//   with the appends spliced before `</sst>`, `uniqueCount` = the item count
+//   with the appends spliced before `</sst>` (before an `<extLst>`, which
+//   CT_Sst puts after the items), `uniqueCount` = the item count
 //   and `count` removed (it is optional, and correct only with every clean
 //   part's references counted). Without a source part the whole part is
 //   generated; writer.ts adds its relationship and Override.
@@ -143,8 +144,9 @@ interface SourceTable {
   count: number;
   /** Text → the first item that is a lone `<t>` with that text. */
   plain: Map<string, number>;
-  /** The root start tag and close tag, for the rewrite. */
-  root: { start: number; end: number; selfClosing: boolean; name: string; closeStart: number } | null;
+  /** The root start tag, for the rewrite, and where its items end: an
+   * `<extLst>`'s start, else the close tag's. */
+  root: { start: number; end: number; selfClosing: boolean; name: string; itemsEnd: number } | null;
   /** The prefix the root (and so every appended item) is written with. */
   prefix: string;
 }
@@ -172,7 +174,7 @@ function scanSourceTable(xml: string): SourceTable {
     if (event.type === "open") {
       const level = depth + 1;
       if (level === 1) {
-        table.root = { start: event.start, end: event.end, selfClosing: event.selfClosing, name: event.name, closeStart: -1 };
+        table.root = { start: event.start, end: event.end, selfClosing: event.selfClosing, name: event.name, itemsEnd: -1 };
         table.prefix = event.name.includes(":") ? `${event.name.slice(0, event.name.indexOf(":"))}:` : "";
       } else if (level === 2 && isSpreadsheetMl(event.ns) && event.local === "si") {
         item = { text: "", children: 0, lone: true, inT: false };
@@ -180,6 +182,8 @@ function scanSourceTable(xml: string): SourceTable {
           item.lone = false;
           finishItem();
         }
+      } else if (level === 2 && table.root !== null && table.root.itemsEnd < 0 && isSpreadsheetMl(event.ns) && event.local === "extLst") {
+        table.root.itemsEnd = event.start;
       } else if (level === 3 && item !== null) {
         item.children += 1;
         if (!isSpreadsheetMl(event.ns) || event.local !== "t") {
@@ -196,8 +200,8 @@ function scanSourceTable(xml: string): SourceTable {
       return;
     }
     if (event.type === "close") {
-      if (depth === 1 && table.root !== null) {
-        table.root.closeStart = event.start;
+      if (depth === 1 && table.root !== null && table.root.itemsEnd < 0) {
+        table.root.itemsEnd = event.start;
       } else if (depth === 2 && item !== null) {
         finishItem();
       } else if (depth === 3 && item !== null) {
@@ -293,7 +297,7 @@ export class SharedStringsWriter {
       splices.push({ start: root.start, end: root.end, text: `${tag.replace(/\s*\/>$/, ">")}${items}</${root.name}>` });
     } else {
       splices.push({ start: root.start, end: root.end, text: tag });
-      splices.push({ start: root.closeStart, end: root.closeStart, text: items });
+      splices.push({ start: root.itemsEnd, end: root.itemsEnd, text: items });
     }
     return applySplices(this.source, splices);
   }
