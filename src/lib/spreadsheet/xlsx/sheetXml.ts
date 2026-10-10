@@ -1627,9 +1627,14 @@ function inAnyRange(ranges: readonly GridRange[], row: number, col: number): boo
 /** One `<c>` (see the module header). */
 function cellXml(cell: Cell, row: Row, sheet: Sheet, ctx: XlsxSheetContext, p: string, arrays: readonly GridRange[]): string {
   let attrs = ` r="${colToLetters(cell.col)}${row.index + 1}"`;
-  if (cell.styleId !== undefined) {
-    const xf = ctx.styles.xfFor(cell.styleId);
-    if (xf !== 0 || (row.styleId ?? columnSpanAt(sheet.columns, cell.col)?.styleId ?? 0) !== 0) {
+  // A cell without its own style shows its row's (customFormat) or column's
+  // — the reader's cell → row → column order — but Excel reads a <c>
+  // without `s` as xf 0, so the inherited xf is written.
+  const inherited = row.styleId ?? columnSpanAt(sheet.columns, cell.col)?.styleId;
+  const styleId = cell.styleId ?? inherited;
+  if (styleId !== undefined) {
+    const xf = ctx.styles.xfFor(styleId);
+    if (xf !== 0 || (inherited ?? 0) !== 0) {
       attrs += ` s="${xf}"`;
     }
   }

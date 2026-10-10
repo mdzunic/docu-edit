@@ -664,10 +664,12 @@ describe("the worksheet writer: cells per the type table", () => {
     });
   }
 
-  it("writes s=\"0\" when the row or column would otherwise lend the cell its own style (the reader resolves cell → row → column)", () => {
+  it("writes s=\"0\" when the row or column would otherwise lend the cell its own style, and the inherited xf for a cell without one (the reader resolves cell → row → column; Excel reads a <c> without s as xf 0)", () => {
     expect(cellXmlOf({ col: 0, value: 1, styleId: 0 }, { styleId: 5 })).toBe(`<c r="A1" s="0"><v>1</v></c>`);
     expect(cellXmlOf({ col: 0, value: 1, styleId: 0 }, {}, { columns: [{ min: 0, max: 2, styleId: 4 }] })).toBe(`<c r="A1" s="0"><v>1</v></c>`);
-    expect(cellXmlOf({ col: 0, value: 1 }, { styleId: 5 })).toBe(`<c r="A1"><v>1</v></c>`);
+    expect(cellXmlOf({ col: 0, value: 1 }, { styleId: 5 })).toBe(`<c r="A1" s="5"><v>1</v></c>`);
+    expect(cellXmlOf({ col: 0, value: 1 }, {}, { columns: [{ min: 0, max: 2, styleId: 4 }] })).toBe(`<c r="A1" s="4"><v>1</v></c>`);
+    expect(cellXmlOf({ col: 0, value: 1 })).toBe(`<c r="A1"><v>1</v></c>`);
   });
 
   it("never writes t=\"shared\": a shared block read from a part is written one formula per cell", () => {
@@ -721,7 +723,7 @@ describe("the worksheet writer: rows, columns, merges, dimension", () => {
         { index: 6, cells: [], hidden: true, sourceAttrs: `outlineLevel='2'` },
       ]),
     ).toBe(
-      `<row r="5" s="3" customFormat="1" ht="20.25" customHeight="1" hidden="1" outlineLevel="1" collapsed="1" thickBot="1"><c r="A5"><v>1</v></c></row>` +
+      `<row r="5" s="3" customFormat="1" ht="20.25" customHeight="1" hidden="1" outlineLevel="1" collapsed="1" thickBot="1"><c r="A5" s="3"><v>1</v></c></row>` +
         `<row r="6" ht="18"><c r="B6"><v>2</v></c></row><row r="7" hidden="1" outlineLevel='2'/>`,
     );
   });
