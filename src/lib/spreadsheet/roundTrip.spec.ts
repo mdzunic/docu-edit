@@ -9,7 +9,9 @@
 // holds at read, and the model survives the store's JSON trip unchanged.
 // SPEC-122: over every fixture an edit → write → read gives the edited model
 // (cells, formulas, number formats and resolved styles, and
-// workbookForCompare), write → read → write is equalBytes-stable, forcing
+// workbookForCompare), the other sheets' parts and tables keep their bytes,
+// xl/styles.xml and xl/sharedStrings.xml only grow (appended entries and
+// their counts), write → read → write is equalBytes-stable, forcing
 // every .ods sheet dirty without an edit reads back to the same model, and a
 // copy in the other format re-opens showing the same displayed values,
 // formulas and number formats.
@@ -475,26 +477,93 @@ function editFirstGridSheet(model: SpreadsheetModel): number {
   setCellEntry(model, index, { row: below, col: 0 }, { value: 1234.5, numberFormat: "#,##0.00" });
   setCellEntry(model, index, { row: below, col: 1 }, { value: "edited\ntwo lines", wrap: true });
   setCellEntry(model, index, { row: below, col: 2 }, { value: 2469, formula: `A${below + 1}*2` });
-  model.sheets = model.sheets.map((each, at) => (at === index ? { ...each, dirty: true } : each));
+  model.sheets = model.sheets.map((each, position) => (position === index ? { ...each, dirty: true } : each));
   return index;
 }
 
+/** A part's text. */
+function partText(parts: Map<string, Uint8Array>, name: string): string {
+  return new TextDecoder().decode(parts.get(name));
+}
+
+/** A part's tags and texts in order, its count attributes left out. */
+function xmlTokens(xml: string): string[] {
+  return xml.replace(/ (?:count|uniqueCount)="\d+"/g, "").match(/<[^>]*>|[^<]+/g) ?? [];
+}
+
+/** Whether `written` is `source` with whole elements inserted and nothing
+ * else changed but `count`/`uniqueCount` values (or a `count` removed) —
+ * SPEC-122's append-only rule for xl/styles.xml and xl/sharedStrings.xml:
+ * compared token by token (tags and text), every source token appears in
+ * order, and a token the source does not have is part of an inserted run. */
+function appendOnly(source: string, written: string): boolean {
+  const from = xmlTokens(source);
+  const to = xmlTokens(written);
+  let j = 0;
+  for (const token of from) {
+    const found = to.indexOf(token, j);
+    if (found < 0) {
+      return false;
+    }
+    // What lies between is inserted: whole elements, never text.
+    const run = to.slice(j, found).join("");
+    if (run !== "" && !/^<[^/!?][\s\S]*>$/.test(run)) {
+      return false;
+    }
+    j = found + 1;
+  }
+  return j === to.length;
+}
+
 describe("SPEC-122: edit → write → read gives the edited model, and write → read → write is stable", () => {
+  it("(the append-only comparison accepts inserted elements and new counts, nothing else)", () => {
+    const source = `<sst count="2" uniqueCount="2"><si><t>a</t></si><si><t>b</t></si></sst>`;
+    expect(appendOnly(source, source)).toBe(true);
+    expect(appendOnly(source, `<sst uniqueCount="3"><si><t>a</t></si><si><t>b</t></si><si><t>c</t></si></sst>`)).toBe(true);
+    expect(appendOnly(`<fonts count="1"><font/></fonts><fills/>`, `<numFmts count="1"><numFmt/></numFmts><fonts count="2"><font/><font><b/></font></fonts><fills/>`)).toBe(true);
+    expect(appendOnly(source, `<sst uniqueCount="2"><si><t>a</t></si><si><t>B</t></si></sst>`)).toBe(false);
+    expect(appendOnly(source, `<sst uniqueCount="1"><si><t>a</t></si></sst>`)).toBe(false);
+    expect(appendOnly(source, `<sst uniqueCount="2"><si><t>a!</t></si><si><t>b</t></si></sst>`)).toBe(false);
+  });
+
   for (const fixture of EDIT_FIXTURES) {
     it(`${fixture.file}`, async () => {
-      const model = await readSpreadsheetBytes(await fixture.bytes(), fixture.format, "fixture");
+      const sourceBytes = await fixture.bytes();
+      const model = await readSpreadsheetBytes(sourceBytes, fixture.format, "fixture");
       const index = editFirstGridSheet(model);
       const written = (await spreadsheetDownload(model)).bytes;
       expect(await packageIntegrity(written)).toEqual([]);
       const back = await readSpreadsheetBytes(written, fixture.format, "fixture");
       expect(workbookForCompare(back)).toEqual(workbookForCompare(model));
-      model.sheets.forEach((sheet, at) => {
-        expect(sheetForCompare(back, back.sheets[at]!), sheet.name).toEqual(sheetForCompare(model, sheet));
+      model.sheets.forEach((sheet, position) => {
+        expect(sheetForCompare(back, back.sheets[position]!), sheet.name).toEqual(sheetForCompare(model, sheet));
       });
 
-      // The same sheet rebuilt again from what was read: every part as before.
-      back.sheets = back.sheets.map((sheet, at) => (at === index ? { ...sheet, dirty: true } : sheet));
+      // Only the edited sheet was rebuilt: every other sheet's part (xlsx) or
+      // table (ods) keeps its source bytes, and the workbook-wide string and
+      // style tables only grew.
+      const source = await unzip(sourceBytes);
       const first = await unzip(written);
+      if (fixture.format === "xlsx") {
+        model.sheets.forEach((sheet, position) => {
+          if (position !== index && sheet.partName !== undefined && source.has(sheet.partName)) {
+            expect(equalBytes(first.get(sheet.partName)!, source.get(sheet.partName)!), sheet.partName).toBe(true);
+          }
+        });
+        for (const name of ["xl/styles.xml", "xl/sharedStrings.xml"].filter((each) => source.has(each))) {
+          expect(appendOnly(partText(source, name), partText(first, name)), name).toBe(true);
+        }
+      } else {
+        const content = partText(first, "content.xml");
+        model.sheets.forEach((sheet, position) => {
+          if (position !== index && sheet.sourceXml !== undefined) {
+            expect(content.includes(sheet.sourceXml), sheet.name).toBe(true);
+          }
+        });
+      }
+
+      // The same sheet rebuilt again from what was read: every part as before.
+      back.sheets = back.sheets.map((sheet, position) => (position === index ? { ...sheet, dirty: true } : sheet));
       const second = await unzip((await spreadsheetDownload(back)).bytes);
       expect([...second.keys()]).toEqual([...first.keys()]);
       for (const [name, bytes] of first) {
@@ -511,8 +580,8 @@ describe("SPEC-122: forcing every .ods sheet dirty without an edit reads back to
       const forced: SpreadsheetModel = { ...model, sheets: model.sheets.map((sheet) => ({ ...sheet, dirty: true as const })) };
       const back = await readSpreadsheetBytes((await spreadsheetDownload(forced)).bytes, "ods", "fixture");
       expect(workbookForCompare(back)).toEqual(workbookForCompare(model));
-      model.sheets.forEach((sheet, at) => {
-        expect(sheetForCompare(back, back.sheets[at]!), sheet.name).toEqual(sheetForCompare(model, sheet));
+      model.sheets.forEach((sheet, position) => {
+        expect(sheetForCompare(back, back.sheets[position]!), sheet.name).toEqual(sheetForCompare(model, sheet));
       });
     });
   }
@@ -547,8 +616,8 @@ describe("SPEC-122: a copy in the other format re-opens with the same displayed 
       const back = await readSpreadsheetBytes(bytes, target, "copy");
       const expected = stripRetention({ ...model, format: target });
       expect(back.sheets.map((sheet) => sheet.name)).toEqual(expected.sheets.map((sheet) => sheet.name));
-      expected.sheets.forEach((sheet, at) => {
-        expect(displayedCells(back, back.sheets[at]!), sheet.name).toEqual(displayedCells(expected, sheet));
+      expected.sheets.forEach((sheet, position) => {
+        expect(displayedCells(back, back.sheets[position]!), sheet.name).toEqual(displayedCells(expected, sheet));
       });
     });
   }
