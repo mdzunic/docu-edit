@@ -651,11 +651,24 @@ function readLibreOffice(cell: Element, text: string, ctx: ImportContext): Readi
   return format && reading.formula === undefined ? { ...reading, format } : reading;
 }
 
+/** Whether the HTML has more `<td>`/`<th>` tags than MAX_COPY_CELLS —
+ * counted, stopping past the cap, never collected (64 MiB of them would be
+ * some 16 million match strings). */
+function moreCellTagsThanCap(html: string): boolean {
+  const tag = /<t[dh][\s>/]/gi;
+  for (let count = 0; tag.exec(html) !== null; count += 1) {
+    if (count >= MAX_COPY_CELLS) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** An external clipboard table as a PasteBlock (see the module header):
  * null when the HTML holds no table, a refusal message when it is too
  * large. */
 export function importClipboardHtml(html: string, ctx: ImportContext): PasteBlock | string | null {
-  if (html.length > MAX_IMPORT_HTML_LENGTH || (html.match(/<t[dh][\s>/]/gi)?.length ?? 0) > MAX_COPY_CELLS) {
+  if (html.length > MAX_IMPORT_HTML_LENGTH || moreCellTagsThanCap(html)) {
     return TOO_MANY_TO_CHANGE_MESSAGE;
   }
   if (typeof DOMParser === "undefined") {

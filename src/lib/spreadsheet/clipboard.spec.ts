@@ -582,6 +582,7 @@ describe("external sources — each producer's markers (inline snippets)", () =>
 
   it("refuses input over 64 MiB or over MAX_COPY_CELLS cells before parsing; HTML without a table is no block", () => {
     expect(importClipboardHtml(`<table><tr><td>x</td></tr></table>${" ".repeat(64 * 1024 * 1024)}`, CTX)).toBe("That's too many cells to change at once");
+    expect(importClipboardHtml(`<table><tr>${"<td>".repeat(MAX_COPY_CELLS + 1)}</tr></table>`, CTX)).toBe(TOO_MANY_TO_CHANGE_MESSAGE);
     expect(importClipboardHtml("<p>no table</p>", CTX)).toBeNull();
   });
 
