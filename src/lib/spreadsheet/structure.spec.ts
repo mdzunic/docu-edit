@@ -10,7 +10,8 @@ import { MAX_FORMAT_MATERIALISED } from "./restyle";
 import { autofitColumnWidthPx, fixedMeasurer } from "./autofit";
 import { autofitColumns, autofitRows, freezePanes, MAX_ROW_HEIGHT_PT, resizeColumns, resizeRows, setColumnsHidden, setRowsHidden, TOO_MANY_ROWS_MESSAGE } from "./bands";
 import { applyPattern, capturePattern, clearRange } from "./formatting";
-import { applyPatternMerges, mergeCells, mergeDiscardsValues, patternMerges, unmergeCells } from "./mergeCells";
+import { applyPatternMerges, mergeCells, mergeDiscardsValues, patternMerges, unmergeCells, type MergeMode } from "./mergeCells";
+import { rangesIntersect } from "./merges";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import {
   adjustIndex,
@@ -64,6 +65,19 @@ const row = (index: number, cells: Cell[], extra: Partial<Row> = {}): Row => ({ 
 const range = (top: number, left: number, bottom: number, right: number): GridRange => ({ top, left, bottom, right });
 const sheetOf = (m: SpreadsheetModel, id = "s1"): Sheet => m.sheets.find((each) => each.id === id)!;
 const indices = (s: Sheet): number[] => s.rows.map((r) => r.index);
+const contains = (outer: GridRange, inner: GridRange): boolean =>
+  outer.top <= inner.top && outer.left <= inner.left && outer.bottom >= inner.bottom && outer.right >= inner.right;
+
+/** A small deterministic generator (mulberry32). */
+function random(seed: number): () => number {
+  let state = seed;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 describe("adjustIndex — the geometry table's index rows", () => {
   it("insert n at a: i < a stays", () => {
@@ -506,6 +520,42 @@ describe("merges (SPEC-124 \"Merges\")", () => {
     expect(single.sheets).toBe(sheets);
   });
 
+  it("'across' over a merge spanning several rows replaces it with one merge per row", () => {
+    // A1:B2 is merged: A1:C2 merged across leaves A1:C1 and A2:C2, never A1:B2 beside them.
+    const m = model([sheet("s1", "Sheet1", { merges: [range(0, 0, 1, 1), range(5, 5, 6, 6)] })]);
+    expect(mergeCells(m, "s1", [range(0, 0, 1, 2)], "across")).toEqual({ ok: true });
+    expect(sheetOf(m).merges).toEqual([range(5, 5, 6, 6), range(0, 0, 0, 2), range(1, 0, 1, 2)]);
+    // A cell of the merge alone expands to all of it, split by rows as well.
+    const inside = model([sheet("s1", "Sheet1", { merges: [range(0, 0, 1, 2)] })]);
+    expect(mergeCells(inside, "s1", [range(1, 1, 1, 1)], "across")).toEqual({ ok: true });
+    expect(sheetOf(inside).merges).toEqual([range(0, 0, 0, 2), range(1, 0, 1, 2)]);
+  });
+
+  it("'across' over a merge one column wide removes it — each of its rows is a single cell", () => {
+    const m = model([sheet("s1", "Sheet1", { rows: [row(0, [value(0, "top")]), row(1, [value(0, "kept")])], merges: [range(0, 0, 2, 0)] })]);
+    const rows = sheetOf(m).rows;
+    expect(mergeDiscardsValues(m, "s1", [range(0, 0, 2, 0)], "across")).toBe(false);
+    expect(mergeCells(m, "s1", [range(0, 0, 2, 0)], "across")).toEqual({ ok: true });
+    expect(sheetOf(m).merges).toEqual([]);
+    expect(sheetOf(m).rows).toBe(rows);
+  });
+
+  it("ranges are merged one after another: a range meeting an earlier one's merge extends over it", () => {
+    const m = model([sheet("s1", "Sheet1")]);
+    expect(mergeCells(m, "s1", [range(0, 0, 0, 1), range(0, 1, 1, 2)], "cells")).toEqual({ ok: true });
+    expect(sheetOf(m).merges).toEqual([range(0, 0, 1, 2)]);
+    const across = model([sheet("s1", "Sheet1")]);
+    expect(mergeCells(across, "s1", [range(0, 0, 1, 2), range(1, 1, 2, 3)], "across")).toEqual({ ok: true });
+    expect(sheetOf(across).merges).toEqual([range(0, 0, 0, 2), range(1, 0, 1, 3), range(2, 0, 2, 3)]);
+  });
+
+  it("refuses to unmerge a protected sheet's locked cells, as merging them is refused", () => {
+    const m = model([sheet("s1", "Sheet1", { protection: { sheet: true }, merges: [range(0, 0, 2, 0)] })]);
+    const sheets = m.sheets;
+    expect(mergeCells(m, "s1", [range(0, 0, 2, 0)], "across")).toEqual({ ok: false, message: PROTECTED_CELL_MESSAGE });
+    expect(m.sheets).toBe(sheets);
+  });
+
   it("a range partially overlapping a merge extends to cover it, and the merges inside are replaced", () => {
     const m = model([sheet("s1", "Sheet1", { merges: [range(1, 1, 2, 2), range(5, 5, 6, 6)] })]);
     expect(mergeCells(m, "s1", [range(0, 0, 1, 1)], "cells")).toEqual({ ok: true });
@@ -543,6 +593,48 @@ describe("merges (SPEC-124 \"Merges\")", () => {
     applyPatternMerges(m, "s1", range(5, 3, 5, 6), pattern);
     expect(sheetOf(m).merges).toEqual([range(0, 0, 0, 1), range(5, 3, 5, 4), range(5, 5, 5, 6)]);
     expect(sheetOf(m).rows[1]!.cells).toEqual([value(3, "keep")]);
+  });
+
+  it("the painter removes a merge reaching into the target that a placed merge would overlap", () => {
+    // A1:B1 painted on the single cell D6 covers D6:E6, which E6:F7 reaches into.
+    const m = model([sheet("s1", "Sheet1", { merges: [range(0, 0, 0, 1), range(5, 4, 6, 5), range(9, 0, 9, 1)] })]);
+    const pattern = capturePattern(sheetOf(m), range(0, 0, 0, 1))!;
+    expect(applyPatternMerges(m, "s1", range(5, 3, 5, 3), pattern)).toEqual({ ok: true });
+    expect(sheetOf(m).merges).toEqual([range(0, 0, 0, 1), range(9, 0, 9, 1), range(5, 3, 5, 4)]);
+  });
+
+  it("never leaves two merges overlapping, and every row of a selected range lies in a merge (randomised)", () => {
+    const next = random(124);
+    const int = (n: number): number => Math.floor(next() * n);
+    const area = (): GridRange => {
+      const top = int(10);
+      const left = int(10);
+      return range(top, left, top + int(4), left + int(4));
+    };
+    const modes: MergeMode[] = ["centre", "across", "cells"];
+    for (let k = 0; k < 400; k += 1) {
+      const existing: GridRange[] = [];
+      for (let j = 0; j < 6; j += 1) {
+        const merge = area();
+        if ((merge.top !== merge.bottom || merge.left !== merge.right) && !existing.some((done) => rangesIntersect(done, merge))) {
+          existing.push(merge);
+        }
+      }
+      const m = model([sheet("s1", "Sheet1", { merges: existing })]);
+      const ranges = Array.from({ length: 1 + int(3) }, area);
+      const mode = modes[int(modes.length)]!;
+      expect(mergeCells(m, "s1", ranges, mode)).toEqual({ ok: true });
+      const merges = sheetOf(m).merges;
+      const scenario = JSON.stringify({ existing, ranges, mode, merges });
+      merges.forEach((a, i) => merges.slice(i + 1).forEach((b) => expect(rangesIntersect(a, b), scenario).toBe(false)));
+      // "across" leaves a range one column wide unmerged, row by row.
+      for (const selected of ranges.filter((each) => each.left !== each.right || (mode !== "across" && each.top !== each.bottom))) {
+        const pieces = mode === "across" ? Array.from({ length: selected.bottom - selected.top + 1 }, (_, d) => ({ ...selected, top: selected.top + d, bottom: selected.top + d })) : [selected];
+        for (const piece of pieces) {
+          expect(merges.some((merge) => contains(merge, piece)), scenario).toBe(true);
+        }
+      }
+    }
   });
 });
 
