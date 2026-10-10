@@ -43,12 +43,17 @@
 //   (`bestFit`, `collapsed`, `outlineLevel`, `phonetic`, …) verbatim in
 //   `sourceAttrs` (`customWidth` is implied by a width). A later `col`
 //   overlapping an earlier one is clipped to the gap. A span is stored only
-//   with a width other than the default, `hidden` or a `styleId`;
+//   with a width other than the default, `hidden` or a `styleId` — or,
+//   SPEC-122, an unmodelled attribute other than `bestFit` (an
+//   `outlineLevel`, `collapsed` …, which the writer must re-emit);
 // - `row`: `ht` → `heightPt` (honoured with or without `customHeight`),
 //   `customHeight`, `hidden`, `s` → `styleId` only with `customFormat="1"`;
 //   every other attribute (`spans`, `x14ac:dyDescent`, `outlineLevel`,
 //   `collapsed`, `thickTop`, `thickBot`, …) verbatim in `sourceAttrs`. A row
-//   with no cells is stored only with a height, `hidden` or a `styleId`;
+//   with no cells is stored only with a height, `hidden` or a `styleId` — or,
+//   SPEC-122, an unmodelled attribute other than the layout caches `spans`
+//   and `x14ac:dyDescent` (model.ts rowSourceAttrsHoldProperties: an
+//   `outlineLevel`, `collapsed` …, which the writer must re-emit);
 // - `sheetPr/tabColor` → `tabColor`; `mergeCells/mergeCell@ref` → `merges`
 //   (merges.ts acceptMerges: two or more cells, no overlap with an earlier
 //   one);
@@ -114,8 +119,10 @@ import { colToLetters, formatA1, formatRange, parseA1, parseRange, parseSqref, u
 import { baseColWidthToPx, DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, pxToXlsxWidth, xlsxWidthToPx } from "../geometry";
 import { acceptMerges } from "../merges";
 import {
+  isRowLayoutCacheAttribute,
   MAX_COLS,
   MAX_ROWS,
+  rowSourceAttrsHoldProperties,
   toCellError,
   type Cell,
   type CellFont,
@@ -510,6 +517,14 @@ const ROW_MODELLED: ReadonlySet<string> = new Set(["r", "ht", "customHeight", "h
 /** The `<col>` attributes the model carries (`customWidth` is implied by a
  * width); the rest go to `sourceAttrs`. */
 const COL_MODELLED: ReadonlySet<string> = new Set(["min", "max", "width", "customWidth", "hidden", "style"]);
+/** Unmodelled `<col>` attributes that alone store no span: `bestFit`, a hint
+ * about how a width was chosen, means nothing at the default width. */
+const COL_HINTS: ReadonlySet<string> = new Set(["bestFit"]);
+
+/** Whether a row without cells is stored (see the module header). */
+function storesEmptyRow(row: Row): boolean {
+  return row.heightPt !== undefined || row.hidden === true || row.styleId !== undefined || rowSourceAttrsHoldProperties(row.sourceAttrs);
+}
 
 // --- columns ------------------------------------------------------------------------
 
@@ -521,6 +536,9 @@ interface ColumnCandidate {
   hidden: boolean;
   styleId: number | undefined;
   sourceAttrs: string | undefined;
+  /** SPEC-122: an unmodelled attribute other than a hint (COL_HINTS) — an
+   * outline level the writer must re-emit — stores the span. */
+  holdsAttrs: boolean;
 }
 
 /** The parts of [min, max] no interval of `claimed` (sorted, disjoint)
@@ -577,7 +595,8 @@ function claim(claimed: [number, number][], min: number, max: number): void {
 
 /** The sheet's column spans: each `<col>` clipped to the columns no earlier
  * one claimed, kept only when it differs from the default (a width other
- * than `defaultColWidthPx`, `hidden` or a `styleId`); sorted by `min`. */
+ * than `defaultColWidthPx`, `hidden` or a `styleId`) or holds an unmodelled
+ * attribute the writer re-emits (an `outlineLevel` …); sorted by `min`. */
 function columnSpans(candidates: readonly ColumnCandidate[], defaultColWidthPx: number, mdw: number): ColumnSpan[] {
   const spans: ColumnSpan[] = [];
   const claimed: [number, number][] = [];
@@ -599,7 +618,7 @@ function columnSpans(candidates: readonly ColumnCandidate[], defaultColWidthPx: 
       sorted = false;
     }
     const widthPx = candidate.width === undefined ? undefined : xlsxWidthToPx(candidate.width, mdw);
-    if (!(widthPx !== undefined && widthPx !== defaultColWidthPx) && !candidate.hidden && candidate.styleId === undefined) {
+    if (!(widthPx !== undefined && widthPx !== defaultColWidthPx) && !candidate.hidden && candidate.styleId === undefined && !candidate.holdsAttrs) {
       continue;
     }
     for (const [min, max] of pieces) {
@@ -735,7 +754,7 @@ function resolveFollowers(
     }
   }
   for (const row of emptied) {
-    if (row.cells.length === 0 && row.heightPt === undefined && !row.hidden && row.styleId === undefined) {
+    if (row.cells.length === 0 && !storesEmptyRow(row)) {
       rows.splice(rows.indexOf(row), 1);
     }
   }
@@ -900,7 +919,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
 
   const finishRow = (): void => {
     const current = row!;
-    if (current.cells.length > 0 || current.heightPt !== undefined || current.hidden || current.styleId !== undefined) {
+    if (current.cells.length > 0 || storesEmptyRow(current)) {
       if (!cellsOrdered) {
         normaliseCells(current.cells);
       }
@@ -1000,6 +1019,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       hidden: isOn(scanAttr(event.attrs, "hidden")),
       styleId: parseIndex(scanAttr(event.attrs, "style")),
       sourceAttrs: unmodelledAttributes(xml, event, COL_MODELLED),
+      holdsAttrs: event.attrs.some((attr) => !COL_MODELLED.has(attr.name) && !COL_HINTS.has(attr.name)),
     });
   };
 
@@ -1601,9 +1621,6 @@ function colsXml(sheet: Sheet, ctx: XlsxSheetContext, p: string): string {
   return `<${p}cols>${cols.join("")}</${p}cols>`;
 }
 
-/** Row attributes the writer drops: Excel's layout caches. */
-const ROW_CACHE_ATTRIBUTES = /^(?:spans|(?:[\w.-]+:)?dyDescent)$/;
-
 /** A row's sourceAttrs less `spans` and `x14ac:dyDescent`, with a leading
  * space ("" when nothing is left); memoised — rows share the strings. */
 function rowSourceAttrs(attrs: string, memo: Map<string, string>): string {
@@ -1611,7 +1628,7 @@ function rowSourceAttrs(attrs: string, memo: Map<string, string>): string {
   if (out === undefined) {
     out = "";
     for (const match of attrs.matchAll(/([^\s=]+)\s*=\s*("[^"]*"|'[^']*')/g)) {
-      if (!ROW_CACHE_ATTRIBUTES.test(match[1]!)) {
+      if (!isRowLayoutCacheAttribute(match[1]!)) {
         out += ` ${match[1]}=${match[2]}`;
       }
     }

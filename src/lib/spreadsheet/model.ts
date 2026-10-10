@@ -164,7 +164,8 @@ export interface CellStyle {
 
 /** A run of columns sharing one size, visibility and style (SPEC-117) —
  * stored only when it has a width other than the sheet default, `hidden` or
- * a `styleId`. */
+ * a `styleId`, or (SPEC-122) an unmodelled xlsx attribute other than
+ * `bestFit` (an `outlineLevel`, `collapsed` … the writer re-emits). */
 export interface ColumnSpan {
   min: number; // 0-based inclusive; spans sorted, non-overlapping
   max: number;
@@ -238,7 +239,8 @@ export interface Row {
   index: number; // 0-based
   cells: Cell[]; // ascending by col, unique
   // SPEC-117 — a row with no cells is stored only if it has a height,
-  // `hidden` or a `styleId`:
+  // `hidden` or a `styleId`, or (SPEC-122) an unmodelled xlsx attribute the
+  // writer re-emits (rowSourceAttrsHoldProperties):
   heightPt?: number;
   customHeight?: true;
   hidden?: true;
@@ -362,6 +364,32 @@ export function hasSource(sheet: Pick<Sheet, "partName" | "sourceXml">): boolean
 /** An original (SPEC-121): a sheet with a source and no `copiedFrom`. */
 export function isOriginal(sheet: Pick<Sheet, "partName" | "sourceXml" | "copiedFrom">): boolean {
   return hasSource(sheet) && sheet.copiedFrom === undefined;
+}
+
+const ROW_LAYOUT_CACHE_ATTRIBUTE = /^(?:spans|(?:[\w.-]+:)?dyDescent)$/;
+const SOURCE_ATTRIBUTE = /([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')/g;
+
+/** Whether an xlsx `<row>` attribute is one of Excel's layout caches
+ * (`spans`, `x14ac:dyDescent`) rather than a property: the xlsx writer drops
+ * them (SPEC-122). */
+export function isRowLayoutCacheAttribute(name: string): boolean {
+  return ROW_LAYOUT_CACHE_ATTRIBUTE.test(name);
+}
+
+/** Whether a row's `sourceAttrs` hold an attribute other than the layout
+ * caches — an `outlineLevel`, `collapsed`, `thickBot` …: a property the xlsx
+ * writer re-emits, so a row without cells carrying one is stored
+ * (SPEC-122). */
+export function rowSourceAttrsHoldProperties(sourceAttrs: string | undefined): boolean {
+  if (sourceAttrs === undefined) {
+    return false;
+  }
+  for (const match of sourceAttrs.matchAll(SOURCE_ATTRIBUTE)) {
+    if (!isRowLayoutCacheAttribute(match[1]!)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The error codes a cell can hold, for readers validating what a file

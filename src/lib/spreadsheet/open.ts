@@ -43,7 +43,14 @@
 //     retained content envelope) and copies those fields onto each model
 //     cell whose value and formula still equal the source's at that address,
 //     and the protection flag onto the sheet; `structureProtected` is the
-//     workbook part's, which every re-read gains.
+//     workbook part's, which every re-read gains. The xlsx reader also
+//     stores, from version 6, a default-width column span or a row without
+//     cells that carries only an unmodelled attribute the writer re-emits (an
+//     `outlineLevel`, `collapsed` …); the step adds those to a dirty xlsx
+//     sheet too — its rows and columns are version 5's, since no command
+//     before SPEC-122 adds or removes one, so they are exactly the source's
+//     spans that overlap no stored span and its rows without cells where none
+//     is stored.
 //
 // Since SPEC-122 the writers rebuild a dirty sheet from the model, so the
 // layout a record re-reads its clean sheets from numbers its styles afresh:
@@ -128,6 +135,9 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
         sheet.protection = { sheet: true };
       }
       sheet.rows = withRetainedContent(sheet.rows, source.rows);
+      if (model.format === "xlsx") {
+        withRetainedOutline(sheet, source);
+      }
     },
   },
 ];
@@ -219,6 +229,21 @@ function withRetainedContent(rows: Row[], sourceRows: readonly Row[]): Row[] {
     }
   });
   return out ?? rows;
+}
+
+/** Adds the source's column spans that overlap no stored span and its rows
+ * without cells where no row is stored (see the version history), in place;
+ * arrays are replaced only when something is added. */
+function withRetainedOutline(sheet: Sheet, source: Sheet): void {
+  const stored = new Set(sheet.rows.map((row) => row.index));
+  const rows = source.rows.filter((row) => row.cells.length === 0 && !stored.has(row.index));
+  if (rows.length > 0) {
+    sheet.rows = [...sheet.rows, ...rows].toSorted((a, b) => a.index - b.index);
+  }
+  const spans = source.columns.filter((span) => !sheet.columns.some((have) => have.min <= span.max && span.min <= have.max));
+  if (spans.length > 0) {
+    sheet.columns = [...sheet.columns, ...spans].toSorted((a, b) => a.min - b.min);
+  }
 }
 
 /** Moves a dirty sheet's style ids from the stored table `from` into the

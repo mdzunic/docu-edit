@@ -14,7 +14,8 @@ import { equalBytes } from "../../core/equality";
 import { OFFICE_THEME_XML } from "../../core/officeThemeXml";
 import { base64ToBytes, bytesToBase64 } from "../../core/packageParts";
 import { unzip } from "../../core/zip";
-import { formatA1 } from "../address";
+import { formatA1, getCell } from "../address";
+import { setCellEntry } from "../cells";
 import { spreadsheetDownload } from "../download";
 import * as F from "../fixtures/build";
 import { packageIntegrity } from "../fixtures/packageIntegrity";
@@ -656,6 +657,45 @@ describe("calcChain and calcPr", () => {
     const added = (await links()).model;
     addSheet(added, 0);
     expect(calcPrOf(text((await save(added)).parts, "xl/workbook.xml"))).toBe(`<calcPr calcId="191029"/>`);
+  });
+});
+
+describe("an edited sheet keeps its outline (SPEC-122)", () => {
+  it("columns grouped at the default width and grouped rows without cells are written back, and re-open the same", async () => {
+    // Excel's grouping of columns G:I and rows 13:14 that nobody resized, and the collapse marks after them.
+    const source = await unzip(await F.buildMiniBookXlsxBytes());
+    const sheetPart = "xl/worksheets/sheet1.xml";
+    const grouped = text(source, sheetPart)
+      .replace(`</cols>`, `<col min="7" max="9" width="9.140625" outlineLevel="1"/><col min="10" max="10" width="9.140625" collapsed="1"/></cols>`)
+      .replace(`</sheetData>`, `<row r="13" spans="1:5" outlineLevel="1" x14ac:dyDescent="0.35"/><row r="14" outlineLevel="1"/><row r="15" collapsed="1"/></sheetData>`);
+    source.set(sheetPart, encoder.encode(grouped));
+    const model = await readSpreadsheetBytes(new Uint8Array(0), "xlsx", "book", source);
+    const summary = model.sheets[0]!;
+    // Both spans are at the sheet's default width: only their attributes keep them.
+    expect(summary.columns.slice(1).map((span) => [span.widthPx, span.sourceAttrs])).toEqual([
+      [summary.defaultColWidthPx, `outlineLevel="1"`],
+      [summary.defaultColWidthPx, `collapsed="1"`],
+    ]);
+    setCellEntry(model, 0, { row: 2, col: 1 }, { value: 1300 });
+    model.sheets[0] = { ...model.sheets[0]!, dirty: true };
+
+    const { bytes, parts } = await save(model);
+    const written = text(parts, sheetPart);
+    expect(written).not.toBe(grouped);
+    expect(written).toContain(
+      `<col min="7" max="9" width="9.140625" customWidth="1" outlineLevel="1"/><col min="10" max="10" width="9.140625" customWidth="1" collapsed="1"/></cols>`,
+    );
+    expect(written).toContain(`<row r="13" outlineLevel="1"/><row r="14" outlineLevel="1"/><row r="15" collapsed="1"/></sheetData>`);
+    expect(await packageIntegrity(bytes)).toEqual([]);
+
+    const reopened = (await readSpreadsheetBytes(bytes, "xlsx", "book")).sheets[0]!;
+    expect(reopened.columns).toEqual(summary.columns);
+    expect(reopened.rows.slice(-3).map((row) => [row.index, row.cells.length, row.sourceAttrs])).toEqual([
+      [12, 0, `outlineLevel="1"`],
+      [13, 0, `outlineLevel="1"`],
+      [14, 0, `collapsed="1"`],
+    ]);
+    expect(getCell(reopened, 2, 1)?.value).toBe(1300);
   });
 });
 

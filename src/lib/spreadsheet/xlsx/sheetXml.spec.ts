@@ -16,7 +16,9 @@
 // and their members, a dynamic array's cm kept and dropped, a data table's
 // <f> and an unparsed formula's wire text verbatim, preserved attributes and
 // children), rows (no spans or dyDescent, the other sourceAttrs kept), cols
-// (the width rules), the splice order with every CT_Worksheet sibling present
+// (the width rules), the outline of default-width columns and of rows
+// without cells (stored by the reader, re-emitted through an edit), the
+// splice order with every CT_Worksheet sibling present
 // and with the rebuilt ones absent, the root start tag and every other element
 // byte-verbatim, the first sheetView (spliced attributes, the frozen pane, the
 // selections, the rest verbatim), sheetFormatPr, mergeCells, SPEC-121's
@@ -139,6 +141,19 @@ describe("cols", () => {
     expect(wide.columns).toEqual([{ min: 0, max: 0, widthPx: 64, sourceWidthChars: 9.140625 }]);
   });
 
+  it("keeps a span at the default width that carries an unmodelled attribute other than bestFit — an outline group the writer re-emits (SPEC-122)", () => {
+    // Excel groups columns B:D without resizing them as width 9.140625 — 64 px, the default.
+    const { columns } = read(
+      `<cols><col min="2" max="4" width="9.140625" outlineLevel="1"/><col min="5" max="5" width="9.140625" bestFit="1" collapsed="1"/>` +
+        `<col min="6" max="6" outlineLevel="2"/><col min="7" max="7" width="9.140625" bestFit="1"/></cols><sheetData/>`,
+    );
+    expect(columns).toEqual([
+      { min: 1, max: 3, widthPx: 64, sourceWidthChars: 9.140625, sourceAttrs: `outlineLevel="1"` },
+      { min: 4, max: 4, widthPx: 64, sourceWidthChars: 9.140625, sourceAttrs: `bestFit="1" collapsed="1"` },
+      { min: 5, max: 5, sourceAttrs: `outlineLevel="2"` },
+    ]);
+  });
+
   it("converts widths with the workbook's MDW", () => {
     const arial11 = maxDigitWidthPx("Arial", 11);
     const { columns } = read(`<cols><col min="1" max="1" width="12" customWidth="1"/></cols><sheetData/>`, { mdw: arial11 });
@@ -211,6 +226,21 @@ describe("rows", () => {
   it("stores a row with no cells only when it has a height, hidden or a style", () => {
     expect(rowsOf(`<row r="1" spans="1:3" x14ac:dyDescent="0.25"/><row r="2" customHeight="1"/><row r="3" ht="12"/>`)).toEqual([
       { index: 2, cells: [], heightPt: 12 },
+    ]);
+  });
+
+  it("stores a row with no cells for an unmodelled attribute other than the layout caches — an outline level the writer re-emits (SPEC-122)", () => {
+    expect(
+      rowsOf(
+        `<row r="1" spans="1:3" outlineLevel="1" x14ac:dyDescent="0.25"/><row r="2" collapsed="1"/><row r="3" spans="1:3" x14ac:dyDescent="0.25"/>` +
+          // A row whose only cell stores nothing, and one whose only cell is a follower of no master.
+          `<row r="4" outlineLevel="1"><c r="A4"/></row><row r="5" outlineLevel="1"><c r="A5"><f t="shared" si="9"/></c></row>`,
+      ),
+    ).toEqual([
+      { index: 0, cells: [], sourceAttrs: `spans="1:3" outlineLevel="1" x14ac:dyDescent="0.25"` },
+      { index: 1, cells: [], sourceAttrs: `collapsed="1"` },
+      { index: 3, cells: [], sourceAttrs: `outlineLevel="1"` },
+      { index: 4, cells: [], sourceAttrs: `outlineLevel="1"` },
     ]);
   });
 });
@@ -752,6 +782,28 @@ describe("the worksheet writer: rows, columns, merges, dimension", () => {
       columns[2],
       columns[3],
     ]);
+  });
+
+  it("keeps the outline of grouped default-width columns and grouped rows without cells through an edit, and reads it back", () => {
+    const body =
+      `<sheetFormatPr defaultRowHeight="15" outlineLevelRow="1" outlineLevelCol="1"/>` +
+      `<cols><col min="2" max="4" width="9.140625" outlineLevel="1"/><col min="5" max="5" width="9.140625" collapsed="1"/><col min="6" max="6" outlineLevel="1"/></cols>` +
+      `<sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="2" spans="1:1" outlineLevel="1" x14ac:dyDescent="0.25"/>` +
+      `<row r="3" outlineLevel="1"/><row r="4" collapsed="1"/></sheetData>`;
+    const read1 = sheetOf(read(body));
+    const edited: Sheet = { ...read1, rows: [{ index: 0, cells: [{ col: 0, value: 2 }] }, ...read1.rows.slice(1)] };
+    const out = serializeWorksheet(edited, worksheet(body), stubContext());
+    expect(out).toContain(
+      `<cols><col min="2" max="4" width="9.140625" customWidth="1" outlineLevel="1"/><col min="5" max="5" width="9.140625" customWidth="1" collapsed="1"/>` +
+        `<col min="6" max="6" outlineLevel="1"/></cols>`,
+    );
+    expect(out).toContain(
+      `<sheetData><row r="1"><c r="A1"><v>2</v></c></row><row r="2" outlineLevel="1"/><row r="3" outlineLevel="1"/><row r="4" collapsed="1"/></sheetData>`,
+    );
+    expect(out).toContain(`<sheetFormatPr defaultRowHeight="15" outlineLevelRow="1" outlineLevelCol="1"/>`);
+    const read2 = read(out.slice(out.indexOf(">") + 1, -"</worksheet>".length));
+    expect(read2.columns).toEqual(read1.columns);
+    expect(read2.rows).toEqual([edited.rows[0], { index: 1, cells: [], sourceAttrs: `outlineLevel="1"` }, ...edited.rows.slice(2)]);
   });
 
   it("xlsxWidthForPx is the smallest multiple of 1/256 SPEC-117's formula maps to the px, for every MDW", () => {

@@ -64,7 +64,7 @@
 import { findRow, getCell, usedRange, type CellRef, type GridRange } from "./address";
 import { shiftFormula } from "./formula/references";
 import { buildMergeIndex, mergeAt, rangesIntersect } from "./merges";
-import { MAX_COLS, MAX_ROWS, isCellError, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetModel } from "./model";
+import { MAX_COLS, MAX_ROWS, isCellError, rowSourceAttrsHoldProperties, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { BUILTIN_NUMBER_FORMATS } from "./numberFormat/builtin";
 import type { ParsedInput } from "./numberFormat/input";
 import { cellStyle, columnSpanAt, effectiveStyleId, internStyle, styleKey } from "./styles";
@@ -161,30 +161,11 @@ function isEmptyCell(cell: Cell): boolean {
   return Object.keys(record).every((key) => key === "col" || key === "value" || record[key] === undefined);
 }
 
-/** Row attributes that are Excel's layout caches, not properties (the xlsx
- * writer drops them; the reader stores no empty row for them). */
-const ROW_CACHE_ATTRIBUTE = /^(?:spans|(?:[\w.-]+:)?dyDescent)$/;
-const RAW_ATTRIBUTE = /([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')/g;
-
-/** Whether a row's unmodelled source attributes hold anything but layout
- * caches (an `outlineLevel`, `thickBot` …: content the writer re-emits). */
-function holdsSourceAttributes(attrs: string | undefined): boolean {
-  if (attrs === undefined) {
-    return false;
-  }
-  for (const match of attrs.matchAll(RAW_ATTRIBUTE)) {
-    if (!ROW_CACHE_ATTRIBUTE.test(match[1]!)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /** A row storing nothing (see the module header): no cells, no height,
  * `hidden` or `styleId` (nor any later field), no unmodelled source attribute
  * but layout caches; an ods row style name alone does not count. */
 export function isEmptyRow(row: Row): boolean {
-  if (row.cells.length > 0 || holdsSourceAttributes(row.sourceAttrs)) {
+  if (row.cells.length > 0 || rowSourceAttrsHoldProperties(row.sourceAttrs)) {
     return false;
   }
   const record = row as unknown as Record<string, unknown>;

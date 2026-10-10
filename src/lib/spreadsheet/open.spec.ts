@@ -459,6 +459,41 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(upgraded.sheets[1]!.protection).toBeUndefined();
   });
 
+  it("xlsx: a default-width grouped column span and grouped rows without cells — stored by version 6, not 5 — come back onto a dirty sheet, so its outline is written", async () => {
+    const parts = await unzip(await buildMiniBookXlsxBytes());
+    patchPart(parts, "xl/worksheets/sheet1.xml", [
+      [
+        `<cols><col min="1" max="1" width="14.6328125" customWidth="1"/></cols>`,
+        `<cols><col min="1" max="1" width="14.6328125" customWidth="1"/><col min="7" max="9" outlineLevel="1"/><col min="10" max="10" collapsed="1"/></cols>`,
+      ],
+      [`</sheetData>`, `<row r="13" outlineLevel="1"/><row r="14" spans="1:5" outlineLevel="1" x14ac:dyDescent="0.35"/><row r="15" collapsed="1"/></sheetData>`],
+    ]);
+    const read = await readSpreadsheetBytes(new Uint8Array(0), "xlsx", "SPEC-122 outline", parts);
+    const summary = read.sheets[0]!;
+    expect(summary.columns.slice(1)).toEqual([
+      { min: 6, max: 8, sourceAttrs: `outlineLevel="1"` },
+      { min: 9, max: 9, sourceAttrs: `collapsed="1"` },
+    ]);
+    expect(summary.rows.slice(-3)).toEqual([
+      { index: 12, cells: [], sourceAttrs: `outlineLevel="1"` },
+      { index: 13, cells: [], sourceAttrs: `spans="1:5" outlineLevel="1" x14ac:dyDescent="0.35"` },
+      { index: 14, cells: [], sourceAttrs: `collapsed="1"` },
+    ]);
+
+    // Stored by SPEC-120's reader, which kept neither; then C3 was edited on the (dirty) Summary.
+    const stored = spec120Record(read, [0], (model) => {
+      const sheet = model.sheets[0]!;
+      model.sheets[0] = { ...sheet, columns: sheet.columns.slice(0, 1), rows: sheet.rows.filter((row) => row.cells.length > 0) };
+      setStoredValue(model, 0, [2, 2], 801);
+    });
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const sheet = upgraded.sheets[0]!;
+    expect(sheet.columns).toEqual(summary.columns);
+    expect(sheet.rows.map((row) => row.index)).toEqual(summary.rows.map((row) => row.index));
+    expect(sheet.rows.slice(-3)).toEqual(summary.rows.slice(-3));
+    expect(getCell(sheet, 2, 2)).toEqual({ col: 2, value: 801 });
+  });
+
   it("ods: preserved attributes, child content and text:p come back onto unchanged cells only; protection and structure protection come back", async () => {
     const parts = await unzip(await buildMiniBookOdsBytes());
     patchPart(parts, "content.xml", [
