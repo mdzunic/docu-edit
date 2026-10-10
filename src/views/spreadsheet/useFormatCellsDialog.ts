@@ -8,7 +8,7 @@
 // never flattens it. A Custom code SPEC-118's parseFormatCode rejects shows
 // CUSTOM_CODE_ERROR and disables OK.
 import { computed, ref, shallowRef } from "vue";
-import { resolveFont, type DocumentTheme, type ModelColor } from "../../lib/core/theme";
+import type { DocumentTheme, ModelColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import { cellCss, type CssDeclarations } from "../../lib/spreadsheet/cellRender";
 import { borderEdgeEntries, fieldsOf, fieldsPatch, type DialogEdge, type FormatCellsFields } from "../../lib/spreadsheet/formatCells";
@@ -16,6 +16,7 @@ import { patchStyle, type StylePatch, type StylePatchEntry } from "../../lib/spr
 import type { CellBorderEdge, CellStyle, CellValue, SheetBorderStyle } from "../../lib/spreadsheet/model";
 import { buildNumberCode, describeNumberCode, isValidFormatCode, numberFormatChoiceOf, type NumberCodeSpec } from "../../lib/spreadsheet/numberCodes";
 import { BUILTIN_NUMBER_FORMATS } from "../../lib/spreadsheet/numberFormat/builtin";
+import { cellFontName } from "../../lib/spreadsheet/styles";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { formatValue, plainText, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
 import type { FormatCellsTab } from "./sheetToolbar";
@@ -65,7 +66,7 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     }
     target.value = t;
     const normal = t.styles[0]?.font;
-    const family = resolveFont(t.style.font?.family ?? normal?.family ?? { theme: "minor" }, t.theme);
+    const family = cellFontName(t.style.font?.family ?? normal?.family, t.theme);
     fields.value = fieldsOf(t.style, family, normal?.sizePt ?? 11);
     touched.value = new Set();
     number.value = describeNumberCode(t.style.numberFormat, t.locale);

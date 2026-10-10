@@ -12,7 +12,7 @@ describe("SpreadsheetMenuBar (SPEC-121)", () => {
     const wrapper = mount(SpreadsheetMenuBar, {
       props: { state: { canUndo: true, undoLabel: "Rename sheet", canRedo: false } },
     });
-    expect(wrapper.findAll("[data-menu-title]").map((title) => title.text())).toEqual(["File", "Edit", "View", "Data"]);
+    expect(wrapper.findAll("[data-menu-title]").map((title) => title.text())).toEqual(["File", "Edit", "View", "Format", "Data"]);
     const undo = wrapper.get('[data-testid="sheet-menu-undo"]');
     expect(undo.text()).toContain("Undo Rename sheet");
     expect(undo.get(".menu-shortcut").text()).toBe(shortcutLabel("edit.undo"));

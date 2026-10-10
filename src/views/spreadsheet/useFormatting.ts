@@ -25,7 +25,7 @@ import { computed, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } 
 import { useToasts } from "../../composables/useToasts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
 import { isMacPlatform } from "../../lib/core/platform";
-import { DEFAULT_THEME, resolveColor, resolveFont, type ModelColor } from "../../lib/core/theme";
+import { DEFAULT_THEME, type ModelColor } from "../../lib/core/theme";
 import { findShortcut } from "../../lib/shortcuts";
 import { getCell } from "../../lib/spreadsheet/address";
 import {
@@ -52,7 +52,7 @@ import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
 import { formatCodeOf } from "../../lib/spreadsheet/numberFormat/builtin";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import type { GridRange } from "../../lib/spreadsheet/address";
-import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
+import { cellColorHex, cellFontName, cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import type { CellEditing } from "./useCellEditing";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 import { cellStyleGroups, documentFonts, numberFormatItems, numberFormatLabel, type SheetToolbarCommand, type SheetToolbarState } from "./sheetToolbar";
@@ -286,10 +286,10 @@ export function useFormatting(deps: FormattingDeps) {
     const locale = deps.locale();
     const horizontal = alignment.horizontal;
     const vertical = alignment.vertical;
-    const hex = (color: ModelColor | null | undefined): string => (color === null || color === undefined ? "" : resolveColor(color, theme.value));
+    const hex = (color: ModelColor | null | undefined): string => cellColorHex(color, theme.value);
     return {
       disabled: current === null || deps.editing.cell.editing.value,
-      fontFamily: resolveFont(font.family ?? { theme: "minor" }, theme.value),
+      fontFamily: cellFontName(font.family, theme.value),
       fontSizePt: font.sizePt ?? 11,
       documentFonts: m ? documentFonts(m) : [],
       bold: style.font?.bold === true,

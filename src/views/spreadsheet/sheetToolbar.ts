@@ -5,7 +5,7 @@
 // effective style (cell → row → column → 0, SPEC-117), never a scan of the
 // selection, which can be a million cells (the stated deviation from
 // SPEC-061's mixed state; Excel and Sheets behave the same way).
-import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme, type ModelColor } from "../../lib/core/theme";
+import { DEFAULT_THEME, type DocumentTheme, type ModelColor } from "../../lib/core/theme";
 import { borderShorthand, cellCss, type CssDeclarations } from "../../lib/spreadsheet/cellRender";
 import type { BorderPreset } from "../../lib/spreadsheet/formatting";
 import type { CellStyle, CellValue, SheetBorderStyle, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -13,7 +13,7 @@ import { describeNumberCode, NUMBER_CATEGORIES, NUMBER_FORMAT_PRESETS, presetIdO
 import { formatCodeOf } from "../../lib/spreadsheet/numberFormat/builtin";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { formatValue, plainText, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
-import { BUILTIN_CELL_STYLES, CELL_STYLE_GROUPS, CUSTOM_CELL_STYLE_GROUP, resolveNamedStyle } from "../../lib/spreadsheet/styles";
+import { BUILTIN_CELL_STYLES, cellColorHex, cellFontName, CELL_STYLE_GROUPS, CUSTOM_CELL_STYLE_GROUP, resolveNamedStyle } from "../../lib/spreadsheet/styles";
 
 export type FormatCellsTab = "number" | "alignment" | "font" | "border" | "fill" | "protection";
 
@@ -100,7 +100,7 @@ export function documentFonts(model: Pick<SpreadsheetModel, "styles" | "theme">)
   const families = new Set<string>();
   for (const style of model.styles) {
     if (style.font?.family !== undefined) {
-      families.add(resolveFont(style.font.family, theme));
+      families.add(cellFontName(style.font.family, theme));
     }
   }
   return [...families];
@@ -109,11 +109,14 @@ export function documentFonts(model: Pick<SpreadsheetModel, "styles" | "theme">)
 /** The dropdown's label for a style's format: the preset it matches
  * exactly, else its category. */
 export function numberFormatLabel(style: CellStyle, locale: SpreadsheetLocale): string {
-  const preset = presetIdOf(style, locale);
+  // An ods data style reads a currency symbol back bare ("$#,##0.00"): the
+  // same code as the quoted spelling the presets write.
+  const quoted = style.numberFormat?.replace(/(^|;)([$€£¥])(?=[#0])/g, '$1"$2"');
+  const preset = presetIdOf(style, locale) ?? (quoted === style.numberFormat ? null : presetIdOf({ ...style, numberFormat: quoted }, locale));
   if (preset !== null) {
     return NUMBER_FORMAT_PRESETS.find((entry) => entry.id === preset)!.label;
   }
-  const category = describeNumberCode(style.numberFormat, locale).category;
+  const category = describeNumberCode(quoted, locale).category;
   return NUMBER_CATEGORIES.find((entry) => entry.id === category)?.label ?? "Custom";
 }
 
@@ -133,7 +136,7 @@ function previewCss(style: CellStyle, theme: DocumentTheme): { box: CssDeclarati
   for (const side of ["top", "right", "bottom", "left"] as const) {
     const edge = style.borders?.[side];
     if (edge) {
-      box[`border-${side}`] = borderShorthand(edge.style, edge.color === undefined ? "#000000" : resolveColor(edge.color, theme));
+      box[`border-${side}`] = borderShorthand(edge.style, cellColorHex(edge.color, theme) || "#000000");
     }
   }
   return { box, text };

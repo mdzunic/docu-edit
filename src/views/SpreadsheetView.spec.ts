@@ -718,7 +718,7 @@ describe("SpreadsheetView recalculation (SPEC-120)", () => {
 
     // The Data menu, after View: a separator, then Recalculate with its F9 hint.
     const titles = wrapper.get('[role="menubar"]').findAll("[data-menu-title]").map((title) => title.text());
-    expect(titles).toEqual(["File", "Edit", "View", "Data"]); // SPEC-121 adds Edit
+    expect(titles).toEqual(["File", "Edit", "View", "Format", "Data"]); // SPEC-121 adds Edit
     await wrapper.get('[data-testid="menu-title-data"]').trigger("click");
     const recalculate = wrapper.get('[data-testid="sheet-menu-recalculate"]');
     expect(recalculate.text()).toContain("Recalculate");

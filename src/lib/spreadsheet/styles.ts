@@ -4,7 +4,7 @@
 // `styleId`, else its row's (present only when the source row carried a
 // format), else the column span covering it, else the default style 0 —
 // each step a binary search over sparse, sorted data, never a scan.
-import { resolveFont, type DocumentTheme } from "../core/theme";
+import { resolveColor, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../core/theme";
 import { findRow, getCell } from "./address";
 import { maxDigitWidthPx } from "./geometry";
 import type { CellBorderEdge, CellBorders, CellFont, CellStyle, ColumnSpan, Sheet, SpreadsheetModel } from "./model";
@@ -158,6 +158,18 @@ export function internStyle(model: Pick<SpreadsheetModel, "styles">, style: Cell
   internTables.set(next, nextTable);
   model.styles = next;
   return next.length - 1;
+}
+
+/** A cell colour as the hex a picker shows ("" for automatic) — SPEC-123's
+ * formatting surfaces display document colours through here. */
+export function cellColorHex(color: ModelColor | null | undefined, theme: DocumentTheme): string {
+  return color === null || color === undefined ? "" : resolveColor(color, theme);
+}
+
+/** A cell font family's name (a theme font resolved), the minor font when
+ * the style names none. */
+export function cellFontName(family: ModelFont | undefined, theme: DocumentTheme): string {
+  return resolveFont(family ?? { theme: "minor" }, theme);
 }
 
 /** The maximum digit width of a cell font (the pinned MDW table — never a
