@@ -112,6 +112,26 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+/** Cuts the `crop` rectangle (source pixels) out of an image and returns it
+ * as a lossless PNG data: URI at the source's own resolution — SPEC-108's
+ * cover/actual crop, applied BEFORE encodeImage so a cropped-away region
+ * never reaches the output file. Throws when the image cannot be decoded. */
+export async function cropImage(
+  src: string,
+  crop: { xPx: number; yPx: number; widthPx: number; heightPx: number },
+): Promise<string> {
+  const image = await loadImage(src);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(crop.widthPx));
+  canvas.height = Math.max(1, Math.round(crop.heightPx));
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("This browser cannot crop images");
+  }
+  context.drawImage(image, crop.xPx, crop.yPx, crop.widthPx, crop.heightPx, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/png");
+}
+
 /** SPEC-034's sampling ceiling: enough for print. */
 export const DEFAULT_MAX_DPI = 300;
 

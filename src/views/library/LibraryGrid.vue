@@ -37,7 +37,7 @@ const emit = defineEmits(["open", "preview", "select-modifiers", "keydown", "men
       :focused="props.lib.rowTabindex(entry.id, index) === 0"
       :menu-open="props.menuFor === entry.id"
       :highlight="entry.id === props.highlightId"
-      :menu-items="libraryRowMenuItems(entry.starred)"
+      :menu-items="libraryRowMenuItems(entry.starred, entry.format)"
       @open="emit('open', $event)"
       @preview="emit('preview', $event)"
       @select="(payload) => emit('select-modifiers', payload)"

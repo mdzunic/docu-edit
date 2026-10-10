@@ -187,7 +187,7 @@ function onRowClick(id = "", event = new MouseEvent("click")) {
           <RowMenu
             :open="props.menuFor === entry.id"
             :label="`Actions for ${entry.title}`"
-            :items="libraryRowMenuItems(entry.starred)"
+            :items="libraryRowMenuItems(entry.starred, entry.format)"
             @toggle="emit('menu-toggle', entry.id)"
             @close="emit('menu-close')"
             @select="(action) => emit('menu-select', { id: entry.id, action })"

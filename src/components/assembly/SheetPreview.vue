@@ -12,9 +12,9 @@ import { asMeasurementUnit, formatLength } from "../../lib/core/units";
 
 const props = defineProps({
   /** core/sheetLayout's SheetGeometry, or null while there is none. */
-  geometry: { type: Object, default: null },
+  geometry: { type: [Object, null], default: null },
   /** core/sheetLayout's SheetPlacement, or null while there is none. */
-  placement: { type: Object, default: null },
+  placement: { type: [Object, null], default: null },
   /** The SPEC-064 measurement unit the sizes are stated in. */
   unit: { type: String, default: "cm" },
   /** The paper colour: "#rrggbb" or "transparent" (drawn as a checkerboard). */
@@ -52,6 +52,10 @@ const viewBox = computed(() => {
   return `${left - pad} ${top - pad} ${right - left + 2 * pad} ${bottom - top + 2 * pad}`;
 });
 
+function rect(x = 0, y = 0, w = 0, h = 0) {
+  return `M${x} ${y}h${w}v${h}h${-w}Z`;
+}
+
 /** The cropped-away region: the item's whole extent minus its visible box,
  * one even-odd path. */
 const croppedPath = computed(() => {
@@ -59,7 +63,6 @@ const croppedPath = computed(() => {
   if (!p || !p.cropped) {
     return "";
   }
-  const rect = (x = 0, y = 0, w = 0, h = 0) => `M${x} ${y}h${w}v${h}h${-w}Z`;
   return (
     rect(p.item.xCm, p.item.yCm, p.item.widthCm, p.item.heightCm) +
     rect(p.xCm, p.yCm, p.widthCm, p.heightCm)

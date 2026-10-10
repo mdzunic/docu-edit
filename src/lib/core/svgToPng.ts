@@ -30,15 +30,20 @@ export interface ConvertedPng {
   heightPx: number;
 }
 
-/** Converts SVG bytes to PNG bytes, rendered at the SVG's own declared
- * pixel size (its `width`/`height`, falling back to its `viewBox`, falling
- * back to the CSS default 300x150 — the same order decodeImageDimensions
- * resolves for the *unconverted* SVG's own natural size). Throws
+/** Converts SVG bytes to PNG bytes, rendered at `size` when given (SPEC-108
+ * rasterises at the size a sheet places the SVG at), else at the SVG's own
+ * declared pixel size (its `width`/`height`, falling back to its `viewBox`,
+ * falling back to the CSS default 300x150 — the same order
+ * decodeImageDimensions resolves for the *unconverted* SVG's own natural
+ * size). Throws
  * SvgConversionError for malformed SVG or when canvas is unavailable — the
  * caller (the insert flow) shows this as an error and inserts nothing,
  * matching AC-33/34's reject-cleanly pattern for an oversized image. */
-export async function convertSvgToPng(svgBytes: Uint8Array): Promise<ConvertedPng> {
-  const dims = decodeImageDimensions(svgBytes, "image/svg+xml");
+export async function convertSvgToPng(
+  svgBytes: Uint8Array,
+  size?: { widthPx: number; heightPx: number },
+): Promise<ConvertedPng> {
+  const dims = size ?? decodeImageDimensions(svgBytes, "image/svg+xml");
   const widthPx = Math.max(1, Math.round(dims?.widthPx ?? DEFAULT_SVG_WIDTH_PX));
   const heightPx = Math.max(1, Math.round(dims?.heightPx ?? DEFAULT_SVG_HEIGHT_PX));
 

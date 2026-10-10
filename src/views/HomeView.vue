@@ -37,7 +37,8 @@ import { instantiateTemplate } from "../lib/templateStore";
 import { createDocument } from "../lib/documentModel";
 import { BLANK_DOCUMENT_KINDS, createBlankDocument } from "../lib/newDocument";
 import { useTier } from "../composables/useResponsiveTier";
-import { motionBaseMs, prefersReducedMotion } from "../lib/core/motion";
+import { useReturningHighlight } from "./library/useReturningHighlight";
+import ConvertToPdfDialog from "./library/ConvertToPdfDialog.vue";
 
 const router = useRouter();
 const { addToast } = useToasts();
@@ -106,6 +107,8 @@ function onMenuSelect(payload = { id: "", action: "" }) {
     lib.restoreDocuments([id]);
   } else if (action === "delete-permanently") {
     permanentDeleteFor.value = id;
+  } else if (action === "convert-pdf") {
+    convertFor.value = id;
   }
 }
 
@@ -312,30 +315,11 @@ function runLibraryCommand(id = "") {
   }
 }
 
-// --- SPEC-060 returning highlight ----------------------------------------
+// SPEC-060: the row of a just-closed document scrolls into view, highlighted.
+const highlightId = useReturningHighlight();
 
-const highlightId = ref("");
-
-onMounted(async () => {
-  const closedId = window.history.state?.closedDocId;
-  if (typeof closedId !== "string" || closedId.length === 0) {
-    return;
-  }
-  await nextTick();
-  const row = document.querySelector(`[data-doc-id="${closedId}"]`);
-  if (row && typeof row.scrollIntoView === "function") {
-    row.scrollIntoView({ block: "center" });
-  }
-  if (prefersReducedMotion()) {
-    return;
-  }
-  highlightId.value = closedId;
-  setTimeout(() => {
-    if (highlightId.value === closedId) {
-      highlightId.value = "";
-    }
-  }, motionBaseMs());
-});
+// SPEC-108: "Convert to PDF…" on an image (row menu or selection bar).
+const convertFor = ref("");
 </script>
 
 <template>
@@ -442,6 +426,7 @@ onMounted(async () => {
           v-if="lib.hasSelection.value"
           :lib="lib"
           @trash="bulkTrash"
+          @convert-pdf="convertFor = $event"
         />
 
         <!-- Storage usage (AC-47..50); the rail hosts it at the full tier. -->
@@ -531,6 +516,12 @@ onMounted(async () => {
       @command-run="runLibraryCommand"
       @command-dismiss="commandPaletteOpen = false"
       @file-chosen="handleFileChosen"
+    />
+    <ConvertToPdfDialog
+      v-if="convertFor"
+      :source-id="convertFor"
+      @close="convertFor = ''"
+      @saved="convertFor = ''; lib.refresh()"
     />
   </AppShell>
 </template>
