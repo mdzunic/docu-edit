@@ -48,7 +48,7 @@ import type { FormatResult } from "../../lib/spreadsheet/formatting";
 import { xlsxWidthToPx } from "../../lib/spreadsheet/geometry";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { headerSelection } from "../../lib/spreadsheet/selection";
-import { applyStructuralEdit, type StructuralEdit } from "../../lib/spreadsheet/structure";
+import { adjustSelection, applyStructuralEdit, type StructuralEdit } from "../../lib/spreadsheet/structure";
 import { fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
 import type { CellEditing } from "./useCellEditing";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
@@ -120,11 +120,12 @@ export function useStructure(deps: StructureDeps) {
   /** Structural edits as one step: all made, or none (a refusal restores
    * what the model held). The live selection follows the model's. */
   function structural(label: string, edits: (sheet: Sheet) => StructuralEdit[]): void {
-    let sheetId = "";
+    let made: StructuralEdit[] = [];
+    const live = deps.selection.selection.value;
     const done = command(label, (m, sheet) => {
-      sheetId = sheet.id;
       const before = { sheets: m.sheets, opaque: m.opaque, envelope: m.odsContentEnvelope };
-      for (const edit of edits(sheet)) {
+      made = edits(sheet);
+      for (const edit of made) {
         const result = applyStructuralEdit(m, edit);
         if (!result.ok) {
           m.sheets = before.sheets;
@@ -135,9 +136,8 @@ export function useStructure(deps: StructureDeps) {
       }
       return { ok: true };
     });
-    const adjusted = done ? model()?.sheets.find((sheet) => sheet.id === sheetId)?.selection : undefined;
-    if (adjusted) {
-      deps.viewState.update(sheetId, { selection: adjusted });
+    if (done && made.length > 0) {
+      deps.viewState.update(made[0]!.sheetId, { selection: made.reduce(adjustSelection, live) });
     }
   }
 
