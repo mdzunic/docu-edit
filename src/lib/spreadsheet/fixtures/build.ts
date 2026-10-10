@@ -5776,3 +5776,289 @@ export async function buildSpec124StructureOdsBytes(): Promise<Uint8Array> {
     part("META-INF/manifest.xml", SPEC124_ODS_MANIFEST),
   ]);
 }
+
+// ============================================================================
+// SPEC-125 — spec125-fill.xlsx / spec125-fill.ods: copy, paste, fill and move
+// ============================================================================
+// The workbook SPEC-125's e2e flow runs on, in both producers' shapes
+// (Excel 365 and LibreOffice 24.8):
+// - "Sheet1" (active): B2:C3 = 10, 20 / =B2*2, =B2+C2 — the block the flow
+//   copies; E1:F1 merged, holding "Merged"; A10:A12 = 5, 6, 7 — the cells it
+//   cuts; J2 "Mon" — the fill handle's seed; L2:L21 = 1…20 beside M2 =L2*2 —
+//   the double-click fill; N2 "Total" above an empty N3:N6 — Ctrl/Cmd+D.
+// - "Sheet2": A1 =SUM(Sheet1!A10:A12) and A2 =Sheet1!B2*3, the cross-sheet
+//   formulas a cut re-points.
+// - "Series": one seed column per series kind — its label in row 1, its
+//   seeds below: numbers (one, a step, a trend, decimals), dates (by day,
+//   month-ends, a month step, a year step, a week step), a time, weekday and
+//   month names, quarters with and without a year, counters (plain, zero
+//   padded, stepped), an ordinal, a formula, a boolean and plain text.
+// Every cached value is what its formula computes. SPEC125_FILL records the
+// facts the specs use.
+
+/** A seed of spec125-fill's "Series" sheet. */
+type Spec125Seed = number | string | boolean | { date: [number, number, number] } | { time: number } | { formula: string; value: number; odsWire?: string };
+
+export const SPEC125_FILL = {
+  title: "Fill",
+  sheetNames: ["Sheet1", "Sheet2", "Series"],
+  activeSheetIndex: 0,
+  block: { B2: 10, C2: 20, B3: { formula: "B2*2", value: 20 }, C3: { formula: "B2+C2", value: 30 } },
+  merge: { ref: "E1:F1", value: "Merged" },
+  cut: { A10: 5, A11: 6, A12: 7 },
+  monday: { ref: "J2", value: "Mon" },
+  guide: { column: "L", first: 2, last: 21 },
+  doubleClick: { ref: "M2", formula: "L2*2", value: 2 },
+  fillDown: { ref: "N2", value: "Total" },
+  sheet2: { A1: { formula: "SUM(Sheet1!A10:A12)", value: 18 }, A2: { formula: "Sheet1!B2*3", value: 30 } },
+  series: [
+    { label: "Number", seeds: [5] },
+    { label: "Step", seeds: [1, 3] },
+    { label: "Trend", seeds: [1, 2, 4] },
+    { label: "Decimal", seeds: [0.1, 0.2] },
+    { label: "Day", seeds: [{ date: [2026, 1, 31] }] },
+    { label: "Month end", seeds: [{ date: [2026, 1, 31] }, { date: [2026, 2, 28] }] },
+    { label: "Month", seeds: [{ date: [2026, 1, 15] }, { date: [2026, 2, 15] }] },
+    { label: "Year", seeds: [{ date: [2024, 3, 1] }, { date: [2025, 3, 1] }] },
+    { label: "Week", seeds: [{ date: [2026, 1, 1] }, { date: [2026, 1, 8] }] },
+    { label: "Hour", seeds: [{ time: 9 }] },
+    { label: "Weekday", seeds: ["Mon"] },
+    { label: "Months", seeds: ["Jan", "Apr"] },
+    { label: "Quarter", seeds: ["Q3 2026"] },
+    { label: "Qtr", seeds: ["Qtr 4"] },
+    { label: "Item", seeds: ["Item 9"] },
+    { label: "Padded", seeds: ["Item 009"] },
+    { label: "Odd items", seeds: ["Item 1", "Item 3"] },
+    { label: "Ordinal", seeds: ["1st"] },
+    { label: "Formula", seeds: [{ formula: "A2*2", value: 10 }] },
+    { label: "Logical", seeds: [true] },
+    { label: "Text", seeds: ["abc"] },
+  ] as { label: string; seeds: Spec125Seed[] }[],
+} as const;
+
+const SPEC125_SHEET1_UID = "5A1C3E5F-7B9D-4F1A-8C2E-4A6C8E0A2C51";
+const SPEC125_SHEET2_UID = "6B2D4F60-8CAE-4A2B-9D3F-5B7D9F1B3D52";
+const SPEC125_SERIES_UID = "7C3E5071-9DBF-4B3C-AE40-6C8EA02C4E53";
+const SPEC125_DATE_XF = 1;
+const SPEC125_TIME_XF = 2;
+const SPEC125_HEADER_XF = 3;
+
+/** Excel's styles part with a date (14), a time (20, h:mm) and a bold xf. */
+const SPEC125_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="2" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="20" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>` +
+  `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+/** The "Series" sheet's seeds as A1 → seed, its labels in row 1. */
+function spec125SeriesGrid(): Map<string, Spec125Seed> {
+  const grid = new Map<string, Spec125Seed>();
+  SPEC125_FILL.series.forEach((column, c) => {
+    const letters = String.fromCharCode(65 + c);
+    grid.set(`${letters}1`, column.label);
+    column.seeds.forEach((seed, r) => grid.set(`${letters}${r + 2}`, seed));
+  });
+  return grid;
+}
+
+/** Sheet1's cells as A1 → value or formula, row by row. */
+function spec125Sheet1Cells(): Map<string, Spec125Seed> {
+  const F = SPEC125_FILL;
+  const cells = new Map<string, Spec125Seed>([
+    ["A1", "Amounts"],
+    ["B1", "Price"],
+    ["C1", "Qty"],
+    ["E1", F.merge.value],
+    ["J1", "Days"],
+    ["L1", "Count"],
+    ["M1", "Double"],
+    ["N1", "Label"],
+    ["B2", F.block.B2],
+    ["C2", F.block.C2],
+    ["B3", F.block.B3],
+    ["C3", F.block.C3],
+    [F.monday.ref, F.monday.value],
+    [F.doubleClick.ref, { formula: F.doubleClick.formula, value: F.doubleClick.value }],
+    [F.fillDown.ref, F.fillDown.value],
+    ["A10", F.cut.A10],
+    ["A11", F.cut.A11],
+    ["A12", F.cut.A12],
+  ]);
+  for (let r = F.guide.first; r <= F.guide.last; r += 1) {
+    cells.set(`${F.guide.column}${r}`, r - F.guide.first + 1);
+  }
+  return cells;
+}
+
+/** Cells grouped by row, each row's in column order. */
+function spec125Rows(cells: Map<string, Spec125Seed>): Map<number, [string, Spec125Seed][]> {
+  const rows = new Map<number, [string, Spec125Seed][]>();
+  for (const [ref, seed] of cells) {
+    const r = Number(/\d+/.exec(ref)![0]);
+    rows.set(r, [...(rows.get(r) ?? []), [ref, seed]]);
+  }
+  for (const entries of rows.values()) {
+    entries.sort((a, b) => a[0].length - b[0].length || a[0].localeCompare(b[0]));
+  }
+  return new Map([...rows.entries()].sort((a, b) => a[0] - b[0]));
+}
+
+function spec125XlsxCell(ref: string, seed: Spec125Seed, str: (value: string) => number, header: boolean): string {
+  if (typeof seed === "string") {
+    return sharedCell(ref, str(seed), header ? SPEC125_HEADER_XF : undefined);
+  }
+  if (typeof seed === "number") {
+    return numberCell(ref, seed);
+  }
+  if (typeof seed === "boolean") {
+    return `<c r="${ref}" t="b"><v>${seed ? 1 : 0}</v></c>`;
+  }
+  if ("date" in seed) {
+    return numberCell(ref, dateToSerial(seed.date[0], seed.date[1], seed.date[2], "1900"), SPEC125_DATE_XF);
+  }
+  if ("time" in seed) {
+    return numberCell(ref, seed.time / 24, SPEC125_TIME_XF);
+  }
+  return formulaCell(ref, normalF(seed.formula), seed.value);
+}
+
+function spec125XlsxRows(cells: Map<string, Spec125Seed>, str: (value: string) => number, spans: string): string {
+  return [...spec125Rows(cells)]
+    .map(([r, entries]) => excelRow(r, spans, entries.map(([ref, seed]) => spec125XlsxCell(ref, seed, str, r === 1)).join("")))
+    .join("");
+}
+
+export async function buildSpec125FillXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC125_FILL;
+  const sst: string[] = [];
+  const sstIndex = new Map<string, number>();
+  const str = (value: string): number => {
+    let index = sstIndex.get(value);
+    if (index === undefined) {
+      index = sst.length;
+      sst.push(value);
+      sstIndex.set(value, index);
+    }
+    return index;
+  };
+  const sheet1 =
+    XML_DECLARATION +
+    worksheetOpen(SPEC125_SHEET1_UID) +
+    `<dimension ref="A1:N21"/><sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/>` +
+    `<sheetData>${spec125XlsxRows(spec125Sheet1Cells(), str, "1:14")}</sheetData>` +
+    `<mergeCells count="1"><mergeCell ref="${F.merge.ref}"/></mergeCells>` +
+    `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`;
+  const sheet2 = worksheetXml({
+    uid: SPEC125_SHEET2_UID,
+    dimension: "A1:A2",
+    sheetData:
+      excelRow(1, "1:1", formulaCell("A1", normalF(F.sheet2.A1.formula), F.sheet2.A1.value)) +
+      excelRow(2, "1:1", formulaCell("A2", normalF(F.sheet2.A2.formula), F.sheet2.A2.value)),
+  });
+  const series = worksheetXml({ uid: SPEC125_SERIES_UID, dimension: "A1:U4", sheetData: spec125XlsxRows(spec125SeriesGrid(), str, "1:21") });
+  const worksheets = [sheet1, sheet2, series];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${sst.length}">` +
+    sst.map((text) => `<si><t>${xmlText(text)}</t></si>`).join("") +
+    `</sst>`;
+  const calcChain = XML_DECLARATION + `<calcChain xmlns="${MAIN_NS}"><c r="B3" i="1" l="1"/><c r="C3"/><c r="M2"/><c r="A1" i="2"/><c r="A2"/><c r="S2" i="3"/></calcChain>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheetNames.map((name, index) => ({ name, xml: worksheets[index]! })),
+    sharedStrings,
+    calcChain,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC125_STYLES,
+  });
+}
+
+// --- spec125-fill.ods ---------------------------------------------------------------
+
+/** One seed as Calc writes its cell (dates with ce1's MM/DD/YYYY, times with
+ * ce4's HH:MM:SS, headers bold with ce5). */
+function spec125OdsCell(seed: Spec125Seed, header: boolean): string {
+  if (typeof seed === "string") {
+    return loString(xmlEscape(seed), header ? "ce5" : undefined);
+  }
+  if (typeof seed === "number") {
+    return loFloat(seed);
+  }
+  if (typeof seed === "boolean") {
+    return `<table:table-cell office:value-type="boolean" office:boolean-value="${seed}" calcext:value-type="boolean"><text:p>${seed ? "TRUE" : "FALSE"}</text:p></table:table-cell>`;
+  }
+  if ("date" in seed) {
+    const [y, m, d] = seed.date;
+    const iso = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    return `<table:table-cell table:style-name="ce1" office:value-type="date" office:date-value="${iso}" calcext:value-type="date"><text:p>${String(m).padStart(2, "0")}/${String(d).padStart(2, "0")}/${y}</text:p></table:table-cell>`;
+  }
+  if ("time" in seed) {
+    const hours = String(seed.time).padStart(2, "0");
+    return `<table:table-cell table:style-name="ce4" office:value-type="time" office:time-value="PT${hours}H00M00S" calcext:value-type="time"><text:p>${hours}:00:00</text:p></table:table-cell>`;
+  }
+  // A same-sheet formula's references in OpenFormula's brackets.
+  return loFormula(seed.odsWire ?? `of:=${seed.formula.replace(/\$?[A-Z]{1,3}\$?\d+/g, (ref) => `[.${ref}]`)}`, seed.value);
+}
+
+/** A table's rows: every row up to its last cell, empty runs between,
+ * Calc's trailing run of empty rows. */
+function spec125OdsTable(name: string, cells: Map<string, Spec125Seed>, extra = ""): string {
+  const rows = spec125Rows(cells);
+  const out: string[] = [];
+  let next = 1;
+  for (const [r, entries] of rows) {
+    if (r > next) {
+      out.push(loRow(loEmpty(16384), "ro1", r - next));
+    }
+    let col = 0;
+    let row = "";
+    for (const [ref, seed] of entries) {
+      const at = ref.replace(/\d+/, "").split("").reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+      if (at > col) {
+        row += loEmpty(at - col);
+      }
+      const merged = name === "Sheet1" && ref === "E1";
+      row += merged
+        ? `<table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="1" office:value-type="string" calcext:value-type="string"><text:p>${seed as string}</text:p></table:table-cell><table:covered-table-cell/>`
+        : spec125OdsCell(seed, r === 1);
+      col = at + (merged ? 2 : 1);
+    }
+    out.push(loRow(row + loEmpty(16384 - col)));
+    next = r + 1;
+  }
+  out.push(loRow(loEmpty(16384), "ro1", 1_048_576 - (next - 1)));
+  return (
+    `<table:table table:name="${name}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    out.join("") +
+    extra +
+    `</table:table>`
+  );
+}
+
+export async function buildSpec125FillOdsBytes(): Promise<Uint8Array> {
+  const F = SPEC125_FILL;
+  const sheet2 = new Map<string, Spec125Seed>([
+    ["A1", { ...F.sheet2.A1, odsWire: "of:=SUM([$Sheet1.A10:.A12])" }],
+    ["A2", { ...F.sheet2.A2, odsWire: "of:=[$Sheet1.B2]*3" }],
+  ]);
+  const tables =
+    spec125OdsTable("Sheet1", spec125Sheet1Cells()) +
+    spec125OdsTable("Sheet2", sheet2) +
+    spec125OdsTable("Series", spec125SeriesGrid());
+  const cellCount = spec125Sheet1Cells().size + sheet2.size + spec125SeriesGrid().size;
+  return loPackage(loContent(tables), loMeta(F.title, F.sheetNames.length, cellCount), loSettings(F.sheetNames, "Sheet1"));
+}
