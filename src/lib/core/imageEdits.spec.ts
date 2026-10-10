@@ -18,6 +18,7 @@ import {
   MAX_EDIT_STACK,
   moveCropHandle,
   normaliseStack,
+  resizeObjectEdit,
   resolveEditGeometry,
   translateEdit,
   type EditKind,
@@ -360,5 +361,14 @@ describe("descriptions", () => {
     expect(translateEdit(SAMPLES.redact[0], 2, 3)).toMatchObject({ x: 3, y: 5 });
     expect(translateEdit(SAMPLES.annotate[0], 1, -1)).toMatchObject({ shape: { x1: 1, y1: -1, x2: 11, y2: 9 } });
     expect(translateEdit(SAMPLES.crop[0], 5, 5)).toBe(SAMPLES.crop[0]);
+  });
+
+  it("resizes objects from the keyboard, never below one pixel", () => {
+    expect(resizeObjectEdit(SAMPLES.redact[0], 10, -1)).toMatchObject({ x: 1, y: 2, width: 13, height: 3 });
+    expect(resizeObjectEdit(SAMPLES.redact[0], -50, -50)).toMatchObject({ width: 1, height: 1 });
+    expect(resizeObjectEdit(SAMPLES.annotate[0], 5, 0)).toMatchObject({ shape: { x1: 0, y1: 0, x2: 15, y2: 10 } });
+    // Text grows with Up/Right and shrinks with Down/Left.
+    expect(resizeObjectEdit(SAMPLES.annotate[1], 0, -1)).toMatchObject({ shape: { fontSize: 25 } });
+    expect(resizeObjectEdit(SAMPLES.crop[0], 5, 5)).toBe(SAMPLES.crop[0]);
   });
 });

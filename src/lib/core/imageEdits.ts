@@ -662,6 +662,33 @@ export function translateEdit(edit: ImageEdit, dx: number, dy: number): ImageEdi
   return edit;
 }
 
+/** A redaction or annotation grown by (dw, dh) output pixels from its
+ * top-left (a line or arrow moves its end point; text grows its size; a
+ * freehand stroke is left as drawn) — the keyboard's Alt+arrow. Never
+ * smaller than one pixel. */
+export function resizeObjectEdit(edit: ImageEdit, dw: number, dh: number): ImageEdit {
+  if (edit.kind === "redact") {
+    return { ...edit, width: Math.max(1, edit.width + dw), height: Math.max(1, edit.height + dh) };
+  }
+  if (edit.kind !== "annotate") {
+    return edit;
+  }
+  const shape = edit.shape;
+  switch (shape.shape) {
+    case "arrow":
+    case "line":
+      return { ...edit, shape: { ...shape, x2: shape.x2 + dw, y2: shape.y2 + dh } };
+    case "rectangle":
+    case "ellipse":
+    case "highlight":
+      return { ...edit, shape: { ...shape, width: Math.max(1, shape.width + dw), height: Math.max(1, shape.height + dh) } };
+    case "text":
+      return { ...edit, shape: { ...shape, fontSize: Math.max(4, shape.fontSize + (dh !== 0 ? -dh : dw)) } };
+    default:
+      return edit;
+  }
+}
+
 // --- descriptions ----------------------------------------------------------
 
 const SHAPE_NOUNS: Record<AnnotationKind, string> = {

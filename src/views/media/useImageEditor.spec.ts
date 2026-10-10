@@ -259,6 +259,28 @@ describe("useImageEditor — undo granularity", () => {
   });
 });
 
+describe("useImageEditor — objects from the keyboard", () => {
+  it("adds, nudges (1 px, Shift 10 px), resizes (Alt) and deletes, one step per key", async () => {
+    const { editor } = await setup();
+    await editor.enter();
+    editor.objects.add("redact");
+    const index = editor.history.value.length - 1;
+    // Placed at the middle quarter of the 160 × 120 output.
+    expect(editor.history.value[index]).toMatchObject({ x: 60, y: 45, width: 40, height: 30, color: "#000000" });
+    const key = (init: KeyboardEventInit) => editor.objects.handleKey(index, new KeyboardEvent("keydown", init));
+    key({ key: "ArrowRight" });
+    key({ key: "ArrowDown", shiftKey: true });
+    key({ key: "ArrowLeft", altKey: true });
+    expect(editor.history.value[index]).toMatchObject({ x: 61, y: 55, width: 39, height: 30 });
+    expect(editor.undo.undoLabel.value).toBe("Resize redaction");
+    editor.undoStep();
+    expect(editor.undo.undoLabel.value).toBe("Move redaction");
+    expect(key({ key: "Delete" })).toBe(true);
+    expect(editor.history.value).toEqual([]);
+    expect(editor.undo.undoLabel.value).toBe("Delete redaction");
+  });
+});
+
 describe("useImageEditor — the redaction notice", () => {
   it("is present exactly while the stack holds a redaction", async () => {
     const { editor, REDACTION_NOTICE } = await setup();

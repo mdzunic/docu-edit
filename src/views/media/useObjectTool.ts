@@ -3,7 +3,8 @@
 // stroke, labelled as the history list reads it ("Redact", "Add arrow") —
 // and every object is also reachable without a pointer: "Add" places one at
 // a default spot, and the object list is focusable, an arrow key nudging the
-// focused object 1 px (10 with Shift) and Delete removing it.
+// focused object 1 px (10 with Shift), Alt+arrow resizing it and Delete
+// removing it.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import { canAddObject, removeAt, replaceAt } from "../../lib/core/imageEditHistory";
 import {
@@ -13,6 +14,7 @@ import {
   describeEditDetail,
   isObjectEdit,
   MAX_FREEHAND_POINTS,
+  resizeObjectEdit,
   translateEdit,
   type AnnotationKind,
   type AnnotationShape,
@@ -52,8 +54,10 @@ export interface ObjectTool {
   drawTo: (x: number, y: number) => void;
   endDraw: () => void;
   nudge: (index: number, dx: number, dy: number) => void;
+  resize: (index: number, dw: number, dh: number) => void;
   remove: (index: number) => void;
-  /** Arrow keys and Delete on a focused object; true when handled. */
+  /** Arrow keys (Alt: resize) and Delete on a focused object; true when
+   * handled. */
   handleKey: (index: number, event: KeyboardEvent) => boolean;
 }
 
@@ -155,6 +159,12 @@ export function useObjectTool(session: EditSession): ObjectTool {
     session.apply(`Move ${noun(edit)}`, replaceAt(session.history.value, index, translateEdit(edit, dx, dy)));
   }
 
+  function resize(index: number, dw: number, dh: number): void {
+    const edit = session.history.value[index];
+    if (!edit || !isObjectEdit(edit)) return;
+    session.apply(`Resize ${noun(edit)}`, replaceAt(session.history.value, index, resizeObjectEdit(edit, dw, dh)));
+  }
+
   function remove(index: number): void {
     const edit = session.history.value[index];
     if (!edit || !isObjectEdit(edit)) return;
@@ -175,10 +185,14 @@ export function useObjectTool(session: EditSession): ObjectTool {
       ArrowDown: [0, step],
     };
     const move = delta[event.key];
-    if (!move || event.altKey || event.metaKey || event.ctrlKey) {
+    if (!move || event.metaKey || event.ctrlKey) {
       return false;
     }
-    nudge(index, move[0], move[1]);
+    if (event.altKey) {
+      resize(index, move[0], move[1]);
+    } else {
+      nudge(index, move[0], move[1]);
+    }
     return true;
   }
 
@@ -198,6 +212,7 @@ export function useObjectTool(session: EditSession): ObjectTool {
     drawTo,
     endDraw,
     nudge,
+    resize,
     remove,
     handleKey,
   };

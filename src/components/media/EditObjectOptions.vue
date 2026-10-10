@@ -3,7 +3,7 @@
 // colour, or the annotation's shape, colour, stroke width, opacity and
 // (for text) its words and size — then "Add" for a keyboard user, and the
 // focusable list of what is on the image: arrow keys nudge the focused
-// object 1 px (10 with Shift), Delete removes it.
+// object 1 px (10 with Shift), Alt+arrow keys resize it, Delete removes it.
 // Runtime prop declarations — see AppShell.vue.
 import { computed } from "vue";
 import { ANNOTATION_KINDS, annotationNoun } from "../../lib/core/imageEdits";
@@ -175,7 +175,7 @@ function onObjectKey(index = 0, event = new KeyboardEvent("keydown")) {
     <ul
       class="object-list"
       data-testid="edit-objects"
-      :aria-label="tool === 'redact' ? 'Redactions — arrow keys move, Delete removes' : 'Annotations — arrow keys move, Delete removes'"
+      :aria-label="`${tool === 'redact' ? 'Redactions' : 'Annotations'} — arrow keys move, Alt+arrow keys resize, Delete removes`"
     >
       <li
         v-for="entry in shown"
@@ -184,7 +184,7 @@ function onObjectKey(index = 0, event = new KeyboardEvent("keydown")) {
         :class="{ 'is-selected': o.selected.value === entry.index }"
         tabindex="0"
         data-testid="edit-object"
-        :aria-label="`${entry.label}${entry.detail ? ` ${entry.detail}` : ''}. Arrow keys move it; Delete removes it.`"
+        :aria-label="`${entry.label}${entry.detail ? ` ${entry.detail}` : ''}. Arrow keys move it; Alt+arrow keys resize it; Delete removes it.`"
         @focus="o.selected.value = entry.index"
         @keydown="onObjectKey(entry.index, $event)"
       >
