@@ -1148,6 +1148,21 @@ export function storeMedia(model: MediaModel): void {
   storeRecord(model, model.format);
 }
 
+/** Writes an edited media document through (SPEC-112's Save and Flatten):
+ * `model` — a new model object, the image editor never mutates the stored
+ * one — becomes the record's model, and touchDocument bumps recency (so the
+ * library thumbnail, keyed by id + lastModified, rebuilds) and persists the
+ * shell plus the media record, whose array reference the edit replaced. One
+ * write-through. A missing or non-media id is a no-op. */
+export function storeMediaEdit(model: MediaModel): Promise<void> {
+  const record = records.get(model.id);
+  if (!record || !isMediaModel(record.model)) {
+    return Promise.resolve();
+  }
+  record.model = model;
+  return touchDocument(model.id);
+}
+
 /** The workbook counterpart (SPEC-116) — an opened `.xlsx`/`.ods` stores
  * through the same record machinery, its sheets' rows split into their own
  * records like every other kind's payload. */

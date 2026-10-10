@@ -3,12 +3,15 @@
 // hands off to its own view, mirroring the other views' guards), and owns
 // the blob-URL lifecycle for the PDF embed — one URL.createObjectURL per
 // open, revoked in onScopeDispose so a closed viewer never leaks the bytes.
+// The URL serves "the current image" (SPEC-112): an edited image's saved
+// render, else the verbatim source; `reload` re-reads the record after the
+// image editor stored a new model under the same id.
 import { onScopeDispose, shallowRef, watch, type ComputedRef, type Ref, ref } from "vue";
 import type { Router } from "vue-router";
 import { documentKindOf, getMedia, getStoredRecord, initLibrary } from "../../lib/documentStore";
 import { editorPathFor } from "../../lib/documentKinds";
 import type { MediaModel } from "../../lib/media/model";
-import { mediaSourceBytes } from "../../lib/media/download";
+import { currentImageBytes } from "../../lib/media/download";
 
 export interface MediaDocumentDeps {
   mediaId: ComputedRef<string>;
@@ -17,12 +20,14 @@ export interface MediaDocumentDeps {
 
 export interface MediaDocumentController {
   media: Ref<MediaModel | null>;
-  /** blob: URL over the verbatim source bytes — the PDF embed's src and the
+  /** blob: URL over the current image's bytes — the PDF embed's src and the
    * image viewer's, both served from memory, never re-encoded. */
   blobUrl: Ref<string>;
   /** Epoch ms the library record was last modified ("stored date"). */
   storedAt: Ref<number>;
   close: () => void;
+  /** Re-reads the stored record (after an edit was saved under this id). */
+  reload: () => void;
 }
 
 export function useMediaDocument(deps: MediaDocumentDeps): MediaDocumentController {
@@ -57,10 +62,14 @@ export function useMediaDocument(deps: MediaDocumentDeps): MediaDocumentControll
     media.value = model;
     revokeBlobUrl();
     if (model) {
-      const bytes = mediaSourceBytes(model);
-      blobUrl.value = URL.createObjectURL(
-        new Blob([bytes as unknown as BlobPart], { type: model.contentType }),
-      );
+      try {
+        const { bytes, contentType } = currentImageBytes(model);
+        blobUrl.value = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: contentType }));
+      } catch {
+        // An edited image whose render is missing shows nothing rather than
+        // the original pixels its redactions cover.
+        blobUrl.value = "";
+      }
     }
   }
 
@@ -78,5 +87,5 @@ export function useMediaDocument(deps: MediaDocumentDeps): MediaDocumentControll
     void deps.router.push({ path: "/", state: { closedDocId: deps.mediaId.value } });
   }
 
-  return { media, blobUrl, storedAt, close };
+  return { media, blobUrl, storedAt, close, reload: load };
 }

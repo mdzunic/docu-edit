@@ -5,6 +5,7 @@ import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { getDocumentLibraryStats } from "../../lib/libraryStats";
 import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
 import { editorPathFor } from "../../lib/documentKinds";
+import { currentImageSize } from "../../lib/media/editModel";
 import LibraryThumbnail from "./LibraryThumbnail.vue";
 import HighlightedTitle from "./HighlightedTitle.vue";
 import RowMenu from "./RowMenu.vue";
@@ -77,7 +78,9 @@ onMounted(() => {
           const pages = media.pdf.pageCount === 1 ? "1 page" : `${media.pdf.pageCount} pages`;
           mediaLabel.value = `${pages} · ${size}`;
         } else if (media.image) {
-          mediaLabel.value = `${media.image.widthPx} × ${media.image.heightPx} px · ${size}`;
+          // The current image's size — an edited image's render (SPEC-112).
+          const image = currentImageSize(media) ?? media.image;
+          mediaLabel.value = `${image.widthPx} × ${image.heightPx} px · ${size}`;
         } else {
           mediaLabel.value = size;
         }
