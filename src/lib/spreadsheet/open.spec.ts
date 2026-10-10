@@ -133,9 +133,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5 and SPEC-122 to 6, with one contiguous step each (from 1, 2, 3, 4, 5)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(6);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6 and SPEC-123 to 7, with one contiguous step each (from 1, 2, 3, 4, 5, 6)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(7);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -409,8 +409,8 @@ function setStoredValue(model: SpreadsheetModel, sheet: number, a1: [number, num
 
 describe("SPEC-122's reader step: a dirty sheet regains its preserved content and protection", () => {
   it("SPEC-122 moved the reader to version 6 with its step from 5 — the first that does real work on a dirty sheet", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(6);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(5);
+    expect(SPREADSHEET_READER_VERSION).toBeGreaterThanOrEqual(6);
+    expect(READER_UPGRADES.findIndex((step) => step.from === 5)).toBe(4);
   });
 
   it("xlsx: sstIndex and preserved attributes and children come back onto unchanged cells only; protection and structure protection come back", async () => {
@@ -442,7 +442,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(getCell(stored.sheets[0]!, 2, 0)!.sstIndex).toBeUndefined();
 
     const upgraded = await upgradeSpreadsheetModel(stored);
-    expect(upgraded.readerVersion).toBe(6);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.structureProtected).toBe(true);
     const sheet = upgraded.sheets[0]!;
     expect(sheet.id).toBe("stored-sheet-0");
@@ -523,7 +523,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     // Stored by SPEC-120's reader; then A3 was edited on the (dirty) Inventory.
     const stored = spec120Record(read, [1], (model) => setStoredValue(model, 1, [2, 0], "Gizmo"));
     const upgraded = await upgradeSpreadsheetModel(stored);
-    expect(upgraded.readerVersion).toBe(6);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
     expect(upgraded.structureProtected).toBe(true);
     const sheet = upgraded.sheets[1]!;
     expect(sheet.id).toBe("stored-sheet-1");

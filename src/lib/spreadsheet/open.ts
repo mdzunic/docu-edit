@@ -51,6 +51,18 @@
 //     before SPEC-122 adds or removes one, so they are exactly the source's
 //     spans that overlap no stored span and its rows without cells where none
 //     is stored.
+// 7 — SPEC-123: named cell styles — the workbook's `namedStyles` (xlsx
+//     `cellStyleXfs` + `cellStyles`, ods `office:styles` common table-cell
+//     styles) and each style's `namedStyle` (xlsx `cellXfs/xf@xfId`, ods
+//     `style:parent-style-name`) — and what a protected sheet still permits
+//     (xlsx `sheetProtection@formatCells|formatColumns|formatRows="0"`). Every
+//     re-read gains them; the step, run for each dirty sheet, fills the
+//     workbook-level fields from the retained styles part when the model
+//     lacks them — idempotently, so any number of dirty sheets may run it —
+//     and refreshes the dirty sheet's protection from its own retained
+//     source. A dirty sheet's styles were stored without `namedStyle`, so
+//     adopting them treats a stored style that is the re-read one's source
+//     entry, but for the `namedStyle` it could not know, as that style.
 //
 // Since SPEC-122 the writers rebuild a dirty sheet from the model, so the
 // layout a record re-reads its clean sheets from numbers its styles afresh:
@@ -64,7 +76,7 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/
 import { buildPreview } from "./preview";
 import { cellStyle, defaultStyles, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 6;
+export const SPREADSHEET_READER_VERSION = 7;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -140,12 +152,39 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       }
     },
   },
+  {
+    // SPEC-123 (6 → 7): named cell styles and the protection's format
+    // permits (see the version history).
+    from: 6,
+    async upgradeDirtySheet(model, sheet, sourceParts) {
+      if (model.namedStyles === undefined) {
+        const named = (await sourcePackageRead(model.format, sourceParts)).namedStyles;
+        if (named !== undefined && named.length > 0) {
+          model.namedStyles = named;
+        }
+      }
+      const source = await retainedSheetRead(model, sheet, sourceParts);
+      if (source?.protection) {
+        sheet.protection = { ...source.protection };
+      }
+    },
+  },
 ];
 
 // --- SPEC-122's step ------------------------------------------------------------------------
 
 /** One read of a source package per upgrade, shared by its dirty sheets. */
 const sourceReads = new WeakMap<Map<string, Uint8Array>, Promise<ParsedSpreadsheet>>();
+
+/** The whole retained source package, read once per upgrade. */
+function sourcePackageRead(format: SpreadsheetFormat, sourceParts: Map<string, Uint8Array>): Promise<ParsedSpreadsheet> {
+  let read = sourceReads.get(sourceParts);
+  if (!read) {
+    read = parse(new Uint8Array(0), format, sourceParts);
+    sourceReads.set(sourceParts, read);
+  }
+  return read;
+}
 
 /** The sheet as the current reader reads it from its own retained source:
  * an xlsx sheet's part (an original's, or for a copy whose part the source
@@ -158,12 +197,7 @@ async function retainedSheetRead(model: SpreadsheetModel, sheet: Sheet, sourcePa
     if (sheet.partName === undefined) {
       return undefined;
     }
-    let read = sourceReads.get(sourceParts);
-    if (!read) {
-      read = parse(new Uint8Array(0), "xlsx", sourceParts);
-      sourceReads.set(sourceParts, read);
-    }
-    const parsed = await read;
+    const parsed = await sourcePackageRead("xlsx", sourceParts);
     return (
       parsed.sheets.find((each) => each.partName === sheet.partName) ??
       (sheet.copiedFrom === undefined ? undefined : parsed.sheets.find((each) => each.name.toUpperCase() === sheet.copiedFrom!.toUpperCase()))
@@ -249,18 +283,27 @@ function withRetainedOutline(sheet: Sheet, source: Sheet): void {
 /** Moves a dirty sheet's style ids from the stored table `from` into the
  * re-read workbook's table (see the module header), in place: an id whose
  * style the re-read table holds at the same index keeps it; any other is
- * interned. Arrays are replaced only when an id changes. */
-function adoptStyles(sheet: Sheet, from: readonly CellStyle[], into: SpreadsheetModel): void {
+ * interned. Arrays are replaced only when an id changes. `beforeNamedStyles`:
+ * the record predates SPEC-123, so a stored style lacking only the
+ * `namedStyle` its re-read source entry has is that entry. */
+function adoptStyles(sheet: Sheet, from: readonly CellStyle[], into: SpreadsheetModel, beforeNamedStyles: boolean): void {
   const ids = new Map<number, number>();
+  const sameEntry = (same: CellStyle, style: CellStyle): boolean => {
+    if (same.sourceXf !== style.sourceXf || same.sourceStyleName !== style.sourceStyleName) {
+      return false;
+    }
+    if (styleKey(same) === styleKey(style)) {
+      return true;
+    }
+    const { namedStyle: _named, ...unnamed } = same;
+    return beforeNamedStyles && style.namedStyle === undefined && (same.sourceXf !== undefined || same.sourceStyleName !== undefined) && styleKey(unnamed) === styleKey(style);
+  };
   const mapId = (id: number): number => {
     let next = ids.get(id);
     if (next === undefined) {
       const style = cellStyle({ styles: from as CellStyle[] }, id);
       const same = into.styles[id];
-      next =
-        same !== undefined && styleKey(same) === styleKey(style) && same.sourceXf === style.sourceXf && same.sourceStyleName === style.sourceStyleName
-          ? id
-          : internStyle(into, style);
+      next = same !== undefined && sameEntry(same, style) ? id : internStyle(into, style);
       ids.set(id, next);
     }
     return next;
@@ -438,7 +481,7 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
           await step.upgradeDirtySheet(fresh, stored, sourceParts);
         }
       }
-      adoptStyles(stored, model.styles, fresh);
+      adoptStyles(stored, model.styles, fresh, model.readerVersion < 7);
       return stored;
     }
     const read = fresh.sheets[index];
