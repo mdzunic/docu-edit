@@ -1,5 +1,5 @@
 // SPEC-122 "Row autofit": autofitRowHeightPt with fixedMeasurer — one line
-// of the cell's font unwrapped (one per explicit line break), greedy word-wrap
+// of the cell's font unwrapped (explicit line breaks included), greedy word-wrap
 // at (column width − 5 px) when wrapped (explicit breaks and over-long words
 // included; numbers never wrap), the rotated bounding box for 1–180, stacked
 // text (255) as characters × line height, px → pt × 0.75 rounded UP to a
@@ -59,8 +59,9 @@ describe("autofitRowHeightPt", () => {
     expect(heightOf([{ col: 0, value: "a long line of text that never wraps" }], {}, fixedMeasurer(10, 24))).toBe(18);
   });
 
-  it("counts each explicit line of unwrapped text, as the grid shows them", () => {
-    expect(heightOf([{ col: 0, value: "one\ntwo\nthree" }], {}, fixedMeasurer(10, 24))).toBe(54);
+  it("is one line for unwrapped text with explicit line breaks too — a break makes a line only when the text wraps", () => {
+    expect(heightOf([{ col: 0, value: "one\ntwo\nthree" }], {}, fixedMeasurer(10, 24))).toBe(18);
+    expect(heightOf([{ col: 0, value: "one\ntwo\nthree", styleId: 1 }], { styles: [{}, WRAP] }, fixedMeasurer(10, 24))).toBe(54);
   });
 
   it("wraps greedily at the column width less 5 px", () => {

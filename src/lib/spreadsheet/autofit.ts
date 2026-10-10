@@ -4,8 +4,9 @@
 // reuse autofitRowHeightPt (and add autofitColumnWidthPx beside it).
 //
 // - autofitRowHeightPt: a row is as tall as its tallest stored cell. A cell
-//   unwrapped is one line of its font — one per explicit "\n" line, as the
-//   grid shows them (`white-space: pre`); wrapped text wraps greedily at word
+//   unwrapped is one line of its font, explicit line breaks included (the
+//   spec's rule and Excel's: a break makes a line only in wrapped text, and
+//   Alt/Option+Enter turns wrap on); wrapped text wraps greedily at word
 //   boundaries — a word wider than the line breaks between characters, as
 //   Excel's does — at the column width (the covering span's widthPx, else
 //   the sheet default) less WRAP_PADDING_PX (5); rotated text (1–180) takes
@@ -178,7 +179,7 @@ function cellHeightPx(model: SpreadsheetModel, sheet: Sheet, row: number, cell: 
     }
     return count * lineHeight;
   }
-  return lines.length * lineHeight;
+  return lineHeight;
 }
 
 /** Each merges array's index, built once (arrays are replaced, never
