@@ -6,7 +6,11 @@
 // a token-level conversion, never print(parse())). A reference leaving the
 // grid, a whole row or column (`R1:R3`, `C[1]`), or a result SPEC-119's
 // parseFormula rejects makes the formula unconvertible: null, and the paste
-// takes the cell's value instead.
+// takes the cell's value instead. Pasted transposed (Paste special), a
+// reference relative on both axes has its offset transposed — `R[a]C[b]`
+// becomes `R[b]C[a]` — as paste.ts transposeFormula does for A1 text; an
+// absolute or mixed one converts at the cell as ever (it shifts by the
+// host's displacement).
 import { colToLetters, type CellRef } from "../address";
 import { MAX_COLS, MAX_ROWS } from "../model";
 import { parseFormula } from "./parse";
@@ -16,10 +20,10 @@ const R1C1_BAND = /^[RC](?:\[-?\d+\]|\d+)/i;
 const IDENTIFIER = /[\p{L}\p{N}_.$]/u;
 
 /** A Google Sheets R1C1 formula as canonical A1 text at `at` (SPEC-125
- * "External sources"): `R[-1]C[0]` relative to the cell, `R2C3` absolute;
- * null when a reference leaves the grid, names a whole row or column, or the
- * result does not parse. */
-export function r1c1ToA1(formula: string, at: CellRef): string | null {
+ * "External sources"): `R[-1]C[0]` relative to the cell, `R2C3` absolute,
+ * `transpose`d as the module header says; null when a reference leaves the
+ * grid, names a whole row or column, or the result does not parse. */
+export function r1c1ToA1(formula: string, at: CellRef, transpose = false): string | null {
   const text = formula.startsWith("=") ? formula.slice(1) : formula;
   let out = "";
   let i = 0;
@@ -38,8 +42,12 @@ export function r1c1ToA1(formula: string, at: CellRef): string | null {
     const match = boundary ? R1C1_CELL.exec(text.slice(i)) : null;
     const after = match ? text[i + match[0].length] : undefined;
     if (match && (after === undefined || (!IDENTIFIER.test(after) && after !== "("))) {
-      const row = match[1] !== undefined ? at.row + Number(match[1]) : match[2] !== undefined ? Number(match[2]) - 1 : at.row;
-      const col = match[3] !== undefined ? at.col + Number(match[3]) : match[4] !== undefined ? Number(match[4]) - 1 : at.col;
+      // `R`/`C` alone is an offset of 0; digits without brackets absolute.
+      const dRow = Number(match[1] ?? 0);
+      const dCol = Number(match[3] ?? 0);
+      const swap = transpose && match[2] === undefined && match[4] === undefined;
+      const row = match[2] !== undefined ? Number(match[2]) - 1 : at.row + (swap ? dCol : dRow);
+      const col = match[4] !== undefined ? Number(match[4]) - 1 : at.col + (swap ? dRow : dCol);
       if (row < 0 || row >= MAX_ROWS || col < 0 || col >= MAX_COLS) {
         return null;
       }

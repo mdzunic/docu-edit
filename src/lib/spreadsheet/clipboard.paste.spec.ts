@@ -353,6 +353,24 @@ describe("date systems and other workbooks", () => {
     expect(cellOf(m, 2, 4, "t")).toEqual(value(4, 4, { formula: "D3*2" }));
     expect(cellOf(m, 2, 5, "t")).toEqual(value(5, 9));
   });
+
+  it("transposes Google Sheets formulas with the block, and pastes one naming a sheet this workbook lacks as its value, counted", () => {
+    const html =
+      '<google-sheets-html-origin><table data-sheets-root="1"><tr><td data-sheets-value=\'{"1":3,"3":2}\'>2</td>' +
+      '<td data-sheets-value=\'{"1":3,"3":4}\' data-sheets-formula="=RC[-1]*2+R1C1">4</td>' +
+      '<td data-sheets-value=\'{"1":3,"3":7}\' data-sheets-formula="=Missing!R1C1">7</td>' +
+      '<td data-sheets-value=\'{"1":3,"3":8}\' data-sheets-formula="=T!R1C1">8</td></tr></table></google-sheets-html-origin>';
+    const block = importClipboardHtml(html, { locale: EN_US, dateSystem: "1900" }) as PasteBlock;
+    const m = model([sheet("t", "T")]);
+    expect(pasteBlock(m, "t", at(2, 3), block, { what: "all", transpose: true })).toEqual({ ok: true, range: range(2, 3, 5, 3), formulasAsValues: 1 });
+    // B1's left neighbour is, transposed at D4, the cell above it; R1C1 is absolute.
+    expect(cellOf(m, 3, 3, "t")).toEqual(value(3, 4, { formula: "D3*2+$A$1" }));
+    expect(cellOf(m, 4, 3, "t")).toEqual(value(3, 7));
+    expect(cellOf(m, 5, 3, "t")).toEqual(value(3, 8, { formula: "T!$A$1" }));
+    const plain = model([sheet("t", "T")]);
+    expect(pasteBlock(plain, "t", at(2, 3), block, ALL)).toMatchObject({ formulasAsValues: 1 });
+    expect(cellOf(plain, 2, 4, "t")?.formula).toBe("D3*2+$A$1");
+  });
 });
 
 describe("plain text", () => {
@@ -384,6 +402,25 @@ describe("plain text", () => {
     const m = model([sheet("t", "T")]);
     pasteBlock(m, "t", over(range(1, 1, 2, 2)), blockFromText("7", ctx) as PasteBlock, ALL);
     expect([cellOf(m, 1, 1, "t")?.value, cellOf(m, 2, 2, "t")?.value, cellOf(m, 3, 3, "t")]).toEqual([7, 7, undefined]);
+  });
+
+  it("Values pastes a formula field as its text (as typed after an apostrophe) and drops implied formats; Values and number formats keeps them", () => {
+    const m = model([sheet("t", "T")]);
+    pasteBlock(m, "t", at(1, 0), blockFromText("=1+1\t5%", ctx) as PasteBlock, { what: "values" });
+    const text = cellOf(m, 1, 0, "t")!;
+    expect([text.value, text.formula]).toEqual(["=1+1", undefined]);
+    expect(cellStyle(m, text.styleId!)).toEqual({ quotePrefix: true });
+    expect(cellOf(m, 1, 1, "t")).toEqual(value(1, 0.05));
+    pasteBlock(m, "t", at(3, 0), blockFromText("=1+1\t5%", ctx) as PasteBlock, { what: "values-number-formats" });
+    expect([cellOf(m, 3, 0, "t")?.value, cellOf(m, 3, 0, "t")?.formula]).toEqual(["=1+1", undefined]);
+    expect(cellStyle(m, cellOf(m, 3, 1, "t")!.styleId!).numberFormat).toBe("0%");
+  });
+
+  it("text with no field but empty ones — a lone line break — is nothing to paste", () => {
+    for (const text of ["\n", "\r\n", "\t\t\r\n", "\n\n"]) {
+      expect(blockFromText(text, ctx), JSON.stringify(text)).toBeNull();
+    }
+    expect((blockFromText("\nx", ctx) as PasteBlock).cells).toEqual([expect.objectContaining({ r: 1, c: 0, v: "x" })]);
   });
 
   it("Paste (All) replaces a merge inside the destination, so every field shows; Values keeps it; one value into a merge's anchor keeps it", () => {

@@ -43,8 +43,12 @@
 //   number format parseInput implies (over General); an empty field clears
 //   its destination's value. Paste (All) replaces the destination's merges
 //   — text brings none, so a merge inside is gone and every field shows.
+//   Under Values a formula field pastes as its text (as typed after an
+//   apostrophe), and text with no field but empty ones (a lone line break)
+//   is nothing to paste.
 // - Google Sheets' R1C1 formulas are converted at each destination cell
-//   (formula/r1c1.ts); an unconvertible one pastes its value.
+//   (formula/r1c1.ts; transposed with the block); an unconvertible one, or
+//   one naming a sheet this workbook lacks (counted), pastes its value.
 // The pasted sheet is marked dirty; the caller wraps the paste in ONE undo
 // step and refits its rows.
 import { sanitizeXmlText } from "../core/xmlText";
@@ -81,6 +85,9 @@ export interface PasteCell extends ClipboardCell {
   r1c1?: string;
   /** Plain text: the entry SPEC-122's parseInput made of the field. */
   entry?: CellEntry;
+  /** Plain text, a formula field: the field as text — as typed after an
+   * apostrophe — which is what Values pastes. */
+  asText?: CellEntry;
 }
 
 /** Anything about to be pasted: the payload's shape plus its source. */
@@ -190,7 +197,8 @@ export function parsedField(text: string, ctx: TextContext): ParsedField {
 }
 
 /** Plain text as a block of entries (see the module header); null for no
- * text, a refusal past MAX_COPY_CELLS. */
+ * text — or none but empty fields, as a lone line break is: that never
+ * clears the selection — a refusal past MAX_COPY_CELLS. */
 export function blockFromText(text: string, ctx: TextContext): PasteBlock | string | null {
   const rows = parseTsv(text);
   const cols = rows.reduce((most, fields) => Math.max(most, fields.length), 0);
@@ -210,10 +218,14 @@ export function blockFromText(text: string, ctx: TextContext): PasteBlock | stri
       const cell: PasteCell = { r, c, v: parsed.value, entry: entryFromInput(parsed) };
       if (parsed.formula !== undefined) {
         cell.f = parsed.formula;
+        cell.asText = entryFromInput(parsedField(`'${field}`, ctx));
       }
       cells.push(cell);
     }),
   );
+  if (cells.length === 0) {
+    return null;
+  }
   return { source: "text", workbookId: "", sheetName: "", dateSystem: ctx.dateSystem, origin: { row: 0, col: 0 }, rows: rows.length, cols, cells, styles: [], merges: [] };
 }
 
@@ -475,7 +487,9 @@ export function pasteBlock(model: SpreadsheetModel, sheetId: string, target: Pas
       if ((options.skipBlanks && isBlank(cell)) || covered(row, col)) {
         return;
       }
-      let entry = cell?.entry ?? null;
+      // Values (and Values and number formats) drop formulas: a formula
+      // field pastes as its text.
+      let entry = (what === "values" || what === "values-number-formats" ? cell?.asText : undefined) ?? cell?.entry ?? null;
       if (entry && what === "values") {
         const { numberFormat: _format, builtinFormatId: _builtin, ...plain } = entry;
         entry = plain;
@@ -531,16 +545,21 @@ export function pasteBlock(model: SpreadsheetModel, sheetId: string, target: Pas
       if ((what === "all" || what === "formulas") && cell && (cell.f !== undefined || cell.r1c1 !== undefined)) {
         const from = { row: block.origin.row + r, col: block.origin.col + c };
         const to = { row, col };
-        const converted =
-          cell.r1c1 !== undefined
-            ? r1c1ToA1(cell.r1c1, to)
-            : !sameWorkbook && namesOtherSheets(cell.f!, knownSheets)
-              ? null
-              : plan.transposed
-                ? transposeFormula(cell.f!, from, to)
-                : shiftFormula(cell.f!, row - from.row, col - from.col);
+        let converted: string | null = null;
+        let otherSheets = false;
+        if (cell.r1c1 !== undefined) {
+          // Google Sheets: R1C1 converted at its destination — another
+          // workbook's formula, under the same missing-sheet rule.
+          const a1 = r1c1ToA1(cell.r1c1, to, plan.transposed);
+          otherSheets = a1 !== null && namesOtherSheets(a1, knownSheets);
+          converted = a1 === null || otherSheets || a1.length > MAX_CLIPBOARD_FORMULA_LENGTH ? null : a1;
+        } else if (!sameWorkbook && namesOtherSheets(cell.f!, knownSheets)) {
+          otherSheets = true;
+        } else {
+          converted = plan.transposed ? transposeFormula(cell.f!, from, to) : shiftFormula(cell.f!, row - from.row, col - from.col);
+        }
         if (converted === null) {
-          formulasAsValues += cell.f !== undefined ? 1 : 0;
+          formulasAsValues += otherSheets ? 1 : 0;
         } else {
           formula = converted;
           if (cell.a && !plan.transposed && what === "all") {

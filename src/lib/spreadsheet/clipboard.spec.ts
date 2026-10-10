@@ -507,6 +507,10 @@ describe("external sources — each producer's markers (inline snippets)", () =>
     expect(r1c1ToA1("=R[-1]C", { row: 0, col: 0 })).toBeNull();
     expect(r1c1ToA1("=SUM(C[1])", { row: 0, col: 0 })).toBeNull();
     expect(r1c1ToA1("=ROUND(R1C1,2)", { row: 4, col: 4 })).toBe("ROUND($A$1,2)");
+    // Transposed: a reference relative on both axes has its offset transposed;
+    // absolute and mixed parts convert at the cell as ever.
+    expect(r1c1ToA1("=R[-1]C[2]+R2C[1]+R[1]C3+RC", { row: 5, col: 5 })).toBe("H5+G$2+$C7+F6");
+    expect(r1c1ToA1("=R[-1]C[2]+R2C[1]+R[1]C3+RC", { row: 5, col: 5 }, true)).toBe("E8+G$2+$C7+F6");
   });
 
   it("LibreOffice: sdval, sdnum codes, a BOOLEAN code, inline CSS and font/b/i/u tags", () => {
