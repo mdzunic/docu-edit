@@ -210,6 +210,27 @@ export interface Cell {
   /** xlsx What-If data table: the anchor's `<f t="dataTable" …/>` element,
    *  verbatim. No `formula`; members hold cached values. Never evaluated. */
   dataTableXml?: string;
+  // --- SPEC-122: what the writers re-emit for content the model does not
+  // model. Drop rules, applied by every command: setting a cell's value or
+  // runs removes `sstIndex`, `preservedText` and ` vm="…"`; setting or
+  // removing its formula removes `cm`, `dynamicArray` and `dataTableXml`. A
+  // cell holding only preserved content is stored (sparseness counts it as
+  // content). A later spec that models an attribute or child stops capturing
+  // it here, and its reader step moves it into the model. ---
+  /** xlsx: the shared-string index the value was read from; reused while
+   *  value and runs are unchanged. */
+  sstIndex?: number;
+  /** Unmodelled start-tag attributes, verbatim with leading spaces: xlsx
+   *  ` vm="2"`, ` ph="1"` (`cm` is SPEC-119's field); ods
+   *  ` table:content-validation-name="v1"`, … */
+  preservedAttrs?: string;
+  /** Unmodelled children, verbatim: xlsx `<extLst>` (a data table's `<f>` is
+   *  SPEC-119's `dataTableXml`); ods everything except the text paragraphs
+   *  (annotations, frames, unknown elements), in source order. */
+  preservedXml?: string;
+  /** ods: the cell's `text:p` sequence verbatim when it holds inline content
+   *  the model does not (links, fields, notes). */
+  preservedText?: string;
   // Later specs add optional fields only.
 }
 
@@ -263,6 +284,11 @@ export interface Sheet {
    *  the origin's source-time text, so the writer maps that name to the
    *  copy's when remapping it. A copy is never an "original". */
   copiedFrom?: string;
+  // --- SPEC-122 ---
+  /** The sheet is protected (xlsx `sheetProtection@sheet="1"`, ods
+   *  `table:protected="true"`): a locked cell refuses entry. Read only — the
+   *  protection XML stays in the retained source, never changed. */
+  protection?: { sheet: true };
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -319,6 +345,12 @@ export interface SpreadsheetModel {
    *  visibility, tab colour, order) changed since open. Absent on a freshly
    *  opened workbook; a from-scratch workbook is always fully built. */
   structureDirty?: true;
+  // --- SPEC-122 ---
+  /** The workbook's structure is protected (xlsx
+   *  `workbookProtection@lockStructure="1"`, ods
+   *  `office:spreadsheet@table:structure-protected="true"`): the sheet
+   *  commands are disabled. Read only, never written. */
+  structureProtected?: true;
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or

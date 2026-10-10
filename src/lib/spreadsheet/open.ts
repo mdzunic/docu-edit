@@ -140,6 +140,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   if (parsed.calc !== undefined && Object.keys(parsed.calc).length > 0) {
     model.calc = parsed.calc;
   }
+  if (parsed.structureProtected) {
+    model.structureProtected = true;
+  }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
 }
