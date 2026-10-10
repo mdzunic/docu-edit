@@ -68,6 +68,20 @@
   --chart-gridline:        #dddddd;
   --chart-text:            #222222;
 
+  /* Formula reference colours (SPEC-122): the cell editor and the formula
+     bar colour each reference of a formula being entered, and the grid
+     outlines the cells it names, in the Nth colour by first appearance
+     (modulo 8). The outlines sit on the sheet's white paper in every theme,
+     so the dark values are mid-tones readable on both it and dark chrome. */
+  --sheet-ref-1:           #1f5fbf;
+  --sheet-ref-2:           #c0392b;
+  --sheet-ref-3:           #7b3fb5;
+  --sheet-ref-4:           #23803d;
+  --sheet-ref-5:           #b35900;
+  --sheet-ref-6:           #0b7a8a;
+  --sheet-ref-7:           #b8236a;
+  --sheet-ref-8:           #6b6b00;
+
   /* Interaction overlays, composited over any surface. */
   --state-hover:           rgb(32 30 29 / 0.06);
   --state-active:          rgb(32 30 29 / 0.12);
@@ -218,6 +232,15 @@
     --state-active:          rgb(246 245 244 / 0.16);
     --focus-ring:            #d99578;
 
+    --sheet-ref-1:           #4a8eff;
+    --sheet-ref-2:           #f0645a;
+    --sheet-ref-3:           #a77bea;
+    --sheet-ref-4:           #3aa65a;
+    --sheet-ref-5:           #e07b1a;
+    --sheet-ref-6:           #1fa2b4;
+    --sheet-ref-7:           #e5568f;
+    --sheet-ref-8:           #9a9a1c;
+
     --shadow-1: 0 1px 2px rgb(0 0 0 / 0.6);
     --shadow-2: 0 2px 6px 1px rgb(0 0 0 / 0.5);
     --shadow-3: 0 4px 12px 3px rgb(0 0 0 / 0.5);
@@ -256,6 +279,15 @@
   --state-hover:           rgb(246 245 244 / 0.08);
   --state-active:          rgb(246 245 244 / 0.16);
   --focus-ring:            #d99578;
+
+  --sheet-ref-1:           #4a8eff;
+  --sheet-ref-2:           #f0645a;
+  --sheet-ref-3:           #a77bea;
+  --sheet-ref-4:           #3aa65a;
+  --sheet-ref-5:           #e07b1a;
+  --sheet-ref-6:           #1fa2b4;
+  --sheet-ref-7:           #e5568f;
+  --sheet-ref-8:           #9a9a1c;
 
   --shadow-1: 0 1px 2px rgb(0 0 0 / 0.6);
   --shadow-2: 0 2px 6px 1px rgb(0 0 0 / 0.5);

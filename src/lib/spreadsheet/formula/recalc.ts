@@ -22,7 +22,10 @@
 //    one new `sheets` array; an unchanged value writes nothing and every
 //    untouched row keeps its identity. An array anchor's result is
 //    distributed over its `arrayRange` with the broadcasting rule — every
-//    member's value written, the anchor's included.
+//    member's value written, the anchor's included. A changed value drops
+//    what was bound to the old one (SPEC-122's drop rules, model.ts
+//    dropValueBound): rich-text runs, the shared-string index, an ods cell's
+//    preserved text:p (a HYPERLINK result's link), an xlsx ` vm`.
 //
 // Cycles: after an "edit" or "manual" pass every cell of a cycle is 0 and its
 // dependents compute from that 0; an "open" pass leaves their cached values
@@ -38,7 +41,7 @@
 import { now as clockNow } from "../../core/clock";
 import { windowOf } from "../../core/arrayWindow";
 import { getCell, parseRange } from "../address";
-import type { Cell, CellValue, Row, Sheet, SpreadsheetModel } from "../model";
+import { dropValueBound, type Cell, type CellValue, type Row, type Sheet, type SpreadsheetModel } from "../model";
 import { formulaAnchorAt, startTagAttribute } from "./anchors";
 import { elementAt, sheetById } from "./areas";
 import {
@@ -787,15 +790,17 @@ function rowPosition(rows: readonly Row[], index: number): number {
 }
 
 /** A row with new values at the given columns — new Cell objects for them
- * (a value written over rich-text runs drops the runs), new cells where the
- * row stored none. */
+ * (a changed value drops what was bound to the old one: rich-text runs, and
+ * SPEC-122's drop rules — the shared-string index, an ods cell's preserved
+ * text:p, an xlsx ` vm`), new cells where the row stored none. */
 function withValues(row: Row, values: ReadonlyMap<number, CellValue>): Row {
   const cells: Cell[] = row.cells.map((cell) => {
     if (!values.has(cell.col)) {
       return cell;
     }
-    const { runs: _runs, ...rest } = cell;
-    return { ...rest, value: values.get(cell.col)! };
+    const next: Cell = { ...cell, value: values.get(cell.col)! };
+    dropValueBound(next);
+    return next;
   });
   let added = false;
   for (const [col, value] of values) {

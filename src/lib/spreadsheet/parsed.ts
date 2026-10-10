@@ -24,6 +24,8 @@ export interface ParsedSpreadsheet {
   properties: DocumentProperties;
   /** SPEC-120: the file's calculation settings (absent: none set). */
   calc?: CalcSettings;
+  /** SPEC-122: the workbook's structure is protected. */
+  structureProtected?: true;
 }
 
 /** Counts stored cells across every sheet of one read against

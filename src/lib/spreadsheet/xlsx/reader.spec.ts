@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { unzip } from "../../core/zip";
 import { getCell, parseA1 } from "../address";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import {
@@ -102,6 +103,15 @@ async function oneSheet(data: string, sharedStrings?: string, workbookPr?: strin
   return parsed.sheets[0]!;
 }
 
+/** The position of an `<si>` item, exactly as written, in a package's
+ * xl/sharedStrings.xml. */
+async function sharedItemIndex(bytes: Uint8Array, item: string): Promise<number> {
+  const xml = new TextDecoder().decode((await unzip(bytes)).get("xl/sharedStrings.xml"));
+  const index = xml.match(/<si>[\s\S]*?<\/si>|<si\/>/g)?.indexOf(item) ?? -1;
+  expect(index, item).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
 describe("mini-book.xlsx (Excel-shaped)", () => {
   it("reads the sheets in <sheets> order with names, visibility and kind", async () => {
     const parsed = await parseXlsx(await buildMiniBookXlsxBytes());
@@ -143,14 +153,16 @@ describe("mini-book.xlsx (Excel-shaped)", () => {
   });
 
   it("places Data's rows and cells, written without r, sequentially", async () => {
-    const data = (await parseXlsx(await buildMiniBookXlsxBytes())).sheets[1]!;
+    const bytes = await buildMiniBookXlsxBytes();
+    const data = (await parseXlsx(bytes)).sheets[1]!;
     expect(data.rows).toHaveLength(MINI_BOOK_XLSX.dataRows);
     expect(data.rows[0]!.cells.map((cell) => cell.value)).toEqual(["ID", "Amount", "Parity"]);
     expect(data.rows.at(-1)!.index).toBe(499);
+    // SPEC-122: a t="s" cell also keeps the item it was read from (sstIndex).
     expect(data.rows.at(-1)!.cells).toEqual([
       { col: 0, value: 499 },
       { col: 1, value: 748.5 },
-      { col: 2, value: "odd" },
+      { col: 2, value: "odd", sstIndex: await sharedItemIndex(bytes, "<si><t>odd</t></si>") },
     ]);
   });
 

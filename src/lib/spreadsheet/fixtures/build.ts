@@ -86,6 +86,23 @@
 //   database range, validation, conditional format, annotation, link, an
 //   embedded chart object, settings.xml TabColor). SPEC121_LINKS_XLSX /
 //   SPEC121_LINKS_ODS record the facts.
+// - spec122-shapes.xlsx (SPEC-122) — Excel 365-shaped: what a rebuilt sheet
+//   must keep. "Edit" (the active tab; B2 a plain General number C2 reads):
+//   shared-formula blocks, a legacy array, a dynamic array (`cm="1"`), a data
+//   table, rich, phonetic (`ph="1"`) and `_x000D_` shared strings, a picture
+//   in a cell (`vm="1"`, xl/richData), rows with `spans`, `x14ac:dyDescent`
+//   and `outlineLevel`, grouped custom-width columns, a merge, a frozen row,
+//   formats 14, 22, 164 and 165, a quote-prefixed number with its
+//   `ignoredErrors`, a classic and an x14 data-bar conditional format,
+//   external and internal hyperlinks, a page setup with printer settings;
+//   "Locked" (`sheetProtection`, Excel's SHA-512 hash, one unlocked cell);
+//   "Inline" (openpyxl-shaped inline strings). spec122-shapes.ods — the
+//   LibreOffice 24.8-shaped twin: the 1048553-row / 16380-column tails,
+//   repeated non-empty runs, a 2×2 span, an annotation, a link, header rows
+//   and a row group, table-local names and conditional formats, a validated
+//   cell, a red-negative `style:map` pair, a `de-ce1` style, and a protected
+//   table with one `style:cell-protect="none"` cell. SPEC122_SHAPES_XLSX /
+//   SPEC122_SHAPES_ODS record the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -3535,5 +3552,861 @@ export async function buildSpec121LinksOdsBytes(): Promise<Uint8Array> {
     part("styles.xml", SPEC121_ODS_STYLES),
     part("manifest.rdf", LO_MANIFEST_RDF),
     part("META-INF/manifest.xml", SPEC121_ODS_MANIFEST),
+  ]);
+}
+
+// ============================================================================
+// SPEC-122 — spec122-shapes.xlsx / spec122-shapes.ods: what a rebuilt sheet keeps
+// ============================================================================
+// The workbooks the cell editor and the sheet writers are proven on: every
+// construct SPEC-122's "Fixtures" lists, in the shape its producer writes it.
+// - spec122-shapes.xlsx — Excel 365-shaped (Aptos, the 2023 theme). "Edit",
+//   the active tab: a budget whose B2 is a plain General number the e2e
+//   retypes (C2 reads it); C2:C5 and D2:D5 shared-formula blocks (master
+//   first), E2:E5 a legacy array, G2:G5 a dynamic array (`cm="1"` and
+//   xl/metadata.xml's XLDAPR), J2:J4 a one-variable data table over F2, rich,
+//   phonetic (`ph="1"` on its cell) and `_x000D_` shared strings, B16 a
+//   picture placed in its cell (`t="e"` `#VALUE!` with `vm="1"`, the rich
+//   value in xl/richData), rows with the block's `spans`, `x14ac:dyDescent`
+//   and `outlineLevel`, grouped custom-width columns, A8:E8 merged, row 1
+//   frozen, dates on 14 and 22, custom formats 164 and 165, a quote-prefixed
+//   "0042" whose number-stored-as-text error is ignored, a classic and an x14
+//   data-bar conditional format, external and internal hyperlinks, and a page
+//   setup with its printer settings. Every cached value is what the formula
+//   computes, written as Excel writes numbers (17 digits when 15 do not
+//   round-trip); no formula is volatile and none outside "Edit" reads it.
+//   "Locked": `sheetProtection` with Excel 2013's SHA-512 hash of "fixture",
+//   A1 locked, B2 the one unlocked cell. "Inline": inline strings as openpyxl
+//   writes them, in the same package. calcChain.xml, TitlesOfParts.
+// - spec122-shapes.ods — LibreOffice 24.8-shaped. "Data" (active): 23 rows
+//   over A:D, so its tails are the 1048553-row and 16380-column runs; header
+//   rows and a row group, a repeated non-empty row and a repeated non-empty
+//   cell, a 2×2 span over covered cells, an annotation, an external
+//   `text:a` link, a validated cell (its `table:content-validations` before
+//   the tables), a cell in a `de-ce1` style, a red-negative N2/N2P0 pair and a
+//   USD currency pair through `style:map`, every value type and `of:=`
+//   formulas the engine reproduces, then the table-local named range and
+//   conditional format after the rows. "Locked": `table:protected` with
+//   Calc's SHA-256 key and `loext:table-protection`, B2 in a
+//   `style:cell-protect="none"` style.
+
+/** A `<v>` number as Excel writes it: 15 significant digits when they
+ * round-trip, else 17 (its "%.17g" — 2000/3 is 666.66666666666663). */
+function excelNumberText(value: number): string {
+  const short = Number(value.toPrecision(15));
+  return short === value ? String(short) : value.toPrecision(17).replace(/(\.\d*?)0+$/, "$1");
+}
+
+/** spec122-shapes.xlsx's cellXfs indices — a cell's `s`. */
+export const SPEC122_XF = {
+  normal: 0,
+  header: 1, // bold on accent1 lighter 80%, a thin accent1 bottom edge
+  date: 2, // built-in 14
+  dateTime: 3, // built-in 22
+  redNegative: 4, // custom 164
+  percent: 5, // custom 165
+  total: 6, // bold between a thin and a double accent1 edge
+  hyperlink: 7, // the Hyperlink cell style
+  quotePrefix: 8,
+  unlocked: 9, // applyProtection="1" + <protection locked="0"/>
+  note: 10, // italic Text 1 lighter 35%, wrapped
+} as const;
+
+/** spec122-shapes.xlsx's custom number formats. */
+export const SPEC122_NUMFMTS = { 164: "#,##0.00;[Red]\\-#,##0.00", 165: "0.0%" } as const;
+
+/** The shared strings' special items: a rich string whose first run has no
+ * `rPr` (it keeps the cell's font) and whose last run is tinted, a phonetic
+ * reading, and Excel's CR escape. */
+const SPEC122_RICH_ITEM =
+  `<si><r><t xml:space="preserve">Figures are </t></r>` +
+  `<r><rPr><b/><sz val="11"/><color rgb="FFC00000"/><rFont val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></rPr><t>estimates</t></r>` +
+  `<r><rPr><sz val="11"/><color theme="1" tint="0.34998626667073579"/><rFont val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></rPr>` +
+  `<t xml:space="preserve"> until the audit</t></r></si>`;
+const SPEC122_PHONETIC_ITEM = `<si><t>東京</t><rPh sb="0" eb="2"><t>トウキョウ</t></rPh><phoneticPr fontId="1"/></si>`;
+const SPEC122_CR_ITEM = `<si><t xml:space="preserve">Line one_x000D_\nLine two</t></si>`;
+
+/** spec122-shapes.xlsx's shared strings in index order (first use, row-major,
+ * sheet order): each item's value as the reader gives it, and its XML when
+ * it is more than a lone `<t>`. */
+const SPEC122_SST: readonly { value: string; xml?: string }[] = [
+  ...["Item", "Amount", "Double", "Running", "Share", "Rate", "Week", "Growth", "Rent", "Food", "Travel", "Books", "Total", "Per month"].map(
+    (value) => ({ value }),
+  ),
+  { value: "Figures are estimates until the audit", xml: SPEC122_RICH_ITEM },
+  { value: "Line one\r\nLine two", xml: SPEC122_CR_ITEM },
+  { value: "Updated" },
+  { value: "Logged" },
+  { value: "Variance" },
+  { value: "東京", xml: SPEC122_PHONETIC_ITEM },
+  ...["Tokyo office", "Code", "0042", "Statements", "Locked!A1", "Receipt", "Approved total", "Adjustment", "Final"].map((value) => ({ value })),
+];
+
+/** "Edit"'s data table, its `<f>` verbatim (column input cell F2). */
+const SPEC122_DATA_TABLE = `<f t="dataTable" ref="J2:J4" dt2D="0" dtr="0" r1="F2"/>`;
+/** The x14 data bar's id, shared by its classic rule and its extension. */
+const SPEC122_DATA_BAR_ID = "{1F5A3C7E-9B2D-4E6F-8A1C-3D5E7F9A1B2C}";
+const SPEC122_SHEET_PROTECTION =
+  `<sheetProtection algorithmName="SHA-512" hashValue="v29aHT5sWJ4HIjjGD0KTaqmRB9g25knlAqPdHUn15k+DY135r8qGmV09ra/OyqkT8v+qDWbrdwrKh+3d9+qBHg==" ` +
+  `saltValue="XBqefTsvSmCBx+nQ8rSmyA==" spinCount="100000" sheet="1" objects="1" scenarios="1"/>`;
+const SPEC122_PRINTER_SETTINGS_REL = `${REL_TYPE}/printerSettings`;
+const SPEC122_RICH_VALUE_REL = "http://schemas.microsoft.com/office/2022/10/relationships/richValueRel";
+const SPEC122_RD_REL = "http://schemas.microsoft.com/office/2017/06/relationships";
+
+/** What spec122-shapes.xlsx holds, for the unit, round-trip and e2e specs.
+ * Cells are A1 notation; a formula cell's value is its cached result. */
+export const SPEC122_SHAPES_XLSX = {
+  title: "Shapes",
+  sheets: [
+    { name: "Edit", sheetId: 1, partName: "xl/worksheets/sheet1.xml", uid: "{5D2B8E41-7C3A-4F19-9E6D-2A4C6E8F0B11}" },
+    { name: "Locked", sheetId: 2, partName: "xl/worksheets/sheet2.xml", uid: "{6E3C9F52-8D4B-4A2A-8F7E-3B5D7F9A1C22}" },
+    { name: "Inline", sheetId: 3, partName: "xl/worksheets/sheet3.xml" },
+  ],
+  sheetNames: ["Edit", "Locked", "Inline"],
+  /** Edit — the only tabSelected sheetView; workbookView has no activeTab (0, Excel's default). */
+  activeSheetIndex: 0,
+  xf: SPEC122_XF,
+  numFmts: SPEC122_NUMFMTS,
+  edit: {
+    /** The e2e's cell: a plain number in General — not merged, in no array
+     * or shared block — whose dependents (C2, D2:D5, B6, …) are all on Edit. */
+    target: { ref: "B2", value: 1200, dependent: { ref: "C2", formula: "B2*2" } },
+    activeCell: "B2",
+    dimension: "A1:J16",
+    /** Every stored cell → the reader's value. */
+    values: {
+      A1: "Item", B1: "Amount", C1: "Double", D1: "Running", E1: "Share", F1: "Rate", G1: "Week", I1: "Growth", J1: 2000,
+      A2: "Rent", B2: 1200, C2: 2400, D2: 1200, E2: 1200 / 2000, F2: 0, G2: 1, I2: 0, J2: 2000,
+      A3: "Food", B3: 450.5, C3: 901, D3: 1650.5, E3: 450.5 / 2000, G3: 2, I3: 0.5, J3: 3000,
+      A4: "Travel", B4: 300, C4: 600, D4: 1950.5, E4: 300 / 2000, G4: 3, I4: 1, J4: 4000,
+      A5: "Books", B5: 49.5, C5: 99, D5: 2000, E5: 49.5 / 2000, G5: 4,
+      A6: "Total", B6: 2000, C6: 4000,
+      A7: "Per month", B7: 2000 / 3,
+      A8: "Figures are estimates until the audit",
+      A9: "Line one\r\nLine two",
+      A10: "Updated", B10: dateToSerial(2026, 10, 8, "1900"),
+      A11: "Logged", B11: dateToSerial(2026, 10, 8, "1900") + (13 * 60 + 45) / (24 * 60),
+      A12: "Variance", B12: -125.5,
+      A13: "東京", B13: "Tokyo office",
+      A14: "Code", B14: "0042",
+      A15: "Statements", B15: "Locked!A1",
+      A16: "Receipt", B16: { error: "#VALUE!" },
+    },
+    /** Every formula cell → its canonical formula (followers expanded). */
+    formulas: {
+      J1: "B6*(1+F2)",
+      C2: "B2*2", C3: "B3*2", C4: "B4*2", C5: "B5*2",
+      D2: "SUM($B$2:B2)", D3: "SUM($B$2:B3)", D4: "SUM($B$2:B4)", D5: "SUM($B$2:B5)",
+      E2: "B2:B5/B6",
+      G2: "SEQUENCE(4)",
+      B6: "SUM(B2:B5)", C6: "SUM(C2:C5)", B7: "B6/3",
+    },
+    /** The shared blocks' masters, as written (followers carry `si` only). */
+    sharedBlocks: [
+      { master: "C2", ref: "C2:C5", si: 0, wire: "B2*2" },
+      { master: "D2", ref: "D2:D5", si: 1, wire: "SUM($B$2:B2)" },
+    ],
+    array: { anchor: "E2", ref: "E2:E5" },
+    dynamicArray: { anchor: "G2", ref: "G2:G5", wire: "_xlfn.SEQUENCE(4)", cm: 1 },
+    dataTable: { anchor: "J2", ref: "J2:J4", xml: SPEC122_DATA_TABLE, inputCell: "F2", inputs: { I2: 0, I3: 0.5, I4: 1 } },
+    merge: "A8:E8",
+    frozen: { rows: 1, cols: 0 },
+    topLeftCell: "A2",
+    /** A8's runs; A13's phonetic item (its reading is skipped) with ph="1";
+     * A9 Excel's `_x000D_` escape of CR. */
+    rich: { ref: "A8", runs: ["Figures are ", "estimates", " until the audit"], sstIndex: 14 },
+    phonetic: { ref: "A13", value: "東京", sstIndex: 19, preservedAttrs: ` ph="1"` },
+    carriageReturn: { ref: "A9", sstIndex: 15 },
+    /** B16: a picture placed in the cell — `#VALUE!` for older readers. */
+    valueMetadata: { ref: "B16", preservedAttrs: ` vm="1"` },
+    /** Rows 2–5 (indices 1–4) are outline level 1; row 9 is 29 pt (two wrapped lines). */
+    spans: "1:10",
+    outlineRows: [1, 2, 3, 4],
+    tallRow: { index: 8, heightPt: 29 },
+    /** Columns A (custom width) and C:D (custom width, outline level 1). */
+    columns: [
+      { min: 0, max: 0, sourceWidthChars: 16.6328125 },
+      { min: 2, max: 3, sourceWidthChars: 10.6328125, sourceAttrs: `outlineLevel="1"` },
+    ],
+    numberFormats: {
+      B10: { builtinFormatId: 14 },
+      B11: { builtinFormatId: 22 },
+      B12: { numFmtId: 164, code: SPEC122_NUMFMTS[164] },
+      E2: { numFmtId: 165, code: SPEC122_NUMFMTS[165] },
+    },
+    quotePrefix: { ref: "B14", value: "0042", xf: SPEC122_XF.quotePrefix },
+    ignoredErrors: `<ignoredErrors><ignoredError sqref="B14" numberStoredAsText="1"/></ignoredErrors>`,
+    hyperlinks: {
+      external: { ref: "A15", rId: "rId1", target: "https://example.com/statements", uid: "{8A4C6E2F-0B1D-4C3E-9F5A-7B9D1F3A5C44}" },
+      internal: { ref: "B15", location: "Locked!A1", uid: "{9B5D7F3A-1C2E-4D4F-8A6B-8C0E2A4B6D55}" },
+    },
+    printerSettings: { rId: "rId2", partName: "xl/printerSettings/printerSettings1.bin" },
+    conditionalFormats: {
+      dataBar: { sqref: "B2:B5", id: SPEC122_DATA_BAR_ID },
+      cellIs: { sqref: "C2:C5", dxfId: 0, formula: "1000" },
+    },
+    /** The worksheet's children, CT_Worksheet order. */
+    children: [
+      "dimension",
+      "sheetViews",
+      "sheetFormatPr",
+      "cols",
+      "sheetData",
+      "mergeCells",
+      "conditionalFormatting",
+      "conditionalFormatting",
+      "hyperlinks",
+      "pageMargins",
+      "pageSetup",
+      "ignoredErrors",
+      "extLst",
+    ],
+  },
+  locked: {
+    values: { A1: "Approved total", B1: 2000, A2: "Adjustment", B2: 150, A3: "Final", B3: 2150 },
+    formulas: { B3: "B1+B2" },
+    /** A1: a locked cell (xf 0) — and the sheet's active cell, so typing there is refused. */
+    protectedCell: { ref: "A1", value: "Approved total" },
+    activeCell: "A1",
+    /** B2: the sheet's one unlocked cell. */
+    unlockedCell: { ref: "B2", value: 150, xf: SPEC122_XF.unlocked },
+    password: "fixture",
+    sheetProtection: SPEC122_SHEET_PROTECTION,
+    children: ["dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData", "sheetProtection", "pageMargins"],
+  },
+  inline: {
+    values: { A1: "Source", B1: "Rows", A2: "ledger.csv", B2: 128, A3: "Checked by script", B3: true, A4: "  padded  " },
+    rich: { ref: "A3", runs: [{ text: "Checked", font: { bold: true } }, { text: " by script" }] },
+  },
+  /** xl/calcChain.xml's cells (`i` = the sheet's sheetId, written on each sheet's first). */
+  calcChain: [
+    ...["C2", "C3", "C4", "C5", "D2", "D3", "D4", "D5", "B6", "C6", "B7", "E2", "J1", "G2", "J2"].map((r) => ({ r, i: 1 })),
+    { r: "B3", i: 2 },
+  ],
+  /** xl/metadata.xml as Excel relates and types it. */
+  metadata: {
+    partName: "xl/metadata.xml",
+    rId: "rId8",
+    type: `${REL_TYPE}/sheetMetadata`,
+    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml",
+  },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/worksheets/sheet3.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    "xl/printerSettings/printerSettings1.bin",
+    "xl/metadata.xml",
+    "xl/richData/rdrichvalue.xml",
+    "xl/richData/rdrichvaluestructure.xml",
+    "xl/richData/rdRichValueTypes.xml",
+    "xl/richData/richValueRel.xml",
+    "xl/richData/_rels/richValueRel.xml.rels",
+    "xl/media/image1.png",
+    "xl/calcChain.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+const SPEC122_FONT_TAIL = `<name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font>`;
+
+/** spec122-shapes.xlsx's styles part (see SPEC122_XF): font 1 is the 6 pt
+ * phonetic font the phonetic item names, fill 2 and font 4 theme colours
+ * with Excel's tints, dxf 0 the classic conditional format's. */
+const SPEC122_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<numFmts count="2"><numFmt numFmtId="164" formatCode="${excelAttr(SPEC122_NUMFMTS[164])}"/><numFmt numFmtId="165" formatCode="${SPEC122_NUMFMTS[165]}"/></numFmts>` +
+  `<fonts count="5" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/>${SPEC122_FONT_TAIL}` +
+  `<font><sz val="6"/><name val="Aptos Narrow"/><family val="3"/><charset val="128"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/>${SPEC122_FONT_TAIL}` +
+  `<font><u/><sz val="11"/><color theme="10"/>${SPEC122_FONT_TAIL}` +
+  `<font><i/><sz val="11"/><color theme="1" tint="0.34998626667073579"/>${SPEC122_FONT_TAIL}</fonts>` +
+  `<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor theme="4" tint="0.79998168889431442"/><bgColor indexed="64"/></patternFill></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFFFF2CC"/><bgColor indexed="64"/></patternFill></fill></fills>` +
+  `<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border>` +
+  `<border><left/><right/><top/><bottom style="thin"><color theme="4"/></bottom><diagonal/></border>` +
+  `<border><left/><right/><top style="thin"><color theme="4"/></top><bottom style="double"><color theme="4"/></bottom><diagonal/></border></borders>` +
+  `<cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" applyNumberFormat="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+  `<cellXfs count="11"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>` +
+  `<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="22" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="0" fontId="2" fillId="0" borderId="2" xfId="0" applyFont="1" applyBorder="1"/>` +
+  `<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" quotePrefix="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="3" borderId="0" xfId="0" applyFill="1" applyProtection="1"><protection locked="0"/></xf>` +
+  `<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment wrapText="1"/></xf></cellXfs>` +
+  `<cellStyles count="2"><cellStyle name="Hyperlink" xfId="1" builtinId="8"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
+  `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">` +
+  `<x14:slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext>` +
+  `<ext uri="{9260A510-F301-46a8-8635-F512D64BE5F5}" xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main">` +
+  `<x15:timelineStyles defaultTimelineStyle="TimeSlicerStyleLight1"/></ext></extLst></styleSheet>`;
+
+/** xl/metadata.xml: the dynamic array's XLDAPR (cm="1") and the placed
+ * picture's XLRICHVALUE (vm="1" → rich value 0). */
+const SPEC122_METADATA =
+  XML_DECLARATION +
+  `<metadata xmlns="${MAIN_NS}" xmlns:xlrd="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata" ` +
+  `xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray"><metadataTypes count="2">` +
+  `<metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" ` +
+  `clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/>` +
+  `<metadataType name="XLRICHVALUE" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" ` +
+  `clearFormats="1" clearComments="1" assign="1" coerce="1"/></metadataTypes>` +
+  `<futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}">` +
+  `<xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata>` +
+  `<futureMetadata name="XLRICHVALUE" count="1"><bk><extLst><ext uri="{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}"><xlrd:rvb i="0"/></ext></extLst></bk></futureMetadata>` +
+  `<cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata><valueMetadata count="1"><bk><rc t="2" v="0"/></bk></valueMetadata></metadata>`;
+
+const SPEC122_RICH_DATA_NS = "http://schemas.microsoft.com/office/spreadsheetml/2017/richdata";
+
+/** The placed picture's rich value: a `_localImage` naming relationship 0
+ * of richValueRel.xml (CalcOrigin 5: placed in the cell). */
+const SPEC122_RICH_VALUE = XML_DECLARATION + `<rvData xmlns="${SPEC122_RICH_DATA_NS}" count="1"><rv s="0"><v>0</v><v>5</v></rv></rvData>`;
+const SPEC122_RICH_VALUE_STRUCTURE =
+  XML_DECLARATION +
+  `<rvStructures xmlns="${SPEC122_RICH_DATA_NS}" count="1"><s t="_localImage"><k n="_rvRel:LocalImageIdentifier" t="i"/><k n="CalcOrigin" t="i"/></s></rvStructures>`;
+const SPEC122_RICH_VALUE_TYPES =
+  XML_DECLARATION +
+  `<rvTypesInfo xmlns="http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2" ` +
+  `xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x" xmlns:x="${MAIN_NS}"><global><keyFlags>` +
+  `<key name="_Self"><flag name="ExcludeFromFile" value="1"/><flag name="ExcludeFromCalcComparison" value="1"/></key>` +
+  ["_DisplayString", "_Flags", "_Format", "_SubLabel", "_Attribution", "_Icon", "_Display", "_CanonicalPropertyNames", "_ClassificationId"]
+    .map((key) => `<key name="${key}"><flag name="ExcludeFromCalcComparison" value="1"/></key>`)
+    .join("") +
+  `</keyFlags></global></rvTypesInfo>`;
+const SPEC122_RICH_VALUE_RELS =
+  XML_DECLARATION +
+  `<richValueRels xmlns="http://schemas.microsoft.com/office/spreadsheetml/2022/richvaluerel" xmlns:r="${REL_NS}"><rel r:id="rId1"/></richValueRels>`;
+
+/** xl/printerSettings/printerSettings1.bin: a stand-in for the DEVMODE
+ * Windows Excel caches with a page setup — the device name in UTF-16, then
+ * a few fields (bytes this product keeps, never reads). */
+function spec122PrinterSettings(): Uint8Array {
+  const device = "Microsoft Print to PDF";
+  const bytes = new Uint8Array(72);
+  for (let i = 0; i < device.length; i += 1) {
+    bytes[i * 2] = device.charCodeAt(i);
+  }
+  bytes.set([0x01, 0x04, 0x00, 0x05, 0xdc, 0x00, 0x24, 0x03], 64);
+  return bytes;
+}
+
+/** A shared-string cell for the SPEC122_SST item whose value is `value`;
+ * `extra` adds attributes after `t` (Excel's order: r, s, t, cm, vm, ph). */
+function spec122Text(ref: string, value: string, style?: number, extra = ""): string {
+  const index = SPEC122_SST.findIndex((item) => item.value === value);
+  if (index < 0) {
+    throw new Error(`"${value}" is not one of spec122-shapes.xlsx's strings`);
+  }
+  return `<c r="${ref}"${style ? ` s="${style}"` : ""} t="s"${extra}><v>${index}</v></c>`;
+}
+
+const spec122Number = (ref: string, value: number, style?: number): string =>
+  `<c r="${ref}"${style ? ` s="${style}"` : ""}><v>${excelNumberText(value)}</v></c>`;
+
+/** A formula cell with a numeric result: `<f>` (any shape) and the cached `<v>`. */
+const spec122Formula = (ref: string, f: string, value: number, style?: number, cm?: number): string =>
+  `<c r="${ref}"${style ? ` s="${style}"` : ""}${cm === undefined ? "" : ` cm="${cm}"`}>${f}<v>${excelNumberText(value)}</v></c>`;
+
+/** One of the Excel-shaped rows: `r`, the 16-row block's `spans` (every
+ * column A:J holds a cell in rows 1–16), the row's own attributes in
+ * Excel's order, `x14ac:dyDescent`. */
+const spec122Row = (r: number, spans: string, attrs: string, cells: string): string =>
+  `<row r="${r}" spans="${spans}"${attrs} x14ac:dyDescent="0.35">${cells}</row>`;
+
+/** "Edit" — see the section header and SPEC122_SHAPES_XLSX.edit. */
+function spec122EditSheet(): string {
+  const E = SPEC122_SHAPES_XLSX.edit;
+  const V = E.values;
+  const X = SPEC122_XF;
+  const [C, D] = E.sharedBlocks;
+  const row = (r: number, cells: string, attrs = ""): string => spec122Row(r, E.spans, attrs, cells);
+  const outlined = ` outlineLevel="1"`;
+  const shared = (ref: string, si: number, value: number): string => spec122Formula(ref, `<f t="shared" si="${si}"/>`, value);
+  const rows = [
+    row(
+      1,
+      (["A1", "B1", "C1", "D1", "E1", "F1", "G1", "I1"] as const).map((ref) => spec122Text(ref, V[ref], X.header)).join("") +
+        spec122Formula("J1", normalF(E.formulas.J1), V.J1),
+    ),
+    row(
+      2,
+      spec122Text("A2", V.A2) +
+        spec122Number("B2", V.B2) +
+        spec122Formula("C2", `<f t="shared" ref="${C.ref}" si="${C.si}">${xmlText(C.wire)}</f>`, V.C2) +
+        spec122Formula("D2", `<f t="shared" ref="${D.ref}" si="${D.si}">${xmlText(D.wire)}</f>`, V.D2) +
+        spec122Formula("E2", `<f t="array" ref="${E.array.ref}">${xmlText(E.formulas.E2)}</f>`, V.E2, X.percent) +
+        spec122Number("F2", V.F2) +
+        spec122Formula("G2", `<f t="array" ref="${E.dynamicArray.ref}">${E.dynamicArray.wire}</f>`, V.G2, undefined, E.dynamicArray.cm) +
+        spec122Number("I2", V.I2, X.percent) +
+        spec122Formula("J2", SPEC122_DATA_TABLE, V.J2),
+      outlined,
+    ),
+    row(
+      3,
+      spec122Text("A3", V.A3) + spec122Number("B3", V.B3) + shared("C3", C.si, V.C3) + shared("D3", D.si, V.D3) + spec122Number("E3", V.E3, X.percent) +
+        spec122Number("G3", V.G3) + spec122Number("I3", V.I3, X.percent) + spec122Number("J3", V.J3),
+      outlined,
+    ),
+    row(
+      4,
+      spec122Text("A4", V.A4) + spec122Number("B4", V.B4) + shared("C4", C.si, V.C4) + shared("D4", D.si, V.D4) + spec122Number("E4", V.E4, X.percent) +
+        spec122Number("G4", V.G4) + spec122Number("I4", V.I4, X.percent) + spec122Number("J4", V.J4),
+      outlined,
+    ),
+    row(
+      5,
+      spec122Text("A5", V.A5) + spec122Number("B5", V.B5) + shared("C5", C.si, V.C5) + shared("D5", D.si, V.D5) + spec122Number("E5", V.E5, X.percent) +
+        spec122Number("G5", V.G5),
+      outlined,
+    ),
+    row(
+      6,
+      spec122Text("A6", V.A6, X.total) + spec122Formula("B6", normalF(E.formulas.B6), V.B6, X.total) + spec122Formula("C6", normalF(E.formulas.C6), V.C6, X.total),
+    ),
+    row(7, spec122Text("A7", V.A7) + spec122Formula("B7", normalF(E.formulas.B7), V.B7)),
+    row(8, spec122Text("A8", V.A8)),
+    row(9, spec122Text("A9", V.A9, X.note), ` ht="${E.tallRow.heightPt}"`),
+    row(10, spec122Text("A10", V.A10) + spec122Number("B10", V.B10, X.date)),
+    row(11, spec122Text("A11", V.A11) + spec122Number("B11", V.B11, X.dateTime)),
+    row(12, spec122Text("A12", V.A12) + spec122Number("B12", V.B12, X.redNegative)),
+    row(13, spec122Text("A13", V.A13, undefined, E.phonetic.preservedAttrs) + spec122Text("B13", V.B13)),
+    row(14, spec122Text("A14", V.A14) + spec122Text("B14", V.B14, X.quotePrefix)),
+    row(15, spec122Text("A15", V.A15, X.hyperlink) + spec122Text("B15", V.B15, X.hyperlink)),
+    row(16, spec122Text("A16", V.A16) + `<c r="B16" t="e"${E.valueMetadata.preservedAttrs}><v>${V.B16.error}</v></c>`),
+  ].join("");
+  const H = E.hyperlinks;
+  const CF = E.conditionalFormats;
+  const x14 = `xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"`;
+  const [firstColumn, groupedColumns] = E.columns;
+  return (
+    XML_DECLARATION +
+    worksheetOpen(SPEC122_SHAPES_XLSX.sheets[0].uid.slice(1, -1)) +
+    `<dimension ref="${E.dimension}"/><sheetViews><sheetView tabSelected="1" workbookViewId="0">` +
+    `<pane ySplit="${E.frozen.rows}" topLeftCell="${E.topLeftCell}" activePane="bottomLeft" state="frozen"/>` +
+    `<selection pane="bottomLeft" activeCell="${E.activeCell}" sqref="${E.activeCell}"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" outlineLevelRow="1" outlineLevelCol="1" x14ac:dyDescent="0.35"/>` +
+    `<cols><col min="${firstColumn.min + 1}" max="${firstColumn.max + 1}" width="${firstColumn.sourceWidthChars}" customWidth="1"/>` +
+    `<col min="${groupedColumns.min + 1}" max="${groupedColumns.max + 1}" width="${groupedColumns.sourceWidthChars}" customWidth="1" ${groupedColumns.sourceAttrs}/></cols>` +
+    `<sheetData>${rows}</sheetData><mergeCells count="1"><mergeCell ref="${E.merge}"/></mergeCells>` +
+    `<conditionalFormatting sqref="${CF.dataBar.sqref}"><cfRule type="dataBar" priority="2"><dataBar><cfvo type="min"/><cfvo type="max"/>` +
+    `<color rgb="FF638EC6"/></dataBar><extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}" ${x14}><x14:id>${CF.dataBar.id}</x14:id></ext></extLst>` +
+    `</cfRule></conditionalFormatting>` +
+    `<conditionalFormatting sqref="${CF.cellIs.sqref}"><cfRule type="cellIs" dxfId="${CF.cellIs.dxfId}" priority="1" operator="greaterThan">` +
+    `<formula>${CF.cellIs.formula}</formula></cfRule></conditionalFormatting>` +
+    `<hyperlinks><hyperlink ref="${H.external.ref}" r:id="${H.external.rId}" xr:uid="${H.external.uid}"/>` +
+    `<hyperlink ref="${H.internal.ref}" location="${H.internal.location}" display="${H.internal.location}" xr:uid="${H.internal.uid}"/></hyperlinks>` +
+    `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>` +
+    `<pageSetup paperSize="9" orientation="landscape" r:id="${E.printerSettings.rId}"/>${E.ignoredErrors}` +
+    `<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" ${x14}><x14:conditionalFormattings>` +
+    `<x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:cfRule type="dataBar" id="${CF.dataBar.id}">` +
+    `<x14:dataBar minLength="0" maxLength="100" border="1" negativeBarBorderColorSameAsPositive="0"><x14:cfvo type="autoMin"/><x14:cfvo type="autoMax"/>` +
+    `<x14:borderColor rgb="FF638EC6"/><x14:negativeFillColor rgb="FFFF0000"/><x14:negativeBorderColor rgb="FFFF0000"/><x14:axisColor rgb="FF000000"/>` +
+    `</x14:dataBar></x14:cfRule><xm:sqref>${CF.dataBar.sqref}</xm:sqref></x14:conditionalFormatting></x14:conditionalFormattings></ext></extLst></worksheet>`
+  );
+}
+
+/** "Locked": the protected sheet (sheetProtection after sheetData, in
+ * CT_Worksheet order), its active cell the locked A1. */
+function spec122LockedSheet(): string {
+  const L = SPEC122_SHAPES_XLSX.locked;
+  const V = L.values;
+  const row = (r: number, cells: string): string => spec122Row(r, "1:2", "", cells);
+  return (
+    XML_DECLARATION +
+    worksheetOpen(SPEC122_SHAPES_XLSX.sheets[1].uid.slice(1, -1)) +
+    `<dimension ref="A1:B3"/><sheetViews><sheetView workbookViewId="0"><selection activeCell="${L.activeCell}" sqref="${L.activeCell}"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/><cols><col min="1" max="1" width="16.6328125" customWidth="1"/></cols><sheetData>` +
+    row(1, spec122Text("A1", V.A1) + spec122Number("B1", V.B1)) +
+    row(2, spec122Text("A2", V.A2) + spec122Number("B2", V.B2, L.unlockedCell.xf)) +
+    row(3, spec122Text("A3", V.A3) + spec122Formula("B3", normalF(L.formulas.B3), V.B3, SPEC122_XF.total)) +
+    `</sheetData>${L.sheetProtection}<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`
+  );
+}
+
+/** "Inline": openpyxl's shape — inline strings (one of them rich), `t="n"`
+ * numbers, rows without spans, no `xr:uid`, its own sizes and margins. */
+function spec122InlineSheet(): string {
+  const V = SPEC122_SHAPES_XLSX.inline.values;
+  const inline = openpyxlInline;
+  return (
+    OPENPYXL_DECLARATION +
+    `<worksheet xmlns="${MAIN_NS}"><sheetPr><outlinePr summaryBelow="1" summaryRight="1"/><pageSetUpPr/></sheetPr><dimension ref="A1:B4"/>` +
+    `<sheetViews><sheetView workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr baseColWidth="8" defaultRowHeight="15"/><sheetData>` +
+    `<row r="1">${inline("A1", V.A1)}${inline("B1", V.B1)}</row>` +
+    `<row r="2">${inline("A2", V.A2)}<c r="B2" t="n"><v>${V.B2}</v></c></row>` +
+    `<row r="3"><c r="A3" t="inlineStr"><is><r><rPr><b val="1"/></rPr><t>Checked</t></r><r><t xml:space="preserve"> by script</t></r></is></c>` +
+    `<c r="B3" t="b"><v>1</v></c></row>` +
+    `<row r="4"><c r="A4" t="inlineStr"><is><t xml:space="preserve">${V.A4}</t></is></c></row>` +
+    `</sheetData><pageMargins left="0.75" right="0.75" top="1" bottom="1" header="0.5" footer="0.5"/></worksheet>`
+  );
+}
+
+export async function buildSpec122ShapesXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC122_SHAPES_XLSX;
+  const worksheets = [spec122EditSheet(), spec122LockedSheet(), spec122InlineSheet()];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${SPEC122_SST.length}">` +
+    SPEC122_SST.map((item) => item.xml ?? `<si><t>${item.value}</t></si>`).join("") +
+    `</sst>`;
+  const calcChain =
+    XML_DECLARATION +
+    `<calcChain xmlns="${MAIN_NS}">` +
+    F.calcChain
+      .map((entry, index) => {
+        const first = index === 0 || F.calcChain[index - 1]!.i !== entry.i;
+        const array = entry.r === F.edit.array.anchor || entry.r === F.edit.dynamicArray.anchor;
+        return `<c r="${entry.r}"${first ? ` i="${entry.i}"` : ""}${index === 0 ? ` l="1"` : ""}${array ? ` a="1"` : ""}/>`;
+      })
+      .join("") +
+    `</calcChain>`;
+  const rels = (relationships: string): string => XML_DECLARATION + `<Relationships xmlns="${PKG_REL_NS}">${relationships}</Relationships>`;
+  const H = F.edit.hyperlinks.external;
+  const P = F.edit.printerSettings;
+  const M = F.metadata;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheets.map((sheet, index) => ({ name: sheet.name, xml: worksheets[index]! })),
+    sharedStrings,
+    calcChain,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC122_STYLES,
+    defaults: [
+      `<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.printerSettings"/>`,
+      `<Default Extension="png" ContentType="image/png"/>`,
+    ],
+    additions: {
+      parts: [
+        part(
+          "xl/worksheets/_rels/sheet1.xml.rels",
+          rels(
+            `<Relationship Id="${P.rId}" Type="${SPEC122_PRINTER_SETTINGS_REL}" Target="../printerSettings/printerSettings1.bin"/>` +
+              `<Relationship Id="${H.rId}" Type="${REL_TYPE}/hyperlink" Target="${H.target}" TargetMode="External"/>`,
+          ),
+        ),
+        { name: P.partName, data: spec122PrinterSettings() },
+        part(M.partName, SPEC122_METADATA),
+        part("xl/richData/rdrichvalue.xml", SPEC122_RICH_VALUE),
+        part("xl/richData/rdrichvaluestructure.xml", SPEC122_RICH_VALUE_STRUCTURE),
+        part("xl/richData/rdRichValueTypes.xml", SPEC122_RICH_VALUE_TYPES),
+        part("xl/richData/richValueRel.xml", SPEC122_RICH_VALUE_RELS),
+        part("xl/richData/_rels/richValueRel.xml.rels", rels(`<Relationship Id="rId1" Type="${REL_TYPE}/image" Target="../media/image1.png"/>`)),
+        { name: "xl/media/image1.png", data: THUMBNAIL_PNG },
+      ],
+      relationships: [
+        `<Relationship Id="${M.rId}" Type="${M.type}" Target="metadata.xml"/>`,
+        `<Relationship Id="rId9" Type="${SPEC122_RICH_VALUE_REL}" Target="richData/richValueRel.xml"/>`,
+        `<Relationship Id="rId10" Type="${SPEC122_RD_REL}/rdRichValue" Target="richData/rdrichvalue.xml"/>`,
+        `<Relationship Id="rId11" Type="${SPEC122_RD_REL}/rdRichValueStructure" Target="richData/rdrichvaluestructure.xml"/>`,
+        `<Relationship Id="rId12" Type="${SPEC122_RD_REL}/rdRichValueTypes" Target="richData/rdRichValueTypes.xml"/>`,
+      ],
+      overrides: [
+        `<Override PartName="/${M.partName}" ContentType="${M.contentType}"/>`,
+        `<Override PartName="/xl/richData/richValueRel.xml" ContentType="application/vnd.ms-excel.richvaluerel+xml"/>`,
+        `<Override PartName="/xl/richData/rdrichvalue.xml" ContentType="application/vnd.ms-excel.rdrichvalue+xml"/>`,
+        `<Override PartName="/xl/richData/rdrichvaluestructure.xml" ContentType="application/vnd.ms-excel.rdrichvaluestructure+xml"/>`,
+        `<Override PartName="/xl/richData/rdRichValueTypes.xml" ContentType="application/vnd.ms-excel.rdrichvaluetypes+xml"/>`,
+      ],
+    },
+  });
+}
+
+// --- spec122-shapes.ods ---------------------------------------------------------
+
+/** "Data"'s annotation (A14), verbatim — what the reader keeps as the
+ * cell's preservedXml. */
+const SPEC122_ODS_ANNOTATION =
+  `<office:annotation draw:style-name="gr1" draw:text-style-name="P1" svg:width="1.6in" svg:height="0.5in" svg:x="1.6in" svg:y="2.3in" ` +
+  `draw:caption-point-x="-0.1in" draw:caption-point-y="0.12in"><dc:creator>${FIXTURE_WORKBOOK_AUTHOR}</dc:creator><dc:date>2026-10-08T17:20:00</dc:date>` +
+  `<text:p text:style-name="P1">Matches the delivery note.</text:p></office:annotation>`;
+
+/** "Data"'s link paragraph (A15), verbatim — the cell's preservedText. */
+const SPEC122_ODS_LINK = `<text:p><text:a xlink:href="https://example.com/catalogue" xlink:type="simple">Catalogue</text:a></text:p>`;
+
+/** What spec122-shapes.ods holds, for the unit and round-trip specs. Cells
+ * are A1 notation; a formula cell's value is its cached result. */
+export const SPEC122_SHAPES_ODS = {
+  title: "Shapes",
+  tableNames: ["Data", "Locked"],
+  activeTable: "Data",
+  activeSheetIndex: 0,
+  data: {
+    /** Every stored cell → the reader's value (rows 4–6 are one repeated row,
+     * B7:D7 one repeated cell; the covered B12, A13 and B13 store nothing). */
+    values: {
+      A1: "Item", B1: "Qty", C1: "Price", D1: "Total",
+      A2: "Widget", B2: 4, C2: 2.5, D2: 10,
+      A3: "Gadget", B3: 3, C3: 4.25, D3: 12.75,
+      A4: "Spare", B4: 1, C4: 0.5, D4: 0.5,
+      A5: "Spare", B5: 1, C5: 0.5, D5: 0.5,
+      A6: "Spare", B6: 1, C6: 0.5, D6: 0.5,
+      A7: "Zero", B7: 0, C7: 0, D7: 0,
+      A8: "Discount", B8: 0.15,
+      A9: "Delivered", B9: dateToSerial(2026, 10, 8, "1900"), C9: (13 * 60 + 45) / (24 * 60),
+      A10: "In stock", B10: true, C10: false,
+      A11: "Balance", B11: -42.5,
+      A12: "Merged note", C12: 7,
+      A14: "Reviewed",
+      A15: "Catalogue",
+      A16: "Quantity", B16: 5,
+      A17: "Highlighted",
+      A18: "Total qty", B18: 10,
+      A19: "Total value", B19: 24.25,
+      A20: "Big orders", B20: 2,
+      A21: "Label", B21: "Widget x4",
+      A22: "Long time", B22: (36 * 60 + 5) / (24 * 60),
+      A23: "Done",
+    },
+    /** Formula cells: `table:formula`, the canonical formula, the cached value. */
+    formulas: {
+      D2: { wire: "of:=[.B2]*[.C2]", formula: "B2*C2", value: 10 },
+      D3: { wire: "of:=[.B3]*[.C3]", formula: "B3*C3", value: 12.75 },
+      B18: { wire: "of:=SUM([.B2:.B7])", formula: "SUM(B2:B7)", value: 10 },
+      B19: { wire: "of:=SUM([.D2:.D7])", formula: "SUM(D2:D7)", value: 24.25 },
+      B20: { wire: 'of:=COUNTIF([.B2:.B7];">1")', formula: 'COUNTIF(B2:B7,">1")', value: 2 },
+      B21: { wire: 'of:=[.A2]&" x"&[.B2]', formula: 'A2&" x"&B2', value: "Widget x4" },
+    },
+    /** 23 rows written over A:D; LibreOffice's tails reach the grid's edge. */
+    usedRows: 23,
+    usedColumns: 4,
+    trailingRowRun: 1_048_553,
+    trailingColumnRun: 16_380,
+    /** Row 1 in `table:table-header-rows`; rows 2–7 in a `table:table-row-group`. */
+    headerRows: { first: 0, last: 0 },
+    rowGroup: { first: 1, last: 6 },
+    repeatedRow: { first: "A4", count: 3 },
+    repeatedCell: { first: "B7", count: 3, value: 0 },
+    /** A12 spans A12:B13 (2×2) over three covered cells. */
+    merge: { anchor: "A12", range: "A12:B13", covered: ["B12", "A13", "B13"] },
+    annotation: { a1: "A14", xml: SPEC122_ODS_ANNOTATION, creator: FIXTURE_WORKBOOK_AUTHOR, text: "Matches the delivery note." },
+    link: { a1: "A15", href: "https://example.com/catalogue", text: "Catalogue", paragraph: SPEC122_ODS_LINK },
+    /** B16's validation, declared in content.xml's prefix. */
+    validation: {
+      a1: "B16",
+      name: "val1",
+      condition: "of:cell-content-is-whole-number() and cell-content-is-between(1;10)",
+      baseCellAddress: "Data.B16",
+      preservedAttrs: ` table:content-validation-name="val1"`,
+    },
+    /** A17's automatic style is literally named de-ce1 (a yellow fill): the
+     * table writer's generated names must step past it. */
+    collision: { a1: "A17", styleName: "de-ce1", fill: "#ffff00" },
+    /** B11 in ce6 → N2, the red negative (N2P0 through style:map). */
+    redNegative: { a1: "B11", styleName: "ce6", dataStyle: "N2", code: "0.00;[Red]-0.00" },
+    /** C2:D6 and B19 in ce3 → N122, USD with a red negative (N122P0 through style:map). */
+    currency: { styleName: "ce3", dataStyle: "N122" },
+    localNamedRange: { name: "Quantities", baseCellAddress: "$Data.$B$2", cellRangeAddress: "$Data.$B$2:.$B$7" },
+    conditionalFormat: { targetRangeAddress: "Data.D2:Data.D7", value: ">10", baseCellAddress: "Data.D2", applyStyleName: "Bad" },
+  },
+  locked: {
+    values: { A1: "Approved total", B1: 24.25, A2: "Adjustment", B2: 1.5, A3: "Final", B3: 25.75 },
+    formulas: { B3: { wire: "of:=[.B1]+[.B2]", formula: "B1+B2", value: 25.75 } },
+    protectedCell: { a1: "A1" },
+    /** B2: the table's one cell whose style (ce7) says style:cell-protect="none". */
+    unprotectedCell: { a1: "B2", styleName: "ce7", value: 1.5 },
+    password: "fixture",
+    /** Calc's key: base64 SHA-256 of the UTF-8 password. */
+    protectionKey: "8W0F7GspJI0sYa2x6SY/eOT3us4blVAUotF4cs/kBk0=",
+    digestAlgorithm: "http://www.w3.org/2000/09/xmldsig#sha256",
+    tableProtection: `<loext:table-protection loext:select-protected-cells="true" loext:select-unprotected-cells="true"/>`,
+  },
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: ["mimetype", "meta.xml", "settings.xml", "content.xml", "Thumbnails/thumbnail.png", "styles.xml", "manifest.rdf", "META-INF/manifest.xml"],
+} as const;
+
+/** content.xml's automatic styles, in Calc's order: columns, rows, the table,
+ * the data styles (N2/N2P0 and N122/N122P0 pairs through style:map), the
+ * cell styles (ce7 unprotected), the de-ce1 a previous save named, and the
+ * annotation's graphic and paragraph styles. */
+const SPEC122_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="co2" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="1.5in"/></style:style>` +
+  `<style:style style:name="co3" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="1in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<number:number-style style:name="N2P0" style:volatile="true"><number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/></number:number-style>` +
+  `<number:number-style style:name="N2"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text>` +
+  `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1"/>` +
+  `<style:map style:condition="value()&gt;=0" style:apply-style-name="N2P0"/></number:number-style>` +
+  `<number:percentage-style style:name="N11"><number:number number:decimal-places="0" number:min-decimal-places="0" number:min-integer-digits="1"/>` +
+  `<number:text>%</number:text></number:percentage-style>` +
+  `<number:date-style style:name="N37" number:automatic-order="true"><number:month number:style="long"/><number:text>/</number:text>` +
+  `<number:day number:style="long"/><number:text>/</number:text><number:year/></number:date-style>` +
+  `<number:time-style style:name="N41" number:truncate-on-overflow="false"><number:hours number:style="long"/><number:text>:</number:text>` +
+  `<number:minutes number:style="long"/><number:text>:</number:text><number:seconds number:style="long"/></number:time-style>` +
+  `<number:currency-style style:name="N122P0" style:volatile="true"><number:currency-symbol number:language="en" number:country="US">$</number:currency-symbol>` +
+  `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1" number:grouping="true"/></number:currency-style>` +
+  `<number:currency-style style:name="N122"><style:text-properties fo:color="#ff0000"/><number:text>-</number:text>` +
+  `<number:currency-symbol number:language="en" number:country="US">$</number:currency-symbol>` +
+  `<number:number number:decimal-places="2" number:min-decimal-places="2" number:min-integer-digits="1" number:grouping="true"/>` +
+  `<style:map style:condition="value()&gt;=0" style:apply-style-name="N122P0"/></number:currency-style>` +
+  `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold" ` +
+  `style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>` +
+  `<style:style style:name="ce2" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N11"/>` +
+  `<style:style style:name="ce3" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N122"/>` +
+  `<style:style style:name="ce4" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N37"/>` +
+  `<style:style style:name="ce5" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N41"/>` +
+  `<style:style style:name="ce6" style:family="table-cell" style:parent-style-name="Default" style:data-style-name="N2"/>` +
+  `<style:style style:name="ce7" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties style:cell-protect="none" ` +
+  `style:print-content="true"/></style:style>` +
+  `<style:style style:name="de-ce1" style:family="table-cell" style:parent-style-name="Default"><style:table-cell-properties fo:background-color="#ffff00"/></style:style>` +
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#000000" draw:fill="solid" ` +
+  `draw:fill-color="#ffffc0" draw:auto-grow-height="true" draw:auto-grow-width="false" fo:padding-top="0.0398in" fo:padding-bottom="0.0398in" ` +
+  `fo:padding-left="0.0398in" fo:padding-right="0.0398in" draw:shadow="visible" draw:shadow-offset-x="0.0236in" draw:shadow-offset-y="0.0236in" ` +
+  `draw:shadow-color="#000000"/><style:paragraph-properties style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-left="0in" fo:margin-right="0in" fo:margin-top="0in" ` +
+  `fo:margin-bottom="0in" fo:text-indent="0in" fo:border="none"/><style:text-properties style:font-name="Liberation Sans" fo:font-size="9pt"/></style:style>` +
+  `</office:automatic-styles>`;
+
+/** A LibreOffice typed cell: its style (if any), value attributes and text. */
+const spec122OdsCell = (style: string | undefined, attrs: string, text: string): string =>
+  `<table:table-cell${style ? ` table:style-name="${style}"` : ""} ${attrs}><text:p>${text}</text:p></table:table-cell>`;
+
+/** "Data" — see the section header and SPEC122_SHAPES_ODS.data. */
+function spec122OdsDataTable(): string {
+  const D = SPEC122_SHAPES_ODS.data;
+  const V = D.values;
+  const F = D.formulas;
+  const cell = spec122OdsCell;
+  /** A row of label A, one value cell B, and the empty run to XFD. */
+  const labelled = (label: string, value: string): string => loRow(loString(label) + value + loEmpty(16382));
+  const header = loRow((["A1", "B1", "C1", "D1"] as const).map((ref) => loString(V[ref], "ce1")).join("") + loEmpty(16380));
+  const group =
+    loRow(loString(V.A2) + loFloat(V.B2) + loCurrency(V.C2, "$2.50") + loCurrency(V.D2, "$10.00", F.D2.wire) + loEmpty(16380)) +
+    loRow(loString(V.A3) + loFloat(V.B3) + loCurrency(V.C3, "$4.25") + loCurrency(V.D3, "$12.75", F.D3.wire) + loEmpty(16380)) +
+    // A repeated NON-empty row: rows 4–6.
+    loRow(loString(V.A4) + loFloat(V.B4) + loCurrency(V.C4, "$0.50") + loCurrency(V.D4, "$0.50") + loEmpty(16380), "ro1", D.repeatedRow.count) +
+    // A repeated NON-empty cell: B7:D7.
+    loRow(
+      loString(V.A7) +
+        `<table:table-cell table:number-columns-repeated="${D.repeatedCell.count}" office:value-type="float" office:value="0" calcext:value-type="float">` +
+        `<text:p>0</text:p></table:table-cell>` +
+        loEmpty(16380),
+    );
+  const A = D.annotation;
+  const rows =
+    labelled(V.A8, cell("ce2", `office:value-type="percentage" office:value="${V.B8}" calcext:value-type="percentage"`, "15%")) +
+    loRow(
+      loString(V.A9) +
+        cell("ce4", `office:value-type="date" office:date-value="2026-10-08" calcext:value-type="date"`, "10/08/2026") +
+        cell("ce5", `office:value-type="time" office:time-value="PT13H45M00S" calcext:value-type="time"`, "13:45:00") +
+        loEmpty(16381),
+    ) +
+    loRow(
+      loString(V.A10) +
+        cell(undefined, `office:value-type="boolean" office:boolean-value="true" calcext:value-type="boolean"`, "TRUE") +
+        cell(undefined, `office:value-type="boolean" office:boolean-value="false" calcext:value-type="boolean"`, "FALSE") +
+        loEmpty(16381),
+    ) +
+    labelled(V.A11, cell(D.redNegative.styleName, `office:value-type="float" office:value="${V.B11}" calcext:value-type="float"`, "-42.50")) +
+    // A 2×2 span: B12 covered here, A13:B13 on the next row.
+    loRow(
+      `<table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2" office:value-type="string" calcext:value-type="string">` +
+        `<text:p>${V.A12}</text:p></table:table-cell><table:covered-table-cell/>` +
+        loFloat(V.C12) +
+        loEmpty(16381),
+    ) +
+    loRow(`<table:covered-table-cell table:number-columns-repeated="2"/>` + loEmpty(16382)) +
+    loRow(`<table:table-cell office:value-type="string" calcext:value-type="string">${A.xml}<text:p>${V.A14}</text:p></table:table-cell>` + loEmpty(16383)) +
+    loRow(`<table:table-cell office:value-type="string" calcext:value-type="string">${D.link.paragraph}</table:table-cell>` + loEmpty(16383)) +
+    labelled(
+      V.A16,
+      `<table:table-cell${D.validation.preservedAttrs} office:value-type="float" office:value="${V.B16}" calcext:value-type="float"><text:p>${V.B16}</text:p></table:table-cell>`,
+    ) +
+    loRow(loString(V.A17, D.collision.styleName) + loEmpty(16383)) +
+    labelled(V.A18, loFloat(V.B18, F.B18.wire)) +
+    labelled(V.A19, loCurrency(V.B19, "$24.25", F.B19.wire)) +
+    labelled(V.A20, loFormula(F.B20.wire, V.B20)) +
+    labelled(
+      V.A21,
+      `<table:table-cell table:formula="${xmlEscape(F.B21.wire)}" office:value-type="string" office:string-value="${V.B21}" calcext:value-type="string">` +
+        `<text:p>${V.B21}</text:p></table:table-cell>`,
+    ) +
+    labelled(V.A22, cell("ce5", `office:value-type="time" office:time-value="PT36H05M00S" calcext:value-type="time"`, "36:05:00")) +
+    loRow(loString(V.A23) + loEmpty(16383)) +
+    // LibreOffice's trailing run to the grid's edge.
+    loRow(loEmpty(16384), "ro1", D.trailingRowRun);
+  const N = D.localNamedRange;
+  const C = D.conditionalFormat;
+  return (
+    `<table:table table:name="${SPEC122_SHAPES_ODS.tableNames[0]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co2" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co3" table:number-columns-repeated="3" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="${D.trailingColumnRun}" table:default-cell-style-name="Default"/>` +
+    `<table:table-header-rows>${header}</table:table-header-rows><table:table-row-group>${group}</table:table-row-group>${rows}` +
+    `<table:named-expressions><table:named-range table:name="${N.name}" table:base-cell-address="${N.baseCellAddress}" ` +
+    `table:cell-range-address="${N.cellRangeAddress}"/></table:named-expressions>` +
+    `<calcext:conditional-formats><calcext:conditional-format calcext:target-range-address="${C.targetRangeAddress}">` +
+    `<calcext:condition calcext:apply-style-name="${C.applyStyleName}" calcext:value="${xmlEscape(C.value)}" calcext:base-cell-address="${C.baseCellAddress}"/>` +
+    `</calcext:conditional-format></calcext:conditional-formats></table:table>`
+  );
+}
+
+/** "Locked": protected with a password, its one unprotected cell B2. */
+function spec122OdsLockedTable(): string {
+  const L = SPEC122_SHAPES_ODS.locked;
+  const V = L.values;
+  return (
+    `<table:table table:name="${SPEC122_SHAPES_ODS.tableNames[1]}" table:style-name="ta1" table:protected="true" ` +
+    `table:protection-key="${L.protectionKey}" table:protection-key-digest-algorithm="${L.digestAlgorithm}">${L.tableProtection}` +
+    `<table:table-column table:style-name="co2" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16383" table:default-cell-style-name="Default"/>` +
+    loRow(loString(V.A1) + loCurrency(V.B1, "$24.25") + loEmpty(16382)) +
+    loRow(
+      loString(V.A2) +
+        spec122OdsCell(L.unprotectedCell.styleName, `office:value-type="float" office:value="${V.B2}" calcext:value-type="float"`, String(V.B2)) +
+        loEmpty(16382),
+    ) +
+    loRow(loString(V.A3) + loFormula(L.formulas.B3.wire, V.B3) + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - 3) +
+    `</table:table>`
+  );
+}
+
+export async function buildSpec122ShapesOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC122_SHAPES_ODS;
+  const V1 = O.data.validation;
+  const validations =
+    `<table:content-validations><table:content-validation table:name="${V1.name}" table:condition="${xmlEscape(V1.condition)}" ` +
+    `table:allow-empty-cell="true" table:base-cell-address="${V1.baseCellAddress}">` +
+    `<table:error-message table:message-type="stop" table:display="true"/></table:content-validation></table:content-validations>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC122_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${validations}${spec122OdsDataTable()}${spec122OdsLockedTable()}` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.data.values).length + Object.keys(O.locked.values).length;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
+    part("meta.xml", loMeta(O.title, O.tableNames.length, cellCount)),
+    part("settings.xml", loSettings(O.tableNames, O.activeTable)),
+    part("content.xml", content),
+    { name: "Thumbnails/thumbnail.png", data: THUMBNAIL_PNG },
+    // Calc's common styles plus "Status" and "Bad", the conditional format's style.
+    part("styles.xml", SPEC121_ODS_STYLES),
+    part("manifest.rdf", LO_MANIFEST_RDF),
+    part("META-INF/manifest.xml", LO_MANIFEST),
   ]);
 }

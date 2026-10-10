@@ -164,7 +164,8 @@ export interface CellStyle {
 
 /** A run of columns sharing one size, visibility and style (SPEC-117) —
  * stored only when it has a width other than the sheet default, `hidden` or
- * a `styleId`. */
+ * a `styleId`, or (SPEC-122) an unmodelled xlsx attribute other than
+ * `bestFit` (an `outlineLevel`, `collapsed` … the writer re-emits). */
 export interface ColumnSpan {
   min: number; // 0-based inclusive; spans sorted, non-overlapping
   max: number;
@@ -210,6 +211,27 @@ export interface Cell {
   /** xlsx What-If data table: the anchor's `<f t="dataTable" …/>` element,
    *  verbatim. No `formula`; members hold cached values. Never evaluated. */
   dataTableXml?: string;
+  // --- SPEC-122: what the writers re-emit for content the model does not
+  // model. Drop rules, applied by every command: setting a cell's value or
+  // runs removes `sstIndex`, `preservedText` and ` vm="…"`; setting or
+  // removing its formula removes `cm`, `dynamicArray` and `dataTableXml`. A
+  // cell holding only preserved content is stored (sparseness counts it as
+  // content). A later spec that models an attribute or child stops capturing
+  // it here, and its reader step moves it into the model. ---
+  /** xlsx: the shared-string index the value was read from; reused while
+   *  value and runs are unchanged. */
+  sstIndex?: number;
+  /** Unmodelled start-tag attributes, verbatim with leading spaces: xlsx
+   *  ` vm="2"`, ` ph="1"` (`cm` is SPEC-119's field); ods
+   *  ` table:content-validation-name="v1"`, … */
+  preservedAttrs?: string;
+  /** Unmodelled children, verbatim: xlsx `<extLst>` (a data table's `<f>` is
+   *  SPEC-119's `dataTableXml`); ods everything except the text paragraphs
+   *  (annotations, frames, unknown elements), in source order. */
+  preservedXml?: string;
+  /** ods: the cell's `text:p` sequence verbatim when it holds inline content
+   *  the model does not (links, fields, notes). */
+  preservedText?: string;
   // Later specs add optional fields only.
 }
 
@@ -217,7 +239,8 @@ export interface Row {
   index: number; // 0-based
   cells: Cell[]; // ascending by col, unique
   // SPEC-117 — a row with no cells is stored only if it has a height,
-  // `hidden` or a `styleId`:
+  // `hidden` or a `styleId`, or (SPEC-122) an unmodelled xlsx attribute the
+  // writer re-emits (rowSourceAttrsHoldProperties):
   heightPt?: number;
   customHeight?: true;
   hidden?: true;
@@ -263,6 +286,11 @@ export interface Sheet {
    *  the origin's source-time text, so the writer maps that name to the
    *  copy's when remapping it. A copy is never an "original". */
   copiedFrom?: string;
+  // --- SPEC-122 ---
+  /** The sheet is protected (xlsx `sheetProtection@sheet="1"`, ods
+   *  `table:protected="true"`): a locked cell refuses entry. Read only — the
+   *  protection XML stays in the retained source, never changed. */
+  protection?: { sheet: true };
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -319,6 +347,12 @@ export interface SpreadsheetModel {
    *  visibility, tab colour, order) changed since open. Absent on a freshly
    *  opened workbook; a from-scratch workbook is always fully built. */
   structureDirty?: true;
+  // --- SPEC-122 ---
+  /** The workbook's structure is protected (xlsx
+   *  `workbookProtection@lockStructure="1"`, ods
+   *  `office:spreadsheet@table:structure-protected="true"`): the sheet
+   *  commands are disabled. Read only, never written. */
+  structureProtected?: true;
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or
@@ -330,6 +364,52 @@ export function hasSource(sheet: Pick<Sheet, "partName" | "sourceXml">): boolean
 /** An original (SPEC-121): a sheet with a source and no `copiedFrom`. */
 export function isOriginal(sheet: Pick<Sheet, "partName" | "sourceXml" | "copiedFrom">): boolean {
   return hasSource(sheet) && sheet.copiedFrom === undefined;
+}
+
+const VM_ATTRIBUTE = /\s+vm\s*=\s*(?:"[^"]*"|'[^']*')/g;
+
+/** Removes, from a cell copy about to take a new value or runs, what the
+ * value invalidates (the drop rules, SPEC-122): `runs`, `sstIndex`,
+ * `preservedText` and a ` vm="…"` in `preservedAttrs` — whoever sets the
+ * value, a command or a recalculation. */
+export function dropValueBound(cell: Cell): void {
+  delete cell.runs;
+  delete cell.sstIndex;
+  delete cell.preservedText;
+  if (cell.preservedAttrs !== undefined) {
+    const rest = cell.preservedAttrs.replace(VM_ATTRIBUTE, "");
+    if (rest.length === 0) {
+      delete cell.preservedAttrs;
+    } else {
+      cell.preservedAttrs = rest;
+    }
+  }
+}
+
+const ROW_LAYOUT_CACHE_ATTRIBUTE = /^(?:spans|(?:[\w.-]+:)?dyDescent)$/;
+const SOURCE_ATTRIBUTE = /([^\s=]+)\s*=\s*(?:"[^"]*"|'[^']*')/g;
+
+/** Whether an xlsx `<row>` attribute is one of Excel's layout caches
+ * (`spans`, `x14ac:dyDescent`) rather than a property: the xlsx writer drops
+ * them (SPEC-122). */
+export function isRowLayoutCacheAttribute(name: string): boolean {
+  return ROW_LAYOUT_CACHE_ATTRIBUTE.test(name);
+}
+
+/** Whether a row's `sourceAttrs` hold an attribute other than the layout
+ * caches — an `outlineLevel`, `collapsed`, `thickBot` …: a property the xlsx
+ * writer re-emits, so a row without cells carrying one is stored
+ * (SPEC-122). */
+export function rowSourceAttrsHoldProperties(sourceAttrs: string | undefined): boolean {
+  if (sourceAttrs === undefined) {
+    return false;
+  }
+  for (const match of sourceAttrs.matchAll(SOURCE_ATTRIBUTE)) {
+    if (!isRowLayoutCacheAttribute(match[1]!)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /** The error codes a cell can hold, for readers validating what a file

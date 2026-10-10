@@ -62,7 +62,8 @@ test("spec119-formulas.xlsx shows its formulas in the bar and, with Ctrl+`, in t
   const ifs = await select(page, "G2");
   await expect(ifs).toHaveText('=IFS(A2>1,"big",TRUE,"small")');
   await expect(ifs).not.toContainText("_xlfn.");
-  await expect(ifs).toHaveAttribute("aria-readonly", "true");
+  // SPEC-122 made the bar editable: a textbox holding the cell editor's draft.
+  await expect(ifs).toHaveAttribute("contenteditable", "true");
 
   // Ctrl+`: formulas in the grid, and View ▸ Show formulas checked.
   await page.keyboard.press("Control+Backquote");

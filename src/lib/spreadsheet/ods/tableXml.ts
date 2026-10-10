@@ -54,15 +54,35 @@
 //   absolute addresses, so it is never shifted), and a matrix formula's
 //   `table:number-matrix-columns-spanned`/`-rows-spanned` become each
 //   repetition's own `arrayRange`, clamped to the grid.
-import { scanAttr, type XmlScanAttribute } from "../../core/xmlScanner";
+import { DEFAULT_THEME, resolveColor } from "../../core/theme";
+import { scanAttr, scanXml, type XmlScanAttribute } from "../../core/xmlScanner";
+import { sanitizeXmlText } from "../../core/xmlText";
 import { TABLE_NAMESPACE } from "../../core/odfXml";
 import type { GridRange } from "../address";
 import { ODS_DEFAULT_COL_WIDTH_PX, ODS_DEFAULT_ROW_HEIGHT_PT } from "../geometry";
 import { acceptMerges } from "../merges";
-import type { FormulaFields } from "../formula/dialect";
-import { MAX_COLS, MAX_ROWS, type Cell, type CellValue, type ColumnSpan, type Row, type TextRun } from "../model";
+import { toOdsFormula, type FormulaFields } from "../formula/dialect";
+import {
+  isCellError,
+  MAX_COLS,
+  MAX_ROWS,
+  type Cell,
+  type CellValue,
+  type ColumnSpan,
+  type Row,
+  type Sheet,
+  type SpreadsheetModel,
+  type TextRun,
+} from "../model";
+import { formatCodeOf } from "../numberFormat/builtin";
+import { SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../numberFormat/locale";
+import { LCID_SYSTEM_LONG_DATE, LCID_SYSTEM_LONG_TIME, parseFormatCode, type FormatSection } from "../numberFormat/parse";
+import { formatValue, plainText, workbookFormatContext, type FormatContext } from "../numberFormat/render";
 import { addressText, type CellBudget, outOfGridError } from "../parsed";
-import type { OdsRowHeight } from "./styles";
+import { serialToOdsDateValue, serialToOdsTimeValue } from "../serial";
+import { cellStyle, columnSpanAt } from "../styles";
+import { tableStartTag } from "./package";
+import type { OdsRowHeight, OdsStyleEnv, OdsStyleRegistry } from "./styles";
 
 /** What the table reader needs from the workbook's styles (OdsStyleBook). */
 export interface OdsLayoutStyles {
@@ -81,6 +101,14 @@ export interface OdsLayoutStyles {
  * the matrix extent its spans declare. */
 export interface OdsCellFormula extends FormulaFields {
   matrix?: { cols: number; rows: number };
+}
+
+/** A cell's captures (SPEC-122 "Model additions"), as reader.ts reads
+ * them: the cell's `preservedAttrs`, `preservedXml` and `preservedText`. */
+export interface OdsCellPreserved {
+  attrs?: string;
+  xml?: string;
+  text?: string;
 }
 
 /** A table's layout, as the sheet stores it. */
@@ -184,6 +212,20 @@ export function acceptMergesByBand(candidates: readonly GridRange[]): GridRange[
     kept.push(...acceptMerges(band));
   }
   return kept;
+}
+
+/** Gives a cell its captures (the strings are shared: they are immutable). */
+function withPreserved(cell: Cell, preserved: OdsCellPreserved): Cell {
+  if (preserved.attrs !== undefined) {
+    cell.preservedAttrs = preserved.attrs;
+  }
+  if (preserved.xml !== undefined) {
+    cell.preservedXml = preserved.xml;
+  }
+  if (preserved.text !== undefined) {
+    cell.preservedText = preserved.text;
+  }
+  return cell;
 }
 
 /** Reads one table, element by element, as reader.ts's scan meets them. */
@@ -357,9 +399,10 @@ export class OdsTableReader {
 
   /** One cell element of the current row, repeated as declared: `value` is
    * its value (null for none), `runs` its rich text, `impliedCode` the
-   * format its value type implies when its style gives none (SPEC-118) and
-   * `formula` its formula (SPEC-119). Returns false when the cell ceiling
-   * stops the read. */
+   * format its value type implies when its style gives none (SPEC-118),
+   * `formula` its formula (SPEC-119) and `preserved` its captures (SPEC-122:
+   * a cell holding only those is stored too). Returns false when the cell
+   * ceiling stops the read. */
   cell(
     attrs: readonly XmlScanAttribute[],
     covered: boolean,
@@ -367,6 +410,7 @@ export class OdsTableReader {
     runs?: TextRun[],
     impliedCode?: string,
     formula?: OdsCellFormula,
+    preserved?: OdsCellPreserved,
   ): boolean {
     const row = this.row!;
     const repeat = repeatCount(attrs, "number-columns-repeated");
@@ -378,7 +422,10 @@ export class OdsTableReader {
       this.collectSpan(row, attrs, first, repeat);
     }
     if (value !== null || formula !== undefined) {
-      return this.storeValues(row, first, repeat, value, runs, styleId, impliedCode, formula);
+      return this.storeValues(row, first, repeat, value, runs, styleId, impliedCode, formula, preserved);
+    }
+    if (preserved) {
+      return this.storePreserved(row, first, repeat, styleId, preserved);
     }
     if (styleId !== undefined) {
       return this.storeStyled(row, first, repeat, styleId);
@@ -406,6 +453,7 @@ export class OdsTableReader {
     styleId: number | undefined,
     impliedCode: string | undefined,
     formula?: OdsCellFormula,
+    preserved?: OdsCellPreserved,
   ): boolean {
     if (row.index >= MAX_ROWS) {
       throw outOfGridError(this.name, addressText(row.index, first));
@@ -446,7 +494,30 @@ export class OdsTableReader {
           };
         }
       }
+      if (preserved) {
+        withPreserved(cell, preserved);
+      }
       row.cells.push(cell);
+    }
+    return true;
+  }
+
+  /** A cell (run) holding only preserved content (SPEC-122): stored, each
+   * repetition counted; past the grid it has nothing to show. */
+  private storePreserved(row: PendingRow, first: number, repeat: number, styleId: number | undefined, preserved: OdsCellPreserved): boolean {
+    if (row.index >= MAX_ROWS || first >= MAX_COLS) {
+      return true;
+    }
+    const last = Math.min(first + repeat, MAX_COLS) - 1;
+    if (!this.budget.take(last - first + 1)) {
+      return false;
+    }
+    for (let col = first; col <= last; col += 1) {
+      const cell: Cell = { col, value: null };
+      if (styleId !== undefined) {
+        cell.styleId = styleId;
+      }
+      row.cells.push(withPreserved(cell, preserved));
     }
     return true;
   }
@@ -648,4 +719,842 @@ export class OdsTableReader {
       merges: acceptMergesByBand(this.mergeCandidates),
     };
   }
+}
+
+// --- the table writer (SPEC-122 "The table writer") -------------------------------------
+
+/** What serializeTable needs beyond the sheet. */
+export interface OdsTableContext {
+  /** The sheet's retained table text (sourceXml, its leading whitespace
+   * included) with the writer's sheet-reference pass and SPEC-121's
+   * `table:name` / `table:style-name` splices already applied; undefined for
+   * a new sheet, whose start tag is generated. */
+  source?: string;
+  model: Pick<SpreadsheetModel, "styles" | "theme" | "dateSystem" | "odsNullDate" | "format" | "indexedColors">;
+  registry: OdsStyleRegistry;
+  /** The user's number locale: the informative `text:p` and a
+   * locale-dependent built-in's generated number style are written in it. */
+  locale: SpreadsheetLocale;
+  /** Whether the target package holds the source's styles (the substitution
+   * path): a style, row or column read from the file then keeps its name.
+   * From scratch every style is generated. */
+  sourceStyleNames?: boolean;
+  /** Whether styles.xml defines a common table-cell style (a generated
+   * style's parent). */
+  commonCellStyle?: (name: string) => boolean;
+  /** The source's column and row styles as the reader measured them — how
+   * the source's default (last-run) column and row styles are recognised and
+   * reused for default-sized columns and rows. */
+  layoutStyles?: Pick<OdsLayoutStyles, "columnWidthPx" | "rowHeight">;
+  /** The retained-text sheet-reference pass, for a cell's preserved content
+   * (source-time text, like sourceXml). */
+  passRetained?: (text: string) => string;
+}
+
+type Axis = "row" | "col";
+
+/** A grouping element of the source (header rows, row groups,
+ * `table:table-rows`, and the column equivalents) and the indices it
+ * covered at read. */
+interface SkeletonGroup {
+  axis: Axis;
+  qname: string;
+  /** The start tag verbatim (the whole element when self-closing). */
+  open: string;
+  selfClosing: boolean;
+  from: number;
+  to: number;
+  children: SkeletonGroup[];
+}
+
+/** A source table as the writer rebuilds it (see serializeTable). */
+interface TableSkeleton {
+  /** The whitespace before the table and its start tag. */
+  head: string;
+  leading: string;
+  trailing: string;
+  close: string;
+  rows: number;
+  cols: number;
+  rowGroups: SkeletonGroup[];
+  colGroups: SkeletonGroup[];
+  lastRowStyle?: string;
+  lastColumnStyle?: string;
+  sawRow: boolean;
+  sawColumn: boolean;
+}
+
+const COLUMN_GROUPS: ReadonlySet<string> = new Set(["table-columns", "table-header-columns", "table-column-group"]);
+const ROW_GROUPS: ReadonlySet<string> = new Set(["table-rows", "table-header-rows", "table-row-group"]);
+
+function rawRepeat(attrs: readonly XmlScanAttribute[], qname: string): number {
+  const value = Number(attrs.find((attr) => attr.name === qname)?.value);
+  return Number.isInteger(value) && value > 1 ? value : 1;
+}
+
+/** Reads a source table's skeleton: its start tag, leading and trailing
+ * children, grouping elements, extents and last column and row styles. The
+ * text is a fragment (its prefixes unbound), so elements are matched by the
+ * qualified names the table's own prefix gives. */
+function readSkeleton(source: string): TableSkeleton {
+  const { start, tag } = tableStartTag(source);
+  const qname = /^<([^\s/>]+)/.exec(tag)?.[1] ?? "table:table";
+  const prefix = qname.includes(":") ? qname.slice(0, qname.indexOf(":") + 1) : "";
+  const skeleton: TableSkeleton = {
+    head: source.slice(0, start) + tag.replace(/\s*\/>$/, ">"),
+    leading: "",
+    trailing: "",
+    close: `</${qname}>`,
+    rows: 0,
+    cols: 0,
+    rowGroups: [],
+    colGroups: [],
+    sawRow: false,
+    sawColumn: false,
+  };
+  if (tag.endsWith("/>")) {
+    return skeleton;
+  }
+  const local = (name: string): string | undefined => (name.startsWith(prefix) ? name.slice(prefix.length) : undefined);
+  type Frame = { kind: "table" | "row" | "other" | "group"; top: boolean; group?: SkeletonGroup };
+  const stack: Frame[] = [];
+  let rowIndex = 0;
+  let colIndex = 0;
+  let rowWidth = 0;
+  let maxRowWidth = 0;
+  let firstStart = -1;
+  let lastEnd = -1;
+  let closeStart = source.length;
+  const tagEnd = start + tag.length;
+  scanXml(source, (event) => {
+    if (event.type === "text") {
+      return undefined;
+    }
+    if (event.type === "close") {
+      const frame = stack.pop();
+      if (frame?.kind === "table") {
+        closeStart = event.start;
+        skeleton.close = source.slice(event.start, event.end);
+        return "stop";
+      }
+      if (frame?.kind === "row") {
+        maxRowWidth = Math.max(maxRowWidth, rowWidth);
+      } else if (frame?.group) {
+        frame.group.to = frame.group.axis === "row" ? rowIndex : colIndex;
+      }
+      if (frame?.top) {
+        lastEnd = event.end;
+      }
+      return undefined;
+    }
+    const parent = stack.at(-1);
+    if (!parent) {
+      stack.push({ kind: "table", top: false });
+      return undefined;
+    }
+    let frame: Frame = { kind: "other", top: false };
+    if (parent.kind === "row") {
+      const name = local(event.name);
+      if (name === "table-cell" || name === "covered-table-cell") {
+        rowWidth += rawRepeat(event.attrs, `${prefix}number-columns-repeated`);
+      }
+    } else if (parent.kind !== "other") {
+      const name = local(event.name);
+      const attr = (attrLocal: string): string | undefined => event.attrs.find((each) => each.name === `${prefix}${attrLocal}`)?.value;
+      let structural = true;
+      if (name === "table-row") {
+        rowIndex += rawRepeat(event.attrs, `${prefix}number-rows-repeated`);
+        skeleton.sawRow = true;
+        skeleton.lastRowStyle = attr("style-name");
+        rowWidth = 0;
+        frame = { kind: "row", top: false };
+      } else if (name === "table-column") {
+        colIndex += rawRepeat(event.attrs, `${prefix}number-columns-repeated`);
+        skeleton.sawColumn = true;
+        skeleton.lastColumnStyle = attr("style-name");
+      } else if (name !== undefined && (ROW_GROUPS.has(name) || COLUMN_GROUPS.has(name))) {
+        const axis: Axis = ROW_GROUPS.has(name) ? "row" : "col";
+        const at = axis === "row" ? rowIndex : colIndex;
+        const group: SkeletonGroup = {
+          axis,
+          qname: event.name,
+          open: source.slice(event.start, event.end),
+          selfClosing: event.selfClosing,
+          from: at,
+          to: at,
+          children: [],
+        };
+        const siblings = parent.group ? parent.group.children : axis === "row" ? skeleton.rowGroups : skeleton.colGroups;
+        siblings.push(group);
+        frame = { kind: "group", top: false, group };
+      } else if (!/(^|:)soft-page-break$/.test(event.name)) {
+        structural = false;
+      }
+      if (structural && parent.kind === "table") {
+        if (firstStart < 0) {
+          firstStart = event.start;
+        }
+        frame.top = true;
+        if (event.selfClosing) {
+          lastEnd = event.end;
+        }
+      }
+    }
+    if (!event.selfClosing) {
+      stack.push(frame);
+    }
+    return undefined;
+  });
+  if (firstStart < 0) {
+    skeleton.leading = source.slice(tagEnd, closeStart);
+  } else {
+    skeleton.leading = source.slice(tagEnd, firstStart);
+    skeleton.trailing = source.slice(lastEnd, closeStart);
+  }
+  skeleton.rows = rowIndex;
+  skeleton.cols = Math.max(colIndex, maxRowWidth);
+  return skeleton;
+}
+
+/** An element with a repeat count spliced after its name. */
+interface Repeatable {
+  /** `<table:table-cell`, `<table:table-row table:style-name="…"`… */
+  head: string;
+  /** The rest of the element. */
+  tail: string;
+}
+
+/** Accumulates runs of identical elements and writes each run once, its
+ * count in `attribute`. */
+class RunWriter {
+  private current: Repeatable | null = null;
+  private count = 0;
+  out = "";
+
+  constructor(private readonly attribute: string) {}
+
+  push(element: Repeatable, count: number): void {
+    if (count <= 0) {
+      return;
+    }
+    if (this.current && this.current.head === element.head && this.current.tail === element.tail) {
+      this.count += count;
+      return;
+    }
+    this.flush();
+    this.current = element;
+    this.count = count;
+  }
+
+  flush(): void {
+    if (this.current) {
+      this.out += this.count > 1 ? `${this.current.head} ${this.attribute}="${this.count}"${this.current.tail}` : this.current.head + this.current.tail;
+    }
+    this.current = null;
+    this.count = 0;
+  }
+}
+
+/** An attribute value: XML-escaped, with the whitespace a parser would
+ * normalise kept as character references. */
+function attributeText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\t/g, "&#9;").replace(/\n/g, "&#10;").replace(/\r/g, "&#13;");
+}
+
+/** Character data: XML-escaped, a carriage return as `&#13;` — a literal one
+ * would reach the reader as a line feed (XML's end-of-line normalisation),
+ * so "\r\n" would read back as two line breaks. */
+function elementText(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r/g, "&#13;");
+}
+
+type NumberValueType = "float" | "percentage" | "currency" | "date" | "time";
+
+/** A number's ODS value type, from its format code's first numeric section
+ * (the inverse of the data-style family SPEC-118's odsNumberStyleXml writes
+ * for it): date and time sections (a section naming a day, month or year is
+ * a date), percent, an explicit `[$sym-lcid]` currency, else float. */
+function numberValueType(code: string | undefined): { type: NumberValueType; symbol?: string } {
+  if (code === undefined) {
+    return { type: "float" };
+  }
+  let sections: readonly FormatSection[];
+  try {
+    const parsed = parseFormatCode(code);
+    sections = parsed.unsupported ? [] : parsed.sections;
+  } catch {
+    return { type: "float" };
+  }
+  const section = sections.find((each) => each.kind !== "text" && each.kind !== "literal");
+  if (!section) {
+    return { type: "float" };
+  }
+  if (section.kind === "date" || section.lcid === LCID_SYSTEM_LONG_DATE || section.lcid === LCID_SYSTEM_LONG_TIME) {
+    const dated =
+      section.lcid === LCID_SYSTEM_LONG_DATE ||
+      section.tokens.some((token) => token.type === "date" && token.part !== "hour" && token.part !== "minute" && token.part !== "second");
+    return { type: dated ? "date" : "time" };
+  }
+  if (section.tokens.some((token) => token.type === "percent")) {
+    return { type: "percentage" };
+  }
+  const currency = section.tokens.find((token) => token.type === "currency");
+  if (currency) {
+    return { type: "currency", symbol: currency.symbol };
+  }
+  return { type: "float" };
+}
+
+/** The ISO 4217 code `office:currency` names for a format's currency
+ * symbol: the locale whose symbol it is (the user's own first), a symbol
+ * that is itself a three-letter code, else the user's locale's code. */
+function currencyCodeOf(symbol: string | undefined, locale: SpreadsheetLocale): string {
+  if (symbol === undefined || symbol === locale.currencySymbol) {
+    return locale.currencyCode;
+  }
+  const match = Object.values(SPREADSHEET_LOCALES).find((each) => each.currencySymbol === symbol);
+  if (match) {
+    return match.currencyCode;
+  }
+  return /^[A-Z]{3}$/.test(symbol) ? symbol : locale.currencyCode;
+}
+
+/** One piece of a cell's text and the text style it is written in. */
+interface TextPiece {
+  text: string;
+  style?: string;
+}
+
+/** A line of text as paragraph content: XML-escaped, a run of spaces as
+ * `<text:s text:c="n"/>` (`<text:s/>` for one) — a single space between
+ * other characters stays literal — and tabs as `<text:tab/>`, each piece in
+ * its `text:span`. Runs of spaces are counted across pieces. */
+function lineXml(pieces: readonly TextPiece[]): string {
+  const full = pieces.map((piece) => piece.text).join("");
+  let out = "";
+  let at = 0; // offset of the current piece in `full`
+  for (const piece of pieces) {
+    let body = "";
+    let i = 0;
+    while (i < piece.text.length) {
+      const ch = piece.text[i]!;
+      if (ch === " ") {
+        let end = i;
+        while (end < piece.text.length && piece.text[end] === " ") {
+          end += 1;
+        }
+        let runStart = at + i;
+        while (runStart > 0 && full[runStart - 1] === " ") {
+          runStart -= 1;
+        }
+        let runEnd = at + end;
+        while (runEnd < full.length && full[runEnd] === " ") {
+          runEnd += 1;
+        }
+        const count = end - i;
+        if (runEnd - runStart === 1 && runStart > 0 && runEnd < full.length) {
+          body += " ";
+        } else {
+          body += count === 1 ? "<text:s/>" : `<text:s text:c="${count}"/>`;
+        }
+        i = end;
+      } else if (ch === "\t") {
+        body += "<text:tab/>";
+        i += 1;
+      } else {
+        let end = i;
+        while (end < piece.text.length && piece.text[end] !== " " && piece.text[end] !== "\t") {
+          end += 1;
+        }
+        body += elementText(piece.text.slice(i, end));
+        i = end;
+      }
+    }
+    at += piece.text.length;
+    if (body !== "") {
+      out += piece.style === undefined ? body : `<text:span text:style-name="${piece.style}">${body}</text:span>`;
+    }
+  }
+  return out;
+}
+
+/** Text as `text:p` paragraphs, one per "\n"-separated line ("" → none),
+ * which the reader joins back with "\n". XML-illegal characters are
+ * dropped (sanitizeXmlText: U+000B/U+000C become line breaks); a carriage
+ * return is kept, as a character reference (elementText). */
+function paragraphsXml(pieces: readonly TextPiece[]): string {
+  const clean = pieces.map((piece) => ({ ...piece, text: sanitizeXmlText(piece.text) }));
+  if (clean.every((piece) => piece.text === "")) {
+    return "";
+  }
+  const lines: TextPiece[][] = [[]];
+  for (const piece of clean) {
+    piece.text.split("\n").forEach((part, index) => {
+      if (index > 0) {
+        lines.push([]);
+      }
+      if (part !== "") {
+        lines.at(-1)!.push({ ...piece, text: part });
+      }
+    });
+  }
+  return lines
+    .map((line) => {
+      const body = lineXml(line);
+      return body === "" ? "<text:p/>" : `<text:p>${body}</text:p>`;
+    })
+    .join("");
+}
+
+/** A merge a written row meets, and whether the row is its top. */
+interface MergeInRow {
+  range: GridRange;
+  anchor: boolean;
+}
+
+/** Writes one sheet's table (see serializeTable). */
+class TableWriter {
+  private readonly sheet: Sheet;
+  private readonly ctx: OdsTableContext;
+  private readonly skeleton: TableSkeleton | null;
+  private readonly styleNames = new Map<number, string>();
+  private readonly valueTypes = new Map<string, { type: NumberValueType; symbol?: string }>();
+  private readonly format: FormatContext;
+  private readonly env: OdsStyleEnv;
+  private defaultColumn: string | undefined;
+  private defaultRow: string | undefined;
+  rowExtent = 1;
+  colExtent = 1;
+  // Row iteration state (rows are written in order, segment by segment).
+  private nextStored = 0;
+  private nextMerge = 0;
+  private active: GridRange[] = [];
+  private readonly merges: GridRange[];
+
+  constructor(sheet: Sheet, ctx: OdsTableContext) {
+    this.sheet = sheet;
+    this.ctx = ctx;
+    this.skeleton = ctx.source === undefined ? null : readSkeleton(ctx.source);
+    this.format = workbookFormatContext(ctx.model, ctx.locale);
+    this.env = { theme: ctx.model.theme ?? DEFAULT_THEME, locale: ctx.locale };
+    if (ctx.commonCellStyle) {
+      this.env.commonCellStyle = ctx.commonCellStyle;
+    }
+    this.merges = sheet.merges.toSorted((a, b) => a.top - b.top || a.left - b.left);
+    this.measure();
+  }
+
+  /** The extents (see serializeTable). */
+  private measure(): void {
+    const sheet = this.sheet;
+    let rows = this.skeleton?.rows ?? 0;
+    let cols = this.skeleton?.cols ?? 0;
+    for (const row of sheet.rows) {
+      rows = Math.max(rows, row.index + 1);
+      const last = row.cells.at(-1);
+      if (last) {
+        cols = Math.max(cols, last.col + 1);
+      }
+    }
+    for (const merge of sheet.merges) {
+      rows = Math.max(rows, merge.bottom + 1);
+      cols = Math.max(cols, merge.right + 1);
+    }
+    for (const span of sheet.columns) {
+      cols = Math.max(cols, span.max + 1);
+    }
+    rows = Math.min(Math.max(rows, 1), MAX_ROWS);
+    cols = Math.min(Math.max(cols, 1), MAX_COLS);
+    // The reader takes the last column and row runs' sizes as the defaults:
+    // a sized last one gets a default-sized one after it.
+    if (cols < MAX_COLS && this.columnWidth(cols - 1) !== sheet.defaultColWidthPx) {
+      cols += 1;
+    }
+    const lastRow = sheet.rows.at(-1);
+    if (rows < MAX_ROWS && lastRow?.index === rows - 1 && lastRow.heightPt !== undefined && lastRow.heightPt !== sheet.defaultRowHeightPt) {
+      rows += 1;
+    }
+    this.rowExtent = rows;
+    this.colExtent = cols;
+  }
+
+  private columnWidth(col: number): number {
+    return columnSpanAt(this.sheet.columns, col)?.widthPx ?? this.sheet.defaultColWidthPx;
+  }
+
+  /** A model style's name: "Default" for 0, the source's name for a style
+   * read from the file (when its styles are retained), else a generated one. */
+  styleName(id: number): string {
+    let name = this.styleNames.get(id);
+    if (name === undefined) {
+      const style = cellStyle(this.ctx.model, id);
+      if (id === 0 || style === this.ctx.model.styles[0]) {
+        name = "Default";
+      } else if (this.ctx.sourceStyleNames && style.sourceStyleName !== undefined) {
+        name = style.sourceStyleName;
+      } else {
+        name = this.ctx.registry.cellStyle(style, this.env);
+      }
+      this.styleNames.set(id, name);
+    }
+    return name;
+  }
+
+  /** The style default-width columns are written with: the source's last
+   * column style when it still measures the default, else a generated one. */
+  private defaultColumnStyle(): string {
+    if (this.defaultColumn === undefined) {
+      const skeleton = this.skeleton;
+      const name = skeleton?.sawColumn ? skeleton.lastColumnStyle : undefined;
+      const layout = this.ctx.layoutStyles;
+      this.defaultColumn =
+        this.ctx.sourceStyleNames && name !== undefined && layout && (layout.columnWidthPx(name) ?? ODS_DEFAULT_COL_WIDTH_PX) === this.sheet.defaultColWidthPx
+          ? name
+          : this.ctx.registry.columnStyle(this.sheet.defaultColWidthPx);
+    }
+    return this.defaultColumn;
+  }
+
+  /** The style default-height rows are written with (as columns). */
+  private defaultRowStyle(): string {
+    if (this.defaultRow === undefined) {
+      const skeleton = this.skeleton;
+      const name = skeleton?.sawRow ? skeleton.lastRowStyle : undefined;
+      const layout = this.ctx.layoutStyles;
+      this.defaultRow =
+        this.ctx.sourceStyleNames && name !== undefined && layout && (layout.rowHeight(name).heightPt ?? ODS_DEFAULT_ROW_HEIGHT_PT) === this.sheet.defaultRowHeightPt
+          ? name
+          : this.ctx.registry.rowStyle(this.sheet.defaultRowHeightPt, true);
+    }
+    return this.defaultRow;
+  }
+
+  // --- columns ---
+
+  /** Columns [from, to): one element per run of identical columns. */
+  private columns(from: number, to: number, out: RunWriter): void {
+    const spans = this.sheet.columns;
+    let index = spans.findIndex((span) => span.max >= from);
+    let col = from;
+    while (col < to) {
+      const span = index >= 0 && index < spans.length ? spans[index] : undefined;
+      if (span && span.min <= col) {
+        const end = Math.min(span.max + 1, to);
+        out.push(this.columnElement(span), end - col);
+        col = end;
+        index += 1;
+      } else {
+        const end = Math.min(span ? span.min : to, to);
+        out.push(this.columnElement(undefined), end - col);
+        col = end;
+      }
+    }
+  }
+
+  private columnElement(span: ColumnSpan | undefined): Repeatable {
+    const width = span?.widthPx ?? this.sheet.defaultColWidthPx;
+    const style =
+      this.ctx.sourceStyleNames && span?.sourceStyleName !== undefined
+        ? span.sourceStyleName
+        : width === this.sheet.defaultColWidthPx
+          ? this.defaultColumnStyle()
+          : this.ctx.registry.columnStyle(width);
+    return {
+      head: `<table:table-column table:style-name="${attributeText(style)}"`,
+      tail: `${span?.hidden ? ` table:visibility="collapse"` : ""} table:default-cell-style-name="${attributeText(this.styleName(span?.styleId ?? 0))}"/>`,
+    };
+  }
+
+  // --- rows ---
+
+  /** Rows [from, to), in order. */
+  private rows(from: number, to: number, out: RunWriter): void {
+    const stored = this.sheet.rows;
+    let r = from;
+    while (r < to) {
+      while (this.nextMerge < this.merges.length && this.merges[this.nextMerge]!.top <= r) {
+        this.active.push(this.merges[this.nextMerge]!);
+        this.nextMerge += 1;
+      }
+      this.active = this.active.filter((merge) => merge.bottom >= r);
+      while (this.nextStored < stored.length && stored[this.nextStored]!.index < r) {
+        this.nextStored += 1;
+      }
+      const row = stored[this.nextStored]?.index === r ? stored[this.nextStored] : undefined;
+      if (row || this.active.some((merge) => merge.top === r)) {
+        out.push(this.rowElement(row, r), 1);
+        r += 1;
+        continue;
+      }
+      let end = Math.min(to, stored[this.nextStored]?.index ?? to);
+      if (this.nextMerge < this.merges.length) {
+        end = Math.min(end, this.merges[this.nextMerge]!.top);
+      }
+      for (const merge of this.active) {
+        end = Math.min(end, merge.bottom + 1);
+      }
+      out.push(this.rowElement(undefined, r), Math.max(end - r, 1));
+      r = Math.max(end, r + 1);
+    }
+  }
+
+  private rowElement(row: Row | undefined, r: number): Repeatable {
+    let style: string;
+    if (this.ctx.sourceStyleNames && row?.sourceStyleName !== undefined) {
+      style = row.sourceStyleName;
+    } else {
+      const height = row?.heightPt ?? this.sheet.defaultRowHeightPt;
+      style = height === this.sheet.defaultRowHeightPt && !row?.customHeight ? this.defaultRowStyle() : this.ctx.registry.rowStyle(height, !row?.customHeight);
+    }
+    let tail = row?.hidden ? ` table:visibility="collapse"` : "";
+    if (row?.styleId !== undefined) {
+      tail += ` table:default-cell-style-name="${attributeText(this.styleName(row.styleId))}"`;
+    }
+    return { head: `<table:table-row table:style-name="${attributeText(style)}"`, tail: `${tail}>${this.cells(row, r)}</table:table-row>` };
+  }
+
+  /** A row's cells, columns 0..colExtent−1. */
+  private cells(row: Row | undefined, r: number): string {
+    const out = new RunWriter("table:number-columns-repeated");
+    const cells = row?.cells ?? [];
+    const merges: MergeInRow[] = this.active
+      .filter((merge) => merge.top <= r && merge.bottom >= r)
+      .map((range) => ({ range, anchor: range.top === r }))
+      .toSorted((a, b) => a.range.left - b.range.left);
+    let next = 0; // the next stored cell
+    let m = 0; // the next merge
+    let col = 0;
+    while (col < this.colExtent) {
+      while (m < merges.length && merges[m]!.range.right < col) {
+        m += 1;
+      }
+      const merge = merges[m] && merges[m]!.range.left <= col ? merges[m] : undefined;
+      while (next < cells.length && cells[next]!.col < col) {
+        next += 1;
+      }
+      const cell = cells[next]?.col === col ? cells[next] : undefined;
+      const anchor = merge?.anchor && merge.range.left === col ? merge.range : undefined;
+      const covered = merge !== undefined && !anchor;
+      if (cell || anchor) {
+        out.push(this.cellElement(cell, covered, anchor, row, col), 1);
+        col += 1;
+        continue;
+      }
+      let end = Math.min(this.colExtent, cells[next]?.col ?? this.colExtent);
+      if (merge) {
+        end = Math.min(end, merge.range.right + 1);
+      } else if (merges[m]) {
+        end = Math.min(end, merges[m]!.range.left);
+      }
+      out.push({ head: covered ? "<table:covered-table-cell" : "<table:table-cell", tail: "/>" }, Math.max(end - col, 1));
+      col = Math.max(end, col + 1);
+    }
+    out.flush();
+    return out.out;
+  }
+
+  private valueTypeOf(code: string | undefined): { type: NumberValueType; symbol?: string } {
+    const key = code ?? "";
+    let found = this.valueTypes.get(key);
+    if (!found) {
+      found = numberValueType(code);
+      this.valueTypes.set(key, found);
+    }
+    return found;
+  }
+
+  /** One cell element (see serializeTable, "Cells"). The style name is part
+   * of the head, so a repeat count follows it, as LibreOffice writes. */
+  private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number): Repeatable {
+    let head = covered ? "<table:covered-table-cell" : "<table:table-cell";
+    const close = covered ? "</table:covered-table-cell>" : "</table:table-cell>";
+    let attrs = "";
+    const positionDefault = row?.styleId ?? columnSpanAt(this.sheet.columns, col)?.styleId ?? 0;
+    if (cell?.styleId !== undefined && cell.styleId !== positionDefault) {
+      head += ` table:style-name="${attributeText(this.styleName(cell.styleId))}"`;
+    }
+    if (anchor) {
+      attrs += ` table:number-columns-spanned="${anchor.right - anchor.left + 1}" table:number-rows-spanned="${anchor.bottom - anchor.top + 1}"`;
+    }
+    if (!cell) {
+      return { head, tail: `${attrs}/>` };
+    }
+    if (cell.arrayRange && cell.formula !== undefined) {
+      const range = cell.arrayRange;
+      attrs += ` table:number-matrix-columns-spanned="${range.right - range.left + 1}" table:number-matrix-rows-spanned="${range.bottom - range.top + 1}"`;
+    }
+    if (cell.formula !== undefined) {
+      attrs += ` table:formula="${attributeText(this.formulaText(cell))}"`;
+    }
+    const style = cellStyle(this.ctx.model, cell.styleId ?? positionDefault);
+    const value = cell.value;
+    let text: TextPiece[] = [];
+    if (value !== null) {
+      const code = formatCodeOf(style, this.ctx.locale);
+      let type: string;
+      if (typeof value === "number") {
+        const kind = this.valueTypeOf(code);
+        type = kind.type;
+        attrs += ` office:value-type="${type}"`;
+        if (type === "date") {
+          attrs += ` office:date-value="${serialToOdsDateValue(value, this.ctx.model.dateSystem, this.ctx.model.odsNullDate)}"`;
+        } else if (type === "time") {
+          attrs += ` office:time-value="${serialToOdsTimeValue(value)}"`;
+        } else {
+          if (type === "currency") {
+            attrs += ` office:currency="${attributeText(currencyCodeOf(kind.symbol, this.ctx.locale))}"`;
+          }
+          attrs += ` office:value="${Object.is(value, -0) ? "0" : String(value)}"`;
+        }
+        text = [{ text: plainText(formatValue(value, code, this.format)) }];
+      } else if (typeof value === "boolean") {
+        type = "boolean";
+        attrs += ` office:value-type="boolean" office:boolean-value="${value}"`;
+        text = [{ text: value ? "TRUE" : "FALSE" }];
+      } else if (typeof value === "string") {
+        type = "string";
+        attrs += ` office:value-type="string"`;
+        text = this.stringPieces(cell, value);
+      } else {
+        type = "error";
+        attrs += cell.formula !== undefined ? ` office:value-type="float" office:value="0"` : ` office:value-type="string"`;
+        text = [{ text: value.error }];
+      }
+      attrs += ` calcext:value-type="${isCellError(value) ? "error" : type}"`;
+    }
+    const pass = this.ctx.passRetained ?? ((retained: string): string => retained);
+    if (cell.preservedAttrs !== undefined) {
+      attrs += pass(cell.preservedAttrs);
+    }
+    let content = cell.preservedXml === undefined ? "" : pass(cell.preservedXml);
+    content += cell.preservedText !== undefined ? pass(cell.preservedText) : paragraphsXml(text);
+    return { head, tail: content === "" ? `${attrs}/>` : `${attrs}>${content}${close}` };
+  }
+
+  /** A string's pieces: its rich runs (each in its `de-T` text style) when
+   * they spell it, else the string as typed. */
+  private stringPieces(cell: Cell, value: string): TextPiece[] {
+    const runs = cell.runs;
+    if (!runs || runs.map((run) => run.text).join("") !== value) {
+      return [{ text: value }];
+    }
+    return runs.map((run) => {
+      const style = this.ctx.registry.textStyle(run.font, this.env.theme);
+      return style === undefined ? { text: run.text } : { text: run.text, style };
+    });
+  }
+
+  /** `table:formula`: the stored wire value verbatim for an unparsed formula,
+   * else the canonical formula through toOdsFormula. */
+  private formulaText(cell: Cell): string {
+    const formula = cell.formula!;
+    if (cell.formulaUnparsed) {
+      return formula;
+    }
+    try {
+      return toOdsFormula(formula);
+    } catch {
+      return `of:=${formula}`;
+    }
+  }
+
+  /** Writes [from, to) of an axis, re-emitting the source's grouping
+   * elements around the indices they covered. */
+  private axis(axis: Axis, groups: readonly SkeletonGroup[], from: number, to: number, emit: (a: number, b: number, out: RunWriter) => void): string {
+    let xml = "";
+    let at = from;
+    const run = (a: number, b: number): void => {
+      if (b > a) {
+        const out = new RunWriter(axis === "row" ? "table:number-rows-repeated" : "table:number-columns-repeated");
+        emit(a, b, out);
+        out.flush();
+        xml += out.out;
+      }
+    };
+    for (const group of groups) {
+      const start = Math.max(group.from, at);
+      run(at, Math.min(start, to));
+      if (group.selfClosing) {
+        xml += group.open;
+      } else {
+        const end = Math.max(Math.min(group.to, to), start);
+        xml += group.open + this.axis(axis, group.children, start, end, emit) + `</${group.qname}>`;
+        at = end;
+        continue;
+      }
+      at = Math.max(at, start);
+    }
+    run(at, to);
+    return xml;
+  }
+
+  write(): string {
+    const sheet = this.sheet;
+    const ctx = this.ctx;
+    let head: string;
+    if (this.skeleton) {
+      head = this.skeleton.head + this.skeleton.leading;
+    } else {
+      const tabColor = sheet.tabColor === undefined ? undefined : resolveColor(sheet.tabColor, ctx.model.theme ?? DEFAULT_THEME);
+      const style = ctx.registry.tableStyle({ masterPage: "Default", display: sheet.visibility === "visible", ...(tabColor === undefined ? {} : { tabColor }) });
+      head = `<table:table table:name="${attributeText(sheet.name)}" table:style-name="${style}">`;
+    }
+    const columns = this.axis("col", this.skeleton?.colGroups ?? [], 0, this.colExtent, (a, b, out) => this.columns(a, b, out));
+    const rows = this.axis("row", this.skeleton?.rowGroups ?? [], 0, this.rowExtent, (a, b, out) => this.rows(a, b, out));
+    return head + columns + rows + (this.skeleton ? this.skeleton.trailing + this.skeleton.close : "</table:table>");
+  }
+}
+
+/** One sheet as a `<table:table>` (SPEC-122 "The table writer"), in order:
+ * 1. the start tag — the source's (with SPEC-121's splices, applied by the
+ *    caller), or generated for a new sheet (its `de-ta` style);
+ * 2. the leading children verbatim (`table:title`, `table:desc`,
+ *    `table:table-source`, `office:dde-source`, `table:scenario`,
+ *    `office:forms`, `table:shapes`);
+ * 3. columns: one element per run of identical columns — the style its
+ *    `sourceStyleName` (the source's styles retained), else a `de-co` by
+ *    width (a default-width column the source's last-run style when that
+ *    still measures the default), `table:visibility="collapse"` when hidden,
+ *    `table:default-cell-style-name` from `styleId` or "Default" —
+ *    compressed with `table:number-columns-repeated`;
+ * 4. rows 0..rowExtent−1: each stored row serialised, gaps as empty rows,
+ *    consecutive rows with identical serialisation (empty ones included)
+ *    compressed with `table:number-rows-repeated`; the style
+ *    `sourceStyleName` or a `de-ro` by height (default rows as columns),
+ *    `table:visibility="collapse"` when hidden,
+ *    `table:default-cell-style-name` from `Row.styleId`;
+ * 5. within a row, columns 0..colExtent−1: stored cells serialised, gaps as
+ *    `<table:table-cell/>`, identical neighbours compressed; a merge anchor
+ *    gets `table:number-columns-spanned`/`-rows-spanned` and every position
+ *    it covers is a `table:covered-table-cell` (carrying content when a
+ *    cell is stored there);
+ * 6. the source's grouping skeleton — `table:table-header-rows`,
+ *    `table:table-row-group`, `table:table-rows` and the column equivalents,
+ *    start tags verbatim — re-emitted around the indices each covered at
+ *    read; `text:soft-page-break` (a layout cache) is dropped;
+ * 7. the trailing children verbatim (`table:named-expressions`,
+ *    `calcext:conditional-formats`, anything after the rows).
+ * Extent per axis = max(the source's total repeated extent, the stored rows,
+ * cells, merges and column spans + 1), so LibreOffice's 1048553-row and
+ * 16380-column tails come back at the same length; a new sheet's is what it
+ * stores (at least 1 × 1). The reader takes the LAST column and row runs'
+ * sizes as the sheet's defaults, so a last column or row of another size
+ * gets one default-sized one after it.
+ * Cells: `table:style-name` when the cell's style differs from the
+ * position's default (the row's, else the column's); `office:value-type` by
+ * value and number format — date (`office:date-value`), time
+ * (`office:time-value`), percentage, currency (+ `office:currency`), float,
+ * boolean, string; an error is float `office:value="0"` in a formula cell
+ * and a string literal otherwise — with `calcext:value-type` (the same word,
+ * or "error"); `table:formula` through toOdsFormula (an unparsed formula's
+ * stored wire value verbatim); an array anchor's
+ * `table:number-matrix-columns-spanned`/`-rows-spanned`; then
+ * `preservedAttrs`. Content: `preservedXml`, then `preservedText` verbatim
+ * when present, else one `<text:p>` per line of the SPEC-118 formatted text
+ * in the user's locale (strings as typed; rich runs as `text:span`s in
+ * `de-T` styles; runs of spaces as `text:s`, tabs as `text:tab`). A formula
+ * cell with no value has no value type; a stale cell's last known value is
+ * written. Preserved content passes through `passRetained`. */
+export function serializeTable(sheet: Sheet, ctx: OdsTableContext): string {
+  return new TableWriter(sheet, ctx).write();
 }

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 // The workbook view's body (SPEC-116's layout, SPEC-117's surfaces): the
-// read-only formula bar (its text from SPEC-119's useFormulaDisplay) above
-// the sheet panel — the grid (in Show formulas mode or not), or a foreign
-// sheet's placeholder — and the sheet tabs below it, with SPEC-121's tab
-// management: the tab context menu, the delete and unhide dialogs and the tab
-// colour picker. It only lays the surfaces out and binds them to the
+// formula bar (its text from SPEC-119's useFormulaDisplay; editable on a grid
+// sheet since SPEC-122, sharing the in-cell editor's draft) above the sheet
+// panel — the grid (in Show formulas mode or not), or a foreign sheet's
+// placeholder — and the sheet tabs below it, with SPEC-121's tab management:
+// the tab context menu, the delete and unhide dialogs and the tab colour
+// picker. A tab chosen while a cell is edited goes through the cell editor
+// (SPEC-122: pointing shows that sheet and keeps editing; otherwise the edit
+// commits first). It only lays the surfaces out and binds them to the
 // view-level composables the view hands in (`book` = useWorkbookLoad, `grid`
 // = the SheetGridContext of the sheet on show, `editing` =
 // useWorkbookEditing); SpreadsheetView keeps only the wiring. Runtime prop
@@ -33,6 +36,7 @@ const props = defineProps({
 const book = computed(() => asWorkbookBook(props.book));
 const grid = computed(() => asSheetGridContext(props.grid));
 const commands = computed(() => asWorkbookEditing(props.editing).commands);
+const cellEditing = computed(() => asWorkbookEditing(props.editing).cell);
 const panelId = "sheet-panel";
 
 /** The visible tabs with their tab colours resolved for CSS. */
@@ -51,6 +55,8 @@ const tabs = computed(() => {
       :address="grid.selection.nameBoxText.value"
       :content="grid.formulas.barText.value"
       :spill-member="grid.formulas.spillMember.value"
+      :editor="cellEditing"
+      :editable="book.activeSheet.value?.kind === 'grid'"
     />
     <div
       :id="panelId"
@@ -82,7 +88,7 @@ const tabs = computed(() => {
       :rename-draft="commands.renaming.value?.draft ?? ''"
       :rename-error="commands.renaming.value?.error ?? ''"
       :announcement="commands.announcement.value"
-      @select="book.selectSheet"
+      @select="cellEditing.selectSheet"
       @add="commands.insert()"
       @menu="commands.openMenu"
       @rename-start="commands.startRename"

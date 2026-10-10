@@ -116,6 +116,25 @@ describe("the formula bar's text", () => {
     expect(formulas.barText.value).toBe("");
   });
 
+  it("SPEC-122: is empty for a hidden formula on a protected sheet only", () => {
+    const sheet = formulaSheet();
+    const hidden = { ...sheet, rows: sheet.rows.map((row) => (row.index === 0 ? { ...row, cells: row.cells.map((cell) => (cell.col === 0 ? { ...cell, styleId: 2 } : cell)) } : row)) };
+    const run = (protectedSheet: boolean) => {
+      const model = bookOf(protectedSheet ? { ...hidden, protection: { sheet: true } } : hidden);
+      model.styles = [...model.styles, { protection: { hidden: true } }];
+      const target = model.sheets[0]!;
+      const fields = shallowRef<SheetViewFields>({});
+      const viewState = { active: computed(() => fields.value), updateActive: () => {} };
+      return scope.run(() => {
+        const sheetMetrics = useSheetMetrics(() => target);
+        const selection = useSheetSelection({ sheet: () => target, sheetMetrics, viewState, model: () => model, locale: () => SPREADSHEET_LOCALES["en-US"] });
+        return useFormulaDisplay({ sheet: () => target, model: () => model, viewState, selection }).barText.value;
+      });
+    };
+    expect(run(false)).toBe("=SUM(B2:B4)");
+    expect(run(true)).toBe("");
+  });
+
   it("shows an ods workbook's unparsed formula from its first '='", () => {
     const { formulas, select } = setup(formulaSheet(), "ods");
     select(0, 4);

@@ -34,14 +34,37 @@
 //     fullCalcOnLoad, calcMode and iterate; ODS `table:calculation-settings`
 //     and settings.xml's AutoCalculate. A re-read keeps the stored model's
 //     `forceFullCalcOnLoad` (set by recalculation, never cleared).
+// 6 — SPEC-122: the content the writers re-emit for what the model does not
+//     model — each cell's `sstIndex`, `preservedAttrs`, `preservedXml` and
+//     `preservedText` — plus `Sheet.protection` and the workbook's
+//     `structureProtected`. Its step is the first that runs on a dirty sheet:
+//     it re-reads the sheet's retained source (an xlsx part with the source
+//     package's shared strings and styles; an ods table text inside the
+//     retained content envelope) and copies those fields onto each model
+//     cell whose value and formula still equal the source's at that address,
+//     and the protection flag onto the sheet; `structureProtected` is the
+//     workbook part's, which every re-read gains. The xlsx reader also
+//     stores, from version 6, a default-width column span or a row without
+//     cells that carries only an unmodelled attribute the writer re-emits (an
+//     `outlineLevel`, `collapsed` …); the step adds those to a dirty xlsx
+//     sheet too — its rows and columns are version 5's, since no command
+//     before SPEC-122 adds or removes one, so they are exactly the source's
+//     spans that overlap no stored span and its rows without cells where none
+//     is stored.
+//
+// Since SPEC-122 the writers rebuild a dirty sheet from the model, so the
+// layout a record re-reads its clean sheets from numbers its styles afresh:
+// each dirty sheet's style ids are moved into the re-read style table
+// (interned — an equal style is shared), never left pointing into the
+// stored one.
 import { decodedPartBytes } from "../core/packageParts";
-import type { Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
+import { isCellError, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { buildPreview } from "./preview";
-import { defaultStyles } from "./styles";
+import { cellStyle, defaultStyles, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 5;
+export const SPREADSHEET_READER_VERSION = 6;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -50,8 +73,9 @@ const READ_PREVIEW_LOCALE = SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE];
 export interface ReaderUpgrade {
   from: number; // upgrades a record at `from` to `from + 1`
   /** Brings ONE dirty sheet up to date by reading the newly modelled element
-   *  from the sheet's retained source and merging it into the model. */
-  upgradeDirtySheet(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>): void;
+   *  from the sheet's retained source and merging it into the model (the
+   *  sheet object is updated in place; its rows stay copy-on-write). */
+  upgradeDirtySheet(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>): void | Promise<void>;
 }
 
 export const READER_UPGRADES: ReaderUpgrade[] = [
@@ -97,7 +121,172 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       throw new Error("SPEC-120 upgrade: a sheet cannot be dirty before SPEC-121");
     },
   },
+  {
+    // SPEC-122 (5 → 6): preserved cell content and sheet protection (see the
+    // version history). A record at version 5 can hold dirty sheets — SPEC-121
+    // shipped editing — so this step does real work.
+    from: 5,
+    async upgradeDirtySheet(model, sheet, sourceParts) {
+      const source = await retainedSheetRead(model, sheet, sourceParts);
+      if (!source) {
+        return;
+      }
+      if (source.protection) {
+        sheet.protection = { sheet: true };
+      }
+      sheet.rows = withRetainedContent(sheet.rows, source.rows);
+      if (model.format === "xlsx") {
+        withRetainedOutline(sheet, source);
+      }
+    },
+  },
 ];
+
+// --- SPEC-122's step ------------------------------------------------------------------------
+
+/** One read of a source package per upgrade, shared by its dirty sheets. */
+const sourceReads = new WeakMap<Map<string, Uint8Array>, Promise<ParsedSpreadsheet>>();
+
+/** The sheet as the current reader reads it from its own retained source:
+ * an xlsx sheet's part (an original's, or for a copy whose part the source
+ * workbook does not list, its origin's — the copy's part is a copy of it),
+ * read with the source package's shared strings and styles; an ods sheet's
+ * table text inside the retained content envelope. Undefined when there is
+ * none to read. */
+async function retainedSheetRead(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>): Promise<Sheet | undefined> {
+  if (model.format === "xlsx") {
+    if (sheet.partName === undefined) {
+      return undefined;
+    }
+    let read = sourceReads.get(sourceParts);
+    if (!read) {
+      read = parse(new Uint8Array(0), "xlsx", sourceParts);
+      sourceReads.set(sourceParts, read);
+    }
+    const parsed = await read;
+    return (
+      parsed.sheets.find((each) => each.partName === sheet.partName) ??
+      (sheet.copiedFrom === undefined ? undefined : parsed.sheets.find((each) => each.name.toUpperCase() === sheet.copiedFrom!.toUpperCase()))
+    );
+  }
+  const envelope = model.odsContentEnvelope;
+  if (sheet.sourceXml === undefined || !envelope) {
+    return undefined;
+  }
+  const parts = new Map(sourceParts);
+  parts.set("content.xml", new TextEncoder().encode(envelope.prefix + sheet.sourceXml + envelope.suffix));
+  return (await parse(new Uint8Array(0), "ods", parts)).sheets[0];
+}
+
+function sameValue(a: CellValue, b: CellValue): boolean {
+  if (isCellError(a) || isCellError(b)) {
+    return isCellError(a) && isCellError(b) && a.error === b.error;
+  }
+  return Object.is(a, b) || a === b;
+}
+
+const RETAINED_FIELDS = ["sstIndex", "preservedAttrs", "preservedXml", "preservedText"] as const;
+
+/** The model's rows with the source's preserved cell content copied onto
+ * every cell whose value and formula equal the source cell's (a shared
+ * string's index only while its runs are unchanged too) — the same array
+ * when nothing is copied; untouched rows and cells keep their identity. */
+function withRetainedContent(rows: Row[], sourceRows: readonly Row[]): Row[] {
+  const sourceByIndex = new Map(sourceRows.map((row) => [row.index, row] as const));
+  let out: Row[] | null = null;
+  rows.forEach((row, at) => {
+    const sourceRow = sourceByIndex.get(row.index);
+    if (!sourceRow) {
+      return;
+    }
+    const sourceCells = new Map(sourceRow.cells.map((cell) => [cell.col, cell] as const));
+    let cells: Cell[] | null = null;
+    row.cells.forEach((cell, index) => {
+      const source = sourceCells.get(cell.col);
+      if (!source || !sameValue(cell.value, source.value) || cell.formula !== source.formula) {
+        return;
+      }
+      let next: Cell = cell;
+      for (const field of RETAINED_FIELDS) {
+        const value = source[field];
+        if (value === undefined || next[field] === value) {
+          continue;
+        }
+        if (field === "sstIndex" && JSON.stringify(cell.runs ?? null) !== JSON.stringify(source.runs ?? null)) {
+          continue;
+        }
+        next = next === cell ? { ...cell } : next;
+        (next as unknown as Record<string, unknown>)[field] = value;
+      }
+      if (next !== cell) {
+        cells ??= row.cells.slice();
+        cells[index] = next;
+      }
+    });
+    if (cells) {
+      out ??= rows.slice();
+      out[at] = { ...row, cells };
+    }
+  });
+  return out ?? rows;
+}
+
+/** Adds the source's column spans that overlap no stored span and its rows
+ * without cells where no row is stored (see the version history), in place;
+ * arrays are replaced only when something is added. */
+function withRetainedOutline(sheet: Sheet, source: Sheet): void {
+  const stored = new Set(sheet.rows.map((row) => row.index));
+  const rows = source.rows.filter((row) => row.cells.length === 0 && !stored.has(row.index));
+  if (rows.length > 0) {
+    sheet.rows = [...sheet.rows, ...rows].toSorted((a, b) => a.index - b.index);
+  }
+  const spans = source.columns.filter((span) => !sheet.columns.some((have) => have.min <= span.max && span.min <= have.max));
+  if (spans.length > 0) {
+    sheet.columns = [...sheet.columns, ...spans].toSorted((a, b) => a.min - b.min);
+  }
+}
+
+/** Moves a dirty sheet's style ids from the stored table `from` into the
+ * re-read workbook's table (see the module header), in place: an id whose
+ * style the re-read table holds at the same index keeps it; any other is
+ * interned. Arrays are replaced only when an id changes. */
+function adoptStyles(sheet: Sheet, from: readonly CellStyle[], into: SpreadsheetModel): void {
+  const ids = new Map<number, number>();
+  const mapId = (id: number): number => {
+    let next = ids.get(id);
+    if (next === undefined) {
+      const style = cellStyle({ styles: from as CellStyle[] }, id);
+      const same = into.styles[id];
+      next =
+        same !== undefined && styleKey(same) === styleKey(style) && same.sourceXf === style.sourceXf && same.sourceStyleName === style.sourceStyleName
+          ? id
+          : internStyle(into, style);
+      ids.set(id, next);
+    }
+    return next;
+  };
+  let rows: Row[] | null = null;
+  sheet.rows.forEach((row, at) => {
+    let cells: Cell[] | null = null;
+    row.cells.forEach((cell, index) => {
+      if (cell.styleId !== undefined && mapId(cell.styleId) !== cell.styleId) {
+        cells ??= row.cells.slice();
+        cells[index] = { ...cell, styleId: mapId(cell.styleId) };
+      }
+    });
+    const rowStyle = row.styleId === undefined ? undefined : mapId(row.styleId);
+    if (cells || rowStyle !== row.styleId) {
+      rows ??= sheet.rows.slice();
+      rows[at] = { ...row, cells: cells ?? row.cells, ...(rowStyle === undefined ? {} : { styleId: rowStyle }) };
+    }
+  });
+  if (rows) {
+    sheet.rows = rows;
+  }
+  if (sheet.columns.some((span) => span.styleId !== undefined && mapId(span.styleId) !== span.styleId)) {
+    sheet.columns = sheet.columns.map((span) => (span.styleId === undefined ? span : { ...span, styleId: mapId(span.styleId) }));
+  }
+}
 
 export { DEFAULT_SPREADSHEET_TITLE } from "./model";
 
@@ -139,6 +328,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   }
   if (parsed.calc !== undefined && Object.keys(parsed.calc).length > 0) {
     model.calc = parsed.calc;
+  }
+  if (parsed.structureProtected) {
+    model.structureProtected = true;
   }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
@@ -228,13 +420,22 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
   if (model.forceFullCalcOnLoad) {
     fresh.forceFullCalcOnLoad = true;
   }
-  fresh.sheets = model.sheets.map((stored, index) => {
+  const sheets: Sheet[] = [];
+  for (const [index, stored] of model.sheets.entries()) {
+    sheets.push(await upgradedSheet(stored, index));
+  }
+  fresh.sheets = sheets;
+  fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
+  return fresh;
+
+  async function upgradedSheet(stored: Sheet, index: number): Promise<Sheet> {
     if (stored.dirty) {
       if (stored.partName !== undefined || stored.sourceXml !== undefined) {
         for (const step of pending) {
-          step.upgradeDirtySheet(fresh, stored, sourceParts);
+          await step.upgradeDirtySheet(fresh, stored, sourceParts);
         }
       }
+      adoptStyles(stored, model.styles, fresh);
       return stored;
     }
     const read = fresh.sheets[index];
@@ -256,7 +457,5 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
       sheet.copiedFrom = stored.copiedFrom;
     }
     return sheet;
-  });
-  fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
-  return fresh;
+  }
 }

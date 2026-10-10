@@ -4,15 +4,24 @@
 // styles; spans → merges; covered-cell storage; text:span fonts; the styled
 // repeat-run rules (the 16380-column run that stores no cell) and their cell
 // budget — over synthetic content and the LibreOffice-shaped fixture.
+// SPEC-122 "The table writer" (serializeTable): repeat compression of
+// identical neighbours (empty ones included) for columns, rows and cells;
+// covered cells under spans; every value type with calcext:value-type; the
+// text:p lines with text:s/text:tab/text:span; table:formula and matrix
+// spans; preserved attributes, children and text; the grouping skeleton
+// around the indices it covered, soft page breaks dropped; the extent rule;
+// the start tag, leading and trailing children verbatim — exact XML.
 import { describe, expect, it } from "vitest";
 import { getCell, parseA1, parseRange, type GridRange } from "../address";
 import { WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import { buildSpec117StylesOdsBytes, SPEC117_STYLES_ODS } from "../fixtures/build";
 import { acceptMerges } from "../merges";
-import type { Sheet } from "../model";
+import type { CellStyle, Sheet } from "../model";
+import { SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { effectiveStyleId } from "../styles";
 import { parseOds } from "./reader";
-import { acceptMergesByBand } from "./tableXml";
+import { OdsStyleBook, OdsStyleRegistry, readOdsContentStyles, readOdsStyleSheet } from "./styles";
+import { acceptMergesByBand, serializeTable, type OdsTableContext } from "./tableXml";
 
 const encoder = new TextEncoder();
 
@@ -548,5 +557,440 @@ describe("spec117-styles.ods (LibreOffice-shaped)", () => {
     const content = new TextDecoder().decode((await unzip(bytes)).get("content.xml")!);
     const envelope = parsed.odsContentEnvelope!;
     expect(envelope.prefix + parsed.sheets.map((s) => s.sourceXml).join("") + envelope.suffix).toBe(content);
+  });
+});
+
+// --- SPEC-122 "The table writer" ---------------------------------------------------------------
+
+const EN_US = SPREADSHEET_LOCALES["en-US"];
+
+/** A sheet with nothing stored: 64 px columns, 15 pt rows. */
+function sheetOf(fields: Partial<Sheet>): Sheet {
+  return { id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+}
+
+/** serializeTable for a new sheet (no source): the table and the styles the
+ * registry generated for it. */
+function writeNew(sheet: Sheet, styles: CellStyle[] = [{}], extra: Partial<OdsTableContext> = {}): { xml: string; styles: string } {
+  const registry = new OdsStyleRegistry();
+  const xml = serializeTable(sheet, { model: { styles, dateSystem: "1900", format: "ods" }, registry, locale: EN_US, ...extra });
+  return { xml, styles: registry.xml() };
+}
+
+/** A new sheet's table: its generated start tag around `inner`. */
+const newTable = (inner: string): string => `<table:table table:name="S" table:style-name="de-ta1">${inner}</table:table>`;
+/** A generated default column (de-co1, 64 px) run. */
+const defaultColumns = (count: number): string =>
+  `<table:table-column table:style-name="de-co1"${count > 1 ? ` table:number-columns-repeated="${count}"` : ""} table:default-cell-style-name="Default"/>`;
+/** A generated default row (de-ro1, 15 pt). */
+const newRow = (cells: string, repeat = 1): string =>
+  `<table:table-row table:style-name="de-ro1"${repeat > 1 ? ` table:number-rows-repeated="${repeat}"` : ""}>${cells}</table:table-row>`;
+const floatCell = (value: number, head = "<table:table-cell"): string =>
+  `${head} office:value-type="float" office:value="${value}" calcext:value-type="float"><text:p>${value}</text:p></table:table-cell>`;
+const stringCell = (paragraphs: string, head = "<table:table-cell"): string =>
+  `${head} office:value-type="string" calcext:value-type="string">${paragraphs}</table:table-cell>`;
+const gap = (count: number): string => `<table:table-cell${count > 1 ? ` table:number-columns-repeated="${count}"` : ""}/>`;
+
+/** A number cell in generated style de-ce<style>. */
+const typed = (style: number, attrs: string, text: string): string =>
+  `<table:table-cell table:style-name="de-ce${style}" ${attrs}><text:p>${text}</text:p></table:table-cell>`;
+
+describe("SPEC-122 serializeTable: repeat compression", () => {
+  it("compresses identical neighbouring cells and rows — empty ones included — and gaps become empty cells and rows", () => {
+    const sheet = sheetOf({
+      columns: [{ min: 1, max: 2, widthPx: 96 }],
+      rows: [
+        { index: 0, cells: [{ col: 0, value: 1 }, { col: 1, value: 1 }, { col: 2, value: 1 }] },
+        { index: 1, cells: [{ col: 0, value: 5 }] },
+        { index: 2, cells: [{ col: 0, value: 5 }] },
+        { index: 5, cells: [{ col: 3, value: "x" }] },
+      ],
+    });
+    expect(writeNew(sheet).xml).toBe(
+      newTable(
+        defaultColumns(1) +
+          `<table:table-column table:style-name="de-co2" table:number-columns-repeated="2" table:default-cell-style-name="Default"/>` +
+          defaultColumns(1) +
+          newRow(floatCell(1, `<table:table-cell table:number-columns-repeated="3"`) + gap(1)) +
+          newRow(floatCell(5) + gap(3), 2) +
+          newRow(gap(4), 2) +
+          newRow(gap(3) + stringCell("<text:p>x</text:p>")),
+      ),
+    );
+  });
+
+  it("writes one column element per run of identical columns: a de-co by width, collapse when hidden, the default cell style from styleId", () => {
+    const sheet = sheetOf({
+      columns: [
+        { min: 0, max: 1, hidden: true },
+        { min: 2, max: 3, widthPx: 96 },
+        { min: 4, max: 5, widthPx: 96 },
+        { min: 6, max: 6, styleId: 1 },
+      ],
+    });
+    const { xml, styles } = writeNew(sheet, [{}, { font: { bold: true } }]);
+    expect(xml).toBe(
+      newTable(
+        `<table:table-column table:style-name="de-co1" table:number-columns-repeated="2" table:visibility="collapse" table:default-cell-style-name="Default"/>` +
+          `<table:table-column table:style-name="de-co2" table:number-columns-repeated="4" table:default-cell-style-name="Default"/>` +
+          `<table:table-column table:style-name="de-co1" table:default-cell-style-name="de-ce1"/>` +
+          newRow(gap(7)),
+      ),
+    );
+    expect(styles).toContain(`<style:style style:name="de-co2" style:family="table-column"><style:table-column-properties style:column-width="1.0000in"/></style:style>`);
+    expect(styles).toContain(`<style:style style:name="de-ce1" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold"/></style:style>`);
+  });
+
+  it("writes a row's de-ro by height, collapse when hidden, and its default cell style from Row.styleId", () => {
+    const sheet = sheetOf({
+      rows: [
+        { index: 0, cells: [], heightPt: 30, customHeight: true },
+        { index: 1, cells: [], hidden: true, styleId: 1 },
+      ],
+    });
+    expect(writeNew(sheet, [{}, { font: { italic: true } }]).xml).toBe(
+      newTable(
+        defaultColumns(1) +
+          `<table:table-row table:style-name="de-ro1">${gap(1)}</table:table-row>` +
+          `<table:table-row table:style-name="de-ro2" table:visibility="collapse" table:default-cell-style-name="de-ce1">${gap(1)}</table:table-row>`,
+      ),
+    );
+  });
+});
+
+describe("SPEC-122 serializeTable: merges", () => {
+  it("gives the anchor its spans and writes every covered position as a covered cell, carrying a stored cell's content", () => {
+    const sheet = sheetOf({
+      merges: [{ top: 0, left: 0, bottom: 1, right: 2 }],
+      rows: [
+        { index: 0, cells: [{ col: 0, value: "T" }] },
+        { index: 1, cells: [{ col: 2, value: 7 }] },
+      ],
+    });
+    expect(writeNew(sheet).xml).toBe(
+      newTable(
+        defaultColumns(3) +
+          newRow(stringCell("<text:p>T</text:p>", `<table:table-cell table:number-columns-spanned="3" table:number-rows-spanned="2"`) + `<table:covered-table-cell table:number-columns-repeated="2"/>`) +
+          newRow(`<table:covered-table-cell table:number-columns-repeated="2"/>` + floatCell(7, "<table:covered-table-cell").replace("</table:table-cell>", "</table:covered-table-cell>")),
+      ),
+    );
+  });
+
+  it("writes an anchor with no stored cell as an empty spanning cell", () => {
+    const sheet = sheetOf({ merges: [{ top: 1, left: 1, bottom: 1, right: 2 }] });
+    expect(writeNew(sheet).xml).toBe(
+      newTable(
+        defaultColumns(3) +
+          newRow(gap(3)) +
+          newRow(`${gap(1)}<table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="1"/><table:covered-table-cell/>`),
+      ),
+    );
+  });
+});
+
+describe("SPEC-122 serializeTable: cells", () => {
+  it("chooses office:value-type from the value and its number format, with calcext:value-type — every row of the table", () => {
+    const styles: CellStyle[] = [
+      {},
+      { numberFormat: "yyyy-mm-dd" },
+      { numberFormat: "yyyy-mm-dd hh:mm" },
+      { numberFormat: "hh:mm:ss" },
+      { numberFormat: "[h]:mm" },
+      { numberFormat: "0.00%" },
+      { numberFormat: "#,##0.00 [$€-407]" },
+      { numberFormat: "[$$-409]#,##0.00" },
+      { numberFormat: "#,##0.00" },
+    ];
+    const numbers = [46303, 46303.5, 0.5, 1.5, 0.125, 1234.5, 1234.5, 1234.5];
+    const sheet = sheetOf({
+      rows: [
+        ...numbers.map((value, at) => ({ index: at, cells: [{ col: 0, value, styleId: at + 1 }] })),
+        { index: 8, cells: [{ col: 0, value: true }] },
+        { index: 9, cells: [{ col: 0, value: "s" }] },
+        { index: 10, cells: [{ col: 0, value: { error: "#DIV/0!" as const }, formula: "1/0" }] },
+        { index: 11, cells: [{ col: 0, value: { error: "#N/A" as const } }] },
+        { index: 12, cells: [{ col: 0, value: null, formula: "A1+1" }] },
+        { index: 13, cells: [{ col: 0, value: 3 }] },
+      ],
+    });
+    const cells = [...writeNew(sheet, styles).xml.matchAll(/<table:table-cell(?:[^>]*\/>|[^>]*>.*?<\/table:table-cell>)/g)].map((match) => match[0]);
+    expect(cells).toEqual([
+      typed(1, `office:value-type="date" office:date-value="2026-10-08" calcext:value-type="date"`, "2026-10-08"),
+      typed(2, `office:value-type="date" office:date-value="2026-10-08T12:00:00" calcext:value-type="date"`, "2026-10-08 12:00"),
+      typed(3, `office:value-type="time" office:time-value="PT12H00M00S" calcext:value-type="time"`, "12:00:00"),
+      typed(4, `office:value-type="time" office:time-value="PT36H00M00S" calcext:value-type="time"`, "36:00"),
+      typed(5, `office:value-type="percentage" office:value="0.125" calcext:value-type="percentage"`, "12.50%"),
+      typed(6, `office:value-type="currency" office:currency="EUR" office:value="1234.5" calcext:value-type="currency"`, "1,234.50 €"),
+      typed(7, `office:value-type="currency" office:currency="USD" office:value="1234.5" calcext:value-type="currency"`, "$1,234.50"),
+      typed(8, `office:value-type="float" office:value="1234.5" calcext:value-type="float"`, "1,234.50"),
+      `<table:table-cell office:value-type="boolean" office:boolean-value="true" calcext:value-type="boolean"><text:p>TRUE</text:p></table:table-cell>`,
+      stringCell("<text:p>s</text:p>"),
+      `<table:table-cell table:formula="of:=1/0" office:value-type="float" office:value="0" calcext:value-type="error"><text:p>#DIV/0!</text:p></table:table-cell>`,
+      `<table:table-cell office:value-type="string" calcext:value-type="error"><text:p>#N/A</text:p></table:table-cell>`,
+      `<table:table-cell table:formula="of:=[.A1]+1"/>`,
+      floatCell(3),
+    ]);
+  });
+
+  it("writes a stale cell's last known value as it is — ODS has no recalculate-on-load flag", () => {
+    const sheet = sheetOf({ rows: [{ index: 0, cells: [{ col: 0, value: 41, formula: "B1+1" }, { col: 1, value: 1 }] }] });
+    const model = { styles: [{}], dateSystem: "1900" as const, format: "ods" as const, forceFullCalcOnLoad: true as const };
+    const xml = serializeTable(sheet, { model, registry: new OdsStyleRegistry(), locale: EN_US });
+    expect(xml).toContain(`<table:table-cell table:formula="of:=[.B1]+1" office:value-type="float" office:value="41" calcext:value-type="float"><text:p>41</text:p></table:table-cell>`);
+  });
+
+  it("writes one text:p per line, runs of spaces as text:s (a leading or trailing one too), tabs as text:tab and a CR as a reference", () => {
+    const sheet = sheetOf({
+      rows: [
+        { index: 0, cells: [{ col: 0, value: "  two  spaces\tand tab\nline 2 " }] },
+        { index: 1, cells: [{ col: 0, value: " x" }] },
+        { index: 2, cells: [{ col: 0, value: "Line one\r\nLine two" }] },
+        { index: 3, cells: [{ col: 0, value: "a\n\nb" }] },
+        { index: 4, cells: [{ col: 0, value: "" }] },
+        { index: 5, cells: [{ col: 0, value: `<&>"` }] },
+      ],
+    });
+    expect(writeNew(sheet).xml).toBe(
+      newTable(
+        defaultColumns(1) +
+          newRow(stringCell(`<text:p><text:s text:c="2"/>two<text:s text:c="2"/>spaces<text:tab/>and tab</text:p><text:p>line 2<text:s/></text:p>`)) +
+          newRow(stringCell(`<text:p><text:s/>x</text:p>`)) +
+          newRow(stringCell(`<text:p>Line one&#13;</text:p><text:p>Line two</text:p>`)) +
+          newRow(stringCell(`<text:p>a</text:p><text:p/><text:p>b</text:p>`)) +
+          newRow(`<table:table-cell office:value-type="string" calcext:value-type="string"/>`) +
+          newRow(stringCell(`<text:p>&lt;&amp;&gt;"</text:p>`)),
+      ),
+    );
+  });
+
+  it("writes rich runs as text:spans in de-T text styles, equal fonts sharing one; a run without a font is plain text", () => {
+    const sheet = sheetOf({
+      rows: [
+        { index: 0, cells: [{ col: 0, value: "Bold plain", runs: [{ text: "Bold ", font: { bold: true } }, { text: "plain" }] }] },
+        { index: 1, cells: [{ col: 0, value: "a  b", runs: [{ text: "a ", font: { color: "#ff0000" } }, { text: " b", font: { bold: true } }] }] },
+        { index: 2, cells: [{ col: 0, value: "changed", runs: [{ text: "Bold", font: { bold: true } }] }] },
+      ],
+    });
+    const { xml, styles } = writeNew(sheet);
+    expect(xml).toBe(
+      newTable(
+        defaultColumns(1) +
+          newRow(stringCell(`<text:p><text:span text:style-name="de-T1">Bold </text:span>plain</text:p>`)) +
+          newRow(stringCell(`<text:p><text:span text:style-name="de-T2">a<text:s/></text:span><text:span text:style-name="de-T1"><text:s/>b</text:span></text:p>`)) +
+          newRow(stringCell(`<text:p>changed</text:p>`)),
+      ),
+    );
+    expect(styles).toContain(
+      `<style:style style:name="de-T1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>` +
+        `<style:style style:name="de-T2" style:family="text"><style:text-properties fo:color="#ff0000"/></style:style>`,
+    );
+  });
+
+  it("writes table:formula through toOdsFormula, an unparsed formula's wire value verbatim, and an array anchor's matrix spans", () => {
+    const sheet = sheetOf({
+      rows: [
+        {
+          index: 0,
+          cells: [
+            { col: 0, value: 4, formula: "SUM('My Sheet'!A1:A2)*2" },
+            { col: 1, value: 1, formula: "oooc:=FOO([.A1]", formulaUnparsed: true },
+          ],
+        },
+        { index: 1, cells: [{ col: 0, value: 1, formula: "TRANSPOSE(B1:C1)", arrayRange: { top: 1, left: 0, bottom: 2, right: 0 } }] },
+        { index: 2, cells: [{ col: 0, value: 2 }] },
+      ],
+    });
+    expect(writeNew(sheet).xml).toBe(
+      newTable(
+        defaultColumns(2) +
+          newRow(floatCell(4, `<table:table-cell table:formula="of:=SUM([$'My Sheet'.A1:.A2])*2"`) + floatCell(1, `<table:table-cell table:formula="oooc:=FOO([.A1]"`)) +
+          newRow(floatCell(1, `<table:table-cell table:number-matrix-columns-spanned="1" table:number-matrix-rows-spanned="2" table:formula="of:=TRANSPOSE([.B1:.C1])"`) + gap(1)) +
+          newRow(floatCell(2) + gap(1)),
+      ),
+    );
+  });
+
+  it("writes preserved attributes after the value attributes, preserved children first, preserved text instead of the paragraphs — through passRetained", () => {
+    const sheet = sheetOf({
+      rows: [
+        {
+          index: 0,
+          cells: [
+            {
+              col: 0,
+              value: "See it",
+              preservedAttrs: ` table:content-validation-name="v1"`,
+              preservedXml: `<office:annotation><text:p>note</text:p></office:annotation>`,
+              preservedText: `<text:p>See <text:a xlink:href="https://example.com/">it</text:a></text:p>`,
+            },
+            { col: 1, value: null, preservedXml: `<office:annotation><text:p>Old!A1</text:p></office:annotation>` },
+          ],
+        },
+      ],
+    });
+    expect(writeNew(sheet, [{}], { passRetained: (text) => text.replace("Old!", "New!") }).xml).toBe(
+      newTable(
+        defaultColumns(2) +
+          newRow(
+            `<table:table-cell office:value-type="string" calcext:value-type="string" table:content-validation-name="v1">` +
+              `<office:annotation><text:p>note</text:p></office:annotation><text:p>See <text:a xlink:href="https://example.com/">it</text:a></text:p></table:table-cell>` +
+              `<table:table-cell><office:annotation><text:p>New!A1</text:p></office:annotation></table:table-cell>`,
+          ),
+      ),
+    );
+  });
+
+  it("names a cell's style only where it differs from its row's default, else its column's", () => {
+    const sheet = sheetOf({
+      columns: [{ min: 0, max: 1, styleId: 1 }],
+      rows: [
+        { index: 0, cells: [{ col: 0, value: 1, styleId: 1 }, { col: 1, value: 1, styleId: 2 }, { col: 2, value: 1 }] },
+        { index: 1, styleId: 2, cells: [{ col: 0, value: 2, styleId: 1 }, { col: 1, value: 2, styleId: 2 }] },
+      ],
+    });
+    const xml = writeNew(sheet, [{}, { font: { bold: true } }, { font: { italic: true } }]).xml;
+    expect(xml).toBe(
+      newTable(
+        `<table:table-column table:style-name="de-co1" table:number-columns-repeated="2" table:default-cell-style-name="de-ce1"/>` +
+          defaultColumns(1) +
+          newRow(floatCell(1) + floatCell(1, `<table:table-cell table:style-name="de-ce2"`) + floatCell(1)) +
+          `<table:table-row table:style-name="de-ro1" table:default-cell-style-name="de-ce2">${floatCell(2, `<table:table-cell table:style-name="de-ce1"`)}${floatCell(2)}${gap(1)}</table:table-row>`,
+      ),
+    );
+  });
+
+  it("keeps a style read from the file by its name when the package holds the source's styles; from scratch every style is generated", () => {
+    const sheet = sheetOf({ rows: [{ index: 0, cells: [{ col: 0, value: 1, styleId: 1 }] }] });
+    const styles: CellStyle[] = [{ sourceStyleName: "Default" }, { font: { bold: true }, sourceStyleName: "ce7" }];
+    expect(writeNew(sheet, styles, { sourceStyleNames: true }).xml).toContain(floatCell(1, `<table:table-cell table:style-name="ce7"`));
+    expect(writeNew(sheet, styles).xml).toContain(floatCell(1, `<table:table-cell table:style-name="de-ce1"`));
+  });
+});
+
+describe("SPEC-122 serializeTable: the extent", () => {
+  it("is 1 × 1 for an empty new sheet, and a new sheet's used range otherwise", () => {
+    expect(writeNew(sheetOf({})).xml).toBe(newTable(defaultColumns(1) + newRow(gap(1))));
+    expect(writeNew(sheetOf({ rows: [{ index: 3, cells: [{ col: 2, value: "z" }] }] })).xml).toBe(
+      newTable(defaultColumns(3) + newRow(gap(3), 3) + newRow(gap(2) + stringCell("<text:p>z</text:p>"))),
+    );
+  });
+
+  it("gives a last column or row of another size one default-sized one after it, since the reader takes the last runs as the defaults", () => {
+    const sheet = sheetOf({ columns: [{ min: 1, max: 1, widthPx: 96 }], rows: [{ index: 1, heightPt: 30, customHeight: true, cells: [{ col: 0, value: 1 }] }] });
+    expect(writeNew(sheet).xml).toBe(
+      newTable(
+        defaultColumns(1) +
+          `<table:table-column table:style-name="de-co2" table:default-cell-style-name="Default"/>` +
+          defaultColumns(1) +
+          newRow(gap(3)) +
+          `<table:table-row table:style-name="de-ro2">${floatCell(1)}${gap(2)}</table:table-row>` +
+          newRow(gap(3)),
+      ),
+    );
+  });
+});
+
+/** The STYLES above as the writer's layout styles (the source's column and
+ * row styles, how its default ones are recognised). */
+function layoutBook(): OdsStyleBook {
+  return new OdsStyleBook(
+    readOdsStyleSheet(`<office:document-styles ${NS}><office:styles><style:style style:name="Default" style:family="table-cell"/></office:styles></office:document-styles>`),
+    readOdsContentStyles([`<office:automatic-styles>${STYLES}</office:automatic-styles>`], NS),
+  );
+}
+
+/** Reads `body` and rebuilds its first table from the model, the way the
+ * writer's substitution path does for a dirty sheet. */
+async function rebuild(body: string, edit?: (sheet: Sheet) => Sheet): Promise<string> {
+  const { parsed, sheet } = await read(body);
+  const target = edit ? edit(sheet) : sheet;
+  return serializeTable(target, {
+    source: target.sourceXml,
+    model: { styles: parsed.styles, dateSystem: parsed.dateSystem, format: "ods" },
+    registry: new OdsStyleRegistry(),
+    locale: EN_US,
+    sourceStyleNames: true,
+    layoutStyles: layoutBook(),
+  });
+}
+
+describe("SPEC-122 serializeTable: a source table rebuilt", () => {
+  const out = (value: number): string => floatCell(value);
+  const LEADING = `<table:title>Title</table:title><table:desc>Desc</table:desc><office:forms/><table:shapes><draw:frame/></table:shapes>`;
+  const TRAILING =
+    `<table:named-expressions><table:named-range table:name="R" table:base-cell-address="$T.$A$1" table:cell-range-address="$T.$A$1"/></table:named-expressions>` +
+    `<calcext:conditional-formats><calcext:conditional-format calcext:target-range-address="T.A1:T.A2"/></calcext:conditional-formats>`;
+  const START = `<table:table table:name="T" table:style-name="ta1" table:protected="true" table:print="false">`;
+  const SOURCE =
+    `${START}${LEADING}` +
+    `<table:table-header-columns>${column(`table:style-name="co1" table:default-cell-style-name="Default"`)}</table:table-header-columns>` +
+    `<table:table-column-group table:display="false">${column(`table:style-name="co2" table:number-columns-repeated="2" table:default-cell-style-name="Default"`)}</table:table-column-group>` +
+    column(`table:style-name="co1" table:number-columns-repeated="16381" table:default-cell-style-name="Default"`) +
+    `<table:table-header-rows>${row(string("Head") + empty(16383), `table:style-name="ro1"`)}</table:table-header-rows>` +
+    `<table:table-row-group table:display="false">${row(float(1) + empty(16383), `table:style-name="ro1"`)}<text:soft-page-break/>` +
+    `<table:table-row-group>${row(float(2) + empty(16383), `table:style-name="ro1"`)}</table:table-row-group></table:table-row-group>` +
+    `<table:table-rows>${row(float(5) + empty(16383), `table:style-name="ro1" table:number-rows-repeated="2"`)}</table:table-rows>` +
+    row(empty(16384), `table:style-name="ro1" table:number-rows-repeated="1048571"`) +
+    `${TRAILING}</table:table>`;
+
+  it("keeps the start tag and the leading and trailing children verbatim, re-emits the grouping skeleton around the indices each covered, drops soft page breaks, and the 1048571-row tail keeps its length", async () => {
+    const xml = await rebuild(SOURCE.replace(LEADING, LEADING.replace("<draw:frame/>", "")));
+    expect(xml).toBe(
+      START +
+        LEADING.replace("<draw:frame/>", "") +
+        `<table:table-header-columns><table:table-column table:style-name="co1" table:default-cell-style-name="Default"/></table:table-header-columns>` +
+        `<table:table-column-group table:display="false"><table:table-column table:style-name="co2" table:number-columns-repeated="2" table:default-cell-style-name="Default"/></table:table-column-group>` +
+        `<table:table-column table:style-name="co1" table:number-columns-repeated="16381" table:default-cell-style-name="Default"/>` +
+        `<table:table-header-rows><table:table-row table:style-name="ro1">${stringCell("<text:p>Head</text:p>")}${gap(16383)}</table:table-row></table:table-header-rows>` +
+        `<table:table-row-group table:display="false"><table:table-row table:style-name="ro1">${out(1)}${gap(16383)}</table:table-row>` +
+        `<table:table-row-group><table:table-row table:style-name="ro1">${out(2)}${gap(16383)}</table:table-row></table:table-row-group></table:table-row-group>` +
+        `<table:table-rows><table:table-row table:style-name="ro1" table:number-rows-repeated="2">${out(5)}${gap(16383)}</table:table-row></table:table-rows>` +
+        `<table:table-row table:style-name="ro1" table:number-rows-repeated="1048571">${gap(16384)}</table:table-row>` +
+        `${TRAILING}</table:table>`,
+    );
+  });
+
+  it("re-emits an edited cell inside a row group in place, the groups unmoved", async () => {
+    const xml = await rebuild(SOURCE.replace(LEADING, ""), (sheet) => ({
+      ...sheet,
+      rows: sheet.rows.map((each) => (each.index === 2 ? { ...each, cells: [{ col: 0, value: 22 }] } : each)),
+    }));
+    expect(xml).toContain(`<table:table-row-group><table:table-row table:style-name="ro1">${out(22)}${gap(16383)}</table:table-row></table:table-row-group></table:table-row-group>`);
+  });
+
+  it("grows the extent to the used range past the source's, and keeps the source's when it is larger", async () => {
+    const small = `<table:table table:name="T">${column(`table:style-name="co1" table:number-columns-repeated="2"`)}${row(float(1) + empty(1), `table:style-name="ro1" table:number-rows-repeated="2"`)}</table:table>`;
+    const grown = await rebuild(small, (sheet) => ({ ...sheet, rows: [...sheet.rows, { index: 3, cells: [{ col: 3, value: 9 }] }] }));
+    expect(grown).toBe(
+      `<table:table table:name="T">` +
+        `<table:table-column table:style-name="co1" table:number-columns-repeated="4" table:default-cell-style-name="Default"/>` +
+        `<table:table-row table:style-name="ro1" table:number-rows-repeated="2">${out(1)}${gap(3)}</table:table-row>` +
+        `<table:table-row table:style-name="ro1">${gap(4)}</table:table-row>` +
+        `<table:table-row table:style-name="ro1">${gap(3)}${out(9)}</table:table-row></table:table>`,
+    );
+    const kept = await rebuild(small, (sheet) => ({ ...sheet, rows: [] }));
+    expect(kept).toBe(
+      `<table:table table:name="T"><table:table-column table:style-name="co1" table:number-columns-repeated="2" table:default-cell-style-name="Default"/>` +
+        `<table:table-row table:style-name="ro1" table:number-rows-repeated="2">${gap(2)}</table:table-row></table:table>`,
+    );
+  });
+
+  it("reads back as the model it was written from (merges, covered content, styles, sizes, hidden rows)", async () => {
+    const body =
+      `<table:table table:name="T">${column(`table:style-name="co2"`)}${column(`table:style-name="co1" table:number-columns-repeated="16383"`)}` +
+      row(float(1, `table:number-columns-spanned="2" table:number-rows-spanned="2" table:style-name="ce1"`) + `<table:covered-table-cell table:style-name="ce2"/>` + empty(16382), `table:style-name="ro2"`) +
+      row(`<table:covered-table-cell table:number-columns-repeated="2"/>` + string("x", `table:style-name="ce3"`) + empty(16381), `table:style-name="ro1" table:visibility="collapse"`) +
+      row(empty(16384), `table:style-name="ro1" table:number-rows-repeated="1048574"`) +
+      `</table:table>`;
+    const { sheet } = await read(body);
+    const xml = await rebuild(body);
+    const back = (await read(`${xml}`)).sheet;
+    expect({ rows: back.rows, columns: back.columns, merges: back.merges, defaultColWidthPx: back.defaultColWidthPx, defaultRowHeightPt: back.defaultRowHeightPt }).toEqual({
+      rows: sheet.rows,
+      columns: sheet.columns,
+      merges: sheet.merges,
+      defaultColWidthPx: sheet.defaultColWidthPx,
+      defaultRowHeightPt: sheet.defaultRowHeightPt,
+    });
   });
 });

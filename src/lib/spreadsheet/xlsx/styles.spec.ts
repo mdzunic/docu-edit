@@ -7,13 +7,26 @@
 // start/end), cellXfs one-to-one with copies, alignment, protection,
 // quotePrefix, the override palette, the parts left unread, the default
 // font — over synthetic parts and spec117-styles.xlsx.
+//
+// SPEC-122 "Styles" › xlsx: the XlsxStyleWriter — a style with sourceXf
+// writes that index; a new one reuses equal source fonts, fills, borders and
+// number formats, else an earlier append, else appends; the numFmtId rules
+// (builtinFormatId as the id; a locale-independent built-in found by its
+// code, never 14/22 or another LOCALE_DEPENDENT_BUILTINS id; an existing
+// custom id; custom ids from 164 or past the highest); the xf (xfId of the
+// named style, apply* against that parent, quotePrefix, alignment,
+// protection); append-only (the source bytes unchanged outside the inserted
+// runs and count values, an absent collection inserted in CT_Stylesheet
+// order, nothing rewritten when nothing was appended); and the from-scratch
+// base built from model.styles[0].
 import { describe, expect, it } from "vitest";
-import { DEFAULT_THEME, hexToRgb, resolveColor, type DocumentTheme, type ModelColor } from "../../core/theme";
+import { DEFAULT_THEME, hexToRgb, resolveColor, resolveFont, type DocumentTheme, type ModelColor } from "../../core/theme";
 import { buildSpec117StylesXlsxBytes, SPEC117_BORDER_STYLES, SPEC117_STYLES_XLSX, SPEC117_XF } from "../fixtures/build";
 import type { CellStyle, SheetColorRef } from "../model";
-import { INDEXED_COLORS } from "../styles";
+import { createBlankWorkbook } from "../sheets";
+import { INDEXED_COLORS, styleKey } from "../styles";
 import { parseXlsx } from "./reader";
-import { readXlsxStyles, XlsxFontReader } from "./styles";
+import { readXlsxStyles, XlsxFontReader, XlsxStyleWriter } from "./styles";
 import {
   modelColorToXlsxAttrs,
   tintTransforms,
@@ -23,6 +36,7 @@ import {
   xlsxThemeSlot,
   type XlsxColorAttributes,
 } from "./themeColor";
+import { FROM_SCRATCH_STYLES_XML } from "./writer";
 
 const MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const STRICT = "http://purl.oclc.org/ooxml/spreadsheetml/main";
@@ -663,5 +677,225 @@ describe("spec117-styles.xlsx (Excel-shaped)", () => {
     expect(styles[SPEC117_XF.unlocked]!.protection).toEqual({ locked: false, hidden: true });
     expect(styles[SPEC117_XF.quotePrefix]!.quotePrefix).toBe(true);
     expect(styles.filter((style) => style.quotePrefix)).toHaveLength(1);
+  });
+});
+
+// --- SPEC-122: the style writer -------------------------------------------------------
+
+const X14AC = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac";
+const DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
+
+/** An Excel-shaped styles part: two custom number formats, a bold font, a
+ * solid fill, the Heading 1 cell style, and the elements the writer never
+ * touches (cellStyles, dxfs, tableStyles, extLst). */
+const SOURCE_STYLES =
+  `${DECLARATION}\r\n<styleSheet xmlns="${MAIN}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac" xmlns:x14ac="${X14AC}">` +
+  `<numFmts count="2"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="170" formatCode="&quot;kg&quot;0"/></numFmts>` +
+  `<fonts count="2" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyNumberFormat="0"/></cellStyleXfs>` +
+  `<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="164" fontId="1" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>` +
+  `<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>` +
+  `<cellStyles count="2"><cellStyle name="Heading 1" xfId="1" builtinId="16"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>` +
+  `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"><x14:slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext></extLst></styleSheet>`;
+
+const BOLD_MINOR = { family: { theme: "minor" as const }, sizePt: 11, bold: true as const, color: { theme: "dk1" as const } };
+const CODE_44 = BUILTIN_CODE_44();
+
+/** Built-in 44's en-US code (a locale-dependent accounting format). */
+function BUILTIN_CODE_44(): string {
+  return '_("$"* #,##0.00_);_("$"* \\(#,##0.00\\);_("$"* "-"??_);_(@_)';
+}
+
+/** A writer over `source` for the source's own styles plus `added`. */
+function styleWriter(added: CellStyle[], source = SOURCE_STYLES): { writer: XlsxStyleWriter; styles: CellStyle[] } {
+  const styles = [...readXlsxStyles(source, undefined).styles, ...added];
+  return { writer: new XlsxStyleWriter(source, { styles, theme: undefined }), styles };
+}
+
+describe("XlsxStyleWriter: number formats", () => {
+  /** The numFmtId a new style with these fields gets, and the numFmts the part then holds. */
+  function numFmt(fields: CellStyle, source = SOURCE_STYLES): { id: number; numFmts: string } {
+    const { writer } = styleWriter([fields], source);
+    const xf = writer.xfFor(readXlsxStyles(source, undefined).styles.length);
+    const xml = writer.xml();
+    const xfs = /<cellXfs[^>]*>(.*)<\/cellXfs>/.exec(xml)![1]!.match(/<xf\b[^>]*?numFmtId="(\d+)"/g)!;
+    return { id: Number(/numFmtId="(\d+)"/.exec(xfs[xf]!)![1]), numFmts: /<numFmts\b.*<\/numFmts>/.exec(xml)?.[0] ?? "" };
+  }
+  const SOURCE_NUMFMTS = `<numFmts count="2"><numFmt numFmtId="164" formatCode="0.000"/><numFmt numFmtId="170" formatCode="&quot;kg&quot;0"/></numFmts>`;
+
+  it("writes builtinFormatId as the numFmtId, with no numFmt entry — whatever the locale's code", () => {
+    expect(numFmt({ numberFormat: "m/d/yyyy", builtinFormatId: 14 })).toEqual({ id: 14, numFmts: SOURCE_NUMFMTS });
+    expect(numFmt({ numberFormat: "dd.mm.yyyy hh:mm", builtinFormatId: 22 })).toEqual({ id: 22, numFmts: SOURCE_NUMFMTS });
+    expect(numFmt({ numberFormat: CODE_44, builtinFormatId: 44 })).toEqual({ id: 44, numFmts: SOURCE_NUMFMTS });
+  });
+
+  it("finds a locale-independent built-in by its code (0–49)", () => {
+    const cases: [string, number][] = [["0", 1], ["#,##0", 3], ["0%", 9], ["0.00%", 10], ["0.00E+00", 11], ["# ?/?", 12], ["d-mmm-yy", 15], ["h:mm AM/PM", 18], ["h:mm:ss", 21], ["[h]:mm:ss", 46], ["@", 49]];
+    for (const [code, id] of cases) {
+      expect(numFmt({ numberFormat: code }), code).toEqual({ id, numFmts: SOURCE_NUMFMTS });
+    }
+    expect(numFmt({ numberFormat: "General" }).id).toBe(0);
+    expect(numFmt({}).id).toBe(0);
+  });
+
+  it("never maps a code to a LOCALE_DEPENDENT_BUILTINS id without builtinFormatId: 14's, 22's and 44's codes become custom formats past the highest id", () => {
+    expect(numFmt({ numberFormat: "m/d/yyyy" })).toEqual({ id: 171, numFmts: SOURCE_NUMFMTS.replace(`count="2"`, `count="3"`).replace("</numFmts>", `<numFmt numFmtId="171" formatCode="m/d/yyyy"/></numFmts>`) });
+    expect(numFmt({ numberFormat: "m/d/yyyy h:mm" }).id).toBe(171);
+    expect(numFmt({ numberFormat: CODE_44 })).toEqual({
+      id: 171,
+      numFmts: SOURCE_NUMFMTS.replace(`count="2"`, `count="3"`).replace("</numFmts>", () => `<numFmt numFmtId="171" formatCode="_(&quot;$&quot;* #,##0.00_);_(&quot;$&quot;* \\(#,##0.00\\);_(&quot;$&quot;* &quot;-&quot;??_);_(@_)"/></numFmts>`),
+    });
+  });
+
+  it("reuses an existing custom id with the same code", () => {
+    expect(numFmt({ numberFormat: "0.000" })).toEqual({ id: 164, numFmts: SOURCE_NUMFMTS });
+    expect(numFmt({ numberFormat: `"kg"0` })).toEqual({ id: 170, numFmts: SOURCE_NUMFMTS });
+  });
+
+  it("numbers custom formats from 164 in a part with none, inserting <numFmts> first in CT_Stylesheet order", () => {
+    const bare = `<styleSheet xmlns="${MAIN}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><cellXfs count="1"><xf numFmtId="0" fontId="0" xfId="0"/></cellXfs></styleSheet>`;
+    expect(numFmt({ numberFormat: "0.0000" }, bare)).toEqual({ id: 164, numFmts: `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0000"/></numFmts>` });
+    expect(numFmt({ numberFormat: "0.0000" }, bare).numFmts).toBe(/^.*<styleSheet[^>]*>(<numFmts.*<\/numFmts>)<fonts/.exec(styleWriterXml(bare, { numberFormat: "0.0000" }))![1]);
+  });
+});
+
+/** The part a writer over `source` writes for one new style. */
+function styleWriterXml(source: string, style: CellStyle): string {
+  const { writer, styles } = styleWriter([style], source);
+  writer.xfFor(styles.length - 1);
+  return writer.xml();
+}
+
+describe("XlsxStyleWriter: append-only", () => {
+  it("writes a style with sourceXf as that index and rewrites nothing when nothing was appended", () => {
+    const { writer, styles } = styleWriter([]);
+    expect(styles.map((_, index) => writer.xfFor(index))).toEqual([0, 1, 2]);
+    expect(writer.changed).toBe(false);
+    expect(writer.xml()).toBe(SOURCE_STYLES);
+  });
+
+  it("reuses equal source entries, appends the rest, and leaves the source bytes unchanged outside the inserted runs and count values", () => {
+    const italic = { family: "Cambria", sizePt: 14, italic: true as const, strike: true as const, underline: "double" as const, vertAlign: "superscript" as const, color: "#c00000" };
+    const added: CellStyle[] = [
+      // A: every part found in the source — but a new xf (no sourceXf).
+      { font: BOLD_MINOR, fill: { kind: "solid", color: "#ffff00" }, numberFormat: "0.000" },
+      // B: a new font, border and custom format; alignment, protection, quotePrefix.
+      {
+        font: italic,
+        borders: { top: { style: "thin" }, bottom: { style: "double", color: "#ff0000" } },
+        alignment: { horizontal: "center", vertical: "top", wrap: true, indent: 2, textRotation: 45, shrinkToFit: true },
+        protection: { locked: false, hidden: true },
+        quotePrefix: true,
+        numberFormat: "m/d/yyyy",
+      },
+      // C: a locale-dependent built-in, no font (font 0).
+      { numberFormat: "m/d/yyyy", builtinFormatId: 14 },
+      // D: the Heading 1 cell style — apply* against its parent xf.
+      { font: BOLD_MINOR, namedStyle: "Heading 1", numberFormat: "0.00%" },
+      // E: a theme-colour fill, an existing custom format, hidden only.
+      { fill: { kind: "solid", color: { theme: "accent1", lumMod: 0.6, lumOff: 0.4 } }, numberFormat: `"kg"0`, protection: { hidden: true } },
+      // F: equal to A — one xf.
+      { font: { ...BOLD_MINOR }, fill: { kind: "solid", color: "#ffff00" }, numberFormat: "0.000" },
+      // G: built-in 44's code without builtinFormatId — a custom format.
+      { numberFormat: CODE_44 },
+    ];
+    const { writer, styles } = styleWriter(added);
+    expect(styles.slice(3).map((_, index) => writer.xfFor(index + 3))).toEqual([3, 4, 5, 6, 7, 3, 8]);
+    expect(writer.changed).toBe(true);
+    const inserted = {
+      numFmts: `<numFmt numFmtId="171" formatCode="m/d/yyyy"/><numFmt numFmtId="172" formatCode="_(&quot;$&quot;* #,##0.00_);_(&quot;$&quot;* \\(#,##0.00\\);_(&quot;$&quot;* &quot;-&quot;??_);_(@_)"/>`,
+      fonts: `<font><i/><strike/><u val="double"/><vertAlign val="superscript"/><sz val="14"/><color rgb="FFC00000"/><name val="Cambria"/></font>`,
+      fills: `<fill><patternFill patternType="solid"><fgColor theme="4" tint="0.4"/><bgColor indexed="64"/></patternFill></fill>`,
+      borders: `<border><left/><right/><top style="thin"><color indexed="64"/></top><bottom style="double"><color rgb="FFFF0000"/></bottom><diagonal/></border>`,
+      cellXfs:
+        `<xf numFmtId="164" fontId="1" fillId="2" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/>` +
+        `<xf numFmtId="171" fontId="2" fillId="0" borderId="1" xfId="0" quotePrefix="1" applyNumberFormat="1" applyFont="1" applyBorder="1" applyAlignment="1" applyProtection="1">` +
+        `<alignment horizontal="center" vertical="top" textRotation="45" wrapText="1" indent="2" shrinkToFit="1"/><protection locked="0" hidden="1"/></xf>` +
+        `<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+        `<xf numFmtId="10" fontId="1" fillId="0" borderId="0" xfId="1" applyNumberFormat="1"/>` +
+        `<xf numFmtId="170" fontId="0" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFill="1" applyProtection="1"><protection hidden="1"/></xf>` +
+        `<xf numFmtId="172" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`,
+    };
+    const xml = writer.xml();
+    expect(xml).toBe(
+      SOURCE_STYLES.replace(`<numFmts count="2">`, `<numFmts count="4">`)
+        .replace("</numFmts>", () => `${inserted.numFmts}</numFmts>`)
+        .replace(`<fonts count="2" `, `<fonts count="3" `)
+        .replace("</fonts>", () => `${inserted.fonts}</fonts>`)
+        .replace(`<fills count="3">`, `<fills count="4">`)
+        .replace("</fills>", () => `${inserted.fills}</fills>`)
+        .replace(`<borders count="1">`, `<borders count="2">`)
+        .replace("</borders>", () => `${inserted.borders}</borders>`)
+        .replace(`<cellXfs count="3">`, `<cellXfs count="9">`)
+        .replace("</cellXfs>", () => `${inserted.cellXfs}</cellXfs>`),
+    );
+    // Removing the inserted runs and restoring the counts gives the source exactly.
+    let restored = xml;
+    for (const run of Object.values(inserted)) {
+      restored = restored.replace(run, () => "");
+    }
+    restored = restored
+      .replace(`<numFmts count="4">`, `<numFmts count="2">`)
+      .replace(`<fonts count="3" `, `<fonts count="2" `)
+      .replace(`<fills count="4">`, `<fills count="3">`)
+      .replace(`<borders count="2">`, `<borders count="1">`)
+      .replace(`<cellXfs count="9">`, `<cellXfs count="3">`);
+    expect(restored).toBe(SOURCE_STYLES);
+    // A written style reads back as the style it was written for (an absent font as font 0).
+    const reread = readXlsxStyles(xml, undefined).styles;
+    const font0 = reread[0]!.font;
+    expect(styleKey(reread[3]!)).toBe(styleKey(added[0]!));
+    expect(styleKey(reread[4]!)).toBe(styleKey(added[1]!));
+    expect(styleKey(reread[5]!)).toBe(styleKey({ ...added[2]!, font: font0 }));
+    // (A theme colour reads back with the tint text written for it.)
+    const tinted: SheetColorRef = { theme: "accent1", lumMod: 0.6, lumOff: 0.4, xlsxTint: "0.4" };
+    expect(styleKey(reread[7]!)).toBe(styleKey({ ...added[4]!, fill: { kind: "solid", color: tinted }, font: font0 }));
+    expect(styleKey(reread[8]!)).toBe(styleKey({ ...added[6]!, font: font0 }));
+  });
+
+  it("writes fonts in Excel's child order, a theme font as its typeface + <scheme>", () => {
+    const appendedFont = (font: CellStyle["font"]): string => /<fonts[^>]*>.*(<font>.*?<\/font>)<\/fonts>/.exec(styleWriterXml(SOURCE_STYLES, { font }))![1]!;
+    expect(appendedFont({ family: "Arial", sizePt: 10, bold: true, italic: true, strike: true, underline: "single", vertAlign: "subscript", color: "#336699" })).toBe(
+      `<font><b/><i/><strike/><u/><vertAlign val="subscript"/><sz val="10"/><color rgb="FF336699"/><name val="Arial"/></font>`,
+    );
+    expect(appendedFont({ family: { theme: "major" }, sizePt: 18, color: { theme: "dk2" } })).toBe(
+      `<font><sz val="18"/><color theme="3"/><name val="${resolveFont({ theme: "major" }, DEFAULT_THEME)}"/><family val="2"/><scheme val="major"/></font>`,
+    );
+  });
+
+  it("inserts an absent collection in CT_Stylesheet order (here borders, before cellXfs; with no parent xf, border 0 needs no applyBorder)", () => {
+    const bare = `<styleSheet xmlns="${MAIN}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill/></fill></fills><cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" xfId="0"/></cellXfs></styleSheet>`;
+    expect(styleWriterXml(bare, { borders: { left: { style: "thin" } } })).toBe(
+      `<styleSheet xmlns="${MAIN}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill/></fill></fills>` +
+        `<borders count="1"><border><left style="thin"><color indexed="64"/></left><right/><top/><bottom/><diagonal/></border></borders>` +
+        `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs></styleSheet>`,
+    );
+  });
+});
+
+describe("XlsxStyleWriter: from scratch", () => {
+  it("builds font 0 and xf 0 from model.styles[0]: the blank workbook's is SPEC-121's FROM_SCRATCH_STYLES_XML", () => {
+    const blank = new XlsxStyleWriter(undefined, createBlankWorkbook());
+    expect(blank.xfFor(0)).toBe(0);
+    expect(blank.changed).toBe(false);
+    expect(blank.xml()).toBe(FROM_SCRATCH_STYLES_XML);
+  });
+
+  it("keeps another workbook's default font — and ignores a sourceXf, which names no xf of this part", () => {
+    const styles: CellStyle[] = [{ font: { family: "Arial", sizePt: 10 } }, { font: { family: "Arial", sizePt: 10, bold: true }, sourceXf: 7 }];
+    const writer = new XlsxStyleWriter(undefined, { styles, theme: undefined });
+    expect([writer.xfFor(0), writer.xfFor(1)]).toEqual([0, 1]);
+    const xml = writer.xml();
+    expect(xml).toContain(`<fonts count="2"><font><sz val="10"/><name val="Arial"/></font><font><b/><sz val="10"/><name val="Arial"/></font></fonts>`);
+    expect(xml).toContain(`<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>`);
+    const read = readXlsxStyles(xml, undefined);
+    expect(read.defaultFont).toEqual({ family: "Arial", sizePt: 10 });
+    expect(read.styles.map(styleKey)).toEqual(styles.map(styleKey));
   });
 });

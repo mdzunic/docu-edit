@@ -47,15 +47,18 @@
 // - Absent properties are omitted — a CellStyle never carries an
 //   `undefined`-valued key (the model is plain JSON).
 import { FO_NAMESPACE, NUMBER_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE } from "../../core/odfXml";
-import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "../../core/theme";
+import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme, type ModelColor } from "../../core/theme";
 import { escapeXmlAttribute, parseXml, XmlParseError } from "../../core/xml";
 import { INDENT_PX_PER_LEVEL } from "../geometry";
 import { ImpliedFormatStyles } from "../impliedFormats";
-import { odsNumberStyleToCode } from "../numberFormat/odsNumberStyles";
+import { formatCodeOf } from "../numberFormat/builtin";
+import type { SpreadsheetLocale } from "../numberFormat/locale";
+import { odsNumberStyleToCode, odsNumberStyleXml } from "../numberFormat/odsNumberStyles";
 import type {
   CellAlignment,
   CellBorderEdge,
   CellBorders,
+  CellFill,
   CellFont,
   CellStyle,
   SheetBorderStyle,
@@ -689,6 +692,10 @@ function mergeInto(target: PropertySets, source: PropertySets): void {
   }
 }
 
+/** The text-property keys a run's font models (see textStyleModelled). */
+const MODELLED_TEXT_PROPERTY =
+  /^(?:style:font-|fo:font-|fo:color$|style:use-window-font-color$|style:text-position$|style:text-underline-|style:text-line-through-|fo:language$|fo:country$|fo:script$|style:language-|style:country-|style:script-|style:rfc-language-tag)/;
+
 /** A parent chain longer than this is malformed (or a cycle). */
 const MAX_STYLE_DEPTH = 64;
 
@@ -708,6 +715,7 @@ export class OdsStyleBook {
   private readonly formatted = new Set<number>();
   private readonly implied: ImpliedFormatStyles;
   private readonly textFonts = new Map<string, CellFont | undefined>();
+  private readonly textModelled = new Map<string, boolean>();
   private readonly columnWidths = new Map<string | undefined, number | undefined>();
   private readonly rowHeights = new Map<string | undefined, OdsRowHeight>();
 
@@ -791,6 +799,56 @@ export class OdsStyleBook {
       this.textFonts.set(name, text ? fontFrom(text, this.fontFaces) : undefined);
     }
     return this.textFonts.get(name);
+  }
+
+  /** SPEC-122: whether a `text:span`'s style holds only what a run's font
+   * models — text properties naming the font, its size, weight, posture,
+   * underline, line-through, colour and position (with their asian/complex
+   * and language twins, which say nothing the model shows) — so the span is
+   * re-created from `TextRun.font`. A name no part defines is modelled (it
+   * shows nothing). Anything else (a highlight, letter spacing, a paragraph
+   * property…) makes the span content the model does not hold. */
+  textStyleModelled(name: string): boolean {
+    let modelled = this.textModelled.get(name);
+    if (modelled === undefined) {
+      const sets = this.flatten("text", name, { withDefault: false });
+      modelled =
+        Object.keys(sets).every((kind) => kind === "text") &&
+        [...(sets.text?.keys() ?? [])].every((key) => MODELLED_TEXT_PROPERTY.test(key));
+      this.textModelled.set(name, modelled);
+    }
+    return modelled;
+  }
+
+  /** SPEC-122: whether styles.xml defines a common table-cell style `name`
+   * (a generated style's `style:parent-style-name` must name one). */
+  commonCellStyle(name: string): boolean {
+    return this.sheet.common.has(styleKey("table-cell", name));
+  }
+
+  /** SPEC-122: the text styles a rich run can be written back in, so a run
+   * read from the file keeps its span's style name — every text-family
+   * style of content.xml's automatic styles, then of styles.xml's common
+   * styles (a common one an automatic one shadows left out), in document
+   * order, that holds only what a run's font models (textStyleModelled) and
+   * gives a font, with that font. */
+  runTextStyles(): { name: string; font: CellFont }[] {
+    const found: { name: string; font: CellFont }[] = [];
+    const seen = new Set<string>();
+    for (const styles of [this.automatic, this.sheet.common]) {
+      for (const [key, definition] of styles) {
+        const name = key.slice(key.indexOf("\u0000") + 1);
+        if (definition.family !== "text" || seen.has(name)) {
+          continue;
+        }
+        seen.add(name);
+        const font = this.textStyleModelled(name) ? this.textFont(name) : undefined;
+        if (font) {
+          found.push({ name, font });
+        }
+      }
+    }
+    return found;
   }
 
   /** A column style's `style:column-width` in px (unrounded) — the
@@ -891,14 +949,217 @@ export interface GeneratedTableStyle {
   tabColor?: string;
 }
 
-/** The writers' automatic styles (SPEC-121 "Generated ODS styles"): `de-ta<n>`
- * (family table: master page, `table:display`, `style:writing-mode`,
- * `tableooo:tab-color`), `de-co<n>` (a column width in inches from px at
- * 96 dpi, 4 decimals) and `de-ro<n>` (a row height in pt and
- * `style:use-optimal-row-height`), deduplicated by properties. Each prefix's
- * counter starts past every `de-` name of that prefix already in
- * content.xml or styles.xml, so no generated name ever collides; xml()
- * is spliced before `</office:automatic-styles>`. */
+/** What a generated cell or text style resolves against (SPEC-122): theme
+ * colours and fonts, the user's locale (a `builtinFormatId` is written as
+ * that built-in's code in it — ODS has no locale-dependent ids) and which
+ * common table-cell styles the target package defines (a `namedStyle` is a
+ * style's parent only when one is; else "Default"). */
+export interface OdsStyleEnv {
+  theme: DocumentTheme;
+  locale: SpreadsheetLocale;
+  commonCellStyle?: (name: string) => boolean;
+}
+
+/** One generated style's property elements, as attribute lists. */
+export interface OdsCellStyleProperties {
+  /** `style:table-cell-properties` attributes, each with its leading space. */
+  cell: string;
+  /** `style:paragraph-properties` attributes. */
+  paragraph: string;
+  /** `style:text-properties` attributes. */
+  text: string;
+}
+
+/** The ODF value of a font family: quoted when it holds a space or comma
+ * (`'Liberation Sans'`), as LibreOffice writes `svg:font-family`. */
+export function odsFontFamilyValue(family: string): string {
+  return /[\s,]/.test(family) ? `'${family.replace(/'/g, "")}'` : family;
+}
+
+/** A number in a length or angle attribute: shortest round-trip text, never
+ * an exponent (`-0` as `0`). */
+function lengthNumber(n: number): string {
+  if (Object.is(n, -0) || n === 0) {
+    return "0";
+  }
+  const text = String(n);
+  return /e/i.test(text) ? n.toFixed(6).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "") : text;
+}
+
+/** A model colour as ODF's `#rrggbb` (theme references resolved). */
+function hexColor(color: ModelColor, theme: DocumentTheme): string {
+  return resolveColor(color, theme).toLowerCase();
+}
+
+/** A run or cell font as `style:text-properties` attributes — the inverse of
+ * fontFrom: the family as `fo:font-family` (theme fonts resolved; `face`
+ * writes `style:font-name` instead, for a style whose font-face the caller
+ * declares), `fo:font-size` in pt, bold, italic, a solid single/double
+ * underline (the accounting underlines as their plain twins), a solid
+ * line-through, `fo:color` and `style:text-position` super/sub 58%. */
+export function odsFontAttributes(font: CellFont | undefined, theme: DocumentTheme, options: { face?: boolean; omitBlack?: boolean } = {}): string {
+  if (!font) {
+    return "";
+  }
+  let out = "";
+  if (font.family !== undefined) {
+    const family = resolveFont(font.family, theme);
+    out += options.face ? ` style:font-name="${escapeOdsAttribute(family)}"` : ` fo:font-family="${escapeOdsAttribute(odsFontFamilyValue(family))}"`;
+  }
+  if (font.sizePt !== undefined) {
+    out += ` fo:font-size="${lengthNumber(font.sizePt)}pt"`;
+  }
+  if (font.bold) {
+    out += ` fo:font-weight="bold"`;
+  }
+  if (font.italic) {
+    out += ` fo:font-style="italic"`;
+  }
+  if (font.underline !== undefined) {
+    const double = font.underline === "double" || font.underline === "doubleAccounting";
+    out += ` style:text-underline-style="solid" style:text-underline-type="${double ? "double" : "single"}"`;
+  }
+  if (font.strike) {
+    out += ` style:text-line-through-style="solid"`;
+  }
+  if (font.color !== undefined) {
+    const color = hexColor(font.color, theme);
+    if (!(options.omitBlack && color === "#000000")) {
+      out += ` fo:color="${color}"`;
+    }
+  }
+  if (font.vertAlign !== undefined) {
+    out += ` style:text-position="${font.vertAlign === "superscript" ? "super" : "sub"} 58%"`;
+  }
+  return out;
+}
+
+/** A fill's one ODS colour: a solid fill's, a pattern's foreground (else its
+ * background), a gradient's first stop — the documented approximation, ODS
+ * cells having only a background colour. */
+function fillColor(fill: CellFill | undefined, theme: DocumentTheme): string | undefined {
+  if (!fill) {
+    return undefined;
+  }
+  const color = fill.kind === "solid" ? fill.color : fill.kind === "pattern" ? (fill.fg ?? fill.bg) : fill.stops[0]?.color;
+  return color === undefined ? undefined : hexColor(color, theme);
+}
+
+const HORIZONTAL_WRITE: Readonly<Record<string, string>> = {
+  left: "start",
+  center: "center",
+  centerContinuous: "center",
+  right: "end",
+  justify: "justify",
+  distributed: "justify",
+};
+const VERTICAL_WRITE: Readonly<Record<string, string>> = {
+  top: "top",
+  center: "middle",
+  bottom: "bottom",
+  justify: "top",
+  distributed: "top",
+};
+
+/** The model's textRotation as `style:rotation-angle` (the inverse of
+ * odsTextRotation): r ≤ 90 → r, 91–180 → 360 − (r − 90). */
+function rotationAngle(rotation: number): number {
+  return rotation <= 90 ? rotation : 360 - (rotation - 90);
+}
+
+/** A cell style's properties — the exact inverse of the reading table
+ * (SPEC-122 "Styles" → ods), so a written style reads back equal: the fill's
+ * colour, the four borders by the pinned write table and the diagonals,
+ * horizontal alignment (`fo:text-align` + `style:text-align-source="fix"`;
+ * fill → `style:repeat-content`; general → `value-type`), vertical, wrap,
+ * rotation (255 → `style:direction="ttb"`), shrink, protection
+ * (`style:cell-protect`), the indent as `fo:margin-left` in pt and the font.
+ * centerContinuous and distributed write as center and justify, vertical
+ * justify and distributed as top. */
+export function odsCellStyleProperties(style: CellStyle, theme: DocumentTheme, options: { face?: boolean; omitBlack?: boolean } = {}): OdsCellStyleProperties {
+  let cell = "";
+  let paragraph = "";
+  const alignment = style.alignment ?? {};
+  const horizontal = alignment.horizontal;
+  if (horizontal === "fill") {
+    cell += ` style:repeat-content="true"`;
+  } else if (horizontal === "general") {
+    cell += ` style:text-align-source="value-type"`;
+  } else if (horizontal !== undefined) {
+    cell += ` style:text-align-source="fix" style:repeat-content="false"`;
+    paragraph += ` fo:text-align="${HORIZONTAL_WRITE[horizontal]}"`;
+  }
+  const background = fillColor(style.fill, theme);
+  if (background !== undefined) {
+    cell += ` fo:background-color="${background}"`;
+  }
+  const borders = style.borders ?? {};
+  for (const side of ["top", "bottom", "left", "right"] as const) {
+    const edge = borders[side];
+    if (edge) {
+      cell += ` fo:border-${side}="${odsBorderString(edge, theme).toLowerCase()}"`;
+    }
+  }
+  const diagonal = borders.diagonal;
+  if (diagonal) {
+    const value = odsBorderString(diagonal, theme).toLowerCase();
+    if (diagonal.down) {
+      cell += ` style:diagonal-tl-br="${value}"`;
+    }
+    if (diagonal.up) {
+      cell += ` style:diagonal-bl-tr="${value}"`;
+    }
+  }
+  if (alignment.wrap) {
+    cell += ` fo:wrap-option="wrap"`;
+  }
+  if (alignment.vertical !== undefined) {
+    cell += ` style:vertical-align="${VERTICAL_WRITE[alignment.vertical]}"`;
+  }
+  if (alignment.textRotation === 255) {
+    cell += ` style:direction="ttb"`;
+  } else if (alignment.textRotation !== undefined && alignment.textRotation > 0 && alignment.textRotation <= 180) {
+    cell += ` style:rotation-angle="${rotationAngle(alignment.textRotation)}"`;
+  }
+  if (alignment.shrinkToFit) {
+    cell += ` style:shrink-to-fit="true"`;
+  }
+  const protection = style.protection;
+  if (protection?.hidden) {
+    cell += ` style:cell-protect="${protection.locked === false ? "formula-hidden" : "hidden-and-protected"}"`;
+  } else if (protection?.locked === false) {
+    cell += ` style:cell-protect="none"`;
+  }
+  if (alignment.indent !== undefined && alignment.indent > 0) {
+    paragraph += ` fo:margin-left="${lengthNumber(alignment.indent * INDENT_PX_PER_LEVEL * 0.75)}pt"`;
+  }
+  return { cell, paragraph, text: odsFontAttributes(style.font, theme, options) };
+}
+
+/** The property elements of a style, in the schema's order. */
+export function odsPropertyElements(properties: OdsCellStyleProperties): string {
+  return (
+    (properties.cell ? `<style:table-cell-properties${properties.cell}/>` : "") +
+    (properties.paragraph ? `<style:paragraph-properties${properties.paragraph}/>` : "") +
+    (properties.text ? `<style:text-properties${properties.text}/>` : "")
+  );
+}
+
+/** The writers' automatic styles (SPEC-121 "Generated ODS styles", SPEC-122
+ * "Styles"): `de-ta<n>` (family table: master page, `table:display`,
+ * `style:writing-mode`, `tableooo:tab-color`), `de-co<n>` (a column width in
+ * inches from px at 96 dpi, 4 decimals), `de-ro<n>` (a row height in pt and
+ * `style:use-optimal-row-height`), and SPEC-122's `de-ce<n>` (family
+ * table-cell: odsCellStyleProperties, `style:parent-style-name` the style's
+ * `namedStyle` when the package defines it, else "Default", and
+ * `style:data-style-name` = a `de-N<n>` for a code other than General),
+ * `de-T<n>` (family text: a rich run's font) and `de-N<n>` (SPEC-118's
+ * odsNumberStyleXml, its `de-N<n>P0`… sub-styles included; a
+ * `builtinFormatId` written as that built-in's code in the user's locale) —
+ * each family deduplicated by its properties. Each prefix's counter starts
+ * past every `de-` name of that prefix already in content.xml or styles.xml
+ * (a source holding `de-ce1` gets `de-ce2` next), so no generated name ever
+ * collides; xml() is spliced before `</office:automatic-styles>`. */
 export class OdsStyleRegistry {
   private readonly counters = new Map<string, number>();
   private readonly byKey = new Map<string, string>();
@@ -906,7 +1167,7 @@ export class OdsStyleRegistry {
 
   constructor(existingXml: readonly string[] = []) {
     for (const xml of existingXml) {
-      for (const match of xml.matchAll(/style:name="de-([a-z]+)(\d+)"/g)) {
+      for (const match of xml.matchAll(/style:name="de-([A-Za-z]+?)(\d+)(?:P\d+)?"/g)) {
         const prefix = match[1]!;
         this.counters.set(prefix, Math.max(this.counters.get(prefix) ?? 0, Number(match[2])));
       }
@@ -954,6 +1215,56 @@ export class OdsStyleRegistry {
       `${height}|${optimal}`,
       (name) =>
         `<style:style style:name="${name}" style:family="table-row"><style:table-row-properties style:row-height="${height}" style:use-optimal-row-height="${optimal}"/></style:style>`,
+    );
+  }
+
+  /** SPEC-122: a `de-N<n>` data style for a format code (equal codes share
+   * one name). */
+  numberStyle(code: string): string {
+    return this.add("N", code, (name) => odsNumberStyleXml(code, name));
+  }
+
+  /** SPEC-122: a `de-ce<n>` table-cell style with `style`'s properties (see
+   * the class comment); equal property sets share one name. A style read
+   * from the file keeps its own name — the caller's choice, not this one's. */
+  cellStyle(style: CellStyle, env: OdsStyleEnv): string {
+    const named = style.namedStyle;
+    const parent = named !== undefined && named !== "Normal" && env.commonCellStyle?.(named) ? named : "Default";
+    const code = formatCodeOf(style, env.locale);
+    const dataStyle = code === undefined || code.trim() === "" || /^general$/i.test(code.trim()) ? undefined : this.numberStyle(code);
+    const body = odsPropertyElements(odsCellStyleProperties(style, env.theme));
+    const attributes =
+      ` style:family="table-cell" style:parent-style-name="${escapeOdsAttribute(parent)}"` +
+      (dataStyle === undefined ? "" : ` style:data-style-name="${dataStyle}"`);
+    return this.add("ce", `${attributes}|${body}`, (name) =>
+      body === "" ? `<style:style style:name="${name}"${attributes}/>` : `<style:style style:name="${name}"${attributes}>${body}</style:style>`,
+    );
+  }
+
+  /** SPEC-122: makes an existing text style (a `runTextStyles` entry of the
+   * retained package) the name of the property set its font writes, so a
+   * run read from the file keeps its span's style and write → read → write
+   * is stable. The first style adopted for a set wins; nothing is written. */
+  adoptTextStyle(name: string, font: CellFont, theme: DocumentTheme): void {
+    const attributes = odsFontAttributes(font, theme);
+    const key = `T|${attributes}`;
+    if (attributes !== "" && !this.byKey.has(key)) {
+      this.byKey.set(key, name);
+    }
+  }
+
+  /** SPEC-122: a `de-T<n>` text style for a rich run's font — an adopted
+   * style of the file when one gives an equal font — or undefined for a
+   * font that sets nothing (the run is plain text). */
+  textStyle(font: CellFont | undefined, theme: DocumentTheme): string | undefined {
+    const attributes = odsFontAttributes(font, theme);
+    if (attributes === "") {
+      return undefined;
+    }
+    return this.add(
+      "T",
+      attributes,
+      (name) => `<style:style style:name="${name}" style:family="text"><style:text-properties${attributes}/></style:style>`,
     );
   }
 

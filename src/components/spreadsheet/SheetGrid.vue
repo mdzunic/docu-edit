@@ -11,7 +11,7 @@
 // which follow the app theme. Frozen rows and columns (and their corner)
 // stay in place while the rest scrolls.
 //
-// ARIA: a read-only grid of MAX_ROWS + 1 rows by MAX_COLS + 1 columns
+// ARIA: a grid (read-only without cell entry) of MAX_ROWS + 1 rows by MAX_COLS + 1 columns
 // (headers included), named by the sheet, focusable, with
 // aria-activedescendant naming the active cell's element
 // (id="sheet-cell-B3"); every rendered cell carries its 1-based
@@ -22,12 +22,20 @@
 // convenience only where the browser does not keep the keys; the sheet tabs
 // are the keyboard path that always works. SPEC-119: `showFormulas` (View ▸
 // Show formulas) has the paper show formula text, and the grid carries
-// data-show-formulas="true". Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
-import { useTemplateRef } from "vue";
+// data-show-formulas="true". SPEC-122: the grid becomes editable — the
+// in-cell editor (CellEditor) is mounted over the active cell in its own
+// layer above the overlays and holds the grid's focus (focus landing on the
+// grid element itself is handed to it), a double-click opens it in Edit
+// mode, and a formula's references on this sheet are outlined
+// (`sheet-ref-highlight`, `data-ref-index` = the colour index, the colour
+// `--sheet-ref-<index + 1>`, the pointed one dashed). Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
+import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
 import { asSheet, COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "../../views/spreadsheet/useSheetViewport";
+import { refColor } from "../../views/spreadsheet/cellEditorDom";
+import CellEditor from "./CellEditor.vue";
 import SheetCellLayer from "./SheetCellLayer.vue";
 
 const props = defineProps({
@@ -52,9 +60,27 @@ const grid = useSheetGrid(
 const vp = grid.viewport;
 const RH = ROW_HEADER_WIDTH_PX;
 const CH = COLUMN_HEADER_HEIGHT_PX;
+const cellEditing = computed(() => asSheetGridContext(props.context).cellEditing);
 
 function px(value = 0) {
   return `${value}px`;
+}
+
+/** Focus on the grid element itself goes on to the in-cell editor. */
+function onFocus(event = new FocusEvent("focus")) {
+  if (event.target === scroller.value && cellEditing.value) {
+    grid.focusEditor();
+  }
+}
+
+/** The browser scrolls a clipped box to show a caret; the layout never
+ * scrolls these boxes, so any such scroll is undone. */
+function unscroll(event = new Event("scroll")) {
+  const box = event.target;
+  if (box instanceof HTMLElement && (box.scrollTop !== 0 || box.scrollLeft !== 0)) {
+    box.scrollTop = 0;
+    box.scrollLeft = 0;
+  }
 }
 </script>
 
@@ -63,7 +89,7 @@ function px(value = 0) {
     ref="scroller"
     class="sheet-grid"
     role="grid"
-    aria-readonly="true"
+    :aria-readonly="cellEditing ? undefined : 'true'"
     aria-multiselectable="true"
     :aria-rowcount="MAX_ROWS + 1"
     :aria-colcount="MAX_COLS + 1"
@@ -73,7 +99,9 @@ function px(value = 0) {
     data-testid="spreadsheet-grid"
     tabindex="0"
     @scroll="vp.onScroll"
+    @focus="onFocus"
     @keydown="grid.onKeydown"
+    @dblclick="grid.onDblClick"
     @wheel="grid.onWheel"
     @pointerdown="grid.pointer.onPointerDown"
     @pointermove="grid.pointer.onPointerMove"
@@ -87,6 +115,7 @@ function px(value = 0) {
       <div
         class="grid-viewport"
         :style="{ width: px(vp.viewW.value * vp.z.value), height: px(vp.viewH.value * vp.z.value) }"
+        @scroll="unscroll"
       >
         <div
           class="grid-content"
@@ -123,6 +152,15 @@ function px(value = 0) {
               }"
             />
             <div
+              v-for="mark in grid.overlays.refHighlights.value"
+              :key="mark.key"
+              class="sheet-ref-highlight"
+              :class="{ 'is-dashed': mark.dashed }"
+              data-testid="sheet-ref-highlight"
+              :data-ref-index="mark.colorIndex"
+              :style="{ left: px(mark.left), top: px(mark.top), width: px(mark.width), height: px(mark.height), borderColor: refColor(mark.colorIndex) }"
+            />
+            <div
               v-if="grid.overlays.freezeLines.value.vertical !== null"
               class="sheet-freeze-line is-vertical"
               data-testid="sheet-freeze-line"
@@ -133,6 +171,19 @@ function px(value = 0) {
               class="sheet-freeze-line is-horizontal"
               data-testid="sheet-freeze-line"
               :style="{ top: px(grid.overlays.freezeLines.value.horizontal - 1) }"
+            />
+          </div>
+          <div
+            v-if="cellEditing"
+            class="sheet-editor-layer"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+            @scroll="unscroll"
+          >
+            <CellEditor
+              :editor="cellEditing"
+              :box-style="grid.editor.value.boxStyle"
+              :text-style="grid.editor.value.textStyle"
+              :label="grid.editor.value.label"
             />
           </div>
           <div
@@ -307,6 +358,27 @@ function px(value = 0) {
   box-sizing: border-box;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border: var(--border-width) solid var(--accent);
+}
+
+/* A formula's reference (SPEC-122): outlined in its --sheet-ref-N colour
+   (set inline), the one being pointed at dashed. */
+.sheet-ref-highlight {
+  position: absolute;
+  box-sizing: border-box;
+  border: var(--space-1) solid;
+}
+
+.sheet-ref-highlight.is-dashed {
+  border-style: dashed;
+}
+
+/* The in-cell editor's layer: over the paper and the overlays, under the
+   headers; it only clips — the editor takes the pointer while editing. */
+.sheet-editor-layer {
+  position: absolute;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 /* The active cell: a 2 px (--space-1) accent outline. */

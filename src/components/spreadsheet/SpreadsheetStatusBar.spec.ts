@@ -60,6 +60,18 @@ describe("SpreadsheetStatusBar", () => {
     expect(wrapper.emitted("apply-zoom")).toEqual([["85%"]]);
   });
 
+  it("SPEC-122: shows the cell editor's mode in sheet-status-mode at its left; empty hides it", async () => {
+    const wrapper = mount(SpreadsheetStatusBar, { props: { mode: "Ready", count: "Count: 3" } });
+    const bar = wrapper.get('[data-testid="spreadsheet-status-bar"]').element;
+    expect(bar.firstElementChild).toBe(wrapper.get('[data-testid="sheet-status-mode"]').element);
+    for (const mode of ["Ready", "Enter", "Edit", "Point"]) {
+      await wrapper.setProps({ mode });
+      expect(wrapper.get('[data-testid="sheet-status-mode"]').text()).toBe(mode);
+    }
+    await wrapper.setProps({ mode: "" });
+    expect(wrapper.find('[data-testid="sheet-status-mode"]').exists()).toBe(false);
+  });
+
   it("SPEC-120: shows the circular-reference warning and Calculating… only while they apply, after the aggregates", async () => {
     const wrapper = mount(SpreadsheetStatusBar, { props: { count: "Count: 3" } });
     expect(wrapper.find('[data-testid="sheet-status-circular"]').exists()).toBe(false);

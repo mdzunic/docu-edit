@@ -4,8 +4,8 @@
 // guard, the reader upgrade and the sheet on show: useWorkbookLoad; view state
 // (never a change to the file): useSheetViewState; geometry, zoom, selection,
 // menus, the locale (SPEC-118), formula display (SPEC-119), recalculation
-// (SPEC-120) and the sheet commands, undo and downloads (SPEC-121,
-// useWorkbookEditing): the spreadsheet/ composables imported below; the
+// (SPEC-120), the sheet commands, undo and downloads (SPEC-121) and cell entry
+// (SPEC-122) — useWorkbookEditing: the spreadsheet/ composables below; the
 // surfaces: components/spreadsheet/*. This file only wires them.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -43,9 +43,9 @@ const sheetLocale = useSpreadsheetLocale();
 const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheetMetrics, viewState, model: () => book.workbook.value, locale: () => sheetLocale.locale.value });
 const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model: () => book.workbook.value, viewState, selection });
 const recalc = useRecalc({ book, locale: () => sheetLocale.locale.value });
-const editing = useWorkbookEditing({ book, viewState, recalc });
+const editing = useWorkbookEditing({ book, viewState, recalc, selection, sheetMetrics, locale: () => sheetLocale.locale.value });
 const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell }));
 </script>
 
 <template>
@@ -85,7 +85,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       #status-bar
     >
       <SpreadsheetStatusBar
-        v-bind="{ ...selection.statusTexts.value, ...recalc.status.value }"
+        v-bind="{ ...selection.statusTexts.value, ...recalc.status.value, mode: editing.cell.modeLabel.value }"
         :zoom-percent="zoom.percent.value"
         :zoom-disabled="book.activeSheet.value?.kind !== 'grid'"
         @zoom-in="zoom.zoomIn"

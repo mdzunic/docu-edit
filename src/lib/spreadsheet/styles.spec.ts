@@ -4,7 +4,7 @@
 // cellStyle falls back to the default style for any id it cannot index.
 // INDEXED_COLORS is ECMA-376 §18.8.27's 64-entry legacy palette, lowercase.
 import { describe, expect, it } from "vitest";
-import { cellStyle, columnSpanAt, defaultStyles, effectiveStyleId, INDEXED_COLORS } from "./styles";
+import { cellStyle, columnSpanAt, defaultStyles, effectiveStyleId, INDEXED_COLORS, internStyle, styleKey } from "./styles";
 import type { CellStyle, ColumnSpan, Row, Sheet } from "./model";
 
 function sheetWith(partial: Partial<Sheet> = {}): Sheet {
@@ -200,5 +200,54 @@ describe("SPEC-117 Colours: INDEXED_COLORS", () => {
     expect(INDEXED_COLORS[40]).toBe("#00ccff");
     expect(INDEXED_COLORS[55]).toBe("#969696");
     expect(INDEXED_COLORS[63]).toBe("#333333");
+  });
+});
+
+describe("SPEC-122 internStyle: structural equality, copy-on-write appends", () => {
+  it("returns an equal entry's index whatever the key order", () => {
+    const model = { styles: [{}, { font: { bold: true as const, sizePt: 11 }, numberFormat: "0%" }] as CellStyle[] };
+    const before = model.styles;
+    expect(internStyle(model, { numberFormat: "0%", font: { sizePt: 11, bold: true } })).toBe(1);
+    expect(model.styles).toBe(before);
+  });
+
+  it("ignores sourceXf and sourceStyleName, preferring a source-backed entry", () => {
+    const model = { styles: [{}, { numberFormat: "0.00" }, { numberFormat: "0.00", sourceXf: 7 }] as CellStyle[] };
+    expect(internStyle(model, { numberFormat: "0.00" })).toBe(2);
+    expect(internStyle(model, { numberFormat: "0.00", sourceStyleName: "ce9" })).toBe(2);
+    expect(styleKey({ numberFormat: "0.00", sourceXf: 3 })).toBe(styleKey({ numberFormat: "0.00" }));
+  });
+
+  it("appends a new style copy-on-write, without the source fields, and finds it again", () => {
+    const first: CellStyle = {};
+    const model = { styles: [first] as CellStyle[] };
+    const before = model.styles;
+    const id = internStyle(model, { alignment: { wrap: true }, sourceXf: 4 });
+    expect(id).toBe(1);
+    expect(model.styles).not.toBe(before);
+    expect(before).toHaveLength(1);
+    expect(model.styles[0]).toBe(first);
+    expect(model.styles[1]).toEqual({ alignment: { wrap: true } });
+    expect(internStyle(model, { alignment: { wrap: true } })).toBe(1);
+    expect(model.styles).toHaveLength(2);
+  });
+
+  it("appends the style object itself when it names no source, and caches per styles array", () => {
+    const model = { styles: [{}] as CellStyle[] };
+    const style: CellStyle = { borders: { top: { style: "thin" } }, font: { italic: true } };
+    expect(internStyle(model, style)).toBe(1);
+    expect(model.styles[1]).toBe(style);
+    const appended = model.styles;
+    // Another array with the same entries has its own table and answers alike.
+    const copy = { styles: [...appended] };
+    expect(internStyle(copy, { font: { italic: true }, borders: { top: { style: "thin" } } })).toBe(1);
+    expect(copy.styles).toHaveLength(2);
+    expect(styleKey({ font: { sizePt: 11, bold: true } })).toBe(styleKey({ font: { bold: true, sizePt: 11 } }));
+  });
+
+  it("treats an absent field and an undefined one alike", () => {
+    const model = { styles: [{}, { numberFormat: "@" }] as CellStyle[] };
+    expect(internStyle(model, { numberFormat: "@", quotePrefix: undefined })).toBe(1);
+    expect(internStyle(model, { quotePrefix: undefined })).toBe(0);
   });
 });

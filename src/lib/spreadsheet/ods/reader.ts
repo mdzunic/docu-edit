@@ -52,6 +52,24 @@
 // - SPEC-120: `table:calculation-settings` (case sensitivity, regular
 //   expressions, wildcards, whole-cell matching, `table:iteration`) and
 //   settings.xml's AutoCalculate → `calc`, read only.
+// - SPEC-122 "Model additions": what the table writer re-emits for content
+//   the model does not hold. Each cell's unmodelled start-tag attributes —
+//   all but style-name, the repeat, span and matrix-span counts,
+//   `table:formula`, `office:value-type`, the value attributes,
+//   `office:currency` and `calcext:value-type` — verbatim with their leading
+//   whitespace, in source order (`preservedAttrs`); every child element but
+//   the text paragraphs (annotations, frames, unknown elements), verbatim in
+//   source order (`preservedXml`); and the cell's `text:p` sequence verbatim
+//   (`preservedText`) when a paragraph holds inline content the model does
+//   not — an attribute on the paragraph, a heading, or any element other
+//   than text:s, text:tab, text:line-break and a text:span whose only
+//   attribute is a style holding nothing but a run font (a link, a field, a
+//   note, a frame…). Whitespace between a cell's children is not content. A
+//   cell holding only preserved content is stored, every repetition counted
+//   against the budget; past the grid it shows nothing, like a style.
+//   `table:protected="true"` → `Sheet.protection`;
+//   `office:spreadsheet@table:structure-protected="true"` →
+//   `structureProtected` (both read only — the XML stays in the source).
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -81,7 +99,7 @@ import {
   readOdsStyleSheet,
   type OdsStyleSheet,
 } from "./styles";
-import { OdsTableReader, repeatCount, type OdsCellFormula } from "./tableXml";
+import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved } from "./tableXml";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
 const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
@@ -97,6 +115,8 @@ interface PendingTable {
   start: number;
   level: number;
   reader: OdsTableReader;
+  /** SPEC-122: `table:protected="true"`. */
+  protected: boolean;
 }
 
 /** A stretch of a cell's text sharing one span font. */
@@ -122,6 +142,96 @@ interface PendingCell {
   spans: { level: number; font: CellFont | undefined }[];
   /** Whether any span gave a font — only then are runs kept. */
   hasSpanFont: boolean;
+  // --- SPEC-122 captures ---
+  /** The unmodelled start-tag attributes, verbatim (empty: none). */
+  preservedAttrs: string;
+  /** The child elements other than paragraphs, verbatim (empty: none). */
+  preservedXml: string;
+  /** Each paragraph child's [start, end) offsets in content.xml. */
+  paragraphRanges: number[];
+  /** Where the open direct child element starts (-1: none open), and
+   * whether it is a paragraph. */
+  childStart: number;
+  childIsParagraph: boolean;
+  /** A paragraph holds inline content the model does not. */
+  inline: boolean;
+}
+
+/** The cell attributes the model holds or the writer regenerates (SPEC-122
+ * "Model additions"), by namespace and local name. */
+const MODELLED_CELL_ATTRIBUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  [
+    TABLE_NAMESPACE,
+    new Set([
+      "style-name",
+      "number-columns-repeated",
+      "number-columns-spanned",
+      "number-rows-spanned",
+      "formula",
+      "number-matrix-columns-spanned",
+      "number-matrix-rows-spanned",
+    ]),
+  ],
+  [OFFICE_NAMESPACE, new Set(["value-type", "value", "date-value", "time-value", "boolean-value", "string-value", "currency"])],
+  [CALCEXT_NAMESPACE, new Set(["value-type"])],
+]);
+
+function isModelledCellAttribute(attr: XmlScanAttribute): boolean {
+  return attr.ns !== undefined && (MODELLED_CELL_ATTRIBUTES.get(attr.ns)?.has(attr.local) ?? false);
+}
+
+/** A raw attribute of a start tag: its leading whitespace, name and quoted
+ * value, verbatim. */
+const RAW_ATTRIBUTE = /(\s+)([^\s=/>]+)\s*=\s*("[^"]*"|'[^']*')/g;
+
+/** A cell's unmodelled start-tag attributes, verbatim with their leading
+ * whitespace and in source order — "" when every attribute is modelled (the
+ * overwhelmingly common case, decided without touching the raw text). */
+function unmodelledAttributes(xml: string, start: number, end: number, attrs: readonly XmlScanAttribute[]): string {
+  if (attrs.every(isModelledCellAttribute)) {
+    return "";
+  }
+  const kept = new Set(attrs.filter((attr) => !isModelledCellAttribute(attr)).map((attr) => attr.name));
+  const tag = xml.slice(start, end);
+  let out = "";
+  for (const match of tag.matchAll(RAW_ATTRIBUTE)) {
+    if (kept.has(match[2]!)) {
+      out += match[0];
+    }
+  }
+  return out;
+}
+
+/** The captures a finished cell hands the table reader, or undefined. */
+function cellPreserved(cell: PendingCell, xml: string): OdsCellPreserved | undefined {
+  if (cell.preservedAttrs === "" && cell.preservedXml === "" && !cell.inline) {
+    return undefined;
+  }
+  const preserved: OdsCellPreserved = {};
+  if (cell.preservedAttrs !== "") {
+    preserved.attrs = cell.preservedAttrs;
+  }
+  if (cell.preservedXml !== "") {
+    preserved.xml = cell.preservedXml;
+  }
+  if (cell.inline && cell.paragraphRanges.length > 0) {
+    let text = "";
+    for (let i = 0; i < cell.paragraphRanges.length; i += 2) {
+      text += xml.slice(cell.paragraphRanges[i], cell.paragraphRanges[i + 1]);
+    }
+    preserved.text = text;
+  }
+  return preserved.attrs === undefined && preserved.xml === undefined && preserved.text === undefined ? undefined : preserved;
+}
+
+/** Records a finished direct child of a cell: a paragraph's offsets, or any
+ * other element verbatim. */
+function captureChild(cell: PendingCell, xml: string, paragraph: boolean, start: number, end: number): void {
+  if (paragraph) {
+    cell.paragraphRanges.push(start, end);
+  } else {
+    cell.preservedXml += xml.slice(start, end);
+  }
 }
 
 /** A cell's formula (SPEC-119), read at the position its first repetition
@@ -248,6 +358,31 @@ function appendText(cell: PendingCell, text: string): void {
   appendRunText(cell, text, cell.spans.at(-1)?.font);
 }
 
+/** Whether an element inside a cell's paragraph is inline content the model
+ * holds (SPEC-122): text:s, text:tab, text:line-break, and a text:span whose
+ * only attribute is a style holding nothing but a run font. */
+function modelledInline(
+  ns: string | undefined,
+  local: string,
+  attrs: readonly XmlScanAttribute[],
+  styleBook: () => OdsStyleBook,
+): boolean {
+  if (ns !== TEXT_NAMESPACE) {
+    return false;
+  }
+  if (local === "s" || local === "tab" || local === "line-break") {
+    return true;
+  }
+  if (local !== "span") {
+    return false;
+  }
+  if (attrs.some((attr) => !(attr.ns === TEXT_NAMESPACE && attr.local === "style-name"))) {
+    return false;
+  }
+  const styleName = scanAttr(attrs, "style-name", TEXT_NAMESPACE);
+  return styleName === undefined || styleBook().textStyleModelled(styleName);
+}
+
 /** A string cell's rich-text runs — only when a span gave a font and the
  * runs spell the value exactly. Fonts are copied: the model shares nothing
  * with the style book. */
@@ -284,6 +419,8 @@ interface OdsContent {
   /** SPEC-120: what `table:calculation-settings` says (ODF's defaults when
    * it, or an attribute, is absent). */
   calc: CalcSettings;
+  /** SPEC-122: `office:spreadsheet@table:structure-protected="true"`. */
+  structureProtected: boolean;
 }
 
 /** SPEC-120 "Calculation settings" from `table:calculation-settings` and its
@@ -333,6 +470,7 @@ export function readOdsContent(
    * not the sheet's. */
   let drawingDepth = 0;
   let tooLarge = false;
+  let structureProtected = false;
   /** content.xml's style sections, sliced verbatim, and the namespace
    * declarations they need to parse on their own. */
   const styleSlices: string[] = [];
@@ -352,7 +490,7 @@ export function readOdsContent(
     const typed = scanAttr(done.attrs, "value-type", OFFICE_NAMESPACE) !== undefined || scanAttr(done.attrs, "value-type", CALCEXT_NAMESPACE) !== undefined;
     // A formula with no value type has no cached value (SPEC-119).
     const value = formula && !typed ? null : odsCellValue(done, dates, where);
-    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula);
+    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula, cellPreserved(done, xml));
   };
 
   const finishTable = (done: PendingTable, end: number): boolean => {
@@ -374,6 +512,9 @@ export function readOdsContent(
     };
     if (done.tabColor !== undefined) {
       sheet.tabColor = done.tabColor;
+    }
+    if (done.protected) {
+      sheet.protection = { sheet: true };
     }
     sheets.push(sheet);
     previousTableEnd = end;
@@ -399,6 +540,10 @@ export function readOdsContent(
           }
           return undefined;
         }
+        if (depth === inside.level + 1 && inside.childStart >= 0) {
+          captureChild(inside, xml, inside.childIsParagraph, inside.childStart, event.end);
+          inside.childStart = -1;
+        }
         if (inside.skipDepth > 0) {
           inside.skipDepth -= 1;
         } else if (inside.spans.length > 0 && depth === inside.spans.at(-1)!.level) {
@@ -411,6 +556,20 @@ export function readOdsContent(
         return undefined;
       }
       const level = depth + 1;
+      if (level === inside.level + 1) {
+        const paragraph = event.ns === TEXT_NAMESPACE && (event.local === "p" || event.local === "h");
+        if (paragraph && (event.local === "h" || event.attrs.length > 0)) {
+          inside.inline = true;
+        }
+        if (event.selfClosing) {
+          captureChild(inside, xml, paragraph, event.start, event.end);
+        } else {
+          inside.childStart = event.start;
+          inside.childIsParagraph = paragraph;
+        }
+      } else if (inside.childIsParagraph && inside.childStart >= 0 && !inside.inline && !modelledInline(event.ns, event.local, event.attrs, styleBook)) {
+        inside.inline = true;
+      }
       if (inside.skipDepth > 0) {
         if (!event.selfClosing) {
           inside.skipDepth += 1;
@@ -509,6 +668,7 @@ export function readOdsContent(
         }
         if (event.local === "spreadsheet") {
           spreadsheetLevel = level;
+          structureProtected ||= scanAttr(event.attrs, "structure-protected", TABLE_NAMESPACE) === "true";
         }
       } else if (event.ns === TABLE_NAMESPACE) {
         if (event.local === "null-date" && spreadsheetLevel > 0 && table === null) {
@@ -535,6 +695,7 @@ export function readOdsContent(
             start,
             level,
             reader: new OdsTableReader(name, styleBook(), budget),
+            protected: scanAttr(event.attrs, "protected", TABLE_NAMESPACE) === "true",
           };
           if (tableStyle.tabColor !== undefined) {
             pending.tabColor = tableStyle.tabColor;
@@ -574,6 +735,12 @@ export function readOdsContent(
             runs: [],
             spans: [],
             hasSpanFont: false,
+            preservedAttrs: unmodelledAttributes(xml, event.start, event.end, event.attrs),
+            preservedXml: "",
+            paragraphRanges: [],
+            childStart: -1,
+            childIsParagraph: false,
+            inline: false,
           };
           if (event.selfClosing) {
             if (!finishCell(pending)) {
@@ -629,6 +796,7 @@ export function readOdsContent(
     suffix: xml.slice(previousTableEnd),
     dates,
     calc: odsCalcSettings(calcAttrs, iterationStatus),
+    structureProtected,
   };
 }
 
@@ -721,6 +889,9 @@ export async function parseOds(
   }
   if (Object.keys(calc).length > 0) {
     parsed.calc = calc;
+  }
+  if (content.structureProtected) {
+    parsed.structureProtected = true;
   }
   return parsed;
 }

@@ -10,8 +10,13 @@
 // record SPEC-118's reader stored re-reads its clean sheets and gains its
 // formulas. SPEC-120 moves it to 5 (its step throws "SPEC-120 upgrade: …"): a
 // record SPEC-119's reader stored gains its calculation settings, and a
-// stored forceFullCalcOnLoad survives the re-read.
+// stored forceFullCalcOnLoad survives the re-read. SPEC-122 moves it to 6:
+// its step is the first to run on a dirty sheet — preserved cell content and
+// sheet protection come back from the retained source onto the cells whose
+// value and formula are unchanged — and a dirty sheet's style ids move into
+// the re-read style table.
 import { afterEach, describe, expect, it } from "vitest";
+import { unzip } from "../core/zip";
 import { getCell } from "./address";
 import {
   buildMiniBookOdsBytes,
@@ -28,7 +33,7 @@ import {
   buildSpec120FullCalcXlsxBytes,
   buildSpec120ManualXlsxBytes,
 } from "./fixtures/build";
-import type { Sheet, SpreadsheetModel } from "./model";
+import type { Cell, Sheet, SpreadsheetModel } from "./model";
 import {
   assembleSpreadsheet,
   READER_UPGRADES,
@@ -128,9 +133,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4 and SPEC-120 to 5, with one contiguous step each (from 1, 2, 3, 4)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(5);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5 and SPEC-122 to 6, with one contiguous step each (from 1, 2, 3, 4, 5)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(6);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -342,5 +347,195 @@ describe("SPEC-120's calculation settings in stored records", () => {
   it("keeps a stored model's forceFullCalcOnLoad through the re-read — this product never clears it", async () => {
     const stored: SpreadsheetModel = { ...(await spec119Record(buildSpec120CalcXlsxBytes, "xlsx")), forceFullCalcOnLoad: true };
     expect((await upgradeSpreadsheetModel(stored)).forceFullCalcOnLoad).toBe(true);
+  });
+});
+
+// --- SPEC-122 (5 → 6): preserved cell content and protection on dirty sheets ----------------
+
+const encodeText = (text: string): Uint8Array => new TextEncoder().encode(text);
+const decodeText = (bytes: Uint8Array | undefined): string => new TextDecoder().decode(bytes);
+
+/** `parts` with `name`'s text passed through `edit` (each replacement must
+ * apply, so a fixture change cannot silently void the test). */
+function patchPart(parts: Map<string, Uint8Array>, name: string, edits: [string, string][]): void {
+  let text = decodeText(parts.get(name));
+  for (const [from, to] of edits) {
+    expect(text.includes(from), `${name}: ${from}`).toBe(true);
+    text = text.replace(from, to);
+  }
+  parts.set(name, encodeText(text));
+}
+
+/** An ODS annotation (a note) as LibreOffice writes one inside a cell. */
+const annotation = (text: string): string => `<office:annotation><dc:creator>Fixture Author</dc:creator><text:p>${text}</text:p></office:annotation>`;
+
+const SPEC122_CELL_FIELDS = ["sstIndex", "preservedAttrs", "preservedXml", "preservedText"] as const;
+
+/** A record as SPEC-120's reader (version 5) stored `read`: none of
+ * SPEC-122's fields, no cell holding only them, then `edit`ed — the sheets it
+ * names marked dirty, as SPEC-121's commands leave them. */
+function spec120Record(read: SpreadsheetModel, dirty: number[], edit: (model: SpreadsheetModel) => void): SpreadsheetModel {
+  const model = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+  delete model.structureProtected;
+  model.readerVersion = 5;
+  model.sheets = model.sheets.map(({ protection: _protection, ...sheet }, index) => ({
+    ...sheet,
+    id: `stored-sheet-${index}`,
+    rows: sheet.rows.map((row) => ({
+      ...row,
+      cells: row.cells
+        .map((cell) => {
+          const plain: Cell = { ...cell };
+          for (const field of SPEC122_CELL_FIELDS) {
+            delete plain[field];
+          }
+          return plain;
+        })
+        .filter((cell) => cell.value !== null || cell.formula !== undefined || cell.styleId !== undefined),
+    })),
+  }));
+  for (const index of dirty) {
+    model.sheets[index] = { ...model.sheets[index]!, dirty: true };
+  }
+  edit(model);
+  return model;
+}
+
+/** Sets a stored cell's value in place (the record is a private clone). */
+function setStoredValue(model: SpreadsheetModel, sheet: number, a1: [number, number], value: string | number): void {
+  const cell = getCell(model.sheets[sheet]!, a1[0], a1[1])!;
+  cell.value = value;
+}
+
+describe("SPEC-122's reader step: a dirty sheet regains its preserved content and protection", () => {
+  it("SPEC-122 moved the reader to version 6 with its step from 5 — the first that does real work on a dirty sheet", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(6);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(5);
+  });
+
+  it("xlsx: sstIndex and preserved attributes and children come back onto unchanged cells only; protection and structure protection come back", async () => {
+    const parts = await unzip(await buildMiniBookXlsxBytes());
+    patchPart(parts, "xl/workbook.xml", [[`<workbookPr defaultThemeVersion="202300"/>`, `<workbookPr defaultThemeVersion="202300"/><workbookProtection lockStructure="1"/>`]]);
+    patchPart(parts, "xl/worksheets/sheet1.xml", [
+      [`<c r="A3" t="s"><v>6</v></c>`, `<c r="A3" t="s" ph="1"><v>6</v></c>`],
+      [`<c r="B3"><v>1200</v></c>`, `<c r="B3" vm="1"><v>1200</v></c>`],
+      [`<c r="C3"><v>800</v></c>`, `<c r="C3"><v>800</v><extLst><ext uri="{C3}"/></extLst></c>`],
+      [`<c r="B4"><v>950.5</v></c>`, `<c r="B4"><v>950.5</v><extLst><ext uri="{B4}"/></extLst></c>`],
+      [`</sheetData>`, `</sheetData><sheetProtection sheet="1" objects="1" scenarios="1"/>`],
+    ]);
+    const read = await readSpreadsheetBytes(new Uint8Array(0), "xlsx", "SPEC-122 shapes", parts);
+    // The current reader captures the Model additions fields.
+    const summary = read.sheets[0]!;
+    expect(read.structureProtected).toBe(true);
+    expect(summary.protection).toEqual({ sheet: true });
+    expect(getCell(summary, 2, 0)).toMatchObject({ value: "North", sstIndex: 6, preservedAttrs: ' ph="1"' });
+    expect(getCell(summary, 1, 1)).toMatchObject({ value: "Revenue", sstIndex: 2 });
+    expect(getCell(summary, 2, 1)).toMatchObject({ value: 1200, preservedAttrs: ' vm="1"' });
+    expect(getCell(summary, 2, 2)).toMatchObject({ value: 800, preservedXml: `<extLst><ext uri="{C3}"/></extLst>` });
+
+    // Stored by SPEC-120's reader; then B2 and C3 were edited on the (dirty) Summary.
+    const stored = spec120Record(read, [0], (model) => {
+      setStoredValue(model, 0, [1, 1], "Turnover");
+      setStoredValue(model, 0, [2, 2], 801);
+    });
+    expect(stored.structureProtected).toBeUndefined();
+    expect(getCell(stored.sheets[0]!, 2, 0)!.sstIndex).toBeUndefined();
+
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(6);
+    expect(upgraded.structureProtected).toBe(true);
+    const sheet = upgraded.sheets[0]!;
+    expect(sheet.id).toBe("stored-sheet-0");
+    expect(sheet.protection).toEqual({ sheet: true });
+    expect(getCell(sheet, 2, 0)).toMatchObject({ value: "North", sstIndex: 6, preservedAttrs: ' ph="1"' });
+    expect(getCell(sheet, 2, 1)).toMatchObject({ value: 1200, preservedAttrs: ' vm="1"' });
+    expect(getCell(sheet, 3, 1)).toMatchObject({ value: 950.5, preservedXml: `<extLst><ext uri="{B4}"/></extLst>` });
+    // The edited cells keep their edits and regain nothing.
+    expect(getCell(sheet, 1, 1)).toEqual({ col: 1, value: "Turnover", styleId: getCell(sheet, 1, 1)!.styleId });
+    expect(getCell(sheet, 1, 1)!.sstIndex).toBeUndefined();
+    expect(getCell(sheet, 2, 2)).toEqual({ col: 2, value: 801 });
+    // A clean sheet is re-read and keeps its stored id.
+    expect(upgraded.sheets[1]!.id).toBe("stored-sheet-1");
+    expect(upgraded.sheets[1]!.protection).toBeUndefined();
+  });
+
+  it("xlsx: a default-width grouped column span and grouped rows without cells — stored by version 6, not 5 — come back onto a dirty sheet, so its outline is written", async () => {
+    const parts = await unzip(await buildMiniBookXlsxBytes());
+    patchPart(parts, "xl/worksheets/sheet1.xml", [
+      [
+        `<cols><col min="1" max="1" width="14.6328125" customWidth="1"/></cols>`,
+        `<cols><col min="1" max="1" width="14.6328125" customWidth="1"/><col min="7" max="9" outlineLevel="1"/><col min="10" max="10" collapsed="1"/></cols>`,
+      ],
+      [`</sheetData>`, `<row r="13" outlineLevel="1"/><row r="14" spans="1:5" outlineLevel="1" x14ac:dyDescent="0.35"/><row r="15" collapsed="1"/></sheetData>`],
+    ]);
+    const read = await readSpreadsheetBytes(new Uint8Array(0), "xlsx", "SPEC-122 outline", parts);
+    const summary = read.sheets[0]!;
+    expect(summary.columns.slice(1)).toEqual([
+      { min: 6, max: 8, sourceAttrs: `outlineLevel="1"` },
+      { min: 9, max: 9, sourceAttrs: `collapsed="1"` },
+    ]);
+    expect(summary.rows.slice(-3)).toEqual([
+      { index: 12, cells: [], sourceAttrs: `outlineLevel="1"` },
+      { index: 13, cells: [], sourceAttrs: `spans="1:5" outlineLevel="1" x14ac:dyDescent="0.35"` },
+      { index: 14, cells: [], sourceAttrs: `collapsed="1"` },
+    ]);
+
+    // Stored by SPEC-120's reader, which kept neither; then C3 was edited on the (dirty) Summary.
+    const stored = spec120Record(read, [0], (model) => {
+      const sheet = model.sheets[0]!;
+      model.sheets[0] = { ...sheet, columns: sheet.columns.slice(0, 1), rows: sheet.rows.filter((row) => row.cells.length > 0) };
+      setStoredValue(model, 0, [2, 2], 801);
+    });
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const sheet = upgraded.sheets[0]!;
+    expect(sheet.columns).toEqual(summary.columns);
+    expect(sheet.rows.map((row) => row.index)).toEqual(summary.rows.map((row) => row.index));
+    expect(sheet.rows.slice(-3)).toEqual(summary.rows.slice(-3));
+    expect(getCell(sheet, 2, 2)).toEqual({ col: 2, value: 801 });
+  });
+
+  it("ods: preserved attributes, child content and text:p come back onto unchanged cells only; protection and structure protection come back", async () => {
+    const parts = await unzip(await buildMiniBookOdsBytes());
+    patchPart(parts, "content.xml", [
+      [`<office:spreadsheet>`, `<office:spreadsheet table:structure-protected="true">`],
+      [`<table:table table:name="Inventory" table:style-name="ta1">`, `<table:table table:name="Inventory" table:style-name="ta1" table:protected="true">`],
+      [
+        `<text:p>Widget</text:p>`,
+        `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`,
+      ],
+      [
+        `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float">`,
+        `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float" table:content-validation-name="val1">`,
+      ],
+      [`<text:p>Gadget</text:p>`, `${annotation("Edited away")}<text:p>Gadget</text:p>`],
+      [`<text:p>Done</text:p>`, `${annotation("Kept")}<text:p>Done</text:p>`],
+    ]);
+    const read = await readSpreadsheetBytes(new Uint8Array(0), "ods", "SPEC-122 shapes", parts);
+    const inventory = read.sheets[1]!;
+    expect(read.structureProtected).toBe(true);
+    expect(inventory.protection).toEqual({ sheet: true });
+    const link = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`;
+    expect(getCell(inventory, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
+    expect(getCell(inventory, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' table:content-validation-name="val1"' });
+    expect(getCell(inventory, 2, 0)).toMatchObject({ value: "Gadget", preservedXml: annotation("Edited away") });
+    expect(getCell(inventory, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
+
+    // Stored by SPEC-120's reader; then A3 was edited on the (dirty) Inventory.
+    const stored = spec120Record(read, [1], (model) => setStoredValue(model, 1, [2, 0], "Gizmo"));
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(6);
+    expect(upgraded.structureProtected).toBe(true);
+    const sheet = upgraded.sheets[1]!;
+    expect(sheet.id).toBe("stored-sheet-1");
+    expect(sheet.protection).toEqual({ sheet: true });
+    expect(getCell(sheet, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
+    expect(getCell(sheet, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' table:content-validation-name="val1"' });
+    expect(getCell(sheet, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
+    // The edited cell keeps its edit and regains nothing.
+    expect(getCell(sheet, 2, 0)!.value).toBe("Gizmo");
+    expect(getCell(sheet, 2, 0)!.preservedXml).toBeUndefined();
+    // The other (clean) tables are re-read, unprotected.
+    expect(upgraded.sheets[0]!.protection).toBeUndefined();
+    expect(upgraded.sheets[2]!.id).toBe("stored-sheet-2");
   });
 });

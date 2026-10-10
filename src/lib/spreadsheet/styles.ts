@@ -74,6 +74,92 @@ export function cellStyle(model: Pick<SpreadsheetModel, "styles">, id: number): 
   return (Number.isInteger(id) && id >= 0 ? styles[id] : undefined) ?? styles[0]!;
 }
 
+// --- SPEC-122: interning (THE normative source for internStyle) -----------------------------
+// internStyle(model, style): the key is the style as JSON with keys sorted
+// (at every level) and `sourceXf`/`sourceStyleName` omitted, an absent and an
+// undefined field alike; the key → index table is cached in a WeakMap keyed
+// by the `styles` array (arrays are replaced, never mutated, so a table never
+// goes stale). An equal entry's index is returned — a source-backed one
+// (`sourceXf`/`sourceStyleName`) first, else the first equal one — else
+// `model.styles = [...model.styles, style]` and the new index. An appended
+// entry never carries `sourceXf`/`sourceStyleName`: a style equal to no
+// entry is not the source's, so a style passed with them (a source style
+// copied and changed) is appended without them, and the writers never
+// mistake it for the source entry. Entries are immutable once interned.
+
+/** A style's interning key: the style as JSON with keys sorted at every
+ * level, `sourceXf`/`sourceStyleName` omitted (where a style was read from
+ * says nothing about how it looks). */
+export function styleKey(style: CellStyle): string {
+  const { sourceXf: _xf, sourceStyleName: _name, ...rest } = style;
+  return stableJson(rest);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => (item === undefined ? "null" : stableJson(item))).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.keys(value)
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function isSourceBacked(style: CellStyle): boolean {
+  return style.sourceXf !== undefined || style.sourceStyleName !== undefined;
+}
+
+/** Each `styles` array's key → index, built once per array (arrays are
+ * replaced, never mutated, so an array's table never goes stale). */
+const internTables = new WeakMap<readonly CellStyle[], Map<string, number>>();
+
+function internTable(styles: readonly CellStyle[]): Map<string, number> {
+  let table = internTables.get(styles);
+  if (!table) {
+    table = new Map();
+    styles.forEach((style, index) => {
+      const key = styleKey(style);
+      const found = table!.get(key);
+      // The first equal entry wins, a source-backed one over an appended one.
+      if (found === undefined || (!isSourceBacked(styles[found]!) && isSourceBacked(style))) {
+        table!.set(key, index);
+      }
+    });
+    internTables.set(styles, table);
+  }
+  return table;
+}
+
+/** The index of a style structurally equal to `style` (SPEC-122 "Styles"):
+ * an existing entry's — a source-backed one first — else `style` is appended
+ * copy-on-write (`model.styles` replaced, never mutated; a new entry carries
+ * no `sourceXf`/`sourceStyleName`, since no source wrote it) and its index
+ * returned. Entries are immutable once interned. */
+export function internStyle(model: Pick<SpreadsheetModel, "styles">, style: CellStyle): number {
+  const styles = model.styles;
+  const table = internTable(styles);
+  const key = styleKey(style);
+  const found = table.get(key);
+  if (found !== undefined) {
+    return found;
+  }
+  let fresh = style;
+  if (isSourceBacked(style)) {
+    const { sourceXf: _xf, sourceStyleName: _name, ...rest } = style;
+    fresh = rest;
+  }
+  const next = [...styles, fresh];
+  const nextTable = new Map(table);
+  nextTable.set(key, next.length - 1);
+  internTables.set(next, nextTable);
+  model.styles = next;
+  return next.length - 1;
+}
+
 /** The maximum digit width of a cell font (the pinned MDW table — never a
  * measurement), for the text-width estimates of overflow, shrink-to-fit and
  * fill: its family resolved against the theme (the theme's minor font when

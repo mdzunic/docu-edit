@@ -405,7 +405,7 @@ describe("SpreadsheetView sheet tabs", () => {
   });
 });
 
-describe("SpreadsheetView read-only grid", () => {
+describe("SpreadsheetView grid", () => {
   async function mountMiniBook() {
     const { store, readFixture, mountSheets } = await loadModules();
     const { model } = await readFixture("mini-book.xlsx");
@@ -413,11 +413,17 @@ describe("SpreadsheetView read-only grid", () => {
     return (await mountSheets(model.id)).wrapper;
   }
 
-  it("is a read-only ARIA grid of the whole sheet, headers included, named by the sheet", async () => {
+  it("is an ARIA grid of the whole sheet, headers included, named by the sheet — editable since SPEC-122, its cell editor mounted in Ready", async () => {
     const wrapper = await mountMiniBook();
     const grid = wrapper.get('[data-testid="spreadsheet-grid"]');
     expect(grid.attributes("role")).toBe("grid");
-    expect(grid.attributes("aria-readonly")).toBe("true");
+    // SPEC-122 makes the cells editable: no aria-readonly, and the in-cell
+    // editor is always mounted over the active cell, empty in Ready.
+    expect(grid.attributes("aria-readonly")).toBeUndefined();
+    const editor = grid.get('[data-testid="cell-editor"]');
+    expect(editor.attributes("contenteditable")).toBe("true");
+    expect(editor.attributes("data-mode")).toBe("ready");
+    expect(editor.text()).toBe("");
     expect(grid.attributes("aria-rowcount")).toBe("1048577");
     expect(grid.attributes("aria-colcount")).toBe("16385");
     expect(grid.attributes("aria-label")).toBe("Summary");
@@ -628,7 +634,7 @@ function controlBackquote(target: Element): void {
 }
 
 describe("SpreadsheetView formulas (SPEC-119)", () => {
-  it("shows the active cell's formula in the read-only bar; Ctrl+` and View ▸ Show formulas switch the grid to formulas as view state", async () => {
+  it("shows the active cell's formula in the bar (editable since SPEC-122); Ctrl+` and View ▸ Show formulas switch the grid to formulas as view state", async () => {
     const { store, readFixture, mountSheets } = await loadModules();
     const { bytes, model } = await readFixture("spec119-formulas.xlsx");
     store.storeSpreadsheet(model);
@@ -636,11 +642,12 @@ describe("SpreadsheetView formulas (SPEC-119)", () => {
     const grid = wrapper.get('[data-testid="spreadsheet-grid"]');
     const bar = () => wrapper.get('[data-testid="formula-bar-content"]');
 
-    // The file's selection opens on B5; the bar shows its formula, read-only.
+    // The file's selection opens on B5; the bar shows its formula — an
+    // editable textbox since SPEC-122 (the cell editor's draft).
     expect(wrapper.get('[data-testid="name-box"]').element).toHaveProperty("value", "B5");
     expect(bar().text()).toBe("=SUM(B2:B4)");
-    expect(bar().attributes("aria-readonly")).toBe("true");
-    expect(bar().attributes("contenteditable")).toBeUndefined();
+    expect(bar().attributes("aria-readonly")).toBeUndefined();
+    expect(bar().attributes("contenteditable")).toBe("true");
     await grid.trigger("keydown", { key: "ArrowRight" });
     await grid.trigger("keydown", { key: "ArrowUp" });
     await grid.trigger("keydown", { key: "ArrowUp" });
