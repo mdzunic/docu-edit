@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { equalBytes } from "../src/lib/core/equality";
 
 // SPEC-108 — the assembly sheet, proven end to end by "Convert to PDF…"
 // (AC-50/51): open the library with spec107-shot.png (64 × 40 px) → row
@@ -137,5 +138,38 @@ test("the selection bar converts exactly one selected image; a refused margin sa
 
   await dialog.getByTestId("convert-pdf-cancel").click();
   await expect(dialog).toBeHidden();
+  await expect(page.getByTestId("library-row")).toHaveCount(1);
+});
+
+test("a cover crop is applied before encoding, and the same setup downloads the same bytes (AC-36, AC-45)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("app-bar")).toBeVisible();
+  await dropPng(page);
+
+  const dialog = await openConvertDialog(page);
+  await dialog.getByTestId("sheet-paper").selectOption("A4");
+  await dialog.getByTestId("sheet-margin-preset").selectOption("Normal");
+  await dialog.getByTestId("sheet-fit").selectOption("cover");
+  await dialog.getByTestId("sheet-dpi").selectOption("600");
+  await expect(dialog.getByTestId("sheet-preview-cropped")).toBeVisible();
+
+  const files: Uint8Array[] = [];
+  for (let i = 0; i < 2; i += 1) {
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      dialog.getByTestId("convert-pdf-download").click(),
+    ]);
+    expect(download.suggestedFilename()).toBe("spec107-shot.pdf");
+    files.push(new Uint8Array(readFileSync((await download.path())!)));
+  }
+  expect(equalBytes(files[0], files[1])).toBe(true);
+  // Covering A4 Normal's 15.92 × 24.62 cm box, the 64 × 40 image keeps its
+  // middle 25.865 × 40 pixels: only those samples are embedded, at full
+  // resolution (600 dpi asks for more than the source has).
+  const text = Buffer.from(files[0]).toString("latin1");
+  expect(text).toContain("/Subtype /Image /Width 26 /Height 40");
+  expect(text).toContain("/MediaBox [0 0 595.28 841.89]");
+  // Downloading stores nothing.
+  await dialog.getByTestId("convert-pdf-cancel").click();
   await expect(page.getByTestId("library-row")).toHaveCount(1);
 });
