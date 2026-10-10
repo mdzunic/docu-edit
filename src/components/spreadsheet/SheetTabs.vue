@@ -83,7 +83,9 @@ async function selectAt(position = 0) {
 }
 
 // The ContextMenu key and Shift+F10 also make the browser fire `contextmenu`
-// at the focused tab; the keyboard path has already asked for the menu.
+// at the focused tab; the keyboard path has already asked for the menu, so
+// that echo is ignored — until a pointer press, which only a real right-click
+// makes.
 const KEYBOARD_MENU_ECHO_MS = 500;
 let keyboardMenuAt = 0;
 
@@ -148,6 +150,8 @@ function onTabClick(position = 0) {
 }
 
 function onTabPointerDown(position = 0, event = new MouseEvent("pointerdown")) {
+  // A pointer press starts a real (mouse) context menu: no keyboard echo.
+  keyboardMenuAt = 0;
   if (event.button !== 0 || press.active) {
     return;
   }
