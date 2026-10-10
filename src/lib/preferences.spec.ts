@@ -8,6 +8,7 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALE_TAGS } from "./spreadshe
 import {
   PREFERENCES_STORAGE_KEY,
   PREFERENCE_DEFAULTS,
+  assemblySheetDefaults,
   loadPreferences,
   onPreferencesChange,
   resetPreferences,
@@ -325,5 +326,57 @@ describe("spreadsheetLocale (SPEC-118 \"The preference\")", () => {
     expect(stored().spreadsheetLocale).toBe("en-US");
     off();
     expect(seen).toEqual(["cs-CZ", "en-US"]);
+  });
+});
+
+describe("assembly sheet preferences (SPEC-108)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetPreferencesSession();
+  });
+
+  it("default to the user's page-setup defaults until chosen", () => {
+    expect(PREFERENCE_DEFAULTS.assemblyPaper).toBeNull();
+    expect(PREFERENCE_DEFAULTS.assemblyMargins).toBeNull();
+    expect(PREFERENCE_DEFAULTS.assemblyDpi).toBe(150);
+    expect(assemblySheetDefaults(loadPreferences())).toEqual({
+      paper: "A4",
+      margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
+      dpi: 150,
+    });
+    savePreference("defaultPageSizeId", "Letter");
+    savePreference("defaultMarginsId", "Narrow");
+    expect(assemblySheetDefaults(loadPreferences())).toMatchObject({
+      paper: "Letter",
+      margins: { topCm: 1.27, rightCm: 1.27, bottomCm: 1.27, leftCm: 1.27 },
+    });
+  });
+
+  it("persist the user's own choices, which then win over the page-setup defaults", () => {
+    savePreference("defaultPageSizeId", "Letter");
+    savePreference("assemblyPaper", "Fit to content");
+    savePreference("assemblyMargins", { topCm: 0, rightCm: 1, bottomCm: 2, leftCm: 3 });
+    savePreference("assemblyDpi", 600);
+    expect(stored()).toMatchObject({
+      assemblyPaper: "Fit to content",
+      assemblyMargins: { topCm: 0, rightCm: 1, bottomCm: 2, leftCm: 3 },
+      assemblyDpi: 600,
+    });
+    resetPreferencesSession();
+    expect(assemblySheetDefaults(loadPreferences())).toEqual({
+      paper: "Fit to content",
+      margins: { topCm: 0, rightCm: 1, bottomCm: 2, leftCm: 3 },
+      dpi: 600,
+    });
+  });
+
+  it("repair a corrupt value to its default, field by field", () => {
+    localStorage.setItem(
+      PREFERENCES_STORAGE_KEY,
+      JSON.stringify({ assemblyPaper: "Custom", assemblyMargins: { topCm: -1 }, assemblyDpi: 200, theme: "dark" }),
+    );
+    const prefs = loadPreferences();
+    expect([prefs.assemblyPaper, prefs.assemblyMargins, prefs.assemblyDpi]).toEqual([null, null, 150]);
+    expect(prefs.theme).toBe("dark");
   });
 });
