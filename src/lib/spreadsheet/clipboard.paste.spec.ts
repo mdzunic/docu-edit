@@ -385,6 +385,24 @@ describe("plain text", () => {
     pasteBlock(m, "t", over(range(1, 1, 2, 2)), blockFromText("7", ctx) as PasteBlock, ALL);
     expect([cellOf(m, 1, 1, "t")?.value, cellOf(m, 2, 2, "t")?.value, cellOf(m, 3, 3, "t")]).toEqual([7, 7, undefined]);
   });
+
+  it("Paste (All) replaces a merge inside the destination, so every field shows; Values keeps it; one value into a merge's anchor keeps it", () => {
+    const merged = (): SpreadsheetModel => model([sheet("t", "T", { merges: [range(0, 0, 1, 1)] })]);
+    const fields = (m: SpreadsheetModel) => [cellOf(m, 0, 0, "t")?.value, cellOf(m, 0, 1, "t")?.value, cellOf(m, 1, 0, "t")?.value, cellOf(m, 1, 1, "t")?.value];
+    const all = merged();
+    expect(pasteBlock(all, "t", at(0, 0), blockFromText("a\tb\r\nc\td", ctx) as PasteBlock, ALL)).toMatchObject({ ok: true, range: range(0, 0, 1, 1) });
+    expect(all.sheets[0]!.merges).toEqual([]);
+    expect(fields(all)).toEqual(["a", "b", "c", "d"]);
+    expect(all.sheets[0]!.dirty).toBe(true);
+    const values = merged();
+    pasteBlock(values, "t", at(0, 0), blockFromText("a\tb\r\nc\td", ctx) as PasteBlock, { what: "values" });
+    expect(values.sheets[0]!.merges).toEqual([range(0, 0, 1, 1)]);
+    expect(fields(values)).toEqual(["a", undefined, undefined, undefined]);
+    const anchor = merged();
+    pasteBlock(anchor, "t", over(range(0, 0, 1, 1)), blockFromText("7", ctx) as PasteBlock, ALL);
+    expect(anchor.sheets[0]!.merges).toEqual([range(0, 0, 1, 1)]);
+    expect(fields(anchor)).toEqual([7, undefined, undefined, undefined]);
+  });
 });
 
 describe("copy-on-write", () => {

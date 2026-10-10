@@ -41,7 +41,8 @@
 // - Plain text (TSV) pastes each field through SPEC-122's parseInput as an
 //   entry (cells.ts writeEntries): destination styles kept but for the
 //   number format parseInput implies (over General); an empty field clears
-//   its destination's value.
+//   its destination's value. Paste (All) replaces the destination's merges
+//   — text brings none, so a merge inside is gone and every field shows.
 // - Google Sheets' R1C1 formulas are converted at each destination cell
 //   (formula/r1c1.ts); an unconvertible one pastes its value.
 // The pasted sheet is marked dirty; the caller wraps the paste in ONE undo
@@ -482,6 +483,15 @@ export function pasteBlock(model: SpreadsheetModel, sheetId: string, target: Pas
       entries.push({ row, col, entry });
     });
     writeEntries(model, sheetIndex, entries);
+    if (replacesFormats && !plan.intoMerge) {
+      // Paste (All) replaces the destination's merges, as for a payload:
+      // plain text brings none, so every merge inside is gone.
+      const current = model.sheets[sheetIndex]!;
+      const merges = current.merges.filter((merge) => !contains(plan.dest, merge));
+      if (merges.length !== current.merges.length) {
+        model.sheets = model.sheets.map((each, index) => (index === sheetIndex ? { ...current, merges, dirty: true as const } : each));
+      }
+    }
     markDirty(model, sheetId, sheet);
     return { ok: true, range: writtenRange(plan), formulasAsValues };
   }
