@@ -16,6 +16,12 @@
 // (useSheetOverlays' refHighlights). SPEC-124: header-boundary resizing
 // (useHeaderResize, through the pointer) and a double-click on a boundary
 // autofitting; the grid binds the resize guide, tooltip and cursor.
+// SPEC-125: the marching ants on the copied range, the fill handle on a
+// single-range selection's bottom-right corner (a double-click on it fills
+// down), the fill and drag-move previews (the move's with its destination's
+// address), the fill options chip and the move cursor (`transfer`); the
+// pointer hands the handle and the outline's presses to useFillHandle and
+// useRangeMove.
 import { computed, watch, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
@@ -24,13 +30,16 @@ import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
+import type { FillHandle } from "./useFillHandle";
 import type { FormatPainter } from "./useFormatPainter";
 import type { HeaderResize } from "./useHeaderResize";
 import type { Merges } from "./useMerges";
 import type { Structure } from "./useStructure";
 import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
+import type { RangeMoveController } from "./useRangeMove";
 import type { Recalc } from "./useRecalc";
+import type { SheetClipboard } from "./useSheetClipboard";
 import type { SheetMetrics } from "./useSheetMetrics";
 import { useSheetCells } from "./useSheetCells";
 import { useSheetOverlays } from "./useSheetOverlays";
@@ -66,6 +75,11 @@ export interface SheetGridContext {
   structure?: Structure;
   headerResize?: HeaderResize;
   merges?: Merges;
+  /** SPEC-125: the clipboard (the marching ants, its dialog), the fill
+   * handle and its chip, drag-move; absent = none. */
+  clipboard?: SheetClipboard;
+  fillHandle?: FillHandle;
+  rangeMove?: RangeMoveController;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -101,7 +115,47 @@ export function useSheetGrid(
     const host = scroller.value?.querySelector<HTMLElement>('[data-testid="cell-editor"]');
     (host ?? scroller.value)?.focus({ preventScroll: true });
   }
-  const pointer = useSheetPointer({ scroller, metrics, viewport, selection: () => context().selection, editing, focus: focusEditor, resize: () => context().headerResize });
+  /** A single-range selection's outline (drag-move's band, the handle's
+   * corner; SPEC-125). */
+  const outline = computed(() => {
+    const ranges = selection().ranges;
+    return ranges.length === 1 ? overlays.rectOf(ranges[0]!, "outline") : null;
+  });
+  const pointer = useSheetPointer({
+    scroller,
+    metrics,
+    viewport,
+    selection: () => context().selection,
+    editing,
+    focus: focusEditor,
+    resize: () => context().headerResize,
+    fill: () => context().fillHandle,
+    move: () => context().rangeMove,
+    outline: () => outline.value,
+    painting: () => Boolean(context().painter?.mode.value),
+  });
+
+  /** SPEC-125's overlays, in paper px (see the module header). */
+  const transfer = computed(() => {
+    const ctx = context();
+    const id = sheet().id;
+    const marquee = ctx.clipboard?.marquee.value;
+    const ants = marquee && marquee.sheetId === id ? overlays.rectOf(marquee.range, "marquee") : null;
+    const corner = ctx.fillHandle?.seed.value && !ctx.rangeMove?.drag.value ? outline.value : null;
+    const fill = ctx.fillHandle?.preview.value;
+    const move = ctx.rangeMove?.preview.value;
+    const moveRect = move ? overlays.rectOf(move.range, "move") : null;
+    const chip = ctx.fillHandle?.chip.value;
+    const chipRect = chip && chip.sheetId === id && !ctx.fillHandle?.drag.value ? overlays.rectOf(chip.target, "chip") : null;
+    return {
+      ants: ants && marquee ? { ...ants, mode: marquee.mode } : null,
+      handle: corner ? { left: corner.left + corner.width - 4, top: corner.top + corner.height - 4 } : null,
+      fillPreview: fill ? overlays.rectOf(fill, "fill") : null,
+      movePreview: moveRect && move ? { ...moveRect, address: move.address } : null,
+      chip: chipRect && chip ? { x: chipRect.left + chipRect.width, y: chipRect.top + chipRect.height, applied: chip.applied } : null,
+      cursor: ctx.rangeMove?.hover.value || ctx.rangeMove?.drag.value ? "move" : "",
+    };
+  });
 
   /** The in-cell editor's box, text style and name (SPEC-122). */
   const editor = computed(() => {
@@ -128,6 +182,11 @@ export function useSheetGrid(
   /** A double-click on a cell opens Edit mode, caret at the clicked
    * character (SPEC-122). */
   function onDblClick(event: MouseEvent): void {
+    // SPEC-125: a double-click on the fill handle fills down.
+    if (event.button === 0 && pointer.pressedOnHandle()) {
+      context().fillHandle?.doubleClick();
+      return;
+    }
     // SPEC-124: a double-click on a header boundary autofits.
     const boundary = event.button === 0 ? pointer.boundaryAtClient(event.clientX, event.clientY) : null;
     if (boundary) {
@@ -239,5 +298,8 @@ export function useSheetGrid(
     canvasStyle,
     /** SPEC-124: header resizing (guide, tooltip, cursor), absent = none. */
     resize: computed(() => context().headerResize ?? null),
+    transfer,
+    /** SPEC-125: the fill handle the chip re-applies through; null = none. */
+    fillChip: computed(() => context().fillHandle ?? null),
   };
 }

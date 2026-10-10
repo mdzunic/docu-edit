@@ -3,10 +3,12 @@
 // Shift+F10 or the Menu key (useFormatting) at the pointer or under the
 // active cell, with "Format cells…" and "Clear contents" — SPEC-124 adds
 // "Insert…" and "Delete…" (`structure`: whole rows or columns act at once,
-// any other selection opens SheetInsertDeleteDialog); SPEC-125 and later
-// specs append theirs. UiMenuSurface owns outside-click and Escape
-// dismissal. Runtime prop declarations per the espree constraint (see
-// AppShell.vue).
+// any other selection opens SheetInsertDeleteDialog); SPEC-125 puts Cut,
+// Copy, Paste and Paste special… first (`clipboard`: useSheetClipboard's
+// menu — Cut and Copy fire the native events through execCommand, Paste
+// reads the async clipboard); later specs append theirs. UiMenuSurface owns
+// outside-click and Escape dismissal. Runtime prop declarations per the
+// espree constraint (see AppShell.vue).
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
 
 const props = defineProps({
@@ -15,7 +17,19 @@ const props = defineProps({
   y: { type: Number, default: 0 },
 });
 
-const emit = defineEmits(["run", "structure", "close"]);
+const emit = defineEmits(["run", "structure", "clipboard", "close"]);
+
+const CLIPBOARD = [
+  { action: "cut", label: "Cut", testid: "sheet-cell-menu-cut" },
+  { action: "copy", label: "Copy", testid: "sheet-cell-menu-copy" },
+  { action: "paste", label: "Paste", testid: "sheet-cell-menu-paste" },
+  { action: "paste-special", label: "Paste special…", testid: "sheet-cell-menu-paste-special" },
+];
+
+function clipboard(action = "copy") {
+  emit("close");
+  emit("clipboard", action);
+}
 
 function choose(command = Object()) {
   emit("close");
@@ -39,6 +53,21 @@ function structure(mode = "insert") {
     :style="{ left: `${props.x}px`, top: `${props.y}px` }"
     @dismiss="emit('close')"
   >
+    <button
+      v-for="item in CLIPBOARD"
+      :key="item.action"
+      type="button"
+      role="menuitem"
+      :data-testid="item.testid"
+      @mousedown.prevent
+      @click="clipboard(item.action)"
+    >
+      {{ item.label }}
+    </button>
+    <hr
+      class="menu-separator"
+      role="separator"
+    >
     <button
       type="button"
       role="menuitem"
@@ -101,5 +130,11 @@ button {
 button:hover,
 button:focus-visible {
   background: var(--state-hover);
+}
+
+.menu-separator {
+  margin: var(--space-1) 0;
+  border: 0;
+  border-top: var(--border-width) solid var(--border-subtle);
 }
 </style>

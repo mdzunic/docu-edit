@@ -14,19 +14,23 @@
 // cell context menu and Format Cells, from the grid context's `formatting`.
 // SPEC-124: the header menu, the insert/delete and size dialogs (the grid
 // context's `structure`) and the merge warning (`merges`); the cell menu's
-// Insert…/Delete… go to the structure. Runtime prop declarations per the
-// espree constraint (see AppShell.vue).
+// Insert…/Delete… go to the structure. SPEC-125: the cell menu's Cut, Copy,
+// Paste and Paste special… (`clipboard`), Paste special's dialog and the
+// drag-move's overwrite question (`rangeMove`). Runtime prop declarations
+// per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import FormatCellsDialog from "./FormatCellsDialog.vue";
 import FormulaBar from "./FormulaBar.vue";
+import PasteSpecialDialog from "./PasteSpecialDialog.vue";
 import SheetCellContextMenu from "./SheetCellContextMenu.vue";
 import SheetGrid from "./SheetGrid.vue";
 import SheetHeaderContextMenu from "./SheetHeaderContextMenu.vue";
 import SheetInsertDeleteDialog from "./SheetInsertDeleteDialog.vue";
 import SheetMergeWarningDialog from "./SheetMergeWarningDialog.vue";
+import SheetMoveOverwriteDialog from "./SheetMoveOverwriteDialog.vue";
 import SheetSizeDialog from "./SheetSizeDialog.vue";
 import SheetTabColorPicker from "./SheetTabColorPicker.vue";
 import SheetTabDeleteDialog from "./SheetTabDeleteDialog.vue";
@@ -50,6 +54,11 @@ function insertOrDelete(mode = "insert") {
   grid.value.structure?.insertOrDelete(mode === "delete" ? "delete" : "insert");
 }
 const grid = computed(() => asSheetGridContext(props.grid));
+
+/** The cell menu's Cut, Copy, Paste and Paste special… (SPEC-125). */
+function clipboard(action = "copy") {
+  grid.value.clipboard?.menu(action === "cut" || action === "paste" || action === "paste-special" ? action : "copy");
+}
 const commands = computed(() => asWorkbookEditing(props.editing).commands);
 const cellEditing = computed(() => asWorkbookEditing(props.editing).cell);
 const panelId = "sheet-panel";
@@ -140,6 +149,7 @@ const tabs = computed(() => {
         :y="grid.formatting.contextMenu.value?.y ?? 0"
         @run="grid.formatting.run"
         @structure="insertOrDelete"
+        @clipboard="clipboard"
         @close="grid.formatting.closeContextMenu()"
       />
       <FormatCellsDialog
@@ -175,6 +185,17 @@ const tabs = computed(() => {
       v-if="grid.merges?.warning.value"
       @confirm="grid.merges.confirm()"
       @cancel="grid.merges.cancel()"
+    />
+    <PasteSpecialDialog
+      v-if="grid.clipboard?.pasteSpecial.value"
+      :capabilities="grid.clipboard.pasteSpecial.value.capabilities"
+      @confirm="grid.clipboard.confirmPasteSpecial"
+      @cancel="grid.clipboard.cancelPasteSpecial()"
+    />
+    <SheetMoveOverwriteDialog
+      v-if="grid.rangeMove?.overwrite.value"
+      @confirm="grid.rangeMove.confirmOverwrite()"
+      @cancel="grid.rangeMove.cancelOverwrite()"
     />
     <SheetTabColorPicker
       v-if="commands.coloring.value"

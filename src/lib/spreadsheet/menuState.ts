@@ -4,8 +4,9 @@
 // typed PropType there), so it coerces that prop through here. SPEC-121 adds
 // the Edit menu's undo/redo state and File ▸ "Download a copy as …" (its
 // label names the other format; a reason disables it). SPEC-124 adds View ▸
-// Freeze's state and the Format menu's rows-and-columns commands. Later
-// spreadsheet specs append fields as they append menus and items.
+// Freeze's state and the Format menu's rows-and-columns commands; SPEC-125
+// Edit ▸ Paste special… and Fill ▸ Down/Right. Later spreadsheet specs
+// append fields as they append menus and items.
 
 /** What the bar needs in order to render: what is checked, what applies. */
 export interface SpreadsheetMenuState {
@@ -69,6 +70,10 @@ export const SHEET_MENU_COMMANDS = {
   columnWidth: "format.column-width",
   autofitRows: "format.autofit-rows",
   autofitColumns: "format.autofit-columns",
+  /** SPEC-125: Edit ▸ Paste special… and Edit ▸ Fill ▸ Down/Right. */
+  pasteSpecial: "edit.paste-special",
+  fillDown: "edit.fill-down",
+  fillRight: "edit.fill-right",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */

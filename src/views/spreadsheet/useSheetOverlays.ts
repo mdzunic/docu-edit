@@ -8,7 +8,8 @@
 // (SPEC-122), one `sheet-ref-highlight` per reference on the sheet on show,
 // outlined in its `--sheet-ref-N` colour (the pointed one dashed). All of it
 // follows the app theme (tokens) — only the paper underneath keeps the
-// file's colours.
+// file's colours. SPEC-125 places its own outlines (the marching ants, the
+// fill handle and its preview, the drag-move preview) through `rectOf`.
 //
 // Positions are unscaled px relative to the paper's origin (the top-left of
 // the cell area, past the headers): a frozen row or column sits at its
@@ -206,5 +207,5 @@ export function useSheetOverlays(deps: SheetOverlaysDeps) {
     }),
   );
 
-  return { columnHeaders, rowHeaders, hiddenMarkers, selectionRects, activeRect, freezeLines, refHighlights };
+  return { columnHeaders, rowHeaders, hiddenMarkers, selectionRects, activeRect, freezeLines, refHighlights, rectOf };
 }

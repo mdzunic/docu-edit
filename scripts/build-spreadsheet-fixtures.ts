@@ -88,6 +88,12 @@
 //                             embedded directly in a cell, a merge, a named
 //                             range, a named expression, a database range
 //                             and a table-local conditional format
+// - spec125-fill.xlsx       — SPEC-125, Excel-shaped: the copy block, a merge,
+//                             the cut cells, a "Mon" seed, a 20-row guide
+//                             column, a fill-down seed, cross-sheet formulas
+//                             and a "Series" sheet with a seed column per
+//                             series kind
+// - spec125-fill.ods        — SPEC-125, LibreOffice-shaped twin
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -121,6 +127,8 @@ import {
   buildSpec123StylesXlsxBytes,
   buildSpec124StructureOdsBytes,
   buildSpec124StructureXlsxBytes,
+  buildSpec125FillOdsBytes,
+  buildSpec125FillXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -151,6 +159,8 @@ writeFileSync(join(fixturesDir, "spec123-styles.xlsx"), await buildSpec123Styles
 writeFileSync(join(fixturesDir, "spec123-styles.ods"), await buildSpec123StylesOdsBytes());
 writeFileSync(join(fixturesDir, "spec124-structure.xlsx"), await buildSpec124StructureXlsxBytes());
 writeFileSync(join(fixturesDir, "spec124-structure.ods"), await buildSpec124StructureOdsBytes());
+writeFileSync(join(fixturesDir, "spec125-fill.xlsx"), await buildSpec125FillXlsxBytes());
+writeFileSync(join(fixturesDir, "spec125-fill.ods"), await buildSpec125FillOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

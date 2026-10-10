@@ -114,6 +114,23 @@ export function entryFromText(text: string, ctx: EntryContext): EntryOutcome {
   }
 }
 
+/** A formula body as a commit stores it (canonical, unbalanced "(" closed);
+ * null when it is over MAX_FORMULA_LENGTH or no formula — SPEC-125's
+ * plain-text paste reads its fields through this. */
+export function canonicalFormula(body: string): string | null {
+  if (body.length > MAX_FORMULA_LENGTH) {
+    return null;
+  }
+  try {
+    return printFormula(parseFormula(closeOpenParens(body)));
+  } catch (error) {
+    if (error instanceof FormulaSyntaxError) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 /** Why `ranges` cannot be changed, or null (see the header). */
 export function refusalFor(model: SpreadsheetModel, sheetIndex: number, ranges: GridRange[]): string | null {
   if (firstLockedCell(model, sheetIndex, ranges)) {

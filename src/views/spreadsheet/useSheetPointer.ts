@@ -13,12 +13,24 @@
 // editor open and the selection where it is). SPEC-124: within
 // RESIZE_HIT_PX of a header boundary the cursor is col-resize/row-resize, a
 // press drags the boundary (useHeaderResize) instead of selecting, and a
-// double-click there autofits (useSheetGrid).
+// double-click there autofits (useSheetGrid). SPEC-125: a press on the fill
+// handle drags a fill (useFillHandle) and one within MOVE_HIT_PX of a
+// single-range selection's outline (sheetGestures.ts) a drag-move
+// (useRangeMove, whose cursor the hover sets) — neither while the format
+// painter is armed, nor a move under outlinePressMoves' selection modifiers;
+// both auto-scroll like a selection drag, the release reads the modifiers
+// held at it, a drop outside the grid cancels a move, and a cancelled
+// pointer cancels either.
 import { onBeforeUnmount, type Ref } from "vue";
+import { isMacPlatform } from "../../lib/core/platform";
 import type { CellRef } from "../../lib/spreadsheet/address";
 import type { GridMetrics } from "../../lib/spreadsheet/geometry";
 import type { CellEditing } from "./useCellEditing";
+import type { FillHandle } from "./useFillHandle";
 import type { HeaderResize } from "./useHeaderResize";
+import type { RangeMoveController } from "./useRangeMove";
+import { nearOutline, onFillHandle, outlinePressMoves, outsideCells } from "./sheetGestures";
+import type { RectItem } from "./useSheetOverlays";
 import { primaryModifier, type SheetSelectionController } from "./useSheetSelection";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, type SheetViewport } from "./useSheetViewport";
 
@@ -66,6 +78,13 @@ export interface SheetPointerDeps {
   focus?: () => void;
   /** SPEC-124: header-boundary resizing; absent = none. */
   resize?: () => HeaderResize | undefined;
+  /** SPEC-125: the fill handle, drag-move and the single-range selection's
+   * outline (paper px) the move's hover band follows; absent = none. */
+  fill?: () => FillHandle | undefined;
+  move?: () => RangeMoveController | undefined;
+  outline?: () => RectItem | null;
+  /** Whether the format painter is armed (SPEC-123): a press is its. */
+  painting?: () => boolean;
 }
 
 /** A header-area point's position along its axis, in content px, and the
@@ -78,11 +97,14 @@ export interface HeaderPoint {
 }
 
 export function useSheetPointer(deps: SheetPointerDeps) {
-  let dragging: "cell" | "row" | "column" | "point" | "resize" | null = null;
+  let dragging: "cell" | "row" | "column" | "point" | "resize" | "fill" | "move" | null = null;
   /** The axis of a resize drag (SPEC-124). */
   let resizeAxis: "row" | "col" = "col";
   let last = { x: 0, y: 0 };
   let frame: number | null = null;
+  /** The last press began on the fill handle (SPEC-125): a double-click's
+   * target is the capturing grid, so this is what tells it apart. */
+  let pressOnHandle = false;
 
   /** A client point → unscaled px from the grid's top-left, and how far it
    * lies outside the scrolled area (for auto-scroll). */
@@ -148,11 +170,32 @@ export function useSheetPointer(deps: SheetPointerDeps) {
     return point && index !== null ? { axis: point.axis, index } : null;
   }
 
+  /** A drag reaching (x, y): the selection extends, or (SPEC-125) the fill
+   * or the move follows the cell there. */
   function extendTo(x: number, y: number): void {
     const hit = hitAt(Math.max(x, ROW_HEADER_WIDTH_PX), Math.max(y, COLUMN_HEADER_HEIGHT_PX));
-    if (hit.area === "cell") {
+    if (hit.area !== "cell") {
+      return;
+    }
+    if (dragging === "fill") {
+      deps.fill?.()?.dragTo(hit.cell);
+    } else if (dragging === "move") {
+      deps.move?.()?.dragTo(hit.cell);
+    } else {
       deps.selection().dragTo(hit.cell);
     }
+  }
+
+  /** Whether (x, y) is on the selection's outline band (SPEC-125). */
+  const onOutline = (x: number, y: number): boolean => nearOutline(x, y, deps.outline?.() ?? null, deps.viewport.z.value);
+
+  /** A fill or move drag begins (SPEC-125). */
+  function startGesture(kind: "fill" | "move", event: PointerEvent): void {
+    dragging = kind;
+    last = { x: event.clientX, y: event.clientY };
+    deps.move?.()?.setHover(false);
+    (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
   }
 
   function stopAutoScroll(): void {
@@ -182,6 +225,7 @@ export function useSheetPointer(deps: SheetPointerDeps) {
   }
 
   function onPointerDown(event: PointerEvent): void {
+    pressOnHandle = onFillHandle(event.target);
     const element = deps.scroller.value;
     const rect = element?.getBoundingClientRect();
     // A press on the scroller's own scrollbars is the browser's.
@@ -199,6 +243,17 @@ export function useSheetPointer(deps: SheetPointerDeps) {
       (event.currentTarget as Element | null)?.setPointerCapture?.(event.pointerId);
       event.preventDefault();
       return;
+    }
+    // SPEC-125: the fill handle, then the selection's outline (drag-move).
+    if (hit.area === "cell" && !editing?.editing.value && !deps.painting?.()) {
+      if (onFillHandle(event.target) && deps.fill?.()?.begin()) {
+        startGesture("fill", event);
+        return;
+      }
+      if (outlinePressMoves(event, isMacPlatform()) && onOutline(point.x, point.y) && deps.move?.()?.begin(hit.cell)) {
+        startGesture("move", event);
+        return;
+      }
     }
     if (editing) {
       const inEditor = event.target instanceof Element && event.target.closest('[data-testid="cell-editor"]') !== null;
@@ -248,10 +303,19 @@ export function useSheetPointer(deps: SheetPointerDeps) {
     if (!dragging) {
       // SPEC-124: the resize cursor over a header boundary.
       const resize = deps.resize?.();
+      const at = local(event.clientX, event.clientY);
       if (resize) {
-        const at = local(event.clientX, event.clientY);
         const header = headerPoint(at.x, at.y);
         resize.setHover(header && resize.boundaryAt(header.axis, header.pos) !== null ? header.axis : null);
+      }
+      // SPEC-125: the move cursor over the selection's outline.
+      const move = deps.move?.();
+      if (move) {
+        const free = !deps.painting?.() && outlinePressMoves(event, isMacPlatform()) && !onFillHandle(event.target) && !deps.editing?.()?.editing.value;
+        const hover = free && hitAt(at.x, at.y).area === "cell" && onOutline(at.x, at.y);
+        if (hover !== move.hover.value) {
+          move.setHover(hover);
+        }
       }
       return;
     }
@@ -264,7 +328,7 @@ export function useSheetPointer(deps: SheetPointerDeps) {
       }
       return;
     }
-    if (dragging === "cell") {
+    if (dragging === "cell" || dragging === "fill" || dragging === "move") {
       extendTo(point.x, point.y);
     } else {
       const hit = hitAt(dragging === "column" ? point.x : 0, dragging === "row" ? point.y : 0);
@@ -279,7 +343,27 @@ export function useSheetPointer(deps: SheetPointerDeps) {
     }
   }
 
-  function onPointerUp(): void {
+  function onPointerUp(event?: PointerEvent): void {
+    if (dragging === "fill" || dragging === "move") {
+      const kind = dragging;
+      dragging = null;
+      stopAutoScroll();
+      const cancelled = !event || event.type === "pointercancel";
+      if (kind === "fill") {
+        const fill = deps.fill?.();
+        if (cancelled) {
+          fill?.cancel();
+        } else {
+          fill?.release({ ctrl: event.ctrlKey, alt: event.altKey });
+        }
+      } else if (cancelled) {
+        deps.move?.()?.cancel();
+      } else {
+        const outside = outsideCells(deps.scroller.value?.getBoundingClientRect(), event.clientX, event.clientY, deps.viewport.z.value);
+        deps.move?.()?.drop({ copy: event.altKey || (event.ctrlKey && !isMacPlatform()), outside });
+      }
+      return;
+    }
     if (dragging === "resize") {
       dragging = null;
       deps.resize?.()?.finish();
@@ -299,5 +383,5 @@ export function useSheetPointer(deps: SheetPointerDeps) {
 
   onBeforeUnmount(stopAutoScroll);
 
-  return { onPointerDown, onPointerMove, onPointerUp, boundaryAtClient };
+  return { onPointerDown, onPointerMove, onPointerUp, boundaryAtClient, pressedOnHandle: (): boolean => pressOnHandle };
 }

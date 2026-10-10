@@ -249,6 +249,9 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.formatScientific",
   "sheet.insertCells",
   "sheet.deleteCells",
+  "sheet.pasteSpecial",
+  "sheet.fillDown",
+  "sheet.fillRight",
 ];
 
 /** The keydown a binding describes on one platform, for sweeping a whole
@@ -288,17 +291,33 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's fourteen commands, one binding each — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns", () => {
+  it("declares the sheet's seventeen commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill — one binding each but paste special's two", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
+    const pasteAndFill = ["sheet.pasteSpecial", "sheet.fillDown", "sheet.fillRight"];
     for (const { isMac } of PLATFORMS) {
       const definitions = sheetShortcutDefinitions(isMac);
       expect(definitions.map((definition) => definition.id)).toEqual(SHEET_IDS);
       for (const definition of definitions) {
         const structural = definition.id === "sheet.insertCells" || definition.id === "sheet.deleteCells";
-        expect(definition.category).toBe(structural ? "Rows and columns" : "Sheet formatting");
-        expect(definition.bindings).toHaveLength(1);
+        expect(definition.category).toBe(structural ? "Rows and columns" : pasteAndFill.includes(definition.id) ? "Paste and fill" : "Sheet formatting");
+        expect(definition.bindings).toHaveLength(definition.id === "sheet.pasteSpecial" ? 2 : 1);
       }
     }
+  });
+
+  it("binds SPEC-125's paste special to Ctrl/Cmd+Shift+V and Ctrl+Alt+V (Control+Option+V on macOS) by physical key, fills to Ctrl/Cmd+D and Ctrl/Cmd+R", () => {
+    for (const { isMac } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      const mod = isMac ? { metaKey: true } : { ctrlKey: true };
+      expect(findShortcut(keydown({ key: "V", code: "KeyV", shiftKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.pasteSpecial");
+      // Option+V types "√" on macOS: the key matches by code.
+      expect(findShortcut(keydown({ key: isMac ? "√" : "v", code: "KeyV", ctrlKey: true, altKey: true }), isMac, definitions)?.id).toBe("sheet.pasteSpecial");
+      expect(findShortcut(keydown({ key: "v", code: "KeyV", ...mod }), isMac, definitions)).toBeUndefined();
+      expect(findShortcut(keydown({ key: "d", code: "KeyD", ...mod }), isMac, definitions)?.id).toBe("sheet.fillDown");
+      expect(findShortcut(keydown({ key: "r", code: "KeyR", ...mod }), isMac, definitions)?.id).toBe("sheet.fillRight");
+    }
+    // Cmd+Option+V on macOS is no binding of the sheet's.
+    expect(findShortcut(keydown({ key: "√", code: "KeyV", metaKey: true, altKey: true }), true, sheetShortcutDefinitions(true))).toBeUndefined();
   });
 
   it("binds SPEC-124's insert and delete to Ctrl+Alt+= / Ctrl+Alt+- (Cmd+Option on macOS) by physical key, apart from the zoom keys", () => {
@@ -447,14 +466,18 @@ describe("the text registry after SPEC-123", () => {
     }
   });
 
-  it("never answers with a sheet command: the sheet's presses are its own format.* or nothing", () => {
+  it("never answers with a sheet command: the sheet's presses are the text editor's own commands on the same keys, or nothing", () => {
     expect(SHORTCUTS.some((definition) => definition.id.startsWith("sheet."))).toBe(false);
     // Ctrl/Cmd+B/I/U, and macOS Cmd+Shift+X, are the text editor's own
-    // commands on the same keys; no other sheet press means anything to it.
+    // commands on the same keys — as SPEC-125's Ctrl/Cmd+Shift+V (paste
+    // without formatting) and Ctrl/Cmd+R (align right) are; no other sheet
+    // press means anything to it.
     const sameKeys = new Map([
       ["sheet.bold", "format.bold"],
       ["sheet.italic", "format.italic"],
       ["sheet.underline", "format.underline"],
+      ["sheet.pasteSpecial", "edit.pastePlain"],
+      ["sheet.fillRight", "paragraph.alignRight"],
     ]);
     for (const { isMac, name } of PLATFORMS) {
       for (const definition of sheetShortcutDefinitions(isMac)) {

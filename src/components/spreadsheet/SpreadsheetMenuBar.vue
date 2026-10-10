@@ -18,6 +18,8 @@
 // SPEC-124 adds View ▸ Freeze ▸ (Top row, First column, Freeze at current
 // cell — disabled at A1 — and Unfreeze, enabled only when frozen) and, at the
 // Format menu's end, Row height…, Column width… and the two autofits.
+// SPEC-125 adds Edit ▸ Paste special… and Edit ▸ Fill ▸ Down / Right, each
+// with its SHEET_SHORTCUTS binding.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -54,6 +56,11 @@ const s = computed(() => asSpreadsheetMenuState(props.state));
 const undoShortcut = shortcutLabel("edit.undo");
 const redoShortcut = shortcutLabel("edit.redo");
 const formatCellsShortcut = shortcutLabel("sheet.formatCells", isMacPlatform(), SHEET_SHORTCUTS);
+const pasteSpecialShortcut = shortcutLabel("sheet.pasteSpecial", isMacPlatform(), SHEET_SHORTCUTS);
+const FILLS = [
+  { label: "Down", command: SHEET_MENU_COMMANDS.fillDown, testid: "sheet-menu-fill-down", shortcut: shortcutLabel("sheet.fillDown", isMacPlatform(), SHEET_SHORTCUTS) },
+  { label: "Right", command: SHEET_MENU_COMMANDS.fillRight, testid: "sheet-menu-fill-right", shortcut: shortcutLabel("sheet.fillRight", isMacPlatform(), SHEET_SHORTCUTS) },
+];
 const CLEARS = [
   { label: "Clear all", command: SHEET_MENU_COMMANDS.clearAll, testid: "sheet-menu-clear-all" },
   { label: "Clear formats", command: SHEET_MENU_COMMANDS.clearFormats, testid: "sheet-menu-clear-formats" },
@@ -122,6 +129,28 @@ const MENUS = [
         :disabled="!s.canRedo"
         @select="emit('command', SHEET_MENU_COMMANDS.redo)"
       />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Paste special…"
+        testid="sheet-menu-paste-special"
+        :shortcut="pasteSpecialShortcut"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.pasteSpecial)"
+      />
+      <MenuSubmenu
+        label="Fill"
+        testid="sheet-menu-fill"
+      >
+        <MenuItem
+          v-for="fill in FILLS"
+          :key="fill.command"
+          :label="fill.label"
+          :testid="fill.testid"
+          :shortcut="fill.shortcut"
+          :disabled="!s.hasGrid"
+          @select="emit('command', fill.command)"
+        />
+      </MenuSubmenu>
     </template>
 
     <template #view>

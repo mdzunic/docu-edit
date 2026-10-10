@@ -11,14 +11,17 @@
 // useWorkbookDownload's (through useWorkbookEditing) — the bar's state carries
 // their enabled states and labels. SPEC-123: the Format menu runs
 // useFormatting's commands. SPEC-124: View ▸ Freeze and the Format menu's
-// row height, column width and autofits are useStructure's. Later specs
-// append commands here.
+// row height, column width and autofits are useStructure's. SPEC-125: Edit ▸
+// Paste special… is useSheetClipboard's, Edit ▸ Fill ▸ Down/Right
+// useFillHandle's. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
 import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
+import type { FillHandle } from "./useFillHandle";
 import type { Recalc } from "./useRecalc";
+import type { SheetClipboard } from "./useSheetClipboard";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
 import type { Structure } from "./useStructure";
@@ -38,6 +41,9 @@ export interface SpreadsheetMenuDeps {
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
   structure?: Pick<Structure, "freeze" | "freezeState" | "formatBands">;
+  /** SPEC-125: Edit ▸ Paste special… and Edit ▸ Fill ▸ Down/Right. */
+  clipboard?: Pick<SheetClipboard, "openPasteSpecial">;
+  fillHandle?: Pick<FillHandle, "fillDown" | "fillRight">;
 }
 
 /** A Format menu command as useFormatting's (null: not one). */
@@ -161,6 +167,15 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.autofitColumns:
         deps.structure?.formatBands("col", "autofit");
+        break;
+      case SHEET_MENU_COMMANDS.pasteSpecial:
+        void deps.clipboard?.openPasteSpecial();
+        break;
+      case SHEET_MENU_COMMANDS.fillDown:
+        deps.fillHandle?.fillDown();
+        break;
+      case SHEET_MENU_COMMANDS.fillRight:
+        deps.fillHandle?.fillRight();
         break;
       default:
         break;
