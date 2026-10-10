@@ -32,7 +32,7 @@
 //   commit or cancel returns to the edited sheet.
 import { computed, nextTick, ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
-import type { CellRef } from "../../lib/spreadsheet/address";
+import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import type { CellEntry } from "../../lib/spreadsheet/cells";
 import { MAX_TEXT_LENGTH } from "../../lib/spreadsheet/formula/values";
@@ -81,8 +81,10 @@ export function useCellEditing(deps: CellEditingDeps) {
   let measurer = deps.measurer;
   const mode = ref<EditMode>("ready");
   const draft = createDraft();
-  /** The cell being edited. */
-  const target = shallowRef<{ sheetId: string; at: CellRef } | null>(null);
+  /** The cell being edited, and its sheet's selection when the editor
+   * opened (what Ctrl/Cmd+Enter fills — not the selection of another sheet
+   * shown while pointing). */
+  const target = shallowRef<{ sheetId: string; at: CellRef; ranges: GridRange[] } | null>(null);
   /** Bumped when a key moved the active cell, so the grid reveals it. */
   const revealTick = ref(0);
   let original = "";
@@ -132,7 +134,7 @@ export function useCellEditing(deps: CellEditingDeps) {
       return false;
     }
     original = cellEditText(m, sheet, active, deps.selection.styleAt(sheet, active.row, active.col), deps.selection.formatContext.value);
-    target.value = { sheetId: sheet.id, at: { ...active } };
+    target.value = { sheetId: sheet.id, at: { ...active }, ranges: deps.selection.selection.value.ranges };
     mode.value = next;
     const text = typed ?? original;
     draft.reset(text, at === "end" ? text.length : at);
@@ -210,7 +212,7 @@ export function useCellEditing(deps: CellEditingDeps) {
     if (!m || !at || !sheet) {
       return null;
     }
-    const refusal = forFill ? refusalFor(m, sheetIndex, deps.selection.selection.value.ranges) : null;
+    const refusal = forFill ? refusalFor(m, sheetIndex, target.value?.ranges ?? []) : null;
     if (refusal) {
       toast(refusal);
       return null;
@@ -246,9 +248,10 @@ export function useCellEditing(deps: CellEditingDeps) {
 
   /** Ctrl/Cmd+Enter: the entry into every cell of the selection ("Fill"). */
   function fill(): void {
+    const ranges = target.value?.ranges ?? [];
     const ready = prepared(true);
     if (ready) {
-      writeFill(ready.ctx, deps.selection.selection.value.ranges, ready.at, ready.entry);
+      writeFill(ready.ctx, ranges, ready.at, ready.entry);
       finish();
     }
   }

@@ -84,7 +84,7 @@ export function renderDraft(host: HTMLElement, text: string, spans: readonly Dra
   const doc = host.ownerDocument;
   const fragment = doc.createDocumentFragment();
   let at = 0;
-  for (const span of [...spans].sort((a, b) => a.start - b.start)) {
+  for (const span of spans.toSorted((a, b) => a.start - b.start)) {
     if (span.start < at || span.end <= span.start || span.end > text.length) {
       continue;
     }

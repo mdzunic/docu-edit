@@ -21,6 +21,16 @@ import { sanitizeXmlText } from "../../lib/core/xmlText";
 import { caretOffsetAtPoint, caretOffsetIn, placeCaretIn, readDraftText, renderDraft, selectionOffsetsIn } from "./cellEditorDom";
 import type { CellEditing, SurfaceKind } from "./useCellEditing";
 
+/** The browser's formatting and history commands, drops and paragraph
+ * breaks never reach a host: the draft is plain text and its line breaks
+ * come from the key table (Alt/Option+Enter). */
+function onBeforeInput(event: InputEvent): void {
+  const type = event.inputType ?? "";
+  if (type.startsWith("format") || type.startsWith("history") || type === "insertFromDrop" || type === "insertParagraph" || type === "insertLineBreak") {
+    event.preventDefault();
+  }
+}
+
 export function useDraftSurface(
   host: Readonly<Ref<HTMLElement | null>>,
   editor: () => CellEditing | null,
@@ -92,12 +102,7 @@ export function useDraftSurface(
     }
   }
 
-  function onBeforeInput(event: InputEvent): void {
-    const type = event.inputType ?? "";
-    if (type.startsWith("format") || type.startsWith("history") || type === "insertFromDrop" || type === "insertParagraph" || type === "insertLineBreak") {
-      event.preventDefault();
-    }
-  }
+
 
   function onPaste(event: ClipboardEvent): void {
     event.preventDefault();

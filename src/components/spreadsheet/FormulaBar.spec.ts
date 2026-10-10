@@ -4,13 +4,18 @@
 // breaks preserved.
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
-import { computed, defineComponent, h, nextTick, shallowRef } from "vue";
+import { computed, defineComponent, h, nextTick, ref, shallowRef } from "vue";
+import { fixedMeasurer } from "../../lib/spreadsheet/autofit";
 import type { Cell, CellStyle, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { SPREADSHEET_LOCALES, type SpreadsheetLocaleTag } from "../../lib/spreadsheet/numberFormat/locale";
+import { createBlankWorkbook } from "../../lib/spreadsheet/sheets";
+import { useCellEditing, type CellEditing } from "../../views/spreadsheet/useCellEditing";
 import { useFormulaDisplay } from "../../views/spreadsheet/useFormulaDisplay";
 import { useSheetMetrics } from "../../views/spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "../../views/spreadsheet/useSheetSelection";
+import { useSpreadsheetUndo } from "../../views/spreadsheet/useSpreadsheetUndo";
 import type { SheetViewFields } from "../../views/spreadsheet/useSheetViewState";
+import CellEditor from "./CellEditor.vue";
 import FormulaBar from "./FormulaBar.vue";
 
 describe("FormulaBar", () => {
@@ -169,6 +174,156 @@ describe("FormulaBar edit text (SPEC-118)", () => {
     expect(await content(2)).toBe("'007");
     expect(await content(5, "de-DE")).toBe("TRUE");
     expect(await content(6, "fr-FR")).toBe("#DIV/0!");
+    wrapper.unmount();
+  });
+});
+
+const enUS = () => SPREADSHEET_LOCALES["en-US"];
+
+/** The bar and the in-cell editor over one useCellEditing: A1 "Revenue", A2 =A1. */
+function mountEditing() {
+  const model = createBlankWorkbook();
+  model.sheets = [{ ...model.sheets[0]!, rows: [{ index: 0, cells: [{ col: 0, value: "Revenue" }] }, { index: 1, cells: [{ col: 0, value: "Revenue", formula: "A1" }] }] }];
+  let editing!: CellEditing;
+  let selectionText!: () => string;
+  const editable = ref(true);
+  const wrapper = mount(
+    defineComponent({
+      setup() {
+        const workbook = shallowRef<SpreadsheetModel | null>(model);
+        const activeIndex = ref(0);
+        const activeSheet = computed(() => workbook.value?.sheets[activeIndex.value] ?? null);
+        const fields = shallowRef<SheetViewFields>({});
+        const viewState = {
+          active: computed(() => fields.value),
+          updateActive: (patch: SheetViewFields) => {
+            fields.value = { ...fields.value, ...patch };
+          },
+        };
+        const sheetMetrics = useSheetMetrics(() => activeSheet.value);
+        const selection = useSheetSelection({ sheet: () => activeSheet.value, sheetMetrics, viewState, model: () => workbook.value, locale: enUS });
+        const undo = useSpreadsheetUndo({ model: workbook, recalc: (_, done) => done([]), onApplied: () => {}, activateSheet: () => {} });
+        editing = useCellEditing({
+          book: { workbook, activeIndex, activeSheet, selectSheet: () => {} },
+          selection,
+          sheetMetrics,
+          undo,
+          locale: enUS,
+          toast: () => {},
+          measurer: fixedMeasurer(7, 20),
+        });
+        const formulas = useFormulaDisplay({ sheet: () => activeSheet.value, model: () => workbook.value, viewState, selection });
+        selectionText = () => selection.nameBoxText.value;
+        return () =>
+          h("div", [
+            h(FormulaBar, { address: selection.nameBoxText.value, content: formulas.barText.value, editor: editing, editable: editable.value }),
+            h(CellEditor, { editor: editing, label: selection.nameBoxText.value }),
+          ]);
+      },
+    }),
+    { attachTo: document.body },
+  );
+  const bar = () => wrapper.get('[data-testid="formula-bar-content"]').element as HTMLElement;
+  const cell = () => wrapper.get('[data-testid="cell-editor"]').element as HTMLElement;
+  return { wrapper, model, editable, editing: () => editing, bar, cell, active: () => selectionText() };
+}
+
+function caret(node: Node, offset: number): void {
+  const range = document.createRange();
+  range.setStart(node, offset);
+  range.collapse(true);
+  document.getSelection()!.removeAllRanges();
+  document.getSelection()!.addRange(range);
+}
+
+function keydown(target: HTMLElement, key: string, init: KeyboardEventInit = {}): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(event);
+  return event;
+}
+
+// SPEC-122: with the view's cell editor and a grid sheet on show the content
+// is editable and holds the same draft as the in-cell editor — typing in
+// either updates both; a click opens Edit mode at the clicked character;
+// Enter, Tab and Escape behave as in the cell, and a commit from the bar
+// returns focus to the in-cell editor. Without an editor (or on a foreign
+// sheet) it stays read-only.
+describe("FormulaBar editing (SPEC-122)", () => {
+  it("is an editable textbox with an editor on a grid sheet, read-only without", async () => {
+    const { wrapper, bar, editable } = mountEditing();
+    expect(bar().getAttribute("contenteditable")).toBe("true");
+    expect(bar().getAttribute("aria-readonly")).toBeNull();
+    expect(bar().textContent).toBe("Revenue");
+    editable.value = false;
+    await nextTick();
+    expect(bar().getAttribute("contenteditable")).toBeNull();
+    expect(bar().getAttribute("aria-readonly")).toBe("true");
+    wrapper.unmount();
+    const plain = mount(FormulaBar, { props: { address: "A1", content: "x" } });
+    expect(plain.get('[data-testid="formula-bar-content"]').attributes("contenteditable")).toBeUndefined();
+  });
+
+  it("a click opens Edit mode at the clicked character; typing there updates the in-cell editor's draft too", async () => {
+    const { wrapper, editing, bar, cell } = mountEditing();
+    bar().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    bar().focus();
+    caret(bar().firstChild!, 3);
+    bar().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await nextTick();
+    expect([editing().mode.value, editing().text.value, editing().caret.value]).toEqual(["edit", "Revenue", 3]);
+    const text = bar().firstChild as Text;
+    text.data = "Rev!enue";
+    caret(text, 4);
+    bar().dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "!" }));
+    await nextTick();
+    expect([editing().text.value, editing().caret.value]).toEqual(["Rev!enue", 4]);
+    expect(cell().textContent).toBe("Rev!enue");
+    wrapper.unmount();
+  });
+
+  it("typing in the cell shows in the bar, with the formula's references coloured there too", async () => {
+    const { wrapper, cell, bar } = mountEditing();
+    cell().focus();
+    cell().append(document.createTextNode("=A1+B2"));
+    caret(cell().firstChild!, 6);
+    cell().dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "=" }));
+    await nextTick();
+    expect(bar().textContent).toBe("=A1+B2");
+    expect([...bar().querySelectorAll("span.sheet-ref")].map((span) => span.textContent)).toEqual(["A1", "B2"]);
+    wrapper.unmount();
+  });
+
+  it("Enter, Tab and Escape behave as in the cell, and a commit hands focus back to the in-cell editor", async () => {
+    const { wrapper, model, editing, bar, cell, active } = mountEditing();
+    bar().focus();
+    await nextTick();
+    // Keyboard focus opens Edit mode with the caret at the end.
+    expect([editing().mode.value, editing().caret.value]).toEqual(["edit", 7]);
+    const text = bar().firstChild as Text;
+    text.data = "Revenues";
+    caret(text, 8);
+    bar().dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "s" }));
+    expect(keydown(bar(), "Enter").defaultPrevented).toBe(true);
+    await nextTick();
+    expect(model.sheets[0]!.rows[0]!.cells[0]!.value).toBe("Revenues");
+    expect([editing().mode.value, active()]).toEqual(["ready", "A2"]);
+    expect(document.activeElement).toBe(cell());
+    expect(bar().textContent).toBe("=A1");
+
+    bar().focus();
+    await nextTick();
+    expect(keydown(bar(), "Tab").defaultPrevented).toBe(true);
+    await nextTick();
+    expect([editing().mode.value, active()]).toEqual(["ready", "B2"]);
+
+    bar().focus();
+    await nextTick();
+    bar().replaceChildren(document.createTextNode("changed"));
+    caret(bar().firstChild!, 7);
+    bar().dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: "d" }));
+    expect(keydown(bar(), "Escape").defaultPrevented).toBe(true);
+    await nextTick();
+    expect([editing().mode.value, active(), bar().textContent]).toEqual(["ready", "B2", ""]);
     wrapper.unmount();
   });
 });
