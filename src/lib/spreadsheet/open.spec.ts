@@ -16,6 +16,7 @@
 // value and formula are unchanged — and a dirty sheet's style ids move into
 // the re-read style table.
 import { afterEach, describe, expect, it } from "vitest";
+import { decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
 import { getCell } from "./address";
 import {
@@ -32,6 +33,8 @@ import {
   buildSpec120CalcXlsxBytes,
   buildSpec120FullCalcXlsxBytes,
   buildSpec120ManualXlsxBytes,
+  buildSpec123StylesXlsxBytes,
+  SPEC123_XF,
 } from "./fixtures/build";
 import type { Cell, Sheet, SpreadsheetModel } from "./model";
 import {
@@ -537,5 +540,38 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     // The other (clean) tables are re-read, unprotected.
     expect(upgraded.sheets[0]!.protection).toBeUndefined();
     expect(upgraded.sheets[2]!.id).toBe("stored-sheet-2");
+  });
+});
+
+describe("SPEC-123's reader step: named cell styles and the protection's format permits", () => {
+  it("moved the reader to version 7 with its step from 6", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(7);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(6);
+  });
+
+  it("a dirty sheet's record regains namedStyles, keeps its source styles' ids, and the step is idempotent", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec123StylesXlsxBytes(), "xlsx", "spec123");
+    expect(read.namedStyles?.map((style) => style.name)).toEqual(["Followed Hyperlink", "Good", "Heading 1", "Invoice total", "Normal"]);
+    expect(read.styles[SPEC123_XF.good]!.namedStyle).toBe("Good");
+    // Stored by SPEC-122's reader (version 6): no named styles anywhere; then
+    // A2 was edited on the (dirty) Budget sheet.
+    const stored = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+    stored.readerVersion = 6;
+    delete stored.namedStyles;
+    stored.styles = stored.styles.map(({ namedStyle: _named, ...style }) => style);
+    stored.sheets = stored.sheets.map((sheet, index) => ({ ...sheet, id: `stored-sheet-${index}` }));
+    stored.sheets[0] = { ...stored.sheets[0]!, dirty: true };
+    getCell(stored.sheets[0]!, 1, 0)!.value = "Rent and rates";
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(7);
+    expect(upgraded.namedStyles).toEqual(read.namedStyles);
+    const sheet = upgraded.sheets[0]!;
+    expect(getCell(sheet, 1, 0)!.value).toBe("Rent and rates");
+    // F3 still names its source entry, now known to be "Good".
+    expect(getCell(sheet, 2, 5)!.styleId).toBe(SPEC123_XF.good);
+    expect(upgraded.styles[SPEC123_XF.good]!.namedStyle).toBe("Good");
+    const named = upgraded.namedStyles;
+    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(upgraded, sheet, decodedPartBytes(upgraded.opaque));
+    expect(upgraded.namedStyles).toBe(named);
   });
 });
