@@ -339,19 +339,19 @@ describe("decodeImageDimensions — WebP (SPEC-107)", () => {
   });
 });
 
-describe("gifFrameCount (SPEC-112: an animated GIF is edited as its first frame)", () => {
-  /** A 1 × 1 GIF89a with `frames` image descriptors (no colour tables), a
-   * graphic-control extension before each frame, then the trailer. */
-  function gif(frames: number): Uint8Array {
-    const bytes = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0, 0];
-    for (let i = 0; i < frames; i += 1) {
-      bytes.push(0x21, 0xf9, 4, 0, 10, 0, 0, 0);
-      bytes.push(0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 0x01, 0);
-    }
-    bytes.push(0x3b);
-    return new Uint8Array(bytes);
+/** A 1 × 1 GIF89a with `frames` image descriptors (no colour tables), a
+ * graphic-control extension before each frame, then the trailer. */
+function gif(frames: number): Uint8Array {
+  const bytes = [0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0, 0];
+  for (let i = 0; i < frames; i += 1) {
+    bytes.push(0x21, 0xf9, 4, 0, 10, 0, 0, 0);
+    bytes.push(0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x4c, 0x01, 0);
   }
+  bytes.push(0x3b);
+  return new Uint8Array(bytes);
+}
 
+describe("gifFrameCount (SPEC-112: an animated GIF is edited as its first frame)", () => {
   it("counts image descriptors by walking the blocks, not by scanning bytes", () => {
     expect(gifFrameCount(gif(1))).toBe(1);
     expect(gifFrameCount(gif(2))).toBe(2);

@@ -98,7 +98,7 @@ describe("the current image", () => {
 describe("Save", () => {
   it("stores the normalised stack and a fresh render beside the untouched source", () => {
     const model = photo();
-    const saved = withSavedStack(model, [...STACK].reverse(), RENDER, null, ids("render-1"));
+    const saved = withSavedStack(model, STACK.toReversed(), RENDER, null, ids("render-1"));
     expect(saved).not.toBe(model);
     expect(saved.sourceMediaId).toBe("src");
     expect(saved.media[0]).toBe(model.media[0]);

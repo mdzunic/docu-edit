@@ -20,13 +20,17 @@ import {
 
 type Call = [string, ...unknown[]];
 
+/** "#rrggbb" → [r, g, b]. */
+function hex(value: string): number[] {
+  return [1, 3, 5].map((i) => Number.parseInt(value.slice(i, i + 2), 16));
+}
+
 /** A canvas whose 2-D context records every call and holds real RGBA
  * pixels: drawImage paints the whole target `base`, fillRect paints its
  * rectangle in the current (hex) fillStyle. */
 function recordingCanvas(width: number, height: number, base = [100, 150, 200, 255]) {
   const calls: Call[] = [];
   const pixels = new Uint8ClampedArray(width * height * 4);
-  const hex = (value: string) => [1, 3, 5].map((i) => Number.parseInt(value.slice(i, i + 2), 16));
   const ctx: Record<string, unknown> = {
     fillStyle: "#000000",
     save: () => calls.push(["save"]),
