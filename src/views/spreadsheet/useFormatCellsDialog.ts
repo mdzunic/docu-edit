@@ -6,17 +6,19 @@
 // useFormatting ONE list of patch entries — only the changed fields
 // (lib/spreadsheet/formatCells.ts), so a dialog opened on a mixed selection
 // never flattens it. A Custom code SPEC-118's parseFormatCode rejects shows
-// CUSTOM_CODE_ERROR and disables OK.
+// CUSTOM_CODE_ERROR and disables OK. The preview box draws the pending outer
+// edges too; the Border tab's "None" line style removes the edges it is
+// applied to.
 import { computed, ref, shallowRef } from "vue";
 import type { DocumentTheme, ModelColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
-import { cellCss, type CssDeclarations } from "../../lib/spreadsheet/cellRender";
+import { AUTOMATIC_COLOR, borderShorthand, cellCss, type CssDeclarations } from "../../lib/spreadsheet/cellRender";
 import { borderEdgeEntries, fieldsOf, fieldsPatch, type DialogEdge, type FormatCellsFields } from "../../lib/spreadsheet/formatCells";
 import { patchStyle, type StylePatch, type StylePatchEntry } from "../../lib/spreadsheet/formatting";
 import type { CellBorderEdge, CellStyle, CellValue, SheetBorderStyle } from "../../lib/spreadsheet/model";
 import { buildNumberCode, describeNumberCode, isValidFormatCode, numberFormatChoiceOf, type NumberCodeSpec } from "../../lib/spreadsheet/numberCodes";
 import { BUILTIN_NUMBER_FORMATS } from "../../lib/spreadsheet/numberFormat/builtin";
-import { cellFontName } from "../../lib/spreadsheet/styles";
+import { cellColorHex, cellFontName } from "../../lib/spreadsheet/styles";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { formatValue, plainText, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
 import type { FormatCellsTab } from "./sheetToolbar";
@@ -59,7 +61,7 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
   const numberTouched = ref(false);
   const customCode = ref("");
   const edges = shallowRef<Partial<Record<DialogEdge, CellBorderEdge | null>>>({});
-  const lineStyle = ref<SheetBorderStyle>("thin");
+  const lineStyle = ref<SheetBorderStyle | "none">("thin");
   const lineColor = shallowRef<ModelColor | null>(null);
 
   /** Opens on the active cell's effective style (see the module header). */
@@ -157,7 +159,11 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     }
   }
 
-  function line(): CellBorderEdge {
+  /** The edge the current line style and colour draw (null: None). */
+  function line(): CellBorderEdge | null {
+    if (lineStyle.value === "none") {
+      return null;
+    }
     return lineColor.value === null ? { style: lineStyle.value } : { style: lineStyle.value, color: lineColor.value };
   }
 
@@ -175,7 +181,8 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
 
   const multiCell = computed(() => (target.value?.ranges ?? []).some((range) => range.top !== range.bottom || range.left !== range.right));
 
-  /** Clicking an edge: on in the current line style and colour, or off. */
+  /** Clicking an edge: on in the current line style and colour, or off
+   * (always off in None). */
   function toggleEdge(edge: DialogEdge | string): void {
     setEdges({ [edge]: edgeShown(edge) ? null : line() });
   }
@@ -201,16 +208,30 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     return patch;
   }
 
-  /** The active cell's value with the pending style. */
-  const preview = computed((): { text: string; box: CssDeclarations; text_: CssDeclarations } => {
+  /** A model colour as a picker's bar shows it ("" = automatic). */
+  function colorHex(color: ModelColor | null | undefined): string {
+    const t = target.value;
+    return t ? cellColorHex(color, t.theme) : "";
+  }
+
+  /** The active cell's value with the pending style, in a box drawing the
+   * pending outer edges. */
+  const preview = computed((): { text: string; box: CssDeclarations; textCss: CssDeclarations } => {
     const t = target.value;
     if (!t) {
-      return { text: "", box: {}, text_: {} };
+      return { text: "", box: {}, textCss: {} };
     }
-    const borders = Object.fromEntries((["top", "bottom", "left", "right"] as const).map((side) => [side, edgeShown(side)]));
-    const style = patchStyle(t.style, { ...pendingPatch(), borders });
+    const sides = ["top", "bottom", "left", "right"] as const;
+    const style = patchStyle(t.style, { ...pendingPatch(), borders: Object.fromEntries(sides.map((side) => [side, edgeShown(side)])) });
     const css = cellCss(style, t.theme, typeof t.value === "number" ? "number" : "string");
-    return { text: sample.value, box: css.box, text_: css.text };
+    const box = { ...css.box };
+    for (const side of sides) {
+      const edge = style.borders?.[side];
+      if (edge) {
+        box[`border-${side}`] = borderShorthand(edge.style, colorHex(edge.color) || AUTOMATIC_COLOR);
+      }
+    }
+    return { text: sample.value, box, textCss: css.text };
   });
 
   function ok(): void {
@@ -252,6 +273,7 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     preset,
     lineStyle,
     lineColor,
+    colorHex,
     multiCell,
     show,
     ok,
@@ -262,7 +284,7 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
       tab.value = next as FormatCellsTab;
     },
     setLineStyle: (style: string): void => {
-      lineStyle.value = style as SheetBorderStyle;
+      lineStyle.value = style as SheetBorderStyle | "none";
     },
   };
 }

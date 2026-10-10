@@ -1,10 +1,13 @@
 // SPEC-123 Format Cells: the six tabs; it opens on the active cell's
-// effective style; the live preview and the Number tab's sample; a Custom
-// code parseFormatCode rejects shows the error and disables OK; OK applies
-// only the fields the user changed (a mixed selection is never flattened).
+// effective style; the live preview (the pending edges included) and the
+// Number tab's sample; a Custom code parseFormatCode rejects shows the error
+// and disables OK; OK applies only the fields the user changed (a mixed
+// selection is never flattened), a picked colour as plain data.
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_THEME } from "../../lib/core/theme";
+import { TEXT_COLOR_PALETTE } from "../../lib/core/colors";
+import { DEFAULT_THEME, resolveColor, type ThemeColorRef } from "../../lib/core/theme";
+import { LINE_STYLES } from "../../lib/spreadsheet/formatCells";
 import type { StylePatchEntry } from "../../lib/spreadsheet/formatting";
 import type { CellStyle } from "../../lib/spreadsheet/model";
 import { SPREADSHEET_LOCALES } from "../../lib/spreadsheet/numberFormat/locale";
@@ -78,16 +81,16 @@ describe("SPEC-123 FormatCellsDialog", () => {
   // Proxy, which patchStyle's clone (and IndexedDB's) refuses — the preview
   // threw instead of showing the colour, and OK applied nothing.
   it("previews and applies theme colours and a coloured outline as plain data", async () => {
-    const { wrapper, apply } = open({ font: { bold: true } }, "Total");
-    const accent = { theme: "accent1", lumMod: 0.6, lumOff: 0.4 };
+    const { wrapper, dialog, apply } = open({ font: { bold: true } }, "Total");
+    const accent: ThemeColorRef = { theme: "accent1", lumMod: 0.6, lumOff: 0.4 };
     await wrapper.get('[data-testid="format-cells-tab-fill"]').trigger("click");
     await wrapper.get('[data-testid="format-cells-fill-theme-swatch"][aria-label="Accent 1, lighter 40%"]').trigger("click");
-    const preview = wrapper.get('[data-testid="format-cells-preview"]');
-    expect(preview.attributes("style")).toContain("background");
+    expect(dialog.preview.value.box["background-color"]).toBe(resolveColor(accent, DEFAULT_THEME));
+    expect(wrapper.get('[data-testid="format-cells-preview"]').attributes("style")).toContain("background-color");
     await wrapper.get('[data-testid="format-cells-tab-font"]').trigger("click");
     await wrapper.get('[data-testid="format-cells-font-color"] [data-testid="text-color-button"]').trigger("click");
     await wrapper.get('[data-testid="format-cells-font-color"] [data-testid="text-color-theme-swatch"][aria-label="Accent 2"]').trigger("click");
-    expect(preview.get("span").attributes("style")).toContain("color");
+    expect(dialog.preview.value.textCss.color).toBe(resolveColor({ theme: "accent2" }, DEFAULT_THEME));
     await wrapper.get('[data-testid="format-cells-tab-border"]').trigger("click");
     await wrapper.get('[data-testid="format-cells-border-color"] [data-testid="text-color-button"]').trigger("click");
     await wrapper.get('[data-testid="format-cells-border-color"] [data-testid="text-color-theme-swatch"][aria-label="Accent 6"]').trigger("click");
@@ -99,6 +102,42 @@ describe("SPEC-123 FormatCellsDialog", () => {
     expect(() => structuredClone(entries)).not.toThrow();
     expect(entries[0]).toEqual({ range: { top: 0, left: 0, bottom: 2, right: 1 }, patch: { font: { color: { theme: "accent2" } }, fill: { kind: "solid", color: accent } } });
     expect(entries.find((entry) => entry.patch.borders?.top)?.patch.borders).toEqual({ top: { style: "thin", color: { theme: "accent6" } } });
+    wrapper.unmount();
+  });
+
+  it("shows the active cell's colours and fills from the standard palette too", async () => {
+    const red = TEXT_COLOR_PALETTE[1]!;
+    const { wrapper, dialog, apply } = open({ font: { color: { theme: "accent2" } }, fill: { kind: "pattern", pattern: "gray125", fg: "#00ff00" } });
+    await wrapper.get('[data-testid="format-cells-tab-font"]').trigger("click");
+    expect(wrapper.get('[data-testid="format-cells-font-color"] [data-testid="text-color-current"]').attributes("data-color")).toBe(resolveColor({ theme: "accent2" }, DEFAULT_THEME));
+    await wrapper.get('[data-testid="format-cells-tab-fill"]').trigger("click");
+    expect(wrapper.get('[data-testid="format-cells-pattern-color"] [data-testid="text-color-current"]').attributes("data-color")).toBe("#00ff00");
+    const swatches = wrapper.findAll('[data-testid="format-cells-fill-swatch"]');
+    expect(swatches.map((swatch) => swatch.attributes("data-color"))).toEqual([...TEXT_COLOR_PALETTE]);
+    await wrapper.get('[data-testid="format-cells-pattern-style"]').setValue("solid");
+    await swatches[1]!.trigger("click");
+    expect(dialog.preview.value.box["background-color"]).toBe(resolveColor(red, DEFAULT_THEME));
+    await wrapper.get('[data-testid="format-cells-ok"]').trigger("click");
+    expect(apply.mock.calls[0]![0]).toEqual([{ range: { top: 0, left: 0, bottom: 2, right: 1 }, patch: { fill: { kind: "solid", color: red } } }]);
+    wrapper.unmount();
+  });
+
+  it("draws the pending outer edges in the preview box; the None line style removes edges", async () => {
+    const { wrapper, dialog, apply } = open({ borders: { top: { style: "thin" } } });
+    await wrapper.get('[data-testid="format-cells-tab-border"]').trigger("click");
+    const style = wrapper.get('[data-testid="format-cells-border-style"]');
+    expect(style.findAll("option").map((option) => option.attributes("value"))).toEqual(["none", ...LINE_STYLES]);
+    expect(dialog.preview.value.box["border-top"]).toBe("1px solid #000000");
+    await style.setValue("double");
+    await wrapper.get('[data-testid="format-cells-border-edge-bottom"]').trigger("click");
+    expect(dialog.preview.value.box["border-bottom"]).toBe("3px double #000000");
+    await style.setValue("none");
+    await wrapper.get('[data-testid="format-cells-border-edge-top"]').trigger("click");
+    expect(wrapper.get('[data-testid="format-cells-border-edge-top"]').attributes("aria-pressed")).toBe("false");
+    expect(dialog.preview.value.box["border-top"]).toBeUndefined();
+    await wrapper.get('[data-testid="format-cells-ok"]').trigger("click");
+    const entries = apply.mock.calls[0]![0].filter((entry) => !entry.storedOnly);
+    expect(entries.map((entry) => entry.patch.borders)).toEqual([{ top: null }, { bottom: { style: "double" } }]);
     wrapper.unmount();
   });
 });

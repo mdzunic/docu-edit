@@ -7,6 +7,7 @@
 // user changed. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
 import { computed } from "vue";
+import { TEXT_COLOR_PALETTE } from "../../lib/core/colors";
 import { STANDARD_FONT_FAMILIES } from "../../lib/core/fonts";
 import { HORIZONTAL_CHOICES, LINE_STYLES, PATTERN_STYLES, VERTICAL_CHOICES } from "../../lib/spreadsheet/formatCells";
 import { CURRENCY_SYMBOLS, dateTypeCodes, FRACTION_TYPE_CODES, NUMBER_CATEGORIES, TIME_TYPE_CODES } from "../../lib/spreadsheet/numberCodes";
@@ -344,6 +345,7 @@ function numberOf(event = new Event("change")) {
           >
             Colour
             <TextColorPicker
+              :value="d.colorHex(f.fontColor)"
               :recent="target?.recentColors ?? []"
               :theme="target?.theme"
               @select="d.set('fontColor', $event)"
@@ -377,6 +379,9 @@ function numberOf(event = new Event("change")) {
               :value="d.lineStyle.value"
               @change="d.setLineStyle(valueOf($event))"
             >
+              <option value="none">
+                None
+              </option>
               <option
                 v-for="style in LINE_STYLES"
                 :key="style"
@@ -389,6 +394,7 @@ function numberOf(event = new Event("change")) {
           >
             Colour
             <TextColorPicker
+              :value="d.colorHex(d.lineColor.value)"
               :theme="target?.theme"
               @select="d.lineColor.value = $event"
             />
@@ -435,6 +441,23 @@ function numberOf(event = new Event("change")) {
               testid="format-cells-fill-theme"
               @select="d.set('fillColor', $event)"
             />
+            <div class="section-label">
+              Standard
+            </div>
+            <div class="swatch-grid">
+              <button
+                v-for="hex in TEXT_COLOR_PALETTE"
+                :key="hex"
+                type="button"
+                class="swatch"
+                data-testid="format-cells-fill-swatch"
+                :data-color="hex"
+                :title="hex"
+                :aria-label="`Fill ${hex}`"
+                :style="{ background: hex }"
+                @click="d.set('fillColor', hex)"
+              />
+            </div>
           </div>
           <label>Pattern style
             <select
@@ -454,6 +477,7 @@ function numberOf(event = new Event("change")) {
           >
             Pattern colour
             <TextColorPicker
+              :value="d.colorHex(f.patternColor)"
               :theme="target?.theme"
               @select="d.set('patternColor', $event)"
             />
@@ -487,7 +511,7 @@ function numberOf(event = new Event("change")) {
         data-testid="format-cells-preview"
         :style="d.preview.value.box"
       >
-        <span :style="d.preview.value.text_">{{ d.preview.value.text }}</span>
+        <span :style="d.preview.value.textCss">{{ d.preview.value.text }}</span>
       </div>
     </div>
     <template #actions>
@@ -572,6 +596,27 @@ function numberOf(event = new Event("change")) {
 
 .note {
   color: var(--text-secondary);
+}
+
+.section-label {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1.125rem);
+  gap: var(--space-2);
+}
+
+.swatch {
+  width: 1.125rem;
+  height: 1.125rem;
+  padding: 0;
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
 }
 
 .preview-row {
