@@ -566,17 +566,32 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
   };
 }
 
+/** Whether a cell carries content only its source format can carry
+ * (SPEC-122): preserved attributes, children or text — an ods
+ * `table:content-validation-name` means nothing in an xlsx `<c>`, nor an
+ * xlsx `vm` in a `table:table-cell`. (An xlsx `sstIndex` crosses harmlessly:
+ * only the xlsx writer reads it, and a copy never reaches the xlsx writer
+ * from an xlsx source.) */
+function hasFormatBoundContent(cell: Cell): boolean {
+  return cell.preservedAttrs !== undefined || cell.preservedXml !== undefined || cell.preservedText !== undefined;
+}
+
 /** A sheet's rows as they cross to `target` — the same array when no
- * formula cell must change. */
+ * formula cell must change: formula cells through formulaForTarget, and
+ * format-bound preserved content (SPEC-122) dropped. */
 function crossRows(rows: Row[], target: SpreadsheetFormat): Row[] {
   let out: Row[] | null = null;
   rows.forEach((row, index) => {
     let cells: Cell[] | null = null;
     row.cells.forEach((cell, at) => {
-      if (cell.formula === undefined && cell.dataTableXml === undefined && cell.cm === undefined) {
-        return;
+      let crossed = cell;
+      if (cell.formula !== undefined || cell.dataTableXml !== undefined || cell.cm !== undefined) {
+        crossed = formulaForTarget(cell, target).cell;
       }
-      const crossed = formulaForTarget(cell, target).cell;
+      if (hasFormatBoundContent(crossed)) {
+        const { preservedAttrs: _attrs, preservedXml: _xml, preservedText: _text, ...rest } = crossed;
+        crossed = rest;
+      }
       if (crossed !== cell) {
         cells ??= row.cells.slice();
         cells[at] = crossed;

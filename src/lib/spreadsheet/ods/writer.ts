@@ -39,6 +39,7 @@ import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { SheetRemap } from "../formula/sheetRefs";
 import type { Sheet, SpreadsheetModel } from "../model";
+import type { SpreadsheetLocale } from "../numberFormat/locale";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, escapeElementText, startTagAt, type Splice } from "../xmlSplice";
 import { decodeUtf8, encodeUtf8 } from "../xlsx/package";
@@ -59,6 +60,10 @@ import { namespaceDeclarations, OdsStyleBook, OdsStyleRegistry, readOdsContentSt
 export interface WriteOdsOptions {
   /** meta.xml's `dc:date` from scratch (defaults to core `now()`). */
   modified?: Date;
+  /** SPEC-122: the user's number locale (SPEC-066/118), which a cell's
+   * informative `text:p` and a locale-dependent built-in format's generated
+   * number style are written in (defaults to en-US). */
+  locale?: SpreadsheetLocale;
 }
 
 export const ODS_MIMETYPE = "application/vnd.oasis.opendocument.spreadsheet";

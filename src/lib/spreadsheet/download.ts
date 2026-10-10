@@ -16,6 +16,7 @@
 import { triggerBlobDownload } from "../core/triggerDownload";
 import { spreadsheetFileExtension, spreadsheetMimeType } from "./fileTypes";
 import { DEFAULT_SPREADSHEET_TITLE, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
+import type { SpreadsheetLocale } from "./numberFormat/locale";
 import { stripRetention, unconvertibleContent } from "./sheets";
 
 /** The file name a workbook downloads under: its title plus the extension
@@ -39,10 +40,10 @@ export interface SpreadsheetDownload {
   notices: string[];
 }
 
-async function write(model: SpreadsheetModel): Promise<Uint8Array> {
+async function write(model: SpreadsheetModel, locale: SpreadsheetLocale | undefined): Promise<Uint8Array> {
   if (model.format === "ods") {
     const { writeOds } = await import("./ods/writer");
-    return writeOds(model);
+    return writeOds(model, locale ? { locale } : {});
   }
   const { writeXlsx } = await import("./xlsx/writer");
   return writeXlsx(model);
@@ -50,10 +51,14 @@ async function write(model: SpreadsheetModel): Promise<Uint8Array> {
 
 /** The bytes, name and MIME type of a workbook's download — a copy in
  * `targetFormat` when that is not the workbook's own. */
-export async function spreadsheetDownload(model: SpreadsheetModel, targetFormat: SpreadsheetFormat = model.format): Promise<SpreadsheetDownload> {
+export async function spreadsheetDownload(
+  model: SpreadsheetModel,
+  targetFormat: SpreadsheetFormat = model.format,
+  locale?: SpreadsheetLocale,
+): Promise<SpreadsheetDownload> {
   if (targetFormat === model.format) {
     return {
-      bytes: await write(model),
+      bytes: await write(model, locale),
       fileName: spreadsheetFileName(model),
       mimeType: spreadsheetMimeType(model.format, model.packageVariant),
       notices: [],
@@ -62,7 +67,7 @@ export async function spreadsheetDownload(model: SpreadsheetModel, targetFormat:
   const labels = unconvertibleContent(model, targetFormat);
   const copy = stripRetention({ ...model, format: targetFormat });
   return {
-    bytes: await write(copy),
+    bytes: await write(copy, locale),
     fileName: spreadsheetFileName(copy),
     mimeType: spreadsheetMimeType(targetFormat),
     notices: labels.length > 0 ? [notIncludedNotice(targetFormat, labels)] : [],
@@ -70,9 +75,10 @@ export async function spreadsheetDownload(model: SpreadsheetModel, targetFormat:
 }
 
 /** Triggers a browser download of the workbook (or its copy); resolves to
- * the notices to show. */
-export async function downloadSpreadsheet(model: SpreadsheetModel, targetFormat?: SpreadsheetFormat): Promise<string[]> {
-  const { bytes, fileName, mimeType, notices } = await spreadsheetDownload(model, targetFormat);
+ * the notices to show. `locale` is the user's number locale (SPEC-122: an
+ * .ods cell's informative text is written in it). */
+export async function downloadSpreadsheet(model: SpreadsheetModel, targetFormat?: SpreadsheetFormat, locale?: SpreadsheetLocale): Promise<string[]> {
+  const { bytes, fileName, mimeType, notices } = await spreadsheetDownload(model, targetFormat, locale);
   triggerBlobDownload(bytes, fileName, mimeType);
   return notices;
 }
