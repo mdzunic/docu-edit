@@ -30,12 +30,22 @@
 // - Rename and delete rewrite every formula naming the sheet (SPEC-119's
 //   renameSheetInFormula; formula/sheetRefs.ts's remapSheetReferences turns
 //   a deleted sheet's references into #REF!). The retained XML keeps
-//   source-time names; the writers remap it on save.
+//   source-time names; the writers remap it on save. SPEC-129: every
+//   conditional-format rule formula on every sheet (cfFormulas.ts's table —
+//   value objects and a preserved xlsx rule's texts included) goes through
+//   remapSheetReferences the same way; a changed format is replaced without
+//   its sourceXml and its sheet marked dirty, as for cell formulas.
+// - SPEC-129, duplicate: the copy's conditional formats get fresh format and
+//   rule ids (x14Ids kept — a GUID pairs only within one worksheet), their
+//   formulas renamed as the copy's cells' are, and in an .ods they lose
+//   their sourceXml, which names the source sheet in its target address.
 // - `alsoRecalc` lists the formula cells whose RESULT may change though
 //   their text did not: 3-D references whose span gained, lost or reordered
 //   a sheet, and references to a name that did not exist before.
 import { relsPathFor } from "../core/xml";
 import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
+import { mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
+import { mintCfId, renumberPriorities, sheetFormats, withX14Placement, type CfRule, type ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter } from "./filter";
 import { cellKey, type CellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
@@ -217,6 +227,16 @@ function rewriteFormulas(sheet: Sheet, rewrite: (formula: string) => string): Sh
   return rows ? { ...sheet, rows, dirty: true } : sheet;
 }
 
+/** A sheet with every conditional-format rule formula passed through
+ * `rewrite` (cfFormulas.ts): the same object when nothing changed, else a
+ * new sheet (marked dirty) whose changed formats lost their sourceXml.
+ * `sheetName`: the sheet's name once the command is done (x14 placement). */
+function rewriteRuleFormulas(format: SpreadsheetFormat, sheet: Sheet, rewrite: (formula: string) => string, sheetName = sheet.name): Sheet {
+  const formats = sheetFormats(sheet);
+  const next = mapFormatsFormulas(formats, rewrite, { format, sheetName });
+  return next === formats ? sheet : { ...sheet, conditionalFormats: next, dirty: true };
+}
+
 /** Every formula cell (parsed formulas only) of the model, with its key. */
 function* formulaCells(model: SpreadsheetModel): Generator<{ key: CellKey; formula: string }> {
   for (const sheet of model.sheets) {
@@ -357,9 +377,11 @@ export function renameSheet(model: SpreadsheetModel, index: number, name: string
     throw new Error(error);
   }
   const before = orderOf(model);
+  const remap = { renamed: { [sheet.name]: name }, deleted: [], orderBefore: model.sheets.map((each) => each.name) };
   model.sheets = model.sheets.map((each, at) => {
     const rewritten = rewriteFormulas(each, (formula) => renameSheetInFormula(formula, sheet.name, name));
-    return at === index ? { ...rewritten, name } : rewritten;
+    const remapped = rewriteRuleFormulas(model.format, rewritten, (formula) => remapSheetReferences(formula, remap), at === index ? name : each.name);
+    return at === index ? { ...remapped, name } : remapped;
   });
   model.structureDirty = true;
   return { activeIndex: model.activeSheetIndex, alsoRecalc: cellsToRecalc(model, before, [name]) };
@@ -392,6 +414,7 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   if (copy.autoFilter) {
     copy.autoFilter = copiedAutoFilter(copy.autoFilter, model.format);
   }
+  copy.conditionalFormats = copiedFormats(sheetFormats(copy), model.format);
   if (partName !== undefined || sourceXml !== undefined) {
     copy.copiedFrom = source.copiedFrom ?? sourceNameOf(model, source);
     if (source.dirty) {
@@ -413,12 +436,21 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
     copy.dirty = true;
   }
   copy = rewriteFormulas(copy, (formula) => renameSheetInFormula(formula, source.name, name));
+  copy = rewriteRuleFormulas(model.format, copy, (formula) => renameSheetInFormula(formula, source.name, name));
   const sheets = model.sheets.slice();
   sheets.splice(index + 1, 0, copy);
   model.sheets = sheets;
   model.structureDirty = true;
   model.activeSheetIndex = index + 1;
   return { activeIndex: index + 1, alsoRecalc: cellsToRecalc(model, before, [name]) };
+}
+
+/** A copy's conditional formats (see the module header). */
+function copiedFormats(formats: readonly ConditionalFormat[], format: SpreadsheetFormat): ConditionalFormat[] {
+  return formats.map((each) => {
+    const copy: ConditionalFormat = { ...each, id: mintCfId(), rules: each.rules.map((rule) => ({ ...rule, id: mintCfId() })) };
+    return format === "ods" ? withoutFormatSource(copy) : copy;
+  });
 }
 
 /** A copy's autofilter (see the module header). */
@@ -464,7 +496,8 @@ export function deleteSheet(model: SpreadsheetModel, index: number): SheetComman
   const remap = { renamed: {}, deleted: [sheet.name], orderBefore: model.sheets.map((each) => each.name) };
   const active = model.activeSheetIndex;
   const activeIndex = active === index ? neighbourAfter(model.sheets, index, true) : active > index ? active - 1 : active;
-  const sheets = model.sheets.filter((_, at) => at !== index).map((each) => rewriteFormulas(each, (formula) => remapSheetReferences(formula, remap)));
+  const remapped = (formula: string): string => remapSheetReferences(formula, remap);
+  const sheets = model.sheets.filter((_, at) => at !== index).map((each) => rewriteRuleFormulas(model.format, rewriteFormulas(each, remapped), remapped));
   if (sheet.copiedFrom !== undefined) {
     if (sheet.partName !== undefined && model.format === "xlsx") {
       model.opaque = removeOwnedParts(model.opaque, sheet.partName);
@@ -551,7 +584,8 @@ export function setTabColor(model: SpreadsheetModel, index: number, color: Model
  * given the model with its `format` already set to the target: no retained
  * package, no source on any sheet, no CSV dialect (SPEC-126), foreign sheets
  * gone, styles without their source indices, every formula cell through
- * formulaForTarget. Pure — the
+ * formulaForTarget, conditional formats per crossFormats and differential
+ * styles without their sourceXml/sourceStyleName (SPEC-129). Pure — the
  * open model is untouched; rows are shared except where a cell must
  * change. */
 export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
@@ -559,7 +593,7 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
   const kept = model.sheets.filter((sheet) => sheet.kind !== "foreign");
   const sheets: Sheet[] = kept.map((sheet) => {
     const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, ...fields } = sheet;
-    return { ...fields, rows: crossRows(sheet.rows, model.format) };
+    return { ...fields, rows: crossRows(sheet.rows, model.format), conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name) };
   });
   if (sheets.length === 0) {
     const { dirty: _dirty, ...fallback } = emptySheet("Sheet1");
@@ -582,7 +616,40 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
       const { sourceXf: _xf, sourceStyleName: _name, ...styleRest } = style;
       return styleRest;
     }),
+    dxfs: model.dxfs.map((dxf) => {
+      const { sourceXml: _xml, sourceStyleName: _name, ...dxfRest } = dxf;
+      return dxfRest;
+    }),
   };
+}
+
+/** A sheet's conditional formats as they cross to `target` (SPEC-129): each
+ * without its sourceXml; each rule without its x14 GUID and placed for the
+ * target (withX14Placement); a `preserved` rule — another format's XML —
+ * dropped, a format left with no rule removed and the priorities renumbered;
+ * to an .ods, an icon set's `reverse` dropped (it has no wire form there).
+ * unconvertible.ts's "some conditional formatting" row names what is lost. */
+function crossFormats(formats: readonly ConditionalFormat[], target: SpreadsheetFormat, sheetName: string): ConditionalFormat[] {
+  let dropped = false;
+  const crossed = formats.flatMap((format) => {
+    const rules = format.rules.flatMap((rule): CfRule[] => {
+      if (rule.kind === "preserved") {
+        dropped = true;
+        return [];
+      }
+      let next: CfRule = rule;
+      if (next.x14Id !== undefined) {
+        const { x14Id: _id, ...rest } = next;
+        next = rest as CfRule;
+      }
+      if (target === "ods" && next.kind === "iconSet" && next.icons.reverse) {
+        next = { ...next, icons: { ...next.icons, reverse: false } };
+      }
+      return [withX14Placement(next, target, sheetName)];
+    });
+    return rules.length === 0 ? [] : [{ ...withoutFormatSource(format), rules }];
+  });
+  return dropped ? renumberPriorities(crossed) : crossed;
 }
 
 /** Whether a cell carries content only its source format can carry

@@ -5,7 +5,8 @@
 // Sheet, Row or Cell — the inputs are deep-frozen to prove it), the copy's
 // own retained source at command time (xlsx closure with its fix-ups, ods
 // ids and embedded objects), the cross-format copy (`stripRetention`) and
-// what it leaves out (`unconvertibleContent`).
+// what it leaves out (`unconvertibleContent`). SPEC-129: conditional formats
+// through rename, delete, duplicate and the cross-format copy.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64 } from "../core/packageParts";
 import { DEFAULT_THEME, type ModelColor } from "../core/theme";
@@ -19,6 +20,7 @@ import {
   buildSpecMacrosXlsmBytes,
   SPEC121_LINKS_XLSX,
 } from "./fixtures/build";
+import type { CfRule, ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter } from "./filter";
 import { cellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
@@ -1729,6 +1731,118 @@ describe("stripRetention", () => {
 
 // =========================================================================================
 
+/** A conditional format over A1:A10, and the rules SPEC-129's cases build. */
+const cf = (id: string, rules: CfRule[], extra: Partial<ConditionalFormat> = {}): ConditionalFormat => ({ id, ranges: [{ top: 0, left: 0, bottom: 9, right: 0 }], rules, ...extra });
+const expression = (id: string, formula: string, priority = 1, extra: Partial<CfRule> = {}): CfRule => ({ id, priority, kind: "expression", formula, ...extra }) as CfRule;
+const scaleOn = (value: string): CfRule => ({
+  id: "scale",
+  priority: 2,
+  kind: "colorScale",
+  stops: [
+    { at: { type: "num", value }, color: "#ff0000" },
+    { at: { type: "max" }, color: "#00ff00" },
+  ],
+});
+const preservedRule = (where: "base" | "x14" | "ods"): CfRule => ({ id: "p", priority: 2, kind: "preserved", where, xml: "<cfRule/>" });
+const iconRule = (reverse: boolean): CfRule => ({ id: "i", priority: 2, kind: "iconSet", icons: { set: "3Arrows", thresholds: [], reverse, showValue: true } });
+const formatsOf = (model: SpreadsheetModel, name: string): ConditionalFormat[] => sheetNamed(model, name).conditionalFormats;
+
+describe("SPEC-129: conditional formats through the sheet commands", () => {
+
+  it("rename remaps every rule formula and value object naming the sheet; the format loses its sourceXml, its sheet turns dirty", () => {
+    const report = cf("r", [expression("e", "A1>Data!$A$1"), scaleOn("Data!$B$1")], { sourceXml: "<conditionalFormatting/>" });
+    const untouched = cf("u", [expression("u1", "A1>0", 3)]);
+    const model = freezeContents(book([gridSheet("Data"), gridSheet("Report", {}, { conditionalFormats: [report, untouched] })]));
+    renameSheet(model, 0, "Facts 2025");
+    const [renamed, same] = formatsOf(model, "Report");
+    expect(renamed!.rules).toMatchObject([{ formula: "A1>'Facts 2025'!$A$1" }, { stops: [{ at: { value: "'Facts 2025'!$B$1" } }, { at: { type: "max" } }] }]);
+    expect(renamed!.sourceXml).toBeUndefined();
+    expect(same).toBe(untouched);
+    expect(sheetNamed(model, "Report").dirty).toBe(true);
+  });
+
+  it("rename leaves a sheet whose rules name no renamed sheet untouched by identity", () => {
+    const model = book([gridSheet("Data"), gridSheet("Report", {}, { conditionalFormats: [cf("r", [expression("e", "A1>Other!$A$1")])] }), gridSheet("Other")]);
+    const report = model.sheets[1];
+    renameSheet(model, 0, "Facts");
+    expect(model.sheets[1]).toBe(report);
+  });
+
+  it("delete turns a deleted sheet's references into #REF! — an x14 rule that no longer references another sheet leaves x14", () => {
+    const report = cf("r", [expression("e", "A1>Data!$A$1", 1, { x14: true }), scaleOn("Data!$B$1")]);
+    const model = freezeContents(book([gridSheet("Data"), gridSheet("Report", {}, { conditionalFormats: [report] })], 1));
+    deleteSheet(model, 0);
+    const [format] = formatsOf(model, "Report");
+    expect(format!.rules[0]).toMatchObject({ formula: "A1>#REF!" });
+    expect(format!.rules[0]!.x14).toBeUndefined();
+    expect(format!.rules[1]).toMatchObject({ stops: [{ at: { value: "#REF!" } }, { at: { type: "max" } }] });
+    expect(sheetNamed(model, "Report").dirty).toBe(true);
+  });
+
+  it("duplicate copies the formats with fresh format and rule ids, x14Ids kept, the copy's own-name references renamed", () => {
+    const bar: CfRule = {
+      id: "bar",
+      priority: 2,
+      kind: "dataBar",
+      x14Id: "{00000000-0000-4000-8000-000000000001}",
+      bar: { min: { type: "min" }, max: { type: "max" }, color: "#638EC6", gradient: true, axis: "automatic", direction: "context", minLengthPct: 10, maxLengthPct: 90, showValue: true },
+    };
+    const own = cf("f", [expression("e", "A1>Data!$Z$1"), bar], { sourceXml: "<conditionalFormatting/>" });
+    const model = freezeContents(book([gridSheet("Data", {}, { conditionalFormats: [own] })]));
+    duplicateSheet(model, 0);
+    const [copy] = formatsOf(model, "Data (2)");
+    expect(copy!.id).not.toBe("f");
+    expect(copy!.rules.map((rule) => rule.id)).not.toContain("e");
+    expect(copy!.rules.map((rule) => rule.id)).not.toContain("bar");
+    expect(copy!.rules[0]).toMatchObject({ formula: "A1>'Data (2)'!$Z$1" });
+    expect(copy!.rules[1]).toMatchObject({ x14Id: bar.x14Id, priority: 2 });
+    expect(formatsOf(model, "Data")[0]).toBe(own);
+
+    // An .ods copy's formats drop their sourceXml (it names the source sheet's table); an .xlsx copy's unrenamed ones keep it.
+    const plain = cf("p", [expression("e", "A1>0")], { sourceXml: "<x/>" });
+    const xlsx = book([gridSheet("Data", {}, { conditionalFormats: [plain] })]);
+    duplicateSheet(xlsx, 0);
+    expect(formatsOf(xlsx, "Data (2)")[0]!.sourceXml).toBe("<x/>");
+    const ods = book([gridSheet("Data", {}, { conditionalFormats: [plain] })], 0, "ods");
+    duplicateSheet(ods, 0);
+    expect(formatsOf(ods, "Data (2)")[0]!.sourceXml).toBeUndefined();
+  });
+
+  it("stripRetention: no sourceXml or x14Id, x14 placed for the target, preserved rules dropped (an emptied format with them), priorities renumbered, an .ods copy's icon order not reversed, dxfs without their source", () => {
+    const icons: CfRule = { id: "i", priority: 4, kind: "iconSet", icons: { set: "3Arrows", thresholds: [], reverse: true, showValue: true } };
+    const formats = [
+      cf("a", [expression("e", "A1>Other!$A$1", 1, { x14: true }), { id: "p", priority: 2, kind: "preserved", where: "x14", xml: "<x14:cfRule/>" }], { sourceXml: "<a/>" }),
+      cf("b", [{ id: "q", priority: 3, kind: "preserved", where: "base", xml: "<cfRule/>" }]),
+      cf("c", [icons, expression("x", "A1>0", 5, { x14Id: "{G}" })]),
+    ];
+    const model = book([gridSheet("Data", {}, { conditionalFormats: formats }), gridSheet("Other")]);
+    model.dxfs = [{ font: { bold: true }, sourceXml: "<dxf><font><b/></font></dxf>" }, { fill: { kind: "solid", color: "#ff0000" }, sourceStyleName: "Bad" }];
+    const before = structuredClone(model);
+
+    const toOds = stripRetention({ ...model, format: "ods" });
+    expect(model).toEqual(before);
+    const odsFormats = formatsOf(toOds, "Data");
+    expect(odsFormats.map((format) => format.id)).toEqual(["a", "c"]);
+    expect(odsFormats.every((format) => !("sourceXml" in format))).toBe(true);
+    expect(odsFormats.flatMap((format) => format.rules.map((rule) => [rule.id, rule.priority]))).toEqual([
+      ["e", 1],
+      ["i", 2],
+      ["x", 3],
+    ]);
+    expect(odsFormats[0]!.rules[0]!.x14).toBeUndefined();
+    expect(odsFormats[1]!.rules[0]).toMatchObject({ icons: { reverse: false } });
+    expect(odsFormats[1]!.rules[1]!.x14Id).toBeUndefined();
+    expect(toOds.dxfs).toEqual([{ font: { bold: true } }, { fill: { kind: "solid", color: "#ff0000" } }]);
+
+    const toXlsx = stripRetention({ ...model, format: "xlsx", sheets: model.sheets.map((sheet) => ({ ...sheet, conditionalFormats: [cf("a", [expression("e", "A1>Other!$A$1")])] })) });
+    expect(formatsOf(toXlsx, "Data")[0]!.rules[0]).toMatchObject({ x14: true });
+    // To .xlsx the reverse order has a wire form and stays.
+    expect(formatsOf(stripRetention({ ...model, format: "xlsx" }), "Data")[1]!.rules[0]).toMatchObject({ icons: { reverse: true } });
+  });
+});
+
+// =========================================================================================
+
 /** An ods content suffix holding database ranges on Data!A1:B10. */
 const databaseRanges = (...rangeNames: string[]): string =>
   `<table:database-ranges>${rangeNames.map((name) => `<table:database-range table:name="${name}" table:target-range-address="Data.A1:Data.B10"/>`).join("")}</table:database-ranges>`;
@@ -1740,7 +1854,7 @@ describe("unconvertibleContent", () => {
     "images and shapes",
     "charts",
     "comments",
-    "conditional formatting",
+    "some conditional formatting",
     "data validation",
     "named ranges",
     "tables",
@@ -1786,13 +1900,25 @@ describe("unconvertibleContent", () => {
   });
 
   it("lists spec121-links.xlsx's structures in table order (a chart's drawing is the charts row, as the AC's toast \"charts, comments\" reads)", async () => {
+    // SPEC-129: its conditional format (an expression rule) crosses.
     const labels = unconvertibleContent(await openLinksXlsx(), "ods");
-    expect(labels).toEqual(["charts", "comments", "conditional formatting", "data validation", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["charts", "comments", "data validation", "named ranges", "tables", "hyperlinks"]);
   });
 
   it("lists spec121-links.ods's structures in table order", async () => {
     const labels = unconvertibleContent(await openLinksOds(), "xlsx");
-    expect(labels).toEqual(["charts", "comments", "conditional formatting", "data validation", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["charts", "comments", "data validation", "named ranges", "tables", "hyperlinks"]);
+  });
+
+  it("SPEC-129: conditional formatting crosses — only a preserved rule (either direction) or, to .ods, a reversed icon set is named", () => {
+    const withRules = (rules: CfRule[], format: SpreadsheetFormat = "xlsx"): SpreadsheetModel =>
+      book([gridSheet("Data", {}, { conditionalFormats: [{ id: "f", ranges: [{ top: 0, left: 0, bottom: 9, right: 0 }], rules }] })], 0, format);
+    const plain = expression("e", "A1>0");
+    expect(unconvertibleContent(withRules([plain, iconRule(false)]), "ods")).toEqual([]);
+    expect(unconvertibleContent(withRules([plain, preservedRule("x14")]), "ods")).toEqual(["some conditional formatting"]);
+    expect(unconvertibleContent(withRules([plain, preservedRule("ods")], "ods"), "xlsx")).toEqual(["some conditional formatting"]);
+    expect(unconvertibleContent(withRules([plain, iconRule(true)]), "ods")).toEqual(["some conditional formatting"]);
+    expect(unconvertibleContent(withRules([plain, iconRule(true)], "ods"), "xlsx")).toEqual([]);
   });
 
   it("names images and shapes for a worksheet drawing holding a picture, and for an ods frame that is not an object's", async () => {
