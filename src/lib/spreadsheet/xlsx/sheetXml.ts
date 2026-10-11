@@ -89,6 +89,12 @@
 // classifyHiddenRows) — and a filter-hidden row with no cells is stored like
 // a hidden one.
 //
+// SPEC-129 (xlsx/conditionalFormats.ts holds the wire mapping): the root
+// start tag, each root-level `<conditionalFormatting>` (with the whitespace
+// before it) and the root `<extLst>` are cut out as the one pass meets them
+// and read after it into `conditionalFormats` — an x14 rule's inline dxf
+// interned into the workbook's `dxfs` (`options.dxfs`).
+//
 // The worksheet writer (SPEC-122 "The worksheet writer", normative there):
 // serializeWorksheet(sheet, base, ctx) rebuilds `dimension`, `sheetViews`,
 // `sheetFormatPr`, `cols`, `sheetData`, SPEC-128's `autoFilter` and
@@ -139,6 +145,15 @@
 //   `filterHidden` — set or removed in the source sheetPr's start tag (its
 //   tabColor, outlinePr, pageSetUpPr untouched), or `<sheetPr
 //   filterMode="1"/>` made the first root child when the part has none.
+// - conditionalFormatting run and the extLst's `{78C0D931-…}` ext (SPEC-129,
+//   conditionalFormatSplices): untouched while the model holds the source's
+//   formats unedited (each still with its `sourceXml`, as many as the part
+//   reads to); else the run is replaced where the source's first block
+//   stood (or inserted at its CT_Worksheet place, after phoneticPr, before
+//   dataValidations) and only that ext rewritten — created as the extLst's
+//   first ext, dropped when empty (with an extLst left empty), every other
+//   ext verbatim; a base rule's dxfId goes through the style writer
+//   (dxfFor), which appends the dxfs the part lacks.
 import type { DocumentTheme, ModelColor } from "../../core/theme";
 import { scanAttr, scanXml, type XmlScanAttribute, type XmlScanEvent } from "../../core/xmlScanner";
 import { colToLetters, formatA1, formatRange, parseA1, parseRange, parseSqref, usedRange, type CellRef, type GridRange } from "../address";
@@ -170,7 +185,16 @@ import { odsDateValueToSerial } from "../serial";
 import type { SortState } from "../sort";
 import { columnSpanAt } from "../styles";
 import { applySplices, attributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import type { Dxf } from "../conditionalFormats";
 import { autoFilterXml, fitsPart, readAutoFilterXml, readSortStateXml, sortStateXml, type FitsPart } from "./autoFilter";
+import {
+  CF_EXT_URI,
+  conditionalFormattingsExtXml,
+  readConditionalFormatSource,
+  writeConditionalFormats,
+  type WorksheetCfSource,
+} from "./conditionalFormats";
+import { elementTree, nodeAttr, whitespaceBefore } from "./elementTree";
 import { decodeXmlEscapes, encodeXlsxText, type SharedStringsWriter } from "./sharedStrings";
 import { isSpreadsheetMl, XlsxFontReader, type XlsxStyleWriter } from "./styles";
 import { modelColorToXlsxAttrs, scannedAttributes, xlsxColorFrom } from "./themeColor";
@@ -808,7 +832,18 @@ export type WorksheetContent = Pick<Sheet, "rows" | "columns" | "defaultColWidth
   Partial<
     Pick<
       Sheet,
-      "frozen" | "showGridLines" | "showZeros" | "zoomPercent" | "tabColor" | "selection" | "topLeftCell" | "showFormulas" | "protection" | "autoFilter" | "sortState"
+      | "frozen"
+      | "showGridLines"
+      | "showZeros"
+      | "zoomPercent"
+      | "tabColor"
+      | "selection"
+      | "topLeftCell"
+      | "showFormulas"
+      | "protection"
+      | "autoFilter"
+      | "sortState"
+      | "conditionalFormats"
     >
   >;
 
@@ -824,6 +859,9 @@ export interface WorksheetReadOptions {
   /** The workbook's implied-format styles (SPEC-118), for `t="d"` values
    * with a General style. */
   implied?: ImpliedFormatStyles;
+  /** SPEC-129: the workbook's differential styles, which an x14 rule's
+   * inline dxf is interned into (a throwaway table when absent). */
+  dxfs?: Pick<SpreadsheetModel, "dxfs">;
 }
 
 /** The root's children whose content this reader reads. */
@@ -876,6 +914,18 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       autoFilter ??= readAutoFilterXml(slice, ns);
     } else {
       sortState ??= readSortStateXml(slice, ns);
+    }
+  };
+  // SPEC-129: the root start tag, each root-level <conditionalFormatting>
+  // (with the whitespace before it) and the root <extLst>, cut out as the
+  // pass meets them; xlsx/conditionalFormats.ts reads them after it.
+  const cfSource: WorksheetCfSource = { rootTag: "", blocks: [] };
+  let cfElement: { local: "conditionalFormatting" | "extLst"; start: number } | null = null;
+  const takeCfElement = (local: "conditionalFormatting" | "extLst", start: number, end: number): void => {
+    if (local === "extLst") {
+      cfSource.extLst ??= xml.slice(start, end);
+    } else {
+      cfSource.blocks.push(xml.slice(whitespaceBefore(xml, start), end));
     }
   };
 
@@ -1130,10 +1180,20 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       openInCell(pending, event);
       return undefined;
     }
+    if (level === 1) {
+      cfSource.rootTag = xml.slice(event.start, event.end);
+    }
     if (!isSpreadsheetMl(event.ns)) {
       return undefined;
     }
     if (level === 2) {
+      if (event.local === "conditionalFormatting" || event.local === "extLst") {
+        if (event.selfClosing) {
+          takeCfElement(event.local, event.start, event.end);
+        } else {
+          cfElement = { local: event.local, start: event.start };
+        }
+      }
       if (event.local === "sheetFormatPr") {
         const height = parseNumber(scanAttr(event.attrs, "defaultRowHeight"));
         if (height !== undefined && height > 0) {
@@ -1261,6 +1321,10 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
         readFilterElement(filterElement.local, xml.slice(filterElement.start, event.end), filterElement.ns);
         filterElement = null;
       }
+      if (cfElement !== null) {
+        takeCfElement(cfElement.local, cfElement.start, event.end);
+        cfElement = null;
+      }
     } else if (section === "sheetData" && level === 3 && row !== null) {
       finishRow();
     } else if (section === "sheetViews" && level === 3) {
@@ -1339,6 +1403,9 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   }
   if (sortState !== undefined) {
     content.sortState = sortState;
+  }
+  if (cfSource.blocks.length > 0 || cfSource.extLst !== undefined) {
+    content.conditionalFormats = readConditionalFormatSource(cfSource, sheetName, options.dxfs ?? { dxfs: [] }, indexedColors);
   }
   const activePane = pane?.activePane ?? "topLeft";
   const selection = view.selections.find((candidate) => candidate.pane === activePane);
@@ -1428,8 +1495,14 @@ export interface XlsxSheetContext {
   mdw: number;
   /** The save's shared-string table. */
   strings: Pick<SharedStringsWriter, "indexFor">;
-  /** The save's style table: a model style id → its cellXfs index. */
-  styles: Pick<XlsxStyleWriter, "xfFor">;
+  /** The save's style table: a model style id → its cellXfs index (and,
+   * SPEC-129, a dxf number format's id). */
+  styles: Pick<XlsxStyleWriter, "xfFor"> & Partial<Pick<XlsxStyleWriter, "dxfNumFmtId" | "dxfFor">>;
+  /** SPEC-129: the workbook's differential styles (an x14 rule's inline dxf). */
+  dxfs?: readonly Dxf[];
+  /** SPEC-129: the writer's sheet-name pass, for a conditional format
+   * re-emitted from its source text (which names sheets as the source did). */
+  passFragment?: (xml: string) => string;
 }
 
 /** A child of the worksheet root: its local name ("" outside SpreadsheetML),
@@ -1956,5 +2029,87 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
   for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
     splices.push({ start: child.start, end: child.end, text: "" });
   }
+  splices.push(...conditionalFormatSplices(xml, layout, sheet, ctx, base !== undefined));
   return applySplices(xml, splices);
+}
+
+/** SPEC-129: the splices bringing the part's `<conditionalFormatting>` run
+ * and the `{78C0D931-…}` ext of its `<extLst>` in line with the model
+ * (xlsx/conditionalFormats.ts) — none while the model holds the source's
+ * formats unedited (every one still with its `sourceXml`, as many as the
+ * source reads to), or for a sheet stored before SPEC-129. The run replaces
+ * the source's blocks where the first stood (or goes in at its CT_Worksheet
+ * position); the ext is rewritten in place, created as the extLst's first
+ * ext (Excel's order: conditional formattings first), or dropped when empty
+ * — with the extLst when nothing else is left in it. */
+function conditionalFormatSplices(xml: string, layout: WorksheetLayout, sheet: Sheet, ctx: XlsxSheetContext, retained: boolean): Splice[] {
+  const formats = sheet.conditionalFormats;
+  if (formats === undefined) {
+    return [];
+  }
+  const blocks = layout.children.filter((child) => child.local === "conditionalFormatting");
+  const extLst = layout.children.find((child) => child.local === "extLst");
+  const extText = extLst === undefined ? undefined : xml.slice(extLst.start, extLst.end);
+  if (retained) {
+    const source: WorksheetCfSource = { rootTag: layout.rootTag, blocks: blocks.map((block) => xml.slice(whitespaceBefore(xml, block.start), block.end)) };
+    if (extText !== undefined) {
+      source.extLst = extText;
+    }
+    const read = readConditionalFormatSource(source, sheet.name, { dxfs: [] });
+    if (read.length === formats.length && formats.every((format) => format.sourceXml !== undefined)) {
+      return [];
+    }
+  } else if (formats.length === 0) {
+    return [];
+  }
+  const p = layout.prefix;
+  let nextNumFmt = 164;
+  const out = writeConditionalFormats(formats, sheet.name, {
+    prefix: p,
+    theme: ctx.theme,
+    dxfs: ctx.dxfs ?? [],
+    numFmtId: (code) => ctx.styles.dxfNumFmtId?.(code) ?? nextNumFmt++,
+    dxfId: (id) => ctx.styles.dxfFor?.(id) ?? id,
+    ...(retained ? { verbatim: { pass: ctx.passFragment ?? ((text: string) => text), context: [layout.rootTag] } } : {}),
+  });
+  const splices: Splice[] = [];
+  const insertAt = (local: string): number => {
+    const rank = WORKSHEET_ORDER.indexOf(local);
+    return layout.children.find((child) => child.order > rank)?.start ?? layout.rootClose;
+  };
+  if (blocks.length > 0) {
+    splices.push({ start: blocks[0]!.start, end: blocks[0]!.end, text: out.run.replace(/^\s+/, "") });
+    for (const block of blocks.slice(1)) {
+      splices.push({ start: whitespaceBefore(xml, block.start), end: block.end, text: "" });
+    }
+  } else if (out.run !== "") {
+    const at = insertAt("conditionalFormatting");
+    splices.push({ start: at, end: at, text: out.run });
+  }
+  const list = extText === undefined ? undefined : elementTree(extText, [layout.rootTag])?.[0];
+  if (extLst !== undefined && extText !== undefined && list !== undefined) {
+    const exts = list.children.filter((child) => child.local === "ext" && isSpreadsheetMl(child.ns));
+    const own = exts.find((ext) => (nodeAttr(ext, "uri") ?? "").toUpperCase() === CF_EXT_URI.toUpperCase());
+    if (own !== undefined) {
+      if (out.x14.length > 0) {
+        const text = conditionalFormattingsExtXml(out.x14, p, { tag: startTagAt(extText, own.start), name: own.name });
+        splices.push({ start: extLst.start + own.start, end: extLst.start + own.end, text });
+      } else if (list.children.length === 1 && extText.slice(list.tagEnd, own.start).trim() === "" && extText.slice(own.end, list.end).replace(/<\/[^>]*>$/, "").trim() === "") {
+        splices.push({ start: extLst.start, end: extLst.end, text: "" });
+      } else {
+        splices.push({ start: extLst.start + whitespaceBefore(extText, own.start), end: extLst.start + own.end, text: "" });
+      }
+    } else if (out.x14.length > 0) {
+      const text = conditionalFormattingsExtXml(out.x14, p);
+      if (list.selfClosing) {
+        splices.push({ start: extLst.start, end: extLst.end, text: `${startTagAt(extText, 0).replace(/\s*\/>$/, ">")}${text}</${list.name}>` });
+      } else {
+        splices.push({ start: extLst.start + list.tagEnd, end: extLst.start + list.tagEnd, text });
+      }
+    }
+  } else if (extLst === undefined && out.x14.length > 0) {
+    const at = insertAt("extLst");
+    splices.push({ start: at, end: at, text: `<${p}extLst>${conditionalFormattingsExtXml(out.x14, p)}</${p}extLst>` });
+  }
+  return splices;
 }

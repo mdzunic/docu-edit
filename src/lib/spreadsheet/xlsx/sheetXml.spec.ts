@@ -939,13 +939,17 @@ describe("the worksheet writer: the splice", () => {
     autoFilter: `<autoFilter ref="A1:D2"><filterColumn colId="1"><filters><filter val="2"/></filters></filterColumn></autoFilter>`,
     sortState: `<sortState ref="B2:D2"><sortCondition descending="1" ref="D2"/></sortState>`,
     mergeCells: `<mergeCells count="1"><mergeCell ref="B2:C2"/></mergeCells>`,
+    // SPEC-129: conditional formats are the model's — this one has none, so
+    // the source's block goes, and with it the x14 ext and its extLst.
+    conditionalFormatting: "",
+    extLst: "",
   };
 
   it("lists CT_Worksheet's children in schema order", () => {
     expect(WORKSHEET_ORDER).toEqual(SIBLINGS.map(([local]) => local));
   });
 
-  it("replaces the eight rebuilt elements (SPEC-128's autoFilter and sortState among them) in place, with every CT_Worksheet sibling present; the declaration, root start tag and every other element stay byte-verbatim", () => {
+  it("replaces the eight rebuilt elements (SPEC-128's autoFilter and sortState among them) and SPEC-129's conditional formats in place, with every CT_Worksheet sibling present; the declaration, root start tag and every other element stay byte-verbatim", () => {
     const out = serializeWorksheet(model(), partWith(SIBLINGS), stubContext());
     expect(out).toBe(partWith(SIBLINGS.map(([local, xml]) => [local, REBUILT[local] ?? xml])));
   });

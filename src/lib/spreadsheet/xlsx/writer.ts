@@ -195,7 +195,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const styles = new XlsxStyleWriter(undefined, model);
   const mdw = workbookMdw(model);
   const worksheets = model.sheets.map((sheet, index) =>
-    serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles }),
+    serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
   );
   const sharedStrings = strings.xml();
   const contentTypes =
@@ -365,7 +365,20 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const strings = new SharedStringsWriter(stringsPath === undefined ? undefined : decodeUtf8(parts.get(stringsPath)!), model.theme);
   const styles = new XlsxStyleWriter(stylesPath === undefined ? undefined : decodeUtf8(parts.get(stylesPath)!), model);
   const mdw = workbookMdw(model);
-  const context = (plan: SheetPlan): XlsxSheetContext => ({ active: plan.index === activeIndex, theme: model.theme, mdw, strings, styles });
+  // SPEC-129: a conditional format re-emitted from its source text takes the
+  // sheet-name pass the retained part took.
+  const context = (plan: SheetPlan, sheetRemap?: SheetRemap): XlsxSheetContext => {
+    const pass = sheetRemap !== undefined && !isEmptyRemap(sheetRemap) ? passFor(plan.partName) : undefined;
+    return {
+      active: plan.index === activeIndex,
+      theme: model.theme,
+      mdw,
+      strings,
+      styles,
+      dxfs: model.dxfs ?? [],
+      ...(pass ? { passFragment: (xml: string) => pass(xml, sheetRemap!) } : {}),
+    };
+  };
   const sheetBytes = new Map<string, Uint8Array>();
   for (const plan of plans) {
     const active = plan.index === activeIndex;
@@ -382,7 +395,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     sheetBytes.set(
       plan.partName,
       write && plan.sheet.dirty && plan.sheet.kind === "grid"
-        ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan)))
+        ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
         : sheetPartFor(bytes, plan, active, sheetRemap, model),
     );
   }

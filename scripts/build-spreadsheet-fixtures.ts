@@ -154,6 +154,10 @@ import {
   buildSpec128FilterOdsBytes,
   buildSpec128FilterXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
+// SPEC-129 (xlsx): spec129-cf.xlsx — Excel-shaped conditional formatting
+// (every kind, an x14 data bar twin, an x14-only 3Stars, a custom x14 icon
+// set, a sparkline ext kept verbatim, tinted theme colours, bgColor-only dxfs).
+import { buildSpec129CfXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
 mkdirSync(fixturesDir, { recursive: true });
@@ -193,6 +197,9 @@ writeFileSync(join(fixturesDir, "spec126-unicode.tsv"), buildSpec126UnicodeTsvBy
 writeFileSync(join(fixturesDir, "spec126-mac-pipe.csv"), buildSpec126MacPipeCsvBytes());
 writeFileSync(join(fixturesDir, "spec128-filter.xlsx"), await buildSpec128FilterXlsxBytes());
 writeFileSync(join(fixturesDir, "spec128-filter.ods"), await buildSpec128FilterOdsBytes());
+// --- SPEC-129 (xlsx) ---
+writeFileSync(join(fixturesDir, "spec129-cf.xlsx"), await buildSpec129CfXlsxBytes());
+// --- end SPEC-129 (xlsx) ---
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

@@ -48,6 +48,11 @@ import {
   SPEC116_VBA_PROJECT,
   SPEC128_FILTER_XLSX,
 } from "./fixtures/build";
+// SPEC-129 (xlsx)
+import { formatRange, parseRange } from "./address";
+import { buildSpec129CfXlsxBytes, SPEC129_CF_XLSX } from "./fixtures/build";
+import { addConditionalFormat, deleteRule, modelledDxf, moveRule, rulesByPriority, updateRule } from "./conditionalFormats";
+import { internDxf } from "./styles";
 import { setFilterCriteria } from "./filter";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
@@ -720,3 +725,109 @@ describe("SPEC-128: filter → save → reopen reproduces the autofilter, the so
     expect(filterForCompare(back.sheets[0]!).rows).toEqual([{ index: SPEC128_FILTER_XLSX.sales.userHiddenIndex, hidden: true, filterHidden: false }]);
   });
 });
+
+// ============================================================================
+// SPEC-129 (xlsx) — conditional formatting over spec129-cf.xlsx: an untouched
+// download is equalBytes per part; a dirty sheet whose rules were not edited
+// re-emits each block (and the extLst) verbatim; add/edit → save → reopen
+// reproduces the conditional formats and the dxfs they reference, minus the
+// minted ids, the x14 GUIDs and the source text, in the same priority order.
+// ============================================================================
+
+/** A model's conditional formats as the SPEC-129 round trips compare them:
+ * no minted ids, GUIDs or source text, each dxfId replaced by the dxf it
+ * names, a preserved rule's XML without its wire `priority` (the writer
+ * patches it to the model's); formats by their first rule's priority (xlsx
+ * keeps base and x14 formats in two lists, so their interleaving in the
+ * array is not carried — precedence is the priority). */
+function spec129Formats(model: SpreadsheetModel): unknown[] {
+  return model.sheets.map((sheet) =>
+    sheet.conditionalFormats
+      .toSorted((a, b) => (a.rules[0]?.priority ?? 0) - (b.rules[0]?.priority ?? 0))
+      .map((format) => ({
+        ranges: format.ranges,
+        pivot: format.pivot,
+        rules: format.rules.map(({ id: _id, x14Id: _guid, dxfId, ...rule }) => ({
+          ...rule,
+          ...(rule.kind === "preserved" ? { xml: rule.xml.replace(/^(<[^>]*?)\s+priority="\d+"/, "$1") } : {}),
+          dxf: dxfId === undefined ? undefined : modelledDxf(model.dxfs[dxfId]!),
+        })),
+      })),
+  );
+}
+
+/** A part's text. */
+function spec129Decode(bytes: Uint8Array | undefined): string {
+  return new TextDecoder().decode(bytes);
+}
+
+/** The first sheet's rules in priority order, as the manager lists them. */
+function spec129Order(model: SpreadsheetModel): string[] {
+  return rulesByPriority(model.sheets[0]!.conditionalFormats).map(({ format, rule }) => `${format.ranges.map(formatRange).join(" ")} ${rule.kind}`);
+}
+
+describe("SPEC-129 (xlsx): spec129-cf.xlsx round trips", () => {
+  const F = SPEC129_CF_XLSX;
+
+  it("an untouched download is equalBytes per part, in order — after the store's JSON trip too", async () => {
+    const source = await buildSpec129CfXlsxBytes();
+    const model = await readSpreadsheetBytes(source, "xlsx", "book");
+    const original = await unzip(source);
+    for (const candidate of [model, JSON.parse(JSON.stringify(model)) as SpreadsheetModel]) {
+      const out = await unzip((await spreadsheetDownload(candidate)).bytes);
+      expect([...out.keys()]).toEqual([...original.keys()]);
+      for (const [name, bytes] of original) {
+        expect(equalBytes(out.get(name)!, bytes), name).toBe(true);
+      }
+    }
+  });
+
+  it("a dirty sheet whose rules were not edited re-emits each block, the conditional-formatting ext and the sparkline ext verbatim", async () => {
+    const source = await buildSpec129CfXlsxBytes();
+    const model = await readSpreadsheetBytes(source, "xlsx", "book");
+    setCellEntry(model, 0, { row: 20, col: 9 }, { value: "note" });
+    model.sheets = model.sheets.map((each, position) => (position === 0 ? { ...each, dirty: true } : each));
+    const parts = await unzip((await spreadsheetDownload(model)).bytes);
+    const original = await unzip(source);
+    const scores = spec129Decode(parts.get(F.scores.partName));
+    expect(scores).not.toBe(spec129Decode(original.get(F.scores.partName)));
+    expect(scores).toContain(F.scores.blocks.join(""));
+    expect(scores).toContain(`<extLst>${F.scores.cfExt}${F.scores.sparklineExt}</extLst>`);
+    for (const name of [F.more.partName, "xl/styles.xml"]) {
+      expect(equalBytes(parts.get(name)!, original.get(name)!), name).toBe(true);
+    }
+    const back = await readSpreadsheetBytes(await spreadsheetDownload(model).then((download) => download.bytes), "xlsx", "book");
+    expect(spec129Formats(back)).toEqual(spec129Formats(model));
+  });
+
+  it("add/edit → save → reopen reproduces the conditional formats and the dxfs they reference, in the same priority order", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec129CfXlsxBytes(), "xlsx", "book");
+    const scores = model.sheets[0]!;
+    // The e2e's flow: "> 120" in green over B2:B13 (first), moved down one.
+    const green = internDxf(model, { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } });
+    expect(green).toBe(F.dxfs.length);
+    const { ruleId } = addConditionalFormat(model, scores.id, [parseRange("B2:B13")!], { kind: "cellIs", operator: "greaterThan", formulas: ["120"], dxfId: green });
+    moveRule(model, scores.id, ruleId, "down");
+    // The data bar recoloured (its GUID kept), More's duplicates rule deleted.
+    const bar = model.sheets[0]!.conditionalFormats.flatMap((format) => format.rules).find((rule) => rule.kind === "dataBar")!;
+    if (bar.kind !== "dataBar") {
+      throw new Error("no data bar");
+    }
+    updateRule(model, scores.id, bar.id, { kind: "dataBar", bar: { ...bar.bar, color: "#ff8800", gradient: true } });
+    const more = model.sheets[1]!;
+    deleteRule(model, more.id, more.conditionalFormats.flatMap((format) => format.rules).find((rule) => rule.kind === "duplicates")!.id);
+
+    const parts = await unzip((await spreadsheetDownload(model)).bytes);
+    const styles = spec129Decode(parts.get("xl/styles.xml"));
+    expect(styles).toContain(`<dxfs count="${F.dxfs.length + 1}">${F.dxfXml.join("")}<dxf><font><color rgb="FF006100"/></font><fill><patternFill><bgColor rgb="FFC6EFCE"/></patternFill></fill></dxf></dxfs>`);
+    expect(spec129Decode(parts.get(F.scores.partName))).toContain(F.scores.sparklineExt);
+    const back = await readSpreadsheetBytes(await spreadsheetDownload(model).then((download) => download.bytes), "xlsx", "book");
+    expect(spec129Formats(back)).toEqual(spec129Formats(model));
+    // The manager lists the same rules in the same order.
+    expect(spec129Order(back)).toEqual(spec129Order(model));
+    expect(spec129Order(back).slice(0, 2)).toEqual(["B2:B13 cellIs", "B2:B13 cellIs"]);
+  });
+});
+// ============================================================================
+// end of SPEC-129 (xlsx)
+// ============================================================================
