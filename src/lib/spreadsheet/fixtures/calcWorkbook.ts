@@ -78,6 +78,7 @@ export function calcSheet(name: string, cells: Record<string, CellSpec>, kind: S
     defaultColWidthPx: 64,
     defaultRowHeightPt: 15,
     merges: [],
+    conditionalFormats: [],
   };
 }
 
@@ -96,6 +97,7 @@ export function calcWorkbook(sheets: Record<string, Record<string, CellSpec>>, o
     opaque: [],
     styles: [{}],
     defaultStyleId: 0,
+    dxfs: [],
   };
   if (options.calc) {
     model.calc = options.calc;

@@ -59,6 +59,7 @@ import type { FormatContext } from "./numberFormat/render";
 
 function sheetWith(partial: Partial<Sheet> = {}): Sheet {
   return {
+    conditionalFormats: [],
     id: "sheet-1",
     name: "Sheet1",
     visibility: "visible",

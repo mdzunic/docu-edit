@@ -249,6 +249,7 @@ export function readCsvBytes(bytes: Uint8Array, format: "csv" | "tsv", title: st
     opaque: [{ name: CSV_SOURCE_PART, data: bytesToBase64(bytes) }],
     styles: defaultStyles(),
     defaultStyleId: 0,
+    dxfs: [],
   };
   /** Each distinct inferred format's style id, interned once. */
   const styleIds = new Map<string, number>();
@@ -307,6 +308,7 @@ export function readCsvBytes(bytes: Uint8Array, format: "csv" | "tsv", title: st
     rows,
     columns: [],
     merges: [],
+    conditionalFormats: [],
     defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
     defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
   };

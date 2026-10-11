@@ -87,6 +87,7 @@ function tableXml(spec: Omit<TableSpec, "modelName" | "cells">): string {
 
 function grid(name: string, sourceXml: string, rows: Row[]): Sheet {
   return {
+    conditionalFormats: [],
     id: `sheet:${name}`,
     name,
     visibility: "visible",
@@ -112,6 +113,7 @@ function odsBook(spec: BookSpec): SpreadsheetModel {
     sheets.push({ ...grid(copy.name, copy.sourceXml, copy.cells ?? origin.rows), copiedFrom: copy.copiedFrom });
   }
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "book",
     title: "Retained",

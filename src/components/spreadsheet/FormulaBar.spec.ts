@@ -87,6 +87,7 @@ describe("FormulaBar edit text (SPEC-118)", () => {
     [7, { col: 0, value: 46303, styleId: 1 }], // A8: a date at midnight
   ];
   const sheet: Sheet = {
+    conditionalFormats: [],
     id: "s1",
     name: "Sheet1",
     visibility: "visible",
@@ -98,6 +99,7 @@ describe("FormulaBar edit text (SPEC-118)", () => {
     merges: [],
   };
   const model: SpreadsheetModel = {
+    dxfs: [],
     kind: "spreadsheet",
     id: "w",
     title: "W",

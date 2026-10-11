@@ -37,6 +37,7 @@ import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
 import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "../core/theme";
 import type { CellRef, GridRange } from "./address";
+import type { ConditionalFormat, Dxf } from "./conditionalFormats";
 import type { AutoFilter } from "./filter";
 import type { SpreadsheetLocaleTag } from "./numberFormat/locale";
 import type { SheetSelection } from "./selection";
@@ -352,6 +353,11 @@ export interface Sheet {
   /** The record of the last sort outside an autofilter (xlsx worksheet
    *  `<sortState>`): never re-applied. Replaced, never mutated. */
   sortState?: SortState;
+  // --- SPEC-129 (conditionalFormats.ts is the normative source) ---
+  /** The sheet's conditional formats, in source order (new ones appended);
+   *  precedence is each rule's sheet-global `priority`. Copy-on-write: every
+   *  command replaces the array and the formats it touches. */
+  conditionalFormats: ConditionalFormat[];
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -423,6 +429,12 @@ export interface SpreadsheetModel {
   /** How a `.csv`/`.tsv` source was written — present exactly when `format`
    *  is "csv" or "tsv". */
   csv?: CsvDialect;
+  // --- SPEC-129 ---
+  /** The differential-style table conditional formats reference (index =
+   *  the xlsx `dxfId`): append-only — styles.ts's internDxf replaces the
+   *  array when it appends, never removes or reorders an entry, so every
+   *  dxfId stays valid. */
+  dxfs: Dxf[];
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or

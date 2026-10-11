@@ -302,6 +302,7 @@ export async function parseXlsx(
       defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
       defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
       merges: [],
+      conditionalFormats: [],
     };
     const bytes = parts.get(entry.partName);
     if (entry.kind === "grid" && bytes) {
@@ -327,6 +328,7 @@ export async function parseXlsx(
     dateSystem,
     opaque: await encodeOpaque(parts),
     properties: coreProperties(parts),
+    dxfs: [],
   };
   if (theme !== undefined) {
     parsed.theme = theme;

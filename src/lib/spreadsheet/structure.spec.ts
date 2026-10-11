@@ -33,6 +33,7 @@ const colsEdit = (kind: "insertCols" | "deleteCols", at: number, count: number, 
 
 function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
   return {
+    conditionalFormats: [],
     id,
     name,
     visibility: "visible",
@@ -48,6 +49,7 @@ function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
 
 function model(sheets: Sheet[]): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "m",
     title: "T",

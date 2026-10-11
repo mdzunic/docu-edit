@@ -105,6 +105,7 @@ export function emptySheet(name: string): Sheet {
     rows: [],
     columns: [],
     merges: [],
+    conditionalFormats: [],
     defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
     defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
     dirty: true,
@@ -130,6 +131,7 @@ export function createBlankWorkbook(): SpreadsheetModel {
     styles: [{ font: { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } }, namedStyle: "Normal" }],
     defaultStyleId: 0,
     theme: structuredClone(DEFAULT_THEME),
+    dxfs: [],
   };
 }
 

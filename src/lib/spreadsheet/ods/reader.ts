@@ -520,6 +520,7 @@ export function readOdsContent(
       defaultColWidthPx: layout.defaultColWidthPx,
       defaultRowHeightPt: layout.defaultRowHeightPt,
       merges: layout.merges,
+      conditionalFormats: [],
     };
     if (done.tabColor !== undefined) {
       sheet.tabColor = done.tabColor;
@@ -892,6 +893,7 @@ export async function parseOds(
     odsContentEnvelope: { prefix: content.prefix, suffix: content.suffix },
     opaque: await encodeOpaque(parts),
     properties: meta ? parseOdfMeta(partText(meta)) : {},
+    dxfs: [],
   };
   if (content.dates.odsNullDate !== undefined) {
     parsed.odsNullDate = content.dates.odsNullDate;

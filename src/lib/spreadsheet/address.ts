@@ -179,3 +179,40 @@ export function usedRange(sheet: Sheet): GridRange | null {
   }
   return range;
 }
+
+/** The cells of `ranges` outside `cut` (SPEC-129, the contract SPEC-130
+ * states identically), as rectangles: each range in source order, the same
+ * object when `cut` misses it, else its uncovered parts — the band above
+ * the cut, then the parts left and right of it, then the band below — each
+ * remainder cut again by the next range of `cut`. A range `cut` covers
+ * entirely contributes nothing. Pure. */
+export function subtractRanges(ranges: readonly GridRange[], cut: GridRange | readonly GridRange[]): GridRange[] {
+  const cuts: readonly GridRange[] = "top" in cut ? [cut as GridRange] : (cut as readonly GridRange[]);
+  let out: GridRange[] = [...ranges];
+  for (const piece of cuts) {
+    out = out.flatMap((range) => subtractOne(range, piece));
+  }
+  return out;
+}
+
+function subtractOne(range: GridRange, cut: GridRange): GridRange[] {
+  if (cut.top > range.bottom || cut.bottom < range.top || cut.left > range.right || cut.right < range.left) {
+    return [range];
+  }
+  const pieces: GridRange[] = [];
+  const top = Math.max(range.top, cut.top);
+  const bottom = Math.min(range.bottom, cut.bottom);
+  if (range.top < cut.top) {
+    pieces.push({ top: range.top, left: range.left, bottom: cut.top - 1, right: range.right });
+  }
+  if (range.left < cut.left) {
+    pieces.push({ top, left: range.left, bottom, right: cut.left - 1 });
+  }
+  if (range.right > cut.right) {
+    pieces.push({ top, left: cut.right + 1, bottom, right: range.right });
+  }
+  if (range.bottom > cut.bottom) {
+    pieces.push({ top: cut.bottom + 1, left: range.left, bottom: range.bottom, right: range.right });
+  }
+  return pieces;
+}

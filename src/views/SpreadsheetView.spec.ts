@@ -121,13 +121,13 @@ function gridSheet(
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** A foreign sheet (chartsheet, dialogsheet, macrosheet): a placeholder, its
  * part carried verbatim. */
 function foreignSheet(name: string, partName: string): Sheet {
-  return { id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
 }
 
 /** A hand-built workbook with no source package (`opaque` is empty, so it
@@ -135,6 +135,7 @@ function foreignSheet(name: string, partName: string): Sheet {
  * current reader version so no upgrade runs. */
 function handBuiltBook(sheets: Sheet[], activeSheetIndex = 0): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: crypto.randomUUID(),
     title: "Hand built",
@@ -176,7 +177,7 @@ function millionRowSheet(): Sheet {
     }
     rows.push({ index, cells });
   }
-  return { id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** The tab strip, one "name:aria-selected:tabindex" string per tab. */

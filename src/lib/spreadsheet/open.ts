@@ -418,6 +418,7 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
     opaque: parsed.opaque,
     styles: parsed.styles.length > 0 ? parsed.styles : defaultStyles(),
     defaultStyleId: 0,
+    dxfs: parsed.dxfs,
   };
   if (parsed.theme !== undefined) {
     model.theme = parsed.theme;
@@ -523,7 +524,12 @@ async function upgradeCsvModel(model: SpreadsheetModel, format: "csv" | "tsv"): 
   const sheet = model.sheets[0];
   const unedited = dialect !== undefined && model.sheets.length === 1 && sheet?.id === dialect.sheetId && !sheet.dirty && !model.structureDirty;
   if (!unedited) {
-    return { ...model, readerVersion: SPREADSHEET_READER_VERSION };
+    // Re-stamped, never re-read: SPEC-129's fields start empty, as a read
+    // of a delimited-text file leaves them.
+    const sheets = model.sheets.some((each) => each.conditionalFormats === undefined)
+      ? model.sheets.map((each) => (each.conditionalFormats === undefined ? { ...each, conditionalFormats: [] } : each))
+      : model.sheets;
+    return { ...model, sheets, dxfs: model.dxfs ?? [], readerVersion: SPREADSHEET_READER_VERSION };
   }
   const { csvSourceBytes, readCsvBytes } = await import("./csv/parse");
   const fresh = readCsvBytes(csvSourceBytes(model), format, model.title, {

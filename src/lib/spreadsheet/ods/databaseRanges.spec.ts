@@ -682,7 +682,7 @@ describe("writing a workbook", () => {
   });
 });
 
-const sheetOf = (rows: Row[]): Sheet => ({ id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] });
+const sheetOf = (rows: Row[]): Sheet => ({ conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] });
 /** serializeTable for a new sheet holding `rows`. */
 const writeRows = (rows: Row[]): string =>
   serializeTable(sheetOf(rows), { model: { styles: [{}], dateSystem: "1900", format: "ods" }, registry: new OdsStyleRegistry(), locale: SPREADSHEET_LOCALES["en-US"] });

@@ -40,7 +40,7 @@ function sheetOf(cells: ReadonlyArray<readonly [number, number, Cell["value"]]>,
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...extra };
+  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...extra };
 }
 
 /** `sheet` with row `index` hidden. */
@@ -53,6 +53,7 @@ function hideRow(sheet: Sheet, index: number): Sheet {
 
 function bookOf(sheet: Sheet, styles: CellStyle[] = [{}]): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "book",
     title: "Book",

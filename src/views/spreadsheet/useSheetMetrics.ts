@@ -23,6 +23,7 @@ const EMPTY_SHEET: Sheet = {
   defaultColWidthPx: 64,
   defaultRowHeightPt: 15,
   merges: [],
+  conditionalFormats: [],
 };
 
 export function useSheetMetrics(sheet: () => Sheet | null) {

@@ -90,6 +90,7 @@ function sheetOf(layout: Layout = {}): Sheet {
     })
     .toSorted((a, b) => a.min - b.min);
   return {
+    conditionalFormats: [],
     id: "sheet-1",
     name: "Sheet1",
     visibility: "visible",

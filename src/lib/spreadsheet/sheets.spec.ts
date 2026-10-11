@@ -85,6 +85,7 @@ function gridSheet(name: string, cells: Record<string, CellSpec> = {}, extra: Pa
     }
   }
   return {
+    conditionalFormats: [],
     id: crypto.randomUUID(),
     name,
     visibility: "visible",
@@ -104,6 +105,7 @@ function foreignSheet(name: string, partName: string, extra: Partial<Sheet> = {}
 
 function book(sheets: Sheet[], activeSheetIndex = 0, format: SpreadsheetFormat = "xlsx"): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: crypto.randomUUID(),
     title: "Hand built",
@@ -275,6 +277,7 @@ describe("createBlankWorkbook", () => {
           rows: [],
           columns: [],
           merges: [],
+          conditionalFormats: [],
           defaultColWidthPx: 64,
           defaultRowHeightPt: 15,
           dirty: true,
@@ -286,6 +289,7 @@ describe("createBlankWorkbook", () => {
       styles: [{ font: { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } }, namedStyle: "Normal" }],
       defaultStyleId: 0,
       theme: structuredClone(DEFAULT_THEME),
+      dxfs: [],
     });
   });
 

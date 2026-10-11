@@ -7,6 +7,7 @@
 import { resolveColor, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../core/theme";
 import { findRow, getCell } from "./address";
 import { maxDigitWidthPx } from "./geometry";
+import type { Dxf } from "./conditionalFormats";
 import type { CellBorderEdge, CellBorders, CellFont, CellStyle, ColumnSpan, Sheet, SpreadsheetModel } from "./model";
 
 /** The default style table: one empty ("Normal") style. */
@@ -157,6 +158,64 @@ export function internStyle(model: Pick<SpreadsheetModel, "styles">, style: Cell
   nextTable.set(key, next.length - 1);
   internTables.set(next, nextTable);
   model.styles = next;
+  return next.length - 1;
+}
+
+// --- SPEC-129: the differential-style table (THE normative source for internDxf) ------
+// internDxf(model, dxf) is internStyle's twin for `model.dxfs`: the key is
+// the dxf as JSON with keys sorted and `sourceXml`/`sourceStyleName`
+// omitted; an equal entry's index is returned (a source-backed one first),
+// else the dxf — without its source fields, which no source wrote — is
+// appended by REPLACING the array (`dxfs` is a WORKBOOK_SNAPSHOT_FIELDS
+// entry, so an undo past the append restores the shorter array). Nothing is
+// ever removed or reordered: every dxfId a sheet, or SPEC-133's preserved
+// table styles, references stays valid.
+
+/** A dxf's interning key (see above). */
+export function dxfKey(dxf: Dxf): string {
+  const { sourceXml: _xml, sourceStyleName: _name, ...rest } = dxf;
+  return stableJson(rest);
+}
+
+function isSourceBackedDxf(dxf: Dxf): boolean {
+  return dxf.sourceXml !== undefined || dxf.sourceStyleName !== undefined;
+}
+
+const dxfTables = new WeakMap<readonly Dxf[], Map<string, number>>();
+
+function dxfTable(dxfs: readonly Dxf[]): Map<string, number> {
+  let table = dxfTables.get(dxfs);
+  if (!table) {
+    table = new Map();
+    dxfs.forEach((dxf, index) => {
+      const key = dxfKey(dxf);
+      const found = table!.get(key);
+      if (found === undefined || (!isSourceBackedDxf(dxfs[found]!) && isSourceBackedDxf(dxf))) {
+        table!.set(key, index);
+      }
+    });
+    dxfTables.set(dxfs, table);
+  }
+  return table;
+}
+
+/** The index of a dxf structurally equal to `dxf` — an existing entry's,
+ * a source-backed one first — else `dxf` appended copy-on-write (see
+ * above) and its index. */
+export function internDxf(model: Pick<SpreadsheetModel, "dxfs">, dxf: Dxf): number {
+  const dxfs = model.dxfs ?? [];
+  const table = dxfTable(dxfs);
+  const key = dxfKey(dxf);
+  const found = table.get(key);
+  if (found !== undefined) {
+    return found;
+  }
+  const { sourceXml: _xml, sourceStyleName: _name, ...fresh } = dxf;
+  const next = [...dxfs, structuredClone(fresh)];
+  const nextTable = new Map(table);
+  nextTable.set(key, next.length - 1);
+  dxfTables.set(next, nextTable);
+  model.dxfs = next;
   return next.length - 1;
 }
 

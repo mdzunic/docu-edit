@@ -166,10 +166,11 @@ describe("reader versions", () => {
     expect(model.preview?.cells[1]?.[1]).toBe("Revenue");
   });
 
-  it("omits empty optional fields when assembling (styles and the default style id are required)", () => {
+  it("omits empty optional fields when assembling (styles, the default style id and SPEC-129's dxfs are required)", () => {
     const model = assembleSpreadsheet("t", "xlsx", {
-      sheets: [{ id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
+      sheets: [{ conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
       styles: [{}],
+      dxfs: [],
       activeSheetIndex: 0,
       dateSystem: "1900",
       opaque: [],
@@ -180,6 +181,7 @@ describe("reader versions", () => {
         "activeSheetIndex",
         "dateSystem",
         "defaultStyleId",
+        "dxfs",
         "format",
         "id",
         "kind",

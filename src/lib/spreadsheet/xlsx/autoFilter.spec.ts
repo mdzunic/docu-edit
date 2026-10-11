@@ -52,7 +52,7 @@ function read(body: string, root = ROOT): WorksheetContent {
 
 /** A grid sheet with SPEC-117's defaults and `fields`. */
 function sheetOf(fields: Partial<Sheet> = {}): Sheet {
-  return { id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 /** A save context: a string cell's index is 100 + its order, a style id its own xf. */
