@@ -16,12 +16,15 @@
 // context's `structure`) and the merge warning (`merges`); the cell menu's
 // Insert…/Delete… go to the structure. SPEC-125: the cell menu's Cut, Copy,
 // Paste and Paste special… (`clipboard`), Paste special's dialog and the
-// drag-move's overwrite question (`rangeMove`). Runtime prop declarations
-// per the espree constraint (see AppShell.vue).
+// drag-move's overwrite question (`rangeMove`). SPEC-128: the Sort dialog,
+// the filter popover and its dialogs and the refusal alert
+// (SortFilterSurfaces, the grid context's `sortFilter`). Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
+import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import FormatCellsDialog from "./FormatCellsDialog.vue";
 import FormulaBar from "./FormulaBar.vue";
@@ -41,6 +44,7 @@ import SheetTabDeleteDialog from "./SheetTabDeleteDialog.vue";
 import SheetTabMenu from "./SheetTabMenu.vue";
 import SheetTabs from "./SheetTabs.vue";
 import SheetUnhideDialog from "./SheetUnhideDialog.vue";
+import SortFilterSurfaces from "./SortFilterSurfaces.vue";
 
 const props = defineProps({
   /** useWorkbookLoad's return. */
@@ -63,6 +67,8 @@ function insertOrDelete(mode = "insert") {
   grid.value.structure?.insertOrDelete(mode === "delete" ? "delete" : "insert");
 }
 const grid = computed(() => asSheetGridContext(props.grid));
+/** SPEC-128's sort and filter (null: not wired). */
+const sortFilter = computed(() => sortFilterOf(props.grid));
 
 /** The cell menu's Cut, Copy, Paste and Paste special… (SPEC-125). */
 function clipboard(action = "copy") {
@@ -228,6 +234,10 @@ const tabs = computed(() => {
       v-if="grid.rangeMove?.overwrite.value"
       @confirm="grid.rangeMove.confirmOverwrite()"
       @cancel="grid.rangeMove.cancelOverwrite()"
+    />
+    <SortFilterSurfaces
+      v-if="sortFilter"
+      :sort-filter="sortFilter"
     />
     <SheetTabColorPicker
       v-if="commands.coloring.value"

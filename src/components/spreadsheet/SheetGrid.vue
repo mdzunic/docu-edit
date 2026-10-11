@@ -39,13 +39,17 @@
 // (`sheet-fill-preview`, `sheet-move-preview` with the destination's address
 // in `sheet-move-tooltip`) among the overlays, the fill options chip
 // (FillOptionsChip) above them, and the move cursor over the selection's
-// outline. Runtime prop declarations per the espree constraint (see
-// AppShell.vue).
+// outline. SPEC-128: the paper draws the autofilter's `filter-button`s (a
+// press opens the column's popover, the view's useSortFilter through the
+// context's `sortFilter`), and while the filter holds a criterion the row
+// headers of its data rows carry data-filtered="true" in the accent colour.
+// Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
 import { asSheet, COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "../../views/spreadsheet/useSheetViewport";
 import { refColor } from "../../views/spreadsheet/cellEditorDom";
+import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import CellEditor from "./CellEditor.vue";
 import FillOptionsChip from "./FillOptionsChip.vue";
 import SheetCellLayer from "./SheetCellLayer.vue";
@@ -86,6 +90,18 @@ const resizeGuide = computed(() => grid.resize.value?.guide.value ?? null);
 const resizeTooltip = computed(() => grid.resize.value?.tooltip.value ?? null);
 /** SPEC-125: the ants, the fill handle, the previews, the chip, the cursor. */
 const transfer = computed(() => grid.transfer.value);
+/** SPEC-128: sort and filter (null: not wired). */
+const sortFilter = computed(() => sortFilterOf(props.context));
+const filterButton = computed(() => sortFilter.value?.filterButtonAt);
+
+function onFilterButton(col = 0, anchor = { left: 0, top: 0 }) {
+  sortFilter.value?.pressFilterButton(col, anchor);
+}
+
+/** A row header's data-filtered (SPEC-128). */
+function filtered(row = 0) {
+  return sortFilter.value?.isRowFiltered(row) ? "true" : undefined;
+}
 
 function px(value = 0) {
   return `${value}px`;
@@ -153,7 +169,9 @@ function unscroll(event = new Event("scroll")) {
             :grid-lines="grid.showGridLines.value"
             :frozen-width="vp.frozenW.value"
             :stale-title="grid.staleTitle"
+            :filter-button="filterButton"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+            @filter-button="onFilterButton"
           />
           <div
             class="sheet-overlays"
@@ -311,6 +329,7 @@ function unscroll(event = new Event("scroll")) {
                 role="rowheader"
                 data-testid="sheet-row-header"
                 :data-index="row.index"
+                :data-filtered="filtered(row.index)"
                 aria-colindex="1"
                 :style="{ top: px(row.start), height: px(row.size), lineHeight: px(row.size - 1) }"
               >
@@ -329,6 +348,7 @@ function unscroll(event = new Event("scroll")) {
                 role="rowheader"
                 data-testid="sheet-row-header"
                 :data-index="row.index"
+                :data-filtered="filtered(row.index)"
                 aria-colindex="1"
                 :style="{ top: px(row.start), height: px(row.size), lineHeight: px(row.size - 1) }"
               >
@@ -601,6 +621,11 @@ function unscroll(event = new Event("scroll")) {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   color: var(--text-primary);
   font-weight: var(--weight-medium);
+}
+
+/* SPEC-128: the row numbers of a filtered range's data rows. */
+.row-header[data-filtered="true"] {
+  color: var(--text-accent);
 }
 
 /* A hidden run's header boundary: a short double tick where the run was. */

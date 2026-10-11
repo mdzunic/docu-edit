@@ -3,6 +3,7 @@
 // runtime-typed prop into the shape the composable that built it declares,
 // or derives what the template binds from it.
 import type { BandItem, CellItem } from "./useSheetCells";
+import type { FilterButtonView } from "./useSortFilter";
 
 /** SheetCellLayer's `bands` (useSheetCells' BandItem[]). */
 export function asBandItems(value: unknown): BandItem[] {
@@ -15,6 +16,17 @@ export type StaleTitle = (row: number, col: number) => string | undefined;
 /** SheetCellLayer's `staleTitle` (useSheetGrid's). */
 export function asStaleTitle(value: unknown): StaleTitle | undefined {
   return typeof value === "function" ? (value as StaleTitle) : undefined;
+}
+
+/** The header row's filter buttons by position (SPEC-128; useSortFilter's
+ * filterButtonAt). */
+export type FilterButtonAt = (row: number, col: number) => FilterButtonView | null;
+
+/** The `filter-button` a cell element draws: none or one (a list, so the
+ * template binds it once). A merge's paint-only copy draws none. */
+export function filterButtonsOf(cell: CellItem, at: unknown): FilterButtonView[] {
+  const view = typeof at === "function" && !cell.paintOnly ? (at as FilterButtonAt)(cell.row, cell.col) : null;
+  return view ? [view] : [];
 }
 
 /** A cell element's identity and ARIA: its id (aria-activedescendant's

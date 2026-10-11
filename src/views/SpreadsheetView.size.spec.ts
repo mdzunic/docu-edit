@@ -22,12 +22,17 @@
 //                    WorkbookAppBar.vue as the CSV import bar and dialog
 //                    arrived (one useCsvImport call, two hookups) — 98 -> 96
 //                    lines, measured 97 with the final newline, no headroom
+//   2026-10-11   93  SPEC-128: the status bar's wiring moved into
+//                    WorkbookStatusBar.vue as sort and filter arrived (one
+//                    useSortFilter call; its surfaces ride the grid context)
+//                    — 96 -> 92 lines, measured 93 with the final newline, no
+//                    headroom
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 97;
+const LINE_BUDGET = 93;
 
 describe("SpreadsheetView size budget", () => {
   it(`SpreadsheetView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
