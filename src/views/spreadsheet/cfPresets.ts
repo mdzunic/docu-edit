@@ -180,3 +180,39 @@ export const CF_FORMAT_PRESETS: readonly CfFormatPreset[] = [
     },
   },
 ];
+
+/** The value presets, which open the rule editor pre-set to their type and
+ * operator rather than applying directly (SPEC-129 "Presets"), and New
+ * rule…, which opens it blank. */
+export const EDITOR_PRESETS: ReadonlySet<string> = new Set([
+  "cf-preset-greater-than",
+  "cf-preset-less-than",
+  "cf-preset-between",
+  "cf-preset-equal",
+  "cf-preset-text-contains",
+  "cf-preset-date",
+  "cf-preset-top10",
+  "cf-preset-bottom10",
+  "cf-preset-new-rule",
+]);
+
+/** `cf-add`'s menu sections, in Excel's order. */
+export const CF_ADD_PRESET_GROUPS: readonly { label: string; presets: readonly CfAddPreset[] }[] = [
+  { label: "Highlight cells rules", prefixes: ["greater-than", "less-than", "between", "equal", "text-contains", "date", "duplicates"] },
+  { label: "Top/bottom rules", prefixes: ["top10", "bottom10", "above-average", "below-average"] },
+  { label: "Data bars", prefixes: ["data-bar-"] },
+  { label: "Colour scales", prefixes: ["color-scale-"] },
+  { label: "Icon sets", prefixes: ["icon-set-"] },
+  { label: "", prefixes: ["new-rule"] },
+].map(({ label, prefixes }) => ({
+  label,
+  presets: CF_ADD_PRESETS.filter((preset) => {
+    const id = preset.testid.slice("cf-preset-".length);
+    return prefixes.some((prefix) => (prefix.endsWith("-") ? id.startsWith(prefix) : id === prefix));
+  }),
+}));
+
+/** The preset with `testid`. */
+export function addPreset(testid: string): CfAddPreset | undefined {
+  return CF_ADD_PRESETS.find((preset) => preset.testid === testid);
+}
