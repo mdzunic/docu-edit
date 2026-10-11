@@ -82,8 +82,25 @@ describe("snapshots are by reference", () => {
     expect(snapshot.sheets[0]).not.toBe(model.sheets[0]);
   });
 
+  it("holds SPEC-128's autofilter and sort record by reference, and an undo restores them by identity", () => {
+    const model = createBlankWorkbook();
+    const autoFilter = { range: { top: 0, left: 0, bottom: 3, right: 1 }, columns: [{ colId: 0, criteria: { kind: "values" as const, values: ["West"], blanks: false, dateGroups: [] } }] };
+    const sortState = { ref: { top: 1, left: 3, bottom: 9, right: 4 }, keys: [{ col: 4, descending: true }] };
+    model.sheets = [{ ...model.sheets[0]!, autoFilter, sortState }];
+    const snapshot = takeSnapshot(model);
+    expect(snapshot.sheets[0]!.autoFilter).toBe(autoFilter);
+    expect(snapshot.sheets[0]!.sortState).toBe(sortState);
+    const { undo } = mount(model);
+    undo.record("Clear filters", { sheetId: model.sheets[0]!.id });
+    model.sheets = [{ ...model.sheets[0]!, autoFilter: { ...autoFilter, columns: [] } }];
+    undo.commit();
+    undo.undo();
+    expect(model.sheets[0]!.autoFilter).toBe(autoFilter);
+    expect(model.sheets[0]!.sortState).toBe(sortState);
+  });
+
   it("names the by-reference fields the spec lists", () => {
-    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen"]);
+    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState"]);
     expect(WORKBOOK_SNAPSHOT_FIELDS).toEqual(["activeSheetIndex", "structureDirty", "styles", "opaque", "odsContentEnvelope"]);
   });
 });
@@ -196,6 +213,24 @@ describe("the edit pipeline", () => {
     model.sheets = [{ ...now, rows: now.rows.map((row) => (row.index === 0 ? { ...row, cells: [{ col: 0, value: 7 }] } : row)) }];
     undo.commit();
     expect(recalls[3]).toEqual([cellKey(sheet.id, 0, 0)]);
+  });
+
+  it("a step that changes filterHidden (a filter command) recalculates every cell calling SUBTOTAL or AGGREGATE too (SPEC-128)", () => {
+    const model = createBlankWorkbook();
+    const sheet = model.sheets[0]!;
+    sheet.rows = [
+      { index: 0, cells: [{ col: 0, value: "Region" }] },
+      { index: 1, cells: [{ col: 0, value: 2 }] },
+      { index: 2, cells: [{ col: 0, value: 3, formula: "SUBTOTAL(9,A2:A2)" }] },
+    ];
+    const { undo, recalls } = mount(model);
+    const subtotal = cellKey(sheet.id, 2, 0);
+    undo.record("Filter", { sheetId: sheet.id });
+    model.sheets = [{ ...sheet, rows: sheet.rows.map((row) => (row.index === 1 ? { ...row, filterHidden: true as const } : row)) }];
+    undo.commit();
+    expect(recalls[0]).toContain(subtotal);
+    undo.undo();
+    expect(recalls[1]).toContain(subtotal);
   });
 
   it("undoing everything leaves no sheet dirty and no structure change", () => {
