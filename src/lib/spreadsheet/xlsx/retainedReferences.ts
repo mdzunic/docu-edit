@@ -7,13 +7,12 @@
 // this table in the change that models its element (structure.ts).
 //
 // | Part | Element / attribute | Kind |
-// | sheet | `conditionalFormatting@sqref`; `cfRule/formula` | sqref; formula |
 // | sheet | `dataValidation@sqref`; `formula1`, `formula2` | sqref; formula |
 // | sheet | `customSheetView`'s `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | sheet | `hyperlink@ref` | range |
 // | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
-// | sheet `extLst` | `x14:conditionalFormatting/xm:sqref`, its `xm:f`; `x14:dataValidation/xm:sqref`, `x14:formula1|2/xm:f`; `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
+// | sheet `extLst` | `x14:dataValidation/xm:sqref`, `x14:formula1|2/xm:f`; `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
 // | workbook | `definedName` text (but the model's `_xlnm._FilterDatabase`s) | formula |
 // | tables | `table@ref`, `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | charts (not style/colors parts) | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
@@ -32,6 +31,12 @@
 //   the model) — so nothing is adjusted twice. Any other (an Advanced
 //   Filter's, or one with no localSheetId) is still adjusted here. A table part's
 //   autoFilter and sortState (SPEC-133's) and a customSheetView's stay here.
+// - Retired by SPEC-129 (its `conditionalFormats` adjusters, structure.ts's
+//   and move.ts's, move the model; the writer re-serialises a dirty sheet's
+//   conditional formats from it): `conditionalFormatting@sqref` and every
+//   `cfRule/formula`, and in the sheet `extLst` each
+//   `x14:conditionalFormatting`'s `xm:sqref` and every `xm:f` inside it —
+//   left verbatim, never removed, so nothing is adjusted twice.
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
@@ -49,12 +54,11 @@
 // - Range text is a whitespace-separated A1 list: each entry through
 //   `range`, a moved one printed with its own `$` markers and shape (one
 //   cell or two), an untouched or unparseable one and every separator kept
-//   as bytes. Where an element may go (conditionalFormatting, dataValidation,
-//   hyperlink, protectedRange, ignoredError, cellWatch, comment,
-//   threadedComment, x14:conditionalFormatting, x14:dataValidation,
-//   x14:sparkline) an entry mapped to null is dropped, with the separator
-//   before it, and an element left with no entry is removed; anywhere else a
-//   null leaves the entry as it was.
+//   as bytes. Where an element may go (dataValidation, hyperlink,
+//   protectedRange, ignoredError, cellWatch, comment, threadedComment,
+//   x14:dataValidation, x14:sparkline) an entry mapped to null is dropped,
+//   with the separator before it, and an element left with no entry is
+//   removed; anywhere else a null leaves the entry as it was.
 // - Removal takes the whole element and what an empty container cannot be
 //   left as: `<dataValidations>`, `<hyperlinks>`, `<protectedRanges>`,
 //   `<ignoredErrors>` and `<cellWatches>` go with their last item, a
@@ -473,8 +477,7 @@ interface Pass {
 
 /** Sheet elements an edit can empty, with their range attribute and the
  * container they are items of. */
-const REMOVABLE_SHEET_ELEMENTS: ReadonlyMap<string, { attribute: string; container?: string }> = new Map([
-  ["conditionalFormatting", { attribute: "sqref" }],
+const REMOVABLE_SHEET_ELEMENTS: ReadonlyMap<string, { attribute: string; container: string }> = new Map([
   ["dataValidation", { attribute: "sqref", container: "dataValidations" }],
   ["hyperlink", { attribute: "ref", container: "hyperlinks" }],
   ["protectedRange", { attribute: "sqref", container: "protectedRanges" }],
@@ -504,12 +507,12 @@ function insideModelledFilter(frame: Frame): boolean {
 }
 /** x14 elements whose `xm:sqref` child is their range, and the x14 elements
  * whose `xm:f` descendants are formulas. */
-const X14_SQREF_OWNERS: ReadonlySet<string> = new Set(["conditionalFormatting", "dataValidation", "sparkline"]);
-const X14_FORMULA_SCOPES: ReadonlySet<string> = new Set(["conditionalFormatting", "dataValidation", "sparklineGroup"]);
+const X14_SQREF_OWNERS: ReadonlySet<string> = new Set(["dataValidation", "sparkline"]);
+const X14_FORMULA_SCOPES: ReadonlySet<string> = new Set(["dataValidation", "sparklineGroup"]);
 
 /** Whether a worksheet's text may hold an element of the table. */
 const WORKSHEET_ELEMENTS =
-  /conditionalFormatting|dataValidation|autoFilter|sortState|hyperlink|rowBreaks|colBreaks|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
+  /dataValidation|autoFilter|sortState|hyperlink|rowBreaks|colBreaks|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
 
 function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
   const edits = new PartEdits(xml, pass.mapper);
@@ -528,7 +531,7 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
       }
       const removable = REMOVABLE_SHEET_ELEMENTS.get(frame.local);
       if (removable) {
-        if (removable.container !== undefined && parent?.local === removable.container) {
+        if (parent?.local === removable.container) {
           countItem(frame);
         }
         if (edits.rangeAttribute(frame, removable.attribute, host.name, true) === "gone") {
@@ -565,8 +568,6 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
         if (frame.local === "sparklines" && frame.items && frame.removedItems === frame.items && parent?.local === "sparklineGroup") {
           parent.remove = true;
         }
-      } else if (frame.local === "formula" && hasAncestor(frame, (at) => at.local === "cfRule" && at.ns !== X14_NS)) {
-        edits.formulaText(frame, contentEnd, host.id);
       } else if ((frame.local === "formula1" || frame.local === "formula2") && hasAncestor(frame, (at) => at.local === "dataValidation" && at.ns !== X14_NS)) {
         edits.formulaText(frame, contentEnd, host.id);
       } else if (EMPTY_CONTAINERS_REMOVED.has(frame.local) && frame.items && frame.removedItems === frame.items) {

@@ -13,7 +13,6 @@
 // | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
 // | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
 // | table start tag | `table:table@table:print-ranges` (emptied → the attribute removed) | list |
-// | inside tables | `calcext:conditional-format@calcext:target-range-address` (emptied → removed, and so is an emptied `calcext:conditional-formats`); `calcext:condition@calcext:value`, `@calcext:base-cell-address`; `calcext:formatting-entry@calcext:value` | list; formula; anchor |
 // | inside tables, `Cell.preservedXml` | `draw:*@table:end-cell-address`; `draw:object@draw:notify-on-update-of-ranges` | anchor; list |
 // | inside tables | `table:scenario@table:scenario-ranges` | list |
 // | `Object N/content.xml` | `chart:plot-area@table:cell-range-address`, `chart:series@chart:values-cell-range-address`, `@chart:label-cell-address`, `chart:domain@table:cell-range-address`, `chart:categories@table:cell-range-address` | list |
@@ -57,6 +56,14 @@
 //   this module's list rules, on the model's copy: the autofilter replaced
 //   without its sourceXml (the writer then serialises that filter), its
 //   sheet marked dirty.
+// - Retired by SPEC-129 (its `conditionalFormats` adjusters, structure.ts's
+//   and move.ts's, move the model; the writer re-serialises a dirty sheet's
+//   `calcext:conditional-formats` from it):
+//   `calcext:conditional-format@calcext:target-range-address`,
+//   `calcext:condition@calcext:value` and `@calcext:base-cell-address`, and
+//   `calcext:formatting-entry@calcext:value` — left verbatim, an emptied
+//   format and an emptied `calcext:conditional-formats` never removed, so
+//   nothing is adjusted twice.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -115,9 +122,6 @@ const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
   ["table:source-cell-range", [list("table:cell-range-address")]],
   ["table:consolidation", [list("table:source-cell-range-addresses"), anchor("table:target-cell-address")]],
   ["table:table", [list("table:print-ranges", "attribute")]],
-  ["calcext:conditional-format", [list("calcext:target-range-address", "element")]],
-  ["calcext:condition", [formula("calcext:value"), anchor("calcext:base-cell-address")]],
-  ["calcext:formatting-entry", [formula("calcext:value")]],
   ["table:scenario", [list("table:scenario-ranges")]],
   ["draw:object", [list("draw:notify-on-update-of-ranges"), END_CELL]],
 ]);
@@ -138,8 +142,8 @@ const CRITERIA_SOURCE = /table:condition-source-range-address\s*=/;
 const chartLocations: LocationTable = (element) => CHART_LOCATIONS.get(element);
 
 /** The prefilter: any of a table's attribute names followed by its `=` —
- * one pass (a bare name would match `calcext:value-type`, on every
- * LibreOffice cell). */
+ * one pass (a bare name would also match a longer one it begins, such as
+ * a filter's `table:condition-source` for `table:condition`). */
 function attributePattern(table: ReadonlyMap<string, readonly Location[]>): RegExp {
   const names = new Set([...table.values()].flat().map((location) => location.attribute));
   return new RegExp(`(?:${[...names].map((name) => name.replace(/[.-]/g, "\\$&")).join("|")})\\s*=`);
@@ -160,7 +164,6 @@ function decodedPart(bytes: Uint8Array): { bom: string; xml: string } {
 }
 
 const TRACKED_CHANGES = "table:tracked-changes";
-const CONDITIONAL_FORMATS = "calcext:conditional-formats";
 const CONTENT_XML = "content.xml";
 const OBJECT_CONTENT = /^(Object [^/]+)\/content\.xml$/;
 
@@ -375,10 +378,6 @@ interface Frame {
   remove: boolean;
   /** Nothing inside is adjusted (tracked changes, a removed element). */
   quiet: boolean;
-  /** `calcext:conditional-formats`: its element children, and how many of
-   * them are removed. */
-  children?: number;
-  removedChildren?: number;
 }
 
 class OdsRetainedRewrite {
@@ -629,15 +628,10 @@ class OdsRetainedRewrite {
           if (frame.quiet) {
             quiet -= 1;
           }
-          const emptied = frame.children !== undefined && frame.children > 0 && frame.removedChildren === frame.children;
-          if (frame.remove || emptied) {
+          if (frame.remove) {
             removeElement(frame.start, event.end);
           }
           return undefined;
-        }
-        const parent = stack.at(-1);
-        if (parent?.children !== undefined) {
-          parent.children += 1;
         }
         const tracked = event.name === TRACKED_CHANGES;
         let remove = false;
@@ -650,9 +644,6 @@ class OdsRetainedRewrite {
             splices.push(...result);
           }
         }
-        if (remove && parent?.removedChildren !== undefined) {
-          parent.removedChildren += 1;
-        }
         if (event.selfClosing) {
           if (remove) {
             removeElement(event.start, event.end);
@@ -660,10 +651,6 @@ class OdsRetainedRewrite {
           return undefined;
         }
         const frame: Frame = { start: event.start, remove, quiet: tracked || remove };
-        if (event.name === CONDITIONAL_FORMATS) {
-          frame.children = 0;
-          frame.removedChildren = 0;
-        }
         if (frame.quiet) {
           quiet += 1;
         }
@@ -709,7 +696,7 @@ class OdsRetainedRewrite {
 
   /** An envelope element's host: the sheet its base-cell-address names. */
   private baseCellHost(tag: string): Host {
-    const span = findAttribute(tag, "table:base-cell-address") ?? findAttribute(tag, "calcext:base-cell-address");
+    const span = findAttribute(tag, "table:base-cell-address");
     if (!span) {
       return {};
     }
