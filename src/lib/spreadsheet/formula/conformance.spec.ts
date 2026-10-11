@@ -237,6 +237,7 @@ const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([
   "SUM",
   "SUMPRODUCT",
   "MMULT",
+  "DOLLAR",
   // Every example row needs what a row cannot hold: an external link
   // (HYPERLINK), a named range or table or several sheets (SHEET, SHEETS), or
   // a root that is no call of the function (SINH's `2.868*SINH(…)`).
