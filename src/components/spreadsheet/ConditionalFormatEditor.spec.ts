@@ -104,6 +104,39 @@ describe("ConditionalFormatEditor (SPEC-129)", () => {
     expect(saved.draft.kind === "iconSet" && saved.draft.icons.thresholds[2]).toEqual({ at: { type: "percent", value: "80" }, gte: true });
   });
 
+  it("edits a 2-colour scale's stops by their index in the rule, and a data bar's options", async () => {
+    const { wrapper, onSave } = setup({
+      kind: "colorScale",
+      stops: [
+        { at: { type: "min" }, color: "#FFFFFF" },
+        { at: { type: "max" }, color: "#F8696B" },
+      ],
+    });
+    expect(wrapper.find('[data-testid="cf-stop-color-2"]').exists()).toBe(false);
+    expect((wrapper.get('[data-testid="cf-stop-color-1"]').element as HTMLInputElement).value).toBe("#f8696b");
+    await wrapper.get('[data-testid="cf-stop-color-1"]').setValue("#00ff00");
+    await wrapper.get('[data-testid="cf-stop-type-0"]').setValue("num");
+    await wrapper.get('[data-testid="cf-stop-value-0"]').setValue("5");
+    expect(wrapper.find('[data-testid="cf-format"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="cf-preview"]').attributes("data-kind")).toBe("scale");
+    await wrapper.get('[data-testid="cf-save"]').trigger("click");
+    expect(onSave.mock.calls[0]![0].draft).toEqual({
+      kind: "colorScale",
+      stops: [
+        { at: { type: "num", value: "5" }, color: "#FFFFFF" },
+        { at: { type: "max" }, color: "#00ff00" },
+      ],
+    });
+    await wrapper.get('[data-testid="cf-style"]').setValue("dataBar");
+    await wrapper.get('[data-testid="cf-bar-gradient"]').setValue(false);
+    await wrapper.get('[data-testid="cf-bar-axis"]').setValue("none");
+    await wrapper.get('[data-testid="cf-bar-color"]').setValue("#123456");
+    expect(wrapper.find('[data-testid="cf-bar-negative-color"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="cf-show-value"]').setValue(false);
+    await wrapper.get('[data-testid="cf-save"]').trigger("click");
+    expect(onSave.mock.calls[1]![0].draft).toMatchObject({ kind: "dataBar", bar: { color: "#123456", gradient: false, axis: "none", showValue: false } });
+  });
+
   it("Custom format… opens the differential Format Cells dialog, whose OK becomes the rule's format", async () => {
     const { wrapper, onSave } = setup({ kind: "cellIs", operator: "greaterThan", formulas: ["5"] });
     expect(wrapper.find('[data-testid="format-cells-dialog"]').exists()).toBe(false);

@@ -150,10 +150,16 @@ export function useConditionalFormatEditor(deps: ConditionalFormatEditorDeps) {
   const iconSets = computed(() => ICON_SET_NAMES.filter((name) => isOds.value || !ODS_ONLY_ICON_SETS.has(name)));
   const formatting = computed(() => takesFormat(fields.value));
 
-  /** The live `cf-preview`: the pending rule as the list will show it. */
+  /** The live `cf-preview`: the pending rule as the list will show it (while
+   * a threshold is invalid, its style with every bound at min/max). */
   const preview = computed(() => {
     const result = draftFromFields(fields.value, context());
-    const body: CfRuleDraft = "draft" in result ? result.draft : { kind: "cellIs", operator: "greaterThan", formulas: [] };
+    if ("draft" in result) {
+      return rulePreview(result.draft, formatting.value ? dxf.value : undefined, deps.theme());
+    }
+    const bounds = { ...fields.value, stops: fields.value.stops.map((stop) => ({ ...stop, type: "min" as const })) };
+    const loose = draftFromFields({ ...bounds, iconThresholds: bounds.iconThresholds.map((each) => ({ ...each, type: "min" as const })) }, context());
+    const body: CfRuleDraft = "draft" in loose && !formatting.value ? loose.draft : { kind: "cellIs", operator: "greaterThan", formulas: [] };
     return rulePreview(body, formatting.value ? dxf.value : undefined, deps.theme());
   });
 

@@ -38,8 +38,21 @@ const e = computed(() => asConditionalFormatEditor(props.editor));
 const f = computed(() => e.value.fields.value);
 const err = computed(() => e.value.error.value);
 const twoValues = computed(() => f.value.operator === "between" || f.value.operator === "notBetween");
-/** The stops a colour scale (or a data bar's min and max) shows. */
-const stopIndices = computed(() => (f.value.style === "3-color" ? [0, 1, 2] : [0, 2]));
+/** The stop rows a colour scale (or a data bar's min and max) shows: `i` is
+ * the stop's index in the rule (its test ids), `at` the field it edits (the
+ * fields keep lowest, midpoint, highest). */
+const stopRows = computed(() =>
+  f.value.style === "3-color"
+    ? [
+        { i: 0, at: 0, label: "Minimum" },
+        { i: 1, at: 1, label: "Midpoint" },
+        { i: 2, at: 2, label: "Maximum" },
+      ]
+    : [
+        { i: 0, at: 0, label: "Minimum" },
+        { i: 1, at: 2, label: "Maximum" },
+      ],
+);
 const scaleTypes = CF_VALUE_TYPES.filter((type) => type.id !== "autoMin" && type.id !== "autoMax");
 const PERIODS = Object.entries(TIME_PERIOD_LABELS).map(([id, label]) => ({ id, label }));
 const AXES = [
@@ -120,16 +133,16 @@ function onEnter() {
       </label>
       <template v-if="f.style !== 'iconSet'">
         <div
-          v-for="i in stopIndices"
-          :key="i"
+          v-for="row in stopRows"
+          :key="row.i"
           class="cf-row"
         >
-          <span class="cf-row-label">{{ i === 0 ? "Minimum" : i === 1 ? "Midpoint" : "Maximum" }}</span>
+          <span class="cf-row-label">{{ row.label }}</span>
           <select
-            :data-testid="`cf-stop-type-${i}`"
-            :aria-label="`Type ${i + 1}`"
-            :value="f.stops[i].type"
-            @change="e.setStop(i, 'type', valueOf($event))"
+            :data-testid="`cf-stop-type-${row.i}`"
+            :aria-label="`${row.label} type`"
+            :value="f.stops[row.at].type"
+            @change="e.setStop(row.at, 'type', valueOf($event))"
           >
             <option
               v-for="type in f.style === 'dataBar' ? CF_VALUE_TYPES : scaleTypes"
@@ -141,20 +154,20 @@ function onEnter() {
           </select>
           <input
             type="text"
-            :data-testid="`cf-stop-value-${i}`"
-            :aria-label="`Value ${i + 1}`"
-            :aria-invalid="invalid(`stop-${i}`)"
-            :disabled="['min', 'max', 'autoMin', 'autoMax'].includes(f.stops[i].type)"
-            :value="f.stops[i].value"
-            @input="e.setStop(i, 'value', valueOf($event))"
+            :data-testid="`cf-stop-value-${row.i}`"
+            :aria-label="`${row.label} value`"
+            :aria-invalid="invalid(`stop-${row.at}`)"
+            :disabled="['min', 'max', 'autoMin', 'autoMax'].includes(f.stops[row.at].type)"
+            :value="f.stops[row.at].value"
+            @input="e.setStop(row.at, 'value', valueOf($event))"
           >
           <input
             v-if="f.style !== 'dataBar'"
             type="color"
-            :data-testid="`cf-stop-color-${i}`"
-            :aria-label="`Colour ${i + 1}`"
-            :value="e.colorHex(f.stops[i].color)"
-            @input="e.setStop(i, 'color', valueOf($event))"
+            :data-testid="`cf-stop-color-${row.i}`"
+            :aria-label="`${row.label} colour`"
+            :value="e.colorHex(f.stops[row.at].color)"
+            @input="e.setStop(row.at, 'color', valueOf($event))"
           >
         </div>
       </template>
