@@ -1,12 +1,19 @@
 // SPEC-127 "Conformance tables": the Date & Time category's rows.
 // Sources: Microsoft's function pages (support.microsoft.com/en-us/excel/functions/<name>-function)
-// for ISOWEEKNUM, WORKDAY, WORKDAY.INTL, NETWORKDAYS, NETWORKDAYS.INTL, YEARFRAC, DATEDIF and
-// DAYS360 (transcribed directly); every other row is "pinned" — hand-derived from this engine's
-// stated date arithmetic (src/lib/spreadsheet/formula/functions/dateTime.ts's documented rules) or
-// from SPEC-127's Function pins, never from running this engine or from memory of Microsoft's
-// printed examples. Date serials are computed by hand: days since 1899-12-30 for dates on/after
-// 1900-03-01 (the fictitious 1900-02-29 = serial 60), verified against the brief's anchors
-// (1900-01-01 = 1, 2008-10-30 = 39751, 2026-10-08 = 46303).
+// for ISOWEEKNUM, WORKDAY, WORKDAY.INTL, NETWORKDAYS, NETWORKDAYS.INTL, YEARFRAC, DATEDIF,
+// DAYS360, DATEVALUE, DAY, DAYS, EDATE, EOMONTH, HOUR, MINUTE, MONTH, SECOND, TIME, TIMEVALUE,
+// WEEKDAY, WEEKNUM and YEAR (transcribed directly, their example tables' own data cells and
+// results); every other row is "pinned" — hand-derived from this engine's stated date arithmetic
+// (src/lib/spreadsheet/formula/functions/dateTime.ts's documented rules) or from SPEC-127's
+// Function pins, never from running this engine or from memory of Microsoft's printed examples.
+// DATE, NOW and TODAY have no Excel row: DATE's Example section is screenshots only (no printed
+// data), and NOW's and TODAY's own example results vary with the current moment, so every row of
+// theirs is pinned against the fixed conformance clock or dateTime.ts's rules instead. Date
+// serials are computed by hand: days since 1899-12-30 for dates on/after 1900-03-01 (the
+// fictitious 1900-02-29 = serial 60), verified against the brief's anchors (1900-01-01 = 1,
+// 2008-10-30 = 39751, 2026-10-08 = 46303) — the only exception is DAYS's and DATEVALUE's text-date
+// arguments, entered as the page prints them (e.g. "15-MAR-2021") rather than as serials, since
+// this engine's text-to-date coercion is what's under test there.
 import type { ConformanceRow } from "./row";
 
 export const DATE_ROWS: ConformanceRow[] = [
@@ -61,6 +68,21 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: dateTime.ts — a negative total number of seconds is #NUM!.",
   },
+  {
+    formula: "TIME(A2,B2,C2)",
+    cells: { A2: 12, B2: 0, C2: 0 },
+    expected: 0.5,
+    source: "Excel",
+    note: "TIME function, example row 1: hour 12, minute 0, second 0 (noon) is 0.5 of a day.",
+  },
+  {
+    formula: "TIME(A3,B3,C3)",
+    cells: { A3: 16, B3: 48, C3: 10 },
+    expected: 0.7001157,
+    digits: 7,
+    source: "Excel",
+    note: "TIME function, example row 2: hour 16, minute 48, second 10 (4:48:10 PM) is 0.7001157 of a day.",
+  },
   // YEAR
   {
     formula: "YEAR(45366)",
@@ -85,6 +107,20 @@ export const DATE_ROWS: ConformanceRow[] = [
     expected: { error: "#NUM!" },
     source: "pinned",
     note: "pinned: dateTime.ts's serialArg rejects a negative serial with #NUM!.",
+  },
+  {
+    formula: "YEAR(A3)",
+    cells: { A3: "=DATE(2023,7,5)" },
+    expected: 2023,
+    source: "Excel",
+    note: "YEAR function, example row 1: A3 = 7/5/2023. =YEAR(A3) is 2023.",
+  },
+  {
+    formula: "YEAR(A4)",
+    cells: { A4: "=DATE(2025,7,5)" },
+    expected: 2025,
+    source: "Excel",
+    note: "YEAR function, example row 2: A4 = 7/5/2025. =YEAR(A4) is 2025.",
   },
   // MONTH
   {
@@ -111,6 +147,13 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: SPEC-120 errors propagate — an error argument returns itself.",
   },
+  {
+    formula: "MONTH(A2)",
+    cells: { A2: "=DATE(2011,4,15)" },
+    expected: 4,
+    source: "Excel",
+    note: "MONTH function, example: A2 = 15-Apr-11. =MONTH(A2) is 4.",
+  },
   // DAY
   {
     formula: "DAY(45366)",
@@ -135,6 +178,13 @@ export const DATE_ROWS: ConformanceRow[] = [
     expected: { error: "#VALUE!" },
     source: "pinned",
     note: "pinned: SPEC-120 — a wrong argument count (0, needs 1) is #VALUE!.",
+  },
+  {
+    formula: "DAY(A2)",
+    cells: { A2: "=DATE(2011,4,15)" },
+    expected: 15,
+    source: "Excel",
+    note: "DAY function, example: A2 = 15-Apr-11. =DAY(A2) is 15.",
   },
   // HOUR
   {
@@ -161,6 +211,27 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: SPEC-120 errors propagate.",
   },
+  {
+    formula: "HOUR(A2)",
+    cells: { A2: 0.75 },
+    expected: 18,
+    source: "Excel",
+    note: "HOUR function, example row 1: A2 = 0.75 of a day (18:00). =HOUR(A2) is 18.",
+  },
+  {
+    formula: "HOUR(A3)",
+    cells: { A3: "=DATE(2011,7,18)+TIME(7,45,0)" },
+    expected: 7,
+    source: "Excel",
+    note: "HOUR function, example row 2: A3 = 7/18/2011 7:45, no AM/PM so 24-hour 7:45. =HOUR(A3) is 7.",
+  },
+  {
+    formula: "HOUR(A4)",
+    cells: { A4: "=DATE(2012,4,21)" },
+    expected: 0,
+    source: "Excel",
+    note: "HOUR function, example row 3: A4 = 4/21/2012, a date with no time portion, taken as midnight. =HOUR(A4) is 0.",
+  },
   // MINUTE
   {
     formula: "MINUTE(46303.395833333333)",
@@ -186,6 +257,13 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: SPEC-120 — wrong argument count (0, needs 1) is #VALUE!.",
   },
+  {
+    formula: "MINUTE(A2)",
+    cells: { A2: "=TIME(12,45,0)" },
+    expected: 45,
+    source: "Excel",
+    note: "MINUTE function, example: A2 = 12:45:00 PM. =MINUTE(A2) is 45.",
+  },
   // SECOND
   {
     formula: "SECOND(46303.395833333333)",
@@ -210,6 +288,20 @@ export const DATE_ROWS: ConformanceRow[] = [
     expected: { error: "#N/A" },
     source: "pinned",
     note: "pinned: SPEC-120 errors propagate.",
+  },
+  {
+    formula: "SECOND(A3)",
+    cells: { A3: "=TIME(16,48,18)" },
+    expected: 18,
+    source: "Excel",
+    note: "SECOND function, example row 1: A3 = 4:48:18 PM. =SECOND(A3) is 18.",
+  },
+  {
+    formula: "SECOND(A4)",
+    cells: { A4: "=TIME(16,48,0)" },
+    expected: 0,
+    source: "Excel",
+    note: "SECOND function, example row 2: A4 = 4:48 PM, no seconds stated (0). =SECOND(A4) is 0.",
   },
   // TODAY
   {
@@ -275,6 +367,27 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: dateTime.ts — a return_type outside {1,2,3,11..17} is #NUM!.",
   },
+  {
+    formula: "WEEKDAY(A2)",
+    cells: { A2: "=DATE(2008,2,14)" },
+    expected: 5,
+    source: "Excel",
+    note: "WEEKDAY function, example row 1: A2 = 2/14/2008, default return_type 1 (Sunday=1). =WEEKDAY(A2) is 5.",
+  },
+  {
+    formula: "WEEKDAY(A2,2)",
+    cells: { A2: "=DATE(2008,2,14)" },
+    expected: 4,
+    source: "Excel",
+    note: "WEEKDAY function, example row 2: same A2, return_type 2 (Monday=1). =WEEKDAY(A2,2) is 4.",
+  },
+  {
+    formula: "WEEKDAY(A2,3)",
+    cells: { A2: "=DATE(2008,2,14)" },
+    expected: 3,
+    source: "Excel",
+    note: "WEEKDAY function, example row 3: same A2, return_type 3 (Monday=0). =WEEKDAY(A2,3) is 3.",
+  },
   // EDATE
   {
     formula: "EDATE(45322,1)",
@@ -299,6 +412,27 @@ export const DATE_ROWS: ConformanceRow[] = [
     expected: { error: "#NUM!" },
     source: "pinned",
     note: "pinned: dateTime.ts — shifting the year outside 1900-9999 is #NUM!; 120000 months (10000 years) from 2024 overflows far past 9999.",
+  },
+  {
+    formula: "EDATE(A2,1)",
+    cells: { A2: "=DATE(2011,1,15)" },
+    expected: 40589,
+    source: "Excel",
+    note: "EDATE function, example row 1: A2 = 15-Jan-11; one month after is 15-Feb-11 (serial 40589).",
+  },
+  {
+    formula: "EDATE(A2,-1)",
+    cells: { A2: "=DATE(2011,1,15)" },
+    expected: 40527,
+    source: "Excel",
+    note: "EDATE function, example row 2: same A2; one month before is 15-Dec-10 (serial 40527).",
+  },
+  {
+    formula: "EDATE(A2,2)",
+    cells: { A2: "=DATE(2011,1,15)" },
+    expected: 40617,
+    source: "Excel",
+    note: "EDATE function, example row 3: same A2; two months after is 15-Mar-11 (serial 40617).",
   },
   // EOMONTH
   {
@@ -325,6 +459,20 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: dateTime.ts — shifting the year outside 1900-9999 is #NUM!.",
   },
+  {
+    formula: "EOMONTH(A2,1)",
+    cells: { A2: "=DATE(2011,1,1)" },
+    expected: 40602,
+    source: "Excel",
+    note: "EOMONTH function, example row 1: A2 = 1-Jan-11; last day of the month one month after is 2/28/2011 (serial 40602).",
+  },
+  {
+    formula: "EOMONTH(A2,-3)",
+    cells: { A2: "=DATE(2011,1,1)" },
+    expected: 40482,
+    source: "Excel",
+    note: "EOMONTH function, example row 2: same A2; last day of the month three months before is 10/31/2010 (serial 40482).",
+  },
   // DAYS
   {
     formula: "DAYS(45352,45292)",
@@ -349,6 +497,19 @@ export const DATE_ROWS: ConformanceRow[] = [
     expected: { error: "#N/A" },
     source: "pinned",
     note: "pinned: SPEC-120 errors propagate.",
+  },
+  {
+    formula: 'DAYS("15-MAR-2021","1-FEB-2021")',
+    expected: 42,
+    source: "Excel",
+    note: 'DAYS function, example row 1: end date "15-MAR-2021", start date "1-FEB-2021", entered directly as quoted text. The result is 42.',
+  },
+  {
+    formula: "DAYS(A2,A3)",
+    cells: { A2: "=DATE(2021,12,31)", A3: "=DATE(2021,1,1)" },
+    expected: 364,
+    source: "Excel",
+    note: "DAYS function, example row 2: A2 = 31-Dec-2021 (end), A3 = 1-Jan-2021 (start). =DAYS(A2,A3) is 364.",
   },
   // DATEVALUE
   {
@@ -375,6 +536,35 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: per the Dates pin, text that is not a recognisable date is #VALUE!.",
   },
+  {
+    formula: 'DATEVALUE("$1,500")',
+    expected: { error: "#VALUE!" },
+    source: "pinned",
+    note: "pinned: per the Dates pin, a text parseInput reads as a currency number (1500), not a date, is #VALUE!.",
+  },
+  {
+    formula: 'TIMEVALUE("1 1/2")',
+    expected: { error: "#VALUE!" },
+    source: "pinned",
+    note: "pinned: per the Dates pin, a text parseInput reads as a fraction (1.5), not a time, is #VALUE!.",
+  },
+  {
+    formula: 'DATEVALUE("8/22/2011")',
+    expected: 40777,
+    source: "Excel",
+    note: 'DATEVALUE function, example row 1: an en-US month/day/year text, "8/22/2011". The result is 40777.',
+  },
+  {
+    formula: 'DATEVALUE("22-MAY-2011")',
+    expected: 40685,
+    source: "Excel",
+    note: 'DATEVALUE function, example row 2: a day-month name-year text, "22-MAY-2011". The result is 40685.',
+  },
+  // Example row 3, DATEVALUE("2011/02/23") (40597), has no row: SPEC-127
+  // pins DATEVALUE to parseInput, whose date grammar (SPEC-120 "Date") reads
+  // day, month and year in the locale's order and takes year-first only as
+  // ISO YYYY-MM-DD, so in en-US this text is no date (#VALUE!). The pin wins
+  // where stated (SPEC-127 "Where semantics come from").
   // TIMEVALUE
   {
     formula: 'TIMEVALUE("2:30 PM")',
@@ -402,6 +592,20 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: per the Dates pin, text that is not a recognisable time is #VALUE!.",
   },
+  {
+    formula: 'TIMEVALUE("2:24 AM")',
+    expected: 0.1,
+    digits: 2,
+    source: "Excel",
+    note: 'TIMEVALUE function, example row 1: "2:24 AM" alone. The result is 0.10.',
+  },
+  {
+    formula: 'TIMEVALUE("22-Aug-2011 6:35 AM")',
+    expected: 0.2743,
+    digits: 4,
+    source: "Excel",
+    note: 'TIMEVALUE function, example row 2: a date and time together, "22-Aug-2011 6:35 AM" — TIMEVALUE keeps only the time part. The result is 0.2743.',
+  },
   // WEEKNUM
   {
     formula: "WEEKNUM(45292,1)",
@@ -426,6 +630,20 @@ export const DATE_ROWS: ConformanceRow[] = [
     expected: { error: "#NUM!" },
     source: "pinned",
     note: "pinned: an invalid return_type (not 1, 2, 11-17 or 21) is #NUM!.",
+  },
+  {
+    formula: "WEEKNUM(A2)",
+    cells: { A2: "=DATE(2012,3,9)" },
+    expected: 10,
+    source: "Excel",
+    note: "WEEKNUM function, example row 1: A2 = 3/9/2012, default return_type 1 (weeks start Sunday). =WEEKNUM(A2) is 10.",
+  },
+  {
+    formula: "WEEKNUM(A2,2)",
+    cells: { A2: "=DATE(2012,3,9)" },
+    expected: 11,
+    source: "Excel",
+    note: "WEEKNUM function, example row 2: same A2, return_type 2 (weeks start Monday). =WEEKNUM(A2,2) is 11.",
   },
   // ISOWEEKNUM
   {

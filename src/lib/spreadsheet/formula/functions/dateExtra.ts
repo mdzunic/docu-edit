@@ -48,10 +48,12 @@ function parsedDateTime(args: ArgList, ctx: EvalContext): number | CellError {
     return text;
   }
   const parsed = parseInput(text, ctx.settings.locale, ctx.settings.dateSystem);
-  // A date or time is an input parseInput suggests a built-in date format or
-  // a time format (one with hours) for.
-  const timeFormat = /h/i.test((parsed.numberFormat ?? "").replace(/"[^"]*"/g, ""));
-  return typeof parsed.value === "number" && (parsed.builtinFormatId !== undefined || timeFormat) && parsed.formula === undefined ? parsed.value : VALUE_ERROR;
+  // A date or time is an input parseInput suggests a date or time format for
+  // ("m/d/yyyy", "d-mmm-yy", "h:mm AM/PM"): one with a d, m, y, h or s
+  // outside its quoted text, escapes and [brackets] — which no number,
+  // percent, currency or fraction format has.
+  const dateTimeFormat = /[dmyhs]/i.test((parsed.numberFormat ?? "").replace(/"[^"]*"|\\.|\[[^\]]*\]/g, ""));
+  return typeof parsed.value === "number" && dateTimeFormat && parsed.formula === undefined ? parsed.value : VALUE_ERROR;
 }
 
 /** The Gregorian leap rule. */

@@ -219,12 +219,16 @@ const CATEGORY_FILES: readonly { file: string; rows: readonly ConformanceRow[]; 
 /** Functions whose Microsoft reference page carries no example table, so no
  * Excel row can exist for them (each checked against its page). */
 const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([
-  // Their pages print no fixed result: the values "vary".
+  // Their pages print no fixed result: the values "vary" (NOW and TODAY's
+  // with the date the page is read on).
   "RAND",
   "RANDBETWEEN",
+  "NOW",
+  "TODAY",
   // Excel's `@` operator in file form: no function page.
   "SINGLE",
   // Examples printed only as screenshots or prose (no literal data).
+  "DATE",
   "IF",
   "TRUE",
   "FALSE",
