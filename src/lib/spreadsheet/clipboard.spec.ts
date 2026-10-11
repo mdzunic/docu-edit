@@ -483,7 +483,7 @@ describe("SPEC-128: Copy over filter-hidden rows takes the visible rows only", (
     ]);
   }
 
-  it("packs the visible rows' spans together in the payload, shifting each formula by the rows it packs up", () => {
+  it("packs the visible rows' spans together in the payload, a packed formula kept as written with its source row", () => {
     const copy = buildClipboardCopy(filtered(), "s1", range(0, 0, 5, 2), undefined, { visibleRows: true });
     expect(copy.spans).toEqual([range(0, 0, 1, 2), range(3, 0, 3, 2), range(5, 0, 5, 2)]);
     expect(copy.area.range).toEqual(range(0, 0, 5, 2));
@@ -499,7 +499,8 @@ describe("SPEC-128: Copy over filter-hidden rows takes the visible rows only", (
       [3, 0, "West"],
       [3, 1, 5],
     ]);
-    expect(copy.payload.cells[6]!.f).toBe("B3*2");
+    expect(copy.payload.cells[6]).toMatchObject({ f: "B4*2", fr: 3 });
+    expect(copy.payload.cells.filter((cell) => cell.fr !== undefined)).toHaveLength(1);
     // The merge crosses a filter-hidden row: it does not travel.
     expect(copy.payload.merges).toEqual([]);
   });
@@ -524,6 +525,25 @@ describe("SPEC-128: Copy over filter-hidden rows takes the visible rows only", (
       [5, 3, undefined],
       [6, 6, "F12*2"],
     ]);
+  });
+
+  it("never passes a relative reference through a row above row 1: a formula far below what it names pastes as Excel's would", () => {
+    const m = model([
+      sheet("s1", "Sheet1", {
+        rows: [
+          row(0, [value(0, "Region")]),
+          row(1, [value(0, "East")], { filterHidden: true }),
+          row(2, [value(0, "East")], { filterHidden: true }),
+          row(3, [value(0, "West"), value(2, "Region", { formula: "A1" })]),
+        ],
+        autoFilter: { range: range(0, 0, 3, 0), columns: [{ colId: 0, criteria: { kind: "values", values: ["West"], blanks: false, dateGroups: [] } }] },
+      }),
+    ]);
+    const { payload } = buildClipboardCopy(m, "s1", range(0, 0, 3, 2), undefined, { visibleRows: true });
+    expect(payload.cells.at(-1)).toMatchObject({ r: 1, c: 2, f: "A1", fr: 3 });
+    expect(parseClipboardPayload(encodePayload(payload))).toEqual(payload);
+    pasteBlock(m, "s1", { ranges: [range(9, 4, 9, 4)], active: { row: 9, col: 4 } }, blockFromPayload(payload), { what: "all" });
+    expect(m.sheets[0]!.rows.find((each) => each.index === 10)!.cells.find((cell) => cell.col === 6)?.formula).toBe("E8");
   });
 
   it("takes every row without filter-hidden rows inside, for a cut, and unless asked (a drag)", () => {

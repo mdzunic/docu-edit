@@ -35,12 +35,12 @@
 // - SPEC-128: Copy of a selection spanning filter-hidden rows takes the
 //   visible rows only (Excel) — the rectangle's visibleRowSpans, packed
 //   together: the payload, the TSV and the HTML hold one row per visible
-//   row, top to bottom, as if they were adjacent. Each formula is shifted by
-//   the rows it packs up (shiftFormula by packed row − source row), so a
-//   paste — which shifts by destination − (origin + r) — moves every
-//   relative reference by the distance from its own source row, as Excel's
-//   paste of visible cells does (a relative reference the packing alone
-//   pushes above row 1 reads #REF!). An array keeps its range, and a merge
+//   row, top to bottom, as if they were adjacent. A cell the packing moves
+//   up keeps its formula as written, with its source row (`fr`, relative to
+//   the origin), and a paste shifts it by destination − (origin + fr): every
+//   relative reference moves by the distance from its own source row, as
+//   Excel's paste of visible cells does — never through a row above row 1
+//   on the way. An array keeps its range, and a merge
 //   travels, only when it lies inside one visible span. A Cut, and the
 //   payload of a drag, take every row: a move moves the whole rectangle.
 import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme } from "../core/theme";
@@ -56,7 +56,6 @@ import {
   type SheetClipboardPayload,
 } from "./clipboardPayload";
 import { visibleRowSpans } from "./filter";
-import { shiftFormula } from "./formula/references";
 import { buildMergeIndex, mergeAt, mergesIn } from "./merges";
 import { MAX_COLS, MAX_ROWS, type Cell, type CellBorderEdge, type CellStyle, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
@@ -252,7 +251,10 @@ export function buildClipboardCopy(
       }
       const entry: ClipboardCell = { r: row - top + offset, c: col - left, v: cell?.value ?? null };
       if (formula !== undefined) {
-        entry.f = shiftFormula(formula, offset, 0);
+        entry.f = formula;
+        if (offset !== 0) {
+          entry.fr = row - top;
+        }
         const array = cell?.arrayRange;
         if (array && array.top === row && array.left === col && array.bottom <= span.bottom && array.right <= right) {
           entry.a = { top: array.top - top + offset, left: array.left - left, bottom: array.bottom - top + offset, right: array.right - left };
