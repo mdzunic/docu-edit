@@ -122,6 +122,20 @@
 //   through `style:map`; column H's `table:default-cell-style-name`; row 6
 //   formatted to XFD as a styled `number-columns-repeated` run.
 //   SPEC123_STYLES_XLSX / SPEC123_STYLES_ODS record the facts.
+// - spec124-structure.xlsx / .ods (SPEC-124) and spec125-fill.xlsx / .ods
+//   (SPEC-125) — see their own sections below.
+// - spec128-filter.xlsx (SPEC-128) — Excel 365-shaped on the classic theme:
+//   "Sales" (active) a 12-record list under an `autoFilter` (`xr:uid`, a
+//   `filters blank="1"` values column, a `customFilters and="1"` pair, an
+//   `autoFilter/sortState`), `sheetPr filterMode="1"`, four filter-hidden
+//   rows and one user-hidden row every criterion passes, half its rows
+//   written without `r`; "Colours" an autoFilter with a `colorFilter` and
+//   its dxf; "Log" a worksheet `sortState` sorting by cell colour; a hidden
+//   `_xlnm._FilterDatabase` per autofilter. spec128-filter.ods — the
+//   LibreOffice 24.8-shaped twin of "Sales": `__Anonymous_Sheet_DB__0` with
+//   `table:filter-set-item`s, `table:visibility="filter"` and `"collapse"`
+//   rows, the trailing repeated rows. SPEC128_FILTER_XLSX /
+//   SPEC128_FILTER_ODS record the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -6199,4 +6213,482 @@ export function buildSpec126UnicodeTsvBytes(): Uint8Array {
 
 export function buildSpec126MacPipeCsvBytes(): Uint8Array {
   return windows1252Literal(SPEC126_CSV.macPipe.text);
+}
+
+// ============================================================================
+// SPEC-128 — spec128-filter.xlsx / spec128-filter.ods: sort and autofilter
+// ============================================================================
+// The workbooks SPEC-128's readers, writers and e2e flow run on, each in its
+// producer's own shapes:
+// - spec128-filter.xlsx — Excel 365 on the classic Office theme (Calibri 11,
+//   rows `x14ac:dyDescent="0.25"`). "Sales" (active): Region, Rep, Amount,
+//   Date (bold headers, dates on built-in numFmt 14) over 12 records in Date
+//   order; `<sheetPr filterMode="1"/>` before `<dimension>`; an `autoFilter`
+//   over A1:D13 with its `xr:uid` — Region a `filters blank="1"` list (East,
+//   North, West: both South rows fail), Amount a `customFilters and="1"`
+//   pair (>= 100, <= 900: the 50 and the 950 fail) — and Excel's
+//   `autoFilter/sortState` (ascending by Date, `xmlns:xlrd2` on it, as Excel
+//   writes it); those four rows `hidden="1"`, plus row 12, which every
+//   criterion passes — the row the user hid. Rows 2, 4, 6, 8, 10 and 12 are
+//   written WITHOUT `r` (their cells too), as a non-Excel producer writes
+//   them; each directly follows its predecessor, so sequential placement
+//   lands it on its own row. "Colours": an autoFilter whose `colorFilter
+//   dxfId="0"` (styles.xml's one dxf, a solid yellow fill) hides the two
+//   unfilled rows. "Log": a worksheet-level `sortState` whose only condition
+//   is `sortBy="cellColor"` (no autoFilter, nothing hidden). xl/workbook.xml
+//   carries a hidden `_xlnm._FilterDatabase` per autofilter.
+// - spec128-filter.ods — LibreOffice 24.8's twin of "Sales": rows 4, 5, 9
+//   and 10 `table:visibility="filter"`, row 12 `"collapse"`, dates as
+//   `office:value-type="date"` under a date data style, the trailing
+//   1048563-row run, and after `table:named-expressions` the anonymous
+//   sheet database range `__Anonymous_Sheet_DB__0` with
+//   `table:display-filter-buttons="true"` and its `table:filter` —
+//   `table:filter-set-item`s for Region (the empty item is "(Blanks)") and a
+//   `>=`/`<=` pair with `table:data-type="number"` for Amount.
+// SPEC128_FILTER_XLSX and SPEC128_FILTER_ODS record the facts: rows are
+// 1-based sheet rows, `index`/`indices` 0-based, `range`s 0-based GridRanges.
+
+/** What the file does with a "Sales" record: shows it, hides it because a
+ * criterion rejects it, or hides it although every criterion passes (the
+ * user hid it). */
+type Spec128RowState = "shown" | "filter" | "user";
+
+interface Spec128SalesRow {
+  /** 1-based sheet row. */
+  row: number;
+  /** null: no A cell at all — a blank, which `filters blank="1"` passes. */
+  region: string | null;
+  rep: string;
+  amount: number;
+  date: readonly [number, number, number];
+  /** The date as a 1900-system serial. */
+  serial: number;
+  state: Spec128RowState;
+}
+
+const spec128Row = (
+  row: number,
+  region: string | null,
+  rep: string,
+  amount: number,
+  date: readonly [number, number, number],
+  state: Spec128RowState,
+): Spec128SalesRow => ({ row, region, rep, amount, date, serial: dateToSerial(date[0], date[1], date[2], "1900"), state });
+
+/** "Sales"'s 12 records, in Date order (the sort record's order). */
+const SPEC128_SALES_ROWS: readonly Spec128SalesRow[] = [
+  spec128Row(2, "East", "Ana", 420, [2026, 1, 5], "shown"),
+  spec128Row(3, "West", "Ben", 310, [2026, 1, 12], "shown"),
+  spec128Row(4, "South", "Cy", 275, [2026, 1, 19], "filter"),
+  spec128Row(5, "North", "Dee", 50, [2026, 2, 2], "filter"),
+  spec128Row(6, "East", "Eve", 610, [2026, 2, 9], "shown"),
+  spec128Row(7, null, "Fay", 180, [2026, 2, 16], "shown"),
+  spec128Row(8, "West", "Gus", 730, [2026, 3, 2], "shown"),
+  spec128Row(9, "South", "Hal", 505, [2026, 3, 9], "filter"),
+  spec128Row(10, "East", "Ivy", 950, [2026, 3, 16], "filter"),
+  spec128Row(11, "North", "Jo", 390, [2026, 3, 23], "shown"),
+  spec128Row(12, "East", "Kim", 220, [2026, 4, 6], "user"),
+  spec128Row(13, "North", "Lee", 845, [2026, 4, 13], "shown"),
+];
+
+/** "Colours"'s items: `yellow` cells carry the fill the colour filter keeps. */
+const SPEC128_COLOUR_ROWS = [
+  { row: 2, item: "Apples", qty: 12, yellow: true },
+  { row: 3, item: "Pears", qty: 7, yellow: false },
+  { row: 4, item: "Plums", qty: 30, yellow: true },
+  { row: 5, item: "Figs", qty: 4, yellow: false },
+  { row: 6, item: "Limes", qty: 18, yellow: true },
+] as const;
+
+/** "Log"'s entries, already sorted yellow-first as its cell-colour sort left them. */
+const SPEC128_LOG_ROWS = [
+  { row: 2, entry: "Audit", hours: 3, yellow: true },
+  { row: 3, entry: "Backup", hours: 1, yellow: true },
+  { row: 4, entry: "Cleanup", hours: 2, yellow: false },
+  { row: 5, entry: "Deploy", hours: 5, yellow: false },
+  { row: 6, entry: "Review", hours: 4, yellow: false },
+] as const;
+
+const SPEC128_XLRD2_NS = "http://schemas.microsoft.com/office/spreadsheetml/2017/richdata2";
+const SPEC128_SALES_AUTOFILTER_UID = "{4D5E6F70-0128-4182-BDCE-3F4A5B6C7D84}";
+const SPEC128_COLOURS_AUTOFILTER_UID = "{5E6F7081-0128-4293-8EDF-4A5B6C7D8E95}";
+
+/** "Sales"'s `<autoFilter>`, verbatim — what the reader keeps as `sourceXml`. */
+const SPEC128_SALES_AUTOFILTER_XML =
+  `<autoFilter ref="A1:D13" xr:uid="${SPEC128_SALES_AUTOFILTER_UID}">` +
+  `<filterColumn colId="0"><filters blank="1"><filter val="East"/><filter val="North"/><filter val="West"/></filters></filterColumn>` +
+  `<filterColumn colId="2"><customFilters and="1"><customFilter operator="greaterThanOrEqual" val="100"/>` +
+  `<customFilter operator="lessThanOrEqual" val="900"/></customFilters></filterColumn>` +
+  `<sortState xmlns:xlrd2="${SPEC128_XLRD2_NS}" ref="A2:D13"><sortCondition ref="D2:D13"/></sortState></autoFilter>`;
+
+/** "Colours"'s `<autoFilter>`, verbatim. */
+const SPEC128_COLOURS_AUTOFILTER_XML =
+  `<autoFilter ref="A1:B6" xr:uid="${SPEC128_COLOURS_AUTOFILTER_UID}"><filterColumn colId="0"><colorFilter dxfId="0"/></filterColumn></autoFilter>`;
+
+/** "Log"'s worksheet-level `<sortState>`, verbatim. */
+const SPEC128_LOG_SORTSTATE_XML =
+  `<sortState xmlns:xlrd2="${SPEC128_XLRD2_NS}" ref="A2:B6"><sortCondition sortBy="cellColor" ref="A2:A6" dxfId="0"/></sortState>`;
+
+/** What spec128-filter.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC128_FILTER_XLSX = {
+  title: "Filter",
+  sheetNames: ["Sales", "Colours", "Log"],
+  activeSheetIndex: 0,
+  /** cellXfs indices: 1 numFmt 14 (m/d/yyyy), 2 bold, 3 solid yellow fill. */
+  xf: { date: 1, header: 2, yellow: 3 },
+  /** styles.xml's one dxf: the solid yellow fill both the colour filter and
+   * the cell-colour sort name. */
+  dxf: { id: 0, fill: "#ffff00" },
+  sales: {
+    partName: "xl/worksheets/sheet1.xml",
+    dimension: "A1:D13",
+    headers: { A1: "Region", B1: "Rep", C1: "Amount", D1: "Date" },
+    rows: SPEC128_SALES_ROWS,
+    /** `<row>`s written without `r` (their cells without `r` too). */
+    rowsWithoutR: [2, 4, 6, 8, 10, 12],
+    /** `<sheetPr filterMode="1"/>`. */
+    filterMode: true,
+    autoFilter: {
+      ref: "A1:D13",
+      range: { top: 0, left: 0, bottom: 12, right: 3 },
+      uid: SPEC128_SALES_AUTOFILTER_UID,
+      xml: SPEC128_SALES_AUTOFILTER_XML,
+      /** Region: `filters blank="1"` with three values. */
+      region: { colId: 0, values: ["East", "North", "West"], blanks: true },
+      /** Amount: `customFilters and="1"`, 100 <= amount <= 900. */
+      amount: {
+        colId: 2,
+        join: "and",
+        conditions: [
+          { operator: "greaterThanOrEqual", value: "100" },
+          { operator: "lessThanOrEqual", value: "900" },
+        ],
+      },
+      /** `autoFilter/sortState`: the data rows, ascending by Date. */
+      sort: { ref: "A2:D13", range: { top: 1, left: 0, bottom: 12, right: 3 }, conditionRef: "D2:D13", keys: [{ col: 3, descending: false }] },
+    },
+    /** Rows a criterion rejects (South ×2, 50, 950) — `filterHidden` on read. */
+    filterHiddenRows: [4, 5, 9, 10],
+    filterHiddenIndices: [3, 4, 8, 9],
+    /** Row 12 (East, 220) passes every criterion yet is hidden — `hidden` on read. */
+    userHiddenRow: 12,
+    userHiddenIndex: 11,
+    /** Data rows of the range (M) and those not filter-hidden (N). */
+    records: 12,
+    status: "8 of 12 records found",
+    /** After unchecking "West" in Region's popover (rows 3 and 8 join the filtered). */
+    statusWithoutWest: "6 of 12 records found",
+    /** The Amount column's visible cells, top to bottom, as opened. */
+    visibleAmounts: [420, 310, 610, 180, 730, 390, 845],
+    /** …after Clear filters (only the user-hidden row 12 stays hidden). */
+    visibleAmountsCleared: [420, 310, 275, 50, 610, 180, 730, 505, 950, 390, 845],
+    /** …after Sort Z to A on Amount (row 12's 220 neither moves nor is moved into). */
+    visibleAmountsDescending: [950, 845, 730, 610, 505, 420, 390, 310, 275, 180, 50],
+  },
+  colours: {
+    partName: "xl/worksheets/sheet2.xml",
+    dimension: "A1:B6",
+    headers: { A1: "Item", B1: "Qty" },
+    rows: SPEC128_COLOUR_ROWS,
+    filterMode: true,
+    autoFilter: {
+      ref: "A1:B6",
+      range: { top: 0, left: 0, bottom: 5, right: 1 },
+      uid: SPEC128_COLOURS_AUTOFILTER_UID,
+      xml: SPEC128_COLOURS_AUTOFILTER_XML,
+      /** A `colorFilter` — a `preserved` criterion labelled "colour". */
+      colorFilter: { colId: 0, dxfId: 0, xml: `<colorFilter dxfId="0"/>` },
+    },
+    /** The unfilled rows the colour filter hides — `filterHidden` on read
+     * (a preserved criterion keeps the file's state). */
+    filterHiddenRows: [3, 5],
+    filterHiddenIndices: [2, 4],
+  },
+  log: {
+    partName: "xl/worksheets/sheet3.xml",
+    dimension: "A1:B6",
+    headers: { A1: "Entry", B1: "Hours" },
+    rows: SPEC128_LOG_ROWS,
+    /** The worksheet `<sortState>`: its one condition sorts by cell colour,
+     * so it is not a key — the element is kept as `sourceXml`. */
+    sortState: {
+      ref: "A2:B6",
+      range: { top: 1, left: 0, bottom: 5, right: 1 },
+      xml: SPEC128_LOG_SORTSTATE_XML,
+      condition: { sortBy: "cellColor", ref: "A2:A6", dxfId: 0 },
+    },
+  },
+  /** xl/workbook.xml's definedNames, in file order. */
+  definedNames: [
+    { name: "_xlnm._FilterDatabase", localSheetId: 0, hidden: true, text: "Sales!$A$1:$D$13" },
+    { name: "_xlnm._FilterDatabase", localSheetId: 1, hidden: true, text: "Colours!$A$1:$B$6" },
+  ],
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/worksheets/sheet3.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+const SPEC128_SALES_UID = "1A2B3C4D-0128-4E5F-8A9B-0C1D2E3F4A51";
+const SPEC128_COLOURS_UID = "2B3C4D5E-0128-4F60-9BAC-1D2E3F4A5B62";
+const SPEC128_LOG_UID = "3C4D5E6F-0128-4071-ACBD-2E3F4A5B6C73";
+
+/** Excel's styles part on the classic theme: Normal, a date xf (numFmt 14),
+ * a bold header xf and a solid-yellow xf; the one dxf the colour filter and
+ * the cell-colour sort name (Excel's shape for a fill dxf it records from a
+ * filter or sort: a solid pattern, the colour in `bgColor`). */
+const SPEC128_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="2" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>` +
+  `<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>` +
+  `<xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/></cellXfs>` +
+  `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="1"><dxf><fill><patternFill patternType="solid"><fgColor indexed="64"/><bgColor rgb="FFFFFF00"/></patternFill></fill></dxf></dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+/** A Calibri-era `<row>`: `r` unless omitted, `spans`, `hidden`, `x14ac:dyDescent`. */
+function spec128XlsxRow(r: number | undefined, spans: string, hidden: boolean, cells: string): string {
+  return `<row${r === undefined ? "" : ` r="${r}"`} spans="${spans}"${hidden ? ` hidden="1"` : ""} x14ac:dyDescent="0.25">${cells}</row>`;
+}
+
+/** A cell: `r` unless its row omits it, then `s`, `t` and the value. */
+function spec128XlsxCell(ref: string | undefined, value: number, options: { s?: number; t?: "s" } = {}): string {
+  return `<c${ref === undefined ? "" : ` r="${ref}"`}${options.s ? ` s="${options.s}"` : ""}${options.t ? ` t="${options.t}"` : ""}><v>${value}</v></c>`;
+}
+
+/** A worksheet in Excel 365's CT_Worksheet order: sheetPr (filterMode),
+ * dimension, sheetViews, sheetFormatPr, sheetData, autoFilter or sortState,
+ * pageMargins. */
+function spec128WorksheetXml(options: { uid: string; filterMode: boolean; dimension: string; selected: boolean; sheetData: string; after: string }): string {
+  return (
+    XML_DECLARATION +
+    worksheetOpen(options.uid) +
+    (options.filterMode ? `<sheetPr filterMode="1"/>` : "") +
+    `<dimension ref="${options.dimension}"/>` +
+    `<sheetViews><sheetView ${options.selected ? 'tabSelected="1" ' : ""}workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    SPEC117_FORMAT_PR +
+    `<sheetData>${options.sheetData}</sheetData>` +
+    options.after +
+    SPEC117_PAGE_MARGINS +
+    `</worksheet>`
+  );
+}
+
+export async function buildSpec128FilterXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC128_FILTER_XLSX;
+  const sst: string[] = [];
+  const sstIndex = new Map<string, number>();
+  const str = (value: string): number => {
+    let index = sstIndex.get(value);
+    if (index === undefined) {
+      index = sst.length;
+      sst.push(value);
+      sstIndex.set(value, index);
+    }
+    return index;
+  };
+  const XF = F.xf;
+  const headerRow = (headers: Record<string, string>, spans: string): string =>
+    spec128XlsxRow(1, spans, false, Object.entries(headers).map(([ref, text]) => spec128XlsxCell(ref, str(text), { s: XF.header, t: "s" })).join(""));
+
+  // Interned in Excel's first-use order: row by row, sheet by sheet.
+  const salesHeader = headerRow(F.sales.headers, "1:4");
+  const withoutR: readonly number[] = F.sales.rowsWithoutR;
+  const salesRows = F.sales.rows.map((row) => {
+    const bare = withoutR.includes(row.row);
+    const ref = (col: string): string | undefined => (bare ? undefined : `${col}${row.row}`);
+    const cells =
+      (row.region === null ? "" : spec128XlsxCell(ref("A"), str(row.region), { t: "s" })) +
+      spec128XlsxCell(ref("B"), str(row.rep), { t: "s" }) +
+      spec128XlsxCell(ref("C"), row.amount) +
+      spec128XlsxCell(ref("D"), row.serial, { s: XF.date });
+    return spec128XlsxRow(bare ? undefined : row.row, "1:4", row.state !== "shown", cells);
+  });
+  const sales = spec128WorksheetXml({
+    uid: SPEC128_SALES_UID,
+    filterMode: F.sales.filterMode,
+    dimension: F.sales.dimension,
+    selected: true,
+    sheetData: salesHeader + salesRows.join(""),
+    after: F.sales.autoFilter.xml,
+  });
+
+  const colours = spec128WorksheetXml({
+    uid: SPEC128_COLOURS_UID,
+    filterMode: F.colours.filterMode,
+    dimension: F.colours.dimension,
+    selected: false,
+    sheetData:
+      headerRow(F.colours.headers, "1:2") +
+      F.colours.rows
+        .map((row) =>
+          spec128XlsxRow(
+            row.row,
+            "1:2",
+            !row.yellow,
+            spec128XlsxCell(`A${row.row}`, str(row.item), { s: row.yellow ? XF.yellow : undefined, t: "s" }) + spec128XlsxCell(`B${row.row}`, row.qty),
+          ),
+        )
+        .join(""),
+    after: F.colours.autoFilter.xml,
+  });
+
+  const log = spec128WorksheetXml({
+    uid: SPEC128_LOG_UID,
+    filterMode: false,
+    dimension: F.log.dimension,
+    selected: false,
+    sheetData:
+      headerRow(F.log.headers, "1:2") +
+      F.log.rows
+        .map((row) =>
+          spec128XlsxRow(
+            row.row,
+            "1:2",
+            false,
+            spec128XlsxCell(`A${row.row}`, str(row.entry), { s: row.yellow ? XF.yellow : undefined, t: "s" }) + spec128XlsxCell(`B${row.row}`, row.hours),
+          ),
+        )
+        .join(""),
+    after: F.log.sortState.xml,
+  });
+
+  const worksheets = [sales, colours, log];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${sst.length}">` +
+    sst.map((text) => `<si><t>${xmlText(text)}</t></si>`).join("") +
+    `</sst>`;
+  const definedNames =
+    `<definedNames>` +
+    F.definedNames
+      .map((name) => `<definedName name="${name.name}" localSheetId="${name.localSheetId}"${name.hidden ? ` hidden="1"` : ""}>${name.text}</definedName>`)
+      .join("") +
+    `</definedNames>`;
+
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheetNames.map((name, index) => ({ name, xml: worksheets[index]! })),
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="166925"/>`,
+    theme: SPEC117_THEME,
+    styles: SPEC128_STYLES,
+    additions: { parts: [], relationships: [], overrides: [], workbookAfterSheets: definedNames },
+  });
+}
+
+// --- spec128-filter.ods ---------------------------------------------------------------
+
+/** The anonymous sheet database range carrying "Sales"'s autofilter, verbatim
+ * as Calc writes it — what the reader keeps as `sourceXml`. */
+const SPEC128_ODS_DATABASE_RANGE_XML =
+  `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sales.A1:Sales.D13" table:display-filter-buttons="true">` +
+  `<table:filter><table:filter-and>` +
+  `<table:filter-condition table:field-number="0" table:value="East" table:operator="=">` +
+  `<table:filter-set-item table:value=""/><table:filter-set-item table:value="East"/>` +
+  `<table:filter-set-item table:value="North"/><table:filter-set-item table:value="West"/></table:filter-condition>` +
+  `<table:filter-condition table:field-number="2" table:value="100" table:operator="&gt;=" table:data-type="number"/>` +
+  `<table:filter-condition table:field-number="2" table:value="900" table:operator="&lt;=" table:data-type="number"/>` +
+  `</table:filter-and></table:filter></table:database-range>`;
+
+/** What spec128-filter.ods holds, for the unit, round-trip and e2e specs. */
+export const SPEC128_FILTER_ODS = {
+  title: "Filter",
+  tableNames: ["Sales"],
+  activeTable: "Sales",
+  activeSheetIndex: 0,
+  headers: { A1: "Region", B1: "Rep", C1: "Amount", D1: "Date" },
+  /** The same records as SPEC128_FILTER_XLSX.sales.rows. */
+  rows: SPEC128_SALES_ROWS,
+  /** Header cells bold (ce5); dates in ce1 — N37, MM/DD/YY. */
+  styles: { header: "ce5", date: "ce1", dateDataStyle: "N37" },
+  databaseRange: {
+    name: "__Anonymous_Sheet_DB__0",
+    targetRangeAddress: "Sales.A1:Sales.D13",
+    displayFilterButtons: true,
+    range: { top: 0, left: 0, bottom: 12, right: 3 },
+    xml: SPEC128_ODS_DATABASE_RANGE_XML,
+    /** Region: `=` with set items; the empty item is "(Blanks)". */
+    region: { fieldNumber: 0, setItems: ["", "East", "North", "West"], values: ["East", "North", "West"], blanks: true },
+    /** Amount: a numeric `>=`/`<=` pair (custom, and). */
+    amount: {
+      fieldNumber: 2,
+      conditions: [
+        { operator: ">=", value: "100" },
+        { operator: "<=", value: "900" },
+      ],
+    },
+  },
+  /** `table:visibility="filter"` rows — `filterHidden` on read. */
+  filterRows: [4, 5, 9, 10],
+  filterIndices: [3, 4, 8, 9],
+  /** The `table:visibility="collapse"` row — `hidden` on read. */
+  collapseRow: 12,
+  collapseIndex: 11,
+  /** 13 rows written, then Calc's trailing run to the grid's edge. */
+  trailingRowRun: 1_048_576 - 13,
+  records: 12,
+  status: "8 of 12 records found",
+} as const;
+
+/** Two digits, as Calc's ISO dates and its MM/DD/YY text spell them. */
+const spec128Pad2 = (n: number): string => String(n).padStart(2, "0");
+
+/** A Calc row with its visibility: `filter` (a filter hid it) or `collapse`
+ * (the user did), in Calc's attribute order. */
+function spec128OdsRow(cells: string, visibility?: "filter" | "collapse"): string {
+  return `<table:table-row table:style-name="ro1"${visibility ? ` table:visibility="${visibility}"` : ""}>${cells}</table:table-row>`;
+}
+
+export async function buildSpec128FilterOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC128_FILTER_ODS;
+  const header = spec128OdsRow(Object.values(O.headers).map((text) => loString(text, O.styles.header)).join("") + loEmpty(16380));
+  const rows = O.rows.map((row) => {
+    const [y, m, d] = row.date;
+    const cells =
+      (row.region === null ? `<table:table-cell/>` : loString(row.region)) +
+      loString(row.rep) +
+      loFloat(row.amount) +
+      `<table:table-cell table:style-name="${O.styles.date}" office:value-type="date" office:date-value="${y}-${spec128Pad2(m)}-${spec128Pad2(d)}" calcext:value-type="date">` +
+      `<text:p>${spec128Pad2(m)}/${spec128Pad2(d)}/${spec128Pad2(y % 100)}</text:p></table:table-cell>` +
+      loEmpty(16380);
+    return spec128OdsRow(cells, row.state === "filter" ? "filter" : row.state === "user" ? "collapse" : undefined);
+  });
+  const table =
+    `<table:table table:name="${O.tableNames[0]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    header +
+    rows.join("") +
+    loRow(loEmpty(16384), "ro1", O.trailingRowRun) +
+    `</table:table>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${LO_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${table}<table:named-expressions/>` +
+    `<table:database-ranges>${O.databaseRange.xml}</table:database-ranges>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.headers).length + O.rows.reduce((sum, row) => sum + (row.region === null ? 3 : 4), 0);
+  return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
 }
