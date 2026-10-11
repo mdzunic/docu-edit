@@ -26,9 +26,9 @@
 //   otherwise, so callers keep the identity of everything untouched
 //   (`conditionalFormats` is shared by reference with SPEC-121's snapshots).
 //   A changed `cellIs`/`expression` rule is re-placed with withX14Placement
-//   for its host: a formula that came to reference another sheet (a move
-//   across sheets) or stopped to (a deleted sheet's `#REF!`) changes where
-//   an xlsx writer puts it.
+//   for its host: a formula that now references another sheet (a move
+//   across sheets) or no longer does (a deleted sheet's `#REF!`) changes
+//   where an xlsx writer puts it.
 import { scanXml, XmlScanError } from "../core/xmlScanner";
 import { withX14Placement, type CfRule, type CfValue, type ConditionalFormat } from "./conditionalFormats";
 import { fromXlsxFormula, toXlsxFormula } from "./formula/dialect";
