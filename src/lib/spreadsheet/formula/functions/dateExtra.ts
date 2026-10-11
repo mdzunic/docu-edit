@@ -48,9 +48,10 @@ function parsedDateTime(args: ArgList, ctx: EvalContext): number | CellError {
     return text;
   }
   const parsed = parseInput(text, ctx.settings.locale, ctx.settings.dateSystem);
-  // A date or time is the one input parseInput suggests a built-in date or
-  // time format for.
-  return typeof parsed.value === "number" && parsed.builtinFormatId !== undefined && parsed.formula === undefined ? parsed.value : VALUE_ERROR;
+  // A date or time is an input parseInput suggests a built-in date format or
+  // a time format (one with hours) for.
+  const timeFormat = /h/i.test((parsed.numberFormat ?? "").replace(/"[^"]*"/g, ""));
+  return typeof parsed.value === "number" && (parsed.builtinFormatId !== undefined || timeFormat) && parsed.formula === undefined ? parsed.value : VALUE_ERROR;
 }
 
 /** The Gregorian leap rule. */
@@ -332,7 +333,9 @@ export const DATE_EXTRA_FUNCTIONS: FunctionSpec[] = [
     args: [arg("time_text", "The time as text, such as \"6:45 PM\" or \"18:45\".")],
     impl(args, ctx) {
       const serial = parsedDateTime(args, ctx);
-      return isError(serial) ? serial : serial - Math.floor(serial);
+      // To the millisecond, the finest a time text states: a date's serial
+      // beside it would otherwise leak its rounding into the fraction.
+      return isError(serial) ? serial : (Math.round((serial - Math.floor(serial)) * 86_400_000) % 86_400_000) / 86_400_000;
     },
   },
   {
