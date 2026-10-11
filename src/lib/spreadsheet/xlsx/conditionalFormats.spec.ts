@@ -32,7 +32,7 @@ import {
 import { spreadsheetDownload } from "../download";
 import { buildSpec129CfXlsxBytes } from "../fixtures/build";
 import { packageIntegrity } from "../fixtures/packageIntegrity";
-import type { Sheet, SpreadsheetModel } from "../model";
+import type { Sheet, SheetColorRef, SpreadsheetModel } from "../model";
 import { readSpreadsheetBytes } from "../open";
 import { CellBudget } from "../parsed";
 import { createBlankWorkbook, stripRetention } from "../sheets";
@@ -121,6 +121,9 @@ function crossFormat(model: SpreadsheetModel): SpreadsheetModel {
     })),
   };
 }
+
+/** Accent 6, darker 25%, as the xlsx reader keeps a tinted theme colour. */
+const ACCENT6_DARKER: SheetColorRef = { theme: "accent6", lumMod: 0.75, xlsxTint: "-0.25" };
 
 const BAR: CfDataBar = {
   min: { type: "autoMin" },
@@ -551,7 +554,7 @@ describe("whole workbooks write valid conditional formats and dxfs", () => {
     addConditionalFormat(model, sheetId, [range("B2:B13")], { kind: "cellIs", operator: "between", formulas: ["10", "$Z$1"], dxfId: green });
     addConditionalFormat(model, sheetId, [range("C2:C13")], { kind: "dataBar", bar: { ...BAR, gradient: false, negativeColor: "#ff00ff", axisColor: "#00ff00" } });
     addConditionalFormat(model, sheetId, [range("D2:D13")], { kind: "iconSet", icons: { set: "3Arrows", thresholds: [0, 33, 67].map((at) => ({ at: { type: "percent", value: String(at) }, gte: at === 0 })), reverse: true, showValue: true } });
-    addConditionalFormat(model, sheetId, [range("E2:E13")], { kind: "colorScale", stops: [{ at: { type: "min" }, color: "#f8696b" }, { at: { type: "max" }, color: { theme: "accent6", lumMod: 0.75, xlsxTint: "-0.25" } }] });
+    addConditionalFormat(model, sheetId, [range("E2:E13")], { kind: "colorScale", stops: [{ at: { type: "min" }, color: "#f8696b" }, { at: { type: "max" }, color: ACCENT6_DARKER }] });
     addConditionalFormat(model, sheetId, [range("F2:F13")], STARS);
     addConditionalFormat(model, sheetId, [range("G2:G13")], { kind: "expression", formula: "G2>Sheet9!$A$1", dxfId: bold });
     addConditionalFormat(model, sheetId, [range("H2:H13")], { kind: "top10", bottom: true, percent: true, rank: 15, dxfId: bold, stopIfTrue: true });

@@ -1484,7 +1484,7 @@ describe("SPEC-129 dxfs: Excel's quirks on read, each dxf kept verbatim", () => 
       { fill: { kind: "pattern", pattern: "darkGray", fg: "#0000ff", bg: INDEXED_COLORS[13] } },
       { numberFormat: "0.0%", borders: { left: { style: "thin", color: "#ff0000" }, bottom: { style: "double" } } },
       {},
-    ] satisfies Dxf[]);
+    ]);
     // Each keeps its element verbatim — alignment and protection included.
     expect(dxfs.map((dxf) => dxf.sourceXml)).toEqual(DXFS);
     // The tinted theme colour resolves as SPEC-117's does (accent 1, darker 25%).
