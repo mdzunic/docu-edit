@@ -6,8 +6,11 @@
 // changes nothing; later specs (SPEC-139) reuse it for their refusals.
 // BaseDialog's look, but its own markup: BaseDialog's panel is a
 // role="dialog". Escape, OK and a press on the backdrop all close it (emit
-// `close`); the caller returns focus to the grid. Runtime prop declarations
-// per the espree constraint (see AppShell.vue).
+// `close`); the caller returns focus to the grid. It is modal, so no key
+// pressed in it reaches the window's and document's shortcut listeners
+// (Ctrl/Cmd+Z would otherwise undo behind it): each keydown stops at the
+// panel, its default (Enter or Space pressing OK) kept. Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { nextTick, onMounted, useTemplateRef } from "vue";
 import UiButton from "../ui/UiButton.vue";
 
@@ -29,8 +32,8 @@ onMounted(async () => {
 });
 
 function onKeydown(event = new KeyboardEvent("keydown")) {
+  event.stopPropagation();
   if (event.key === "Escape") {
-    event.stopPropagation();
     emit("close");
   } else if (event.key === "Tab") {
     // One control: focus stays on OK.

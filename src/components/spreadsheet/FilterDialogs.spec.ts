@@ -56,4 +56,19 @@ describe("SheetAlertDialog (SPEC-128)", () => {
     expect(wrapper.emitted("close")).toHaveLength(2);
     wrapper.unmount();
   });
+
+  it("keeps its keys from the window's shortcut listeners: Ctrl/Cmd+Z pressed in it never undoes behind it", async () => {
+    const wrapper = mount(SheetAlertDialog, { props: { message: "Cannot sort" }, attachTo: document.body });
+    const seen: string[] = [];
+    const listener = (event: KeyboardEvent): void => {
+      seen.push(event.key);
+    };
+    window.addEventListener("keydown", listener);
+    await wrapper.get('[data-testid="sheet-alert-ok"]').trigger("keydown", { key: "z", ctrlKey: true, metaKey: true });
+    await wrapper.get('[data-testid="sheet-alert"]').trigger("keydown", { key: "Escape" });
+    window.removeEventListener("keydown", listener);
+    expect(seen).toEqual([]);
+    expect(wrapper.emitted("close")).toHaveLength(1);
+    wrapper.unmount();
+  });
 });
