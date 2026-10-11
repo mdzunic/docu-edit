@@ -100,6 +100,21 @@ const BAR: CfDataBar = {
   showValue: true,
 };
 
+/** A 1900-system date serial. */
+function day(y: number, m: number, d: number): number {
+  return dateToSerial(y, m, d, "1900");
+}
+
+/** The value-object formula stub: $B$1 is 100, anything else unresolved. */
+function formula(text: string): number | null {
+  return text === "$B$1" ? 100 : null;
+}
+
+/** A 3-icon icon-set rule body with the default thresholds. */
+function icons(set: "3Arrows" | "NoIcons", reverse = false): CfRuleBody {
+  return { kind: "iconSet", icons: { set, thresholds: defaultIconThresholds(3), reverse, showValue: true } };
+}
+
 afterEach(() => setClock(null));
 
 // --- semantics ------------------------------------------------------------------------------------
@@ -144,8 +159,8 @@ describe("Evaluation semantics", () => {
 
   it("an expression is true only for TRUE or a non-zero number; an error, text or an unparseable formula is false", () => {
     const cases: [string, boolean][] = [["TRUE", true], ["2", true], ["-0.5", true], ["0", false], ["FALSE", false], ['"TRUE"', false], ["1/0", false], ["NA()", false], ["1+", false]];
-    for (const [formula, expected] of cases) {
-      expect(formatted(book({ A1: 1 }, [format("A1", rule({ kind: "expression", formula }, { dxfId: 0 }))]), "A1"), formula).toBe(expected);
+    for (const [text, expected] of cases) {
+      expect(formatted(book({ A1: 1 }, [format("A1", rule({ kind: "expression", formula: text }, { dxfId: 0 }))]), "A1"), text).toBe(expected);
     }
   });
 
@@ -209,7 +224,6 @@ describe("Evaluation semantics", () => {
 
   it("timePeriod tests floor(v) against today from core/clock, weeks starting on Sunday", () => {
     setClock(new Date(2026, 9, 14, 15, 30)); // Wednesday 14 October 2026, local time
-    const day = (y: number, m: number, d: number) => dateToSerial(y, m, d, "1900");
     const values = {
       A1: day(2026, 10, 14) + 0.75,
       A2: day(2026, 10, 13),
@@ -267,7 +281,6 @@ describe("Value objects and statistics", () => {
   });
 
   it("resolves every value-object type", () => {
-    const formula = (text: string) => (text === "$B$1" ? 100 : null);
     const resolve = (type: Parameters<typeof resolveCfValue>[0]["type"], value?: string) => resolveCfValue({ type, value }, stats, formula);
     expect(resolve("min")).toBe(-4);
     expect(resolve("max")).toBe(10);
@@ -374,7 +387,6 @@ describe("Icon set", () => {
   });
 
   it("resolves percent thresholds over the format's numbers; NoIcons draws nothing but still wins the icon", () => {
-    const icons = (set: "3Arrows" | "NoIcons", reverse = false) => ({ kind: "iconSet" as const, icons: { set, thresholds: defaultIconThresholds(3), reverse, showValue: true } });
     const model = book({ D2: 100, D3: 50, D4: 0 }, [format("D2:D4", rule(icons("3Arrows")))]);
     expect(at(model, "D2")?.icon).toEqual({ set: "3Arrows", index: 2 });
     expect(at(model, "D3")?.icon).toEqual({ set: "3Arrows", index: 1 });
@@ -466,7 +478,7 @@ describe("commands", () => {
   it("renumbers priorities densely, keeping a reader's sourceXml only on request", () => {
     const formats = commandBook().sheets[0]!.conditionalFormats;
     const renumbered = renumberPriorities(formats);
-    expect(rulesByPriority(renumbered).map(({ rule }) => [rule.id, rule.priority])).toEqual([["x", 1], ["y", 2]]);
+    expect(rulesByPriority(renumbered).map((entry) => [entry.rule.id, entry.rule.priority])).toEqual([["x", 1], ["y", 2]]);
     expect(renumbered.every((each) => each.sourceXml === undefined)).toBe(true);
     expect(renumberPriorities(formats, { keepSource: true }).map((each) => each.sourceXml)).toEqual(["<x/>", "<y/>"]);
     expect(renumberPriorities(renumbered)).toBe(renumbered);
@@ -480,7 +492,7 @@ describe("commands", () => {
     expect(sheet).not.toBe(before);
     expect(before.conditionalFormats).toHaveLength(2);
     expect(sheet.dirty).toBe(true);
-    expect(rulesByPriority(sheet.conditionalFormats).map(({ rule }) => [rule.id, rule.priority])).toEqual([[ruleId, 1], ["x", 2], ["y", 3]]);
+    expect(rulesByPriority(sheet.conditionalFormats).map((entry) => [entry.rule.id, entry.rule.priority])).toEqual([[ruleId, 1], ["x", 2], ["y", 3]]);
     expect(sheet.conditionalFormats.at(-1)).toMatchObject({ id: formatId, ranges: [range("B2:B13")] });
     expect(sheet.conditionalFormats.some((each) => each.sourceXml !== undefined)).toBe(false);
   });
@@ -492,7 +504,7 @@ describe("commands", () => {
     setStopIfTrue(model, "s1", "x", true);
     expect(model.sheets[0]!.conditionalFormats[0]!.rules[0]!.stopIfTrue).toBe(true);
     moveRule(model, "s1", "x", "down");
-    expect(rulesByPriority(model.sheets[0]!.conditionalFormats).map(({ rule }) => rule.id)).toEqual(["y", "x"]);
+    expect(rulesByPriority(model.sheets[0]!.conditionalFormats).map((entry) => entry.rule.id)).toEqual(["y", "x"]);
     const unchanged = model.sheets;
     moveRule(model, "s1", "y", "up");
     expect(model.sheets).toBe(unchanged);

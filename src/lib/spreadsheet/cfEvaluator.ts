@@ -297,7 +297,7 @@ export function colorScaleColor(value: number, stops: readonly { value: number; 
     const t = (value - lo.value) / (hi.value - lo.value);
     const a = channels(lo.color);
     const b = channels(hi.color);
-    return hexOf(a.map((channel, i) => channel + (b[i]! - channel) * t));
+    return hexOf(a.map((channel, at) => channel + (b[at]! - channel) * t));
   }
   return last.color;
 }
