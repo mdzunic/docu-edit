@@ -14,13 +14,16 @@
 // their counts), write → read → write is equalBytes-stable, forcing
 // every .ods sheet dirty without an edit reads back to the same model, and a
 // copy in the other format re-opens showing the same displayed values,
-// formulas and number formats.
+// formulas and number formats. SPEC-129: the conditional-format fixtures
+// download byte-identical, a dirty sheet re-emits unedited rules verbatim,
+// rules edited, saved and reopened come back with their dxfs, and a copy in
+// the other format carries every modelled rule.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../core/equality";
 import { unzip } from "../core/zip";
-import { formatA1, getCell, parseA1, usedRange } from "./address";
+import { formatA1, formatRange, getCell, parseA1, parseRange, usedRange } from "./address";
 import { setCellEntry } from "./cells";
 import { spreadsheetDownload, spreadsheetFileName } from "./download";
 import {
@@ -45,14 +48,24 @@ import {
   buildSpec122ShapesXlsxBytes,
   buildSpec128FilterOdsBytes,
   buildSpec128FilterXlsxBytes,
+  buildSpec129CfOdsBytes,
+  buildSpec129CfXlsxBytes,
+  buildSpec129LegacyOdsBytes,
   SPEC116_VBA_PROJECT,
   SPEC128_FILTER_XLSX,
+  SPEC129_CF_ODS,
+  SPEC129_CF_XLSX,
 } from "./fixtures/build";
-// SPEC-129 (xlsx)
-import { formatRange, parseRange } from "./address";
-import { buildSpec129CfXlsxBytes, SPEC129_CF_XLSX } from "./fixtures/build";
-import { addConditionalFormat, deleteRule, modelledDxf, moveRule, rulesByPriority, updateRule } from "./conditionalFormats";
-import { internDxf } from "./styles";
+import {
+  addConditionalFormat,
+  deleteRule,
+  modelledDxf,
+  moveRule,
+  rulesByPriority,
+  setFormatRanges,
+  updateRule,
+  type ConditionalFormat,
+} from "./conditionalFormats";
 import { setFilterCriteria } from "./filter";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
@@ -63,7 +76,7 @@ import { readSpreadsheetBytes } from "./open";
 import { packageIntegrity } from "./fixtures/packageIntegrity";
 import { workbookForCompare } from "./fixtures/workbookForCompare";
 import { addSheet, createBlankWorkbook, duplicateSheet, moveSheet, renameSheet, setSheetHidden, setTabColor, stripRetention } from "./sheets";
-import { cellStyle, effectiveStyleId, styleKey } from "./styles";
+import { cellStyle, effectiveStyleId, internDxf, styleKey } from "./styles";
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
 const NUMBERS_XLSX = new Uint8Array(readFileSync(join(E2E_FIXTURES, "spec116-numbers.xlsx")));
@@ -841,10 +854,6 @@ describe("SPEC-129 (xlsx): spec129-cf.xlsx round trips", () => {
 // ODS numbers priorities by document order, so formats compare in priority
 // order, and dxfs by content (the re-read table is in first-use order).
 // ============================================================================
-import { parseRange as parseSpec129Range } from "./address";
-import * as spec129OdsCf from "./conditionalFormats";
-import { buildSpec129CfOdsBytes, buildSpec129LegacyOdsBytes, SPEC129_CF_ODS } from "./fixtures/build";
-import { internDxf as internSpec129OdsDxf } from "./styles";
 
 /** An edit of a sheet's cells, the sheet marked dirty as the editor does. */
 function editSpec129Sheet(model: SpreadsheetModel, index: number, row: number, col: number, value: string | number): void {
@@ -852,7 +861,7 @@ function editSpec129Sheet(model: SpreadsheetModel, index: number, row: number, c
   model.sheets = model.sheets.map((each, position) => (position === index ? { ...each, dirty: true } : each));
 }
 
-function spec129FirstPriority(format: spec129OdsCf.ConditionalFormat): number {
+function spec129FirstPriority(format: ConditionalFormat): number {
   return Math.min(...format.rules.map((rule) => rule.priority));
 }
 
@@ -899,24 +908,24 @@ describe("SPEC-129 (ODS): conditional formats round trip", () => {
   it("spec129-cf.ods: add (Greater than 120, green), move it down, edit, re-range and delete rules → save → reopen reproduces them", async () => {
     const model = await readSpreadsheetBytes(await buildSpec129CfOdsBytes(), "ods", "book");
     const [scores, more] = model.sheets;
-    const green = internSpec129OdsDxf(model, { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } });
-    const { ruleId } = spec129OdsCf.addConditionalFormat(model, scores!.id, [parseSpec129Range("B2:B13")!], { kind: "cellIs", operator: "greaterThan", formulas: ["120"], dxfId: green });
-    spec129OdsCf.moveRule(model, scores!.id, ruleId, "down");
+    const green = internDxf(model, { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } });
+    const { ruleId } = addConditionalFormat(model, scores!.id, [parseRange("B2:B13")!], { kind: "cellIs", operator: "greaterThan", formulas: ["120"], dxfId: green });
+    moveRule(model, scores!.id, ruleId, "down");
     const sheetFormats = (index: number) => model.sheets[index]!.conditionalFormats;
     const stars = sheetFormats(0).find((format) => format.rules[0]!.kind === "iconSet" && format.rules[0]!.icons.set === "3Stars")!;
-    spec129OdsCf.deleteRule(model, scores!.id, stars.rules[0]!.id);
+    deleteRule(model, scores!.id, stars.rules[0]!.id);
     const bar = sheetFormats(0).find((format) => format.rules[0]!.kind === "dataBar")!;
-    spec129OdsCf.setFormatRanges(model, scores!.id, bar.id, [parseSpec129Range("C2:C20")!, parseSpec129Range("J2:J5")!]);
+    setFormatRanges(model, scores!.id, bar.id, [parseRange("C2:C20")!, parseRange("J2:J5")!]);
     const text = sheetFormats(1).flatMap((format) => format.rules).find((rule) => rule.kind === "text")!;
-    const bold = internSpec129OdsDxf(model, { font: { bold: true, underline: "single" }, numberFormat: "0.00" });
-    spec129OdsCf.updateRule(model, more!.id, text.id, { kind: "text", operator: "beginsWith", text: `say "hi"`, dxfId: bold });
+    const bold = internDxf(model, { font: { bold: true, underline: "single" }, numberFormat: "0.00" });
+    updateRule(model, more!.id, text.id, { kind: "text", operator: "beginsWith", text: `say "hi"`, dxfId: bold });
 
     const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, "ods", "book");
     for (const index of [0, 1]) {
       expect(odsConditionalFormatsForCompare(back, back.sheets[index]!)).toEqual(odsConditionalFormatsForCompare(model, model.sheets[index]!));
     }
     // The new rule ranks second, under Bad's "> 100".
-    const ranked = spec129OdsCf.rulesByPriority(back.sheets[0]!.conditionalFormats).slice(0, 2);
+    const ranked = rulesByPriority(back.sheets[0]!.conditionalFormats).slice(0, 2);
     expect(ranked.map(({ rule }) => rule.kind === "cellIs" && rule.formulas[0])).toEqual(["100", "120"]);
     // And a second save of the re-read model is stable.
     const again = await readSpreadsheetBytes((await spreadsheetDownload(back)).bytes, "ods", "book");
@@ -929,4 +938,46 @@ describe("SPEC-129 (ODS): conditional formats round trip", () => {
     const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, "ods", "book");
     expect(odsConditionalFormatsForCompare(back, back.sheets[0]!)).toEqual(odsConditionalFormatsForCompare(model, model.sheets[0]!));
   });
+});
+
+// ============================================================================
+// SPEC-129: "Download a copy as…" carries every modelled rule across formats
+// per the wire tables — in priority order, over the same ranges; a preserved
+// rule stays behind (UNCONVERTIBLE_CONTENT's "some conditional formatting").
+// A kind with no wire form of its own in the target travels as the
+// expression the tables give it: blanks and a std-dev average as ODS
+// `formula-is`, LibreOffice's year periods as xlsx expressions.
+// ============================================================================
+
+/** Each sheet's rules in priority order as "<ranges> <kind>[ <icon set>]". */
+function carriedRules(model: SpreadsheetModel, target: SpreadsheetFormat): string[][] {
+  return model.sheets.map((sheet) =>
+    rulesByPriority(sheet.conditionalFormats)
+      .filter(({ rule }) => rule.kind !== "preserved")
+      .map(({ format, rule }) => {
+        const asExpression =
+          target === "ods"
+            ? rule.kind === "blanks" || (rule.kind === "aboveAverage" && rule.stdDev !== undefined)
+            : rule.kind === "timePeriod" && rule.period.endsWith("Year");
+        const kind = asExpression ? "expression" : rule.kind;
+        return `${format.ranges.map(formatRange).join(" ")} ${kind}${rule.kind === "iconSet" ? ` ${rule.icons.set}` : ""}`;
+      }),
+  );
+}
+
+describe("SPEC-129: a copy in the other format carries every modelled rule", () => {
+  for (const [file, format, build] of [
+    ["spec129-cf.xlsx", "xlsx", buildSpec129CfXlsxBytes],
+    ["spec129-cf.ods", "ods", buildSpec129CfOdsBytes],
+  ] as const) {
+    it(file, async () => {
+      const model = await readSpreadsheetBytes(await build(), format, "book");
+      const target: SpreadsheetFormat = format === "xlsx" ? "ods" : "xlsx";
+      const { bytes } = await spreadsheetDownload(model, target);
+      expect(await packageIntegrity(bytes)).toEqual([]);
+      const back = await readSpreadsheetBytes(bytes, target, "copy");
+      expect(carriedRules(back, target)).toEqual(carriedRules(model, target));
+      expect(carriedRules(back, target).flat().length).toBeGreaterThan(10);
+    });
+  }
 });
