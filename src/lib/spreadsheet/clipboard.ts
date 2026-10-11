@@ -32,6 +32,17 @@
 //   white-space:pre-wrap for wrapped cells and border-top|right|bottom|left
 //   (1px/2px/3px solid|dashed|dotted|double + colour), theme colours resolved
 //   to hex. No class, no script, nothing a reader must execute.
+// - SPEC-128: Copy of a selection spanning filter-hidden rows takes the
+//   visible rows only (Excel) — the rectangle's visibleRowSpans, packed
+//   together: the payload, the TSV and the HTML hold one row per visible
+//   row, top to bottom, as if they were adjacent. Each formula is shifted by
+//   the rows it packs up (shiftFormula by packed row − source row), so a
+//   paste — which shifts by destination − (origin + r) — moves every
+//   relative reference by the distance from its own source row, as Excel's
+//   paste of visible cells does (a relative reference the packing alone
+//   pushes above row 1 reads #REF!). An array keeps its range, and a merge
+//   travels, only when it lies inside one visible span. A Cut, and the
+//   payload of a drag, take every row: a move moves the whole rectangle.
 import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme } from "../core/theme";
 import { findRow, usedRange, type GridRange } from "./address";
 import {
@@ -44,6 +55,8 @@ import {
   type ClipboardRowProps,
   type SheetClipboardPayload,
 } from "./clipboardPayload";
+import { visibleRowSpans } from "./filter";
+import { shiftFormula } from "./formula/references";
 import { buildMergeIndex, mergeAt, mergesIn } from "./merges";
 import { MAX_COLS, MAX_ROWS, type Cell, type CellBorderEdge, type CellStyle, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
@@ -136,6 +149,31 @@ export interface ClipboardCopy {
   payload: SheetClipboardPayload;
   styleIds: number[];
   area: CopyArea;
+  /** SPEC-128: the visible row spans of `area.range` the payload packs
+   *  together, when filter-hidden rows were left out. */
+  spans?: GridRange[];
+}
+
+/** A span of copied rows and how far its rows move up when packed (0, or
+ * the filter-hidden rows above it inside the copy, negated). */
+interface PackedSpan {
+  span: GridRange;
+  offset: number;
+}
+
+/** The copied rows as packed spans: `area` whole, or — `visibleRows` —
+ * its visibleRowSpans (the whole area when none is left). */
+function packedSpans(sheet: Sheet, area: GridRange, visibleRows: boolean): PackedSpan[] {
+  const spans = visibleRows ? visibleRowSpans(sheet, area) : [];
+  if (spans.length === 0 || (spans.length === 1 && spans[0]!.top === area.top && spans[0]!.bottom === area.bottom)) {
+    return [{ span: area, offset: 0 }];
+  }
+  let packed = area.top;
+  return spans.map((span) => {
+    const offset = packed - span.top;
+    packed += span.bottom - span.top + 1;
+    return { span, offset };
+  });
 }
 
 /** A style as the clipboard carries it: no `sourceXf`/`sourceStyleName`. */
@@ -168,14 +206,24 @@ export function forEachPosition(
 }
 
 /** The copy of `range` on `sheetId` (see the module header); a cut carries
- * `cutToken`. The caller checked copyRefusal. */
-export function buildClipboardCopy(model: SpreadsheetModel, sheetId: string, range: GridRange, cutToken?: string): ClipboardCopy {
+ * `cutToken`. `visibleRows`: Edit ▸ Copy's — leave out filter-hidden rows
+ * (SPEC-128; never a cut's). The caller checked copyRefusal. */
+export function buildClipboardCopy(
+  model: SpreadsheetModel,
+  sheetId: string,
+  range: GridRange,
+  cutToken?: string,
+  options: { visibleRows?: boolean } = {},
+): ClipboardCopy {
   const sheet = model.sheets.find((each) => each.id === sheetId);
   if (!sheet) {
     throw new RangeError(`No sheet ${sheetId}`);
   }
   const area = copyArea(sheet, range);
-  const { top, left, bottom, right } = area.range;
+  const { top, left, right } = area.range;
+  const spans = packedSpans(sheet, area.range, options.visibleRows === true && cutToken === undefined);
+  const lastSpan = spans.at(-1)!;
+  const bottom = lastSpan.span.bottom + lastSpan.offset;
   const whole = area.wholeRows || area.wholeCols;
   const styleIds: number[] = [];
   const styleIndex = new Map<number, number>();
@@ -191,32 +239,34 @@ export function buildClipboardCopy(model: SpreadsheetModel, sheetId: string, ran
     return index;
   };
   const cells: ClipboardCell[] = [];
-  forEachPosition(sheet, area.range, (row, col, cell, effective) => {
-    // A whole-axis copy carries the cells' own styles; the rows' and
-    // columns' travel as their properties.
-    const styleId = whole ? cell?.styleId : effective;
-    const formula = cell?.formula !== undefined && !cell.formulaUnparsed ? cell.formula : undefined;
-    // A blank position travels as nothing: no value, no formula, and no style
-    // of its own (a whole-axis copy) or only the default (an ordinary one).
-    if ((cell === undefined || (cell.value === null && formula === undefined)) && (whole ? styleId === undefined : styleId === 0)) {
-      return;
-    }
-    const entry: ClipboardCell = { r: row - top, c: col - left, v: cell?.value ?? null };
-    if (formula !== undefined) {
-      entry.f = formula;
-      const array = cell?.arrayRange;
-      if (array && array.top === row && array.left === col && array.bottom <= bottom && array.right <= right) {
-        entry.a = { top: array.top - top, left: array.left - left, bottom: array.bottom - top, right: array.right - left };
+  for (const { span, offset } of spans) {
+    forEachPosition(sheet, span, (row, col, cell, effective) => {
+      // A whole-axis copy carries the cells' own styles; the rows' and
+      // columns' travel as their properties.
+      const styleId = whole ? cell?.styleId : effective;
+      const formula = cell?.formula !== undefined && !cell.formulaUnparsed ? cell.formula : undefined;
+      // A blank position travels as nothing: no value, no formula, and no style
+      // of its own (a whole-axis copy) or only the default (an ordinary one).
+      if ((cell === undefined || (cell.value === null && formula === undefined)) && (whole ? styleId === undefined : styleId === 0)) {
+        return;
       }
-    }
-    if (styleId !== undefined && (styleId !== 0 || whole)) {
-      entry.s = indexOf(styleId);
-    }
-    if (cell?.runs && typeof cell.value === "string") {
-      entry.t = structuredClone(cell.runs);
-    }
-    cells.push(entry);
-  });
+      const entry: ClipboardCell = { r: row - top + offset, c: col - left, v: cell?.value ?? null };
+      if (formula !== undefined) {
+        entry.f = shiftFormula(formula, offset, 0);
+        const array = cell?.arrayRange;
+        if (array && array.top === row && array.left === col && array.bottom <= span.bottom && array.right <= right) {
+          entry.a = { top: array.top - top + offset, left: array.left - left, bottom: array.bottom - top + offset, right: array.right - left };
+        }
+      }
+      if (styleId !== undefined && (styleId !== 0 || whole)) {
+        entry.s = indexOf(styleId);
+      }
+      if (cell?.runs && typeof cell.value === "string") {
+        entry.t = structuredClone(cell.runs);
+      }
+      cells.push(entry);
+    });
+  }
   const payload: SheetClipboardPayload = {
     kind: PAYLOAD_KIND,
     version: 1,
@@ -228,13 +278,15 @@ export function buildClipboardCopy(model: SpreadsheetModel, sheetId: string, ran
     cols: right - left + 1,
     cells,
     styles,
-    merges: sheet.merges
-      .filter((merge) => merge.top >= top && merge.left >= left && merge.bottom <= bottom && merge.right <= right)
-      .map((merge) => ({ top: merge.top - top, left: merge.left - left, bottom: merge.bottom - top, right: merge.right - left })),
+    merges: spans.flatMap(({ span, offset }) =>
+      sheet.merges
+        .filter((merge) => merge.top >= span.top && merge.left >= left && merge.bottom <= span.bottom && merge.right <= right)
+        .map((merge) => ({ top: merge.top - top + offset, left: merge.left - left, bottom: merge.bottom - top + offset, right: merge.right - left })),
+    ),
   };
   if (area.wholeRows) {
     payload.wholeRows = true;
-    payload.rowProps = rowPropsOf(sheet, area.range, indexOf);
+    payload.rowProps = spans.flatMap(({ span, offset }) => rowPropsOf(sheet, span, top - offset, indexOf));
   }
   if (area.wholeCols) {
     payload.wholeCols = true;
@@ -243,7 +295,11 @@ export function buildClipboardCopy(model: SpreadsheetModel, sheetId: string, ran
   if (cutToken !== undefined) {
     payload.cut = cutToken;
   }
-  return { payload, styleIds, area };
+  const copy: ClipboardCopy = { payload, styleIds, area };
+  if (spans.length > 1 || spans[0]!.span !== area.range) {
+    copy.spans = spans.map(({ span }) => span);
+  }
+  return copy;
 }
 
 /** The payload of one copy (see buildClipboardCopy). */
@@ -251,12 +307,13 @@ export function buildClipboardPayload(model: SpreadsheetModel, sheetId: string, 
   return buildClipboardCopy(model, sheetId, range, cutToken).payload;
 }
 
-/** The copied rows' own properties (a whole-row copy). */
-function rowPropsOf(sheet: Sheet, range: GridRange, indexOf: (id: number) => number): ClipboardRowProps[] {
+/** The copied rows' own properties (a whole-row copy) on `range`'s rows,
+ * each `r` counted from `origin`. */
+function rowPropsOf(sheet: Sheet, range: GridRange, origin: number, indexOf: (id: number) => number): ClipboardRowProps[] {
   const out: ClipboardRowProps[] = [];
   for (let r = firstRowAtOrAfter(sheet.rows, range.top); r < sheet.rows.length && sheet.rows[r]!.index <= range.bottom; r += 1) {
     const row = sheet.rows[r]!;
-    const props: ClipboardRowProps = { r: row.index - range.top };
+    const props: ClipboardRowProps = { r: row.index - origin };
     if (row.heightPt !== undefined) {
       props.heightPt = row.heightPt;
     }
@@ -406,7 +463,8 @@ export function copyFlavours(model: SpreadsheetModel, sheetId: string, copy: Cli
   const html: string[] = [];
   let line: string[] = [];
   let currentRow = -1;
-  forEachPosition(sheet, range, (row, col, cell, styleId) => {
+  let spanBottom = range.bottom;
+  const visit = (row: number, col: number, cell: Cell | undefined, styleId: number): void => {
     if (row !== currentRow) {
       if (currentRow >= 0) {
         lines.push(line);
@@ -435,11 +493,15 @@ export function copyFlavours(model: SpreadsheetModel, sheetId: string, copy: Cli
       css.set(styleId, style);
     }
     const span =
-      merge && merge.bottom <= range.bottom && merge.right <= range.right
+      merge && merge.bottom <= spanBottom && merge.right <= range.right
         ? `${merge.right > merge.left ? ` colspan="${merge.right - merge.left + 1}"` : ""}${merge.bottom > merge.top ? ` rowspan="${merge.bottom - merge.top + 1}"` : ""}`
         : "";
     html.push(`<td${span}${style ? ` style="${escapeHtml(style)}"` : ""}>${escapeHtml(shown).replaceAll("\n", "<br>")}</td>`);
-  });
+  };
+  for (const rows of copy.spans ?? [range]) {
+    spanBottom = rows.bottom;
+    forEachPosition(sheet, rows, visit);
+  }
   lines.push(line);
   html.push("</tr>");
   const attribute = encodePayload(copy.payload);

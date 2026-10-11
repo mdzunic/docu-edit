@@ -65,7 +65,7 @@ export interface SheetClipboardPayload {
   sheetName: string;
   dateSystem: "1900" | "1904";
   origin: CellRef; // source top-left
-  rows: number; // the copied rectangle after used-range clipping
+  rows: number; // the copied rectangle after used-range clipping (SPEC-128: its visible rows, packed, when a copy leaves filter-hidden rows out)
   cols: number;
   wholeRows?: true;
   wholeCols?: true;

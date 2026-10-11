@@ -17,6 +17,7 @@ import {
   cellCss,
   clipboardFlavours,
   copyArea,
+  copyFlavours,
   copyRefusal,
   encodePayload,
   MAX_COPY_CELLS,
@@ -461,6 +462,79 @@ function at(block: PasteBlock, r: number, c: number): { v: unknown; f?: string; 
   }
   return { v: cell.v, ...(cell.f ? { f: cell.f } : {}), ...(cell.r1c1 ? { r1c1: cell.r1c1 } : {}), ...(cell.s !== undefined ? { style: block.styles[cell.s] } : {}) };
 }
+
+describe("SPEC-128: Copy over filter-hidden rows takes the visible rows only", () => {
+  /** A1:C6 — Region | Amount over West, East, West, North, West, filtered to
+   * West (rows 3 and 5 filter-hidden); C4 = B4*2, merged C5:C6 hidden-crossing. */
+  function filtered(): SpreadsheetModel {
+    return model([
+      sheet("s1", "Sheet1", {
+        rows: [
+          row(0, [value(0, "Region"), value(1, "Amount")]),
+          row(1, [value(0, "West"), value(1, 1)]),
+          row(2, [value(0, "East"), value(1, 2)], { filterHidden: true }),
+          row(3, [value(0, "West"), value(1, 3), value(2, 6, { formula: "B4*2" })]),
+          row(4, [value(0, "North"), value(1, 4), value(2, "x")], { filterHidden: true }),
+          row(5, [value(0, "West"), value(1, 5)]),
+        ],
+        merges: [range(4, 2, 5, 2)],
+        autoFilter: { range: range(0, 0, 5, 1), columns: [{ colId: 0, criteria: { kind: "values", values: ["West"], blanks: false, dateGroups: [] } }] },
+      }),
+    ]);
+  }
+
+  it("packs the visible rows' spans together in the payload, shifting each formula by the rows it packs up", () => {
+    const copy = buildClipboardCopy(filtered(), "s1", range(0, 0, 5, 2), undefined, { visibleRows: true });
+    expect(copy.spans).toEqual([range(0, 0, 1, 2), range(3, 0, 3, 2), range(5, 0, 5, 2)]);
+    expect(copy.area.range).toEqual(range(0, 0, 5, 2));
+    expect(copy.payload.rows).toBe(4);
+    expect(copy.payload.cells.map((cell) => [cell.r, cell.c, cell.v])).toEqual([
+      [0, 0, "Region"],
+      [0, 1, "Amount"],
+      [1, 0, "West"],
+      [1, 1, 1],
+      [2, 0, "West"],
+      [2, 1, 3],
+      [2, 2, 6],
+      [3, 0, "West"],
+      [3, 1, 5],
+    ]);
+    expect(copy.payload.cells[6]!.f).toBe("B3*2");
+    // The merge crosses a filter-hidden row: it does not travel.
+    expect(copy.payload.merges).toEqual([]);
+  });
+
+  it("the flavours hold the visible rows only", () => {
+    const m = filtered();
+    const copy = buildClipboardCopy(m, "s1", range(0, 0, 5, 2), undefined, { visibleRows: true });
+    const { text, html } = copyFlavours(m, "s1", copy);
+    expect(text).toBe(tsvText([["Region", "Amount", ""], ["West", "1", ""], ["West", "3", "6"], ["West", "5", ""]]));
+    const table = new DOMParser().parseFromString(html, "text/html").querySelector(`table[${PAYLOAD_ATTRIBUTE}]`)!;
+    expect(table.querySelectorAll("tr").length).toBe(4);
+    expect(parseClipboardPayload(table.getAttribute(PAYLOAD_ATTRIBUTE)!)).toEqual(copy.payload);
+  });
+
+  it("a paste of it moves each relative reference by the distance from its own source row (Excel)", () => {
+    const m = filtered();
+    const { payload } = buildClipboardCopy(m, "s1", range(0, 0, 5, 2), undefined, { visibleRows: true });
+    pasteBlock(m, "s1", { ranges: [range(9, 4, 9, 4)], active: { row: 9, col: 4 } }, blockFromPayload(payload), { what: "all" });
+    const pasted = m.sheets[0]!.rows.find((each) => each.index === 11)!;
+    expect(pasted.cells.map((cell) => [cell.col, cell.value, cell.formula])).toEqual([
+      [4, "West", undefined],
+      [5, 3, undefined],
+      [6, 6, "F12*2"],
+    ]);
+  });
+
+  it("takes every row without filter-hidden rows inside, for a cut, and unless asked (a drag)", () => {
+    const m = filtered();
+    expect(buildClipboardCopy(m, "s1", range(0, 0, 1, 2), undefined, { visibleRows: true }).spans).toBeUndefined();
+    const cut = buildClipboardCopy(m, "s1", range(0, 0, 5, 2), "cut-token", { visibleRows: true });
+    expect([cut.spans, cut.payload.rows]).toEqual([undefined, 6]);
+    const drag = buildClipboardCopy(m, "s1", range(0, 0, 5, 2));
+    expect([drag.spans, drag.payload.rows, drag.payload.merges]).toEqual([undefined, 6, [range(4, 2, 5, 2)]]);
+  });
+});
 
 describe("external sources — each producer's markers (inline snippets)", () => {
   it("Excel: xmlns:x, x:num/x:bool/x:err/x:str, mso-number-format from class rules with CSS escapes, class rules read as data", () => {
