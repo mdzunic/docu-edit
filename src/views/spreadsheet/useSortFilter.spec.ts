@@ -151,6 +151,21 @@ describe("SPEC-128 useSortFilter — sorting", () => {
     expect(h.sheet().autoFilter?.sort?.keys).toEqual([{ col: 1, descending: true }]);
   });
 
+  it("Sort range… over the autofilter's range locks its header row as a header: an OK without headers still sorts below it", () => {
+    const h = harness(rowsOf(SALES), { autoFilter: { range: A1_B5, columns: [] } });
+    h.selection.value = single(2, 1);
+    h.sf.openSortDialog();
+    expect(h.sf.sortDialog.value).toMatchObject({ range: A1_B5, hasHeader: true, headerLocked: true });
+    h.sf.confirmSort({ keys: [{ col: 1, descending: false }], hasHeader: false, caseSensitive: false });
+    expect(h.column(0, 0)).toEqual(["Region", "West", "North", "East", "West"]);
+    expect(h.column(1, 0)).toEqual(["Amount", 10, 20, 30, 40]);
+    // Off the autofilter the box stays the user's.
+    const plain = harness(rowsOf(SALES));
+    plain.selection.value = single(2, 1);
+    plain.sf.openSortDialog();
+    expect(plain.sf.sortDialog.value?.headerLocked).toBe(false);
+  });
+
   it("a multi-area selection refuses: sheet-alert states why, nothing changes and no undo step is left", () => {
     const h = harness(rowsOf(SALES));
     const before = h.sheet();

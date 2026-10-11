@@ -1,6 +1,7 @@
 // SPEC-128's Sort dialog: its test ids and labels, the header toggle's
 // column names and the orders by column type, the level tools acting on the
-// selected level, Add level disabled at 64 levels with its reason, the
+// selected level, the header box locked over an autofilter's range, Add
+// level disabled at 64 levels with its reason, the
 // duplicate refusal inline, and OK / Cancel.
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
@@ -49,6 +50,17 @@ describe("SortDialog (SPEC-128)", () => {
     expect(optionTexts(wrapper.get('[data-testid="sort-level-order"]'))).toEqual(["A to Z", "Z to A"]);
     await wrapper.get('[data-testid="sort-has-headers"]').setValue(true);
     expect(optionTexts(wrapper.get('[data-testid="sort-level-column"]'))).toEqual(["Region", "Column B", "Amount"]);
+  });
+
+  it("over an autofilter's range the headers box is ticked and disabled, and OK sorts below the header row", async () => {
+    const wrapper = mountDialog({ hasHeader: false, headerLocked: true });
+    const box = wrapper.get<HTMLInputElement>('[data-testid="sort-has-headers"]');
+    expect(box.element.checked).toBe(true);
+    expect(box.element.disabled).toBe(true);
+    expect(optionTexts(wrapper.get('[data-testid="sort-level-column"]'))).toEqual(["Region", "Column B", "Amount"]);
+    await wrapper.get('[data-testid="sort-ok"]').trigger("click");
+    expect(wrapper.emitted("confirm")).toEqual([[{ keys: [{ col: 2, descending: false }], hasHeader: true, caseSensitive: false }]]);
+    expect(mountDialog().get<HTMLInputElement>('[data-testid="sort-has-headers"]').element.disabled).toBe(false);
   });
 
   it("adds, copies, moves and deletes levels — the tools act on the selected level — and OK emits the keys in level order", async () => {

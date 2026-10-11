@@ -73,6 +73,8 @@ export interface SortDialogState {
   range: GridRange;
   /** guessHasHeader's answer — the checkbox's initial state. */
   hasHeader: boolean;
+  /** The range is an autofilter's: its header row stays a header (Excel ticks and disables the box). */
+  headerLocked: boolean;
   /** The first level's column (the active cell's). */
   keyCol: number;
   withHeader: SortColumnChoice[];
@@ -146,7 +148,7 @@ export function useSortFilter(deps: SortFilterDeps) {
 
   /** What a sort covers (see the module header): the ranges as given when
    * several (sortRange refuses those), else one range and its header guess. */
-  function sortTarget(m: SpreadsheetModel, sheet: Sheet): { range: GridRange | readonly GridRange[]; hasHeader: boolean } {
+  function sortTarget(m: SpreadsheetModel, sheet: Sheet): { range: GridRange | readonly GridRange[]; hasHeader: boolean; headerLocked?: true } {
     const sel = deps.selection.selection.value;
     if (sel.ranges.length > 1) {
       return { range: sel.ranges, hasHeader: false };
@@ -154,7 +156,7 @@ export function useSortFilter(deps: SortFilterDeps) {
     const selected = sel.ranges[0] ?? { top: sel.active.row, left: sel.active.col, bottom: sel.active.row, right: sel.active.col };
     const filter = sheet.autoFilter;
     if (filter && within(selected, filter.range)) {
-      return { range: filter.range, hasHeader: true };
+      return { range: filter.range, hasHeader: true, headerLocked: true };
     }
     const range = selectionSpansMultipleCells(sel.ranges, deps.sheetMetrics.merges.value) ? selected : currentRegion(sel.active, deps.sheetMetrics.nav());
     return { range, hasHeader: guessHasHeader(m, sheet, range) };
@@ -193,6 +195,7 @@ export function useSortFilter(deps: SortFilterDeps) {
       sheetId: sheet.id,
       range,
       hasHeader: target.hasHeader,
+      headerLocked: target.headerLocked === true,
       keyCol,
       withHeader: sortColumnChoices(m, sheet, range, true, keyCol, ctx()),
       withoutHeader: sortColumnChoices(m, sheet, range, false, keyCol, ctx()),
@@ -207,7 +210,7 @@ export function useSortFilter(deps: SortFilterDeps) {
       sortDialog.value = null;
       return;
     }
-    const outcome = sortStep(dialog.range, choice);
+    const outcome = sortStep(dialog.range, dialog.headerLocked ? { ...choice, hasHeader: true } : choice);
     if (outcome) {
       sortDialog.value = outcome.ok ? null : { ...dialog, error: outcome.message };
     }

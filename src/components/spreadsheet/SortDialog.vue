@@ -7,7 +7,8 @@
 // `sort-move-down` act on the selected one; `sort-add-level` appends a level
 // (disabled at MAX_SORT_KEYS = 64, stating "Up to 64 levels"). Column choices
 // read the header text while "My data has headers" (`sort-has-headers`,
-// seeded by the header guess) is on — a blank header "Column B" — and
+// seeded by the header guess; ticked and disabled over an autofilter's range,
+// whose header row is never data, as Excel does) is on — a blank header "Column B" — and
 // "Column B" otherwise; orders read "A to Z"/"Z to A", or "Smallest to
 // Largest"/"Largest to Smallest" for a column of mostly numbers or dates.
 // "Case sensitive" (`sort-case-sensitive`). OK (`sort-ok`) emits confirm({
@@ -29,6 +30,8 @@ const props = defineProps({
   withoutHeader: { type: Array, default: () => [] },
   /** The header guess: the checkbox's initial state. */
   hasHeader: { type: Boolean, default: false },
+  /** An autofilter's range: the checkbox ticked and disabled. */
+  headerLocked: { type: Boolean, default: false },
   /** The first level's column (absolute). */
   keyCol: { type: Number, default: 0 },
   /** The view's refusal of the last OK ("" for none). */
@@ -39,7 +42,7 @@ const emit = defineEmits(["confirm", "cancel"]);
 
 const MAX_LEVELS_REASON = `Up to ${MAX_SORT_KEYS} levels`;
 
-const headers = ref(props.hasHeader);
+const headers = ref(props.hasHeader || props.headerLocked);
 const caseSensitive = ref(false);
 let nextId = 1;
 const levels = ref([{ id: 0, col: props.keyCol, descending: false }]);
@@ -119,7 +122,7 @@ function confirm() {
   localError.value = "";
   emit("confirm", {
     keys: levels.value.map((level) => ({ col: level.col, descending: level.descending })),
-    hasHeader: headers.value,
+    hasHeader: headers.value || props.headerLocked,
     caseSensitive: caseSensitive.value,
   });
 }
@@ -195,6 +198,7 @@ function confirm() {
           <input
             v-model="headers"
             type="checkbox"
+            :disabled="props.headerLocked"
             data-testid="sort-has-headers"
           >
           <span>My data has headers</span>

@@ -32,6 +32,7 @@ function cancelPopover(how = "done") {
     :with-header="sf.sortDialog.value.withHeader"
     :without-header="sf.sortDialog.value.withoutHeader"
     :has-header="sf.sortDialog.value.hasHeader"
+    :header-locked="sf.sortDialog.value.headerLocked"
     :key-col="sf.sortDialog.value.keyCol"
     :error="sf.sortDialog.value.error"
     @confirm="sf.confirmSort"
