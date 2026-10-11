@@ -23,6 +23,7 @@ const REQUIRED = [
   "check", "dash", "plus", "minus",
   "more-horizontal", "more-vertical", "search", "settings",
   "warning", "error", "info",
+  "conditional-format",
 ];
 
 describe("AppIcon", () => {

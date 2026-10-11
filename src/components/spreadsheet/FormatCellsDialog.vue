@@ -25,8 +25,13 @@ const d = computed(() => asFormatCellsDialog(props.dialog));
 const f = computed(() => d.value.fields.value);
 const n = computed(() => d.value.number.value);
 const target = computed(() => d.value.target.value);
+// SPEC-129: a conditional format's Dxf has no alignment or protection, and no
+// font family/size, border inside edges or diagonals — ConditionalFormatEditor
+// opens this same dialog in "differential" mode for exactly the aspects a Dxf
+// carries.
+const differential = computed(() => d.value.mode.value === "differential");
 
-const TABS = [
+const ALL_TABS = [
   { id: "number", label: "Number" },
   { id: "alignment", label: "Alignment" },
   { id: "font", label: "Font" },
@@ -34,7 +39,9 @@ const TABS = [
   { id: "fill", label: "Fill" },
   { id: "protection", label: "Protection" },
 ];
-const EDGES = [
+const DIFFERENTIAL_TAB_IDS = new Set(["number", "font", "border", "fill"]);
+const TABS = computed(() => (differential.value ? ALL_TABS.filter((tab) => DIFFERENTIAL_TAB_IDS.has(tab.id)) : ALL_TABS));
+const ALL_EDGES = [
   { id: "top", label: "Top" },
   { id: "insideHorizontal", label: "Inside horizontal", testid: "inside-horizontal" },
   { id: "bottom", label: "Bottom" },
@@ -44,6 +51,8 @@ const EDGES = [
   { id: "diagonalUp", label: "Diagonal up", testid: "diagonal-up" },
   { id: "diagonalDown", label: "Diagonal down", testid: "diagonal-down" },
 ];
+const DIFFERENTIAL_EDGE_IDS = new Set(["top", "bottom", "left", "right"]);
+const EDGES = computed(() => (differential.value ? ALL_EDGES.filter((edge) => DIFFERENTIAL_EDGE_IDS.has(edge.id)) : ALL_EDGES));
 const UNDERLINES = [
   { value: "none", label: "None" },
   { value: "single", label: "Single" },
@@ -294,7 +303,7 @@ function numberOf(event = new Event("change")) {
       </template>
       <template v-else-if="d.tab.value === 'font'">
         <div class="grid">
-          <label>Font
+          <label v-if="!differential">Font
             <select
               data-testid="format-cells-font-family"
               :value="f.fontFamily"
@@ -318,7 +327,7 @@ function numberOf(event = new Event("change")) {
                 :value="choice.value"
               >{{ choice.label }}</option>
             </select></label>
-          <label>Size
+          <label v-if="!differential">Size
             <input
               type="number"
               min="1"
