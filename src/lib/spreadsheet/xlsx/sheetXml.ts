@@ -1910,7 +1910,8 @@ function mergeCellsXml(sheet: Sheet, p: string): string {
 }
 
 /** A worksheet part for `sheet` (see the module header): the model's
- * dimension, views, default sizes, columns, cells and merges spliced into
+ * dimension, views, default sizes, columns, cells, autofilter, sort record
+ * and merges (and SPEC-128's sheetPr@filterMode) spliced into
  * `base` — the retained part with the writer's sheet-reference pass and tab
  * colour already applied — or into SPEC-121's empty-sheet template when the
  * sheet has none. */
