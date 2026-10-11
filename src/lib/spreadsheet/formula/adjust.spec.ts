@@ -92,8 +92,9 @@ describe("adjustFormula — what survives byte-for-byte", () => {
   });
 });
 
+const range = (top: number, left: number, bottom: number, right: number): GridRange => ({ top, left, bottom, right });
+
 describe("adjustAnchoredFormula (SPEC-129 \"Structural edits\")", () => {
-  const range = (top: number, left: number, bottom: number, right: number): GridRange => ({ top, left, bottom, right });
   const B5_B20 = range(4, 1, 19, 1); // B5:B20
   const anchored = (text: string, e: StructuralEdit, firstRange: GridRange = B5_B20): string => adjustAnchoredFormula(text, { row: 4, col: 1 }, firstRange, "s1", e, nameOf);
 

@@ -107,19 +107,24 @@ function rulesOf(model: SpreadsheetModel): unknown[] {
   );
 }
 
-/** A model as a cross-format copy carries it: stripRetention, and (until
- * stripRetention does it) no conditional-format source text, no x14 GUID, no
- * dxf source. */
+/** A model as a cross-format copy carries it: stripRetention drops every
+ * conditional-format source text, x14 GUID and dxf source, and the
+ * preserved rules (they cannot cross formats). */
 function crossFormat(model: SpreadsheetModel): SpreadsheetModel {
   const stripped = stripRetention(model);
-  return {
-    ...stripped,
-    dxfs: stripped.dxfs.map(modelledDxf),
-    sheets: stripped.sheets.map((sheet) => ({
-      ...sheet,
-      conditionalFormats: sheet.conditionalFormats.map(({ sourceXml: _source, ...format }) => ({ ...format, rules: format.rules.map(({ x14Id: _guid, ...rule }) => rule as CfRule) })),
-    })),
-  };
+  for (const sheet of stripped.sheets) {
+    for (const format of sheet.conditionalFormats) {
+      expect(format.sourceXml).toBeUndefined();
+      expect(format.rules.filter((rule) => rule.x14Id !== undefined || rule.kind === "preserved")).toEqual([]);
+    }
+  }
+  expect(stripped.dxfs.filter((dxf) => dxf.sourceXml !== undefined)).toEqual([]);
+  return stripped;
+}
+
+/** How many of a model's rules `keep` accepts. */
+function ruleCount(model: SpreadsheetModel, keep: (rule: CfRule) => boolean): number {
+  return model.sheets.flatMap((sheet) => sheet.conditionalFormats.flatMap((format) => format.rules.filter(keep))).length;
 }
 
 /** Accent 6, darker 25%, as the xlsx reader keeps a tinted theme colour. */
@@ -577,9 +582,11 @@ describe("whole workbooks write valid conditional formats and dxfs", () => {
   it("a stripped cross-format copy of spec129-cf.xlsx (no sources, no GUIDs, dxfs without their XML)", async () => {
     const model = await readSpreadsheetBytes(await buildSpec129CfXlsxBytes(), "xlsx", "book");
     const stripped = crossFormat(model);
+    // Every rule but the preserved custom-icon one crosses.
+    expect(ruleCount(stripped, () => true)).toBe(ruleCount(model, (rule) => rule.kind !== "preserved"));
     const bytes = (await spreadsheetDownload(stripped)).bytes;
     expect(await packageIntegrity(bytes)).toEqual([]);
     const back = await readSpreadsheetBytes(bytes, "xlsx", "book");
-    expect(rulesOf(back)).toEqual(rulesOf(model));
+    expect(rulesOf(back)).toEqual(rulesOf(stripped));
   });
 });

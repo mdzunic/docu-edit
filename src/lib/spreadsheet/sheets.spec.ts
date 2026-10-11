@@ -1347,7 +1347,12 @@ describe("deleteSheet", () => {
     deleteSheet(model, 2);
     expect(model.sheets[0]).not.toBe(summary);
     expect(model.sheets[0]!.rows[0]).toBe(summary!.rows[0]);
-    expect(model.sheets[1]).toBe(data);
+    // SPEC-129: Data's cfRule names Lookup, so its rule is remapped — a new
+    // sheet object, its rows kept, still clean (the writer's sheet-reference
+    // pass rewrites the retained rule text).
+    expect(model.sheets[1]).not.toBe(data);
+    expect(model.sheets[1]!.rows).toBe(data!.rows);
+    expect(model.sheets[1]!.dirty).toBeUndefined();
     expect(model.sheets[2]).toBe(archive);
     expect(model.sheets[3]).toBe(vault);
   });
@@ -1749,7 +1754,7 @@ const formatsOf = (model: SpreadsheetModel, name: string): ConditionalFormat[] =
 
 describe("SPEC-129: conditional formats through the sheet commands", () => {
 
-  it("rename remaps every rule formula and value object naming the sheet; the format loses its sourceXml, its sheet turns dirty", () => {
+  it("rename remaps every rule formula and value object naming the sheet; the format loses its sourceXml, its sheet stays clean", () => {
     const report = cf("r", [expression("e", "A1>Data!$A$1"), scaleOn("Data!$B$1")], { sourceXml: "<conditionalFormatting/>" });
     const untouched = cf("u", [expression("u1", "A1>0", 3)]);
     const model = freezeContents(book([gridSheet("Data"), gridSheet("Report", {}, { conditionalFormats: [report, untouched] })]));
@@ -1758,7 +1763,8 @@ describe("SPEC-129: conditional formats through the sheet commands", () => {
     expect(renamed!.rules).toMatchObject([{ formula: "A1>'Facts 2025'!$A$1" }, { stops: [{ at: { value: "'Facts 2025'!$B$1" } }, { at: { type: "max" } }] }]);
     expect(renamed!.sourceXml).toBeUndefined();
     expect(same).toBe(untouched);
-    expect(sheetNamed(model, "Report").dirty).toBe(true);
+    // Only a rule changed: the writers' sheet-reference pass rewrites the retained text.
+    expect(sheetNamed(model, "Report").dirty).toBeUndefined();
   });
 
   it("rename leaves a sheet whose rules name no renamed sheet untouched by identity", () => {
@@ -1776,7 +1782,7 @@ describe("SPEC-129: conditional formats through the sheet commands", () => {
     expect(format!.rules[0]).toMatchObject({ formula: "A1>#REF!" });
     expect(format!.rules[0]!.x14).toBeUndefined();
     expect(format!.rules[1]).toMatchObject({ stops: [{ at: { value: "#REF!" } }, { at: { type: "max" } }] });
-    expect(sheetNamed(model, "Report").dirty).toBe(true);
+    expect(sheetNamed(model, "Report").dirty).toBeUndefined();
   });
 
   it("duplicate copies the formats with fresh format and rule ids, x14Ids kept, the copy's own-name references renamed", () => {

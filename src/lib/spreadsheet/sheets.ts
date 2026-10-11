@@ -34,7 +34,10 @@
 //   conditional-format rule formula on every sheet (cfFormulas.ts's table —
 //   value objects and a preserved xlsx rule's texts included) goes through
 //   remapSheetReferences the same way; a changed format is replaced without
-//   its sourceXml and its sheet marked dirty, as for cell formulas.
+//   its sourceXml (a dirty sheet then writes it from the model). Unlike a
+//   cell-formula rewrite this leaves the sheet clean: its retained part's
+//   rule text goes through the writers' sheet-reference pass, as a
+//   validation's or a hyperlink's does.
 // - SPEC-129, duplicate: the copy's conditional formats get fresh format and
 //   rule ids (x14Ids kept — a GUID pairs only within one worksheet), their
 //   formulas renamed as the copy's cells' are, and in an .ods they lose
@@ -229,12 +232,13 @@ function rewriteFormulas(sheet: Sheet, rewrite: (formula: string) => string): Sh
 
 /** A sheet with every conditional-format rule formula passed through
  * `rewrite` (cfFormulas.ts): the same object when nothing changed, else a
- * new sheet (marked dirty) whose changed formats lost their sourceXml.
- * `sheetName`: the sheet's name once the command is done (x14 placement). */
+ * new sheet whose changed formats lost their sourceXml — its dirty flag
+ * untouched (see the header). `sheetName`: the sheet's name once the
+ * command is done (x14 placement). */
 function rewriteRuleFormulas(format: SpreadsheetFormat, sheet: Sheet, rewrite: (formula: string) => string, sheetName = sheet.name): Sheet {
   const formats = sheetFormats(sheet);
   const next = mapFormatsFormulas(formats, rewrite, { format, sheetName });
-  return next === formats ? sheet : { ...sheet, conditionalFormats: next, dirty: true };
+  return next === formats ? sheet : { ...sheet, conditionalFormats: next };
 }
 
 /** Every formula cell (parsed formulas only) of the model, with its key. */
