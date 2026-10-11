@@ -167,6 +167,17 @@ describe("line endings, quoteAll and width", () => {
   });
 });
 
+/** The date evidence's effect: en-US ↔ en-GB only. */
+function swapped(tag: SpreadsheetLocaleTag, dates: "none" | "day" | "month"): SpreadsheetLocaleTag {
+  if (dates === "day" && tag === "en-US") {
+    return "en-GB";
+  }
+  if (dates === "month" && tag === "en-GB") {
+    return "en-US";
+  }
+  return tag;
+}
+
 describe("locale inference", () => {
   const COMMA = ["1,5", "2,25", "-1.234,56"];
   const POINT = ["1.5", "2.25", "+1,234.56"];
@@ -182,17 +193,6 @@ describe("locale inference", () => {
     "es-ES": { comma: "es-ES", point: "en-US", tie: "es-ES" },
     "cs-CZ": { comma: "cs-CZ", point: "en-US", tie: "cs-CZ" },
   };
-
-  /** The date evidence's effect: en-US ↔ en-GB only. */
-  function swapped(tag: SpreadsheetLocaleTag, dates: "none" | "day" | "month"): SpreadsheetLocaleTag {
-    if (dates === "day" && tag === "en-US") {
-      return "en-GB";
-    }
-    if (dates === "month" && tag === "en-GB") {
-      return "en-US";
-    }
-    return tag;
-  }
 
   for (const user of SPREADSHEET_LOCALE_TAGS) {
     for (const [kind, fields] of [
