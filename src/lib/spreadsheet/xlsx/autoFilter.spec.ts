@@ -617,6 +617,21 @@ describe("_xlnm._FilterDatabase in xl/workbook.xml", () => {
     expect(definedNamesOf(xml)).toBe(`<definedNames></definedNames>`);
   });
 
+  it("an Advanced Filter's name — on a sheet whose part never held an autoFilter — is an ordinary defined name: kept on a dirty save, renumbered with its sheet", async () => {
+    const criteria = `<definedName name="_xlnm.Criteria" localSheetId="0">Sales!$D$1:$D$2</definedName>`;
+    const model = await open(await book([{ name: "Sales", body: cells }, { name: "Other" }], `<definedNames>${NAME_0}${criteria}</definedNames>`));
+    expect(model.sheets[0]!.autoFilter).toBeUndefined();
+    model.sheets[0] = { ...model.sheets[0]!, dirty: true };
+    expect(definedNamesOf(await workbookXml(model))).toBe(`<definedNames>${NAME_0}${criteria}</definedNames>`);
+    moveSheet(model, 0, 1);
+    expect(definedNamesOf(await workbookXml(model))).toBe(`<definedNames>${NAME_0.replace(`localSheetId="0"`, `localSheetId="1"`)}${criteria.replace(`localSheetId="0"`, `localSheetId="1"`)}</definedNames>`);
+    // Turning a filter on there takes the name over rather than adding a second.
+    model.sheets[1] = { ...model.sheets[1]!, autoFilter: { range: range("A1:B2"), columns: [] }, dirty: true };
+    const names = definedNamesOf(await workbookXml(model));
+    expect(names.match(/_xlnm\._FilterDatabase/g)).toHaveLength(1);
+    expect(names).toContain(`<definedName name="_xlnm._FilterDatabase" localSheetId="1" hidden="1">Sales!$A$1:$B$2</definedName>`);
+  });
+
   it("added: a sheet gaining an autofilter gains a hidden name, first in definedNames, its sheet name quoted as a reference quotes it", async () => {
     const model = await open(await book([{ name: "Sales", body: FILTERED }, { name: "My Data", body: cells }], `<definedNames>${NAME_0}${PRINT_0}</definedNames>`));
     model.sheets[1] = { ...model.sheets[1]!, autoFilter: { range: range("A1:B3"), columns: [] }, dirty: true };

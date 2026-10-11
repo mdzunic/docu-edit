@@ -14,7 +14,7 @@
 // | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
 // | sheet `extLst` | `x14:conditionalFormatting/xm:sqref`, its `xm:f`; `x14:dataValidation/xm:sqref`, `x14:formula1|2/xm:f`; `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
-// | workbook | `definedName` text (but `_xlnm._FilterDatabase`'s) | formula |
+// | workbook | `definedName` text (but the model's `_xlnm._FilterDatabase`s) | formula |
 // | tables | `table@ref`, `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | charts (not style/colors parts) | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
 // | pivot caches | `worksheetSource@ref` on `@sheet` (one naming `name` or `r:id` is left alone) | range |
@@ -26,8 +26,11 @@
 // - Retired by SPEC-128 (its `autofilter` adjuster moves the model, the
 //   writer serialises it): the worksheet's root-level `autoFilter@ref` and
 //   `sortState@ref` with every `sortState`/`sortCondition` inside them, and
-//   the `_xlnm._FilterDatabase` definedName text (writer.ts reconciles it
-//   with the model) — so nothing is adjusted twice. A table part's
+//   the text of a `_xlnm._FilterDatabase` definedName the model owns — its
+//   localSheetId a sheet with an autofilter, or whose source part held one
+//   (autoFilter.ts's sheetPartHasAutoFilter; writer.ts reconciles it with
+//   the model) — so nothing is adjusted twice. Any other (an Advanced
+//   Filter's, or one with no localSheetId) is still adjusted here. A table part's
 //   autoFilter and sortState (SPEC-133's) and a customSheetView's stay here.
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
@@ -82,8 +85,9 @@ import type { Sheet, SpreadsheetModel } from "../model";
 import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, decodeXmlText, escapeElementText, findAttribute, startTagAt, type Splice } from "../xmlSplice";
-import { FILTER_DATABASE_NAME } from "./autoFilter";
+import { FILTER_DATABASE_NAME, sheetPartHasAutoFilter } from "./autoFilter";
 import {
+  decodeUtf8,
   encodeUtf8,
   LazyParts,
   readSourceWorkbook,
@@ -638,19 +642,23 @@ function chartEdits(xml: string, hostSheetId: string, pass: Pass): PartEdits {
 }
 
 /** `hosts[i]`: the id of the model sheet the source workbook's i-th sheet
- * is ("" for none). */
-function definedNameEdits(xml: string, hosts: readonly string[], pass: Pass): PartEdits | undefined {
+ * is ("" for none); `owned(id)`: whether that sheet's `_xlnm._FilterDatabase`
+ * is the model's (see the module header). */
+function definedNameEdits(xml: string, hosts: readonly string[], owned: (sheetId: string) => boolean, pass: Pass): PartEdits | undefined {
   if (!xml.includes("definedName")) {
     return undefined;
   }
   const edits = new PartEdits(xml, pass.mapper);
   walk(xml, ignore, (frame, contentEnd) => {
-    // SPEC-128: _xlnm._FilterDatabase follows the model's autofilter (writer.ts).
-    if (frame.local !== "definedName" || scanAttr(frame.attrs, "name")?.toLowerCase() === FILTER_DATABASE_NAME.toLowerCase()) {
+    if (frame.local !== "definedName") {
       return;
     }
     const local = scanAttr(frame.attrs, "localSheetId")?.trim();
     const host = local !== undefined && /^\d+$/.test(local) ? (hosts[Number(local)] ?? "") : "";
+    // SPEC-128: the model's _xlnm._FilterDatabase follows its autofilter (writer.ts).
+    if (host !== "" && scanAttr(frame.attrs, "name")?.toLowerCase() === FILTER_DATABASE_NAME.toLowerCase() && owned(host)) {
+      return;
+    }
     edits.formulaText(frame, contentEnd, host);
   });
   return edits;
@@ -1039,7 +1047,12 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
     const hosts = workbook.sheets.map((source) =>
       source.partName === "" ? "" : (model.sheets.find((sheet) => sheet.partName === source.partName)?.id ?? ""),
     );
-    run.rewrite(workbook.path, (xml) => definedNameEdits(xml, hosts, run));
+    const owned = (sheetId: string): boolean => {
+      const sheet = model.sheets.find((each) => each.id === sheetId);
+      const bytes = sheet?.partName === undefined ? undefined : run.parts.get(sheet.partName);
+      return sheet?.autoFilter !== undefined || (bytes !== undefined && sheetPartHasAutoFilter(decodeUtf8(bytes)));
+    };
+    run.rewrite(workbook.path, (xml) => definedNameEdits(xml, hosts, owned, run));
     for (const rel of workbook.rels) {
       const target = relationshipKind(rel.type) === "pivotCacheDefinition" ? targetPart(workbook.path, rel) : undefined;
       if (target !== undefined) {

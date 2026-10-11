@@ -26,7 +26,8 @@
 //     `firstSheet`, and (SPEC-128, a save only — not substitutedXlsxParts)
 //     the `_xlnm._FilterDatabase` names reconciled with the model by string
 //     splice: for every grid sheet once `structureDirty`, else for the dirty
-//     and new ones, a sheet with an autofilter keeps its first source name
+//     and new ones that have an autofilter or whose source part had one (an
+//     Advanced Filter's name is an ordinary one), a sheet with an autofilter keeps its first source name
 //     (localSheetId renumbered; the text as written while it names the
 //     autofilter's range, else `'Sheet'!$A$1:$D$20` — xlsx/autoFilter.ts) or
 //     gains one (first in `<definedNames>`, which is created before `calcPr`
@@ -74,7 +75,7 @@ import { maxDigitWidthPx } from "../geometry";
 import type { Sheet, SpreadsheetModel } from "../model";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
-import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText } from "./autoFilter";
+import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText, sheetPartHasAutoFilter } from "./autoFilter";
 import { ownedClosure } from "./duplicate";
 import {
   contentTypeIn,
@@ -434,7 +435,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     if (name === contentTypesName) {
       data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added));
     } else if (name === workbook.path) {
-      data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, write ? filterDatabaseScope(model) : undefined));
+      data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, write ? filterDatabaseScope(model, parts) : undefined));
     } else if (name === workbook.relsPath) {
       data = encode(workbookRelsFor(workbook, plans, droppedRelIds, added));
     } else if (name === appPath) {
@@ -625,10 +626,26 @@ function spliceTabSelected(xml: string, active: boolean): string {
 /** SPEC-128: which sheets' `_xlnm._FilterDatabase` names a save reconciles
  * with the model — every grid sheet once the structure changed (sheets
  * added, copied, moved, renamed or deleted), else the dirty ones (a
- * structural edit moves an autofilter without touching the structure).
- * A clean sheet's names stay as the source wrote them. */
-function filterDatabaseScope(model: SpreadsheetModel): (plan: SheetPlan) => boolean {
-  return (plan) => plan.sheet.kind === "grid" && (model.structureDirty === true || plan.sheet.dirty === true || plan.source === undefined);
+ * structural edit moves an autofilter without touching the structure) —
+ * among those the model owns the names of: a sheet with an autofilter, or
+ * one whose source part held one (autoFilter.ts's sheetPartHasAutoFilter).
+ * A clean sheet's names stay as the source wrote them; an Advanced Filter's
+ * go through the ordinary defined-name splice. */
+function filterDatabaseScope(model: SpreadsheetModel, parts: ReadonlyMap<string, Uint8Array>): (plan: SheetPlan) => boolean {
+  const hadAutoFilter = new Map<string, boolean>();
+  const sourceHad = (partName: string): boolean => {
+    let had = hadAutoFilter.get(partName);
+    if (had === undefined) {
+      const bytes = parts.get(partName);
+      had = bytes !== undefined && sheetPartHasAutoFilter(decodeUtf8(bytes));
+      hadAutoFilter.set(partName, had);
+    }
+    return had;
+  };
+  return (plan) =>
+    plan.sheet.kind === "grid" &&
+    (model.structureDirty === true || plan.sheet.dirty === true || plan.source === undefined) &&
+    (plan.sheet.autoFilter !== undefined || (plan.source !== undefined && sourceHad(plan.source.partName)));
 }
 
 /** A `_xlnm._FilterDatabase` definedName met in the source. */

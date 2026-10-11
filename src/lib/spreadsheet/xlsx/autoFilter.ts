@@ -19,7 +19,7 @@
 // | `sheetProtection@sort="0"` / `@autoFilter="0"` | `protection.allowSort` / `allowAutoFilter` (sheetXml.ts) |
 // | `sheetPr@filterMode="1"` | written iff some row is `filterHidden` (sheetXml.ts) |
 // | `row@hidden="1"` | `hidden` or `filterHidden` — the read rule tells them apart (reader.ts, filter.ts classifyHiddenRows) |
-// | `definedName name="_xlnm._FilterDatabase" localSheetId hidden="1"` | derived from each sheet's autofilter (writer.ts) |
+// | `definedName name="_xlnm._FilterDatabase" localSheetId hidden="1"` | derived from each sheet's autofilter (writer.ts); a sheet's that never had one (an Advanced Filter's) kept as written |
 //
 // Reading. Each element is parsed from its own source slice (sheetXml.ts
 // cuts it out of the part by the scanner's offsets, in the sheet's one
@@ -445,6 +445,24 @@ export function readSheetFilterElements(worksheetXml: string): { autoFilter?: Au
     }
   });
   return found;
+}
+
+/** Whether a worksheet part holds a modelled root-level `<autoFilter>`. A
+ * sheet's `_xlnm._FilterDatabase` names are the model's while the sheet has
+ * an autofilter or its source part held one (the user may have turned it
+ * off): writer.ts reconciles them and the retained pass leaves them alone.
+ * Another sheet's — an Advanced Filter's, which has no `<autoFilter>` — is an
+ * ordinary defined name, kept and adjusted. False for a part that does not
+ * scan. */
+export function sheetPartHasAutoFilter(worksheetXml: string): boolean {
+  try {
+    return readSheetFilterElements(worksheetXml).autoFilter !== undefined;
+  } catch (error) {
+    if (error instanceof XmlScanError) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 // --- writing ------------------------------------------------------------------------------
