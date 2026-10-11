@@ -23,7 +23,8 @@
 // after another separator Filter (a menuitemcheckbox, checked while the sheet
 // has an autofilter, Ctrl/Cmd+Shift+L), Clear filters and Reapply filter
 // (Ctrl/Cmd+Alt+L) — the last two disabled without an autofilter, stating
-// "Turn on Filter first".
+// "Turn on Filter first". SPEC-129 adds Format ▸ Conditional formatting…
+// (after Cell styles ▸), which opens the side panel's rules manager.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -282,6 +283,12 @@ const MENUS = [
           @select="emit('command', cellStyleCommand(name))"
         />
       </MenuSubmenu>
+      <MenuItem
+        label="Conditional formatting…"
+        testid="sheet-menu-conditional-formatting"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.conditionalFormatting)"
+      />
       <MenuSubmenu
         label="Clear"
         testid="sheet-menu-clear"
