@@ -37,8 +37,10 @@ import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
 import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "../core/theme";
 import type { CellRef, GridRange } from "./address";
+import type { AutoFilter } from "./filter";
 import type { SpreadsheetLocaleTag } from "./numberFormat/locale";
 import type { SheetSelection } from "./selection";
+import type { SortState } from "./sort";
 import type { NamedCellStyle } from "./styles";
 
 export type SpreadsheetFormat = "xlsx" | "ods" | "csv" | "tsv";
@@ -272,6 +274,12 @@ export interface Row {
   heightPt?: number;
   customHeight?: true;
   hidden?: true;
+  /** SPEC-128: hidden by the sheet's autofilter — distinct from the user's
+   *  `hidden` (Unhide clears only `hidden`; turning the filter off or
+   *  clearing its criteria clears only this). The row is displayed hidden
+   *  when either is set (rowIsHidden). A filter-hidden blank row is stored
+   *  as a Row with no cells. */
+  filterHidden?: true;
   /** Present only when the source row had customFormat="1" (xlsx) or a
    * default cell style (ods). */
   styleId?: number;
@@ -332,7 +340,18 @@ export interface Sheet {
     allowInsertColumns?: true;
     allowDeleteRows?: true;
     allowDeleteColumns?: true;
+    /** SPEC-128: xlsx `sort="0"` / `autoFilter="0"` — sorting and using
+     *  the autofilter are permitted on the protected sheet. */
+    allowSort?: true;
+    allowAutoFilter?: true;
   };
+  // --- SPEC-128 (filter.ts and sort.ts are the normative sources) ---
+  /** The sheet's autofilter: its range (header row included), per-column
+   *  criteria and the record of its last sort. Replaced, never mutated. */
+  autoFilter?: AutoFilter;
+  /** The record of the last sort outside an autofilter (xlsx worksheet
+   *  `<sortState>`): never re-applied. Replaced, never mutated. */
+  sortState?: SortState;
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -461,6 +480,12 @@ export function rowSourceAttrsHoldProperties(sourceAttrs: string | undefined): b
     }
   }
   return false;
+}
+
+/** Whether a row is displayed hidden (SPEC-128): hidden by the user or by
+ * the sheet's autofilter. */
+export function rowIsHidden(row: Pick<Row, "hidden" | "filterHidden"> | undefined): boolean {
+  return row !== undefined && (row.hidden === true || row.filterHidden === true);
 }
 
 /** The error codes a cell can hold, for readers validating what a file
