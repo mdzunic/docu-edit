@@ -117,6 +117,9 @@ export function useRecalc(deps: RecalcDeps) {
   let passModel: SpreadsheetModel | null = null;
   /** SPEC-121: the edit pipeline's callback for the running pass. */
   let passDone: ((changedSheetIds: string[]) => void) | null = null;
+  /** SPEC-129: the running pass's own keys, and who hears each result. */
+  let passKeys: CellKey[] = [];
+  const resultListeners: ((changed: CellKey[]) => void)[] = [];
   let slot: IdleHandle | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -148,6 +151,11 @@ export function useRecalc(deps: RecalcDeps) {
       stale.value = next;
     }
     reportCycles(model);
+    const changed = [...passKeys, ...current.result.valueChanged];
+    passKeys = [];
+    for (const listener of resultListeners) {
+      listener(changed);
+    }
     const done = passDone;
     passDone = null;
     done?.(current.result.changedSheetIds);
@@ -206,7 +214,8 @@ export function useRecalc(deps: RecalcDeps) {
       carried = passDone;
     }
     stopDriving();
-    const current = startRecalc(model, [...new Set([...inherited, ...changed])], { ...options, settings: { locale: deps.locale() } });
+    passKeys = [...new Set([...inherited, ...changed])];
+    const current = startRecalc(model, passKeys, { ...options, settings: { locale: deps.locale() } });
     pass = current;
     passModel = model;
     passDone =
@@ -321,10 +330,17 @@ export function useRecalc(deps: RecalcDeps) {
     return reason ? staleTitle(reason) : undefined;
   }
 
+  /** SPEC-129: calls `listener` with every completed pass's changed keys —
+   * the cells it was started on and those whose value it changed. */
+  function onResult(listener: (changed: CellKey[]) => void): void {
+    resultListeners.push(listener);
+  }
+
   return {
     circular,
     calculating,
     stale,
+    onResult,
     /** SpreadsheetStatusBar's recalculation props, bound as one object. */
     status: computed(() => ({ circular: circular.value, calculating: calculating.value })),
     staleTitleAt,

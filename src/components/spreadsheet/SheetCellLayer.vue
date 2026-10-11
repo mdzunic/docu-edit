@@ -21,12 +21,20 @@
 // the autofilter's header cells draws its `filter-button` (`filterButton`,
 // useSortFilter's filterButtonAt) — right-aligned, 16 px, so it virtualises
 // with the grid — whose press never reaches the grid's pointer handling and
-// emits filter-button(col, anchor) with the viewport point under it. Runtime
-// prop declarations per the espree constraint (see AppShell.vue).
+// emits filter-button(col, anchor) with the viewport point under it. SPEC-129:
+// a cell with a conditional-format result carries data-cf="true" (its style
+// arrives already layered — dxf, number format, a scale's fill); its data
+// bar (`sheet-cf-databar`, cfBarsOf) sits behind the text inside the cell,
+// 2 px in, with a dashed axis line when it has one; its icon (CfIcon.vue,
+// 16 px on the paper, so it scales with the zoom like everything on it)
+// sits at the left edge, the text aligned in the width that remains; a
+// winning bar or icon with showValue false hides the text. Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems, asStaleTitle, cellAttributes, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { asBandItems, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import AppIcon from "../AppIcon.vue";
+import CfIcon from "./CfIcon.vue";
 
 const props = defineProps({
   /** The bands to draw (useSheetCells' BandItem[]). */
@@ -130,6 +138,35 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
             :style="cell.boxStyle"
           >
             <div
+              v-for="bar in cfBarsOf(cell)"
+              :key="`cf-bar-${bar.widthPct}`"
+              class="sheet-cf-bar-area"
+              aria-hidden="true"
+            >
+              <div
+                class="sheet-cf-databar"
+                data-testid="sheet-cf-databar"
+                aria-hidden="true"
+                :data-width-pct="bar.widthPct"
+                :style="bar.barStyle"
+              />
+              <div
+                v-if="bar.axisStyle"
+                class="sheet-cf-axis"
+                :style="bar.axisStyle"
+              />
+            </div>
+            <span
+              v-if="cell.cf?.icon && !cell.paintOnly"
+              class="sheet-cf-icon-box"
+            >
+              <CfIcon
+                :set="cell.cf.icon.set"
+                :index="cell.cf.icon.index"
+              />
+            </span>
+            <div
+              v-if="!cell.cf?.hideValue"
               class="sheet-cell-text"
               :style="textStyle(cell.textStyle)"
             >
@@ -326,6 +363,36 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
   flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
+}
+
+/* SPEC-129: a data bar's area — inside the cell, 2 px in — behind the text
+   (earlier in the cell's paint order), and its icon at the left edge. */
+.sheet-cf-bar-area {
+  position: absolute;
+  inset: 2px;
+  pointer-events: none;
+}
+
+.sheet-cf-databar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+}
+
+.sheet-cf-axis {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 0;
+}
+
+.sheet-cf-icon-box {
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .sheet-cell-diagonal {

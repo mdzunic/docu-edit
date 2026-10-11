@@ -30,6 +30,7 @@ import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
+import type { ConditionalFormatsView } from "./useConditionalFormats";
 import type { FunctionAssist } from "./useFunctionAssist";
 import type { FillHandle } from "./useFillHandle";
 import type { FormatPainter } from "./useFormatPainter";
@@ -66,6 +67,8 @@ export interface SheetGridContext {
   recalc?: Pick<Recalc, "staleTitleAt">;
   /** Cell entry (SPEC-122); absent = the grid is read-only. */
   cellEditing?: CellEditing;
+  /** SPEC-129: each mounted cell's conditional-format result; absent = none. */
+  conditionalFormats?: Pick<ConditionalFormatsView, "resultAt">;
   /** SPEC-127's function assists: the in-cell editor's ARIA. */
   assist?: Pick<FunctionAssist, "editorAria">;
   /** SPEC-123: formatting (the cell context menu and Format Cells) and the
@@ -110,7 +113,17 @@ export function useSheetGrid(
     initialTopLeft: () => context().viewState.active.value.topLeftCell ?? sheet().topLeftCell,
     onTopLeftChange: (cell) => context().viewState.updateActive({ topLeftCell: cell }),
   });
-  const cells = useSheetCells({ model: () => context().model, sheet, metrics, merges, selection, viewport, locale: () => context().locale, showFormulas });
+  const cells = useSheetCells({
+    model: () => context().model,
+    sheet,
+    metrics,
+    merges,
+    selection,
+    viewport,
+    locale: () => context().locale,
+    showFormulas,
+    conditional: (row, col) => context().conditionalFormats?.resultAt(row, col),
+  });
   const editing = (): CellEditing | undefined => context().cellEditing;
   const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport, highlights: () => editing()?.point.highlights.value ?? [] });
   /** Focus goes to the in-cell editor (the grid itself without one). */

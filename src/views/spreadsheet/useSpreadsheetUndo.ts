@@ -95,6 +95,10 @@ export interface SpreadsheetUndo {
   /** SPEC-125: bumped by every committed step, undo, redo and reset — "any
    * edit" (the marching ants and a pending cut end on it). */
   revision: Ref<number>;
+  /** SPEC-129: calls `listener` on every committed step, undo and redo,
+   * with its label, after the model changed and before the pipeline
+   * re-renders. */
+  onStep(listener: (kind: "commit" | "undo" | "redo", label: string) => void): void;
 }
 
 /** A stored state: every sheet (small fields cloned, the by-reference
@@ -176,6 +180,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
   const undoLabel = ref("");
   const redoLabel = ref("");
   const revision = ref(0);
+  const stepListeners: ((kind: "commit" | "undo" | "redo", label: string) => void)[] = [];
   /** The step being recorded, and what the model held when it was. */
   let pending: { step: Step; sheets: Sheet[]; fields: unknown[] } | null = null;
 
@@ -257,12 +262,15 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     }
     redoStack.length = 0;
     refresh();
+    for (const listener of stepListeners) {
+      listener("commit", recorded.step.label);
+    }
     pipeline(model, recorded.step.snapshot.sheets, recorded.step.snapshot, alsoRecalc);
   }
 
   /** Swaps the live state for a stored step's, pushing the live one onto
    * the opposite stack. */
-  function swap(from: Step[], to: Step[]): void {
+  function swap(from: Step[], to: Step[], kind: "undo" | "redo"): void {
     const model = deps.model.value;
     if (!model || from.length === 0) {
       return;
@@ -274,6 +282,9 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     const before = model.sheets;
     install(model, step.snapshot);
     refresh();
+    for (const listener of stepListeners) {
+      listener(kind, step.label);
+    }
     pipeline(model, before, step.snapshot, step.alsoRecalc);
     const scopeId = step.scope === "workbook" ? undefined : step.scope.sheetId;
     const target = model.sheets.find((sheet) => sheet.id === scopeId) ?? model.sheets[model.activeSheetIndex];
@@ -283,11 +294,11 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
   }
 
   function undo(): void {
-    swap(undoStack, redoStack);
+    swap(undoStack, redoStack, "undo");
   }
 
   function redo(): void {
-    swap(redoStack, undoStack);
+    swap(redoStack, undoStack, "redo");
   }
 
   function reset(): void {
@@ -320,5 +331,9 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     }
   });
 
-  return { record, commit, undo, redo, reset, canUndo, canRedo, undoLabel, redoLabel, revision };
+  function onStep(listener: (kind: "commit" | "undo" | "redo", label: string) => void): void {
+    stepListeners.push(listener);
+  }
+
+  return { record, commit, undo, redo, reset, canUndo, canRedo, undoLabel, redoLabel, revision, onStep };
 }

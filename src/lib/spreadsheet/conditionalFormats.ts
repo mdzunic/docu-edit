@@ -308,6 +308,15 @@ export interface CfCellResult {
   hideValue?: true; // the winning bar or icon has showValue false
 }
 
+/** A cell's style with its conditional-format result layered on: the merged
+ * dxf (layerDxf), then a winning colour scale's colour as a solid fill — what
+ * SPEC-117's cellCss renders, so a highlighted cell is the ordinary cell
+ * rendering with the layer applied. */
+export function conditionalStyle(base: CellStyle, result: CfCellResult): CellStyle {
+  const layered = result.dxf ? layerDxf(base, result.dxf) : base;
+  return result.scaleColor === undefined ? layered : { ...layered, fill: { kind: "solid", color: result.scaleColor } };
+}
+
 // --- helpers ------------------------------------------------------------------------------------
 
 /** A fresh id for a format or a rule (never written to a file). */

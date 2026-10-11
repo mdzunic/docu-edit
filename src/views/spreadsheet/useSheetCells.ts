@@ -47,10 +47,10 @@ import {
   runCss,
   showFormulasDisplay,
   valueKind,
-  type CellText,
   type CssDeclarations,
   type EdgeSegment,
 } from "../../lib/spreadsheet/cellRender";
+import { conditionalStyle, type CfCellResult } from "../../lib/spreadsheet/conditionalFormats";
 import type { GridMetrics } from "../../lib/spreadsheet/geometry";
 import { mergeAt, paneMerges, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -59,64 +59,19 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale
 import { workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
 import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
+import type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
+
+export type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
 
 export const GRID_MAX_MOUNTED_CELLS = 10_000;
 
+/** SPEC-129: the room a conditional-format icon takes at a cell's left edge
+ * — 16 px and a 2 px gap — the text aligning in what remains. */
+export const CF_ICON_BOX_PX = 18;
+
 /** Declarations that belong on the text's content span, not its clip box. */
 const CONTENT_KEYS = new Set(["transform", "transform-origin", "writing-mode", "text-orientation"]);
-
-export interface CellItem {
-  key: string;
-  ref: string;
-  row: number;
-  col: number;
-  left: number; // relative to the region
-  top: number; // relative to the host row
-  width: number;
-  height: number;
-  text: string;
-  runs: { text: string; style: CssDeclarations }[] | null;
-  /** A number format's `*x` fill (SPEC-118, cellText). */
-  fill: CellText["fill"];
-  boxStyle: CssDeclarations;
-  textStyle: CssDeclarations;
-  contentStyle: CssDeclarations;
-  kindClass: "is-number" | "is-text" | "is-centred" | "is-empty";
-  rowSpan: number;
-  colSpan: number;
-  merged: boolean;
-  /** A merge's paint in a further frozen pane; its element is elsewhere. */
-  paintOnly: boolean;
-  raised: boolean;
-  selected: boolean;
-  diagonal: ReturnType<typeof diagonalLines>;
-}
-
-export interface RowItem {
-  index: number;
-  top: number;
-  height: number;
-  frozen: CellItem[];
-  scrolled: CellItem[];
-}
-
-export interface BorderItem {
-  key: string;
-  style: CssDeclarations;
-}
-
-export interface BandItem {
-  kind: "frozen" | "main";
-  top: number;
-  height: number;
-  rows: RowItem[];
-  gridRows: number[]; // y of each horizontal gridline, band-relative
-  gridColsFrozen: number[]; // x of each vertical gridline, region-relative
-  gridColsScrolled: number[];
-  bordersFrozen: BorderItem[];
-  bordersScrolled: BorderItem[];
-}
 
 export interface SheetCellsDeps {
   model: () => SpreadsheetModel;
@@ -130,6 +85,8 @@ export interface SheetCellsDeps {
   locale?: () => SpreadsheetLocale | undefined;
   /** View ▸ Show formulas (SPEC-119); absent = values. */
   showFormulas?: () => boolean;
+  /** SPEC-129: a position's conditional-format result; absent = none. */
+  conditional?: (row: number, col: number) => CfCellResult | undefined;
 }
 
 /** The border element for one resolved edge, region-relative. */
@@ -199,7 +156,11 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     const value = cell?.value ?? null;
     // Showing formulas: a formula as left-aligned text, a value's General text.
     const shown = deps.showFormulas?.() ? showFormulasDisplay(sheet, at.row, at.col, value, deps.model().format) : null;
-    const style = shown?.formula ? leftAligned(styleOf(styleId)) : styleOf(styleId);
+    // A conditional format layers its dxf (and a scale's fill) over the
+    // style before anything reads it — its number format included.
+    const cf = deps.conditional?.(at.row, at.col);
+    const base = shown?.formula ? leftAligned(styleOf(styleId)) : styleOf(styleId);
+    const style = cf ? conditionalStyle(base, cf) : base;
     const kind = shown?.formula ? "string" : valueKind(value);
     const mdw = mdwFor(styleId);
     // The value through its number format, fitted to the cell (or merge);
@@ -209,7 +170,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       ...(style.alignment?.shrinkToFit ? {} : { widthPx: place.width }),
       digitWidthPx: mdw,
     });
-    const css = cssFor(styleId, kind, formatted.alignHint, shown?.formula);
+    const css = cf ? cellCss(style, theme.value, kind, formatted.alignHint) : cssFor(styleId, kind, formatted.alignHint, shown?.formula);
     const textStyle: CssDeclarations = {};
     const contentStyle: CssDeclarations = {};
     for (const [key, val] of Object.entries(css.text)) {
@@ -233,6 +194,10 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
         textLeft = -room.left;
         textWidth = place.width + room.left + room.right;
       }
+    }
+    if (cf?.icon) {
+      textLeft += CF_ICON_BOX_PX;
+      textWidth -= CF_ICON_BOX_PX;
     }
     textStyle.left = `${textLeft}px`;
     textStyle.width = `${textWidth}px`;
@@ -258,6 +223,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       raised,
       selected: isCellSelected(deps.selection(), at.row, at.col),
       diagonal: diagonalLines(style, theme.value),
+      ...(cf ? { cf } : {}),
     };
   }
 
@@ -372,7 +338,10 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
           placed.add(anchor);
         }
       }
-      const styleAt = (r: number, c: number): CellStyle => styleOf(effectiveStyleId(sheet, r, c));
+      const styleAt = (r: number, c: number): CellStyle => {
+        const cf = deps.conditional?.(r, c);
+        return cf ? conditionalStyle(styleOf(effectiveStyleId(sheet, r, c)), cf) : styleOf(effectiveStyleId(sheet, r, c));
+      };
       const borders = (items: AxisItem[], shiftX: number): BorderItem[] => {
         const window = edgeWindow(items);
         return window

@@ -11,6 +11,7 @@ import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { useCellEditing, type CellEditingDeps } from "./useCellEditing";
+import { useConditionalFormats } from "./useConditionalFormats";
 import type { Recalc } from "./useRecalc";
 import { useSheetCommands } from "./useSheetCommands";
 import type { SheetViewState } from "./useSheetViewState";
@@ -26,7 +27,7 @@ export interface WorkbookEditingDeps {
     sheetsChanged(): void;
   };
   viewState: Pick<SheetViewState, "syncInto">;
-  recalc: Pick<Recalc, "edit" | "settle">;
+  recalc: Pick<Recalc, "edit" | "settle" | "onResult">;
   /** Cell entry's view inputs (SPEC-122). */
   selection: CellEditingDeps["selection"];
   sheetMetrics: CellEditingDeps["sheetMetrics"];
@@ -60,6 +61,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncViewState: (model) => deps.viewState.syncInto(model),
   });
   const download = useWorkbookDownload({ book: deps.book });
+  const conditionalFormats = useConditionalFormats({ book: deps.book, recalc: deps.recalc, undo, locale: deps.locale });
   const cell = useCellEditing({
     book: deps.book,
     selection: deps.selection,
@@ -81,7 +83,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     copyDisabledReason: download.copyDisabledReason.value,
     copyOdsLabel: download.copyOdsLabel.value,
   }));
-  return { undo, commands, download, appBar, cell };
+  return { undo, commands, download, appBar, cell, conditionalFormats };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;
