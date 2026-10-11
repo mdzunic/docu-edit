@@ -11,6 +11,12 @@ import { defineConfig } from "@playwright/test";
 //
 // The browser window opens on screen (headless: false) and the run is also
 // recorded to video under demo-results/.
+//
+// DEMO_PORT moves the whole run (baseURL + the server it starts) off 5173 —
+// use it when another project's dev server already holds 5173, which the
+// reuse below would otherwise happily point the tour at.
+const port = Number(process.env.DEMO_PORT ?? 5173);
+
 export default defineConfig({
   testDir: "./e2e/demo",
   testMatch: /\.tour\.ts$/,
@@ -22,7 +28,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: [["list"]],
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: `http://localhost:${port}`,
     headless: false,
     viewport: { width: 1440, height: 900 },
     // Software compositing + no occlusion/background throttling: with GPU
@@ -44,10 +50,10 @@ export default defineConfig({
     trace: "off",
   },
   // Same contract as the main config: reuse a dev server if one is already
-  // listening on 5173, otherwise start one.
+  // listening on the port, otherwise start one there.
   webServer: {
-    command: "npm run dev",
-    url: "http://localhost:5173",
+    command: port === 5173 ? "npm run dev" : `npm run dev -- --port ${port} --strictPort`,
+    url: `http://localhost:${port}`,
     reuseExistingServer: true,
     timeout: 120_000,
   },

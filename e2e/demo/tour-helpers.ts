@@ -47,6 +47,14 @@ export async function caption(page: Page, text: string): Promise<void> {
 
 /** Full-screen title card, shown briefly at the start and end of the tour. */
 export async function titleCard(page: Page, title: string, subtitle: string, ms: number): Promise<void> {
+  await showTitleCard(page, title, subtitle);
+  await page.waitForTimeout(ms);
+  await hideTitleCard(page);
+}
+
+/** Puts the title card up and leaves it there — work can happen beneath it
+ * (it survives SPA route changes) until hideTitleCard fades it out. */
+export async function showTitleCard(page: Page, title: string, subtitle: string): Promise<void> {
   await page.evaluate(
     ({ title, subtitle }) => {
       const el = document.createElement("div");
@@ -76,7 +84,10 @@ export async function titleCard(page: Page, title: string, subtitle: string, ms:
     },
     { title, subtitle },
   );
-  await page.waitForTimeout(ms);
+}
+
+/** Fades out the card showTitleCard put up. */
+export async function hideTitleCard(page: Page): Promise<void> {
   await page.evaluate(() => {
     const el = document.getElementById("__demo_title_card");
     if (el) {
