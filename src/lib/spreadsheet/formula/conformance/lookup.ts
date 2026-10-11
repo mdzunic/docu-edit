@@ -122,6 +122,19 @@ export const LOOKUP_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: row_num 0 selects the whole of column 2 of an array constant (no reference), the array {2;4}; a plain cell's array result is its top-left element (SPEC-120 \"Implicit intersection\"), so 2.",
   },
+  {
+    formula: "INDEX({1,2;3,4},3,1)",
+    expected: { error: "#REF!" },
+    source: "Excel",
+    note: "INDEX function, array form Remarks: row_num and column_num must point inside the array, otherwise #REF! — row 3 of a 2-row array.",
+  },
+  {
+    formula: "INDEX(A2:B3,1,3)",
+    cells: { A2: "Apples", B2: "Lemons", A3: "Bananas", B3: "Pears" },
+    expected: { error: "#REF!" },
+    source: "Excel",
+    note: "INDEX function, reference form Remarks: row_num and column_num must point inside the reference, otherwise #REF! — column 3 of a 2-column range.",
+  },
 
   // --- MATCH -------------------------------------------------------------------
   {
