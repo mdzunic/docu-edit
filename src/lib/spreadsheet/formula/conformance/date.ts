@@ -3,12 +3,12 @@
 // for ISOWEEKNUM, WORKDAY, WORKDAY.INTL, NETWORKDAYS, NETWORKDAYS.INTL, YEARFRAC, DATEDIF,
 // DAYS360, DATEVALUE, DAY, DAYS, EDATE, EOMONTH, HOUR, MINUTE, MONTH, SECOND, TIME, TIMEVALUE,
 // WEEKDAY, WEEKNUM and YEAR (transcribed directly, their example tables' own data cells and
-// results); every other row is "pinned" — hand-derived from this engine's stated date arithmetic
-// (src/lib/spreadsheet/formula/functions/dateTime.ts's documented rules) or from SPEC-127's
-// Function pins, never from running this engine or from memory of Microsoft's printed examples.
-// DATE, NOW and TODAY have no Excel row: DATE's Example section is screenshots only (no printed
-// data), and NOW's and TODAY's own example results vary with the current moment, so every row of
-// theirs is pinned against the fixed conformance clock or dateTime.ts's rules instead. Date
+// results), and DATE's Remarks, whose worked calls stand in for an Example section printed
+// only as screenshots; every other row is "pinned" — hand-derived from this engine's stated date
+// arithmetic (src/lib/spreadsheet/formula/functions/dateTime.ts's documented rules) or from
+// SPEC-127's Function pins, never from running this engine or from memory of Microsoft's printed
+// examples. NOW and TODAY have no Excel row: their examples' results vary with the current
+// moment, so every row of theirs is pinned against the fixed conformance clock instead. Date
 // serials are computed by hand: days since 1899-12-30 for dates on/after 1900-03-01 (the
 // fictitious 1900-02-29 = serial 60), verified against the brief's anchors (1900-01-01 = 1,
 // 2008-10-30 = 39751, 2026-10-08 = 46303) — the only exception is DAYS's and DATEVALUE's text-date
@@ -42,6 +42,12 @@ export const DATE_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: "pinned: dateTime.ts — year outside 0-9999 (after the 0-1899 adjustment) is #NUM!.",
   },
+  { formula: "DATE(108,1,2)", expected: 39449, source: "Excel", note: "DATE function, Remarks: a year of 0–1899 has 1900 added, DATE(108,1,2) is January 2, 2008." },
+  { formula: "DATE(2008,14,2)", expected: 39846, source: "Excel", note: "DATE function, Remarks: a month past 12 runs on into the next year, DATE(2008,14,2) is February 2, 2009." },
+  { formula: "DATE(2008,-3,2)", expected: 39327, source: "Excel", note: "DATE function, Remarks: a month below 1 counts back from January, DATE(2008,-3,2) is September 2, 2007." },
+  { formula: "DATE(2008,1,35)", expected: 39482, source: "Excel", note: "DATE function, Remarks: a day past the month's end runs on, DATE(2008,1,35) is February 4, 2008." },
+  { formula: "DATE(2008,1,-15)", expected: 39432, source: "Excel", note: "DATE function, Remarks: a day below 1 counts back, DATE(2008,1,-15) is December 16, 2007." },
+  { formula: "DATE(-1,1,1)", expected: { error: "#NUM!" }, source: "Excel", note: "DATE function, Remarks: a year less than 0 is #NUM!." },
   // TIME
   {
     formula: "TIME(14,30,0)",

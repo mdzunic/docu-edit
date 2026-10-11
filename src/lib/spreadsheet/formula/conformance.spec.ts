@@ -228,7 +228,6 @@ const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([
   // Excel's `@` operator in file form: no function page.
   "SINGLE",
   // Examples printed only as screenshots or prose (no literal data).
-  "DATE",
   "IF",
   "TRUE",
   "FALSE",
