@@ -73,6 +73,9 @@ const backgroundOf = (page: Page, ref: string): Promise<string> => cell(page, re
 const textColorOf = (page: Page, ref: string): Promise<string> =>
   cell(page, ref).evaluate((element) => getComputedStyle(element.querySelector(".sheet-cell-text") ?? element).color);
 
+const fontWeightOf = (page: Page, ref: string): Promise<string> =>
+  cell(page, ref).evaluate((element) => getComputedStyle(element.querySelector(".sheet-cell-text") ?? element).fontWeight);
+
 const barWidth = async (page: Page, ref: string): Promise<number> => Number(await cell(page, ref).getByTestId("sheet-cf-databar").getAttribute("data-width-pct"));
 
 test("conditional formats render from the file, and the manager adds, reorders, undoes and round-trips rules (AC-52)", async ({ page }) => {
@@ -164,4 +167,39 @@ test("spec129-cf.ods: a calcext:condition cell shows its named style's fill (AC-
   expect(await textColorOf(page, "B3")).toBe(RED_TEXT);
   // B4 = 90 does not.
   expect(await backgroundOf(page, "B4")).not.toBe(RED_FILL);
+});
+
+test("Custom format… opens Format Cells in its differential mode, and the dxf it returns styles the rule's cells (AC-42)", async ({ page }) => {
+  await open(page, join(fixtures, "spec129-cf.xlsx"));
+  const manager = await openManager(page);
+  await clickCell(page, "B2");
+  await clickCell(page, "B13", ["Shift"]);
+  await manager.getByTestId("cf-add").click();
+  await page.getByTestId("cf-preset-less-than").click();
+  const editor = page.getByTestId("cf-editor");
+  await editor.getByTestId("cf-value-1").fill("60");
+  await editor.getByTestId("cf-format").selectOption({ label: "Custom format…" });
+
+  // Only the Number, Font, Border and Fill tabs; Font has no family or size.
+  const dialog = page.getByTestId("format-cells-dialog");
+  await expect(dialog).toBeVisible();
+  for (const tab of ["number", "font", "border", "fill"]) {
+    await expect(dialog.getByTestId(`format-cells-tab-${tab}`)).toBeVisible();
+  }
+  for (const tab of ["alignment", "protection"]) {
+    await expect(dialog.getByTestId(`format-cells-tab-${tab}`)).toHaveCount(0);
+  }
+  await dialog.getByTestId("format-cells-tab-font").click();
+  await expect(dialog.getByTestId("format-cells-font-family")).toHaveCount(0);
+  await expect(dialog.getByTestId("format-cells-font-size")).toHaveCount(0);
+  await dialog.getByTestId("format-cells-font-style").selectOption({ label: "Bold" });
+  await dialog.getByTestId("format-cells-ok").click();
+  await expect(dialog).toBeHidden();
+  await expect(editor.getByTestId("cf-preview")).toBeVisible();
+  await editor.getByTestId("cf-save").click();
+
+  // B11 = 55 is the only score below 60.
+  await expect(manager.getByTestId("cf-rule-description").first()).toHaveText("Cell value < 60");
+  await expect.poll(async () => Number(await fontWeightOf(page, "B11"))).toBeGreaterThanOrEqual(700);
+  expect(Number(await fontWeightOf(page, "B2"))).toBeLessThan(700);
 });
