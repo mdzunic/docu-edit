@@ -9,7 +9,7 @@
 // | envelope prefix | `table:content-validation@table:base-cell-address`, `@table:condition` | anchor; formula |
 // | envelope prefix | `table:label-range@table:label-cell-range-address`, `@table:data-cell-range-address` | list, emptied → element removed |
 // | suffix, inside tables | `table:named-range@table:cell-range-address` (emptied → removed), `@table:base-cell-address`; `table:named-expression@table:expression`, `@table:base-cell-address` | list; anchor; formula |
-// | suffix | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
+// | suffix, not a database range the model owns | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
 // | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
 // | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
 // | table start tag | `table:table@table:print-ranges` (emptied → the attribute removed) | list |
@@ -44,6 +44,12 @@
 //   alone). An `Object N`: the sheet whose sourceXml shows it
 //   (`objectsReferenced`), a copy's override only for a copy that alone
 //   shows it (the writer's rule).
+// - SPEC-128: a `table:database-range` that is a sheet's autofilter (the
+//   claim of ods/databaseRanges.ts, decided on the retained text alone) is
+//   the model's — `Sheet.autoFilter`, which the `autofilter` reference
+//   adjuster moves and the writer serialises — so nothing inside it (its
+//   target, its filter's criteria range) is adjusted here: nothing is
+//   adjusted twice. Every other database range still is.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -67,6 +73,7 @@ import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, findAttribute, type Splice } from "../xmlSplice";
 import { decodeUtf8, encodeUtf8, LazyParts } from "../xlsx/package";
+import { odsOwnedDatabaseRangeSpans } from "./databaseRanges";
 import { objectsReferenced, sourceTables } from "./package";
 import { parseOdsRangeAddress, splitOdsRangeAddressList } from "./rangeAddress";
 
@@ -470,18 +477,24 @@ class OdsRetainedRewrite {
     const prefixSplices: Splice[] = [];
     const suffixSplices: Splice[] = [];
     const outside = prefix + suffix;
+    const tables = sourceTables(xml, prefix.length, suffix.length);
     if (mentions(outside, CONTENT_ATTRIBUTES)) {
+      // SPEC-128: the database ranges the model owns are left alone.
+      const owned = odsOwnedDatabaseRangeSpans(suffix, tables.map((table) => table.name));
       for (const splice of this.splices(outside, ENVELOPE_HOST, contentLocations)) {
         // One straddling the two would be an ancestor of the tables: never a location.
         if (splice.end <= prefix.length) {
           prefixSplices.push(splice);
         } else if (splice.start >= prefix.length) {
-          suffixSplices.push({ ...splice, start: splice.start - prefix.length, end: splice.end - prefix.length });
+          const inSuffix = { ...splice, start: splice.start - prefix.length, end: splice.end - prefix.length };
+          if (!owned.some((span) => inSuffix.start >= span.start && inSuffix.end <= span.end)) {
+            suffixSplices.push(inSuffix);
+          }
         }
       }
     }
     const tableSplices: Splice[] = [];
-    for (const table of sourceTables(xml, prefix.length, suffix.length)) {
+    for (const table of tables) {
       const text = xml.slice(table.start, table.end);
       if (!mentions(text, CONTENT_ATTRIBUTES)) {
         continue;
