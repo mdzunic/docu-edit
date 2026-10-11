@@ -75,6 +75,8 @@ const vp = grid.viewport;
 const RH = ROW_HEADER_WIDTH_PX;
 const CH = COLUMN_HEADER_HEIGHT_PX;
 const cellEditing = computed(() => asSheetGridContext(props.context).cellEditing);
+/** SPEC-127: the function assists' ARIA on the in-cell editor. */
+const cellAria = computed(() => asSheetGridContext(props.context).assist?.editorAria.value ?? {});
 /** SPEC-123: the armed format painter ("once" | "locked"), "" when off. */
 const painterMode = computed(() => asSheetGridContext(props.context).painter?.mode.value ?? "");
 /** SPEC-124: header resizing — the cursor, and while dragging the guide line
@@ -228,6 +230,7 @@ function unscroll(event = new Event("scroll")) {
           >
             <CellEditor
               :editor="cellEditing"
+              :aria="cellAria"
               :box-style="grid.editor.value.boxStyle"
               :text-style="grid.editor.value.textStyle"
               :label="grid.editor.value.label"

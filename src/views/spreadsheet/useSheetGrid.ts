@@ -30,6 +30,7 @@ import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
+import type { FunctionAssist } from "./useFunctionAssist";
 import type { FillHandle } from "./useFillHandle";
 import type { FormatPainter } from "./useFormatPainter";
 import type { HeaderResize } from "./useHeaderResize";
@@ -65,6 +66,8 @@ export interface SheetGridContext {
   recalc?: Pick<Recalc, "staleTitleAt">;
   /** Cell entry (SPEC-122); absent = the grid is read-only. */
   cellEditing?: CellEditing;
+  /** SPEC-127's function assists: the in-cell editor's ARIA. */
+  assist?: Pick<FunctionAssist, "editorAria">;
   /** SPEC-123: formatting (the cell context menu and Format Cells) and the
    * format painter (the grid's data-format-painter); absent = none. */
   formatting?: Formatting;

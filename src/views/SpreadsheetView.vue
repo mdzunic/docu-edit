@@ -17,6 +17,7 @@ import { useFillHandle } from "./spreadsheet/useFillHandle";
 import { useFormatPainter } from "./spreadsheet/useFormatPainter";
 import { useFormatting } from "./spreadsheet/useFormatting";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
+import { useFunctionAssist } from "./spreadsheet/useFunctionAssist";
 import { useHeaderResize } from "./spreadsheet/useHeaderResize";
 import { useMerges } from "./spreadsheet/useMerges";
 import { useRecalc } from "./spreadsheet/useRecalc";
@@ -54,7 +55,8 @@ const fillHandle = useFillHandle({ book, viewState, selection, editing, locale: 
 const rangeMove = useRangeMove({ book, viewState, selection, editing });
 const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle });
 const csvImport = useCsvImport({ book, undo: editing.undo, router: useRouter() });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove }));
+const assist = useFunctionAssist({ ...editing.cell });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove }));
 </script>
 
 <template>
@@ -74,9 +76,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
     </template>
     <WorkbookBody
       v-if="book.workbook.value"
-      :book="book"
-      :grid="grid"
-      :editing="editing"
+      v-bind="{ book, grid, editing, assist }"
     />
     <WorkbookNotFound v-else />
     <CsvImportDialog :csv-import="csvImport" />

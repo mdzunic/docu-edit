@@ -26,9 +26,13 @@ const props = defineProps({
   textStyle: { type: Object, default: () => ({}) },
   /** "B3, Revenue". */
   label: { type: String, default: "" },
+  /** SPEC-127: the function assists' ARIA (useFunctionAssist's editorAria). */
+  aria: { type: Object, default: () => ({}) },
 });
 
 const editor = computed(() => asCellEditing(props.editor));
+/** The assists' ARIA, a formula error's description taking precedence. */
+const hostAria = computed(() => ({ ...props.aria, ...(editor.value.error.value ? { "aria-describedby": "cell-editor-error" } : {}) }));
 const host = useTemplateRef("host");
 const surface = useDraftSurface(host, () => editor.value, "cell");
 </script>
@@ -48,7 +52,7 @@ const surface = useDraftSurface(host, () => editor.value, "cell");
       aria-multiline="true"
       :aria-label="props.label"
       :aria-invalid="editor.error.value ? 'true' : undefined"
-      :aria-describedby="editor.error.value ? 'cell-editor-error' : undefined"
+      v-bind="hostAria"
       :data-mode="editor.mode.value"
       spellcheck="false"
       autocapitalize="off"
