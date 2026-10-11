@@ -655,8 +655,9 @@ describe("merges (SPEC-124 \"Merges\")", () => {
 
 // --- SPEC-128's autofilter adjuster ("Structural edits") -------------------------------------
 
+const sortOf = (ref: GridRange, cols: number[], extra: Partial<SortState> = {}): SortState => ({ ref, keys: cols.map((col) => ({ col, descending: false })), ...extra });
+
 describe("the autofilter adjuster (SPEC-128 \"Structural edits\")", () => {
-  const sortOf = (ref: GridRange, cols: number[], extra: Partial<SortState> = {}): SortState => ({ ref, keys: cols.map((col) => ({ col, descending: false })), ...extra });
   /** An autofilter at A5:D20 with criteria on B and D and a sort by D. */
   const filterAt = (fields: Partial<AutoFilter> = {}): AutoFilter => ({
     range: range(4, 0, 19, 3),
