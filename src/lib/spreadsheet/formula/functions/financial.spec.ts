@@ -109,7 +109,8 @@ describe("pinned annuity arithmetic", () => {
     ["PPMT(0,2,10,1000)", -100],
     ["IPMT(0.1,1,2,1000,0,1)", 0], // the first payment, due at the start, carries no interest
     ["NPV(0.1,110,121)", 200], // 110/1.1 + 121/1.21
-    ['NPV(0.1,"110",TRUE)', 100 + 1 / 1.21], // direct arguments coerce
+    ['NPV(0.1,"110",TRUE,110)', 100], // only numbers count: text and logicals are skipped, even as arguments
+    ["NPV(0.1,110,1/0,121)", 200], // so is an error value: 110/1.1 + 121/1.21
     ["NPV(0.1,A1:A3)", 200], // A2's text is skipped: 110/1.1 + 121/1.21
     ["SLN(1000,100,9)", 100],
     ["SYD(1000,100,2,1)", 600], // 900·2·2/(2·3)
@@ -164,7 +165,6 @@ describe("error cases", () => {
     ["RATE(2,0,-1,1E+40)", err("#NUM!")], // root 1E+20 − 1: Newton halves toward it, past 20 steps
     ["RATE(48,-200,8000,0,0,-1)", err("#NUM!")], // a guess at −1
     ["NPV(-1,100)", err("#DIV/0!")],
-    ["NPV(0.1,1,1/0)", err("#DIV/0!")],
     ["IRR({100,200})", err("#NUM!")], // no negative flow
     ["IRR({-1,1E+10})", err("#NUM!")], // 1 + rate doubles each step: 20 are not enough
     ["MIRR({100,200},0.1,0.1)", err("#DIV/0!")],

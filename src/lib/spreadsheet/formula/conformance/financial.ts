@@ -261,6 +261,19 @@ export const FINANCIAL_ROWS: ConformanceRow[] = [
       "pinned: the same example 2 states NPV(A2,A4:A8,-9000)+A3 = ($3,749.47) with A3=-40000, so NPV(A2,A4:A8,-9000) = -3749.47 - (-40000) = 36250.53.",
   },
   {
+    formula: "NPV(0.1,A1:A3)",
+    cells: { A1: 110, A2: { error: "#N/A" }, A3: 121 },
+    expected: 200,
+    source: "Excel",
+    note: "NPV function, Remarks: error values (and empty cells, logicals, text) in a reference are ignored — A2's #N/A is skipped, so 110/1.1 + 121/1.1² = 100 + 100.",
+  },
+  {
+    formula: 'NPV(0.1,"110",TRUE,110)',
+    expected: 100,
+    source: "Excel",
+    note: "NPV function, Remarks: arguments that are logical values or text, even a number's text, are ignored — only the last 110 counts, 110/1.1.",
+  },
+  {
     formula: "NPV(0.1)",
     expected: { error: "#VALUE!" },
     source: "pinned",

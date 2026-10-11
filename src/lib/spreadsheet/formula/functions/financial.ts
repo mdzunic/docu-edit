@@ -17,9 +17,10 @@
 //   non-finite iterate or a rate ≤ −1 (a guess too) is #NUM!, never a
 //   half-converged number. RATE needs nper > 0; IRR and XIRR a positive and
 //   a negative cash flow.
-// - NPV reads its values like SUM (numbers only from references and arrays,
-//   direct arguments coerced, the first error propagating), the first one
-//   period 1; a rate of −1 is #DIV/0!. IRR and MIRR read numbers only from
+// - NPV counts numbers only, as its page's Remarks state: empty cells,
+//   logicals, text (a number's text too) and error values are skipped,
+//   whether arguments or inside references and arrays; the first number is
+//   period 1, and a rate of −1 is #DIV/0!. IRR and MIRR read numbers only from
 //   their range or array (text, logicals and empty cells skipped, zeros
 //   kept); MIRR without both signs, or with a rate of −1, is #DIV/0!.
 // - XNPV and XIRR pair values and dates element by element, row-major, empty
@@ -43,7 +44,7 @@ import { forEachScalar, toArray } from "../areas";
 import type { EvalContext } from "../evaluate";
 import type { ArgList, FunctionSpec } from "../registry";
 import { DIV0_ERROR, isError, NUM_ERROR, VALUE_ERROR, type EvalValue } from "../values";
-import { arg, eachNumber, numberArg, numberOr, optional, repeating } from "./common";
+import { arg, numberArg, numberOr, optional, repeating } from "./common";
 import { maxSerial } from "./dateTime";
 import { roundDecimal } from "./math";
 import { newton } from "./numeric";
@@ -478,12 +479,13 @@ export const FINANCIAL_FUNCTIONS: FunctionSpec[] = [
       }
       let total = 0;
       let period = 0;
-      const failure = eachNumber(argsFrom(args, 1), ctx, (flow) => {
-        period += 1;
-        total += flow / compound(rate, period);
-      });
-      if (failure) {
-        return failure;
+      for (let i = 1; i < args.length; i += 1) {
+        forEachScalar(ctx, args.get(i), (flow) => {
+          if (typeof flow === "number") {
+            period += 1;
+            total += flow / compound(rate, period);
+          }
+        });
       }
       return rate === -1 ? DIV0_ERROR : total;
     },
