@@ -598,6 +598,12 @@ const OPERATOR_TEXT: Readonly<Record<FilterOperator, string>> = {
 
 const INVARIANT_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 
+/** An attribute value as written: escaped, and the whitespace a parser
+ * would normalise (a value from a multi-line cell) as character references. */
+function attributeText(value: string): string {
+  return escapeAttributeValue(value).replace(/\t/g, "&#9;").replace(/\n/g, "&#10;").replace(/\r/g, "&#13;");
+}
+
 const isStar = (at: { ch: string; wild: boolean } | undefined): boolean => at !== undefined && at.wild && at.ch === "*";
 
 /** A wildcard pattern as a literal with a `*` at its start, end or both —
@@ -638,11 +644,11 @@ function conditionXml(field: number, condition: FilterCondition): string {
     const pattern = purePattern(condition.value);
     if (pattern) {
       const where = pattern.start && pattern.end ? "contains" : pattern.end ? "begins" : "ends";
-      return `${head} table:value="${escapeAttributeValue(pattern.literal)}" table:operator="${PATTERN_OPERATORS[where][condition.operator]}"/>`;
+      return `${head} table:value="${attributeText(pattern.literal)}" table:operator="${PATTERN_OPERATORS[where][condition.operator]}"/>`;
     }
   }
   const numeric = INVARIANT_NUMBER.test(condition.value) && Number.isFinite(Number(condition.value));
-  return `${head} table:value="${escapeAttributeValue(condition.value)}" table:operator="${escapeAttributeValue(OPERATOR_TEXT[condition.operator])}"${numeric ? ` table:data-type="number"` : ""}/>`;
+  return `${head} table:value="${attributeText(condition.value)}" table:operator="${attributeText(OPERATOR_TEXT[condition.operator])}"${numeric ? ` table:data-type="number"` : ""}/>`;
 }
 
 /** One criterion's elements inside the filter (none when it has no ODS form). */
@@ -653,8 +659,8 @@ function criteriaXml(field: number, criteria: FilterCriteria): string[] {
       if (items.length === 0) {
         return [];
       }
-      const set = items.map((item) => `<table:filter-set-item table:value="${escapeAttributeValue(item)}"/>`).join("");
-      return [`<table:filter-condition table:field-number="${field}" table:value="${escapeAttributeValue(items[0]!)}" table:operator="=">${set}</table:filter-condition>`];
+      const set = items.map((item) => `<table:filter-set-item table:value="${attributeText(item)}"/>`).join("");
+      return [`<table:filter-condition table:field-number="${field}" table:value="${attributeText(items[0]!)}" table:operator="=">${set}</table:filter-condition>`];
     }
     case "custom": {
       const conditions = criteria.conditions.map((condition) => conditionXml(field, condition));

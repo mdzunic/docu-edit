@@ -159,6 +159,13 @@ describe("the operator table, both ways", () => {
     expect(columnsOf(filterOf(columns))).toEqual(columns);
   });
 
+  it("escapes values, a multi-line cell's line breaks as character references, so they read back", () => {
+    const columns: FilterColumn[] = [{ colId: 0, criteria: values(["a & <b>", "two\nlines\tand \"tab\""]) }];
+    const wire = filterOf(columns);
+    expect(wire).toContain(`<table:filter-set-item table:value="a &amp; &lt;b&gt;"/><table:filter-set-item table:value="two&#10;lines&#9;and &quot;tab&quot;"/>`);
+    expect(columnsOf(wire)).toEqual(columns);
+  });
+
   it("writes a pure pattern as begins/ends/contains even when it came from elsewhere (xlsx's customFilter)", () => {
     expect(filterOf([{ colId: 0, criteria: custom("and", ["equal", "*Ea~?st*"]) }])).toBe(`<table:filter>${condition(0, `table:value="Ea?st" table:operator="contains"`)}</table:filter>`);
     expect(filterOf([{ colId: 0, criteria: custom("and", ["equal", "*"]) }])).toBe(`<table:filter>${condition(0, `table:value="*" table:operator="="`)}</table:filter>`);
