@@ -651,17 +651,19 @@ describe("SPEC-122: a copy in the other format re-opens with the same displayed 
   }
 });
 
+/** A modelled element without its verbatim source text. */
+function strip<T extends { sourceXml?: string }>(value: T | undefined): Omit<T, "sourceXml"> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const { sourceXml: _source, ...rest } = value;
+  return rest;
+}
+
 /** What SPEC-128 round-trips of a sheet: its autofilter and sort record
  * (their verbatim source text is retention, not model) and every row's two
  * hidden flags. */
 function filterForCompare(sheet: Sheet) {
-  const strip = <T extends { sourceXml?: string }>(value: T | undefined): Omit<T, "sourceXml"> | undefined => {
-    if (value === undefined) {
-      return undefined;
-    }
-    const { sourceXml: _source, ...rest } = value;
-    return rest;
-  };
   const autoFilter = sheet.autoFilter && { ...strip(sheet.autoFilter)!, sort: strip(sheet.autoFilter.sort) };
   if (autoFilter && autoFilter.sort === undefined) {
     delete autoFilter.sort;
