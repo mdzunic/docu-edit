@@ -202,6 +202,8 @@ describe("moveMapper — retained references", () => {
 
 // --- SPEC-128's autofilter move adjuster ("Moves") -----------------------------------------
 
+const hiddenRows = (s: Sheet): number[] => s.rows.filter((each) => each.filterHidden).map((each) => each.index);
+
 describe("the autofilter move adjuster (SPEC-128 \"Moves\")", () => {
   const WEST: AutoFilter["columns"] = [{ colId: 0, criteria: { kind: "values", values: ["West"], blanks: false, dateGroups: [] } }];
   /** A1:B5 — Region | Amount over West, East, West, North — filtered to West
@@ -223,8 +225,6 @@ describe("the autofilter move adjuster (SPEC-128 \"Moves\")", () => {
       },
       ...fields,
     });
-  const hiddenRows = (s: Sheet): number[] => s.rows.filter((each) => each.filterHidden).map((each) => each.index);
-
   it("moves an autofilter entirely inside the source by the offset with its sort record, clears the old rows' filterHidden and reapplies it at its new place", () => {
     const m = model([regions()]);
     expect(moveRange(m, { fromSheetId: "s1", from: range(0, 0, 4, 1), toSheetId: "s1", toTop: 10, toLeft: 3 })).toEqual({ ok: true });
