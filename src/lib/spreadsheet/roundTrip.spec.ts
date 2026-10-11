@@ -720,3 +720,102 @@ describe("SPEC-128: filter → save → reopen reproduces the autofilter, the so
     expect(filterForCompare(back.sheets[0]!).rows).toEqual([{ index: SPEC128_FILTER_XLSX.sales.userHiddenIndex, hidden: true, filterHidden: false }]);
   });
 });
+
+// ============================================================================
+// SPEC-129 (ODS): conditional formats round trip — spec129-cf.ods and
+// spec129-legacy.ods download byte-identical when untouched; add/edit → save
+// → reopen reproduces each sheet's conditional formats and the dxfs their
+// rules apply under toEqual, minus the minted ids, `sourceXml` and a dxf's
+// `sourceStyleName` (a new dxf comes back as its generated `de-cf` style).
+// ODS numbers priorities by document order, so formats compare in priority
+// order, and dxfs by content (the re-read table is in first-use order).
+// ============================================================================
+import { parseRange as parseSpec129Range } from "./address";
+import * as spec129OdsCf from "./conditionalFormats";
+import { buildSpec129CfOdsBytes, buildSpec129LegacyOdsBytes, SPEC129_CF_ODS } from "./fixtures/build";
+import { internDxf as internSpec129OdsDxf } from "./styles";
+
+/** An edit of a sheet's cells, the sheet marked dirty as the editor does. */
+function editSpec129Sheet(model: SpreadsheetModel, index: number, row: number, col: number, value: string | number): void {
+  setCellEntry(model, index, { row, col }, { value });
+  model.sheets = model.sheets.map((each, position) => (position === index ? { ...each, dirty: true } : each));
+}
+
+function spec129FirstPriority(format: spec129OdsCf.ConditionalFormat): number {
+  return Math.min(...format.rules.map((rule) => rule.priority));
+}
+
+/** A sheet's formats as an ODS save round-trips them (see above). */
+function odsConditionalFormatsForCompare(model: SpreadsheetModel, sheet: Sheet) {
+  return sheet.conditionalFormats
+    .toSorted((a, b) => spec129FirstPriority(a) - spec129FirstPriority(b))
+    .map((format) => ({
+      ranges: format.ranges,
+      rules: format.rules.map(({ id: _id, dxfId, ...rule }) => {
+        if (dxfId === undefined) {
+          return rule;
+        }
+        const { sourceXml: _xml, sourceStyleName: _name, ...dxf } = model.dxfs[dxfId]!;
+        return { ...rule, dxf };
+      }),
+    }));
+}
+
+describe("SPEC-129 (ODS): conditional formats round trip", () => {
+  for (const [file, build] of [
+    ["spec129-cf.ods", buildSpec129CfOdsBytes],
+    ["spec129-legacy.ods", buildSpec129LegacyOdsBytes],
+  ] as const) {
+    it(`${file}: an untouched download is every part byte-identical and in order`, async () => {
+      const source = await build();
+      const model = await readSpreadsheetBytes(source, "ods", "fixture");
+      const out = await unzip((await spreadsheetDownload(model)).bytes);
+      const original = await unzip(source);
+      expect([...out.keys()]).toEqual([...original.keys()]);
+      for (const [name, bytes] of original) {
+        expect(equalBytes(out.get(name)!, bytes), name).toBe(true);
+      }
+    });
+  }
+
+  it("spec129-cf.ods: a dirty table whose rules were not edited re-emits each format's source verbatim", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec129CfOdsBytes(), "ods", "book");
+    editSpec129Sheet(model, 0, 20, 1, "note");
+    const content = new TextDecoder().decode((await unzip((await spreadsheetDownload(model)).bytes)).get("content.xml"));
+    expect(content).toContain(`<calcext:conditional-formats>${SPEC129_CF_ODS.scoresFormats.join("")}</calcext:conditional-formats>`);
+  });
+
+  it("spec129-cf.ods: add (Greater than 120, green), move it down, edit, re-range and delete rules → save → reopen reproduces them", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec129CfOdsBytes(), "ods", "book");
+    const [scores, more] = model.sheets;
+    const green = internSpec129OdsDxf(model, { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } });
+    const { ruleId } = spec129OdsCf.addConditionalFormat(model, scores!.id, [parseSpec129Range("B2:B13")!], { kind: "cellIs", operator: "greaterThan", formulas: ["120"], dxfId: green });
+    spec129OdsCf.moveRule(model, scores!.id, ruleId, "down");
+    const sheetFormats = (index: number) => model.sheets[index]!.conditionalFormats;
+    const stars = sheetFormats(0).find((format) => format.rules[0]!.kind === "iconSet" && format.rules[0]!.icons.set === "3Stars")!;
+    spec129OdsCf.deleteRule(model, scores!.id, stars.rules[0]!.id);
+    const bar = sheetFormats(0).find((format) => format.rules[0]!.kind === "dataBar")!;
+    spec129OdsCf.setFormatRanges(model, scores!.id, bar.id, [parseSpec129Range("C2:C20")!, parseSpec129Range("J2:J5")!]);
+    const text = sheetFormats(1).flatMap((format) => format.rules).find((rule) => rule.kind === "text")!;
+    const bold = internSpec129OdsDxf(model, { font: { bold: true, underline: "single" }, numberFormat: "0.00" });
+    spec129OdsCf.updateRule(model, more!.id, text.id, { kind: "text", operator: "beginsWith", text: `say "hi"`, dxfId: bold });
+
+    const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, "ods", "book");
+    for (const index of [0, 1]) {
+      expect(odsConditionalFormatsForCompare(back, back.sheets[index]!)).toEqual(odsConditionalFormatsForCompare(model, model.sheets[index]!));
+    }
+    // The new rule ranks second, under Bad's "> 100".
+    const ranked = spec129OdsCf.rulesByPriority(back.sheets[0]!.conditionalFormats).slice(0, 2);
+    expect(ranked.map(({ rule }) => rule.kind === "cellIs" && rule.formulas[0])).toEqual(["100", "120"]);
+    // And a second save of the re-read model is stable.
+    const again = await readSpreadsheetBytes((await spreadsheetDownload(back)).bytes, "ods", "book");
+    expect(odsConditionalFormatsForCompare(again, again.sheets[0]!)).toEqual(odsConditionalFormatsForCompare(back, back.sheets[0]!));
+  });
+
+  it("spec129-legacy.ods: an edited table writes its style:map rules as calcext ones and reopens to the same formats", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec129LegacyOdsBytes(), "ods", "book");
+    editSpec129Sheet(model, 0, 2, 2, 120);
+    const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, "ods", "book");
+    expect(odsConditionalFormatsForCompare(back, back.sheets[0]!)).toEqual(odsConditionalFormatsForCompare(model, model.sheets[0]!));
+  });
+});

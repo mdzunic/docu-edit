@@ -28,6 +28,7 @@ import { readSpreadsheetBytes } from "../open";
 import { createBlankWorkbook, stripRetention } from "../sheets";
 import { internDxf } from "../styles";
 import { odsCfReadContext, readOdsTableConditionalFormats } from "./conditionalFormats";
+import { parseOds } from "./reader";
 import { writeOds } from "./writer";
 
 const CALCEXT = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
@@ -304,6 +305,22 @@ describe("reading legacy style:map conditions", () => {
   it("calcext rules win: the maps are not read beside them", () => {
     const both = legacyTable.replace("</table:table>", `${oneFormat(condition("=1"))}</table:table>`);
     expect(read(both).formats.map((format) => format.ranges)).toEqual([[range("B2:B10")]]);
+  });
+});
+
+describe("reading one retained table (SPEC-129's reader upgrade over a dirty sheet)", () => {
+  it("the envelope around a sheet's sourceXml, with the retained styles.xml, yields its formats and the dxfs they apply", async () => {
+    const source = await buildSpec129CfOdsBytes();
+    const model = await readSpreadsheetBytes(source, "ods", "book");
+    const parts = await unzip(source);
+    const envelope = model.odsContentEnvelope!;
+    parts.set("content.xml", new TextEncoder().encode(envelope.prefix + model.sheets[1]!.sourceXml! + envelope.suffix));
+    const parsed = await parseOds(new Uint8Array(0), parts);
+    expect(parsed.sheets.map((sheet) => sheet.name)).toEqual(["More"]);
+    const formats = parsed.sheets[0]!.conditionalFormats;
+    expect(formats.map((format) => format.sourceXml)).toEqual(SPEC129_CF_ODS.moreFormats);
+    expect(formats.flatMap((format) => format.rules.map((rule) => parsed.dxfs[rule.dxfId!]!.sourceStyleName))).toEqual(["Good", "Accent_20_3", "Bad", "Bad", "Accent_20_3", "Good"]);
+    expect(parsed.dxfs).toEqual([SPEC129_CF_ODS.dxfs[2], SPEC129_CF_ODS.dxfs[1], SPEC129_CF_ODS.dxfs[0]]);
   });
 });
 
