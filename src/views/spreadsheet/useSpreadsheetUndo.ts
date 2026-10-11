@@ -25,6 +25,10 @@
 //    only contributes all its stored cells. When the sheet list, a name or
 //    the order changed, invalidateDependencyGraph runs first; otherwise
 //    updateGraphCells follows the keys.
+//    When a step hid or showed a row (recalc.ts's rowVisibilityChanged),
+//    every formula cell calling SUBTOTAL or AGGREGATE joins the keys
+//    (visibilitySensitiveCells, SPEC-127): their results follow which rows
+//    show, though no cell they read changed.
 // 2. deps.recalc(keys ∪ alsoRecalc, done) — an "edit" pass, possibly sliced.
 // 3. Every sheet whose `rows` reference differs from the reference snapshot
 //    (the step's pre-command state for a command; the installed state for an
@@ -43,7 +47,7 @@
 import { onScopeDispose, ref, type Ref, type ShallowRef } from "vue";
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
 import { cellKey, invalidateDependencyGraph, updateGraphCells, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
-import { changedCellsBetween } from "../../lib/spreadsheet/formula/recalc";
+import { changedCellsBetween, rowVisibilityChanged, visibilitySensitiveCells } from "../../lib/spreadsheet/formula/recalc";
 import type { Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 
 export const MAX_UNDO_STEPS = 100;
@@ -184,12 +188,14 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     const beforeById = new Map(before.map((sheet) => [sheet.id, sheet] as const));
     const afterById = new Map(model.sheets.map((sheet) => [sheet.id, sheet] as const));
     const keys: CellKey[] = [];
+    let visibility = false;
     for (const [id, was] of beforeById) {
       const now = afterById.get(id);
       if (!now) {
         keys.push(...allCellKeys(id, was.rows));
       } else if (now.rows !== was.rows) {
         keys.push(...changedCellsBetween(id, was.rows, now.rows));
+        visibility ||= rowVisibilityChanged(was.rows, now.rows);
       }
     }
     for (const [id, now] of afterById) {
@@ -205,7 +211,8 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
       updateGraphCells(model, keys);
     }
     markDirty(model, reference);
-    deps.recalc([...new Set([...keys, ...alsoRecalc])], () => {
+    const sensitive = visibility ? visibilitySensitiveCells(model) : [];
+    deps.recalc([...new Set([...keys, ...alsoRecalc, ...sensitive])], () => {
       if (deps.model.value === model) {
         markDirty(model, reference);
         deps.onApplied();

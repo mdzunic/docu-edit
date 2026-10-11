@@ -1,20 +1,26 @@
-// SPEC-120 "The registry" and "The core functions": registeredFunctionNames()
-// is exactly the core table's names, each file (functions/index.ts's
-// CORE_FUNCTION_FILES) registering the functions the table gives it; every
-// FunctionSpec's metadata holds the invariants SPEC-120 states — a category
-// from FunctionCategory, 0 ≤ minArgs ≤ maxArgs ≤ 255, argument kinds from
-// ArgKind with one per entry of `args` (a variadic function's repeating group
-// once in each, marked repeating), `repeat` within argKinds, a one-line
-// summary ending in ".",
-// snake_case argument names, required before optional; volatile and lazy are
-// exactly the functions the spec names; argKindAt cycles through `repeat`;
-// every name resolves through SPEC-119's functionNames.ts in both wire
-// dialects; the evaluator — not each function — applies arity and argument
-// kinds (#VALUE! for a wrong count or a "range" argument that is no
-// reference, implicit intersection for a "value" argument outside array mode
-// and lifting inside it, an "any" argument as evaluated, an "array" argument
-// evaluated in array mode, value-kind errors before the function runs); and
-// registerFunction refuses a duplicate while getFunction ignores case.
+// SPEC-120 "The registry" and "The core functions", SPEC-127 "Function
+// metadata": registeredFunctionNames() is exactly the core table's names —
+// each file (functions/index.ts's CORE_FUNCTION_FILES) registering the
+// functions the table gives it — and SPEC-127's library, each in the
+// category its acceptance criteria file it under; every FunctionSpec's
+// metadata holds SPEC-127's invariants (a test per function, so a failure
+// names it): a canonical name, a 10–100 character summary, snake_case
+// argument names, unique, each described in 5–120 characters, required
+// before optional with minArgs their count, a variadic function's repeating
+// group the trailing run of optional numbered arguments — `repeat` the same
+// group, maxArgs ≤ 255 — and otherwise maxArgs = args.length; argument kinds
+// from ArgKind, one per entry of `args`; FUNCTION_CATEGORY_ORDER lists every
+// FunctionCategory once; the legacy names are "Compatibility", sharing their
+// modern function's implementation; volatile, lazy and visibilitySensitive
+// are exactly the functions the specs name; no dynamic-array function is
+// registered; argKindAt cycles through `repeat`; every name resolves through
+// SPEC-119's functionNames.ts in both wire dialects; the evaluator — not
+// each function — applies arity and argument kinds (#VALUE! for a wrong
+// count or a "range" argument that is no reference, implicit intersection
+// for a "value" argument outside array mode and lifting inside it, an "any"
+// argument as evaluated, an "array" argument evaluated in array mode,
+// value-kind errors before the function runs); and registerFunction refuses
+// a duplicate while getFunction ignores case.
 //
 // The registry is module-global: the one test that registers a function
 // (ZZTESTFN) runs last, and the name lists below are read before it.
@@ -24,7 +30,16 @@ import { calcWorkbook, type CellSpec } from "../fixtures/calcWorkbook";
 import { evaluateCell, storedValueContext } from "./evaluate";
 import { canonicalFromOds, canonicalFromXlsx, odsFromCanonical, xlsxFromCanonical } from "./functionNames";
 import { CORE_FUNCTION_FILES } from "./functions";
-import { argKindAt, getFunction, registerFunction, registeredFunctionNames, type ArgKind, type FunctionCategory, type FunctionSpec } from "./registry";
+import {
+  argKindAt,
+  FUNCTION_CATEGORY_ORDER,
+  getFunction,
+  registerFunction,
+  registeredFunctionNames,
+  type ArgKind,
+  type FunctionCategory,
+  type FunctionSpec,
+} from "./registry";
 
 /** SPEC-120 "The core functions", transcribed. (The spec calls them "the 100
  * core functions"; its table lists 101 names — the table is what is
@@ -42,17 +57,82 @@ const CORE_TABLE: Readonly<Record<string, string>> = {
 
 const TABLE_NAMES: readonly string[] = Object.values(CORE_TABLE).flatMap((names) => names.split(" "));
 
-const CATEGORIES: readonly FunctionCategory[] = [
-  "Financial",
-  "Date & Time",
-  "Math & Trig",
-  "Statistical",
-  "Lookup & Reference",
-  "Text",
-  "Logical",
-  "Information",
-  "Engineering",
-  "Compatibility",
+/** SPEC-127's library by category, transcribed from its acceptance criteria
+ * (the trigonometric set from "Function pins", the twelve base conversions
+ * spelled out); the legacy names are "Compatibility", as Excel files them. */
+const LIBRARY_TABLE: Readonly<Record<FunctionCategory, string>> = {
+  Financial: "PMT IPMT PPMT FV PV NPER RATE NPV XNPV IRR XIRR MIRR SLN SYD DB DDB CUMIPMT CUMPRINC EFFECT NOMINAL",
+  "Date & Time": "DATEVALUE TIMEVALUE WEEKNUM ISOWEEKNUM WORKDAY WORKDAY.INTL NETWORKDAYS NETWORKDAYS.INTL YEARFRAC DATEDIF DAYS360",
+  "Math & Trig":
+    "SUMSQ GCD LCM FACT COMBIN PERMUT QUOTIENT EVEN ODD SIN COS TAN ASIN ACOS ATAN ATAN2 SINH COSH TANH ASINH ACOSH ATANH COT CSC SEC ACOT " +
+    "DEGREES RADIANS CEILING.MATH FLOOR.MATH CEILING.PRECISE FLOOR.PRECISE ISO.CEILING ROMAN ARABIC BASE DECIMAL MMULT SUBTOTAL AGGREGATE",
+  Statistical:
+    "MEDIAN MODE.SNGL STDEV.S STDEV.P VAR.S VAR.P LARGE SMALL RANK.EQ RANK.AVG PERCENTILE.INC PERCENTILE.EXC QUARTILE.INC QUARTILE.EXC " +
+    "PERCENTRANK.INC PERCENTRANK.EXC CORREL PEARSON RSQ COVARIANCE.P COVARIANCE.S SLOPE INTERCEPT STEYX FORECAST.LINEAR NORM.DIST NORM.INV " +
+    "NORM.S.DIST NORM.S.INV STANDARDIZE T.DIST T.DIST.2T T.DIST.RT T.INV T.INV.2T BINOM.DIST POISSON.DIST EXPON.DIST CONFIDENCE.NORM AVERAGEA " +
+    "MAXA MINA STDEVA STDEVPA VARA VARPA GEOMEAN HARMEAN AVEDEV DEVSQ KURT SKEW SKEW.P TRIMMEAN FREQUENCY GAMMA GAMMALN GAMMALN.PRECISE",
+  "Lookup & Reference": "XLOOKUP XMATCH LOOKUP ADDRESS AREAS TRANSPOSE HYPERLINK FORMULATEXT",
+  Text: "CHAR CODE UNICHAR UNICODE CLEAN FIXED DOLLAR NUMBERVALUE T TEXTBEFORE TEXTAFTER VALUETOTEXT ARRAYTOTEXT",
+  Logical: "",
+  Information: "ISEVEN ISODD ISREF ISFORMULA TYPE ERROR.TYPE N SHEET SHEETS CELL INFO",
+  Engineering:
+    "BIN2DEC BIN2HEX BIN2OCT DEC2BIN DEC2HEX DEC2OCT HEX2BIN HEX2DEC HEX2OCT OCT2BIN OCT2DEC OCT2HEX DELTA GESTEP ERF ERF.PRECISE ERFC ERFC.PRECISE",
+  Compatibility:
+    "STDEV VAR PERCENTILE QUARTILE RANK MODE NORMDIST NORMINV NORMSDIST NORMSINV TDIST TINV BINOMDIST POISSON EXPONDIST CONFIDENCE COVAR " +
+    "FORECAST PERCENTRANK STDEVP VARP",
+};
+
+const LIBRARY_NAMES: readonly string[] = Object.values(LIBRARY_TABLE).flatMap((names) => (names === "" ? [] : names.split(" ")));
+
+/** Each legacy name and the modern function whose implementation it shares
+ * (SPEC-127: TDIST's `tails` picks between T.DIST.RT and T.DIST.2T, so it
+ * shares their kernels rather than one `impl`). */
+const LEGACY_MODERN: Readonly<Record<string, string>> = {
+  STDEV: "STDEV.S",
+  VAR: "VAR.S",
+  PERCENTILE: "PERCENTILE.INC",
+  QUARTILE: "QUARTILE.INC",
+  RANK: "RANK.EQ",
+  MODE: "MODE.SNGL",
+  NORMDIST: "NORM.DIST",
+  NORMINV: "NORM.INV",
+  NORMSDIST: "NORM.S.DIST",
+  NORMSINV: "NORM.S.INV",
+  TINV: "T.INV.2T",
+  BINOMDIST: "BINOM.DIST",
+  POISSON: "POISSON.DIST",
+  EXPONDIST: "EXPON.DIST",
+  CONFIDENCE: "CONFIDENCE.NORM",
+  COVAR: "COVARIANCE.P",
+  FORECAST: "FORECAST.LINEAR",
+  PERCENTRANK: "PERCENTRANK.INC",
+  STDEVP: "STDEV.P",
+  VARP: "VAR.P",
+};
+
+/** Every FunctionCategory — a Record, so the compiler holds it to the
+ * union. */
+const EVERY_CATEGORY: Readonly<Record<FunctionCategory, true>> = {
+  Financial: true,
+  "Date & Time": true,
+  "Math & Trig": true,
+  Statistical: true,
+  "Lookup & Reference": true,
+  Text: true,
+  Logical: true,
+  Information: true,
+  Engineering: true,
+  Compatibility: true,
+};
+
+const CATEGORIES: readonly FunctionCategory[] = Object.keys(EVERY_CATEGORY) as FunctionCategory[];
+
+/** SPEC-127: the dynamic-array functions stay unregistered (they spill), as
+ * does Google Sheets' COUNTUNIQUE. */
+const NEVER_REGISTERED: readonly string[] = [
+  "FILTER", "SORT", "SORTBY", "UNIQUE", "SEQUENCE", "RANDARRAY", "LET", "LAMBDA", "BYCOL", "BYROW", "MAKEARRAY", "MAP", "REDUCE", "SCAN",
+  "ISOMITTED", "TEXTSPLIT", "VSTACK", "HSTACK", "TAKE", "DROP", "CHOOSECOLS", "CHOOSEROWS", "TOCOL", "TOROW", "WRAPROWS", "WRAPCOLS", "EXPAND",
+  "COUNTUNIQUE",
 ];
 
 const ARG_KINDS: readonly ArgKind[] = ["value", "range", "any", "array"];
@@ -78,12 +158,21 @@ function evalAt(cells: Record<string, CellSpec>, address: string): ReturnType<ty
   return evaluateCell(model, "sheet-Sheet1", at.row, at.col, storedValueContext(model));
 }
 
-describe("the core library", () => {
-  it("registers exactly the names of the core functions table, sorted", () => {
+describe("the core library and SPEC-127's", () => {
+  it("registers exactly the core functions table and SPEC-127's library, sorted", () => {
     expect(TABLE_NAMES).toHaveLength(101);
-    expect(new Set(TABLE_NAMES).size).toBe(TABLE_NAMES.length);
-    expect(REGISTERED).toEqual(TABLE_NAMES.toSorted());
+    expect(LIBRARY_NAMES).toHaveLength(200);
+    const all = [...TABLE_NAMES, ...LIBRARY_NAMES];
+    expect(new Set(all).size).toBe(all.length);
+    expect(REGISTERED).toEqual(all.toSorted());
   });
+
+  it.each(Object.entries(LIBRARY_TABLE).flatMap(([category, names]) => (names === "" ? [] : names.split(" ").map((name) => [name, category]))))(
+    "files %s under %s",
+    (name, category) => {
+      expect(specOf(name).category).toBe(category);
+    },
+  );
 
   it("registers each function from the file the table names", () => {
     expect(Object.keys(CORE_FUNCTION_FILES).toSorted()).toEqual(Object.keys(CORE_TABLE).toSorted());
@@ -96,9 +185,30 @@ describe("the core library", () => {
     }
   });
 
-  it("marks exactly NOW, TODAY, RAND, RANDBETWEEN, OFFSET and INDIRECT volatile", () => {
-    expect(REGISTERED.filter((name) => specOf(name).volatile === true)).toEqual(["INDIRECT", "NOW", "OFFSET", "RAND", "RANDBETWEEN", "TODAY"]);
-    expect(REGISTERED.filter((name) => specOf(name).volatile !== undefined)).toHaveLength(6);
+  it("marks exactly NOW, TODAY, RAND, RANDBETWEEN, OFFSET, INDIRECT, CELL and INFO volatile", () => {
+    expect(REGISTERED.filter((name) => specOf(name).volatile === true)).toEqual(["CELL", "INDIRECT", "INFO", "NOW", "OFFSET", "RAND", "RANDBETWEEN", "TODAY"]);
+    expect(REGISTERED.filter((name) => specOf(name).volatile !== undefined)).toHaveLength(8);
+  });
+
+  it("marks exactly SUBTOTAL and AGGREGATE visibilitySensitive", () => {
+    expect(REGISTERED.filter((name) => specOf(name).visibilitySensitive === true)).toEqual(["AGGREGATE", "SUBTOTAL"]);
+    expect(REGISTERED.filter((name) => specOf(name).visibilitySensitive !== undefined)).toHaveLength(2);
+  });
+
+  it("registers no dynamic-array function, and not Google Sheets' COUNTUNIQUE", () => {
+    for (const name of NEVER_REGISTERED) {
+      expect(getFunction(name), name).toBeUndefined();
+    }
+  });
+
+  it.each(Object.entries(LEGACY_MODERN))("files the legacy %s under Compatibility, sharing %s's implementation", (legacy, modern) => {
+    expect(specOf(legacy).category).toBe("Compatibility");
+    expect(specOf(modern).category).not.toBe("Compatibility");
+    expect(specOf(legacy).impl, `${legacy} shares ${modern}'s impl`).toBe(specOf(modern).impl);
+  });
+
+  it("files TDIST under Compatibility too", () => {
+    expect(specOf("TDIST").category).toBe("Compatibility");
   });
 
   it("makes exactly IF, IFS, IFERROR, IFNA, SWITCH and CHOOSE lazy", () => {
@@ -117,10 +227,11 @@ describe("getFunction", () => {
 
   it("is undefined for a name nobody registered", () => {
     expect(getFunction("NOSUCHFUNCTION")).toBeUndefined();
-    // SPEC-127's library and the dynamic-array backlog are not core.
-    expect(getFunction("XLOOKUP")).toBeUndefined();
+    // The dynamic-array backlog stays unregistered; SPEC-127's library is in.
     expect(getFunction("FILTER")).toBeUndefined();
-    expect(getFunction("CELL")).toBeUndefined();
+    expect(getFunction("SEQUENCE")).toBeUndefined();
+    expect(getFunction("xlookup")).toBe(getFunction("XLOOKUP"));
+    expect(getFunction("Cell")?.name).toBe("CELL");
   });
 });
 
@@ -171,23 +282,75 @@ describe("every registered function's metadata", () => {
     expect(from + count).toBeLessThanOrEqual(spec.argKinds.length);
   });
 
-  it.each(REGISTERED)("%s: a one-line summary ending in \".\"", (name) => {
+  it.each(REGISTERED)("%s: a one-line summary of 10–100 characters, capitalised, ending in \".\"", (name) => {
     const { summary } = specOf(name);
-    expect(summary).not.toMatch(/[\r\n]/);
-    expect(summary.trim()).toBe(summary);
-    expect(summary.length).toBeGreaterThan(1);
-    expect(summary.endsWith(".")).toBe(true);
+    expect(summary, name).not.toMatch(/[\r\n]/);
+    expect(summary.trim(), name).toBe(summary);
+    expect(summary.length, `${name}'s summary length`).toBeGreaterThanOrEqual(10);
+    expect(summary.length, `${name}'s summary length`).toBeLessThanOrEqual(100);
+    expect(summary, `${name}'s summary starts with a capital`).toMatch(/^[A-Z]/);
+    expect(summary.endsWith("."), `${name}'s summary ends with "."`).toBe(true);
   });
 
-  it.each(REGISTERED)("%s: snake_case argument names, required before optional", (name) => {
+  it.each(REGISTERED)("%s: a name matching SPEC-127's pattern", (name) => {
+    expect(name).toMatch(/^[A-Z][A-Z0-9]*(\.[A-Z0-9]+)*$/);
+  });
+
+  it.each(REGISTERED)("%s: unique snake_case argument names, each described in 5–120 characters ending in \".\"", (name) => {
     const { args } = specOf(name);
     for (const arg of args) {
-      expect(arg.name).toMatch(/^[a-z][a-z0-9_]*$/);
+      expect(arg.name, `${name}: ${arg.name}`).toMatch(/^[a-z][a-z0-9_]*$/);
+      expect(arg.description.length, `${name}: ${arg.name}'s description length`).toBeGreaterThanOrEqual(5);
+      expect(arg.description.length, `${name}: ${arg.name}'s description length`).toBeLessThanOrEqual(120);
+      expect(arg.description.endsWith("."), `${name}: ${arg.name}'s description ends with "."`).toBe(true);
     }
+    expect(new Set(args.map((arg) => arg.name)).size, `${name}'s argument names are unique`).toBe(args.length);
+  });
+
+  it.each(REGISTERED)("%s: required arguments before optional ones, minArgs their count", (name) => {
+    const { args, minArgs } = specOf(name);
     const firstOptional = args.findIndex((arg) => arg.optional === true);
-    if (firstOptional >= 0) {
-      expect(args.slice(firstOptional).filter((arg) => arg.optional !== true)).toEqual([]);
+    const required = firstOptional < 0 ? args.length : firstOptional;
+    expect(args.slice(required).filter((arg) => arg.optional !== true), `${name}: a required argument after an optional one`).toEqual([]);
+    expect(minArgs, `${name}: minArgs is the number of required arguments`).toBe(required);
+  });
+
+  it.each(REGISTERED)("%s: a repeating group is the trailing run of optional numbered arguments (maxArgs ≤ 255), else maxArgs = args.length", (name) => {
+    const { args, maxArgs, repeat } = specOf(name);
+    const first = args.findIndex((arg) => arg.repeating === true);
+    if (first < 0) {
+      expect(maxArgs, `${name}: maxArgs equals args.length`).toBe(args.length);
+      expect(repeat, `${name}: no repeat without repeating args`).toBeUndefined();
+      return;
     }
+    const group = args.slice(first);
+    expect(group.every((arg) => arg.repeating === true), `${name}: the repeating args are the trailing run`).toBe(true);
+    expect(group.every((arg) => arg.optional === true), `${name}: the repeating args are optional`).toBe(true);
+    for (const arg of group) {
+      expect(arg.name, `${name}: a repeating name ends in a digit`).toMatch(/[0-9]$/);
+    }
+    expect(maxArgs, `${name}: maxArgs ≤ 255`).toBeLessThanOrEqual(255);
+    expect(maxArgs, `${name}: maxArgs reaches the group`).toBeGreaterThanOrEqual(args.length);
+    expect(repeat, `${name}: repeat names the same group`).toEqual({ from: first, count: group.length });
+  });
+});
+
+describe("FUNCTION_CATEGORY_ORDER", () => {
+  it("lists every FunctionCategory exactly once, in the dialog's order", () => {
+    expect(FUNCTION_CATEGORY_ORDER).toEqual([
+      "Financial",
+      "Date & Time",
+      "Math & Trig",
+      "Statistical",
+      "Lookup & Reference",
+      "Text",
+      "Logical",
+      "Information",
+      "Engineering",
+      "Compatibility",
+    ]);
+    expect(new Set(FUNCTION_CATEGORY_ORDER).size).toBe(FUNCTION_CATEGORY_ORDER.length);
+    expect(FUNCTION_CATEGORY_ORDER.toSorted()).toEqual(CATEGORIES.toSorted());
   });
 });
 
@@ -225,7 +388,7 @@ describe("the wire dialects", () => {
 });
 
 describe("the evaluator applies arity and argument kinds", () => {
-  it.each(["ROUND(1)", "ROUND(1,2,3)", "ABS()", "ABS(1,2)", "PI(1)", "TODAY(1)", 'MID("abc",1)', "NOT(TRUE,FALSE)", "IFERROR(1)", "SUMIFS(A1:A2,A1:A2)"])(
+  it.each(["ROUND(1)", "ROUND(1,2,3)", "ABS()", "ABS(1,2)", "PI(1)", "TODAY(1)", 'MID("abc",1)', "NOT(TRUE,FALSE)", "IFERROR(1)", "SUMIFS(A1:A2,A1:A2)", "PMT(1,2)"])(
     "=%s, a wrong argument count, is #VALUE!",
     (formula) => {
       expect(evalAt({ A1: 1, A2: 2, C1: `=${formula}` }, "C1")).toEqual({ error: "#VALUE!" });

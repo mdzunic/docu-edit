@@ -17,7 +17,7 @@
 //   yields the cell in the host's row (column), else #VALUE!; a 2-D range or
 //   several areas are #VALUE!; an array is its top-left element.
 import type { CellRef } from "../address";
-import { MAX_COLS, MAX_ROWS, type CellError, type Row, type Sheet, type SpreadsheetModel } from "../model";
+import { MAX_COLS, MAX_ROWS, type Cell, type CellError, type Row, type Sheet, type SpreadsheetModel } from "../model";
 import type { EvalContext } from "./evaluate";
 import type { RefPart, ReferenceNode } from "./references";
 import {
@@ -202,11 +202,12 @@ function firstCellAtOrAfter(cells: Row["cells"], col: number): number {
 }
 
 /** Visits the stored cells of an area, row-major, each value read through
- * `ctx.valueAt`; `visit` returns false to stop. Returns false when stopped. */
+ * `ctx.valueAt` (the stored Cell beside it, for SUBTOTAL's look at its
+ * formula); `visit` returns false to stop. Returns false when stopped. */
 export function forEachStoredCell(
   ctx: Pick<EvalContext, "model" | "valueAt">,
   area: Area,
-  visit: (value: ScalarValue, row: number, col: number) => boolean | void,
+  visit: (value: ScalarValue, row: number, col: number, cell: Cell) => boolean | void,
 ): boolean {
   const sheet = sheetById(ctx.model, area.sheetId);
   if (!sheet) {
@@ -224,7 +225,7 @@ export function forEachStoredCell(
       if (col > area.right) {
         break;
       }
-      if (visit(ctx.valueAt(area.sheetId, row.index, col), row.index, col) === false) {
+      if (visit(ctx.valueAt(area.sheetId, row.index, col), row.index, col, cells[c]!) === false) {
         return false;
       }
     }

@@ -33,11 +33,14 @@ export function optional(name: string, description: string): ArgMeta {
   return { name, description, optional: true };
 }
 
-/** The metadata of an argument in a function's repeating group (`repeat`):
- * one entry per argument kind, as `argKinds` has, the group required once
- * (SUM's `number`, SUMIFS' `criteria_range` and `criteria`). */
+/** The metadata of an argument in a variadic function's repeating group
+ * (SPEC-127 "Function metadata"): the group's second instance — optional,
+ * its name numbered ("number2", "criteria_range2") — after a first instance
+ * of plain required arguments ("number1"). `argKinds` has one kind per
+ * entry and `repeat` names the same group, so SUM is [number1, number2…]
+ * with `repeat` { from: 1, count: 1 }. */
 export function repeating(name: string, description: string): ArgMeta {
-  return { name, description, repeating: true };
+  return { name, description, optional: true, repeating: true };
 }
 
 /** A value-kind argument as the scalar the evaluator made it. */

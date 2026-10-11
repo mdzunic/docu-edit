@@ -400,7 +400,7 @@ export const LOOKUP_FUNCTIONS: FunctionSpec[] = [
     args: [
       arg("lookup_value", "The value to find."),
       arg("lookup_array", "One row or one column to search."),
-      optional("match_type", "1 or omitted: the largest value ≤ it (sorted ascending); 0: an exact match; -1: the smallest value ≥ it (sorted descending)."),
+      optional("match_type", "1 or omitted: the largest value ≤ it (ascending data); 0: an exact match; -1: the smallest value ≥ it (descending)."),
     ],
     impl(args, ctx) {
       const lookup = scalarArg(args, 0);

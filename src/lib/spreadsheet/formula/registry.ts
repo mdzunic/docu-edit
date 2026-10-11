@@ -17,9 +17,22 @@
 // an argument only when it asks for it (IF, IFS, SWITCH, CHOOSE, IFERROR,
 // IFNA evaluate only the branch they take).
 //
-// `summary` and `args` follow SPEC-127's metadata invariants as far as they
-// are stated there — a summary ending in ".", snake_case argument names,
-// required arguments before optional ones; SPEC-127 owns and rewrites them.
+// SPEC-127 "Function metadata" owns `summary`, `args` and `category` and
+// holds every function to one standard (formula/registry.spec.ts asserts it
+// for every registered name): a summary of 10–100 characters, capitalised
+// and ending in "."; snake_case argument names, unique, each with a 5–120
+// character description ending in "."; required arguments before optional
+// ones, `minArgs` the number of required ones; a variadic function's
+// repeating group the trailing run of `args`, all optional, each name
+// ending in a digit ("number2", "criteria_range2"), and `repeat` the same
+// group — so SUM is `args` [number1, number2…] with `repeat` { from: 1,
+// count: 1 } and `maxArgs` 255, while a fixed-arity function has `maxArgs`
+// equal to `args.length`. FUNCTION_CATEGORY_ORDER is the Insert Function
+// dialog's category order. A function that cannot compute a valid call
+// (an info type outside the supported subset) throws UnsupportedCaseError,
+// which the evaluator turns into the uncomputable reason "unsupportedCase";
+// a `visibilitySensitive` function (SUBTOTAL, AGGREGATE) is recalculated
+// whenever rows are hidden or shown.
 import type { EvalContext, UncomputableReason } from "./evaluate";
 import type { EvalValue } from "./values";
 
@@ -37,6 +50,21 @@ export type FunctionCategory =
   | "Information"
   | "Engineering"
   | "Compatibility";
+
+/** The FunctionCategory values (already display names), in the Insert
+ * Function dialog's order (SPEC-127). */
+export const FUNCTION_CATEGORY_ORDER: readonly FunctionCategory[] = [
+  "Financial",
+  "Date & Time",
+  "Math & Trig",
+  "Statistical",
+  "Lookup & Reference",
+  "Text",
+  "Logical",
+  "Information",
+  "Engineering",
+  "Compatibility",
+];
 
 export interface ArgList {
   readonly length: number;
@@ -62,6 +90,8 @@ export interface FunctionSpec {
   volatile?: true;
   lazy?: true;
   acceptsErrors?: true;
+  /** The result depends on row visibility (SUBTOTAL, AGGREGATE). */
+  visibilitySensitive?: true;
   impl(args: ArgList, ctx: EvalContext): EvalValue;
   summary: string;
   args: { name: string; description: string; optional?: true; repeating?: true }[];
@@ -77,6 +107,17 @@ export class UncomputableError extends Error {
     super(`Uncomputable: ${reason.kind}`);
     this.name = "UncomputableError";
     this.reason = reason;
+  }
+}
+
+/** Thrown by `impl` for a valid call this library does not compute (an info
+ * type outside the supported subset, ROMAN's forms 1–4): the evaluator makes
+ * the cell uncomputable ({ kind: "unsupportedCase", name }), so it keeps its
+ * cached value exactly as for a function missing from the registry. */
+export class UnsupportedCaseError extends Error {
+  constructor(message = "This use of the function isn't supported") {
+    super(message);
+    this.name = "UnsupportedCaseError";
   }
 }
 

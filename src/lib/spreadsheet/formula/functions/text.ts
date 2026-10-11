@@ -185,10 +185,10 @@ export const TEXT_FUNCTIONS: FunctionSpec[] = [
     category: "Text",
     minArgs: 1,
     maxArgs: 254,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: "Joins texts, reading ranges row by row.",
-    args: [repeating("text", "A text, or a range or array of texts.")],
+    args: [arg("text1", "A text, or a range or array of texts."), repeating("text2", "More texts, ranges or arrays to join.")],
     impl(args, ctx) {
       const parts: string[] = [];
       for (let i = 0; i < args.length; i += 1) {
@@ -205,10 +205,10 @@ export const TEXT_FUNCTIONS: FunctionSpec[] = [
     category: "Text",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["value"],
-    repeat: { from: 0, count: 1 },
-    summary: "Joins texts.",
-    args: [repeating("text", "A text to join.")],
+    argKinds: ["value", "value"],
+    repeat: { from: 1, count: 1 },
+    summary: "Joins several texts into one.",
+    args: [arg("text1", "The first text to join."), repeating("text2", "A further text to join.")],
     impl(args) {
       const parts: string[] = [];
       for (let i = 0; i < args.length; i += 1) {
@@ -226,13 +226,14 @@ export const TEXT_FUNCTIONS: FunctionSpec[] = [
     category: "Text",
     minArgs: 3,
     maxArgs: 254,
-    argKinds: ["any", "value", "any"],
-    repeat: { from: 2, count: 1 },
+    argKinds: ["any", "value", "any", "any"],
+    repeat: { from: 3, count: 1 },
     summary: "Joins texts with a delimiter, optionally skipping empty ones.",
     args: [
       arg("delimiter", "The text placed between the items, or a range of them used in turn."),
       arg("ignore_empty", "TRUE skips empty items."),
-      repeating("text", "A text, or a range or array of texts (up to 252)."),
+      arg("text1", "A text, or a range or array of texts."),
+      repeating("text2", "More texts, ranges or arrays (up to 252 in all)."),
     ],
     impl(args, ctx) {
       // A range or array of delimiters is used in turn (Excel's TEXTJOIN).

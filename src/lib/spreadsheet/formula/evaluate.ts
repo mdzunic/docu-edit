@@ -24,8 +24,13 @@
 // - Per-AST facts — volatile, dynamic, the uncomputable reason, the
 //   references, array constants — are memoised in WeakMaps keyed by the
 //   shared node.
+// - SPEC-127: a function's UnsupportedCaseError (a valid call the library
+//   does not compute) makes the cell uncomputable with the reason
+//   { kind: "unsupportedCase", name }; `rowVisibility` answers "hidden" for a
+//   user-hidden row (SPEC-117's Row.hidden) and "visible" otherwise —
+//   SPEC-128 widens it to answer "filtered" — for SUBTOTAL and AGGREGATE.
 import { now as clockNow } from "../../core/clock";
-import { getCell, type CellRef } from "../address";
+import { findRow, getCell, type CellRef } from "../address";
 import type { CalcSettings, CellError, CellValue, SpreadsheetModel } from "../model";
 import { SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../numberFormat/locale";
 import type { BinaryOp, FormulaNode, NodeOf } from "./ast";
@@ -47,7 +52,7 @@ import {
 // Loading the core library registers its functions.
 import "./functions";
 import { FormulaSyntaxError, parseFormulaAt } from "./parse";
-import { argKindAt, getFunction, UncomputableError, type ArgKind, type ArgList, type FunctionSpec } from "./registry";
+import { argKindAt, getFunction, UncomputableError, UnsupportedCaseError, type ArgKind, type ArgList, type FunctionSpec } from "./registry";
 import {
   compareScalars,
   DIV0_ERROR,
@@ -89,6 +94,10 @@ export interface EvalSettings {
   dateQuirks: "excel" | "proleptic";
 }
 
+/** How a row shows (SPEC-127): "hidden" by the user (Row.hidden),
+ * "filtered" out by a filter (SPEC-128), else "visible". */
+export type RowVisibility = "visible" | "filtered" | "hidden";
+
 export interface EvalContext {
   model: SpreadsheetModel;
   host: { sheetId: string; row: number; col: number };
@@ -104,6 +113,10 @@ export interface EvalContext {
   valueAt(sheetId: string, row: number, col: number): ScalarValue;
   /** INDIRECT/OFFSET results. */
   recordDependency(area: Area): void;
+  /** Whether a row of a sheet shows (SUBTOTAL and AGGREGATE skip hidden
+   * ones): "hidden" for Row.hidden, else "visible" (SPEC-128 adds
+   * "filtered"). */
+  rowVisibility(sheetId: string, row: number): RowVisibility;
   /** SPEC-133 adds `resolveName(name, sheetQualifier, host)` and
    *  `resolveStructured(node, host)` and owns their signatures. While a hook
    *  is absent, a name or structured node makes the cell uncomputable. */
@@ -118,7 +131,8 @@ export type UncomputableReason =
   | { kind: "unparsed" }
   | { kind: "iterative" }
   | { kind: "regex" }
-  | { kind: "dataTable" };
+  | { kind: "dataTable" }
+  | { kind: "unsupportedCase"; name: string };
 
 export interface Uncomputable {
   uncomputable: UncomputableReason;
@@ -165,7 +179,14 @@ export function storedValueContext(
       return fromCellValue(sheet ? (getCell(sheet, row, col)?.value ?? null) : null);
     },
     recordDependency() {},
+    rowVisibility: (sheetId, row) => rowVisibilityIn(model, sheetId, row),
   };
+}
+
+/** A row's visibility as the model stores it (see EvalContext). */
+export function rowVisibilityIn(model: SpreadsheetModel, sheetId: string, row: number): RowVisibility {
+  const sheet = sheetById(model, sheetId);
+  return sheet && findRow(sheet, row)?.hidden ? "hidden" : "visible";
 }
 
 export function isUncomputable(value: unknown): value is Uncomputable {
@@ -648,7 +669,14 @@ function callFunction(node: NodeOf<"function">, ctx: EvalContext): EvalValue {
     return VALUE_ERROR;
   }
   const kinds = node.args.map((_, i) => argKindAt(spec, i));
-  return spec.lazy ? callLazy(spec, node, kinds, ctx) : callEager(spec, node, kinds, ctx);
+  try {
+    return spec.lazy ? callLazy(spec, node, kinds, ctx) : callEager(spec, node, kinds, ctx);
+  } catch (error) {
+    if (error instanceof UnsupportedCaseError) {
+      throw new UncomputableError({ kind: "unsupportedCase", name: spec.name });
+    }
+    throw error;
+  }
 }
 
 // --- the interpreter -----------------------------------------------------------------
