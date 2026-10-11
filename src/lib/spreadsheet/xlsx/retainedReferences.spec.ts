@@ -278,11 +278,30 @@ describe("the sheet part", () => {
     ]);
   });
 
-  it("autoFilter@ref, sortState@ref and sortCondition@ref; an area gone leaves them as they were", () => {
+  it("SPEC-128: leaves the root-level autoFilter, its sortState and the worksheet sortState to the model; a customSheetView's autoFilter@ref, sortState@ref and sortCondition@ref still move, and an area gone leaves them", () => {
+    // The root-level elements are modelled (the autofilter adjuster moves
+    // them, the writer serialises them): moving them here too would move
+    // them twice.
     const filter =
       `<autoFilter ref="A1:D30"><filterColumn colId="1"><filters><filter val="x"/></filters></filterColumn>` +
-      `<sortState ref="A2:D30"><sortCondition descending="1" ref="B2:B30"/></sortState></autoFilter>`;
-    const rows = book([{ name: "Sheet1", xml: worksheet(filter) }]);
+      `<sortState ref="A2:D30"><sortCondition descending="1" ref="B2:B30"/></sortState></autoFilter>` +
+      `<sortState ref="F2:G30"><sortCondition ref="G2:G30"/></sortState>`;
+    for (const [kind, at, count] of [
+      ["insertRows", 9, 3],
+      ["insertCols", 1, 1],
+      ["deleteCols", 0, 4],
+    ] as const) {
+      const model = book([{ name: "Sheet1", xml: worksheet(filter) }]);
+      const before = model.opaque;
+      expect(adjust(model, kind, at, count), kind).toEqual(new Set());
+      expect(model.opaque, kind).toBe(before);
+    }
+
+    const view =
+      `<customSheetViews><customSheetView guid="{00000000-0000-0000-0000-000000000001}"><selection sqref="A1"/>` +
+      `<autoFilter ref="A1:D30"><filterColumn colId="1"><filters><filter val="x"/></filters></filterColumn>` +
+      `<sortState ref="A2:D30"><sortCondition descending="1" ref="B2:B30"/></sortState></autoFilter></customSheetView></customSheetViews>`;
+    const rows = book([{ name: "Sheet1", xml: worksheet(view) }]);
     const rowsBefore = rows.opaque;
     adjust(rows, "insertRows", 9, 3);
     expect(spans(rowsBefore, rows, SHEET1)).toEqual([
@@ -291,7 +310,7 @@ describe("the sheet part", () => {
       ["B2:B30", "B2:B33"],
     ]);
 
-    const cols = book([{ name: "Sheet1", xml: worksheet(filter) }]);
+    const cols = book([{ name: "Sheet1", xml: worksheet(view) }]);
     const colsBefore = cols.opaque;
     adjust(cols, "insertCols", 1, 1);
     expect(spans(colsBefore, cols, SHEET1)).toEqual([
@@ -300,7 +319,7 @@ describe("the sheet part", () => {
       ["B2:B30", "C2:C30"],
     ]);
 
-    const gone = book([{ name: "Sheet1", xml: worksheet(filter) }]);
+    const gone = book([{ name: "Sheet1", xml: worksheet(view) }]);
     const goneBefore = gone.opaque;
     expect(adjust(gone, "deleteCols", 0, 4)).toEqual(new Set());
     expect(gone.opaque).toBe(goneBefore);
@@ -406,13 +425,17 @@ describe("the workbook and the parts a sheet relates", () => {
     `<definedName name="There" localSheetId="0">$A$5</definedName><definedName name="Total">SUM(Sheet1!$B$2:$B$30)</definedName>` +
     `<definedName name="Other">Sheet2!$A$1:$A$9</definedName><definedName name="Bare">$A$5</definedName></definedNames>`;
 
-  it("definedName text, a localSheetId naming its host in the SOURCE workbook's sheet order", () => {
+  it("definedName text, a localSheetId naming its host in the SOURCE workbook's sheet order; SPEC-128: never _xlnm._FilterDatabase's", () => {
     const model = book([{ name: "Sheet1" }, { name: "Sheet2" }], {}, NAMES);
     model.sheets = [model.sheets[1]!, model.sheets[0]!]; // moved: the model's order is no longer the source's
     const before = model.opaque;
     expect(adjust(model, "insertRows", 0, 2, "s1")).toEqual(new Set());
+    // The first Sheet1!$A$1:$D$30 — _xlnm._FilterDatabase's — stays: the
+    // writer reconciles it with the model's autofilter (SPEC-128).
+    expect(textOf(model.opaque, "xl/workbook.xml")).toContain(
+      `<definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Sheet1!$A$1:$D$30</definedName>`,
+    );
     expect(spans(before, model, "xl/workbook.xml")).toEqual([
-      ["Sheet1!$A$1:$D$30", "Sheet1!$A$3:$D$32"],
       ["Sheet1!$A$1:$D$30", "Sheet1!$A$3:$D$32"],
       ["$A$5", "$A$7"],
       ["SUM(Sheet1!$B$2:$B$30)", "SUM(Sheet1!$B$4:$B$32)"],

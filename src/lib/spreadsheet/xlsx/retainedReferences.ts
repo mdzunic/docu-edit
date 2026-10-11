@@ -9,12 +9,12 @@
 // | Part | Element / attribute | Kind |
 // | sheet | `conditionalFormatting@sqref`; `cfRule/formula` | sqref; formula |
 // | sheet | `dataValidation@sqref`; `formula1`, `formula2` | sqref; formula |
-// | sheet | `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
+// | sheet | `customSheetView`'s `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | sheet | `hyperlink@ref` | range |
 // | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
 // | sheet `extLst` | `x14:conditionalFormatting/xm:sqref`, its `xm:f`; `x14:dataValidation/xm:sqref`, `x14:formula1|2/xm:f`; `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
-// | workbook | `definedName` text | formula |
+// | workbook | `definedName` text (but `_xlnm._FilterDatabase`'s) | formula |
 // | tables | `table@ref`, `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | charts (not style/colors parts) | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
 // | pivot caches | `worksheetSource@ref` on `@sheet` (one naming `name` or `r:id` is left alone) | range |
@@ -23,6 +23,12 @@
 // | comments, threaded comments | `comment@ref`, `threadedComment@ref` | range |
 // | VML | `x:ClientData` `x:Row`, `x:Column`, `x:Anchor` numbers 1, 3, 5 and 7 (LeftCol, TopRow, RightCol, BottomRow) | index |
 //
+// - Retired by SPEC-128 (its `autofilter` adjuster moves the model, the
+//   writer serialises it): the worksheet's root-level `autoFilter@ref` and
+//   `sortState@ref` with every `sortState`/`sortCondition` inside them, and
+//   the `_xlnm._FilterDatabase` definedName text (writer.ts reconciles it
+//   with the model) — so nothing is adjusted twice. A table part's
+//   autoFilter and sortState (SPEC-133's) and a customSheetView's stay here.
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
@@ -66,7 +72,8 @@
 //   cells, every element this table names follows them) only when it
 //   mentions one of them, and a changed tail is re-encoded onto the untouched
 //   base64 before it. Nothing here touches `<sheetData>`, `<mergeCells>`,
-//   `<cols>`, `<sheetViews>` or `<dimension>` — the writer rebuilds them.
+//   `<cols>`, `<sheetViews>`, `<dimension>` or the root-level `<autoFilter>`
+//   and `<sortState>` — the writer rebuilds them.
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { colToLetters, parseA1, type GridRange } from "../address";
@@ -75,6 +82,7 @@ import type { Sheet, SpreadsheetModel } from "../model";
 import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, decodeXmlText, escapeElementText, findAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { FILTER_DATABASE_NAME } from "./autoFilter";
 import {
   encodeUtf8,
   LazyParts,
@@ -478,6 +486,18 @@ const MOVED_SHEET_ATTRIBUTES: ReadonlyMap<string, string> = new Map([
   ["sortCondition", "ref"],
   ["inputCells", "r"],
 ]);
+
+/** SPEC-128: the worksheet's root-level autoFilter and sortState (and
+ * everything inside them) are modelled — the autofilter adjuster moves
+ * them; a customSheetView's are still this table's. */
+function insideModelledFilter(frame: Frame): boolean {
+  for (let at: Frame | undefined = frame; at; at = at.parent) {
+    if ((at.local === "autoFilter" || at.local === "sortState") && at.parent !== undefined && at.parent.parent === undefined) {
+      return true;
+    }
+  }
+  return false;
+}
 /** x14 elements whose `xm:sqref` child is their range, and the x14 elements
  * whose `xm:f` descendants are formulas. */
 const X14_SQREF_OWNERS: ReadonlySet<string> = new Set(["conditionalFormatting", "dataValidation", "sparkline"]);
@@ -514,7 +534,9 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
       }
       const moved = MOVED_SHEET_ATTRIBUTES.get(frame.local);
       if (moved !== undefined) {
-        edits.rangeAttribute(frame, moved, host.name, false);
+        if (frame.local === "inputCells" || !insideModelledFilter(frame)) {
+          edits.rangeAttribute(frame, moved, host.name, false);
+        }
       } else if (frame.local === "brk" && (parent?.local === "rowBreaks" || parent?.local === "colBreaks")) {
         edits.indexAttribute(frame, "id", host.name, parent.local === "rowBreaks" ? "row" : "col");
       } else if (frame.local === "dataRef" && scanAttr(frame.attrs, "ref") !== undefined && !hasRelationshipId(frame.attrs)) {
@@ -623,7 +645,8 @@ function definedNameEdits(xml: string, hosts: readonly string[], pass: Pass): Pa
   }
   const edits = new PartEdits(xml, pass.mapper);
   walk(xml, ignore, (frame, contentEnd) => {
-    if (frame.local !== "definedName") {
+    // SPEC-128: _xlnm._FilterDatabase follows the model's autofilter (writer.ts).
+    if (frame.local !== "definedName" || scanAttr(frame.attrs, "name")?.toLowerCase() === FILTER_DATABASE_NAME.toLowerCase()) {
       return;
     }
     const local = scanAttr(frame.attrs, "localSheetId")?.trim();
