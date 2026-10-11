@@ -352,11 +352,12 @@ export const FINANCIAL_ROWS: ConformanceRow[] = [
       A7: 2750, B7: 39904,
     },
     expected: 0.373362535,
-    digits: 9,
+    digits: 8,
     source: "Excel",
     note:
       "XIRR function, example: the Description column states outright \"The internal rate of return (0.373362535 or 37.34%)\"; dates are the " +
-      "same schedule as XNPV's example, converted to Excel serials from the stated 2008-10-30 = 39751 anchor.",
+      "same schedule as XNPV's example, converted to Excel serials from the stated 2008-10-30 = 39751 anchor. Compared at 8 digits: the " +
+      "page's Remarks give XIRR's accuracy as 0.000001 percent (1e-8), so a ninth digit of 0.37… is below what Excel itself guarantees.",
   },
   {
     formula: "XIRR(A1:A2,B1:B2)",
@@ -647,7 +648,7 @@ export const FINANCIAL_ROWS: ConformanceRow[] = [
   {
     formula: "NOMINAL(A2,A3)",
     cells: { A2: 0.053543, A3: 4 },
-    expected: 0.0525003,
+    expected: 0.05250032,
     digits: 7,
     source: "Excel",
     note: "NOMINAL function, example: nominal rate for a 5.3543% effective rate compounded quarterly; Microsoft prints 0.05250032.",

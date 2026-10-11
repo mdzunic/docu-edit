@@ -65,12 +65,14 @@ function compound(rate: number, n: number): number {
   return rate > -1 ? Math.exp(n * Math.log1p(rate)) : (1 + rate) ** n;
 }
 
+/** (1 + rate)^n − 1, the growth over n periods, without rounding 1 + rate. */
+function growth(rate: number, n: number): number {
+  return rate > -1 ? Math.expm1(n * Math.log1p(rate)) : (1 + rate) ** n - 1;
+}
+
 /** ((1 + rate)^n − 1) / rate, the annuity factor; n at rate 0. */
 function annuityFactor(rate: number, n: number): number {
-  if (rate === 0) {
-    return n;
-  }
-  return (rate > -1 ? Math.expm1(n * Math.log1p(rate)) : (1 + rate) ** n - 1) / rate;
+  return rate === 0 ? n : growth(rate, n) / rate;
 }
 
 /** The future value the annuity equation gives. */
@@ -443,8 +445,10 @@ export const FINANCIAL_FUNCTIONS: FunctionSpec[] = [
         return NUM_ERROR;
       }
       const t = due(type);
-      // f(r) = pv·(1+r)^n + pmt·(1+r·t)·A(r) + fv, A(r) = ((1+r)^n − 1)/r.
-      const f = (rate: number): number => pv * compound(rate, nper) + pmt * (1 + rate * t) * annuityFactor(rate, nper) + fv;
+      // f(r) = pv·(1+r)^n + pmt·(1+r·t)·A(r) + fv, A(r) = ((1+r)^n − 1)/r,
+      // summed as (pv + fv) + pv·((1+r)^n − 1) + …: forming 1 + r first
+      // would round away r's last digits, and the root with them.
+      const f = (rate: number): number => pv + fv + pv * growth(rate, nper) + pmt * (1 + rate * t) * annuityFactor(rate, nper);
       const df = (rate: number): number => {
         const factor = annuityFactor(rate, nper);
         // A'(r) = (n·(1+r)^(n−1)·r − ((1+r)^n − 1)) / r², n(n−1)/2 at 0.

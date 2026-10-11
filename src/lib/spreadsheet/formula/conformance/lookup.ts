@@ -118,9 +118,9 @@ export const LOOKUP_ROWS: ConformanceRow[] = [
   },
   {
     formula: "INDEX({1,2;3,4},0,2)",
-    expected: { error: "#VALUE!" },
+    expected: 2,
     source: "pinned",
-    note: "pinned: SPEC-127 Function pins — INDEX returns a reference; row_num 0 selects the whole column (a 2-cell array), implicitly intersected with Z100's row/column in this plain cell, which neither row matches, so #VALUE!.",
+    note: "pinned: row_num 0 selects the whole of column 2 of an array constant (no reference), the array {2;4}; a plain cell's array result is its top-left element (SPEC-120 \"Implicit intersection\"), so 2.",
   },
 
   // --- MATCH -------------------------------------------------------------------

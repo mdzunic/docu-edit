@@ -133,6 +133,13 @@ describe("pinned annuity arithmetic", () => {
     expect(num("XIRR({-100,110},{39448,39813})")).toBeCloseTo(0.1, 9);
   });
 
+  it("keeps RATE's root to the last digit where 1 + rate would round it", () => {
+    // −100·(1 + r) + 110 = 0 at r = 0.1 exactly; with 1 + 0.1 formed first
+    // the residual at 0.1 is −1.4e-14 and Newton steps off the root.
+    expect(num("RATE(1,0,-100,110)")).toBe(0.1);
+    expect(Number(num("RATE(2,0,-100,121)").toPrecision(15))).toBe(0.1);
+  });
+
   it("DB: the rate rounded to three decimals, the period after life, and later periods", () => {
     // rate = 1 − 0.5^(1/2) = 0.29289… → 0.293; period 1 = 1000·0.293·6/12.
     expect(num("DB(1000,500,2,1,6)")).toBeCloseTo(146.5, 9);

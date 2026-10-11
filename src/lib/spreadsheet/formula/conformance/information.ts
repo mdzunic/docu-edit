@@ -92,7 +92,9 @@ export const INFORMATION_ROWS: ConformanceRow[] = [
 
   // --- ISREF -----------------------------------------------------------------
   { formula: "ISREF(G8)", expected: true, source: "Excel", note: "IS functions page, Example 1: G8 is a valid reference." },
-  { formula: "ISREF(XYZ1)", expected: false, source: "Excel", note: "IS functions page, Example 1: XYZ1 names no defined reference." },
+  // Example 1's =ISREF(XYZ1) (FALSE) has no row: XYZ1 lies past column XFD,
+  // so it is a defined name, and a name makes the cell uncomputable until
+  // SPEC-133 adds resolveName (SPEC-120 "EvalContext").
   { formula: "ISREF(A1)", cells: { A1: 5 }, expected: true, source: "pinned", note: "pinned: a plain cell reference, whatever its contents, is a reference." },
   { formula: "ISREF(A1,A2)", expected: { error: "#VALUE!" }, source: "pinned", note: "pinned: SPEC-120 Errors — a wrong argument count (max 1) is #VALUE!." },
 
@@ -209,7 +211,13 @@ export const INFORMATION_ROWS: ConformanceRow[] = [
     source: "pinned",
     note: 'pinned: SPEC-127 Function pins — "filename" is "[<title>.<ext>]<sheet>"; this workbook is Calc.xlsx, sheet Sheet1.',
   },
-  { formula: 'CELL("protect",A1)', cells: { A1: 5 }, expected: 0, source: "pinned", note: 'pinned: CELL function — "protect": 0 when the cell is unlocked (the default).' },
+  {
+    formula: 'CELL("protect",A1)',
+    cells: { A1: 5 },
+    expected: 1,
+    source: "pinned",
+    note: 'pinned: CELL function — "protect" is 1 for a locked cell, 0 otherwise; a cell with no style is locked (SPEC-122: locked unless the effective style\'s protection.locked is false).',
+  },
   {
     formula: 'CELL("width",A1)',
     expected: { error: "#NAME?" },
