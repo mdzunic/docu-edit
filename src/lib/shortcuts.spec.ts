@@ -253,6 +253,8 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.fillDown",
   "sheet.fillRight",
   "sheet.insertFunction",
+  "sheet.toggleFilter",
+  "sheet.reapplyFilter",
 ];
 
 /** The keydown a binding describes on one platform, for sweeping a whole
@@ -292,15 +294,23 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's eighteen commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function under Formulas — one binding each but paste special's two", () => {
+  it("declares the sheet's twenty commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function under Formulas, SPEC-128's filter toggle and reapply under Sort and filter — one binding each but paste special's two", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
     const pasteAndFill = ["sheet.pasteSpecial", "sheet.fillDown", "sheet.fillRight"];
+    const sortAndFilter = ["sheet.toggleFilter", "sheet.reapplyFilter"];
     for (const { isMac } of PLATFORMS) {
       const definitions = sheetShortcutDefinitions(isMac);
       expect(definitions.map((definition) => definition.id)).toEqual(SHEET_IDS);
       for (const definition of definitions) {
         const structural = definition.id === "sheet.insertCells" || definition.id === "sheet.deleteCells";
-        const category = definition.id === "sheet.insertFunction" ? "Formulas" : pasteAndFill.includes(definition.id) ? "Paste and fill" : "Sheet formatting";
+        const category =
+          definition.id === "sheet.insertFunction"
+            ? "Formulas"
+            : pasteAndFill.includes(definition.id)
+              ? "Paste and fill"
+              : sortAndFilter.includes(definition.id)
+                ? "Sort and filter"
+                : "Sheet formatting";
         expect(definition.category).toBe(structural ? "Rows and columns" : category);
         expect(definition.bindings).toHaveLength(definition.id === "sheet.pasteSpecial" ? 2 : 1);
       }
@@ -320,6 +330,17 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
     }
     // Cmd+Option+V on macOS is no binding of the sheet's.
     expect(findShortcut(keydown({ key: "√", code: "KeyV", metaKey: true, altKey: true }), true, sheetShortcutDefinitions(true))).toBeUndefined();
+  });
+
+  it("binds SPEC-128's Filter to Ctrl/Cmd+Shift+L and Reapply filter to Ctrl/Cmd+Alt+L by physical key", () => {
+    for (const { isMac } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      const mod = isMac ? { metaKey: true } : { ctrlKey: true };
+      expect(findShortcut(keydown({ key: "L", code: "KeyL", shiftKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.toggleFilter");
+      // Option+L types "¬" on macOS: the key matches by code.
+      expect(findShortcut(keydown({ key: isMac ? "¬" : "l", code: "KeyL", altKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.reapplyFilter");
+      expect(findShortcut(keydown({ key: "l", code: "KeyL", ...mod }), isMac, definitions)).toBeUndefined();
+    }
   });
 
   it("binds SPEC-127's Insert function to Shift+F3 on both platforms", () => {

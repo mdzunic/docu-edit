@@ -13,7 +13,9 @@
 // useFormatting's commands. SPEC-124: View ▸ Freeze and the Format menu's
 // row height, column width and autofits are useStructure's. SPEC-125: Edit ▸
 // Paste special… is useSheetClipboard's, Edit ▸ Fill ▸ Down/Right
-// useFillHandle's. Later specs append commands here.
+// useFillHandle's. SPEC-128: the Data menu's sorts and filter commands are
+// useSortFilter's, and the bar's state says whether Filter is on. Later specs
+// append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -22,6 +24,7 @@ import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { FillHandle } from "./useFillHandle";
 import type { Recalc } from "./useRecalc";
 import type { SheetClipboard } from "./useSheetClipboard";
+import type { SortFilter } from "./useSortFilter";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
 import type { Structure } from "./useStructure";
@@ -44,7 +47,19 @@ export interface SpreadsheetMenuDeps {
   /** SPEC-125: Edit ▸ Paste special… and Edit ▸ Fill ▸ Down/Right. */
   clipboard?: Pick<SheetClipboard, "openPasteSpecial">;
   fillHandle?: Pick<FillHandle, "fillDown" | "fillRight">;
+  /** SPEC-128: the Data menu's sorts and filter commands. */
+  sortFilter?: Pick<SortFilter, "sortAscending" | "sortDescending" | "openSortDialog" | "toggleFilter" | "clearFilters" | "reapplyFilter" | "filterOn">;
 }
+
+/** SPEC-128's Data menu commands → useSortFilter's. */
+const SORT_FILTER_COMMANDS: Readonly<Record<string, "sortAscending" | "sortDescending" | "openSortDialog" | "toggleFilter" | "clearFilters" | "reapplyFilter">> = {
+  [SHEET_MENU_COMMANDS.sortAscending]: "sortAscending",
+  [SHEET_MENU_COMMANDS.sortDescending]: "sortDescending",
+  [SHEET_MENU_COMMANDS.sortRange]: "openSortDialog",
+  [SHEET_MENU_COMMANDS.filter]: "toggleFilter",
+  [SHEET_MENU_COMMANDS.clearFilters]: "clearFilters",
+  [SHEET_MENU_COMMANDS.reapplyFilter]: "reapplyFilter",
+};
 
 /** A Format menu command as useFormatting's (null: not one). */
 function formatCommand(command: string): Parameters<Formatting["run"]>[0] | null {
@@ -90,6 +105,7 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       cellStyleNames: deps.formatting?.toolbar.value.cellStyles.flatMap((group) => group.styles.map((style) => style.name)) ?? [],
       frozen: deps.structure?.freezeState.value.frozen === true,
       freezeAtCellDisabled: deps.structure?.freezeState.value.atA1 !== false,
+      filterOn: deps.sortFilter?.filterOn.value === true,
     }),
   );
 
@@ -102,6 +118,11 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
     const format = formatCommand(command);
     if (format) {
       deps.formatting?.run(format);
+      return;
+    }
+    const sortFilter = SORT_FILTER_COMMANDS[command];
+    if (sortFilter) {
+      deps.sortFilter?.[sortFilter]();
       return;
     }
     const preset = zoomPresetOf(command);

@@ -5,8 +5,11 @@
 // the Edit menu's undo/redo state and File ▸ "Download a copy as …" (its
 // label names the other format; a reason disables it). SPEC-124 adds View ▸
 // Freeze's state and the Format menu's rows-and-columns commands; SPEC-125
-// Edit ▸ Paste special… and Fill ▸ Down/Right. Later spreadsheet specs
-// append fields as they append menus and items.
+// Edit ▸ Paste special… and Fill ▸ Down/Right; SPEC-128 the Data menu's
+// sorts and filter commands and whether the sheet has an autofilter (Filter
+// is checked; without one Clear filters and Reapply filter are disabled,
+// saying "Turn on Filter first"). Later spreadsheet specs append fields as
+// they append menus and items.
 
 /** What the bar needs in order to render: what is checked, what applies. */
 export interface SpreadsheetMenuState {
@@ -36,7 +39,12 @@ export interface SpreadsheetMenuState {
    * frozen; "Freeze at current cell" is disabled at A1. */
   frozen: boolean;
   freezeAtCellDisabled: boolean;
+  /** SPEC-128: the active sheet has an autofilter (Data ▸ Filter checked). */
+  filterOn: boolean;
 }
+
+/** SPEC-128: why Clear filters and Reapply filter are disabled. */
+export const FILTER_OFF_REASON = "Turn on Filter first";
 
 /** The command ids the bar emits — routed by useSpreadsheetMenu. Item test
  * ids keep the `sheet-menu-` prefix. */
@@ -74,6 +82,14 @@ export const SHEET_MENU_COMMANDS = {
   pasteSpecial: "edit.paste-special",
   fillDown: "edit.fill-down",
   fillRight: "edit.fill-right",
+  /** SPEC-128: Data ▸ Sort A to Z / Z to A / Sort range…, Filter, Clear
+   * filters and Reapply filter. */
+  sortAscending: "data.sort-asc",
+  sortDescending: "data.sort-desc",
+  sortRange: "data.sort-range",
+  filter: "data.filter",
+  clearFilters: "data.clear-filters",
+  reapplyFilter: "data.reapply-filter",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
@@ -124,5 +140,6 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     cellStyleNames: Array.isArray(state.cellStyleNames) ? state.cellStyleNames : [],
     frozen: state.frozen === true,
     freezeAtCellDisabled: state.freezeAtCellDisabled === true,
+    filterOn: state.filterOn === true,
   };
 }
