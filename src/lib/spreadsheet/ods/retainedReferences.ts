@@ -49,7 +49,14 @@
 //   the model's — `Sheet.autoFilter`, which the `autofilter` reference
 //   adjuster moves and the writer serialises — so nothing inside it (its
 //   target, its filter's criteria range) is adjusted here: nothing is
-//   adjusted twice. Every other database range still is.
+//   adjusted twice. Every other database range still is. The filter of a
+//   claimed range that does not decompose is the model's verbatim
+//   `autoFilter.odsUnmappedFilter`; its `table:condition-source-range-address`
+//   (a criteria range, on any sheet) is moved by the `autofilter` adjusters
+//   of structure.ts and move.ts through adjustOdsFilterCriteriaRanges, by
+//   this module's list rules, on the model's copy: the autofilter replaced
+//   without its sourceXml (the writer then serialises that filter), its
+//   sheet marked dirty.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -125,6 +132,9 @@ const CHART_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
 type LocationTable = (element: string) => readonly Location[] | undefined;
 
 const contentLocations: LocationTable = (element) => CONTENT_LOCATIONS.get(element) ?? (element.startsWith("draw:") ? SHAPE_LOCATIONS : undefined);
+/** A verbatim ods filter (`autoFilter.odsUnmappedFilter`): its criteria range. */
+const filterLocations: LocationTable = (element) => (element === "table:filter" ? CONTENT_LOCATIONS.get(element) : undefined);
+const CRITERIA_SOURCE = /table:condition-source-range-address\s*=/;
 const chartLocations: LocationTable = (element) => CHART_LOCATIONS.get(element);
 
 /** The prefilter: any of a table's attribute names followed by its `=` —
@@ -412,6 +422,30 @@ class OdsRetainedRewrite {
       model.sheets = sheets;
     }
     return changed;
+  }
+
+  /** Each verbatim ods filter whose criteria range moves, moved (see
+   * adjustOdsFilterCriteriaRanges). Sheet-less entries stay, as in the
+   * suffix; names resolve with the sheet's id (a copy's override). */
+  filterSources(): void {
+    let sheets: Sheet[] | undefined;
+    this.model.sheets.forEach((sheet, i) => {
+      const filter = sheet.autoFilter;
+      const xml = filter?.odsUnmappedFilter;
+      if (!filter || xml === undefined || !mentions(xml, CRITERIA_SOURCE)) {
+        return;
+      }
+      const odsUnmappedFilter = applySplices(xml, this.splices(xml, { id: sheet.id }, filterLocations));
+      if (odsUnmappedFilter === xml) {
+        return;
+      }
+      const { sourceXml: _source, ...rest } = filter;
+      sheets ??= this.model.sheets.slice();
+      sheets[i] = { ...sheet, autoFilter: { ...rest, odsUnmappedFilter }, dirty: true };
+    });
+    if (sheets) {
+      this.model.sheets = sheets;
+    }
   }
 
   /** A sheet with its sourceXml and its cells' preservedXml adjusted (the
@@ -819,4 +853,16 @@ class OdsRetainedRewrite {
  * shows. */
 export function rewriteOdsRetainedReferences(model: SpreadsheetModel, mapper: RetainedReferenceMapper): Set<string> {
   return new OdsRetainedRewrite(model, mapper).run();
+}
+
+/** SPEC-128: every sheet's verbatim ods filter (`autoFilter.odsUnmappedFilter`)
+ * with its `table:condition-source-range-address` moved through `mapper` —
+ * the `autofilter` adjusters' share of the database range the model owns
+ * (see the module header). Each autofilter whose filter changed is
+ * replaced, without its sourceXml, and its sheet marked dirty. */
+export function adjustOdsFilterCriteriaRanges(model: SpreadsheetModel, mapper: RetainedReferenceMapper): void {
+  if (model.format !== "ods" || !model.sheets.some((sheet) => sheet.autoFilter?.odsUnmappedFilter !== undefined)) {
+    return;
+  }
+  new OdsRetainedRewrite(model, mapper).filterSources();
 }

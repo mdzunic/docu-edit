@@ -43,6 +43,7 @@ import { rangesIntersect } from "./merges";
 import { MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { workbookFormatContext } from "./numberFormat/render";
+import { adjustOdsFilterCriteriaRanges } from "./ods/retainedReferences";
 import { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retainedReferences";
 import { contains, inheritedStyleId, SheetEdit } from "./sheetEdit";
 import type { SortState } from "./sort";
@@ -389,7 +390,10 @@ const retainedAdjuster: MoveAdjuster = {
 // or the destination only partly is left alone. What moves is replaced —
 // never mutated — without its `sourceXml`; an ods database range keeps its
 // name on its own sheet and takes the replaced one's (or none) on another.
-// Moving an autofilter sets `structureDirty` (`_xlnm._FilterDatabase`).
+// Moving an autofilter sets `structureDirty` (`_xlnm._FilterDatabase`). The
+// criteria range an ods verbatim filter names, on any sheet, moves first
+// through moveMapper (adjustOdsFilterCriteriaRanges — SPEC-124's retained
+// row for it is retired).
 
 /** A sort record moved by the offset, without its source. */
 function movedSortState(sort: SortState, dRow: number, dCol: number): SortState {
@@ -419,10 +423,14 @@ function withoutFilterHidden(rows: Row[], range: GridRange): Row[] {
 const autofilterAdjuster: MoveAdjuster = {
   id: "autofilter",
   move(model, move) {
+    const { dRow, dCol } = offsetOf(move);
+    if (move.fromSheetId === move.toSheetId && dRow === 0 && dCol === 0) {
+      return;
+    }
+    adjustOdsFilterCriteriaRanges(model, moveMapper(model, move));
     const from = sheetOf(model, move.fromSheetId);
     const to = sheetOf(model, move.toSheetId);
-    const { dRow, dCol } = offsetOf(move);
-    if (!from || !to || (from === to && dRow === 0 && dCol === 0)) {
+    if (!from || !to) {
       return;
     }
     const filter = from.autoFilter !== undefined && contains(move.from, from.autoFilter.range) ? from.autoFilter : undefined;

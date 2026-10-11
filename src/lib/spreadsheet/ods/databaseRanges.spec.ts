@@ -10,7 +10,8 @@
 // element's unmodelled attributes and children kept), a new filter
 // (appended, or a new container placed after the named expressions), a
 // removal (an emptied container removed), a structural edit moving it once
-// (through the model), a rename, a deletion renumbering an anonymous range,
+// (through the model), a verbatim filter's criteria range moved once (the
+// model's copy, by a structural edit and a move), a rename, a deletion renumbering an anonymous range,
 // a duplicate's own range, from scratch, write → read;
 // and the table writer's visibility and its repeat-compression key.
 import { describe, expect, it } from "vitest";
@@ -23,6 +24,7 @@ import type { Row, Sheet, SpreadsheetModel } from "../model";
 import { SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { readSpreadsheetBytes } from "../open";
 import { createBlankWorkbook, deleteSheet, duplicateSheet, renameSheet } from "../sheets";
+import { moveRange } from "../move";
 import { applyStructuralEdit } from "../structure";
 import {
   odsAutoFilterClaims,
@@ -557,6 +559,25 @@ describe("writing a workbook", () => {
       [4, "filterHidden"],
       [6, "hidden"],
     ]);
+  });
+
+  it("moves a verbatim filter's criteria range on another sheet once — the model's copy, by a structural edit and by a move — and writes it", async () => {
+    const criteria = `<table:filter table:condition-source-range-address="Sheet2.A1:Sheet2.B2">${condition(0, `table:value="East" table:operator="="`)}</table:filter>`;
+    const ranged = `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sheet1.A1:Sheet1.B5" table:display-filter-buttons="true">${criteria}</table:database-range>`;
+    const { model } = await open({ suffix: `<table:named-expressions/>${databaseRanges(ranged)}` });
+    expect(model.sheets[0]!.autoFilter!.odsUnmappedFilter).toBe(criteria);
+    expect(applyStructuralEdit(model, { kind: "insertRows", sheetId: model.sheets[1]!.id, at: 0, count: 2 })).toEqual({ ok: true });
+    const inserted = criteria.replace(`"Sheet2.A1:Sheet2.B2"`, `"Sheet2.A3:Sheet2.B4"`);
+    expect(model.sheets[0]!.autoFilter!.odsUnmappedFilter).toBe(inserted);
+    expect(model.sheets[0]!.dirty).toBe(true);
+    // The retained element is untouched: only the model moved it.
+    expect(model.odsContentEnvelope!.suffix).toContain(ranged);
+    expect(await savedSuffix(model)).toBe(`<table:named-expressions/>${databaseRanges(ranged.replace(criteria, inserted))}`);
+    expect(moveRange(model, { fromSheetId: model.sheets[1]!.id, from: { top: 2, left: 0, bottom: 3, right: 1 }, toSheetId: model.sheets[1]!.id, toTop: 5, toLeft: 2 })).toEqual({ ok: true });
+    const moved = criteria.replace(`"Sheet2.A1:Sheet2.B2"`, `"Sheet2.C6:Sheet2.D7"`);
+    expect(model.sheets[0]!.autoFilter!.odsUnmappedFilter).toBe(moved);
+    expect(await savedSuffix(model)).toBe(`<table:named-expressions/>${databaseRanges(ranged.replace(criteria, moved))}`);
+    expect((await reopen(model)).sheets[0]!.autoFilter!.odsUnmappedFilter).toBe(moved);
   });
 
   it("re-serialises a verbatim element's target when its sheet is renamed", async () => {

@@ -52,6 +52,7 @@ import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import type { AutoFilter, FilterColumn } from "./filter";
 import { adjustFormula, adjustFormulaReferences } from "./formula/adjust";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
+import { adjustOdsFilterCriteriaRanges } from "./ods/retainedReferences";
 import { firstRowAtOrAfter, MAX_FORMAT_MATERIALISED } from "./restyle";
 import { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retainedReferences";
 import type { SheetSelection } from "./selection";
@@ -750,7 +751,10 @@ const retainedAdjuster: ReferenceAdjuster = {
 // of the range, removes the autofilter; the rows it hid stay hidden as the
 // user's (`hidden`, which Unhide clears — Excel's one flag). A changed
 // column layout of a range holding an ods `odsUnmappedFilter` drops that
-// verbatim filter (its field numbers no longer fit). Every object that
+// verbatim filter (its field numbers no longer fit); the criteria range such
+// a filter names (`table:condition-source-range-address`, on any sheet —
+// SPEC-124's retained row, retired) moves through structuralMapper first,
+// adjustOdsFilterCriteriaRanges's rewrite of every sheet's. Every object that
 // changes is replaced — never mutated — without its `sourceXml`; one that
 // does not keeps its identity. Moving or removing an autofilter sets
 // `structureDirty` (the workbook part carries `_xlnm._FilterDatabase`).
@@ -845,6 +849,7 @@ function filterHiddenToHidden(rows: Row[]): Row[] {
 const autofilterAdjuster: ReferenceAdjuster = {
   id: "autofilter",
   adjust(model, edit) {
+    adjustOdsFilterCriteriaRanges(model, structuralMapper(model, edit));
     let structureMoved = false;
     updateSheet(model, edit.sheetId, (sheet) => {
       const was = sheet.autoFilter;
