@@ -36,6 +36,18 @@
 //   turns it into `numberFormat` (General → absent). A date, time or
 //   percentage value in a style with no data style at all gets a derived
 //   style with its implied format (impliedStyleId, impliedFormats.ts).
+// - SPEC-129: a cell style's `style:map` children (the legacy conditional
+//   formats ods/conditionalFormats.ts reads off content.xml's automatic
+//   styles) are kept as written (cellStyleMaps). conditionalStyle(name) is a
+//   conditional format's applied style as a differential style (`Dxf`): the
+//   common style by its `style:name`, else by the name LibreOffice's encoder
+//   gives a display name ("Accent 3" → "Accent_20_3"), else by its
+//   `style:display-name`; what it and its ancestors set short of "Default"
+//   (never the family default-style) — `fo:color`, a `fo:font-weight` /
+//   `fo:font-style` / underline / line-through either way (`normal` and
+//   `none` are explicit offs), `fo:background-color` as a solid fill, the
+//   four `fo:border-*` edges and the data style's format code — and
+//   odsDxfProperties writes one back the same way.
 // - Mapping (the spec's table): `table-cell-properties` fo:background-color →
 //   a solid fill (`transparent` → none); fo:border-* → borders by the pinned
 //   "ODS borders" table; style:diagonal-bl-tr / -tl-br → the diagonal with
@@ -75,6 +87,8 @@ import type {
   SpreadsheetModel,
 } from "../model";
 import { STYLE_ASPECTS, workbookNamedStyle, type NamedCellStyle } from "../styles";
+import type { Dxf, DxfFont } from "../conditionalFormats";
+import { decodeXmlText } from "../xmlSplice";
 
 /** OpenOffice's table extension namespace (`tableooo:tab-color`). */
 export const TABLEOOO_NAMESPACE = "http://openoffice.org/2009/table";
@@ -112,6 +126,18 @@ interface StyleDefinition {
   dataStyle?: string;
   /** `style:display-name` (SPEC-123: a common style's named-style name). */
   displayName?: string;
+  /** SPEC-129: a table-cell style's `style:map` children, in order (absent:
+   * none). */
+  maps?: OdsStyleMap[];
+}
+
+/** One `style:map` of a cell style (SPEC-129's legacy condition), as
+ * written: the condition, the style it applies, and the cell its relative
+ * references are written from. */
+export interface OdsStyleMap {
+  condition: string;
+  applyStyleName: string;
+  baseCellAddress?: string;
 }
 
 const EMPTY_PROPS: Props = new Map();
@@ -207,7 +233,21 @@ function expandShorthands(kind: PropertyKind, props: Props): Props {
 
 function readDefinition(el: Element, family: string): StyleDefinition {
   const props: PropertySets = {};
+  const maps: OdsStyleMap[] = [];
   for (const child of Array.from(el.children)) {
+    if (child.namespaceURI === STYLE_NAMESPACE && child.localName === "map" && family === "table-cell") {
+      const condition = child.getAttributeNS(STYLE_NAMESPACE, "condition");
+      const applyStyleName = child.getAttributeNS(STYLE_NAMESPACE, "apply-style-name");
+      if (condition && applyStyleName) {
+        const map: OdsStyleMap = { condition, applyStyleName };
+        const base = child.getAttributeNS(STYLE_NAMESPACE, "base-cell-address");
+        if (base) {
+          map.baseCellAddress = base;
+        }
+        maps.push(map);
+      }
+      continue;
+    }
     if (child.namespaceURI !== STYLE_NAMESPACE || !child.localName.endsWith("-properties")) {
       continue;
     }
@@ -228,6 +268,9 @@ function readDefinition(el: Element, family: string): StyleDefinition {
   const displayName = el.getAttributeNS(STYLE_NAMESPACE, "display-name");
   if (displayName) {
     definition.displayName = displayName;
+  }
+  if (maps.length > 0) {
+    definition.maps = maps;
   }
   return definition;
 }
@@ -336,6 +379,21 @@ export function readOdsContentStyles(slices: readonly string[], declarations: st
     }
   }
   return styles;
+}
+
+/** A retained package's style book, as the reader built it: styles.xml
+ * (absent: none) and the content envelope prefix's font faces and
+ * automatic styles, parsed under its root's namespace declarations — what
+ * the writer's substitution path (SPEC-122) and SPEC-129's reader upgrade
+ * resolve source styles against. */
+export function odsStyleBookFromSource(prefix: string, stylesXml: string | undefined): OdsStyleBook {
+  const root = /<[\w.-]+:document-content\b[^>]*>/.exec(prefix)?.[0] ?? "";
+  const declarations = namespaceDeclarations(
+    [...root.matchAll(/\s(xmlns(?::[\w.-]+)?)\s*=\s*"([^"]*)"/g)].map((match) => ({ name: match[1]!, value: decodeXmlText(match[2]!) })),
+  );
+  const slices = [...prefix.matchAll(/<office:(font-face-decls|automatic-styles)\b[\s\S]*?<\/office:\1>/g)].map((match) => match[0]);
+  const sheet = stylesXml === undefined ? emptyOdsStyleSheet() : readOdsStyleSheet(stylesXml);
+  return new OdsStyleBook(sheet, readOdsContentStyles(slices, declarations));
 }
 
 // --- style names (SPEC-123) -----------------------------------------------------
@@ -719,6 +777,35 @@ function fontFrom(text: Props, fontFaces: ReadonlyMap<string, string>): CellFont
   return Object.keys(font).length > 0 ? font : undefined;
 }
 
+/** SPEC-129: `style:text-properties` → a differential font: what they set,
+ * either way (`normal` weight or posture, a `none` underline or
+ * line-through are explicit offs); undefined when they set none of it. */
+function dxfFontFrom(text: Props): DxfFont | undefined {
+  const font: DxfFont = {};
+  const color = odsColor(text.get("fo:color"));
+  if (color !== undefined) {
+    font.color = color;
+  }
+  const weight = text.get("fo:font-weight");
+  if (weight !== undefined) {
+    font.bold = weight === "bold" || Number(weight) >= 600;
+  }
+  const posture = text.get("fo:font-style");
+  if (posture !== undefined) {
+    font.italic = posture === "italic" || posture === "oblique";
+  }
+  const underline = text.get("style:text-underline-style");
+  if (underline !== undefined) {
+    const type = text.get("style:text-underline-type");
+    font.underline = underline === "none" || type === "none" ? "none" : type === "double" ? "double" : "single";
+  }
+  const strike = text.get("style:text-line-through-style");
+  if (strike !== undefined) {
+    font.strike = strike !== "none" && text.get("style:text-line-through-type") !== "none";
+  }
+  return Object.keys(font).length > 0 ? font : undefined;
+}
+
 /** Flattened properties → a CellStyle (the spec's mapping table). */
 function cellStyleFrom(sets: PropertySets, fontFaces: ReadonlyMap<string, string>): CellStyle {
   const style: CellStyle = {};
@@ -791,6 +878,8 @@ export class OdsStyleBook {
   private readonly textModelled = new Map<string, boolean>();
   private readonly columnWidths = new Map<string | undefined, number | undefined>();
   private readonly rowHeights = new Map<string | undefined, OdsRowHeight>();
+  /** SPEC-129: the automatic cell styles that carry a `style:map`. */
+  private mapped: string[] | undefined;
 
   constructor(sheet: OdsStyleSheet, content: OdsContentStyles = { automatic: new Map(), fontFaces: new Map(), dataStyles: new Map() }) {
     this.sheet = sheet;
@@ -962,6 +1051,77 @@ export class OdsStyleBook {
    * (a generated style's `style:parent-style-name` must name one). */
   commonCellStyle(name: string): boolean {
     return this.sheet.common.has(styleKey("table-cell", name));
+  }
+
+  /** SPEC-129: the `style:map` conditions of content.xml's AUTOMATIC
+   * table-cell style `name` (where legacy conditional formats live), or
+   * undefined when it has none. */
+  cellStyleMaps(name: string): readonly OdsStyleMap[] | undefined {
+    return this.automatic.get(styleKey("table-cell", name))?.maps;
+  }
+
+  /** SPEC-129: the automatic table-cell styles that carry a `style:map`,
+   * in document order. */
+  mappedCellStyles(): readonly string[] {
+    this.mapped ??= [...this.automatic].flatMap(([key, definition]) =>
+      definition.family === "table-cell" && definition.maps !== undefined ? [key.slice(key.indexOf("\u0000") + 1)] : [],
+    );
+    return this.mapped;
+  }
+
+  /** SPEC-129: the common table-cell style a conditional format applies,
+   * and its definition as a differential style (see the module header);
+   * null when no common style matches `name`. */
+  conditionalStyle(name: string): { name: string; dxf: Dxf } | null {
+    const resolved = this.commonCellStyleNamed(name);
+    if (resolved === undefined) {
+      return null;
+    }
+    const sets = this.flatten("table-cell", resolved, { withDefault: false, commonOnly: true, stopAt: "Default" });
+    const dxf: Dxf = {};
+    const font = dxfFontFrom(sets.text ?? EMPTY_PROPS);
+    if (font) {
+      dxf.font = font;
+    }
+    const cell = sets["table-cell"] ?? EMPTY_PROPS;
+    const fill = odsColor(cell.get("fo:background-color"));
+    if (fill !== undefined) {
+      dxf.fill = { kind: "solid", color: fill };
+    }
+    const borders: NonNullable<Dxf["borders"]> = {};
+    for (const side of BORDER_SIDES) {
+      const edge = odsBorderEdge(cell.get(`fo:border-${side}`));
+      if (edge) {
+        borders[side] = edge;
+      }
+    }
+    if (Object.keys(borders).length > 0) {
+      dxf.borders = borders;
+    }
+    const code = this.dataStyleCode(this.dataStyleOf(resolved, true, "Default"));
+    if (code !== undefined) {
+      dxf.numberFormat = code;
+    }
+    return { name: resolved, dxf };
+  }
+
+  /** The `style:name` of the common table-cell style `name` refers to: the
+   * name itself, else LibreOffice's encoding of it as a display name, else
+   * the style whose `style:display-name` it is. */
+  private commonCellStyleNamed(name: string): string | undefined {
+    if (this.commonCellStyle(name)) {
+      return name;
+    }
+    const encoded = encodeOdsStyleName(name);
+    if (this.commonCellStyle(encoded)) {
+      return encoded;
+    }
+    for (const [key, definition] of this.sheet.common) {
+      if (definition.family === "table-cell" && definition.displayName === name) {
+        return key.slice(key.indexOf("\u0000") + 1);
+      }
+    }
+    return undefined;
   }
 
   /** SPEC-122: the text styles a rich run can be written back in, so a run
@@ -1289,6 +1449,47 @@ export function odsCellStyleProperties(style: CellStyle, theme: DocumentTheme, o
     paragraph += ` fo:margin-left="${lengthNumber(alignment.indent * INDENT_PX_PER_LEVEL * 0.75)}pt"`;
   }
   return { cell, paragraph, text: odsFontAttributes(style.font, theme, options) };
+}
+
+/** SPEC-129: a differential style's properties — the inverse of
+ * OdsStyleBook.conditionalStyle, so a written dxf reads back equal: the
+ * fill's one colour (fillColor's approximation), the four borders by the
+ * pinned write table, and the font's colour, weight, posture, underline
+ * (`none` written as such; the accounting underlines as their plain twins)
+ * and line-through, each either way. */
+export function odsDxfProperties(dxf: Dxf, theme: DocumentTheme): OdsCellStyleProperties {
+  let cell = "";
+  const background = fillColor(dxf.fill, theme);
+  if (background !== undefined) {
+    cell += ` fo:background-color="${background}"`;
+  }
+  for (const side of ["top", "bottom", "left", "right"] as const) {
+    const edge = dxf.borders?.[side];
+    if (edge) {
+      cell += ` fo:border-${side}="${odsBorderString(edge, theme).toLowerCase()}"`;
+    }
+  }
+  let text = "";
+  const font = dxf.font ?? {};
+  if (font.bold !== undefined) {
+    text += ` fo:font-weight="${font.bold ? "bold" : "normal"}"`;
+  }
+  if (font.italic !== undefined) {
+    text += ` fo:font-style="${font.italic ? "italic" : "normal"}"`;
+  }
+  if (font.underline === "none") {
+    text += ` style:text-underline-style="none"`;
+  } else if (font.underline !== undefined) {
+    const double = font.underline === "double" || font.underline === "doubleAccounting";
+    text += ` style:text-underline-style="solid" style:text-underline-type="${double ? "double" : "single"}"`;
+  }
+  if (font.strike !== undefined) {
+    text += ` style:text-line-through-style="${font.strike ? "solid" : "none"}"`;
+  }
+  if (font.color !== undefined) {
+    text += ` fo:color="${hexColor(font.color, theme)}"`;
+  }
+  return { cell, paragraph: "", text };
 }
 
 /** The property elements of a style, in the schema's order. */

@@ -765,6 +765,18 @@ export interface OdsTableContext {
   /** The retained-text sheet-reference pass, for a cell's preserved content
    * (source-time text, like sourceXml). */
   passRetained?: (text: string) => string;
+  /** SPEC-129: the save's conditional-format writer
+   * (ods/conditionalFormats.ts), which writes the table's
+   * `calcext:conditional-formats` from the model into its leading or
+   * trailing children; absent, they are re-emitted as they are. */
+  conditionalFormats?: {
+    splice(sheet: Sheet, leading: string, trailing: string, passRetained?: (text: string) => string): { leading: string; trailing: string };
+  };
+  /** SPEC-129: whether the source's automatic cell style of this name
+   * carries a `style:map` — such a style is never named by a rebuilt
+   * table: the cells using it get a generated `de-ce` style without the
+   * map, so a rule deleted from the model cannot come back. */
+  mappedCellStyle?: (name: string) => boolean;
 }
 
 type Axis = "row" | "col";
@@ -1209,7 +1221,7 @@ class TableWriter {
       const style = cellStyle(this.ctx.model, id);
       if (id === 0 || style === this.ctx.model.styles[0]) {
         name = "Default";
-      } else if (this.ctx.sourceStyleNames && style.sourceStyleName !== undefined) {
+      } else if (this.ctx.sourceStyleNames && style.sourceStyleName !== undefined && !this.ctx.mappedCellStyle?.(style.sourceStyleName)) {
         name = style.sourceStyleName;
       } else {
         name = this.ctx.registry.cellStyle(style, this.env);
@@ -1514,16 +1526,21 @@ class TableWriter {
     const sheet = this.sheet;
     const ctx = this.ctx;
     let head: string;
+    let leading = this.skeleton?.leading ?? "";
+    let trailing = this.skeleton?.trailing ?? "";
+    if (ctx.conditionalFormats) {
+      ({ leading, trailing } = ctx.conditionalFormats.splice(sheet, leading, trailing, ctx.passRetained));
+    }
     if (this.skeleton) {
-      head = this.skeleton.head + this.skeleton.leading;
+      head = this.skeleton.head + leading;
     } else {
       const tabColor = sheet.tabColor === undefined ? undefined : resolveColor(sheet.tabColor, ctx.model.theme ?? DEFAULT_THEME);
       const style = ctx.registry.tableStyle({ masterPage: "Default", display: sheet.visibility === "visible", ...(tabColor === undefined ? {} : { tabColor }) });
-      head = `<table:table table:name="${attributeText(sheet.name)}" table:style-name="${style}">`;
+      head = `<table:table table:name="${attributeText(sheet.name)}" table:style-name="${style}">` + leading;
     }
     const columns = this.axis("col", this.skeleton?.colGroups ?? [], 0, this.colExtent, (a, b, out) => this.columns(a, b, out));
     const rows = this.axis("row", this.skeleton?.rowGroups ?? [], 0, this.rowExtent, (a, b, out) => this.rows(a, b, out));
-    return head + columns + rows + (this.skeleton ? this.skeleton.trailing + this.skeleton.close : "</table:table>");
+    return head + columns + rows + trailing + (this.skeleton ? this.skeleton.close : "</table:table>");
   }
 }
 
@@ -1557,7 +1574,13 @@ class TableWriter {
  *    start tags verbatim — re-emitted around the indices each covered at
  *    read; `text:soft-page-break` (a layout cache) is dropped;
  * 7. the trailing children verbatim (`table:named-expressions`,
- *    `calcext:conditional-formats`, anything after the rows).
+ *    `calcext:conditional-formats`, anything after the rows) — but for
+ *    SPEC-129: with a conditional-format writer in the context, the
+ *    `calcext:conditional-formats` among the leading or trailing children
+ *    is the model's (OdsConditionalFormatWriter.splice: in place, removed,
+ *    or a new one last), and a cell style whose source automatic style
+ *    carries a `style:map` (`mappedCellStyle`) is written as a generated
+ *    `de-ce` style instead of its source name.
  * Extent per axis = max(the source's total repeated extent, the stored rows,
  * cells, merges and column spans + 1), so LibreOffice's 1048553-row and
  * 16380-column tails come back at the same length; a new sheet's is what it
