@@ -3,7 +3,11 @@
 // its row's, else the covering ColumnSpan's (a binary search), else 0 — and
 // cellStyle falls back to the default style for any id it cannot index.
 // INDEXED_COLORS is ECMA-376 §18.8.27's 64-entry legacy palette, lowercase.
+// SPEC-129 internDxf: the differential-style table dedups by the modelled
+// fields (not sourceXml/sourceStyleName, a source-backed entry preferred) and
+// only ever appends, replacing the array.
 import { describe, expect, it } from "vitest";
+import type { Dxf } from "./conditionalFormats";
 import {
   BUILTIN_CELL_STYLES,
   builtinCellStyle,
@@ -13,7 +17,9 @@ import {
   columnSpanAt,
   defaultStyles,
   effectiveStyleId,
+  dxfKey,
   INDEXED_COLORS,
+  internDxf,
   internStyle,
   resolveNamedStyle,
   STYLE_ASPECTS,
@@ -309,5 +315,42 @@ describe("SPEC-123 named cell styles: the built-in table", () => {
     expect(resolveNamedStyle(model, "Bad")).toMatchObject({ builtinId: 27, defined: false, includes: ["font", "fill"] });
     expect(resolveNamedStyle(model, "Normal")).toMatchObject({ style: { font: { family: "Calibri", sizePt: 11 } }, includes: STYLE_ASPECTS });
     expect(resolveNamedStyle(model, "Nope")).toBeUndefined();
+  });
+});
+
+describe("SPEC-129 internDxf: structural equality, append-only, copy-on-write", () => {
+  const red: Dxf = { font: { color: "#9c0006" }, fill: { kind: "solid", color: "#ffc7ce" } };
+
+  it("returns an equal entry's index whatever the key order, ignoring sourceXml and sourceStyleName and preferring a source-backed entry", () => {
+    const model = { dxfs: [{ font: { bold: false } }, { ...red }, { ...red, sourceXml: "<dxf/>" }] as Dxf[] };
+    const before = model.dxfs;
+    expect(internDxf(model, { fill: { color: "#ffc7ce", kind: "solid" }, font: { color: "#9c0006" } })).toBe(2);
+    expect(internDxf(model, { ...red, sourceStyleName: "Bad" })).toBe(2);
+    expect(internDxf(model, { font: { bold: false } })).toBe(0);
+    expect(model.dxfs).toBe(before);
+    expect(dxfKey({ ...red, sourceXml: "<dxf/>" })).toBe(dxfKey(red));
+  });
+
+  it("tells an explicit false from an unset flag", () => {
+    const model = { dxfs: [{ font: { bold: false } }] as Dxf[] };
+    expect(internDxf(model, { font: {} })).toBe(1);
+    expect(internDxf(model, { font: { bold: true } })).toBe(2);
+  });
+
+  it("appends a new dxf without its source fields by replacing the array — earlier indices and the old array untouched — and finds it again", () => {
+    const first: Dxf = { ...red, sourceXml: "<dxf>…</dxf>" };
+    const model = { dxfs: [first] as Dxf[] };
+    const before = model.dxfs;
+    const green: Dxf = { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, sourceStyleName: "Good" };
+    expect(internDxf(model, green)).toBe(1);
+    expect(model.dxfs).not.toBe(before);
+    expect(before).toEqual([first]);
+    expect(model.dxfs[0]).toBe(first);
+    expect(model.dxfs[1]).toEqual({ font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" } });
+    expect(internDxf(model, { fill: { kind: "solid", color: "#c6efce" }, font: { color: "#006100" } })).toBe(1);
+    // A model without a table yet starts one.
+    const empty: { dxfs?: Dxf[] } = {};
+    expect(internDxf(empty as { dxfs: Dxf[] }, red)).toBe(0);
+    expect(empty.dxfs).toEqual([red]);
   });
 });

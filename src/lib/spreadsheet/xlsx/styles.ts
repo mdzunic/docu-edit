@@ -41,8 +41,20 @@
 //   `sourceXfId` is its `xfId` — absent when the xf has no xfId, the xfId
 //   names no cellStyle, or it names Normal (builtinId 0; the one named
 //   "Normal" when no cellStyle has builtinId 0).
-// dxfs (SPEC-129), tableStyles (SPEC-133), extLst and colors/mruColors stay
-// unread in the retained part.
+// - SPEC-129 "xlsx wire mapping" › dxfs: `dxfs/dxf` → SpreadsheetModel.dxfs
+//   by index (readXlsxDxfs), each keeping its `<dxf>` verbatim as
+//   `sourceXml` (alignment and protection children are not modelled). A dxf
+//   is a PARTIAL style, so a font property is tri-state: `<b/>`, `<b
+//   val="1"/>` → `bold: true`, `<b val="0"/>` → `bold: false` (likewise `i`,
+//   `strike`), absent → unset; `<u/>` → "single", `<u val="none"/>` → "none";
+//   `color` as everywhere. Excel's fill quirk: a `patternFill` with no
+//   `patternType`, or `solid`, is a solid fill of `bgColor ?? fgColor` (no
+//   colour: no fill); `none` is no fill; other patterns and `gradientFill`
+//   as above. `border` edges left/start, right/end, top, bottom (diagonals
+//   and inner edges are not modelled). `numFmt@formatCode` → `numberFormat`
+//   (a built-in id without a code → the built-in's code).
+// tableStyles (SPEC-133), extLst and colors/mruColors stay unread in the
+// retained part.
 // Colours map through themeColor.ts, the only module that interprets them.
 //
 // The style writer (SPEC-122 "Styles" › xlsx, normative there): one
@@ -98,13 +110,25 @@
 //   <fgColor …/><bgColor indexed="64"/>`; border edges in the order left,
 //   right, top, bottom, diagonal, an automatic colour as `indexed="64"`;
 //   every colour through themeColor.ts's modelColorToXlsxAttrs.
+// - SPEC-129, dxfs: `model.dxfs` is append-only, so the source's `<dxf>`s
+//   are never rewritten and the entries past the source's count are
+//   appended — every one up to the highest dxfId a serialised base rule
+//   wrote (dxfFor), so an untouched workbook whose x14 rules interned their
+//   inline dxfs at read stays byte-identical (dxfXml, children in CT_Dxf
+//   order font, numFmt, fill, border): a font's
+//   set properties (`<b val="0"/>` for an explicit false, `<u val="none"/>`),
+//   a solid fill as Excel writes a dxf's — `<patternFill><bgColor/>` with no
+//   patternType — other fills as cellXfs writes them, the set border edges;
+//   a numFmt's id is the one `<numFmts>` gives its code, else the next free
+//   id ≥ 164 (shared with the numFmts appends; a dxf's numFmt is not added to
+//   `<numFmts>`). A from-scratch part starts with `<dxfs count="0"/>`.
 // - Appends are spliced before each collection's close tag with its `count`
 //   set to the new total; an absent collection is inserted in CT_Stylesheet
 //   order (numFmts, fonts, fills, borders, cellStyleXfs, cellXfs, cellStyles,
 //   dxfs, tableStyles, colors, extLst); the part is rewritten only when
 //   something was appended — every source entry (numFmts, fonts, fills,
-//   borders, cellStyleXfs, cellXfs, cellStyles: each keeps its index) and
-//   every other element stays byte-verbatim.
+//   borders, cellStyleXfs, cellXfs, cellStyles, dxfs: each keeps its index)
+//   and every other element stays byte-verbatim.
 // - From scratch (no source part) the base is a minimal styles part whose
 //   font 0 is built from `model.styles[0]` and whose xf 0 IS style 0, so
 //   unstyled cells keep the workbook's own default font in either direction;
@@ -112,10 +136,12 @@
 import { DEFAULT_THEME, isThemeFont, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../../core/theme";
 import { parseXml } from "../../core/xml";
 import { scanXml } from "../../core/xmlScanner";
+import { DXF_BORDER_EDGES, type Dxf, type DxfFont } from "../conditionalFormats";
 import type { CellAlignment, CellBorderEdge, CellBorders, CellFill, CellFont, CellStyle, SheetBorderStyle, SpreadsheetModel } from "../model";
 import { BUILTIN_NUMBER_FORMATS, LOCALE_DEPENDENT_BUILTINS } from "../numberFormat/builtin";
 import { builtinCellStyle, defaultStyles, INDEXED_COLORS, styleKey, workbookNamedStyle, type NamedCellStyle, type StyleAspect } from "../styles";
 import { applySplices, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { childNodes, elementTree, nodeAttr, type XmlNode } from "./elementTree";
 import { elementAttributes, modelColorToXlsxAttrs, xlsxColorFrom, xlsxColorFromElement, xlsxRgbToHex, type AttributeGetter } from "./themeColor";
 
 /** SpreadsheetML's main namespace, transitional and strict. */
@@ -146,6 +172,8 @@ export interface XlsxStyleTable {
   /** SPEC-123: the named cell styles, one per `cellStyles/cellStyle` (the
    * first per xfId) in file order — absent when the part names none. */
   namedStyles?: NamedCellStyle[];
+  /** SPEC-129: the differential styles, one per `dxfs/dxf` in order. */
+  dxfs: Dxf[];
 }
 
 function isOn(value: string | null | undefined): boolean {
@@ -634,8 +662,223 @@ function readIndexedColors(root: Element): string[] | undefined {
   return colors.length > 0 ? colors : undefined;
 }
 
+// --- differential styles (SPEC-129) ---------------------------------------------
+
+const inMain = (ns: string | undefined): boolean => isSpreadsheetMl(ns);
+
+/** A CT_BooleanProperty's value: absent `val` (or anything but an explicit
+ * false) is true. */
+function booleanProperty(node: XmlNode): boolean {
+  const val = nodeAttr(node, "val");
+  return !(val === "0" || val === "false");
+}
+
+function nodeColor(node: XmlNode | undefined, indexedColors: readonly string[] | undefined): ModelColor | undefined {
+  return node ? xlsxColorFrom((name) => nodeAttr(node, name), indexedColors) : undefined;
+}
+
+function firstChild(node: XmlNode | undefined, local: string): XmlNode | undefined {
+  return node ? childNodes(node, local, inMain)[0] : undefined;
+}
+
+/** A dxf `<font>`: the tri-state flags, the underline and the colour. */
+function readDxfFont(node: XmlNode, indexedColors: readonly string[] | undefined): DxfFont | undefined {
+  const font: DxfFont = {};
+  for (const child of node.children) {
+    if (!inMain(child.ns)) {
+      continue;
+    }
+    switch (child.local) {
+      case "b":
+        font.bold = booleanProperty(child);
+        break;
+      case "i":
+        font.italic = booleanProperty(child);
+        break;
+      case "strike":
+        font.strike = booleanProperty(child);
+        break;
+      case "u": {
+        const val = nodeAttr(child, "val");
+        if (val === undefined) {
+          font.underline = "single";
+        } else if (val === "none" || UNDERLINES.has(val)) {
+          font.underline = val as DxfFont["underline"];
+        }
+        break;
+      }
+      case "color": {
+        const color = nodeColor(child, indexedColors);
+        if (color !== undefined) {
+          font.color = color;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  return Object.keys(font).length > 0 ? font : undefined;
+}
+
+/** A dxf `<fill>` (see the module header: Excel's solid-fill quirk). */
+function readDxfFill(node: XmlNode, indexedColors: readonly string[] | undefined): CellFill | undefined {
+  const pattern = firstChild(node, "patternFill");
+  if (pattern) {
+    const type = nodeAttr(pattern, "patternType");
+    const fg = nodeColor(firstChild(pattern, "fgColor"), indexedColors);
+    const bg = nodeColor(firstChild(pattern, "bgColor"), indexedColors);
+    if (type === undefined || type === "" || type === "solid") {
+      const color = bg ?? fg;
+      return color === undefined ? undefined : { kind: "solid", color };
+    }
+    if (type === "none") {
+      return undefined;
+    }
+    const fill: PatternFill = { kind: "pattern", pattern: type };
+    if (fg !== undefined) {
+      fill.fg = fg;
+    }
+    if (bg !== undefined) {
+      fill.bg = bg;
+    }
+    return fill;
+  }
+  const gradient = firstChild(node, "gradientFill");
+  if (!gradient) {
+    return undefined;
+  }
+  const fill: GradientFill = { kind: "gradient", type: nodeAttr(gradient, "type") === "path" ? "path" : "linear", stops: [] };
+  const degree = parseNumber(nodeAttr(gradient, "degree"));
+  if (degree !== undefined) {
+    fill.degree = degree;
+  }
+  for (const side of GRADIENT_FOCUS) {
+    const value = parseNumber(nodeAttr(gradient, side));
+    if (value !== undefined) {
+      fill[side] = value;
+    }
+  }
+  for (const stop of childNodes(gradient, "stop", inMain)) {
+    fill.stops.push({ position: parseNumber(nodeAttr(stop, "position")) ?? 0, color: nodeColor(firstChild(stop, "color"), indexedColors) ?? "#000000" });
+  }
+  return fill;
+}
+
+/** A dxf `<border>`: its four outer edges. */
+function readDxfBorders(node: XmlNode, indexedColors: readonly string[] | undefined): Dxf["borders"] {
+  const borders: NonNullable<Dxf["borders"]> = {};
+  for (const child of node.children) {
+    const side = inMain(child.ns) ? BORDER_EDGES.get(child.local) : undefined;
+    const style = nodeAttr(child, "style");
+    if (side === undefined || side === "diagonal" || style === undefined || !BORDER_STYLES.has(style) || borders[side] !== undefined) {
+      continue;
+    }
+    const edge: CellBorderEdge = { style: style as SheetBorderStyle };
+    const color = nodeColor(firstChild(child, "color"), indexedColors);
+    if (color !== undefined) {
+      edge.color = color;
+    }
+    borders[side] = edge;
+  }
+  return Object.keys(borders).length > 0 ? borders : undefined;
+}
+
+/** One `<dxf>` (styles.xml) or `<x14:dxf>` (an x14 rule's inline one) →
+ * the model's Dxf, without `sourceXml` (see the module header). */
+export function readDxfNode(node: XmlNode, indexedColors?: readonly string[]): Dxf {
+  const dxf: Dxf = {};
+  const font = firstChild(node, "font");
+  const fontValue = font ? readDxfFont(font, indexedColors) : undefined;
+  if (fontValue !== undefined) {
+    dxf.font = fontValue;
+  }
+  const fill = firstChild(node, "fill");
+  const fillValue = fill ? readDxfFill(fill, indexedColors) : undefined;
+  if (fillValue !== undefined) {
+    dxf.fill = fillValue;
+  }
+  const border = firstChild(node, "border");
+  const borders = border ? readDxfBorders(border, indexedColors) : undefined;
+  if (borders !== undefined) {
+    dxf.borders = borders;
+  }
+  const numFmt = firstChild(node, "numFmt");
+  if (numFmt) {
+    const code = nodeAttr(numFmt, "formatCode") ?? BUILTIN_NUMBER_FORMATS[parseIndex(nodeAttr(numFmt, "numFmtId")) ?? -1];
+    if (code !== undefined) {
+      dxf.numberFormat = code;
+    }
+  }
+  return dxf;
+}
+
+/** `xl/styles.xml`'s `<dxfs>` → the model's differential styles, by index,
+ * each with its `<dxf>` verbatim as `sourceXml` (see the module header); []
+ * for a part without dxfs or one that is not well-formed. The part's own
+ * `<indexedColors>` palette applies. The reader upgrade (open.ts) calls this
+ * for a stored workbook that predates SPEC-129. */
+export function readXlsxDxfs(xml: string | undefined): Dxf[] {
+  const root = xml === undefined ? undefined : elementTree(xml)?.[0];
+  if (xml === undefined || !root || root.local !== "styleSheet" || !inMain(root.ns)) {
+    return [];
+  }
+  const palette = firstChild(firstChild(root, "colors"), "indexedColors");
+  const indexed = palette
+    ? childNodes(palette, "rgbColor", inMain)
+        .slice(0, 64)
+        .map((entry, index) => xlsxRgbToHex(nodeAttr(entry, "rgb") ?? "") ?? INDEXED_COLORS[index]!)
+    : [];
+  const indexedColors = indexed.length > 0 ? indexed : undefined;
+  const dxfs = firstChild(root, "dxfs");
+  return (dxfs ? childNodes(dxfs, "dxf", inMain) : []).map((node) => ({ ...readDxfNode(node, indexedColors), sourceXml: xml.slice(node.start, node.end) }));
+}
+
+/** A dxf's children as SpreadsheetML (see the module header), in CT_Dxf
+ * order; `numFmtId` names the id a format code is written with. */
+export function dxfXml(dxf: Dxf, theme: DocumentTheme | undefined, p: string, numFmtId: (code: string) => number): string {
+  let out = "";
+  const font = dxf.font;
+  if (font !== undefined && Object.values(font).some((value) => value !== undefined)) {
+    const flag = (local: string, value: boolean | undefined): string => (value === undefined ? "" : value ? `<${p}${local}/>` : `<${p}${local} val="0"/>`);
+    let body = flag("b", font.bold) + flag("i", font.italic) + flag("strike", font.strike);
+    if (font.underline !== undefined) {
+      body += font.underline === "single" ? `<${p}u/>` : `<${p}u val="${font.underline}"/>`;
+    }
+    if (font.color !== undefined) {
+      body += colorElement("color", font.color, theme, p);
+    }
+    out += `<${p}font>${body}</${p}font>`;
+  }
+  if (dxf.numberFormat !== undefined) {
+    out += `<${p}numFmt numFmtId="${numFmtId(dxf.numberFormat)}" formatCode="${escapeAttributeValue(dxf.numberFormat)}"/>`;
+  }
+  if (dxf.fill !== undefined) {
+    out +=
+      dxf.fill.kind === "solid"
+        ? `<${p}fill><${p}patternFill>${colorElement("bgColor", dxf.fill.color, theme, p)}</${p}patternFill></${p}fill>`
+        : fillXml(dxf.fill, theme, p);
+  }
+  const borders = dxf.borders;
+  if (borders !== undefined && DXF_BORDER_EDGES.some((edge) => borders[edge] !== undefined)) {
+    const edges = (["left", "right", "top", "bottom"] as const)
+      .map((side) => {
+        const edge = borders[side];
+        if (edge === undefined) {
+          return "";
+        }
+        return edge.color === undefined
+          ? `<${p}${side} style="${edge.style}"/>`
+          : `<${p}${side} style="${edge.style}">${colorElement("color", edge.color, theme, p)}</${p}${side}>`;
+      })
+      .join("");
+    out += `<${p}border>${edges}</${p}border>`;
+  }
+  return out;
+}
+
 function defaultTable(): XlsxStyleTable {
-  return { styles: defaultStyles(), defaultFont: { ...DEFAULT_XLSX_FONT } };
+  return { styles: defaultStyles(), defaultFont: { ...DEFAULT_XLSX_FONT }, dxfs: [] };
 }
 
 /** Reads `xl/styles.xml` (undefined: the workbook has no styles part) into
@@ -676,6 +919,7 @@ export function readXlsxStyles(xml: string | undefined, theme: DocumentTheme | u
   const table: XlsxStyleTable = {
     styles: styles.length > 0 ? styles : defaultStyles(),
     defaultFont: { family, sizePt: normalFont?.sizePt ?? DEFAULT_XLSX_FONT.sizePt },
+    dxfs: readXlsxDxfs(xml),
   };
   if (indexedColors !== undefined) {
     table.indexedColors = indexedColors;
@@ -814,10 +1058,10 @@ function protectionXml(protection: CellStyle["protection"], p: string): string {
 }
 
 /** The collections the writer appends to. */
-type StyleCollection = "numFmts" | "fonts" | "fills" | "borders" | "cellStyleXfs" | "cellXfs" | "cellStyles";
+type StyleCollection = "numFmts" | "fonts" | "fills" | "borders" | "cellStyleXfs" | "cellXfs" | "cellStyles" | "dxfs";
 
 /** Those collections, in CT_Stylesheet order. */
-const STYLE_COLLECTIONS: readonly StyleCollection[] = ["numFmts", "fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "cellStyles"];
+const STYLE_COLLECTIONS: readonly StyleCollection[] = ["numFmts", "fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "cellStyles", "dxfs"];
 
 /** CT_Stylesheet's children, in schema order. */
 const STYLESHEET_ORDER = ["numFmts", "fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "cellStyles", "dxfs", "tableStyles", "colors", "extLst"];
@@ -881,8 +1125,21 @@ export class XlsxStyleWriter {
   private readonly spans = new Map<string, ElementSpan>();
   private readonly order: ElementSpan[] = [];
   private rootCloseStart = -1;
-  private readonly counts: Record<StyleCollection, number> = { numFmts: 0, fonts: 0, fills: 0, borders: 0, cellStyleXfs: 0, cellXfs: 0, cellStyles: 0 };
-  private readonly appends: Record<StyleCollection, string[]> = { numFmts: [], fonts: [], fills: [], borders: [], cellStyleXfs: [], cellXfs: [], cellStyles: [] };
+  private readonly counts: Record<StyleCollection, number> = { numFmts: 0, fonts: 0, fills: 0, borders: 0, cellStyleXfs: 0, cellXfs: 0, cellStyles: 0, dxfs: 0 };
+  private readonly appends: Record<StyleCollection, string[]> = {
+    numFmts: [],
+    fonts: [],
+    fills: [],
+    borders: [],
+    cellStyleXfs: [],
+    cellXfs: [],
+    cellStyles: [],
+    dxfs: [],
+  };
+  /** SPEC-129: the ids given to dxf number formats `<numFmts>` lacks. */
+  private readonly dxfNumFmts = new Map<string, number>();
+  /** SPEC-129: the highest model dxfId a serialised rule wrote, plus one. */
+  private dxfsUsed = 0;
   /** styleKey → index, per collection (the first source entry, then appends). */
   private readonly fontIds = new Map<string, number>();
   private readonly fillIds = new Map<string, number>();
@@ -908,7 +1165,7 @@ export class XlsxStyleWriter {
    * from-scratch base from `model.styles[0]` (xf 0 is style 0). */
   constructor(
     source: string | undefined,
-    private readonly model: Pick<SpreadsheetModel, "styles" | "theme" | "indexedColors" | "namedStyles">,
+    private readonly model: Pick<SpreadsheetModel, "styles" | "theme" | "indexedColors" | "namedStyles"> & Partial<Pick<SpreadsheetModel, "dxfs">>,
   ) {
     this.fromSource = source !== undefined;
     this.text = source ?? fromScratchBase(model.styles[0], model.theme);
@@ -1012,6 +1269,14 @@ export class XlsxStyleWriter {
     const cellStylesElement = childNamed(root, "cellStyles");
     const cellStyles = cellStylesElement ? childrenNamed(cellStylesElement, "cellStyle") : [];
     this.counts.cellStyles = cellStyles.length;
+    // SPEC-129: the source's dxfs keep their indices; their numFmt ids are
+    // taken, like numFmts'.
+    const dxfsElement = childNamed(root, "dxfs");
+    const dxfs = dxfsElement ? childrenNamed(dxfsElement, "dxf") : [];
+    this.counts.dxfs = dxfs.length;
+    for (const dxf of dxfs) {
+      this.highestNumFmt = Math.max(this.highestNumFmt, parseIndex(childNamed(dxf, "numFmt")?.getAttribute("numFmtId")) ?? 0);
+    }
     let builtinNormal: number | undefined;
     for (const cellStyle of cellStyles) {
       const name = cellStyle.getAttribute("name");
@@ -1219,12 +1484,45 @@ export class XlsxStyleWriter {
   /** Whether anything was appended to the part (beyond a from-scratch
    * base's own xf 0). */
   get changed(): boolean {
-    return this.appendCount() > this.baseAppends;
+    return this.appendCount() > this.baseAppends || this.appendedDxfs().length > this.appends.dxfs.length;
+  }
+
+  /** SPEC-129: the id a dxf's number format is written with — the one
+   * `<numFmts>` gives the code, else the next free id ≥ 164 (once per code
+   * per save; never added to `<numFmts>`). */
+  dxfNumFmtId(code: string): number {
+    const known = this.numFmtByCode.get(code) ?? this.dxfNumFmts.get(code);
+    if (known !== undefined) {
+      return known;
+    }
+    const id = Math.max(163, this.highestNumFmt) + 1;
+    this.highestNumFmt = id;
+    this.dxfNumFmts.set(code, id);
+    return id;
+  }
+
+  /** SPEC-129: the dxfId a serialised base rule writes for the model's dxf
+   * `id` — the same index, the table being append-only — recording that the
+   * part must hold it (see the module header). */
+  dxfFor(id: number): number {
+    this.dxfsUsed = Math.max(this.dxfsUsed, id + 1);
+    return id;
+  }
+
+  /** The model's dxfs past the source part's, up to the last one a rule
+   * wrote (dxfFor). */
+  private appendedDxfs(): readonly Dxf[] {
+    const dxfs = this.model.dxfs ?? [];
+    return dxfs.slice(this.counts.dxfs, Math.min(dxfs.length, this.dxfsUsed));
   }
 
   /** The part text: the source verbatim when nothing was appended, else
    * with the appends spliced in (see the module header). */
   xml(): string {
+    const p0 = this.prefix;
+    for (const dxf of this.appendedDxfs().slice(this.appends.dxfs.length)) {
+      this.append("dxfs", `<${p0}dxf>${dxfXml(dxf, this.model.theme, p0, (code) => this.dxfNumFmtId(code))}</${p0}dxf>`);
+    }
     if (this.appendCount() === 0) {
       return this.text;
     }

@@ -30,18 +30,28 @@
 // cellStyle carrying a built-in's builtinId, Normal's xf and cellStyle
 // first in a part without them, from scratch too), write → read, append-only
 // over every collection, and a whole save of spec117-styles.xlsx.
+//
+// SPEC-129 "xlsx wire mapping" › dxfs: `<dxfs>` read by index with Excel's
+// quirks (a patternFill with no patternType is solid in its bgColor, `<b
+// val="0"/>` an explicit not-bold, `<u val="none"/>`, tinted theme colours),
+// each dxf's XML kept verbatim; the writer's append-only `<dxfs>` (nothing
+// appended until a rule writes a dxfId past the source's, the count
+// updated, a solid fill as `bgColor`, a numFmt's id the one numFmts gives
+// its code else the next free one ≥ 164, `<dxfs>` created before
+// tableStyles), read back to the same dxfs.
 import { describe, expect, it } from "vitest";
 import { DEFAULT_THEME, hexToRgb, resolveColor, resolveFont, type DocumentTheme, type ModelColor } from "../../core/theme";
 import { unzip } from "../../core/zip";
 import { getCell } from "../address";
 import { buildSpec117StylesXlsxBytes, SPEC117_BORDER_STYLES, SPEC117_STYLES_XLSX, SPEC117_XF } from "../fixtures/build";
 import { packageIntegrity } from "../fixtures/packageIntegrity";
+import type { Dxf } from "../conditionalFormats";
 import type { CellFont, CellStyle, SheetColorRef } from "../model";
 import { readSpreadsheetBytes } from "../open";
 import { createBlankWorkbook } from "../sheets";
 import { builtinCellStyle, cellStyle, INDEXED_COLORS, internStyle, STYLE_ASPECTS, styleKey, type NamedCellStyle, type StyleAspect } from "../styles";
 import { parseXlsx } from "./reader";
-import { readXlsxStyles, XlsxFontReader, XlsxStyleWriter } from "./styles";
+import { readXlsxDxfs, readXlsxStyles, XlsxFontReader, XlsxStyleWriter } from "./styles";
 import {
   modelColorToXlsxAttrs,
   tintTransforms,
@@ -546,12 +556,13 @@ describe("the parts left unread and the override palette", () => {
     `<colors><mruColors><color rgb="FF66FF33"/></mruColors></colors>` +
     `<extLst><ext uri="{EB79DEF2-80B8-43e5-95BD-54CBDDF9020C}"><slicerStyles defaultSlicerStyle="SlicerStyleLight1"/></ext></extLst>`;
 
-  it("leaves dxfs, tableStyles, extLst and mruColors unread; numFmts are SPEC-118's and read, cellStyleXfs/cellStyles SPEC-123's", () => {
+  it("leaves tableStyles, extLst and mruColors unread (SPEC-129 reads the dxfs); numFmts are SPEC-118's and read, cellStyleXfs/cellStyles SPEC-123's", () => {
     const xfs = [`<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`];
     const numFmts = `<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts`;
     const bare = readXlsxStyles(stylesXml({ xfs }).replace("<fonts", numFmts), undefined);
     const full = readXlsxStyles(stylesXml({ xfs, extra: unread }).replace("<fonts", numFmts), undefined);
-    expect(full).toEqual(bare);
+    expect({ ...full, dxfs: [] }).toEqual(bare);
+    expect(full.dxfs.map(({ sourceXml: _xml, ...dxf }) => dxf)).toEqual([{ font: { bold: true }, fill: { kind: "solid", color: "#ffc7ce" } }]);
     expect(full.styles[0]!.numberFormat).toBe("0.0%");
     expect(full.styles[0]!.namedStyle).toBeUndefined();
     expect(full.indexedColors).toBeUndefined();
@@ -561,6 +572,7 @@ describe("the parts left unread and the override palette", () => {
     const withNamed = readXlsxStyles(stylesXml({ xfs, extra: named + unread }).replace("<fonts", numFmts), undefined);
     expect(withNamed).toEqual({
       ...bare,
+      dxfs: full.dxfs,
       styles: [{ ...bare.styles[0], namedStyle: "Good" }],
       namedStyles: [{ name: "Good", builtinId: 26, style: { font: { family: "Calibri", sizePt: 11 } }, includes: [...STYLE_ASPECTS], sourceXfId: 0 }],
     });
@@ -601,10 +613,11 @@ describe("the default font and missing parts", () => {
   });
 
   it("gives a workbook with no styles part one empty style and Calibri 11", () => {
-    expect(readXlsxStyles(undefined, undefined)).toEqual({ styles: [{}], defaultFont: { family: "Calibri", sizePt: 11 } });
+    // SPEC-129: and no differential styles.
+    expect(readXlsxStyles(undefined, undefined)).toEqual({ styles: [{}], defaultFont: { family: "Calibri", sizePt: 11 }, dxfs: [] });
     // A part that is not well-formed, or names no xf, reads the same.
-    expect(readXlsxStyles("<styleSheet", undefined)).toEqual({ styles: [{}], defaultFont: { family: "Calibri", sizePt: 11 } });
-    expect(readXlsxStyles(`<styleSheet xmlns="${MAIN}"/>`, undefined)).toEqual({ styles: [{}], defaultFont: { family: "Calibri", sizePt: 11 } });
+    expect(readXlsxStyles("<styleSheet", undefined)).toEqual({ styles: [{}], defaultFont: { family: "Calibri", sizePt: 11 }, dxfs: [] });
+    expect(readXlsxStyles(`<styleSheet xmlns="${MAIN}"/>`, undefined)).toEqual({ styles: [{}], defaultFont: { family: "Calibri", sizePt: 11 }, dxfs: [] });
   });
 
   it("reads a strict (ISO 29500) styles part", () => {
@@ -612,6 +625,7 @@ describe("the default font and missing parts", () => {
     expect(readXlsxStyles(xml, undefined)).toEqual({
       styles: [{ font: { family: "Arial", sizePt: 10, bold: true }, sourceXf: 0 }],
       defaultFont: { family: "Arial", sizePt: 10 },
+      dxfs: [],
     });
   });
 });
@@ -1445,5 +1459,106 @@ describe("SPEC-123 named cell styles: the style writer", () => {
       expect(contentOf(after, local).startsWith(contentOf(before, local)), local).toBe(true);
     }
     expect(contentOf(after, "cellStyles")).toBe(`${contentOf(before, "cellStyles")}<cellStyle name="Bad" xfId="3" builtinId="27"/>`);
+  });
+});
+
+// --- SPEC-129: differential styles ------------------------------------------------------
+
+describe("SPEC-129 dxfs: Excel's quirks on read, each dxf kept verbatim", () => {
+  const DXFS = [
+    `<dxf><font><b val="0"/><i/><strike val="1"/><u val="none"/><color theme="4" tint="-0.249977111117893"/></font></dxf>`,
+    `<dxf><font><b/><u/><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>`,
+    `<dxf><fill><patternFill patternType="solid"><fgColor rgb="FF00B050"/></patternFill></fill></dxf>`,
+    `<dxf><fill><patternFill patternType="darkGray"><fgColor rgb="FF0000FF"/><bgColor indexed="13"/></patternFill></fill></dxf>`,
+    `<dxf><numFmt numFmtId="164" formatCode="0.0%"/><border><left style="thin"><color rgb="FFFF0000"/></left><bottom style="double"/></border></dxf>`,
+    `<dxf><alignment horizontal="center"/><protection locked="0"/></dxf>`,
+  ];
+  const part = stylesXml({ extra: `<dxfs count="${DXFS.length}">${DXFS.join("")}</dxfs>` });
+
+  it("reads tri-state flags, underline none, tinted theme colours, the bgColor fill quirk, patterns, number formats and borders by index", () => {
+    const dxfs = readXlsxDxfs(part);
+    expect(dxfs.map(({ sourceXml: _xml, ...dxf }) => dxf)).toEqual([
+      { font: { bold: false, italic: true, strike: true, underline: "none", color: { theme: "accent1", lumMod: 1 - 0.249977111117893, xlsxTint: "-0.249977111117893" } } },
+      { font: { bold: true, underline: "single", color: "#9c0006" }, fill: { kind: "solid", color: "#ffc7ce" } },
+      { fill: { kind: "solid", color: "#00b050" } },
+      { fill: { kind: "pattern", pattern: "darkGray", fg: "#0000ff", bg: INDEXED_COLORS[13] } },
+      { numberFormat: "0.0%", borders: { left: { style: "thin", color: "#ff0000" }, bottom: { style: "double" } } },
+      {},
+    ] satisfies Dxf[]);
+    // Each keeps its element verbatim — alignment and protection included.
+    expect(dxfs.map((dxf) => dxf.sourceXml)).toEqual(DXFS);
+    // The tinted theme colour resolves as SPEC-117's does (accent 1, darker 25%).
+    expectNearColor(resolveColor(dxfs[0]!.font!.color!, DEFAULT_THEME), "#2f5597");
+  });
+
+  it("reads the same through readXlsxStyles; a part without dxfs, or not well-formed, reads none", () => {
+    expect(readXlsxStyles(part, undefined).dxfs).toEqual(readXlsxDxfs(part));
+    expect(readXlsxDxfs(stylesXml({}))).toEqual([]);
+    expect(readXlsxDxfs("<styleSheet")).toEqual([]);
+    expect(readXlsxDxfs(undefined)).toEqual([]);
+  });
+});
+
+/** A blank workbook holding `dxfs`. */
+function modelWith(dxfs: Dxf[]) {
+  return { ...createBlankWorkbook(), dxfs };
+}
+
+describe("SPEC-129 dxfs: the writer appends past the source's, append-only", () => {
+  const SOURCE_DXF = `<dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>`;
+  const source =
+    `<styleSheet xmlns="${MAIN}"><numFmts count="1"><numFmt numFmtId="170" formatCode="0.0%"/></numFmts>` +
+    `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
+    `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+    `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+    `<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>` +
+    `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+    `<dxfs count="1">${SOURCE_DXF}</dxfs><tableStyles count="0"/></styleSheet>`;
+  const appended: Dxf[] = [
+    { font: { color: "#006100", bold: false, underline: "none", strike: true }, fill: { kind: "solid", color: "#c6efce" } },
+    { numberFormat: "0.0%" },
+    { numberFormat: "#,##0.000", borders: { top: { style: "thin" }, right: { style: "medium", color: "#ff0000" } } },
+    { fill: { kind: "pattern", pattern: "lightGray", fg: "#ff0000" } },
+  ];
+
+  it("leaves the part untouched until a rule writes a dxfId past the source's — an interned but unwritten dxf is not appended", () => {
+    const writer = new XlsxStyleWriter(source, modelWith([...readXlsxDxfs(source), ...appended]));
+    expect(writer.changed).toBe(false);
+    expect(writer.xml()).toBe(source);
+    expect(writer.dxfFor(0)).toBe(0);
+    expect(writer.changed).toBe(false);
+    expect(writer.xml()).toBe(source);
+  });
+
+  it("appends every dxf up to the highest written id, count updated, a solid fill as bgColor, numFmt ids reused or the next free ≥ 164; the source dxf verbatim", () => {
+    const writer = new XlsxStyleWriter(source, modelWith([...readXlsxDxfs(source), ...appended]));
+    expect(writer.dxfFor(3)).toBe(3);
+    expect(writer.changed).toBe(true);
+    const xml = writer.xml();
+    expect(xml).toBe(
+      source.replace(
+        `<dxfs count="1">${SOURCE_DXF}</dxfs>`,
+        `<dxfs count="4">${SOURCE_DXF}` +
+          `<dxf><font><b val="0"/><strike/><u val="none"/><color rgb="FF006100"/></font><fill><patternFill><bgColor rgb="FFC6EFCE"/></patternFill></fill></dxf>` +
+          `<dxf><numFmt numFmtId="170" formatCode="0.0%"/></dxf>` +
+          `<dxf><numFmt numFmtId="171" formatCode="#,##0.000"/><border><right style="medium"><color rgb="FFFF0000"/></right><top style="thin"/></border></dxf></dxfs>`,
+      ),
+    );
+    // Read back, the appended entries are the model's.
+    expect(readXlsxDxfs(xml).map(({ sourceXml: _xml, ...dxf }) => dxf)).toEqual([readXlsxDxfs(source)[0]!, ...appended.slice(0, 3)].map(({ sourceXml: _xml, ...dxf }) => dxf));
+  });
+
+  it("creates <dxfs> after cellStyles, before tableStyles, when the part has none; from scratch too", () => {
+    const bare = source.replace(`<dxfs count="1">${SOURCE_DXF}</dxfs>`, "");
+    const writer = new XlsxStyleWriter(bare, modelWith([appended[0]!]));
+    writer.dxfFor(0);
+    expect(writer.xml()).toContain(`</cellStyles><dxfs count="1"><dxf><font>`);
+    expect(writer.xml()).toMatch(/<\/dxf><\/dxfs><tableStyles count="0"\/><\/styleSheet>$/);
+    const scratch = new XlsxStyleWriter(undefined, modelWith([appended[3]!, appended[1]!]));
+    scratch.dxfFor(1);
+    const xml = scratch.xml();
+    expect(xml).toContain(`<dxfs count="2"><dxf><fill><patternFill patternType="lightGray"><fgColor rgb="FFFF0000"/>`);
+    expect(xml).toContain(`<dxf><numFmt numFmtId="164" formatCode="0.0%"/></dxf></dxfs><tableStyles count="0"/>`);
+    expect(readXlsxDxfs(xml).map(({ sourceXml: _xml, ...dxf }) => dxf)).toEqual([appended[3], appended[1]]);
   });
 });
