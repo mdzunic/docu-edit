@@ -37,11 +37,38 @@ import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
 import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "../core/theme";
 import type { CellRef, GridRange } from "./address";
+import type { SpreadsheetLocaleTag } from "./numberFormat/locale";
 import type { SheetSelection } from "./selection";
 import type { NamedCellStyle } from "./styles";
 
-export type SpreadsheetFormat = "xlsx" | "ods"; // SPEC-126 widens with "csv" | "tsv"
+export type SpreadsheetFormat = "xlsx" | "ods" | "csv" | "tsv";
 export type PackageVariant = "macroEnabled" | "template" | "macroEnabledTemplate";
+
+// --- SPEC-126: the CSV dialect --------------------------------------------------
+// SPEC-126 is the normative source for CsvDialect: how a `.csv`/`.tsv` file
+// was written, recorded at read so a save writes it back the same way (and
+// csv/write.ts never guesses). Present exactly when `format` is "csv" or
+// "tsv"; the source bytes themselves are the single `opaque` part
+// csv/parse.ts's CSV_SOURCE_PART.
+export type CsvDelimiter = "," | ";" | "\t" | "|";
+export type CsvEncoding = "utf-8" | "utf-16le" | "utf-16be" | "windows-1252";
+export interface CsvDialect {
+  delimiter: CsvDelimiter;
+  encoding: CsvEncoding;
+  bom: boolean; // the source began with its encoding's BOM
+  lineEnding: "\r\n" | "\n" | "\r"; // the first record terminator outside quotes ("\r\n" if none)
+  finalLineEnding: boolean; // the source's last record was terminated
+  quoteAll: boolean; // every non-empty field in the sniff sample was quoted
+  width?: number; // fields per record, when every non-blank record agreed
+  sepLine?: true; // the source began with Excel's "sep=X" line
+  localeTag: SpreadsheetLocaleTag; // the locale the fields were read in (and are written in)
+  sheetId: string; // the sheet read from the file
+}
+
+/** Whether a workbook format is one of SPEC-126's delimited-text formats. */
+export function isCsvFormat(format: SpreadsheetFormat): format is "csv" | "tsv" {
+  return format === "csv" || format === "tsv";
+}
 
 /** The title a workbook gets when nothing names it — a new workbook's, and
  * the download name of an untitled one (SPEC-121). */
@@ -373,6 +400,10 @@ export interface SpreadsheetModel {
    *  "Named cell styles"); a built-in applied for the first time is appended
    *  and stays (undo never removes one — an unused definition is harmless). */
   namedStyles?: NamedCellStyle[];
+  // --- SPEC-126 ---
+  /** How a `.csv`/`.tsv` source was written — present exactly when `format`
+   *  is "csv" or "tsv". */
+  csv?: CsvDialect;
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or

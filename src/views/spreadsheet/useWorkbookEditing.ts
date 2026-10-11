@@ -79,6 +79,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     redoLabel: undo.redoLabel.value,
     copyLabel: download.copyLabel.value,
     copyDisabledReason: download.copyDisabledReason.value,
+    copyOdsLabel: download.copyOdsLabel.value,
   }));
   return { undo, commands, download, appBar, cell };
 }

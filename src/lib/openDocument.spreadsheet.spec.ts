@@ -248,11 +248,12 @@ describe("the open surface", () => {
     for (const name of ["a.xlsx", "a.xlsm", "a.xltx", "a.xltm", "a.ods", "a.ots", "A.XLSX"]) {
       expect(hasSupportedExtension(name)).toBe(true);
     }
-    for (const name of ["a.xls", "a.xlsb", "a.numbers", "a.fods", "a.csv"]) {
+    // SPEC-126 admits .csv/.tsv by extension (openDocument.csv.spec.ts).
+    for (const name of ["a.xls", "a.xlsb", "a.numbers", "a.fods"]) {
       expect(hasSupportedExtension(name)).toBe(false);
     }
     expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe(
-      "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .pdf and image files",
+      "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .csv, .tsv, .pdf and image files",
     );
   });
 

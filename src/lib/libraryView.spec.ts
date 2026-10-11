@@ -169,6 +169,8 @@ describe("chipUnavailable", () => {
     odp: 0,
     xlsx: 0,
     ods: 0,
+    csv: 0,
+    tsv: 0,
     pdf: 0,
     png: 0,
     jpeg: 0,
@@ -256,6 +258,16 @@ describe("workbook chips (SPEC-116)", () => {
     expect(FORMAT_CHIPS.find((chip) => chip.id === "ods")).toEqual({ id: "ods", label: "ODS", formats: ["ods"] });
     expect(FILTERABLE_FORMATS).toContain("xlsx");
     expect(FILTERABLE_FORMATS).toContain("ods");
+  });
+
+  it("adds a csv and a tsv chip right after ods, both filterable (SPEC-126)", () => {
+    const ids = FORMAT_CHIPS.map((chip) => chip.id);
+    const odsAt = ids.indexOf("ods");
+    expect(ids.slice(odsAt, odsAt + 3)).toEqual(["ods", "csv", "tsv"]);
+    expect(FORMAT_CHIPS.find((chip) => chip.id === "csv")).toEqual({ id: "csv", label: "CSV", formats: ["csv"] });
+    expect(FORMAT_CHIPS.find((chip) => chip.id === "tsv")).toEqual({ id: "tsv", label: "TSV", formats: ["tsv"] });
+    expect(FILTERABLE_FORMATS).toContain("csv");
+    expect(FILTERABLE_FORMATS).toContain("tsv");
   });
 
   it("filters and counts a workbook's variants with their format", () => {

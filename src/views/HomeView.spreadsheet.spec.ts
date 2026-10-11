@@ -3,7 +3,9 @@
 // and ods chips right after odp (a variant filters with its format), the
 // card's SheetMiniature and "N sheets" stat, and the shared search/sort/star/
 // select/trash/download machinery over MIXED kinds with no new code path.
-// Same harness as HomeView.media.spec.ts.
+// SPEC-126 adds CSV and TSV as first-class workbook formats: their badges,
+// chips right after ods, the card's miniature and "1 sheet", and bulk
+// download of the exact source bytes. Same harness as HomeView.media.spec.ts.
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
@@ -103,7 +105,17 @@ async function loadModules() {
     store.storePresentation(deck);
     return deck;
   }
-  return { store, seedWorkbook, seedEveryFlavour, seedText, seedDeck, mountHome };
+  /** SPEC-126: reads a delimited-text fixture into a workbook titled
+   * `title` and stores it as last modified at `at`. */
+  async function seedCsv(title: string, fixture: "csv" | "tsv", at: number) {
+    const { readCsvBytes } = await import("../lib/spreadsheet/csv/parse");
+    const bytes = fixture === "csv" ? fixtures.buildSpec126Semicolon1252CsvBytes() : fixtures.buildSpec126UnicodeTsvBytes();
+    const model = readCsvBytes(bytes, fixture, title, { userLocaleTag: "en-US" });
+    vi.spyOn(Date, "now").mockReturnValue(at);
+    store.storeSpreadsheet(model);
+    return { bytes, model };
+  }
+  return { store, seedWorkbook, seedEveryFlavour, seedText, seedDeck, seedCsv, mountHome };
 }
 
 async function selectAllRows(wrapper: { findAll: (selector: string) => Array<{ setValue: (value: boolean) => Promise<void> }> }) {
@@ -266,5 +278,88 @@ describe("bulk actions over mixed kinds", () => {
     expect(restored?.sheets).toHaveLength(3);
     expect(restored?.sheets.map((sheet) => sheet.name)).toEqual(["Summary", "Data", "Hidden"]);
     expect(restored?.sheets.map((sheet) => sheet.rows.length)).toEqual([11, 500, 2]);
+  });
+});
+
+describe("csv and tsv workbooks (SPEC-126)", () => {
+  it("badges them CSV and TSV and puts a csv and a tsv chip right after ods, each counting and filtering its format", async () => {
+    const { seedCsv, seedWorkbook, mountHome } = await loadModules();
+    await seedWorkbook("Stock", "mini-book.ods", 4000);
+    await seedCsv("Kunden", "csv", 3000);
+    await seedCsv("Greetings", "tsv", 2000);
+    const { wrapper } = await mountHome();
+
+    const badges = Object.fromEntries(
+      wrapper
+        .findAll('[data-testid="library-row"]')
+        .map((row) => [row.get('[data-testid="row-title"]').text(), row.get('[data-testid="row-format"]').text()]),
+    );
+    expect(badges).toEqual({ Stock: "ODS", Kunden: "CSV", Greetings: "TSV" });
+
+    const chipIds = wrapper.findAll('[data-testid^="filter-"]').map((chip) => chip.attributes("data-testid"));
+    const ods = chipIds.indexOf("filter-ods");
+    expect(chipIds.slice(ods + 1, ods + 3)).toEqual(["filter-csv", "filter-tsv"]);
+    const csv = wrapper.get('[data-testid="filter-csv"]');
+    expect(csv.text()).toContain("CSV");
+    expect(csv.get(".chip-count").text()).toBe("1");
+    expect(wrapper.get('[data-testid="filter-tsv"] .chip-count').text()).toBe("1");
+    await csv.trigger("click");
+    expect(rowTitles(wrapper)).toEqual(["Kunden"]);
+    await csv.trigger("click");
+    await wrapper.get('[data-testid="filter-tsv"]').trigger("click");
+    expect(rowTitles(wrapper)).toEqual(["Greetings"]);
+  });
+
+  it('shows a csv workbook\'s card with the SheetMiniature and "1 sheet"', async () => {
+    const { seedCsv, mountHome } = await loadModules();
+    const { model } = await seedCsv("Kunden", "csv", 2000);
+    const { wrapper } = await mountHome();
+    await wrapper.get('[data-testid="view-grid"]').trigger("click");
+    const card = () => wrapper.get(`[data-testid="library-row"][data-doc-id="${model.id}"]`);
+    await vi.waitFor(() => expect(card().get('[data-testid="row-counts"]').text()).toBe("1 sheet"), { timeout: 5_000 });
+    await vi.waitFor(() => expect(card().find('[data-testid="sheet-miniature"]').exists()).toBe(true), { timeout: 5_000 });
+    const cells = card()
+      .findAll('[data-testid="sheet-miniature-cell"]')
+      .map((cell) => cell.text());
+    expect(cells).toContain("Müller");
+    expect(cells).toContain("01234");
+    // Displayed in the user's locale, read in the file's.
+    expect(cells).toContain("1234.5");
+  });
+
+  it("searches, stars, trashes, restores and bulk-downloads them on the shared paths — the download the exact source bytes", async () => {
+    const downloads: Array<{ bytes: Uint8Array; name: string; type: string }> = [];
+    vi.doMock("../lib/core/triggerDownload", () => ({
+      triggerBlobDownload: (bytes: Uint8Array, name: string, type: string) => {
+        downloads.push({ bytes, name, type });
+      },
+    }));
+    const { store, seedText, seedCsv, mountHome } = await loadModules();
+    seedText("doc-1", "Report", 3000);
+    const { model, bytes } = await seedCsv("Kunden", "csv", 2000);
+    const { wrapper } = await mountHome();
+
+    await wrapper.get('[data-testid="library-search"]').setValue("kdn");
+    expect(rowTitles(wrapper)).toEqual(["Kunden"]);
+    await wrapper.get('[data-testid="library-search"]').setValue("");
+    await wrapper.get(`[data-testid="library-row"][data-doc-id="${model.id}"] [data-testid="row-star"]`).trigger("click");
+    expect(store.getStoredRecord(model.id)?.starred).toBe(true);
+    expect(rowTitles(wrapper)).toEqual(["Kunden", "Report"]);
+
+    await selectAllRows(wrapper);
+    await wrapper.get('[data-testid="bulk-download"]').trigger("click");
+    await vi.waitFor(() => expect(downloads).toHaveLength(2), { timeout: 10_000 });
+    const csv = downloads.find((download) => download.name === "Kunden.csv");
+    expect(csv?.type).toBe("text/csv");
+    expect(equalBytes(csv?.bytes ?? new Uint8Array(0), bytes)).toBe(true);
+
+    await selectAllRows(wrapper);
+    await wrapper.get('[data-testid="bulk-trash"]').trigger("click");
+    expect(store.listTrashedDocuments().map((entry) => entry.id)).toContain(model.id);
+    await wrapper.get('[data-testid="toast-action"]').trigger("click");
+    const restored = store.getSpreadsheet(model.id);
+    expect(restored?.format).toBe("csv");
+    expect(restored?.csv).toEqual(model.csv);
+    expect(restored?.sheets[0]?.rows).toHaveLength(5);
   });
 });

@@ -1,15 +1,18 @@
 <script setup lang="ts">
 // The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget): each composable owns its feature —
-// loading, view state, selection, editing, formatting, rows and columns, merges, clipboard, fill and move; surfaces: components/.
+// loading, view state, selection, editing, formatting, rows and columns, merges, clipboard, fill and move, CSV import; surfaces: components/.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
-import SpreadsheetAppBar from "../components/spreadsheet/SpreadsheetAppBar.vue";
+import CsvImportBar from "../components/spreadsheet/CsvImportBar.vue";
+import CsvImportDialog from "../components/spreadsheet/CsvImportDialog.vue";
 import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar.vue";
+import WorkbookAppBar from "../components/spreadsheet/WorkbookAppBar.vue";
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import WorkbookCommandBar from "../components/spreadsheet/WorkbookCommandBar.vue";
 import WorkbookNotFound from "../components/spreadsheet/WorkbookNotFound.vue";
 import { useTheme } from "../composables/useTheme";
+import { useCsvImport } from "./spreadsheet/useCsvImport";
 import { useFillHandle } from "./spreadsheet/useFillHandle";
 import { useFormatPainter } from "./spreadsheet/useFormatPainter";
 import { useFormatting } from "./spreadsheet/useFormatting";
@@ -50,6 +53,7 @@ const clipboard = useSheetClipboard({ book, viewState, selection, editing, local
 const fillHandle = useFillHandle({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
 const rangeMove = useRangeMove({ book, viewState, selection, editing });
 const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle });
+const csvImport = useCsvImport({ book, undo: editing.undo, router: useRouter() });
 const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove }));
 </script>
 
@@ -59,21 +63,14 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
     :format-badge="book.badge.value"
   >
     <template #app-bar-actions>
-      <SpreadsheetAppBar
-        :format-label="book.formatLabel.value"
-        v-bind="editing.appBar.value"
-        @undo="editing.undo.undo()"
-        @redo="editing.undo.redo()"
-        @download="editing.download.download()"
-        @download-copy="editing.download.downloadCopy()"
-        @close="book.close()"
-      />
+      <WorkbookAppBar v-bind="{ book, editing }" />
     </template>
     <template
       v-if="book.workbook.value"
       #menubar
     >
       <WorkbookCommandBar v-bind="{ menu, formatting, painter, merges }" />
+      <CsvImportBar :csv-import="csvImport" />
     </template>
     <WorkbookBody
       v-if="book.workbook.value"
@@ -82,6 +79,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       :editing="editing"
     />
     <WorkbookNotFound v-else />
+    <CsvImportDialog :csv-import="csvImport" />
     <template
       v-if="book.workbook.value"
       #status-bar

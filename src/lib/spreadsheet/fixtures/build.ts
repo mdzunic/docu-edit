@@ -6062,3 +6062,141 @@ export async function buildSpec125FillOdsBytes(): Promise<Uint8Array> {
   const cellCount = spec125Sheet1Cells().size + sheet2.size + spec125SeriesGrid().size;
   return loPackage(loContent(tables), loMeta(F.title, F.sheetNames.length, cellCount), loSettings(F.sheetNames, "Sheet1"));
 }
+
+// --- SPEC-126: CSV and TSV --------------------------------------------------------------------
+// Six delimited-text files, each emulating a producer. They are LITERAL
+// bytes — spelled out here character by character and encoded by the small
+// tables below, never by csv/write.ts, which would only prove our writer
+// agrees with itself:
+// - spec126-excel-utf8.csv — Excel "CSV UTF-8": a BOM, CRLF after every
+//   record, minimal quoting (a field with a comma, one with an in-cell LF,
+//   one with `""`), `10/8/2026`, `12%`, `1.50`, `TRUE`, `007`, a 16-digit
+//   number, `1-2`, `SEPT2`, `2026-10-08`, `123456789012`, empty fields;
+//   rectangular (five fields a record).
+// - spec126-semicolon-1252.csv — a German Excel export: Windows-1252, `;`,
+//   CRLF, header `Name;Zip;Amount`, row 2 `Müller;01234;1234,5`, a `€` and
+//   `1.234,56` elsewhere and a `31.12.2025` date.
+// - spec126-quoted.csv — a database dump: UTF-8 without a BOM, LF, every
+//   non-empty field quoted, ragged records, no line ending after the last.
+// - spec126-sep.csv — Excel's `sep=;` first line, then three `;` records.
+// - spec126-unicode.tsv — Excel "Unicode Text": a UTF-16 LE BOM, tab, CRLF,
+//   a quoted field holding a tab and a `""`, Czech, Greek and an
+//   astral-plane emoji.
+// - spec126-mac-pipe.csv — classic Mac: lone CR records, `|`, Windows-1252.
+// SPEC126_CSV records the facts.
+
+/** The few non-ASCII Windows-1252 bytes the fixtures spell. */
+const WINDOWS_1252_BYTES: Readonly<Record<string, number>> = {
+  "€": 0x80,
+  "Ü": 0xdc,
+  "ß": 0xdf,
+  "è": 0xe8,
+  "é": 0xe9,
+  "ö": 0xf6,
+  "û": 0xfb,
+  "ü": 0xfc,
+};
+
+/** `text` as Windows-1252 bytes: ASCII as itself, the table above for the
+ * rest (a character outside both is a fixture bug). */
+function windows1252Literal(text: string): Uint8Array {
+  return Uint8Array.from(Array.from(text), (char) => {
+    const code = char.charCodeAt(0);
+    const byte = code < 0x80 ? code : WINDOWS_1252_BYTES[char];
+    if (byte === undefined) {
+      throw new Error(`no Windows-1252 byte spelled for ${char}`);
+    }
+    return byte;
+  });
+}
+
+/** `text` as UTF-16 LE code units after the FF FE BOM. */
+function utf16LeLiteral(text: string): Uint8Array {
+  const out = new Uint8Array(2 + text.length * 2);
+  out[0] = 0xff;
+  out[1] = 0xfe;
+  for (let at = 0; at < text.length; at += 1) {
+    const unit = text.charCodeAt(at);
+    out[2 + at * 2] = unit & 0xff;
+    out[3 + at * 2] = unit >> 8;
+  }
+  return out;
+}
+
+function withUtf8Bom(text: string): Uint8Array {
+  const body = encoder.encode(text);
+  const out = new Uint8Array(3 + body.length);
+  out.set([0xef, 0xbb, 0xbf]);
+  out.set(body, 3);
+  return out;
+}
+
+export const SPEC126_CSV = {
+  excelUtf8: {
+    fileName: "spec126-excel-utf8.csv",
+    text:
+      "Name,Note,Date,Share,Price\r\n" +
+      '"Smith, Jane","Line one\nLine two",10/8/2026,12%,1.50\r\n' +
+      'Bob,"Says ""hi""",,TRUE,007\r\n' +
+      "Ann,1234567890123456,1-2,SEPT2,\r\n" +
+      "Zoë,Plain text,2026-10-08,,123456789012\r\n",
+    /** The one-field edit the round trip makes: A3's text, replaced by
+     * exactly the typed text. */
+    edit: { ref: "A3", row: 2, col: 0, from: "Bob", to: "Robert" },
+  },
+  semicolon1252: {
+    fileName: "spec126-semicolon-1252.csv",
+    text:
+      "Name;Zip;Amount\r\n" +
+      "Müller;01234;1234,5\r\n" +
+      "Schröder;80331;1.234,56\r\n" +
+      "Café Ü (€);10115;-7,25\r\n" +
+      "Stichtag;;31.12.2025\r\n",
+    edit: { ref: "C2", row: 1, col: 2, from: "1234,5", to: "99" },
+  },
+  quoted: {
+    fileName: "spec126-quoted.csv",
+    text: '"id","name","city"\n"1","Ada","London"\n"2","Grace"\n"3","Linus","Helsinki","FI"\n"4","","Oslo"',
+  },
+  sep: {
+    fileName: "spec126-sep.csv",
+    text: "sep=;\r\nItem;Qty;Price\r\nApples;3;0.5\r\nPears;12;1.25\r\n",
+  },
+  unicode: {
+    fileName: "spec126-unicode.tsv",
+    text:
+      "Jazyk\tPozdrav\tPoznámka\r\n" +
+      "Čeština\tDobrý den\tŽluťoučký kůň\r\n" +
+      'Ελληνικά\tΓειά σου\t"tab\there ""quoted"""\r\n' +
+      "Emoji\t😀\t42\r\n",
+    edit: { ref: "B2", row: 1, col: 1, from: "Dobrý den", to: "Ahoj" },
+  },
+  macPipe: {
+    fileName: "spec126-mac-pipe.csv",
+    text: "Produkt|Preis|Menge\rCrème brûlée|4.50|2\rCafé|2.20|10\r",
+  },
+} as const;
+
+export function buildSpec126ExcelUtf8CsvBytes(): Uint8Array {
+  return withUtf8Bom(SPEC126_CSV.excelUtf8.text);
+}
+
+export function buildSpec126Semicolon1252CsvBytes(): Uint8Array {
+  return windows1252Literal(SPEC126_CSV.semicolon1252.text);
+}
+
+export function buildSpec126QuotedCsvBytes(): Uint8Array {
+  return encoder.encode(SPEC126_CSV.quoted.text);
+}
+
+export function buildSpec126SepCsvBytes(): Uint8Array {
+  return encoder.encode(SPEC126_CSV.sep.text);
+}
+
+export function buildSpec126UnicodeTsvBytes(): Uint8Array {
+  return utf16LeLiteral(SPEC126_CSV.unicode.text);
+}
+
+export function buildSpec126MacPipeCsvBytes(): Uint8Array {
+  return windows1252Literal(SPEC126_CSV.macPipe.text);
+}

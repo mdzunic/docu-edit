@@ -39,6 +39,7 @@ import { parseSheetPrefix, sheetPrefixOf, tokenize } from "./formula/tokens";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT } from "./geometry";
 import {
   DEFAULT_SPREADSHEET_TITLE,
+  isCsvFormat,
   type Cell,
   type Row,
   type Sheet,
@@ -531,12 +532,13 @@ export function setTabColor(model: SpreadsheetModel, index: number, color: Model
 
 /** The model a cross-format copy writes (SPEC-121 "Cross-format copy"),
  * given the model with its `format` already set to the target: no retained
- * package, no source on any sheet, foreign sheets gone, styles without their
- * source indices, every formula cell through formulaForTarget. Pure — the
+ * package, no source on any sheet, no CSV dialect (SPEC-126), foreign sheets
+ * gone, styles without their source indices, every formula cell through
+ * formulaForTarget. Pure — the
  * open model is untouched; rows are shared except where a cell must
  * change. */
 export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
-  const { opaque: _opaque, odsContentEnvelope: _envelope, structureDirty: _structure, packageVariant: _variant, ...rest } = model;
+  const { opaque: _opaque, odsContentEnvelope: _envelope, structureDirty: _structure, packageVariant: _variant, csv: _csv, ...rest } = model;
   const kept = model.sheets.filter((sheet) => sheet.kind !== "foreign");
   const sheets: Sheet[] = kept.map((sheet) => {
     const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, ...fields } = sheet;
@@ -607,9 +609,10 @@ function crossRows(rows: Row[], target: SpreadsheetFormat): Row[] {
 
 /** The labels of UNCONVERTIBLE_CONTENT whose marker the source holds, in
  * table order — what a copy to `target` leaves out. Empty for the model's
- * own format. */
+ * own format, and for a csv/tsv source (SPEC-126: a delimited-text file
+ * carries no package content to leave out). */
 export function unconvertibleContent(model: SpreadsheetModel, target: SpreadsheetFormat): string[] {
-  if (target === model.format) {
+  if (target === model.format || isCsvFormat(model.format)) {
     return [];
   }
   const source: ConversionSource = { model, parts: new LazyParts(model.opaque) };

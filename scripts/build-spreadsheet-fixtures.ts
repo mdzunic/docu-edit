@@ -94,6 +94,12 @@
 //                             and a "Series" sheet with a seed column per
 //                             series kind
 // - spec125-fill.ods        — SPEC-125, LibreOffice-shaped twin
+// - spec126-*.csv / .tsv    — SPEC-126, literal bytes per producer: Excel
+//                             "CSV UTF-8", a German Excel export
+//                             (Windows-1252, `;`), a database dump (all
+//                             quoted, ragged, LF), Excel's `sep=;` line,
+//                             Excel "Unicode Text" (UTF-16 LE) and a classic
+//                             Mac pipe file (lone CR)
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -129,6 +135,12 @@ import {
   buildSpec124StructureXlsxBytes,
   buildSpec125FillOdsBytes,
   buildSpec125FillXlsxBytes,
+  buildSpec126ExcelUtf8CsvBytes,
+  buildSpec126MacPipeCsvBytes,
+  buildSpec126QuotedCsvBytes,
+  buildSpec126Semicolon1252CsvBytes,
+  buildSpec126SepCsvBytes,
+  buildSpec126UnicodeTsvBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -161,6 +173,12 @@ writeFileSync(join(fixturesDir, "spec124-structure.xlsx"), await buildSpec124Str
 writeFileSync(join(fixturesDir, "spec124-structure.ods"), await buildSpec124StructureOdsBytes());
 writeFileSync(join(fixturesDir, "spec125-fill.xlsx"), await buildSpec125FillXlsxBytes());
 writeFileSync(join(fixturesDir, "spec125-fill.ods"), await buildSpec125FillOdsBytes());
+writeFileSync(join(fixturesDir, "spec126-excel-utf8.csv"), buildSpec126ExcelUtf8CsvBytes());
+writeFileSync(join(fixturesDir, "spec126-semicolon-1252.csv"), buildSpec126Semicolon1252CsvBytes());
+writeFileSync(join(fixturesDir, "spec126-quoted.csv"), buildSpec126QuotedCsvBytes());
+writeFileSync(join(fixturesDir, "spec126-sep.csv"), buildSpec126SepCsvBytes());
+writeFileSync(join(fixturesDir, "spec126-unicode.tsv"), buildSpec126UnicodeTsvBytes());
+writeFileSync(join(fixturesDir, "spec126-mac-pipe.csv"), buildSpec126MacPipeCsvBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

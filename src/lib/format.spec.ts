@@ -108,4 +108,11 @@ describe("workbook badges and labels (SPEC-116)", () => {
     expect(spreadsheetFormatLabel("ods")).toBe("OpenDocument Spreadsheet (.ods)");
     expect(spreadsheetFormatLabel("ods", "template")).toBe("OpenDocument Spreadsheet template (.ots)");
   });
+
+  it("names SPEC-126's delimited-text formats and badges them CSV / TSV", () => {
+    expect(spreadsheetFormatLabel("csv")).toBe("Comma-separated values (.csv)");
+    expect(spreadsheetFormatLabel("tsv")).toBe("Tab-separated values (.tsv)");
+    expect(formatBadgeLabel("csv")).toBe("CSV");
+    expect(formatBadgeLabel("tsv")).toBe("TSV");
+  });
 });

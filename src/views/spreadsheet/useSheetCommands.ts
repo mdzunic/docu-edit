@@ -25,11 +25,15 @@
 //   STRUCTURE_PROTECTED_MESSAGE — each menu item, and the gestures (the "+"
 //   button, double-click rename, drag) refuse with it as a toast. The
 //   protection XML itself is never changed.
+// - SPEC-126: adding or duplicating a sheet in a csv/tsv workbook is allowed,
+//   and the first time it happens in this view the toast
+//   CSV_SECOND_SHEET_NOTICE says the file keeps only the first sheet.
 import { computed, ref, type ComputedRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { loadRecentColors, pushRecentColor } from "../../lib/core/colors";
 import { DEFAULT_THEME, type ModelColor } from "../../lib/core/theme";
-import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
+import { CSV_SECOND_SHEET_NOTICE } from "../../lib/spreadsheet/csv/messages";
+import { isCsvFormat, type SpreadsheetModel } from "../../lib/spreadsheet/model";
 import {
   addSheet,
   deleteSheet,
@@ -67,8 +71,20 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
   const coloring = ref<{ index: number; x: number; y: number } | null>(null);
   const announcement = ref("");
   const recentColors = ref(loadRecentColors());
+  /** CSV_SECOND_SHEET_NOTICE has been shown in this view (SPEC-126). */
+  let secondSheetNoticed = false;
 
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
+
+  /** SPEC-126: once per view, a csv/tsv workbook that gained a sheet says
+   * that only the first one is saved in the file. */
+  function noticeSecondSheet(result: SheetCommandResult | undefined): void {
+    const target = model();
+    if (result && target && isCsvFormat(target.format) && !secondSheetNoticed) {
+      secondSheetNoticed = true;
+      addToast(CSV_SECOND_SHEET_NOTICE);
+    }
+  }
 
   /** Whether the workbook's structure is protected (SPEC-122) — and if so,
    * says why as a toast: the gesture is refused. */
@@ -119,7 +135,7 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
   }
 
   function insert(): void {
-    run("Add sheet", (target) => addSheet(target, deps.book.activeIndex.value));
+    noticeSecondSheet(run("Add sheet", (target) => addSheet(target, deps.book.activeIndex.value)));
   }
 
   // --- rename ---------------------------------------------------------------------------
@@ -298,7 +314,7 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
         startRename(state.index);
         break;
       case "duplicate":
-        run("Duplicate sheet", (target) => duplicateSheet(target, state.index));
+        noticeSecondSheet(run("Duplicate sheet", (target) => duplicateSheet(target, state.index)));
         break;
       case "delete":
         requestDelete(state.index);

@@ -55,7 +55,8 @@ import {
   SpreadsheetOpenError,
   XLSB_UNSUPPORTED_MESSAGE,
 } from "./spreadsheet/errors";
-import { isLegacyOrEncryptedWorkbook, isNumbersPackage } from "./spreadsheet/detect";
+import { csvFormatOfName, isLegacyOrEncryptedWorkbook, isNumbersPackage } from "./spreadsheet/detect";
+import { loadPreferences } from "./preferences";
 
 export { DocxOpenError, LegacyDocError, OdtOpenError, FlatOdfError, KeynoteOpenError, SpreadsheetOpenError };
 
@@ -78,11 +79,11 @@ export class FileTooLargeError extends Error {}
  * filter (the picker's `accept` attribute has no drop equivalent), so it
  * checks the name itself before ever reading the file. Format is still
  * detected from content, never the extension, once a file passes this —
- * except Markdown (SPEC-050), which has no content signature at all and is
- * admitted by extension as the deliberate, documented exception (see
- * `openDocumentFile`). */
+ * except Markdown (SPEC-050) and CSV/TSV (SPEC-126), which have no content
+ * signature at all and are admitted by extension as the deliberate,
+ * documented exceptions (see `openFile`). */
 export const UNSUPPORTED_FILE_TYPE_MESSAGE =
-  "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .pdf and image files";
+  "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .csv, .tsv, .pdf and image files";
 
 const SUPPORTED_EXTENSION_PATTERN = new RegExp(`\\.(${OPENABLE_EXTENSIONS.join("|")})$`, "i");
 
@@ -101,7 +102,7 @@ export function hasTemplateFileExtension(fileName: string): boolean {
  * extension removed (AC-29). */
 export function titleFromFileName(fileName: string): string {
   const withoutExtension = fileName.replace(
-    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|key|xlsx|xlsm|xltx|xltm|ods|ots|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
+    /\.(docx|dotx|odt|ott|md|markdown|pptx|odp|key|xlsx|xlsm|xltx|xltm|ods|ots|csv|tsv|pdf|png|jpg|jpeg|gif|svg|webp)$/i,
     "",
   );
   return withoutExtension.length > 0 ? withoutExtension : fileName;
@@ -241,8 +242,10 @@ const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
  *   own terms;
  * - a non-ZIP is flat ODF (rejected specifically), Markdown by extension
  *   (SPEC-050's deliberate exception — Markdown has no content signature),
- *   an old or password-protected workbook (a compound file named as one),
- *   or takes the .docx path (whose legacy-.doc detection also lives there).
+ *   an old or password-protected workbook (a compound file named as one,
+ *   `.csv`/`.tsv` included), CSV/TSV by extension (SPEC-126's exception,
+ *   stated below), or takes the .docx path (whose legacy-.doc detection
+ *   also lives there).
  * `allowPresentations` is false for the text-only entry point, which must
  * keep returning DocumentModel — a presentation, media file or workbook
  * there is an error, not a silent misparse. */
@@ -294,6 +297,25 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     // file keeps that path's own .doc message.
     if (isLegacyOrEncryptedWorkbook(bytes, file.name)) {
       throw new SpreadsheetOpenError(LEGACY_OR_ENCRYPTED_WORKBOOK_MESSAGE);
+    }
+    // SPEC-126, the second extension exception, stated as SPEC-050 states
+    // Markdown's: a file that is not media and not a ZIP package is CSV if
+    // its name ends `.csv` and TSV if it ends `.tsv`. ZIP packages, media and
+    // flat ODF continue to be identified by content exactly as they are
+    // today (so a ZIP named `.csv` is a ZIP, and an `.xlsx` renamed `.csv`
+    // opens as the `.xlsx` it is). The reader reads numbers and dates in the
+    // user's spreadsheet locale unless the file's own evidence says
+    // otherwise.
+    const csvFormat = csvFormatOfName(file.name);
+    if (csvFormat !== null) {
+      if (!allowPresentations) {
+        throw new UnsupportedFileError(SPREADSHEET_NOT_TEXT_MESSAGE);
+      }
+      const { readCsvBytes } = await import("./spreadsheet/csv/parse");
+      return {
+        kind: "spreadsheet",
+        model: readCsvBytes(bytes, csvFormat, title, { userLocaleTag: loadPreferences().spreadsheetLocale }),
+      };
     }
     if (namedDotKey) {
       // Not even a ZIP — a corrupt or truncated Keynote file.
