@@ -534,6 +534,24 @@ describe("Ctrl/Cmd+Enter and Delete", () => {
     expect(model.sheets[0]!.rows).toEqual(rows);
   });
 
+  it("SPEC-128: Delete over filter-hidden rows clears the visible rows only, as one step", () => {
+    const rows: Row[] = [
+      { index: 0, cells: [{ col: 0, value: "West" }, { col: 1, value: 1 }] },
+      { index: 1, cells: [{ col: 0, value: "East" }, { col: 1, value: 2 }], filterHidden: true },
+      { index: 2, cells: [{ col: 0, value: "North" }, { col: 1, value: 3 }], hidden: true },
+      { index: 3, cells: [{ col: 0, value: "West" }, { col: 1, value: 4 }] },
+    ];
+    const { undo, press, select, model } = setup(book({}, { sheet: { rows } }));
+    select("A1:B4");
+    press("Delete");
+    // The user-hidden row is no filter's: it is cleared, as without a filter.
+    expect(model.sheets[0]!.rows).toEqual([rows[1], { index: 2, cells: [], hidden: true }]);
+    expect(model.sheets[0]!.rows[0]).toBe(rows[1]);
+    expect(undo.undoLabel.value).toBe("Clear contents");
+    undo.undo();
+    expect(model.sheets[0]!.rows).toEqual(rows);
+  });
+
   it("Delete and Backspace inside the editor are text editing, not Clear contents", () => {
     const { editing, undo, type, press, select, cell } = setup(book({ A1: "keep" }));
     select("A1");
