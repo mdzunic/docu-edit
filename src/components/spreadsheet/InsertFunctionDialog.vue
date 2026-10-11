@@ -11,8 +11,8 @@
 // `=NAME(` into the editor. Runtime prop declarations per the espree
 // constraint (see AppShell.vue).
 import { computed, ref, watch } from "vue";
-import { functionSignature, searchFunctions } from "../../lib/spreadsheet/formula/functionHelp";
-import { FUNCTION_CATEGORY_ORDER, getFunction, registeredFunctionNames, type FunctionCategory } from "../../lib/spreadsheet/formula/registry";
+import { functionSignature, searchFunctionsIn } from "../../lib/spreadsheet/formula/functionHelp";
+import { FUNCTION_CATEGORY_ORDER, getFunction, registeredFunctionNames } from "../../lib/spreadsheet/formula/registry";
 import BaseDialog from "../BaseDialog.vue";
 import UiButton from "../ui/UiButton.vue";
 
@@ -28,7 +28,7 @@ const categories = computed(() => {
   const held = new Set(registeredFunctionNames().map((name) => getFunction(name)?.category));
   return [ALL, ...FUNCTION_CATEGORY_ORDER.filter((name) => held.has(name))];
 });
-const names = computed(() => searchFunctions(query.value, category.value === ALL ? null : (category.value as FunctionCategory)));
+const names = computed(() => searchFunctionsIn(query.value, category.value));
 const spec = computed(() => (selected.value ? getFunction(selected.value) : undefined));
 
 watch(
@@ -41,22 +41,22 @@ watch(
   { immediate: true },
 );
 
-function move(step: number): void {
+function move(step = 1) {
   const list = names.value;
   if (list.length === 0) {
     return;
   }
   const at = list.indexOf(selected.value);
-  selected.value = list[Math.max(0, Math.min(list.length - 1, at + step))]!;
+  selected.value = list[Math.max(0, Math.min(list.length - 1, at + step))] ?? "";
 }
 
-function insert(): void {
+function insert() {
   if (selected.value) {
     emit("insert", selected.value);
   }
 }
 
-function onSearchKey(event: KeyboardEvent): void {
+function onSearchKey(event = new KeyboardEvent("keydown")) {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     move(event.key === "ArrowDown" ? 1 : -1);

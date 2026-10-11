@@ -28,7 +28,7 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from "vue";
 import { isMacPlatform } from "../../lib/core/platform";
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
-import { callAtCaret, completionAt, functionsStartingWith, signatureParts } from "../../lib/spreadsheet/formula/functionHelp";
+import { callAtCaret, completionAt, functionsStartingWith, signatureParts, type SignaturePart } from "../../lib/spreadsheet/formula/functionHelp";
 import { getFunction } from "../../lib/spreadsheet/formula/registry";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 
@@ -222,6 +222,11 @@ export function useFunctionAssist(deps: FunctionAssistDeps) {
 }
 
 export type FunctionAssist = ReturnType<typeof useFunctionAssist>;
+
+/** Narrows FunctionArgHint's runtime-typed `parts` prop. */
+export function asSignatureParts(value: unknown): SignaturePart[] {
+  return Array.isArray(value) ? (value as SignaturePart[]) : [];
+}
 
 /** Narrows a component's runtime-typed `assist` prop (the .vue parser bars
  * casts). */

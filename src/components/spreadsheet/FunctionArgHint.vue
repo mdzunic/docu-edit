@@ -4,7 +4,8 @@
 // current argument bold (`function-arg-current`); past maxArgs nothing is.
 // It sits just below the editor; the editor names it in aria-describedby.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
-import { ARG_HINT_ID } from "../../views/spreadsheet/useFunctionAssist";
+import { computed } from "vue";
+import { ARG_HINT_ID, asSignatureParts } from "../../views/spreadsheet/useFunctionAssist";
 
 const props = defineProps({
   /** The signature in pieces: `{ text, current? }`. */
@@ -13,11 +14,7 @@ const props = defineProps({
   anchorStyle: { type: Object, default: () => ({}) },
 });
 
-/** A piece as the template reads it. */
-function piece(part: unknown): { text: string; current: boolean } {
-  const value = part as { text?: unknown; current?: unknown };
-  return { text: String(value.text ?? ""), current: value.current === true };
-}
+const parts = computed(() => asSignatureParts(props.parts));
 </script>
 
 <template>
@@ -29,14 +26,14 @@ function piece(part: unknown): { text: string; current: boolean } {
     :style="props.anchorStyle"
   >
     <template
-      v-for="(part, index) in props.parts"
+      v-for="(part, index) in parts"
       :key="index"
     >
       <b
-        v-if="piece(part).current"
+        v-if="part.current"
         data-testid="function-arg-current"
-      >{{ piece(part).text }}</b>
-      <span v-else>{{ piece(part).text }}</span>
+      >{{ part.text }}</b>
+      <span v-else>{{ part.text }}</span>
     </template>
   </div>
 </template>

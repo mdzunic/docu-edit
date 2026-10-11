@@ -26,7 +26,7 @@
 // Every string here is en-US whatever the locale (formulas are en-US).
 // Loading the library registers the functions these read.
 import "./functions";
-import { getFunction, registeredFunctionNames, type FunctionCategory, type FunctionSpec } from "./registry";
+import { FUNCTION_CATEGORY_ORDER, getFunction, registeredFunctionNames, type FunctionCategory, type FunctionSpec } from "./registry";
 import { tokenize, type Token } from "./tokens";
 
 type Metadata = Pick<FunctionSpec, "name" | "args" | "maxArgs">;
@@ -192,6 +192,15 @@ export function completionAt(text: string, caret: number): { prefix: string; sta
 export function functionsStartingWith(prefix: string): string[] {
   const upper = prefix.toUpperCase();
   return registeredFunctionNames().filter((name) => name.startsWith(upper));
+}
+
+/** The dialog's list for a category select's value: "All" or a
+ * FunctionCategory (anything else lists nothing). */
+export function searchFunctionsIn(query: string, category: string): string[] {
+  if (category === "All") {
+    return searchFunctions(query, null);
+  }
+  return FUNCTION_CATEGORY_ORDER.includes(category as FunctionCategory) ? searchFunctions(query, category as FunctionCategory) : [];
 }
 
 /** The Insert Function dialog's list (see the module header); `category`

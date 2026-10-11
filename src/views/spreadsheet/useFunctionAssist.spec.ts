@@ -44,7 +44,7 @@ function session(initial = "", editing = true, canEdit = true) {
     text.value = value;
     caret.value = value.length;
   };
-  const key = (key: string, init: KeyboardEventInit = {}) => filter?.(new KeyboardEvent("keydown", { key, cancelable: true, ...init })) ?? false;
+  const key = (name: string, init: KeyboardEventInit = {}) => filter?.(new KeyboardEvent("keydown", { key: name, cancelable: true, ...init })) ?? false;
   return { assist, deps, text, caret, type, key, scope };
 }
 
