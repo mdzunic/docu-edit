@@ -150,3 +150,84 @@ export function autoFilterRangeFor(selection: SheetSelection, nav: NavContext): 
   void nav;
   throw new Error("not implemented");
 }
+
+// --- commands (one undo entry each; each sets Sheet.dirty and replaces —
+// never mutates — `autoFilter`) ----------------------------------------------
+
+/** Data ▸ Filter: off when the sheet has an autofilter (removing it and every
+ * row's `filterHidden`), else on over `range` (autoFilterRangeFor's; null
+ * refuses with EMPTY_FILTER_REGION_MESSAGE). */
+export function toggleAutoFilter(model: SpreadsheetModel, sheetId: string, range: GridRange | null, ctx: FormatContext): FilterCommandResult {
+  void model;
+  void sheetId;
+  void range;
+  void ctx;
+  throw new Error("not implemented");
+}
+
+/** A column's criteria set (undefined: cleared), then the filter applied. */
+export function setFilterCriteria(
+  model: SpreadsheetModel,
+  sheetId: string,
+  colId: number,
+  criteria: FilterCriteria | undefined,
+  ctx: FormatContext,
+): FilterCommandResult {
+  void model;
+  void sheetId;
+  void colId;
+  void criteria;
+  void ctx;
+  throw new Error("not implemented");
+}
+
+/** Data ▸ Clear filters: every criterion removed (the buttons stay), every
+ * row's `filterHidden` cleared; `hidden` never touched. */
+export function clearFilters(model: SpreadsheetModel, sheetId: string): FilterCommandResult {
+  void model;
+  void sheetId;
+  throw new Error("not implemented");
+}
+
+/** Data ▸ Reapply filter: the criteria re-evaluated against current values. */
+export function reapplyFilter(model: SpreadsheetModel, sheetId: string, ctx: FormatContext): FilterCommandResult {
+  void model;
+  void sheetId;
+  void ctx;
+  throw new Error("not implemented");
+}
+
+// --- what the UI reads -------------------------------------------------------
+
+/** A column's type for labels: the majority of its non-blank data cells —
+ * date cells, other numbers, or everything else (ties → text). `col` is
+ * absolute; rows top..bottom inclusive. */
+export function columnValueKind(
+  model: Pick<SpreadsheetModel, "styles">,
+  sheet: Sheet,
+  col: number,
+  rows: { top: number; bottom: number },
+  ctx: FormatContext,
+): "text" | "number" | "date" {
+  void model;
+  void sheet;
+  void col;
+  void rows;
+  void ctx;
+  throw new Error("not implemented");
+}
+
+/** "N of M records found" while the sheet's autofilter has a criterion: M
+ * data rows up to the used range, N of them not filter-hidden; else null. */
+export function filterRecordCounts(sheet: Sheet): { found: number; total: number } | null {
+  void sheet;
+  throw new Error("not implemented");
+}
+
+/** A header button's `data-state`: sorted (the filter's sort record's first
+ * key on this column) wins over filtered. */
+export function filterButtonState(filter: AutoFilter, colId: number): "none" | "filtered" | "sorted-asc" | "sorted-desc" {
+  void filter;
+  void colId;
+  throw new Error("not implemented");
+}
