@@ -3,7 +3,9 @@
 // format, round-trips every entry both ways, and leaves a name absent from it
 // identical in all three spellings.
 import { describe, expect, it } from "vitest";
+import { fromOdsFormula, fromXlsxFormula, toOdsFormula, toXlsxFormula } from "./dialect";
 import { canonicalFromOds, canonicalFromXlsx, FUNCTION_NAMES, odsFromCanonical, xlsxFromCanonical } from "./functionNames";
+import { getFunction, registeredFunctionNames } from "./registry";
 
 describe("the pinned test vectors", () => {
   it.each([
@@ -92,5 +94,23 @@ describe("the table", () => {
     expect(canonicalFromXlsx("_xlfn._xlws.sort")).toBe("SORT");
     expect(canonicalFromXlsx("_XLFN.Concat")).toBe("CONCAT");
     expect(canonicalFromXlsx("_xlfn.VALUETOTEXT")).toBe("VALUETOTEXT");
+  });
+});
+
+// SPEC-127: every registered name round-trips through the table on both
+// wires — one call of each function, its required arguments as references.
+describe("every registered function on the wire (SPEC-127)", () => {
+  const calls = registeredFunctionNames().map((name) => `${name}(${Array.from({ length: getFunction(name)!.minArgs }, (_, i) => `A${i + 1}`).join(",")})`);
+
+  it.each(calls)("%s round-trips through xlsx and ods", (text) => {
+    expect(fromXlsxFormula(toXlsxFormula(text))).toBe(text);
+    expect(fromOdsFormula(toOdsFormula(text))).toBe(text);
+  });
+
+  it("writes the future functions SPEC-127 registers with their prefixes", () => {
+    expect(toXlsxFormula("XLOOKUP(A1,A2,A3)")).toBe("_xlfn.XLOOKUP(A1,A2,A3)");
+    expect(toXlsxFormula("STDEV.S(A1)")).toBe("_xlfn.STDEV.S(A1)");
+    expect(toXlsxFormula("AGGREGATE(A1,A2,A3)")).toBe("_xlfn.AGGREGATE(A1,A2,A3)");
+    expect(toOdsFormula("XLOOKUP(A1,A2,A3)")).toContain("COM.MICROSOFT.XLOOKUP");
   });
 });

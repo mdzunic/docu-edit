@@ -24,6 +24,8 @@
 //   name substring, then every query word in the summary, alphabetical
 //   within each; the empty query lists the category alphabetically.
 // Every string here is en-US whatever the locale (formulas are en-US).
+// Loading the library registers the functions these read.
+import "./functions";
 import { getFunction, registeredFunctionNames, type FunctionCategory, type FunctionSpec } from "./registry";
 import { tokenize, type Token } from "./tokens";
 
