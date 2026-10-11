@@ -10,7 +10,7 @@
 // is used; a value preset opens the rule editor (useConditionalFormatEditor)
 // instead, whose save lands here. Dxfs are interned inside the step, so an
 // undo past a new one restores the shorter table.
-import { computed, ref, shallowRef } from "vue";
+import { computed, ref, shallowRef, watch } from "vue";
 import { DEFAULT_THEME } from "../../lib/core/theme";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import {
@@ -103,6 +103,18 @@ export function useConditionalFormatManager(deps: ConditionalFormatManagerDeps) 
     format: () => deps.model()?.format ?? "xlsx",
     onSave: saveFromEditor,
   });
+
+  // Another sheet on show: the editor and the presets close and nothing
+  // stays selected (a rule id belongs to its sheet).
+  watch(
+    () => gridSheet()?.id,
+    () => {
+      editor.cancel();
+      presetsOpen.value = false;
+      selectedRuleId.value = null;
+      appliesToErrors.value = {};
+    },
+  );
 
   /** The sheet's rules in priority order, within the scope. */
   const entries = computed<CfRuleEntry[]>(() => {

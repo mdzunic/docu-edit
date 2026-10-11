@@ -204,6 +204,22 @@ describe("ConditionalFormatsPane (SPEC-129)", () => {
     expect(undo.canUndo.value).toBe(false);
   });
 
+  it("closes the editor and drops the selection when another sheet is shown", async () => {
+    const model = seeded();
+    model.sheets = [...model.sheets, { ...model.sheets[0]!, id: "other", name: "Other", conditionalFormats: [] }];
+    const { wrapper, click, selectRule, book, manager } = setup(model);
+    await selectRule(0);
+    await click("cf-edit");
+    expect(wrapper.find('[data-testid="cf-editor"]').exists()).toBe(true);
+    book.value!.activeSheetIndex = 1;
+    triggerRef(book);
+    await wrapper.vm.$nextTick();
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="cf-editor"]').exists()).toBe(false);
+    expect(manager.selectedRuleId.value).toBeNull();
+    expect(wrapper.find('[data-testid="cf-empty"]').exists()).toBe(true);
+  });
+
   it("sets Stop if true on a formatting rule as one step", async () => {
     const { wrapper, formats, undo } = setup();
     await wrapper.get('[data-testid="cf-rule-stop-if-true"]').setValue(true);
