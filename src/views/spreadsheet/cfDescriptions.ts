@@ -19,7 +19,7 @@ const OPERATOR_SYMBOLS: Readonly<Record<Exclude<CfOperator, "between" | "notBetw
 };
 
 /** `timePeriod`'s periods, as "Date occurring: <label>". */
-const TIME_PERIOD_LABELS: Readonly<Record<CfTimePeriod, string>> = {
+export const TIME_PERIOD_LABELS: Readonly<Record<CfTimePeriod, string>> = {
   today: "Today",
   yesterday: "Yesterday",
   tomorrow: "Tomorrow",
