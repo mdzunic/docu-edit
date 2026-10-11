@@ -50,11 +50,20 @@
 //   the owner being the ORIGINAL sheet whose source name the claim names —
 //   or removed when the owner (or its autofilter) is gone; every element the
 //   model does not own is re-emitted through `retained` (the writer's
-//   sheet-reference pass; ranges on deleted sheets dropped); an autofilter
-//   with no claim (a new one, a copy's — whose `odsName` duplicateSheet
-//   dropped) is appended at the end, LibreOffice's place for sheet-local
-//   ranges; a container emptied that way is removed, and a missing one is
-//   created after `table:named-expressions`, before `table:data-pilot-tables`
+//   sheet-reference pass; ranges on deleted sheets dropped), an anonymous
+//   one's `table:name` then renumbered to the index of the sheet its target
+//   now lies on — LibreOffice's numbering, which the owned elements follow
+//   too, so a sheet moving never gives two ranges one name. LibreOffice
+//   keeps ONE anonymous range per sheet: an original whose autofilter has no
+//   claim takes over its table's unclaimed anonymous range (a sort-only one,
+//   which LibreOffice writes whenever a user sorts) in place — the element
+//   patched as below, keeping its `table:sort` while the autofilter has no
+//   sort record and covers the same area (LibreOffice resets a range's sort
+//   when its area changes); any other autofilter with no claim (a new one, a
+//   copy's — whose `odsName` duplicateSheet dropped) is appended at the end,
+//   LibreOffice's place for sheet-local ranges; a container emptied that way
+//   is removed, and a missing one is created after
+//   `table:named-expressions`, before `table:data-pilot-tables`
 //   (`table:consolidation`, `table:dde-links`, else `</office:spreadsheet>`).
 //   The owner's element:
 //   - while `autoFilter.sourceXml` is the claimed element (unchanged since
@@ -742,8 +751,9 @@ export function odsDatabaseRangeXml(autoFilter: AutoFilter, sheetName: string, n
 }
 
 /** A claimed element rewritten for its owner's changed autofilter (see the
- * module header): its other attributes and children kept through `pass`. */
-function patchedElement(claim: OdsAutoFilterClaim, autoFilter: AutoFilter, sheetName: string, index: number, pass: Pass): string {
+ * module header): its other attributes and children kept through `pass` —
+ * its `table:sort` too when `keepSort` (a taken-over range's). */
+function patchedElement(claim: OdsAutoFilterClaim, autoFilter: AutoFilter, sheetName: string, index: number, pass: Pass, keepSort = false): string {
   const { element, tree } = claim;
   const xml = element.xml;
   let tag = pass(startTagAt(xml, 0));
@@ -752,11 +762,11 @@ function patchedElement(claim: OdsAutoFilterClaim, autoFilter: AutoFilter, sheet
   }
   tag = setAttribute(tag, "table:target-range-address", odsTargetRangeAddress(sheetName, autoFilter.range));
   tag = setAttribute(tag, "table:display-filter-buttons", "true");
-  const kept = tree.children.filter((child) => child.name !== FILTER && child.name !== SORT);
+  const kept = tree.children.filter((child) => child.name !== FILTER && (keepSort || child.name !== SORT));
   const sources = kept.filter((child) => child.name.startsWith("table:database-source"));
   const rest = kept.filter((child) => !child.name.startsWith("table:database-source"));
   const slice = (nodes: readonly Node[]): string => nodes.map((node) => pass(xml.slice(node.start, node.end))).join("");
-  const body = slice(sources) + odsFilterXml(autoFilter, pass) + odsSortXml(autoFilter, pass) + slice(rest);
+  const body = slice(sources) + odsFilterXml(autoFilter, pass) + (keepSort ? "" : odsSortXml(autoFilter, pass)) + slice(rest);
   const open = tag.replace(/\s*\/>$/, ">");
   const qname = /^<([^\s/>]+)/.exec(tag)?.[1] ?? "table:database-range";
   return body === "" ? open.replace(/>$/, "/>") : `${open}${body}</${qname}>`;
@@ -793,6 +803,50 @@ export interface OdsAutoFilterWriteOptions {
 function insertionPoint(suffix: string): number {
   const at = /<table:(?:data-pilot-tables|consolidation|dde-links)(?=[\s/>])|<\/office:spreadsheet>/.exec(suffix);
   return at ? at.index : 0;
+}
+
+const sameArea = (a: GridRange, b: GridRange): boolean => a.top === b.top && a.left === b.left && a.bottom === b.bottom && a.right === b.right;
+
+/** The unclaimed anonymous ranges an owner's unclaimed autofilter takes
+ * over (see the module header): the first on each such table. */
+function takeovers(found: OdsDatabaseRanges, claims: readonly OdsAutoFilterClaim[], sourceIndex: ReadonlyMap<string, number>, owners: ReadonlyMap<number, { sheet: Sheet }>): OdsAutoFilterClaim[] {
+  const held = new Set(claims.map((claim) => claim.tableIndex));
+  const claimed = new Set(claims.map((claim) => claim.element.start));
+  const out: OdsAutoFilterClaim[] = [];
+  for (const element of found.ranges) {
+    if (!isAnonymous(element.name) || element.sheet === undefined || element.range === undefined || claimed.has(element.start)) {
+      continue;
+    }
+    const tableIndex = sourceIndex.get(element.sheet.toUpperCase());
+    if (tableIndex === undefined || held.has(tableIndex) || !owners.get(tableIndex)?.sheet.autoFilter) {
+      continue;
+    }
+    const tree = parseTree(element.xml);
+    if (tree) {
+      held.add(tableIndex);
+      out.push({ tableIndex, element: { ...element, range: element.range }, tree });
+    }
+  }
+  return out;
+}
+
+/** Retained text with each anonymous range named after the index of the
+ * sheet its (passed) target lies on (see the module header). */
+function renumberedAnonymous(text: string, sheets: readonly Sheet[]): string {
+  if (!text.includes(ODS_ANONYMOUS_SHEET_DB)) {
+    return text;
+  }
+  return text.replace(RANGE, (xml) => {
+    const tag = startTagAt(xml, 0);
+    const name = attributeValue(tag, "table:name");
+    const target = targetOf(attributeValue(tag, "table:target-range-address"));
+    const index = target === undefined ? -1 : sheets.findIndex((sheet) => sheet.name.toUpperCase() === target.sheet.toUpperCase());
+    if (!isAnonymous(name) || index < 0) {
+      return xml;
+    }
+    const renamed = setAttribute(tag, "table:name", anonymousSheetDbName(index));
+    return renamed === tag ? xml : renamed + xml.slice(tag.length);
+  });
 }
 
 /** The substitution path's suffix (see the module header) and the text it
@@ -833,6 +887,16 @@ export function odsSuffixWithAutoFilters(suffix: string, sheets: readonly Sheet[
     replaced.set(claim, text);
     placed.add(owner.sheet);
   }
+  const taken = takeovers(found, claims, sourceIndex, owners);
+  for (const claim of taken) {
+    const owner = owners.get(claim.tableIndex)!;
+    const autoFilter = owner.sheet.autoFilter!;
+    const keepSort = autoFilter.sort === undefined && sameArea(claim.element.range, autoFilter.range);
+    const text = patchedElement(claim, autoFilter, owner.sheet.name, owner.index, (piece) => options.sheetPass(owner.sheet, piece), keepSort);
+    generated += text;
+    replaced.set(claim, text);
+    placed.add(owner.sheet);
+  }
   let fresh = "";
   sheets.forEach((sheet, index) => {
     if (sheet.autoFilter && !placed.has(sheet)) {
@@ -851,14 +915,15 @@ export function odsSuffixWithAutoFilters(suffix: string, sheets: readonly Sheet[
       generated,
     };
   }
-  // The container's content: claimed elements replaced, the rest passed.
+  // The container's content: owned elements replaced, the rest passed and renumbered.
+  const retained = (text: string): string => renumberedAnonymous(options.retained(text), sheets);
   let content = "";
   let at = container.contentStart;
-  for (const claim of claims) {
-    content += options.retained(suffix.slice(at, claim.element.start)) + replaced.get(claim)!;
+  for (const claim of [...claims, ...taken].toSorted((a, b) => a.element.start - b.element.start)) {
+    content += retained(suffix.slice(at, claim.element.start)) + replaced.get(claim)!;
     at = claim.element.end;
   }
-  content += options.retained(suffix.slice(at, container.contentEnd)) + fresh;
+  content += retained(suffix.slice(at, container.contentEnd)) + fresh;
   const tag = startTagAt(suffix, container.start);
   let element: string;
   if (found.ranges.length > 0 && !/<table:database-range(?=[\s/>])/.test(content)) {

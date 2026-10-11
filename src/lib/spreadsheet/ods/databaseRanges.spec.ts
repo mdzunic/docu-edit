@@ -12,7 +12,9 @@
 // removal (an emptied container removed), a structural edit moving it once
 // (through the model), a verbatim filter's criteria range moved once (the
 // model's copy, by a structural edit and a move), a rename, a deletion renumbering an anonymous range,
-// a duplicate's own range, from scratch, write → read;
+// a duplicate's own range, a new autofilter taking over its sheet's
+// sort-only anonymous range, every anonymous range renumbered after its
+// sheet's index, from scratch, write → read;
 // and the table writer's visibility and its repeat-compression key.
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../../core/equality";
@@ -23,7 +25,7 @@ import type { AutoFilter, FilterColumn, FilterCriteria } from "../filter";
 import type { Row, Sheet, SpreadsheetModel } from "../model";
 import { SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { readSpreadsheetBytes } from "../open";
-import { createBlankWorkbook, deleteSheet, duplicateSheet, renameSheet } from "../sheets";
+import { createBlankWorkbook, deleteSheet, duplicateSheet, moveSheet, renameSheet } from "../sheets";
 import { moveRange } from "../move";
 import { applyStructuralEdit } from "../structure";
 import {
@@ -596,6 +598,38 @@ describe("writing a workbook", () => {
     const { model } = await open({ suffix: databaseRanges(SALES_FILTER, filter2) });
     deleteSheet(model, 0);
     expect(await savedSuffix(model)).toBe(databaseRanges(filter2.replace("__Anonymous_Sheet_DB__1", "__Anonymous_Sheet_DB__0")));
+  });
+
+  it("a new autofilter takes over its sheet's sort-only anonymous range — one per sheet, as LibreOffice keeps — its sort kept over the same area", async () => {
+    const sortBy = `<table:sort><table:sort-by table:field-number="1" table:data-type="automatic" table:order="descending"/></table:sort>`;
+    const sortOnly = `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sheet1.A1:Sheet1.B5" table:contains-header="true">${sortBy}</table:database-range>`;
+    const { model } = await open({ suffix: `<table:named-expressions/>${databaseRanges(DB1, sortOnly)}` });
+    expect(model.sheets[0]!.autoFilter).toBeUndefined();
+    const autoFilter: AutoFilter = { range: { top: 0, left: 0, bottom: 4, right: 1 }, columns: [{ colId: 0, criteria: values(["East"]) }] };
+    setAutoFilter(model, 0, autoFilter);
+    const head = `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sheet1.A1:Sheet1.B5" table:contains-header="true" table:display-filter-buttons="true">`;
+    const east = `<table:filter><table:filter-condition table:field-number="0" table:value="East" table:operator="="><table:filter-set-item table:value="East"/></table:filter-condition></table:filter>`;
+    expect(await savedSuffix(model)).toBe(`<table:named-expressions/>${databaseRanges(DB1, `${head}${east}${sortBy}</table:database-range>`)}`);
+    const reread = await reopen(model);
+    expect(modelled(reread.sheets[0]!.autoFilter)).toEqual({ ...autoFilter, sort: { ref: { top: 1, left: 0, bottom: 4, right: 1 }, keys: [{ col: 1, descending: true }] } });
+    // Over another area the old sort no longer describes it: the model's (none) is written.
+    setAutoFilter(model, 0, { ...autoFilter, range: { top: 0, left: 0, bottom: 3, right: 1 } });
+    expect(await savedSuffix(model)).toBe(`<table:named-expressions/>${databaseRanges(DB1, `${head.replace("Sheet1.B5", "Sheet1.B4")}${east}</table:database-range>`)}`);
+  });
+
+  it("renumbers every anonymous range after its sheet's index, owned or not, so a sheet move never gives two one name", async () => {
+    const sortOnly = `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sheet1.A1:Sheet1.B5"><table:sort/></table:database-range>`;
+    const filter2 = `<table:database-range table:name="__Anonymous_Sheet_DB__1" table:target-range-address="Sheet2.A1:Sheet2.B1" table:display-filter-buttons="true"/>`;
+    const { model } = await open({ suffix: databaseRanges(sortOnly, filter2) });
+    moveSheet(model, 1, 0);
+    expect(await savedSuffix(model)).toBe(
+      databaseRanges(sortOnly.replace("__Anonymous_Sheet_DB__0", "__Anonymous_Sheet_DB__1"), filter2.replace("__Anonymous_Sheet_DB__1", "__Anonymous_Sheet_DB__0")),
+    );
+    // A duplicate's new range takes the copy's index; the later sheet's moves on.
+    const again = await open({ suffix: databaseRanges(SALES_FILTER, sortOnly.replaceAll("Sheet1", "Sheet2").replace("__0", "__1")) });
+    duplicateSheet(again.model, 0);
+    const names = [...(await savedSuffix(again.model)).matchAll(/table:name="([^"]+)"/g)].map((match) => match[1]);
+    expect(names.toSorted()).toEqual(["__Anonymous_Sheet_DB__0", "__Anonymous_Sheet_DB__1", "__Anonymous_Sheet_DB__2"]);
   });
 
   it("writes a duplicated sheet's autofilter as its own anonymous range, the origin's kept", async () => {
