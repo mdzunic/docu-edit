@@ -32,10 +32,13 @@
 //   the seam per-cell structures that travel with a record register into
 //   (SPEC-135's annotations). Range-based structures never register.
 // - Refusals change nothing and carry SORT_REFUSAL_MESSAGES' text.
-import type { GridRange } from "./address";
-import { PROTECTED_CELL_MESSAGE } from "./cells";
-import type { CellKey } from "./formula/dependencies";
-import type { CellValue, Sheet, SpreadsheetModel } from "./model";
+import { colToLetters, findRow, getCell, usedRange, type GridRange } from "./address";
+import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
+import { cellKey, type CellKey } from "./formula/dependencies";
+import { shiftFormula } from "./formula/references";
+import { isCellError, rowIsHidden, type Cell, type CellValue, type Row, type Sheet, type SpreadsheetModel } from "./model";
+import { withRows } from "./sheetEdit";
+import { cellStyle, effectiveStyleId } from "./styles";
 
 export const MAX_SORT_KEYS = 64;
 
@@ -89,36 +92,255 @@ export const SORT_REFUSAL_MESSAGES: Readonly<Record<Exclude<SortRefusal, "duplic
 
 /** "Column B is used by more than one level — remove the duplicate." */
 export function duplicateKeyMessage(col: number): string {
-  void col;
-  throw new Error("not implemented");
+  return `Column ${colToLetters(col)} is used by more than one level — remove the duplicate.`;
 }
 
 export function sortCollator(localeTag: string, caseSensitive: boolean): Intl.Collator {
-  void localeTag;
-  void caseSensitive;
-  throw new Error("not implemented");
+  return new Intl.Collator(localeTag, {
+    usage: "sort",
+    numeric: false,
+    ignorePunctuation: false,
+    sensitivity: caseSensitive ? "variant" : "accent",
+    caseFirst: "lower",
+  });
 }
 
-/** Ascending order of two values (see the module header). */
+/** A value's class in ascending order; a blank (null) after every class. */
+function classOf(value: CellValue): number {
+  if (value === null) {
+    return 5;
+  }
+  if (typeof value === "number") {
+    return 0;
+  }
+  if (typeof value === "string") {
+    return 1;
+  }
+  if (typeof value === "boolean") {
+    return value ? 3 : 2;
+  }
+  return isCellError(value) ? 4 : 5;
+}
+
+/** Ascending order of two values (see the module header): numbers < text <
+ * FALSE < TRUE < errors, a blank after everything. */
 export function compareSortValues(a: CellValue, b: CellValue, collator: Intl.Collator): number {
-  void a;
-  void b;
-  void collator;
-  throw new Error("not implemented");
+  const ca = classOf(a);
+  const cb = classOf(b);
+  if (ca !== cb) {
+    return ca - cb;
+  }
+  if (typeof a === "number" && typeof b === "number") {
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+  if (typeof a === "string" && typeof b === "string") {
+    return collator.compare(a, b);
+  }
+  return 0;
 }
 
+/** One key's comparison: blanks last in both directions. */
+function compareByKey(a: CellValue, b: CellValue, descending: boolean, collator: Intl.Collator): number {
+  if (a === null || b === null) {
+    return a === null ? (b === null ? 0 : 1) : -1;
+  }
+  const order = compareSortValues(a, b, collator);
+  return descending ? -order : order;
+}
+
+/** The stored cells of `row` in [left, right]. */
+function cellsIn(row: Row | undefined, left: number, right: number): Cell[] {
+  return row ? row.cells.filter((cell) => cell.col >= left && cell.col <= right) : [];
+}
+
+/** Whether the position resolves bold (SPEC-117's cell → row → column style). */
+function isBold(model: Pick<SpreadsheetModel, "styles">, sheet: Sheet, row: number, col: number): boolean {
+  return cellStyle(model, effectiveStyleId(sheet, row, col)).font?.bold === true;
+}
+
+/** "The header guess" (SPEC-128): pinned, and only ever the seed of the
+ * "My data has headers" checkbox. */
 export function guessHasHeader(model: Pick<SpreadsheetModel, "styles">, sheet: Sheet, range: GridRange): boolean {
-  void model;
-  void sheet;
-  void range;
-  throw new Error("not implemented");
+  if (range.bottom - range.top + 1 < 2) {
+    return false;
+  }
+  if (sheet.autoFilter && sheet.autoFilter.range.top === range.top) {
+    return true;
+  }
+  const first = cellsIn(findRow(sheet, range.top), range.left, range.right).filter((cell) => cell.value !== null);
+  if (first.length === 0 || first.some((cell) => typeof cell.value !== "string")) {
+    return false;
+  }
+  const typedBelow = first.some((cell) => {
+    const below = getCell(sheet, range.top + 1, cell.col)?.value ?? null;
+    return below !== null && typeof below !== "string";
+  });
+  if (typedBelow) {
+    return true;
+  }
+  const second = cellsIn(findRow(sheet, range.top + 1), range.left, range.right).filter((cell) => cell.value !== null);
+  return first.every((cell) => isBold(model, sheet, range.top, cell.col)) && !second.some((cell) => isBold(model, sheet, range.top + 1, cell.col));
 }
 
-export function sortRange(model: SpreadsheetModel, sheetId: string, range: GridRange, options: SortOptions): SortOutcome {
-  void model;
-  void sheetId;
-  void range;
-  void options;
-  throw new Error("not implemented");
+const refuse = (reason: Exclude<SortRefusal, "duplicateKey">): SortOutcome => ({ ok: false, reason, message: SORT_REFUSAL_MESSAGES[reason] });
+
+const intersects = (a: GridRange, b: GridRange): boolean => a.top <= b.bottom && b.top <= a.bottom && a.left <= b.right && b.left <= a.right;
+
+/** Why the records of `data` cannot move, or null: a merge spanning rows or
+ * crossing the left/right edge, part of a multi-row (or edge-crossing) array. */
+function blockedBy(sheet: Sheet, data: GridRange): "merges" | "array" | null {
+  for (const merge of sheet.merges) {
+    if (intersects(merge, data) && (merge.top !== merge.bottom || merge.left < data.left || merge.right > data.right)) {
+      return "merges";
+    }
+  }
+  for (const row of sheet.rows) {
+    if (row.index > data.bottom) {
+      break;
+    }
+    for (const cell of row.cells) {
+      const array = cell.arrayRange;
+      if (array && intersects(array, data) && (array.top !== array.bottom || array.left < data.left || array.right > data.right)) {
+        return "array";
+      }
+    }
+  }
+  return null;
 }
 
+/** A record's cells moved by `delta` rows, shifted like a copy. */
+function movedCells(cells: readonly Cell[], delta: number): Cell[] {
+  return cells.map((cell) => {
+    if (delta === 0 || (cell.formula === undefined && cell.arrayRange === undefined)) {
+      return cell;
+    }
+    const next: Cell = { ...cell };
+    if (next.formula !== undefined && !next.formulaUnparsed) {
+      next.formula = shiftFormula(next.formula, delta, 0);
+    }
+    if (next.arrayRange) {
+      next.arrayRange = { ...next.arrayRange, top: next.arrayRange.top + delta, bottom: next.arrayRange.bottom + delta };
+    }
+    return next;
+  });
+}
+
+/** `row`'s cells with those in [left, right] replaced by `cells` (sorted). */
+function spliceCells(row: Row | undefined, left: number, right: number, cells: readonly Cell[]): Cell[] {
+  const kept = row ? row.cells.filter((cell) => cell.col < left || cell.col > right) : [];
+  return [...kept, ...cells].toSorted((a, b) => a.col - b.col);
+}
+
+/** Sorts the rows of `range` on `sheetId` (see the module header) and
+ * records the sort. A list of ranges sorts only when it holds exactly one. */
+export function sortRange(model: SpreadsheetModel, sheetId: string, range: GridRange | readonly GridRange[], options: SortOptions): SortOutcome {
+  const ranges: readonly GridRange[] = "top" in range ? [range] : range;
+  if (ranges.length !== 1) {
+    return refuse("multiArea");
+  }
+  const target = ranges[0]!;
+  const sheetIndex = model.sheets.findIndex((each) => each.id === sheetId);
+  const sheet = model.sheets[sheetIndex];
+  if (!sheet || sheet.kind !== "grid") {
+    return refuse("tooFewRows");
+  }
+  if (sheet.protection && !sheet.protection.allowSort) {
+    return refuse("protected");
+  }
+  const dataTop = target.top + (options.hasHeader ? 1 : 0);
+  if (target.bottom - dataTop + 1 < 2) {
+    return refuse("tooFewRows");
+  }
+  const seen = new Set<number>();
+  for (const key of options.keys) {
+    if (seen.has(key.col)) {
+      return { ok: false, reason: "duplicateKey", message: duplicateKeyMessage(key.col) };
+    }
+    seen.add(key.col);
+  }
+  const data: GridRange = { top: dataTop, left: target.left, bottom: target.bottom, right: target.right };
+  const blocked = blockedBy(sheet, data);
+  if (blocked) {
+    return refuse(blocked);
+  }
+
+  // Rows past the used range hold only blanks, which sort last: they never move.
+  const used = usedRange(sheet);
+  const lastRow = Math.min(data.bottom, used?.bottom ?? -1);
+  const positions: number[] = [];
+  const records: { index: number; from: number; cells: Cell[] }[] = [];
+  for (let r = data.top; r <= lastRow; r += 1) {
+    const row = findRow(sheet, r);
+    if (rowIsHidden(row)) {
+      continue;
+    }
+    positions.push(r);
+    records.push({ index: records.length, from: r, cells: cellsIn(row, data.left, data.right) });
+  }
+  const collator = sortCollator(options.localeTag, options.caseSensitive);
+  const keyed = records.map((record) => ({
+    record,
+    values: options.keys.map((key) => record.cells.find((cell) => cell.col === key.col)?.value ?? null),
+  }));
+  keyed.sort((a, b) => {
+    for (let k = 0; k < options.keys.length; k += 1) {
+      const order = compareByKey(a.values[k]!, b.values[k]!, options.keys[k]!.descending, collator);
+      if (order !== 0) {
+        return order;
+      }
+    }
+    return a.record.index - b.record.index;
+  });
+
+  const permutation: { from: number; to: number }[] = [];
+  const changed: CellKey[] = [];
+  const replaced = new Map<number, Row | undefined>();
+  const rowMoves = new Map<number, number>();
+  keyed.forEach(({ record }, i) => {
+    const to = positions[i]!;
+    if (record.from === to) {
+      return;
+    }
+    permutation.push({ from: record.from, to });
+    rowMoves.set(record.from, to);
+    const destination = findRow(sheet, to);
+    const before = cellsIn(destination, data.left, data.right);
+    const cells = movedCells(record.cells, to - record.from);
+    const next: Row = { ...(destination ?? { index: to }), index: to, cells: spliceCells(destination, data.left, data.right, cells) };
+    replaced.set(to, isEmptyRow(next) ? undefined : next);
+    for (const col of new Set([...before.map((cell) => cell.col), ...cells.map((cell) => cell.col)])) {
+      changed.push(cellKey(sheetId, to, col));
+    }
+  });
+
+  let merges = sheet.merges;
+  if (rowMoves.size > 0 && merges.some((merge) => rowMoves.has(merge.top) && intersects(merge, data))) {
+    merges = merges.map((merge) => {
+      const to = intersects(merge, data) ? rowMoves.get(merge.top) : undefined;
+      return to === undefined ? merge : { ...merge, top: to, bottom: to };
+    });
+  }
+  const state: SortState = { ref: data, keys: options.keys.map((key) => ({ ...key })) };
+  if (options.caseSensitive) {
+    state.caseSensitive = true;
+  }
+  const filter = sheet.autoFilter;
+  const updated: Sheet = { ...sheet, rows: withRows(sheet.rows, replaced), merges, dirty: true };
+  if (
+    filter &&
+    filter.range.top + 1 === data.top &&
+    filter.range.bottom === data.bottom &&
+    filter.range.left === data.left &&
+    filter.range.right === data.right
+  ) {
+    const { sourceXml: _source, ...rest } = filter;
+    updated.autoFilter = { ...rest, sort: state };
+  } else {
+    updated.sortState = state;
+  }
+  model.sheets = model.sheets.map((each, i) => (i === sheetIndex ? updated : each));
+  for (const adjuster of ROW_PERMUTATION_ADJUSTERS) {
+    adjuster.permute(model, sheetId, data, permutation);
+  }
+  return { ok: true, permutation, changed };
+}
