@@ -816,8 +816,7 @@ export function readDxfNode(node: XmlNode, indexedColors?: readonly string[]): D
 /** `xl/styles.xml`'s `<dxfs>` → the model's differential styles, by index,
  * each with its `<dxf>` verbatim as `sourceXml` (see the module header); []
  * for a part without dxfs or one that is not well-formed. The part's own
- * `<indexedColors>` palette applies. The reader upgrade (open.ts) calls this
- * for a stored workbook that predates SPEC-129. */
+ * `<indexedColors>` palette applies. */
 export function readXlsxDxfs(xml: string | undefined): Dxf[] {
   const root = xml === undefined ? undefined : elementTree(xml)?.[0];
   if (xml === undefined || !root || root.local !== "styleSheet" || !inMain(root.ns)) {
