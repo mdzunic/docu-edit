@@ -37,15 +37,16 @@ describe("the widened open surface (AC-1..AC-4)", () => {
   });
 
   it("the pickers' accept string lists .key after the native presentation formats (AC-2)", () => {
-    // SPEC-116 adds the six workbook extensions after .key.
+    // SPEC-116 adds the six workbook extensions after .key; SPEC-126 .csv
+    // and .tsv after them.
     expect(OPEN_FILE_ACCEPT).toBe(
-      ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.xlsx,.xlsm,.xltx,.xltm,.ods,.ots,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
+      ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.xlsx,.xlsm,.xltx,.xltm,.ods,.ots,.csv,.tsv,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
     );
   });
 
   it("the drop error names .key (AC-3, in SPEC-116's current wording)", () => {
     expect(UNSUPPORTED_FILE_TYPE_MESSAGE).toBe(
-      "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .pdf and image files",
+      "We can only open .docx, .odt, .md, .pptx, .odp, .key, .xlsx, .ods, .csv, .tsv, .pdf and image files",
     );
   });
 

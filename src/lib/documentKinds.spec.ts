@@ -69,12 +69,12 @@ describe("documentKinds — the media kind (SPEC-107)", () => {
 });
 
 describe("documentKinds — the spreadsheet kind (SPEC-116)", () => {
-  it("adds \"spreadsheet\" as the fourth kind with two formats", () => {
+  it("adds \"spreadsheet\" as the fourth kind with its formats (SPEC-126 adds csv and tsv)", () => {
     const kinds: DocumentKind[] = ["text", "presentation", "media", "spreadsheet"];
     expect(kinds).toHaveLength(4);
-    expect(SPREADSHEET_FORMATS).toEqual(["xlsx", "ods"]);
+    expect(SPREADSHEET_FORMATS).toEqual(["xlsx", "ods", "csv", "tsv"]);
     const formats: LibraryFormat[] = [...SPREADSHEET_FORMATS];
-    expect(formats).toEqual(["xlsx", "ods"]);
+    expect(formats).toEqual(["xlsx", "ods", "csv", "tsv"]);
   });
 
   it("routes exactly the spreadsheet formats to the spreadsheet kind", () => {

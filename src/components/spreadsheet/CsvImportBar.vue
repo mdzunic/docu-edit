@@ -62,7 +62,7 @@ const csv = computed(() => asCsvImport(props.csvImport));
   background: transparent;
   color: inherit;
   font: inherit;
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   text-decoration: underline;
   cursor: pointer;
 }
