@@ -449,6 +449,22 @@ describe("writing", () => {
     expect(reread.sourceStyleName).toBe("de-cf1");
   });
 
+  it("a format whose ranges did not read keeps its source through a rewrite of its container", async () => {
+    const odd = `<calcext:conditional-format calcext:target-range-address="nowhere!"><calcext:condition calcext:apply-style-name="Bad" calcext:value="=1" calcext:base-cell-address="S.A1"/></calcext:conditional-format>`;
+    const content =
+      `${DECL}<office:document-content ${NS} xmlns:calcext="${CALCEXT}" office:version="1.2"><office:automatic-styles/><office:body><office:spreadsheet>` +
+      `<table:table table:name="S"><table:table-column table:number-columns-repeated="2"/><table:table-row><table:table-cell office:value-type="float" office:value="5"><text:p>5</text:p></table:table-cell>` +
+      `<table:table-cell/></table:table-row><calcext:conditional-formats>${odd}<calcext:conditional-format calcext:target-range-address="S.B1:S.B2">` +
+      `<calcext:condition calcext:apply-style-name="Bad" calcext:value="=2" calcext:base-cell-address="S.B1"/></calcext:conditional-format></calcext:conditional-formats>` +
+      `</table:table></office:spreadsheet></office:body></office:document-content>`;
+    const { model } = await open(await odsPackage(content));
+    const formats = model.sheets[0]!.conditionalFormats;
+    expect(formats.map((format) => format.ranges)).toEqual([[], [range("B1:B2")]]);
+    deleteRule(model, model.sheets[0]!.id, formats[1]!.rules[0]!.id);
+    const written = tableText((await save(model)).content, "S");
+    expect(written).toContain(`<calcext:conditional-formats>${odd}</calcext:conditional-formats>`);
+  });
+
   it("deleting every rule of a table removes its container", async () => {
     const { model } = await open(await buildSpec129CfOdsBytes());
     for (const format of model.sheets[1]!.conditionalFormats) {

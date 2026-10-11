@@ -1091,7 +1091,8 @@ export class OdsConditionalFormatWriter {
     }
     const groups: { format: ConditionalFormat; rules: CfRule[] }[] = [];
     for (const { format, rule } of rulesByPriority(formats)) {
-      if (!writable(rule) || format.ranges.length === 0) {
+      // A format whose ranges did not read is carried by its source alone.
+      if (!writable(rule) || (format.ranges.length === 0 && !(parts && isOdsFormatSource(format.sourceXml)))) {
         continue;
       }
       const last = groups.at(-1);
