@@ -560,7 +560,7 @@ function dateGroupXml(item: DateGroupItem, p: string): string {
   for (const field of ["month", "day", "hour", "minute", "second"] as const) {
     const value = item[field];
     if (value !== undefined) {
-      attrs += attr(field, String(value));
+      attrs += attrXml(field, String(value));
     }
   }
   return `<${p}dateGroupItem${attrs}${attrXml("dateTimeGrouping", item.grouping)}/>`;
