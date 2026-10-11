@@ -43,8 +43,12 @@ import {
   buildSpec121LinksXlsxBytes,
   buildSpec122ShapesOdsBytes,
   buildSpec122ShapesXlsxBytes,
+  buildSpec128FilterOdsBytes,
+  buildSpec128FilterXlsxBytes,
   SPEC116_VBA_PROJECT,
+  SPEC128_FILTER_XLSX,
 } from "./fixtures/build";
+import { setFilterCriteria } from "./filter";
 import type { PackageVariant, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
 import { parseFormatCode } from "./numberFormat/parse";
@@ -174,6 +178,22 @@ const FIXTURES: Fixture[] = [
     extension: "ods",
     mimeType: "application/vnd.oasis.opendocument.spreadsheet",
     bytes: buildSpec119FormulasOdsBytes,
+  },
+  // SPEC-128: reading an autofilter, its criteria, the sort records and
+  // which hidden rows the filter hid writes nothing.
+  {
+    file: "spec128-filter.xlsx",
+    format: "xlsx",
+    extension: "xlsx",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    bytes: buildSpec128FilterXlsxBytes,
+  },
+  {
+    file: "spec128-filter.ods",
+    format: "ods",
+    extension: "ods",
+    mimeType: "application/vnd.oasis.opendocument.spreadsheet",
+    bytes: buildSpec128FilterOdsBytes,
   },
 ];
 
@@ -629,4 +649,72 @@ describe("SPEC-122: a copy in the other format re-opens with the same displayed 
       });
     });
   }
+});
+
+/** What SPEC-128 round-trips of a sheet: its autofilter and sort record
+ * (their verbatim source text is retention, not model) and every row's two
+ * hidden flags. */
+function filterForCompare(sheet: Sheet) {
+  const strip = <T extends { sourceXml?: string }>(value: T | undefined): Omit<T, "sourceXml"> | undefined => {
+    if (value === undefined) {
+      return undefined;
+    }
+    const { sourceXml: _source, ...rest } = value;
+    return rest;
+  };
+  const autoFilter = sheet.autoFilter && { ...strip(sheet.autoFilter)!, sort: strip(sheet.autoFilter.sort) };
+  if (autoFilter && autoFilter.sort === undefined) {
+    delete autoFilter.sort;
+  }
+  return {
+    autoFilter,
+    sortState: strip(sheet.sortState),
+    rows: sheet.rows.filter((row) => row.hidden || row.filterHidden).map((row) => ({ index: row.index, hidden: row.hidden === true, filterHidden: row.filterHidden === true })),
+  };
+}
+
+describe("SPEC-128: filter → save → reopen reproduces the autofilter, the sort records and every row's hidden flags", () => {
+  const ctx = workbookFormatContext({ dateSystem: "1900", format: "xlsx" }, EN_US);
+  for (const [file, format, bytes] of [
+    ["spec128-filter.xlsx", "xlsx", buildSpec128FilterXlsxBytes],
+    ["spec128-filter.ods", "ods", buildSpec128FilterOdsBytes],
+  ] as const) {
+    it(`${file}: Region without West`, async () => {
+      const model = await readSpreadsheetBytes(await bytes(), format, "book");
+      const sales = model.sheets[0]!;
+      expect(sales.autoFilter?.range).toEqual(SPEC128_FILTER_XLSX.sales.autoFilter.range);
+      const result = setFilterCriteria(model, sales.id, 0, { kind: "values", values: ["East", "North"], blanks: true, dateGroups: [] }, { ...ctx, dateQuirks: format === "ods" ? "proleptic" : "excel" });
+      expect(result.ok).toBe(true);
+      const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, format, "book");
+      expect(back.sheets.map(filterForCompare)).toEqual(model.sheets.map(filterForCompare));
+      expect(filterForCompare(back.sheets[0]!).rows.filter((row) => row.filterHidden).map((row) => row.index + 1)).toEqual([3, 4, 5, 8, 9, 10]);
+    });
+  }
+
+  it("spec128-filter.xlsx: a filter whose source text survives is re-emitted verbatim inside a rebuilt sheet", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec128FilterXlsxBytes(), "xlsx", "book");
+    setCellEntry(model, 0, { row: 20, col: 5 }, { value: "note" });
+    model.sheets = model.sheets.map((each, position) => (position === 0 ? { ...each, dirty: true } : each));
+    const parts = await unzip((await spreadsheetDownload(model)).bytes);
+    const sheetXml = new TextDecoder().decode(parts.get(SPEC128_FILTER_XLSX.sales.partName)!);
+    expect(sheetXml).toContain(SPEC128_FILTER_XLSX.sales.autoFilter.xml);
+    const back = await readSpreadsheetBytes(await spreadsheetDownload(model).then((d) => d.bytes), "xlsx", "book");
+    expect(back.sheets.map(filterForCompare)).toEqual(model.sheets.map(filterForCompare));
+  });
+
+  it("spec128-filter.xlsx: turning the filter off writes no autoFilter, no filterMode and no _xlnm._FilterDatabase for the sheet", async () => {
+    const model = await readSpreadsheetBytes(await buildSpec128FilterXlsxBytes(), "xlsx", "book");
+    const { toggleAutoFilter } = await import("./filter");
+    expect(toggleAutoFilter(model, model.sheets[0]!.id, null, ctx).ok).toBe(true);
+    const parts = await unzip((await spreadsheetDownload(model)).bytes);
+    const sheetXml = new TextDecoder().decode(parts.get(SPEC128_FILTER_XLSX.sales.partName)!);
+    expect(sheetXml).not.toContain("<autoFilter");
+    expect(sheetXml).not.toContain("filterMode");
+    const workbookXml = new TextDecoder().decode(parts.get("xl/workbook.xml")!);
+    const filterDatabases = [...workbookXml.matchAll(/<definedName\b[^>]*name="_xlnm\._FilterDatabase"[^>]*>/g)].map((match) => /localSheetId="(\d+)"/.exec(match[0])?.[1]);
+    expect(filterDatabases).toEqual(["1"]);
+    const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, "xlsx", "book");
+    expect(back.sheets[0]!.autoFilter).toBeUndefined();
+    expect(filterForCompare(back.sheets[0]!).rows).toEqual([{ index: SPEC128_FILTER_XLSX.sales.userHiddenIndex, hidden: true, filterHidden: false }]);
+  });
 });
