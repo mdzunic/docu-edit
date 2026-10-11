@@ -138,9 +138,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8 and SPEC-128 to 9, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(9);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9 and SPEC-129 to 10, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(10);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -592,9 +592,9 @@ const odsItemRow = (item: string): string => `<table:table-row table:style-name=
 const hide = (item: string, visibility: string): [string, string] => [odsItemRow(item), odsItemRow(item).replace(`"ro1"`, `"ro1" table:visibility="${visibility}"`)];
 
 describe("SPEC-128's reader step: the autofilter, the sort records and filter-hidden rows", () => {
-  it("moved the reader to version 9 with its step from 8, last", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(9);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(8);
+  it("moved the reader to version 9 with its step from 8 (SPEC-129's from 9 follows it)", () => {
+    expect(READER_UPGRADES.findIndex((step) => step.from === 8)).toBe(READER_UPGRADES.length - 2);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(9);
   });
 
   it("a version-8 record re-reads its clean filtered sheet, and its dirty one gains the autofilter, the sort records and its filter-hidden rows from the retained source", async () => {
