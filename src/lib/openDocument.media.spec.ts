@@ -1,7 +1,7 @@
 // SPEC-107 on the open funnel: every open path reaches media through
 // openAnyDocumentFile, which sniffs the six media formats from the bytes
-// BEFORE any unzip attempt and never from the extension; `.md` keeps its
-// extension exception and nothing else gains one; the text-only entry point
+// BEFORE any unzip attempt and never from the extension; `.md`, `.csv` and
+// `.tsv` keep their extension exception (SPEC-126); the text-only entry point
 // refuses media with a specific message; one size limit covers every kind.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -93,10 +93,14 @@ describe("openAnyDocumentFile — media (SPEC-107)", () => {
     await expect(openAnyDocumentFile(file(new TextEncoder().encode("# Notes"), "notes.svg"))).rejects.toThrow(DocxOpenError);
   });
 
-  it(".md keeps its extension exception", async () => {
+  it(".md, .csv and .tsv keep their extension exception", async () => {
     const opened = await openAnyDocumentFile(file(new TextEncoder().encode("# Notes\n\nPlain text."), "notes.md"));
     expect(opened.kind).toBe("text");
     expect(opened.kind === "text" && opened.model.format).toBe("md");
+    for (const format of ["csv", "tsv"] as const) {
+      const table = await openAnyDocumentFile(file(new TextEncoder().encode("a,b\tc\n1,2\t3\n"), `table.${format}`));
+      expect(table.kind === "spreadsheet" && table.model.format).toBe(format);
+    }
   });
 
   it("refuses an encrypted PDF with the password message", async () => {
