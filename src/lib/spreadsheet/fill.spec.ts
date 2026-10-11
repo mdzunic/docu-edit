@@ -267,6 +267,40 @@ describe("fill down / fill right", () => {
     expect(cellOf(m, 1, 2)?.formula).toBe("C1*2");
   });
 
+  it("SPEC-128: over filter-hidden rows, fills down the visible rows only from the first visible row, each formula shifted by its real distance", () => {
+    const m = model(
+      sheet({
+        rows: [
+          row(0, [value(0, "Head")]),
+          row(1, [value(0, 1, { styleId: 1 }), value(1, 2, { formula: "A2*2" })]),
+          row(2, [value(0, "kept")], { filterHidden: true }),
+          row(3, [value(0, 9)]),
+          row(4, [], { filterHidden: true }),
+          row(5, [value(1, 0)]),
+        ],
+      }),
+      { styles: [{}, { font: { bold: true } }] },
+    );
+    expect(fillDownRight(m, "s1", [range(1, 0, 5, 1)], "down")).toMatchObject({ ok: true });
+    expect([3, 5].map((r) => [cellOf(m, r, 0), cellOf(m, r, 1)?.formula])).toEqual([
+      [value(0, 1, { styleId: 1 }), "A4*2"],
+      [value(0, 1, { styleId: 1 }), "A6*2"],
+    ]);
+    expect(cellOf(m, 2, 0)?.value).toBe("kept");
+    expect(cellOf(m, 2, 1)).toBeUndefined();
+    expect(m.sheets[0]!.rows.find((each) => each.index === 4)).toEqual(row(4, [], { filterHidden: true }));
+  });
+
+  it("SPEC-128: over filter-hidden rows, fills right within each visible row only", () => {
+    const m = model(sheet({ rows: [row(0, [value(0, "a")]), row(1, [value(0, "b")], { filterHidden: true }), row(2, [value(0, "c")])] }));
+    fillDownRight(m, "s1", [range(0, 0, 2, 2)], "right");
+    expect([0, 1, 2].map((r) => [cellOf(m, r, 1)?.value, cellOf(m, r, 2)?.value])).toEqual([
+      ["a", "a"],
+      [undefined, undefined],
+      ["c", "c"],
+    ]);
+  });
+
   it("a one-row (one-column) selection copies from the row above (the column to the left)", () => {
     const m = model(sheet({ rows: [row(0, [value(0, 7), value(1, 8)])] }));
     fillDownRight(m, "s1", [range(1, 0, 1, 1)], "down");

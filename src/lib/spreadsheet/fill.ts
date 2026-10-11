@@ -31,11 +31,16 @@
 //   into the rest of the range — formulas shifted, styles copied, never a
 //   series; a one-row (one-column) range copies from the row above (the
 //   column to the left). Whole rows and columns are clipped to the used
-//   range first.
+//   range first. SPEC-128: a range spanning filter-hidden rows fills its
+//   visible rows only (Excel), through filter.ts's visibleRowSpans — down
+//   from the range's first visible row into every later visible row, each
+//   formula shifted by its real distance; right within each visible span —
+//   and leaves the filter-hidden rows as they are.
 import { getCell, usedRange, type GridRange } from "./address";
 import { arrayRangeTouched, clearContents, firstLockedCell, PROTECTED_CELL_MESSAGE } from "./cells";
 import { forEachPosition, PASTE_MERGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
 import { MAX_COPY_CELLS } from "./clipboardPayload";
+import { visibleRowSpans } from "./filter";
 import { shiftFormula } from "./formula/references";
 import { buildMergeIndex, mergeAt, rangesIntersect } from "./merges";
 import { MAX_COLS, MAX_ROWS, type Cell, type Sheet, type SpreadsheetModel, type TextRun } from "./model";
@@ -264,6 +269,28 @@ function fillMerges(sheet: Sheet, seed: GridRange, band: GridRange, axis: "row" 
 const isWholeColumns = (range: GridRange): boolean => range.top === 0 && range.bottom === MAX_ROWS - 1;
 const isWholeRows = (range: GridRange): boolean => range.left === 0 && range.right === MAX_COLS - 1;
 
+/** The plans filling the visible row spans of a range that spans
+ * filter-hidden rows (see the module header): down from its first visible
+ * row, right within each span. */
+function filteredPlans(spans: readonly GridRange[], direction: "down" | "right"): { source: GridRange; band: GridRange }[] {
+  const plans: { source: GridRange; band: GridRange }[] = [];
+  const first = spans[0];
+  for (const span of spans) {
+    if (direction === "down") {
+      const source = { ...first!, bottom: first!.top };
+      const band = span === first ? { ...span, top: span.top + 1 } : span;
+      if (band.top <= band.bottom) {
+        plans.push({ source, band });
+      }
+    } else if (span.left !== span.right) {
+      plans.push({ source: { ...span, right: span.left }, band: { ...span, left: span.left + 1 } });
+    } else if (span.left > 0) {
+      plans.push({ source: { ...span, left: span.left - 1, right: span.left - 1 }, band: span });
+    }
+  }
+  return plans;
+}
+
 /** Ctrl/Cmd+D ("down") or Ctrl/Cmd+R ("right") over the selection's ranges
  * (see the module header). */
 export function fillDownRight(model: SpreadsheetModel, sheetId: string, ranges: readonly GridRange[], direction: "down" | "right"): FillResult {
@@ -281,6 +308,11 @@ export function fillDownRight(model: SpreadsheetModel, sheetId: string, ranges: 
     }
     if (used && isWholeRows(range)) {
       range.right = Math.max(range.left, used.right);
+    }
+    const spans = range.top === range.bottom ? [range] : visibleRowSpans(sheet, range);
+    if (spans.length !== 1 || spans[0]!.top !== range.top || spans[0]!.bottom !== range.bottom) {
+      plans.push(...filteredPlans(spans, direction));
+      continue;
     }
     if (direction === "down") {
       const single = range.top === range.bottom;
