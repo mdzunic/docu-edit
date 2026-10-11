@@ -1,11 +1,12 @@
 // SPEC-124 "Formula adjustment": every example of the table, plus a
 // randomised check that an insert followed by the delete of the same band
-// restores every formula the insert did not turn into #REF!.
+// restores every formula the insert did not turn into #REF!. SPEC-129
+// "Structural edits" adds adjustAnchoredFormula's own cases.
 import { describe, expect, it } from "vitest";
-import { colToLetters } from "../address";
+import { colToLetters, type GridRange } from "../address";
 import { MAX_COLS, MAX_ROWS } from "../model";
 import type { StructuralEdit } from "../structure";
-import { adjustFormula, adjustFormulaReferences } from "./adjust";
+import { adjustAnchoredFormula, adjustFormula, adjustFormulaReferences } from "./adjust";
 
 const SHEETS: Record<string, string> = { s1: "Sheet1", s2: "Sheet2", s3: "Sheet3", my: "My Sheet" };
 const nameOf = (id: string): string => SHEETS[id] ?? "";
@@ -88,6 +89,47 @@ describe("adjustFormula — what survives byte-for-byte", () => {
 
   it("takes the sheet test from the caller for retained text", () => {
     expect(adjustFormulaReferences("Old!A5+A5", edit("insertRows", 0, 1), (sheet) => sheet === "Old")).toBe("Old!A6+A5");
+  });
+});
+
+describe("adjustAnchoredFormula (SPEC-129 \"Structural edits\")", () => {
+  const range = (top: number, left: number, bottom: number, right: number): GridRange => ({ top, left, bottom, right });
+  const B5_B20 = range(4, 1, 19, 1); // B5:B20
+  const anchored = (text: string, e: StructuralEdit, firstRange: GridRange = B5_B20): string => adjustAnchoredFormula(text, { row: 4, col: 1 }, firstRange, "s1", e, nameOf);
+
+  it("behaves as adjustFormula when the origin's row/col is not deleted (an insert, or a delete elsewhere)", () => {
+    expect(anchored("B5>$Z$1", edit("insertRows", 2, 2))).toBe("B7>$Z$1");
+    expect(anchored("B5>$Z$1", edit("deleteRows", 10, 2))).toBe("B5>$Z$1");
+  });
+
+  it("re-anchors onto the surviving top-left instead of #REF! when the edit deletes the origin's row", () => {
+    // Deleting B5 itself: the formula keeps meaning "this cell" for B6, now B5.
+    expect(anchored("B5>$Z$1", edit("deleteRows", 4, 1))).toBe("B5>$Z$1");
+    // Plain adjustFormula would have turned the self-reference into #REF!.
+    expect(adjustFormula("B5>$Z$1", "s1", edit("deleteRows", 4, 1), nameOf)).toBe("#REF!>$Z$1");
+  });
+
+  it("re-anchors past a deleted band wider than one row", () => {
+    // Deleting B5:B6: the surviving top was B7, now B5 — same text.
+    expect(anchored("B5>$Z$1", edit("deleteRows", 4, 2))).toBe("B5>$Z$1");
+  });
+
+  it("leaves a formula with no reference to the origin alone", () => {
+    expect(anchored("$Z$1>$Y$1", edit("deleteRows", 4, 1))).toBe("$Z$1>$Y$1");
+  });
+
+  it("rebases onto a firstRange distinct from the origin's own (the caller's first surviving range)", () => {
+    // origin B5 is deleted; firstRange (C10:C20, unrelated to it) is not, and
+    // shifts up by the one deleted row — the formula ends up self-referential
+    // to its new top-left, C9; the untouched $Z$1 (above the deleted row) stays.
+    expect(anchored("B5>$Z$1", edit("deleteRows", 4, 1), range(9, 2, 19, 2))).toBe("C9>$Z$1");
+  });
+
+  it("follows the column axis the same way", () => {
+    const C5 = range(4, 2, 4, 19); // C5:T5
+    const columnAnchored = (text: string, e: StructuralEdit): string => adjustAnchoredFormula(text, { row: 4, col: 2 }, C5, "s1", e, nameOf);
+    expect(columnAnchored("C5>$A$1", edit("deleteCols", 2, 1))).toBe("C5>$A$1");
+    expect(adjustFormula("C5>$A$1", "s1", edit("deleteCols", 2, 1), nameOf)).toBe("#REF!>$A$1");
   });
 });
 
