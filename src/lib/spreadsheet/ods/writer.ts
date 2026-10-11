@@ -15,7 +15,9 @@
 //     columns, merges and styles, every model style a generated `de-ce`
 //     one) and a settings.xml holding only the view's `ActiveTable`. The
 //     `number` and `calcext` namespaces are declared only when the content
-//     uses them.
+//     uses them. SPEC-128: every sheet's autofilter as a
+//     `table:database-range` in a `table:database-ranges` after the tables
+//     (ods/databaseRanges.ts).
 //  2. Retained package, nothing changed: every part verbatim (mimetype first
 //     and STOREd).
 //  3. The substitution path: content.xml = the envelope prefix (the
@@ -23,7 +25,11 @@
 //     sheet-reference pass over its content validations; a namespace the
 //     rebuilt tables use declared on the root when the source did not) +
 //     each sheet's table text + the suffix (the pass, and the named ranges
-//     and database ranges on deleted sheets removed). A sheet's table text:
+//     and database ranges on deleted sheets removed; SPEC-128: the database
+//     ranges that are the sheets' autofilters regenerated from the model —
+//     an unchanged one verbatim, a changed one patched, a new one appended,
+//     a removed one dropped — per ods/databaseRanges.ts, the pass applied to
+//     their retained text only). A sheet's table text:
 //     its sourceXml with the pass and two start-tag splices — `table:name`
 //     when it differs from the model's, `table:style-name` → a `de-ta` style
 //     when the model's visibility or tab colour differs from what the source
@@ -76,6 +82,7 @@ import {
   tableNameOf,
   tableStyleNameOf,
 } from "./package";
+import { odsDatabaseRangesXml, odsSuffixWithAutoFilters } from "./databaseRanges";
 import { passOdsText, removeRangesOnDeletedSheets, rootNamespaces } from "./sheetNamePass";
 import {
   emptyOdsStyleSheet,
@@ -241,12 +248,13 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   // The generated styles.xml defines "Default" alone: every other named style is appended.
   const named = new OdsNamedStyles(model, { defines: (name) => name === "Default", appendable: true }, registry, locale);
   const tables = model.sheets.map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name) })).join("");
+  const databaseRanges = odsDatabaseRangesXml(model.sheets);
   const styles = registry.xml();
   const content =
     `${ODF_DECLARATION}<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}" ` +
     `xmlns:table="${TABLE_NS}" xmlns:fo="${FO_NS}" xmlns:of="${OF_NS}" xmlns:tableooo="${TABLEOOO_NS}"${optionalDeclarations(styles + tables)} office:version="1.2">` +
     `<office:automatic-styles>${styles}</office:automatic-styles>` +
-    `<office:body><office:spreadsheet>${calculationSettings(model)}${tables}</office:spreadsheet></office:body></office:document-content>`;
+    `<office:body><office:spreadsheet>${calculationSettings(model)}${tables}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
   const active = model.sheets[model.activeSheetIndex] ?? model.sheets[0];
   return [
     { name: "mimetype", data: encode(ODS_MIMETYPE), store: true },
@@ -409,9 +417,15 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     rebuilt += table;
     return table;
   });
+  // SPEC-128: the autofilters' database ranges regenerated; every other byte of the suffix passed.
+  const databases = odsSuffixWithAutoFilters(envelope.suffix, model.sheets, {
+    sourceNames: remap.orderBefore,
+    retained: (retained) => passOdsText(removeRangesOnDeletedSheets(retained, remap), remap, namespaces),
+    sheetPass: (sheet, retained) => passOdsText(retained, copyRemap(remap, sheet), namespaces),
+  });
   const generated = registry.xml();
-  const prefix = withNamespaces(withGeneratedStyles(passOdsText(envelope.prefix, remap, namespaces), generated), generated + rebuilt);
-  const suffix = passOdsText(removeRangesOnDeletedSheets(envelope.suffix, remap), remap, namespaces);
+  const prefix = withNamespaces(withGeneratedStyles(passOdsText(envelope.prefix, remap, namespaces), generated), generated + rebuilt + databases.generated);
+  const suffix = databases.suffix;
   const content = prefix + tables.join("") + suffix;
 
   // Objects and pictures only a deleted source table showed.
