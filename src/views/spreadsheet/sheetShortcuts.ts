@@ -58,11 +58,13 @@ export type SheetShortcutId =
   | "sheet.deleteCells"
   | "sheet.pasteSpecial"
   | "sheet.fillDown"
-  | "sheet.fillRight";
+  | "sheet.fillRight"
+  | "sheet.insertFunction";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
 const PASTE_CATEGORY = "Paste and fill";
+const FORMULA_CATEGORY = "Formulas";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -103,6 +105,10 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     },
     { id: "sheet.fillDown", label: "Fill down", category: PASTE_CATEGORY, bindings: [{ key: "d", mod: true }] },
     { id: "sheet.fillRight", label: "Fill right", category: PASTE_CATEGORY, bindings: [{ key: "r", mod: true }] },
+    // SPEC-127: the Insert Function dialog, Excel's Shift+F3. Firefox keeps
+    // Shift+F3 for find-previous, so the formula bar's fx button is the
+    // guaranteed path.
+    { id: "sheet.insertFunction", label: "Insert function", category: FORMULA_CATEGORY, bindings: [{ key: "F3", shift: true }] },
   ];
   return definitions;
 }

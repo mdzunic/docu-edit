@@ -8,15 +8,40 @@
 // regular-expression criteria, partial-cell matching), and spec120-calc.xlsx,
 // whose column G holds the self-contained rows with Excel's cached values:
 // F9 over it must reproduce every one.
+//
+// SPEC-127 "Conformance tables": then every row of the category files under
+// conformance/ (one per category; conformance/row.ts says where a value may
+// come from), each run through the real parser, evaluator and a full
+// recalculation of its own workbook — the formula at Z100 of Sheet1 (or over
+// its legacy array range), the clock at 2026-10-08 09:30, RAND drawing 0.5 — and
+// named by its file and formula when it fails. Numbers compare at the row's
+// significant digits (15 by default). Then the completeness rules: a row's
+// root function (the call at the formula's root) belongs to its file's
+// category, and every registered function — SPEC-120's included — roots at
+// least three rows, one of them an error case and, unless its Microsoft page
+// carries no example table, one of them an Excel row.
 import { describe, expect, it } from "vitest";
-import { getCell, parseA1 } from "../address";
+import { getCell, parseA1, parseRange } from "../address";
 import { buildSpec120CalcXlsxBytes, SPEC120_CONFORMANCE } from "../fixtures/build";
 import { calcWorkbook, type CellSpec } from "../fixtures/calcWorkbook";
 import type { CalcSettings, CellValue } from "../model";
 import { SPREADSHEET_LOCALES, type SpreadsheetLocaleTag } from "../numberFormat/locale";
 import { readSpreadsheetBytes } from "../open";
+import type { FormulaNode } from "./ast";
+import { DATE_ROWS } from "./conformance/date";
+import { ENGINEERING_ROWS } from "./conformance/engineering";
+import { FINANCIAL_ROWS } from "./conformance/financial";
+import { INFORMATION_ROWS } from "./conformance/information";
+import { LOGICAL_ROWS } from "./conformance/logical";
+import { LOOKUP_ROWS } from "./conformance/lookup";
+import { MATH_ROWS } from "./conformance/math";
+import type { ConformanceRow } from "./conformance/row";
+import { STATISTICAL_ROWS } from "./conformance/statistical";
+import { TEXT_ROWS } from "./conformance/text";
 import { evaluateCell, isUncomputable, storedValueContext } from "./evaluate";
+import { parseFormula } from "./parse";
 import { recalculate } from "./recalc";
+import { getFunction, registeredFunctionNames, type FunctionCategory } from "./registry";
 
 type Source = "Excel" | "pinned";
 
@@ -173,5 +198,157 @@ describe("spec120-calc.xlsx's conformance rows (cached with Excel's values)", ()
     expect(SPEC120_CONFORMANCE.map((row) => getCell(after, parseA1(row.ref)!.row, parseA1(row.ref)!.col)?.value)).toEqual(
       SPEC120_CONFORMANCE.map((row) => row.value),
     );
+  });
+});
+
+// --- SPEC-127: the category files ------------------------------------------------------
+
+/** Each category file, and the categories whose functions its rows root in. */
+const CATEGORY_FILES: readonly { file: string; rows: readonly ConformanceRow[]; categories: readonly FunctionCategory[] }[] = [
+  { file: "lookup.ts", rows: LOOKUP_ROWS, categories: ["Lookup & Reference"] },
+  { file: "text.ts", rows: TEXT_ROWS, categories: ["Text"] },
+  { file: "date.ts", rows: DATE_ROWS, categories: ["Date & Time"] },
+  { file: "math.ts", rows: MATH_ROWS, categories: ["Math & Trig"] },
+  { file: "statistical.ts", rows: STATISTICAL_ROWS, categories: ["Statistical", "Compatibility"] },
+  { file: "financial.ts", rows: FINANCIAL_ROWS, categories: ["Financial"] },
+  { file: "information.ts", rows: INFORMATION_ROWS, categories: ["Information"] },
+  { file: "engineering.ts", rows: ENGINEERING_ROWS, categories: ["Engineering"] },
+  { file: "logical.ts", rows: LOGICAL_ROWS, categories: ["Logical"] },
+];
+
+/** Functions whose Microsoft reference page carries no example table, so no
+ * Excel row can exist for them (each checked against its page). */
+const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([
+  // Their pages print no fixed result: the values "vary" (NOW and TODAY's
+  // with the date the page is read on).
+  "RAND",
+  "RANDBETWEEN",
+  "NOW",
+  "TODAY",
+  // Excel's `@` operator in file form: no function page.
+  "SINGLE",
+  // Examples printed only as screenshots or prose (no literal data).
+  "IF",
+  "TRUE",
+  "FALSE",
+  "IFNA",
+  "VLOOKUP",
+  "XLOOKUP",
+  "TRANSPOSE",
+  "CELL",
+  "INFO",
+  "SUM",
+  "SUMPRODUCT",
+  "MMULT",
+  "FREQUENCY",
+  "DOLLAR",
+  // Every example row needs what a row cannot hold: an external link
+  // (HYPERLINK), a named range or table or several sheets (SHEET, SHEETS), or
+  // a root that is no call of the function (SINH's `2.868*SINH(…)`).
+  "HYPERLINK",
+  "SHEET",
+  "SHEETS",
+  "SINH",
+]);
+
+/** The conformance clock: 2026-10-08 09:30, local time. */
+const CONFORMANCE_NOW = new Date(2026, 9, 8, 9, 30);
+
+/** The conformance RAND: every draw is 0.5, so a row over RAND or
+ * RANDBETWEEN is derived by hand from SPEC-120's rule. */
+const CONFORMANCE_RANDOM = (): number => 0.5;
+
+/** The value a row's formula computes, and its array members' values. */
+function runRow(row: ConformanceRow): { value: CellValue; members?: CellValue[][] } {
+  const range = row.array === undefined ? undefined : parseRange(row.array);
+  if (row.array !== undefined && !range) {
+    throw new Error(`Not a range: ${row.array}`);
+  }
+  const host = range ? { row: range.top, col: range.left } : parseA1("Z100")!;
+  const hostRef = range ? row.array!.split(":")[0]! : "Z100";
+  const cells: Record<string, CellSpec> = { ...row.cells, [hostRef]: range ? { formula: row.formula, array: row.array } : { formula: row.formula } };
+  const model = calcWorkbook({ Sheet1: cells });
+  recalculate(model, [], { full: true, reason: "manual", now: () => CONFORMANCE_NOW, random: CONFORMANCE_RANDOM });
+  const sheet = model.sheets[0]!;
+  const at = (r: number, c: number): CellValue => getCell(sheet, r, c)?.value ?? null;
+  if (!range) {
+    return { value: at(host.row, host.col) };
+  }
+  const members: CellValue[][] = [];
+  for (let r = range.top; r <= range.bottom; r += 1) {
+    const line: CellValue[] = [];
+    for (let c = range.left; c <= range.right; c += 1) {
+      line.push(at(r, c));
+    }
+    members.push(line);
+  }
+  return { value: at(host.row, host.col), members };
+}
+
+/** A value as the row compares it: a number at `digits` significant digits. */
+function comparable(value: CellValue, digits: number): CellValue {
+  if (typeof value !== "number") {
+    return value;
+  }
+  return value === 0 ? 0 : Number(value.toPrecision(digits));
+}
+
+/** The function at a formula's root (through parentheses), if any. */
+function rootFunction(formula: string): string | undefined {
+  let node: FormulaNode = parseFormula(formula);
+  while (node.kind === "paren") {
+    node = node.inner;
+  }
+  return node.kind === "function" ? node.name.toUpperCase() : undefined;
+}
+
+const isErrorValue = (value: CellValue): boolean => typeof value === "object" && value !== null && "error" in value;
+
+describe("SPEC-127's conformance tables (formula/conformance/*.ts)", () => {
+  for (const { file, rows } of CATEGORY_FILES) {
+    rows.forEach((row, index) => {
+      const label = `${file} #${index + 1}: =${row.formula}${row.array ? ` over ${row.array}` : ""} is ${JSON.stringify(row.expected)} — ${row.source}`;
+      it(label, () => {
+        const digits = row.digits ?? 15;
+        const { value, members } = runRow(row);
+        expect(comparable(value, digits), `${label} (${row.note})`).toEqual(comparable(row.expected, digits));
+        if (row.expectedArray) {
+          expect(
+            members?.map((line) => line.map((member) => comparable(member, digits))),
+            `${label}: the array's members`,
+          ).toEqual(row.expectedArray.map((line) => line.map((member) => comparable(member, digits))));
+        }
+      });
+    });
+  }
+});
+
+describe("SPEC-127's conformance completeness", () => {
+  const all = CATEGORY_FILES.flatMap(({ file, rows, categories }) => rows.map((row) => ({ file, row, categories, root: rootFunction(row.formula) })));
+
+  it("labels every row Excel, pinned or reference, with a note, and gives `expectedArray` exactly to array rows", () => {
+    for (const { file, row } of all) {
+      expect(["Excel", "pinned", "reference"], `${file}: =${row.formula}`).toContain(row.source);
+      expect(row.note.trim().length, `${file}: =${row.formula} has a note`).toBeGreaterThan(0);
+      expect(row.expectedArray === undefined, `${file}: =${row.formula}`).toBe(row.array === undefined);
+    }
+  });
+
+  it("files every row under its root function's category", () => {
+    for (const { file, row, categories, root } of all) {
+      expect(root, `${file}: =${row.formula} roots in a function call`).toBeDefined();
+      const spec = getFunction(root!);
+      expect(spec, `${file}: =${row.formula} roots in a registered function`).toBeDefined();
+      expect(categories, `${file}: =${row.formula} (${root} is ${spec?.category})`).toContain(spec!.category);
+    }
+  });
+
+  it.each(registeredFunctionNames().filter((name) => name !== "ZZTESTFN"))("%s roots at least three rows, an error row among them, and an Excel row where its page has an example", (name) => {
+    const rows = all.filter((entry) => entry.root === name).map((entry) => entry.row);
+    expect(rows.length, `${name}'s rows`).toBeGreaterThanOrEqual(3);
+    expect(rows.some((row) => isErrorValue(row.expected)), `${name} has an error row`).toBe(true);
+    if (!NO_EXAMPLE_TABLE.has(name)) {
+      expect(rows.some((row) => row.source === "Excel"), `${name} has an Excel row`).toBe(true);
+    }
   });
 });

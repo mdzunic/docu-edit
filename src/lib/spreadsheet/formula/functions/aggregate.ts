@@ -60,10 +60,10 @@ function minMax(name: "MIN" | "MAX", pick: (a: number, b: number) => number): Fu
     category: "Statistical",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: name === "MIN" ? "Returns the smallest number." : "Returns the largest number.",
-    args: [repeating("number", "A number, or a range or array of numbers.")],
+    args: [arg("number1", "A number, or a range or array of numbers."), repeating("number2", "More numbers, ranges or arrays.")],
     impl(args, ctx) {
       return extreme(pick, (visit) => eachNumber(args, ctx, visit));
     },
@@ -76,13 +76,15 @@ function minMaxIfs(name: "MINIFS" | "MAXIFS", pick: (a: number, b: number) => nu
     category: "Statistical",
     minArgs: 3,
     maxArgs: 255,
-    argKinds: ["range", "range", "value"],
-    repeat: { from: 1, count: 2 },
+    argKinds: ["range", "range", "value", "range", "value"],
+    repeat: { from: 3, count: 2 },
     summary: name === "MINIFS" ? "Returns the smallest number among cells that meet every criterion." : "Returns the largest number among cells that meet every criterion.",
     args: [
       arg(name === "MINIFS" ? "min_range" : "max_range", "The cells whose numbers are compared."),
-      repeating("criteria_range", "The cells a criterion is tested against."),
-      repeating("criteria", "The criterion for that range."),
+      arg("criteria_range1", "The cells the first criterion is tested against."),
+      arg("criteria1", "The first criterion."),
+      repeating("criteria_range2", "The cells a further criterion is tested against."),
+      repeating("criteria2", "The criterion for that range."),
     ],
     impl(args, ctx) {
       const call = ifsArguments(args, ctx);
@@ -111,10 +113,10 @@ export const AGGREGATE_FUNCTIONS: FunctionSpec[] = [
     category: "Statistical",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: "Returns the arithmetic mean of its arguments.",
-    args: [repeating("number", "A number, or a range or array of numbers.")],
+    args: [arg("number1", "A number, or a range or array of numbers."), repeating("number2", "More numbers, ranges or arrays.")],
     impl(args, ctx) {
       return average((visit) => eachNumber(args, ctx, visit));
     },
@@ -153,13 +155,15 @@ export const AGGREGATE_FUNCTIONS: FunctionSpec[] = [
     category: "Statistical",
     minArgs: 3,
     maxArgs: 255,
-    argKinds: ["range", "range", "value"],
-    repeat: { from: 1, count: 2 },
+    argKinds: ["range", "range", "value", "range", "value"],
+    repeat: { from: 3, count: 2 },
     summary: "Returns the mean of the cells that meet every criterion.",
     args: [
       arg("average_range", "The cells to average."),
-      repeating("criteria_range", "The cells a criterion is tested against."),
-      repeating("criteria", "The criterion for that range."),
+      arg("criteria_range1", "The cells the first criterion is tested against."),
+      arg("criteria1", "The first criterion."),
+      repeating("criteria_range2", "The cells a further criterion is tested against."),
+      repeating("criteria2", "The criterion for that range."),
     ],
     impl(args, ctx) {
       const call = ifsArguments(args, ctx);
@@ -171,10 +175,10 @@ export const AGGREGATE_FUNCTIONS: FunctionSpec[] = [
     category: "Statistical",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: "Counts the numbers among its arguments.",
-    args: [repeating("value", "A value, or a range or array whose numbers are counted.")],
+    args: [arg("value1", "A value, or a range or array whose numbers are counted."), repeating("value2", "More values, ranges or arrays to count.")],
     impl(args, ctx) {
       let count = 0;
       for (let i = 0; i < args.length; i += 1) {
@@ -192,10 +196,10 @@ export const AGGREGATE_FUNCTIONS: FunctionSpec[] = [
     category: "Statistical",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: "Counts the values that are not empty.",
-    args: [repeating("value", "A value, or a range or array whose non-empty values are counted.")],
+    args: [arg("value1", "A value, or a range or array whose non-empty values are counted."), repeating("value2", "More values, ranges or arrays to count.")],
     impl(args, ctx) {
       let count = 0;
       for (let i = 0; i < args.length; i += 1) {
@@ -255,10 +259,15 @@ export const AGGREGATE_FUNCTIONS: FunctionSpec[] = [
     category: "Statistical",
     minArgs: 2,
     maxArgs: 254,
-    argKinds: ["range", "value"],
-    repeat: { from: 0, count: 2 },
+    argKinds: ["range", "value", "range", "value"],
+    repeat: { from: 2, count: 2 },
     summary: "Counts the positions where every criterion is met.",
-    args: [repeating("criteria_range", "The cells a criterion is tested against."), repeating("criteria", "The criterion for that range.")],
+    args: [
+      arg("criteria_range1", "The cells the first criterion is tested against."),
+      arg("criteria1", "The first criterion."),
+      repeating("criteria_range2", "The cells a further criterion is tested against."),
+      repeating("criteria2", "The criterion for that range."),
+    ],
     impl(args, ctx) {
       const pairs = criteriaPairs(args, 0, ctx);
       return isError(pairs) ? pairs : countMatches(ctx, pairs);

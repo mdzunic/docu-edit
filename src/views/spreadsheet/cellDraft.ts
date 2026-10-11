@@ -96,6 +96,12 @@ export function createDraft() {
     return true;
   }
 
+  /** text[from, to) replaced by `insert`, the caret at `caretAfter` (one
+   * undoable step) — SPEC-127's function assists insert through this. */
+  function replaceRange(from: number, to: number, insert: string, caretAfter: number): void {
+    set(text.value.slice(0, from) + insert + text.value.slice(to), caretAfter);
+  }
+
   /** Registers a host; returns its unregistration. A cell host mounted
    * while focus was requested (the grid re-mounted on a sheet switch) takes
    * it. */
@@ -123,6 +129,7 @@ export function createDraft() {
     fail,
     syncCaret,
     replaceSelection,
+    replaceRange,
     register,
     /** The in-cell editor's offset under a viewport point. */
     caretAt: (x: number, y: number): number | null => surfaces.get("cell")?.caretAt(x, y) ?? null,

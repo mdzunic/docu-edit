@@ -124,10 +124,10 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     category: "Math & Trig",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: "Adds its arguments.",
-    args: [repeating("number", "A number, or a range or array whose numbers are added.")],
+    args: [arg("number1", "A number, or a range or array whose numbers are added."), repeating("number2", "More numbers, ranges or arrays to add.")],
     impl(args, ctx) {
       let total = 0;
       return eachNumber(args, ctx, (n) => {
@@ -181,13 +181,15 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     category: "Math & Trig",
     minArgs: 3,
     maxArgs: 255,
-    argKinds: ["range", "range", "value"],
-    repeat: { from: 1, count: 2 },
+    argKinds: ["range", "range", "value", "range", "value"],
+    repeat: { from: 3, count: 2 },
     summary: "Adds the cells that meet every criterion.",
     args: [
       arg("sum_range", "The cells to add."),
-      repeating("criteria_range", "The cells a criterion is tested against."),
-      repeating("criteria", "The criterion for that range."),
+      arg("criteria_range1", "The cells the first criterion is tested against."),
+      arg("criteria1", "The first criterion."),
+      repeating("criteria_range2", "The cells a further criterion is tested against."),
+      repeating("criteria2", "The criterion for that range."),
     ],
     impl(args, ctx) {
       const sum = singleArea(args.get(0));
@@ -218,10 +220,10 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     category: "Math & Trig",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["array"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["array", "array"],
+    repeat: { from: 1, count: 1 },
     summary: "Multiplies corresponding elements of arrays and adds the products.",
-    args: [repeating("array", "An array or range, all of the same dimensions.")],
+    args: [arg("array1", "An array or range."), repeating("array2", "A further array or range of the same dimensions.")],
     impl(args, ctx) {
       const arrays: ArrayValue[] = [];
       for (let i = 0; i < args.length; i += 1) {
@@ -258,10 +260,10 @@ export const MATH_FUNCTIONS: FunctionSpec[] = [
     category: "Math & Trig",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary: "Multiplies its arguments.",
-    args: [repeating("number", "A number, or a range or array whose numbers are multiplied.")],
+    args: [arg("number1", "A number, or a range or array whose numbers are multiplied."), repeating("number2", "More numbers, ranges or arrays to multiply.")],
     impl(args, ctx) {
       let product = 1;
       let count = 0;

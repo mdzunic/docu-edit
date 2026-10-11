@@ -77,6 +77,8 @@ export function staleTitle(reason: UncomputableReason): string {
         return "iterative calculation isn't supported";
       case "regex":
         return "regular-expression criteria aren't supported";
+      case "unsupportedCase":
+        return `this use of ${reason.name} isn't supported yet`;
       default:
         return "data tables aren't supported";
     }

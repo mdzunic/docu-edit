@@ -21,9 +21,13 @@
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
+import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import FormatCellsDialog from "./FormatCellsDialog.vue";
 import FormulaBar from "./FormulaBar.vue";
+import FunctionArgHint from "./FunctionArgHint.vue";
+import FunctionAutocomplete from "./FunctionAutocomplete.vue";
+import InsertFunctionDialog from "./InsertFunctionDialog.vue";
 import PasteSpecialDialog from "./PasteSpecialDialog.vue";
 import SheetCellContextMenu from "./SheetCellContextMenu.vue";
 import SheetGrid from "./SheetGrid.vue";
@@ -45,7 +49,12 @@ const props = defineProps({
   grid: { type: Object, required: true },
   /** useWorkbookEditing's return (SPEC-121). */
   editing: { type: Object, required: true },
+  /** useFunctionAssist's return (SPEC-127): the autocomplete, the argument
+   * hint and the Insert Function dialog, and the formula bar's fx. */
+  assist: { type: Object, default: null },
 });
+
+const assist = computed(() => (props.assist ? asFunctionAssist(props.assist) : null));
 
 const book = computed(() => asWorkbookBook(props.book));
 
@@ -81,7 +90,30 @@ const tabs = computed(() => {
       :spill-member="grid.formulas.spillMember.value"
       :editor="cellEditing"
       :editable="book.activeSheet.value?.kind === 'grid'"
+      :can-insert-function="assist?.canInsert.value ?? false"
+      :aria="assist?.editorAria.value ?? {}"
+      @insert-function="assist?.openDialog()"
     />
+    <template v-if="assist">
+      <FunctionAutocomplete
+        v-if="assist.listOpen.value"
+        :names="assist.matches.value"
+        :highlighted="assist.highlighted.value ?? ''"
+        :summary="assist.summary.value"
+        :anchor-style="assist.anchorStyle.value"
+        @choose="assist.choose"
+      />
+      <FunctionArgHint
+        v-else-if="assist.hint.value"
+        :parts="assist.hint.value.parts"
+        :anchor-style="assist.anchorStyle.value"
+      />
+      <InsertFunctionDialog
+        v-if="assist.dialogOpen.value"
+        @insert="assist.insertFromDialog"
+        @cancel="assist.closeDialog()"
+      />
+    </template>
     <div
       :id="panelId"
       class="workbook-sheet"

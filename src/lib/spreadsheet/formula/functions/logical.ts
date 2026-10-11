@@ -56,10 +56,10 @@ function logicalFold(name: string, summary: string, start: boolean, step: (acc: 
     category: "Logical",
     minArgs: 1,
     maxArgs: 255,
-    argKinds: ["any"],
-    repeat: { from: 0, count: 1 },
+    argKinds: ["any", "any"],
+    repeat: { from: 1, count: 1 },
     summary,
-    args: [repeating("logical", "A condition, or a range or array of logicals.")],
+    args: [arg("logical1", "A condition, or a range or array of logicals."), repeating("logical2", "More conditions, ranges or arrays.")],
     impl(args, ctx) {
       return logicals(args, ctx, start, step);
     },
@@ -134,11 +134,16 @@ export const LOGICAL_FUNCTIONS: FunctionSpec[] = [
     category: "Logical",
     minArgs: 2,
     maxArgs: 254,
-    argKinds: ["value", "any"],
-    repeat: { from: 0, count: 2 },
+    argKinds: ["value", "any", "value", "any"],
+    repeat: { from: 2, count: 2 },
     lazy: true,
     summary: "Returns the value of the first condition that is TRUE.",
-    args: [repeating("logical_test", "A condition, tested in order."), repeating("value_if_true", "The result when it is the first TRUE one.")],
+    args: [
+      arg("logical_test1", "The first condition."),
+      arg("value_if_true1", "The result when it is TRUE."),
+      repeating("logical_test2", "A further condition, tested in order."),
+      repeating("value_if_true2", "The result when it is the first TRUE one."),
+    ],
     impl(args) {
       if (args.length % 2 !== 0) {
         return VALUE_ERROR;
@@ -180,14 +185,16 @@ export const LOGICAL_FUNCTIONS: FunctionSpec[] = [
     category: "Logical",
     minArgs: 3,
     maxArgs: 254,
-    argKinds: ["value", "value", "any"],
-    repeat: { from: 1, count: 2 },
+    argKinds: ["value", "value", "any", "value", "any"],
+    repeat: { from: 3, count: 2 },
     lazy: true,
     summary: "Returns the result paired with the first value that equals an expression.",
     args: [
       arg("expression", "The value to match."),
-      repeating("value", "A value to compare it with; a last unpaired argument is the default."),
-      repeating("result", "The result when it matches."),
+      arg("value1", "The first value to compare it with."),
+      arg("result1", "The result when it matches."),
+      repeating("default_or_value2", "A further value to compare; a last unpaired argument is the default."),
+      repeating("result2", "The result when that value matches."),
     ],
     impl(args, ctx) {
       const expression = scalarArg(args, 0);
@@ -212,11 +219,11 @@ export const LOGICAL_FUNCTIONS: FunctionSpec[] = [
     category: "Lookup & Reference",
     minArgs: 2,
     maxArgs: 255,
-    argKinds: ["value", "any"],
-    repeat: { from: 1, count: 1 },
+    argKinds: ["value", "any", "any"],
+    repeat: { from: 2, count: 1 },
     lazy: true,
     summary: "Returns one of its values by position.",
-    args: [arg("index_num", "Which value to return, from 1."), repeating("value", "A value to choose from.")],
+    args: [arg("index_num", "Which value to return, from 1."), arg("value1", "The first value to choose from."), repeating("value2", "A further value to choose from.")],
     impl(args, ctx) {
       const index = toNumber(scalarArg(args, 0) as ScalarValue, ctx.settings);
       if (isError(index)) {

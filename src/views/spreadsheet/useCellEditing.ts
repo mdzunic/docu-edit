@@ -41,7 +41,7 @@ import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/local
 import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
-import { cellEditText, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
+import { canEditCell, cellEditText, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { usePointMode } from "./usePointMode";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -89,6 +89,7 @@ export function useCellEditing(deps: CellEditingDeps) {
   const revealTick = ref(0);
   let original = "";
   let composing = false;
+  let keyFilter: ((event: KeyboardEvent) => boolean) | null = null;
 
   const editing = computed(() => mode.value !== "ready");
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
@@ -304,6 +305,9 @@ export function useCellEditing(deps: CellEditingDeps) {
       return editing.value || composing;
     }
     draft.syncCaret();
+    if (editing.value && keyFilter?.(event)) {
+      return true; // SPEC-127: the function assists' keys come first
+    }
     return editing.value ? editKey(event, actions) : readyKey(event, actions);
   }
 
@@ -356,9 +360,15 @@ export function useCellEditing(deps: CellEditingDeps) {
     onShownSheet: computed(() => target.value === null || target.value.sheetId === deps.book.activeSheet.value?.id),
     input,
     compositionStart,
-    compositionEnd: (): void => {
-      composing = false;
-    },
+    compositionEnd: (): void => void (composing = false),
+    replaceRange: draft.replaceRange,
+    /** SPEC-127's Insert Function from Ready: edits the active cell with
+     * `text`, caret at the end; false when refused (a toast). */
+    startEditing: (text: string): boolean => open("enter", text, "end") && (draft.focusCell(), true),
+    /** Whether protection lets the active cell be edited (SPEC-127's fx). */
+    canEditActiveCell: (): boolean => canEditCell(model(), deps.book.activeIndex.value, deps.book.activeSheet.value, deps.selection.selection.value.active),
+    /** Keys a host's assist takes before the editor's own table. */
+    setKeyFilter: (filter: ((event: KeyboardEvent) => boolean) | null): void => void (keyFilter = filter),
     openEdit,
     commit: (): boolean => commit(null),
     cancel: finish,
@@ -370,10 +380,7 @@ export function useCellEditing(deps: CellEditingDeps) {
     pressCell,
     /** A press on a header or the corner: an edit commits first (false:
      * it could not, the editor stays open). */
-    pressOutside: (): boolean => {
-      moves.forget();
-      return !editing.value || commit(null);
-    },
+    pressOutside: (): boolean => (moves.forget(), !editing.value || commit(null)),
     pointDrag: point.drag,
     pointRelease: point.release,
     selectSheet,

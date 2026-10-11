@@ -24,15 +24,15 @@ import type { ArgList, FunctionSpec } from "../registry";
 import { isError, NUM_ERROR } from "../values";
 import { arg, integerArg, numberArg, numberOr, optional } from "./common";
 
-type Dates = Pick<EvalSettings, "dateSystem" | "dateQuirks">;
+export type Dates = Pick<EvalSettings, "dateSystem" | "dateQuirks">;
 
 /** The last serial: 9999-12-31. */
-function maxSerial(settings: Dates): number {
+export function maxSerial(settings: Dates): number {
   return dateToSerial(9999, 12, 31, settings.dateSystem);
 }
 
 /** Whether February 1900 has Excel's fictitious 29th. */
-function lotus(settings: Dates): boolean {
+export function lotus(settings: Dates): boolean {
   return settings.dateSystem === "1900" && settings.dateQuirks === "excel";
 }
 
@@ -40,7 +40,7 @@ const DAY_1899_12_31 = daysFromCivil(1899, 12, 31);
 
 /** The serial of a calendar date whose month and day may overflow, in the
  * workbook's calendar. */
-function serialOf(year: number, month: number, day: number, settings: Dates): number {
+export function serialOf(year: number, month: number, day: number, settings: Dates): number {
   const months = year * 12 + (month - 1);
   const y = Math.floor(months / 12);
   const m = months - y * 12 + 1;
@@ -53,7 +53,7 @@ function serialOf(year: number, month: number, day: number, settings: Dates): nu
 }
 
 /** The calendar date of a whole-day serial (Excel's 1900-01-00 for 0). */
-function dateOf(serial: number, settings: Dates): { year: number; month: number; day: number } {
+export function dateOf(serial: number, settings: Dates): { year: number; month: number; day: number } {
   const days = Math.floor(serial);
   if (lotus(settings) && days === 0) {
     return { year: 1900, month: 1, day: 0 };
@@ -66,7 +66,7 @@ function dateOf(serial: number, settings: Dates): { year: number; month: number;
 }
 
 /** Days in a month in the workbook's calendar. */
-function monthLength(year: number, month: number, settings: Dates): number {
+export function monthLength(year: number, month: number, settings: Dates): number {
   if (month === 2 && year === 1900) {
     return lotus(settings) ? 29 : 28;
   }
@@ -74,7 +74,7 @@ function monthLength(year: number, month: number, settings: Dates): number {
 }
 
 /** A serial argument: a number (text coerced) from 0 to 9999-12-31. */
-function serialArg(args: ArgList, index: number, ctx: EvalContext): number | CellError {
+export function serialArg(args: ArgList, index: number, ctx: EvalContext): number | CellError {
   const serial = numberArg(args, index, ctx);
   if (isError(serial)) {
     return serial;
@@ -155,6 +155,19 @@ function monthShift(name: "EDATE" | "EOMONTH", summary: string): FunctionSpec {
       return serial < 0 ? NUM_ERROR : serial;
     },
   };
+}
+
+/** The day of the week of a serial, 0 = Sunday — Excel's arithmetic (see
+ * the module header). */
+export function weekdayOf(serial: number, settings: Dates): number {
+  const days = Math.floor(serial);
+  if (settings.dateSystem === "1904") {
+    return (days + 5) % 7;
+  }
+  if (lotus(settings) || days >= 60) {
+    return (days + 6) % 7;
+  }
+  return days % 7; // proleptic before March 1900: 1899-12-31 (0) was a Sunday
 }
 
 /** The workbook serial of a local date (`now`'s calendar day). */
@@ -262,16 +275,7 @@ export const DATE_TIME_FUNCTIONS: FunctionSpec[] = [
       if (isError(type)) {
         return type;
       }
-      const days = Math.floor(serial);
-      // 0 = Sunday.
-      let sunday0: number;
-      if (ctx.settings.dateSystem === "1904") {
-        sunday0 = (days + 5) % 7;
-      } else if (lotus(ctx.settings) || days >= 60) {
-        sunday0 = (days + 6) % 7;
-      } else {
-        sunday0 = days % 7; // proleptic before March 1900: 1899-12-31 (0) was a Sunday
-      }
+      const sunday0 = weekdayOf(serial, ctx.settings);
       const kind = Math.trunc(type);
       if (kind === 1 || kind === 17) {
         return sunday0 + 1;

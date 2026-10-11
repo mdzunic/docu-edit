@@ -46,7 +46,7 @@ import { lookupMatcher } from "./criteria";
 
 /** A table a lookup reads: a range's one area or an array, with a reader of
  * its cells by offset. */
-interface Table {
+export interface Table {
   rows: number;
   cols: number;
   at(row: number, col: number): ScalarValue;
@@ -55,7 +55,7 @@ interface Table {
   scan(line: "col" | "row", index: number, visit: (value: ScalarValue) => boolean): number;
 }
 
-function tableOf(value: EvalValue, ctx: EvalContext): Table | CellError {
+export function tableOf(value: EvalValue, ctx: EvalContext): Table | CellError {
   if (isError(value)) {
     return value;
   }
@@ -113,7 +113,7 @@ function kindOf(value: ScalarValue): Kind | null {
 
 /** Bisects a vector for the last element ≤ the lookup value (`descending`:
  * ≥), probing past elements of another type (see the module header). */
-function bisect(length: number, read: (i: number) => ScalarValue, lookup: ScalarValue, descending: boolean, ctx: EvalContext): number {
+export function bisect(length: number, read: (i: number) => ScalarValue, lookup: ScalarValue, descending: boolean, ctx: EvalContext): number {
   const kind = kindOf(lookup);
   if (kind === null) {
     return -1;
@@ -400,7 +400,7 @@ export const LOOKUP_FUNCTIONS: FunctionSpec[] = [
     args: [
       arg("lookup_value", "The value to find."),
       arg("lookup_array", "One row or one column to search."),
-      optional("match_type", "1 or omitted: the largest value ≤ it (sorted ascending); 0: an exact match; -1: the smallest value ≥ it (sorted descending)."),
+      optional("match_type", "1 or omitted: the largest value ≤ it (ascending data); 0: an exact match; -1: the smallest value ≥ it (descending)."),
     ],
     impl(args, ctx) {
       const lookup = scalarArg(args, 0);

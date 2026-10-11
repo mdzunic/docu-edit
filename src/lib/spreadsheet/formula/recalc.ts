@@ -37,7 +37,13 @@
 // dependent of a cell whose value or formula changed in the pass; after an
 // open-time full pass every uncomputable cell is; after an "edit" or
 // "manual" pass every cell of a data-table range is. A pass leaving any stale
-// cell sets `model.forceFullCalcOnLoad` (never cleared here).
+// cell sets `model.forceFullCalcOnLoad` (never cleared here). SPEC-127: an
+// uncomputable cell with NO cached value (a newly typed formula) gets the
+// value #NAME? and is stale — never a guessed value.
+//
+// SPEC-127: visibilitySensitiveCells lists the formula cells calling SUBTOTAL
+// or AGGREGATE (visibility.ts's memo), which hiding or showing rows hands to
+// a pass, since their results depend on which rows show.
 import { now as clockNow } from "../../core/clock";
 import { windowOf } from "../../core/arrayWindow";
 import { getCell, parseRange } from "../address";
@@ -59,11 +65,13 @@ import {
   evaluateCell,
   isUncomputable,
   MAX_EVAL_DEPTH,
+  rowVisibilityIn,
   type EvalContext,
   type EvalSettings,
   type UncomputableReason,
 } from "./evaluate";
 import { fromCellValue, isError, toCellValue, type Area, type ScalarValue } from "./values";
+import { callsVisibilitySensitive } from "./visibility";
 
 export type RecalcReason = "open" | "edit" | "manual";
 
@@ -120,6 +128,16 @@ export function changedCellsBetween(sheetId: string, before: Row[], after: Row[]
     }
   }
   return keys;
+}
+
+/** Whether an edit hid or showed a row: some row's `hidden` differs between
+ * the two row lists (the identity diff changedCellsBetween takes) — when it
+ * did, visibilitySensitiveCells must recalculate (SPEC-127). */
+export function rowVisibilityChanged(before: Row[], after: Row[]): boolean {
+  const rows = windowOf(before, after);
+  const hiddenBefore = new Set(rows.beforeMid.filter((row) => row.hidden).map((row) => row.index));
+  const hiddenAfter = rows.afterMid.filter((row) => row.hidden).map((row) => row.index);
+  return hiddenAfter.length !== hiddenBefore.size || hiddenAfter.some((index) => !hiddenBefore.has(index));
 }
 
 /** Whether opening a workbook must recalculate it whole: its file asks
@@ -286,6 +304,7 @@ class Pass implements RecalcPass {
       recordDependency: (area) => {
         this.recorded.at(-1)?.push(area);
       },
+      rowVisibility: (sheetId, row) => rowVisibilityIn(this.model, sheetId, row),
     };
   }
 
@@ -566,7 +585,7 @@ class Pass implements RecalcPass {
     for (const member of members) {
       this.done.add(member);
       if (iterating || this.graph.uncomputable.has(member)) {
-        this.checkStale(member);
+        this.settleUncomputable(member);
       } else if (this.reason !== "open") {
         this.writeResult(member, 0);
       }
@@ -576,7 +595,7 @@ class Pass implements RecalcPass {
   private evaluateNode(key: CellKey): void {
     if (this.graph.hasStaticReason(key)) {
       this.done.add(key);
-      this.checkStale(key);
+      this.settleUncomputable(key);
       return;
     }
     const { sheetId, row, col } = parseCellKey(key);
@@ -599,14 +618,14 @@ class Pass implements RecalcPass {
     }
     if (isUncomputable(value)) {
       this.graph.setRuntimeReason(key, value.uncomputable);
-      this.checkStale(key);
+      this.settleUncomputable(key);
       return;
     }
     this.graph.setRuntimeReason(key, undefined);
     if (this.dynamicCycle.has(key)) {
       if (this.model.calc?.iterate) {
         this.graph.markIterative([key]);
-        this.checkStale(key);
+        this.settleUncomputable(key);
       } else if (this.reason !== "open") {
         this.writeResult(key, 0);
       }
@@ -700,6 +719,20 @@ class Pass implements RecalcPass {
     for (const dependent of this.graph.dependentsOf(sheetId, row, col)) {
       this.affected.add(dependent);
     }
+  }
+
+  /** An uncomputable cell keeps its cached value; one with none — a newly
+   * typed formula — gets #NAME? and is stale (SPEC-127), never a guess. */
+  private settleUncomputable(key: CellKey): void {
+    const { sheetId, row, col } = parseCellKey(key);
+    const pending = this.pending.get(key);
+    const sheet = sheetById(this.model, sheetId);
+    const current = pending !== undefined ? pending : sheet ? (getCell(sheet, row, col)?.value ?? null) : null;
+    if (current === null) {
+      this.writeResult(key, { error: "#NAME?" });
+      this.affected.add(key);
+    }
+    this.checkStale(key);
   }
 
   private checkStale(key: CellKey): void {
@@ -810,6 +843,23 @@ function withValues(row: Row, values: ReadonlyMap<number, CellValue>): Row {
     }
   }
   return { ...row, cells: added ? cells.toSorted((a, b) => a.col - b.col) : cells };
+}
+
+/** Every formula cell calling a visibility-sensitive function (SUBTOTAL,
+ * AGGREGATE), sheet order then row-major: what hiding or showing rows hands
+ * to a pass (SPEC-124's hide/unhide; SPEC-128's filters). */
+export function visibilitySensitiveCells(model: SpreadsheetModel): CellKey[] {
+  const keys: CellKey[] = [];
+  for (const sheet of model.sheets) {
+    for (const row of sheet.rows) {
+      for (const cell of row.cells) {
+        if (cell.formula !== undefined && callsVisibilitySensitive(cell.formula)) {
+          keys.push(cellKey(sheet.id, row.index, cell.col));
+        }
+      }
+    }
+  }
+  return keys;
 }
 
 /** Starts a pass over the model (see the module header). */

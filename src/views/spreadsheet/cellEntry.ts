@@ -139,6 +139,12 @@ export function refusalFor(model: SpreadsheetModel, sheetIndex: number, ranges: 
   return arrayRangeTouched(model, sheetIndex, ranges) ? ARRAY_PART_MESSAGE : null;
 }
 
+/** Whether protection lets a grid sheet's cell be edited (SPEC-127: the fx
+ * button and Shift+F3 do nothing on a cell the editor refuses this way). */
+export function canEditCell(model: SpreadsheetModel | null, sheetIndex: number, sheet: Sheet | null, at: CellRef): boolean {
+  return model !== null && sheet?.kind === "grid" && !firstLockedCell(model, sheetIndex, [{ top: at.row, left: at.col, bottom: at.row, right: at.col }]);
+}
+
 /** What every write needs: the live model, the sheet, the undo pipeline,
  * the measurer and format context autofit takes. */
 export interface CellWriteContext {

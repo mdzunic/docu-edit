@@ -30,9 +30,17 @@ const props = defineProps({
   editor: { type: Object, default: null },
   /** A grid sheet is on show, so the content can be edited. */
   editable: { type: Boolean, default: false },
+  /** SPEC-127: protection lets the active cell be edited, so fx can insert. */
+  canInsertFunction: { type: Boolean, default: false },
+  /** SPEC-127: the function assists' ARIA (useFunctionAssist's editorAria). */
+  aria: { type: Object, default: () => ({}) },
 });
 
+const emit = defineEmits(["insert-function"]);
 const editor = computed(() => (props.editor && props.editable ? asCellEditing(props.editor) : null));
+/** fx: disabled off a grid sheet, and on a protected cell with that title. */
+const fxDisabled = computed(() => !editor.value || !props.canInsertFunction);
+const fxTitle = computed(() => (editor.value && !props.canInsertFunction ? "This cell is protected" : "Insert function"));
 const editing = computed(() => editor.value?.editing.value === true);
 const host = useTemplateRef("host");
 const surface = useDraftSurface(host, () => editor.value, "bar", () => props.content);
@@ -51,10 +59,18 @@ const surface = useDraftSurface(host, () => editor.value, "bar", () => props.con
       aria-label="Name Box"
       :value="props.address"
     >
-    <span
+    <button
+      type="button"
       class="formula-bar-fx"
-      aria-hidden="true"
-    >fx</span>
+      data-testid="formula-bar-fx"
+      aria-label="Insert function"
+      :title="fxTitle"
+      :disabled="fxDisabled"
+      @mousedown.prevent
+      @click="emit('insert-function')"
+    >
+      fx
+    </button>
     <div
       ref="host"
       class="formula-bar-content"
@@ -66,6 +82,7 @@ const surface = useDraftSurface(host, () => editor.value, "bar", () => props.con
       aria-label="Cell content"
       aria-multiline="true"
       :data-spill-member="props.spillMember && !editing ? 'true' : undefined"
+      v-bind="editing ? props.aria : {}"
       spellcheck="false"
       @input="surface.onInput"
       @beforeinput="surface.onBeforeInput"
@@ -115,8 +132,29 @@ const surface = useDraftSurface(host, () => editor.value, "bar", () => props.con
 .formula-bar-fx {
   flex: none;
   align-self: center;
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
+  font: inherit;
   font-style: italic;
+  cursor: pointer;
+}
+
+.formula-bar-fx:hover:not(:disabled) {
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+}
+
+.formula-bar-fx:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.formula-bar-fx:focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* Line breaks preserved; a multi-line value is clipped to a few lines. */
