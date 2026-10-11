@@ -584,6 +584,11 @@ describe("SPEC-123's reader step: named cell styles and the protection's format 
 /** The rows' indices carrying a visibility flag. */
 const flagged = (sheet: Sheet, flag: "hidden" | "filterHidden"): number[] => sheet.rows.filter((row) => row[flag]).map((row) => row.index);
 
+/** The start of mini-book.ods's Inventory row for `item`, and the patch
+ * giving it a `table:visibility`. */
+const odsItemRow = (item: string): string => `<table:table-row table:style-name="ro1"><table:table-cell office:value-type="string" calcext:value-type="string"><text:p>${item}</text:p>`;
+const hide = (item: string, visibility: string): [string, string] => [odsItemRow(item), odsItemRow(item).replace(`"ro1"`, `"ro1" table:visibility="${visibility}"`)];
+
 describe("SPEC-128's reader step: the autofilter, the sort records and filter-hidden rows", () => {
   it("moved the reader to version 9 with its step from 8, last", () => {
     expect(SPREADSHEET_READER_VERSION).toBe(9);
@@ -663,8 +668,6 @@ describe("SPEC-128's reader step: the autofilter, the sort records and filter-hi
 
   it("ods: a dirty sheet gains its database range's autofilter, and its hidden rows inside it are reclassified by the read rule", async () => {
     const parts = await unzip(await buildMiniBookOdsBytes());
-    const row = (item: string): string => `<table:table-row table:style-name="ro1"><table:table-cell office:value-type="string" calcext:value-type="string"><text:p>${item}</text:p>`;
-    const hide = (item: string, visibility: string): [string, string] => [row(item), row(item).replace(`"ro1"`, `"ro1" table:visibility="${visibility}"`)];
     // Inventory A1:D6 filtered to Widget: Gadget hidden by it, Widget by the
     // user, the three Spare rows rejected but shown.
     patchPart(parts, "content.xml", [
