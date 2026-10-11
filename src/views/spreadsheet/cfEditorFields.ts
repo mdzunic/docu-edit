@@ -25,6 +25,7 @@ import { shiftFormula } from "../../lib/spreadsheet/formula/references";
 import { isCellError } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { parseInput } from "../../lib/spreadsheet/numberFormat/input";
+import { galleryDataBar } from "./cfPresets";
 
 export type CfRuleType = "values" | "contain" | "rank" | "average" | "unique" | "formula";
 
@@ -137,18 +138,7 @@ export interface CfEditorContext {
 }
 
 function defaultBar(): CfDataBar {
-  return {
-    min: { type: "min" },
-    max: { type: "max" },
-    color: "#638EC6",
-    gradient: true,
-    negativeColor: "#FF0000",
-    axis: "automatic",
-    direction: "context",
-    minLengthPct: 10,
-    maxLengthPct: 90,
-    showValue: true,
-  };
+  return galleryDataBar("#638EC6", true);
 }
 
 function iconThresholdFields(set: IconSetName): CfEditorFields["iconThresholds"] {

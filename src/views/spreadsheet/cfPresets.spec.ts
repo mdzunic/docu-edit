@@ -28,6 +28,26 @@ describe("CF_ADD_PRESETS (SPEC-129 Presets)", () => {
       expect((gradient!.draft() as { bar: { gradient: boolean } }).bar.gradient).toBe(true);
       expect((solid!.draft() as { bar: { gradient: boolean } }).bar.gradient).toBe(false);
     }
+    // Excel 2010's gallery bar: automatic bounds over the full 0–100% length,
+    // red negatives, a black axis, a same-colour border on the gradient.
+    expect(CF_ADD_PRESETS.find((p) => p.testid === "cf-preset-data-bar-green-gradient")!.draft()).toEqual({
+      kind: "dataBar",
+      bar: {
+        min: { type: "autoMin" },
+        max: { type: "autoMax" },
+        color: "#63BE7B",
+        gradient: true,
+        border: "#63BE7B",
+        negativeColor: "#FF0000",
+        negativeBorderColor: "#FF0000",
+        axis: "automatic",
+        axisColor: "#000000",
+        direction: "context",
+        minLengthPct: 0,
+        maxLengthPct: 100,
+        showValue: true,
+      },
+    });
   });
 
   it("includes six colour scales", () => {

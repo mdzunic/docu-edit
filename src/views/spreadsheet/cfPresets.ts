@@ -5,7 +5,7 @@
 // fill in, per the rule editor's `cf-value-1`) and `cf-format`'s six
 // differential-style presets plus "Custom format…" (FORMAT_PRESETS).
 // Framework-free and pure, so it unit-tests without mounting a component.
-import { ODS_ONLY_ICON_SETS, ICON_SET_NAMES, defaultIconThresholds, iconSetSize, type CfRuleDraft, type IconSetName } from "../../lib/spreadsheet/conditionalFormats";
+import { ODS_ONLY_ICON_SETS, ICON_SET_NAMES, defaultIconThresholds, iconSetSize, type CfDataBar, type CfRuleDraft, type IconSetName } from "../../lib/spreadsheet/conditionalFormats";
 import { ICON_SET_LABELS } from "../../lib/spreadsheet/cfIcons";
 import type { Dxf } from "../../lib/spreadsheet/conditionalFormats";
 
@@ -15,17 +15,25 @@ export interface CfAddPreset {
   draft(): CfRuleDraft;
 }
 
-const BLANK_DATA_BAR = (color: string, gradient: boolean) => ({
-  min: { type: "min" as const },
-  max: { type: "max" as const },
-  color,
-  gradient,
-  axis: "automatic" as const,
-  direction: "context" as const,
-  minLengthPct: 10,
-  maxLengthPct: 90,
-  showValue: true,
-});
+/** A gallery data bar as Excel 2010+ writes one: automatic minimum and
+ * maximum, lengths 0–100%, red negative bars, a black automatic axis, and a
+ * border in the bar's own colour on the gradient style. */
+export function galleryDataBar(color: string, gradient: boolean): CfDataBar {
+  return {
+    min: { type: "autoMin" },
+    max: { type: "autoMax" },
+    color,
+    gradient,
+    ...(gradient ? { border: color, negativeBorderColor: "#FF0000" } : {}),
+    negativeColor: "#FF0000",
+    axis: "automatic",
+    axisColor: "#000000",
+    direction: "context",
+    minLengthPct: 0,
+    maxLengthPct: 100,
+    showValue: true,
+  };
+}
 
 /** The six data-bar colours `cf-add` offers, each as a gradient and a solid
  * bar (SPEC-129 "Presets"). */
@@ -119,12 +127,12 @@ export const CF_ADD_PRESETS: readonly CfAddPreset[] = [
     {
       testid: `cf-preset-data-bar-${entry.id}-gradient`,
       label: `${entry.label} Data Bar (Gradient)`,
-      draft: (): CfRuleDraft => ({ kind: "dataBar", bar: BLANK_DATA_BAR(entry.color, true) }),
+      draft: (): CfRuleDraft => ({ kind: "dataBar", bar: galleryDataBar(entry.color, true) }),
     },
     {
       testid: `cf-preset-data-bar-${entry.id}-solid`,
       label: `${entry.label} Data Bar (Solid)`,
-      draft: (): CfRuleDraft => ({ kind: "dataBar", bar: BLANK_DATA_BAR(entry.color, false) }),
+      draft: (): CfRuleDraft => ({ kind: "dataBar", bar: galleryDataBar(entry.color, false) }),
     },
   ]),
   ...COLOR_SCALES.map((scale, index) => ({
