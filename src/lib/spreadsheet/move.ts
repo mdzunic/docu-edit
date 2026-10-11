@@ -26,22 +26,26 @@
 // | 2 | formulas | repointFormula over every sheet's formulas (not formulaUnparsed) |
 // | 3 | merges | source merges move, destination merges are replaced |
 // | 4 | retained | SPEC-124's rewriteRetainedReferences with moveMapper |
+// | 5 | autofilter | SPEC-128 "Moves": an autofilter or worksheet sort record entirely inside the source moves by the offset onto the destination sheet (see "5. autofilter") |
 // Later specs that register a SPEC-124 ReferenceAdjuster for something that
-// travels with cells or points at them — the autofilter (128), conditional
-// formats (129), validations (130), chart references (132), defined names
-// and tables (133), notes and hyperlinks (135), pivots (139) — register a
-// MoveAdjuster with the same id here, with its row in move.spec.ts's
-// registry contract; drawings (131) and page breaks (136) deliberately do
-// not.
+// travels with cells or points at them — conditional formats (129),
+// validations (130), chart references (132), defined names and tables (133),
+// notes and hyperlinks (135), pivots (139) — register a MoveAdjuster with
+// the same id here, with its row in move.spec.ts's registry contract;
+// drawings (131) and page breaks (136) deliberately do not.
 import type { CellRef, GridRange } from "./address";
 import { forEachPosition, PASTE_MERGE_MESSAGE, PASTE_PAST_EDGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
-import { firstLockedCell, PROTECTED_CELL_MESSAGE } from "./cells";
+import { firstLockedCell, isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { MAX_COPY_CELLS } from "./clipboardPayload";
+import { applyAutoFilter, type AutoFilter } from "./filter";
 import { rewriteReferences, type RefPart, type ReferenceNode } from "./formula/references";
 import { rangesIntersect } from "./merges";
-import { MAX_COLS, MAX_ROWS, type Cell, type Sheet, type SpreadsheetModel } from "./model";
+import { MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "./model";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
+import { workbookFormatContext } from "./numberFormat/render";
 import { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retainedReferences";
 import { contains, inheritedStyleId, SheetEdit } from "./sheetEdit";
+import type { SortState } from "./sort";
 import { resolveRetainedSheetName } from "./sourceNames";
 import { NOT_A_GRID_MESSAGE, PARTIAL_ARRAY_MESSAGE } from "./structure";
 import { LazyParts } from "./xlsx/package";
@@ -373,9 +377,108 @@ const retainedAdjuster: MoveAdjuster = {
   },
 };
 
+// --- 5. autofilter -----------------------------------------------------------------------------
+// SPEC-128 "Moves". An autofilter whose range lies entirely inside the source
+// moves by the offset onto the destination sheet — its colIds are relative
+// and stay; its sort record's ref and key columns shift with it — replacing
+// that sheet's autofilter. Row properties never move with cells: the old data
+// rows' `filterHidden` (and a replaced autofilter's) are cleared and the
+// filter is reapplied at its new place (applyAutoFilter, the workbook's
+// format context in the default locale). A worksheet sort record entirely
+// inside the source moves by the same rule. Anything overlapping the source
+// or the destination only partly is left alone. What moves is replaced —
+// never mutated — without its `sourceXml`; an ods database range keeps its
+// name on its own sheet and takes the replaced one's (or none) on another.
+// Moving an autofilter sets `structureDirty` (`_xlnm._FilterDatabase`).
+
+/** A sort record moved by the offset, without its source. */
+function movedSortState(sort: SortState, dRow: number, dCol: number): SortState {
+  const { sourceXml: _source, ...rest } = sort;
+  return { ...rest, ref: shifted(sort.ref, dRow, dCol), keys: sort.keys.map((key) => ({ ...key, col: key.col + dCol })) };
+}
+
+/** The rows with `filterHidden` cleared on an autofilter's data rows —
+ * emptied rows removed, the same array when none was set. */
+function withoutFilterHidden(rows: Row[], range: GridRange): Row[] {
+  let changed = false;
+  const out: Row[] = [];
+  for (const row of rows) {
+    if (!row.filterHidden || row.index <= range.top || row.index > range.bottom) {
+      out.push(row);
+      continue;
+    }
+    changed = true;
+    const { filterHidden: _filtered, ...rest } = row;
+    if (!isEmptyRow(rest)) {
+      out.push(rest);
+    }
+  }
+  return changed ? out : rows;
+}
+
+const autofilterAdjuster: MoveAdjuster = {
+  id: "autofilter",
+  move(model, move) {
+    const from = sheetOf(model, move.fromSheetId);
+    const to = sheetOf(model, move.toSheetId);
+    const { dRow, dCol } = offsetOf(move);
+    if (!from || !to || (from === to && dRow === 0 && dCol === 0)) {
+      return;
+    }
+    const filter = from.autoFilter !== undefined && contains(move.from, from.autoFilter.range) ? from.autoFilter : undefined;
+    const sortState = from.sortState !== undefined && contains(move.from, from.sortState.ref) ? from.sortState : undefined;
+    if (!filter && !sortState) {
+      return;
+    }
+    let arrived: AutoFilter | undefined;
+    if (filter) {
+      const { sourceXml: _source, sort, odsName: _name, ...rest } = filter;
+      arrived = { ...rest, range: shifted(filter.range, dRow, dCol) };
+      if (sort) {
+        arrived.sort = movedSortState(sort, dRow, dCol);
+      }
+      const odsName = from === to ? filter.odsName : to.autoFilter?.odsName;
+      if (odsName !== undefined) {
+        arrived.odsName = odsName;
+      }
+    }
+    model.sheets = model.sheets.map((sheet) => {
+      if (sheet !== from && sheet !== to) {
+        return sheet;
+      }
+      const next: Sheet = { ...sheet };
+      if (sheet === from) {
+        if (filter) {
+          delete next.autoFilter;
+          next.rows = withoutFilterHidden(next.rows, filter.range);
+        }
+        if (sortState) {
+          delete next.sortState;
+        }
+      }
+      if (sheet === to) {
+        if (arrived) {
+          if (sheet !== from && sheet.autoFilter) {
+            next.rows = withoutFilterHidden(next.rows, sheet.autoFilter.range);
+          }
+          next.autoFilter = arrived;
+        }
+        if (sortState) {
+          next.sortState = movedSortState(sortState, dRow, dCol);
+        }
+      }
+      return next;
+    });
+    if (filter) {
+      model.structureDirty = true;
+      applyAutoFilter(model, move.toSheetId, workbookFormatContext(model, SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE]));
+    }
+  },
+};
+
 // --- the registry ------------------------------------------------------------------------------
 
-export const MOVE_ADJUSTERS: MoveAdjuster[] = [cellsAdjuster, formulasAdjuster, mergesAdjuster, retainedAdjuster];
+export const MOVE_ADJUSTERS: MoveAdjuster[] = [cellsAdjuster, formulasAdjuster, mergesAdjuster, retainedAdjuster, autofilterAdjuster];
 
 /** One move (see the module header). */
 export function moveRange(model: SpreadsheetModel, move: RangeMove): MoveResult {

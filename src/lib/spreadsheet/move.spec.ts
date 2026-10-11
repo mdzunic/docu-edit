@@ -7,6 +7,7 @@ import type { GridRange } from "./address";
 import { getCell } from "./address";
 import { PROTECTED_CELL_MESSAGE } from "./cells";
 import { PASTE_MERGE_MESSAGE, PASTE_PAST_EDGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
+import type { AutoFilter } from "./filter";
 import { MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { MOVE_ADJUSTERS, moveMapper, moveRange, moveRefusal, repointFormula, snappedMove, type RangeMove } from "./move";
 import { PARTIAL_ARRAY_MESSAGE } from "./structure";
@@ -199,6 +200,86 @@ describe("moveMapper — retained references", () => {
   });
 });
 
+// --- SPEC-128's autofilter move adjuster ("Moves") -----------------------------------------
+
+describe("the autofilter move adjuster (SPEC-128 \"Moves\")", () => {
+  const WEST: AutoFilter["columns"] = [{ colId: 0, criteria: { kind: "values", values: ["West"], blanks: false, dateGroups: [] } }];
+  /** A1:B5 — Region | Amount over West, East, West, North — filtered to West
+   * (rows 3 and 5 filter-hidden), last sorted by Amount descending. */
+  const regions = (fields: Partial<Sheet> = {}): Sheet =>
+    sheet("s1", "Sheet1", {
+      rows: [
+        row(0, [value(0, "Region"), value(1, "Amount")]),
+        row(1, [value(0, "West"), value(1, 1)]),
+        row(2, [value(0, "East"), value(1, 2)], { filterHidden: true }),
+        row(3, [value(0, "West"), value(1, 3)]),
+        row(4, [value(0, "North"), value(1, 4)], { filterHidden: true }),
+      ],
+      autoFilter: {
+        range: range(0, 0, 4, 1),
+        columns: WEST,
+        sort: { ref: range(1, 0, 4, 1), keys: [{ col: 1, descending: true }], sourceXml: `<sortState ref="A2:B5"/>` },
+        sourceXml: `<autoFilter ref="A1:B5"/>`,
+      },
+      ...fields,
+    });
+  const hiddenRows = (s: Sheet): number[] => s.rows.filter((each) => each.filterHidden).map((each) => each.index);
+
+  it("moves an autofilter entirely inside the source by the offset with its sort record, clears the old rows' filterHidden and reapplies it at its new place", () => {
+    const m = model([regions()]);
+    expect(moveRange(m, { fromSheetId: "s1", from: range(0, 0, 4, 1), toSheetId: "s1", toTop: 10, toLeft: 3 })).toEqual({ ok: true });
+    const s = sheetOf(m, "s1");
+    expect(s.autoFilter).toEqual({ range: range(10, 3, 14, 4), columns: WEST, sort: { ref: range(11, 3, 14, 4), keys: [{ col: 4, descending: true }] } });
+    expect(hiddenRows(s)).toEqual([12, 14]);
+    expect(s.rows.some((each) => each.index < 10)).toBe(false);
+    expect(m.structureDirty).toBe(true);
+  });
+
+  it("across sheets it replaces the destination's autofilter (whose rows show again) and leaves the source with none", () => {
+    const other = sheet("s2", "Sheet2", {
+      rows: [row(0, [value(0, "Kind")]), row(1, [value(0, "a")], { filterHidden: true }), row(2, [value(0, "b")])],
+      autoFilter: { range: range(0, 0, 2, 0), columns: [{ colId: 0, criteria: { kind: "values", values: ["b"], blanks: false, dateGroups: [] } }], odsName: "__Anonymous_Sheet_DB__1" },
+    });
+    const m = model([regions(), other], { format: "ods" });
+    moveRange(m, { fromSheetId: "s1", from: range(0, 0, 4, 1), toSheetId: "s2", toTop: 5, toLeft: 0 });
+    expect(sheetOf(m, "s1").autoFilter).toBeUndefined();
+    expect(hiddenRows(sheetOf(m, "s1"))).toEqual([]);
+    const s2 = sheetOf(m, "s2");
+    expect(s2.autoFilter).toEqual({ range: range(5, 0, 9, 1), columns: WEST, sort: { ref: range(6, 0, 9, 1), keys: [{ col: 1, descending: true }] }, odsName: "__Anonymous_Sheet_DB__1" });
+    expect(hiddenRows(s2)).toEqual([7, 9]);
+  });
+
+  it("leaves an autofilter the source overlaps only partly, and one the destination covers, by identity", () => {
+    const m = model([regions()]);
+    const { autoFilter } = sheetOf(m, "s1");
+    moveRange(m, { fromSheetId: "s1", from: range(0, 0, 2, 1), toSheetId: "s1", toTop: 20, toLeft: 0 });
+    expect(sheetOf(m, "s1").autoFilter).toBe(autoFilter);
+    moveRange(m, { fromSheetId: "s1", from: range(30, 0, 34, 1), toSheetId: "s1", toTop: 0, toLeft: 0 });
+    expect(sheetOf(m, "s1").autoFilter).toBe(autoFilter);
+    expect(m.structureDirty).toBeUndefined();
+  });
+
+  it("moves a worksheet sort record entirely inside the source by the same rule, and leaves a partial one", () => {
+    const sortState = { ref: range(1, 5, 9, 6), keys: [{ col: 6, descending: false }], sourceXml: `<sortState ref="F2:G10"/>` };
+    const m = model([sheet("s1", "Sheet1", { sortState }), sheet("s2", "Sheet2")]);
+    moveRange(m, { fromSheetId: "s1", from: range(0, 5, 9, 6), toSheetId: "s2", toTop: 0, toLeft: 0 });
+    expect(sheetOf(m, "s1").sortState).toBeUndefined();
+    expect(sheetOf(m, "s2").sortState).toEqual({ ref: range(1, 0, 9, 1), keys: [{ col: 1, descending: false }] });
+    expect(m.structureDirty).toBeUndefined();
+    const partial = model([sheet("s1", "Sheet1", { sortState })]);
+    moveRange(partial, { fromSheetId: "s1", from: range(0, 5, 4, 6), toSheetId: "s1", toTop: 20, toLeft: 5 });
+    expect(sheetOf(partial, "s1").sortState).toBe(sortState);
+  });
+
+  it("is copy-on-write: the moved objects are new, the old ones untouched", () => {
+    const source = regions();
+    const snapshot = structuredClone(source);
+    const m = model([source]);
+    moveRange(m, { fromSheetId: "s1", from: range(0, 0, 4, 1), toSheetId: "s1", toTop: 10, toLeft: 3 });
+    expect(source).toEqual(snapshot);
+  });
+});
+
 // --- the registry contract ------------------------------------------------------------------
 // Every MoveAdjuster joins this table: a model holding no structure of its
 // kind is left untouched by identity, and moving the block holding its
@@ -216,6 +297,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, merges: [range(0, 0, 1, 1)] }]);
     case "retained":
       return model([base]);
+    case "autofilter":
+      return model([{ ...base, rows: [row(0, [value(0, "Head")]), row(1, [value(0, 1)])], autoFilter: { range: range(0, 0, 1, 1), columns: [] } }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -230,6 +313,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return getCell(s, 5, 0)?.formula;
     case "merges":
       return s.merges;
+    case "autofilter":
+      return s.autoFilter?.range;
     default:
       return undefined;
   }
@@ -238,8 +323,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
 describe("MOVE_ADJUSTERS — the registry contract", () => {
   const MOVE: RangeMove = { fromSheetId: "s1", from: range(0, 0, 1, 1), toSheetId: "s1", toTop: 10, toLeft: 3 };
 
-  it("registers this spec's adjusters in order", () => {
-    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter", () => {
+    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter"]);
   });
 
   for (const adjuster of MOVE_ADJUSTERS) {
@@ -263,7 +348,7 @@ describe("MOVE_ADJUSTERS — the registry contract", () => {
         adjuster.move(m, MOVE);
         const after = structureOf(adjuster.id, m);
         expect(after).not.toEqual(before);
-        expect(after).toEqual({ cells: [[10, 3]], formulas: "D11", merges: [range(10, 3, 11, 4)] }[adjuster.id]);
+        expect(after).toEqual({ cells: [[10, 3]], formulas: "D11", merges: [range(10, 3, 11, 4)], autofilter: range(10, 3, 11, 4) }[adjuster.id]);
       });
     }
   }
