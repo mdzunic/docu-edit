@@ -549,35 +549,36 @@ function onEnter() {
 .cf-editor {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--text-md);
 }
 .cf-editor-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 .cf-editor-title {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--text-md);
 }
 .cf-editor-back {
   border: none;
   background: transparent;
+  color: var(--text-primary);
   cursor: pointer;
-  font-size: 1rem;
+  font-size: var(--text-lg);
 }
 .cf-field {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 .cf-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 .cf-row-label {
   min-width: 4.5rem;
@@ -588,22 +589,22 @@ function onEnter() {
 .cf-check {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 .cf-editor-error {
   margin: 0;
-  color: var(--color-danger, #b00020);
+  color: var(--text-danger);
 }
 [aria-invalid="true"] {
-  outline: 2px solid var(--color-danger, #b00020);
+  border-color: var(--danger);
 }
 .cf-editor-actions {
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-3);
   justify-content: flex-end;
 }
 .cf-button {
-  padding: 0.25rem 0.75rem;
+  padding: var(--space-2) var(--space-4);
   cursor: pointer;
 }
 </style>

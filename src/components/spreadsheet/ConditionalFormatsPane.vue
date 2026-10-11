@@ -282,19 +282,19 @@ onBeforeUnmount(() => {
 .cf-manager {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  font-size: 0.8125rem;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  font-size: var(--text-md);
 }
 .cf-scope {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 .cf-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 .cf-add {
   position: relative;
@@ -302,8 +302,8 @@ onBeforeUnmount(() => {
 .cf-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
-  padding: 0.25rem 0.5rem;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   cursor: pointer;
 }
 .cf-presets {
@@ -316,31 +316,31 @@ onBeforeUnmount(() => {
   min-width: 15rem;
   max-height: 24rem;
   overflow-y: auto;
-  padding: 0.25rem 0;
-  background: var(--color-surface, #ffffff);
-  border: 1px solid var(--color-border, #d0d0d0);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.15);
+  padding: var(--space-2) 0;
+  background: var(--surface-raised);
+  border: var(--border-width) solid var(--border-default);
+  box-shadow: var(--shadow-2);
 }
 .cf-presets-group {
-  padding: 0.25rem 0.75rem;
-  font-weight: 600;
-  color: var(--color-text-muted, #666666);
+  padding: var(--space-2) var(--space-4);
+  font-weight: var(--weight-bold);
+  color: var(--text-secondary);
 }
 .cf-preset {
-  padding: 0.25rem 1.25rem;
+  padding: var(--space-2) var(--space-5);
   border: none;
   background: transparent;
+  color: var(--text-primary);
   text-align: left;
   cursor: pointer;
 }
-.cf-preset:hover,
-.cf-preset:focus-visible {
-  background: var(--color-hover, #eef2f8);
+.cf-preset:hover {
+  background: var(--state-hover);
 }
 .cf-rule-list {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -348,20 +348,20 @@ onBeforeUnmount(() => {
 .cf-rule {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.375rem;
-  border: 1px solid var(--color-border, #d0d0d0);
-  border-radius: 4px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 .cf-rule.selected {
-  border-color: var(--color-accent, #1a73e8);
-  background: var(--color-selected, #e8f0fe);
+  border-color: var(--accent);
+  background: var(--surface-selected);
 }
 .cf-rule-head {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-3);
 }
 .cf-rule-description {
   overflow-wrap: anywhere;
@@ -369,7 +369,7 @@ onBeforeUnmount(() => {
 .cf-rule-applies {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 .cf-rule-applies input {
   flex: 1;
@@ -378,18 +378,18 @@ onBeforeUnmount(() => {
 .cf-rule-stop {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 .cf-error {
-  color: var(--color-danger, #b00020);
+  color: var(--text-danger);
 }
 .cf-empty {
   margin: 0;
-  color: var(--color-text-muted, #666666);
+  color: var(--text-secondary);
 }
 .cf-clear {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: var(--space-2);
 }
 </style>

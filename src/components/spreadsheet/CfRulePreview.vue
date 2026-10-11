@@ -62,14 +62,15 @@ const p = computed(() => asCfPreview(props.preview));
 </template>
 
 <style scoped>
+/* A swatch the size of a short cell: the rule's look on the app's surface. */
 .cf-preview {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   width: 4.5rem;
   height: 1.5rem;
-  border: 1px solid var(--color-border, #d0d0d0);
-  background: #ffffff;
+  border: var(--border-width) solid var(--border-default);
+  background: var(--surface-base);
   overflow: hidden;
 }
 .cf-preview-format {
@@ -79,8 +80,8 @@ const p = computed(() => asCfPreview(props.preview));
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  font-size: 0.75rem;
-  color: #000000;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
 }
 .cf-preview-strip {
   width: 100%;
@@ -90,7 +91,7 @@ const p = computed(() => asCfPreview(props.preview));
   display: flex;
   width: 100%;
   height: 100%;
-  padding: 3px 0;
+  padding: var(--space-1) 0;
   box-sizing: border-box;
 }
 .cf-preview-bar-fill {
@@ -99,12 +100,12 @@ const p = computed(() => asCfPreview(props.preview));
 }
 .cf-preview-icons {
   display: inline-flex;
-  gap: 1px;
-  padding: 0 2px;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
 }
 .cf-preview-none {
   width: 100%;
   text-align: center;
-  color: var(--color-text-muted, #666666);
+  color: var(--text-secondary);
 }
 </style>
