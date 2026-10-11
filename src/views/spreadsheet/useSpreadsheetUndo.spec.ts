@@ -4,7 +4,8 @@
 // dirty marking, and the shortcuts.
 import { effectScope, shallowRef } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CellKey } from "../../lib/spreadsheet/formula/dependencies";
+import { setRowsHidden } from "../../lib/spreadsheet/bands";
+import { cellKey, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
 import type { Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { addSheet, createBlankWorkbook, deleteSheet, renameSheet, setTabColor } from "../../lib/spreadsheet/sheets";
 import { MAX_UNDO_STEPS, SHEET_BY_REFERENCE_FIELDS, takeSnapshot, useSpreadsheetUndo, WORKBOOK_SNAPSHOT_FIELDS } from "./useSpreadsheetUndo";
@@ -162,6 +163,39 @@ describe("the edit pipeline", () => {
     finishPass([sheet.id]);
     expect(model.sheets[0]!.dirty).toBe(true);
     expect(applied).toHaveBeenCalledTimes(2);
+  });
+
+  it("hiding or unhiding rows also recalculates every cell calling SUBTOTAL or AGGREGATE (SPEC-127)", () => {
+    const model = createBlankWorkbook();
+    const sheet = model.sheets[0]!;
+    sheet.rows = [
+      { index: 0, cells: [{ col: 0, value: 1 }] },
+      { index: 1, cells: [{ col: 0, value: 2 }] },
+      { index: 2, cells: [{ col: 0, value: 3, formula: "SUBTOTAL(109,A1:A2)" }, { col: 1, value: 3, formula: "SUM(A1:A2)" }] },
+      { index: 5, cells: [{ col: 3, value: 3, formula: "1+AGGREGATE(9,5,A1:A2)" }] },
+    ];
+    const { undo, recalls } = mount(model);
+    const subtotal = cellKey(sheet.id, 2, 0);
+    const aggregate = cellKey(sheet.id, 5, 3);
+    const sum = cellKey(sheet.id, 2, 1);
+    undo.record("Hide rows", { sheetId: sheet.id });
+    setRowsHidden(model, sheet.id, [{ start: 1, end: 1 }], true);
+    undo.commit();
+    expect(recalls[0]).toEqual(expect.arrayContaining([subtotal, aggregate]));
+    expect(recalls[0]).not.toContain(sum);
+    undo.record("Unhide rows", { sheetId: model.sheets[0]!.id });
+    setRowsHidden(model, model.sheets[0]!.id, [{ start: 1, end: 1 }], false);
+    undo.commit();
+    expect(recalls[1]).toEqual(expect.arrayContaining([subtotal, aggregate]));
+    // Undo puts the row back as hidden: the same cells again.
+    undo.undo();
+    expect(recalls[2]).toEqual(expect.arrayContaining([subtotal, aggregate]));
+    // An edit that hides nothing leaves them alone.
+    undo.record("Edit", { sheetId: model.sheets[0]!.id });
+    const now = model.sheets[0]!;
+    model.sheets = [{ ...now, rows: now.rows.map((row) => (row.index === 0 ? { ...row, cells: [{ col: 0, value: 7 }] } : row)) }];
+    undo.commit();
+    expect(recalls[3]).toEqual([cellKey(sheet.id, 0, 0)]);
   });
 
   it("undoing everything leaves no sheet dirty and no structure change", () => {
