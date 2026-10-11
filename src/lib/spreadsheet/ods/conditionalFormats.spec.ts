@@ -522,6 +522,19 @@ describe("writing", () => {
     expectSameRules(back, stripped, 1);
   });
 
+  it("a source another format left on a format is never written into ODS: the format is serialised", async () => {
+    const model = createBlankWorkbook();
+    const dxfId = internDxf(model, { fill: { kind: "solid", color: "#ffc7ce" } });
+    addConditionalFormat(model, model.sheets[0]!.id, [range("A1:A5")], scoresDraft(dxfId));
+    const xlsxSource = `<conditionalFormatting sqref="A1:A5"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>120</formula></cfRule></conditionalFormatting>`;
+    model.sheets[0]!.conditionalFormats = model.sheets[0]!.conditionalFormats.map((format) => ({ ...format, sourceXml: xlsxSource }));
+    const { content, bytes } = await save(model);
+    expect(content).not.toContain("cfRule");
+    expect(content).toContain(`<calcext:condition calcext:apply-style-name="de-cf1" calcext:value="&gt;120" calcext:base-cell-address="Sheet1.A1"/>`);
+    const back = await readSpreadsheetBytes(bytes, "ods", "book");
+    expectSameRules(back, model, 0);
+  });
+
   it("a new workbook writes every modelled kind; blanks and a stdDev average go as formula-is, reversed icons and stopIfTrue have no wire form", async () => {
     const model = createBlankWorkbook();
     const sheet = model.sheets[0]!;

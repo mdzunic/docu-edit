@@ -87,7 +87,9 @@
 //   element (ODS numbers priorities by document order, so a format whose
 //   rules interleave another's is split)
 //   — each group that is a whole format with its `sourceXml` from that
-//   (through the sheet-name pass, as all retained text), else serialised:
+//   (through the sheet-name pass, as all retained text; only an ODS
+//   element's, into a table whose source had a container — a model from
+//   another format never writes its source here), else serialised:
 //   `calcext:target-range-address` and `calcext:base-cell-address` (the
 //   origin) in LibreOffice's form (`Sheet1.B2:Sheet1.B13`), operands
 //   through toOdsFormula without `of:=`, relative to the origin. blanks →
@@ -966,6 +968,13 @@ function topLevelConditionalFormats(text: string): { start: number; end: number 
   return found;
 }
 
+/** Whether a format's `sourceXml` is an ODS format element (whitespace
+ * first) — only then, and only into a table that had a container, is it
+ * re-emitted: a model from another format carries no ODS source. */
+function isOdsFormatSource(sourceXml: string | undefined): sourceXml is string {
+  return sourceXml !== undefined && /^\s*<[\w.-]+:conditional-format[\s/>]/.test(sourceXml);
+}
+
 /** A sheet name as an ODS address writes it (quoted when it must be). */
 function odsSheetName(name: string): string {
   return sheetNameNeedsQuotes(name) || name.includes(".") ? `'${name.replaceAll("'", "''")}'` : name;
@@ -1077,7 +1086,7 @@ export class OdsConditionalFormatWriter {
     // Unchanged: a format a command touched has lost its source, a deleted
     // one is missing, a new one has none — so every format still carrying
     // its source, as many as the element holds, are its children as read.
-    if (parts && parts.formats === formats.length && formats.every((format) => format.sourceXml !== undefined)) {
+    if (parts && parts.formats === formats.length && formats.every((format) => isOdsFormatSource(format.sourceXml))) {
       return source!;
     }
     const groups: { format: ConditionalFormat; rules: CfRule[] }[] = [];
@@ -1097,7 +1106,7 @@ export class OdsConditionalFormatWriter {
     }
     const body = groups
       .map(({ format, rules }) =>
-        format.sourceXml !== undefined && rules.length === format.rules.length ? pass(format.sourceXml) : this.formatXml(sheet.name, format, rules),
+        parts !== undefined && isOdsFormatSource(format.sourceXml) && rules.length === format.rules.length ? pass(format.sourceXml) : this.formatXml(sheet.name, format, rules),
       )
       .join("");
     return (parts?.open ?? "<calcext:conditional-formats>") + body + (parts?.tail ?? "") + (parts?.close ?? "</calcext:conditional-formats>");
