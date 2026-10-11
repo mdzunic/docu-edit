@@ -767,7 +767,8 @@ describe("filter values that attribute normalisation would change", () => {
     const bytes = await writeXlsx(model);
     const part = decoder.decode((await unzip(bytes)).get("xl/worksheets/sheet1.xml"));
     expect(part).toContain(`<filter val="two&#10;lines"/><filter val="tab&#9;bed"/><filter val="bell_x0001_"/>`);
-    expect(part).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+    // XML 1.0 carries no C0 control but tab, line feed and carriage return.
+    expect([...part].filter((char) => char < " " && !"\t\n\r".includes(char))).toEqual([]);
     const reread = await open(bytes);
     const again = reread.sheets[0]!;
     expect(again.autoFilter!.columns).toEqual([{ colId: 0, criteria }]);
