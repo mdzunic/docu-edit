@@ -32,11 +32,12 @@
 // | 5 | selection | Sheet.selection's ranges and active cell (a range or cell whose area is gone stays where it was, clamped into the sheet) |
 // | 6 | columns | ColumnSpans shifted, split, removed; inserted columns copy the left span's width and style (not `hidden`); adjacent equal spans re-joined |
 // | 7 | retained | rewriteRetainedReferences(model, structuralMapper(model, edit)) |
-// Later specs append theirs, in landing order — autofilter (SPEC-128),
-// conditionalFormats (129), validations (130), drawings (131), charts (132),
-// names and tables (133), notes and hyperlinks (135), pageBreaks (136),
-// pivots (139) — each with the registry contract test in structure.spec.ts,
-// retiring its rows from retainedReferences' tables in the same change.
+// | 8 | autofilter | SPEC-128: Sheet.autoFilter (range, colIds, its sort record) and Sheet.sortState (ref, key columns) — see "8. autofilter" |
+// Later specs append theirs, in landing order — conditionalFormats (129),
+// validations (130), drawings (131), charts (132), names and tables (133),
+// notes and hyperlinks (135), pageBreaks (136), pivots (139) — each with the
+// registry contract test in structure.spec.ts, retiring its rows from
+// retainedReferences' tables in the same change.
 //
 // Inserted rows take the row above's styleId, heightPt and customHeight and
 // its non-zero cell styles as styled empty cells (columns: the column to the
@@ -44,13 +45,17 @@
 // materialise more than MAX_FORMAT_MATERIALISED cells only the row and column
 // properties are copied. Formatting-only rows, cells, spans and merges pushed
 // past the end are dropped. Deleting every row leaves an empty sheet.
+// Inserted rows are visible: they inherit neither `hidden` nor SPEC-128's
+// `filterHidden`.
 import type { CellRef, GridRange } from "./address";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
+import type { AutoFilter, FilterColumn } from "./filter";
 import { adjustFormula, adjustFormulaReferences } from "./formula/adjust";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { firstRowAtOrAfter, MAX_FORMAT_MATERIALISED } from "./restyle";
 import { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retainedReferences";
 import type { SheetSelection } from "./selection";
+import type { SheetSortKey, SortState } from "./sort";
 import { resolveRetainedSheetName } from "./sourceNames";
 import { LazyParts } from "./xlsx/package";
 
@@ -732,6 +737,143 @@ const retainedAdjuster: ReferenceAdjuster = {
   },
 };
 
+// --- 8. autofilter ---------------------------------------------------------------------------
+// SPEC-128 "Structural edits". `autoFilter.range`, `autoFilter.sort.ref`,
+// `Sheet.sortState.ref` follow adjustRange and every SheetSortKey.col
+// adjustIndex. A FilterColumn's colId is relative — column range.left +
+// colId — so a column edit moves its absolute column by adjustIndex and
+// re-bases it on the moved range's left: colIds at or right of an inserted
+// column shift by `count`; a deleted column drops its FilterColumn and its
+// sort keys. A sort record left with no keys once it changes (its keys'
+// columns deleted, or a keyless record whose source no longer fits) is
+// removed. Deleting the header row (range.top in the band), or every column
+// of the range, removes the autofilter; the rows it hid stay hidden as the
+// user's (`hidden`, which Unhide clears — Excel's one flag). A changed
+// column layout of a range holding an ods `odsUnmappedFilter` drops that
+// verbatim filter (its field numbers no longer fit). Every object that
+// changes is replaced — never mutated — without its `sourceXml`; one that
+// does not keeps its identity. Moving or removing an autofilter sets
+// `structureDirty` (the workbook part carries `_xlnm._FilterDatabase`).
+
+/** A sort record after `edit`: the same object when nothing moves, null
+ * when it no longer exists. */
+export function adjustSortState(sort: SortState, edit: StructuralEdit): SortState | null {
+  const ref = adjustRange(sort.ref, edit);
+  if (ref === null) {
+    return null;
+  }
+  let keys = sort.keys;
+  if (editAxis(edit) === "col") {
+    const moved: SheetSortKey[] = [];
+    for (const key of sort.keys) {
+      const col = adjustIndex(key.col, edit);
+      if (col !== null) {
+        moved.push(col === key.col ? key : { ...key, col });
+      }
+    }
+    if (moved.length !== keys.length || moved.some((key, i) => key !== keys[i])) {
+      keys = moved;
+    }
+  }
+  if (ref === sort.ref && keys === sort.keys) {
+    return sort;
+  }
+  if (keys.length === 0) {
+    return null;
+  }
+  const { sourceXml: _source, ...rest } = sort;
+  return { ...rest, ref, keys };
+}
+
+/** An autofilter after `edit`: the same object when nothing moves, null when
+ * it no longer exists. */
+export function adjustAutoFilter(filter: AutoFilter, edit: StructuralEdit): AutoFilter | null {
+  const columnEdit = editAxis(edit) === "col";
+  const { top } = filter.range;
+  if (!columnEdit && !isInsert(edit) && top >= edit.at && top < edit.at + edit.count) {
+    return null;
+  }
+  const range = adjustRange(filter.range, edit);
+  if (range === null) {
+    return null;
+  }
+  let columns = filter.columns;
+  if (columnEdit) {
+    const moved: FilterColumn[] = [];
+    for (const column of filter.columns) {
+      const col = adjustIndex(filter.range.left + column.colId, edit);
+      if (col !== null) {
+        const colId = col - range.left;
+        moved.push(colId === column.colId ? column : { ...column, colId });
+      }
+    }
+    if (moved.length !== columns.length || moved.some((column, i) => column !== columns[i])) {
+      columns = moved;
+    }
+  }
+  const sort = filter.sort === undefined ? undefined : (adjustSortState(filter.sort, edit) ?? undefined);
+  if (range === filter.range && columns === filter.columns && sort === filter.sort) {
+    return filter;
+  }
+  const { sourceXml: _source, sort: _sort, odsUnmappedFilter, ...rest } = filter;
+  const next: AutoFilter = { ...rest, range, columns };
+  if (sort !== undefined) {
+    next.sort = sort;
+  }
+  const reshaped = columnEdit && range.right - range.left !== filter.range.right - filter.range.left;
+  if (odsUnmappedFilter !== undefined && !reshaped) {
+    next.odsUnmappedFilter = odsUnmappedFilter;
+  }
+  return next;
+}
+
+/** The rows with every `filterHidden` row made the user's `hidden` — the
+ * same array when there is none. */
+function filterHiddenToHidden(rows: Row[]): Row[] {
+  if (!rows.some((row) => row.filterHidden)) {
+    return rows;
+  }
+  return rows.map((row) => {
+    if (!row.filterHidden) {
+      return row;
+    }
+    const { filterHidden: _filtered, ...rest } = row;
+    return { ...rest, hidden: true };
+  });
+}
+
+const autofilterAdjuster: ReferenceAdjuster = {
+  id: "autofilter",
+  adjust(model, edit) {
+    let structureMoved = false;
+    updateSheet(model, edit.sheetId, (sheet) => {
+      const was = sheet.autoFilter;
+      const autoFilter = was === undefined ? undefined : (adjustAutoFilter(was, edit) ?? undefined);
+      const sortState = sheet.sortState === undefined ? undefined : (adjustSortState(sheet.sortState, edit) ?? undefined);
+      if (autoFilter === was && sortState === sheet.sortState) {
+        return sheet;
+      }
+      const next: Sheet = { ...sheet };
+      if (autoFilter !== undefined) {
+        next.autoFilter = autoFilter;
+      } else if (was !== undefined) {
+        delete next.autoFilter;
+        next.rows = filterHiddenToHidden(sheet.rows);
+      }
+      if (sortState !== undefined) {
+        next.sortState = sortState;
+      } else {
+        delete next.sortState;
+      }
+      structureMoved ||= was !== undefined && autoFilter?.range !== was.range;
+      return next;
+    });
+    if (structureMoved) {
+      model.structureDirty = true;
+    }
+  },
+};
+
 // --- the registry ----------------------------------------------------------------------------
 
 export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
@@ -742,6 +884,7 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   selectionAdjuster,
   columnsAdjuster,
   retainedAdjuster,
+  autofilterAdjuster,
 ];
 
 /** One structural edit (see the module header). */
