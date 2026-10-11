@@ -889,6 +889,16 @@ describe("the conditionalFormats adjuster (SPEC-129 \"Structural edits\")", () =
     applyStructuralEdit(m, rowsEdit("insertRows", 0, 1));
     expect(m.sheets[1]).toBe(sheets[1]);
   });
+
+  it("leaves a sheet stored before SPEC-129 (no conditionalFormats field) untouched by identity", () => {
+    const legacy = { ...sheet("s2", "Sheet2"), conditionalFormats: undefined } as unknown as Sheet;
+    const m = model([sheet("s1", "Sheet1"), legacy]);
+    const adjuster = REFERENCE_ADJUSTERS.find((each) => each.id === "conditionalFormats")!;
+    const sheets = m.sheets;
+    adjuster.adjust(m, rowsEdit("insertRows", 0, 1, "s2"));
+    adjuster.adjust(m, rowsEdit("insertRows", 0, 1));
+    expect(m.sheets).toBe(sheets);
+  });
 });
 
 // --- the registry contract ------------------------------------------------------------------

@@ -900,13 +900,14 @@ const autofilterAdjuster: ReferenceAdjuster = {
 // dirty sheet's formats from the model (SPEC-124's retained rows for them
 // are retired).
 
-/** `sheet`'s formats after `edit`: the same array when none changes. */
-function adjustSheetFormats(model: SpreadsheetModel, sheet: Sheet, edit: StructuralEdit, nameOf: (sheetId: string) => string): ConditionalFormat[] {
+/** `sheet`'s formats after `edit`: undefined when none changes. */
+function adjustSheetFormats(model: SpreadsheetModel, sheet: Sheet, edit: StructuralEdit, nameOf: (sheetId: string) => string): ConditionalFormat[] | undefined {
   const formats = sheetFormats(sheet);
   const host = { format: model.format, sheetName: sheet.name };
   const plain = (formula: string): string => adjustFormula(formula, sheet.id, edit, nameOf);
   if (sheet.id !== edit.sheetId) {
-    return mapFormatsFormulas(formats, plain, host);
+    const mapped = mapFormatsFormulas(formats, plain, host);
+    return mapped === formats ? undefined : mapped;
   }
   let changed = false;
   const next: ConditionalFormat[] = [];
@@ -938,7 +939,7 @@ function adjustSheetFormats(model: SpreadsheetModel, sheet: Sheet, edit: Structu
   }
   // Surviving formats keep their rules' priorities: renumbering changes
   // something only when a format went.
-  return changed ? renumberPriorities(next) : formats;
+  return changed ? renumberPriorities(next) : undefined;
 }
 
 const conditionalFormatsAdjuster: ReferenceAdjuster = {
@@ -949,7 +950,7 @@ const conditionalFormatsAdjuster: ReferenceAdjuster = {
     let changed = false;
     const sheets = model.sheets.map((sheet) => {
       const formats = adjustSheetFormats(model, sheet, edit, nameOf);
-      if (formats === sheetFormats(sheet)) {
+      if (formats === undefined) {
         return sheet;
       }
       changed = true;
