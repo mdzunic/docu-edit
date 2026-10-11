@@ -27,8 +27,9 @@
 // - SPEC-127: a function's UnsupportedCaseError (a valid call the library
 //   does not compute) makes the cell uncomputable with the reason
 //   { kind: "unsupportedCase", name }; `rowVisibility` answers "hidden" for a
-//   user-hidden row (SPEC-117's Row.hidden) and "visible" otherwise —
-//   SPEC-128 widens it to answer "filtered" — for SUBTOTAL and AGGREGATE.
+//   user-hidden row (SPEC-117's Row.hidden), "filtered" for one SPEC-128's
+//   autofilter hides (Row.filterHidden; "hidden" wins when both are set) and
+//   "visible" otherwise — for SUBTOTAL and AGGREGATE.
 import { now as clockNow } from "../../core/clock";
 import { findRow, getCell, type CellRef } from "../address";
 import type { CalcSettings, CellError, CellValue, SpreadsheetModel } from "../model";
@@ -114,8 +115,8 @@ export interface EvalContext {
   /** INDIRECT/OFFSET results. */
   recordDependency(area: Area): void;
   /** Whether a row of a sheet shows (SUBTOTAL and AGGREGATE skip hidden
-   * ones): "hidden" for Row.hidden, else "visible" (SPEC-128 adds
-   * "filtered"). */
+   * ones): "hidden" for Row.hidden, "filtered" for Row.filterHidden alone
+   * (SPEC-128), else "visible". */
   rowVisibility(sheetId: string, row: number): RowVisibility;
   /** SPEC-133 adds `resolveName(name, sheetQualifier, host)` and
    *  `resolveStructured(node, host)` and owns their signatures. While a hook
@@ -186,7 +187,8 @@ export function storedValueContext(
 /** A row's visibility as the model stores it (see EvalContext). */
 export function rowVisibilityIn(model: SpreadsheetModel, sheetId: string, row: number): RowVisibility {
   const sheet = sheetById(model, sheetId);
-  return sheet && findRow(sheet, row)?.hidden ? "hidden" : "visible";
+  const stored = sheet ? findRow(sheet, row) : undefined;
+  return stored?.hidden ? "hidden" : stored?.filterHidden ? "filtered" : "visible";
 }
 
 export function isUncomputable(value: unknown): value is Uncomputable {
