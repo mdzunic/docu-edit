@@ -17,6 +17,10 @@
 // the re-read style table. SPEC-128 moves it to 9: a version-8 record's
 // dirty sheet gains its autofilter, sort records, sort/autofilter permits
 // and filter-hidden rows from its retained source; a clean one is re-read.
+// SPEC-129 moves it to 10: a version-9 record's dirty sheet gains its
+// conditional formats from its retained source, their dxfs interned into the
+// model's table (read from the retained styles part when the model has none);
+// a clean one is re-read.
 import { afterEach, describe, expect, it } from "vitest";
 import { decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
@@ -36,8 +40,11 @@ import {
   buildSpec120FullCalcXlsxBytes,
   buildSpec120ManualXlsxBytes,
   buildSpec123StylesXlsxBytes,
+  buildSpec129CfOdsBytes,
+  buildSpec129CfXlsxBytes,
   SPEC123_XF,
 } from "./fixtures/build";
+import { modelledDxf } from "./conditionalFormats";
 import type { Cell, Sheet, SpreadsheetModel } from "./model";
 import {
   assembleSpreadsheet,
@@ -710,5 +717,73 @@ describe("SPEC-128's reader step: the autofilter, the sort records and filter-hi
     await READER_UPGRADES.at(-1)!.upgradeDirtySheet(read, sheet, decodedPartBytes(read.opaque));
     expect(sheet.autoFilter).toBeUndefined();
     expect(sheet.rows).toEqual([{ index: 2, cells: [], hidden: true }]);
+  });
+});
+
+// --- SPEC-129's step ------------------------------------------------------------------------
+
+/** A sheet's conditional formats as the step's tests compare them: no minted
+ * ids, each dxfId replaced by the dxf it names in its model's table. */
+function formatsForCompare(model: SpreadsheetModel, sheet: Sheet) {
+  return sheet.conditionalFormats.map(({ id: _id, ...format }) => ({
+    ...format,
+    rules: format.rules.map(({ id: _rule, dxfId, ...rule }) => ({ ...rule, dxf: dxfId === undefined ? undefined : modelledDxf(model.dxfs[dxfId]!) })),
+  }));
+}
+
+/** `read` as SPEC-128's reader (version 9) stored it — no differential-style
+ * table, no conditional formats, stable sheet ids — then B4 of the sheet at
+ * `dirtyIndex` edited to 130. */
+function storedAtVersion9(read: SpreadsheetModel, dirtyIndex: number): SpreadsheetModel {
+  const { dxfs: _dxfs, ...rest } = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+  const stored = { ...rest, readerVersion: 9 } as unknown as SpreadsheetModel;
+  stored.sheets = stored.sheets.map(({ conditionalFormats: _formats, ...sheet }, index) => ({ ...sheet, id: `stored-sheet-${index}` }) as Sheet);
+  stored.sheets[dirtyIndex] = { ...stored.sheets[dirtyIndex]!, dirty: true };
+  getCell(stored.sheets[dirtyIndex]!, 3, 1)!.value = 130;
+  return stored;
+}
+
+describe("SPEC-129's reader step: conditional formats and the differential styles", () => {
+  it("moved the reader to version 10 with its step from 9, last", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(10);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(9);
+  });
+
+  for (const [format, build] of [
+    ["xlsx", buildSpec129CfXlsxBytes],
+    ["ods", buildSpec129CfOdsBytes],
+  ] as const) {
+    it(`${format}: a version-9 record re-reads its clean sheet, and its dirty one gains its conditional formats and their dxfs from the retained source`, async () => {
+      const read = await readSpreadsheetBytes(await build(), format, "SPEC-129 rules");
+      const [scores, more] = read.sheets;
+      expect(scores!.conditionalFormats.length).toBeGreaterThan(0);
+      expect(more!.conditionalFormats.length).toBeGreaterThan(0);
+      const stored = storedAtVersion9(read, 0);
+      expect(stored.dxfs).toBeUndefined();
+      expect(stored.sheets[0]!.conditionalFormats).toBeUndefined();
+
+      const upgraded = await upgradeSpreadsheetModel(stored);
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+      // The dirty sheet keeps its edit and gains every rule its source holds
+      // (each block's source text with it), each rule's dxf in the model's table.
+      const dirty = upgraded.sheets[0]!;
+      expect(dirty.id).toBe("stored-sheet-0");
+      expect(getCell(dirty, 3, 1)!.value).toBe(130);
+      expect(formatsForCompare(upgraded, dirty)).toEqual(formatsForCompare(read, scores!));
+      // The clean sheet is re-read, keeping its stored id.
+      const clean = upgraded.sheets[1]!;
+      expect(clean.id).toBe("stored-sheet-1");
+      expect(formatsForCompare(upgraded, clean)).toEqual(formatsForCompare(read, more!));
+    });
+  }
+
+  it("fills a model's absent dxfs from the retained styles part, then takes the dirty sheet's rules", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec129CfXlsxBytes(), "xlsx", "SPEC-129 rules");
+    const model = { ...read, dxfs: undefined } as unknown as SpreadsheetModel;
+    const { conditionalFormats: _formats, ...rest } = read.sheets[0]!;
+    const sheet = { ...rest, dirty: true } as Sheet;
+    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(model, sheet, decodedPartBytes(read.opaque));
+    expect(model.dxfs.map(modelledDxf)).toEqual(read.dxfs.map(modelledDxf));
+    expect(formatsForCompare(model, sheet)).toEqual(formatsForCompare(read, read.sheets[0]!));
   });
 });
