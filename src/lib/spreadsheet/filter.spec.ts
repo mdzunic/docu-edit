@@ -534,5 +534,9 @@ describe("what the UI reads", () => {
     expect(columnValueKind(m, s, 0, { top: 1, bottom: 3 }, ctx)).toBe("number");
     expect(columnValueKind(m, s, 1, { top: 1, bottom: 3 }, ctx)).toBe("date");
     expect(columnValueKind(m, s, 2, { top: 1, bottom: 3 }, ctx)).toBe("text");
+    // A formula returning "" is blank (display text ""): 1, 2 and three of them is a number column.
+    const empty = (col: number): Cell => cell(col, "", { formula: '""' });
+    const t = sheet({ rows: [row(1, [cell(0, 1)]), row(2, [cell(0, 2)]), row(3, [empty(0)]), row(4, [empty(0)]), row(5, [empty(0)])] });
+    expect(columnValueKind(model(t), t, 0, { top: 1, bottom: 5 }, ctx)).toBe("number");
   });
 });

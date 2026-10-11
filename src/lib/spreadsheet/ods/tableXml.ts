@@ -1325,7 +1325,9 @@ class TableWriter {
       const height = row?.heightPt ?? this.sheet.defaultRowHeightPt;
       style = height === this.sheet.defaultRowHeightPt && !row?.customHeight ? this.defaultRowStyle() : this.ctx.registry.rowStyle(height, !row?.customHeight);
     }
-    // SPEC-128: the user's hidden wins (the read rule recovers the filter half).
+    // SPEC-128: the user's hidden wins — "collapse" whatever filterHidden is.
+    // ODS rows read back as the wire says (never reclassified), so a row
+    // both hidden and filter-hidden comes back hidden only.
     let tail = row?.hidden ? ` table:visibility="collapse"` : row?.filterHidden ? ` table:visibility="filter"` : "";
     if (row?.styleId !== undefined) {
       tail += ` table:default-cell-style-name="${attributeText(this.styleName(row.styleId))}"`;

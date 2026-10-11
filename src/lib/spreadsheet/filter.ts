@@ -819,7 +819,8 @@ export function filterValueList(
 }
 
 /** A column's type for labels: the majority of its non-blank data cells —
- * date cells, other numbers, or everything else (ties → text). `col` is
+ * date cells, other numbers, or everything else (ties → text); a formula
+ * returning "" is blank here (display text ""), as in the criteria. `col` is
  * absolute; rows top..bottom inclusive. */
 export function columnValueKind(
   model: Pick<SpreadsheetModel, "styles">,
@@ -836,7 +837,7 @@ export function columnValueKind(
       continue;
     }
     const cell: Cell | undefined = row.cells.find((each) => each.col === col);
-    if (!cell || cell.value === null) {
+    if (!cell || cell.value === null || cell.value === "") {
       continue;
     }
     if (typeof cell.value === "number") {
