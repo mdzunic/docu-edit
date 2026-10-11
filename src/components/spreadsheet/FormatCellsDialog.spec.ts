@@ -141,3 +141,62 @@ describe("SPEC-123 FormatCellsDialog", () => {
     wrapper.unmount();
   });
 });
+
+// SPEC-129 "The rule editor": the same dialog, opened over a Dxf instead of a
+// cell's style.
+describe("SPEC-129 FormatCellsDialog differential mode", () => {
+  function openDifferential(initial: Record<string, unknown> = {}) {
+    const apply = vi.fn<(entries: StylePatchEntry[]) => void>();
+    const onSave = vi.fn<(dxf: unknown) => void>();
+    const dialog = useFormatCellsDialog({ target: () => null, apply });
+    dialog.showDifferential(initial as never, { theme: DEFAULT_THEME, locale: EN_US, documentFonts: ["Calibri"] }, onSave);
+    const wrapper = mount(FormatCellsDialog, { props: { dialog }, attachTo: document.body });
+    return { dialog, wrapper, apply, onSave };
+  }
+
+  it("shows only Number, Font, Border and Fill, and hides font family/size", async () => {
+    const { wrapper } = openDifferential();
+    expect(wrapper.findAll('[role="tab"]').map((tab) => tab.attributes("data-testid"))).toEqual(
+      ["number", "font", "border", "fill"].map((tab) => `format-cells-tab-${tab}`),
+    );
+    await wrapper.get('[data-testid="format-cells-tab-font"]').trigger("click");
+    expect(wrapper.find('[data-testid="format-cells-font-family"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="format-cells-font-size"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="format-cells-font-style"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="format-cells-tab-border"]').trigger("click");
+    expect(wrapper.findAll('[data-testid^="format-cells-border-edge-"]').map((edge) => edge.attributes("data-testid"))).toEqual([
+      "format-cells-border-edge-top",
+      "format-cells-border-edge-bottom",
+      "format-cells-border-edge-left",
+      "format-cells-border-edge-right",
+    ]);
+    wrapper.unmount();
+  });
+
+  it("seeds the Font tab from an already-set Dxf and preserves it when OK is pressed untouched", async () => {
+    const { wrapper, onSave } = openDifferential({ font: { color: "#9C0006", bold: true } });
+    await wrapper.get('[data-testid="format-cells-tab-font"]').trigger("click");
+    expect((wrapper.get('[data-testid="format-cells-font-style"]').element as HTMLSelectElement).value).toBe("bold");
+    await wrapper.get('[data-testid="format-cells-ok"]').trigger("click");
+    expect(onSave).toHaveBeenCalledWith({ font: { color: "#9C0006", bold: true, italic: false } });
+    wrapper.unmount();
+  });
+
+  it("OK hands the rebuilt Dxf to onSave instead of calling apply", async () => {
+    const { wrapper, apply, onSave } = openDifferential();
+    await wrapper.get('[data-testid="format-cells-tab-fill"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-fill-swatch"]').trigger("click");
+    await wrapper.get('[data-testid="format-cells-ok"]').trigger("click");
+    expect(apply).not.toHaveBeenCalled();
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0]![0]).toMatchObject({ fill: { kind: "solid" } });
+    wrapper.unmount();
+  });
+
+  it("Cancel closes without saving", async () => {
+    const { wrapper, onSave } = openDifferential();
+    await wrapper.get('[data-testid="format-cells-cancel"]').trigger("click");
+    expect(onSave).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+});

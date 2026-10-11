@@ -9,10 +9,21 @@
 // CUSTOM_CODE_ERROR and disables OK. The preview box draws the pending outer
 // edges too; the Border tab's "None" line style removes the edges it is
 // applied to.
+//
+// SPEC-129 "The rule editor" adds a second, DIFFERENTIAL mode: showDifferential
+// opens the same tabs over a Dxf instead of a cell's style — Number, Font
+// (colour/bold/italic/underline/strike; ConditionalFormatEditor.vue hides
+// family and size, which a Dxf has no room for), Border (top/right/bottom/
+// left only — no inside or diagonal, which a single differential cell has no
+// use for) and Fill; Alignment and Protection stay hidden. `ok()` branches on
+// `mode`: a differential OK reads the fields back through dxfFields.ts's
+// fieldsAsDxf and hands the result to the callback showDifferential was
+// given, instead of useFormatting's `apply`.
 import { computed, ref, shallowRef } from "vue";
 import type { DocumentTheme, ModelColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import { AUTOMATIC_COLOR, borderShorthand, cellCss, type CssDeclarations } from "../../lib/spreadsheet/cellRender";
+import type { Dxf } from "../../lib/spreadsheet/conditionalFormats";
 import { borderEdgeEntries, fieldsOf, fieldsPatch, type DialogEdge, type FormatCellsFields } from "../../lib/spreadsheet/formatCells";
 import { patchStyle, type StylePatch, type StylePatchEntry } from "../../lib/spreadsheet/formatting";
 import type { CellBorderEdge, CellStyle, CellValue, SheetBorderStyle } from "../../lib/spreadsheet/model";
@@ -21,9 +32,17 @@ import { BUILTIN_NUMBER_FORMATS } from "../../lib/spreadsheet/numberFormat/built
 import { cellColorHex, cellFontName } from "../../lib/spreadsheet/styles";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { formatValue, plainText, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
+import { dxfAsStyle, dxfTouchedFields, fieldsAsDxf } from "./dxfFields";
 import type { FormatCellsTab } from "./sheetToolbar";
 
 export const CUSTOM_CODE_ERROR = "This number format isn't valid";
+
+/** SPEC-129: what showDifferential opens on — a Dxf rather than a cell. */
+export interface DifferentialContext {
+  theme: DocumentTheme;
+  locale: SpreadsheetLocale;
+  documentFonts?: string[];
+}
 
 /** What the dialog opens on (useFormatting's active cell and workbook). */
 export interface FormatCellsTarget {
@@ -47,9 +66,19 @@ export interface FormatCellsDialogDeps {
 
 const EDGES: readonly DialogEdge[] = ["top", "insideHorizontal", "bottom", "left", "insideVertical", "right", "diagonalUp", "diagonalDown"];
 
+/** A representative value the Number tab's sample formats (SPEC-129's
+ * differential target has no real cell behind it). */
+const DIFFERENTIAL_SAMPLE_VALUE = 1234.56;
+
 export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
   const open = ref(false);
   const tab = ref<FormatCellsTab>("number");
+  const mode = ref<"cells" | "differential">("cells");
+  // Not reactive: set immediately before showDifferential opens the dialog
+  // and consumed (then cleared) by its own ok()/cancel() — nothing reads it
+  // between, so a plain closure variable is simpler than a ref nothing
+  // templates.
+  let differentialSave: ((dxf: Dxf) => void) | null = null;
   const target = shallowRef<FormatCellsTarget | null>(null);
   // Shallow, and replaced rather than mutated: a picked colour or border edge
   // must reach patchStyle as the plain object the picker emitted — a deep ref
@@ -70,6 +99,8 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     if (!t) {
       return;
     }
+    mode.value = "cells";
+    differentialSave = null;
     target.value = t;
     const normal = t.styles[0]?.font;
     const family = cellFontName(t.style.font?.family ?? normal?.family, t.theme);
@@ -80,6 +111,34 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     numberTouched.value = false;
     edges.value = {};
     tab.value = at;
+    open.value = true;
+  }
+
+  /** SPEC-129: opens on `initial` (a conditional format's Dxf, `{}` for a
+   * brand-new rule) instead of a cell's style; OK hands the rebuilt Dxf to
+   * `onSave` rather than useFormatting's `apply` (see the module header). */
+  function showDifferential(initial: Dxf, ctx: DifferentialContext, onSave: (dxf: Dxf) => void): void {
+    mode.value = "differential";
+    differentialSave = onSave;
+    const style = dxfAsStyle(initial);
+    target.value = {
+      style,
+      value: DIFFERENTIAL_SAMPLE_VALUE,
+      locale: ctx.locale,
+      format: { locale: ctx.locale, dateSystem: "1900" },
+      theme: ctx.theme,
+      documentFonts: ctx.documentFonts ?? [],
+      styles: [],
+      ranges: [{ top: 0, left: 0, bottom: 0, right: 0 }],
+      recentColors: [],
+    };
+    fields.value = fieldsOf(style, "", 11);
+    touched.value = dxfTouchedFields(initial);
+    number.value = describeNumberCode(initial.numberFormat, ctx.locale);
+    customCode.value = number.value.category === "custom" ? (number.value.type ?? "") : (initial.numberFormat ?? "General");
+    numberTouched.value = initial.numberFormat !== undefined;
+    edges.value = {};
+    tab.value = "number";
     open.value = true;
   }
 
@@ -239,6 +298,14 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     if (!t || codeError.value !== "") {
       return;
     }
+    if (mode.value === "differential") {
+      const dxf = fieldsAsDxf(fields.value, touched.value, edgeShown, code.value, numberTouched.value);
+      const onSave = differentialSave;
+      open.value = false;
+      differentialSave = null;
+      onSave?.(dxf);
+      return;
+    }
     const patch = pendingPatch();
     const entries: StylePatchEntry[] = [];
     for (const range of t.ranges) {
@@ -256,6 +323,7 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
   return {
     open,
     tab,
+    mode,
     target,
     fields,
     set,
@@ -276,9 +344,11 @@ export function useFormatCellsDialog(deps: FormatCellsDialogDeps) {
     colorHex,
     multiCell,
     show,
+    showDifferential,
     ok,
     cancel: (): void => {
       open.value = false;
+      differentialSave = null;
     },
     showTab: (next: string): void => {
       tab.value = next as FormatCellsTab;
