@@ -108,12 +108,14 @@ export const MATH_ROWS: ConformanceRow[] = [
 
   // --- ROUNDUP ---------------------------------------------------------------
   { formula: "ROUNDUP(3.2,0)", expected: 4, digits: 1, source: "Excel", note: "ROUNDUP function, example, row 1." },
+  // eslint-disable-next-line approx-constant -- the result as Microsoft's page prints it, compared at its digits
   { formula: "ROUNDUP(3.14159,3)", expected: 3.142, digits: 4, source: "Excel", note: "ROUNDUP function, example, row 3." },
   { formula: "ROUNDUP(-3.14159,1)", expected: -3.2, digits: 2, source: "Excel", note: "ROUNDUP function, example, row 4." },
   { formula: "ROUNDUP(1,2,3)", expected: { error: "#VALUE!" }, source: "pinned", note: "pinned: ROUNDUP takes at most 2 arguments; a wrong argument count is #VALUE!." },
 
   // --- ROUNDDOWN ---------------------------------------------------------------
   { formula: "ROUNDDOWN(3.2,0)", expected: 3, digits: 1, source: "Excel", note: "ROUNDDOWN function, example, row 1." },
+  // eslint-disable-next-line approx-constant -- the result as Microsoft's page prints it, compared at its digits
   { formula: "ROUNDDOWN(3.14159,3)", expected: 3.141, digits: 4, source: "Excel", note: "ROUNDDOWN function, example, row 3." },
   { formula: "ROUNDDOWN(-3.14159,1)", expected: -3.1, digits: 2, source: "Excel", note: "ROUNDDOWN function, example, row 4." },
   { formula: "ROUNDDOWN(1,2,3)", expected: { error: "#VALUE!" }, source: "pinned", note: "pinned: ROUNDDOWN takes at most 2 arguments; a wrong argument count is #VALUE!." },
@@ -166,6 +168,7 @@ export const MATH_ROWS: ConformanceRow[] = [
   { formula: "POWER(2)", expected: { error: "#VALUE!" }, source: "pinned", note: "pinned: POWER needs 2 arguments; a wrong argument count is #VALUE!." },
 
   // --- EXP ---------------------------------------------------------------
+  // eslint-disable-next-line approx-constant -- the result as Microsoft's page prints it, compared at its digits
   { formula: "EXP(1)", expected: 2.71828183, digits: 9, source: "Excel", note: "EXP function, example, row 1." },
   { formula: "EXP(2)", expected: 7.3890561, digits: 8, source: "Excel", note: "EXP function, example, row 2." },
   { formula: "EXP(0)", expected: 1, source: "pinned", note: "pinned: e^0 = 1." },
@@ -190,6 +193,7 @@ export const MATH_ROWS: ConformanceRow[] = [
   { formula: "LOG10(1/0)", expected: { error: "#DIV/0!" }, source: "pinned", note: "pinned: an error argument propagates (SPEC-120 \"Errors\")." },
 
   // --- PI ---------------------------------------------------------------
+  // eslint-disable-next-line approx-constant -- the result as Microsoft's page prints it, compared at its digits
   { formula: "PI()", expected: 3.141592654, digits: 10, source: "Excel", note: "PI function, example, row 1." },
   { formula: "PI(1)", expected: { error: "#VALUE!" }, source: "pinned", note: "pinned: PI takes no arguments; a wrong argument count is #VALUE! (e.g. PI(1))." },
   { formula: "PI(1,2)", expected: { error: "#VALUE!" }, source: "pinned", note: "pinned: PI takes no arguments; a wrong argument count is #VALUE!." },
