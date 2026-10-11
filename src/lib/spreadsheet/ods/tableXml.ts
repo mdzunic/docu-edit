@@ -15,12 +15,14 @@
 //   85.33 px; a run equal to the default with no other property stores no
 //   span ("Default" as a default cell style is style 0, no property).
 // - Rows. `style:row-height` → heightPt, `style:use-optimal-row-height=
-//   "false"` → customHeight, visibility → hidden, a default cell style →
-//   styleId. `defaultRowHeightPt` is the height of the style on the table's
-//   LAST row run, else 12.8 pt, and is only known when the table ends — so
-//   a row holding no cell is kept as a pending run (never expanded) and
-//   materialised then only when it differs from the default (a height of
-//   its own, hidden, or a style). LibreOffice's trailing 1048553-row run IS
+//   "false"` → customHeight, `table:visibility="collapse"` → hidden and
+//   SPEC-128's `"filter"` → filterHidden (as the wire says: no
+//   classification), a default cell style → styleId. `defaultRowHeightPt`
+//   is the height of the style on the table's LAST row run, else 12.8 pt,
+//   and is only known when the table ends — so a row holding no cell is
+//   kept as a pending run (never expanded) and materialised then only when
+//   it differs from the default (a height of its own, either visibility, or
+//   a style) — a filter-hidden blank row is a Row with no cells. LibreOffice's trailing 1048553-row run IS
 //   the default and costs nothing. Every row object materialised for its
 //   properties alone counts against MAX_WORKBOOK_CELLS, as does every merge,
 //   so a few bytes of repeat counts can never allocate millions of objects.
@@ -132,6 +134,15 @@ function isHidden(attrs: readonly XmlScanAttribute[]): boolean {
   return visibility === "collapse" || visibility === "filter";
 }
 
+/** A row's `table:visibility` as the model holds it (SPEC-128): `collapse`
+ * is the user's hidden, `filter` the autofilter's; undefined when visible. */
+type RowVisibility = "collapse" | "filter" | undefined;
+
+function rowVisibility(attrs: readonly XmlScanAttribute[]): RowVisibility {
+  const visibility = scanAttr(attrs, "visibility", TABLE_NAMESPACE);
+  return visibility === "collapse" || visibility === "filter" ? visibility : undefined;
+}
+
 interface ColumnRun {
   min: number;
   max: number;
@@ -150,7 +161,7 @@ interface RowMerge {
 interface PendingRow {
   index: number;
   repeat: number;
-  hidden: boolean;
+  visibility: RowVisibility;
   styleName?: string;
   /** The row's default style (`table:default-cell-style-name`), or the
    * style of a styled run that reached the last column. */
@@ -168,7 +179,7 @@ interface PendingRow {
 interface RowEntry {
   index: number;
   repeat: number;
-  hidden: boolean;
+  visibility: RowVisibility;
   styleName?: string;
   styleId?: number;
   rows?: Row[];
@@ -374,7 +385,7 @@ export class OdsTableReader {
     const row: PendingRow = {
       index: this.nextRow,
       repeat: repeatCount(attrs, "number-rows-repeated"),
-      hidden: isHidden(attrs),
+      visibility: rowVisibility(attrs),
       ownDefault: false,
       cells: [],
       col: 0,
@@ -643,7 +654,7 @@ export class OdsTableReader {
         }
       }
     }
-    const entry: RowEntry = { index: start, repeat, hidden: row.hidden };
+    const entry: RowEntry = { index: start, repeat, visibility: row.visibility };
     if (row.styleName !== undefined) {
       entry.styleName = row.styleName;
     }
@@ -666,8 +677,10 @@ export class OdsTableReader {
 
   private rowObject(entry: RowEntry, index: number, cells: Cell[]): Row {
     const row: Row = { index, cells };
-    if (entry.hidden) {
+    if (entry.visibility === "collapse") {
       row.hidden = true;
+    } else if (entry.visibility === "filter") {
+      row.filterHidden = true;
     }
     if (entry.styleId !== undefined) {
       row.styleId = entry.styleId;
@@ -690,7 +703,7 @@ export class OdsTableReader {
       const ownHeight = height.heightPt !== undefined && height.heightPt !== defaultRowHeightPt ? height : undefined;
       let stored = entry.rows;
       if (!stored) {
-        if (!ownHeight && !entry.hidden && entry.styleId === undefined) {
+        if (!ownHeight && entry.visibility === undefined && entry.styleId === undefined) {
           continue; // equal to the default: nothing to store
         }
         if (!this.budget.take(entry.repeat)) {
@@ -1312,7 +1325,8 @@ class TableWriter {
       const height = row?.heightPt ?? this.sheet.defaultRowHeightPt;
       style = height === this.sheet.defaultRowHeightPt && !row?.customHeight ? this.defaultRowStyle() : this.ctx.registry.rowStyle(height, !row?.customHeight);
     }
-    let tail = row?.hidden ? ` table:visibility="collapse"` : "";
+    // SPEC-128: the user's hidden wins (the read rule recovers the filter half).
+    let tail = row?.hidden ? ` table:visibility="collapse"` : row?.filterHidden ? ` table:visibility="filter"` : "";
     if (row?.styleId !== undefined) {
       tail += ` table:default-cell-style-name="${attributeText(this.styleName(row.styleId))}"`;
     }
@@ -1525,10 +1539,12 @@ class TableWriter {
  *    compressed with `table:number-columns-repeated`;
  * 4. rows 0..rowExtent−1: each stored row serialised, gaps as empty rows,
  *    consecutive rows with identical serialisation (empty ones included)
- *    compressed with `table:number-rows-repeated`; the style
- *    `sourceStyleName` or a `de-ro` by height (default rows as columns),
- *    `table:visibility="collapse"` when hidden,
- *    `table:default-cell-style-name` from `Row.styleId`;
+ *    compressed with `table:number-rows-repeated` (so visibility is part of
+ *    the compression key: a filter-hidden row never joins a collapsed or a
+ *    visible one); the style `sourceStyleName` or a `de-ro` by height
+ *    (default rows as columns), `table:visibility="collapse"` when hidden
+ *    (whatever filterHidden is), `"filter"` when only filterHidden
+ *    (SPEC-128), `table:default-cell-style-name` from `Row.styleId`;
  * 5. within a row, columns 0..colExtent−1: stored cells serialised, gaps as
  *    `<table:table-cell/>`, identical neighbours compressed; a merge anchor
  *    gets `table:number-columns-spanned`/`-rows-spanned` and every position
