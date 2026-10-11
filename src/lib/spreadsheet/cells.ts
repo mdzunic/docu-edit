@@ -16,9 +16,10 @@
 //   preserved content is removed — any style, formula or preserved field
 //   keeps it (a cell holding only preserved content is content) — and a row
 //   left with no cells and no properties is removed. A row's properties are
-//   what the readers store an empty row for — a height, `hidden`, a
-//   `styleId` — and any unmodelled source attribute other than Excel's
-//   layout caches (`spans`, `x14ac:dyDescent`, which the writer drops); an
+//   what the readers store an empty row for — a height, `hidden` (or
+//   SPEC-128's `filterHidden`), a `styleId` — and any unmodelled source
+//   attribute other than Excel's layout caches (`spans`, `x14ac:dyDescent`,
+//   which the writer drops); an
 //   ods row's `sourceStyleName` alone is no property (its height is
 //   `heightPt`), so an emptied row reads back the way it is stored.
 // - Styles: the new style is the position's effective style (effectiveStyleId

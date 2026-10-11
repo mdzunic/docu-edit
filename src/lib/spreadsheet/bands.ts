@@ -13,7 +13,9 @@
 //   width>` it stands for). A size under 4 px hides instead, keeping the
 //   size for unhide; any other size unhides.
 // - Hide and unhide set `Row.hidden` (a property-only Row where none is
-//   stored) and `ColumnSpan.hidden`, never touching a size. Every Row a
+//   stored) and `ColumnSpan.hidden`, never touching a size — nor SPEC-128's
+//   `Row.filterHidden`: a row the autofilter hides stays hidden through
+//   Unhide until the filter changes (structure.spec.ts). Every Row a
 //   command creates for rows that store nothing counts against
 //   MAX_FORMAT_MATERIALISED: past it the command is refused with
 //   TOO_MANY_ROWS_MESSAGE.

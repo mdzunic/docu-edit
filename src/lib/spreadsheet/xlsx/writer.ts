@@ -8,7 +8,9 @@
 //     stripRetention'ed copy): the minimal package from the model, parts in
 //     this order: [Content_Types].xml, _rels/.rels, docProps/core.xml,
 //     docProps/app.xml (Application only — no TitlesOfParts to go stale),
-//     xl/workbook.xml, its rels, xl/theme/theme1.xml (core's
+//     xl/workbook.xml (SPEC-128: with a `<definedNames>` after `<sheets>`
+//     holding one hidden `_xlnm._FilterDatabase` per sheet with an
+//     autofilter, when one has), its rels, xl/theme/theme1.xml (core's
 //     OFFICE_THEME_XML), xl/styles.xml (xlsx/styles.ts's from-scratch base —
 //     font 0 and xf 0 built from `model.styles[0]` — with every other style a
 //     cell, row or column uses appended), xl/sharedStrings.xml when a cell
@@ -21,7 +23,17 @@
 //     `<sheets>` (an original keeps its source sheetId and rId; copies and
 //     new sheets get the next free ones), renumbered / removed / duplicated
 //     `definedName@localSheetId`, every workbookView's `activeTab` and no
-//     `firstSheet`; the workbook's rels and [Content_Types].xml are spliced,
+//     `firstSheet`, and (SPEC-128, a save only — not substitutedXlsxParts)
+//     the `_xlnm._FilterDatabase` names reconciled with the model by string
+//     splice: for every grid sheet once `structureDirty`, else for the dirty
+//     and new ones that have an autofilter or whose source part had one (an
+//     Advanced Filter's name is an ordinary one), a sheet with an autofilter keeps its first source name
+//     (localSheetId renumbered; the text as written while it names the
+//     autofilter's range, else `'Sheet'!$A$1:$D$20` — xlsx/autoFilter.ts) or
+//     gains one (first in `<definedNames>`, which is created before `calcPr`
+//     and its later siblings when absent), and its other names — like a
+//     deleted sheet's — go; a copy gets its own from its autofilter, never a
+//     duplicate of its origin's; a clean sheet's stay verbatim; the workbook's rels and [Content_Types].xml are spliced,
 //     never re-serialised; xl/calcChain.xml is dropped with its relationship
 //     and Override; docProps/app.xml's sheet titles are rebuilt or removed;
 //     a deleted sheet's part and everything reachable only through it are
@@ -62,7 +74,8 @@ import { isEmptyRemap, type SheetRemap } from "../formula/sheetRefs";
 import { maxDigitWidthPx } from "../geometry";
 import type { Sheet, SpreadsheetModel } from "../model";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
-import { applySplices, attributeValue, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText, sheetPartHasAutoFilter } from "./autoFilter";
 import { ownedClosure } from "./duplicate";
 import {
   contentTypeIn,
@@ -208,7 +221,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     model.sheets
       .map((sheet, index) => `<sheet name="${escapeAttributeValue(sheet.name)}" sheetId="${index + 1}"${sheetStateAttr(sheet)} r:id="rId${index + 1}"/>`)
       .join("") +
-    `</sheets><calcPr calcId="${CALC_ID}"${fullCalc ? ` fullCalcOnLoad="1"` : ""}/></workbook>`;
+    `</sheets>${fromScratchDefinedNames(model)}<calcPr calcId="${CALC_ID}"${fullCalc ? ` fullCalcOnLoad="1"` : ""}/></workbook>`;
   const workbookRels =
     `${XML_DECLARATION}<Relationships xmlns="${PKG_REL_NS}">` +
     sheetParts.map((part, index) => relationshipXml(`rId${index + 1}`, `${RELATIONSHIP_TYPE}/worksheet`, part.slice("xl/".length))).join("") +
@@ -228,6 +241,21 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     ...(sharedStrings === undefined ? [] : [{ name: "xl/sharedStrings.xml", data: encode(sharedStrings) }]),
     ...worksheets.map((xml, index) => ({ name: sheetParts[index]!, data: encode(xml) })),
   ];
+}
+
+/** A from-scratch workbook's `<definedNames>`: one `_xlnm._FilterDatabase`
+ * per sheet with an autofilter (SPEC-128); "" when none has one. */
+function fromScratchDefinedNames(model: SpreadsheetModel): string {
+  const names = model.sheets.flatMap((sheet, index) => (sheet.kind === "grid" && sheet.autoFilter ? [filterDatabaseXml(sheet, index, "")] : []));
+  return names.length === 0 ? "" : `<definedNames>${names.join("")}</definedNames>`;
+}
+
+/** One `_xlnm._FilterDatabase` definedName, as Excel writes it. */
+function filterDatabaseXml(sheet: Sheet, index: number, prefix: string): string {
+  return (
+    `<${prefix}definedName name="${FILTER_DATABASE_NAME}" localSheetId="${index}" hidden="1">` +
+    `${escapeText(filterDatabaseText(sheet.name, sheet.autoFilter!.range))}</${prefix}definedName>`
+  );
 }
 
 // --- substitution -------------------------------------------------------------------------
@@ -407,7 +435,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     if (name === contentTypesName) {
       data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added));
     } else if (name === workbook.path) {
-      data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc));
+      data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, write ? filterDatabaseScope(model, parts) : undefined));
     } else if (name === workbook.relsPath) {
       data = encode(workbookRelsFor(workbook, plans, droppedRelIds, added));
     } else if (name === appPath) {
@@ -595,11 +623,108 @@ function spliceTabSelected(xml: string, active: boolean): string {
 
 // --- the workbook part ---------------------------------------------------------------------
 
+/** SPEC-128: which sheets' `_xlnm._FilterDatabase` names a save reconciles
+ * with the model — every grid sheet once the structure changed (sheets
+ * added, copied, moved, renamed or deleted), else the dirty ones (a
+ * structural edit moves an autofilter without touching the structure) —
+ * among those the model owns the names of: a sheet with an autofilter, or
+ * one whose source part held one (autoFilter.ts's sheetPartHasAutoFilter).
+ * A clean sheet's names stay as the source wrote them; an Advanced Filter's
+ * go through the ordinary defined-name splice. */
+function filterDatabaseScope(model: SpreadsheetModel, parts: ReadonlyMap<string, Uint8Array>): (plan: SheetPlan) => boolean {
+  const hadAutoFilter = new Map<string, boolean>();
+  const sourceHad = (partName: string): boolean => {
+    let had = hadAutoFilter.get(partName);
+    if (had === undefined) {
+      const bytes = parts.get(partName);
+      had = bytes !== undefined && sheetPartHasAutoFilter(decodeUtf8(bytes));
+      hadAutoFilter.set(partName, had);
+    }
+    return had;
+  };
+  return (plan) =>
+    plan.sheet.kind === "grid" &&
+    (model.structureDirty === true || plan.sheet.dirty === true || plan.source === undefined) &&
+    (plan.sheet.autoFilter !== undefined || (plan.source !== undefined && sourceHad(plan.source.partName)));
+}
+
+/** A `_xlnm._FilterDatabase` definedName met in the source. */
+interface FilterDatabaseEntry {
+  start: number;
+  end: number;
+  textStart: number;
+  textEnd: number;
+  sourceIndex: number;
+}
+
+/** SPEC-128 "xlsx wire mapping": the `_xlnm._FilterDatabase` names
+ * reconciled by string splice — a reconciled sheet with an autofilter keeps
+ * its first source name (localSheetId renumbered to its index, the text left
+ * as written while it still names the range, else rewritten) or gains one;
+ * every other name of a reconciled sheet, and every name of a deleted sheet,
+ * goes. New names go first inside `<definedNames>` — created before the
+ * first of `calcPr` and its later siblings when the part has none, or opened
+ * up when it closes itself. */
+function filterDatabaseSplices(
+  xml: string,
+  prefix: string,
+  entries: readonly FilterDatabaseEntry[],
+  plans: readonly SheetPlan[],
+  sourceIndexToModel: ReadonlyMap<number, number>,
+  container: { start: number; end: number; selfClosing: boolean; contentStart: number } | null,
+  insertAt: number,
+  reconciled: (plan: SheetPlan) => boolean,
+  splices: Splice[],
+): void {
+  const named = new Set<number>();
+  for (const entry of entries) {
+    const modelIndex = sourceIndexToModel.get(entry.sourceIndex);
+    const sheet = modelIndex === undefined ? undefined : plans[modelIndex]!.sheet;
+    if (modelIndex === undefined || sheet?.autoFilter === undefined || named.has(modelIndex)) {
+      splices.push({ start: entry.start, end: entry.end, text: "" });
+      continue;
+    }
+    named.add(modelIndex);
+    const tagText = startTagAt(xml, entry.start);
+    const tag = withLocalSheetId(tagText, modelIndex);
+    const raw = xml.slice(entry.textStart, entry.textEnd);
+    const body = filterDatabaseNames(decodeXmlText(raw), sheet.name, sheet.autoFilter.range) ? raw : escapeText(filterDatabaseText(sheet.name, sheet.autoFilter.range));
+    if (tag !== tagText || body !== raw) {
+      const close = entry.textEnd === entry.end ? `</${/^<([\w.:-]+)/.exec(tagText)![1]}>` : xml.slice(entry.textEnd, entry.end);
+      const open = tagText.endsWith("/>") ? `${tag.replace(/\s*\/>$/, ">")}` : tag;
+      splices.push({ start: entry.start, end: entry.end, text: `${open}${body}${close}` });
+    }
+  }
+  const added = plans
+    .filter((plan) => plan.sheet.autoFilter !== undefined && !named.has(plan.index) && reconciled(plan))
+    .map((plan) => filterDatabaseXml(plan.sheet, plan.index, prefix));
+  if (added.length === 0) {
+    return;
+  }
+  const names = added.join("");
+  if (container === null) {
+    splices.push({ start: insertAt, end: insertAt, text: `<${prefix}definedNames>${names}</${prefix}definedNames>` });
+  } else if (container.selfClosing) {
+    const tag = xml.slice(container.start, container.end);
+    const name = /^<([\w.:-]+)/.exec(tag)![1];
+    splices.push({ start: container.start, end: container.end, text: `${tag.replace(/\s*\/>$/, ">")}${names}</${name}>` });
+  } else {
+    splices.push({ start: container.contentStart, end: container.contentStart, text: names });
+  }
+}
+
 /** CT_Workbook's children after `calcPr`: an absent `calcPr` is created
  * before the first of these. */
 const AFTER_CALC_PR = ["oleSize", "customWorkbookViews", "pivotCaches", "smartTagPr", "smartTagTypes", "webPublishing", "fileRecoveryPr", "webPublishObjects", "extLst"];
 
-function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], remap: SheetRemap, activeIndex: number, fullCalc: boolean): string {
+function workbookXmlFor(
+  workbook: SourceWorkbook,
+  plans: readonly SheetPlan[],
+  remap: SheetRemap,
+  activeIndex: number,
+  fullCalc: boolean,
+  reconciled: ((plan: SheetPlan) => boolean) | undefined,
+): string {
   const xml = workbook.xml;
   const root = rootTag(xml);
   const relPrefix = relationshipPrefix(root.tag);
@@ -628,6 +753,27 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
   let insertCalcPrAt = -1;
   let definedName: { start: number; tagEnd: number; attrs: Parameters<typeof scanAttr>[0] } | null = null;
   let rootClose = -1;
+  // SPEC-128: the _xlnm._FilterDatabase names this save reconciles (see
+  // filterDatabaseSplices), the <definedNames> holding them, and where one
+  // would be created.
+  const filterEntries: FilterDatabaseEntry[] = [];
+  let definedNames: { start: number; end: number; selfClosing: boolean; contentStart: number } | null = null;
+  let insertDefinedNamesAt = -1;
+  const reconciledName = (attrs: Parameters<typeof scanAttr>[0], element: { start: number; end: number; textStart: number; textEnd: number }): boolean => {
+    if (reconciled === undefined || scanAttr(attrs, "name")?.toLowerCase() !== FILTER_DATABASE_NAME.toLowerCase()) {
+      return false;
+    }
+    const local = scanAttr(attrs, "localSheetId")?.trim();
+    if (local === undefined || !/^\d+$/.test(local)) {
+      return false;
+    }
+    const modelIndex = sourceIndexToModel.get(Number(local));
+    if (modelIndex !== undefined && !reconciled(plans[modelIndex]!)) {
+      return false;
+    }
+    filterEntries.push({ ...element, sourceIndex: Number(local) });
+    return true;
+  };
   scanXml(xml, (event) => {
     if (event.type === "open") {
       depth += 1;
@@ -641,6 +787,11 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
           calcPr = { start: event.start, end: event.end };
         } else if (AFTER_CALC_PR.includes(event.local) && insertCalcPrAt < 0) {
           insertCalcPrAt = event.start;
+        } else if (event.local === "definedNames" && definedNames === null) {
+          definedNames = { start: event.start, end: event.end, selfClosing: event.selfClosing, contentStart: event.end };
+        }
+        if ((event.local === "calcPr" || AFTER_CALC_PR.includes(event.local)) && insertDefinedNamesAt < 0) {
+          insertDefinedNamesAt = event.start;
         }
       } else if (depth === 3 && event.local === "workbookView") {
         const tag = xml.slice(event.start, event.end);
@@ -650,7 +801,10 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
         }
       } else if (depth === 3 && event.local === "definedName") {
         if (event.selfClosing) {
-          definedNameSplices(xml, { start: event.start, end: event.end, textStart: event.end, textEnd: event.end }, event.attrs, sourceIndexToModel, copiesBySourceIndex, remap, splices);
+          const element = { start: event.start, end: event.end, textStart: event.end, textEnd: event.end };
+          if (!reconciledName(event.attrs, element)) {
+            definedNameSplices(xml, element, event.attrs, sourceIndexToModel, copiesBySourceIndex, remap, splices);
+          }
         } else {
           definedName = { start: event.start, tagEnd: event.end, attrs: event.attrs };
         }
@@ -663,15 +817,10 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
         sheetsRange = { start: sheetsStart, end: event.end };
       } else if (depth === 3 && event.local === "definedName" && definedName) {
         const current: { start: number; tagEnd: number; attrs: Parameters<typeof scanAttr>[0] } = definedName;
-        definedNameSplices(
-          xml,
-          { start: current.start, end: event.end, textStart: current.tagEnd, textEnd: event.start },
-          current.attrs,
-          sourceIndexToModel,
-          copiesBySourceIndex,
-          remap,
-          splices,
-        );
+        const element = { start: current.start, end: event.end, textStart: current.tagEnd, textEnd: event.start };
+        if (!reconciledName(current.attrs, element)) {
+          definedNameSplices(xml, element, current.attrs, sourceIndexToModel, copiesBySourceIndex, remap, splices);
+        }
         definedName = null;
       } else if (depth === 1) {
         rootClose = event.start;
@@ -679,6 +828,14 @@ function workbookXmlFor(workbook: SourceWorkbook, plans: readonly SheetPlan[], r
       depth -= 1;
     }
   });
+
+  if (reconciled !== undefined) {
+    // Before the calcPr splices: a definedNames created where an absent
+    // calcPr is also created goes first.
+    const container: { start: number; end: number; selfClosing: boolean; contentStart: number } | null = definedNames;
+    const at = insertDefinedNamesAt >= 0 ? insertDefinedNamesAt : rootClose;
+    filterDatabaseSplices(xml, root.prefix, filterEntries, plans, sourceIndexToModel, container, at, reconciled, splices);
+  }
 
   if (sheetsRange) {
     const range: { start: number; end: number } = sheetsRange;

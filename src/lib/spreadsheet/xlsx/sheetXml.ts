@@ -77,11 +77,22 @@
 // → `allowFormatCells`/`allowFormatColumns`/`allowFormatRows` (absent = not
 // permitted, Excel's default), and SPEC-124's `insertRows`/`insertColumns`/
 // `deleteRows`/`deleteColumns` "0"/"false" → `allowInsertRows`/
-// `allowInsertColumns`/`allowDeleteRows`/`allowDeleteColumns`.
+// `allowInsertColumns`/`allowDeleteRows`/`allowDeleteColumns`, and SPEC-128's
+// `sort`/`autoFilter` "0"/"false" → `allowSort`/`allowAutoFilter`.
+//
+// SPEC-128 (xlsx/autoFilter.ts holds the wire mapping): the root-level
+// `<autoFilter>` → `autoFilter` and `<sortState>` → `sortState`, each cut out
+// of the part by the scanner's offsets as the one pass meets it and parsed
+// from that slice (a prefixed `x:autoFilter` reads the same; one whose `ref`
+// does not parse is not modelled). A row's `hidden="1"` stays `hidden` here
+// — reader.ts reclassifies the ones inside an autofilter (filter.ts's
+// classifyHiddenRows) — and a filter-hidden row with no cells is stored like
+// a hidden one.
 //
 // The worksheet writer (SPEC-122 "The worksheet writer", normative there):
 // serializeWorksheet(sheet, base, ctx) rebuilds `dimension`, `sheetViews`,
-// `sheetFormatPr`, `cols`, `sheetData` and `mergeCells` from the model and
+// `sheetFormatPr`, `cols`, `sheetData`, SPEC-128's `autoFilter` and
+// `sortState`, and `mergeCells` from the model and
 // splices each over its source counterpart's exact range, located with the
 // scanner (an absent one is inserted before the first source child that
 // comes later in CT_Worksheet order — an `mc:AlternateContent` ranks as the
@@ -110,6 +121,7 @@
 //   row; `<c r [s] [t] [cm] {preservedAttrs}>` per cell — `s` omitted for xf
 //   0 (unless the row or column would otherwise lend the cell its style),
 //   self-closing when childless, children `<f>`, `<v>`, then preservedXml.
+//   SPEC-128: `hidden="1"` for a `hidden` or a `filterHidden` row.
 //   number → no t; string → t="s" through the save's SharedStringsWriter
 //   (inline strings become shared ones); a formula's or an array member's
 //   string result → t="str" (encodeXlsxText); boolean → t="b" 1/0; error →
@@ -119,11 +131,20 @@
 //   dataTableXml is its `<f>`, verbatim. Shared formulas are never written.
 //   Numbers: `Object.is(n, -0) ? "0" : String(n)`.
 // - mergeCells: `count` + one `mergeCell ref` per merge.
+// - autoFilter, sortState (SPEC-128, xlsx/autoFilter.ts): the model's —
+//   its `sourceXml` verbatim while that fits the part, else serialised with
+//   the root's prefix; a source element the model no longer has goes, one the
+//   reader could not model (no parseable `ref`) stays verbatim.
+// - sheetPr (SPEC-128): `filterMode="1"` exactly when some row is
+//   `filterHidden` — set or removed in the source sheetPr's start tag (its
+//   tabColor, outlinePr, pageSetUpPr untouched), or `<sheetPr
+//   filterMode="1"/>` made the first root child when the part has none.
 import type { DocumentTheme, ModelColor } from "../../core/theme";
 import { scanAttr, scanXml, type XmlScanAttribute, type XmlScanEvent } from "../../core/xmlScanner";
 import { colToLetters, formatA1, formatRange, parseA1, parseRange, parseSqref, usedRange, type CellRef, type GridRange } from "../address";
 import { baseColWidthToPx, DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, pxToXlsxWidth, xlsxWidthToPx } from "../geometry";
 import { acceptMerges } from "../merges";
+import type { AutoFilter } from "../filter";
 import {
   isRowLayoutCacheAttribute,
   MAX_COLS,
@@ -146,8 +167,10 @@ import { shiftFormula } from "../formula/references";
 import { addressText, normaliseCells, normaliseRows, outOfGridError, parseError, type CellBudget } from "../parsed";
 import type { SheetSelection } from "../selection";
 import { odsDateValueToSerial } from "../serial";
+import type { SortState } from "../sort";
 import { columnSpanAt } from "../styles";
 import { applySplices, attributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { autoFilterXml, fitsPart, readAutoFilterXml, readSortStateXml, sortStateXml, type FitsPart } from "./autoFilter";
 import { decodeXmlEscapes, encodeXlsxText, type SharedStringsWriter } from "./sharedStrings";
 import { isSpreadsheetMl, XlsxFontReader, type XlsxStyleWriter } from "./styles";
 import { modelColorToXlsxAttrs, scannedAttributes, xlsxColorFrom } from "./themeColor";
@@ -533,7 +556,13 @@ const COL_HINTS: ReadonlySet<string> = new Set(["bestFit"]);
 
 /** Whether a row without cells is stored (see the module header). */
 function storesEmptyRow(row: Row): boolean {
-  return row.heightPt !== undefined || row.hidden === true || row.styleId !== undefined || rowSourceAttrsHoldProperties(row.sourceAttrs);
+  return (
+    row.heightPt !== undefined ||
+    row.hidden === true ||
+    row.filterHidden === true ||
+    row.styleId !== undefined ||
+    rowSourceAttrsHoldProperties(row.sourceAttrs)
+  );
 }
 
 // --- columns ------------------------------------------------------------------------
@@ -776,7 +805,12 @@ function resolveFollowers(
  * SPEC-117 layout and view fields (optional ones only when the part has
  * them). */
 export type WorksheetContent = Pick<Sheet, "rows" | "columns" | "defaultColWidthPx" | "defaultRowHeightPt" | "merges"> &
-  Partial<Pick<Sheet, "frozen" | "showGridLines" | "showZeros" | "zoomPercent" | "tabColor" | "selection" | "topLeftCell" | "showFormulas" | "protection">>;
+  Partial<
+    Pick<
+      Sheet,
+      "frozen" | "showGridLines" | "showZeros" | "zoomPercent" | "tabColor" | "selection" | "topLeftCell" | "showFormulas" | "protection" | "autoFilter" | "sortState"
+    >
+  >;
 
 export interface WorksheetReadOptions {
   sharedStrings: readonly SharedString[];
@@ -832,6 +866,18 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   let sheetViews = 0;
   let inFirstView = false;
   const view: ViewState = { selections: [] };
+  // SPEC-128: the root-level autoFilter and sortState, each parsed from its
+  // source slice (xlsx/autoFilter.ts) once the scanner has passed its end.
+  let autoFilter: AutoFilter | undefined;
+  let sortState: SortState | undefined;
+  let filterElement: { local: "autoFilter" | "sortState"; start: number; ns: string } | null = null;
+  const readFilterElement = (local: "autoFilter" | "sortState", slice: string, ns: string): void => {
+    if (local === "autoFilter") {
+      autoFilter ??= readAutoFilterXml(slice, ns);
+    } else {
+      sortState ??= readSortStateXml(slice, ns);
+    }
+  };
 
   /** The style a column's `<col>` gives it (the first `<col>` claiming it). */
   const columnStyleAt = (col: number): number | undefined =>
@@ -1125,6 +1171,19 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
         if (isOff(scanAttr(event.attrs, "deleteColumns"))) {
           protection.allowDeleteColumns = true;
         }
+        // SPEC-128: sorting and the autofilter, read the same way.
+        if (isOff(scanAttr(event.attrs, "sort"))) {
+          protection.allowSort = true;
+        }
+        if (isOff(scanAttr(event.attrs, "autoFilter"))) {
+          protection.allowAutoFilter = true;
+        }
+      } else if ((event.local === "autoFilter" && autoFilter === undefined) || (event.local === "sortState" && sortState === undefined)) {
+        if (event.selfClosing) {
+          readFilterElement(event.local, xml.slice(event.start, event.end), event.ns!);
+        } else {
+          filterElement = { local: event.local, start: event.start, ns: event.ns! };
+        }
       }
       section = !event.selfClosing && SECTIONS.has(event.local) ? (event.local as Section) : null;
       return undefined;
@@ -1198,6 +1257,10 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
     }
     if (level === 2) {
       section = null;
+      if (filterElement !== null) {
+        readFilterElement(filterElement.local, xml.slice(filterElement.start, event.end), filterElement.ns);
+        filterElement = null;
+      }
     } else if (section === "sheetData" && level === 3 && row !== null) {
       finishRow();
     } else if (section === "sheetViews" && level === 3) {
@@ -1270,6 +1333,12 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   }
   if (protection !== undefined) {
     content.protection = protection;
+  }
+  if (autoFilter !== undefined) {
+    content.autoFilter = autoFilter;
+  }
+  if (sortState !== undefined) {
+    content.sortState = sortState;
   }
   const activePane = pane?.activePane ?? "topLeft";
   const selection = view.selections.find((candidate) => candidate.pane === activePane);
@@ -1367,6 +1436,8 @@ export interface XlsxSheetContext {
  * its CT_Worksheet rank (-1 unknown) and its source range. */
 interface RootChild {
   local: string;
+  /** The element's namespace (SPEC-128: what its slice is re-read in). */
+  ns: string | undefined;
   order: number;
   mc: boolean;
   start: number;
@@ -1383,6 +1454,8 @@ interface ViewChild {
 
 interface WorksheetLayout {
   prefix: string;
+  /** The root's start tag, as written. */
+  rootTag: string;
   children: RootChild[];
   rootClose: number;
   /** The first sheetView of the first sheetViews. */
@@ -1421,7 +1494,7 @@ function collapseSheetData(xml: string): string {
 
 /** The root's children and the first sheetView, located with the scanner. */
 function scanLayout(xml: string): WorksheetLayout {
-  const layout: WorksheetLayout = { prefix: "", children: [], rootClose: xml.length, view: null };
+  const layout: WorksheetLayout = { prefix: "", rootTag: "", children: [], rootClose: xml.length, view: null };
   let depth = 0;
   let child: RootChild | null = null;
   let viewOpen = false;
@@ -1431,10 +1504,12 @@ function scanLayout(xml: string): WorksheetLayout {
       const level = depth + 1;
       if (level === 1) {
         layout.prefix = event.name.includes(":") ? `${event.name.slice(0, event.name.indexOf(":"))}:` : "";
+        layout.rootTag = xml.slice(event.start, event.end);
       } else if (level === 2) {
         const main = isSpreadsheetMl(event.ns);
         const entry: RootChild = {
           local: main ? event.local : "",
+          ns: event.ns,
           order: main ? WORKSHEET_ORDER.indexOf(event.local) : -1,
           mc: event.ns === MC_NS && event.local === "AlternateContent",
           start: event.start,
@@ -1761,8 +1836,8 @@ function sheetDataXml(sheet: Sheet, ctx: XlsxSheetContext, p: string): string {
     if (row.heightPt !== undefined) {
       attrs += ` ht="${numberText(row.heightPt)}"${row.customHeight ? ` customHeight="1"` : ""}`;
     }
-    if (row.hidden) {
-      attrs += ` hidden="1"`;
+    if (row.hidden || row.filterHidden) {
+      attrs += ` hidden="1"`; // SPEC-128: either kind; the read rule tells them apart
     }
     if (row.sourceAttrs !== undefined) {
       attrs += rowSourceAttrs(row.sourceAttrs, memo);
@@ -1781,6 +1856,52 @@ function sheetDataXml(sheet: Sheet, ctx: XlsxSheetContext, p: string): string {
   return out.join("");
 }
 
+/** SPEC-128: the rebuilt `<autoFilter>` and `<sortState>` — the model's
+ * (xlsx/autoFilter.ts: its sourceXml while that fits the part, else
+ * serialised), "" when the model has none and the source's is one the reader
+ * models (it goes), and a source element the reader could not model kept
+ * verbatim. */
+function filterElementXml(
+  xml: string,
+  element: RootChild | undefined,
+  local: "autoFilter" | "sortState",
+  sheet: Sheet,
+  p: string,
+  fits: FitsPart,
+): string {
+  if (local === "autoFilter" && sheet.autoFilter !== undefined) {
+    return autoFilterXml(sheet.autoFilter, sheet, p, fits);
+  }
+  if (local === "sortState" && sheet.sortState !== undefined) {
+    return sortStateXml(sheet.sortState, p, fits);
+  }
+  if (element === undefined) {
+    return "";
+  }
+  const source = xml.slice(element.start, element.end);
+  const read = local === "autoFilter" ? readAutoFilterXml(source, element.ns) : readSortStateXml(source, element.ns);
+  return read === undefined ? source : "";
+}
+
+/** SPEC-128: `sheetPr@filterMode="1"` exactly when some row is filter-hidden
+ * — spliced into the source sheetPr's start tag (left as written when it
+ * already says so), or a `<sheetPr filterMode="1"/>` made the first root
+ * child when there is none and it is needed. */
+function filterModeSplice(xml: string, layout: WorksheetLayout, sheet: Sheet): Splice | undefined {
+  const want = sheet.rows.some((row) => row.filterHidden === true);
+  const sheetPr = layout.children.find((child) => child.local === "sheetPr");
+  if (sheetPr === undefined) {
+    if (!want) {
+      return undefined;
+    }
+    const at = layout.children[0]?.start ?? layout.rootClose;
+    return { start: at, end: at, text: `<${layout.prefix}sheetPr filterMode="1"/>` };
+  }
+  const tag = startTagAt(xml, sheetPr.start);
+  const next = flagAttribute(tag, "filterMode", want, false);
+  return next === tag ? undefined : { start: sheetPr.start, end: sheetPr.start + tag.length, text: next };
+}
+
 function mergeCellsXml(sheet: Sheet, p: string): string {
   if (sheet.merges.length === 0) {
     return "";
@@ -1789,7 +1910,8 @@ function mergeCellsXml(sheet: Sheet, p: string): string {
 }
 
 /** A worksheet part for `sheet` (see the module header): the model's
- * dimension, views, default sizes, columns, cells and merges spliced into
+ * dimension, views, default sizes, columns, cells, autofilter, sort record
+ * and merges (and SPEC-128's sheetPr@filterMode) spliced into
  * `base` — the retained part with the writer's sheet-reference pass and tab
  * colour already applied — or into SPEC-121's empty-sheet template when the
  * sheet has none. */
@@ -1799,15 +1921,24 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
   const p = layout.prefix;
   const first = (local: string): RootChild | undefined => layout.children.find((child) => child.local === local);
   const range = usedRange(sheet);
+  const fits: FitsPart = (text, local) => fitsPart(text, layout.rootTag, local);
   const rebuilt: [string, string][] = [
     ["dimension", `<${p}dimension ref="${range ? formatRange(range) : "A1"}"/>`],
     ["sheetViews", sheetViewsXml(xml, first("sheetViews"), layout, sheet, ctx)],
     ["sheetFormatPr", sheetFormatPrXml(xml, first("sheetFormatPr"), sheet, ctx, p)],
     ["cols", colsXml(sheet, ctx, p)],
     ["sheetData", sheetDataXml(sheet, ctx, p)],
+    ["autoFilter", filterElementXml(xml, first("autoFilter"), "autoFilter", sheet, p, fits)],
+    ["sortState", filterElementXml(xml, first("sortState"), "sortState", sheet, p, fits)],
     ["mergeCells", mergeCellsXml(sheet, p)],
   ];
   const splices: Splice[] = [];
+  // First: a sheetPr inserted before the first child goes ahead of an
+  // element inserted at the same offset.
+  const filterMode = filterModeSplice(xml, layout, sheet);
+  if (filterMode !== undefined) {
+    splices.push(filterMode);
+  }
   for (const [local, text] of rebuilt) {
     const found = first(local);
     if (found !== undefined) {

@@ -142,6 +142,12 @@ export const ICON_PATHS: Record<string, string[]> = {
   // A display — "follow the system".
   system: ["M4 5h12v8H4z", "M8 16h4", "M10 13v3"],
 
+  // ---- Sort and filter (SPEC-128's header buttons) ------------------------
+  // A funnel; an arrow beside bars growing (ascending) or shrinking.
+  filter: ["M4 5h12l-4.5 5.5v4.5l-3 1.5v-6z"],
+  "sort-ascending": ["M6 15V5", "M3.5 7.5L6 5l2.5 2.5", "M11 6h2", "M11 10h4", "M11 14h6"],
+  "sort-descending": ["M6 5v10", "M3.5 12.5L6 15l2.5-2.5", "M11 6h6", "M11 10h4", "M11 14h2"],
+
   // ---- Chevrons & primitives ----------------------------------------------
   "chevron-up": ["M5 12l5-5 5 5"],
   "chevron-down": ["M5 8l5 5 5-5"],

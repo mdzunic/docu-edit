@@ -1,16 +1,16 @@
 <script setup lang="ts">
 // The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget): each composable owns its feature —
-// loading, view state, selection, editing, formatting, rows and columns, merges, clipboard, fill and move, CSV import; surfaces: components/.
+// loading, view state, selection, editing, formatting, rows and columns, merges, clipboard, fill and move, CSV import, sort and filter; surfaces: components/.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
 import CsvImportBar from "../components/spreadsheet/CsvImportBar.vue";
 import CsvImportDialog from "../components/spreadsheet/CsvImportDialog.vue";
-import SpreadsheetStatusBar from "../components/spreadsheet/SpreadsheetStatusBar.vue";
 import WorkbookAppBar from "../components/spreadsheet/WorkbookAppBar.vue";
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import WorkbookCommandBar from "../components/spreadsheet/WorkbookCommandBar.vue";
 import WorkbookNotFound from "../components/spreadsheet/WorkbookNotFound.vue";
+import WorkbookStatusBar from "../components/spreadsheet/WorkbookStatusBar.vue";
 import { useTheme } from "../composables/useTheme";
 import { useCsvImport } from "./spreadsheet/useCsvImport";
 import { useFillHandle } from "./spreadsheet/useFillHandle";
@@ -27,6 +27,7 @@ import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
 import { useSheetViewState } from "./spreadsheet/useSheetViewState";
 import { useSheetZoom } from "./spreadsheet/useSheetZoom";
+import { useSortFilter } from "./spreadsheet/useSortFilter";
 import { useSpreadsheetLocale } from "./spreadsheet/useSpreadsheetLocale";
 import { useSpreadsheetMenu } from "./spreadsheet/useSpreadsheetMenu";
 import { useStructure } from "./spreadsheet/useStructure";
@@ -53,10 +54,11 @@ const painter = useFormatPainter({ book, selection, formatting, merges });
 const clipboard = useSheetClipboard({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
 const fillHandle = useFillHandle({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
 const rangeMove = useRangeMove({ book, viewState, selection, editing });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle });
+const sortFilter = useSortFilter({ book, viewState, selection, sheetMetrics, editing, locale: () => sheetLocale.locale.value });
+const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle, sortFilter });
 const csvImport = useCsvImport({ book, undo: editing.undo, router: useRouter() });
 const assist = useFunctionAssist({ ...editing.cell });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter }));
 </script>
 
 <template>
@@ -84,13 +86,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       v-if="book.workbook.value"
       #status-bar
     >
-      <SpreadsheetStatusBar
-        v-bind="{ ...selection.statusTexts.value, ...recalc.status.value, mode: editing.cell.modeLabel.value, zoomPercent: zoom.percent.value, zoomDisabled: book.activeSheet.value?.kind !== 'grid' }"
-        @zoom-in="zoom.zoomIn"
-        @zoom-out="zoom.zoomOut"
-        @apply-zoom="zoom.applyInput"
-        @set-zoom="zoom.set"
-      />
+      <WorkbookStatusBar v-bind="{ book, selection, recalc, editing, zoom, sortFilter }" />
     </template>
   </AppShell>
 </template>

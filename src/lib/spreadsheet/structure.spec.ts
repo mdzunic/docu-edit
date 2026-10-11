@@ -13,6 +13,8 @@ import { applyPattern, capturePattern, clearRange } from "./formatting";
 import { applyPatternMerges, mergeCells, mergeDiscardsValues, patternMerges, unmergeCells, type MergeMode } from "./mergeCells";
 import { rangesIntersect } from "./merges";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
+import type { AutoFilter } from "./filter";
+import type { SortState } from "./sort";
 import {
   adjustIndex,
   adjustRange,
@@ -416,6 +418,19 @@ describe("resize, hide, unhide (SPEC-124 \"Sizes\")", () => {
     expect(sheetOf(m).columns[1]).toEqual({ min: 2, max: 2, widthPx: 120, hidden: true });
   });
 
+  it("SPEC-128: Unhide clears `hidden` only — a filtered-out row stays hidden until the filter changes (a sheet holding both kinds)", () => {
+    const m = model([
+      sheet("s1", "Sheet1", {
+        rows: [row(2, [value(0, "West")], { filterHidden: true }), row(3, [value(0, "East")], { hidden: true }), row(4, [], { hidden: true, filterHidden: true })],
+      }),
+    ]);
+    expect(setRowsHidden(m, "s1", [{ start: 0, end: 10 }], false)).toEqual({ ok: true });
+    expect(sheetOf(m).rows).toEqual([row(2, [value(0, "West")], { filterHidden: true }), row(3, [value(0, "East")]), row(4, [], { filterHidden: true })]);
+    // Hiding a filtered-out row adds the user's flag beside the filter's.
+    setRowsHidden(m, "s1", [{ start: 2, end: 2 }], true);
+    expect(sheetOf(m).rows[0]).toEqual(row(2, [value(0, "West")], { filterHidden: true, hidden: true }));
+  });
+
   it("hide and unhide touch only `hidden`; unhiding stores nothing new", () => {
     const m = model([sheet("s1", "Sheet1", { rows: [row(4, [], { heightPt: 40, customHeight: true })], columns: [{ min: 2, max: 2, widthPx: 100 }] })]);
     setRowsHidden(m, "s1", [{ start: 4, end: 5 }], true);
@@ -638,6 +653,132 @@ describe("merges (SPEC-124 \"Merges\")", () => {
   });
 });
 
+// --- SPEC-128's autofilter adjuster ("Structural edits") -------------------------------------
+
+const sortOf = (ref: GridRange, cols: number[], extra: Partial<SortState> = {}): SortState => ({ ref, keys: cols.map((col) => ({ col, descending: false })), ...extra });
+
+describe("the autofilter adjuster (SPEC-128 \"Structural edits\")", () => {
+  /** An autofilter at A5:D20 with criteria on B and D and a sort by D. */
+  const filterAt = (fields: Partial<AutoFilter> = {}): AutoFilter => ({
+    range: range(4, 0, 19, 3),
+    columns: [
+      { colId: 1, criteria: { kind: "values", values: ["West"], blanks: false, dateGroups: [] } },
+      { colId: 3, criteria: { kind: "top10", top: true, percent: false, value: 3 } },
+    ],
+    sort: sortOf(range(5, 0, 19, 3), [3], { sourceXml: `<sortState ref="A6:D20"><sortCondition ref="D6:D20"/></sortState>` }),
+    sourceXml: `<autoFilter ref="A5:D20"/>`,
+    ...fields,
+  });
+  const filtered = (fields: Partial<Sheet> = {}): SpreadsheetModel =>
+    model([sheet("s1", "Sheet1", { autoFilter: filterAt(), rows: [row(4, [value(0, "Region")]), row(6, [value(0, "West")], { filterHidden: true }), row(8, [value(0, "East")], { hidden: true })], ...fields })]);
+
+  it("inserting two rows above an autofilter at A5:D20 moves it to A7:D22 with its sort record and the worksheet's sortState, without their source", () => {
+    const m = filtered({ sortState: sortOf(range(4, 5, 9, 6), [6], { sourceXml: `<sortState ref="F5:G10"/>` }) });
+    expect(applyStructuralEdit(m, rowsEdit("insertRows", 1, 2))).toEqual({ ok: true });
+    const s = sheetOf(m);
+    expect(s.autoFilter).toEqual({ range: range(6, 0, 21, 3), columns: filterAt().columns, sort: sortOf(range(7, 0, 21, 3), [3]) });
+    expect(s.sortState).toEqual(sortOf(range(6, 5, 11, 6), [6]));
+    // The rows it hid moved with their rows; the user's hidden row too.
+    expect(s.rows.map((r) => [r.index, r.filterHidden, r.hidden])).toEqual([
+      [6, undefined, undefined],
+      [8, true, undefined],
+      [10, undefined, true],
+    ]);
+    expect(m.structureDirty).toBe(true);
+  });
+
+  it("leaves an autofilter and a sort record an edit does not reach by identity (and the workbook part alone)", () => {
+    const m = filtered({ sortState: sortOf(range(4, 5, 9, 6), [6]) });
+    const { autoFilter, sortState } = sheetOf(m);
+    applyStructuralEdit(m, rowsEdit("insertRows", 30, 2));
+    applyStructuralEdit(m, colsEdit("insertCols", 10, 1));
+    expect(sheetOf(m).autoFilter).toBe(autoFilter);
+    expect(sheetOf(m).sortState).toBe(sortState);
+    expect(m.structureDirty).toBeUndefined();
+  });
+
+  it("a row inserted inside the data rows grows the range and is visible, though the row above it is filtered out", () => {
+    const m = filtered();
+    sheetOf(m).rows[1] = row(6, [value(0, "West", { styleId: 1 })], { filterHidden: true, heightPt: 30 });
+    applyStructuralEdit(m, rowsEdit("insertRows", 7, 1));
+    const s = sheetOf(m);
+    expect(s.autoFilter!.range).toEqual(range(4, 0, 20, 3));
+    expect(s.rows.find((r) => r.index === 7)).toEqual(row(7, [value(0, null, { styleId: 1 })], { heightPt: 30 }));
+  });
+
+  it("a column inserted inside the range shifts the colIds (and sort keys) at or right of it; one at its left edge moves the range only", () => {
+    const m = filtered();
+    const left = sheetOf(m).autoFilter!.columns[0];
+    applyStructuralEdit(m, colsEdit("insertCols", 2, 1));
+    let filter = sheetOf(m).autoFilter!;
+    expect(filter.range).toEqual(range(4, 0, 19, 4));
+    expect(filter.columns.map((column) => column.colId)).toEqual([1, 4]);
+    expect(filter.columns[0]).toBe(left);
+    expect(filter.sort).toEqual(sortOf(range(5, 0, 19, 4), [4]));
+    expect(filter.sourceXml).toBeUndefined();
+    applyStructuralEdit(m, colsEdit("insertCols", 0, 2));
+    filter = sheetOf(m).autoFilter!;
+    expect(filter.range).toEqual(range(4, 2, 19, 6));
+    expect(filter.columns.map((column) => column.colId)).toEqual([1, 4]);
+    expect(filter.sort!.keys).toEqual([{ col: 6, descending: false }]);
+  });
+
+  it("deleting a criterion's column drops that criterion and its sort keys; a sort record left with no keys is removed", () => {
+    const m = filtered({ sortState: sortOf(range(30, 0, 40, 3), [3]) });
+    applyStructuralEdit(m, colsEdit("deleteCols", 1, 1));
+    let s = sheetOf(m);
+    expect(s.autoFilter!.range).toEqual(range(4, 0, 19, 2));
+    expect(s.autoFilter!.columns).toEqual([{ colId: 2, criteria: { kind: "top10", top: true, percent: false, value: 3 } }]);
+    expect(s.autoFilter!.sort).toEqual(sortOf(range(5, 0, 19, 2), [2]));
+    applyStructuralEdit(m, colsEdit("deleteCols", 2, 1));
+    s = sheetOf(m);
+    expect(s.autoFilter!.columns).toEqual([]);
+    expect(s.autoFilter!.sort).toBeUndefined();
+    expect("sort" in s.autoFilter!).toBe(false);
+    expect(s.sortState).toBeUndefined();
+    expect("sortState" in s).toBe(false);
+  });
+
+  it("deleting the header row removes the autofilter, and the rows it hid stay hidden as the user's", () => {
+    const m = filtered();
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 1));
+    const s = sheetOf(m);
+    expect(s.autoFilter).toBeUndefined();
+    expect("autoFilter" in s).toBe(false);
+    expect(s.rows.map((r) => [r.index, r.filterHidden, r.hidden])).toEqual([
+      [5, undefined, true],
+      [7, undefined, true],
+    ]);
+    expect(m.structureDirty).toBe(true);
+  });
+
+  it("deleting data rows shrinks the range; deleting every column of it removes it", () => {
+    const m = filtered();
+    applyStructuralEdit(m, rowsEdit("deleteRows", 10, 20));
+    expect(sheetOf(m).autoFilter!.range).toEqual(range(4, 0, 9, 3));
+    applyStructuralEdit(m, colsEdit("deleteCols", 0, 4));
+    expect(sheetOf(m).autoFilter).toBeUndefined();
+  });
+
+  it("a column edit reshaping a range with an ods filter that does not decompose drops it; moving the range keeps it", () => {
+    const unmapped = `<table:filter><table:filter-or/></table:filter>`;
+    const m = filtered({ autoFilter: filterAt({ odsName: "__Anonymous_Sheet_DB__0", odsUnmappedFilter: unmapped }) });
+    applyStructuralEdit(m, colsEdit("insertCols", 0, 1));
+    expect(sheetOf(m).autoFilter).toMatchObject({ odsName: "__Anonymous_Sheet_DB__0", odsUnmappedFilter: unmapped });
+    applyStructuralEdit(m, colsEdit("insertCols", 2, 1));
+    expect(sheetOf(m).autoFilter!.odsUnmappedFilter).toBeUndefined();
+  });
+
+  it("is copy-on-write: the autofilter, its columns and sort records are replaced, never mutated", () => {
+    const m = filtered({ sortState: sortOf(range(4, 5, 9, 6), [6]) });
+    const before = sheetOf(m);
+    const snapshot = structuredClone(before);
+    applyStructuralEdit(m, colsEdit("insertCols", 2, 1));
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 1));
+    expect(before).toEqual(snapshot);
+  });
+});
+
 // --- the registry contract ------------------------------------------------------------------
 // Every adjuster joins this table: a model holding no structure of its kind is
 // left untouched by identity, and a row inserted above its structure moves it.
@@ -662,6 +803,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, columns: [{ min: 5, max: 5, widthPx: 90 }] }]);
     case "retained":
       return model([base]);
+    case "autofilter":
+      return model([{ ...base, autoFilter: { range: range(5, 0, 7, 1), columns: [] } }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -683,14 +826,16 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.selection?.active;
     case "columns":
       return s.columns[0];
+    case "autofilter":
+      return s.autoFilter?.range;
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order", () => {
-    expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["rows", "formulas", "merges", "frozen", "selection", "columns", "retained"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter", () => {
+    expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["rows", "formulas", "merges", "frozen", "selection", "columns", "retained", "autofilter"]);
   });
 
   for (const adjuster of REFERENCE_ADJUSTERS) {
@@ -726,6 +871,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             frozen: { rows: 7, cols: 0 },
             selection: { row: 6, col: 0 },
             columns: { min: 6, max: 6, widthPx: 90 },
+            autofilter: range(6, 0, 8, 1),
           }[adjuster.id],
         );
       });

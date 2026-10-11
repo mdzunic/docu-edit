@@ -67,6 +67,28 @@
 //     `sheetProtection@insertRows|insertColumns|deleteRows|deleteColumns="0"`).
 //     Every re-read gains them; the step refreshes a dirty sheet's
 //     protection from its own retained source (SPEC-123's move).
+// 9 — SPEC-128: the autofilter and the sort records — xlsx `<autoFilter>`
+//     (with its `<sortState>`) and the worksheet `<sortState>`, ods the
+//     sheet's anonymous `table:database-range` — the filter-hidden rows
+//     (`Row.filterHidden`: an xlsx hidden row inside the filter's data rows
+//     that a criterion rejects, ods `table:visibility="filter"`, which
+//     version 8 read as `hidden`) and the protection's sort and autofilter
+//     permits (`sheetProtection@sort|autoFilter="0"`). Every re-read gains
+//     them. The step, run for each dirty sheet, takes `autoFilter` and
+//     `sortState` from the sheet's retained source — whose references
+//     SPEC-124's retained adjusters kept moving with every structural edit
+//     and move, so they fit the edited sheet — refreshes its protection, and
+//     reclassifies its hidden rows by the read rule (filter.ts's
+//     classifyHiddenRows over the sheet's current values, in the workbook's
+//     format context and the reader's locale). Both formats use the read
+//     rule, not the ods wire's per-row `table:visibility`: a retained table
+//     keeps its source-time row numbers, which an edit since may have
+//     shifted, so only the criteria can say which of the edited sheet's
+//     hidden rows are the filter's. The rule is reading's, so it never shows
+//     or hides a row. (The stored sheet's style ids still index the stored
+//     style table while the step runs — adoptStyles moves them after — and
+//     a row's display text is read through `model.styles`, the re-read
+//     table, which holds every source entry at the same index.)
 //
 // SPEC-126: a csv/tsv workbook never runs a ReaderUpgrade — its source is
 // one delimited-text part, read by csv/parse.ts, which adds no element to
@@ -84,10 +106,11 @@ import { decodedPartBytes } from "../core/packageParts";
 import { isCellError, isCsvFormat, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
+import { workbookFormatContext } from "./numberFormat/render";
 import { buildPreview } from "./preview";
 import { cellStyle, defaultStyles, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 8;
+export const SPREADSHEET_READER_VERSION = 9;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -188,6 +211,30 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       if (source?.protection) {
         sheet.protection = { ...source.protection };
       }
+    },
+  },
+  {
+    // SPEC-128 (8 → 9): the autofilter, the sort records, filter-hidden rows
+    // and the protection's sort and autofilter permits (see the version
+    // history).
+    from: 8,
+    async upgradeDirtySheet(model, sheet, sourceParts) {
+      const source = await retainedSheetRead(model, sheet, sourceParts);
+      if (!source) {
+        return;
+      }
+      if (source.protection) {
+        sheet.protection = { ...source.protection };
+      }
+      if (source.autoFilter !== undefined && sheet.autoFilter === undefined) {
+        sheet.autoFilter = source.autoFilter;
+      }
+      if (source.sortState !== undefined && sheet.sortState === undefined) {
+        sheet.sortState = source.sortState;
+      }
+      // On demand, as the readers are: the store imports this module.
+      const { classifyHiddenRows } = await import("./filter");
+      sheet.rows = classifyHiddenRows(model, sheet, workbookFormatContext(model, READ_PREVIEW_LOCALE));
     },
   },
 ];

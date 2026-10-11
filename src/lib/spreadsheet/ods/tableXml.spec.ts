@@ -1,9 +1,10 @@
 // SPEC-117 "Reading ODS sheet layout" (with SPEC-116's cell rules it
 // extends): column widths, visibility and default cell styles with the
-// last-run default; row heights, custom heights, visibility and default
-// styles; spans → merges; covered-cell storage; text:span fonts; the styled
-// repeat-run rules (the 16380-column run that stores no cell) and their cell
-// budget — over synthetic content and the LibreOffice-shaped fixture.
+// last-run default; row heights, custom heights, visibility (SPEC-128:
+// collapse → hidden, filter → filterHidden) and default styles; spans →
+// merges; covered-cell storage; text:span fonts; the styled repeat-run
+// rules (the 16380-column run that stores no cell) and their cell budget —
+// over synthetic content and the LibreOffice-shaped fixture.
 // SPEC-122 "The table writer" (serializeTable): repeat compression of
 // identical neighbours (empty ones included) for columns, rows and cells;
 // covered cells under spans; every value type with calcext:value-type; the
@@ -168,7 +169,7 @@ describe("rows", () => {
     expect(sheet.rows).toHaveLength(1);
   });
 
-  it("stores a hidden row (collapse or filter) and a row's default cell style, cells or not", async () => {
+  it("stores a hidden row (collapse → hidden, SPEC-128's filter → filterHidden) and a row's default cell style, cells or not", async () => {
     const { sheet, id } = await read(
       table(
         "",
@@ -181,8 +182,9 @@ describe("rows", () => {
     );
     expect(sheet.rows).toEqual([
       { index: 0, cells: [{ col: 0, value: 1 }], hidden: true, sourceStyleName: "ro1" },
-      { index: 1, cells: [], hidden: true, sourceStyleName: "ro1" },
-      { index: 2, cells: [], hidden: true, sourceStyleName: "ro1" },
+      // SPEC-128: the autofilter's rows, as the wire says — a blank one a Row with no cells.
+      { index: 1, cells: [], filterHidden: true, sourceStyleName: "ro1" },
+      { index: 2, cells: [], filterHidden: true, sourceStyleName: "ro1" },
       // "Default" as a row's default says nothing when no column sets a style.
       { index: 3, cells: [], styleId: id("ce2"), sourceStyleName: "ro1" },
     ]);

@@ -6,9 +6,10 @@
 //
 // Snapshots are by reference. A snapshot holds, for EVERY sheet, a shallow
 // copy whose object/array fields are structuredCloned — except
-// SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, and SPEC-124's `columns`,
-// `merges` and `frozen`, which every command replaces and never mutates),
-// kept by reference because copy-on-write makes that safe — so an undo
+// SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, SPEC-124's `columns`,
+// `merges` and `frozen`, and SPEC-128's `autoFilter` and `sortState`, which
+// every command replaces and never mutates), kept by reference because
+// copy-on-write makes that safe — so an undo
 // restores them by identity — plus every WORKBOOK_SNAPSHOT_FIELDS value by
 // reference (each a primitive or copy-on-write: `styles` grows by
 // replacement, `opaque` and `odsContentEnvelope` are replaced when they
@@ -25,10 +26,11 @@
 //    only contributes all its stored cells. When the sheet list, a name or
 //    the order changed, invalidateDependencyGraph runs first; otherwise
 //    updateGraphCells follows the keys.
-//    When a step hid or showed a row (recalc.ts's rowVisibilityChanged),
-//    every formula cell calling SUBTOTAL or AGGREGATE joins the keys
-//    (visibilitySensitiveCells, SPEC-127): their results follow which rows
-//    show, though no cell they read changed.
+//    When a step hid or showed a row (recalc.ts's rowVisibilityChanged —
+//    the user's `hidden` or SPEC-128's `filterHidden`, so every filter
+//    command counts), every formula cell calling SUBTOTAL or AGGREGATE joins
+//    the keys (visibilitySensitiveCells, SPEC-127): their results follow
+//    which rows show, though no cell they read changed.
 // 2. deps.recalc(keys ∪ alsoRecalc, done) — an "edit" pass, possibly sliced.
 // 3. Every sheet whose `rows` reference differs from the reference snapshot
 //    (the step's pre-command state for a command; the installed state for an
@@ -54,7 +56,7 @@ export const MAX_UNDO_STEPS = 100;
 
 export type UndoScope = "workbook" | { sheetId: string };
 
-export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = ["rows", "sourceXml", "columns", "merges", "frozen"];
+export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = ["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState"];
 
 export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
   "activeSheetIndex",

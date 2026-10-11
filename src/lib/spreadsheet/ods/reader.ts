@@ -21,11 +21,11 @@
 //   `tableooo:tab-color` is the tab colour;
 // - each table's columns, rows and cells (ods/tableXml.ts): column widths,
 //   visibility and default cell styles; row heights, custom heights,
-//   visibility and default cell styles, the defaults taken from the last
-//   column and row runs; cell values and style ids; styled empty cells
-//   (stored only where they differ from the effective default, a run to XFD
-//   becoming the row's style); covered cells with a value or a style; spans
-//   → merges. `table:number-rows-repeated` / `table:number-columns-repeated`
+//   visibility (hidden or filter-hidden) and default cell styles, the
+//   defaults taken from the last column and row runs; cell values and style
+//   ids; styled empty cells (stored only where they differ from the
+//   effective default, a run to XFD becoming the row's style); covered cells
+//   with a value or a style; spans → merges. `table:number-rows-repeated` / `table:number-columns-repeated`
 //   are honoured without ever materialising a repeated run that holds
 //   nothing to store (LibreOffice's trailing 1048553-row and 16380-column
 //   runs, styled or not, cost nothing); everything materialised is counted
@@ -71,6 +71,12 @@
 //   `table:protected="true"` → `Sheet.protection`;
 //   `office:spreadsheet@table:structure-protected="true"` →
 //   `structureProtected` (both read only — the XML stays in the source).
+// - SPEC-128: a row's `table:visibility="filter"` → `filterHidden` and
+//   `"collapse"` → `hidden`, exactly as the wire says (tableXml.ts; ODS rows
+//   are never classified); the suffix's `table:database-range` that is a
+//   table's autofilter (ods/databaseRanges.ts's claim) → `Sheet.autoFilter`
+//   (its criteria, sort record, verbatim element and name; a filter that
+//   does not decompose per column kept as `odsUnmappedFilter`).
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -101,6 +107,7 @@ import {
   readOdsStyleSheet,
   type OdsStyleSheet,
 } from "./styles";
+import { readOdsAutoFilters } from "./databaseRanges";
 import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved } from "./tableXml";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
@@ -793,12 +800,16 @@ export function readOdsContent(
   if (sheets.length === 0 || firstTableStart < 0) {
     throw parseError("content.xml", "the spreadsheet has no tables");
   }
+  const suffix = xml.slice(previousTableEnd);
+  for (const [index, autoFilter] of readOdsAutoFilters(suffix, sheets.map((sheet) => sheet.name))) {
+    sheets[index]!.autoFilter = autoFilter;
+  }
   return {
     sheets,
     styles: styleBook().styles,
     namedStyles: styleBook().namedStyles(),
     prefix: xml.slice(0, firstTableStart),
-    suffix: xml.slice(previousTableEnd),
+    suffix,
     dates,
     calc: odsCalcSettings(calcAttrs, iterationStatus),
     structureProtected,

@@ -13,7 +13,7 @@
 //   the 1,048,576-row grid. Zoom is a view transform applied outside: these
 //   numbers never see it.
 import { findRow } from "./address";
-import { MAX_COLS, MAX_ROWS, type Sheet } from "./model";
+import { MAX_COLS, MAX_ROWS, rowIsHidden, type Sheet } from "./model";
 
 /** Padding on each side of a cell's text; + the 1 px gridline = Excel's 5 px. */
 export const CELL_PADDING_PX = 2;
@@ -231,7 +231,8 @@ function columnRuns(sheet: Sheet, defaultSize: number): Run[] {
 function rowRuns(sheet: Sheet, defaultSize: number): Run[] {
   const runs: Run[] = [];
   for (const row of sheet.rows) {
-    if (row.hidden) {
+    // SPEC-128: a row hidden by the user or by the autofilter has no height.
+    if (rowIsHidden(row)) {
       pushRun(runs, row.index, row.index, 0, defaultSize);
     } else if (row.heightPt !== undefined) {
       pushRun(runs, row.index, row.index, ptToPx(row.heightPt), defaultSize);
@@ -304,7 +305,9 @@ export function hiddenColumnRuns(sheet: Sheet, first: number, last: number): Hid
 }
 
 /** The hidden row runs touching [first − 1, last + 1]: a binary search to
- * the window, then a walk over the stored rows inside it. */
+ * the window, then a walk over the stored rows inside it. Only the user's
+ * `hidden` rows: a row the autofilter hides (SPEC-128) carries no marker —
+ * Unhide cannot show it; the filter's own row headers say it is filtered. */
 export function hiddenRowRuns(sheet: Sheet, first: number, last: number): HiddenRun[] {
   const rows = sheet.rows;
   let lo = 0;

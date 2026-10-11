@@ -7,7 +7,8 @@
 // references left alone), hosts (a renamed sheet, a duplicated sheet's own
 // text, an embedded chart's sheet), tracked changes, content.xml = prefix +
 // tables + suffix after every edit, copy-on-write identity and the returned
-// sheet ids.
+// sheet ids. SPEC-128: a database range that is a sheet's autofilter is left
+// alone (the model's adjuster moves it), every other one still moves.
 import { describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { scanXml } from "../../core/xmlScanner";
@@ -342,6 +343,41 @@ describe("the ods location table", () => {
     edit(model, "Data", "deleteCols", 1, 1);
     expect(spans(afterRows, suffixOf(model))).toEqual([["Data.A1:Data.C9", "Data.A1:Data.B9"]]);
     expectConsistent(model);
+  });
+
+  it("SPEC-128: a database range that is a sheet's autofilter is the model's — its target and its filter's criteria range are left alone; every other one still moves", () => {
+    // Data's anonymous range with filter buttons is its autofilter (ods/databaseRanges.ts's claim);
+    // the named one with buttons is not (the anonymous wins); Other has a named one alone, so it is Other's.
+    const anonymous =
+      `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Data.A1:Data.C9" table:display-filter-buttons="true">` +
+      `<table:filter table:condition-source-range-address="Data.E1:Data.E3"><table:filter-condition table:field-number="0" table:value="1" table:operator="="/></table:filter></table:database-range>`;
+    const named = `<table:database-range table:name="db1" table:target-range-address="Data.A12:Data.C20" table:display-filter-buttons="true"/>`;
+    const other = `<table:database-range table:name="db2" table:target-range-address="Other.A1:Other.B5" table:display-filter-buttons="true"/>`;
+    const plain = `<table:database-range table:name="db3" table:target-range-address="Data.B1:Data.B9"/>`;
+    const build = (): SpreadsheetModel =>
+      odsBook({ suffix: `<table:database-ranges>${anonymous}${named}${other}${plain}</table:database-ranges>`, tables: [{ name: "Data" }, { name: "Other" }] });
+    const before = suffixOf(build());
+
+    const inserted = build();
+    edit(inserted, "Data", "insertCols", 0, 1);
+    expect(spans(before, suffixOf(inserted))).toEqual([
+      ["Data.A12:Data.C20", "Data.B12:Data.D20"],
+      ["Data.B1:Data.B9", "Data.C1:Data.C9"],
+    ]);
+    expect(suffixOf(inserted)).toContain(anonymous);
+    expectConsistent(inserted);
+
+    // Deleting every column of the owned range would empty it: it is not removed here either.
+    const deleted = build();
+    edit(deleted, "Data", "deleteCols", 0, 3);
+    expect(suffixOf(deleted)).toContain(anonymous);
+    expect(suffixOf(deleted)).not.toContain(named);
+    expect(suffixOf(deleted)).not.toContain(plain);
+    expectConsistent(deleted);
+
+    const rows = build();
+    expect(edit(rows, "Other", "insertRows", 0, 2)).toEqual(new Set());
+    expect(suffixOf(rows)).toBe(before);
   });
 
   it("suffix: a consolidation's source ranges and target cell, a deleted target becoming the band's start", () => {

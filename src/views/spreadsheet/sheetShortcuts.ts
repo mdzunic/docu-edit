@@ -37,6 +37,12 @@
 // reload keys: useFillHandle claims them only while the grid has focus (as
 // Google Sheets does); Edit ▸ Fill ▸ Down/Right is the menu path. Copy, cut
 // and paste are the native clipboard events, not entries here.
+//
+// SPEC-128 adds Excel's filter keys by physical key (`KeyL`): Ctrl/Cmd+Shift+L
+// toggles Data ▸ Filter (`sheet.toggleFilter`) and Ctrl/Cmd+Alt+L reapplies
+// it (`sheet.reapplyFilter`) — best effort on macOS, where Chrome keeps
+// Cmd+Option+L for its Downloads page; Data ▸ Reapply filter is the
+// guaranteed path. useSortFilter runs both.
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -59,12 +65,15 @@ export type SheetShortcutId =
   | "sheet.pasteSpecial"
   | "sheet.fillDown"
   | "sheet.fillRight"
-  | "sheet.insertFunction";
+  | "sheet.insertFunction"
+  | "sheet.toggleFilter"
+  | "sheet.reapplyFilter";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
 const PASTE_CATEGORY = "Paste and fill";
 const FORMULA_CATEGORY = "Formulas";
+const FILTER_CATEGORY = "Sort and filter";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -109,6 +118,9 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // Shift+F3 for find-previous, so the formula bar's fx button is the
     // guaranteed path.
     { id: "sheet.insertFunction", label: "Insert function", category: FORMULA_CATEGORY, bindings: [{ key: "F3", shift: true }] },
+    // SPEC-128: Data ▸ Filter and Data ▸ Reapply filter, by physical key.
+    { id: "sheet.toggleFilter", label: "Filter", category: FILTER_CATEGORY, bindings: [{ key: "L", code: "KeyL", mod: true, shift: true }] },
+    { id: "sheet.reapplyFilter", label: "Reapply filter", category: FILTER_CATEGORY, bindings: [{ key: "L", code: "KeyL", mod: true, alt: true }] },
   ];
   return definitions;
 }
@@ -119,7 +131,8 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
 export const SHEET_SHORTCUTS: ShortcutDefinition[] = sheetShortcutDefinitions(isMacPlatform());
 
 /** Whether a shortcut is one of the formatting commands useFormatting runs
- * (the others are useStructure's, useSheetClipboard's and useFillHandle's). */
+ * (the others are useStructure's, useSheetClipboard's, useFillHandle's,
+ * useFunctionAssist's and useSortFilter's). */
 export function isFormattingShortcut(id: string): boolean {
   return SHEET_SHORTCUTS.find((definition) => definition.id === id)?.category === CATEGORY;
 }

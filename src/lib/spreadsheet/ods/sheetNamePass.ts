@@ -24,6 +24,11 @@
 // - Text that mentions no remapped name is returned unscanned.
 // removeRangesOnDeletedSheets drops the named ranges and database ranges
 // whose range lies on a deleted sheet (SPEC-121 "Deleting a sheet").
+// SPEC-128: a database range that is a sheet's autofilter is the model's —
+// the writer regenerates it (ods/databaseRanges.ts), applying the pass only
+// to the retained text it keeps (an unchanged element, the attributes and
+// children of a patched one), never to the text it generates, which already
+// names the model's sheets; a deleted owner drops it there.
 import { fromOdsFormula, toOdsFormula } from "../formula/dialect";
 import { FormulaSyntaxError } from "../formula/parse";
 import { isEmptyRemap, remapOdsAddresses, remapSheetReferences, type SheetRemap } from "../formula/sheetRefs";

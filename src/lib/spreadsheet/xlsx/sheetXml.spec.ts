@@ -22,11 +22,13 @@
 // and with the rebuilt ones absent, the root start tag and every other element
 // byte-verbatim, the first sheetView (spliced attributes, the frozen pane, the
 // selections, the rest verbatim), sheetFormatPr, mergeCells, SPEC-121's
-// empty-sheet template byte for byte, encodeXlsxText's round trip through
-// SPEC-116's decoding (property-tested), and an Excel-shaped part rebuilt
+// empty-sheet template byte for byte, encodeXlsxText's and
+// encodeXlsxAttribute's round trip through SPEC-116's decoding
+// (property-tested), and an Excel-shaped part rebuilt
 // from an unchanged model.
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../../core/equality";
+import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { unzip } from "../../core/zip";
 import { formatA1, getCell, parseA1, parseRange } from "../address";
 import { buildSpec117StylesXlsxBytes, buildSpec119FormulasXlsxBytes, SPEC117_BORDER_STYLES, SPEC117_STYLES_XLSX, SPEC117_XF, SPEC119_FORMULAS_XLSX } from "../fixtures/build";
@@ -37,7 +39,7 @@ import { CellBudget } from "../parsed";
 import { INDEXED_COLORS } from "../styles";
 import { decodeXmlText, escapeElementText } from "../xmlSplice";
 import { parseXlsx } from "./reader";
-import { decodeXmlEscapes, encodeXlsxText, xlsxTextElement } from "./sharedStrings";
+import { decodeXmlEscapes, encodeXlsxAttribute, encodeXlsxText, xlsxTextElement } from "./sharedStrings";
 import {
   emptyWorksheetXml,
   readSharedStrings,
@@ -916,13 +918,17 @@ const EXCEL_ROOT =
 const partWith = (siblings: readonly [string, string][]): string => `${DECLARATION}\r\n${EXCEL_ROOT}${siblings.map(([, xml]) => xml).join("")}</worksheet>`;
 
 describe("the worksheet writer: the splice", () => {
-  /** The model the splice tests write: two cells, a column, a merge. */
+  /** The model the splice tests write: two cells, a column, a merge, and
+   * (SPEC-128) an autofilter and a worksheet sort record the source's do
+   * not say. */
   const model = (): Sheet =>
     sheetOf({
       rows: [{ index: 1, cells: [{ col: 1, value: 2 }, { col: 3, value: "d", sstIndex: 0 }], sourceAttrs: `spans="2:4" x14ac:dyDescent="0.25"` }],
       columns: [{ min: 1, max: 1, widthPx: 100 }],
       merges: [parseRange("B2:C2")!],
       selection: { active: { row: 1, col: 1 }, ranges: [parseRange("B2")!], activeRangeIndex: 0 },
+      autoFilter: { range: parseRange("A1:D2")!, columns: [{ colId: 1, criteria: { kind: "values", values: ["2"], blanks: false, dateGroups: [] } }] },
+      sortState: { ref: parseRange("B2:D2")!, keys: [{ col: 3, descending: true }] },
     });
   const REBUILT: Record<string, string> = {
     dimension: `<dimension ref="B2:D2"/>`,
@@ -930,6 +936,8 @@ describe("the worksheet writer: the splice", () => {
     sheetFormatPr: `<sheetFormatPr baseColWidth="10" defaultRowHeight="15" outlineLevelRow="1" x14ac:dyDescent="0.25"/>`,
     cols: `<cols><col min="2" max="2" width="14.21875" customWidth="1"/></cols>`,
     sheetData: `<sheetData><row r="2"><c r="B2"><v>2</v></c><c r="D2" t="s"><v>0</v></c></row></sheetData>`,
+    autoFilter: `<autoFilter ref="A1:D2"><filterColumn colId="1"><filters><filter val="2"/></filters></filterColumn></autoFilter>`,
+    sortState: `<sortState ref="B2:D2"><sortCondition descending="1" ref="D2"/></sortState>`,
     mergeCells: `<mergeCells count="1"><mergeCell ref="B2:C2"/></mergeCells>`,
   };
 
@@ -937,7 +945,7 @@ describe("the worksheet writer: the splice", () => {
     expect(WORKSHEET_ORDER).toEqual(SIBLINGS.map(([local]) => local));
   });
 
-  it("replaces the six rebuilt elements in place, with every CT_Worksheet sibling present; the declaration, root start tag and every other element stay byte-verbatim", () => {
+  it("replaces the eight rebuilt elements (SPEC-128's autoFilter and sortState among them) in place, with every CT_Worksheet sibling present; the declaration, root start tag and every other element stay byte-verbatim", () => {
     const out = serializeWorksheet(model(), partWith(SIBLINGS), stubContext());
     expect(out).toBe(partWith(SIBLINGS.map(([local, xml]) => [local, REBUILT[local] ?? xml])));
   });
@@ -957,6 +965,8 @@ describe("the worksheet writer: the splice", () => {
         ["cols", REBUILT.cols!],
         ["sheetData", REBUILT.sheetData!],
         ["foreign", `<x14ac:unknown/>`],
+        ["autoFilter", REBUILT.autoFilter!],
+        ["sortState", REBUILT.sortState!],
         ["mergeCells", REBUILT.mergeCells!],
         sparse[2]!,
       ]),
@@ -968,6 +978,8 @@ describe("the worksheet writer: the splice", () => {
         ["sheetFormatPr", `<sheetFormatPr defaultRowHeight="15"/>`],
         ["cols", REBUILT.cols!],
         ["sheetData", REBUILT.sheetData!],
+        ["autoFilter", REBUILT.autoFilter!],
+        ["sortState", REBUILT.sortState!],
         ["mergeCells", REBUILT.mergeCells!],
       ]),
     );
@@ -1151,7 +1163,22 @@ describe("encodeXlsxText", () => {
       expect(decodeXmlEscapes(decodeXmlText(encoded)), JSON.stringify(text)).toBe(text);
       // …and through the reader, as a shared-string item.
       expect(readSharedStrings(`<sst xmlns="${MAIN}"><si>${xlsxTextElement(text)}</si></sst>`)[0]!.text, JSON.stringify(text)).toBe(text);
+      // encodeXlsxAttribute: the same, through attribute-value normalisation.
+      let value: string | undefined;
+      scanXml(`<a v="${encodeXlsxAttribute(text)}"/>`, (event) => {
+        if (event.type === "open") {
+          value = scanAttr(event.attrs, "v");
+        }
+      });
+      expect(xmlCarries(value!), JSON.stringify(text)).toBe(true);
+      expect(decodeXmlEscapes(value!), JSON.stringify(text)).toBe(text);
     }
+  });
+
+  it("encodeXlsxAttribute: the same encoding, `\"` escaped too, tab and line feed as character references", () => {
+    expect(encodeXlsxAttribute(`two\nlines\tand\r"q" & <b>`)).toBe(`two&#10;lines&#9;and_x000D_&quot;q&quot; &amp; &lt;b&gt;`);
+    expect(encodeXlsxAttribute("\u0001_x0041_")).toBe("_x0001__x005F_x0041_");
+    expect(encodeXlsxAttribute("plain")).toBe("plain");
   });
 
   it("gives <t> xml:space=\"preserve\" for leading or trailing whitespace or a line break", () => {

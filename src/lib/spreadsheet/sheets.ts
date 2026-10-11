@@ -21,7 +21,12 @@
 //   none) — Excel's numbering, not the first gap.
 // - Duplicate: `<base> (<n>)` (see duplicateName); the copy shares the
 //   source's rows by reference, clones its small fields, and gets its own
-//   retained source at once (xlsx/duplicate.ts, ods/duplicate.ts).
+//   retained source at once (xlsx/duplicate.ts, ods/duplicate.ts). SPEC-128:
+//   the clones include the autofilter (its criteria, the rows' filterHidden
+//   riding in the shared rows) and the sort records — the autofilter without
+//   its `odsName` (the database range is the source sheet's; the writer
+//   names the copy's) and, in an .ods, without its `sourceXml`, which names
+//   the source sheet in its target address.
 // - Rename and delete rewrite every formula naming the sheet (SPEC-119's
 //   renameSheetInFormula; formula/sheetRefs.ts's remapSheetReferences turns
 //   a deleted sheet's references into #REF!). The retained XML keeps
@@ -31,6 +36,7 @@
 //   a sheet, and references to a name that did not exist before.
 import { relsPathFor } from "../core/xml";
 import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
+import type { AutoFilter } from "./filter";
 import { cellKey, type CellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
@@ -381,6 +387,9 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   const name = duplicateName(model, source.name);
   const { id: _id, partName, sourceXml, copiedFrom: _copiedFrom, dirty: _dirty, ...fields } = source;
   let copy: Sheet = structuredCloneExceptRows({ ...fields, id: crypto.randomUUID(), name, rows: source.rows });
+  if (copy.autoFilter) {
+    copy.autoFilter = copiedAutoFilter(copy.autoFilter, model.format);
+  }
   if (partName !== undefined || sourceXml !== undefined) {
     copy.copiedFrom = source.copiedFrom ?? sourceNameOf(model, source);
     if (source.dirty) {
@@ -408,6 +417,12 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   model.structureDirty = true;
   model.activeSheetIndex = index + 1;
   return { activeIndex: index + 1, alsoRecalc: cellsToRecalc(model, before, [name]) };
+}
+
+/** A copy's autofilter (see the module header). */
+function copiedAutoFilter(filter: AutoFilter, format: SpreadsheetFormat): AutoFilter {
+  const { odsName: _name, sourceXml, ...rest } = filter;
+  return format === "ods" || sourceXml === undefined ? rest : { ...rest, sourceXml };
 }
 
 /** A sheet's small fields cloned, its rows kept by reference. */

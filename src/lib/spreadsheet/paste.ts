@@ -543,7 +543,8 @@ export function pasteBlock(model: SpreadsheetModel, sheetId: string, target: Pas
       let formula: string | undefined;
       let arrayRange: GridRange | undefined;
       if ((what === "all" || what === "formulas") && cell && (cell.f !== undefined || cell.r1c1 !== undefined)) {
-        const from = { row: block.origin.row + r, col: block.origin.col + c };
+        // SPEC-128: a packed visible-rows copy names the row its formula was written for.
+        const from = { row: block.origin.row + (cell.fr ?? r), col: block.origin.col + c };
         const to = { row, col };
         let converted: string | null = null;
         let otherSheets = false;

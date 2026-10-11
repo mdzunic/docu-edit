@@ -41,7 +41,7 @@ import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/local
 import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
-import { canEditCell, cellEditText, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
+import { canEditCell, cellEditText, clearTargets, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { usePointMode } from "./usePointMode";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -257,13 +257,14 @@ export function useCellEditing(deps: CellEditingDeps) {
     }
   }
 
-  /** Delete/Backspace in Ready: "Clear contents" over the selection. */
+  /** Delete/Backspace in Ready (and Format ▸ Clear contents): see clearTargets. */
   function clearSelection(): void {
     const m = model();
-    const ranges = deps.selection.selection.value.ranges;
-    if (!m || deps.book.activeSheet.value?.kind !== "grid") {
+    const sheet = deps.book.activeSheet.value;
+    if (!m || sheet?.kind !== "grid") {
       return;
     }
+    const ranges = clearTargets(sheet, deps.selection.selection.value.ranges);
     const refusal = refusalFor(m, deps.book.activeIndex.value, ranges);
     if (refusal) {
       toast(refusal);

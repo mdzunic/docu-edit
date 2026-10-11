@@ -100,6 +100,16 @@
 //                             quoted, ragged, LF), Excel's `sep=;` line,
 //                             Excel "Unicode Text" (UTF-16 LE) and a classic
 //                             Mac pipe file (lone CR)
+// - spec128-filter.xlsx     — SPEC-128, Excel-shaped: "Sales" under an
+//                             autoFilter (values with blanks, a custom pair,
+//                             its sortState), filterMode, four filter-hidden
+//                             rows and one user-hidden row, rows without `r`;
+//                             "Colours" a colorFilter and its dxf; "Log" a
+//                             cell-colour worksheet sortState;
+//                             _xlnm._FilterDatabase names
+// - spec128-filter.ods      — SPEC-128, LibreOffice-shaped twin of "Sales":
+//                             __Anonymous_Sheet_DB__0 with filter-set-items,
+//                             visibility "filter" and "collapse" rows
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT generated here: Apple
 // Numbers exported them (scripts/make-numbers-fixture.applescript,
 // scripts/make-numbers-calc-fixture.applescript and their notes in
@@ -141,6 +151,8 @@ import {
   buildSpec126Semicolon1252CsvBytes,
   buildSpec126SepCsvBytes,
   buildSpec126UnicodeTsvBytes,
+  buildSpec128FilterOdsBytes,
+  buildSpec128FilterXlsxBytes,
 } from "../src/lib/spreadsheet/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -179,6 +191,8 @@ writeFileSync(join(fixturesDir, "spec126-quoted.csv"), buildSpec126QuotedCsvByte
 writeFileSync(join(fixturesDir, "spec126-sep.csv"), buildSpec126SepCsvBytes());
 writeFileSync(join(fixturesDir, "spec126-unicode.tsv"), buildSpec126UnicodeTsvBytes());
 writeFileSync(join(fixturesDir, "spec126-mac-pipe.csv"), buildSpec126MacPipeCsvBytes());
+writeFileSync(join(fixturesDir, "spec128-filter.xlsx"), await buildSpec128FilterXlsxBytes());
+writeFileSync(join(fixturesDir, "spec128-filter.ods"), await buildSpec128FilterOdsBytes());
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

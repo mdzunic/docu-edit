@@ -6,9 +6,8 @@
 // items: File — Download (the same action as the app bar's) and Close;
 // View — Gridlines (a menuitemcheckbox), SPEC-119's Show formulas (another,
 // with its Ctrl+` shortcut — Control on every platform) and Zoom ▸ the
-// ZOOM_PRESETS ladder, Zoom in and Zoom out. SPEC-120's Data menu ends, after
-// a separator, with Recalculate (F9) — SPEC-128 puts Sort and Filter above
-// that separator; until then nothing is, so a leading separator is not drawn.
+// ZOOM_PRESETS ladder, Zoom in and Zoom out. SPEC-120's Data menu opens with
+// Recalculate (F9).
 // SPEC-121 adds the Edit menu between File and View — Undo and Redo, each
 // naming its step ("Undo Rename sheet") with the registry's shortcut, and
 // disabled when there is nothing to undo or redo — and File ▸ "Download a
@@ -19,7 +18,12 @@
 // cell — disabled at A1 — and Unfreeze, enabled only when frozen) and, at the
 // Format menu's end, Row height…, Column width… and the two autofits.
 // SPEC-125 adds Edit ▸ Paste special… and Edit ▸ Fill ▸ Down / Right, each
-// with its SHEET_SHORTCUTS binding.
+// with its SHEET_SHORTCUTS binding. SPEC-128 adds to the Data menu, after
+// Recalculate and a separator, Sort A to Z, Sort Z to A and Sort range…, then
+// after another separator Filter (a menuitemcheckbox, checked while the sheet
+// has an autofilter, Ctrl/Cmd+Shift+L), Clear filters and Reapply filter
+// (Ctrl/Cmd+Alt+L) — the last two disabled without an autofilter, stating
+// "Turn on Filter first".
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -32,6 +36,7 @@ import MenuSubmenu from "../MenuSubmenu.vue";
 import {
   asSpreadsheetMenuState,
   cellStyleCommand,
+  FILTER_OFF_REASON,
   numberFormatCommand,
   SHEET_MENU_COMMANDS,
   undoRedoMenuLabel,
@@ -57,6 +62,14 @@ const undoShortcut = shortcutLabel("edit.undo");
 const redoShortcut = shortcutLabel("edit.redo");
 const formatCellsShortcut = shortcutLabel("sheet.formatCells", isMacPlatform(), SHEET_SHORTCUTS);
 const pasteSpecialShortcut = shortcutLabel("sheet.pasteSpecial", isMacPlatform(), SHEET_SHORTCUTS);
+const filterShortcut = shortcutLabel("sheet.toggleFilter", isMacPlatform(), SHEET_SHORTCUTS);
+const reapplyShortcut = shortcutLabel("sheet.reapplyFilter", isMacPlatform(), SHEET_SHORTCUTS);
+// SPEC-128: the Data menu's sorts.
+const SORTS = [
+  { label: "Sort A to Z", command: SHEET_MENU_COMMANDS.sortAscending, testid: "sheet-menu-sort-asc" },
+  { label: "Sort Z to A", command: SHEET_MENU_COMMANDS.sortDescending, testid: "sheet-menu-sort-desc" },
+  { label: "Sort range…", command: SHEET_MENU_COMMANDS.sortRange, testid: "sheet-menu-sort-range" },
+];
 const FILLS = [
   { label: "Down", command: SHEET_MENU_COMMANDS.fillDown, testid: "sheet-menu-fill-down", shortcut: shortcutLabel("sheet.fillDown", isMacPlatform(), SHEET_SHORTCUTS) },
   { label: "Right", command: SHEET_MENU_COMMANDS.fillRight, testid: "sheet-menu-fill-right", shortcut: shortcutLabel("sheet.fillRight", isMacPlatform(), SHEET_SHORTCUTS) },
@@ -294,23 +307,45 @@ const MENUS = [
     </template>
 
     <template #data>
-      <hr class="menu-separator data-recalculate-separator">
       <MenuItem
         label="Recalculate"
         testid="sheet-menu-recalculate"
         shortcut="F9"
         @select="emit('command', SHEET_MENU_COMMANDS.recalculate)"
       />
+      <hr class="menu-separator">
+      <MenuItem
+        v-for="sort in SORTS"
+        :key="sort.command"
+        :label="sort.label"
+        :testid="sort.testid"
+        :disabled="!s.hasGrid"
+        @select="emit('command', sort.command)"
+      />
+      <hr class="menu-separator">
+      <MenuCheckItem
+        label="Filter"
+        testid="sheet-menu-filter"
+        :shortcut="filterShortcut"
+        :checked="s.filterOn"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.filter)"
+      />
+      <MenuItem
+        label="Clear filters"
+        testid="sheet-menu-clear-filters"
+        :disabled="!s.filterOn"
+        :reason="s.hasGrid ? FILTER_OFF_REASON : ''"
+        @select="emit('command', SHEET_MENU_COMMANDS.clearFilters)"
+      />
+      <MenuItem
+        label="Reapply filter"
+        testid="sheet-menu-reapply-filter"
+        :shortcut="reapplyShortcut"
+        :disabled="!s.filterOn"
+        :reason="s.hasGrid ? FILTER_OFF_REASON : ''"
+        @select="emit('command', SHEET_MENU_COMMANDS.reapplyFilter)"
+      />
     </template>
   </MenuBar>
 </template>
-
-<style scoped>
-/* The separator before Recalculate divides it from the Data commands above
-   it (SPEC-128's); with nothing above it yet — first in the popup, or right
-   under the compact sheet's heading — it is not drawn. */
-.data-recalculate-separator:first-child,
-.menu-section-label + .data-recalculate-separator {
-  display: none;
-}
-</style>

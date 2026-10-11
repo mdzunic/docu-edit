@@ -17,11 +17,16 @@
 // pane. A number format's `*x` fill (SPEC-118) is a flex row: the text
 // before it, a run of the fill character taking the remaining width (clipped,
 // hidden from assistive technology), the text after it. SPEC-120: a stale
-// cell carries data-stale and its title (`staleTitle`). Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// cell carries data-stale and its title (`staleTitle`). SPEC-128: each of
+// the autofilter's header cells draws its `filter-button` (`filterButton`,
+// useSortFilter's filterButtonAt) — right-aligned, 16 px, so it virtualises
+// with the grid — whose press never reaches the grid's pointer handling and
+// emits filter-button(col, anchor) with the viewport point under it. Runtime
+// prop declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems, asStaleTitle, cellAttributes } from "../../views/spreadsheet/sheetLayerProps";
+import { asBandItems, asStaleTitle, cellAttributes, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import AppIcon from "../AppIcon.vue";
 
 const props = defineProps({
   /** The bands to draw (useSheetCells' BandItem[]). */
@@ -32,7 +37,11 @@ const props = defineProps({
   frozenWidth: { type: Number, default: 0 },
   /** A stale cell's title by position (SPEC-120; useSheetGrid's). */
   staleTitle: { type: Function, default: undefined },
+  /** The header row's filter buttons by position (SPEC-128). */
+  filterButton: { type: Function, default: undefined },
 });
+
+const emit = defineEmits(["filter-button"]);
 
 const items = computed(() => asBandItems(props.bands));
 const staleTitleOf = computed(() => asStaleTitle(props.staleTitle));
@@ -45,6 +54,12 @@ function textStyle(style = {}) {
 
 function px(value = 0) {
   return `${value}px`;
+}
+
+/** A filter button's press: its column and the point under it. */
+function pressFilter(col = 0, event = new MouseEvent("click")) {
+  const box = event.currentTarget instanceof Element ? event.currentTarget.getBoundingClientRect() : null;
+  emit("filter-button", col, { left: box ? box.left : 0, top: box ? box.bottom : 0 });
 }
 </script>
 
@@ -161,6 +176,24 @@ function px(value = 0) {
                 :stroke-opacity="cell.diagonal.opacity ?? undefined"
               />
             </svg>
+            <button
+              v-for="button in filterButtonsOf(cell, props.filterButton)"
+              :key="button.state"
+              type="button"
+              class="sheet-filter-button"
+              data-testid="filter-button"
+              aria-haspopup="dialog"
+              :aria-expanded="button.expanded ? 'true' : 'false'"
+              :aria-label="button.label"
+              :title="button.label"
+              :data-state="button.state"
+              @pointerdown.stop
+              @mousedown.stop
+              @dblclick.stop
+              @click.stop="pressFilter(cell.col, $event)"
+            >
+              <AppIcon :name="button.icon" />
+            </button>
           </div>
         </div>
       </div>
@@ -301,6 +334,47 @@ function px(value = 0) {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+/* SPEC-128: a header cell's filter dropdown, on the paper (literal colours,
+   as every paper colour), right-aligned at the cell's foot. */
+.sheet-filter-button {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: #444444;
+  background: #f3f3f3;
+  border: 1px solid #a6a6a6;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.sheet-filter-button:hover {
+  background: #e1e1e1;
+}
+
+.sheet-filter-button[data-state="filtered"],
+.sheet-filter-button[data-state="sorted-asc"],
+.sheet-filter-button[data-state="sorted-desc"] {
+  color: #1f5fbf;
+}
+
+.sheet-filter-button:focus-visible {
+  outline: 2px solid #1f5fbf;
+  outline-offset: 1px;
+}
+
+.sheet-filter-button :deep(.app-icon) {
+  width: 14px;
+  height: 14px;
 }
 
 .sheet-border {

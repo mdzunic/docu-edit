@@ -72,6 +72,16 @@ describe("SpreadsheetStatusBar", () => {
     expect(wrapper.find('[data-testid="sheet-status-mode"]').exists()).toBe(false);
   });
 
+  it("SPEC-128: shows the filter's record count in sheet-status-filter after the mode; empty hides it", async () => {
+    const wrapper = mount(SpreadsheetStatusBar, { props: { mode: "Ready", filter: "8 of 12 records found" } });
+    const filter = wrapper.get('[data-testid="sheet-status-filter"]');
+    expect(filter.text()).toBe("8 of 12 records found");
+    expect(filter.attributes("role")).toBe("status");
+    expect(wrapper.get('[data-testid="sheet-status-mode"]').element.nextElementSibling).toBe(filter.element);
+    await wrapper.setProps({ filter: "" });
+    expect(wrapper.find('[data-testid="sheet-status-filter"]').exists()).toBe(false);
+  });
+
   it("SPEC-120: shows the circular-reference warning and Calculating… only while they apply, after the aggregates", async () => {
     const wrapper = mount(SpreadsheetStatusBar, { props: { count: "Count: 3" } });
     expect(wrapper.find('[data-testid="sheet-status-circular"]').exists()).toBe(false);

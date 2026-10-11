@@ -35,6 +35,7 @@ import {
 } from "../../lib/spreadsheet/cells";
 import { sanitizeXmlText } from "../../lib/core/xmlText";
 import { FormulaSyntaxError, parseFormula } from "../../lib/spreadsheet/formula/parse";
+import { visibleRowSpans } from "../../lib/spreadsheet/filter";
 import { formulaTextAt, printFormula } from "../../lib/spreadsheet/formula/print";
 import { tokenize } from "../../lib/spreadsheet/formula/tokens";
 import type { CellStyle, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -182,6 +183,12 @@ export function writeFill(ctx: CellWriteContext, ranges: GridRange[], origin: Ce
 }
 
 /** Delete/Backspace: one step "Clear contents" over the selection. */
+/** What "Clear contents" over a selection clears: its visible rows only
+ * where it spans filter-hidden ones (SPEC-128 visibleRowSpans, Excel's rule). */
+export function clearTargets(sheet: Sheet, ranges: readonly GridRange[]): GridRange[] {
+  return ranges.flatMap((range) => visibleRowSpans(sheet, range));
+}
+
 export function writeClear(ctx: CellWriteContext, ranges: GridRange[]): void {
   oneStep(ctx, CLEAR_CONTENTS_LABEL, ranges, () => clearContents(ctx.model, ctx.sheetIndex, ranges));
 }

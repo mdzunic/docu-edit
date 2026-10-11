@@ -65,7 +65,7 @@ export interface SheetClipboardPayload {
   sheetName: string;
   dateSystem: "1900" | "1904";
   origin: CellRef; // source top-left
-  rows: number; // the copied rectangle after used-range clipping
+  rows: number; // the copied rectangle after used-range clipping (SPEC-128: its visible rows, packed, when a copy leaves filter-hidden rows out)
   cols: number;
   wholeRows?: true;
   wholeCols?: true;
@@ -82,6 +82,7 @@ export interface ClipboardCell {
   c: number;
   v: CellValue; // the value, or a formula's cached value
   f?: string; // canonical formula
+  fr?: number; // SPEC-128: the source row (relative to origin) `f` is written for, when a visible-rows copy packed the cell up from it (absent: r)
   a?: GridRange; // relative arrayRange — only when the whole array was copied
   s?: number; // index into styles
   t?: TextRun[]; // rich text
@@ -523,6 +524,10 @@ function validCell(value: unknown, rows: number, cols: number, styleCount: numbe
   // Soft: a formula that is not one is dropped, its cached value kept.
   if (typeof formula === "string" && formula.length > 0 && formula.length <= MAX_CLIPBOARD_FORMULA_LENGTH && formulaParses(formula, verdicts)) {
     cell.f = formula;
+    const sourceRow = own(raw, "fr");
+    if (sourceRow !== undefined) {
+      cell.fr = int(sourceRow, 0, MAX_ROWS - 1);
+    }
   }
   const array = own(raw, "a");
   if (array !== undefined && cell.f !== undefined) {

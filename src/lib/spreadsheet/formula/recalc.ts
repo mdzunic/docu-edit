@@ -130,14 +130,18 @@ export function changedCellsBetween(sheetId: string, before: Row[], after: Row[]
   return keys;
 }
 
-/** Whether an edit hid or showed a row: some row's `hidden` differs between
- * the two row lists (the identity diff changedCellsBetween takes) — when it
- * did, visibilitySensitiveCells must recalculate (SPEC-127). */
+/** A hidden row's index and which flags hide it. */
+const visibilityKey = (row: Row): string => `${row.index}:${row.hidden ? "h" : ""}${row.filterHidden ? "f" : ""}`;
+
+/** Whether an edit hid or showed a row: some row's `hidden` or (SPEC-128)
+ * `filterHidden` differs between the two row lists (the identity diff
+ * changedCellsBetween takes) — when it did, visibilitySensitiveCells must
+ * recalculate (SPEC-127). */
 export function rowVisibilityChanged(before: Row[], after: Row[]): boolean {
   const rows = windowOf(before, after);
-  const hiddenBefore = new Set(rows.beforeMid.filter((row) => row.hidden).map((row) => row.index));
-  const hiddenAfter = rows.afterMid.filter((row) => row.hidden).map((row) => row.index);
-  return hiddenAfter.length !== hiddenBefore.size || hiddenAfter.some((index) => !hiddenBefore.has(index));
+  const shownBefore = new Set(rows.beforeMid.filter((row) => row.hidden || row.filterHidden).map(visibilityKey));
+  const shownAfter = rows.afterMid.filter((row) => row.hidden || row.filterHidden).map(visibilityKey);
+  return shownAfter.length !== shownBefore.size || shownAfter.some((key) => !shownBefore.has(key));
 }
 
 /** Whether opening a workbook must recalculate it whole: its file asks

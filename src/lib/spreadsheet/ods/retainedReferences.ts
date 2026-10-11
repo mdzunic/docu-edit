@@ -9,7 +9,7 @@
 // | envelope prefix | `table:content-validation@table:base-cell-address`, `@table:condition` | anchor; formula |
 // | envelope prefix | `table:label-range@table:label-cell-range-address`, `@table:data-cell-range-address` | list, emptied → element removed |
 // | suffix, inside tables | `table:named-range@table:cell-range-address` (emptied → removed), `@table:base-cell-address`; `table:named-expression@table:expression`, `@table:base-cell-address` | list; anchor; formula |
-// | suffix | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
+// | suffix, not a database range the model owns | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
 // | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
 // | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
 // | table start tag | `table:table@table:print-ranges` (emptied → the attribute removed) | list |
@@ -44,6 +44,19 @@
 //   alone). An `Object N`: the sheet whose sourceXml shows it
 //   (`objectsReferenced`), a copy's override only for a copy that alone
 //   shows it (the writer's rule).
+// - SPEC-128: a `table:database-range` that is a sheet's autofilter (the
+//   claim of ods/databaseRanges.ts, decided on the retained text alone) is
+//   the model's — `Sheet.autoFilter`, which the `autofilter` reference
+//   adjuster moves and the writer serialises — so nothing inside it (its
+//   target, its filter's criteria range) is adjusted here: nothing is
+//   adjusted twice. Every other database range still is. The filter of a
+//   claimed range that does not decompose is the model's verbatim
+//   `autoFilter.odsUnmappedFilter`; its `table:condition-source-range-address`
+//   (a criteria range, on any sheet) is moved by the `autofilter` adjusters
+//   of structure.ts and move.ts through adjustOdsFilterCriteriaRanges, by
+//   this module's list rules, on the model's copy: the autofilter replaced
+//   without its sourceXml (the writer then serialises that filter), its
+//   sheet marked dirty.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -67,6 +80,7 @@ import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, findAttribute, type Splice } from "../xmlSplice";
 import { decodeUtf8, encodeUtf8, LazyParts } from "../xlsx/package";
+import { odsOwnedDatabaseRangeSpans } from "./databaseRanges";
 import { objectsReferenced, sourceTables } from "./package";
 import { parseOdsRangeAddress, splitOdsRangeAddressList } from "./rangeAddress";
 
@@ -118,6 +132,9 @@ const CHART_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
 type LocationTable = (element: string) => readonly Location[] | undefined;
 
 const contentLocations: LocationTable = (element) => CONTENT_LOCATIONS.get(element) ?? (element.startsWith("draw:") ? SHAPE_LOCATIONS : undefined);
+/** A verbatim ods filter (`autoFilter.odsUnmappedFilter`): its criteria range. */
+const filterLocations: LocationTable = (element) => (element === "table:filter" ? CONTENT_LOCATIONS.get(element) : undefined);
+const CRITERIA_SOURCE = /table:condition-source-range-address\s*=/;
 const chartLocations: LocationTable = (element) => CHART_LOCATIONS.get(element);
 
 /** The prefilter: any of a table's attribute names followed by its `=` —
@@ -407,6 +424,30 @@ class OdsRetainedRewrite {
     return changed;
   }
 
+  /** Each verbatim ods filter whose criteria range moves, moved (see
+   * adjustOdsFilterCriteriaRanges). Sheet-less entries stay, as in the
+   * suffix; names resolve with the sheet's id (a copy's override). */
+  filterSources(): void {
+    let sheets: Sheet[] | undefined;
+    this.model.sheets.forEach((sheet, i) => {
+      const filter = sheet.autoFilter;
+      const xml = filter?.odsUnmappedFilter;
+      if (!filter || xml === undefined || !mentions(xml, CRITERIA_SOURCE)) {
+        return;
+      }
+      const odsUnmappedFilter = applySplices(xml, this.splices(xml, { id: sheet.id }, filterLocations));
+      if (odsUnmappedFilter === xml) {
+        return;
+      }
+      const { sourceXml: _source, ...rest } = filter;
+      sheets ??= this.model.sheets.slice();
+      sheets[i] = { ...sheet, autoFilter: { ...rest, odsUnmappedFilter }, dirty: true };
+    });
+    if (sheets) {
+      this.model.sheets = sheets;
+    }
+  }
+
   /** A sheet with its sourceXml and its cells' preservedXml adjusted (the
    * same object when neither changes); records the sourceXml's splices. */
   private sheet(sheet: Sheet, ownSplices: Map<Sheet, Splice[]>): Sheet {
@@ -470,18 +511,24 @@ class OdsRetainedRewrite {
     const prefixSplices: Splice[] = [];
     const suffixSplices: Splice[] = [];
     const outside = prefix + suffix;
+    const tables = sourceTables(xml, prefix.length, suffix.length);
     if (mentions(outside, CONTENT_ATTRIBUTES)) {
+      // SPEC-128: the database ranges the model owns are left alone.
+      const owned = odsOwnedDatabaseRangeSpans(suffix, tables.map((table) => table.name));
       for (const splice of this.splices(outside, ENVELOPE_HOST, contentLocations)) {
         // One straddling the two would be an ancestor of the tables: never a location.
         if (splice.end <= prefix.length) {
           prefixSplices.push(splice);
         } else if (splice.start >= prefix.length) {
-          suffixSplices.push({ ...splice, start: splice.start - prefix.length, end: splice.end - prefix.length });
+          const inSuffix = { ...splice, start: splice.start - prefix.length, end: splice.end - prefix.length };
+          if (!owned.some((span) => inSuffix.start >= span.start && inSuffix.end <= span.end)) {
+            suffixSplices.push(inSuffix);
+          }
         }
       }
     }
     const tableSplices: Splice[] = [];
-    for (const table of sourceTables(xml, prefix.length, suffix.length)) {
+    for (const table of tables) {
       const text = xml.slice(table.start, table.end);
       if (!mentions(text, CONTENT_ATTRIBUTES)) {
         continue;
@@ -806,4 +853,16 @@ class OdsRetainedRewrite {
  * shows. */
 export function rewriteOdsRetainedReferences(model: SpreadsheetModel, mapper: RetainedReferenceMapper): Set<string> {
   return new OdsRetainedRewrite(model, mapper).run();
+}
+
+/** SPEC-128: every sheet's verbatim ods filter (`autoFilter.odsUnmappedFilter`)
+ * with its `table:condition-source-range-address` moved through `mapper` —
+ * the `autofilter` adjusters' share of the database range the model owns
+ * (see the module header). Each autofilter whose filter changed is
+ * replaced, without its sourceXml, and its sheet marked dirty. */
+export function adjustOdsFilterCriteriaRanges(model: SpreadsheetModel, mapper: RetainedReferenceMapper): void {
+  if (model.format !== "ods" || !model.sheets.some((sheet) => sheet.autoFilter?.odsUnmappedFilter !== undefined)) {
+    return;
+  }
+  new OdsRetainedRewrite(model, mapper).filterSources();
 }

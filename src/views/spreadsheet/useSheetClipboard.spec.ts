@@ -136,6 +136,23 @@ describe("SPEC-125 useSheetClipboard — copy and cut", () => {
     expect(h.undo.canUndo.value).toBe(false);
   });
 
+  it("SPEC-128: Copy over a filter-hidden row writes the visible rows only; Cut writes every row", () => {
+    const rows: Row[] = [
+      { index: 1, cells: [{ col: 1, value: 1 }] },
+      { index: 2, cells: [{ col: 1, value: 2 }], filterHidden: true },
+      { index: 3, cells: [{ col: 1, value: 3 }] },
+    ];
+    const h = harness({ rows });
+    h.select(range(1, 1, 3, 1));
+    const copy = new FakeData();
+    h.clipboard.onCopy(clipboardEvent(copy, h.target));
+    expect(copy.getData("text/plain")).toBe("1\r\n3");
+    expect(h.clipboard.marquee.value?.range).toEqual(range(1, 1, 3, 1));
+    const cut = new FakeData();
+    h.clipboard.onCut(clipboardEvent(cut, h.target));
+    expect(cut.getData("text/plain")).toBe("1\r\n2\r\n3");
+  });
+
   it("refuses a multi-range selection with a toast, writing nothing", () => {
     const h = harness();
     h.selection.value = { active: { row: 1, col: 1 }, ranges: [range(1, 1, 1, 1), range(4, 4, 4, 4)], activeRangeIndex: 0 };

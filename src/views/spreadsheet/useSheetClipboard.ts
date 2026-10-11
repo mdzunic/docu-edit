@@ -7,7 +7,9 @@
 //   and no cell is being edited (the window's capture phase, so the in-cell
 //   editor holding the grid's focus never sees them): both flavours are
 //   written in the synchronous handler with clipboardData.setData, a Cut
-//   with a fresh cut token, and the model is untouched. A multi-range
+//   with a fresh cut token, and the model is untouched. A Copy over
+//   filter-hidden rows takes the visible rows only (SPEC-128, clipboard.ts);
+//   a Cut takes every row, as the move it pastes as does. A multi-range
 //   selection or more than MAX_COPY_CELLS refuses with a toast. The copied
 //   range is outlined by the marching ants (`marquee`, view state — never in
 //   the undo stack) until Escape, another copy or cut, any edit (the undo
@@ -149,7 +151,7 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
     }
     event.preventDefault();
     const token = cut ? newCutToken() : undefined;
-    const copy = buildClipboardCopy(m, sheet.id, ranges[0]!, token);
+    const copy = buildClipboardCopy(m, sheet.id, ranges[0]!, token, { visibleRows: true });
     const { text, html, attribute } = copyFlavours(m, sheet.id, copy, deps.selection.formatContext.value);
     data.setData("text/plain", text);
     data.setData("text/html", html);

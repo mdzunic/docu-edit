@@ -4,8 +4,9 @@
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import SpreadsheetMenuBar from "./SpreadsheetMenuBar.vue";
-import { asSpreadsheetMenuState, SHEET_MENU_COMMANDS } from "../../lib/spreadsheet/menuState";
+import { asSpreadsheetMenuState, FILTER_OFF_REASON, SHEET_MENU_COMMANDS } from "../../lib/spreadsheet/menuState";
 import { shortcutLabel } from "../../lib/shortcuts";
+import { SHEET_SHORTCUTS } from "../../views/spreadsheet/sheetShortcuts";
 
 describe("SpreadsheetMenuBar (SPEC-121)", () => {
   it("puts Edit between File and View, with Undo/Redo naming their step and routing edit.undo/edit.redo", async () => {
@@ -53,5 +54,61 @@ describe("SpreadsheetMenuBar (SPEC-121)", () => {
       copyDisabledReason: "",
     });
     expect(SHEET_MENU_COMMANDS).toMatchObject({ undo: "edit.undo", redo: "edit.redo", downloadCopy: "file.download-copy" });
+  });
+});
+
+describe("SpreadsheetMenuBar's Data menu (SPEC-128)", () => {
+  it("has Recalculate, a separator, the three sorts, a separator, then Filter, Clear filters and Reapply filter, each routing its command", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { filterOn: true } } });
+    const menu = wrapper.get('[data-testid="menu-data"]');
+    const rows = menu.findAll('[role^="menuitem"], hr').map((row) => (row.element.tagName === "HR" ? "—" : row.attributes("data-testid")));
+    expect(rows).toEqual([
+      "sheet-menu-recalculate",
+      "—",
+      "sheet-menu-sort-asc",
+      "sheet-menu-sort-desc",
+      "sheet-menu-sort-range",
+      "—",
+      "sheet-menu-filter",
+      "sheet-menu-clear-filters",
+      "sheet-menu-reapply-filter",
+    ]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual([
+      "Recalculate",
+      "Sort A to Z",
+      "Sort Z to A",
+      "Sort range…",
+      "Filter",
+      "Clear filters",
+      "Reapply filter",
+    ]);
+    const filter = wrapper.get('[data-testid="sheet-menu-filter"]');
+    expect(filter.attributes("role")).toBe("menuitemcheckbox");
+    expect(filter.attributes("aria-checked")).toBe("true");
+    expect(filter.text()).toContain(shortcutLabel("sheet.toggleFilter", false, SHEET_SHORTCUTS));
+    expect(wrapper.get('[data-testid="sheet-menu-reapply-filter"]').text()).toContain(shortcutLabel("sheet.reapplyFilter", false, SHEET_SHORTCUTS));
+    for (const [testid, command] of [
+      ["sheet-menu-sort-asc", SHEET_MENU_COMMANDS.sortAscending],
+      ["sheet-menu-sort-desc", SHEET_MENU_COMMANDS.sortDescending],
+      ["sheet-menu-sort-range", SHEET_MENU_COMMANDS.sortRange],
+      ["sheet-menu-filter", SHEET_MENU_COMMANDS.filter],
+      ["sheet-menu-clear-filters", SHEET_MENU_COMMANDS.clearFilters],
+      ["sheet-menu-reapply-filter", SHEET_MENU_COMMANDS.reapplyFilter],
+    ]) {
+      await wrapper.get(`[data-testid="${testid}"]`).trigger("click");
+      expect(wrapper.emitted("command")?.at(-1)).toEqual([command]);
+    }
+  });
+
+  it("without an autofilter Filter is unchecked and Clear filters and Reapply filter are disabled, saying 'Turn on Filter first'", () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: {} } });
+    expect(wrapper.get('[data-testid="sheet-menu-filter"]').attributes("aria-checked")).toBe("false");
+    for (const testid of ["sheet-menu-clear-filters", "sheet-menu-reapply-filter"]) {
+      const item = wrapper.get(`[data-testid="${testid}"]`);
+      expect(item.attributes("disabled")).toBeDefined();
+      expect(item.get('[data-testid="menu-item-reason"]').text()).toBe(FILTER_OFF_REASON);
+    }
+    expect(FILTER_OFF_REASON).toBe("Turn on Filter first");
+    expect(asSpreadsheetMenuState(undefined).filterOn).toBe(false);
   });
 });

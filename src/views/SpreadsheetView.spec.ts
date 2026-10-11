@@ -716,14 +716,16 @@ describe("SpreadsheetView recalculation (SPEC-120)", () => {
     expect(text("B2")).toBe("999");
     expect(wrapper.find('[data-testid="sheet-status-calculating"]').exists()).toBe(false);
 
-    // The Data menu, after View: a separator, then Recalculate with its F9 hint.
+    // The Data menu, after View: Recalculate with its F9 hint first, then a
+    // separator before SPEC-128's sorts.
     const titles = wrapper.get('[role="menubar"]').findAll("[data-menu-title]").map((title) => title.text());
     expect(titles).toEqual(["File", "Edit", "View", "Format", "Data"]); // SPEC-121 adds Edit
     await wrapper.get('[data-testid="menu-title-data"]').trigger("click");
     const recalculate = wrapper.get('[data-testid="sheet-menu-recalculate"]');
     expect(recalculate.text()).toContain("Recalculate");
     expect(recalculate.text()).toContain("F9");
-    expect(recalculate.element.previousElementSibling?.tagName).toBe("HR");
+    expect(recalculate.element.previousElementSibling).toBeNull();
+    expect(recalculate.element.nextElementSibling?.tagName).toBe("HR");
 
     // F9: every formula recalculated; the add-in call keeps its value, stale.
     grid.element.dispatchEvent(new KeyboardEvent("keydown", { key: "F9", bubbles: true }));
