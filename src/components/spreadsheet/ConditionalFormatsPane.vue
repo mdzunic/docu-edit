@@ -11,7 +11,7 @@
 // `cf-move-down`, `cf-clear-selection` and `cf-clear-sheet`. While a rule is
 // being added or edited the pane shows the rule editor instead. Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import { CF_ADD_PRESET_GROUPS } from "../../views/spreadsheet/cfPresets";
 import { asConditionalFormatManager, CF_SCOPES } from "../../views/spreadsheet/useConditionalFormatManager";
 import AppIcon from "../AppIcon.vue";
@@ -58,6 +58,21 @@ function onListKey(event = new KeyboardEvent("keydown")) {
 function togglePresets() {
   m.value.presetsOpen.value = !m.value.presetsOpen.value;
 }
+
+// The presets menu closes on a press anywhere outside it (or its button).
+const addMenu = useTemplateRef("addMenu");
+function onDocumentPointerDown(event = new Event("pointerdown")) {
+  const root = addMenu.value;
+  if (m.value.presetsOpen.value && root && event.target instanceof Node && !root.contains(event.target)) {
+    m.value.presetsOpen.value = false;
+  }
+}
+onMounted(() => {
+  document.addEventListener("pointerdown", onDocumentPointerDown);
+});
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", onDocumentPointerDown);
+});
 </script>
 
 <template>
@@ -90,7 +105,10 @@ function togglePresets() {
         role="toolbar"
         aria-label="Rule actions"
       >
-        <div class="cf-add">
+        <div
+          ref="addMenu"
+          class="cf-add"
+        >
           <button
             type="button"
             class="cf-button"

@@ -104,6 +104,11 @@ describe("ConditionalFormatsPane (SPEC-129)", () => {
     expect(wrapper.find('[data-testid="cf-preset-color-scale-6"]').exists()).toBe(true);
     await click("cf-preset-above-average");
     expect(wrapper.find('[data-testid="cf-presets"]').exists()).toBe(false);
+    // A press outside the open menu closes it without adding anything.
+    await click("cf-add");
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    await wrapper.vm.$nextTick();
+    expect(wrapper.find('[data-testid="cf-presets"]').exists()).toBe(false);
     expect(descriptions()).toEqual(["Above average", "Cell value > 100", "Icon set (3 Arrows)"]);
     const added = formats().find((format) => format.ranges[0]!.top === 4)!;
     expect(added.ranges).toEqual([range(4, 4, 5, 4)]);
