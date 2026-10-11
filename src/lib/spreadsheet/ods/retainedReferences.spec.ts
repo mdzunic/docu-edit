@@ -9,6 +9,9 @@
 // tables + suffix after every edit, copy-on-write identity and the returned
 // sheet ids. SPEC-128: a database range that is a sheet's autofilter is left
 // alone (the model's adjuster moves it), every other one still moves.
+// SPEC-129: the conditional formats' rows are retired — `calcext:` conditional
+// formats keep every byte, emptied or not (the model's adjusters move them),
+// beside rows that still move.
 import { describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { scanXml } from "../../core/xmlScanner";
@@ -428,7 +431,9 @@ describe("the ods location table", () => {
     expectConsistent(emptied);
   });
 
-  it("inside tables: conditional formats' targets, conditions' values and base cells, formatting entries' values", () => {
+  it("SPEC-129: inside tables, conditional formats' targets, conditions' values and base cells and formatting entries' values are retired — left verbatim — while a named range beside them moves", () => {
+    // The conditionalFormats adjusters move the model's formats and the
+    // writer re-serialises them: moving them here too would move them twice.
     const formats =
       `<calcext:conditional-formats>` +
       `<calcext:conditional-format calcext:target-range-address="Data.B2:Data.B9">` +
@@ -439,41 +444,47 @@ describe("the ods location table", () => {
       `<calcext:formatting-entry calcext:value="0" calcext:type="maximum" calcext:color="#00ff00"/>` +
       `</calcext:color-scale></calcext:conditional-format>` +
       `</calcext:conditional-formats>`;
-    const model = odsBook({ tables: [{ name: "Data", trailing: formats }, { name: "Other" }] });
+    const alone = odsBook({ tables: [{ name: "Data", trailing: formats }, { name: "Other" }] });
+    const { sheets, opaque, odsContentEnvelope } = alone;
+    expect(edit(alone, "Data", "insertRows", 1, 2)).toEqual(new Set());
+    expect(alone.sheets).toBe(sheets);
+    expect(alone.opaque).toBe(opaque);
+    expect(alone.odsContentEnvelope).toBe(odsContentEnvelope);
+
+    const local = `<table:named-expressions><table:named-range table:name="Local" table:base-cell-address="$Data.$B$2" table:cell-range-address="$Data.$B$2:.$B$9"/></table:named-expressions>`;
+    const model = odsBook({ tables: [{ name: "Data", trailing: local + formats }, { name: "Other" }] });
     const before = sourceOf(model, "Data");
 
     expect(edit(model, "Data", "insertRows", 1, 2)).toEqual(ids(sheetNamed(model, "Data")));
     expect(spans(before, sourceOf(model, "Data"))).toEqual([
-      ["Data.B2:Data.B9", "Data.B4:Data.B11"],
-      ["formula-is([.B2]&gt;[$Other.$B$1])", "formula-is([.B4]&gt;[$Other.$B$1])"],
-      ["Data.B2", "Data.B4"],
-      ["Data.C2:Data.C9 Data.E2:Data.E3", "Data.C4:Data.C11 Data.E4:Data.E5"],
-      ["[.C2]", "[.C4]"],
+      ["$Data.$B$2", "$Data.$B$4"],
+      ["$Data.$B$2:.$B$9", "$Data.$B$4:.$B$11"],
     ]);
+    expect(sourceOf(model, "Data")).toContain(formats);
     expectConsistent(model);
   });
 
-  it("inside tables: an emptied conditional format is removed, and so is an emptied container", () => {
+  it("SPEC-129: inside tables, an emptied conditional format and an emptied calcext:conditional-formats are retired — never removed, left verbatim — while an emptied named range beside them still is", () => {
     const gone = `<calcext:conditional-format calcext:target-range-address="Data.B3:Data.B4"><calcext:condition calcext:value="[.B3]&gt;1" calcext:base-cell-address="Data.B3"/></calcext:conditional-format>`;
     const kept = `<calcext:conditional-format calcext:target-range-address="Data.C3:Data.D9"><calcext:condition calcext:value="[.C3]&gt;1" calcext:base-cell-address="Data.C3"/></calcext:conditional-format>`;
+    const goneRange = `<table:named-range table:name="Gone" table:base-cell-address="$Data.$B$3" table:cell-range-address="$Data.$B$3:.$B$4"/>`;
+    const local = `<table:named-expressions>${goneRange}<table:named-range table:name="Kept" table:base-cell-address="$Data.$C$3" table:cell-range-address="$Data.$C$3:.$D$9"/></table:named-expressions>`;
 
-    const mixed = odsBook({ tables: [{ name: "Data", trailing: `<calcext:conditional-formats>${gone}${kept}</calcext:conditional-formats>` }] });
-    const mixedBefore = sourceOf(mixed, "Data");
-    edit(mixed, "Data", "deleteRows", 2, 2);
-    // [.C3] lay in the band: #REF!; the base cell C3 goes where the band starts — C3 again, so it keeps its bytes.
-    expect(spans(mixedBefore, sourceOf(mixed, "Data"), [gone])).toEqual([
-      ["Data.C3:Data.D9", "Data.C3:Data.D7"],
-      ["[.C3]&gt;1", "[.#REF!]&gt;1"],
-    ]);
-    expectConsistent(mixed);
+    for (const formats of [`<calcext:conditional-formats>${gone}${kept}</calcext:conditional-formats>`, `<calcext:conditional-formats>${gone}</calcext:conditional-formats>`]) {
+      const alone = odsBook({ tables: [{ name: "Data", trailing: formats }] });
+      const { sheets, opaque } = alone;
+      expect(edit(alone, "Data", "deleteRows", 2, 2)).toEqual(new Set());
+      expect(alone.sheets).toBe(sheets);
+      expect(alone.opaque).toBe(opaque);
 
-    const container = `<calcext:conditional-formats>${gone}</calcext:conditional-formats>`;
-    const emptied = odsBook({ tables: [{ name: "Data", trailing: container }] });
-    const emptiedBefore = sourceOf(emptied, "Data");
-    edit(emptied, "Data", "deleteRows", 2, 2);
-    expect(spans(emptiedBefore, sourceOf(emptied, "Data"), [container])).toEqual([]);
-    expect(sourceOf(emptied, "Data")).not.toContain("calcext:");
-    expectConsistent(emptied);
+      // Beside them the same edit removes the emptied named range and moves the other.
+      const model = odsBook({ tables: [{ name: "Data", trailing: local + formats }] });
+      const before = sourceOf(model, "Data");
+      edit(model, "Data", "deleteRows", 2, 2);
+      expect(spans(before, sourceOf(model, "Data"), [goneRange])).toEqual([["$Data.$C$3:.$D$9", "$Data.$C$3:.$D$7"]]);
+      expect(sourceOf(model, "Data")).toContain(formats);
+      expectConsistent(model);
+    }
   });
 
   it("inside tables and Cell.preservedXml: shapes' end cells and an object's notify ranges, copy-on-write", () => {

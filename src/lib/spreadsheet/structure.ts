@@ -33,11 +33,12 @@
 // | 6 | columns | ColumnSpans shifted, split, removed; inserted columns copy the left span's width and style (not `hidden`); adjacent equal spans re-joined |
 // | 7 | retained | rewriteRetainedReferences(model, structuralMapper(model, edit)) |
 // | 8 | autofilter | SPEC-128: Sheet.autoFilter (range, colIds, its sort record) and Sheet.sortState (ref, key columns) — see "8. autofilter" |
-// Later specs append theirs, in landing order — conditionalFormats (129),
-// validations (130), drawings (131), charts (132), names and tables (133),
-// notes and hyperlinks (135), pageBreaks (136), pivots (139) — each with the
-// registry contract test in structure.spec.ts, retiring its rows from
-// retainedReferences' tables in the same change.
+// | 9 | conditionalFormats | SPEC-129: Sheet.conditionalFormats — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied format removed) and its cellIs/expression formulas re-anchored with adjustAnchoredFormula; every other formula a rule carries (cfFormulas.ts), on every sheet, via adjustFormula — see "9. conditionalFormats" |
+// Later specs append theirs, in landing order — validations (130), drawings
+// (131), charts (132), names and tables (133), notes and hyperlinks (135),
+// pageBreaks (136), pivots (139) — each with the registry contract test in
+// structure.spec.ts, retiring its rows from retainedReferences' tables in the
+// same change.
 //
 // Inserted rows take the row above's styleId, heightPt and customHeight and
 // its non-zero cell styles as styled empty cells (columns: the column to the
@@ -49,8 +50,10 @@
 // `filterHidden`.
 import type { CellRef, GridRange } from "./address";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
+import { mapFormatFormulas, mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
+import { formatOrigin, renumberPriorities, sheetFormats, type ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter, FilterColumn } from "./filter";
-import { adjustFormula, adjustFormulaReferences } from "./formula/adjust";
+import { adjustAnchoredFormula, adjustFormula, adjustFormulaReferences } from "./formula/adjust";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { adjustOdsFilterCriteriaRanges } from "./ods/retainedReferences";
 import { firstRowAtOrAfter, MAX_FORMAT_MATERIALISED } from "./restyle";
@@ -879,6 +882,86 @@ const autofilterAdjuster: ReferenceAdjuster = {
   },
 };
 
+// --- 9. conditionalFormats ---------------------------------------------------------------------
+// SPEC-129 "Structural edits". On the edited sheet each format's ranges are
+// mapped with adjustRange in source order (a range fully gone is dropped —
+// the first one still standing leads; a format left with none is removed);
+// its cellIs/expression formulas are re-anchored with adjustAnchoredFormula
+// (origin = the pre-edit ranges[0] top-left, firstRange = the first range
+// still standing, in pre-edit coordinates) and every other formula it
+// carries (cfFormulas.ts: value objects, a preserved xlsx rule's texts) goes
+// through adjustFormula. On every other sheet each formula of each format
+// goes through adjustFormula with that sheet as host — only references
+// naming the edited sheet move; ranges never do. A touched format is
+// replaced without its sourceXml, an untouched one keeps its identity;
+// priorities are renumbered when a format went (renumberPriorities), and a
+// sheet whose formats changed is marked dirty, as the formulas adjuster
+// marks a sheet whose cell formulas changed: the writers re-serialise a
+// dirty sheet's formats from the model (SPEC-124's retained rows for them
+// are retired).
+
+/** `sheet`'s formats after `edit`: undefined when none changes. */
+function adjustSheetFormats(model: SpreadsheetModel, sheet: Sheet, edit: StructuralEdit, nameOf: (sheetId: string) => string): ConditionalFormat[] | undefined {
+  const formats = sheetFormats(sheet);
+  const host = { format: model.format, sheetName: sheet.name };
+  const plain = (formula: string): string => adjustFormula(formula, sheet.id, edit, nameOf);
+  if (sheet.id !== edit.sheetId) {
+    const mapped = mapFormatsFormulas(formats, plain, host);
+    return mapped === formats ? undefined : mapped;
+  }
+  let changed = false;
+  const next: ConditionalFormat[] = [];
+  for (const format of formats) {
+    let firstStanding: GridRange | undefined;
+    const ranges: GridRange[] = [];
+    for (const range of format.ranges) {
+      const adjusted = adjustRange(range, edit);
+      if (adjusted !== null) {
+        firstStanding ??= range;
+        ranges.push(adjusted);
+      }
+    }
+    if (firstStanding === undefined) {
+      changed = true; // the format is removed
+      continue;
+    }
+    const origin = formatOrigin(format);
+    const first = firstStanding;
+    const anchored = (formula: string): string => adjustAnchoredFormula(formula, origin, first, sheet.id, edit, nameOf);
+    const mapped = mapFormatFormulas(format, { relative: anchored, absolute: plain }, host);
+    const moved = ranges.length !== format.ranges.length || ranges.some((range, i) => range !== format.ranges[i]);
+    if (!moved && mapped === format) {
+      next.push(format);
+      continue;
+    }
+    changed = true;
+    next.push(moved ? withoutFormatSource({ ...mapped, ranges }) : mapped);
+  }
+  // Surviving formats keep their rules' priorities: renumbering changes
+  // something only when a format went.
+  return changed ? renumberPriorities(next) : undefined;
+}
+
+const conditionalFormatsAdjuster: ReferenceAdjuster = {
+  id: "conditionalFormats",
+  adjust(model, edit) {
+    const names = new Map(model.sheets.map((sheet) => [sheet.id, sheet.name] as const));
+    const nameOf = (id: string): string => names.get(id) ?? "";
+    let changed = false;
+    const sheets = model.sheets.map((sheet) => {
+      const formats = adjustSheetFormats(model, sheet, edit, nameOf);
+      if (formats === undefined) {
+        return sheet;
+      }
+      changed = true;
+      return { ...sheet, conditionalFormats: formats, dirty: true as const };
+    });
+    if (changed) {
+      model.sheets = sheets;
+    }
+  },
+};
+
 // --- the registry ----------------------------------------------------------------------------
 
 export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
@@ -890,6 +973,7 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   columnsAdjuster,
   retainedAdjuster,
   autofilterAdjuster,
+  conditionalFormatsAdjuster,
 ];
 
 /** One structural edit (see the module header). */

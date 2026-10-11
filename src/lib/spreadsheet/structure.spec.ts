@@ -9,6 +9,7 @@ import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, t
 import { MAX_FORMAT_MATERIALISED } from "./restyle";
 import { autofitColumnWidthPx, fixedMeasurer } from "./autofit";
 import { autofitColumns, autofitRows, freezePanes, MAX_ROW_HEIGHT_PT, resizeColumns, resizeRows, setColumnsHidden, setRowsHidden, TOO_MANY_ROWS_MESSAGE } from "./bands";
+import type { ConditionalFormat } from "./conditionalFormats";
 import { applyPattern, capturePattern, clearRange } from "./formatting";
 import { applyPatternMerges, mergeCells, mergeDiscardsValues, patternMerges, unmergeCells, type MergeMode } from "./mergeCells";
 import { rangesIntersect } from "./merges";
@@ -781,6 +782,125 @@ describe("the autofilter adjuster (SPEC-128 \"Structural edits\")", () => {
   });
 });
 
+// --- SPEC-129's conditionalFormats adjuster ("Structural edits") -----------------------------
+
+/** A format over B5:B20 with one expression rule, self-referential to its
+ * origin (B5) and an absolute cell ($Z$1) — SPEC-129's own example. */
+const expressionFormat = (fields: Partial<ConditionalFormat> = {}): ConditionalFormat => ({
+  id: "f1",
+  ranges: [range(4, 1, 19, 1)],
+  rules: [{ id: "r1", priority: 1, kind: "expression", formula: "B5>$Z$1" }],
+  ...fields,
+});
+
+describe("the conditionalFormats adjuster (SPEC-129 \"Structural edits\")", () => {
+  it("inserting two rows above a format on B5:B20 moves it to B7:B22 and its expression B5>$Z$1 to B7>$Z$1", () => {
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [expressionFormat()] })]);
+    expect(applyStructuralEdit(m, rowsEdit("insertRows", 2, 2))).toEqual({ ok: true });
+    const format = sheetOf(m).conditionalFormats[0]!;
+    expect(format.ranges).toEqual([range(6, 1, 21, 1)]);
+    expect(format.rules[0]).toMatchObject({ kind: "expression", formula: "B7>$Z$1" });
+  });
+
+  it("deleting the format's first row re-anchors the formula onto the surviving top-left (no #REF!)", () => {
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [expressionFormat()] })]);
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 1));
+    const format = sheetOf(m).conditionalFormats[0]!;
+    expect(format.ranges).toEqual([range(4, 1, 18, 1)]); // B5:B19
+    expect(format.rules[0]).toMatchObject({ kind: "expression", formula: "B5>$Z$1" });
+  });
+
+  it("drops a fully deleted range and keeps the other; removes an empty format and renumbers priorities", () => {
+    const twoRanges = expressionFormat({ ranges: [range(4, 1, 19, 1), range(30, 1, 35, 1)] });
+    const second = expressionFormat({ id: "f2", ranges: [range(40, 1, 40, 1)], rules: [{ id: "r2", priority: 2, kind: "expression", formula: "B41>0" }] });
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [twoRanges, second] })]);
+    applyStructuralEdit(m, rowsEdit("deleteRows", 30, 6));
+    let formats = sheetOf(m).conditionalFormats;
+    expect(formats).toHaveLength(2);
+    expect(formats[0]!.ranges).toEqual([range(4, 1, 19, 1)]); // the second range (30:35) is gone, the first stays
+    expect(formats[0]!.rules[0]!.priority).toBe(1);
+    expect(formats[1]!.rules[0]!.priority).toBe(2);
+
+    // Deleting the whole first format's remaining range removes it and renumbers.
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 16));
+    formats = sheetOf(m).conditionalFormats;
+    expect(formats).toHaveLength(1);
+    expect(formats[0]!.id).toBe("f2");
+    expect(formats[0]!.rules[0]!.priority).toBe(1);
+  });
+
+  it("re-anchors onto the next standing range when the first is deleted whole, and follows the column axis", () => {
+    // B5:B6 and D10:D20; deleting rows 5–6 leaves D10:D20 (now D8:D18) leading.
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [expressionFormat({ ranges: [range(4, 1, 5, 1), range(9, 3, 19, 3)] })] })]);
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 2));
+    expect(sheetOf(m).conditionalFormats[0]!.ranges).toEqual([range(7, 3, 17, 3)]);
+    expect(sheetOf(m).conditionalFormats[0]!.rules[0]).toMatchObject({ formula: "D8>$Z$1" });
+    // A format on B5:D5: deleting column B re-anchors onto C5, now B5 ($Z$1, right of the band, moves left too).
+    const cols = model([sheet("s1", "Sheet1", { conditionalFormats: [expressionFormat({ ranges: [range(4, 1, 4, 3)] })] })]);
+    applyStructuralEdit(cols, { kind: "deleteCols", sheetId: "s1", at: 1, count: 1 });
+    expect(sheetOf(cols).conditionalFormats[0]!.ranges).toEqual([range(4, 1, 4, 2)]);
+    expect(sheetOf(cols).conditionalFormats[0]!.rules[0]).toMatchObject({ formula: "B5>$Y$1" });
+  });
+
+  it("adjusts a format on another sheet whose formula references the edited sheet, and marks it dirty", () => {
+    const other: ConditionalFormat = { id: "f2", ranges: [range(0, 0, 0, 0)], rules: [{ id: "r2", priority: 1, kind: "expression", formula: "A1>Sheet1!$Z$1" }] };
+    const m = model([sheet("s1", "Sheet1"), sheet("s2", "Sheet2", { conditionalFormats: [other] })]);
+    applyStructuralEdit(m, rowsEdit("insertRows", 0, 3));
+    const s2 = sheetOf(m, "s2");
+    expect(s2.conditionalFormats[0]!.rules[0]).toMatchObject({ formula: "A1>Sheet1!$Z$4" });
+    expect(s2.dirty).toBe(true);
+  });
+
+  it("adjusts a colour scale's value-object formula and a preserved rule's embedded <formula>, and leaves an untouched format by identity", () => {
+    const colorScale: ConditionalFormat = {
+      id: "cs",
+      ranges: [range(59, 1, 69, 1)], // B60:B70
+      rules: [{ id: "r", priority: 1, kind: "colorScale", stops: [{ at: { type: "num", value: "$Z$60" }, color: "#ff0000" }, { at: { type: "max" }, color: "#00ff00" }] }],
+    };
+    const preserved: ConditionalFormat = {
+      id: "pv",
+      ranges: [range(59, 2, 69, 2)], // C60:C70
+      rules: [{ id: "rp", priority: 2, kind: "preserved", where: "base", xml: `<cfRule type="expression"><formula>$Z$60&gt;0</formula></cfRule>` }],
+    };
+    // A distinct priority: ranks must stay unique across the sheet's formats.
+    const untouched = expressionFormat({ id: "far", rules: [{ id: "r1", priority: 3, kind: "expression", formula: "B5>$Z$1" }] }); // B5:B20, well above the inserted band
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [colorScale, preserved, untouched] })]);
+    applyStructuralEdit(m, rowsEdit("insertRows", 50, 1));
+    const formats = sheetOf(m).conditionalFormats;
+    const byId = (id: string): ConditionalFormat => formats.find((format) => format.id === id)!;
+    expect(byId("cs").ranges).toEqual([range(60, 1, 70, 1)]);
+    expect(byId("cs").rules[0]).toMatchObject({ stops: [{ at: { type: "num", value: "$Z$61" } }, { at: { type: "max" } }] });
+    expect(byId("pv").rules[0]).toMatchObject({ xml: `<cfRule type="expression"><formula>$Z$61&gt;0</formula></cfRule>` });
+    expect(byId("far")).toBe(untouched);
+  });
+
+  it("is copy-on-write: a touched format loses its sourceXml, an untouched one keeps it, nothing is mutated", () => {
+    const touched = expressionFormat({ sourceXml: "<conditionalFormatting/>" });
+    const snapshot = structuredClone(touched);
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [touched] })]);
+    applyStructuralEdit(m, rowsEdit("insertRows", 2, 1));
+    expect(touched).toEqual(snapshot);
+    expect(sheetOf(m).conditionalFormats[0]!.sourceXml).toBeUndefined();
+  });
+
+  it("leaves a model with no conditional formats untouched by identity", () => {
+    const m = model([sheet("s1", "Sheet1"), sheet("s2", "Sheet2")]);
+    const sheets = m.sheets;
+    applyStructuralEdit(m, rowsEdit("insertRows", 0, 1));
+    expect(m.sheets[1]).toBe(sheets[1]);
+  });
+
+  it("leaves a sheet stored before SPEC-129 (no conditionalFormats field) untouched by identity", () => {
+    const legacy = { ...sheet("s2", "Sheet2"), conditionalFormats: undefined } as unknown as Sheet;
+    const m = model([sheet("s1", "Sheet1"), legacy]);
+    const adjuster = REFERENCE_ADJUSTERS.find((each) => each.id === "conditionalFormats")!;
+    const sheets = m.sheets;
+    adjuster.adjust(m, rowsEdit("insertRows", 0, 1, "s2"));
+    adjuster.adjust(m, rowsEdit("insertRows", 0, 1));
+    expect(m.sheets).toBe(sheets);
+  });
+});
+
 // --- the registry contract ------------------------------------------------------------------
 // Every adjuster joins this table: a model holding no structure of its kind is
 // left untouched by identity, and a row inserted above its structure moves it.
@@ -807,6 +927,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([base]);
     case "autofilter":
       return model([{ ...base, autoFilter: { range: range(5, 0, 7, 1), columns: [] } }]);
+    case "conditionalFormats":
+      return model([{ ...base, conditionalFormats: [{ id: "f1", ranges: [range(5, 0, 5, 0)], rules: [{ id: "r1", priority: 1, kind: "expression", formula: "A6>0" }] }] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -830,14 +952,16 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.columns[0];
     case "autofilter":
       return s.autoFilter?.range;
+    case "conditionalFormats":
+      return s.conditionalFormats[0]?.ranges[0];
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter", () => {
-    expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["rows", "formulas", "merges", "frozen", "selection", "columns", "retained", "autofilter"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, then SPEC-129's conditionalFormats", () => {
+    expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["rows", "formulas", "merges", "frozen", "selection", "columns", "retained", "autofilter", "conditionalFormats"]);
   });
 
   for (const adjuster of REFERENCE_ADJUSTERS) {
@@ -874,6 +998,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             selection: { row: 6, col: 0 },
             columns: { min: 6, max: 6, widthPx: 90 },
             autofilter: range(6, 0, 8, 1),
+            conditionalFormats: range(6, 0, 6, 0),
           }[adjuster.id],
         );
       });
