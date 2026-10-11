@@ -558,10 +558,18 @@ describe("whole workbooks write valid conditional formats and dxfs", () => {
     addConditionalFormat(model, sheetId, [range("F2:F13")], STARS);
     addConditionalFormat(model, sheetId, [range("G2:G13")], { kind: "expression", formula: "G2>Sheet9!$A$1", dxfId: bold });
     addConditionalFormat(model, sheetId, [range("H2:H13")], { kind: "top10", bottom: true, percent: true, rank: 15, dxfId: bold, stopIfTrue: true });
+    // LibreOffice's smilies have no Excel form: written by name, as its own xlsx export does.
+    for (const [set, column] of [["3Smilies", "I"], ["3ColorSmilies", "J"]] as const) {
+      addConditionalFormat(model, sheetId, [range(`${column}2:${column}13`)], { kind: "iconSet", icons: { set, thresholds: [0, 33, 67].map((at) => ({ at: { type: "percent", value: String(at) }, gte: true })), reverse: false, showValue: true } });
+    }
     const bytes = (await spreadsheetDownload(model)).bytes;
     expect(await packageIntegrity(bytes)).toEqual([]);
-    const styles = new TextDecoder().decode((await unzip(bytes)).get("xl/styles.xml"));
+    const parts = await unzip(bytes);
+    const styles = new TextDecoder().decode(parts.get("xl/styles.xml"));
     expect(styles).toContain(`<dxfs count="2">`);
+    const sheet = new TextDecoder().decode(parts.get("xl/worksheets/sheet1.xml"));
+    expect(sheet).toContain(`<conditionalFormatting sqref="I2:I13"><cfRule type="iconSet" priority="2"><iconSet iconSet="3Smilies"><cfvo type="percent" val="0"/>`);
+    expect(sheet).toContain(`<iconSet iconSet="3ColorSmilies">`);
     const back = await readSpreadsheetBytes(bytes, "xlsx", "book");
     expect(rulesOf(back)).toEqual(rulesOf(model));
   });
