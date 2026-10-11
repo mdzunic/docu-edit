@@ -40,6 +40,14 @@
 //   `structureProtected`; each worksheet's `sheetProtection@sheet` →
 //   `protection`, its cells' `sstIndex`, `preservedAttrs` and `preservedXml`
 //   (xlsx/sheetXml.ts). Read only: the protection XML stays verbatim.
+// - SPEC-128: each worksheet's `autoFilter` and `sortState` (xlsx/sheetXml.ts,
+//   xlsx/autoFilter.ts); then, on a sheet with an autofilter, the read rule
+//   ("Filter-hidden or user-hidden", filter.ts classifyHiddenRows): a
+//   `hidden="1"` row inside its data rows becomes `filterHidden` when a
+//   modelled criterion rejects it or the filter carries a preserved one —
+//   display text through the default locale (en-US) and the workbook's date
+//   system — and stays `hidden` otherwise. A row the file shows is never
+//   hidden by reading. `_xlnm._FilterDatabase` is derived, not read.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -53,9 +61,12 @@ import { XmlScanError } from "../../core/xmlScanner";
 import { unzip, ZipError } from "../../core/zip";
 import type { DocumentProperties } from "../../core/documentProperties";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
+import { classifyHiddenRows } from "../filter";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, maxDigitWidthPx } from "../geometry";
 import { ImpliedFormatStyles } from "../impliedFormats";
 import type { CalcSettings, Sheet } from "../model";
+import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "../numberFormat/locale";
+import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
 import { isSpreadsheetMl, readXlsxStyles } from "./styles";
@@ -275,6 +286,9 @@ export async function parseXlsx(
 
   const budget = new CellBudget();
   const implied = new ImpliedFormatStyles(styleTable.styles);
+  // SPEC-128: the read rule judges a hidden row by its display text in the
+  // default locale — what the file shows does not depend on the reader's.
+  const formatContext = workbookFormatContext({ dateSystem, format: "xlsx", indexedColors }, SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE]);
   const sheets: Sheet[] = [];
   for (const entry of workbook.sheets) {
     const sheet: Sheet = {
@@ -298,6 +312,10 @@ export async function parseXlsx(
         throw new SpreadsheetOpenError(WORKBOOK_TOO_LARGE_MESSAGE);
       }
       Object.assign(sheet, content);
+      const filter = sheet.autoFilter?.range;
+      if (filter !== undefined && sheet.rows.some((row) => row.hidden === true && row.index > filter.top && row.index <= filter.bottom)) {
+        sheet.rows = classifyHiddenRows({ styles: styleTable.styles }, sheet, formatContext);
+      }
     }
     sheets.push(sheet);
   }
