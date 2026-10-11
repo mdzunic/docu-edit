@@ -9,8 +9,9 @@
 // after a criteria change (in place, other database ranges and the claimed
 // element's unmodelled attributes and children kept), a new filter
 // (appended, or a new container placed after the named expressions), a
-// removal (an emptied container removed), a rename, a deletion renumbering
-// an anonymous range, a duplicate's own range, from scratch, write → read;
+// removal (an emptied container removed), a structural edit moving it once
+// (through the model), a rename, a deletion renumbering an anonymous range,
+// a duplicate's own range, from scratch, write → read;
 // and the table writer's visibility and its repeat-compression key.
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../../core/equality";
@@ -22,6 +23,7 @@ import type { Row, Sheet, SpreadsheetModel } from "../model";
 import { SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { readSpreadsheetBytes } from "../open";
 import { createBlankWorkbook, deleteSheet, duplicateSheet, renameSheet } from "../sheets";
+import { applyStructuralEdit } from "../structure";
 import {
   odsAutoFilterClaims,
   odsDatabaseRangeXml,
@@ -529,6 +531,25 @@ describe("writing a workbook", () => {
     setAutoFilter(alone.model, 0, undefined);
     expect(await savedSuffix(alone.model)).toBe(`<table:named-expressions/>`);
     expect((await reopen(alone.model)).sheets[0]!.autoFilter).toBeUndefined();
+  });
+
+  it("moves the range once on a structural edit — through the model, never the retained text — and writes it", async () => {
+    const { model } = await open();
+    const sheetId = model.sheets[0]!.id;
+    expect(applyStructuralEdit(model, { kind: "insertRows", sheetId, at: 0, count: 2 })).toEqual({ ok: true });
+    expect(applyStructuralEdit(model, { kind: "insertCols", sheetId, at: 0, count: 1 })).toEqual({ ok: true });
+    // The retained element is untouched: only the model moved.
+    expect(model.odsContentEnvelope!.suffix).toContain(SALES_FILTER);
+    expect(model.sheets[0]!.autoFilter!.range).toEqual({ top: 2, left: 1, bottom: 6, right: 2 });
+    expect(await savedSuffix(model)).toBe(
+      `<table:named-expressions/>${databaseRanges(DB1, SALES_FILTER.replace(`"Sheet1.A1:Sheet1.B5"`, `"Sheet1.B3:Sheet1.C7"`))}`,
+    );
+    const reread = await reopen(model);
+    expect(modelled(reread.sheets[0]!.autoFilter)).toEqual(modelled(model.sheets[0]!.autoFilter));
+    expect(visibilityOf(reread.sheets[0]!)).toEqual([
+      [4, "filterHidden"],
+      [6, "hidden"],
+    ]);
   });
 
   it("re-serialises a verbatim element's target when its sheet is renamed", async () => {
