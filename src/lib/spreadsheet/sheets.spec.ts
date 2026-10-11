@@ -1725,6 +1725,10 @@ describe("stripRetention", () => {
 
 // =========================================================================================
 
+/** An ods content suffix holding database ranges on Data!A1:B10. */
+const databaseRanges = (...rangeNames: string[]): string =>
+  `<table:database-ranges>${rangeNames.map((name) => `<table:database-range table:name="${name}" table:target-range-address="Data.A1:Data.B10"/>`).join("")}</table:database-ranges>`;
+
 describe("unconvertibleContent", () => {
   const LABELS = [
     "chart sheets",
@@ -1833,11 +1837,9 @@ describe("unconvertibleContent", () => {
     expect(unconvertibleContent(unmapped, "xlsx")).toEqual(["colour and icon filters"]);
     // The sheet's database range is its autofilter, not a table; another one is.
     const ods = filtered({ range, columns: [values], odsName: "__Anonymous_Sheet_DB__0" }, "ods");
-    const ranges = (...names: string[]): string =>
-      `<table:database-ranges>${names.map((name) => `<table:database-range table:name="${name}" table:target-range-address="Data.A1:Data.B10"/>`).join("")}</table:database-ranges>`;
-    ods.odsContentEnvelope = { prefix: "", suffix: ranges("__Anonymous_Sheet_DB__0") };
+    ods.odsContentEnvelope = { prefix: "", suffix: databaseRanges("__Anonymous_Sheet_DB__0") };
     expect(unconvertibleContent(ods, "xlsx")).toEqual([]);
-    ods.odsContentEnvelope = { prefix: "", suffix: ranges("__Anonymous_Sheet_DB__0", "Table1") };
+    ods.odsContentEnvelope = { prefix: "", suffix: databaseRanges("__Anonymous_Sheet_DB__0", "Table1") };
     expect(unconvertibleContent(ods, "xlsx")).toEqual(["tables"]);
   });
 
