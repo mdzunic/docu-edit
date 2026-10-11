@@ -13,7 +13,7 @@
 // conformance/ (one per category; conformance/row.ts says where a value may
 // come from), each run through the real parser, evaluator and a full
 // recalculation of its own workbook — the formula at Z100 of Sheet1 (or over
-// its legacy array range), the clock at 2026-10-08 09:30, RAND seeded — and
+// its legacy array range), the clock at 2026-10-08 09:30, RAND drawing 0.5 — and
 // named by its file and formula when it fails. Numbers compare at the row's
 // significant digits (15 by default). Then the completeness rules: a row's
 // root function (the call at the formula's root) belongs to its file's
@@ -218,22 +218,20 @@ const CATEGORY_FILES: readonly { file: string; rows: readonly ConformanceRow[]; 
 
 /** Functions whose Microsoft reference page carries no example table, so no
  * Excel row can exist for them (each checked against its page). */
-const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([]);
+const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([
+  // Their pages print no fixed result: the values "vary".
+  "RAND",
+  "RANDBETWEEN",
+  // Excel's `@` operator in file form: no function page.
+  "SINGLE",
+]);
 
 /** The conformance clock: 2026-10-08 09:30, local time. */
 const CONFORMANCE_NOW = new Date(2026, 9, 8, 9, 30);
 
-/** mulberry32: a seeded RAND, so a row over RAND is reproducible. */
-function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
-  };
-}
+/** The conformance RAND: every draw is 0.5, so a row over RAND or
+ * RANDBETWEEN is derived by hand from SPEC-120's rule. */
+const CONFORMANCE_RANDOM = (): number => 0.5;
 
 /** The value a row's formula computes, and its array members' values. */
 function runRow(row: ConformanceRow): { value: CellValue; members?: CellValue[][] } {
@@ -245,7 +243,7 @@ function runRow(row: ConformanceRow): { value: CellValue; members?: CellValue[][
   const hostRef = range ? row.array!.split(":")[0]! : "Z100";
   const cells: Record<string, CellSpec> = { ...row.cells, [hostRef]: range ? { formula: row.formula, array: row.array } : { formula: row.formula } };
   const model = calcWorkbook({ Sheet1: cells });
-  recalculate(model, [], { full: true, reason: "manual", now: () => CONFORMANCE_NOW, random: seededRandom(127) });
+  recalculate(model, [], { full: true, reason: "manual", now: () => CONFORMANCE_NOW, random: CONFORMANCE_RANDOM });
   const sheet = model.sheets[0]!;
   const at = (r: number, c: number): CellValue => getCell(sheet, r, c)?.value ?? null;
   if (!range) {
