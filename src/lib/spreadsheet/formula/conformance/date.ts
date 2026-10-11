@@ -233,7 +233,7 @@ export const DATE_ROWS: ConformanceRow[] = [
   // NOW
   {
     formula: "NOW()",
-    expected: 46303.395833333333,
+    expected: 46303.395833333336,
     digits: 15,
     source: "pinned",
     note: "pinned: the fixed conformance clock is 2026-10-08 09:30 = 46303 + 9.5/24 = 46303.395833333333. Microsoft's own NOW example is moment-dependent and is skipped per the brief.",

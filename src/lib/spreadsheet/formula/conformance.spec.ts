@@ -224,6 +224,26 @@ const NO_EXAMPLE_TABLE: ReadonlySet<string> = new Set<string>([
   "RANDBETWEEN",
   // Excel's `@` operator in file form: no function page.
   "SINGLE",
+  // Examples printed only as screenshots or prose (no literal data).
+  "IF",
+  "TRUE",
+  "FALSE",
+  "IFNA",
+  "VLOOKUP",
+  "XLOOKUP",
+  "TRANSPOSE",
+  "CELL",
+  "INFO",
+  "SUM",
+  "SUMPRODUCT",
+  "MMULT",
+  // Every example row needs what a row cannot hold: an external link
+  // (HYPERLINK), a named range or table or several sheets (SHEET, SHEETS), or
+  // a root that is no call of the function (SINH's `2.868*SINH(…)`).
+  "HYPERLINK",
+  "SHEET",
+  "SHEETS",
+  "SINH",
 ]);
 
 /** The conformance clock: 2026-10-08 09:30, local time. */
