@@ -22,11 +22,13 @@
 // and with the rebuilt ones absent, the root start tag and every other element
 // byte-verbatim, the first sheetView (spliced attributes, the frozen pane, the
 // selections, the rest verbatim), sheetFormatPr, mergeCells, SPEC-121's
-// empty-sheet template byte for byte, encodeXlsxText's round trip through
-// SPEC-116's decoding (property-tested), and an Excel-shaped part rebuilt
+// empty-sheet template byte for byte, encodeXlsxText's and
+// encodeXlsxAttribute's round trip through SPEC-116's decoding
+// (property-tested), and an Excel-shaped part rebuilt
 // from an unchanged model.
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../../core/equality";
+import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { unzip } from "../../core/zip";
 import { formatA1, getCell, parseA1, parseRange } from "../address";
 import { buildSpec117StylesXlsxBytes, buildSpec119FormulasXlsxBytes, SPEC117_BORDER_STYLES, SPEC117_STYLES_XLSX, SPEC117_XF, SPEC119_FORMULAS_XLSX } from "../fixtures/build";
@@ -37,7 +39,7 @@ import { CellBudget } from "../parsed";
 import { INDEXED_COLORS } from "../styles";
 import { decodeXmlText, escapeElementText } from "../xmlSplice";
 import { parseXlsx } from "./reader";
-import { decodeXmlEscapes, encodeXlsxText, xlsxTextElement } from "./sharedStrings";
+import { decodeXmlEscapes, encodeXlsxAttribute, encodeXlsxText, xlsxTextElement } from "./sharedStrings";
 import {
   emptyWorksheetXml,
   readSharedStrings,
@@ -1161,7 +1163,22 @@ describe("encodeXlsxText", () => {
       expect(decodeXmlEscapes(decodeXmlText(encoded)), JSON.stringify(text)).toBe(text);
       // …and through the reader, as a shared-string item.
       expect(readSharedStrings(`<sst xmlns="${MAIN}"><si>${xlsxTextElement(text)}</si></sst>`)[0]!.text, JSON.stringify(text)).toBe(text);
+      // encodeXlsxAttribute: the same, through attribute-value normalisation.
+      let value: string | undefined;
+      scanXml(`<a v="${encodeXlsxAttribute(text)}"/>`, (event) => {
+        if (event.type === "open") {
+          value = scanAttr(event.attrs, "v");
+        }
+      });
+      expect(xmlCarries(value!), JSON.stringify(text)).toBe(true);
+      expect(decodeXmlEscapes(value!), JSON.stringify(text)).toBe(text);
     }
+  });
+
+  it("encodeXlsxAttribute: the same encoding, `\"` escaped too, tab and line feed as character references", () => {
+    expect(encodeXlsxAttribute(`two\nlines\tand\r"q" & <b>`)).toBe(`two&#10;lines&#9;and_x000D_&quot;q&quot; &amp; &lt;b&gt;`);
+    expect(encodeXlsxAttribute("\u0001_x0041_")).toBe("_x0001__x005F_x0041_");
+    expect(encodeXlsxAttribute("plain")).toBe("plain");
   });
 
   it("gives <t> xml:space=\"preserve\" for leading or trailing whitespace or a line break", () => {

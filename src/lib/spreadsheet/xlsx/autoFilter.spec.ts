@@ -14,7 +14,9 @@ import { unzip } from "../../core/zip";
 import { zip } from "../../core/zipWriter";
 import { parseRange, type GridRange } from "../address";
 import { buildSpec128FilterXlsxBytes, SPEC128_FILTER_XLSX } from "../fixtures/build";
-import type { AutoFilter, FilterCriteria } from "../filter";
+import { applyAutoFilter, type AutoFilter, type FilterCriteria } from "../filter";
+import { SPREADSHEET_LOCALES } from "../numberFormat/locale";
+import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget } from "../parsed";
 import type { Row, Sheet, SpreadsheetModel } from "../model";
 import { readSpreadsheetBytes } from "../open";
@@ -34,6 +36,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 const range = (text: string): GridRange => parseRange(text)!;
+const FORMAT = workbookFormatContext({ dateSystem: "1900", format: "xlsx" }, SPREADSHEET_LOCALES["en-US"]);
 
 /** A worksheet part around `body` (the root's children). */
 const worksheet = (body: string, root = ROOT): string => `${DECL}${root}${body}</worksheet>`;
@@ -375,6 +378,18 @@ describe("writing: model → xml → read again", () => {
       `<autoFilter ref="A1:B7"><filterColumn colId="1"/><sortState ref="A2:B7" caseSensitive="1"><sortCondition descending="1" ref="B2:B7"/><sortCondition ref="A2:A7"/></sortState></autoFilter>`,
     ],
     ["no columns", { range: range("C3:E9"), columns: [] }, `<autoFilter ref="C3:E9"/>`],
+    [
+      "values and a condition from multi-line cells, a control character and a literal _xHHHH_ (ST_Xstring)",
+      {
+        range: RANGE,
+        columns: [
+          { colId: 0, criteria: { kind: "values", values: ["two\nlines\tand\rmore", "bell\u0001", "_x0041_"], blanks: false, dateGroups: [] } },
+          { colId: 1, criteria: { kind: "custom", join: "or", conditions: [{ operator: "equal", value: "a\nb*" }] } },
+        ],
+      },
+      `<autoFilter ref="A1:B7"><filterColumn colId="0"><filters><filter val="two&#10;lines&#9;and_x000D_more"/><filter val="bell_x0001_"/><filter val="_x005F_x0041_"/></filters></filterColumn>` +
+        `<filterColumn colId="1"><customFilters><customFilter val="a&#10;b*"/></customFilters></filterColumn></autoFilter>`,
+    ],
   ];
 
   for (const [label, filter, xml] of cases) {
@@ -734,6 +749,31 @@ describe("reading classifies the hidden rows inside an autofilter (filter.ts's r
     expect(withoutSource(reread.autoFilter)).toEqual(autoFilter);
     expect(withoutSource(reread.sortState)).toEqual(sortState);
     expect(flags(reread)).toEqual({ 3: "filter", 4: "user" });
+  });
+});
+
+describe("filter values that attribute normalisation would change", () => {
+  it("a kept multi-line, tabbed or control-character value survives save → reopen: Reapply leaves its rows shown, and the part is XML 1.0", async () => {
+    const body = regions("", [
+      ["two\nlines", 1, false],
+      ["tab\tbed", 2, false],
+      ["bell_x0001_", 3, false],
+      ["West", 4, false],
+    ]);
+    const model = await open(await book([{ name: "Sales", body }]));
+    const sheet = model.sheets[0]!;
+    const criteria: FilterCriteria = { kind: "values", values: ["two\nlines", "tab\tbed", "bell\u0001"], blanks: false, dateGroups: [] };
+    model.sheets[0] = { ...sheet, autoFilter: { range: sheet.autoFilter!.range, columns: [{ colId: 0, criteria }] }, dirty: true };
+    const bytes = await writeXlsx(model);
+    const part = decoder.decode((await unzip(bytes)).get("xl/worksheets/sheet1.xml"));
+    expect(part).toContain(`<filter val="two&#10;lines"/><filter val="tab&#9;bed"/><filter val="bell_x0001_"/>`);
+    expect(part).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+    const reread = await open(bytes);
+    const again = reread.sheets[0]!;
+    expect(again.autoFilter!.columns).toEqual([{ colId: 0, criteria }]);
+    applyAutoFilter(reread, again.id, FORMAT);
+    const hidden = (index: number): boolean => reread.sheets[0]!.rows.find((row) => row.index === index)?.filterHidden === true;
+    expect([1, 2, 3, 4].map(hidden)).toEqual([false, false, false, true]);
   });
 });
 

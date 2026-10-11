@@ -10,7 +10,10 @@
 //   hex), and escapes a literal `_xHHHH_` as `_x005F_xHHHH_` — exactly the
 //   underscores the reader's decodeXmlEscapes would otherwise consume, so the
 //   decoding reads back the text it was given (property-tested) — then
-//   XML-escapes `&`, `<` and `>`.
+//   XML-escapes `&`, `<` and `>`. encodeXlsxAttribute is the same encoding
+//   for an ST_Xstring attribute (SPEC-128's `filter@val`, `customFilter@val`):
+//   `"` escaped too, and tab and line feed written `&#9;` / `&#10;`, which
+//   attribute-value normalisation would otherwise read as spaces.
 // - SharedStringsWriter, one per save: `indexFor(cell)` is `cell.sstIndex`
 //   when present (an unchanged string keeps its item, rich runs and phonetic
 //   runs intact); else, for a plain string, the first source `<si>` that is a
@@ -30,7 +33,7 @@
 import type { DocumentTheme } from "../../core/theme";
 import { scanXml } from "../../core/xmlScanner";
 import type { Cell, TextRun } from "../model";
-import { applySplices, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { applySplices, escapeAttributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { isSpreadsheetMl, xlsxFontProperties } from "./styles";
 
 const XML_DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
@@ -108,11 +111,10 @@ function escapeCode(code: number): string {
   return `_x${code.toString(16).toUpperCase().padStart(4, "0")}_`;
 }
 
-/** A cell string as SpreadsheetML text content (see the module header): the
- * `_xHHHH_` encoding, then `&`, `<` and `>` escaped. */
-export function encodeXlsxText(text: string): string {
+/** `text` with the `_xHHHH_` encoding applied, not yet XML-escaped. */
+function xstringText(text: string): string {
   if (!needsEncoding(text)) {
-    return escapeElementText(text);
+    return text;
   }
   let out = "";
   for (let i = 0; i < text.length; i += 1) {
@@ -125,7 +127,20 @@ export function encodeXlsxText(text: string): string {
       out += text[i];
     }
   }
-  return escapeElementText(out);
+  return out;
+}
+
+/** A cell string as SpreadsheetML text content (see the module header): the
+ * `_xHHHH_` encoding, then `&`, `<` and `>` escaped. */
+export function encodeXlsxText(text: string): string {
+  return escapeElementText(xstringText(text));
+}
+
+/** A string as an ST_Xstring attribute value (see the module header): the
+ * `_xHHHH_` encoding, `&`, `<`, `>` and `"` escaped, tab and line feed as
+ * character references. decodeXmlEscapes over the parsed value reads it back. */
+export function encodeXlsxAttribute(text: string): string {
+  return escapeAttributeValue(xstringText(text)).replace(/\t/g, "&#9;").replace(/\n/g, "&#10;");
 }
 
 /** Whether a `<t>` holding `text` needs `xml:space="preserve"`. */

@@ -67,7 +67,11 @@
 //   <sortState ref="A2:D13"[ caseSensitive="1"]><sortCondition[ descending="1"]
 //     ref="C2:C13"/>…</sortState> — each key's ref its column over the
 //     state's rows; a sort's own sourceXml verbatim while it fits.
-// Elements with no children close themselves. Attribute text is escaped.
+// Elements with no children close themselves. Attribute text is ST_Xstring
+// (sharedStrings.ts's encodeXlsxAttribute: `_xHHHH_` for what XML 1.0 cannot
+// carry, tab and line feed as character references), so a filter value from
+// a multi-line cell or one holding a control character reads back as written;
+// the reader decodes `filter@val` and `customFilter@val` with decodeXmlEscapes.
 import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { colToLetters, formatRange, parseRange, type GridRange } from "../address";
 import type { AutoFilter, DateGroupItem, DynamicFilterType, FilterColumn, FilterCondition, FilterCriteria, FilterOperator } from "../filter";
@@ -75,6 +79,7 @@ import { quoteSheetName } from "../formula/print";
 import type { Row, Sheet } from "../model";
 import type { SheetSortKey, SortState } from "../sort";
 import { escapeAttributeValue } from "../xmlSplice";
+import { decodeXmlEscapes, encodeXlsxAttribute } from "./sharedStrings";
 import { isSpreadsheetMl } from "./styles";
 
 const MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -252,7 +257,7 @@ function readCriteria(slice: string, element: SliceElement): FilterCriteria | un
         if (child.local === "filter") {
           const value = scanAttr(child.attrs, "val");
           if (value !== undefined) {
-            values.push(value);
+            values.push(decodeXmlEscapes(value));
           }
         } else if (child.local === "dateGroupItem") {
           const item = readDateGroup(child);
@@ -270,7 +275,7 @@ function readCriteria(slice: string, element: SliceElement): FilterCriteria | un
           const operator = scanAttr(child.attrs, "operator");
           conditions.push({
             operator: operator !== undefined && OPERATORS.has(operator) ? (operator as FilterOperator) : "equal",
-            value: scanAttr(child.attrs, "val") ?? "",
+            value: decodeXmlEscapes(scanAttr(child.attrs, "val") ?? ""),
           });
         }
       }
@@ -548,7 +553,7 @@ export function top10Threshold(numbers: readonly number[], top: boolean, percent
 }
 
 function attrXml(name: string, value: string): string {
-  return ` ${name}="${escapeAttributeValue(value)}"`;
+  return ` ${name}="${encodeXlsxAttribute(value)}"`;
 }
 
 function elementXml(p: string, local: string, attrs: string, children: string): string {
