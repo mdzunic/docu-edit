@@ -25,10 +25,11 @@ test("opening a .docx through the file picker renders it at /doc/:id (AC-2)", as
   await page.goto("/");
   const input = page.getByTestId("open-document-input");
   // The repaired assertion's own value: SPEC-116's workbook extensions sit
-  // alongside every earlier spec's additions, and .docx/.odt are still there.
+  // alongside every earlier spec's additions (SPEC-126's AC-1 then adds
+  // .csv/.tsv after them), and .docx/.odt are still there.
   await expect(input).toHaveAttribute(
     "accept",
-    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.xlsx,.xlsm,.xltx,.xltm,.ods,.ots,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
+    ".docx,.odt,.md,.markdown,.pptx,.odp,.key,.xlsx,.xlsm,.xltx,.xltm,.ods,.ots,.csv,.tsv,.pdf,.png,.jpg,.jpeg,.gif,.svg,.webp",
   );
 
   await input.setInputFiles(wordFixture);
