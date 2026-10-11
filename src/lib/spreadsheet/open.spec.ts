@@ -661,6 +661,44 @@ describe("SPEC-128's reader step: the autofilter, the sort records and filter-hi
     expect([flagged(clean, "filterHidden"), flagged(clean, "hidden")]).toEqual([[3], []]);
   });
 
+  it("ods: a dirty sheet gains its database range's autofilter, and its hidden rows inside it are reclassified by the read rule", async () => {
+    const parts = await unzip(await buildMiniBookOdsBytes());
+    const row = (item: string): string => `<table:table-row table:style-name="ro1"><table:table-cell office:value-type="string" calcext:value-type="string"><text:p>${item}</text:p>`;
+    const hide = (item: string, visibility: string): [string, string] => [row(item), row(item).replace(`"ro1"`, `"ro1" table:visibility="${visibility}"`)];
+    // Inventory A1:D6 filtered to Widget: Gadget hidden by it, Widget by the
+    // user, the three Spare rows rejected but shown.
+    patchPart(parts, "content.xml", [
+      hide("Widget", "collapse"),
+      hide("Gadget", "filter"),
+      [
+        `</office:spreadsheet>`,
+        `<table:database-ranges><table:database-range table:name="__Anonymous_Sheet_DB__1" table:target-range-address="Inventory.A1:Inventory.D6" table:display-filter-buttons="true">` +
+          `<table:filter><table:filter-condition table:field-number="0" table:value="Widget" table:operator="="/></table:filter></table:database-range></table:database-ranges></office:spreadsheet>`,
+      ],
+    ]);
+    const read = await readSpreadsheetBytes(new Uint8Array(0), "ods", "SPEC-128 ods filter", parts);
+    const inventory = read.sheets[1]!;
+    expect(inventory.autoFilter?.range).toEqual({ top: 0, left: 0, bottom: 5, right: 3 });
+    expect([flagged(inventory, "filterHidden"), flagged(inventory, "hidden")]).toEqual([[2], [1]]);
+
+    // Stored by SPEC-124's reader: both `table:visibility` values read as
+    // the user's `hidden`, no autofilter; then a cell was edited.
+    const stored = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+    stored.readerVersion = 8;
+    stored.sheets = stored.sheets.map(({ autoFilter: _filter, ...sheet }, index) => ({
+      ...sheet,
+      id: `stored-sheet-${index}`,
+      rows: sheet.rows.map(({ filterHidden, ...each }) => (filterHidden ? { ...each, hidden: true as const } : each)),
+    }));
+    stored.sheets[1] = { ...stored.sheets[1]!, dirty: true };
+    getCell(stored.sheets[1]!, 3, 1)!.value = 2;
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const dirty = upgraded.sheets[1]!;
+    expect(dirty.autoFilter).toEqual(inventory.autoFilter);
+    expect([flagged(dirty, "filterHidden"), flagged(dirty, "hidden")]).toEqual([[2], [1]]);
+    expect(getCell(dirty, 3, 1)!.value).toBe(2);
+  });
+
   it("the step leaves a dirty sheet whose source has no autofilter as it is", async () => {
     const read = await readSpreadsheetBytes(await buildMiniBookXlsxBytes(), "xlsx", "mini-book");
     const sheet = { ...read.sheets[0]!, rows: [{ index: 2, cells: [], hidden: true as const }], dirty: true as const };
