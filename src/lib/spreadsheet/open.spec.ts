@@ -14,7 +14,9 @@
 // its step is the first to run on a dirty sheet — preserved cell content and
 // sheet protection come back from the retained source onto the cells whose
 // value and formula are unchanged — and a dirty sheet's style ids move into
-// the re-read style table.
+// the re-read style table. SPEC-128 moves it to 9: a version-8 record's
+// dirty sheet gains its autofilter, sort records, sort/autofilter permits
+// and filter-hidden rows from its retained source; a clean one is re-read.
 import { afterEach, describe, expect, it } from "vitest";
 import { decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
@@ -136,9 +138,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7 and SPEC-124 to 8, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(8);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8 and SPEC-128 to 9, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(9);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -545,8 +547,9 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
 
 describe("SPEC-123's reader step: named cell styles and the protection's format permits", () => {
   it("moved the reader to version 7 with its step from 6 (SPEC-124's from 7 follows it)", () => {
-    expect(READER_UPGRADES.map((step) => step.from)).toContain(6);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(7);
+    const at = READER_UPGRADES.findIndex((step) => step.from === 6);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(READER_UPGRADES[at + 1]!.from).toBe(7);
   });
 
   it("a dirty sheet's record regains namedStyles, keeps its source styles' ids, and the step is idempotent", async () => {
@@ -571,7 +574,98 @@ describe("SPEC-123's reader step: named cell styles and the protection's format 
     expect(getCell(sheet, 2, 5)!.styleId).toBe(SPEC123_XF.good);
     expect(upgraded.styles[SPEC123_XF.good]!.namedStyle).toBe("Good");
     const named = upgraded.namedStyles;
-    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(upgraded, sheet, decodedPartBytes(upgraded.opaque));
+    await READER_UPGRADES.find((step) => step.from === 6)!.upgradeDirtySheet(upgraded, sheet, decodedPartBytes(upgraded.opaque));
     expect(upgraded.namedStyles).toBe(named);
+  });
+});
+
+// --- SPEC-128's step (8 → 9) ------------------------------------------------------------------
+
+/** The rows' indices carrying a visibility flag. */
+const flagged = (sheet: Sheet, flag: "hidden" | "filterHidden"): number[] => sheet.rows.filter((row) => row[flag]).map((row) => row.index);
+
+describe("SPEC-128's reader step: the autofilter, the sort records and filter-hidden rows", () => {
+  it("moved the reader to version 9 with its step from 8, last", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(9);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(8);
+  });
+
+  it("a version-8 record re-reads its clean filtered sheet, and its dirty one gains the autofilter, the sort records and its filter-hidden rows from the retained source", async () => {
+    const parts = await unzip(await buildMiniBookXlsxBytes());
+    // Summary (clean): A2:E5 filtered to North — South's row 4 hidden by it,
+    // Total's row 5 rejected but shown (reading never changes what shows).
+    patchPart(parts, "xl/worksheets/sheet1.xml", [
+      [`<row r="4" spans="1:5" x14ac:dyDescent="0.35">`, `<row r="4" spans="1:5" hidden="1" x14ac:dyDescent="0.35">`],
+      [`</sheetData>`, `</sheetData><autoFilter ref="A2:E5"><filterColumn colId="0"><filters><filter val="North"/></filters></filterColumn></autoFilter>`],
+    ]);
+    // Data (to be edited): A1:C500 filtered to odd parity and last sorted by
+    // Amount descending — rows 3 and 5 (even) hidden by it, row 4 (odd) by
+    // the user — plus a worksheet sort record and the sort/autofilter permits.
+    patchPart(parts, "xl/worksheets/sheet2.xml", [
+      [`<row><c><v>2</v></c><c><v>3</v></c>`, `<row hidden="1"><c><v>2</v></c><c><v>3</v></c>`],
+      [`<row><c><v>3</v></c><c><v>4.5</v></c>`, `<row hidden="1"><c><v>3</v></c><c><v>4.5</v></c>`],
+      [`<row><c><v>4</v></c><c><v>6</v></c>`, `<row hidden="1"><c><v>4</v></c><c><v>6</v></c>`],
+      [
+        `</sheetData>`,
+        `</sheetData><sheetProtection sheet="1" sort="0" autoFilter="0"/>` +
+          `<autoFilter ref="A1:C500"><filterColumn colId="2"><filters><filter val="odd"/></filters></filterColumn>` +
+          `<sortState ref="A2:C500"><sortCondition descending="1" ref="B2:B500"/></sortState></autoFilter>` +
+          `<sortState ref="E2:F9"><sortCondition ref="F2:F9"/></sortState>`,
+      ],
+    ]);
+    const read = await readSpreadsheetBytes(new Uint8Array(0), "xlsx", "SPEC-128 filters", parts);
+    // The current reader models both filters and classifies the hidden rows.
+    const [summary, data] = read.sheets;
+    expect(summary!.autoFilter?.range).toEqual({ top: 1, left: 0, bottom: 4, right: 4 });
+    expect([flagged(summary!, "filterHidden"), flagged(summary!, "hidden")]).toEqual([[3], []]);
+    expect(data!.autoFilter?.sort?.keys).toEqual([{ col: 1, descending: true }]);
+    expect(data!.sortState?.keys).toEqual([{ col: 5, descending: false }]);
+    expect(data!.protection).toMatchObject({ sheet: true, allowSort: true, allowAutoFilter: true });
+    expect([flagged(data!, "filterHidden"), flagged(data!, "hidden")]).toEqual([[2, 4], [3]]);
+
+    // Stored by SPEC-124's reader (version 8): no autofilter or sort record
+    // anywhere, every hidden row the user's, no sort or autofilter permit;
+    // then A2 was edited on the (dirty) Data sheet.
+    const stored = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+    stored.readerVersion = 8;
+    stored.sheets = stored.sheets.map(({ autoFilter: _filter, sortState: _sort, protection, ...sheet }, index) => {
+      const old: Sheet = {
+        ...sheet,
+        id: `stored-sheet-${index}`,
+        rows: sheet.rows.map(({ filterHidden, ...row }) => (filterHidden ? { ...row, hidden: true as const } : row)),
+      };
+      if (protection) {
+        const { allowSort: _s, allowAutoFilter: _a, ...rest } = protection;
+        old.protection = rest;
+      }
+      return old;
+    });
+    stored.sheets[1] = { ...stored.sheets[1]!, dirty: true };
+    getCell(stored.sheets[1]!, 1, 0)!.value = 100;
+    expect(flagged(stored.sheets[1]!, "hidden")).toEqual([2, 3, 4]);
+
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    // The dirty sheet keeps its edit and gains what the source says.
+    const dirty = upgraded.sheets[1]!;
+    expect(dirty.id).toBe("stored-sheet-1");
+    expect(getCell(dirty, 1, 0)!.value).toBe(100);
+    expect(dirty.autoFilter).toEqual(data!.autoFilter);
+    expect(dirty.sortState).toEqual(data!.sortState);
+    expect(dirty.protection).toEqual(data!.protection);
+    expect([flagged(dirty, "filterHidden"), flagged(dirty, "hidden")]).toEqual([[2, 4], [3]]);
+    // The clean sheet is re-read, keeping its stored id.
+    const clean = upgraded.sheets[0]!;
+    expect(clean.id).toBe("stored-sheet-0");
+    expect(clean.autoFilter).toEqual(summary!.autoFilter);
+    expect([flagged(clean, "filterHidden"), flagged(clean, "hidden")]).toEqual([[3], []]);
+  });
+
+  it("the step leaves a dirty sheet whose source has no autofilter as it is", async () => {
+    const read = await readSpreadsheetBytes(await buildMiniBookXlsxBytes(), "xlsx", "mini-book");
+    const sheet = { ...read.sheets[0]!, rows: [{ index: 2, cells: [], hidden: true as const }], dirty: true as const };
+    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(read, sheet, decodedPartBytes(read.opaque));
+    expect(sheet.autoFilter).toBeUndefined();
+    expect(sheet.rows).toEqual([{ index: 2, cells: [], hidden: true }]);
   });
 });
