@@ -54,7 +54,7 @@ describe("FilterPopover (SPEC-128)", () => {
     expect(all.attributes("role")).toBe("checkbox");
     expect(all.text()).toContain("(Select All)");
     expect(all.attributes("aria-checked")).toBe("true");
-    expect(values(wrapper).map((value) => value.text())).toEqual(["✓East", "✓North", "✓West", "✓(Blanks)"]);
+    expect(values(wrapper).map((value) => value.text())).toEqual(["East", "North", "West", "(Blanks)"]);
     expect(values(wrapper).every((value) => value.attributes("role") === "checkbox" && value.attributes("aria-checked") === "true")).toBe(true);
     expect(wrapper.find('[data-testid="filter-not-all"]').exists()).toBe(false);
     expect(wrapper.get('[data-testid="filter-ok"]').text()).toBe("OK");
@@ -81,7 +81,7 @@ describe("FilterPopover (SPEC-128)", () => {
   it("the search narrows the list case-insensitively, (Select All) reads (Select All Search Results), and OK keeps only the checked matches", async () => {
     const wrapper = mountPopover();
     await wrapper.get('[data-testid="filter-search"]').setValue("ST");
-    expect(values(wrapper).map((value) => value.text())).toEqual(["✓East", "✓West"]);
+    expect(values(wrapper).map((value) => value.text())).toEqual(["East", "West"]);
     expect(wrapper.get('[data-testid="filter-select-all"]').text()).toContain("(Select All Search Results)");
     await values(wrapper)[1]!.trigger("click");
     await wrapper.get('[data-testid="filter-ok"]').trigger("click");

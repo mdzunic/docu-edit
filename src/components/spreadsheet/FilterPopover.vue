@@ -9,7 +9,8 @@
 // data-condition), the search box (`filter-search`, narrowing the list
 // case-insensitively), "(Select All)" (`filter-select-all`, tri-state through
 // aria-checked; "(Select All Search Results)" while searching) and one
-// `filter-value` checkbox per entry, "Not all items showing"
+// `filter-value` checkbox per entry (its text the value alone — the check
+// marks are drawn by CSS), "Not all items showing"
 // (`filter-not-all`) past FILTER_VALUE_LIST_MAX, then OK (`filter-ok`,
 // disabled while nothing is checked) and Cancel (`filter-cancel`).
 // OK emits apply(keys) — the checked entries' keys; while searching, only
@@ -145,7 +146,7 @@ function onDocPointerDown(event = new PointerEvent("pointerdown")) {
 onMounted(() => {
   document.addEventListener("pointerdown", onDocPointerDown, true);
   void nextTick(() => {
-    const first = root.value ? root.value.querySelector('[data-testid="filter-search"], [data-testid="filter-clear"]') : null;
+    const first = root.value ? (root.value.querySelector('[data-testid="filter-search"]') ?? root.value.querySelector('[data-testid="filter-clear"]')) : null;
     if (first instanceof HTMLElement) {
       first.focus();
     }
@@ -269,8 +270,9 @@ onBeforeUnmount(() => {
         >
           <span
             class="filter-mark"
+            :class="{ 'is-checked': allState === 'true', 'is-mixed': allState === 'mixed' }"
             aria-hidden="true"
-          >{{ allState === "true" ? "✓" : allState === "mixed" ? "–" : "" }}</span>
+          />
           <span>{{ term ? "(Select All Search Results)" : "(Select All)" }}</span>
         </button>
         <button
@@ -285,8 +287,9 @@ onBeforeUnmount(() => {
         >
           <span
             class="filter-mark"
+            :class="{ 'is-checked': checks[entry.key] }"
             aria-hidden="true"
-          >{{ checks[entry.key] ? "✓" : "" }}</span>
+          />
           <span>{{ entry.text }}</span>
         </button>
       </div>
@@ -432,6 +435,15 @@ onBeforeUnmount(() => {
   font-size: var(--text-xs);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);
+}
+
+/* The marks are drawn, not text, so an item's text is its value alone. */
+.filter-mark.is-checked::after {
+  content: "✓";
+}
+
+.filter-mark.is-mixed::after {
+  content: "–";
 }
 
 .filter-not-all,
