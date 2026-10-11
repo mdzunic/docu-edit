@@ -58,9 +58,10 @@
 //   (`table:consolidation`, `table:dde-links`, else `</office:spreadsheet>`).
 //   The owner's element:
 //   - while `autoFilter.sourceXml` is the claimed element (unchanged since
-//     read), that text through the owner's sheet pass (a rename rewrites its
-//     `table:target-range-address`) — verbatim — with an anonymous
-//     `table:name` renumbered to the sheet's index when it moved;
+//     read), that text verbatim through the owner's sheet pass, but for its
+//     `table:target-range-address`, re-serialised when the sheet's name is
+//     no longer the one it names, and an anonymous `table:name` renumbered
+//     to the sheet's index when the sheet moved;
 //   - otherwise the claimed element patched: `table:name` (anonymous →
 //     `__Anonymous_Sheet_DB__<sheet index>`, a named one keeps its name),
 //     `table:target-range-address`, `table:display-filter-buttons="true"`,
@@ -761,12 +762,15 @@ function ownedElement(claim: OdsAutoFilterClaim, autoFilter: AutoFilter, sheetNa
     return patchedElement(claim, autoFilter, sheetName, index, pass);
   }
   const text = pass(claim.element.xml);
-  const name = anonymousSheetDbName(index);
-  if (!isAnonymous(claim.element.name) || claim.element.name === name) {
-    return text;
+  const original = startTagAt(text, 0);
+  let tag = original;
+  if (claim.element.sheet !== sheetName) {
+    tag = setAttribute(tag, "table:target-range-address", odsTargetRangeAddress(sheetName, autoFilter.range));
   }
-  const tag = startTagAt(text, 0);
-  return setAttribute(tag, "table:name", name) + text.slice(tag.length);
+  if (isAnonymous(claim.element.name)) {
+    tag = setAttribute(tag, "table:name", anonymousSheetDbName(index));
+  }
+  return tag === original ? text : tag + text.slice(original.length);
 }
 
 export interface OdsAutoFilterWriteOptions {
