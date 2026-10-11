@@ -27,16 +27,19 @@
 // | 3 | merges | source merges move, destination merges are replaced |
 // | 4 | retained | SPEC-124's rewriteRetainedReferences with moveMapper |
 // | 5 | autofilter | SPEC-128 "Moves": an autofilter or worksheet sort record entirely inside the source moves by the offset onto the destination sheet (see "5. autofilter") |
+// | 6 | conditionalFormats | SPEC-129 "Moves": formats travel with their cells — a format wholly inside the source moves, the part of one partly inside becomes a new format at the destination, the destination's previous rules go, every rule formula re-pointed (see "6. conditionalFormats") |
 // Later specs that register a SPEC-124 ReferenceAdjuster for something that
-// travels with cells or points at them — conditional formats (129),
-// validations (130), chart references (132), defined names and tables (133),
-// notes and hyperlinks (135), pivots (139) — register a MoveAdjuster with
-// the same id here, with its row in move.spec.ts's registry contract;
-// drawings (131) and page breaks (136) deliberately do not.
-import type { CellRef, GridRange } from "./address";
+// travels with cells or points at them — validations (130), chart
+// references (132), defined names and tables (133), notes and hyperlinks
+// (135), pivots (139) — register a MoveAdjuster with the same id here, with
+// its row in move.spec.ts's registry contract; drawings (131) and page
+// breaks (136) deliberately do not.
+import { subtractRanges, type CellRef, type GridRange } from "./address";
+import { mapFormatFormulas, withoutFormatSource } from "./cfFormulas";
 import { forEachPosition, PASTE_MERGE_MESSAGE, PASTE_PAST_EDGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
 import { firstLockedCell, isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { MAX_COPY_CELLS } from "./clipboardPayload";
+import { formatOrigin, mintCfId, reanchorRule, renumberPriorities, sheetFormats, type CfRule, type ConditionalFormat } from "./conditionalFormats";
 import { applyAutoFilter, type AutoFilter } from "./filter";
 import { rewriteReferences, type RefPart, type ReferenceNode } from "./formula/references";
 import { rangesIntersect } from "./merges";
@@ -484,9 +487,159 @@ const autofilterAdjuster: MoveAdjuster = {
   },
 };
 
+// --- 6. conditionalFormats ----------------------------------------------------------------------
+// SPEC-129 "Moves": formats travel with their cells, as in Excel. The source
+// is read before anything is written (source and destination may overlap):
+// - Each format on the source sheet loses the part of its ranges inside
+//   `move.from`. A format whose every range lies inside travels whole —
+//   same id, its ranges offset onto the destination sheet. Otherwise the
+//   cut-out pieces become a new format on the destination (fresh format and
+//   rule ids, no x14Id: the writer pairs it afresh) carrying the source's
+//   rules rebased (reanchorRule) onto the pieces' origin, so each piece
+//   means what it meant in place.
+// - Every format on the destination sheet that did not just arrive loses the
+//   destination rectangle (subtractRanges) — the overwritten cells' rules go
+//   — and a format left with no range is removed. A staying format whose
+//   origin changed (cut or overwritten) is re-anchored onto its new origin,
+//   once, from the origin it had.
+// - Priorities: on the same sheet each new rule ranks right after the rule
+//   it copies; on another sheet the arriving rules (a whole format's too)
+//   rank lowest, in their source order — a whole format crossing sheets also
+//   drops its x14Ids, as a GUID pairs only within one worksheet. Both
+//   sheets are then renumbered densely.
+// - Every formula of every format on every sheet goes through
+//   repointFormula (cfFormulas.ts's table), an arriving format's as a moved
+//   formula hosted on the source sheet — references to moved cells follow
+//   them, its unqualified references gain the source sheet's name across
+//   sheets — every other format's as its own sheet's.
+// Touched formats are replaced without their sourceXml; a sheet whose
+// formats changed is marked dirty (moveRange marks both ends anyway).
+
+/** The cells two ranges share, or null. */
+function overlap(a: GridRange, b: GridRange): GridRange | null {
+  const top = Math.max(a.top, b.top);
+  const bottom = Math.min(a.bottom, b.bottom);
+  const left = Math.max(a.left, b.left);
+  const right = Math.min(a.right, b.right);
+  return top <= bottom && left <= right ? { top, left, bottom, right } : null;
+}
+
+/** `format` on `ranges` (some of its own, or what is left of them): the
+ * same format when they are its ranges, null when none is left, else
+ * re-anchored from its origin onto theirs, without its sourceXml. */
+function onRanges(format: ConditionalFormat, ranges: GridRange[]): ConditionalFormat | null {
+  if (ranges.length === 0) {
+    return null;
+  }
+  if (ranges.length === format.ranges.length && ranges.every((range, i) => range === format.ranges[i])) {
+    return format;
+  }
+  const from = formatOrigin(format);
+  const to = formatOrigin({ ranges });
+  return withoutFormatSource({ ...format, ranges, rules: format.rules.map((rule) => reanchorRule(rule, from, to)) });
+}
+
+/** A rule without its x14 GUID. */
+function withoutX14Id(rule: CfRule): CfRule {
+  if (rule.x14Id === undefined) {
+    return rule;
+  }
+  const { x14Id: _id, ...rest } = rule;
+  return rest as CfRule;
+}
+
+const conditionalFormatsAdjuster: MoveAdjuster = {
+  id: "conditionalFormats",
+  move(model, move) {
+    const from = sheetOf(model, move.fromSheetId);
+    const to = sheetOf(model, move.toSheetId);
+    const { dRow, dCol } = offsetOf(move);
+    if (!from || !to || (from === to && dRow === 0 && dCol === 0)) {
+      return;
+    }
+    const same = from === to;
+    const dest = moveDestination(move);
+    // The source's formats with the moved part cut out, and what travels.
+    const staying: { format: ConditionalFormat; ranges: GridRange[]; arrived?: true }[] = [];
+    const arriving: ConditionalFormat[] = [];
+    for (const format of sheetFormats(from)) {
+      const inside = format.ranges.flatMap((range) => overlap(range, move.from) ?? []);
+      if (inside.length === 0) {
+        staying.push({ format, ranges: format.ranges });
+        continue;
+      }
+      if (format.ranges.every((range) => contains(move.from, range))) {
+        const whole = withoutFormatSource({
+          ...format,
+          ranges: format.ranges.map((range) => shifted(range, dRow, dCol)),
+          rules: same ? format.rules : format.rules.map(withoutX14Id),
+        });
+        if (same) {
+          staying.push({ format: whole, ranges: whole.ranges, arrived: true });
+        } else {
+          arriving.push(whole);
+        }
+        continue;
+      }
+      staying.push({ format, ranges: subtractRanges(format.ranges, move.from) });
+      const origin = formatOrigin(format);
+      const pieceOrigin = formatOrigin({ ranges: inside });
+      const { id: _id, ranges: _ranges, sourceXml: _source, rules, ...fields } = format;
+      arriving.push({
+        ...fields,
+        id: mintCfId(),
+        ranges: inside.map((range) => shifted(range, dRow, dCol)),
+        rules: rules.map((rule) => ({
+          ...withoutX14Id(reanchorRule(rule, origin, pieceOrigin)),
+          id: mintCfId(),
+          // Right after the rule it copies (another sheet: placed below).
+          priority: same ? rule.priority + 0.5 : rule.priority,
+        })),
+      });
+    }
+    // The destination loses the overwritten rectangle — what arrived excepted.
+    const overwritten = (format: ConditionalFormat, ranges: GridRange[], arrived?: true): ConditionalFormat | null =>
+      arrived ? format : onRanges(format, subtractRanges(ranges, dest));
+    const fromNext = same
+      ? staying.flatMap(({ format, ranges, arrived }) => overwritten(format, ranges, arrived) ?? [])
+      : staying.flatMap(({ format, ranges }) => onRanges(format, ranges) ?? []);
+    const toNext = same ? fromNext : sheetFormats(to).flatMap((format) => overwritten(format, format.ranges) ?? []);
+    // On another sheet the arrivals rank below every rule already there.
+    const lowest = same ? 0 : Math.max(0, ...toNext.flatMap((format) => format.rules.map((rule) => rule.priority)));
+    toNext.push(...arriving.map((format) => (lowest === 0 ? format : { ...format, rules: format.rules.map((rule) => ({ ...rule, priority: lowest + rule.priority })) })));
+    const moved = new Set<ConditionalFormat>([...toNext.slice(toNext.length - arriving.length), ...staying.flatMap(({ format, arrived }) => (arrived ? [format] : []))]);
+    // Every formula re-pointed; then each touched sheet renumbered.
+    const names = new Map(model.sheets.map((sheet) => [sheet.id, sheet.name] as const));
+    const nameOf = (id: string): string => names.get(id) ?? "";
+    let changed = false;
+    const sheets = model.sheets.map((sheet) => {
+      const formats = sheet === to ? toNext : sheet === from ? fromNext : sheetFormats(sheet);
+      const host = { format: model.format, sheetName: sheet.name };
+      const own = (formula: string): string => repointFormula(formula, sheet.id, move, nameOf);
+      const travelled = (formula: string): string => repointFormula(formula, move.fromSheetId, move, nameOf, move.toSheetId);
+      let next = formats.map((format) => {
+        const map = moved.has(format) ? travelled : own;
+        return mapFormatFormulas(format, { relative: map, absolute: map }, host);
+      });
+      if (sheet === from || sheet === to) {
+        next = renumberPriorities(next);
+      }
+      const before = sheetFormats(sheet);
+      if (next.length === before.length && next.every((format, i) => format === before[i])) {
+        return sheet;
+      }
+      changed = true;
+      return { ...sheet, conditionalFormats: next, dirty: true as const };
+    });
+    if (changed) {
+      model.sheets = sheets;
+    }
+  },
+};
+
 // --- the registry ------------------------------------------------------------------------------
 
-export const MOVE_ADJUSTERS: MoveAdjuster[] = [cellsAdjuster, formulasAdjuster, mergesAdjuster, retainedAdjuster, autofilterAdjuster];
+export const MOVE_ADJUSTERS: MoveAdjuster[] = [cellsAdjuster, formulasAdjuster, mergesAdjuster, retainedAdjuster, autofilterAdjuster, conditionalFormatsAdjuster];
 
 /** One move (see the module header). */
 export function moveRange(model: SpreadsheetModel, move: RangeMove): MoveResult {
