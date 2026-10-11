@@ -121,13 +121,13 @@ function gridSheet(
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** A foreign sheet (chartsheet, dialogsheet, macrosheet): a placeholder, its
  * part carried verbatim. */
 function foreignSheet(name: string, partName: string): Sheet {
-  return { id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
 }
 
 /** A hand-built workbook with no source package (`opaque` is empty, so it
@@ -135,6 +135,7 @@ function foreignSheet(name: string, partName: string): Sheet {
  * current reader version so no upgrade runs. */
 function handBuiltBook(sheets: Sheet[], activeSheetIndex = 0): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: crypto.randomUUID(),
     title: "Hand built",
@@ -176,7 +177,7 @@ function millionRowSheet(): Sheet {
     }
     rows.push({ index, cells });
   }
-  return { id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** The tab strip, one "name:aria-selected:tabindex" string per tab. */
@@ -830,5 +831,44 @@ describe("SpreadsheetView sheet management (SPEC-121)", () => {
     await flushPromises();
     expect(names(wrapper)).toEqual(["One", "Two", "Stash", "Three"]);
     expect(tabStrip(wrapper)).toContain("Stash:true:0");
+  });
+});
+
+describe("SpreadsheetView conditional formatting (SPEC-129)", () => {
+  it("Format ▸ Conditional formatting… opens the rules manager in the side panel, whose steps undo from the Edit menu", async () => {
+    localStorage.removeItem("docu-edit:sheet-side-panel");
+    const { store, mountSheets } = await loadModules();
+    const sheet = gridSheet("Scores", [
+      [1, 1, 140],
+      [2, 1, 90],
+    ]);
+    sheet.conditionalFormats = [
+      { id: "f1", ranges: [{ top: 1, left: 1, bottom: 2, right: 1 }], rules: [{ id: "r1", priority: 1, kind: "cellIs", operator: "greaterThan", formulas: ["100"], dxfId: 0 }] },
+    ];
+    const model = handBuiltBook([sheet]);
+    model.dxfs = [{ fill: { kind: "solid", color: "#FFC7CE" }, font: { color: "#9C0006" } }];
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+    expect(wrapper.find('[data-testid="cf-manager"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="menu-title-format"]').trigger("click");
+    await wrapper.get('[data-testid="sheet-menu-conditional-formatting"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="side-panel"]').attributes("aria-label")).toBe("Conditional Formatting");
+    const descriptions = () => wrapper.findAll('[data-testid="cf-rule-description"]').map((each) => each.text());
+    expect(descriptions()).toEqual(["Cell value > 100"]);
+
+    // A direct preset applies to the selection (A1) at priority 1 ...
+    await wrapper.get('[data-testid="cf-add"]').trigger("click");
+    await wrapper.get('[data-testid="cf-preset-above-average"]').trigger("click");
+    await flushPromises();
+    expect(descriptions()).toEqual(["Above average", "Cell value > 100"]);
+
+    // ... as one step Edit ▸ Undo names and takes back.
+    await wrapper.get('[data-testid="menu-title-edit"]').trigger("click");
+    const undo = wrapper.get('[data-testid="sheet-menu-undo"]');
+    expect(undo.text()).toContain("Conditional formatting");
+    await undo.trigger("click");
+    await flushPromises();
+    expect(descriptions()).toEqual(["Cell value > 100"]);
   });
 });

@@ -24,6 +24,7 @@ import { MAX_COLS, MAX_ROWS, type ColumnSpan, type Row, type Sheet } from "./mod
 
 function sheetWith(partial: Partial<Sheet> = {}): Sheet {
   return {
+    conditionalFormats: [],
     id: "sheet-1",
     name: "Sheet1",
     visibility: "visible",

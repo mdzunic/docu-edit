@@ -40,11 +40,12 @@ const DATE_STYLE = 1;
 const PERCENT_STYLE = 2;
 
 function sheet(fields: Partial<Sheet> = {}): Sheet {
-  return { id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 function model(s: Sheet): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "book",
     title: "T",

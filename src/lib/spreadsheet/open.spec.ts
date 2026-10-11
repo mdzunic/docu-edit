@@ -17,6 +17,10 @@
 // the re-read style table. SPEC-128 moves it to 9: a version-8 record's
 // dirty sheet gains its autofilter, sort records, sort/autofilter permits
 // and filter-hidden rows from its retained source; a clean one is re-read.
+// SPEC-129 moves it to 10: a version-9 record's dirty sheet gains its
+// conditional formats from its retained source, their dxfs interned into the
+// model's table (read from the retained styles part when the model has none);
+// a clean one is re-read.
 import { afterEach, describe, expect, it } from "vitest";
 import { decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
@@ -36,8 +40,11 @@ import {
   buildSpec120FullCalcXlsxBytes,
   buildSpec120ManualXlsxBytes,
   buildSpec123StylesXlsxBytes,
+  buildSpec129CfOdsBytes,
+  buildSpec129CfXlsxBytes,
   SPEC123_XF,
 } from "./fixtures/build";
+import { modelledDxf } from "./conditionalFormats";
 import type { Cell, Sheet, SpreadsheetModel } from "./model";
 import {
   assembleSpreadsheet,
@@ -138,9 +145,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8 and SPEC-128 to 9, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(9);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9 and SPEC-129 to 10, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(10);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -166,10 +173,11 @@ describe("reader versions", () => {
     expect(model.preview?.cells[1]?.[1]).toBe("Revenue");
   });
 
-  it("omits empty optional fields when assembling (styles and the default style id are required)", () => {
+  it("omits empty optional fields when assembling (styles, the default style id and SPEC-129's dxfs are required)", () => {
     const model = assembleSpreadsheet("t", "xlsx", {
-      sheets: [{ id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
+      sheets: [{ conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
       styles: [{}],
+      dxfs: [],
       activeSheetIndex: 0,
       dateSystem: "1900",
       opaque: [],
@@ -180,6 +188,7 @@ describe("reader versions", () => {
         "activeSheetIndex",
         "dateSystem",
         "defaultStyleId",
+        "dxfs",
         "format",
         "id",
         "kind",
@@ -590,9 +599,9 @@ const odsItemRow = (item: string): string => `<table:table-row table:style-name=
 const hide = (item: string, visibility: string): [string, string] => [odsItemRow(item), odsItemRow(item).replace(`"ro1"`, `"ro1" table:visibility="${visibility}"`)];
 
 describe("SPEC-128's reader step: the autofilter, the sort records and filter-hidden rows", () => {
-  it("moved the reader to version 9 with its step from 8, last", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(9);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(8);
+  it("moved the reader to version 9 with its step from 8 (SPEC-129's from 9 follows it)", () => {
+    expect(READER_UPGRADES.findIndex((step) => step.from === 8)).toBe(READER_UPGRADES.length - 2);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(9);
   });
 
   it("a version-8 record re-reads its clean filtered sheet, and its dirty one gains the autofilter, the sort records and its filter-hidden rows from the retained source", async () => {
@@ -708,5 +717,73 @@ describe("SPEC-128's reader step: the autofilter, the sort records and filter-hi
     await READER_UPGRADES.at(-1)!.upgradeDirtySheet(read, sheet, decodedPartBytes(read.opaque));
     expect(sheet.autoFilter).toBeUndefined();
     expect(sheet.rows).toEqual([{ index: 2, cells: [], hidden: true }]);
+  });
+});
+
+// --- SPEC-129's step ------------------------------------------------------------------------
+
+/** A sheet's conditional formats as the step's tests compare them: no minted
+ * ids, each dxfId replaced by the dxf it names in its model's table. */
+function formatsForCompare(model: SpreadsheetModel, sheet: Sheet) {
+  return sheet.conditionalFormats.map(({ id: _id, ...format }) => ({
+    ...format,
+    rules: format.rules.map(({ id: _rule, dxfId, ...rule }) => ({ ...rule, dxf: dxfId === undefined ? undefined : modelledDxf(model.dxfs[dxfId]!) })),
+  }));
+}
+
+/** `read` as SPEC-128's reader (version 9) stored it — no differential-style
+ * table, no conditional formats, stable sheet ids — then B4 of the sheet at
+ * `dirtyIndex` edited to 130. */
+function storedAtVersion9(read: SpreadsheetModel, dirtyIndex: number): SpreadsheetModel {
+  const { dxfs: _dxfs, ...rest } = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+  const stored = { ...rest, readerVersion: 9 } as unknown as SpreadsheetModel;
+  stored.sheets = stored.sheets.map(({ conditionalFormats: _formats, ...sheet }, index) => ({ ...sheet, id: `stored-sheet-${index}` }) as Sheet);
+  stored.sheets[dirtyIndex] = { ...stored.sheets[dirtyIndex]!, dirty: true };
+  getCell(stored.sheets[dirtyIndex]!, 3, 1)!.value = 130;
+  return stored;
+}
+
+describe("SPEC-129's reader step: conditional formats and the differential styles", () => {
+  it("moved the reader to version 10 with its step from 9, last", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(10);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(9);
+  });
+
+  for (const [format, build] of [
+    ["xlsx", buildSpec129CfXlsxBytes],
+    ["ods", buildSpec129CfOdsBytes],
+  ] as const) {
+    it(`${format}: a version-9 record re-reads its clean sheet, and its dirty one gains its conditional formats and their dxfs from the retained source`, async () => {
+      const read = await readSpreadsheetBytes(await build(), format, "SPEC-129 rules");
+      const [scores, more] = read.sheets;
+      expect(scores!.conditionalFormats.length).toBeGreaterThan(0);
+      expect(more!.conditionalFormats.length).toBeGreaterThan(0);
+      const stored = storedAtVersion9(read, 0);
+      expect(stored.dxfs).toBeUndefined();
+      expect(stored.sheets[0]!.conditionalFormats).toBeUndefined();
+
+      const upgraded = await upgradeSpreadsheetModel(stored);
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+      // The dirty sheet keeps its edit and gains every rule its source holds
+      // (each block's source text with it), each rule's dxf in the model's table.
+      const dirty = upgraded.sheets[0]!;
+      expect(dirty.id).toBe("stored-sheet-0");
+      expect(getCell(dirty, 3, 1)!.value).toBe(130);
+      expect(formatsForCompare(upgraded, dirty)).toEqual(formatsForCompare(read, scores!));
+      // The clean sheet is re-read, keeping its stored id.
+      const clean = upgraded.sheets[1]!;
+      expect(clean.id).toBe("stored-sheet-1");
+      expect(formatsForCompare(upgraded, clean)).toEqual(formatsForCompare(read, more!));
+    });
+  }
+
+  it("fills a model's absent dxfs from the retained styles part, then takes the dirty sheet's rules", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec129CfXlsxBytes(), "xlsx", "SPEC-129 rules");
+    const model = { ...read, dxfs: undefined } as unknown as SpreadsheetModel;
+    const { conditionalFormats: _formats, ...rest } = read.sheets[0]!;
+    const sheet = { ...rest, dirty: true } as Sheet;
+    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(model, sheet, decodedPartBytes(read.opaque));
+    expect(model.dxfs.map(modelledDxf)).toEqual(read.dxfs.map(modelledDxf));
+    expect(formatsForCompare(model, sheet)).toEqual(formatsForCompare(read, read.sheets[0]!));
   });
 });

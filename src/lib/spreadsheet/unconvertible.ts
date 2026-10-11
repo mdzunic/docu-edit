@@ -12,8 +12,14 @@
 // spec's table): SPEC-128 deleted "filters" — an autofilter's range,
 // criteria and sort cross — and added "colour and icon filters", the
 // criteria it keeps verbatim (an xlsx `preserved` criterion, an ods
-// `odsUnmappedFilter`). A row may also yield item-level labels (SPEC-131's
-// "Form control on Sheet1") by returning them from its marker.
+// `odsUnmappedFilter`). SPEC-129 replaced "conditional formatting" — rules,
+// their ranges and differential styles cross — with "some conditional
+// formatting", what its stripRetention drops: a `preserved` rule (another
+// format's XML, in either direction) and, going to .ods, an icon set's
+// reversed order (no wire form there). A row may also yield item-level
+// labels (SPEC-131's "Form control on Sheet1") by returning them from its
+// marker.
+import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
 import type { SpreadsheetModel } from "./model";
 import { partTextOf, readSourceWorkbook, relationshipKind, relationshipsOf, targetPart, type PartLookup } from "./xlsx/package";
@@ -135,6 +141,15 @@ const odsPageSetup: Marker = ({ model, parts }) => {
 const verbatimFilters: Marker = ({ model }) =>
   model.sheets.some((sheet) => sheet.autoFilter !== undefined && (sheet.autoFilter.odsUnmappedFilter !== undefined || sheet.autoFilter.columns.some((column) => column.criteria?.kind === "preserved")));
 
+/** SPEC-129: a conditional-format rule the copy drops — a `preserved` rule,
+ * or (`toOds`) an icon set in reversed order. */
+function someConditionalFormatting(toOds: boolean): Marker {
+  return ({ model }) =>
+    model.sheets.some((sheet) =>
+      sheetFormats(sheet).some((format) => format.rules.some((rule) => rule.kind === "preserved" || (toOds && rule.kind === "iconSet" && rule.icons.reverse))),
+    );
+}
+
 /** A formula that cannot cross: unparsed text or a data table. */
 const untranslatableFormulas: Marker = ({ model }) =>
   model.sheets.some((sheet) => sheet.rows.some((row) => row.cells.some((cell) => cell.formulaUnparsed === true || cell.dataTableXml !== undefined)));
@@ -150,7 +165,7 @@ export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
   { label: "images and shapes", xlsx: xlsxImagesAndShapes, ods: odsImagesAndShapes },
   { label: "charts", xlsx: anyPart(/^xl\/charts\/chart[^/]*\.xml$/), ods: anyTableHas("<draw:object") },
   { label: "comments", xlsx: worksheetRelationship("comments"), ods: anyTableHas("<office:annotation") },
-  { label: "conditional formatting", xlsx: anyWorksheetHas("conditionalFormatting"), ods: anyTableHas("<calcext:conditional-formats") },
+  { label: "some conditional formatting", xlsx: someConditionalFormatting(true), ods: someConditionalFormatting(false) },
   { label: "data validation", xlsx: anyWorksheetHas("<dataValidations"), ods: envelopeHas("<table:content-validations") },
   { label: "named ranges", xlsx: xlsxNamedRanges, ods: (source) => envelopeHas("<table:named-expressions")(source) || anyTableHas("<table:named-expressions")(source) },
   { label: "tables", xlsx: anyPart(/^xl\/tables\/[^/]+\.xml$/), ods: odsTables },

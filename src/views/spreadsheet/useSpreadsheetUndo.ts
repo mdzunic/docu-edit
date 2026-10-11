@@ -7,13 +7,14 @@
 // Snapshots are by reference. A snapshot holds, for EVERY sheet, a shallow
 // copy whose object/array fields are structuredCloned — except
 // SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, SPEC-124's `columns`,
-// `merges` and `frozen`, and SPEC-128's `autoFilter` and `sortState`, which
-// every command replaces and never mutates), kept by reference because
+// `merges` and `frozen`, SPEC-128's `autoFilter` and `sortState`, and
+// SPEC-129's `conditionalFormats`, which every command replaces and never
+// mutates), kept by reference because
 // copy-on-write makes that safe — so an undo
 // restores them by identity — plus every WORKBOOK_SNAPSHOT_FIELDS value by
-// reference (each a primitive or copy-on-write: `styles` grows by
-// replacement, `opaque` and `odsContentEnvelope` are replaced when they
-// change). Taking one costs O(sheets + small metadata), never O(cells) or
+// reference (each a primitive or copy-on-write: `styles` and SPEC-129's
+// `dxfs` grow by replacement, `opaque` and `odsContentEnvelope` are replaced
+// when they change). Taking one costs O(sheets + small metadata), never O(cells) or
 // O(package). A later spec that adds a sheet field able to grow with the
 // cell count makes it copy-on-write and appends it to
 // SHEET_BY_REFERENCE_FIELDS; one that adds workbook-level state appends to
@@ -56,7 +57,7 @@ export const MAX_UNDO_STEPS = 100;
 
 export type UndoScope = "workbook" | { sheetId: string };
 
-export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = ["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState"];
+export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = ["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState", "conditionalFormats"];
 
 export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
   "activeSheetIndex",
@@ -64,6 +65,7 @@ export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
   "styles",
   "opaque",
   "odsContentEnvelope",
+  "dxfs",
 ];
 
 export interface SpreadsheetUndoDeps {
@@ -93,6 +95,10 @@ export interface SpreadsheetUndo {
   /** SPEC-125: bumped by every committed step, undo, redo and reset — "any
    * edit" (the marching ants and a pending cut end on it). */
   revision: Ref<number>;
+  /** SPEC-129: calls `listener` on every committed step, undo and redo,
+   * with its label, after the model changed and before the pipeline
+   * re-renders. */
+  onStep(listener: (kind: "commit" | "undo" | "redo", label: string) => void): void;
 }
 
 /** A stored state: every sheet (small fields cloned, the by-reference
@@ -174,6 +180,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
   const undoLabel = ref("");
   const redoLabel = ref("");
   const revision = ref(0);
+  const stepListeners: ((kind: "commit" | "undo" | "redo", label: string) => void)[] = [];
   /** The step being recorded, and what the model held when it was. */
   let pending: { step: Step; sheets: Sheet[]; fields: unknown[] } | null = null;
 
@@ -255,12 +262,15 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     }
     redoStack.length = 0;
     refresh();
+    for (const listener of stepListeners) {
+      listener("commit", recorded.step.label);
+    }
     pipeline(model, recorded.step.snapshot.sheets, recorded.step.snapshot, alsoRecalc);
   }
 
   /** Swaps the live state for a stored step's, pushing the live one onto
    * the opposite stack. */
-  function swap(from: Step[], to: Step[]): void {
+  function swap(from: Step[], to: Step[], kind: "undo" | "redo"): void {
     const model = deps.model.value;
     if (!model || from.length === 0) {
       return;
@@ -272,6 +282,9 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     const before = model.sheets;
     install(model, step.snapshot);
     refresh();
+    for (const listener of stepListeners) {
+      listener(kind, step.label);
+    }
     pipeline(model, before, step.snapshot, step.alsoRecalc);
     const scopeId = step.scope === "workbook" ? undefined : step.scope.sheetId;
     const target = model.sheets.find((sheet) => sheet.id === scopeId) ?? model.sheets[model.activeSheetIndex];
@@ -281,11 +294,11 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
   }
 
   function undo(): void {
-    swap(undoStack, redoStack);
+    swap(undoStack, redoStack, "undo");
   }
 
   function redo(): void {
-    swap(redoStack, undoStack);
+    swap(redoStack, undoStack, "redo");
   }
 
   function reset(): void {
@@ -318,5 +331,9 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     }
   });
 
-  return { record, commit, undo, redo, reset, canUndo, canRedo, undoLabel, redoLabel, revision };
+  function onStep(listener: (kind: "commit" | "undo" | "redo", label: string) => void): void {
+    stepListeners.push(listener);
+  }
+
+  return { record, commit, undo, redo, reset, canUndo, canRedo, undoLabel, redoLabel, revision, onStep };
 }

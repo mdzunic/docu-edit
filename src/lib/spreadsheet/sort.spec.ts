@@ -21,11 +21,11 @@ import {
 } from "./sort";
 
 function sheet(fields: Partial<Sheet> = {}): Sheet {
-  return { id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 function model(s: Sheet, fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {
-  return { kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 9, sheets: [s], activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}, { font: { bold: true } }], defaultStyleId: 0, ...fields };
+  return { dxfs: [], kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 9, sheets: [s], activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}, { font: { bold: true } }], defaultStyleId: 0, ...fields };
 }
 
 const cell = (col: number, value: CellValue, extra: Partial<Cell> = {}): Cell => ({ col, value, ...extra });

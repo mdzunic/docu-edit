@@ -68,6 +68,7 @@ const ACCENT1_DARKER_25: SheetColorRef = { theme: "accent1", lumMod: 0.75, xlsxT
 /** A model with every optional field populated and every kind of value. */
 function handBuiltModel(): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "doc-1",
     title: "Quarterly budget",
@@ -76,6 +77,7 @@ function handBuiltModel(): SpreadsheetModel {
     readerVersion: 1,
     sheets: [
       {
+        conditionalFormats: [],
         id: "sheet-a",
         name: "Summary",
         visibility: "visible",
@@ -135,6 +137,7 @@ function handBuiltModel(): SpreadsheetModel {
         topLeftCell: { row: 1, col: 1 },
       },
       {
+        conditionalFormats: [],
         id: "sheet-b",
         name: "Chart1",
         visibility: "hidden",
@@ -147,6 +150,7 @@ function handBuiltModel(): SpreadsheetModel {
         merges: [],
       },
       {
+        conditionalFormats: [],
         id: "sheet-c",
         name: "Secret",
         visibility: "veryHidden",

@@ -148,6 +148,10 @@ export const ICON_PATHS: Record<string, string[]> = {
   "sort-ascending": ["M6 15V5", "M3.5 7.5L6 5l2.5 2.5", "M11 6h2", "M11 10h4", "M11 14h6"],
   "sort-descending": ["M6 5v10", "M3.5 12.5L6 15l2.5-2.5", "M11 6h6", "M11 10h4", "M11 14h2"],
 
+  // ---- Conditional formatting (SPEC-129's side-panel tab) ------------------
+  // A small grid whose cells are shaded by rule: a bar, a highlight, a dot.
+  "conditional-format": ["M4 4h12v12H4z", "M4 8h12", "M4 12h12", "M8 4v12", "M9.5 5.5h4.5", "M5.5 10h1", "M10 14h.01"],
+
   // ---- Chevrons & primitives ----------------------------------------------
   "chevron-up": ["M5 12l5-5 5 5"],
   "chevron-down": ["M5 8l5 5 5-5"],

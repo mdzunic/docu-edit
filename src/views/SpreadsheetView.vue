@@ -58,7 +58,7 @@ const sortFilter = useSortFilter({ book, viewState, selection, sheetMetrics, edi
 const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle, sortFilter });
 const csvImport = useCsvImport({ book, undo: editing.undo, router: useRouter() });
 const assist = useFunctionAssist({ ...editing.cell });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter }));
 </script>
 
 <template>

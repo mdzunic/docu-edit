@@ -7,9 +7,9 @@
 // (core/xmlScanner.ts, in xlsx/sheetXml.ts) — a million-cell sheet as a DOM
 // costs an order of magnitude more memory than its text.
 //
-// What is read (everything else — dxfs, drawings, comments, tables,
-// calcChain, VBA, custom XML — stays in `opaque`, untouched; nothing here
-// writes, so a download stays byte-identical):
+// What is read (everything else — drawings, comments, tables, calcChain,
+// VBA, custom XML — stays in `opaque`, untouched; nothing here writes, so a
+// download stays byte-identical):
 // - sheets in `<sheets>` order: name, `state` → visibility, and the
 //   relationship type → kind (worksheet → "grid"; chartsheet, dialogsheet,
 //   macrosheet → "foreign", shown as a placeholder and carried verbatim);
@@ -48,6 +48,10 @@
 //   display text through the default locale (en-US) and the workbook's date
 //   system — and stays `hidden` otherwise. A row the file shows is never
 //   hidden by reading. `_xlnm._FilterDatabase` is derived, not read.
+// - SPEC-129: styles.xml's `<dxfs>` → `dxfs` (xlsx/styles.ts readXlsxDxfs)
+//   and each worksheet's conditional formats (xlsx/conditionalFormats.ts,
+//   from the blocks and extLst sheetXml.ts cuts out), an x14 rule's inline
+//   dxf interned into the same `dxfs`.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -290,6 +294,8 @@ export async function parseXlsx(
   // default locale — what the file shows does not depend on the reader's.
   const formatContext = workbookFormatContext({ dateSystem, format: "xlsx", indexedColors }, SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE]);
   const sheets: Sheet[] = [];
+  // SPEC-129: styles.xml's dxfs, which an x14 rule's inline dxf joins.
+  const dxfs = { dxfs: styleTable.dxfs };
   for (const entry of workbook.sheets) {
     const sheet: Sheet = {
       id: crypto.randomUUID(),
@@ -302,11 +308,12 @@ export async function parseXlsx(
       defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
       defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
       merges: [],
+      conditionalFormats: [],
     };
     const bytes = parts.get(entry.partName);
     if (entry.kind === "grid" && bytes) {
       const content = scanned(entry.partName, () =>
-        readWorksheet(partText(bytes), entry.name, { sharedStrings, dateSystem, budget, mdw, indexedColors, implied }),
+        readWorksheet(partText(bytes), entry.name, { sharedStrings, dateSystem, budget, mdw, indexedColors, implied, dxfs }),
       );
       if (content === null) {
         throw new SpreadsheetOpenError(WORKBOOK_TOO_LARGE_MESSAGE);
@@ -327,6 +334,7 @@ export async function parseXlsx(
     dateSystem,
     opaque: await encodeOpaque(parts),
     properties: coreProperties(parts),
+    dxfs: dxfs.dxfs,
   };
   if (theme !== undefined) {
     parsed.theme = theme;

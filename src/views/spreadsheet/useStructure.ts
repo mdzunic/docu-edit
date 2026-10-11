@@ -58,6 +58,7 @@ import { initialSize } from "./sheetSizes";
 import type { SheetMetrics } from "./useSheetMetrics";
 import type { SheetSelectionController } from "./useSheetSelection";
 import type { SheetViewState } from "./useSheetViewState";
+import type { ConditionalFormatsView } from "./useConditionalFormats";
 import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
 
 export interface StructureDeps {
@@ -65,7 +66,7 @@ export interface StructureDeps {
   viewState: Pick<SheetViewState, "syncInto" | "update">;
   selection: Pick<SheetSelectionController, "selection" | "set" | "formatContext">;
   sheetMetrics: Pick<SheetMetrics, "nav">;
-  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing"> };
+  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing">; conditionalFormats?: Pick<ConditionalFormatsView, "invalidate"> };
   /** Autofit's measurer — default: the canvas one. */
   measurer?: CellTextMeasurer;
   /** Shows a toast — default: useToasts' addToast. */
@@ -138,6 +139,7 @@ export function useStructure(deps: StructureDeps) {
     });
     if (done && made.length > 0) {
       deps.viewState.update(made[0]!.sheetId, { selection: made.reduce(adjustSelection, live) });
+      deps.editing.conditionalFormats?.invalidate("all"); // SPEC-129: every cell may have moved
     }
   }
 

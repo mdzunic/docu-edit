@@ -18,8 +18,9 @@
 // Paste and Paste special… (`clipboard`), Paste special's dialog and the
 // drag-move's overwrite question (`rangeMove`). SPEC-128: the Sort dialog,
 // the filter popover and its dialogs and the refusal alert
-// (SortFilterSurfaces, the grid context's `sortFilter`). Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// (SortFilterSurfaces, the grid context's `sortFilter`). SPEC-129: the
+// sheet's side panel beside the sheet (SheetSidePanel, from `editing`).
+// Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
@@ -38,6 +39,7 @@ import SheetHeaderContextMenu from "./SheetHeaderContextMenu.vue";
 import SheetInsertDeleteDialog from "./SheetInsertDeleteDialog.vue";
 import SheetMergeWarningDialog from "./SheetMergeWarningDialog.vue";
 import SheetMoveOverwriteDialog from "./SheetMoveOverwriteDialog.vue";
+import SheetSidePanel from "./SheetSidePanel.vue";
 import SheetSizeDialog from "./SheetSizeDialog.vue";
 import SheetTabColorPicker from "./SheetTabColorPicker.vue";
 import SheetTabDeleteDialog from "./SheetTabDeleteDialog.vue";
@@ -120,27 +122,30 @@ const tabs = computed(() => {
         @cancel="assist.closeDialog()"
       />
     </template>
-    <div
-      :id="panelId"
-      class="workbook-sheet"
-      role="tabpanel"
-      :aria-labelledby="book.activeSheet.value ? `sheet-tab-${book.activeSheet.value.id}` : undefined"
-    >
+    <div class="workbook-main">
       <div
-        v-if="book.activeSheet.value?.kind === 'foreign'"
-        class="sheet-foreign"
-        data-testid="sheet-foreign"
+        :id="panelId"
+        class="workbook-sheet"
+        role="tabpanel"
+        :aria-labelledby="book.activeSheet.value ? `sheet-tab-${book.activeSheet.value.id}` : undefined"
       >
-        {{ book.foreignMessage.value }}
+        <div
+          v-if="book.activeSheet.value?.kind === 'foreign'"
+          class="sheet-foreign"
+          data-testid="sheet-foreign"
+        >
+          {{ book.foreignMessage.value }}
+        </div>
+        <SheetGrid
+          v-else-if="book.activeSheet.value"
+          :key="`${book.activeSheet.value.id}:${book.generation.value}`"
+          :sheet="book.activeSheet.value"
+          :context="grid"
+          :show-formulas="grid.formulas.showFormulas.value"
+          @cycle-sheet="book.cycleSheet"
+        />
       </div>
-      <SheetGrid
-        v-else-if="book.activeSheet.value"
-        :key="`${book.activeSheet.value.id}:${book.generation.value}`"
-        :sheet="book.activeSheet.value"
-        :context="grid"
-        :show-formulas="grid.formulas.showFormulas.value"
-        @cycle-sheet="book.cycleSheet"
-      />
+      <SheetSidePanel :editing="editing" />
     </div>
     <SheetTabs
       :tabs="tabs"
@@ -260,9 +265,17 @@ const tabs = computed(() => {
   flex-direction: column;
 }
 
+/* The sheet and SPEC-129's side panel, side by side. */
+.workbook-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 .workbook-sheet {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
 }
 
 .sheet-foreign {

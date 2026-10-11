@@ -89,6 +89,18 @@
 //     style table while the step runs — adoptStyles moves them after — and
 //     a row's display text is read through `model.styles`, the re-read
 //     table, which holds every source entry at the same index.)
+// 10 — SPEC-129: conditional formats (`Sheet.conditionalFormats` — xlsx
+//     `<conditionalFormatting>` with the worksheet's x14 ext, ods
+//     `calcext:conditional-formats` or, failing those, legacy `style:map`s)
+//     and the differential-style table (`model.dxfs` — xlsx `<dxfs>`, ods the
+//     named styles rules apply). Every re-read gains them. The step, run for
+//     each dirty sheet, fills `dxfs` from the retained styles part when the
+//     model lacks it, and takes the sheet's conditional formats from its own
+//     retained source — whose references SPEC-124's and SPEC-125's retained
+//     adjusters kept moving with every structural edit and move, so their
+//     positions fit the edited sheet — each rule's dxf interned into the
+//     model's table (internDxf finds the source entry it came from) and its
+//     formulas' source-time sheet names remapped onto the record's names.
 //
 // SPEC-126: a csv/tsv workbook never runs a ReaderUpgrade — its source is
 // one delimited-text part, read by csv/parse.ts, which adds no element to
@@ -108,9 +120,10 @@ import type { ParsedSpreadsheet } from "./parsed";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { workbookFormatContext } from "./numberFormat/render";
 import { buildPreview } from "./preview";
-import { cellStyle, defaultStyles, internStyle, styleKey } from "./styles";
+import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
+import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 9;
+export const SPREADSHEET_READER_VERSION = 10;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -120,8 +133,11 @@ export interface ReaderUpgrade {
   from: number; // upgrades a record at `from` to `from + 1`
   /** Brings ONE dirty sheet up to date by reading the newly modelled element
    *  from the sheet's retained source and merging it into the model (the
-   *  sheet object is updated in place; its rows stay copy-on-write). */
-  upgradeDirtySheet(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>): void | Promise<void>;
+   *  sheet object is updated in place; its rows stay copy-on-write).
+   *  `record` is the stored model being upgraded — its sheet list, names and
+   *  retained package — for a step that maps source-time names (absent: the
+   *  model's own). */
+  upgradeDirtySheet(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>, record?: SpreadsheetModel): void | Promise<void>;
 }
 
 export const READER_UPGRADES: ReaderUpgrade[] = [
@@ -237,7 +253,73 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       sheet.rows = classifyHiddenRows(model, sheet, workbookFormatContext(model, READ_PREVIEW_LOCALE));
     },
   },
+  {
+    // SPEC-129 (9 → 10): conditional formats and the differential styles
+    // (see the version history).
+    from: 9,
+    async upgradeDirtySheet(model, sheet, sourceParts, record) {
+      if (model.dxfs === undefined) {
+        model.dxfs = (await sourcePackageRead(model.format, sourceParts)).dxfs;
+      }
+      const source = await retainedSheetSource(model, sheet, sourceParts);
+      if (!source || source.sheet.conditionalFormats.length === 0) {
+        sheet.conditionalFormats = [];
+        return;
+      }
+      const { remapSheetReferences, isEmptyRemap } = await import("./formula/sheetRefs");
+      const { copyRemap, sourceSheetRemap } = await import("./sourceNames");
+      const { LazyParts } = await import("./xlsx/package");
+      const stored = record ?? model;
+      const remap = copyRemap(sourceSheetRemap(stored, new LazyParts(stored.opaque)), sheet);
+      const rename = isEmptyRemap(remap) ? (text: string) => text : (text: string) => remapSheetReferences(text, remap);
+      sheet.conditionalFormats = source.sheet.conditionalFormats.map((format) => ({
+        ...format,
+        rules: format.rules.map((rule) => upgradedRule(rule, source.dxfs, model, rename)),
+      }));
+    },
+  },
 ];
+
+// --- SPEC-129's step -------------------------------------------------------------------------
+
+/** A value object's formula, or undefined for a plain number (a `formula`
+ * value is always one; num/percent/percentile hold a number or a formula). */
+function valueFormula(value: CfValue): string | undefined {
+  if (value.value === undefined) {
+    return undefined;
+  }
+  return value.type === "formula" || !/^\s*[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?\s*$/i.test(value.value) ? value.value : undefined;
+}
+
+function renamedValue(value: CfValue, rename: (text: string) => string): CfValue {
+  const formula = valueFormula(value);
+  return formula === undefined ? value : { ...value, value: rename(formula) };
+}
+
+/** A rule read from a retained source, made the model's: its dxf interned
+ * into the model's table (from the read's own), its formulas' sheet names
+ * remapped. */
+function upgradedRule(rule: CfRule, readDxfs: readonly Dxf[], model: SpreadsheetModel, rename: (text: string) => string): CfRule {
+  let next: CfRule = rule;
+  if (rule.dxfId !== undefined) {
+    const dxf = readDxfs[rule.dxfId];
+    next = dxf === undefined ? next : { ...next, dxfId: internDxf(model, dxf) };
+  }
+  switch (next.kind) {
+    case "cellIs":
+      return { ...next, formulas: next.formulas.map(rename) };
+    case "expression":
+      return { ...next, formula: rename(next.formula) };
+    case "colorScale":
+      return { ...next, stops: next.stops.map((stop) => ({ ...stop, at: renamedValue(stop.at, rename) })) };
+    case "dataBar":
+      return { ...next, bar: { ...next.bar, min: renamedValue(next.bar.min, rename), max: renamedValue(next.bar.max, rename) } };
+    case "iconSet":
+      return { ...next, icons: { ...next.icons, thresholds: next.icons.thresholds.map((threshold) => ({ ...threshold, at: renamedValue(threshold.at, rename) })) } };
+    default:
+      return next;
+  }
+}
 
 // --- SPEC-122's step ------------------------------------------------------------------------
 
@@ -252,6 +334,27 @@ function sourcePackageRead(format: SpreadsheetFormat, sourceParts: Map<string, U
     sourceReads.set(sourceParts, read);
   }
   return read;
+}
+
+/** The sheet read from its own retained source (retainedSheetRead) with the
+ * dxf table its rules' ids index into — the read's own. */
+async function retainedSheetSource(
+  model: SpreadsheetModel,
+  sheet: Sheet,
+  sourceParts: Map<string, Uint8Array>,
+): Promise<{ sheet: Sheet; dxfs: Dxf[] } | undefined> {
+  if (model.format === "xlsx") {
+    const read = await retainedSheetRead(model, sheet, sourceParts);
+    return read ? { sheet: read, dxfs: (await sourcePackageRead("xlsx", sourceParts)).dxfs } : undefined;
+  }
+  const envelope = model.odsContentEnvelope;
+  if (sheet.sourceXml === undefined || !envelope) {
+    return undefined;
+  }
+  const parts = new Map(sourceParts);
+  parts.set("content.xml", new TextEncoder().encode(envelope.prefix + sheet.sourceXml + envelope.suffix));
+  const parsed = await parse(new Uint8Array(0), "ods", parts);
+  return parsed.sheets[0] ? { sheet: parsed.sheets[0], dxfs: parsed.dxfs } : undefined;
 }
 
 /** The sheet as the current reader reads it from its own retained source:
@@ -418,6 +521,7 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
     opaque: parsed.opaque,
     styles: parsed.styles.length > 0 ? parsed.styles : defaultStyles(),
     defaultStyleId: 0,
+    dxfs: parsed.dxfs,
   };
   if (parsed.theme !== undefined) {
     model.theme = parsed.theme;
@@ -523,7 +627,12 @@ async function upgradeCsvModel(model: SpreadsheetModel, format: "csv" | "tsv"): 
   const sheet = model.sheets[0];
   const unedited = dialect !== undefined && model.sheets.length === 1 && sheet?.id === dialect.sheetId && !sheet.dirty && !model.structureDirty;
   if (!unedited) {
-    return { ...model, readerVersion: SPREADSHEET_READER_VERSION };
+    // Re-stamped, never re-read: SPEC-129's fields start empty, as a read
+    // of a delimited-text file leaves them.
+    const sheets = model.sheets.some((each) => each.conditionalFormats === undefined)
+      ? model.sheets.map((each) => (each.conditionalFormats === undefined ? { ...each, conditionalFormats: [] } : each))
+      : model.sheets;
+    return { ...model, sheets, dxfs: model.dxfs ?? [], readerVersion: SPREADSHEET_READER_VERSION };
   }
   const { csvSourceBytes, readCsvBytes } = await import("./csv/parse");
   const fresh = readCsvBytes(csvSourceBytes(model), format, model.title, {
@@ -583,7 +692,7 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
     if (stored.dirty) {
       if (stored.partName !== undefined || stored.sourceXml !== undefined) {
         for (const step of pending) {
-          await step.upgradeDirtySheet(fresh, stored, sourceParts);
+          await step.upgradeDirtySheet(fresh, stored, sourceParts, model);
         }
       }
       adoptStyles(stored, model.styles, fresh, model.readerVersion < 7);

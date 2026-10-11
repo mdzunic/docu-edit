@@ -21,6 +21,7 @@ const { useSheetViewState, VIEW_STATE_PERSIST_DELAY_MS } = await import("./useSh
 
 function sheetOf(id: string): Sheet {
   return {
+    conditionalFormats: [],
     id,
     name: id,
     visibility: "visible",
@@ -35,6 +36,7 @@ function sheetOf(id: string): Sheet {
 
 function bookOf(): SpreadsheetModel {
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "book",
     title: "Book",

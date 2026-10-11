@@ -111,6 +111,7 @@ describe("SpreadsheetStatusBar formatted aggregates and the locale control (SPEC
   const styles: CellStyle[] = [{}, { numberFormat: "#,##0.00" }, { numberFormat: "0.0%" }, { builtinFormatId: 14, numberFormat: "m/d/yyyy" }];
   /** B2 "Label", C2 1234.5 (#,##0.00), B3 0.5 (0.0%), C3 2 (General); B5 46303 and C5 1 (dates). */
   const sheet: Sheet = {
+    conditionalFormats: [],
     id: "s1",
     name: "Sheet1",
     visibility: "visible",
@@ -126,6 +127,7 @@ describe("SpreadsheetStatusBar formatted aggregates and the locale control (SPEC
     merges: [],
   };
   const model: SpreadsheetModel = {
+    dxfs: [],
     kind: "spreadsheet",
     id: "w",
     title: "W",

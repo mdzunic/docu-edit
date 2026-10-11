@@ -21,8 +21,19 @@
 //   an `external` token) are left alone; strings, names and structured
 //   references are not references here. Callers never pass
 //   `formulaUnparsed` text (wire text is never transformed).
-import { adjustIndex, adjustSpan, editAxis, type StructuralEdit } from "../structure";
-import { rewriteReferences, type RefPart, type ReferenceNode } from "./references";
+//
+// adjustAnchoredFormula (SPEC-129 "Structural edits"; SPEC-130 states the
+// identical contract) is for a conditional format's cellIs/expression
+// formula, stored relative to the format's origin (its first range's
+// pre-edit top-left): when the edit deletes the origin's row or column, the
+// text is first rebased with shiftFormula onto the first surviving cell of
+// `firstRange` (pre-edit coordinates — the row/col right after the deleted
+// band when that range's own top-left lies in it, else unchanged), so the
+// formula keeps meaning "this cell" for whatever cell now leads the
+// surviving range; adjustFormula then applies as it would to any formula.
+import type { CellRef, GridRange } from "../address";
+import { adjustIndex, adjustSpan, editAxis, isInsert, type StructuralEdit } from "../structure";
+import { rewriteReferences, shiftFormula, type RefPart, type ReferenceNode } from "./references";
 
 /** Whether a reference's sheet — as written, undefined when it names none —
  * is the edited sheet. */
@@ -77,4 +88,37 @@ export function adjustReference(ref: ReferenceNode, edit: StructuralEdit): Refer
     return undefined;
   }
   return { ...ref, start: withIndex(ref.start, axis, nextStart), end: withIndex(endPart, axis, nextEnd) };
+}
+
+/** `range`'s first surviving cell under `edit`, in pre-edit coordinates: the
+ * row/col right after the deleted band when the range's own top-left lies in
+ * it, else the top-left as it was. */
+function firstSurvivingCell(range: GridRange, edit: StructuralEdit): CellRef {
+  if (editAxis(edit) === "row") {
+    const row = adjustIndex(range.top, edit) === null ? edit.at + edit.count : range.top;
+    return { row, col: range.left };
+  }
+  const col = adjustIndex(range.left, edit) === null ? edit.at + edit.count : range.left;
+  return { row: range.top, col };
+}
+
+/** A conditional-format rule formula (relative to `origin`) adjusted for
+ * `edit` (see the module header): when the edit deletes the origin's row or
+ * column, rebased first onto `firstRange`'s first surviving cell, then
+ * adjusted as any formula is. */
+export function adjustAnchoredFormula(
+  text: string,
+  origin: CellRef,
+  firstRange: GridRange,
+  hostSheetId: string,
+  edit: StructuralEdit,
+  sheetNameOf: (sheetId: string) => string,
+): string {
+  const originIndex = editAxis(edit) === "row" ? origin.row : origin.col;
+  if (isInsert(edit) || adjustIndex(originIndex, edit) !== null) {
+    return adjustFormula(text, hostSheetId, edit, sheetNameOf);
+  }
+  const target = firstSurvivingCell(firstRange, edit);
+  const rebased = shiftFormula(text, target.row - origin.row, target.col - origin.col);
+  return adjustFormula(rebased, hostSheetId, edit, sheetNameOf);
 }

@@ -77,6 +77,10 @@
 //   table's autofilter (ods/databaseRanges.ts's claim) → `Sheet.autoFilter`
 //   (its criteria, sort record, verbatim element and name; a filter that
 //   does not decompose per column kept as `odsUnmappedFilter`).
+// - SPEC-129: each table's `calcext:conditional-formats` (else the legacy
+//   `style:map`s of its cells' automatic styles) → `conditionalFormats`,
+//   the named styles they apply → `dxfs` (ods/conditionalFormats.ts, after
+//   the scan, from each sheet's sourceXml).
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -98,6 +102,8 @@ import { IMPLIED_PERCENTAGE, IMPLIED_TIME, impliedDateCode } from "../impliedFor
 import { odsDateValueToSerial, odsTimeValueToSerial } from "../serial";
 import { readOdsFormula } from "../formula/dialect";
 import type { NamedCellStyle } from "../styles";
+import type { Dxf } from "../conditionalFormats";
+import { readOdsTableConditionalFormats, type OdsCfReadContext } from "./conditionalFormats";
 import { readOdsSettings, type OdsSettings } from "./settings";
 import {
   emptyOdsStyleSheet,
@@ -424,6 +430,9 @@ interface OdsContent {
   styles: CellStyle[];
   /** SPEC-123: the common table-cell styles, in document order. */
   namedStyles: NamedCellStyle[];
+  /** SPEC-129: the differential styles the tables' conditional formats
+   * apply, one per named style. */
+  dxfs: Dxf[];
   prefix: string;
   suffix: string;
   dates: { dateSystem: "1900" | "1904"; odsNullDate?: string };
@@ -520,6 +529,7 @@ export function readOdsContent(
       defaultColWidthPx: layout.defaultColWidthPx,
       defaultRowHeightPt: layout.defaultRowHeightPt,
       merges: layout.merges,
+      conditionalFormats: [],
     };
     if (done.tabColor !== undefined) {
       sheet.tabColor = done.tabColor;
@@ -804,10 +814,18 @@ export function readOdsContent(
   for (const [index, autoFilter] of readOdsAutoFilters(suffix, sheets.map((sheet) => sheet.name))) {
     sheets[index]!.autoFilter = autoFilter;
   }
+  // SPEC-129: each table's conditional formats, the styles they apply
+  // gathered into one dxf table.
+  const conditional = { dxfs: [] as Dxf[] };
+  const cfContext: OdsCfReadContext = { styles: styleBook(), namespaces };
+  for (const sheet of sheets) {
+    sheet.conditionalFormats = readOdsTableConditionalFormats(sheet.sourceXml!, cfContext, conditional);
+  }
   return {
     sheets,
     styles: styleBook().styles,
     namedStyles: styleBook().namedStyles(),
+    dxfs: conditional.dxfs,
     prefix: xml.slice(0, firstTableStart),
     suffix,
     dates,
@@ -892,6 +910,7 @@ export async function parseOds(
     odsContentEnvelope: { prefix: content.prefix, suffix: content.suffix },
     opaque: await encodeOpaque(parts),
     properties: meta ? parseOdfMeta(partText(meta)) : {},
+    dxfs: content.dxfs,
   };
   if (content.dates.odsNullDate !== undefined) {
     parsed.odsNullDate = content.dates.odsNullDate;

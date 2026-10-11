@@ -6692,3 +6692,553 @@ export async function buildSpec128FilterOdsBytes(): Promise<Uint8Array> {
   const cellCount = Object.keys(O.headers).length + O.rows.reduce((sum, row) => sum + (row.region === null ? 3 : 4), 0);
   return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
 }
+
+// ============================================================================
+// SPEC-129 (xlsx) — spec129-cf.xlsx: conditional formatting
+// ============================================================================
+// Excel 365 on the classic Office theme (Calibri 11), its worksheets rooted
+// with `mc:Ignorable="x14ac xr xr2 xr3"`, every `<conditionalFormatting>`
+// carrying an `xr:uid`, and styles.xml's three `<dxfs>` written as Excel
+// writes a dxf fill — a `patternFill` with no patternType and only `bgColor`:
+// dxf 0 Excel's "Light red fill with dark red text", dxf 1 its "Yellow fill
+// with dark yellow text", dxf 2 bold theme text on a tinted theme fill.
+// "Scores" (active), 12 records under header row 1, rules by priority:
+//   1. B2:B13 cellIs greaterThan 100 (dxf 0) — B3 (140) is the only score
+//      above 100; B4 is 90.
+//   2. C2:C13 a solid data bar with its x14 twin (one GUID, gradient="0",
+//      axis automatic, autoMin/autoMax): distinct values, C2 the clearly
+//      negative one, C5 slightly negative.
+//   3. D2:D13 3Arrows, thresholds percent 0/33/67 with gte="0"; D2 the
+//      column's largest value (so it shows the green up arrow, index 2).
+//   4. E2:E13 a 3-colour scale (min, 50th percentile, max) of tinted theme
+//      colours.
+//   5. F2:F13 an x14-only 3Stars icon set (no base twin).
+//   6. G2:G13 a custom x14 icon set (`custom="1"` + `x14:cfIcon`s).
+//   7. A2:H13 expression `$H2="late"` with stopIfTrue (dxf 1) — rows 3 and 4
+//      are "on time"; ranked last, so it hides no bar, icon or scale.
+// Its `<extLst>` holds the conditional-formatting ext and, after it, a
+// sparkline ext that must stay verbatim.
+// "More": top10 percent (rank 20), aboveAverage stdDev="1", one block with
+// duplicateValues and containsText "an" (Excel's formula), containsBlanks
+// and timePeriod last7Days, each with Excel's own `<formula>`.
+// SPEC129_CF_XLSX records the facts (rows 1-based, ranges 0-based).
+
+const SPEC129_X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
+const SPEC129_XM_NS = "http://schemas.microsoft.com/office/excel/2006/main";
+const SPEC129_DATABAR_GUID = "{8A1E2F3C-0129-4D5E-9F60-7A8B9C0D1E2F}";
+const SPEC129_STARS_GUID = "{9B2F3041-0129-4E6F-8071-8B9CAD1E2F30}";
+const SPEC129_CUSTOM_GUID = "{AC304152-0129-4F70-9182-9CADBE2F3041}";
+
+/** The x14 data bar twin of "Scores"' C column, verbatim. */
+const SPEC129_DATABAR_X14 =
+  `<x14:cfRule type="dataBar" id="${SPEC129_DATABAR_GUID}"><x14:dataBar minLength="0" maxLength="100" gradient="0">` +
+  `<x14:cfvo type="autoMin"/><x14:cfvo type="autoMax"/><x14:negativeFillColor rgb="FFFF0000"/><x14:axisColor rgb="FF000000"/></x14:dataBar></x14:cfRule>`;
+
+/** The x14-only 3Stars rule, verbatim. */
+const SPEC129_STARS_X14 =
+  `<x14:cfRule type="iconSet" priority="5" id="${SPEC129_STARS_GUID}"><x14:iconSet iconSet="3Stars">` +
+  `<x14:cfvo type="percent"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type="percent"><xm:f>33</xm:f></x14:cfvo><x14:cfvo type="percent"><xm:f>67</xm:f></x14:cfvo>` +
+  `</x14:iconSet></x14:cfRule>`;
+
+/** The custom icon set — preserved verbatim by the reader. */
+const SPEC129_CUSTOM_X14 =
+  `<x14:cfRule type="iconSet" priority="6" id="${SPEC129_CUSTOM_GUID}"><x14:iconSet iconSet="3Arrows" custom="1">` +
+  `<x14:cfvo type="percent"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type="percent"><xm:f>33</xm:f></x14:cfvo><x14:cfvo type="percent"><xm:f>67</xm:f></x14:cfvo>` +
+  `<x14:cfIcon iconSet="3Flags" iconId="0"/><x14:cfIcon iconSet="3Symbols" iconId="1"/><x14:cfIcon iconSet="3Stars" iconId="2"/></x14:iconSet></x14:cfRule>`;
+
+/** The sparkline ext after the conditional formattings, verbatim. */
+const SPEC129_SPARKLINE_EXT =
+  `<ext uri="{05C60535-1F16-4fd2-B633-F4F36F0B64E0}" xmlns:x14="${SPEC129_X14_NS}"><x14:sparklineGroups xmlns:xm="${SPEC129_XM_NS}">` +
+  `<x14:sparklineGroup displayEmptyCellsAs="gap" xr2:uid="{BD415263-0129-4081-A293-ADBECF304152}"><x14:colorSeries theme="4" tint="-0.499984740745262"/>` +
+  `<x14:colorNegative theme="5"/><x14:colorAxis rgb="FF000000"/><x14:colorMarkers theme="4" tint="-0.499984740745262"/><x14:colorFirst theme="4" tint="0.39997558519241921"/>` +
+  `<x14:colorLast theme="4" tint="0.39997558519241921"/><x14:colorHigh theme="4"/><x14:colorLow theme="4"/>` +
+  `<x14:sparklines><x14:sparkline><xm:f>Scores!B2:G2</xm:f><xm:sqref>I2</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup></x14:sparklineGroups></ext>`;
+
+/** "Scores"' base blocks, verbatim, in document order. */
+const SPEC129_SCORES_BLOCKS = [
+  `<conditionalFormatting sqref="B2:B13" xr:uid="{C1526374-0129-4192-B3A4-BECFD0415263}"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>100</formula></cfRule></conditionalFormatting>`,
+  `<conditionalFormatting sqref="C2:C13" xr:uid="{D2637485-0129-42A3-84B5-CFD0E1526374}"><cfRule type="dataBar" priority="2"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar>` +
+    `<extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}" xmlns:x14="${SPEC129_X14_NS}"><x14:id>${SPEC129_DATABAR_GUID}</x14:id></ext></extLst></cfRule></conditionalFormatting>`,
+  `<conditionalFormatting sqref="D2:D13" xr:uid="{E3748596-0129-43B4-95C6-D0E1F2637485}"><cfRule type="iconSet" priority="3"><iconSet iconSet="3Arrows">` +
+    `<cfvo type="percent" val="0"/><cfvo type="percent" val="33" gte="0"/><cfvo type="percent" val="67" gte="0"/></iconSet></cfRule></conditionalFormatting>`,
+  `<conditionalFormatting sqref="E2:E13" xr:uid="{F48596A7-0129-44C5-A6D7-E1F203748596}"><cfRule type="colorScale" priority="4"><colorScale>` +
+    `<cfvo type="min"/><cfvo type="percentile" val="50"/><cfvo type="max"/><color theme="5" tint="0.39997558519241921"/><color theme="0" tint="-0.249977111117893"/>` +
+    `<color theme="9"/></colorScale></cfRule></conditionalFormatting>`,
+  `<conditionalFormatting sqref="A2:H13" xr:uid="{0596A7B8-0129-45D6-B7E8-F20314859607}"><cfRule type="expression" dxfId="1" priority="7" stopIfTrue="1"><formula>$H2="late"</formula></cfRule></conditionalFormatting>`,
+] as const;
+
+/** "Scores"' conditional-formatting ext (the twin, the stars, the custom set). */
+const SPEC129_CF_EXT =
+  `<ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="${SPEC129_X14_NS}"><x14:conditionalFormattings>` +
+  `<x14:conditionalFormatting xmlns:xm="${SPEC129_XM_NS}">${SPEC129_DATABAR_X14}<xm:sqref>C2:C13</xm:sqref></x14:conditionalFormatting>` +
+  `<x14:conditionalFormatting xmlns:xm="${SPEC129_XM_NS}">${SPEC129_STARS_X14}<xm:sqref>F2:F13</xm:sqref></x14:conditionalFormatting>` +
+  `<x14:conditionalFormatting xmlns:xm="${SPEC129_XM_NS}">${SPEC129_CUSTOM_X14}<xm:sqref>G2:G13</xm:sqref></x14:conditionalFormatting>` +
+  `</x14:conditionalFormattings></ext>`;
+
+/** "More"'s base blocks, verbatim. */
+const SPEC129_MORE_BLOCKS = [
+  `<conditionalFormatting sqref="A2:A11" xr:uid="{16A7B8C9-0129-46E7-88F9-0314259607A8}"><cfRule type="top10" dxfId="2" priority="1" percent="1" rank="20"/></conditionalFormatting>`,
+  `<conditionalFormatting sqref="B2:B11" xr:uid="{27B8C9DA-0129-47F8-990A-14253607A8B9}"><cfRule type="aboveAverage" dxfId="1" priority="2" stdDev="1"/></conditionalFormatting>`,
+  `<conditionalFormatting sqref="C2:C11" xr:uid="{38C9DAEB-0129-4809-AA1B-2536478B9CA0}"><cfRule type="duplicateValues" dxfId="0" priority="3"/>` +
+    `<cfRule type="containsText" dxfId="2" priority="4" operator="containsText" text="an"><formula>NOT(ISERROR(SEARCH("an",C2)))</formula></cfRule></conditionalFormatting>`,
+  `<conditionalFormatting sqref="D2:D11" xr:uid="{49DAEBFC-0129-491A-BB2C-36478A9CB0D1}"><cfRule type="containsBlanks" dxfId="1" priority="5"><formula>LEN(TRIM(D2))=0</formula></cfRule></conditionalFormatting>`,
+  `<conditionalFormatting sqref="E2:E11" xr:uid="{5AEBFC0D-0129-4A2B-8C3D-4789BADC1E20}"><cfRule type="timePeriod" dxfId="0" priority="6" timePeriod="last7Days">` +
+    `<formula>AND(TODAY()-FLOOR(E2,1)&lt;=6,FLOOR(E2,1)&lt;=TODAY())</formula></cfRule></conditionalFormatting>`,
+] as const;
+
+/** What spec129-cf.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC129_CF_XLSX = {
+  title: "Conditional formats",
+  sheetNames: ["Scores", "More"],
+  activeSheetIndex: 0,
+  /** cellXfs: 1 a date (numFmt 14), 2 a bold header. */
+  xf: { date: 1, header: 2 },
+  /** styles.xml's dxfs as the model reads them. */
+  dxfs: [
+    { font: { color: "#9c0006" }, fill: { kind: "solid", color: "#ffc7ce" } },
+    { font: { color: "#9c5700" }, fill: { kind: "solid", color: "#ffeb9c" } },
+    { font: { bold: true, color: { theme: "dk1" } }, fill: { kind: "solid", color: { theme: "accent1", lumMod: 1 - 0.79998168889431442, lumOff: 0.79998168889431442, xlsxTint: "0.79998168889431442" } } },
+  ],
+  dxfXml: [
+    `<dxf><font><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>`,
+    `<dxf><font><color rgb="FF9C5700"/></font><fill><patternFill><bgColor rgb="FFFFEB9C"/></patternFill></fill></dxf>`,
+    `<dxf><font><b/><color theme="1"/></font><fill><patternFill><bgColor theme="4" tint="0.79998168889431442"/></patternFill></fill></dxf>`,
+  ],
+  scores: {
+    partName: "xl/worksheets/sheet1.xml",
+    dimension: "A1:H13",
+    headers: ["Name", "Score", "Change", "Trend", "Heat", "Rating", "Flags", "Status"],
+    names: ["Ana", "Ben", "Cy", "Dee", "Eve", "Fay", "Gus", "Hal", "Ivy", "Jo", "Kim", "Lee"],
+    /** B2..B13: only B3 is above 100. */
+    scores: [75, 140, 90, 60, 88, 95, 70, 82, 100, 55, 99, 64],
+    /** C2..C13: distinct; C2 clearly negative, C5 slightly. */
+    changes: [-30, 45, 10, -8, 80, 25, 60, 15, 35, 70, 50, 5],
+    negativeCells: ["C2", "C5"],
+    /** D2..D13: D2 the largest. */
+    trends: [98, 12, 45, 67, 23, 88, 34, 51, 5, 76, 40, 60],
+    heat: [55, 12, 78, 34, 90, 23, 67, 45, 81, 5, 62, 39],
+    ratings: [3, 5, 1, 4, 2, 5, 3, 1, 4, 2, 3, 5],
+    flags: [7, 2, 9, 4, 6, 1, 8, 3, 5, 10, 2, 6],
+    /** H2..H13: rows 3 and 4 are on time. */
+    statuses: ["late", "on time", "on time", "late", "on time", "on time", "late", "on time", "on time", "late", "on time", "on time"],
+    blocks: SPEC129_SCORES_BLOCKS,
+    cfExt: SPEC129_CF_EXT,
+    sparklineExt: SPEC129_SPARKLINE_EXT,
+    cellIs: { sqref: "B2:B13", priority: 1, dxfId: 0, operator: "greaterThan", formula: "100", hot: "B3", hotValue: 140, coolCell: "B4", coolValue: 90 },
+    dataBar: { sqref: "C2:C13", priority: 2, guid: SPEC129_DATABAR_GUID, color: "#638ec6", x14Xml: SPEC129_DATABAR_X14 },
+    arrows: { sqref: "D2:D13", priority: 3, set: "3Arrows", topCell: "D2", topIcon: "3Arrows:2" },
+    colorScale: { sqref: "E2:E13", priority: 4 },
+    stars: { sqref: "F2:F13", priority: 5, guid: SPEC129_STARS_GUID },
+    custom: { sqref: "G2:G13", priority: 6, guid: SPEC129_CUSTOM_GUID, xml: SPEC129_CUSTOM_X14 },
+    late: { sqref: "A2:H13", priority: 7, dxfId: 1, formula: `$H2="late"` },
+  },
+  more: {
+    partName: "xl/worksheets/sheet2.xml",
+    dimension: "A1:E11",
+    headers: ["Sales", "Hours", "Fruit", "Notes", "Date"],
+    sales: [120, 340, 560, 90, 780, 230, 410, 650, 300, 870],
+    hours: [8, 7.5, 9, 6, 30, 8, 7, 8.5, 9, 7],
+    fruit: ["Apple", "Banana", "Cherry", "Apple", "Mango", "Kiwi", "Banana", "Grape", "Orange", "Plum"],
+    /** null: a blank cell. */
+    notes: ["ok", null, "check", null, "ok", "ok", null, "late", "ok", null],
+    /** E2..E11 as [y, m, d]. */
+    dates: [
+      [2026, 10, 1],
+      [2026, 10, 3],
+      [2026, 10, 5],
+      [2026, 10, 6],
+      [2026, 10, 7],
+      [2026, 10, 8],
+      [2026, 10, 9],
+      [2026, 10, 10],
+      [2026, 10, 11],
+      [2026, 10, 12],
+    ],
+    blocks: SPEC129_MORE_BLOCKS,
+  },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** Excel's styles part for spec129-cf.xlsx (see the section header). */
+const SPEC129_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="2" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><b/><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>` +
+  `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="3">${SPEC129_CF_XLSX.dxfXml.join("")}</dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+const SPEC129_SCORES_UID = "6BFC0D1E-0129-4B3C-9D4E-589ACBED2F31";
+const SPEC129_MORE_UID = "7C0D1E2F-0129-4C4D-AE5F-69ABDCFE3042";
+
+/** A worksheet in Excel 365's CT_Worksheet order with its conditional
+ * formats (and extLst) after sheetData. */
+function spec129WorksheetXml(options: { uid: string; dimension: string; selected: boolean; sheetData: string; after: string }): string {
+  return (
+    XML_DECLARATION +
+    worksheetOpen(options.uid) +
+    `<dimension ref="${options.dimension}"/>` +
+    `<sheetViews><sheetView ${options.selected ? 'tabSelected="1" ' : ""}workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    SPEC117_FORMAT_PR +
+    `<sheetData>${options.sheetData}</sheetData>` +
+    options.after +
+    `</worksheet>`
+  );
+}
+
+/** A row of spec129-cf.xlsx as Excel 365 writes one. */
+function spec129Row(r: number, spans: string, cells: string): string {
+  return `<row r="${r}" spans="${spans}" x14ac:dyDescent="0.25">${cells}</row>`;
+}
+
+/** A number cell of spec129-cf.xlsx. */
+function spec129Number(ref: string, value: number, style?: number): string {
+  return `<c r="${ref}"${style ? ` s="${style}"` : ""}><v>${value}</v></c>`;
+}
+
+export async function buildSpec129CfXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC129_CF_XLSX;
+  const sst: string[] = [];
+  const sstIndex = new Map<string, number>();
+  const str = (value: string): number => {
+    let index = sstIndex.get(value);
+    if (index === undefined) {
+      index = sst.length;
+      sst.push(value);
+      sstIndex.set(value, index);
+    }
+    return index;
+  };
+  const columns = "ABCDEFGH";
+  const text = (ref: string, value: string, style?: number): string => `<c r="${ref}"${style ? ` s="${style}"` : ""} t="s"><v>${str(value)}</v></c>`;
+
+  const S = F.scores;
+  const scoresRows = [spec129Row(1, "1:8", S.headers.map((header, col) => text(`${columns[col]}1`, header, F.xf.header)).join(""))];
+  S.names.forEach((name, i) => {
+    const r = i + 2;
+    scoresRows.push(
+      spec129Row(
+        r,
+        "1:8",
+        text(`A${r}`, name) +
+          spec129Number(`B${r}`, S.scores[i]!) +
+          spec129Number(`C${r}`, S.changes[i]!) +
+          spec129Number(`D${r}`, S.trends[i]!) +
+          spec129Number(`E${r}`, S.heat[i]!) +
+          spec129Number(`F${r}`, S.ratings[i]!) +
+          spec129Number(`G${r}`, S.flags[i]!) +
+          text(`H${r}`, S.statuses[i]!),
+      ),
+    );
+  });
+  const scores = spec129WorksheetXml({
+    uid: SPEC129_SCORES_UID,
+    dimension: S.dimension,
+    selected: true,
+    sheetData: scoresRows.join(""),
+    after: S.blocks.join("") + SPEC117_PAGE_MARGINS + `<extLst>${S.cfExt}${S.sparklineExt}</extLst>`,
+  });
+
+  const M = F.more;
+  const moreRows = [spec129Row(1, "1:5", M.headers.map((header, col) => text(`${columns[col]}1`, header, F.xf.header)).join(""))];
+  M.sales.forEach((sales, i) => {
+    const r = i + 2;
+    const note = M.notes[i];
+    const [y, m, d] = M.dates[i]!;
+    moreRows.push(
+      spec129Row(
+        r,
+        "1:5",
+        spec129Number(`A${r}`, sales) +
+          spec129Number(`B${r}`, M.hours[i]!) +
+          text(`C${r}`, M.fruit[i]!) +
+          (note === null || note === undefined ? "" : text(`D${r}`, note)) +
+          spec129Number(`E${r}`, dateToSerial(y, m, d, "1900"), F.xf.date),
+      ),
+    );
+  });
+  const more = spec129WorksheetXml({
+    uid: SPEC129_MORE_UID,
+    dimension: M.dimension,
+    selected: false,
+    sheetData: moreRows.join(""),
+    after: M.blocks.join("") + SPEC117_PAGE_MARGINS,
+  });
+
+  const worksheets = [scores, more];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${sst.length}">` +
+    sst.map((value) => `<si><t>${xmlText(value)}</t></si>`).join("") +
+    `</sst>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheetNames.map((name, index) => ({ name, xml: worksheets[index]! })),
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="166925"/>`,
+    theme: SPEC117_THEME,
+    styles: SPEC129_STYLES,
+  });
+}
+// ============================================================================
+// end of SPEC-129 (xlsx)
+// ============================================================================
+
+// ============================================================================
+// SPEC-129 (ODS) — spec129-cf.ods / spec129-legacy.ods: conditional formatting
+// ============================================================================
+// - spec129-cf.ods — LibreOffice 24.8's twin of spec129-cf.xlsx: "Scores"
+//   (Name, Score, Change, Trend, Heat, Stars, Custom, Status over 12
+//   records; B3 = 140, B4 = 90, D2 the Trend column's largest, negative
+//   Changes) and "More", each table closing with Calc's
+//   `calcext:conditional-formats` after its rows. The conditions apply the
+//   common styles of styles.xml: "Bad" (fill #ffc7ce, text #9c0006) and
+//   "Good" (#c6efce, #006100), both children of the empty "Status", and
+//   "Accent 3" written `Accent_20_3` (fill #dddddd) under "Accent" (bold) —
+//   so its differential style is its own fill plus Accent's weight, short of
+//   "Default". Scores: B2:B13 `>100` → Bad; A2:H13 `formula-is([.$H2]="late")`
+//   → Accent 3 (rows 3 and 4 are not late); a data bar on C2:C13 (negative
+//   and axis colours, no gradient, auto minimum and maximum); a 3Arrows icon
+//   set on D2:D13 whose 33 and 67 thresholds are `calcext:gte="false"`; a
+//   3-colour scale on E2:E13 (minimum, 50th percentile, maximum); 3Stars on
+//   F2:F13; a custom icon set on G2:G13 (`calcext:custom="true"`, carried
+//   verbatim). More: one format on A2:A7 holding top-percent(10), above-
+//   average and duplicate; contains-text("late") and the blanks formula on
+//   B2:B7; date-is last-7-days on C2:C7.
+// - spec129-legacy.ods — an older producer's shape: no calcext rules, only
+//   `style:map` on content.xml's automatic cell styles. ce6 (`cell-content()
+//   >100` → Bad, then `cell-content-is-between(50,100)` → Good, written from
+//   Legacy.B2) styles B2:D6 cell by cell and then a 994-row repeated run of
+//   empty cells, B7:D1000; ce7 (`is-true-formula([.E2]="late")` → Bad,
+//   written from Legacy.E2) is column E's default cell style, which every
+//   unstyled cell of the column takes — the header, the flags and Calc's
+//   trailing run — so its region is E1:E1048576, one rectangle.
+// SPEC129_CF_ODS and SPEC129_LEGACY_ODS record the facts; ranges are
+// 0-based GridRanges, formulas canonical and relative to each format's
+// origin.
+
+/** styles.xml for both: Calc's common styles plus the conditional ones. */
+const SPEC129_ODS_STYLES = LO_STYLES.replace(
+  `</office:styles>`,
+  `<style:style style:name="Accent" style:family="table-cell" style:parent-style-name="Default"><style:text-properties fo:font-weight="bold" ` +
+    `style:font-weight-asian="bold" style:font-weight-complex="bold"/></style:style>` +
+    `<style:style style:name="Accent_20_3" style:display-name="Accent 3" style:family="table-cell" style:parent-style-name="Accent">` +
+    `<style:table-cell-properties fo:background-color="#dddddd"/></style:style>` +
+    `<style:style style:name="Status" style:family="table-cell" style:parent-style-name="Default"/>` +
+    `<style:style style:name="Good" style:family="table-cell" style:parent-style-name="Status"><style:table-cell-properties fo:background-color="#c6efce"/>` +
+    `<style:text-properties fo:color="#006100"/></style:style>` +
+    `<style:style style:name="Bad" style:family="table-cell" style:parent-style-name="Status"><style:table-cell-properties fo:background-color="#ffc7ce"/>` +
+    `<style:text-properties fo:color="#9c0006"/></style:style></office:styles>`,
+);
+
+/** One "Scores" record: Name, Score, Change, Trend, Heat, Stars, Custom, Status. */
+type Spec129Record = readonly [string, number, number, number, number, number, number, string];
+
+const SPEC129_SCORES: readonly Spec129Record[] = [
+  ["Ana", 95, 12, 98, 10, 1, 3, "late"],
+  ["Ben", 140, -8, 40, 20, 2, 1, "on time"],
+  ["Cy", 90, 5, 55, 30, 3, 2, "on time"],
+  ["Dee", 105, -15, 60, 40, 4, 3, "late"],
+  ["Eve", 70, 20, 25, 50, 5, 1, "on time"],
+  ["Fay", 130, 0, 80, 60, 1, 2, "on time"],
+  ["Gus", 60, 9, 30, 70, 2, 3, "late"],
+  ["Hal", 115, -3, 45, 80, 3, 1, "on time"],
+  ["Ivy", 85, 14, 70, 90, 4, 2, "on time"],
+  ["Jo", 100, 7, 15, 100, 5, 3, "on time"],
+  ["Kai", 125, -11, 65, 110, 1, 1, "late"],
+  ["Lu", 75, 3, 20, 120, 2, 2, "on time"],
+];
+
+/** Each Scores and More format verbatim, as Calc writes it (and as the
+ * reader keeps it as `sourceXml`). */
+const SPEC129_ODS_SCORES_FORMATS = [
+  `<calcext:conditional-format calcext:target-range-address="Scores.B2:Scores.B13">` +
+    `<calcext:condition calcext:apply-style-name="Bad" calcext:value="&gt;100" calcext:base-cell-address="Scores.B2"/></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="Scores.A2:Scores.H13">` +
+    `<calcext:condition calcext:apply-style-name="Accent_20_3" calcext:value="formula-is([.$H2]=&quot;late&quot;)" calcext:base-cell-address="Scores.A2"/></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="Scores.C2:Scores.C13">` +
+    `<calcext:data-bar calcext:gradient="false" calcext:negative-color="#ff0000" calcext:positive-color="#638ec6" calcext:axis-color="#000000">` +
+    `<calcext:formatting-entry calcext:value="0" calcext:type="auto-minimum"/><calcext:formatting-entry calcext:value="0" calcext:type="auto-maximum"/>` +
+    `</calcext:data-bar></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="Scores.D2:Scores.D13">` +
+    `<calcext:icon-set calcext:icon-set-type="3Arrows"><calcext:formatting-entry calcext:value="0" calcext:type="percent"/>` +
+    `<calcext:formatting-entry calcext:value="33" calcext:type="percent" calcext:gte="false"/>` +
+    `<calcext:formatting-entry calcext:value="67" calcext:type="percent" calcext:gte="false"/></calcext:icon-set></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="Scores.E2:Scores.E13">` +
+    `<calcext:color-scale><calcext:color-scale-entry calcext:value="0" calcext:type="minimum" calcext:color="#f8696b"/>` +
+    `<calcext:color-scale-entry calcext:value="50" calcext:type="percentile" calcext:color="#ffeb84"/>` +
+    `<calcext:color-scale-entry calcext:value="0" calcext:type="maximum" calcext:color="#63be7b"/></calcext:color-scale></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="Scores.F2:Scores.F13">` +
+    `<calcext:icon-set calcext:icon-set-type="3Stars"><calcext:formatting-entry calcext:value="0" calcext:type="percent"/>` +
+    `<calcext:formatting-entry calcext:value="33" calcext:type="percent"/><calcext:formatting-entry calcext:value="67" calcext:type="percent"/>` +
+    `</calcext:icon-set></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="Scores.G2:Scores.G13">` +
+    `<calcext:icon-set calcext:icon-set-type="3Arrows" calcext:custom="true">` +
+    `<calcext:custom-iconset calcext:custom-iconset-name="3Stars" calcext:custom-iconset-index="0"/>` +
+    `<calcext:custom-iconset calcext:custom-iconset-name="3Flags" calcext:custom-iconset-index="1"/>` +
+    `<calcext:custom-iconset calcext:custom-iconset-name="3Arrows" calcext:custom-iconset-index="2"/>` +
+    `<calcext:formatting-entry calcext:value="0" calcext:type="percent"/><calcext:formatting-entry calcext:value="33" calcext:type="percent"/>` +
+    `<calcext:formatting-entry calcext:value="67" calcext:type="percent"/></calcext:icon-set></calcext:conditional-format>`,
+] as const;
+
+const SPEC129_ODS_MORE_FORMATS = [
+  `<calcext:conditional-format calcext:target-range-address="More.A2:More.A7">` +
+    `<calcext:condition calcext:apply-style-name="Good" calcext:value="top-percent(10)" calcext:base-cell-address="More.A2"/>` +
+    `<calcext:condition calcext:apply-style-name="Accent_20_3" calcext:value="above-average" calcext:base-cell-address="More.A2"/>` +
+    `<calcext:condition calcext:apply-style-name="Bad" calcext:value="duplicate" calcext:base-cell-address="More.A2"/></calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="More.B2:More.B7">` +
+    `<calcext:condition calcext:apply-style-name="Bad" calcext:value="contains-text(&quot;late&quot;)" calcext:base-cell-address="More.B2"/>` +
+    `<calcext:condition calcext:apply-style-name="Accent_20_3" calcext:value="formula-is(LEN(TRIM([.B2]))=0)" calcext:base-cell-address="More.B2"/>` +
+    `</calcext:conditional-format>`,
+  `<calcext:conditional-format calcext:target-range-address="More.C2:More.C7">` +
+    `<calcext:date-is calcext:style="Good" calcext:date="last-7-days"/></calcext:conditional-format>`,
+] as const;
+
+/** What spec129-cf.ods holds, for the unit, round-trip and e2e specs. */
+export const SPEC129_CF_ODS = {
+  title: "Conditional formats",
+  tableNames: ["Scores", "More"],
+  activeTable: "Scores",
+  headers: ["Name", "Score", "Change", "Trend", "Heat", "Stars", "Custom", "Status"],
+  records: SPEC129_SCORES,
+  /** The common styles the rules apply. */
+  styles: {
+    bad: { name: "Bad", fill: "#ffc7ce", text: "#9c0006" },
+    good: { name: "Good", fill: "#c6efce", text: "#006100" },
+    accent3: { name: "Accent_20_3", displayName: "Accent 3", fill: "#dddddd", bold: true },
+  },
+  /** The dxfs they read as, in first-reference order. */
+  dxfs: [
+    { font: { color: "#9c0006" }, fill: { kind: "solid", color: "#ffc7ce" }, sourceStyleName: "Bad" },
+    { font: { bold: true }, fill: { kind: "solid", color: "#dddddd" }, sourceStyleName: "Accent_20_3" },
+    { font: { color: "#006100" }, fill: { kind: "solid", color: "#c6efce" }, sourceStyleName: "Good" },
+  ],
+  scoresFormats: SPEC129_ODS_SCORES_FORMATS,
+  moreFormats: SPEC129_ODS_MORE_FORMATS,
+  /** More's values: numbers, notes (B3 and B6 blank) and due dates. */
+  more: {
+    values: [10, 50, 50, 90, 30, 70],
+    notes: ["late fee", null, "ok", "late", null, "fine"],
+    dates: ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10"],
+  },
+} as const;
+
+/** A Calc date cell (LO_AUTOMATIC_STYLES's ce1, the N37 date style). */
+const spec129Date = (iso: string): string =>
+  `<table:table-cell table:style-name="ce1" office:value-type="date" office:date-value="${iso}" calcext:value-type="date">` +
+  `<text:p>${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(2, 4)}</text:p></table:table-cell>`;
+
+export async function buildSpec129CfOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC129_CF_ODS;
+  const header = loRow(O.headers.map((text) => loString(text, "ce5")).join("") + loEmpty(16384 - O.headers.length));
+  const records = O.records.map(([name, score, change, trend, heat, stars, custom, status]) =>
+    loRow(loString(name) + [score, change, trend, heat, stars, custom].map((value) => loFloat(value)).join("") + loString(status) + loEmpty(16376)),
+  );
+  const scores =
+    `<table:table table:name="Scores" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    header +
+    records.join("") +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - 13) +
+    `<calcext:conditional-formats>${O.scoresFormats.join("")}</calcext:conditional-formats></table:table>`;
+  const moreRows = O.more.values.map((value, i) => {
+    const note = O.more.notes[i];
+    return loRow(loFloat(value) + (note === null || note === undefined ? `<table:table-cell/>` : loString(note)) + spec129Date(O.more.dates[i]!) + loEmpty(16381));
+  });
+  const more =
+    `<table:table table:name="More" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(["Value", "Note", "Due"].map((text) => loString(text, "ce5")).join("") + loEmpty(16381)) +
+    moreRows.join("") +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - 7) +
+    `<calcext:conditional-formats>${O.moreFormats.join("")}</calcext:conditional-formats></table:table>`;
+  const cellCount = O.headers.length * 13 + 3 + 16;
+  return loPackage(loContent(scores + more), loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable), SPEC129_ODS_STYLES);
+}
+
+/** content.xml's automatic styles for spec129-legacy.ods: Calc's, plus the
+ * two mapped cell styles. */
+const SPEC129_LEGACY_AUTOMATIC_STYLES = LO_AUTOMATIC_STYLES.replace(
+  `</office:automatic-styles>`,
+  `<style:style style:name="ce6" style:family="table-cell" style:parent-style-name="Default">` +
+    `<style:map style:condition="cell-content()&gt;100" style:apply-style-name="Bad" style:base-cell-address="Legacy.B2"/>` +
+    `<style:map style:condition="cell-content-is-between(50,100)" style:apply-style-name="Good" style:base-cell-address="Legacy.B2"/></style:style>` +
+    `<style:style style:name="ce7" style:family="table-cell" style:parent-style-name="Default">` +
+    `<style:map style:condition="is-true-formula([.E2]=&quot;late&quot;)" style:apply-style-name="Bad" style:base-cell-address="Legacy.E2"/></style:style>` +
+    `</office:automatic-styles>`,
+);
+
+/** What spec129-legacy.ods holds. */
+export const SPEC129_LEGACY_ODS = {
+  title: "Legacy conditions",
+  tableNames: ["Legacy"],
+  activeTable: "Legacy",
+  /** Rows 2–6: an item, three quarters (in ce6) and a flag (column E's ce7). */
+  rows: [
+    ["North", 120, 80, 40, "late"],
+    ["South", 95, 101, 50, "ok"],
+    ["East", 60, 30, 100, "late"],
+    ["West", 150, 75, 20, "ok"],
+    ["Centre", 99, 100, 101, "ok"],
+  ],
+  /** ce6's repeated empty run after the data: rows 7–1000. */
+  emptyRun: 994,
+  styles: { quarters: "ce6", flags: "ce7" },
+  /** The formats the reader makes, in first-use order (E1 is met first). */
+  formats: [
+    { ranges: [{ top: 0, left: 4, bottom: 1_048_575, right: 4 }], rules: [{ kind: "expression", formula: `E1="late"`, style: "Bad" }] },
+    {
+      ranges: [{ top: 1, left: 1, bottom: 999, right: 3 }],
+      rules: [
+        { kind: "cellIs", operator: "greaterThan", formulas: ["100"], style: "Bad" },
+        { kind: "cellIs", operator: "between", formulas: ["50", "100"], style: "Good" },
+      ],
+    },
+  ],
+} as const;
+
+export async function buildSpec129LegacyOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC129_LEGACY_ODS;
+  const styled = (cell: string): string => cell.replace("<table:table-cell", `<table:table-cell table:style-name="${O.styles.quarters}"`);
+  const header = loRow(["Item", "Q1", "Q2", "Q3"].map((text) => loString(text, "ce5")).join("") + loString("Flag") + loEmpty(16379));
+  const rows = O.rows.map(([item, q1, q2, q3, flag]) => loRow(loString(item) + [q1, q2, q3].map((value) => styled(loFloat(value))).join("") + loString(flag) + loEmpty(16379)));
+  const table =
+    `<table:table table:name="Legacy" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="4" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:default-cell-style-name="${O.styles.flags}"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16379" table:default-cell-style-name="Default"/>` +
+    header +
+    rows.join("") +
+    loRow(`<table:table-cell/><table:table-cell table:style-name="${O.styles.quarters}" table:number-columns-repeated="3"/>` + loEmpty(16380), "ro1", O.emptyRun) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - 6 - O.emptyRun) +
+    `</table:table>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC129_LEGACY_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${table}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  return loPackage(content, loMeta(O.title, 1, 5 * 6), loSettings(O.tableNames, O.activeTable), SPEC129_ODS_STYLES);
+}

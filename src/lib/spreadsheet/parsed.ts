@@ -8,6 +8,7 @@ import type { DocumentTheme } from "../core/theme";
 import { colToLetters } from "./address";
 import { SpreadsheetOpenError } from "./errors";
 import { MAX_WORKBOOK_CELLS, type CalcSettings, type CellStyle, type PackageVariant, type Sheet } from "./model";
+import type { Dxf } from "./conditionalFormats";
 import type { NamedCellStyle } from "./styles";
 
 export interface ParsedSpreadsheet {
@@ -29,6 +30,9 @@ export interface ParsedSpreadsheet {
   structureProtected?: true;
   /** SPEC-123: the named cell styles (absent: the file defines none). */
   namedStyles?: NamedCellStyle[];
+  /** SPEC-129: the differential styles (xlsx `<dxfs>` by index, ods the
+   *  named styles conditional formats apply) — `[]` when there are none. */
+  dxfs: Dxf[];
 }
 
 /** Counts stored cells across every sheet of one read against

@@ -112,3 +112,19 @@ describe("SpreadsheetMenuBar's Data menu (SPEC-128)", () => {
     expect(asSpreadsheetMenuState(undefined).filterOn).toBe(false);
   });
 });
+
+describe("SpreadsheetMenuBar's Format menu (SPEC-129)", () => {
+  it("offers Conditional formatting… after Cell styles, routing format.conditional-formatting and disabled without a grid sheet", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: true } } });
+    const menu = wrapper.get('[data-testid="menu-format"]');
+    const ids = menu.findAll("[data-testid]").map((row) => row.attributes("data-testid"));
+    expect(ids.indexOf("sheet-menu-conditional-formatting")).toBeGreaterThan(ids.indexOf("sheet-menu-cell-styles"));
+    expect(ids.indexOf("sheet-menu-conditional-formatting")).toBeLessThan(ids.indexOf("sheet-menu-clear"));
+    const item = wrapper.get('[data-testid="sheet-menu-conditional-formatting"]');
+    expect(item.text()).toContain("Conditional formatting…");
+    await item.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.conditionalFormatting]);
+    const noGrid = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
+    expect(noGrid.get('[data-testid="sheet-menu-conditional-formatting"]').attributes("disabled")).toBeDefined();
+  });
+});

@@ -2,22 +2,25 @@
 // references to overwritten cells, moved formulas not shifted, overlapping
 // source and destination, cross-sheet moves, the refusals, moveMapper for
 // retained text, and the registry contract every later MoveAdjuster joins.
+// SPEC-128's autofilter and SPEC-129's conditionalFormats move adjusters
+// have their own blocks.
 import { describe, expect, it } from "vitest";
 import type { GridRange } from "./address";
 import { getCell } from "./address";
 import { PROTECTED_CELL_MESSAGE } from "./cells";
 import { PASTE_MERGE_MESSAGE, PASTE_PAST_EDGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
+import type { CfRule, ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter } from "./filter";
 import { MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { MOVE_ADJUSTERS, moveMapper, moveRange, moveRefusal, repointFormula, snappedMove, type RangeMove } from "./move";
 import { PARTIAL_ARRAY_MESSAGE } from "./structure";
 
 function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
-  return { id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 function model(sheets: Sheet[], fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {
-  return { kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 8, sheets, activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}], defaultStyleId: 0, ...fields };
+  return { dxfs: [], kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 8, sheets, activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}], defaultStyleId: 0, ...fields };
 }
 
 const value = (col: number, v: Cell["value"], extra: Partial<Cell> = {}): Cell => ({ col, value: v, ...extra });
@@ -280,6 +283,121 @@ describe("the autofilter move adjuster (SPEC-128 \"Moves\")", () => {
   });
 });
 
+// --- SPEC-129's conditionalFormats move adjuster ("Moves") ------------------------------------
+
+/** A format on `ranges` with one expression rule. */
+const cfFormat = (id: string, ranges: GridRange[], formula: string, priority = 1, fields: Partial<ConditionalFormat> = {}): ConditionalFormat => ({
+  id,
+  ranges,
+  rules: [{ id: `${id}-r`, priority, kind: "expression", formula }],
+  ...fields,
+});
+const formatsOf = (m: SpreadsheetModel, id = "s1"): ConditionalFormat[] => sheetOf(m, id).conditionalFormats;
+const formulaOf = (rule: CfRule | undefined): string | undefined => (rule?.kind === "expression" ? rule.formula : undefined);
+/** B5:B6 → F5 on Sheet1. */
+const B5_B6_TO_F5: RangeMove = { fromSheetId: "s1", from: range(4, 1, 5, 1), toSheetId: "s1", toTop: 4, toLeft: 5 };
+
+describe("the conditionalFormats move adjuster (SPEC-129 \"Moves\")", () => {
+  it("cutting B5:B6 out of a format on B5:B20 and pasting at F5 leaves B7:B20 with B7>$Z$1 and creates F5:F6 with F5>$Z$1", () => {
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [cfFormat("f1", [range(4, 1, 19, 1)], "B5>$Z$1", 1, { sourceXml: "<conditionalFormatting/>" })] })]);
+    expect(moveRange(m, B5_B6_TO_F5)).toEqual({ ok: true });
+    const [source, piece] = formatsOf(m);
+    expect(source).toMatchObject({ id: "f1", ranges: [range(6, 1, 19, 1)] });
+    expect(source!.sourceXml).toBeUndefined();
+    expect(formulaOf(source!.rules[0])).toBe("B7>$Z$1");
+    expect(piece!.ranges).toEqual([range(4, 5, 5, 5)]);
+    expect(formulaOf(piece!.rules[0])).toBe("F5>$Z$1");
+    expect(piece!.id).not.toBe("f1");
+    expect(piece!.rules[0]!.id).not.toBe("f1-r");
+    // The copy ranks right after the rule it copies.
+    expect([source!.rules[0]!.priority, piece!.rules[0]!.priority]).toEqual([1, 2]);
+  });
+
+  it("a format wholly inside the source keeps its id and moves, its references following the moved cells", () => {
+    const inside = cfFormat("f1", [range(4, 1, 5, 1)], "AND(B5>$Z$1,$B$6<>0)");
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [inside] })]);
+    moveRange(m, B5_B6_TO_F5);
+    expect(formatsOf(m)).toHaveLength(1);
+    expect(formatsOf(m)[0]).toMatchObject({ id: "f1", ranges: [range(4, 5, 5, 5)], rules: [{ id: "f1-r", priority: 1 }] });
+    expect(formulaOf(formatsOf(m)[0]!.rules[0])).toBe("AND(F5>$Z$1,$F$6<>0)");
+  });
+
+  it("removes the destination rectangle's previous rules: a format inside it goes, one overlapping it keeps the rest, re-anchored", () => {
+    const covered = cfFormat("gone", [range(4, 5, 5, 5)], "F5>0", 2);
+    const overlapping = cfFormat("over", [range(4, 5, 9, 5)], "F5>$A$1", 3); // F5:F10
+    const elsewhere = cfFormat("far", [range(0, 9, 3, 9)], "J1>0", 4);
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [cfFormat("f1", [range(4, 1, 5, 1)], "B5>0"), covered, overlapping, elsewhere] })]);
+    moveRange(m, B5_B6_TO_F5);
+    const byId = new Map(formatsOf(m).map((format) => [format.id, format]));
+    expect(byId.has("gone")).toBe(false);
+    expect(byId.get("over")!.ranges).toEqual([range(6, 5, 9, 5)]); // F7:F10
+    expect(formulaOf(byId.get("over")!.rules[0])).toBe("F7>$A$1");
+    expect(byId.get("far")!.ranges).toBe(elsewhere.ranges);
+    // Dense again: f1 (moved whole) 1, over 2, far 3 — gone's rank closed up.
+    expect(formatsOf(m).flatMap((format) => format.rules.map((rule) => [format.id, rule.priority]))).toEqual([
+      ["f1", 1],
+      ["over", 2],
+      ["far", 3],
+    ]);
+  });
+
+  it("moves a block overlapping its own destination (down one row), reading the source before writing", () => {
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [cfFormat("f1", [range(4, 1, 19, 1)], "B5>$Z$1")] })]);
+    moveRange(m, { fromSheetId: "s1", from: range(4, 1, 5, 1), toSheetId: "s1", toTop: 5, toLeft: 1 });
+    const [source, piece] = formatsOf(m);
+    expect(source!.ranges).toEqual([range(7, 1, 19, 1)]); // B8:B20 (B6:B7 overwritten)
+    expect(formulaOf(source!.rules[0])).toBe("B8>$Z$1");
+    expect(piece!.ranges).toEqual([range(5, 1, 6, 1)]); // B6:B7 — what B5:B6 carried
+    expect(formulaOf(piece!.rules[0])).toBe("B6>$Z$1");
+  });
+
+  it("across sheets: the arrivals rank lowest, unqualified references keep their sheet, x14 placement and GUIDs follow", () => {
+    const bar: CfRule = {
+      id: "bar",
+      priority: 2,
+      kind: "dataBar",
+      x14Id: "{00000000-0000-4000-8000-000000000001}",
+      bar: { min: { type: "min" }, max: { type: "max" }, color: "#638EC6", gradient: true, axis: "automatic", direction: "context", minLengthPct: 10, maxLengthPct: 90, showValue: true },
+    };
+    const whole: ConditionalFormat = { ...cfFormat("f1", [range(4, 1, 5, 1)], "B5>$Z$1"), rules: [{ id: "f1-r", priority: 1, kind: "expression", formula: "B5>$Z$1" }, bar] };
+    const theirs = cfFormat("g1", [range(0, 0, 0, 0)], "A1>0");
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [whole, cfFormat("f2", [range(0, 3, 0, 3)], "D1>0", 3)] }), sheet("s2", "Sheet2", { conditionalFormats: [theirs] })]);
+    moveRange(m, { ...B5_B6_TO_F5, toSheetId: "s2" });
+    expect(formatsOf(m, "s1").map((format) => format.id)).toEqual(["f2"]);
+    expect(formatsOf(m, "s1")[0]!.rules[0]!.priority).toBe(1);
+    const [kept, arrived] = formatsOf(m, "s2");
+    expect(kept!.rules[0]).toBe(theirs.rules[0]);
+    expect(arrived).toMatchObject({ id: "f1", ranges: [range(4, 5, 5, 5)] });
+    expect(arrived!.rules.map((rule) => rule.priority)).toEqual([2, 3]);
+    // B5 moved with the cells; $Z$1 did not, so it keeps naming Sheet1's —
+    // a reference to another sheet, which an xlsx writer puts in x14.
+    expect(arrived!.rules[0]).toMatchObject({ formula: "F5>Sheet1!$Z$1", x14: true });
+    expect(arrived!.rules[1]!.x14Id).toBeUndefined();
+  });
+
+  it("re-points another sheet's rule formulas that reference the moved cells, and marks that sheet dirty", () => {
+    const other = cfFormat("o1", [range(0, 0, 9, 0)], "A1>Sheet1!$B$5");
+    const m = model([sheet("s1", "Sheet1"), sheet("s2", "Sheet2", { conditionalFormats: [other] }), sheet("s3", "Other Sheet")]);
+    const untouched = m.sheets[2];
+    moveRange(m, B5_B6_TO_F5);
+    expect(formulaOf(formatsOf(m, "s2")[0]!.rules[0])).toBe("A1>Sheet1!$F$5");
+    expect(sheetOf(m, "s2").dirty).toBe(true);
+    expect(m.sheets[2]).toBe(untouched);
+  });
+
+  it("is copy-on-write: nothing the move started from is mutated, an untouched format keeps its identity and sourceXml", () => {
+    // The untouched format ranks first: the copy, ranked after f1's rule, renumbers nothing above it.
+    const untouched = cfFormat("f2", [range(30, 0, 31, 0)], "A31>0", 1, { sourceXml: "<b/>" });
+    const touched = cfFormat("f1", [range(4, 1, 19, 1)], "B5>$Z$1", 2, { sourceXml: "<a/>" });
+    const source = sheet("s1", "Sheet1", { conditionalFormats: [touched, untouched] });
+    const snapshot = structuredClone(source);
+    const m = model([source]);
+    moveRange(m, B5_B6_TO_F5);
+    expect(source).toEqual(snapshot);
+    expect(formatsOf(m)).toContain(untouched);
+  });
+});
+
 // --- the registry contract ------------------------------------------------------------------
 // Every MoveAdjuster joins this table: a model holding no structure of its
 // kind is left untouched by identity, and moving the block holding its
@@ -299,6 +417,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([base]);
     case "autofilter":
       return model([{ ...base, rows: [row(0, [value(0, "Head")]), row(1, [value(0, 1)])], autoFilter: { range: range(0, 0, 1, 1), columns: [] } }]);
+    case "conditionalFormats":
+      return model([{ ...base, conditionalFormats: [cfFormat("f1", [range(0, 0, 1, 1)], "A1>0")] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -315,6 +435,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.merges;
     case "autofilter":
       return s.autoFilter?.range;
+    case "conditionalFormats":
+      return s.conditionalFormats[0]?.ranges;
     default:
       return undefined;
   }
@@ -323,8 +445,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
 describe("MOVE_ADJUSTERS — the registry contract", () => {
   const MOVE: RangeMove = { fromSheetId: "s1", from: range(0, 0, 1, 1), toSheetId: "s1", toTop: 10, toLeft: 3 };
 
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter", () => {
-    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, then SPEC-129's conditionalFormats", () => {
+    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats"]);
   });
 
   for (const adjuster of MOVE_ADJUSTERS) {
@@ -348,7 +470,9 @@ describe("MOVE_ADJUSTERS — the registry contract", () => {
         adjuster.move(m, MOVE);
         const after = structureOf(adjuster.id, m);
         expect(after).not.toEqual(before);
-        expect(after).toEqual({ cells: [[10, 3]], formulas: "D11", merges: [range(10, 3, 11, 4)], autofilter: range(10, 3, 11, 4) }[adjuster.id]);
+        expect(after).toEqual(
+          { cells: [[10, 3]], formulas: "D11", merges: [range(10, 3, 11, 4)], autofilter: range(10, 3, 11, 4), conditionalFormats: [range(10, 3, 11, 4)] }[adjuster.id],
+        );
       });
     }
   }

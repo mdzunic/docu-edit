@@ -90,6 +90,8 @@ export const SHEET_MENU_COMMANDS = {
   filter: "data.filter",
   clearFilters: "data.clear-filters",
   reapplyFilter: "data.reapply-filter",
+  /** SPEC-129: Format ▸ Conditional formatting… (the rules manager pane). */
+  conditionalFormatting: "format.conditional-formatting",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */

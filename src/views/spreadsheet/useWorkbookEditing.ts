@@ -6,13 +6,20 @@
 // (useSheetCommands); the downloads (useWorkbookDownload); and SPEC-122's
 // cell entry (useCellEditing) over the same undo pipeline — `cell` is what
 // the grid, the formula bar, the sheet tabs and the status bar bind.
+// SPEC-129: the view's one side panel (useSheetSidePanel — the Format menu
+// opens it, WorkbookBody renders it) and its conditional-formatting rules
+// manager (useConditionalFormatManager), whose steps run on the same undo
+// stack.
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { useCellEditing, type CellEditingDeps } from "./useCellEditing";
+import { useConditionalFormatManager } from "./useConditionalFormatManager";
+import { useConditionalFormats } from "./useConditionalFormats";
 import type { Recalc } from "./useRecalc";
 import { useSheetCommands } from "./useSheetCommands";
+import { useSheetSidePanel } from "./useSheetSidePanel";
 import type { SheetViewState } from "./useSheetViewState";
 import { useSpreadsheetUndo } from "./useSpreadsheetUndo";
 import { useWorkbookDownload } from "./useWorkbookDownload";
@@ -26,7 +33,7 @@ export interface WorkbookEditingDeps {
     sheetsChanged(): void;
   };
   viewState: Pick<SheetViewState, "syncInto">;
-  recalc: Pick<Recalc, "edit" | "settle">;
+  recalc: Pick<Recalc, "edit" | "settle" | "onResult">;
   /** Cell entry's view inputs (SPEC-122). */
   selection: CellEditingDeps["selection"];
   sheetMetrics: CellEditingDeps["sheetMetrics"];
@@ -60,6 +67,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncViewState: (model) => deps.viewState.syncInto(model),
   });
   const download = useWorkbookDownload({ book: deps.book });
+  const conditionalFormats = useConditionalFormats({ book: deps.book, recalc: deps.recalc, undo, locale: deps.locale });
   const cell = useCellEditing({
     book: deps.book,
     selection: deps.selection,
@@ -81,7 +89,17 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     copyDisabledReason: download.copyDisabledReason.value,
     copyOdsLabel: download.copyOdsLabel.value,
   }));
-  return { undo, commands, download, appBar, cell };
+  const sidePanel = useSheetSidePanel();
+  const cfManager = useConditionalFormatManager({
+    model: () => deps.book.workbook.value,
+    sheet: () => deps.book.activeSheet.value,
+    selection: () => deps.selection.selection.value,
+    undo,
+    locale: deps.locale,
+    syncInto: (model) => deps.viewState.syncInto(model),
+    busy: () => cell.editing.value,
+  });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

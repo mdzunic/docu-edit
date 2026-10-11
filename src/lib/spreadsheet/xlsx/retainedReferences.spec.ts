@@ -6,7 +6,11 @@
 // legacy comment's VML shape), source-time sheet names (a renamed sheet, a
 // duplicated sheet's override, another sheet's references left alone),
 // copy-on-write identity, the returned set of changed sheets, and the
-// worksheet tail path (the cells are never decoded or scanned).
+// worksheet tail path (the cells are never decoded or scanned). SPEC-129: the
+// conditional formats' rows are retired — `conditionalFormatting`, its
+// `cfRule/formula`s and the extLst's `x14:conditionalFormatting` keep every
+// byte, emptied or not (the model's adjusters move them), beside rows that
+// still move.
 import { describe, expect, it } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { relsPathFor } from "../../core/xml";
@@ -84,6 +88,7 @@ function book(specs: readonly SheetSpec[], parts: Readonly<Record<string, string
   });
   Object.assign(files, parts);
   return {
+    dxfs: [],
     kind: "spreadsheet",
     id: "retained",
     title: "Retained references",
@@ -99,7 +104,7 @@ function book(specs: readonly SheetSpec[], parts: Readonly<Record<string, string
 }
 
 function sheetOf(id: string, name: string, partName: string, kind: Sheet["kind"] = "grid", extra: Partial<Sheet> = {}): Sheet {
-  return { id, name, partName, rows: [], columns: [], merges: [], visibility: "visible", kind, defaultColWidthPx: 64, defaultRowHeightPt: 15, ...extra };
+  return { conditionalFormats: [], id, name, partName, rows: [], columns: [], merges: [], visibility: "visible", kind, defaultColWidthPx: 64, defaultRowHeightPt: 15, ...extra };
 }
 
 function textOf(opaque: readonly OpaquePart[], name: string): string {
@@ -144,6 +149,10 @@ function x14Cf(id: number, sqref: string, f?: string): string {
     `<x14:dataBar minLength="0" maxLength="100">${min}<x14:cfvo type="autoMax"/></x14:dataBar></x14:cfRule><xm:sqref>${sqref}</xm:sqref></x14:conditionalFormatting>`
   );
 }
+
+/** A sheet's `<dataValidations>` holding one custom validation. */
+const dv = (sqref: string, formula1: string): string =>
+  `<dataValidations count="1"><dataValidation type="custom" sqref="${sqref}"><formula1>${formula1}</formula1></dataValidation></dataValidations>`;
 
 function x14Dv(sqref: string, formula1: string, formula2?: string): string {
   const second = formula2 === undefined ? "" : `<x14:formula2><xm:f>${formula2}</xm:f></x14:formula2>`;
@@ -226,33 +235,44 @@ const pivotCacheXml = (source: string): string =>
 // --- the sheet part --------------------------------------------------------------------------
 
 describe("the sheet part", () => {
-  it("conditionalFormatting@sqref and cfRule/formula move; cells, merges, dimension, views and columns do not", () => {
+  it("SPEC-129: conditionalFormatting@sqref and cfRule/formula are retired — left verbatim like the cells, merges, dimension, views and columns — while a dataValidation beside them moves", () => {
+    // The conditionalFormats adjusters move the model's formats and the
+    // writer re-serialises them: moving them here too would move them twice.
     const cf =
       `<mergeCells count="1"><mergeCell ref="A5:B5"/></mergeCells><conditionalFormatting sqref="A1:A10 $C$5"><cfRule type="expression" dxfId="0" priority="1">` +
       `<formula>$A3&gt;Sheet2!$B$1</formula><formula>B5</formula></cfRule></conditionalFormatting>`;
-    const rows = book([{ name: "Sheet1", xml: worksheet(cf) }, { name: "Sheet2" }]);
+    for (const [kind, at, count] of [
+      ["insertRows", 2, 2],
+      ["insertCols", 0, 1],
+    ] as const) {
+      const alone = book([{ name: "Sheet1", xml: worksheet(cf) }, { name: "Sheet2" }]);
+      const aloneBefore = alone.opaque;
+      expect(adjust(alone, kind, at, count), kind).toEqual(new Set());
+      expect(alone.opaque, kind).toBe(aloneBefore);
+    }
+
+    const tail = cf + dv("A1:A10 $C$5", "$A3&gt;Sheet2!$B$1");
+    const rows = book([{ name: "Sheet1", xml: worksheet(tail) }, { name: "Sheet2" }]);
     const before = rows.opaque;
     expect(adjust(rows, "insertRows", 2, 2)).toEqual(new Set(["s1"]));
     expect(spans(before, rows, SHEET1)).toEqual([
       ["A1:A10 $C$5", "A1:A12 $C$7"],
       ["$A3&gt;Sheet2!$B$1", "$A5&gt;Sheet2!$B$1"],
-      ["B5", "B7"],
     ]);
+    expect(textOf(rows.opaque, SHEET1)).toContain(cf);
 
-    const cols = book([{ name: "Sheet1", xml: worksheet(cf) }, { name: "Sheet2" }]);
+    const cols = book([{ name: "Sheet1", xml: worksheet(tail) }, { name: "Sheet2" }]);
     const colsBefore = cols.opaque;
     adjust(cols, "insertCols", 0, 1);
     expect(spans(colsBefore, cols, SHEET1)).toEqual([
       ["A1:A10 $C$5", "B1:B10 $D$5"],
       ["$A3&gt;Sheet2!$B$1", "$B3&gt;Sheet2!$B$1"],
-      ["B5", "C5"],
     ]);
+    expect(textOf(cols.opaque, SHEET1)).toContain(cf);
   });
 
   it("a range list keeps its separators, `$` markers, entry shapes and unparseable entries; a dropped entry takes the separator before it", () => {
-    const model = book([
-      { name: "Sheet1", xml: worksheet(`<conditionalFormatting sqref="A1  $B$3:B$9 XFE1 A3 C2:C3"><cfRule type="expression" priority="1"><formula>TRUE</formula></cfRule></conditionalFormatting>`) },
-    ]);
+    const model = book([{ name: "Sheet1", xml: worksheet(dv("A1  $B$3:B$9 XFE1 A3 C2:C3", "TRUE")) }]);
     const before = model.opaque;
     adjust(model, "deleteRows", 2, 1);
     expect(spans(before, model, SHEET1)).toEqual([["A1  $B$3:B$9 XFE1 A3 C2:C3", "A1  $B$3:B$8 XFE1 C2:C2"]]);
@@ -387,12 +407,13 @@ describe("the sheet part", () => {
     ]);
   });
 
-  it("the extLst: x14:conditionalFormatting's xm:sqref and xm:f, x14:dataValidation's xm:sqref and formula1/2, x14:sparkline's xm:f and xm:sqref, a group's date axis", () => {
+  it("the extLst: x14:dataValidation's xm:sqref and formula1/2, x14:sparkline's xm:f and xm:sqref, a group's date axis; SPEC-129: x14:conditionalFormatting's xm:sqref and xm:f are retired — left verbatim", () => {
+    const cf = ext(X14_CF, `<x14:conditionalFormattings>${x14Cf(1, "A2:A20", "$H$3")}</x14:conditionalFormattings>`);
     const model = book([
       {
         name: "Sheet1",
         xml: worksheet(
-          `<extLst>${ext(X14_CF, `<x14:conditionalFormattings>${x14Cf(1, "A2:A20", "$H$3")}</x14:conditionalFormattings>`)}` +
+          `<extLst>${cf}` +
             `${ext(X14_DV, `<x14:dataValidations count="1" xmlns:xm="${XM}">${x14Dv("C3:C9 E4", "Sheet2!$A$1:$A$5", "$H$4")}</x14:dataValidations>`)}` +
             `${ext(
               X14_SPARKLINES,
@@ -405,14 +426,13 @@ describe("the sheet part", () => {
     const before = model.opaque;
     expect(adjust(model, "insertRows", 2, 1)).toEqual(new Set(["s1"]));
     expect(spans(before, model, SHEET1)).toEqual([
-      ["$H$3", "$H$4"],
-      ["A2:A20", "A2:A21"],
       ["$H$4", "$H$5"],
       ["C3:C9 E4", "C4:C10 E5"],
       ["Sheet1!$B$12:$E$12", "Sheet1!$B$13:$E$13"],
       ["Sheet1!B3:E3", "Sheet1!B4:E4"],
       ["F3", "F4"],
     ]);
+    expect(textOf(model.opaque, SHEET1)).toContain(cf);
   });
 });
 
@@ -647,16 +667,25 @@ describe("drawings, comments and VML", () => {
 // --- removal ---------------------------------------------------------------------------------
 
 describe("removal", () => {
-  it("a conditional format whose range is gone is removed; one losing an entry keeps the rest", () => {
+  it("SPEC-129: a conditional format whose range is gone, or that loses an entry, is retired — left verbatim, never removed — while dataValidations over the same ranges still go or lose it", () => {
     const gone = `<conditionalFormatting sqref="A3:B4"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThan"><formula>A3</formula></cfRule></conditionalFormatting>`;
     const kept = `<conditionalFormatting sqref="C3 C8"><cfRule type="expression" dxfId="1" priority="2"><formula>C8&gt;0</formula></cfRule></conditionalFormatting>`;
-    const model = book([{ name: "Sheet1", xml: worksheet(gone + kept) }]);
+    const alone = book([{ name: "Sheet1", xml: worksheet(gone + kept) }]);
+    const aloneBefore = alone.opaque;
+    expect(adjust(alone, "deleteRows", 2, 2)).toEqual(new Set());
+    expect(alone.opaque).toBe(aloneBefore);
+
+    const goneDv = `<dataValidation type="whole" sqref="A3:B4"><formula1>0</formula1></dataValidation>`;
+    const validations = `<dataValidations count="2">${goneDv}<dataValidation type="custom" sqref="C3 C8"><formula1>C8&gt;0</formula1></dataValidation></dataValidations>`;
+    const model = book([{ name: "Sheet1", xml: worksheet(gone + kept + validations) }]);
     const before = model.opaque;
-    adjust(model, "deleteRows", 2, 2);
-    expect(spans(before, model, SHEET1, [gone])).toEqual([
+    expect(adjust(model, "deleteRows", 2, 2)).toEqual(new Set(["s1"]));
+    expect(spans(before, model, SHEET1, [goneDv])).toEqual([
+      ["2", "1"],
       ["C3 C8", "C6"],
       ["C8&gt;0", "C6&gt;0"],
     ]);
+    expect(textOf(model.opaque, SHEET1)).toContain(gone + kept);
   });
 
   it("dataValidation: emptied items removed, dataValidations@count kept right, the container removed with its last item", () => {
@@ -711,8 +740,8 @@ describe("removal", () => {
     ]);
   });
 
-  it("x14:conditionalFormatting and x14:dataValidation (its count kept right) removed; x14:sparkline removed, an emptied sparklineGroup with it", () => {
-    const goneCf = x14Cf(1, "A3:A4");
+  it("x14:dataValidation (its count kept right) removed; x14:sparkline removed, an emptied sparklineGroup with it; SPEC-129: an x14:conditionalFormatting whose range is gone is retired — left verbatim, never removed", () => {
+    const cf = ext(X14_CF, `<x14:conditionalFormattings>${x14Cf(1, "A3:A4")}${x14Cf(2, "A9")}</x14:conditionalFormattings>`);
     const goneDv = x14Dv("B3", "Sheet2!$A$1:$A$3");
     const goneGroup = sparklineGroup(sparkline("Sheet1!B3:E3", "F3"));
     const goneSparkline = sparkline("Sheet1!B4:E4", "F4");
@@ -720,7 +749,7 @@ describe("removal", () => {
       {
         name: "Sheet1",
         xml: worksheet(
-          `<extLst>${ext(X14_CF, `<x14:conditionalFormattings>${goneCf}${x14Cf(2, "A9")}</x14:conditionalFormattings>`)}` +
+          `<extLst>${cf}` +
             `${ext(X14_DV, `<x14:dataValidations count="2" xmlns:xm="${XM}">${goneDv}${x14Dv("B10", "Sheet2!$A$1:$A$3")}</x14:dataValidations>`)}` +
             `${ext(X14_SPARKLINES, `<x14:sparklineGroups xmlns:xm="${XM}">${goneGroup}${sparklineGroup(goneSparkline + sparkline("Sheet1!B9:E9", "F9"))}</x14:sparklineGroups>`)}</extLst>`,
         ),
@@ -729,13 +758,13 @@ describe("removal", () => {
     ]);
     const before = model.opaque;
     adjust(model, "deleteRows", 2, 2);
-    expect(spans(before, model, SHEET1, [goneCf, goneDv, goneGroup, goneSparkline])).toEqual([
-      ["A9", "A7"],
+    expect(spans(before, model, SHEET1, [goneDv, goneGroup, goneSparkline])).toEqual([
       ["2", "1"],
       ["B10", "B8"],
       ["Sheet1!B9:E9", "Sheet1!B7:E7"],
       ["F9", "F7"],
     ]);
+    expect(textOf(model.opaque, SHEET1)).toContain(cf);
   });
 
   it("a comment whose cell is deleted goes, with its VML shape (matched by x:Row/x:Column); a threaded comment with its replies", () => {
@@ -783,10 +812,7 @@ describe("sheet names in retained text", () => {
         {
           name: "Data",
           sourceName: "Sheet1",
-          xml: worksheet(
-            `<conditionalFormatting sqref="A1:A10"><cfRule type="expression" priority="1"><formula>$A1</formula></cfRule></conditionalFormatting>` +
-              `<rowBreaks count="1" manualBreakCount="1"><brk id="4" max="16383" man="1"/></rowBreaks>`,
-          ),
+          xml: worksheet(`${dv("A1:A10", "$A1")}<rowBreaks count="1" manualBreakCount="1"><brk id="4" max="16383" man="1"/></rowBreaks>`),
         },
         { name: "Sheet2", xml: worksheet(`<drawing r:id="rId1"/>`), rels: [["rId1", "drawing", "../drawings/drawing1.xml"]] },
       ],
@@ -812,7 +838,7 @@ describe("sheet names in retained text", () => {
   it("a renamed sheet: what names its source-time name still moves, the name written back exactly as found", () => {
     const model = book(
       [
-        { name: "Data", sourceName: "Sheet1", xml: worksheet(`<conditionalFormatting sqref="A1:A10"><cfRule type="expression" priority="1"><formula>$A1</formula></cfRule></conditionalFormatting>`) },
+        { name: "Data", sourceName: "Sheet1", xml: worksheet(dv("A1:A10", "$A1")) },
         { name: "Sheet2", xml: worksheet(`<drawing r:id="rId1"/>`), rels: [["rId1", "drawing", "../drawings/drawing1.xml"]] },
         { name: "Totals", sourceName: "My Data" },
       ],
@@ -842,8 +868,8 @@ describe("sheet names in retained text", () => {
   });
 
   it("a reference to another sheet is left alone, on either side", () => {
-    const own = `<conditionalFormatting sqref="A1:A10"><cfRule type="expression" priority="1"><formula>$A1&gt;Sheet2!B5</formula></cfRule></conditionalFormatting>`;
-    const theirs = `<conditionalFormatting sqref="A1:A10"><cfRule type="expression" priority="1"><formula>$A1&gt;Sheet2!B5</formula></cfRule></conditionalFormatting>`;
+    const own = dv("A1:A10", "$A1&gt;Sheet2!B5");
+    const theirs = dv("A1:A10", "$A1&gt;Sheet2!B5");
     const model = book([
       { name: "Sheet1", xml: worksheet(own) },
       { name: "Sheet2", xml: worksheet(theirs) },
@@ -887,10 +913,10 @@ describe("sheet names in retained text", () => {
 // --- copy-on-write and the result ----------------------------------------------------------------
 
 describe("copy-on-write and the changed sheets", () => {
-  const CF = `<conditionalFormatting sqref="A1:A10"><cfRule type="expression" priority="1"><formula>Sheet2!$A$1</formula></cfRule></conditionalFormatting>`;
+  const DV = dv("A1:A10", "Sheet2!$A$1");
 
   it("when nothing moves, opaque keeps its identity", () => {
-    const model = book([{ name: "Sheet1", xml: worksheet(CF) }, { name: "Sheet2" }]);
+    const model = book([{ name: "Sheet1", xml: worksheet(DV) }, { name: "Sheet2" }]);
     const before = model.opaque;
     expect(adjust(model, "insertRows", 100, 5)).toEqual(new Set());
     expect(adjust(model, "deleteCols", 3, 2)).toEqual(new Set());
@@ -898,7 +924,7 @@ describe("copy-on-write and the changed sheets", () => {
   });
 
   it("a change makes a new opaque array with new parts only where they changed; the old array and parts are untouched", () => {
-    const model = book([{ name: "Sheet1", xml: worksheet(CF) }, { name: "Sheet2" }]);
+    const model = book([{ name: "Sheet1", xml: worksheet(DV) }, { name: "Sheet2" }]);
     const before = model.opaque;
     const snapshot = before.map((part) => ({ ...part }));
     adjust(model, "insertRows", 0, 1);
@@ -918,9 +944,9 @@ describe("copy-on-write and the changed sheets", () => {
   it("returns the sheets whose own parts changed: the edited sheet's, another's chart naming it — not a sheet only naming others", () => {
     const model = book(
       [
-        { name: "Sheet1", xml: worksheet(CF) },
+        { name: "Sheet1", xml: worksheet(DV) },
         { name: "Sheet2", xml: worksheet(`<drawing r:id="rId1"/>`), rels: [["rId1", "drawing", "../drawings/drawing1.xml"]] },
-        { name: "Sheet3", xml: worksheet(CF) },
+        { name: "Sheet3", xml: worksheet(DV) },
       ],
       chartParts("xl/drawings/drawing1.xml", "xl/charts/chart1.xml", ["Sheet1!$B$2:$B$30"]),
     );
@@ -951,7 +977,7 @@ describe("worksheet parts", () => {
   it("a part with no literal <sheetData (a prefixed namespace) is adjusted whole", () => {
     const xml =
       `${DECL}<x:worksheet xmlns:x="${MAIN}"><x:sheetData><x:row r="2"><x:c r="A2"><x:v>1</x:v></x:c></x:row></x:sheetData>` +
-      `<x:conditionalFormatting sqref="A1:A4"><x:cfRule type="expression" priority="1"><x:formula>A1</x:formula></x:cfRule></x:conditionalFormatting></x:worksheet>`;
+      `<x:dataValidations count="1"><x:dataValidation type="custom" sqref="A1:A4"><x:formula1>A1</x:formula1></x:dataValidation></x:dataValidations></x:worksheet>`;
     const model = book([{ name: "Sheet1", xml }]);
     const before = model.opaque;
     adjust(model, "insertRows", 0, 1);
