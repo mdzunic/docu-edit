@@ -33,11 +33,12 @@
 // | 6 | columns | ColumnSpans shifted, split, removed; inserted columns copy the left span's width and style (not `hidden`); adjacent equal spans re-joined |
 // | 7 | retained | rewriteRetainedReferences(model, structuralMapper(model, edit)) |
 // | 8 | autofilter | SPEC-128: Sheet.autoFilter (range, colIds, its sort record) and Sheet.sortState (ref, key columns) — see "8. autofilter" |
-// Later specs append theirs, in landing order — conditionalFormats (129),
-// validations (130), drawings (131), charts (132), names and tables (133),
-// notes and hyperlinks (135), pageBreaks (136), pivots (139) — each with the
-// registry contract test in structure.spec.ts, retiring its rows from
-// retainedReferences' tables in the same change.
+// | 9 | conditionalFormats | SPEC-129: Sheet.conditionalFormats — every range via adjustRange (dropping a fully deleted one; an emptied format removed); cellIs/expression formulas on the edited sheet re-anchored with adjustAnchoredFormula; value-object and preserved-rule formulas, on every sheet, via adjustFormula — see "9. conditionalFormats" |
+// Later specs append theirs, in landing order — validations (130), drawings
+// (131), charts (132), names and tables (133), notes and hyperlinks (135),
+// pageBreaks (136), pivots (139) — each with the registry contract test in
+// structure.spec.ts, retiring its rows from retainedReferences' tables in the
+// same change.
 //
 // Inserted rows take the row above's styleId, heightPt and customHeight and
 // its non-zero cell styles as styled empty cells (columns: the column to the
@@ -47,10 +48,13 @@
 // past the end are dropped. Deleting every row leaves an empty sheet.
 // Inserted rows are visible: they inherit neither `hidden` nor SPEC-128's
 // `filterHidden`.
+import { scanXml } from "../core/xmlScanner";
 import type { CellRef, GridRange } from "./address";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
+import { formatOrigin, renumberPriorities, sheetFormats, type CfRule, type CfValue, type ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter, FilterColumn } from "./filter";
-import { adjustFormula, adjustFormulaReferences } from "./formula/adjust";
+import { adjustAnchoredFormula, adjustFormula, adjustFormulaReferences } from "./formula/adjust";
+import { fromOdsFormula, fromXlsxFormula, toOdsFormula, toXlsxFormula } from "./formula/dialect";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { adjustOdsFilterCriteriaRanges } from "./ods/retainedReferences";
 import { firstRowAtOrAfter, MAX_FORMAT_MATERIALISED } from "./restyle";
@@ -59,6 +63,7 @@ import type { SheetSelection } from "./selection";
 import type { SheetSortKey, SortState } from "./sort";
 import { resolveRetainedSheetName } from "./sourceNames";
 import { LazyParts } from "./xlsx/package";
+import { applySplices, decodeXmlText, escapeElementText, type Splice } from "./xmlSplice";
 
 export { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retainedReferences";
 
@@ -879,6 +884,292 @@ const autofilterAdjuster: ReferenceAdjuster = {
   },
 };
 
+// --- 9. conditionalFormats ---------------------------------------------------------------------
+// SPEC-129 "Structural edits". For every sheet's conditionalFormats: each
+// format's ranges are mapped with adjustRange, in source order (a range
+// fully gone is dropped; the first one still standing is the new ranges[0]);
+// a format left with no range is removed. On the EDITED sheet, a
+// cellIs/expression rule's formulas are re-anchored with
+// adjustAnchoredFormula (origin = the format's pre-edit ranges[0] top-left,
+// firstRange = the first range still standing); its value-object formulas
+// (a colour scale's stops, a data bar's min/max, an icon set's thresholds)
+// and a preserved rule's embedded formula text (xlsx's <formula>/<xm:f>, an
+// ods preserved rule's calcext:value "if straightforward") go through plain
+// adjustFormula, as do EVERY sheet's — a format on another sheet that merely
+// references the edited sheet is adjusted the same way, without
+// re-anchoring, since its own ranges never move. Touched formats are
+// replaced (never mutated) without their sourceXml; priorities are
+// renumbered densely when a format was removed. A sheet whose formats
+// change — the edited one, or another one referencing it — is marked dirty.
+
+/** Whether a CfValue's `value` is formula text, not a plain number (the test
+ * the evaluator also uses): a `formula` value always is; for
+ * `num`/`percent`/`percentile` a value that does not parse as a plain number
+ * is; `min`/`max`/`autoMin`/`autoMax` carry no value. */
+function isCfValueFormula(value: CfValue): value is CfValue & { value: string } {
+  if (value.value === undefined) {
+    return false;
+  }
+  if (value.type === "formula") {
+    return true;
+  }
+  return (value.type === "num" || value.type === "percent" || value.type === "percentile") && !/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(value.value.trim());
+}
+
+/** `rule`'s value-object formulas (a colour scale's stops, a data bar's
+ * min/max, an icon set's thresholds) each run through `adjust`; the same
+ * object when none changes. Exported for move.ts's mover, which reuses it
+ * with repointFormula. */
+export function mapCfValueFormulas(rule: CfRule, adjust: (formula: string) => string): CfRule {
+  const at = (value: CfValue): CfValue => {
+    if (!isCfValueFormula(value)) {
+      return value;
+    }
+    const next = adjust(value.value);
+    return next === value.value ? value : { ...value, value: next };
+  };
+  if (rule.kind === "colorScale") {
+    const stops = rule.stops.map((stop) => {
+      const next = at(stop.at);
+      return next === stop.at ? stop : { ...stop, at: next };
+    });
+    return stops.every((stop, i) => stop === rule.stops[i]) ? rule : { ...rule, stops };
+  }
+  if (rule.kind === "dataBar") {
+    const min = at(rule.bar.min);
+    const max = at(rule.bar.max);
+    return min === rule.bar.min && max === rule.bar.max ? rule : { ...rule, bar: { ...rule.bar, min, max } };
+  }
+  if (rule.kind === "iconSet") {
+    const thresholds = rule.icons.thresholds.map((threshold) => {
+      const next = at(threshold.at);
+      return next === threshold.at ? threshold : { ...threshold, at: next };
+    });
+    return thresholds.every((threshold, i) => threshold === rule.icons.thresholds[i]) ? rule : { ...rule, icons: { ...rule.icons, thresholds } };
+  }
+  return rule; // cellIs, expression and preserved carry no value object
+}
+
+/** Every `<formula>` or `<xm:f>` element's text inside a preserved xlsx
+ * rule's XML run through `adjust` (canonical text in and out, via
+ * fromXlsxFormula/toXlsxFormula); the identical string when none changes, or
+ * when the XML is not well formed. Exported for move.ts's mover. */
+export function withXlsxPreservedFormulas(xml: string, adjust: (formula: string) => string): string {
+  const splices: Splice[] = [];
+  const open: number[] = [];
+  try {
+    scanXml(xml, (event) => {
+      if (event.type === "text" || (event.name !== "formula" && event.name !== "xm:f")) {
+        return;
+      }
+      if (event.type === "open") {
+        if (!event.selfClosing) {
+          open.push(event.end);
+        }
+        return;
+      }
+      const start = open.pop();
+      if (start === undefined) {
+        return;
+      }
+      const raw = xml.slice(start, event.start);
+      if (raw.trim() === "") {
+        return;
+      }
+      const canonical = fromXlsxFormula(decodeXmlText(raw));
+      const next = adjust(canonical);
+      if (next !== canonical) {
+        splices.push({ start, end: event.start, text: escapeElementText(toXlsxFormula(next)) });
+      }
+    });
+  } catch {
+    return xml;
+  }
+  return splices.length === 0 ? xml : applySplices(xml, splices);
+}
+
+/** The first top-level comma in `text` (paren/bracket depth 0, outside a
+ * single-quoted string) — a preserved ods rule's `between(f1,f2)`
+ * separator; -1 when there is none. */
+function topLevelComma(text: string): number {
+  let depth = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "'") {
+      const end = text.indexOf("'", i + 1);
+      i = end < 0 ? text.length : end;
+    } else if (ch === "(" || ch === "[") {
+      depth += 1;
+    } else if (ch === ")" || ch === "]") {
+      depth -= 1;
+    } else if (ch === "," && depth === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** A preserved ods rule's `calcext:value` with its embedded formula
+ * operand(s) — bracket-form OpenFormula, as `table:formula` writes it minus
+ * the `of:=` prefix — run through `adjust` via fromOdsFormula/toOdsFormula
+ * (SPEC-129: "if straightforward" — a shape this does not recognise, such as
+ * `duplicate`, `top-elements(n)` or `begins-with("t")`, has no formula
+ * operand and is left exactly as written). Exported for move.ts's mover. */
+export function withOdsPreservedCondition(value: string, adjust: (formula: string) => string): string {
+  const operand = (text: string): string => {
+    let canonical: string;
+    try {
+      canonical = fromOdsFormula(text);
+    } catch {
+      return text;
+    }
+    const next = adjust(canonical);
+    return next === canonical ? text : toOdsFormula(next).slice(4); // drop toOdsFormula's "of:=" prefix
+  };
+  if (value.startsWith("formula-is(") && value.endsWith(")")) {
+    const inner = value.slice("formula-is(".length, -1);
+    const next = operand(inner);
+    return next === inner ? value : `formula-is(${next})`;
+  }
+  for (const prefix of ["between(", "not-between("] as const) {
+    if (!value.startsWith(prefix) || !value.endsWith(")")) {
+      continue;
+    }
+    const inner = value.slice(prefix.length, -1);
+    const comma = topLevelComma(inner);
+    if (comma < 0) {
+      return value;
+    }
+    const a = inner.slice(0, comma);
+    const b = inner.slice(comma + 1);
+    const nextA = operand(a);
+    const nextB = operand(b);
+    return nextA === a && nextB === b ? value : `${prefix}${nextA},${nextB})`;
+  }
+  for (const op of ["<>", ">=", "<=", "=", ">", "<"] as const) {
+    if (value.startsWith(op)) {
+      const inner = value.slice(op.length);
+      const next = operand(inner);
+      return next === inner ? value : `${op}${next}`;
+    }
+  }
+  return value;
+}
+
+/** `rule` with every formula it carries run through `plain`, except a
+ * cellIs/expression formula on the format's own (edited) sheet, which
+ * `anchor` re-anchors instead. */
+function adjustRuleFormulas(rule: CfRule, plain: (formula: string) => string, anchor?: (formula: string) => string): CfRule {
+  if (rule.kind === "cellIs") {
+    const formulas = rule.formulas.map((formula) => (anchor ?? plain)(formula));
+    return formulas.every((formula, i) => formula === rule.formulas[i]) ? rule : { ...rule, formulas };
+  }
+  if (rule.kind === "expression") {
+    const formula = (anchor ?? plain)(rule.formula);
+    return formula === rule.formula ? rule : { ...rule, formula };
+  }
+  if (rule.kind === "preserved") {
+    const xml = rule.where === "ods" ? withOdsPreservedCondition(rule.xml, plain) : withXlsxPreservedFormulas(rule.xml, plain);
+    return xml === rule.xml ? rule : { ...rule, xml };
+  }
+  return mapCfValueFormulas(rule, plain);
+}
+
+/** A format without its `sourceXml` (something about it changed: a fresh
+ * element is serialised). */
+function withoutFormatSource(format: ConditionalFormat): ConditionalFormat {
+  const { sourceXml: _source, ...rest } = format;
+  return rest;
+}
+
+/** `sheet`'s formats after `edit`: undefined when none changes. `own`:
+ * whether `sheet` is the edited sheet (its ranges move; its cellIs/
+ * expression formulas re-anchor instead of just shifting). */
+function adjustSheetFormats(sheet: Sheet, edit: StructuralEdit, own: boolean, sheetNameOf: (sheetId: string) => string): ConditionalFormat[] | undefined {
+  const formats = sheetFormats(sheet);
+  if (formats.length === 0) {
+    return undefined;
+  }
+  const plain = (formula: string): string => adjustFormula(formula, sheet.id, edit, sheetNameOf);
+  let changed = false;
+  const next: ConditionalFormat[] = [];
+  for (const format of formats) {
+    if (!own) {
+      let rulesChanged = false;
+      const rules = format.rules.map((rule) => {
+        const adjusted = adjustRuleFormulas(rule, plain);
+        rulesChanged ||= adjusted !== rule;
+        return adjusted;
+      });
+      if (!rulesChanged) {
+        next.push(format);
+        continue;
+      }
+      changed = true;
+      next.push(withoutFormatSource({ ...format, rules }));
+      continue;
+    }
+    const origin = formatOrigin(format);
+    let firstSurviving: GridRange | undefined;
+    let rangesChanged = false;
+    const ranges: GridRange[] = [];
+    for (const range of format.ranges) {
+      const adjusted = adjustRange(range, edit);
+      if (adjusted === null) {
+        rangesChanged = true;
+        continue;
+      }
+      rangesChanged ||= adjusted !== range;
+      firstSurviving ??= range; // pre-edit coordinates, as adjustAnchoredFormula wants
+      ranges.push(adjusted);
+    }
+    if (ranges.length === 0) {
+      changed = true; // the format is removed
+      continue;
+    }
+    const anchor = (formula: string): string => adjustAnchoredFormula(formula, origin, firstSurviving!, sheet.id, edit, sheetNameOf);
+    let rulesChanged = rangesChanged;
+    const rules = format.rules.map((rule) => {
+      const adjusted = adjustRuleFormulas(rule, plain, anchor);
+      rulesChanged ||= adjusted !== rule;
+      return adjusted;
+    });
+    if (!rangesChanged && !rulesChanged) {
+      next.push(format);
+      continue;
+    }
+    changed = true;
+    next.push(withoutFormatSource({ ...format, ranges, rules }));
+  }
+  if (!changed) {
+    return undefined;
+  }
+  // renumberPriorities is a no-op (same array, by identity) when no rule's
+  // priority actually needs to move — which is exactly when no format was
+  // removed, since a surviving format's rules keep theirs.
+  return renumberPriorities(next);
+}
+
+const conditionalFormatsAdjuster: ReferenceAdjuster = {
+  id: "conditionalFormats",
+  adjust(model, edit) {
+    const names = new Map(model.sheets.map((sheet) => [sheet.id, sheet.name] as const));
+    const nameOf = (id: string): string => names.get(id) ?? "";
+    let changed = false;
+    const sheets = model.sheets.map((sheet) => {
+      const formats = adjustSheetFormats(sheet, edit, sheet.id === edit.sheetId, nameOf);
+      if (formats === undefined) {
+        return sheet;
+      }
+      changed = true;
+      return { ...sheet, conditionalFormats: formats, dirty: true as const };
+    });
+    if (changed) {
+      model.sheets = sheets;
+    }
+  },
+};
+
 // --- the registry ----------------------------------------------------------------------------
 
 export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
@@ -890,6 +1181,7 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   columnsAdjuster,
   retainedAdjuster,
   autofilterAdjuster,
+  conditionalFormatsAdjuster,
 ];
 
 /** One structural edit (see the module header). */
