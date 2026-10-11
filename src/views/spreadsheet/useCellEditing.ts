@@ -9,8 +9,7 @@
 //   in the (empty) editor and opens Enter mode with that input replacing the
 //   cell's content; F2 (or a double-click, or a click in the formula bar)
 //   opens Edit mode on the cell's edit text, caret at the end (or at the
-//   clicked character); Delete/Backspace clear the selection's contents
-//   (its visible rows only across filter-hidden ones, SPEC-128);
+//   clicked character); Delete/Backspace clear the selection's contents;
 //   Enter/Tab move (SPEC-117's cycle within a multi-cell selection); every
 //   other key is SPEC-117's navigation, on the editor proxy unchanged.
 // - Enter/Edit: Enter/Shift+Enter commit and move down/up, Tab/Shift+Tab
@@ -36,14 +35,13 @@ import { useToasts } from "../../composables/useToasts";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import type { CellEntry } from "../../lib/spreadsheet/cells";
-import { visibleRowSpans } from "../../lib/spreadsheet/filter";
 import { MAX_TEXT_LENGTH } from "../../lib/spreadsheet/formula/values";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
-import { canEditCell, cellEditText, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
+import { canEditCell, cellEditText, clearTargets, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { usePointMode } from "./usePointMode";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -259,16 +257,14 @@ export function useCellEditing(deps: CellEditingDeps) {
     }
   }
 
-  /** Delete/Backspace in Ready (and Format ▸ Clear contents): "Clear
-   * contents" over the selection — over its visible rows only when it spans
-   * filter-hidden ones (SPEC-128: visibleRowSpans, Excel's rule). */
+  /** Delete/Backspace in Ready (and Format ▸ Clear contents): see clearTargets. */
   function clearSelection(): void {
     const m = model();
     const sheet = deps.book.activeSheet.value;
     if (!m || sheet?.kind !== "grid") {
       return;
     }
-    const ranges = deps.selection.selection.value.ranges.flatMap((range) => visibleRowSpans(sheet, range));
+    const ranges = clearTargets(sheet, deps.selection.selection.value.ranges);
     const refusal = refusalFor(m, deps.book.activeIndex.value, ranges);
     if (refusal) {
       toast(refusal);

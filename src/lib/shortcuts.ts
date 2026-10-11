@@ -369,7 +369,7 @@ export function isOutsideDocumentInput(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
   }
-  if (target.closest('[role="dialog"]') || target.closest('[data-testid="find-bar"]')) {
+  if (target.closest('[role="dialog"], [role="alertdialog"]') || target.closest('[data-testid="find-bar"]')) {
     return true;
   }
   if (target instanceof HTMLElement && target.isContentEditable) {
