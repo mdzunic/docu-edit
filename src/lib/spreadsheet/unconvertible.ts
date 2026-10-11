@@ -5,11 +5,15 @@
 // present, in table order; the download names them in one toast ("Not
 // included in the .ods copy: charts, comments").
 //
-// Every row is a structure the model does not carry yet, so stripRetention's
-// copy cannot either. Each later spec that models a structure deletes its
-// row when the structure crosses through the model (the "Row removed by"
-// column of the spec's table); a row may also yield item-level labels
-// (SPEC-131's "Form control on Sheet1") by returning them from its marker.
+// Every row is a structure the model does not carry yet — or carries only
+// verbatim, in its source format's terms — so stripRetention's copy cannot
+// either. Each later spec that models a structure deletes its row when the
+// structure crosses through the model (the "Row removed by" column of the
+// spec's table): SPEC-128 deleted "filters" — an autofilter's range,
+// criteria and sort cross — and added "colour and icon filters", the
+// criteria it keeps verbatim (an xlsx `preserved` criterion, an ods
+// `odsUnmappedFilter`). A row may also yield item-level labels (SPEC-131's
+// "Form control on Sheet1") by returning them from its marker.
 import { isChartSheet } from "./foreign";
 import type { SpreadsheetModel } from "./model";
 import { partTextOf, readSourceWorkbook, relationshipKind, relationshipsOf, targetPart, type PartLookup } from "./xlsx/package";
@@ -97,6 +101,14 @@ function envelopeHas(fragment: string): Marker {
   return ({ model }) => (model.odsContentEnvelope?.prefix ?? "").includes(fragment) || (model.odsContentEnvelope?.suffix ?? "").includes(fragment);
 }
 
+/** A database range no sheet's autofilter claims (SPEC-128: the one a sheet's
+ * autofilter is read from crosses through the model). */
+const odsTables: Marker = ({ model }) => {
+  const claimed = new Set(model.sheets.flatMap((sheet) => (sheet.autoFilter?.odsName === undefined ? [] : [sheet.autoFilter.odsName])));
+  const text = (model.odsContentEnvelope?.prefix ?? "") + (model.odsContentEnvelope?.suffix ?? "");
+  return [...text.matchAll(/<table:database-range\b[^>]*?\btable:name="([^"]*)"/g)].some((match) => !claimed.has(match[1]!));
+};
+
 /** Shapes, or a frame that is not an embedded object's. */
 const odsImagesAndShapes: Marker = (source) =>
   tableTexts(source).some((text) => {
@@ -118,6 +130,11 @@ const odsPageSetup: Marker = ({ model, parts }) => {
 
 // --- both ---------------------------------------------------------------------------------------
 
+/** SPEC-128: an autofilter criterion kept verbatim — an xlsx colour or icon
+ * filter (`preserved`), an ods filter that does not decompose per column. */
+const verbatimFilters: Marker = ({ model }) =>
+  model.sheets.some((sheet) => sheet.autoFilter !== undefined && (sheet.autoFilter.odsUnmappedFilter !== undefined || sheet.autoFilter.columns.some((column) => column.criteria?.kind === "preserved")));
+
 /** A formula that cannot cross: unparsed text or a data table. */
 const untranslatableFormulas: Marker = ({ model }) =>
   model.sheets.some((sheet) => sheet.rows.some((row) => row.cells.some((cell) => cell.formulaUnparsed === true || cell.dataTableXml !== undefined)));
@@ -136,8 +153,8 @@ export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
   { label: "conditional formatting", xlsx: anyWorksheetHas("conditionalFormatting"), ods: anyTableHas("<calcext:conditional-formats") },
   { label: "data validation", xlsx: anyWorksheetHas("<dataValidations"), ods: envelopeHas("<table:content-validations") },
   { label: "named ranges", xlsx: xlsxNamedRanges, ods: (source) => envelopeHas("<table:named-expressions")(source) || anyTableHas("<table:named-expressions")(source) },
-  { label: "tables", xlsx: anyPart(/^xl\/tables\/[^/]+\.xml$/), ods: envelopeHas("<table:database-ranges") },
-  { label: "filters", xlsx: anyWorksheetHas("<autoFilter"), ods: (source) => envelopeHas("table:display-filter-buttons")(source) || anyTableHas("table:display-filter-buttons")(source) },
+  { label: "tables", xlsx: anyPart(/^xl\/tables\/[^/]+\.xml$/), ods: odsTables },
+  { label: "colour and icon filters", xlsx: verbatimFilters, ods: verbatimFilters },
   { label: "hyperlinks", xlsx: anyWorksheetHas("<hyperlinks"), ods: anyTableHas("<text:a") },
   { label: "pivot tables", xlsx: anyPart(/^xl\/pivotTables\//), ods: envelopeHas("<table:data-pilot-tables") },
   { label: "page setup", xlsx: (source) => anyWorksheetHas("<pageSetup")(source) || anyWorksheetHas("<headerFooter")(source), ods: odsPageSetup },

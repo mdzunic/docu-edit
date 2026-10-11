@@ -19,6 +19,7 @@ import {
   buildSpecMacrosXlsmBytes,
   SPEC121_LINKS_XLSX,
 } from "./fixtures/build";
+import type { AutoFilter } from "./filter";
 import { cellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
@@ -748,6 +749,33 @@ describe("duplicateSheet", () => {
     expect(copy.columns[0]).not.toBe(source.columns[0]);
     expect(copy.merges[0]).not.toBe(source.merges[0]);
     expect(copy).toMatchObject({ zoomPercent: 150, showGridLines: false, defaultColWidthPx: 80, defaultRowHeightPt: 18, visibility: "visible", kind: "grid" });
+  });
+
+  it("copies the autofilter and the sort records (SPEC-128): cloned, the rows' filterHidden shared, the autofilter without its odsName", () => {
+    const autoFilter: AutoFilter = {
+      range: { top: 0, left: 0, bottom: 4, right: 1 },
+      columns: [{ colId: 0, criteria: { kind: "values", values: ["West"], blanks: false, dateGroups: [] } }],
+      sort: { ref: { top: 1, left: 0, bottom: 4, right: 1 }, keys: [{ col: 1, descending: true }], sourceXml: `<sortState ref="A2:B5"/>` },
+      sourceXml: `<autoFilter ref="A1:B5"/>`,
+    };
+    const sortState = { ref: { top: 1, left: 4, bottom: 9, right: 5 }, keys: [{ col: 5, descending: false }] };
+    const source = gridSheet("Data", { A1: "Region", A2: "West", A3: "East" }, { autoFilter, sortState });
+    source.rows[2] = { ...source.rows[2]!, filterHidden: true };
+    const model = book([source]);
+    duplicateSheet(model, 0);
+    const copy = model.sheets[1]!;
+    expect(copy.autoFilter).toEqual(autoFilter);
+    expect(copy.autoFilter).not.toBe(autoFilter);
+    expect(copy.autoFilter!.columns).not.toBe(autoFilter.columns);
+    expect(copy.sortState).toEqual(sortState);
+    expect(copy.sortState).not.toBe(sortState);
+    expect(copy.rows).toBe(source.rows);
+
+    const ods = book([gridSheet("Data", {}, { autoFilter: { ...autoFilter, odsName: "__Anonymous_Sheet_DB__0", sourceXml: `<table:database-range table:name="__Anonymous_Sheet_DB__0"/>` } })], 0, "ods");
+    duplicateSheet(ods, 0);
+    const { sourceXml: _source, ...unsourced } = autoFilter;
+    expect(ods.sheets[1]!.autoFilter).toEqual(unsourced);
+    expect(ods.sheets[0]!.autoFilter!.odsName).toBe("__Anonymous_Sheet_DB__0");
   });
 
   it("rewrites qualified references to the source inside the copy (which makes it dirty) and leaves the source untouched", () => {
@@ -1708,7 +1736,7 @@ describe("unconvertibleContent", () => {
     "data validation",
     "named ranges",
     "tables",
-    "filters",
+    "colour and icon filters",
     "hyperlinks",
     "pivot tables",
     "page setup",
@@ -1792,6 +1820,25 @@ describe("unconvertibleContent", () => {
   it("names chart sheets for a foreign chartsheet", () => {
     const model = book([gridSheet("Data"), foreignSheet("Chart1", "xl/chartsheets/sheet1.xml")]);
     expect(unconvertibleContent(model, "ods")).toEqual(["chart sheets"]);
+  });
+
+  it("SPEC-128: an autofilter crosses — only a colour or icon filter (xlsx) or an ods filter that does not decompose is named, and an ods sheet's own database range is no table", () => {
+    const values = { colId: 0, criteria: { kind: "values" as const, values: ["West"], blanks: false, dateGroups: [] } };
+    const filtered = (autoFilter: AutoFilter, format: SpreadsheetFormat = "xlsx"): SpreadsheetModel => book([gridSheet("Data", { A1: "Region" }, { autoFilter })], 0, format);
+    const range = { top: 0, left: 0, bottom: 9, right: 1 };
+    expect(unconvertibleContent(filtered({ range, columns: [values] }), "ods")).toEqual([]);
+    const colour = { colId: 1, criteria: { kind: "preserved" as const, xml: `<colorFilter dxfId="0"/>`, label: "colour" as const } };
+    expect(unconvertibleContent(filtered({ range, columns: [values, colour] }), "ods")).toEqual(["colour and icon filters"]);
+    const unmapped = filtered({ range, columns: [], odsName: "__Anonymous_Sheet_DB__0", odsUnmappedFilter: `<table:filter/>` }, "ods");
+    expect(unconvertibleContent(unmapped, "xlsx")).toEqual(["colour and icon filters"]);
+    // The sheet's database range is its autofilter, not a table; another one is.
+    const ods = filtered({ range, columns: [values], odsName: "__Anonymous_Sheet_DB__0" }, "ods");
+    const ranges = (...names: string[]): string =>
+      `<table:database-ranges>${names.map((name) => `<table:database-range table:name="${name}" table:target-range-address="Data.A1:Data.B10"/>`).join("")}</table:database-ranges>`;
+    ods.odsContentEnvelope = { prefix: "", suffix: ranges("__Anonymous_Sheet_DB__0") };
+    expect(unconvertibleContent(ods, "xlsx")).toEqual([]);
+    ods.odsContentEnvelope = { prefix: "", suffix: ranges("__Anonymous_Sheet_DB__0", "Table1") };
+    expect(unconvertibleContent(ods, "xlsx")).toEqual(["tables"]);
   });
 
   it("names the custom date origin for an .ods with odsNullDate crossing to .xlsx, last", async () => {
