@@ -829,6 +829,19 @@ describe("the conditionalFormats adjuster (SPEC-129 \"Structural edits\")", () =
     expect(formats[0]!.rules[0]!.priority).toBe(1);
   });
 
+  it("re-anchors onto the next standing range when the first is deleted whole, and follows the column axis", () => {
+    // B5:B6 and D10:D20; deleting rows 5–6 leaves D10:D20 (now D8:D18) leading.
+    const m = model([sheet("s1", "Sheet1", { conditionalFormats: [expressionFormat({ ranges: [range(4, 1, 5, 1), range(9, 3, 19, 3)] })] })]);
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 2));
+    expect(sheetOf(m).conditionalFormats[0]!.ranges).toEqual([range(7, 3, 17, 3)]);
+    expect(sheetOf(m).conditionalFormats[0]!.rules[0]).toMatchObject({ formula: "D8>$Z$1" });
+    // A format on B5:D5: deleting column B re-anchors onto C5, now B5 ($Z$1, right of the band, moves left too).
+    const cols = model([sheet("s1", "Sheet1", { conditionalFormats: [expressionFormat({ ranges: [range(4, 1, 4, 3)] })] })]);
+    applyStructuralEdit(cols, { kind: "deleteCols", sheetId: "s1", at: 1, count: 1 });
+    expect(sheetOf(cols).conditionalFormats[0]!.ranges).toEqual([range(4, 1, 4, 2)]);
+    expect(sheetOf(cols).conditionalFormats[0]!.rules[0]).toMatchObject({ formula: "B5>$Y$1" });
+  });
+
   it("adjusts a format on another sheet whose formula references the edited sheet, and marks it dirty", () => {
     const other: ConditionalFormat = { id: "f2", ranges: [range(0, 0, 0, 0)], rules: [{ id: "r2", priority: 1, kind: "expression", formula: "A1>Sheet1!$Z$1" }] };
     const m = model([sheet("s1", "Sheet1"), sheet("s2", "Sheet2", { conditionalFormats: [other] })]);
