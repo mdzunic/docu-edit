@@ -51,7 +51,15 @@
 //     first time) is appended to its `office:styles` as a common table-cell
 //     style (OdsNamedStyles; the element created when self-closing or
 //     absent), which the generated `de-ce` styles name as their parent —
-//     the part re-encoded only then. Every other part is verbatim.
+//     and SPEC-129's generated `de-cf` conditional styles after them — the
+//     part re-encoded only then. Every other part is verbatim.
+//
+// SPEC-129: every rebuilt or new table's `calcext:conditional-formats` is
+// written from the model by one OdsConditionalFormatWriter per save
+// (ods/conditionalFormats.ts — the normative source); on the substitution
+// path a cell style whose source automatic style carries a `style:map` is
+// re-emitted in a rebuilt table as a generated `de-ce` style without it. A
+// clean table keeps its source, conditional formats included.
 //
 // A cell's informative `text:p` and a locale-dependent built-in format's
 // generated number style are written in the user's locale (`locale`,
@@ -83,19 +91,16 @@ import {
   tableStyleNameOf,
 } from "./package";
 import { odsDatabaseRangesXml, odsSuffixWithAutoFilters } from "./databaseRanges";
+import { OdsConditionalFormatWriter } from "./conditionalFormats";
 import { passOdsText, removeRangesOnDeletedSheets, rootNamespaces } from "./sheetNamePass";
 import {
-  emptyOdsStyleSheet,
-  namespaceDeclarations,
   odsCellStyleProperties,
   odsFontAttributes,
   odsFontFamilyValue,
   OdsNamedStyles,
   odsPropertyElements,
-  OdsStyleBook,
+  odsStyleBookFromSource,
   OdsStyleRegistry,
-  readOdsContentStyles,
-  readOdsStyleSheet,
 } from "./styles";
 import { serializeTable, type OdsTableContext } from "./tableXml";
 
@@ -247,7 +252,10 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const registry = new OdsStyleRegistry();
   // The generated styles.xml defines "Default" alone: every other named style is appended.
   const named = new OdsNamedStyles(model, { defines: (name) => name === "Default", appendable: true }, registry, locale);
-  const tables = model.sheets.map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name) })).join("");
+  const conditionalFormats = new OdsConditionalFormatWriter(model, registry, { definesStyle: (name) => name === "Default", appendable: true });
+  const tables = model.sheets
+    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats }))
+    .join("");
   const databaseRanges = odsDatabaseRangesXml(model.sheets);
   const styles = registry.xml();
   const content =
@@ -260,24 +268,16 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
     { name: "mimetype", data: encode(ODS_MIMETYPE), store: true },
     { name: "META-INF/manifest.xml", data: encode(FROM_SCRATCH_ODS_MANIFEST_XML) },
     { name: "meta.xml", data: encode(buildMetaXml({ title: model.title }, modified)) },
-    { name: "styles.xml", data: encode(withNamedStyles(fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale), named.xml)) },
+    {
+      name: "styles.xml",
+      data: encode(withNamedStyles(fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale), named.xml + conditionalFormats.stylesXml)),
+    },
     { name: "content.xml", data: encode(content) },
     { name: "settings.xml", data: encode(fromScratchSettingsXml(active?.name ?? "")) },
   ];
 }
 
 // --- substitution ---------------------------------------------------------------------------
-
-/** The source table styles as the reader reads them. */
-function sourceStyleBook(prefix: string, stylesXml: string | undefined): OdsStyleBook {
-  const root = /<[\w.-]+:document-content\b[^>]*>/.exec(prefix)?.[0] ?? "";
-  const declarations = namespaceDeclarations(
-    [...root.matchAll(/\s(xmlns(?::[\w.-]+)?)\s*=\s*"([^"]*)"/g)].map((match) => ({ name: match[1]!, value: decodeXmlText(match[2]!) })),
-  );
-  const slices = [...prefix.matchAll(/<office:(font-face-decls|automatic-styles)\b[\s\S]*?<\/office:\1>/g)].map((match) => match[0]);
-  const sheet = stylesXml === undefined ? emptyOdsStyleSheet() : readOdsStyleSheet(stylesXml);
-  return new OdsStyleBook(sheet, readOdsContentStyles(slices, declarations));
-}
 
 /** A table style's master page, read from the envelope's automatic styles. */
 function masterPageOf(prefix: string, styleName: string | undefined): string {
@@ -370,12 +370,16 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const remap = sourceSheetRemap(model, parts);
   const namespaces = rootNamespaces(envelope.prefix);
   const registry = new OdsStyleRegistry([envelope.prefix, envelope.suffix, stylesXml ?? ""]);
-  const book = sourceStyleBook(envelope.prefix, stylesXml);
+  const book = odsStyleBookFromSource(envelope.prefix, stylesXml);
   // A rich run read from the file is written in its span's own text style.
   for (const { name, font } of book.runTextStyles()) {
     registry.adoptTextStyle(name, font, model.theme ?? DEFAULT_THEME);
   }
   const named = new OdsNamedStyles(model, { defines: (name) => book.commonCellStyle(name), appendable: stylesXml !== undefined }, registry, localeOf(options));
+  const conditionalFormats = new OdsConditionalFormatWriter(model, registry, {
+    definesStyle: (name) => book.commonCellStyle(name),
+    appendable: stylesXml !== undefined,
+  });
   const recoloured = new Set<string>();
   const context: OdsTableContext = {
     model,
@@ -385,6 +389,8 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     commonCellStyle: (name) => book.commonCellStyle(name),
     namedStyleParent: (name) => named.parent(name),
     layoutStyles: book,
+    conditionalFormats,
+    mappedCellStyle: (name) => book.cellStyleMaps(name) !== undefined,
   };
   let rebuilt = "";
 
@@ -461,8 +467,8 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     let data = bytes;
     if (name === "content.xml") {
       data = encode(content);
-    } else if (name === "styles.xml" && named.xml !== "") {
-      data = encode(withNamedStyles(stylesXml!, named.xml));
+    } else if (name === "styles.xml" && named.xml + conditionalFormats.stylesXml !== "") {
+      data = encode(withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml));
     } else if (name === "settings.xml") {
       data = encode(settingsXmlFor(decodeUtf8(bytes), model, remap, recoloured, active?.name));
     } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0)) {
