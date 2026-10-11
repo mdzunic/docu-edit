@@ -75,16 +75,22 @@ function elementIn(xml: string, local: string): string | undefined {
 
 /** A model value with its sourceXml fields dropped — what a write → read
  * round trip compares. */
-function withoutSource<T extends AutoFilter | SortState | undefined>(value: T): T {
+function withoutSource(value: AutoFilter | undefined): AutoFilter | undefined;
+function withoutSource(value: SortState | undefined): SortState | undefined;
+function withoutSource(value: AutoFilter | SortState | undefined): AutoFilter | SortState | undefined {
   if (value === undefined) {
-    return value;
+    return undefined;
   }
-  const { sourceXml: _source, ...rest } = value;
-  if ("sort" in rest && rest.sort !== undefined) {
-    const { sourceXml: _sortSource, ...sort } = rest.sort;
-    return { ...rest, sort } as T;
+  if ("range" in value) {
+    const { sourceXml: _source, ...filter } = value;
+    if (filter.sort === undefined) {
+      return filter;
+    }
+    const { sourceXml: _sortSource, ...sort } = filter.sort;
+    return { ...filter, sort };
   }
-  return rest as T;
+  const { sourceXml: _source, ...state } = value;
+  return state;
 }
 
 /** Numbered rows with a text cell in column A and a number in column B. */
@@ -507,7 +513,7 @@ describe("rows and sheetPr@filterMode", () => {
     );
     // A new sheet: the empty-sheet template, with and without a tab colour.
     expect(serializeWorksheet(sheetOf({ rows: hiddenByFilter }), undefined, stubContext())).toContain(`<sheetPr filterMode="1"/><dimension ref="A1"/>`);
-    expect(serializeWorksheet(sheetOf({ rows: hiddenByFilter, tabColor: { rgb: "#ff0000" } }), undefined, stubContext())).toMatch(/<sheetPr filterMode="1"><tabColor [^>]*\/><\/sheetPr><dimension /);
+    expect(serializeWorksheet(sheetOf({ rows: hiddenByFilter, tabColor: "#ff0000" }), undefined, stubContext())).toMatch(/<sheetPr filterMode="1"><tabColor [^>]*\/><\/sheetPr><dimension /);
   });
 });
 
