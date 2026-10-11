@@ -18,12 +18,16 @@
 //   2026-10-09   99  SPEC-121: the not-found state moved into
 //                    WorkbookNotFound.vue and the editing wiring arrived as
 //                    one useWorkbookEditing call (106 -> 98 lines)
+//   2026-10-11   97  SPEC-126: the app bar's wiring moved into
+//                    WorkbookAppBar.vue as the CSV import bar and dialog
+//                    arrived (one useCsvImport call, two hookups) — 98 -> 96
+//                    lines, measured 97 with the final newline, no headroom
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 99;
+const LINE_BUDGET = 97;
 
 describe("SpreadsheetView size budget", () => {
   it(`SpreadsheetView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

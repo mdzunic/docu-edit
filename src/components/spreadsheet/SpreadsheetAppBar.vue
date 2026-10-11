@@ -3,7 +3,8 @@
 // undo/redo pair (`spreadsheet-undo`/`spreadsheet-redo`, tooltips "Undo
 // Rename sheet (⌘Z)"), the format name ("Excel workbook (.xlsx)", …), the
 // split Download — the file in its own format, or "Download a copy as …" the
-// other — and SPEC-060's Close. AppShell's #app-bar-actions slot is where
+// other (SPEC-126: both workbook formats for a csv/tsv workbook, and the
+// current sheet as CSV or TSV for every one) — and SPEC-060's Close. AppShell's #app-bar-actions slot is where
 // every editor puts its cluster; the title and the format badge are
 // AppShell's own props. Runtime declarations per the espree constraint.
 import UndoRedoControls from "../UndoRedoControls.vue";
@@ -23,9 +24,11 @@ const props = defineProps({
   copyLabel: { type: String, default: "" },
   /** Why the copy is unavailable; "" when it is available. */
   copyDisabledReason: { type: String, default: "" },
+  /** SPEC-126: the .ods copy's label beside the .xlsx one (csv/tsv only). */
+  copyOdsLabel: { type: String, default: "" },
 });
 
-const emit = defineEmits(["undo", "redo", "download", "download-copy", "close"]);
+const emit = defineEmits(["undo", "redo", "download", "download-copy", "download-copy-ods", "download-copy-csv", "download-copy-tsv", "close"]);
 </script>
 
 <template>
@@ -49,8 +52,12 @@ const emit = defineEmits(["undo", "redo", "download", "download-copy", "close"])
       <SpreadsheetDownloadButton
         :copy-label="props.copyLabel"
         :copy-disabled-reason="props.copyDisabledReason"
+        :copy-ods-label="props.copyOdsLabel"
         @download="emit('download')"
         @download-copy="emit('download-copy')"
+        @download-copy-ods="emit('download-copy-ods')"
+        @download-copy-csv="emit('download-copy-csv')"
+        @download-copy-tsv="emit('download-copy-tsv')"
       />
     </template>
     <UiIconButton

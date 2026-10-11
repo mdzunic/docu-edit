@@ -122,6 +122,12 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     activeIndex.value = order[(at + delta + order.length) % order.length]!;
   }
 
+  /** Shows a re-read of the workbook on show in its place (SPEC-126's
+   * import dialog "Apply"): the grid re-mounts on the new model. */
+  function replace(model: SpreadsheetModel): void {
+    show(model);
+  }
+
   function download(): void {
     if (workbook.value) {
       void downloadSpreadsheet(workbook.value);
@@ -150,6 +156,7 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     selectSheet,
     cycleSheet,
     sheetsChanged,
+    replace,
     download,
     close,
   };

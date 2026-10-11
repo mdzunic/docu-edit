@@ -2,7 +2,8 @@
 // names and labels" table): the extension a download is named with (and the
 // library badge is spelled from) and the MIME type it is served under. A
 // template opens as an ordinary workbook and, being byte-preserved,
-// downloads as the template it is.
+// downloads as the template it is. SPEC-126's delimited-text formats have no
+// variants.
 import type { PackageVariant, SpreadsheetFormat } from "./model";
 
 interface FileType {
@@ -13,6 +14,8 @@ interface FileType {
 const PLAIN: Record<SpreadsheetFormat, FileType> = {
   xlsx: { extension: "xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
   ods: { extension: "ods", mimeType: "application/vnd.oasis.opendocument.spreadsheet" },
+  csv: { extension: "csv", mimeType: "text/csv" },
+  tsv: { extension: "tsv", mimeType: "text/tab-separated-values" },
 };
 
 const VARIANTS: Record<SpreadsheetFormat, Partial<Record<PackageVariant, FileType>>> = {
@@ -24,13 +27,15 @@ const VARIANTS: Record<SpreadsheetFormat, Partial<Record<PackageVariant, FileTyp
   ods: {
     template: { extension: "ots", mimeType: "application/vnd.oasis.opendocument.spreadsheet-template" },
   },
+  csv: {},
+  tsv: {},
 };
 
 function fileTypeOf(format: SpreadsheetFormat, variant: PackageVariant | undefined): FileType {
   return (variant !== undefined ? VARIANTS[format][variant] : undefined) ?? PLAIN[format];
 }
 
-/** "xlsx", "xlsm", "xltx", "xltm", "ods" or "ots". */
+/** "xlsx", "xlsm", "xltx", "xltm", "ods", "ots", "csv" or "tsv". */
 export function spreadsheetFileExtension(format: SpreadsheetFormat, variant?: PackageVariant): string {
   return fileTypeOf(format, variant).extension;
 }

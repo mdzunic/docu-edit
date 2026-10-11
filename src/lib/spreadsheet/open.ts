@@ -68,13 +68,20 @@
 //     Every re-read gains them; the step refreshes a dirty sheet's
 //     protection from its own retained source (SPEC-123's move).
 //
+// SPEC-126: a csv/tsv workbook never runs a ReaderUpgrade — its source is
+// one delimited-text part, read by csv/parse.ts, which adds no element to
+// the xlsx/ods readers and bumps no version. An entirely unedited one behind
+// the current version is re-read through readCsvBytes with its recorded
+// dialect (keeping `id`, `title` — and so the store's starred and trash
+// state — and the sheet's id); any other is only re-stamped.
+//
 // Since SPEC-122 the writers rebuild a dirty sheet from the model, so the
 // layout a record re-reads its clean sheets from numbers its styles afresh:
 // each dirty sheet's style ids are moved into the re-read style table
 // (interned — an equal style is shared), never left pointing into the
 // stored one.
 import { decodedPartBytes } from "../core/packageParts";
-import { isCellError, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
+import { isCellError, isCsvFormat, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { buildPreview } from "./preview";
@@ -401,12 +408,21 @@ async function parse(
   format: SpreadsheetFormat,
   parts: Map<string, Uint8Array> | undefined,
 ): Promise<ParsedSpreadsheet> {
-  if (format === "xlsx") {
-    const { parseXlsx } = await import("./xlsx/reader");
-    return parseXlsx(bytes, parts);
+  switch (format) {
+    case "xlsx": {
+      const { parseXlsx } = await import("./xlsx/reader");
+      return parseXlsx(bytes, parts);
+    }
+    case "ods": {
+      const { parseOds } = await import("./ods/reader");
+      return parseOds(bytes, parts);
+    }
+    case "csv":
+    case "tsv":
+      // A delimited-text file is no package: csv/parse.ts's readCsvBytes
+      // reads it (upgradeCsvModel below).
+      throw new Error(`a .${format} workbook is read by readCsvBytes, not as a package`);
   }
-  const { parseOds } = await import("./ods/reader");
-  return parseOds(bytes, parts);
 }
 
 /** Reads and parses workbook bytes into a new SpreadsheetModel, with no
@@ -430,6 +446,9 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   if (model.readerVersion >= SPREADSHEET_READER_VERSION) {
     return model;
   }
+  if (isCsvFormat(model.format)) {
+    return upgradeCsvModel(model, model.format);
+  }
   const sourceParts = decodedPartBytes(model.opaque);
   const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
   if (model.structureDirty || model.sheets.some((sheet) => sheet.dirty)) {
@@ -444,6 +463,31 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
     const stored = model.sheets[index];
     return stored ? { ...sheet, id: stored.id } : sheet;
   });
+  fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
+  return fresh;
+}
+
+/** SPEC-126: a csv/tsv workbook behind the reader version (see the module
+ * header) — re-read with its recorded dialect when nothing was edited (one
+ * sheet, the one read from the file, clean, no structure change), else only
+ * re-stamped. */
+async function upgradeCsvModel(model: SpreadsheetModel, format: "csv" | "tsv"): Promise<SpreadsheetModel> {
+  const dialect = model.csv;
+  const sheet = model.sheets[0];
+  const unedited = dialect !== undefined && model.sheets.length === 1 && sheet?.id === dialect.sheetId && !sheet.dirty && !model.structureDirty;
+  if (!unedited) {
+    return { ...model, readerVersion: SPREADSHEET_READER_VERSION };
+  }
+  const { csvSourceBytes, readCsvBytes } = await import("./csv/parse");
+  const fresh = readCsvBytes(csvSourceBytes(model), format, model.title, {
+    userLocaleTag: DEFAULT_SPREADSHEET_LOCALE,
+    delimiter: dialect.delimiter,
+    encoding: dialect.encoding,
+    localeTag: dialect.localeTag,
+  });
+  fresh.id = model.id;
+  fresh.sheets = fresh.sheets.map((each) => ({ ...each, id: sheet.id, name: sheet.name }));
+  fresh.csv = { ...fresh.csv!, sheetId: sheet.id };
   fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
   return fresh;
 }

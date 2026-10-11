@@ -41,8 +41,9 @@ export const MEDIA_FORMAT_CONTENT_TYPES: readonly string[] = MEDIA_FORMATS.map(
   (format) => MEDIA_CONTENT_TYPES[format],
 );
 
-/** The spreadsheet product's formats (SPEC-116), in display order. */
-export const SPREADSHEET_FORMATS: readonly SpreadsheetFormat[] = ["xlsx", "ods"];
+/** The spreadsheet product's formats (SPEC-116; SPEC-126 adds the
+ * delimited-text formats), in display order. */
+export const SPREADSHEET_FORMATS: readonly SpreadsheetFormat[] = ["xlsx", "ods", "csv", "tsv"];
 
 const SPREADSHEET_FORMAT_SET: ReadonlySet<string> = new Set(SPREADSHEET_FORMATS);
 
@@ -92,7 +93,8 @@ export function editorPathFor(kind: DocumentKind, id: string): string {
  * it appears here (the open surface) but never as a LibraryFormat. A
  * workbook's six extensions (SPEC-116) are two formats: xlsm/xltx/xltm are
  * "xlsx" package variants and ots an "ods" one — detected from the package,
- * never the name. */
+ * never the name. csv and tsv (SPEC-126) are the second extension exception
+ * after Markdown's, documented in openDocument.ts. */
 export const OPENABLE_EXTENSIONS = [
   "docx",
   "odt",
@@ -107,6 +109,8 @@ export const OPENABLE_EXTENSIONS = [
   "xltm",
   "ods",
   "ots",
+  "csv",
+  "tsv",
   "pdf",
   "png",
   "jpg",

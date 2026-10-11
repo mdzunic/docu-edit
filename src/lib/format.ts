@@ -62,6 +62,8 @@ const BADGE_LABELS: Record<DocumentFormat, string> = {
   webp: "WEBP",
   xlsx: "XLSX",
   ods: "ODS",
+  csv: "CSV",
+  tsv: "TSV",
   new: "New",
 };
 
@@ -109,6 +111,8 @@ const SPREADSHEET_FORMAT_LABELS: Record<SpreadsheetFormat, Partial<Record<Packag
     plain: "OpenDocument Spreadsheet (.ods)",
     template: "OpenDocument Spreadsheet template (.ots)",
   },
+  csv: { plain: "Comma-separated values (.csv)" },
+  tsv: { plain: "Tab-separated values (.tsv)" },
 };
 
 /** The full format name a workbook's view header shows (SPEC-116), by
