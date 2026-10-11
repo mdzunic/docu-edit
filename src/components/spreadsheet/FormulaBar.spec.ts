@@ -187,6 +187,7 @@ function mountEditing() {
   let editing!: CellEditing;
   let selectionText!: () => string;
   const editable = ref(true);
+  const canInsertFunction = ref(true);
   const wrapper = mount(
     defineComponent({
       setup() {
@@ -216,7 +217,13 @@ function mountEditing() {
         selectionText = () => selection.nameBoxText.value;
         return () =>
           h("div", [
-            h(FormulaBar, { address: selection.nameBoxText.value, content: formulas.barText.value, editor: editing, editable: editable.value }),
+            h(FormulaBar, {
+              address: selection.nameBoxText.value,
+              content: formulas.barText.value,
+              editor: editing,
+              editable: editable.value,
+              canInsertFunction: canInsertFunction.value,
+            }),
             h(CellEditor, { editor: editing, label: selection.nameBoxText.value }),
           ]);
       },
@@ -225,7 +232,7 @@ function mountEditing() {
   );
   const bar = () => wrapper.get('[data-testid="formula-bar-content"]').element as HTMLElement;
   const cell = () => wrapper.get('[data-testid="cell-editor"]').element as HTMLElement;
-  return { wrapper, model, editable, editing: () => editing, bar, cell, active: () => selectionText() };
+  return { wrapper, model, editable, canInsertFunction, editing: () => editing, bar, cell, active: () => selectionText() };
 }
 
 function caret(node: Node, offset: number): void {
@@ -261,6 +268,24 @@ describe("FormulaBar editing (SPEC-122)", () => {
     wrapper.unmount();
     const plain = mount(FormulaBar, { props: { address: "A1", content: "x" } });
     expect(plain.get('[data-testid="formula-bar-content"]').attributes("contenteditable")).toBeUndefined();
+  });
+
+  it("SPEC-127: fx asks for Insert Function, and on a cell protection keeps from editing is disabled and titled \"This cell is protected\"", async () => {
+    const { wrapper, canInsertFunction } = mountEditing();
+    const fx = () => wrapper.get('[data-testid="formula-bar-fx"]');
+    const asks = () => wrapper.findComponent(FormulaBar).emitted("insert-function") ?? [];
+    expect(fx().attributes("aria-label")).toBe("Insert function");
+    expect(fx().attributes("title")).toBe("Insert function");
+    expect(fx().attributes("disabled")).toBeUndefined();
+    await fx().trigger("click");
+    expect(asks()).toHaveLength(1);
+    canInsertFunction.value = false;
+    await nextTick();
+    expect(fx().attributes("disabled")).toBeDefined();
+    expect(fx().attributes("title")).toBe("This cell is protected");
+    await fx().trigger("click");
+    expect(asks()).toHaveLength(1);
+    wrapper.unmount();
   });
 
   it("a click opens Edit mode at the clicked character; typing there updates the in-cell editor's draft too", async () => {
