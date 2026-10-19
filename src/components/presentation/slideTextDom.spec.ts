@@ -348,6 +348,47 @@ describe("SPEC-097 fields survive the contenteditable round trip", () => {
     expect(result[2]).toEqual({ runs: [{ text: "after" }] });
   });
 
+  it("a paragraph's source id (a preserved-animation target) round-trips but stays on the first line of a split", () => {
+    const el = host();
+    const target: SlideParagraph = { runs: [{ text: "Target" }], odpParaProps: 'fo:text-indent="0cm"', sourceWireId: "id4" };
+    renderEditableParagraphs(el, [target]);
+    expect(normalizeTextFrameDom(el)).toEqual([target]);
+    // Chrome's Enter split clones the block, attributes and all.
+    const clone = el.children[0].cloneNode(false) as HTMLElement;
+    clone.textContent = "split";
+    el.children[0].after(clone);
+    // …and a block the browser minted itself inherits from the line above.
+    const inserted = el.ownerDocument.createElement("div");
+    inserted.textContent = "new";
+    el.appendChild(inserted);
+    const [first, split, created] = normalizeTextFrameDom(el);
+    expect(first.sourceWireId).toBe("id4");
+    expect(split.sourceWireId).toBeUndefined();
+    expect(split.odpParaProps).toBe(target.odpParaProps);
+    expect(created.sourceWireId).toBeUndefined();
+  });
+
+  it("a line's pptx source paragraph round-trips and carries onto every line split off it", () => {
+    const el = host();
+    const line: SlideParagraph = { runs: [{ text: "Target" }], pptxSourceParagraph: 0 };
+    const next: SlideParagraph = { runs: [{ text: "Next" }], pptxSourceParagraph: 2 };
+    renderEditableParagraphs(el, [line, next]);
+    expect(normalizeTextFrameDom(el)).toEqual([line, next]);
+    // Chrome's Enter split clones the block; a soft break stays inside it…
+    const clone = el.children[0].cloneNode(false) as HTMLElement;
+    clone.append("split", el.ownerDocument.createElement("br"), "soft");
+    el.children[0].after(clone);
+    // …and a block the browser minted itself inherits from the line above.
+    const inserted = el.ownerDocument.createElement("div");
+    inserted.textContent = "new";
+    el.children[1].after(inserted);
+    const lines = normalizeTextFrameDom(el);
+    expect(lines.map((p) => p.runs.map((r) => r.text).join(""))).toEqual(["Target", "split", "soft", "new", "Next"]);
+    // All of it came from source a:p 0 — a preserved by-paragraph build
+    // still reveals it together.
+    expect(lines.map((p) => p.pptxSourceParagraph)).toEqual([0, 0, 0, 0, 2]);
+  });
+
   it("renders the paragraph's indent and spacing on its block (WYSIWYG), with no hanging first line for a list item", () => {
     const el = host();
     renderEditableParagraphs(el, [

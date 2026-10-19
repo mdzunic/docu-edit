@@ -51,12 +51,14 @@ const NUMBER_FIELDS = [
   ["lineSpacingPt", "lineSpacingPt"],
   ["spaceBeforePt", "spaceBefore"],
   ["spaceAfterPt", "spaceAfter"],
+  ["pptxSourceParagraph", "pptxSourceParagraph"],
 ] as const;
 const STRING_FIELDS = [
   ["bulletChar", "bulletChar"],
   ["bulletImageId", "bulletImage"],
   ["pptxPPr", "pptxPpr"],
   ["odpParaProps", "odpParaProps"],
+  ["sourceWireId", "sourceWireId"],
 ] as const;
 
 /** Renders paragraphs into an editable host: one `<div class="ce-p">` per
@@ -162,9 +164,16 @@ interface PendingLine {
  * unmodelled formatting — bullet font/colour/size, tabs, default run props —
  * which the new line visibly shares, exactly as PowerPoint and Impress copy a
  * paragraph's properties onto the line Enter creates; dropping them would
- * re-render a Wingdings `buChar` bullet in the wrong font on that line. */
+ * re-render a Wingdings `buChar` bullet in the wrong font on that line. A
+ * paragraph's `sourceWireId` (its source id, which preserved animation
+ * targets) is an identity, not formatting: like `startAt` it stays on the
+ * first line, or two paragraphs would claim one target. Its pptx
+ * `pptxSourceParagraph` DOES carry over: it says which source paragraph the
+ * text came from, which both halves of a split did — exactly as the reader
+ * gives every line an `a:br` split off its paragraph's index — so a
+ * preserved by-paragraph build still reveals all of that text. */
 function carriedProps(props: ParaProps): ParaProps {
-  const { startAt: _startAt, ...rest } = props;
+  const { startAt: _startAt, sourceWireId: _sourceWireId, ...rest } = props;
   return rest;
 }
 
@@ -261,6 +270,8 @@ function definedProps(props: ParaProps): ParaProps {
   if (props.spaceAfterPt !== undefined) out.spaceAfterPt = props.spaceAfterPt;
   if (props.pptxPPr !== undefined) out.pptxPPr = props.pptxPPr;
   if (props.odpParaProps !== undefined) out.odpParaProps = props.odpParaProps;
+  if (props.sourceWireId !== undefined) out.sourceWireId = props.sourceWireId;
+  if (props.pptxSourceParagraph !== undefined) out.pptxSourceParagraph = props.pptxSourceParagraph;
   return out;
 }
 

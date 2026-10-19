@@ -20,7 +20,7 @@ import { resolvedShapeAdjustments } from "../core/shapeCatalogue";
 import { MIN_COLUMN_WIDTH_CM } from "../core/tables";
 import { markSlideEdited } from "./text";
 import { createTableFrame, scaleTableGrid, setColumnWidths, setRowHeight } from "./tables";
-import { removeAnimationsForFrame } from "./animations";
+import { clearSourceWireIds, dropPreservedTimingTargeting, removeAnimationsForFrame } from "./animations";
 import { MIN_FRAME_SIZE_CM } from "./model";
 import type {
   FrameStroke,
@@ -715,10 +715,13 @@ export function deleteFrame(model: PresentationModel, slideIndex: number, frameI
   if (index < 0) {
     return null;
   }
-  slide.frames.splice(index, 1);
-  // Drop any animations that targeted the removed frame (SPEC-086 AC-18); undo
-  // restores both because the undo stack snapshots the whole slide.
+  const [removed] = slide.frames.splice(index, 1);
+  // Drop any animations that targeted the removed frame (SPEC-086 AC-18) — or,
+  // when it is a target of preserved out-of-subset timing, that whole timing
+  // (it is never half-edited); undo restores both because the undo stack
+  // snapshots the whole slide.
   slide.animations = removeAnimationsForFrame(slide.animations, frameId);
+  dropPreservedTimingTargeting(slide, [removed]);
   touch(model, slide);
   const neighbour = slide.frames[index - 1] ?? slide.frames[index] ?? null;
   return neighbour ? neighbour.id : null;
@@ -743,6 +746,8 @@ export function duplicateFrame(model: PresentationModel, slideIndex: number, fra
   }
   const copy = structuredClone(frame);
   remintIds(copy);
+  // The copy is no target of the slide's preserved timing — the original is.
+  clearSourceWireIds([copy]);
   // A group's children shift with the copy (slide-space coordinates), which
   // deletes the copy's verbatim xml — the original keeps its own.
   translateFrame(copy, DUPLICATE_OFFSET_CM, DUPLICATE_OFFSET_CM);
@@ -849,7 +854,8 @@ export function reorderFrames(
  * `GroupFrame` (SPEC-096 AC-40): the group sits at the children's rotated
  * union box, carries them as `children` in slide space (z-order preserved)
  * and NO `xml`; it lands at the topmost member's z-position. Any animation
- * targeting a grouped frame is dropped (grouped frames are unanimatable).
+ * targeting a grouped frame is dropped (grouped frames are unanimatable), as
+ * is preserved timing that targets one.
  * Returns the new group's id, or null for fewer than two matches. */
 export function groupFrames(
   model: PresentationModel,
@@ -879,6 +885,7 @@ export function groupFrames(
   for (const child of children) {
     slide.animations = removeAnimationsForFrame(slide.animations, child.id);
   }
+  dropPreservedTimingTargeting(slide, children);
   touch(model, slide);
   return group.id;
 }
@@ -907,6 +914,9 @@ export function ungroupFrame(model: PresentationModel, slideIndex: number, frame
     return child;
   });
   slide.frames.splice(index, 1, ...children);
+  // The group itself leaves the slide: timing that animated it as a whole
+  // would now name nothing.
+  dropPreservedTimingTargeting(slide, [group]);
   touch(model, slide);
   return children.map((child) => child.id);
 }

@@ -3,8 +3,11 @@
 // SMIL tree. The canonical serialised bytes are pinned by `animGolden.ts`; the
 // reader accepts those plus Impress-authored equivalents (reordered attributes,
 // extra behaviour internals it ignores). Anything the preset table does not
-// recognise makes the whole tree out of subset: the reader returns `undefined`
-// and the caller keeps the source markup preserved verbatim (AC-4).
+// recognise, or a target narrower than a whole frame (a paragraph, the frame's
+// text only, text by word/letter), makes the whole tree out of subset: the
+// reader returns `undefined` and the caller keeps the source markup preserved
+// verbatim (AC-4) — kept pointing at its targets across a rebuild (the
+// "Preserved anim" section).
 //
 // Framework-free; imports the model types, the format-neutral animation
 // helpers, and the odf attribute readers.
@@ -215,13 +218,28 @@ function parseAnim(
   return animations.length > 0 ? animations : undefined;
 }
 
+const ANIM_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:animation:1.0";
+
+/** Whether an effect animates whole frames (the model's frame-level unit), as
+ * pptx's `isFrameLevel`. An `anim:iterate` (text by word or letter) or a
+ * behaviour narrowed by `anim:sub-item` to the frame's text or background
+ * animates part of the frame; reading it as the whole frame would save the
+ * narrowing away. (A "by paragraph" build targets each paragraph's `text:p`
+ * id, which never resolves to a frame, so it falls out at target resolution.) */
+function isFrameLevel(par: Element): boolean {
+  return Array.from(par.getElementsByTagName("*")).every((el) => {
+    const subItem = el.getAttributeNS(ANIM_NAMESPACE, "sub-item");
+    return el.localName !== "iterate" && (!subItem || subItem === "whole");
+  });
+}
+
 function parseEffect(
   par: Element,
   firstInGroup: boolean,
   resolveTarget: (wireId: string) => string | undefined,
 ): SlideAnimation | undefined {
   const effect = PRESET_TO_EFFECT[presentationAttr(par, "preset-id") ?? ""];
-  if (!effect) {
+  if (!effect || !isFrameLevel(par)) {
     return undefined;
   }
   const behaviour = firstBehaviour(par);
@@ -274,4 +292,47 @@ function parseSeconds(value: string | null): number | undefined {
     return Number.isFinite(n) ? Math.round(n * 1000) : undefined;
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Preserved (out-of-subset) anim
+// ---------------------------------------------------------------------------
+// A preserved `anim:*` tree re-emits verbatim and names its targets by SOURCE
+// element id. ODF ids are document-wide and the source's are already unique,
+// so a rebuilt page re-emits each target's own id (`sourceWireId`, on frames
+// and on `text:p` — an Impress by-paragraph build) rather than minting new
+// ones; the tree is kept only while every id it references is still defined
+// on the page. These scanners work on the preserved string, prefix-agnostic
+// (a model stored before the anim was kept byte-verbatim spells the SMIL
+// attributes with generated `ns1:`-style prefixes).
+
+/** `name="value"` (either quote) for an attribute whose LOCAL name is one of
+ * `names`, under any prefix or none. */
+function attrValues(xml: string, names: string): string[] {
+  const re = new RegExp(`\\s(?:[\\w.-]+:)?(?:${names})\\s*=\\s*(["'])(.*?)\\1`, "g");
+  return Array.from(xml.matchAll(re), (m) => m[2]);
+}
+
+/** The element ids a preserved anim string references: every
+ * `smil:targetElement` (a shape, or a `text:p` for a by-paragraph build) and
+ * `presentation:master-element`, plus the id half of an id-qualified
+ * `smil:begin`/`smil:end` value (`id3.click` — an interactive trigger shape;
+ * `id7.end` — another node). */
+export function preservedAnimReferences(animXml: string): Set<string> {
+  const refs = new Set(attrValues(animXml, "targetElement|master-element"));
+  for (const value of attrValues(animXml, "begin|end")) {
+    for (const part of value.split(";")) {
+      const id = /^\s*([A-Za-z_][\w-]*)\.[A-Za-z]/.exec(part)?.[1];
+      if (id) {
+        refs.add(id);
+      }
+    }
+  }
+  return refs;
+}
+
+/** Every element id an XML fragment defines (`xml:id`, `draw:id`, `anim:id`,
+ * …) — what a preserved anim's references may name on a rebuilt page. */
+export function xmlIdsDefinedIn(xml: string): Set<string> {
+  return new Set(attrValues(xml, "id"));
 }

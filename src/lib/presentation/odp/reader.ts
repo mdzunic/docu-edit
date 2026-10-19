@@ -47,7 +47,9 @@ import { normalizeRotationDeg } from "../../core/shapes";
 import { CHART_NAMESPACE, parseOdfChartXml } from "../../core/chartPartOdf";
 import type { ShapeGeometry } from "../../core/shapes";
 import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
-import { readOdpAnim } from "./anim";
+import { preservedAnimReferences, readOdpAnim } from "./anim";
+import { retainSourceWireIds } from "../animations";
+import { scanXml, XmlScanError } from "../../core/xmlScanner";
 import { effectiveHangingCm, effectiveIndentCm } from "../slideLists";
 import { isLinkableKind } from "../slideLinks";
 import { DEFAULT_INSETS_CM } from "../textBody";
@@ -834,6 +836,9 @@ function parseParagraph(p: Element, role: PlaceholderRole | undefined, ctx: OdpC
   const ownProps = ownStyle ? firstChildElement(ownStyle, STYLE_NAMESPACE, "paragraph-properties") : undefined;
   const preserved = ownProps ? unmodelledParaProps(ownProps) : undefined;
   if (preserved) para.odpParaProps = preserved;
+  // Kept by parsePage only if the page's preserved anim targets it.
+  const xmlId = p.getAttributeNS(XML_NAMESPACE, "id");
+  if (xmlId) para.sourceWireId = xmlId;
   return para;
 }
 
@@ -1921,7 +1926,7 @@ export async function parseOdp(
   let pageIndex = 0;
   for (const child of Array.from(presentation.children)) {
     if (child.namespaceURI === DRAW_NAMESPACE && child.localName === "page") {
-      const slide = parsePage(child, ctx);
+      const slide = parsePage(child, ctx, pageSources[pageIndex]);
       if (pageSources[pageIndex] !== undefined) {
         slide.sourceXml = pageSources[pageIndex];
       }
@@ -2065,7 +2070,10 @@ function splitContentEnvelope(content: string): { prefix: string; suffix: string
   return { prefix: content.slice(0, firstPage), suffix: content.slice(suffixStart), pageSources };
 }
 
-function parsePage(page: Element, ctx: OdpContext): Slide {
+/** One `draw:page` → a Slide. `pageSource` is the page's exact source text
+ * (absent when content.xml would not split), which preserved anim is cut from
+ * verbatim. */
+function parsePage(page: Element, ctx: OdpContext, pageSource?: string): Slide {
   const frames: SlideFrame[] = [];
   // wire id (`xml:id`/`draw:id`) → minted frame id, so an `anim:*` tree's
   // `smil:targetElement` resolves back to the frame it targets (SPEC-086).
@@ -2079,6 +2087,8 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
       const wireId = idEl.getAttributeNS(XML_NAMESPACE, "id") ?? drawAttr(idEl, "id");
       if (wireId) {
         frameForWire.set(wireId, frame.id);
+        // Kept below only if preserved anim targets this frame.
+        frame.sourceWireId = wireId;
       }
     }
   }
@@ -2111,9 +2121,12 @@ function parsePage(page: Element, ctx: OdpContext): Slide {
     if (animations) {
       slide.animations = animations;
     } else {
-      preserved["anim"] = animEls.map((el) => serializeElement(el)).join("");
+      preserved["anim"] = verbatimAnimXml(pageSource, animEls.length) ?? animEls.map((el) => serializeElement(el)).join("");
     }
   }
+  // Anim that stays preserved names its targets by source id: each frame and
+  // paragraph it targets keeps that id, which a rebuilt page re-emits.
+  retainSourceWireIds(frames, preserved["anim"] ? preservedAnimReferences(preserved["anim"]) : new Set<string>());
   // Slide transition (SPEC-085): the page's drawing-page style carries the smil
   // attributes. A subset combination becomes the modelled field; an
   // out-of-subset one leaves the field unset and marks the honest
@@ -2209,6 +2222,60 @@ function readOdpNotes(notesEl: Element): string[] | undefined {
     return paragraphs.length > 0 ? paragraphs : undefined;
   }
   return undefined;
+}
+
+/** A page's animation children cut from its source text, byte-verbatim:
+ * `serializeElement` would re-spell each attribute whose prefix is bound only
+ * on the content.xml root (`presentation:`, `smil:`) under a generated `ns1:`
+ * (namespace-correct, but neither byte-stable nor greppable). Valid wherever
+ * re-emitted, as that is only ever into this same content.xml. Undefined when
+ * the source is missing or does not scan to the `expected` children the DOM
+ * found (the caller then serialises). */
+function verbatimAnimXml(pageSource: string | undefined, expected: number): string | undefined {
+  if (pageSource === undefined) {
+    return undefined;
+  }
+  const slices: string[] = [];
+  let depth = 0;
+  let start = -1;
+  try {
+    scanXml(pageSource, (event) => {
+      if (event.type === "open") {
+        if (depth === 1 && isAnimationTag(event.name, event.ns)) {
+          if (event.selfClosing) {
+            slices.push(pageSource.slice(event.start, event.end));
+          } else {
+            start = event.start;
+          }
+        }
+        if (!event.selfClosing) {
+          depth += 1;
+        }
+      } else if (event.type === "close") {
+        depth -= 1;
+        if (depth === 1 && start >= 0) {
+          slices.push(pageSource.slice(start, event.end));
+          start = -1;
+        }
+        if (depth === 0) {
+          return "stop";
+        }
+      }
+      return undefined;
+    });
+  } catch (e) {
+    if (e instanceof XmlScanError) {
+      return undefined;
+    }
+    throw e;
+  }
+  return slices.length === expected ? slices.join("") : undefined;
+}
+
+/** `isAnimationElement` for a scanned tag: its prefix, or — when the scanned
+ * slice binds it — its namespace. */
+function isAnimationTag(name: string, ns: string | undefined): boolean {
+  return name.startsWith("anim:") || (ns ?? "").includes("animation") || (ns ?? "").includes("smil");
 }
 
 /** Whether an element is one of a page's animation children (`anim:*`) the
