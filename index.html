@@ -22,7 +22,15 @@
            canvas is styled per-run. The exposure it would otherwise buy back
            is small here: there is no HTML-injection sink in the codebase (no
            v-html, no innerHTML, no insertAdjacentHTML anywhere in src/), so
-           an attacker has no way to place markup for it to act on. -->
+           an attacker has no way to place markup for it to act on.
+
+         `frame-src` is blob:, not 'none', although the app has no iframes:
+         Chromium hosts its built-in PDF viewer in a frame inside the
+         <object> (components/media/MediaPdfEmbed.vue) and checks that frame
+         against frame-src as well as object-src, so 'none' refused every PDF
+         at /media/:id. blob: is all it takes — 'self' does not match a blob:
+         URL and is not needed — and it lets a frame load nothing an <object>
+         could not already, since object-src admits blob: too. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="
@@ -37,7 +45,7 @@
         connect-src 'self' data: blob: https: ws: wss:;
         base-uri 'none';
         form-action 'none';
-        frame-src 'none';
+        frame-src blob:;
       "
     />
     <title>docu-edit</title>
