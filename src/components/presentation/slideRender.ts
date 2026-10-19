@@ -128,10 +128,17 @@ export function asString(value: unknown): string {
 }
 
 // --- media resolution -------------------------------------------------------
-/** A resolver from `mediaId` to a `data:` URI over a media-part list. */
-export function mediaResolver(media: MediaPart[]): (mediaId: string) => string {
+/** A resolver from `mediaId` to a `data:` URI over a media-part list. An
+ * `override` (the show's per-showing GIF URLs) wins wherever it answers. */
+export function mediaResolver(
+  media: MediaPart[],
+  override?: ((mediaId: string) => string | undefined) | null,
+): (mediaId: string) => string {
   const map = new Map(media.map((part) => [part.mediaId, part]));
-  return (mediaId) => mediaDataUri(map.get(mediaId));
+  return (mediaId) => override?.(mediaId) ?? mediaDataUri(map.get(mediaId));
+}
+export function asMediaUrlOverride(value: unknown): ((mediaId: string) => string | undefined) | null {
+  return typeof value === "function" ? (value as (mediaId: string) => string | undefined) : null;
 }
 
 // --- frame narrowing (templates cannot narrow a discriminated union) --------

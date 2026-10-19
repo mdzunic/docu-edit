@@ -33,6 +33,9 @@ const props = defineProps({
    * so the transition shows what the plain stage will. Preview passes none. */
   outgoingFrameStyles: { type: Object, default: () => ({}) },
   incomingFrameStyles: { type: Object, default: () => ({}) },
+  /** Playback's per-showing media URLs per stage (see SlideStage). */
+  outgoingMediaUrlOverride: { type: Function, default: null },
+  incomingMediaUrlOverride: { type: Function, default: null },
 });
 
 const emit = defineEmits(["done"]);
@@ -135,6 +138,7 @@ function onIncomingTransitionEnd() {
         :scale="scale"
         :interactive="false"
         :frame-styles="outgoingFrameStyles"
+        :media-url-override="outgoingMediaUrlOverride"
         :theme="theme"
       />
     </div>
@@ -152,6 +156,7 @@ function onIncomingTransitionEnd() {
         :scale="scale"
         :interactive="false"
         :frame-styles="incomingFrameStyles"
+        :media-url-override="incomingMediaUrlOverride"
         :theme="theme"
       />
     </div>
