@@ -83,7 +83,7 @@ import { colorRefFrom, fontRefFrom, readDeckTheme } from "./theme";
 import { DEFAULT_THEME, type ModelColor, type ModelFont } from "../../core/theme";
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
-import { readPptxTiming } from "./timing";
+import { readPptxAutoStartSpids, readPptxTiming } from "./timing";
 import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
 import { PPTX_MAIN_CONTENT_TYPE } from "../detect";
 import { readSections } from "./sections";
@@ -2031,6 +2031,16 @@ function buildSlide(
     if (animations) {
       slide.animations = animations;
       delete preserved["p:timing"];
+    } else if (timingEl) {
+      // SPEC-095: PowerPoint's "start automatically" cue sets `autoStart` on its
+      // clip (the timing stays preserved). A clip carrying docu-edit's own flags
+      // keeps them — those were written from the model and win.
+      for (const spid of readPptxAutoStartSpids(timingEl)) {
+        const frame = frames.find((f) => f.id === frameForSpid.get(spid));
+        if (frame?.kind === "media" && !frame.sourceXml?.includes(DE_MEDIA_NAMESPACE)) {
+          frame.autoStart = true;
+        }
+      }
     }
   }
   Object.assign(preserved, fieldPreserved);
