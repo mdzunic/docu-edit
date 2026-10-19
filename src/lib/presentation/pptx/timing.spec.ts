@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { parseXml } from "../../core/xml";
-import type { SlideAnimation } from "../model";
-import { readPptxTiming, writePptxTiming } from "./timing";
+import type { SlideAnimation, SlideParagraph } from "../model";
+import {
+  preservedTimingSpids,
+  preservedTimingTextTargets,
+  readPptxTiming,
+  rebuiltParagraphRange,
+  retargetPreservedTiming,
+  writePptxTiming,
+  type PreservedTextRange,
+} from "./timing";
 import { GOLDEN_ANIMATIONS, goldenSpidFor, TIMING_GOLDEN } from "./timingGolden";
 
 const SPID_NS = ` xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"`;
@@ -118,6 +126,115 @@ describe("pptx timing serialiser", () => {
 
     // An unresolvable target (the slide doesn't contain that shape) → preserve.
     expect(readPptxTiming(parseTiming(TIMING_GOLDEN), () => undefined)).toBeUndefined();
+  });
+
+  it("preserves a by-paragraph build of a modelled preset — never a whole-frame replay per paragraph", () => {
+    // One effect's target narrowed to a paragraph is enough.
+    const byParagraph = TIMING_GOLDEN.replace(
+      /<p:spTgt spid="(\d+)"\/>/,
+      `<p:spTgt spid="$1"><p:txEl><p:pRg st="0" end="0"/></p:txEl></p:spTgt>`,
+    );
+    expect(byParagraph).not.toBe(TIMING_GOLDEN);
+    expect(readPptxTiming(parseTiming(byParagraph), resolve)).toBeUndefined();
+  });
+});
+
+/** The range re-pointer for targets whose text did not move. */
+const sameRange = (_spid: string, range: PreservedTextRange): { st: number; end: number } => ({ st: range.st, end: range.end });
+/** A bare timing around `targets`, and one `p:txEl`-narrowed target. */
+const timingWith = (targets: string): string => `<p:timing><p:tnLst>${targets}</p:tnLst></p:timing>`;
+const rangeTarget = (spid: string, range: string): string => `<p:tgtEl><p:spTgt spid="${spid}"><p:txEl>${range}</p:txEl></p:spTgt></p:tgtEl>`;
+
+// SPEC-086 AC-4: a preserved (out-of-subset) timing re-pointed at a rebuild's ids.
+describe("preserved pptx timing retargeting", () => {
+  const TIMING =
+    `<p:timing><p:tnLst><p:par><p:cTn id="1"><p:childTnLst>` +
+    `<p:set><p:cBhvr><p:cTn id="2" dur="1"/><p:tgtEl><p:spTgt spid="12"><p:txEl><p:pRg st="0" end="0"/></p:txEl></p:spTgt></p:tgtEl></p:cBhvr></p:set>` +
+    `<p:set><p:cBhvr><p:cTn id="3" dur="1"/><p:tgtEl><p:spTgt spid="7"><p:subSp spid="{0A1B2C3D-0000-0000-0000-000000000001}"/></p:spTgt></p:tgtEl></p:cBhvr></p:set>` +
+    `</p:childTnLst></p:cTn></p:par></p:tnLst><p:bldLst><p:bldP spid="12" grpId="0" build="p"/></p:bldLst></p:timing>`;
+
+  it("lists the numeric shape references — not time-node ids, not a sub-shape GUID", () => {
+    expect(preservedTimingSpids(TIMING)).toEqual(new Set(["12", "7"]));
+  });
+
+  it("re-points every shape reference at once (no chained renumbering)", () => {
+    const map = new Map([["12", 7], ["7", 2]]);
+    const out = retargetPreservedTiming(TIMING, (spid) => map.get(spid), sameRange);
+    expect(out).toBe(
+      TIMING.replace(`spTgt spid="12"`, `spTgt spid="7"`)
+        .replace(`spTgt spid="7"><p:subSp`, `spTgt spid="2"><p:subSp`)
+        .replace(`bldP spid="12"`, `bldP spid="7"`),
+    );
+  });
+
+  it("returns undefined when any reference has no shape left", () => {
+    expect(retargetPreservedTiming(TIMING, (spid) => (spid === "12" ? 3 : undefined), sameRange)).toBeUndefined();
+    expect(retargetPreservedTiming(`<p:timing/>`, () => undefined, () => undefined)).toBe(`<p:timing/>`);
+  });
+
+  it("lists the shapes addressed by text range — not the whole-shape and sub-shape targets", () => {
+    expect(preservedTimingTextTargets(TIMING)).toEqual(new Set(["12"]));
+  });
+
+  it("re-points a paragraph range by its SOURCE shape, in the same pass as the shape ids", () => {
+    const map = new Map([["12", 7], ["7", 2]]);
+    const seen: [string, PreservedTextRange][] = [];
+    const out = retargetPreservedTiming(TIMING, (spid) => map.get(spid), (spid, range) => {
+      seen.push([spid, { kind: range.kind, st: range.st, end: range.end }]);
+      return { st: 1, end: 2 };
+    });
+    expect(seen).toEqual([["12", { kind: "pRg", st: 0, end: 0 }]]);
+    expect(out).toBe(
+      TIMING.replace(`<p:spTgt spid="12"><p:txEl><p:pRg st="0" end="0"/>`, `<p:spTgt spid="7"><p:txEl><p:pRg st="1" end="2"/>`)
+        .replace(`spTgt spid="7"><p:subSp`, `spTgt spid="2"><p:subSp`)
+        .replace(`bldP spid="12"`, `bldP spid="7"`),
+    );
+  });
+
+  it("re-points every range of a by-paragraph build, and a character range by its own kind", () => {
+    const timing = timingWith(rangeTarget("4", `<p:pRg st="0" end="0"/>`) + rangeTarget("4", `<p:pRg st="1" end="1"/>`) + rangeTarget("4", `<p:charRg st="3" end="9"/>`));
+    expect(retargetPreservedTiming(timing, () => 4, (_spid, { st, end }) => ({ st: st + 10, end: end + 20 }))).toBe(
+      timingWith(rangeTarget("4", `<p:pRg st="10" end="20"/>`) + rangeTarget("4", `<p:pRg st="11" end="21"/>`) + rangeTarget("4", `<p:charRg st="13" end="29"/>`)),
+    );
+  });
+
+  it("returns undefined when a range has no text left, or is not a pair of indices", () => {
+    expect(retargetPreservedTiming(TIMING, () => 3, () => undefined)).toBeUndefined();
+    const bad = TIMING.replace(`<p:pRg st="0" end="0"/>`, `<p:pRg st="x" end="0"/>`);
+    expect(retargetPreservedTiming(bad, () => 3, sameRange)).toBeUndefined();
+  });
+});
+
+/** Lines read from source paragraphs (`undefined` = a line an edit added). */
+const lines = (...sources: (number | undefined)[]): SlideParagraph[] =>
+  sources.map((source) => (source === undefined ? { runs: [] } : { runs: [], pptxSourceParagraph: source }));
+const pRange = (st: number, end: number): PreservedTextRange => ({ kind: "pRg", st, end });
+
+describe("a source paragraph range on a rebuilt body", () => {
+  it("spans every line an a:br split off the source paragraph, and shifts past it", () => {
+    // Source: a:p 0 = "A<a:br/>B", a:p 1 = "C" → lines A, B, C.
+    const body = lines(0, 0, 1);
+    expect(rebuiltParagraphRange(body, pRange(0, 0))).toEqual({ st: 0, end: 1 });
+    expect(rebuiltParagraphRange(body, pRange(1, 1))).toEqual({ st: 2, end: 2 });
+    expect(rebuiltParagraphRange(body, pRange(0, 1))).toEqual({ st: 0, end: 2 });
+  });
+
+  it("follows lines an edit added or removed around it", () => {
+    // Source 0 deleted, a new line before source 2.
+    const body = lines(1, undefined, 2, 3);
+    expect(rebuiltParagraphRange(body, pRange(1, 1))).toEqual({ st: 0, end: 0 });
+    expect(rebuiltParagraphRange(body, pRange(2, 2))).toEqual({ st: 2, end: 2 });
+    expect(rebuiltParagraphRange(body, pRange(3, 3))).toEqual({ st: 3, end: 3 });
+    // A range keeps what is left of it (and a line added inside it).
+    expect(rebuiltParagraphRange(body, pRange(0, 2))).toEqual({ st: 0, end: 2 });
+  });
+
+  it("is undefined when no line from the range is left, and for a character range", () => {
+    const body = lines(1, undefined, 2);
+    expect(rebuiltParagraphRange(body, pRange(0, 0))).toBeUndefined();
+    expect(rebuiltParagraphRange(body, pRange(5, 7))).toBeUndefined();
+    expect(rebuiltParagraphRange([], pRange(0, 0))).toBeUndefined();
+    expect(rebuiltParagraphRange(body, { kind: "charRg", st: 0, end: 3 })).toBeUndefined();
   });
 });
 

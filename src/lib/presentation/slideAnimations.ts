@@ -9,7 +9,7 @@
 // siblings and src/lib/core.
 import type { AnimationEffect, PresentationFormat, Slide, SlideAnimation } from "./model";
 import { markSlideEdited } from "./text";
-import { defaultAnimationDirection } from "./animations";
+import { defaultAnimationDirection, dropPreservedTiming } from "./animations";
 
 /** A new animation targets `frameId` with the neutral default: fade in, on
  * click. */
@@ -23,13 +23,7 @@ function newAnimation(frameId: string): SlideAnimation {
 function ensureModelled(slide: Slide): SlideAnimation[] {
   if (!slide.animations) {
     slide.animations = [];
-    if (slide.preserved) {
-      delete slide.preserved["p:timing"];
-      delete slide.preserved["anim"];
-      if (Object.keys(slide.preserved).length === 0) {
-        delete slide.preserved;
-      }
-    }
+    dropPreservedTiming(slide);
   }
   return slide.animations;
 }

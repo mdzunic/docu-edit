@@ -56,7 +56,7 @@ import {
   type ThemeColorRef,
 } from "../../core/theme";
 import { themeGraphicParent, themeTextParent } from "./theme";
-import { writeOdpAnim } from "./anim";
+import { preservedAnimReferences, writeOdpAnim, xmlIdsDefinedIn } from "./anim";
 import { odpDisplayProps, type OdpPageFieldPlan } from "./fields";
 
 const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
@@ -497,13 +497,45 @@ export function serializePage(
       }
     }
   }
-  const frames = slide.frames.map((frame) => frameXml(frame, registry, wireIdFor.get(frame.id))).join("");
+  // A frame that preserved (out-of-subset) anim targets re-emits its SOURCE
+  // id instead (`sourceWireId` — the first claimant of each; its targeted
+  // paragraphs likewise, in `paragraphXml`): ODF ids are document-wide and the
+  // source's already unique, so the anim string stays verbatim.
+  const sourceIds = new Set<string>();
+  const frames = slide.frames
+    .map((frame) => {
+      let wireId = wireIdFor.get(frame.id);
+      if (wireId === undefined && frame.sourceWireId !== undefined && !sourceIds.has(frame.sourceWireId)) {
+        wireId = frame.sourceWireId;
+        sourceIds.add(wireId);
+      }
+      return frameXml(frame, registry, wireId);
+    })
+    .join("");
   const notes = notesXml(slide.notes);
   // Modelled animations win over any preserved timing (never both).
   const anim = slide.animations !== undefined
     ? writeOdpAnim(slide.animations, (id) => wireIdFor.get(id))
-    : (slide.preserved?.["anim"] ?? "");
+    : keptPreservedAnim(slide.preserved?.["anim"], attrs + frames);
   return `<draw:page${attrs}>${frames}${notes}${anim}</draw:page>`;
+}
+
+/** A page's preserved (out-of-subset) anim, kept only while every element it
+ * references is still defined on the rebuilt page — its frames and
+ * paragraphs, verbatim markup, the page's own attributes, or the anim's own
+ * nodes. Otherwise "" (SPEC-086 AC-4): a preserved tree is dropped whole,
+ * never half-edited and never left naming an element that is gone. */
+function keptPreservedAnim(anim: string | undefined, pageXml: string): string {
+  if (!anim) {
+    return "";
+  }
+  const defined = new Set([...xmlIdsDefinedIn(pageXml), ...xmlIdsDefinedIn(anim)]);
+  for (const ref of preservedAnimReferences(anim)) {
+    if (!defined.has(ref)) {
+      return "";
+    }
+  }
+  return anim;
 }
 
 /** Sets/replaces `draw:style-name` in a page's attribute string. */
@@ -603,10 +635,15 @@ function uniqueName(base: string, used: Set<string>): string {
 }
 
 /** The `xml:id`/`draw:id` attribute string for a frame with a wire id, "" when
- * it has none (SPEC-086 — group/foreign frames re-emit verbatim and never
- * receive one, and animations never target them). */
+ * it has none (SPEC-086 — foreign frames and verbatim groups re-emit their own
+ * markup and never receive one; an authored group gets one only as a target
+ * of preserved anim, its source id). */
 function idAttrs(wireId: string | undefined): string {
-  return wireId ? ` xml:id="${wireId}" draw:id="${wireId}"` : "";
+  if (!wireId) {
+    return "";
+  }
+  const id = escapeXmlAttribute(wireId);
+  return ` xml:id="${id}" draw:id="${id}"`;
 }
 
 /** A linkable frame's element wrapped in `<draw:a>` when it carries an
@@ -639,7 +676,7 @@ function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireI
       // Verbatim (still carrying its source xml) re-emits unchanged; an
       // authored group rebuilds as draw:g, whose children keep their OWN
       // svg:x/svg:y — a draw:g has no box of its own (SPEC-096).
-      return frame.xml ?? `<draw:g>${frame.children.map((child) => frameXml(child, registry)).join("")}</draw:g>`;
+      return frame.xml ?? `<draw:g${idAttrs(wireId)}>${frame.children.map((child) => frameXml(child, registry)).join("")}</draw:g>`;
     case "media":
       // Untouched clip re-emits verbatim (byte-identical, AC-44); a touched or
       // inserted one rebuilds the canonical draw:frame + draw:plugin (SPEC-095).
@@ -819,7 +856,10 @@ function mediaFrameXml(frame: MediaFrame, registry: StyleRegistry, wireId?: stri
 function paragraphXml(para: SlideParagraph, registry: StyleRegistry): string {
   const styleName = registry.paragraphStyle(para);
   const styleAttr = styleName ? ` text:style-name="${styleName}"` : "";
-  return `<text:p${styleAttr}>${runsXml(para.runs, registry)}</text:p>`;
+  // A paragraph preserved anim targets (an Impress by-paragraph build) keeps
+  // its source `xml:id` (SPEC-086 AC-4; see serializePage).
+  const idAttr = para.sourceWireId !== undefined ? ` xml:id="${escapeXmlAttribute(para.sourceWireId)}"` : "";
+  return `<text:p${styleAttr}${idAttr}>${runsXml(para.runs, registry)}</text:p>`;
 }
 
 /** The external href a link writes, or null: sanitised, and never an

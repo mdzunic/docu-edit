@@ -19,7 +19,7 @@ import {
   type SlideFrame,
   type TextFrame,
 } from "./model";
-import { retargetAnimations } from "./animations";
+import { clearSourceWireIds, retargetAnimations } from "./animations";
 import { newSlideFramesForLayout } from "./layouts";
 import { normaliseSections } from "./sections";
 
@@ -285,13 +285,16 @@ export function unconvertibleFrameCount(model: PresentationModel): number {
 }
 
 /** Deletes a slide's per-slide package retention — `partName`, `sourceXml`
- * and `preserved`, and nothing else — so the writers serialise it from the
+ * and `preserved` (with the source wire ids its timing hung off), and nothing
+ * else — so the writers serialise it from the
  * model alone. Shared by `stripRetention` and SPEC-099's `importSlides`; each
  * caller keeps its own dirty-flag handling. */
 export function stripSlideParts(slide: Slide): void {
   delete slide.partName;
   delete slide.sourceXml;
   delete slide.preserved;
+  // The preserved timing went with `preserved`; so do its frame targets.
+  clearSourceWireIds(slide.frames);
 }
 
 /** A copy of the model with every retained-package field removed

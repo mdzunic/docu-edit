@@ -232,6 +232,20 @@ export interface SlideParagraph {
   /** odp: the source paragraph style's unmodelled property string. Same
    *  clearing rule. */
   odpParaProps?: string;
+  /** odp: the source `text:p`'s `xml:id`, recorded only while the slide's
+   *  preserved out-of-subset timing targets this paragraph (an Impress
+   *  by-paragraph build) — see `SlideFrameBase.sourceWireId`. Stays with the
+   *  paragraph's first line when an edit splits it. */
+  sourceWireId?: string;
+  /** pptx: the 0-based index of the source `a:p` (among its `p:txBody`'s)
+   *  this line was read from — every line an `a:br` split off shares it —
+   *  recorded only while the slide's preserved out-of-subset timing targets
+   *  the frame by paragraph range (`p:txEl`/`p:pRg`, a by-paragraph build),
+   *  so a rebuild, which writes each line as its own `a:p`, can re-point
+   *  those ranges (`pptx/timing.ts`). Unlike `sourceWireId` it carries onto a
+   *  line an edit splits off: that text still came from the same source
+   *  paragraph. Cleared with `sourceWireId` (`animations.ts`). */
+  pptxSourceParagraph?: number;
 }
 
 /** The text-body properties of a text-carrying frame (SPEC-097). Declared
@@ -263,6 +277,16 @@ interface SlideFrameBase {
    *  selection, undo and (SPEC-086) animation targets hang off it. Never
    *  serialised to either file format. */
   id: string;
+  /** The frame's id in its SOURCE file — pptx `p:cNvPr id`, odp `xml:id`/
+   *  `draw:id` — recorded by the readers only while the slide keeps
+   *  out-of-subset timing (`preserved["p:timing"]`/`["anim"]`) that targets
+   *  this frame, so a rebuild can keep that verbatim timing pointing at it
+   *  (the pptx writer re-points it at the re-minted id, the odp writer
+   *  re-emits this one; pptx `p:pRg` ranges inside the frame re-point
+   *  through its paragraphs' `pptxSourceParagraph`). Top-level frames only;
+   *  cleared with the preserved timing, and never copied onto a duplicate
+   *  (`animations.ts`). */
+  sourceWireId?: string;
   xCm: number;
   yCm: number;
   widthCm: number;
