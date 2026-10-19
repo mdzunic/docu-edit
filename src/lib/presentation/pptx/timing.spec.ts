@@ -120,3 +120,69 @@ describe("pptx timing serialiser", () => {
     expect(readPptxTiming(parseTiming(TIMING_GOLDEN), () => undefined)).toBeUndefined();
   });
 });
+
+/** PowerPoint's markup for a one-click-per-part fade-in build on shape 4: each
+ * effect's behaviours target `<p:spTgt spid="4">{part}</p:spTgt>` ("" = the
+ * whole shape). `cTnExtra` lands in the effect cTn before its childTnLst (where
+ * PowerPoint puts `p:iterate`). */
+function pptPartBuild(parts: string[], cTnExtra = ""): string {
+  const effects = parts
+    .map((part) => {
+      const tgt = `<p:tgtEl><p:spTgt spid="4">${part}</p:spTgt></p:tgtEl>`;
+      return (
+        `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>` +
+        `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
+        `<p:par><p:cTn presetID="10" presetClass="entr" presetSubtype="0" fill="hold" grpId="0" nodeType="clickEffect">` +
+        `<p:stCondLst><p:cond delay="0"/></p:stCondLst>${cTnExtra}<p:childTnLst>` +
+        `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn dur="500"/>${tgt}</p:cBhvr></p:animEffect>` +
+        `<p:set><p:cBhvr><p:cTn dur="1" fill="hold"/>${tgt}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr>` +
+        `<p:to><p:strVal val="visible"/></p:to></p:set>` +
+        `</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>`
+      );
+    })
+    .join("");
+  const build = parts.some((part) => part.includes("txEl")) ? ` build="p"` : "";
+  return (
+    `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>` +
+    `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${effects}</p:childTnLst></p:cTn>` +
+    `<p:prevCondLst/><p:nextCondLst/></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst>` +
+    `<p:bldLst><p:bldP spid="4" grpId="0"${build}/></p:bldLst></p:timing>`
+  );
+}
+const pRg = (i: number) => `<p:txEl><p:pRg st="${i}" end="${i}"/></p:txEl>`;
+
+describe("pptx timing reader: frame-level targets only", () => {
+  it("models a whole-shape build (the control for the cases below)", () => {
+    expect(readPptxTiming(parseTiming(pptPartBuild([""])), resolve)).toEqual([
+      { frameId: "f4", effect: "fadeIn", trigger: "click" },
+    ]);
+  });
+
+  it("preserves a by-paragraph text build (p:txEl) rather than replaying the whole frame per paragraph", () => {
+    expect(readPptxTiming(parseTiming(pptPartBuild([pRg(0), pRg(1)])), resolve)).toBeUndefined();
+    // One paragraph-targeted effect taints the whole timing (never half-parse).
+    expect(readPptxTiming(parseTiming(pptPartBuild(["", pRg(0)])), resolve)).toBeUndefined();
+    // A character range is a sub-target too.
+    const charRg = `<p:txEl><p:charRg st="0" end="4"/></p:txEl>`;
+    expect(readPptxTiming(parseTiming(pptPartBuild([charRg])), resolve)).toBeUndefined();
+  });
+
+  it("preserves every other p:spTgt sub-target", () => {
+    const subTargets = [
+      `<p:bg/>`,
+      `<p:subSp spid="_x0000_s1"/>`,
+      `<p:oleChartEl type="series" lvl="1"/>`,
+      `<p:graphicEl><a:chart xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" seriesIdx="0" categoryIdx="-3" bldStep="series"/></p:graphicEl>`,
+    ];
+    for (const sub of subTargets) {
+      expect(readPptxTiming(parseTiming(pptPartBuild([sub])), resolve), sub).toBeUndefined();
+    }
+  });
+
+  it("preserves a by-word / by-letter text build (p:iterate)", () => {
+    for (const type of ["wd", "lt"]) {
+      const iterate = `<p:iterate type="${type}"><p:tmPct val="10000"/></p:iterate>`;
+      expect(readPptxTiming(parseTiming(pptPartBuild([""], iterate)), resolve)).toBeUndefined();
+    }
+  });
+});

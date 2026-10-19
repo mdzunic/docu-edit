@@ -70,3 +70,45 @@ describe("odp animation serialiser", () => {
     expect(readOdpAnim(parseAnim(`<anim:par presentation:node-type="other"/>`), resolve)).toBeUndefined();
   });
 });
+
+/** An Impress-shaped one-effect fade-in tree whose behaviours are `behaviours`. */
+function impressFade(behaviours: string): string {
+  return (
+    `<anim:par presentation:node-type="timing-root"><anim:seq presentation:node-type="main-sequence">` +
+    `<anim:par smil:begin="next"><anim:par smil:begin="0s">` +
+    `<anim:par smil:begin="0s" smil:fill="hold" presentation:node-type="on-click" presentation:preset-class="entrance"` +
+    ` presentation:preset-id="ooo-entrance-fade-in" presentation:group-id="0">${behaviours}</anim:par>` +
+    `</anim:par></anim:par></anim:seq></anim:par>`
+  );
+}
+function fadeOn(target: string, attrs = ""): string {
+  return `<anim:transitionFilter smil:dur="0.5s" smil:targetElement="${target}"${attrs} smil:type="fade" smil:direction="forward"/>`;
+}
+
+describe("odp animation reader: frame-level targets only", () => {
+  it("models a whole-frame effect, with or without an explicit whole sub-item", () => {
+    const expected = [{ frameId: "f2", effect: "fadeIn", trigger: "click" }];
+    expect(readOdpAnim(parseAnim(impressFade(fadeOn("de-f2"))), resolve)).toEqual(expected);
+    expect(readOdpAnim(parseAnim(impressFade(fadeOn("de-f2", ` anim:sub-item="whole"`))), resolve)).toEqual(expected);
+  });
+
+  it("preserves an effect narrowed to the frame's text or background (anim:sub-item)", () => {
+    for (const subItem of ["text", "background"]) {
+      const xml = impressFade(fadeOn("de-f2", ` anim:sub-item="${subItem}"`));
+      expect(readOdpAnim(parseAnim(xml), resolve), subItem).toBeUndefined();
+    }
+  });
+
+  it("preserves a by-paragraph build: its targets are text:p ids, not frames", () => {
+    expect(readOdpAnim(parseAnim(impressFade(fadeOn("id1", ` anim:sub-item="text"`))), resolve)).toBeUndefined();
+  });
+
+  it("preserves a by-word / by-letter text build (anim:iterate)", () => {
+    for (const type of ["by-word", "by-letter"]) {
+      const iterate =
+        `<anim:iterate smil:targetElement="de-f2" anim:iterate-type="${type}" anim:iterate-interval="0.05s">` +
+        `<anim:transitionFilter smil:dur="0.5s" smil:type="fade" smil:direction="forward"/></anim:iterate>`;
+      expect(readOdpAnim(parseAnim(impressFade(iterate)), resolve), type).toBeUndefined();
+    }
+  });
+});

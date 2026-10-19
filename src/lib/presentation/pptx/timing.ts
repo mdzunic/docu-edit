@@ -6,9 +6,10 @@
 //
 // Framework-free (imports only the model types and the format-neutral animation
 // helpers). Anything the preset table does not recognise — an unknown preset, a
-// second sequence, a `p:audio` cue, a target the slide doesn't contain — makes
-// the whole timing "out of subset": the reader returns `undefined` and the
-// caller keeps the source markup preserved verbatim (AC-4).
+// second sequence, a `p:audio` cue, a target the slide doesn't contain, a
+// target narrower than a whole shape (a "by paragraph" text build) — makes the
+// whole timing "out of subset": the reader returns `undefined` and the caller
+// keeps the source markup preserved verbatim (AC-4).
 import type { AnimationEffect, SlideAnimation, TransitionDirection } from "../model";
 import {
   buildGroups,
@@ -255,6 +256,22 @@ function parseTiming(
   return animations.length > 0 ? animations : undefined;
 }
 
+/** Whether every behaviour of an effect animates whole shapes (the model's
+ * frame-level unit): each `p:tgtEl` holds a bare `p:spTgt` and nothing iterates.
+ * A sub-target under `p:spTgt` — `p:txEl` (a "by paragraph" text build's
+ * paragraph range), `p:graphicEl`/`p:oleChartEl` (chart or diagram element),
+ * `p:subSp`, `p:bg` — an ink/sound/slide target, or a `p:iterate` (text by
+ * word or letter) animates part of the frame; reading it as the whole frame
+ * would replay the frame per part and the writer would save the parts away. */
+function isFrameLevel(cTn: Element): boolean {
+  if (descendants(cTn, "iterate").length > 0) {
+    return false;
+  }
+  return descendants(cTn, "tgtEl").every((tgtEl) =>
+    Array.from(tgtEl.children).every((t) => t.localName === "spTgt" && t.children.length === 0),
+  );
+}
+
 function parseEffect(
   cTn: Element,
   firstInGroup: boolean,
@@ -263,7 +280,7 @@ function parseEffect(
   const presetClass = cTn.getAttribute("presetClass");
   const presetID = cTn.getAttribute("presetID");
   const effect = PRESET_TO_EFFECT[`${presetClass}:${presetID}`];
-  if (!effect) {
+  if (!effect || !isFrameLevel(cTn)) {
     return undefined;
   }
   const spTgt = descendants(cTn, "spTgt")[0];

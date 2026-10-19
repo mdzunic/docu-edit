@@ -3,8 +3,10 @@
 // SMIL tree. The canonical serialised bytes are pinned by `animGolden.ts`; the
 // reader accepts those plus Impress-authored equivalents (reordered attributes,
 // extra behaviour internals it ignores). Anything the preset table does not
-// recognise makes the whole tree out of subset: the reader returns `undefined`
-// and the caller keeps the source markup preserved verbatim (AC-4).
+// recognise, or a target narrower than a whole frame (a paragraph, the frame's
+// text only, text by word/letter), makes the whole tree out of subset: the
+// reader returns `undefined` and the caller keeps the source markup preserved
+// verbatim (AC-4).
 //
 // Framework-free; imports the model types, the format-neutral animation
 // helpers, and the odf attribute readers.
@@ -215,13 +217,28 @@ function parseAnim(
   return animations.length > 0 ? animations : undefined;
 }
 
+const ANIM_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:animation:1.0";
+
+/** Whether an effect animates whole frames (the model's frame-level unit), as
+ * pptx's `isFrameLevel`. An `anim:iterate` (text by word or letter) or a
+ * behaviour narrowed by `anim:sub-item` to the frame's text or background
+ * animates part of the frame; reading it as the whole frame would save the
+ * narrowing away. (A "by paragraph" build targets each paragraph's `text:p`
+ * id, which never resolves to a frame, so it falls out at target resolution.) */
+function isFrameLevel(par: Element): boolean {
+  return Array.from(par.getElementsByTagName("*")).every((el) => {
+    const subItem = el.getAttributeNS(ANIM_NAMESPACE, "sub-item");
+    return el.localName !== "iterate" && (!subItem || subItem === "whole");
+  });
+}
+
 function parseEffect(
   par: Element,
   firstInGroup: boolean,
   resolveTarget: (wireId: string) => string | undefined,
 ): SlideAnimation | undefined {
   const effect = PRESET_TO_EFFECT[presentationAttr(par, "preset-id") ?? ""];
-  if (!effect) {
+  if (!effect || !isFrameLevel(par)) {
     return undefined;
   }
   const behaviour = firstBehaviour(par);
