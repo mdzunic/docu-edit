@@ -99,6 +99,37 @@ describe("useBuildPreview", () => {
     expect(hidden(p.frameStyles.value, "b")).toBe(false);
   });
 
+  it("holds the start style through a rendered frame before flipping to the end style", () => {
+    // In one frame the browser would style from and to together, so the
+    // transition would start from the settled hidden state (a fly-in plays as a
+    // fade). The flip waits for the frame after the one that renders `from`.
+    const queue: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => queue.push(cb));
+    const frame = (): void => queue.splice(0).forEach((cb) => cb(0));
+    const p = useBuildPreview();
+    p.playGroup(slide([{ frameId: "b", effect: "flyIn", trigger: "click" }]), 0, false);
+    vi.advanceTimersByTime(0);
+    expect(p.frameStyles.value.b).toMatchObject({ transform: "translateX(-120%)", transition: "none" });
+    frame();
+    expect(p.frameStyles.value.b).toMatchObject({ transform: "translateX(-120%)", transition: "none" });
+    frame();
+    expect(p.frameStyles.value.b).toMatchObject({ transform: "none" });
+    expect(p.frameStyles.value.b.transition).toContain("transform");
+  });
+
+  it("drops a pending flip when the group completes first, so it cannot undo the settle", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => queue.push(cb));
+    const frame = (): void => queue.splice(0).forEach((cb) => cb(0));
+    const p = useBuildPreview();
+    p.playGroup(slide([{ frameId: "b", effect: "flyIn", trigger: "click" }]), 0, false);
+    vi.advanceTimersByTime(0);
+    expect(p.complete()).toBe(true);
+    frame();
+    frame();
+    expect(p.frameStyles.value.b).toEqual({}); // settled visible, no stale transition
+  });
+
   it("complete() is a no-op with nothing in flight — a settled slide advances normally (AC-24)", () => {
     const p = useBuildPreview();
     const s = slide(ANIMS);

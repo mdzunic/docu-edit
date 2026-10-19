@@ -159,3 +159,44 @@ test("an advance mid-build completes the current group instantly and holds (AC-2
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/2$`));
 });
+
+test("a keyboard-driven fly-in moves — the start state is committed before the transition", async ({ page }) => {
+  // The engine sets each effect's start style, then its end style with a
+  // transition. Unless a frame renders the start style in between, both land
+  // in one style recalc and the transition runs from the settled hidden state:
+  // a fly-in plays as a bare fade, a wipe pops in. A pointer move's hit test
+  // happens to flush style, so the bug only showed with the pointer still —
+  // the show driven from the keyboard or a clicker. The probe is event
+  // listeners only: reading computed style here would flush it and hide the bug.
+  await openFixture(page);
+  const deckId = page.url().match(/\/slides\/([^/?]+)/)?.[1] ?? "";
+  expect(deckId).not.toBe("");
+
+  // Slide 2 carries the canonical timing: the body fades in on click, then the
+  // shape flies in from the right after it.
+  await page.goto(`/slides/${deckId}/present/2`);
+  const stage = page.getByTestId("presentation-play").getByTestId("slide-stage");
+  await expect(stage.getByText("Canonical")).toBeVisible();
+  await expect(stage.getByText("Shape text")).toBeHidden();
+
+  await stage
+    .locator(".frame")
+    .filter({ hasText: "Shape text" })
+    .evaluate((el) => {
+      const seen: string[] = [];
+      (window as unknown as { shapeTransitions: Promise<string[]> }).shapeTransitions = new Promise((resolve) => {
+        el.addEventListener("transitionrun", (e) => {
+          if (e.target === el) seen.push((e as TransitionEvent).propertyName);
+        });
+        el.addEventListener("transitionend", (e) => {
+          if (e.target === el) resolve(seen);
+        });
+        setTimeout(() => resolve(seen), 10_000);
+      });
+    });
+  await page.keyboard.press("ArrowRight");
+  const transitioned = await page.evaluate(
+    () => (window as unknown as { shapeTransitions: Promise<string[]> }).shapeTransitions,
+  );
+  expect(transitioned).toContain("transform");
+});
