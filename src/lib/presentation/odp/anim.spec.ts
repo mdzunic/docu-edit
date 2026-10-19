@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseXml } from "../../core/xml";
 import type { SlideAnimation } from "../model";
-import { readOdpAnim, writeOdpAnim } from "./anim";
+import { preservedAnimReferences, readOdpAnim, writeOdpAnim, xmlIdsDefinedIn } from "./anim";
 import { ANIM_GOLDEN, GOLDEN_ANIMATIONS, goldenTargetFor } from "./animGolden";
 
 const NS =
@@ -110,5 +110,23 @@ describe("odp animation reader: frame-level targets only", () => {
         `<anim:transitionFilter smil:dur="0.5s" smil:type="fade" smil:direction="forward"/></anim:iterate>`;
       expect(readOdpAnim(parseAnim(impressFade(iterate)), resolve), type).toBeUndefined();
     }
+  });
+});
+
+// SPEC-086 AC-4: what a preserved (out-of-subset) anim string references.
+describe("preserved odp anim references", () => {
+  it("collects targetElement, master-element and id-qualified begin/end values, under any prefix", () => {
+    const anim =
+      `<anim:seq presentation:node-type="interactive-sequence" smil:begin="id9.click" smil:end="id9.click">` +
+      `<anim:par smil:begin="next"><anim:par smil:begin="0s; id7.end+0.5s" presentation:master-element="id6">` +
+      `<anim:set ns2:targetElement='id4' smil:begin="indefinite"/></anim:par></anim:par></anim:seq>`;
+    expect(preservedAnimReferences(anim)).toEqual(new Set(["id9", "id7", "id6", "id4"]));
+  });
+
+  it("collects the ids a fragment defines, on any attribute whose local name is id", () => {
+    const xml =
+      `<draw:frame xml:id="id3" draw:id="id3" presentation:preset-id="ooo-x">` +
+      `<text:p xml:id="id4"/></draw:frame><anim:par anim:id="n1" smil:targetElement="id9"/>`;
+    expect(xmlIdsDefinedIn(xml)).toEqual(new Set(["id3", "id4", "n1"]));
   });
 });

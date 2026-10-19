@@ -83,7 +83,8 @@ import { colorRefFrom, fontRefFrom, readDeckTheme } from "./theme";
 import { DEFAULT_THEME, type ModelColor, type ModelFont } from "../../core/theme";
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
-import { readPptxAutoStartSpids, readPptxTiming } from "./timing";
+import { preservedTimingSpids, preservedTimingTextTargets, readPptxAutoStartSpids, readPptxTiming } from "./timing";
+import { retainSourceWireIds } from "../animations";
 import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
 import { PPTX_MAIN_CONTENT_TYPE } from "../detect";
 import { readSections } from "./sections";
@@ -177,6 +178,10 @@ interface SlideContext {
   /** Slide part path → 1-based deck position, so a slide-jump link
    *  (`ppaction://hlinksldjump`) resolves to `linkSlide` (SPEC-097). */
   slideNumberOf?: Map<string, number>;
+  /** The slide's `p:timing` addresses text by paragraph or character range
+   *  (`p:txEl`): every text body records its lines' source `a:p` indices,
+   *  which `buildSlide` then keeps only where preserved timing needs them. */
+  recordSourceParagraphs?: boolean;
 }
 
 /** The first colour element (`a:srgbClr`/`a:sysClr`/`a:schemeClr`) inside a
@@ -348,7 +353,9 @@ function alignOf(pPr: Element | undefined): SlideParagraph["align"] {
 }
 
 /** Parses a `p:txBody` into paragraphs, splitting each `a:p` at explicit
- * `a:br` breaks so every entry is one rendered line. */
+ * `a:br` breaks so every entry is one rendered line. Under
+ * `ctx.recordSourceParagraphs` each line records the index of the `a:p` it
+ * came from (`pptxSourceParagraph`). */
 function parseTxBody(
   txBody: Element,
   role: PlaceholderRole | undefined,
@@ -356,7 +363,7 @@ function parseTxBody(
 ): SlideParagraph[] {
   const shapeLstStyle = firstA(txBody, "lstStyle");
   const paragraphs: SlideParagraph[] = [];
-  for (const p of childrenA(txBody, "p")) {
+  for (const [sourceIndex, p] of childrenA(txBody, "p").entries()) {
     const pPr = firstA(p, "pPr");
     const level = Number(pPr?.getAttribute("lvl") ?? "0") || 0;
     const align = alignOf(pPr);
@@ -375,6 +382,7 @@ function parseTxBody(
       // A start-at seeds only the paragraph's first (non-empty) visual line.
       if (!first) delete para.startAt;
       if (currentRuns.length > 0) first = false;
+      if (ctx.recordSourceParagraphs) para.pptxSourceParagraph = sourceIndex;
       paragraphs.push(para);
       currentRuns = [];
     };
@@ -1955,6 +1963,7 @@ function buildSlide(
     media: deps.media,
     parts: deps.parts,
     slideNumberOf: deps.slideNumberOf,
+    recordSourceParagraphs: timingAddressesText(slideRoot),
   };
 
   // Populate media referenced by this slide's image rels.
@@ -1994,6 +2003,8 @@ function buildSlide(
         const spid = firstCNvPrId(child);
         if (spid) {
           frameForSpid.set(spid, frame.id);
+          // Kept below only if preserved timing targets this frame.
+          frame.sourceWireId = spid;
         }
       }
     }
@@ -2043,6 +2054,17 @@ function buildSlide(
       }
     }
   }
+  // Timing that stays preserved names its shapes by source id: each frame it
+  // targets keeps that id, so a rebuild can re-point the verbatim timing at
+  // the id it re-mints (the serialiser's `preservedTimingXml`) — and a frame
+  // it targets by paragraph range keeps each line's source `a:p` index, so
+  // the rebuild can re-point the range at the `a:p`s those lines become.
+  const preservedTiming = preserved["p:timing"];
+  retainSourceWireIds(
+    frames,
+    preservedTiming ? preservedTimingSpids(preservedTiming) : new Set<string>(),
+    preservedTiming ? preservedTimingTextTargets(preservedTiming) : new Set<string>(),
+  );
   Object.assign(preserved, fieldPreserved);
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
@@ -2055,6 +2077,13 @@ function buildSlide(
     slide.notes = notes;
   }
   return { slide, deckDateFormat };
+}
+
+/** Whether a slide's `p:timing` names text inside a shape by range
+ * (`p:spTgt/p:txEl` — a by-paragraph build). */
+function timingAddressesText(slideRoot: Element): boolean {
+  const timing = pChild(slideRoot, "timing");
+  return timing !== undefined && timing.getElementsByTagNameNS(P_NAMESPACE, "txEl").length > 0;
 }
 
 function layoutSpTree(root: Element): Element | undefined {

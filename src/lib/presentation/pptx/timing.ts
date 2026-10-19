@@ -4,13 +4,16 @@
 // `timingGolden.ts`; the reader accepts those plus PowerPoint-authored
 // equivalents (reordered attributes, extra behaviour internals it ignores).
 //
-// Framework-free (imports only the model types and the format-neutral animation
-// helpers). Anything the preset table does not recognise — an unknown preset, a
-// second sequence, a `p:audio` cue, a target the slide doesn't contain, a
-// target narrower than a whole shape (a "by paragraph" text build) — makes the
-// whole timing "out of subset": the reader returns `undefined` and the caller
-// keeps the source markup preserved verbatim (AC-4).
-import type { AnimationEffect, SlideAnimation, TransitionDirection } from "../model";
+// Framework-free (imports only the model types, the format-neutral animation
+// helpers and core's XML scanner). Anything the preset table does not
+// recognise — an unknown preset, a second sequence, a `p:audio` cue, a target
+// the slide doesn't contain or only part of a shape (a by-paragraph build) —
+// makes the whole timing "out of subset": the reader returns `undefined` and
+// the caller keeps the source markup preserved verbatim (AC-4) — its shape
+// and paragraph references re-pointed on a rebuild (the "Preserved timing"
+// section below).
+import type { AnimationEffect, SlideAnimation, SlideParagraph, TransitionDirection } from "../model";
+import { scanXml, XmlScanError } from "../../core/xmlScanner";
 import {
   buildGroups,
   DEFAULT_ANIMATION_DURATION_MS,
@@ -360,4 +363,172 @@ function firstBehaviourDur(effectCtn: Element): number | undefined {
     }
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Preserved (out-of-subset) timing
+// ---------------------------------------------------------------------------
+// A preserved `p:timing` re-emits verbatim, but it names its shapes by their
+// SOURCE `p:cNvPr id`, and a rebuilt slide re-mints those ids (2, 3, … in
+// z-order). The reader records each targeted frame's source id
+// (`sourceWireId`); the serialiser re-points the references through the
+// functions below. A drawing-element reference is any NUMERIC `spid`
+// attribute — `p:spTgt`, `p:bldP`/`p:bldGraphic`/`p:bldOleChart`/`p:bldDgm`,
+// `p:inkTgt`, `p14:bmkTgt`; `p:subSp spid` names a diagram sub-shape by GUID,
+// never a slide shape, and is left alone.
+//
+// A target can also name text INSIDE a shape by position: `p:spTgt/p:txEl`
+// holds a `p:pRg` (0-based `a:p` indices, inclusive — a by-paragraph build)
+// or a `p:charRg` (character offsets). The model reads every `a:br` as a new
+// paragraph and a rebuild writes each as its own `a:p`, so on a rebuilt shape
+// those indices shift — the reader records each line's source `a:p` index
+// (`pptxSourceParagraph`) for the frames such ranges target, and the
+// serialiser re-points each range alongside its shape.
+const SPID_ATTR = /(\s(?:[\w.-]+:)?spid=")(\d+)(")/g;
+
+/** The shape ids a preserved `p:timing` string references. */
+export function preservedTimingSpids(timingXml: string): Set<string> {
+  return new Set(Array.from(timingXml.matchAll(SPID_ATTR), (m) => m[2]));
+}
+
+/** A text range a preserved target names inside its shape (`p:txEl`), in the
+ * SOURCE's numbering: `pRg` by `a:p` index, `charRg` by character offset;
+ * both inclusive of `st` and `end`. */
+export interface PreservedTextRange {
+  kind: "pRg" | "charRg";
+  st: number;
+  end: number;
+}
+
+/** One `p:txEl` range in a preserved timing string: the `p:spTgt spid` it
+ * sits in and the source offsets of its (empty) element's open tag. */
+interface TextRangeSite extends PreservedTextRange {
+  spid: string;
+  start: number;
+  stop: number;
+}
+
+/** Every `p:txEl` range in a preserved timing string, in document order —
+ * `undefined` when the string does not scan (never the case for what the
+ * reader stores, which is serialised DOM) or a range is not a pair of
+ * non-negative integers. */
+function textRangeSites(timingXml: string): TextRangeSite[] | undefined {
+  const sites: TextRangeSite[] = [];
+  let spid: string | undefined;
+  let inTxEl = false;
+  let malformed = false;
+  try {
+    scanXml(timingXml, (event) => {
+      if (event.type === "open") {
+        if (event.local === "spTgt" && !event.selfClosing) {
+          spid = event.attrs.find((a) => a.local === "spid")?.value;
+        } else if (event.local === "txEl" && !event.selfClosing) {
+          inTxEl = true;
+        } else if (inTxEl && spid !== undefined && (event.local === "pRg" || event.local === "charRg")) {
+          const st = Number(event.attrs.find((a) => a.local === "st")?.value);
+          const end = Number(event.attrs.find((a) => a.local === "end")?.value);
+          if (!Number.isInteger(st) || !Number.isInteger(end) || st < 0 || end < 0) {
+            malformed = true;
+            return "stop";
+          }
+          sites.push({ spid, kind: event.local, st, end, start: event.start, stop: event.end });
+        }
+      } else if (event.type === "close") {
+        if (event.local === "spTgt") {
+          spid = undefined;
+        } else if (event.local === "txEl") {
+          inTxEl = false;
+        }
+      }
+      return undefined;
+    });
+  } catch (e) {
+    if (e instanceof XmlScanError) {
+      return undefined;
+    }
+    throw e;
+  }
+  return malformed ? undefined : sites;
+}
+
+/** The shape ids a preserved `p:timing` string addresses by text POSITION
+ * (a `p:txEl` range inside their `p:spTgt`). */
+export function preservedTimingTextTargets(timingXml: string): Set<string> {
+  return new Set((textRangeSites(timingXml) ?? []).map((site) => site.spid));
+}
+
+/** A source paragraph range re-pointed at a REBUILT body, which writes each
+ * model paragraph as its own `a:p`: from the first to the last line read from
+ * a source paragraph inside the range (`pptxSourceParagraph`) — so a source
+ * paragraph an `a:br` split, or an edit, spans several `a:p` and the build
+ * still reveals all of its text. `undefined` when no line from the range is
+ * left (the user deleted or merged away that paragraph), and for a character
+ * range, whose offsets any text edit moves and nothing records. */
+export function rebuiltParagraphRange(
+  paragraphs: readonly SlideParagraph[],
+  range: PreservedTextRange,
+): { st: number; end: number } | undefined {
+  if (range.kind !== "pRg") {
+    return undefined;
+  }
+  let st = -1;
+  let end = -1;
+  paragraphs.forEach((para, index) => {
+    const source = para.pptxSourceParagraph;
+    if (source !== undefined && source >= range.st && source <= range.end) {
+      if (st < 0) {
+        st = index;
+      }
+      end = index;
+    }
+  });
+  return st < 0 ? undefined : { st, end };
+}
+
+/** `st`/`end` on a range element's open tag. */
+const RANGE_ATTR = /(\s(st|end)\s*=\s*["'])\d+(["'])/g;
+
+/** A preserved `p:timing` with every shape reference re-pointed through
+ * `resolve` (source id → the id the rebuilt slide gave that shape) and every
+ * `p:txEl` range through `remapText` (source id + source range → the range on
+ * the rebuilt shape), or `undefined` when any reference has no shape — or
+ * range no text — on the rebuilt slide: the caller then drops the timing
+ * whole rather than emit a dangling target (PowerPoint repairs that as
+ * corruption), a range that animates the wrong paragraph, or one re-minting
+ * handed to a different shape — preserved timing is never half-edited
+ * (AC-4). */
+export function retargetPreservedTiming(
+  timingXml: string,
+  resolve: (spid: string) => number | undefined,
+  remapText: (spid: string, range: PreservedTextRange) => { st: number; end: number } | undefined,
+): string | undefined {
+  // Ranges first, while each still sits under its SOURCE spid.
+  const sites = textRangeSites(timingXml);
+  if (!sites) {
+    return undefined;
+  }
+  let ranged = "";
+  let cursor = 0;
+  for (const site of sites) {
+    const range = remapText(site.spid, site);
+    if (!range) {
+      return undefined;
+    }
+    const tag = timingXml
+      .slice(site.start, site.stop)
+      .replace(RANGE_ATTR, (_m, before: string, name: string, after: string) => `${before}${name === "st" ? range.st : range.end}${after}`);
+    ranged += timingXml.slice(cursor, site.start) + tag;
+    cursor = site.stop;
+  }
+  ranged += timingXml.slice(cursor);
+  let dangling = false;
+  const out = ranged.replace(SPID_ATTR, (match, before: string, spid: string, after: string) => {
+    const id = resolve(spid);
+    if (id === undefined) {
+      dangling = true;
+      return match;
+    }
+    return `${before}${id}${after}`;
+  });
+  return dangling ? undefined : out;
 }

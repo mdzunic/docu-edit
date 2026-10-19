@@ -6,7 +6,8 @@
 // recognise, or a target narrower than a whole frame (a paragraph, the frame's
 // text only, text by word/letter), makes the whole tree out of subset: the
 // reader returns `undefined` and the caller keeps the source markup preserved
-// verbatim (AC-4).
+// verbatim (AC-4) — kept pointing at its targets across a rebuild (the
+// "Preserved anim" section).
 //
 // Framework-free; imports the model types, the format-neutral animation
 // helpers, and the odf attribute readers.
@@ -291,4 +292,47 @@ function parseSeconds(value: string | null): number | undefined {
     return Number.isFinite(n) ? Math.round(n * 1000) : undefined;
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Preserved (out-of-subset) anim
+// ---------------------------------------------------------------------------
+// A preserved `anim:*` tree re-emits verbatim and names its targets by SOURCE
+// element id. ODF ids are document-wide and the source's are already unique,
+// so a rebuilt page re-emits each target's own id (`sourceWireId`, on frames
+// and on `text:p` — an Impress by-paragraph build) rather than minting new
+// ones; the tree is kept only while every id it references is still defined
+// on the page. These scanners work on the preserved string, prefix-agnostic
+// (a model stored before the anim was kept byte-verbatim spells the SMIL
+// attributes with generated `ns1:`-style prefixes).
+
+/** `name="value"` (either quote) for an attribute whose LOCAL name is one of
+ * `names`, under any prefix or none. */
+function attrValues(xml: string, names: string): string[] {
+  const re = new RegExp(`\\s(?:[\\w.-]+:)?(?:${names})\\s*=\\s*(["'])(.*?)\\1`, "g");
+  return Array.from(xml.matchAll(re), (m) => m[2]);
+}
+
+/** The element ids a preserved anim string references: every
+ * `smil:targetElement` (a shape, or a `text:p` for a by-paragraph build) and
+ * `presentation:master-element`, plus the id half of an id-qualified
+ * `smil:begin`/`smil:end` value (`id3.click` — an interactive trigger shape;
+ * `id7.end` — another node). */
+export function preservedAnimReferences(animXml: string): Set<string> {
+  const refs = new Set(attrValues(animXml, "targetElement|master-element"));
+  for (const value of attrValues(animXml, "begin|end")) {
+    for (const part of value.split(";")) {
+      const id = /^\s*([A-Za-z_][\w-]*)\.[A-Za-z]/.exec(part)?.[1];
+      if (id) {
+        refs.add(id);
+      }
+    }
+  }
+  return refs;
+}
+
+/** Every element id an XML fragment defines (`xml:id`, `draw:id`, `anim:id`,
+ * …) — what a preserved anim's references may name on a rebuilt page. */
+export function xmlIdsDefinedIn(xml: string): Set<string> {
+  return new Set(attrValues(xml, "id"));
 }

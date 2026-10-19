@@ -48,7 +48,7 @@ import {
   mediaNvPrXml,
   VIDEO_RELATIONSHIP,
 } from "./mediaWire";
-import { writePptxTiming } from "./timing";
+import { rebuiltParagraphRange, retargetPreservedTiming, writePptxTiming, type PreservedTextRange } from "./timing";
 import { DEFAULT_DATE_FORMAT, fieldText, isTitleSlide } from "../headerFooter";
 import { FIELD_GUID, FORMAT_TO_PPTX_DATETIME, PH_IDX_OF_KIND, PH_NAME_OF_KIND, PH_TYPE_OF_KIND } from "./fields";
 import {
@@ -137,8 +137,15 @@ export function serializeSlideXml(
   // even though grouping never makes them animatable), while a group or
   // chart still carrying verbatim `xml` claims none. The emitted ids and the
   // timing's `p:spTgt spid` references cannot drift (SPEC-086 wire ids).
+  // Verbatim markup keeps its SOURCE ids, so minting steps over those: no two
+  // shapes share an id, and preserved timing that targets a verbatim shape
+  // still finds it (and only it).
+  const retained = retainedShapeIds(slide, fields);
   const spidFor = new Map<string, number>();
   const mint = (frameId?: string): number => {
+    while (retained.has(nextId)) {
+      nextId++;
+    }
     const id = nextId++;
     if (frameId !== undefined) {
       spidFor.set(frameId, id);
@@ -161,7 +168,7 @@ export function serializeSlideXml(
   // is the modelled state, so preserved timing is never re-emitted alongside.
   const timing = slide.animations !== undefined
     ? writePptxTiming(slide.animations, (id) => spidFor.get(id))
-    : (slide.preserved?.["p:timing"] ?? "");
+    : preservedTimingXml(slide, spidFor, retained);
   const extLst = slide.preserved?.["p:extLst"] ?? "";
   return (
     `${XML_DECL}<p:sld${rootAttrs}>` +
@@ -176,6 +183,78 @@ export function serializeSlideXml(
     extLst +
     `</p:sld>`
   );
+}
+
+/** `p:cNvPr id`s in verbatim markup, under any prefix. */
+const CNVPR_ID = /<(?:[\w.-]+:)?cNvPr\b[^>]*?\sid="(\d+)"/g;
+
+/** The shape ids the rebuilt slide re-emits from VERBATIM markup — foreign
+ * frames, groups/charts still carrying their source `xml`, untouched media
+ * `sourceXml` (recursing exactly where `frameXml` does) and the preserved
+ * field placeholders `fieldPlaceholderXml` re-emits. */
+function retainedShapeIds(slide: Slide, fields: ResolvedField[]): Set<number> {
+  const ids = new Set<number>();
+  const collect = (xml: string): void => {
+    for (const m of xml.matchAll(CNVPR_ID)) {
+      ids.add(Number(m[1]));
+    }
+  };
+  const visit = (frame: SlideFrame): void => {
+    if (frame.kind === "foreign") {
+      collect(frame.xml);
+    } else if (frame.kind === "chart" && frame.xml !== undefined) {
+      collect(frame.xml);
+    } else if (frame.kind === "media" && frame.sourceXml !== undefined) {
+      collect(frame.sourceXml);
+    } else if (frame.kind === "group") {
+      if (frame.xml !== undefined) {
+        collect(frame.xml);
+      } else {
+        frame.children.forEach(visit);
+      }
+    }
+  };
+  slide.frames.forEach(visit);
+  for (const rf of fields) {
+    const preserved = slide.preserved?.[`p:ph:${PH_TYPE_OF_KIND[rf.field.kind]}`];
+    if (preserved) {
+      collect(preserved);
+    }
+  }
+  return ids;
+}
+
+/** The slide's preserved (out-of-subset) `p:timing` with its shape references
+ * re-pointed from source ids to this rebuild's (SPEC-086 AC-4): a frame the
+ * timing targets maps its `sourceWireId` to its minted id (the first frame
+ * claiming an id, in z-order), and an id verbatim markup still carries maps
+ * to itself. A text range inside a target (`p:txEl`) re-points with it: on a
+ * rebuilt frame through its lines' source paragraph indices (each line is
+ * its own `a:p` now), in verbatim markup unchanged. Any other reference — a
+ * shape since deleted, one re-minted without a record, a paragraph no line
+ * is left from — drops the timing whole (""), never dangling. */
+function preservedTimingXml(slide: Slide, spidFor: Map<string, number>, retained: Set<number>): string {
+  const timing = slide.preserved?.["p:timing"];
+  if (!timing) {
+    return "";
+  }
+  const rebuilt = new Map<string, { id: number; frame: SlideFrame }>();
+  for (const frame of slide.frames) {
+    const id = spidFor.get(frame.id);
+    if (frame.sourceWireId !== undefined && id !== undefined && !rebuilt.has(frame.sourceWireId)) {
+      rebuilt.set(frame.sourceWireId, { id, frame });
+    }
+  }
+  const resolve = (spid: string): number | undefined =>
+    rebuilt.get(spid)?.id ?? (retained.has(Number(spid)) ? Number(spid) : undefined);
+  const remapText = (spid: string, range: PreservedTextRange): { st: number; end: number } | undefined => {
+    const frame = rebuilt.get(spid)?.frame;
+    if (frame === undefined) {
+      return retained.has(Number(spid)) ? range : undefined;
+    }
+    return frame.kind === "text" || frame.kind === "shape" ? rebuiltParagraphRange(frame.paragraphs ?? [], range) : undefined;
+  };
+  return retargetPreservedTiming(timing, resolve, remapText) ?? "";
 }
 
 // --- notes-slide part (SPEC-083) -------------------------------------------
