@@ -12,7 +12,17 @@ import { computed, onBeforeUnmount, onMounted, useTemplateRef } from "vue";
 import SlideFrameView from "./SlideFrameView.vue";
 import FrameSelectionOverlay from "./FrameSelectionOverlay.vue";
 import SelectionBoundsOverlay from "./SelectionBoundsOverlay.vue";
-import { asMediaParts, asSlide, asStageFields, asStrings, asTheme, cmPx, mediaResolver, surfaceBackground } from "./slideRender";
+import {
+  asMediaParts,
+  asMediaUrlOverride,
+  asSlide,
+  asStageFields,
+  asStrings,
+  asTheme,
+  cmPx,
+  mediaResolver,
+  surfaceBackground,
+} from "./slideRender";
 
 const props = defineProps({
   /** The Slide to render (presentation model). */
@@ -54,6 +64,10 @@ const props = defineProps({
    * layers on during a show/preview. Absent in the editor (frames fully
    * visible, AC-25). */
   frameStyles: { type: Object, default: () => ({}) },
+  /** SPEC-084 playback: media id → this showing's URL (or undefined), so a GIF
+   * restarts each time its slide is shown (useShowingMedia). Absent = every
+   * image resolves to its shared `data:` URI. */
+  mediaUrlOverride: { type: Function, default: null },
   /** SPEC-093: the slide's pre-resolved deck fields (footer/slide-number/date),
    * computed by the parent from `fieldText` so this shared surface stays
    * framework-neutral and updates under the deck's shallowRef commit. Empty on a
@@ -113,7 +127,7 @@ onBeforeUnmount(() => emit("surface-mounted", null));
 const slide = computed(() => asSlide(props.slide));
 const frames = computed(() => slide.value.frames);
 const stageFieldList = computed(() => asStageFields(props.fields));
-const resolveMedia = computed(() => mediaResolver(asMediaParts(props.media)));
+const resolveMedia = computed(() => mediaResolver(asMediaParts(props.media), asMediaUrlOverride(props.mediaUrlOverride)));
 const selectedIds = computed(() => asStrings(props.selectedFrameIds));
 const selectedFrames = computed(() => frames.value.filter((frame) => selectedIds.value.includes(frame.id)));
 const selectedFrame = computed(() => frames.value.find((frame) => frame.id === props.selectedFrameId) ?? null);

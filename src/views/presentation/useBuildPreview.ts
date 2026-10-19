@@ -15,18 +15,29 @@ import { fromStyle, settledStyle, toStyle, transitionFor } from "../../component
 
 type StyleMap = Record<string, Record<string, string>>;
 
-function nextFrame(cb: () => void): void {
-  if (typeof requestAnimationFrame === "function") {
-    requestAnimationFrame(() => cb());
-  } else {
-    setTimeout(cb, 16);
+// The settle runs this long after a group's last animation is scheduled to end:
+// two frames for the from→to commit (`afterCommitFrame`) plus margin, so the
+// settle never cuts a still-running transition short.
+const SETTLE_SLACK_MS = 100;
+
+/** The per-frame styles of `slide` settled with `groupsPlayed` groups shown —
+ * the static visibility with no animation in flight (AC-20). */
+export function settledFrameStyles(slide: Slide, groupsPlayed: number): StyleMap {
+  const groups = slideBuildGroups(slide);
+  const styles: StyleMap = {};
+  for (const frame of slide.frames) {
+    styles[frame.id] = settledStyle(isFrameHiddenAt(groups, frame.id, groupsPlayed));
   }
+  return styles;
 }
 
 export function useBuildPreview() {
   const frameStyles = ref<StyleMap>({});
   const playing = ref(false);
   let timers: number[] = [];
+  // Bumped by clearTimers so a frame callback scheduled before a stop, a
+  // completion or the next group never lands a stale "to" style after it.
+  let generation = 0;
   // The settled state a currently-animating group resolves to (its slide and the
   // group count shown once it finishes). Held so a mid-build input can snap
   // straight to it (AC-24).
@@ -37,6 +48,25 @@ export function useBuildPreview() {
       clearTimeout(t);
     }
     timers = [];
+    generation += 1;
+  }
+
+  /** Runs `cb` once the "from" style just set has been rendered: two frames,
+   * like SlideTransitionLayer. One is not enough — a rAF callback runs BEFORE
+   * its frame's style recalc, so from and to would land in the same recalc and
+   * the transition would start from the settled hidden style instead (flyIn and
+   * zoomIn degrade to a fade, wipeIn to an appear) unless something else, such
+   * as a mouse move's hit test, happened to flush style in between. */
+  function afterCommitFrame(cb: () => void): void {
+    const scheduled = generation;
+    const run = (): void => {
+      if (scheduled === generation) cb();
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => requestAnimationFrame(run));
+    } else {
+      timers.push(window.setTimeout(run, 32));
+    }
   }
 
   function setFrame(frameId: string, style: Record<string, string>): void {
@@ -46,12 +76,7 @@ export function useBuildPreview() {
   /** Renders the slide settled with `groupsPlayed` groups shown — the static
    * visibility with no animation in flight (AC-20). */
   function settle(slide: Slide, groupsPlayed: number): void {
-    const groups = slideBuildGroups(slide);
-    const styles: StyleMap = {};
-    for (const frame of slide.frames) {
-      styles[frame.id] = settledStyle(isFrameHiddenAt(groups, frame.id, groupsPlayed));
-    }
-    frameStyles.value = styles;
+    frameStyles.value = settledFrameStyles(slide, groupsPlayed);
   }
 
   /** Animates build group `groupIndex` (0-based): settles instantly to the
@@ -82,7 +107,7 @@ export function useBuildPreview() {
       timers.push(
         window.setTimeout(() => {
           setFrame(a.frameId, { ...fromStyle(a), transition: "none" });
-          nextFrame(() => {
+          afterCommitFrame(() => {
             setFrame(a.frameId, a.effect === "appear" ? toStyle(a) : { ...toStyle(a), transition: transitionFor(a) });
           });
         }, entry.startMs),
@@ -94,7 +119,7 @@ export function useBuildPreview() {
         playing.value = false;
         pending = null;
         onDone?.();
-      }, totalMs + 40),
+      }, totalMs + SETTLE_SLACK_MS),
     );
   }
 

@@ -295,6 +295,28 @@ function parseEffect(
   return animation;
 }
 
+/** The `p:spTgt spid`s of the clips a slide's timing starts with the slide —
+ * PowerPoint's "Start: Automatically": a `p:cmd type="call"` `playFrom(…)` in
+ * the main sequence's first group when that group begins on the slide's own
+ * `onBegin` rather than on a click. SPEC-095 reads the cue only this far, to
+ * set `autoStart`; the timing itself stays preserved whole (a media cue is out
+ * of SPEC-086's subset). */
+export function readPptxAutoStartSpids(timingEl: Element): string[] {
+  const mainSeq = descendants(timingEl, "cTn").find((c) => c.getAttribute("nodeType") === "mainSeq");
+  const childTnLst = mainSeq ? Array.from(mainSeq.children).find((c) => c.localName === "childTnLst") : undefined;
+  const firstGroup = childTnLst ? Array.from(childTnLst.children).find((c) => c.localName === "par") : undefined;
+  const groupCtn = firstGroup ? Array.from(firstGroup.children).find((c) => c.localName === "cTn") : undefined;
+  const stCondLst = groupCtn ? Array.from(groupCtn.children).find((c) => c.localName === "stCondLst") : undefined;
+  const withSlide = !!stCondLst && Array.from(stCondLst.children).some((c) => c.getAttribute("evt") === "onBegin");
+  if (!groupCtn || !withSlide) {
+    return [];
+  }
+  return descendants(groupCtn, "cmd")
+    .filter((cmd) => cmd.getAttribute("type") === "call" && (cmd.getAttribute("cmd") ?? "").startsWith("playFrom"))
+    .map((cmd) => descendants(cmd, "spTgt")[0]?.getAttribute("spid") ?? "")
+    .filter((spid) => spid !== "");
+}
+
 /** The effect's own start condition delay: the first `p:cond` under the
  * effect cTn's direct `p:stCondLst`. */
 function firstCond(cTn: Element): Element | undefined {
@@ -303,10 +325,13 @@ function firstCond(cTn: Element): Element | undefined {
 }
 
 /** The first nested `p:cTn` (inside the effect's behaviour tree) that carries a
- * numeric `dur` — the effect duration by the canonical form's convention. */
+ * numeric `dur` — the effect duration by the canonical form's convention. A
+ * `p:set` behaviour is skipped: its `dur="1"` is the instant visibility flip,
+ * which PowerPoint writes BEFORE the timed behaviour (the canonical form writes
+ * it after), so taking it would read every PowerPoint entrance as 1ms. */
 function firstBehaviourDur(effectCtn: Element): number | undefined {
   for (const cTn of descendants(effectCtn, "cTn")) {
-    if (cTn === effectCtn) {
+    if (cTn === effectCtn || cTn.parentElement?.parentElement?.localName === "set") {
       continue;
     }
     const dur = cTn.getAttribute("dur");

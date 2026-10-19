@@ -28,6 +28,14 @@ const props = defineProps({
   /** When true, no animation runs — the layer completes on the next tick
    * (an instant cut) so reduced-motion users get no movement (AC-16). */
   reducedMotion: { type: Boolean, default: false },
+  /** SPEC-086 build state per stage (frame id → inline style): playback hides
+   * the incoming slide's unbuilt frames and the outgoing slide's exited ones,
+   * so the transition shows what the plain stage will. Preview passes none. */
+  outgoingFrameStyles: { type: Object, default: () => ({}) },
+  incomingFrameStyles: { type: Object, default: () => ({}) },
+  /** Playback's per-showing media URLs per stage (see SlideStage). */
+  outgoingMediaUrlOverride: { type: Function, default: null },
+  incomingMediaUrlOverride: { type: Function, default: null },
 });
 
 const emit = defineEmits(["done"]);
@@ -129,6 +137,8 @@ function onIncomingTransitionEnd() {
         :media="media"
         :scale="scale"
         :interactive="false"
+        :frame-styles="outgoingFrameStyles"
+        :media-url-override="outgoingMediaUrlOverride"
         :theme="theme"
       />
     </div>
@@ -145,6 +155,8 @@ function onIncomingTransitionEnd() {
         :media="media"
         :scale="scale"
         :interactive="false"
+        :frame-styles="incomingFrameStyles"
+        :media-url-override="incomingMediaUrlOverride"
         :theme="theme"
       />
     </div>

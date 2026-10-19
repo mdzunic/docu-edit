@@ -94,6 +94,25 @@ describe("PresentationPlayView transitions", () => {
     expect(wrapper.find(LAYER).exists()).toBe(false);
   });
 
+  it("carries build state into the transition: unbuilt frames stay hidden, exited frames stay gone (SPEC-086)", async () => {
+    const deck = await deckWithTransitions();
+    const exited = deck.slides[0].frames[0];
+    const unbuilt = deck.slides[1].frames[0];
+    deck.slides[0].animations = [{ frameId: exited.id, effect: "fadeOut", trigger: "click" }];
+    deck.slides[1].animations = [{ frameId: unbuilt.id, effect: "fadeIn", trigger: "click" }];
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/2`, deck);
+    key("ArrowLeft"); // back lands on slide 1 fully built — its exit has played
+    await flushPromises();
+    key("ArrowRight"); // → slide 2 (push), none of its builds played yet
+    await flushPromises();
+    const frameStyle = (stage: string, index: number): string =>
+      wrapper.get(`[data-testid="${stage}"]`).findAll(".stage-surface > *")[index].attributes("style") ?? "";
+    expect(frameStyle("transition-outgoing", 0)).toContain("visibility: hidden");
+    expect(frameStyle("transition-outgoing", 1)).not.toContain("visibility: hidden");
+    expect(frameStyle("transition-incoming", 0)).toContain("visibility: hidden");
+    expect(frameStyle("transition-incoming", 1)).not.toContain("visibility: hidden");
+  });
+
   it("keeps a number-jump instant (AC-14)", async () => {
     const deck = await deckWithTransitions();
     const { wrapper } = await mountAt(`/slides/${deck.id}/present/1`, deck);

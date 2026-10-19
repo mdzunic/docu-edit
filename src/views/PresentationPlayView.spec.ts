@@ -135,6 +135,33 @@ describe("PresentationPlayView", () => {
     expect(replace).toHaveBeenCalledWith({ path: `/slides/${deck.id}`, query: { return: "2" } });
   });
 
+  it("shows a GIF from a fresh URL on each visit to its slide, so it plays from the start", async () => {
+    // Chrome keeps one playback timeline per image URL: from the shared data:
+    // URI, a non-looping GIF that already played in the editor came up frozen.
+    let minted = 0;
+    vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:showing/${++minted}`);
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const deck = await freshDeck();
+    const mediaId = deck.slides[3].frames.flatMap((f) => (f.kind === "image" ? [f.mediaId] : []))[0];
+    const part = deck.media?.find((p) => p.mediaId === mediaId);
+    expect(part).toBeDefined();
+    if (part) part.contentType = "image/gif";
+
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/4`, deck);
+    const gifSrc = () => wrapper.findAll("img").map((img) => img.attributes("src") ?? "").find((src) => src.startsWith("blob:"));
+    const first = gifSrc();
+    expect(first).toMatch(/^blob:showing\//);
+
+    key("ArrowLeft");
+    await flushPromises();
+    expect(gifSrc()).toBeUndefined(); // slide 3 has no GIF
+    key("ArrowRight");
+    await flushPromises();
+    const second = gifSrc();
+    expect(second).toMatch(/^blob:showing\//);
+    expect(second).not.toBe(first);
+  });
+
   it("number-then-Enter jumps to that slide (AC-27)", async () => {
     const deck = await freshDeck();
     const { wrapper, replace } = await mountAt(`/slides/${deck.id}/present/1`, deck);

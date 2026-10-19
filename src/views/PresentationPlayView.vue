@@ -24,7 +24,8 @@ import { slideOutline } from "../lib/presentation/slideModel";
 import { slideBuildCount } from "../lib/presentation/buildPlayback";
 import { playbackActionForKey } from "../lib/presentation/playbackKeys";
 import { usePlayback } from "./presentation/usePlayback";
-import { useBuildPreview } from "./presentation/useBuildPreview";
+import { settledFrameStyles, useBuildPreview } from "./presentation/useBuildPreview";
+import { useShowingMedia } from "./presentation/useShowingMedia";
 
 const route = useRoute();
 const router = useRouter();
@@ -87,6 +88,13 @@ watch(
     // A forward build step on the same slide: animate the group that just began.
     buildPreview.playGroup(slide, cur.buildIndex - 1, reducedMotion.value);
   },
+);
+// --- per-showing GIF URLs: a GIF restarts each time its slide is shown -------
+const showingMedia = useShowingMedia();
+watch(
+  [() => playback.current.value.slideIndex, () => playback.atEnd.value, presentation],
+  () => showingMedia.enter(presentation.value?.media ?? []),
+  { immediate: true },
 );
 const deckTitle = computed(() => presentation.value?.title ?? "Slide show");
 const counterLabel = computed(() => `${playback.current.value.slideIndex + 1} / ${slideCount.value}`);
@@ -230,6 +238,14 @@ function exit() {
 // (AC-15). `advanceOnClick` is never consulted here: in-editor playback always
 // advances (the presenter escape hatch, AC-18).
 const transitionView = shallowRef(emptyTwoStageView());
+// The outgoing stage shows its slide fully built (a forward step only leaves a
+// slide once every group has played), so exited frames stay gone; the incoming
+// stage shares the live build state, which the step watcher has already settled
+// to 0 groups — unbuilt frames stay hidden through the transition (SPEC-086).
+const transitionOutgoingStyles = computed(() => {
+  const outgoing = transitionView.value?.outgoing;
+  return outgoing ? settledFrameStyles(outgoing, slideBuildCount(outgoing)) : {};
+});
 function clearTransition() {
   transitionView.value = null;
 }
@@ -414,6 +430,7 @@ onBeforeUnmount(() => {
   if (idleTimer) clearTimeout(idleTimer);
   clearAutoAdvance();
   buildPreview.stop();
+  showingMedia.releaseAll();
 });
 </script>
 
@@ -458,6 +475,10 @@ onBeforeUnmount(() => {
       :scale="stageScale"
       :reduced-motion="reducedMotion"
       :theme="presentation.theme"
+      :outgoing-frame-styles="transitionOutgoingStyles"
+      :incoming-frame-styles="buildPreview.frameStyles.value"
+      :outgoing-media-url-override="showingMedia.previousUrl()"
+      :incoming-media-url-override="showingMedia.currentUrl()"
       @done="onTransitionDone"
     />
     <SlideStage
@@ -470,6 +491,7 @@ onBeforeUnmount(() => {
       :interactive="false"
       :playback-mode="true"
       :frame-styles="buildPreview.frameStyles.value"
+      :media-url-override="showingMedia.currentUrl()"
       :fields="currentFields"
       :theme="presentation.theme"
     />
