@@ -13,6 +13,34 @@ function resolve(spid: string): string | undefined {
   return `f${spid}`;
 }
 
+// PowerPoint's entrance shape: the instant `p:set` (dur="1", its own start
+// condition) precedes the timed behaviour. Its dur is not the effect's.
+const PPT_VISIBILITY_SET =
+  `<p:set><p:cBhvr><p:cTn id="6" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn>` +
+  `<p:tgtEl><p:spTgt spid="2"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst>` +
+  `</p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set>`;
+function pptEffect(presetID: number, subtype: number, behaviours: string): string {
+  return (
+    `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>` +
+    `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>` +
+    `<p:par><p:cTn id="3" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>` +
+    `<p:par><p:cTn id="4" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
+    `<p:par><p:cTn id="5" presetID="${presetID}" presetClass="entr" presetSubtype="${subtype}" fill="hold" grpId="0" nodeType="clickEffect">` +
+    `<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${PPT_VISIBILITY_SET}${behaviours}</p:childTnLst></p:cTn></p:par>` +
+    `</p:childTnLst></p:cTn></p:par>` +
+    `</p:childTnLst></p:cTn></p:par>` +
+    `</p:childTnLst></p:cTn></p:seq></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`
+  );
+}
+function pptFade(dur: number): string {
+  return `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="7" dur="${dur}"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl></p:cBhvr></p:animEffect>`;
+}
+const PPT_FLY_X =
+  `<p:anim calcmode="lin" valueType="num"><p:cBhvr additive="base"><p:cTn id="7" dur="750" fill="hold"/>` +
+  `<p:tgtEl><p:spTgt spid="2"/></p:tgtEl><p:attrNameLst><p:attrName>ppt_x</p:attrName></p:attrNameLst></p:cBhvr>` +
+  `<p:tavLst><p:tav tm="0"><p:val><p:strVal val="0-#ppt_w/2"/></p:val></p:tav>` +
+  `<p:tav tm="100000"><p:val><p:strVal val="#ppt_x"/></p:val></p:tav></p:tavLst></p:anim>`;
+
 describe("pptx timing serialiser", () => {
   it("serialises the golden animations to the golden bytes", () => {
     expect(writePptxTiming(GOLDEN_ANIMATIONS, goldenSpidFor)).toBe(TIMING_GOLDEN);
@@ -64,6 +92,18 @@ describe("pptx timing serialiser", () => {
       `</p:childTnLst></p:cTn><p:prevCondLst/><p:nextCondLst/></p:seq>` +
       `</p:childTnLst></p:cTn></p:par></p:tnLst></p:timing>`;
     expect(readPptxTiming(parseTiming(xml), resolve)).toEqual([{ frameId: "f2", effect: "fadeIn", trigger: "click" }]);
+  });
+
+  it("reads the duration from the timed behaviour when PowerPoint writes the visibility set first", () => {
+    expect(readPptxTiming(parseTiming(pptEffect(10, 0, pptFade(500))), resolve)).toEqual([
+      { frameId: "f2", effect: "fadeIn", trigger: "click" },
+    ]);
+    expect(readPptxTiming(parseTiming(pptEffect(10, 0, pptFade(2000))), resolve)).toEqual([
+      { frameId: "f2", effect: "fadeIn", trigger: "click", durationMs: 2000 },
+    ]);
+    expect(readPptxTiming(parseTiming(pptEffect(2, 8, PPT_FLY_X)), resolve)).toEqual([
+      { frameId: "f2", effect: "flyIn", trigger: "click", durationMs: 750 },
+    ]);
   });
 
   it("preserves (returns undefined) for out-of-subset timing", () => {

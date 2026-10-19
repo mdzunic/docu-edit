@@ -303,10 +303,13 @@ function firstCond(cTn: Element): Element | undefined {
 }
 
 /** The first nested `p:cTn` (inside the effect's behaviour tree) that carries a
- * numeric `dur` — the effect duration by the canonical form's convention. */
+ * numeric `dur` — the effect duration by the canonical form's convention. A
+ * `p:set` behaviour is skipped: its `dur="1"` is the instant visibility flip,
+ * which PowerPoint writes BEFORE the timed behaviour (the canonical form writes
+ * it after), so taking it would read every PowerPoint entrance as 1ms. */
 function firstBehaviourDur(effectCtn: Element): number | undefined {
   for (const cTn of descendants(effectCtn, "cTn")) {
-    if (cTn === effectCtn) {
+    if (cTn === effectCtn || cTn.parentElement?.parentElement?.localName === "set") {
       continue;
     }
     const dur = cTn.getAttribute("dur");
