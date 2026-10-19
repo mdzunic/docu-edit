@@ -24,7 +24,7 @@ import { slideOutline } from "../lib/presentation/slideModel";
 import { slideBuildCount } from "../lib/presentation/buildPlayback";
 import { playbackActionForKey } from "../lib/presentation/playbackKeys";
 import { usePlayback } from "./presentation/usePlayback";
-import { useBuildPreview } from "./presentation/useBuildPreview";
+import { settledFrameStyles, useBuildPreview } from "./presentation/useBuildPreview";
 
 const route = useRoute();
 const router = useRouter();
@@ -230,6 +230,14 @@ function exit() {
 // (AC-15). `advanceOnClick` is never consulted here: in-editor playback always
 // advances (the presenter escape hatch, AC-18).
 const transitionView = shallowRef(emptyTwoStageView());
+// The outgoing stage shows its slide fully built (a forward step only leaves a
+// slide once every group has played), so exited frames stay gone; the incoming
+// stage shares the live build state, which the step watcher has already settled
+// to 0 groups — unbuilt frames stay hidden through the transition (SPEC-086).
+const transitionOutgoingStyles = computed(() => {
+  const outgoing = transitionView.value?.outgoing;
+  return outgoing ? settledFrameStyles(outgoing, slideBuildCount(outgoing)) : {};
+});
 function clearTransition() {
   transitionView.value = null;
 }
@@ -458,6 +466,8 @@ onBeforeUnmount(() => {
       :scale="stageScale"
       :reduced-motion="reducedMotion"
       :theme="presentation.theme"
+      :outgoing-frame-styles="transitionOutgoingStyles"
+      :incoming-frame-styles="buildPreview.frameStyles.value"
       @done="onTransitionDone"
     />
     <SlideStage
