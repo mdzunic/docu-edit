@@ -27,6 +27,15 @@
 // (after Cell styles ▸), which opens the side panel's rules manager. SPEC-130
 // adds Data ▸ "Data validation…" after a separator below the filter items,
 // which opens the validation dialog (disabled on a foreign sheet).
+// SPEC-131 adds the Insert menu after View — Image… (`sheet-menu-insert-image`,
+// the image picker) and Shapes (`sheet-menu-insert-shape`, the shape gallery
+// popover), disabled where the workbook cannot hold drawings — and the
+// Arrange menu after it: Bring to Front, Bring Forward, Send Backward, Send to
+// Back (`sheet-menu-arrange-front`, `-forward`, `-backward`, `-back`) and
+// Alt Text… (`sheet-menu-arrange-alt-text`) on the selected drawing, disabled
+// without one (and a move that cannot move it disabled). The drawing context
+// menu offers the same under `sheet-drawing-*` ids; these popups stay mounted,
+// so the two never share an id.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -91,13 +100,29 @@ const SIZES = [
   { label: "Autofit column width", command: SHEET_MENU_COMMANDS.autofitColumns, testid: "sheet-menu-autofit-columns" },
 ];
 
+// SPEC-131: the Arrange menu's z-order moves (`end`: the z-order end at which
+// the move cannot move the drawing).
+const ARRANGE = [
+  { label: "Bring to Front", command: SHEET_MENU_COMMANDS.arrangeFront, testid: "sheet-menu-arrange-front", end: "front" },
+  { label: "Bring Forward", command: SHEET_MENU_COMMANDS.arrangeForward, testid: "sheet-menu-arrange-forward", end: "front" },
+  { label: "Send Backward", command: SHEET_MENU_COMMANDS.arrangeBackward, testid: "sheet-menu-arrange-backward", end: "back" },
+  { label: "Send to Back", command: SHEET_MENU_COMMANDS.arrangeBack, testid: "sheet-menu-arrange-back", end: "back" },
+];
+
 const MENUS = [
   { id: "file", label: "File" },
   { id: "edit", label: "Edit" },
   { id: "view", label: "View" },
+  { id: "insert", label: "Insert" },
+  { id: "arrange", label: "Arrange" },
   { id: "format", label: "Format" },
   { id: "data", label: "Data" },
 ];
+
+/** An Arrange move is off without a selected drawing, or at its end. */
+function arrangeDisabled(end = "front") {
+  return !s.value.drawingSelected || (end === "front" ? s.value.drawingAtFront : s.value.drawingAtBack);
+}
 </script>
 
 <template>
@@ -242,6 +267,41 @@ const MENUS = [
           @select="emit('command', SHEET_MENU_COMMANDS.unfreeze)"
         />
       </MenuSubmenu>
+    </template>
+
+    <template #insert>
+      <MenuItem
+        label="Image…"
+        icon="image"
+        testid="sheet-menu-insert-image"
+        :disabled="!s.canInsertDrawings"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertImage)"
+      />
+      <MenuItem
+        label="Shapes"
+        icon="shape"
+        testid="sheet-menu-insert-shape"
+        :disabled="!s.canInsertDrawings"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertShape)"
+      />
+    </template>
+
+    <template #arrange>
+      <MenuItem
+        v-for="move in ARRANGE"
+        :key="move.command"
+        :label="move.label"
+        :testid="move.testid"
+        :disabled="arrangeDisabled(move.end)"
+        @select="emit('command', move.command)"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Alt Text…"
+        testid="sheet-menu-arrange-alt-text"
+        :disabled="!s.drawingSelected"
+        @select="emit('command', SHEET_MENU_COMMANDS.altText)"
+      />
     </template>
 
     <template #format>

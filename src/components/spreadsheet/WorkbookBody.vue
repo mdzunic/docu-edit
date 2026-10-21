@@ -21,14 +21,19 @@
 // (SortFilterSurfaces, the grid context's `sortFilter`). SPEC-129: the
 // sheet's side panel beside the sheet (SheetSidePanel, from `editing`).
 // SPEC-130: the Data validation dialog (ValidationDialog) and the data-validation
-// alert (ValidationAlert), both from `editing`. Runtime prop declarations per
-// the espree constraint (see AppShell.vue).
+// alert (ValidationAlert), both from `editing`. SPEC-131: the drawing layer's
+// surfaces, from the grid context's `drawings` — the Insert menu's image
+// picker and shape gallery popover (SheetInsertSurfaces), the drawing context
+// menu (SheetDrawingContextMenu) and the alt-text dialog
+// (DrawingAltTextDialog). Runtime prop declarations per the espree constraint
+// (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
 import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
+import DrawingAltTextDialog from "./DrawingAltTextDialog.vue";
 import FormatCellsDialog from "./FormatCellsDialog.vue";
 import FormulaBar from "./FormulaBar.vue";
 import FunctionArgHint from "./FunctionArgHint.vue";
@@ -36,9 +41,11 @@ import FunctionAutocomplete from "./FunctionAutocomplete.vue";
 import InsertFunctionDialog from "./InsertFunctionDialog.vue";
 import PasteSpecialDialog from "./PasteSpecialDialog.vue";
 import SheetCellContextMenu from "./SheetCellContextMenu.vue";
+import SheetDrawingContextMenu from "./SheetDrawingContextMenu.vue";
 import SheetGrid from "./SheetGrid.vue";
 import SheetHeaderContextMenu from "./SheetHeaderContextMenu.vue";
 import SheetInsertDeleteDialog from "./SheetInsertDeleteDialog.vue";
+import SheetInsertSurfaces from "./SheetInsertSurfaces.vue";
 import SheetMergeWarningDialog from "./SheetMergeWarningDialog.vue";
 import SheetMoveOverwriteDialog from "./SheetMoveOverwriteDialog.vue";
 import SheetSidePanel from "./SheetSidePanel.vue";
@@ -85,6 +92,12 @@ const cellEditing = computed(() => asWorkbookEditing(props.editing).cell);
 const validationDialog = computed(() => asWorkbookEditing(props.editing).validationDialog);
 /** SPEC-130: data validation (absent when the editing wiring has none). */
 const validation = computed(() => asWorkbookEditing(props.editing).validation ?? null);
+
+/** SPEC-131: the drawing layer (null: not wired). */
+const drawings = computed(() => grid.value.drawings ?? null);
+function drawingAction(action = "front") {
+  drawings.value?.runAction(action === "forward" || action === "backward" || action === "back" || action === "alt-text" || action === "delete" ? action : "front");
+}
 
 /** The validation alert's answer. */
 function answerAlert(choice = "cancel") {
@@ -267,6 +280,25 @@ const tabs = computed(() => {
       :text="validation.alert.value.text"
       @answer="answerAlert"
     />
+    <template v-if="drawings">
+      <SheetInsertSurfaces :drawings="drawings" />
+      <SheetDrawingContextMenu
+        :open="drawings.contextMenu.value !== null"
+        :x="drawings.contextMenu.value?.x ?? 0"
+        :y="drawings.contextMenu.value?.y ?? 0"
+        :at-front="drawings.order.value.atFront"
+        :at-back="drawings.order.value.atBack"
+        @run="drawingAction"
+        @close="drawings.closeContextMenu()"
+      />
+      <DrawingAltTextDialog
+        v-if="drawings.altText.value"
+        :initial="drawings.altText.value.initial"
+        :name="drawings.altText.value.name"
+        @confirm="drawings.confirmAltText"
+        @cancel="drawings.cancelAltText()"
+      />
+    </template>
     <SheetTabColorPicker
       v-if="commands.coloring.value"
       :x="commands.coloring.value.x"

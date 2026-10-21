@@ -57,6 +57,11 @@ const EXEMPT_FILES = new Set([
   // in every app theme, exactly the document-content exemption above
   // (headers, selection and the rest of the grid stay on tokens).
   "components/spreadsheet/SheetCellLayer.vue",
+  // SPEC-131's sheet drawings: SheetDrawingView paints the workbook's own
+  // pictures, shapes and text in the file's colours, and the unsupported
+  // drawing's placeholder in paintChart's dashed #888888 — document content
+  // like the paper under it (the layer, handles and menus stay on tokens).
+  "components/spreadsheet/SheetDrawingView.vue",
 ]);
 
 // A rule whose selector targets the document-content / pages subtree is exempt

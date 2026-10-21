@@ -13,7 +13,8 @@ describe("SpreadsheetMenuBar (SPEC-121)", () => {
     const wrapper = mount(SpreadsheetMenuBar, {
       props: { state: { canUndo: true, undoLabel: "Rename sheet", canRedo: false } },
     });
-    expect(wrapper.findAll("[data-menu-title]").map((title) => title.text())).toEqual(["File", "Edit", "View", "Format", "Data"]);
+    // SPEC-131 puts Insert after View, then Arrange.
+    expect(wrapper.findAll("[data-menu-title]").map((title) => title.text())).toEqual(["File", "Edit", "View", "Insert", "Arrange", "Format", "Data"]);
     const undo = wrapper.get('[data-testid="sheet-menu-undo"]');
     expect(undo.text()).toContain("Undo Rename sheet");
     expect(undo.get(".menu-shortcut").text()).toBe(shortcutLabel("edit.undo"));
@@ -148,5 +149,59 @@ describe("SpreadsheetMenuBar's Data menu (SPEC-130)", () => {
     expect(SHEET_MENU_COMMANDS.dataValidation).toBe("data.validation");
     const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
     expect(foreign.get('[data-testid="sheet-menu-data-validation"]').attributes("disabled")).toBeDefined();
+  });
+});
+
+describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
+  it("Insert offers Image… and Shapes, routing insert.image and insert.shape, disabled where drawings cannot go in", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { canInsertDrawings: true } } });
+    const menu = wrapper.get('[data-testid="menu-insert"]');
+    expect(menu.findAll('[role="menuitem"]').map((item) => item.attributes("data-testid"))).toEqual(["sheet-menu-insert-image", "sheet-menu-insert-shape"]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes"]);
+    await wrapper.get('[data-testid="sheet-menu-insert-image"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertImage]);
+    await wrapper.get('[data-testid="sheet-menu-insert-shape"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertShape]);
+    const csv = mount(SpreadsheetMenuBar, { props: { state: { canInsertDrawings: false } } });
+    for (const testid of ["sheet-menu-insert-image", "sheet-menu-insert-shape"]) {
+      expect(csv.get(`[data-testid="${testid}"]`).attributes("disabled")).toBeDefined();
+    }
+  });
+
+  it("Arrange offers the four z-order moves and Alt Text…, disabled without a selected drawing and at the z-order's ends", async () => {
+    const none = mount(SpreadsheetMenuBar, { props: { state: {} } });
+    const menu = none.get('[data-testid="menu-arrange"]');
+    const rows = menu.findAll('[role="menuitem"], hr').map((row) => (row.element.tagName === "HR" ? "—" : row.attributes("data-testid")));
+    expect(rows).toEqual(["sheet-menu-arrange-front", "sheet-menu-arrange-forward", "sheet-menu-arrange-backward", "sheet-menu-arrange-back", "—", "sheet-menu-arrange-alt-text"]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Bring to Front", "Bring Forward", "Send Backward", "Send to Back", "Alt Text…"]);
+    for (const row of menu.findAll('[role="menuitem"]')) {
+      expect(row.attributes("disabled")).toBeDefined();
+    }
+    const middle = mount(SpreadsheetMenuBar, { props: { state: { drawingSelected: true } } });
+    for (const [testid, command] of [
+      ["sheet-menu-arrange-front", SHEET_MENU_COMMANDS.arrangeFront],
+      ["sheet-menu-arrange-forward", SHEET_MENU_COMMANDS.arrangeForward],
+      ["sheet-menu-arrange-backward", SHEET_MENU_COMMANDS.arrangeBackward],
+      ["sheet-menu-arrange-back", SHEET_MENU_COMMANDS.arrangeBack],
+      ["sheet-menu-arrange-alt-text", SHEET_MENU_COMMANDS.altText],
+    ]) {
+      const item = middle.get(`[data-testid="${testid}"]`);
+      expect(item.attributes("disabled")).toBeUndefined();
+      await item.trigger("click");
+      expect(middle.emitted("command")?.at(-1)).toEqual([command]);
+    }
+    const front = mount(SpreadsheetMenuBar, { props: { state: { drawingSelected: true, drawingAtFront: true } } });
+    expect(front.get('[data-testid="sheet-menu-arrange-front"]').attributes("disabled")).toBeDefined();
+    expect(front.get('[data-testid="sheet-menu-arrange-forward"]').attributes("disabled")).toBeDefined();
+    expect(front.get('[data-testid="sheet-menu-arrange-back"]').attributes("disabled")).toBeUndefined();
+    const back = mount(SpreadsheetMenuBar, { props: { state: { drawingSelected: true, drawingAtBack: true } } });
+    expect(back.get('[data-testid="sheet-menu-arrange-backward"]').attributes("disabled")).toBeDefined();
+    expect(back.get('[data-testid="sheet-menu-arrange-back"]').attributes("disabled")).toBeDefined();
+    expect(back.get('[data-testid="sheet-menu-arrange-front"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("defaults: drawings can go in, none is selected", () => {
+    expect(asSpreadsheetMenuState(undefined)).toMatchObject({ canInsertDrawings: true, drawingSelected: false, drawingAtFront: false, drawingAtBack: false });
+    expect(SHEET_MENU_COMMANDS).toMatchObject({ insertImage: "insert.image", insertShape: "insert.shape", arrangeBack: "arrange.back", altText: "arrange.alt-text" });
   });
 });

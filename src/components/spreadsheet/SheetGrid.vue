@@ -49,6 +49,12 @@
 // aria-describedby while it shows) and the dropdown button and its list
 // (ValidationDropdown), placed from the active cell's rect in unscaled px so
 // they follow scroll and zoom; Alt+Down opens the list (useSheetGrid).
+// SPEC-131: the drawing layer sits between the paper and the overlays — one
+// SheetDrawingLayer per pane (useDrawingGestures' panes, each a clipping box of
+// the cell area) painting the sheet's drawings in unscaled px, so the content
+// box's zoom transform scales them; presses on a drawing never reach the
+// grid's own handling. While a shape is armed the grid carries
+// data-drawing-armed="true" and the crosshair cursor.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
@@ -60,6 +66,7 @@ import CellEditor from "./CellEditor.vue";
 import FillOptionsChip from "./FillOptionsChip.vue";
 import SheetCellLayer from "./SheetCellLayer.vue";
 import SheetCopyMarquee from "./SheetCopyMarquee.vue";
+import SheetDrawingLayer from "./SheetDrawingLayer.vue";
 import SheetFillHandle from "./SheetFillHandle.vue";
 import ValidationDropdown from "./ValidationDropdown.vue";
 import ValidationInputMessage from "./ValidationInputMessage.vue";
@@ -104,6 +111,19 @@ const filterButton = computed(() => sortFilter.value?.filterButtonAt);
 
 function onFilterButton(col = 0, anchor = { left: 0, top: 0 }) {
   sortFilter.value?.pressFilterButton(col, anchor);
+}
+
+/** SPEC-131: the drawing layer (null: no drawings wired) and its events. */
+const drawingLayer = computed(() => grid.drawingGestures.layer.value);
+const drawings = computed(() => asSheetGridContext(props.context).drawings ?? null);
+function drawingKey(id = "", event = new KeyboardEvent("keydown")) {
+  drawings.value?.onDrawingKeydown(id, event);
+}
+function drawingMenu(id = "", x = 0, y = 0) {
+  drawings.value?.openContextMenu(id, x, y);
+}
+function drawingFocus(id = "") {
+  drawings.value?.select(id, false);
 }
 
 /** SPEC-130: the dropdown's events, to data validation. */
@@ -161,6 +181,7 @@ function unscroll(event = new Event("scroll")) {
     :aria-activedescendant="grid.activeDescendant.value"
     :data-show-formulas="props.showFormulas ? 'true' : undefined"
     :data-format-painter="painterMode || undefined"
+    :data-drawing-armed="drawingLayer?.armed ? 'true' : undefined"
     :style="{ cursor: resizeCursor || transfer.cursor || undefined }"
     data-testid="spreadsheet-grid"
     tabindex="0"
@@ -197,6 +218,26 @@ function unscroll(event = new Event("scroll")) {
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
             @filter-button="onFilterButton"
           />
+          <div
+            v-if="drawingLayer"
+            class="sheet-drawings"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+          >
+            <SheetDrawingLayer
+              v-for="pane in drawingLayer.panes"
+              :key="pane.id"
+              :pane="pane"
+              :zoom="drawingLayer.zoom"
+              :theme="drawingLayer.theme"
+              :image-src="drawingLayer.imageSrc"
+              :draw-box="drawingLayer.drawBox ?? undefined"
+              @press="grid.drawingGestures.pressDrawing"
+              @handle-press="grid.drawingGestures.pressHandle"
+              @key="drawingKey"
+              @menu="drawingMenu"
+              @focus-drawing="drawingFocus"
+            />
+          </div>
           <div
             class="sheet-overlays"
             aria-hidden="true"
@@ -512,6 +553,14 @@ function unscroll(event = new Event("scroll")) {
   pointer-events: none;
 }
 
+/* SPEC-131: the drawing panes' box, over the paper and under the overlays;
+   only the drawings take the pointer. */
+.sheet-drawings {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .sheet-selection {
   position: absolute;
   box-sizing: border-box;
@@ -712,6 +761,12 @@ function unscroll(event = new Event("scroll")) {
   height: 6px;
   border-left: none;
   border-right: none;
+}
+
+/* SPEC-131: an armed shape's crosshair, over every grid layer. */
+.sheet-grid[data-drawing-armed],
+.sheet-grid[data-drawing-armed] :deep(*) {
+  cursor: crosshair;
 }
 
 /* SPEC-123: the armed format painter's cursor, over every grid layer. */

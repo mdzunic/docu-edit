@@ -33,7 +33,8 @@
 //   reads the async API — refused: CLIPBOARD_BLOCKED_MESSAGE — and opens
 //   PasteSpecialDialog with what the source can supply ("Paste special").
 // - Every paste is ONE undo step with the rows it wrote refitted
-//   (sheetSteps.ts); a refusal toasts and records nothing.
+//   (sheetSteps.ts); a refusal toasts and records nothing. SPEC-131: a pasted
+//   image (sheetClipboardIo's pastedImage) inserts as a drawing instead.
 import { onScopeDispose, shallowRef, watch, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { isMacPlatform } from "../../lib/core/platform";
@@ -59,10 +60,11 @@ import { blockFromPayload, blockFromText, pasteBlock, pasteCapabilities, type Pa
 import { canonicalFormula } from "./cellEntry";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { inGrid } from "./headerMenu";
-import { newCutToken, payloadAttribute, readClipboard } from "./sheetClipboardIo";
+import { newCutToken, pastedImage, payloadAttribute, readClipboard } from "./sheetClipboardIo";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 import { runStep, selectionOf, type StepContext } from "./sheetSteps";
 import type { CellEditing } from "./useCellEditing";
+import type { SheetDrawings } from "./useSheetDrawings";
 import type { SheetSelectionController } from "./useSheetSelection";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
@@ -71,7 +73,7 @@ export interface SheetClipboardDeps {
   book: { workbook: ShallowRef<SpreadsheetModel | null>; activeSheet: Readonly<Ref<Sheet | null>> };
   viewState: Pick<SheetViewState, "syncInto">;
   selection: Pick<SheetSelectionController, "selection" | "set" | "formatContext">;
-  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit" | "revision">; cell: Pick<CellEditing, "editing" | "focusCell"> };
+  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit" | "revision">; cell: Pick<CellEditing, "editing" | "focusCell">; drawings?: Pick<SheetDrawings, "insertImageFile"> };
   locale: () => SpreadsheetLocale;
   /** Shows a toast — default: useToasts' addToast. */
   toast?: (message: string) => void;
@@ -269,6 +271,11 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
     }
     event.preventDefault();
     event.stopPropagation();
+    const image = deps.editing.drawings ? pastedImage(data) : null;
+    if (image) {
+      void deps.editing.drawings?.insertImageFile(image);
+      return;
+    }
     const source = resolve(data.getData("text/html"), data.getData("text/plain"), false);
     if (typeof source === "string") {
       toast(source);
