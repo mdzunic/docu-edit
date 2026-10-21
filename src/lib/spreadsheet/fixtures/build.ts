@@ -160,7 +160,14 @@
 //   `mc:AlternateContent Requires="cx1"` with Excel's text-box Fallback;
 //   "Q1 Data" a scatter; "Summary" a line plotting 'Q1 Data'!$B$2:$B$13;
 //   "Sales Chart" a chart sheet (absoluteAnchor → a clustered column).
-//   SPEC132_CHARTS records the facts.
+//   SPEC132_CHARTS records the facts. spec132-charts.ods — LibreOffice
+//   24.8-shaped: "Data" the same block, a clustered column (`chart:bar`)
+//   anchored in F2 to M17 whose `draw:object` is notified of
+//   Data.A1:Data.D5, its Object 1/content.xml naming the plot area,
+//   categories, values and labels on the sheet beside the `local-table`
+//   cache, styles.xml, meta.xml and ObjectReplacements/Object 1; a
+//   page-anchored 3-D `chart:surface` (Object 2) over the same block;
+//   "Summary" the xlsx's Summary block. SPEC132_CHARTS_ODS records the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -8925,6 +8932,360 @@ export async function buildSpec132ChartsXlsxBytes(): Promise<Uint8Array> {
     part(C.chartSheet.part, spec132ColumnChartXml(C.chartSheet, 1517026736, 1517028176, "8A5B-4C6D-9E7F-513200000006", false)),
     part("docProps/core.xml", coreXml(SPEC132_CHARTS.title)),
     part("docProps/app.xml", app),
+  ]);
+}
+
+// --- spec132-charts.ods ------------------------------------------------------
+// LibreOffice Calc 24.8-shaped: "Data" (active) holds the xlsx's Data block
+// (A1:D5) and two embedded chart objects over it — Object 1, a clustered
+// column (`chart:bar`) anchored in cell F2 to M17 (`table:end-cell-address`),
+// its `draw:object` notified of Data.A1:Data.D5, its content.xml naming the
+// plot area, the x axis categories and each series' values and label cell
+// on the sheet beside the `local-table` cache; Object 2, a 3-D
+// `chart:surface` (out of the catalogue) over the same block, anchored to the
+// page in `table:shapes` below it. Each object has its styles.xml and
+// meta.xml and an ObjectReplacements GDI-metafile stand-in, all listed in
+// the manifest in Calc's order. "Summary" holds the xlsx's Summary block
+// (A1:C4) for insert from selection.
+
+/** A Data reference of Object 1's or Object 2's content.xml, as Calc writes it ("Data.B2:Data.B5"). */
+const spec132OdsAddress = (from: string, to?: string): string => (to === undefined ? `Data.${from}` : `Data.${from}:Data.${to}`);
+
+/** Each object's series: label cell and values range on Data (the xlsx column chart's). */
+const SPEC132_ODS_SERIES = [
+  { label: spec132OdsAddress("B1"), values: spec132OdsAddress("B2", "B5") },
+  { label: spec132OdsAddress("C1"), values: spec132OdsAddress("C2", "C5") },
+  { label: spec132OdsAddress("D1"), values: spec132OdsAddress("D2", "D5") },
+] as const;
+
+/** The references readOdfChartRefs gives for either object (canonical). */
+const SPEC132_ODS_REFS = {
+  plotArea: "Data!A1:D5",
+  series: [
+    { name: "Data!B1", categories: "Data!A2:A5", values: "Data!B2:B5" },
+    { name: "Data!C1", categories: "Data!A2:A5", values: "Data!C2:C5" },
+    { name: "Data!D1", categories: "Data!A2:A5", values: "Data!D2:D5" },
+  ],
+  plotVisibleOnly: true,
+} as const;
+
+/** What spec132-charts.ods holds, for the unit, round-trip and e2e specs.
+ * Cells are 0-based [col, row]; lengths cm (Calc's default 2.258cm column,
+ * 0.452cm row). */
+export const SPEC132_CHARTS_ODS = {
+  file: "spec132-charts.ods",
+  title: "Charts",
+  tableNames: ["Data", "Summary"],
+  activeTable: "Data",
+  activeSheetIndex: 0,
+  /** Each table's cells, A1 → value (the xlsx's Data and Summary). */
+  cells: { Data: SPEC132_CHARTS.cells.Data, Summary: SPEC132_CHARTS.cells.Summary },
+  charts: {
+    /** The cell-anchored clustered column over Data.A1:Data.D5, with its local-table cache. */
+    bar: {
+      name: "Object 1",
+      object: "Object 1",
+      part: "Object 1/content.xml",
+      replacement: "ObjectReplacements/Object 1",
+      chartClass: "chart:bar",
+      chartType: "columnClustered",
+      title: "Sales by region",
+      legend: "right",
+      anchor: "twoCell",
+      cell: [5, 1],
+      endCellAddress: "Data.M17",
+      cells: "F2:M17",
+      sizeCm: [7 * SPEC131_COL_CM, 15 * SPEC131_ROW_CM],
+      notifyRanges: spec132OdsAddress("A1", "D5"),
+      plotArea: spec132OdsAddress("A1", "D5"),
+      categories: spec132OdsAddress("A2", "A5"),
+      series: SPEC132_ODS_SERIES,
+      refs: SPEC132_ODS_REFS,
+    },
+    /** The page-anchored 3-D surface chart over the same block — out of the catalogue. */
+    surface: {
+      name: "Object 2",
+      object: "Object 2",
+      part: "Object 2/content.xml",
+      replacement: "ObjectReplacements/Object 2",
+      chartClass: "chart:surface",
+      chartType: null,
+      title: "Regional surface",
+      anchor: "absolute",
+      posCm: [5 * SPEC131_COL_CM, 18 * SPEC131_ROW_CM],
+      sizeCm: [7 * SPEC131_COL_CM, 15 * SPEC131_ROW_CM],
+      notifyRanges: spec132OdsAddress("A1", "D5"),
+      plotArea: spec132OdsAddress("A1", "D5"),
+      categories: spec132OdsAddress("A2", "A5"),
+      series: SPEC132_ODS_SERIES,
+    },
+  },
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: [
+    "mimetype",
+    "meta.xml",
+    "settings.xml",
+    "content.xml",
+    "Thumbnails/thumbnail.png",
+    "Object 1/content.xml",
+    "Object 1/styles.xml",
+    "Object 1/meta.xml",
+    "Object 2/content.xml",
+    "Object 2/styles.xml",
+    "Object 2/meta.xml",
+    "ObjectReplacements/Object 1",
+    "ObjectReplacements/Object 2",
+    "styles.xml",
+    "manifest.rdf",
+    "META-INF/manifest.xml",
+  ],
+} as const;
+
+/** content.xml's automatic styles: columns, rows, the table, and the chart
+ * frames' graphic and paragraph styles (gr1, P1 — Calc's for an embedded
+ * object). */
+const SPEC132_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="none" draw:fill="none" draw:textarea-horizontal-align="center" ` +
+  `draw:textarea-vertical-align="middle" draw:color-mode="standard" draw:luminance="0%" draw:contrast="0%" draw:gamma="100%" draw:red="0%" draw:green="0%" ` +
+  `draw:blue="0%" fo:clip="rect(0cm, 0cm, 0cm, 0cm)" draw:image-opacity="100%" style:mirror="none"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:style>` +
+  `</office:automatic-styles>`;
+
+/** The namespaces Calc declares on a chart object's content.xml. */
+const SPEC132_ODS_CHART_NAMESPACES =
+  `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
+  `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+  `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
+  `xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" ` +
+  `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" ` +
+  `xmlns:dr3d="urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0" xmlns:ooo="http://openoffice.org/2004/office" ` +
+  `xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" xmlns:chartooo="http://openoffice.org/2010/chart" office:version="1.3"`;
+
+/** Calc's default series colours, in order. */
+const SPEC132_ODS_SERIES_COLORS = ["#004586", "#ff420e", "#ffd320"] as const;
+
+const SPEC132_ODS_TEXT_10PT = `<style:text-properties fo:font-size="10pt" style:font-size-asian="10pt" style:font-size-complex="10pt"/>`;
+
+/** A chart object's automatic styles as Calc writes them: ch1 the chart
+ * area, ch2 the title, ch3 the legend, ch4 the plot area (hidden cells
+ * excluded; `threeD`: chart:three-dimensional), ch5/ch6 the x/y axes, ch7
+ * the major grid, then (3-D) ch8 the z axis, a style per series, the wall
+ * and the floor. */
+function spec132OdsChartStyles(threeD: boolean): string {
+  const axis = (extra: string): string =>
+    `<style:chart-properties chart:display-label="true" chart:logarithmic="false" chart:reverse-direction="false" text:line-break="false" ` +
+    `chart:link-data-style-to-source="true"${extra}/><style:graphic-properties svg:stroke-color="#b3b3b3"/>${SPEC132_ODS_TEXT_10PT}`;
+  const first = threeD ? 9 : 8;
+  const series = SPEC132_ODS_SERIES_COLORS.map(
+    (color, i) =>
+      `<style:style style:name="ch${first + i}" style:family="chart" style:data-style-name="N0"><style:chart-properties chart:link-data-style-to-source="true"/>` +
+      `<style:graphic-properties draw:stroke="none" draw:fill-color="${color}"/>${SPEC132_ODS_TEXT_10PT}</style:style>`,
+  ).join("");
+  const wall = first + SPEC132_ODS_SERIES_COLORS.length;
+  return (
+    `<office:automatic-styles><number:number-style style:name="N0"><number:number number:min-integer-digits="1"/></number:number-style>` +
+    `<style:style style:name="ch1" style:family="chart"><style:graphic-properties draw:stroke="none" svg:stroke-color="#b3b3b3" draw:fill-color="#ffffff"/></style:style>` +
+    `<style:style style:name="ch2" style:family="chart"><style:chart-properties chart:auto-position="true"/><style:paragraph-properties style:writing-mode="lr-tb"/>` +
+    `<style:text-properties fo:font-size="13pt" style:font-size-asian="13pt" style:font-size-complex="13pt"/></style:style>` +
+    `<style:style style:name="ch3" style:family="chart"><style:chart-properties chart:auto-position="true"/><style:graphic-properties draw:stroke="none" ` +
+    `svg:stroke-color="#b3b3b3" draw:fill="none" draw:fill-color="#e6e6e6"/>${SPEC132_ODS_TEXT_10PT}</style:style>` +
+    `<style:style style:name="ch4" style:family="chart"><style:chart-properties chart:include-hidden-cells="false" chart:auto-position="true" chart:auto-size="true" ` +
+    `chart:treat-empty-cells="leave-gap" chart:right-angled-axes="${!threeD}"${threeD ? ` chart:three-dimensional="true" chart:deep="false"` : ""}/></style:style>` +
+    `<style:style style:name="ch5" style:family="chart" style:data-style-name="N0">` +
+    axis(` chart:axis-position="0" chart:axis-label-position="outside-start" chart:tick-mark-position="at-labels"`) +
+    `</style:style>` +
+    `<style:style style:name="ch6" style:family="chart" style:data-style-name="N0">${axis(` chart:axis-position="start"`)}</style:style>` +
+    `<style:style style:name="ch7" style:family="chart"><style:graphic-properties svg:stroke-color="#b3b3b3"/></style:style>` +
+    (threeD ? `<style:style style:name="ch8" style:family="chart" style:data-style-name="N0">${axis("")}</style:style>` : "") +
+    series +
+    `<style:style style:name="ch${wall}" style:family="chart"><style:graphic-properties draw:stroke="none" draw:fill="none"/></style:style>` +
+    `<style:style style:name="ch${wall + 1}" style:family="chart"><style:graphic-properties svg:stroke-color="#b3b3b3" draw:fill-color="#cccccc"/></style:style>` +
+    `</office:automatic-styles>`
+  );
+}
+
+/** The `local-table` Calc writes beside a chart's addresses: the corner and
+ * the series' label cells as the header row, then a row per category. */
+function spec132OdsLocalTable(): string {
+  const data = SPEC132_COLUMNS.Data;
+  const letters = ["B", "C", "D"] as const;
+  const header = letters.map((letter) => `<table:table-cell office:value-type="string"><text:p>${data[letter]![0]}</text:p></table:table-cell>`).join("");
+  const rows = data
+    .A!.slice(1)
+    .map(
+      (category, i) =>
+        `<table:table-row><table:table-cell office:value-type="string"><text:p>${category}</text:p></table:table-cell>` +
+        letters.map((letter) => `<table:table-cell office:value-type="float" office:value="${data[letter]![i + 1]}"><text:p>${data[letter]![i + 1]}</text:p></table:table-cell>`).join("") +
+        `</table:table-row>`,
+    )
+    .join("");
+  return (
+    `<table:table table:name="local-table"><table:table-header-columns><table:table-column/></table:table-header-columns>` +
+    `<table:table-columns><table:table-column table:number-columns-repeated="${letters.length}"/></table:table-columns>` +
+    `<table:table-header-rows><table:table-row><table:table-cell><text:p/></table:table-cell>${header}</table:table-row></table:table-header-rows>` +
+    `<table:table-rows>${rows}</table:table-rows></table:table>`
+  );
+}
+
+/** A chart object's content.xml as Calc writes it over Data.A1:Data.D5:
+ * the title, the legend, the plot area (Object 2's with its 3-D scene and
+ * lights, a z axis), its axes and series, the wall and floor, then the
+ * local-table. */
+function spec132OdsChartContent(chart: (typeof SPEC132_CHARTS_ODS.charts)[keyof typeof SPEC132_CHARTS_ODS.charts]): string {
+  const threeD = chart.chartClass === "chart:surface";
+  const [width, height] = chart.sizeCm;
+  const scene = threeD
+    ? ` dr3d:transform="matrix (0.893670830886674 0.102940462128667 -0.436720840538603 0 0.000337001018427 0.972829547037185 0.231521941536044 0 ` +
+      `0.448688364303066 -0.207367206662094 0.869306612770937 0 0cm 0cm 0cm)" dr3d:vrp="(17634.6218373783 10271.4823817647 39437.2480574609)" ` +
+      `dr3d:vpn="(0.416199821709347 0.173649045905254 0.892537795986984)" dr3d:vup="(-0.0733876362771618 0.984807599917971 -0.157379306090273)" ` +
+      `dr3d:projection="perspective" dr3d:distance="4.2cm" dr3d:focal-length="8cm" dr3d:shadow-slant="0" dr3d:shade-mode="flat" ` +
+      `dr3d:ambient-color="#cccccc" dr3d:lighting-mode="true"`
+    : "";
+  const lights = threeD
+    ? `<dr3d:light dr3d:diffuse-color="#b3b3b3" dr3d:direction="(0.577350269189626 0.577350269189626 0.577350269189626)" dr3d:enabled="true" dr3d:specular="true"/>` +
+      `<dr3d:light dr3d:diffuse-color="#cccccc" dr3d:direction="(0.2 0.4 1)" dr3d:enabled="false" dr3d:specular="false"/>`
+    : `<chartooo:coordinate-region svg:x="0.9cm" svg:y="1.3cm" svg:width="${cm(width - 4.1)}" svg:height="${cm(height - 2.2)}"/>`;
+  const seriesClass = threeD ? "chart:surface" : "chart:bar";
+  const firstSeriesStyle = threeD ? 9 : 8;
+  const series = chart.series
+    .map(
+      (each, i) =>
+        `<chart:series chart:style-name="ch${firstSeriesStyle + i}" chart:values-cell-range-address="${each.values}" chart:label-cell-address="${each.label}" ` +
+        `chart:class="${seriesClass}"><chart:data-point chart:repeated="4"/></chart:series>`,
+    )
+    .join("");
+  const wall = firstSeriesStyle + chart.series.length;
+  return (
+    ODF_XML_DECLARATION +
+    `<office:document-content ${SPEC132_ODS_CHART_NAMESPACES}>${spec132OdsChartStyles(threeD)}<office:body><office:chart>` +
+    `<chart:chart svg:width="${cm(width)}" svg:height="${cm(height)}" xlink:href=".." xlink:type="simple" chart:class="${chart.chartClass}" chart:style-name="ch1">` +
+    `<chart:title svg:x="${cm(width / 2 - 2.2)}" svg:y="0.2cm" chart:style-name="ch2"><text:p>${chart.title}</text:p></chart:title>` +
+    `<chart:legend chart:legend-position="end" svg:x="${cm(width - 2.4)}" svg:y="${cm(height / 2 - 0.8)}" style:legend-expansion="high" chart:style-name="ch3"/>` +
+    `<chart:plot-area chart:style-name="ch4" table:cell-range-address="${chart.plotArea}" chart:data-source-has-labels="both" svg:x="0.3cm" svg:y="1.1cm" ` +
+    `svg:width="${cm(width - 3)}" svg:height="${cm(height - 1.4)}"${scene}>${lights}` +
+    `<chart:axis chart:dimension="x" chart:name="primary-x" chart:style-name="ch5"><chart:categories table:cell-range-address="${chart.categories}"/></chart:axis>` +
+    `<chart:axis chart:dimension="y" chart:name="primary-y" chart:style-name="ch6"><chart:grid chart:style-name="ch7" chart:class="major"/></chart:axis>` +
+    (threeD ? `<chart:axis chart:dimension="z" chart:name="primary-z" chart:style-name="ch8"/>` : "") +
+    series +
+    `<chart:wall chart:style-name="ch${wall}"/><chart:floor chart:style-name="ch${wall + 1}"/></chart:plot-area>` +
+    spec132OdsLocalTable() +
+    `</chart:chart></office:chart></office:body></office:document-content>`
+  );
+}
+
+/** A chart frame's `draw:object` and replacement `draw:image`, as Calc writes them. */
+function spec132OdsObject(chart: { readonly object: string; readonly notifyRanges: string; readonly replacement: string }): string {
+  return (
+    `<draw:object draw:notify-on-update-of-ranges="${chart.notifyRanges}" xlink:href="./${chart.object}" xlink:type="simple" xlink:show="embed" ` +
+    `xlink:actuate="onLoad"><loext:p/></draw:object>` +
+    `<draw:image xlink:href="./${chart.replacement}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>`
+  );
+}
+
+/** A table over `columns` (from A1), `inCell` (0-based "col,row" → XML) the
+ * drawings anchored in its cells, `shapes` its `table:shapes` content. */
+function spec132OdsTable(name: string, columns: Spec132Columns, inCell: Readonly<Record<string, string>> = {}, shapes = ""): string {
+  const letters = Object.keys(columns);
+  const rowCount = Math.max(...letters.map((letter) => columns[letter]!.length));
+  const rows: string[] = [];
+  for (let r = 0; r < rowCount; r += 1) {
+    let cells = letters
+      .map((letter) => {
+        const value = columns[letter]![r];
+        return value === undefined ? `<table:table-cell/>` : typeof value === "number" ? loFloat(value) : loString(value);
+      })
+      .join("");
+    let at = letters.length;
+    const anchored = Object.entries(inCell)
+      .map(([key, xml]) => ({ col: Number(key.split(",")[0]), row: Number(key.split(",")[1]), xml }))
+      .filter((entry) => entry.row === r)
+      .toSorted((a, b) => a.col - b.col);
+    for (const entry of anchored) {
+      if (entry.col > at) {
+        cells += entry.col - at === 1 ? `<table:table-cell/>` : loEmpty(entry.col - at);
+      }
+      cells += `<table:table-cell>${entry.xml}</table:table-cell>`;
+      at = entry.col + 1;
+    }
+    rows.push(loRow(cells + loEmpty(16384 - at)));
+  }
+  const forms = shapes === "" && Object.keys(inCell).length === 0 ? "" : `<office:forms form:automatic-focus="false" form:apply-design-mode="false"/>`;
+  return (
+    `<table:table table:name="${name}" table:style-name="ta1">${forms}${shapes === "" ? "" : `<table:shapes>${shapes}</table:shapes>`}` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    rows.join("") +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - rowCount) +
+    `</table:table>`
+  );
+}
+
+/** The replacement images: stand-ins for the GDI metafiles Calc stores (the "VCLMTF" signature, then a few bytes). */
+const spec132OdsReplacement = (n: number): Uint8Array =>
+  new Uint8Array([0x56, 0x43, 0x4c, 0x4d, 0x54, 0x46, 0x01, 0x00, 0x31, 0x00, 0x00, 0x00, ...encoder.encode(`SPEC-132 Object ${n}`)]);
+
+/** META-INF/manifest.xml: Calc's entries plus each object's (its files, its
+ * directory, then the replacements), in Calc's order. */
+const SPEC132_ODS_MANIFEST = LO_MANIFEST.replace(
+  `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>`,
+  `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>` +
+    ["Object 1", "Object 2"]
+      .map(
+        (object) =>
+          `<manifest:file-entry manifest:full-path="${object}/content.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${object}/styles.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${object}/meta.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${object}/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.chart"/>`,
+      )
+      .join("") +
+    ["Object 1", "Object 2"]
+      .map(
+        (object) =>
+          `<manifest:file-entry manifest:full-path="ObjectReplacements/${object}" ` +
+          `manifest:media-type="application/x-openoffice-gdimetafile;windows_formatname=&quot;GDIMetaFile&quot;"/>`,
+      )
+      .join(""),
+);
+
+export async function buildSpec132ChartsOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC132_CHARTS_ODS;
+  const { bar, surface } = O.charts;
+  const [bx, by] = spec131OdsAt(...bar.cell);
+  const barFrame =
+    `<draw:frame table:end-cell-address="${bar.endCellAddress}" table:end-x="0cm" table:end-y="0cm" draw:z-index="0" draw:name="${bar.name}" ` +
+    `draw:style-name="gr1" draw:text-style-name="P1" svg:width="${cm(bar.sizeCm[0])}" svg:height="${cm(bar.sizeCm[1])}" svg:x="${cm(bx)}" svg:y="${cm(by)}">` +
+    `${spec132OdsObject(bar)}</draw:frame>`;
+  const surfaceFrame =
+    `<draw:frame draw:z-index="1" draw:name="${surface.name}" draw:style-name="gr1" draw:text-style-name="P1" svg:width="${cm(surface.sizeCm[0])}" ` +
+    `svg:height="${cm(surface.sizeCm[1])}" svg:x="${cm(surface.posCm[0])}" svg:y="${cm(surface.posCm[1])}">${spec132OdsObject(surface)}</draw:frame>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC132_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}` +
+    spec132OdsTable(O.tableNames[0], SPEC132_COLUMNS.Data, { [`${bar.cell[0]},${bar.cell[1]}`]: barFrame }, surfaceFrame) +
+    spec132OdsTable(O.tableNames[1], SPEC132_COLUMNS.Summary) +
+    `<table:named-expressions/></office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.cells.Data).length + Object.keys(O.cells.Summary).length;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
+    part("meta.xml", loMeta(O.title, O.tableNames.length, cellCount, 2)),
+    part("settings.xml", loSettings(O.tableNames, O.activeTable)),
+    part("content.xml", content),
+    { name: "Thumbnails/thumbnail.png", data: THUMBNAIL_PNG },
+    part(bar.part, spec132OdsChartContent(bar)),
+    part(`${bar.object}/styles.xml`, SPEC121_ODS_CHART_STYLES),
+    part(`${bar.object}/meta.xml`, SPEC121_ODS_CHART_META),
+    part(surface.part, spec132OdsChartContent(surface)),
+    part(`${surface.object}/styles.xml`, SPEC121_ODS_CHART_STYLES),
+    part(`${surface.object}/meta.xml`, SPEC121_ODS_CHART_META),
+    { name: bar.replacement, data: spec132OdsReplacement(1) },
+    { name: surface.replacement, data: spec132OdsReplacement(2) },
+    part("styles.xml", LO_STYLES),
+    part("manifest.rdf", LO_MANIFEST_RDF),
+    part("META-INF/manifest.xml", SPEC132_ODS_MANIFEST),
   ]);
 }
 // ============================================================================

@@ -1,16 +1,17 @@
-// SPEC-132's chart fixture (spec132-charts.xlsx, built by fixtures/build.ts):
-// package-level facts only — the builder is deterministic, the committed e2e
-// file is its bytes, the package is whole, it holds exactly the parts
-// SPEC132_CHARTS lists, every XML part parses, and each chart part carries
-// the references, anchors and producer shapes the readers and writers are
-// proven on. Nothing here asserts how the app reads it.
+// SPEC-132's chart fixtures (spec132-charts.xlsx and spec132-charts.ods,
+// built by fixtures/build.ts): package-level facts only — each builder is
+// deterministic, the committed e2e file is its bytes, the package is whole,
+// it holds exactly the parts SPEC132_CHARTS / SPEC132_CHARTS_ODS list, every
+// XML part parses, and each chart part carries the references, anchors and
+// producer shapes the readers and writers are proven on. Nothing here
+// asserts how the app reads them.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../core/equality";
 import { parseXml } from "../core/xml";
 import { unzip } from "../core/zip";
-import { buildSpec132ChartsXlsxBytes, SPEC132_CHARTS } from "./fixtures/build";
+import { buildSpec132ChartsOdsBytes, buildSpec132ChartsXlsxBytes, SPEC132_CHARTS, SPEC132_CHARTS_ODS } from "./fixtures/build";
 import { packageIntegrity } from "./fixtures/packageIntegrity";
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
@@ -101,5 +102,87 @@ describe("spec132-charts.xlsx", () => {
     for (const sheet of Object.values(X.worksheets)) {
       expect(decoder.decode(parts.get(sheet.part))).toMatch(/<pageMargins[^>]*\/><drawing r:id="rId1"\/><\/worksheet>$/);
     }
+  });
+});
+
+describe("spec132-charts.ods", () => {
+  const O = SPEC132_CHARTS_ODS;
+  const { bar, surface } = O.charts;
+  /** A Calc address attribute list's values, in document order. */
+  const addresses = (xml: string): string[] =>
+    [...xml.matchAll(/(?:table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="([^"]*)"/g)].map((match) => match[1]!);
+
+  it("is deterministic, the committed bytes, whole, with exactly the listed parts", async () => {
+    const built = await buildSpec132ChartsOdsBytes();
+    expect(equalBytes(built, await buildSpec132ChartsOdsBytes())).toBe(true);
+    const bytes = committed(O.file);
+    expect(equalBytes(bytes, built)).toBe(true);
+    expect(await packageIntegrity(bytes)).toEqual([]);
+    expect([...(await unzip(bytes)).keys()]).toEqual([...O.parts]);
+  });
+
+  it("every XML part parses", async () => {
+    const parts = await unzip(committed(O.file));
+    for (const [name, data] of parts) {
+      if (name.endsWith(".xml") || name.endsWith(".rdf")) {
+        expect(() => parseXml(decoder.decode(data)), name).not.toThrow();
+      }
+    }
+  });
+
+  it("anchors the bar chart's frame in F2 to M17, notified of Data.A1:Data.D5, and the surface chart's on the page", async () => {
+    const content = decoder.decode((await unzip(committed(O.file))).get("content.xml"));
+    // F2: row 2's sixth cell (A2:D2 the data, E2 empty).
+    expect(content).toMatch(
+      /<table:table-row table:style-name="ro1"><table:table-cell [^>]*><text:p>Q1<\/text:p><\/table:table-cell>(?:<table:table-cell [^>]*><text:p>\d+<\/text:p><\/table:table-cell>){3}<table:table-cell\/><table:table-cell><draw:frame table:end-cell-address="Data\.M17" /,
+    );
+    expect(content).toContain(`draw:name="${bar.name}" draw:style-name="gr1" draw:text-style-name="P1" svg:width="15.806cm" svg:height="6.78cm" svg:x="11.29cm" svg:y="0.452cm">`);
+    expect(content).toContain(`<draw:object draw:notify-on-update-of-ranges="${bar.notifyRanges}" xlink:href="./${bar.object}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad">`);
+    expect(content).toContain(`<draw:image xlink:href="./${bar.replacement}" `);
+    expect(content).toContain(`<office:forms form:automatic-focus="false" form:apply-design-mode="false"/><table:shapes><draw:frame draw:z-index="1" draw:name="${surface.name}" `);
+    expect(content).toContain(`svg:x="11.29cm" svg:y="8.136cm"><draw:object draw:notify-on-update-of-ranges="${surface.notifyRanges}" xlink:href="./${surface.object}"`);
+    expect(content).toContain(`<table:table table:name="Summary" table:style-name="ta1"><table:table-column `);
+  });
+
+  it("each object names its plot area, categories, series values and labels on the sheet, beside the local-table cache", async () => {
+    const parts = await unzip(committed(O.file));
+    for (const chart of [bar, surface]) {
+      const xml = decoder.decode(parts.get(chart.part));
+      expect(xml, chart.part).toContain(`chart:class="${chart.chartClass}"`);
+      expect(addresses(xml), chart.part).toEqual([chart.plotArea, chart.categories, ...chart.series.flatMap((series) => [series.values, series.label])]);
+      expect(xml, chart.part).toContain(`chart:include-hidden-cells="false"`);
+      expect(xml, chart.part).toContain(`<table:table table:name="local-table">`);
+      // The header row names the series; D3's cached value is 30.
+      expect(xml, chart.part).toContain(`<table:table-header-rows><table:table-row><table:table-cell><text:p/></table:table-cell><table:table-cell office:value-type="string"><text:p>North</text:p>`);
+      expect(xml, chart.part).toContain(`<table:table-cell office:value-type="float" office:value="30"><text:p>30</text:p></table:table-cell></table:table-row>`);
+      expect(xml.match(/<chart:data-point chart:repeated="4"\/>/g), chart.part).toHaveLength(3);
+    }
+    const barXml = decoder.decode(parts.get(bar.part));
+    expect(barXml).toContain(`<chart:title svg:x=`);
+    expect(barXml).toContain(`<text:p>${bar.title}</text:p></chart:title><chart:legend chart:legend-position="end" `);
+    expect(barXml).toContain(`<chartooo:coordinate-region `);
+    const surfaceXml = decoder.decode(parts.get(surface.part));
+    expect(surfaceXml).toContain(`chart:three-dimensional="true"`);
+    expect(surfaceXml).toContain(`dr3d:projection="perspective"`);
+    expect(surfaceXml).toContain(`<dr3d:light `);
+    expect(surfaceXml).toContain(`<chart:axis chart:dimension="z" chart:name="primary-z" `);
+  });
+
+  it("gives each object its styles.xml, meta.xml and replacement image, listed in the manifest in Calc's order", async () => {
+    const parts = await unzip(committed(O.file));
+    const manifest = decoder.decode(parts.get("META-INF/manifest.xml"));
+    for (const chart of [bar, surface]) {
+      expect(decoder.decode(parts.get(`${chart.object}/styles.xml`))).toContain(`<office:document-styles `);
+      expect(decoder.decode(parts.get(`${chart.object}/meta.xml`))).toContain(`<meta:generator>LibreOffice/24.8`);
+      expect(decoder.decode(parts.get(chart.replacement)).startsWith("VCLMTF")).toBe(true);
+      expect(manifest).toContain(
+        `<manifest:file-entry manifest:full-path="${chart.object}/content.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${chart.object}/styles.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${chart.object}/meta.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${chart.object}/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.chart"/>`,
+      );
+      expect(manifest).toContain(`<manifest:file-entry manifest:full-path="${chart.replacement}" manifest:media-type="application/x-openoffice-gdimetafile;`);
+    }
+    expect(decoder.decode(parts.get("meta.xml"))).toContain(`meta:table-count="2" meta:cell-count="32" meta:object-count="2"`);
   });
 });

@@ -255,9 +255,15 @@ writeFileSync(join(fixturesDir, "spec131-drawings.ods"), await buildSpec131Drawi
 //                         pie, a 3-D column, a cx1 waterfall with Excel's
 //                         Fallback, a scatter, a line on another sheet and a
 //                         chart sheet
-import { buildSpec132ChartsXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+// - spec132-charts.ods  — LibreOffice-shaped sheet charts: a cell-anchored bar
+//                         chart notified of its ranges, its Object 1 (sheet
+//                         addresses beside the local-table, styles.xml,
+//                         meta.xml, a replacement image) and a page-anchored
+//                         chart:surface
+import { buildSpec132ChartsOdsBytes, buildSpec132ChartsXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
 
 writeFileSync(join(fixturesDir, "spec132-charts.xlsx"), await buildSpec132ChartsXlsxBytes());
+writeFileSync(join(fixturesDir, "spec132-charts.ods"), await buildSpec132ChartsOdsBytes());
 // --- end SPEC-132 ---------------------------------------------------------------
 
 // The idle scheduler keeps Node's event loop alive; the files are written.
