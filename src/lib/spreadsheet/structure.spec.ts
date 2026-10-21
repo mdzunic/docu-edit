@@ -16,6 +16,7 @@ import { rangesIntersect } from "./merges";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import type { AutoFilter } from "./filter";
 import type { SortState } from "./sort";
+import type { DataValidation } from "./validation";
 import {
   adjustIndex,
   adjustRange,
@@ -902,6 +903,103 @@ describe("the conditionalFormats adjuster (SPEC-129 \"Structural edits\")", () =
   });
 });
 
+// --- SPEC-130's validations adjuster ("Structural edits") ------------------------------------
+
+/** A rule over B5:B20 — by default a custom rule self-referential to its
+ * origin (B5) and an absolute cell ($Z$1), the spec's own example. */
+const validationRule = (fields: Partial<DataValidation> = {}): DataValidation => ({
+  id: "v1",
+  ranges: [range(4, 1, 19, 1)],
+  type: "custom",
+  operator: "between",
+  formula1: "B5>$Z$1",
+  allowBlank: true,
+  showDropdown: true,
+  input: { show: true, title: "", text: "" },
+  error: { show: true, style: "stop", title: "", text: "" },
+  ...fields,
+});
+/** A list rule over B5:B20 whose source is $E$2:$E$6. */
+const listRule = (fields: Partial<DataValidation> = {}): DataValidation => validationRule({ id: "list", type: "list", formula1: "$E$2:$E$6", ...fields });
+
+describe("the validations adjuster (SPEC-130 \"Structural edits\")", () => {
+  it("inserting two rows above a rule on B5:B20 moves it to B7:B22, B5>$Z$1 to B7>$Z$1 and a list source $E$2:$E$6 below the insertion to $E$4:$E$8", () => {
+    const m = model([sheet("s1", "Sheet1", { validations: [validationRule(), listRule({ ranges: [range(4, 2, 19, 2)] })] })]);
+    expect(applyStructuralEdit(m, rowsEdit("insertRows", 1, 2))).toEqual({ ok: true });
+    const [custom, list] = sheetOf(m).validations;
+    expect(custom).toMatchObject({ id: "v1", ranges: [range(6, 1, 21, 1)], formula1: "B7>$Z$1" });
+    expect(list).toMatchObject({ id: "list", ranges: [range(6, 2, 21, 2)], formula1: "$E$4:$E$8" });
+  });
+
+  it("deleting the rule's first row re-anchors its formulas with adjustAnchoredFormula (no #REF!)", () => {
+    const whole = validationRule({ id: "v2", type: "whole", ranges: [range(4, 3, 19, 3)], formula1: "$Y$1", formula2: "$Z$1+D5" }); // D5:D20
+    const m = model([sheet("s1", "Sheet1", { validations: [validationRule(), whole] })]);
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 1));
+    const [custom, bounds] = sheetOf(m).validations;
+    expect(custom).toMatchObject({ ranges: [range(4, 1, 18, 1)], formula1: "B5>$Z$1" }); // B5:B19
+    // "$Z$1 + this cell" keeps meaning that for the new leading cell.
+    expect(bounds).toMatchObject({ ranges: [range(4, 3, 18, 3)], formula1: "$Y$1", formula2: "$Z$1+D5" });
+    expect(JSON.stringify(sheetOf(m).validations)).not.toContain("#REF!");
+  });
+
+  it("follows the column axis: inserting columns moves and widens, deleting the origin's column re-anchors", () => {
+    const m = model([sheet("s1", "Sheet1", { validations: [validationRule({ ranges: [range(4, 1, 4, 3)] }), listRule({ ranges: [range(9, 6, 9, 6)] })] })]);
+    applyStructuralEdit(m, colsEdit("insertCols", 0, 1));
+    let [custom, list] = sheetOf(m).validations;
+    expect(custom).toMatchObject({ ranges: [range(4, 2, 4, 4)], formula1: "C5>$AA$1" }); // C5:E5
+    expect(list).toMatchObject({ ranges: [range(9, 7, 9, 7)], formula1: "$F$2:$F$6" });
+    // Deleting column C (the origin's) re-anchors onto D5, now C5.
+    applyStructuralEdit(m, colsEdit("deleteCols", 2, 1));
+    [custom, list] = sheetOf(m).validations;
+    expect(custom).toMatchObject({ ranges: [range(4, 2, 4, 3)], formula1: "C5>$Z$1" });
+    expect(list).toMatchObject({ ranges: [range(9, 6, 9, 6)], formula1: "$E$2:$E$6" });
+  });
+
+  it("drops a fully deleted range, re-anchoring onto the next standing one; removes a rule wholly deleted", () => {
+    // B5:B6 and D10:D20; deleting rows 5–6 leaves D10:D20 (now D8:D18) leading.
+    const twoRanges = validationRule({ ranges: [range(4, 1, 5, 1), range(9, 3, 19, 3)] });
+    const gone = validationRule({ id: "gone", ranges: [range(30, 0, 31, 0)], formula1: "A31>0" });
+    const m = model([sheet("s1", "Sheet1", { validations: [twoRanges, gone] })]);
+    applyStructuralEdit(m, rowsEdit("deleteRows", 4, 2));
+    expect(sheetOf(m).validations[0]).toMatchObject({ ranges: [range(7, 3, 17, 3)], formula1: "D8>$Z$1" });
+    applyStructuralEdit(m, rowsEdit("deleteRows", 25, 10));
+    expect(sheetOf(m).validations.map((dv) => dv.id)).toEqual(["v1"]);
+  });
+
+  it("adjusts a rule on another sheet whose formula references the edited sheet, and marks that sheet dirty", () => {
+    const other = listRule({ id: "o", ranges: [range(0, 0, 9, 0)], formula1: "Sheet1!$E$2:$E$6", x14: true });
+    const m = model([sheet("s1", "Sheet1"), sheet("s2", "Sheet2", { validations: [other] }), sheet("s3", "Sheet3", { validations: [listRule({ ranges: [range(0, 0, 0, 0)] })] })]);
+    const third = m.sheets[2];
+    applyStructuralEdit(m, rowsEdit("insertRows", 0, 3));
+    const s2 = sheetOf(m, "s2");
+    expect(s2.validations[0]).toMatchObject({ ranges: [range(0, 0, 9, 0)], formula1: "Sheet1!$E$5:$E$9", x14: true });
+    expect(s2.dirty).toBe(true);
+    // Sheet3's own unqualified references are its own cells: untouched.
+    expect(m.sheets[2]).toBe(third);
+  });
+
+  it("is copy-on-write: a touched rule loses its sourceXml, an untouched one keeps it and its identity, nothing is mutated", () => {
+    const touched = validationRule({ sourceXml: "<dataValidation/>" });
+    const untouched = validationRule({ id: "far", ranges: [range(0, 1, 1, 1)], formula1: "B1>$Z$1", sourceXml: "<dataValidation/>" });
+    const snapshot = structuredClone([touched, untouched]);
+    const m = model([sheet("s1", "Sheet1", { validations: [touched, untouched] })]);
+    applyStructuralEdit(m, rowsEdit("insertRows", 2, 1));
+    expect([touched, untouched]).toEqual(snapshot);
+    expect(sheetOf(m).validations[0]!.sourceXml).toBeUndefined();
+    expect(sheetOf(m).validations[1]).toBe(untouched);
+  });
+
+  it("leaves a sheet stored before SPEC-130 (no validations field) untouched by identity", () => {
+    const legacy = { ...sheet("s2", "Sheet2"), validations: undefined } as unknown as Sheet;
+    const m = model([sheet("s1", "Sheet1"), legacy]);
+    const adjuster = REFERENCE_ADJUSTERS.find((each) => each.id === "validations")!;
+    const sheets = m.sheets;
+    adjuster.adjust(m, rowsEdit("insertRows", 0, 1, "s2"));
+    adjuster.adjust(m, rowsEdit("insertRows", 0, 1));
+    expect(m.sheets).toBe(sheets);
+  });
+});
+
 // --- the registry contract ------------------------------------------------------------------
 // Every adjuster joins this table: a model holding no structure of its kind is
 // left untouched by identity, and a row inserted above its structure moves it.
@@ -930,6 +1028,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, autoFilter: { range: range(5, 0, 7, 1), columns: [] } }]);
     case "conditionalFormats":
       return model([{ ...base, conditionalFormats: [{ id: "f1", ranges: [range(5, 0, 5, 0)], rules: [{ id: "r1", priority: 1, kind: "expression", formula: "A6>0" }] }] }]);
+    case "validations":
+      return model([{ ...base, validations: [validationRule({ ranges: [range(5, 0, 5, 0)], formula1: "A6>0" })] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -955,14 +1055,27 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.autoFilter?.range;
     case "conditionalFormats":
       return s.conditionalFormats[0]?.ranges[0];
+    case "validations":
+      return s.validations[0]?.ranges[0];
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, then SPEC-129's conditionalFormats", () => {
-    expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["rows", "formulas", "merges", "frozen", "selection", "columns", "retained", "autofilter", "conditionalFormats"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats and SPEC-130's validations", () => {
+    expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual([
+      "rows",
+      "formulas",
+      "merges",
+      "frozen",
+      "selection",
+      "columns",
+      "retained",
+      "autofilter",
+      "conditionalFormats",
+      "validations",
+    ]);
   });
 
   for (const adjuster of REFERENCE_ADJUSTERS) {
@@ -1000,6 +1113,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             columns: { min: 6, max: 6, widthPx: 90 },
             autofilter: range(6, 0, 8, 1),
             conditionalFormats: range(6, 0, 6, 0),
+            validations: range(6, 0, 6, 0),
           }[adjuster.id],
         );
       });

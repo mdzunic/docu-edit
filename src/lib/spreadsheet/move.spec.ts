@@ -14,6 +14,7 @@ import type { AutoFilter } from "./filter";
 import { MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { MOVE_ADJUSTERS, moveMapper, moveRange, moveRefusal, repointFormula, snappedMove, type RangeMove } from "./move";
 import { PARTIAL_ARRAY_MESSAGE } from "./structure";
+import type { DataValidation } from "./validation";
 
 function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
   return { conditionalFormats: [], validations: [], id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
@@ -398,6 +399,119 @@ describe("the conditionalFormats move adjuster (SPEC-129 \"Moves\")", () => {
   });
 });
 
+// --- SPEC-130's validations move adjuster ("Moves") ------------------------------------------
+
+/** A rule on `ranges` — by default a list whose source is $E$2:$E$6. */
+const dvRule = (id: string, ranges: GridRange[], fields: Partial<DataValidation> = {}): DataValidation => ({
+  id,
+  ranges,
+  type: "list",
+  operator: "between",
+  formula1: "$E$2:$E$6",
+  allowBlank: true,
+  showDropdown: true,
+  input: { show: true, title: "Priority", text: "Pick one" },
+  error: { show: true, style: "stop", title: "", text: "" },
+  ...fields,
+});
+const validationsOf = (m: SpreadsheetModel, id = "s1"): DataValidation[] => sheetOf(m, id).validations;
+/** B2 → D2 on Sheet1. */
+const B2_TO_D2: RangeMove = { fromSheetId: "s1", from: range(1, 1, 1, 1), toSheetId: "s1", toTop: 1, toLeft: 3 };
+
+describe("the validations move adjuster (SPEC-130 \"Moves\")", () => {
+  it("cutting B2 (a list rule on B2:B10) and pasting at D2 leaves the rule on B3:B10, creates the same rule on D2, and the rule that covered D2 loses it", () => {
+    const list = dvRule("v1", [range(1, 1, 9, 1)], { sourceXml: "<dataValidation/>", odsName: "val1" });
+    const covering = dvRule("d", [range(0, 3, 4, 3)], { type: "whole", formula1: "1", formula2: "10" }); // D1:D5
+    const m = model([sheet("s1", "Sheet1", { validations: [list, covering] })]);
+    expect(moveRange(m, B2_TO_D2)).toEqual({ ok: true });
+    const [source, trimmed, piece] = validationsOf(m);
+    expect(source).toMatchObject({ id: "v1", ranges: [range(2, 1, 9, 1)], formula1: "$E$2:$E$6", odsName: "val1" });
+    expect(source!.sourceXml).toBeUndefined();
+    expect(trimmed).toMatchObject({ id: "d", ranges: [range(0, 3, 0, 3), range(2, 3, 4, 3)], formula1: "1", formula2: "10" });
+    // The same rule, a new identity: a fresh id, no sourceXml or odsName.
+    const { id: _id, ranges: _ranges, sourceXml: _source, odsName: _name, ...settings } = list;
+    expect(piece).toEqual({ ...settings, id: expect.any(String), ranges: [range(1, 3, 1, 3)] });
+    expect(piece!.id).not.toBe("v1");
+    expect(validationsOf(m)).toHaveLength(3);
+  });
+
+  it("a rule wholly inside the source keeps its id (and its odsName on its own sheet) and moves, its references following the moved cells", () => {
+    const inside = dvRule("w", [range(1, 1, 2, 1)], { type: "custom", formula1: "AND(B2>$Z$1,$B$3<>0)", odsName: "val1", sourceXml: "<x/>" });
+    const m = model([sheet("s1", "Sheet1", { validations: [inside] })]);
+    moveRange(m, { fromSheetId: "s1", from: range(1, 1, 2, 1), toSheetId: "s1", toTop: 1, toLeft: 5 });
+    const { sourceXml: _source, ...kept } = inside;
+    expect(validationsOf(m)).toEqual([{ ...kept, ranges: [range(1, 5, 2, 5)], formula1: "AND(F2>$Z$1,$F$3<>0)" }]);
+    expect("sourceXml" in validationsOf(m)[0]!).toBe(false);
+  });
+
+  it("the list source $E$2:$E$6 follows only if those cells were moved — on every sheet, marking a sheet whose rule changed dirty", () => {
+    const own = dvRule("v1", [range(1, 1, 9, 1)]);
+    const other = dvRule("o", [range(0, 0, 0, 0)], { formula1: "Sheet1!$E$2:$E$6", x14: true });
+    const m = model([sheet("s1", "Sheet1", { validations: [own] }), sheet("s2", "Sheet2", { validations: [other] }), sheet("s3", "Other Sheet")]);
+    const untouched = m.sheets[2];
+    // Only E2:E3 moves: the source is partly moved, so nothing follows.
+    moveRange(m, { fromSheetId: "s1", from: range(1, 4, 2, 4), toSheetId: "s1", toTop: 1, toLeft: 7 });
+    expect(validationsOf(m)[0]).toBe(own);
+    expect(validationsOf(m, "s2")[0]).toBe(other);
+    // All of E2:E6 moves to G2: both follow.
+    moveRange(m, { fromSheetId: "s1", from: range(1, 4, 5, 4), toSheetId: "s1", toTop: 1, toLeft: 6 });
+    expect(validationsOf(m)[0]).toMatchObject({ id: "v1", ranges: [range(1, 1, 9, 1)], formula1: "$G$2:$G$6" });
+    expect(validationsOf(m, "s2")[0]).toMatchObject({ id: "o", formula1: "Sheet1!$G$2:$G$6", x14: true });
+    expect(sheetOf(m, "s2").dirty).toBe(true);
+    expect(m.sheets[2]).toBe(untouched);
+  });
+
+  it("across sheets: a whole rule arrives with its id and without its odsName, a piece rebased; unqualified references keep their sheet, placed in x14", () => {
+    const whole = dvRule("w", [range(1, 1, 2, 1)], { odsName: "val1" }); // B2:B3
+    const partly = dvRule("p", [range(1, 2, 9, 2)], { type: "custom", formula1: "C2>$Z$1" }); // C2:C10
+    const theirs = dvRule("t", [range(4, 3, 19, 3)], { type: "custom", formula1: 'D5<>""' }); // Sheet2!D5:D20
+    const m = model([sheet("s1", "Sheet1", { validations: [whole, partly] }), sheet("s2", "Sheet2", { validations: [theirs] })]);
+    // B2:C3 → Sheet2!D5:E6.
+    moveRange(m, { fromSheetId: "s1", from: range(1, 1, 2, 2), toSheetId: "s2", toTop: 4, toLeft: 3 });
+    expect(validationsOf(m, "s1")).toEqual([{ ...partly, ranges: [range(3, 2, 9, 2)], formula1: "C4>$Z$1" }]);
+    const [kept, arrived, piece] = validationsOf(m, "s2");
+    expect(kept).toEqual({ ...theirs, ranges: [range(6, 3, 19, 3)], formula1: 'D7<>""' });
+    const { odsName: _name, ...withoutName } = whole;
+    expect(arrived).toEqual({ ...withoutName, ranges: [range(4, 3, 5, 3)], formula1: "Sheet1!$E$2:$E$6", x14: true });
+    expect(piece).toMatchObject({ type: "custom", ranges: [range(4, 4, 5, 4)], formula1: "E5>Sheet1!$Z$1", x14: true });
+    expect(piece!.id).not.toBe("p");
+  });
+
+  it("moves a block overlapping its own destination (down one row), reading the source before writing", () => {
+    const m = model([sheet("s1", "Sheet1", { validations: [dvRule("v1", [range(4, 1, 19, 1)], { type: "custom", formula1: "B5>$Z$1" })] })]);
+    moveRange(m, { fromSheetId: "s1", from: range(4, 1, 5, 1), toSheetId: "s1", toTop: 5, toLeft: 1 });
+    const [source, piece] = validationsOf(m);
+    expect(source).toMatchObject({ id: "v1", ranges: [range(7, 1, 19, 1)], formula1: "B8>$Z$1" }); // B8:B20 (B6:B7 overwritten)
+    expect(piece).toMatchObject({ ranges: [range(5, 1, 6, 1)], formula1: "B6>$Z$1" }); // B6:B7 — what B5:B6 carried
+  });
+
+  it("never merges a moved rule into an identical one at the destination", () => {
+    const identical = dvRule("same", [range(2, 3, 9, 3)]); // D3:D10, the same settings as v1
+    const m = model([sheet("s1", "Sheet1", { validations: [dvRule("v1", [range(1, 1, 9, 1)]), identical] })]);
+    moveRange(m, B2_TO_D2);
+    const rules = validationsOf(m);
+    expect(rules).toHaveLength(3);
+    expect(rules[1]).toBe(identical);
+    expect(rules[2]!.ranges).toEqual([range(1, 3, 1, 3)]);
+  });
+
+  it("is copy-on-write: nothing the move started from is mutated; a rule the move misses keeps its identity and sourceXml", () => {
+    const untouched = dvRule("far", [range(30, 0, 31, 0)], { sourceXml: "<b/>" });
+    const touched = dvRule("v1", [range(1, 1, 9, 1)], { sourceXml: "<a/>" });
+    const source = sheet("s1", "Sheet1", { validations: [touched, untouched] });
+    const snapshot = structuredClone(source);
+    const m = model([source]);
+    moveRange(m, B2_TO_D2);
+    expect(source).toEqual(snapshot);
+    expect(validationsOf(m)).toContain(untouched);
+    // A move touching no rule leaves the array itself alone.
+    const quiet = model([sheet("s1", "Sheet1", { validations: [untouched] })]);
+    const rules = validationsOf(quiet);
+    moveRange(quiet, B2_TO_D2);
+    expect(validationsOf(quiet)).toBe(rules);
+  });
+});
+
 // --- the registry contract ------------------------------------------------------------------
 // Every MoveAdjuster joins this table: a model holding no structure of its
 // kind is left untouched by identity, and moving the block holding its
@@ -419,6 +533,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, rows: [row(0, [value(0, "Head")]), row(1, [value(0, 1)])], autoFilter: { range: range(0, 0, 1, 1), columns: [] } }]);
     case "conditionalFormats":
       return model([{ ...base, conditionalFormats: [cfFormat("f1", [range(0, 0, 1, 1)], "A1>0")] }]);
+    case "validations":
+      return model([{ ...base, validations: [dvRule("v1", [range(0, 0, 1, 1)])] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -437,6 +553,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.autoFilter?.range;
     case "conditionalFormats":
       return s.conditionalFormats[0]?.ranges;
+    case "validations":
+      return s.validations[0]?.ranges;
     default:
       return undefined;
   }
@@ -445,8 +563,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
 describe("MOVE_ADJUSTERS — the registry contract", () => {
   const MOVE: RangeMove = { fromSheetId: "s1", from: range(0, 0, 1, 1), toSheetId: "s1", toTop: 10, toLeft: 3 };
 
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, then SPEC-129's conditionalFormats", () => {
-    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats and SPEC-130's validations", () => {
+    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats", "validations"]);
   });
 
   for (const adjuster of MOVE_ADJUSTERS) {
@@ -471,7 +589,14 @@ describe("MOVE_ADJUSTERS — the registry contract", () => {
         const after = structureOf(adjuster.id, m);
         expect(after).not.toEqual(before);
         expect(after).toEqual(
-          { cells: [[10, 3]], formulas: "D11", merges: [range(10, 3, 11, 4)], autofilter: range(10, 3, 11, 4), conditionalFormats: [range(10, 3, 11, 4)] }[adjuster.id],
+          {
+            cells: [[10, 3]],
+            formulas: "D11",
+            merges: [range(10, 3, 11, 4)],
+            autofilter: range(10, 3, 11, 4),
+            conditionalFormats: [range(10, 3, 11, 4)],
+            validations: [range(10, 3, 11, 4)],
+          }[adjuster.id],
         );
       });
     }

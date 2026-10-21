@@ -7,9 +7,9 @@
 // Snapshots are by reference. A snapshot holds, for EVERY sheet, a shallow
 // copy whose object/array fields are structuredCloned — except
 // SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, SPEC-124's `columns`,
-// `merges` and `frozen`, SPEC-128's `autoFilter` and `sortState`, and
-// SPEC-129's `conditionalFormats`, which every command replaces and never
-// mutates), kept by reference because
+// `merges` and `frozen`, SPEC-128's `autoFilter` and `sortState`,
+// SPEC-129's `conditionalFormats` and SPEC-130's `validations`, which every
+// command replaces and never mutates), kept by reference because
 // copy-on-write makes that safe — so an undo
 // restores them by identity — plus every WORKBOOK_SNAPSHOT_FIELDS value by
 // reference (each a primitive or copy-on-write: `styles` and SPEC-129's
@@ -57,7 +57,17 @@ export const MAX_UNDO_STEPS = 100;
 
 export type UndoScope = "workbook" | { sheetId: string };
 
-export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = ["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState", "conditionalFormats"];
+export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = [
+  "rows",
+  "sourceXml",
+  "columns",
+  "merges",
+  "frozen",
+  "autoFilter",
+  "sortState",
+  "conditionalFormats",
+  "validations",
+];
 
 export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
   "activeSheetIndex",
