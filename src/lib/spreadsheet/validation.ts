@@ -48,6 +48,7 @@ import { tokenize } from "./formula/tokens";
 import { fromCellValue, isEmpty, isError, isRange, isArray, numberToText, roundTo15, toCellValue, type ScalarValue } from "./formula/values";
 import type { CellValue, Sheet, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
+import { parseInput } from "./numberFormat/input";
 import { formatValue, plainText, type FormatContext } from "./numberFormat/render";
 import { cellStyle, effectiveStyleId } from "./styles";
 
@@ -253,10 +254,16 @@ function evaluateAt(
     return null;
   }
   const base = deps.base;
-  const valueAt: EvalContext["valueAt"] = overlay
-    ? (sheetId, row, col) => (sheetId === sheet.id && row === overlay.at.row && col === overlay.at.col ? fromCellValue(overlay.value) : base.valueAt(sheetId, row, col))
-    : base.valueAt;
-  const ctx: EvalContext = { ...base, valueAt, host: { sheetId: sheet.id, row: at.row, col: at.col }, origin: parsed.origin, arrayMode: false };
+  let ctx: EvalContext = { ...base, host: { sheetId: sheet.id, row: at.row, col: at.col }, origin: parsed.origin, arrayMode: false };
+  if (overlay) {
+    // The candidate answers its cell both to a direct read and to a range
+    // walk over the stored cells (which consults the model's rows).
+    const overlaid = overlaidSheet(sheet, overlay.at, overlay.value);
+    const model: SpreadsheetModel = { ...base.model, sheets: base.model.sheets.map((each) => (each.id === sheet.id ? overlaid : each)) };
+    const valueAt: EvalContext["valueAt"] = (sheetId, row, col) =>
+      sheetId === sheet.id && row === overlay.at.row && col === overlay.at.col ? fromCellValue(overlay.value) : base.valueAt(sheetId, row, col);
+    ctx = { ...ctx, model, valueAt };
+  }
   try {
     return { value: evaluate(parsed.node, ctx), ctx };
   } catch (error) {
@@ -265,6 +272,25 @@ function evaluateAt(
     }
     throw error;
   }
+}
+
+/** `sheet` with `value` stored at `at` (rows copied on write; the original
+ * untouched) — `custom`'s overlay. */
+function overlaidSheet(sheet: Sheet, at: CellRef, value: CellValue): Sheet {
+  const rows = sheet.rows.slice();
+  let index = rows.findIndex((row) => row.index >= at.row);
+  if (index < 0) {
+    index = rows.length;
+  }
+  const row = rows[index];
+  if (row && row.index === at.row) {
+    const cells = row.cells.filter((cell) => cell.col !== at.col);
+    cells.push({ col: at.col, value });
+    rows[index] = { ...row, cells: cells.toSorted((a, b) => a.col - b.col) };
+  } else {
+    rows.splice(index, 0, { index: at.row, cells: [{ col: at.col, value }] });
+  }
+  return { ...sheet, rows };
 }
 
 /** A bound's number at `at`: blank = 0; null when the bound cannot be
@@ -301,18 +327,19 @@ function scalarText(value: CellValue, deps: ValidationDeps): string {
 }
 
 /** The items a `list` rule offers at `at`, in source order (see "List
- * sources"): a literal's items (each item's value as parseInput would enter
- * it — the caller passes `parseItem`; without one, the text), a one-row or
- * one-column range or array's cells (blank cells as empty items, duplicates
- * kept), capped at VALIDATION_LIST_MAX — or `unavailable` for a 2-D result,
- * an error or an uncomputable source. */
+ * sources"): a literal's items — each item's value what typing its text
+ * would enter (SPEC-122's parseInput in `deps.ctx`'s locale, so `10` is the
+ * number 10) — or a one-row or one-column range or array's cells (a range
+ * cell's value as stored, its text through its own number format; blank
+ * cells as empty items; duplicates kept), capped at VALIDATION_LIST_MAX; or
+ * `unavailable` for a 2-D result, an error or an uncomputable source. A
+ * `sort-ascending` ODS list is sorted (sortItemsAscending). */
 export function listItems(
   model: SpreadsheetModel,
   sheet: Sheet,
   dv: DataValidation,
   at: CellRef,
   deps: ValidationDeps,
-  parseItem: (text: string) => CellValue = (text) => text,
 ): ValidationList {
   const source = listSourceOf(dv);
   if (!source) {
@@ -320,7 +347,7 @@ export function listItems(
   }
   let items: ValidationListItem[];
   if (source.kind === "literal") {
-    items = source.items.slice(0, VALIDATION_LIST_MAX).map((text) => ({ value: text === "" ? null : parseItem(text), text }));
+    items = source.items.slice(0, VALIDATION_LIST_MAX).map((text) => ({ value: literalItemValue(text, deps.ctx), text }));
   } else {
     const result = evaluateAt(sheet, dv, source.formula, at, deps);
     if (!result) {
@@ -368,6 +395,11 @@ export function listItems(
     items = sortItemsAscending(items, deps.ctx.locale.tag);
   }
   return { items };
+}
+
+/** What typing a literal item's text enters (SPEC-122's parseInput). */
+export function literalItemValue(text: string, ctx: Pick<FormatContext, "locale" | "dateSystem">): CellValue {
+  return text === "" ? null : parseInput(text, ctx.locale, ctx.dateSystem).value;
 }
 
 /** LibreOffice's sort-ascending list: numbers numerically, before text
