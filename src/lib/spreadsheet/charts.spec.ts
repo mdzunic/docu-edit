@@ -68,8 +68,9 @@ const DATA = { A1: "Quarter", B1: "North", A2: "Q1", A3: "Q2", A4: "Q3", B2: 10,
 const REFS: SheetChartRefs = { series: [{ name: "Data!$B$1", categories: "Data!$A$2:$A$4", values: "Data!$B$2:$B$4" }], plotVisibleOnly: true };
 const VISUAL: ChartVisual = { chartType: "columnClustered", categories: ["Q1", "Q2", "Q3"], series: [{ name: "North", values: [10, 20, 30], color: "#4e79a7" }], options: defaultChartOptions() };
 
+const corner = (col: number, row: number) => ({ col, colOffEmu: 0, row, rowOffEmu: 0 });
+
 function chartDrawing(refs: SheetChartRefs = REFS, visual: ChartVisual = VISUAL): SheetDrawing {
-  const corner = (col: number, row: number) => ({ col, colOffEmu: 0, row, rowOffEmu: 0 });
   return { id: "dr1", name: "Chart 1", anchor: { kind: "twoCell", from: corner(5, 20), to: corner(10, 35) }, content: { kind: "chart", visual, refs, sourcePart: "xl/charts/chart1.xml" } };
 }
 
@@ -190,9 +191,10 @@ describe("the charts adjusters", () => {
   });
 });
 
+const select = (top: number, left: number, bottom: number, right: number) => ({ ranges: [{ top, left, bottom, right }], active: { row: top, col: left } });
+
 describe("insert from selection", () => {
   const TABLE = { A1: "Item", B1: "Plan", C1: "Actual", A2: "Alpha", A3: "Beta", A4: "Gamma", B2: 4, B3: 6, B4: 8, C2: 5, C3: 5, C4: 9 };
-  const select = (top: number, left: number, bottom: number, right: number) => ({ ranges: [{ top, left, bottom, right }], active: { row: top, col: left } });
 
   it("headers become names and categories, series run down the columns, and the chart lands two columns right of the data on its top row", () => {
     const model = bookOf([sheetOf("Summary", TABLE)]);
