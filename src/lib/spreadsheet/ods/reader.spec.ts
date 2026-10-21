@@ -9,7 +9,21 @@
 // spans, repetitions copying the text unshifted, no value type → null.
 // SPEC-120 adds the calculation settings: table:calculation-settings with
 // ODF's defaults, table:iteration and settings.xml's AutoCalculate → `calc`.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ChartVisual } from "../../core/charts";
+import { refreshSheetChart } from "../charts";
+import { readOdsChart } from "./chartXml";
+
+// SPEC-132: the chart wire read and the refresh pass through to the real
+// modules; the open-time display refresh test overrides one read.
+vi.mock("./chartXml", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./chartXml")>();
+  return { ...actual, readOdsChart: vi.fn(actual.readOdsChart) };
+});
+vi.mock("../charts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../charts")>();
+  return { ...actual, refreshSheetChart: vi.fn(actual.refreshSheetChart) };
+});
 import { getCell, parseA1, usedRange } from "../address";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import {
@@ -486,5 +500,48 @@ describe('calculation settings (SPEC-120 "Calculation settings")', () => {
     const sheet = parsed.sheets[0]!;
     expect(cellAt(sheet, "A4")).toMatchObject({ formula: SPEC120_CALC_ODS.formulas.A4, value: null });
     expect(cellAt(sheet, "B4")).toMatchObject({ formula: SPEC120_CALC_ODS.formulas.B4, value: null });
+  });
+});
+
+describe("SPEC-132: chart objects at open", () => {
+  const CHART_PART =
+    `<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
+    `xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0"><office:body><office:chart><chart:chart chart:class="chart:bar"/></office:chart></office:body></office:document-content>`;
+  const visual = {
+    chartType: "columnClustered",
+    categories: ["a"],
+    series: [{ name: "S", values: [1], color: { theme: "accent1" } }],
+    options: { legend: "right", dataLabels: false, gridlines: true },
+  } as const satisfies ChartVisual;
+  const refs = { series: [{ values: "Sheet1!$A$1:$A$1" }], plotVisibleOnly: true };
+
+  async function openWithChart(): Promise<Sheet> {
+    const parts = synthetic({
+      body:
+        `<table:table table:name="Sheet1"><table:table-row><table:table-cell office:value-type="float" office:value="1">` +
+        `<draw:frame svg:x="0cm" svg:y="0cm" svg:width="1cm" svg:height="1cm" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink">` +
+        `<draw:object xlink:href="./Object 1"/></draw:frame><text:p>1</text:p></table:table-cell></table:table-row></table:table>`,
+    });
+    parts.set("Object 1/content.xml", encoder.encode(CHART_PART));
+    return (await parseOds(new Uint8Array(0), parts)).sheets[0]!;
+  }
+
+  it("refreshes a chart whose object carries a reference with no cache for display, once every table is read — the content never stores `uncached`", async () => {
+    vi.mocked(refreshSheetChart).mockClear();
+    vi.mocked(readOdsChart).mockReturnValueOnce({ visual: structuredClone(visual), refs, uncached: true });
+    const sheet = await openWithChart();
+    const drawing = sheet.drawings![0]!;
+    expect(drawing.content).toEqual({ kind: "chart", visual, refs, sourcePart: "Object 1/content.xml" });
+    expect(refreshSheetChart).toHaveBeenCalledTimes(1);
+    const [model, sheetId, drawingId, options] = vi.mocked(refreshSheetChart).mock.calls[0]!;
+    expect([sheetId, drawingId, options]).toEqual([sheet.id, drawing.id, { forDisplay: true }]);
+    expect(model.sheets.map((each) => each.name)).toEqual(["Sheet1"]);
+  });
+
+  it("trusts every other chart's caches: no refresh at open", async () => {
+    vi.mocked(refreshSheetChart).mockClear();
+    vi.mocked(readOdsChart).mockReturnValueOnce({ visual: structuredClone(visual), refs });
+    await openWithChart();
+    expect(refreshSheetChart).not.toHaveBeenCalled();
   });
 });

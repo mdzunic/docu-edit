@@ -29,6 +29,7 @@ import {
   GOLDEN_ODS_SHAPE_STYLE,
   GOLDEN_ODS_TABLE_SHAPES,
 } from "./drawingGolden";
+import { readOdsChart } from "./chartXml";
 import { canonicalOdsDrawing, odsSheetDrawingsXml, odsShapeGraphicProperties, upgradeOdsSheetDrawings } from "./drawingXml";
 import { OdsStyleRegistry } from "./styles";
 import { writeOds } from "./writer";
@@ -91,30 +92,50 @@ const TABLE =
   row(empty(16384), ` table:number-rows-repeated="1048573"`) +
   `</table:table>`;
 
-const MANIFEST =
+const OFFICE_CHART_NS =
+  `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" ` +
+  `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"`;
+/** An embedded object's content.xml with `body` as its office:body child. */
+const objectContent = (body: string): string =>
+  `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${OFFICE_CHART_NS} office:version="1.2"><office:body>${body}</office:body></office:document-content>`;
+/** SPEC-132: CHART's object — a chart outside the catalogue (a surface chart), so it stays unmodelled. */
+const OBJECT_1 = objectContent(`<office:chart><chart:chart chart:class="chart:surface"><chart:plot-area/></chart:chart></office:chart>`);
+
+const manifestOf = (entries: string): string =>
   `<?xml version="1.0" encoding="UTF-8"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">` +
   `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/>` +
   `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
-  `<manifest:file-entry manifest:full-path="Pictures/a.png" manifest:media-type="image/png"/></manifest:manifest>`;
+  `<manifest:file-entry manifest:full-path="Pictures/a.png" manifest:media-type="image/png"/>` +
+  `<manifest:file-entry manifest:full-path="Object 1/" manifest:media-type="application/vnd.oasis.opendocument.chart"/>` +
+  `<manifest:file-entry manifest:full-path="Object 1/content.xml" manifest:media-type="text/xml"/>${entries}</manifest:manifest>`;
+const MANIFEST = manifestOf("");
 
-async function workbookBytes(table = TABLE): Promise<Uint8Array> {
+/** The workbook's package; `extra` adds parts (and their manifest entries). */
+async function workbookBytes(table = TABLE, extra: { parts?: { name: string; text: string }[]; manifest?: string } = {}): Promise<Uint8Array> {
   const content = `<?xml version="1.0" encoding="UTF-8"?><office:document-content ${NS} office:version="1.2"><office:automatic-styles>${STYLES}</office:automatic-styles><office:body><office:spreadsheet>${table}</office:spreadsheet></office:body></office:document-content>`;
   return zip([
     { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
-    { name: "META-INF/manifest.xml", data: encoder.encode(MANIFEST) },
+    { name: "META-INF/manifest.xml", data: encoder.encode(manifestOf(extra.manifest ?? "")) },
     { name: "content.xml", data: encoder.encode(content) },
     { name: "Pictures/a.png", data: png(96, 48) },
+    { name: "Object 1/content.xml", data: encoder.encode(OBJECT_1) },
+    ...(extra.parts ?? []).map((part) => ({ name: part.name, data: encoder.encode(part.text) })),
   ]);
 }
 
-async function open(table = TABLE): Promise<SpreadsheetModel> {
-  return readSpreadsheetBytes(await workbookBytes(table), "ods", "t");
+async function open(table = TABLE, extra?: Parameters<typeof workbookBytes>[1]): Promise<SpreadsheetModel> {
+  return readSpreadsheetBytes(await workbookBytes(table, extra), "ods", "t");
 }
 
 /** A group drawing's members as [x, y, w, h] (to 9 places) and kind. */
 const groupMembers = (drawing: SheetDrawing): unknown =>
   drawing.content.kind === "group" && drawing.content.members.map((member) => [member.x, member.y, member.w, member.h].map((n) => n.toFixed(9)).concat(member.content.kind));
 const named = (sheet: Sheet, name: string): SheetDrawing => sheet.drawings!.find((drawing) => drawing.name === name)!;
+/** SPEC-132: the chart content a frame showing `sourcePart` reads as (ods/chartXml.ts readOdsChart's read, `uncached` never stored). */
+const chartRead = (text: string, sourcePart: string): SheetDrawing["content"] => {
+  const read = readOdsChart(text);
+  return read.refs ? { kind: "chart", visual: read.visual, refs: read.refs, sourcePart } : { kind: "chart", visual: read.visual, sourcePart };
+};
 const at = (sheet: Sheet, index: number): SheetDrawing => sheet.drawings![index]!;
 
 /** The golden geometry's sheet (drawingGolden.ts). */
@@ -189,7 +210,8 @@ describe("reading ods drawings", () => {
   it("reads every content kind", async () => {
     const sheet = (await open()).sheets[0]!;
     expect(named(sheet, "Pic").content).toEqual({ kind: "image", mediaId: "Pictures/a.png", crop: { l: 0.1, t: 0, r: 0.1, b: 0 } });
-    expect(at(sheet, 2).content).toEqual({ kind: "chart", sourcePart: "Object 1/content.xml" });
+    // SPEC-132: a chart object's content is what readOdsChart reads from its part.
+    expect(at(sheet, 2).content).toEqual(chartRead(OBJECT_1, "Object 1/content.xml"));
     expect(at(sheet, 5).content).toEqual({ kind: "foreign", label: "Form control" });
     expect(at(sheet, 6).content).toMatchObject({ kind: "shape", visual: { geometry: "line" } });
     expect(at(sheet, 7).content).toEqual({ kind: "foreign", label: "3-D object" });
@@ -199,6 +221,38 @@ describe("reading ods drawings", () => {
     expect(group.content.kind === "group" && group.content.members.map(({ x, y, w, h, content }) => [x, y, w, h, content.kind === "shape" && content.visual.geometry])).toEqual([
       [0, 0, 1 / 3, 1, "rect"],
       [2 / 3, 0, 1 / 3, 1, "ellipse"],
+    ]);
+  });
+
+  it("SPEC-132: reads only a chart object as a chart — by the manifest's media type or an office:chart body; another embedded object is foreign Object, a missing part foreign Chart, a group's chart member foreign Chart", async () => {
+    const frame = (object: string, z: number): string =>
+      `<draw:frame draw:z-index="${z}" svg:x="0in" svg:y="0in" svg:width="1in" svg:height="1in"><draw:object xlink:href="./${object}"/></draw:frame>`;
+    const table =
+      `<table:table table:name="Sheet1"><table:table-column table:style-name="co1" table:number-columns-repeated="16384"/>` +
+      row(cell(frame("Object 2", 0)) + cell(frame("Object 3", 1)) + cell(frame("Object 4", 2)) + cell(frame("Object 5", 3)) + cell(`<draw:g draw:name="G">${frame("Object 1", 4)}${frame("Object 2", 5)}</draw:g>`) + empty(16379)) +
+      row(empty(16384), ` table:number-rows-repeated="1048575"`) +
+      `</table:table>`;
+    const formula = objectContent(`<office:formula/>`);
+    const unlisted = objectContent(`<office:chart><chart:chart chart:class="chart:bar"/></office:chart>`);
+    const sheet = (
+      await open(table, {
+        parts: [
+          { name: "Object 2/content.xml", text: formula },
+          { name: "Object 3/content.xml", text: unlisted },
+          { name: "Object 5/content.xml", text: formula },
+        ],
+        manifest:
+          `<manifest:file-entry manifest:full-path="Object 2/" manifest:media-type="application/vnd.oasis.opendocument.formula"/>` +
+          `<manifest:file-entry manifest:full-path="Object 5/" manifest:media-type="application/vnd.oasis.opendocument.chart"/>`,
+      })
+    ).sheets[0]!;
+    expect(sheet.drawings!.map((drawing) => drawing.content)).toEqual([
+      { kind: "foreign", label: "Object" },
+      chartRead(unlisted, "Object 3/content.xml"),
+      { kind: "foreign", label: "Chart" },
+      // The manifest says chart: whatever the body, the object is read as one.
+      chartRead(formula, "Object 5/content.xml"),
+      { kind: "group", members: [expect.objectContaining({ content: { kind: "foreign", label: "Chart" } }), expect.objectContaining({ content: { kind: "foreign", label: "Object" } })] },
     ]);
   });
 
