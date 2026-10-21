@@ -404,6 +404,8 @@ describe("canonical new drawings (xlsx/drawingGolden.ts)", () => {
     const added = spliceWorksheetDrawing(sheet, "rId1");
     expect(added).toBe(sheet.replace("<legacyDrawing", `${G.GOLDEN_WORKSHEET_DRAWING}<legacyDrawing`));
     expect(spliceWorksheetDrawing(added, null)).toBe(sheet);
+    const headerFooter = `<worksheet xmlns="${MAIN}" xmlns:r="${R}"><sheetData/><pageMargins left="0.7"/><drawingHF r:id="rId9"/></worksheet>`;
+    expect(spliceWorksheetDrawing(headerFooter, "rId1")).toBe(headerFooter.replace("<drawingHF", `${G.GOLDEN_WORKSHEET_DRAWING}<drawingHF`));
   });
 });
 

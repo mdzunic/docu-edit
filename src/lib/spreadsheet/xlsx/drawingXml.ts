@@ -877,6 +877,7 @@ const WORKSHEET_TAIL_ORDER = [
   "drawing",
   "legacyDrawing",
   "legacyDrawingHF",
+  "drawingHF",
   "picture",
   "oleObjects",
   "controls",
