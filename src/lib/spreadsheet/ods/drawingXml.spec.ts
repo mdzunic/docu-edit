@@ -111,6 +111,9 @@ async function open(table = TABLE): Promise<SpreadsheetModel> {
   return readSpreadsheetBytes(await workbookBytes(table), "ods", "t");
 }
 
+/** A group drawing's members as [x, y, w, h] (to 9 places) and kind. */
+const groupMembers = (drawing: SheetDrawing): unknown =>
+  drawing.content.kind === "group" && drawing.content.members.map((member) => [member.x, member.y, member.w, member.h].map((n) => n.toFixed(9)).concat(member.content.kind));
 const named = (sheet: Sheet, name: string): SheetDrawing => sheet.drawings!.find((drawing) => drawing.name === name)!;
 const at = (sheet: Sheet, index: number): SheetDrawing => sheet.drawings![index]!;
 
@@ -329,8 +332,7 @@ describe("writing a dirty table's drawings", () => {
     const now = named(model.sheets[0]!, "G2");
     expect(reread.anchor).toEqual(now.anchor);
     // The members keep their places in the group (to float noise).
-    const members = (drawing: SheetDrawing): unknown => drawing.content.kind === "group" && drawing.content.members.map(({ x, y, w, h, content }) => [x, y, w, h].map((n) => n.toFixed(9)).concat(content.kind));
-    expect(members(reread)).toEqual(members(moved));
+    expect(groupMembers(reread)).toEqual(groupMembers(moved));
   });
 
   it("writes a renamed sheet's touched drawing's end cell with the new name", async () => {

@@ -153,17 +153,17 @@ describe("SPEC-131 useSheetDrawings", () => {
 
   it("a step records before its command runs: values a running recalculation settles on the drawing's sheet survive the step", () => {
     const h = harness();
-    const computed = [{ index: 0, cells: [{ col: 0, value: 42 }] }];
+    const settled = [{ index: 0, cells: [{ col: 0, value: 42 }] }];
     // record() settles: the recalculation writes its result into a new sheet.
     h.settle.run = () => {
       h.settle.run = null;
       const sheets = h.workbook.value!.sheets;
-      h.workbook.value!.sheets = [{ ...sheets[0]!, rows: computed }, ...sheets.slice(1)];
+      h.workbook.value!.sheets = [{ ...sheets[0]!, rows: settled }, ...sheets.slice(1)];
     };
     h.drawings.select("dr1");
     h.drawings.onDrawingKeydown("dr1", key("ArrowRight"));
     expect(h.undo.undoLabel.value).toBe("Move image");
-    expect(h.sheet().rows).toBe(computed);
+    expect(h.sheet().rows).toBe(settled);
     expect(h.sheet().drawingsDirty).toBe(true);
   });
 
