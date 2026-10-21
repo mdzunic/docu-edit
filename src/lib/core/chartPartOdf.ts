@@ -288,9 +288,12 @@ function tableXml(chart: ChartVisual, series: ChartSeries[]): string {
   );
 }
 
-function seriesXml(chart: ChartVisual, series: ChartSeries, index: number, theme: DocumentTheme): string {
+function seriesXml(chart: ChartVisual, series: ChartSeries, index: number, theme: DocumentTheme, refs?: OdfChartRefs["series"][number]): string {
   const col = tableColumnLetter(index);
   const rows = chart.categories.length;
+  const values = refs?.values ?? `local-table.$${col}$2:.$${col}$${rows + 1}`;
+  const label = refs?.label ?? `local-table.$${col}$1`;
+  const domainXml = refs?.domain === undefined ? "" : `<chart:domain table:cell-range-address="${escapeXmlAttribute(refs.domain)}"/>`;
   const classFor: Record<ChartType, string> = {
     columnClustered: "chart:bar",
     columnStacked: "chart:bar",
@@ -306,8 +309,9 @@ function seriesXml(chart: ChartVisual, series: ChartSeries, index: number, theme
     // ODF's chart:color has no theme vocabulary — a reference writes its
     // resolved literal (SPEC-077 D8/AC-39 semantics for the ODF family).
     `<chart:series chart:class="${classFor[chart.chartType]}" chart:color="${escapeXmlAttribute(resolveColor(series.color, theme))}"` +
-    ` chart:values-cell-range-address="local-table.$${col}$2:.$${col}$${rows + 1}"` +
-    ` chart:label-cell-address="local-table.$${col}$1"/>`
+    ` chart:values-cell-range-address="${escapeXmlAttribute(values)}"` +
+    ` chart:label-cell-address="${escapeXmlAttribute(label)}"` +
+    (domainXml === "" ? "/>" : `>${domainXml}</chart:series>`)
   );
 }
 
@@ -315,11 +319,20 @@ function axisTitleXml(text: string): string {
   return `<chart:title><text:p>${escapeXmlText(text)}</text:p></chart:title>`;
 }
 
-function axesXml(chart: ChartVisual): string {
+/** The x axis's `chart:categories` for a host's categories range (SPEC-132)
+ * — after the axis title, before any grid: ODF 1.2's `chart:axis` content
+ * order. */
+function categoriesXml(categories: string | undefined): string {
+  return categories === undefined ? "" : `<chart:categories table:cell-range-address="${escapeXmlAttribute(categories)}"/>`;
+}
+
+function axesXml(chart: ChartVisual, categories?: string): string {
   if (chart.chartType === "pie" || chart.chartType === "doughnut") {
-    return "";
+    // No axes — but a categories range rides an x axis of its own, as
+    // LibreOffice writes a pie's.
+    return categories === undefined ? "" : `<chart:axis chart:dimension="x" chart:name="primary-x">${categoriesXml(categories)}</chart:axis>`;
   }
-  const catTitle = chart.options.categoryAxisTitle ? axisTitleXml(chart.options.categoryAxisTitle) : "";
+  const catTitle = (chart.options.categoryAxisTitle ? axisTitleXml(chart.options.categoryAxisTitle) : "") + categoriesXml(categories);
   const valTitle = chart.options.valueAxisTitle ? axisTitleXml(chart.options.valueAxisTitle) : "";
   const gridXml = chart.options.gridlines ? '<chart:grid chart:class="major"/>' : "";
   const minMaxAttrs =
@@ -336,7 +349,13 @@ function axesXml(chart: ChartVisual): string {
  * (`widthCm`/`heightCm`) is passed explicitly because `ChartVisual` — unlike
  * the text product's `Chart` — carries no size; its container (the
  * `draw:frame`/`p:graphicFrame`) owns placement. An untouched chart never
- * calls this: its object's original bytes are re-emitted verbatim instead. */
+ * calls this: its object's original bytes are re-emitted verbatim instead.
+ * With `refs` (SPEC-132, a sheet chart) each given wire address replaces the
+ * `local-table` one it stands for, the categories ride the x axis (a pie's
+ * or doughnut's x axis exists for them alone), a series' `domain` is its
+ * `chart:domain` child and `plotArea` the plot area's range; the
+ * `local-table` cache is written all the same. Without `refs` the output is
+ * byte-for-byte what it always was. */
 export function odfChartContentXml(
   chart: ChartVisual,
   widthCm: number,
@@ -344,7 +363,6 @@ export function odfChartContentXml(
   theme: DocumentTheme = DEFAULT_THEME,
   refs?: OdfChartRefs,
 ): string {
-  void refs; // SPEC-132 skeleton: implemented by the core codec change
   const vertical = chart.chartType !== "barClustered";
   const stacked = chart.chartType === "columnStacked";
   const classFor: Record<ChartType, string> = {
@@ -375,7 +393,8 @@ export function odfChartContentXml(
   // chart:circle/chart:ring holds exactly one chart:series; the model keeps
   // the rest for the data sheet to still show (SPEC-052 "Chart catalogue").
   const seriesToWrite = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
-  const seriesXmlStr = seriesToWrite.map((s, i) => seriesXml(chart, s, i, theme)).join("");
+  const seriesXmlStr = seriesToWrite.map((s, i) => seriesXml(chart, s, i, theme, refs?.series[i])).join("");
+  const plotAreaRangeAttr = refs?.plotArea === undefined ? "" : ` table:cell-range-address="${escapeXmlAttribute(refs.plotArea)}"`;
   const dataLabelsAttr = chart.options.dataLabels ? ' chart:data-labels="true"' : "";
   return (
     '<?xml version="1.0" encoding="UTF-8"?>' +
@@ -386,7 +405,7 @@ export function odfChartContentXml(
     ` svg:width="${cmToOdfLength(widthCm)}" svg:height="${cmToOdfLength(Math.max(0, heightCm))}">` +
     titleXml +
     legendXml +
-    `<chart:plot-area${dataLabelsAttr}>${axesXml(chart)}${seriesXmlStr}</chart:plot-area>` +
+    `<chart:plot-area${plotAreaRangeAttr}${dataLabelsAttr}>${axesXml(chart, refs?.categories)}${seriesXmlStr}</chart:plot-area>` +
     tableXml(chart, seriesToWrite) +
     "</chart:chart>" +
     "</office:chart></office:body>" +
