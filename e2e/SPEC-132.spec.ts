@@ -29,10 +29,17 @@ async function open(page: Page, path: string): Promise<void> {
   await expect(page.getByTestId("spreadsheet-grid")).toBeVisible();
 }
 
+function cell(page: Page, ref: string): Locator {
+  return page.locator(`[data-testid="sheet-cell"][data-ref="${ref}"]`);
+}
+
+/** Selects a cell ("D3") or a range ("A1:C4") by clicking its corners. */
 async function goTo(page: Page, reference: string): Promise<void> {
-  const nameBox = page.getByTestId("name-box");
-  await nameBox.fill(reference);
-  await nameBox.press("Enter");
+  const [from, to] = reference.split(":");
+  await cell(page, from!).click();
+  if (to !== undefined) {
+    await cell(page, to).click({ modifiers: ["Shift"] });
+  }
 }
 
 const COLUMN_VALUES = [
@@ -96,6 +103,7 @@ test("SPEC-132: the column chart follows its cells and a row insert; the 3-D and
   const chartSheet = page.getByTestId("sheet-chart-sheet");
   await expect(chartSheet).toBeVisible();
   await expect(chartSheet.getByTestId("sheet-chart-canvas")).toHaveAttribute("data-chart-type", "columnClustered");
+  await tab(page, "Data").click();
 
   // Download: the edited value's cache, the moved references, the new chart and its options persist;
   // the 3-D chart's part differs from the source only in its adjusted c:f texts.
