@@ -28,11 +28,13 @@
 // 2 px in, with a dashed axis line when it has one; its icon (CfIcon.vue,
 // 16 px on the paper, so it scales with the zoom like everything on it)
 // sits at the left edge, the text aligned in the width that remains; a
-// winning bar or icon with showValue false hides the text. Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// winning bar or icon with showValue false hides the text. SPEC-130: the
+// active cell is described by the data-validation input message while it
+// shows (`describedBy`, cellAttributes). Runtime prop declarations per the
+// espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { asBandItems, asDescribedCell, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import AppIcon from "../AppIcon.vue";
 import CfIcon from "./CfIcon.vue";
 
@@ -47,12 +49,15 @@ const props = defineProps({
   staleTitle: { type: Function, default: undefined },
   /** The header row's filter buttons by position (SPEC-128). */
   filterButton: { type: Function, default: undefined },
+  /** SPEC-130: { ref, id } — the cell the input message describes; null = none. */
+  describedBy: { type: Object, default: undefined },
 });
 
 const emit = defineEmits(["filter-button"]);
 
 const items = computed(() => asBandItems(props.bands));
 const staleTitleOf = computed(() => asStaleTitle(props.staleTitle));
+const describedCell = computed(() => asDescribedCell(props.describedBy));
 
 /** The text box's style, its family wrapped in the substitution stack. */
 function textStyle(style = {}) {
@@ -134,7 +139,7 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
             :key="cell.key"
             class="sheet-cell"
             :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
-            v-bind="cellAttributes(cell, staleTitleOf)"
+            v-bind="cellAttributes(cell, staleTitleOf, describedCell)"
             :style="cell.boxStyle"
           >
             <div

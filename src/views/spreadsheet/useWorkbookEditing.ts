@@ -10,14 +10,18 @@
 // opens it, WorkbookBody renders it) and its conditional-formatting rules
 // manager (useConditionalFormatManager), whose steps run on the same undo
 // stack. SPEC-130: the Data validation dialog (useValidationDialog — the Data
-// menu opens it, WorkbookBody renders it), whose OK is one step on that stack.
+// menu opens it, WorkbookBody renders it), whose OK is one step on that stack;
+// and data validation (useDataValidation) — the cell editor's entry gate, and
+// the alert, input message and dropdown it shows (`validation` — WorkbookBody
+// renders the alert; the grid context carries it for the rest).
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
-import { useCellEditing, type CellEditingDeps } from "./useCellEditing";
+import { useCellEditing, type CellEditing, type CellEditingDeps } from "./useCellEditing";
 import { useConditionalFormatManager } from "./useConditionalFormatManager";
 import { useConditionalFormats } from "./useConditionalFormats";
+import { entryGateOf, useDataValidation } from "./useDataValidation";
 import type { Recalc } from "./useRecalc";
 import { useSheetCommands } from "./useSheetCommands";
 import { useSheetSidePanel } from "./useSheetSidePanel";
@@ -70,6 +74,9 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
   });
   const download = useWorkbookDownload({ book: deps.book });
   const conditionalFormats = useConditionalFormats({ book: deps.book, recalc: deps.recalc, undo, locale: deps.locale });
+  // The gate is the editor's dep and a pick commits through the editor.
+  let editor: CellEditing | null = null;
+  const validation = useDataValidation({ book: deps.book, selection: deps.selection, locale: deps.locale, editor: () => editor });
   const cell = useCellEditing({
     book: deps.book,
     selection: deps.selection,
@@ -77,7 +84,9 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     undo,
     locale: deps.locale,
     syncViewState: (model) => deps.viewState.syncInto(model),
+    entryGate: entryGateOf(validation),
   });
+  editor = cell;
   /** SpreadsheetAppBar's undo/redo and split-download props, bound as one
    * (the Edit menu reads the same). While a cell is being edited the
    * workbook's undo and redo are off — the editor's own text undo has
@@ -110,7 +119,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncInto: (model) => deps.viewState.syncInto(model),
     busy: () => cell.editing.value,
   });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog };
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

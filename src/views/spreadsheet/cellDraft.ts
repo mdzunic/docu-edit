@@ -4,6 +4,9 @@
 // draft's own text undo — Cmd/Ctrl+Z and +Y while editing step through the
 // draft's edits, never the workbook's. `revision` is bumped whenever the
 // draft changes other than by a host's own input, so every host re-renders.
+// SPEC-130: `anchor` is the other end of a selection the draft asks the
+// focused host to show (selectAll — a validation alert's Retry selects the
+// entered text); null = a caret only. Any edit of the draft drops it.
 import { ref } from "vue";
 
 export type SurfaceKind = "cell" | "bar";
@@ -28,6 +31,7 @@ export function createDraft() {
   const caret = ref(0);
   const error = ref("");
   const revision = ref(0);
+  const anchor = ref<number | null>(null);
   let history: DraftState[] = [];
   let future: DraftState[] = [];
   const surfaces = new Map<SurfaceKind, DraftSurface>();
@@ -39,6 +43,7 @@ export function createDraft() {
     future = [];
     text.value = next;
     caret.value = Math.max(0, Math.min(at, next.length));
+    anchor.value = null;
     error.value = "";
     revision.value += 1;
   }
@@ -49,6 +54,7 @@ export function createDraft() {
     future = [];
     text.value = next;
     caret.value = Math.max(0, Math.min(at, next.length));
+    anchor.value = null;
     error.value = "";
     revision.value += 1;
   }
@@ -62,6 +68,7 @@ export function createDraft() {
     (back ? future : history).push({ text: text.value, caret: caret.value });
     text.value = state.text;
     caret.value = state.caret;
+    anchor.value = null;
     revision.value += 1;
     return true;
   }
@@ -70,6 +77,15 @@ export function createDraft() {
   function fail(message: string, at: number): void {
     error.value = message;
     caret.value = at;
+    anchor.value = null;
+    revision.value += 1;
+  }
+
+  /** Selects the whole text (the focused host shows it selected; typing
+   * replaces it). */
+  function selectAll(): void {
+    anchor.value = 0;
+    caret.value = text.value.length;
     revision.value += 1;
   }
 
@@ -123,8 +139,10 @@ export function createDraft() {
     caret,
     error,
     revision,
+    anchor,
     set,
     reset,
+    selectAll,
     step,
     fail,
     syncCaret,

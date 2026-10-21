@@ -21,7 +21,12 @@
 // down), the fill and drag-move previews (the move's with its destination's
 // address), the fill options chip and the move cursor (`transfer`); the
 // pointer hands the handle and the outline's presses to useFillHandle and
-// useRangeMove.
+// useRangeMove. SPEC-130: the data-validation chrome over the active cell
+// (`validationChrome` — the input message and the dropdown, placed from the
+// active cell's rect, with the cell area's size to stay inside), the input
+// message's id as the active cell's aria-describedby (`describedBy`), and
+// Alt+Down opening the dropdown's list from the grid (useDataValidation's
+// onGridKey, before SPEC-117's navigation).
 import { computed, watch, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
@@ -30,6 +35,7 @@ import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
+import type { DataValidationView } from "./useDataValidation";
 import type { ConditionalFormatsView } from "./useConditionalFormats";
 import type { FunctionAssist } from "./useFunctionAssist";
 import type { FillHandle } from "./useFillHandle";
@@ -50,6 +56,7 @@ import type { SheetSelectionController } from "./useSheetSelection";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, useSheetViewport } from "./useSheetViewport";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
+import { VALIDATION_INPUT_MESSAGE_ID } from "./validationChrome";
 
 /** What the view hands the grid: the view-level state of the sheet on show. */
 export interface SheetGridContext {
@@ -86,6 +93,8 @@ export interface SheetGridContext {
   clipboard?: SheetClipboard;
   fillHandle?: FillHandle;
   rangeMove?: RangeMoveController;
+  /** SPEC-130: data validation's input message and dropdown; absent = none. */
+  validation?: DataValidationView;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -219,6 +228,28 @@ export function useSheetGrid(
     }
   }
 
+  /** SPEC-130's chrome over the active cell (null: none shows): the cell's
+   * rect and the cell area's size (paper px), the input message, the
+   * dropdown and its open list. */
+  const validationChrome = computed(() => {
+    const validation = context().validation;
+    const rect = overlays.activeRect.value;
+    const message = validation?.inputMessage.value ?? null;
+    const dropdown = validation?.dropdown.value ?? null;
+    if (!validation || !rect || (!message && !dropdown)) {
+      return null;
+    }
+    return {
+      rect,
+      bounds: { width: viewport.viewCols.value, height: viewport.viewRows.value },
+      message,
+      dropdown,
+      list: validation.listView.value,
+    };
+  });
+  /** The active cell's aria-describedby while the input message shows. */
+  const describedBy = computed(() => (validationChrome.value?.message ? { ref: activeDescendant.value.slice("sheet-cell-".length), id: VALIDATION_INPUT_MESSAGE_ID } : null));
+
   const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
   /** A stale cell's title on this sheet (SPEC-120), for the paper. */
   const staleTitle = (row: number, col: number): string | undefined => context().recalc?.staleTitleAt(sheet().id, row, col);
@@ -261,6 +292,11 @@ export function useSheetGrid(
     // A key on the grid element itself (not through the editor, whose own
     // handler ran first) still meets the editor's key table.
     if (event.target === scroller.value && editing()?.onKeydown(event)) {
+      return;
+    }
+    // SPEC-130: Alt+Down opens the active cell's dropdown list.
+    if (context().validation?.onGridKey(event)) {
+      event.preventDefault();
       return;
     }
     if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && (event.key === "PageDown" || event.key === "PageUp")) {
@@ -317,5 +353,9 @@ export function useSheetGrid(
     transfer,
     /** SPEC-125: the fill handle the chip re-applies through; null = none. */
     fillChip: computed(() => context().fillHandle ?? null),
+    validationChrome,
+    describedBy,
+    /** SPEC-130: data validation (null: not wired). */
+    validation: computed(() => context().validation ?? null),
   };
 }
