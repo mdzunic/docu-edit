@@ -200,12 +200,14 @@ export function valueLabels(type: ValidationType, operator: ValidationOperator):
     case "equal":
     case "notEqual":
       return { value1: type === "date" ? "Date" : type === "time" ? "Time" : type === "textLength" ? "Length" : "Value", value2: null };
+    // The spec's labels: "Minimum" / "Maximum" for the one-sided
+    // comparisons of every type (Start/End name only a between's bounds).
     case "greaterThan":
     case "greaterThanOrEqual":
-      return { value1: min, value2: null };
+      return { value1: "Minimum", value2: null };
     case "lessThan":
     case "lessThanOrEqual":
-      return { value1: max, value2: null };
+      return { value1: "Maximum", value2: null };
   }
 }
 

@@ -93,6 +93,8 @@ describe("validationFields — choices and labels (SPEC-130)", () => {
     expect(valueLabels("decimal", "greaterThanOrEqual")).toEqual({ value1: "Minimum", value2: null });
     expect(valueLabels("whole", "lessThan")).toEqual({ value1: "Maximum", value2: null });
     expect(valueLabels("textLength", "lessThanOrEqual")).toEqual({ value1: "Maximum", value2: null });
+    expect(valueLabels("date", "greaterThan")).toEqual({ value1: "Minimum", value2: null });
+    expect(valueLabels("time", "lessThanOrEqual")).toEqual({ value1: "Maximum", value2: null });
   });
 
   it("pins the mixed-selection notice", () => {
