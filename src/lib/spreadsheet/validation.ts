@@ -402,16 +402,20 @@ export function literalItemValue(text: string, ctx: Pick<FormatContext, "locale"
   return text === "" ? null : parseInput(text, ctx.locale, ctx.dateSystem).value;
 }
 
+/** Numbers first, then text, then blanks. */
+function sortRank(item: ValidationListItem): number {
+  return typeof item.value === "number" ? 0 : item.value === null ? 2 : 1;
+}
+
 /** LibreOffice's sort-ascending list: numbers numerically, before text
  * ordered by the locale's collator; blanks last. */
 export function sortItemsAscending(items: readonly ValidationListItem[], localeTag: string): ValidationListItem[] {
   const collator = new Intl.Collator(localeTag);
-  const rank = (item: ValidationListItem): number => (typeof item.value === "number" ? 0 : item.value === null ? 2 : 1);
   return items
     .map((item, index) => ({ item, index }))
-    .sort((a, b) => {
-      const ra = rank(a.item);
-      const rb = rank(b.item);
+    .toSorted((a, b) => {
+      const ra = sortRank(a.item);
+      const rb = sortRank(b.item);
       if (ra !== rb) {
         return ra - rb;
       }

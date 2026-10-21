@@ -267,6 +267,10 @@ describe("validateValue — blanks", () => {
   }
 });
 
+function sourceOf(formula1: string) {
+  return listSourceOf({ type: "list", formula1 });
+}
+
 describe("list sources", () => {
   it("parses and formats a literal list", () => {
     expect(parseListLiteral('"Low,Medium,High"')).toEqual(["Low", "Medium", "High"]);
@@ -280,12 +284,11 @@ describe("list sources", () => {
   });
 
   it("names a rule's source kind", () => {
-    const of = (formula1: string) => listSourceOf({ type: "list", formula1 });
-    expect(of('"a,b"')).toEqual({ kind: "literal", items: ["a", "b"] });
-    expect(of("$E$2:$E$6")).toEqual({ kind: "reference", formula: "$E$2:$E$6" });
-    expect(of("Lists!$A$1:$A$4")).toEqual({ kind: "reference", formula: "Lists!$A$1:$A$4" });
-    expect(of("Colours")).toEqual({ kind: "name", formula: "Colours" });
-    expect(of("OFFSET($E$2,0,0,3,1)")).toEqual({ kind: "formula", formula: "OFFSET($E$2,0,0,3,1)" });
+    expect(sourceOf('"a,b"')).toEqual({ kind: "literal", items: ["a", "b"] });
+    expect(sourceOf("$E$2:$E$6")).toEqual({ kind: "reference", formula: "$E$2:$E$6" });
+    expect(sourceOf("Lists!$A$1:$A$4")).toEqual({ kind: "reference", formula: "Lists!$A$1:$A$4" });
+    expect(sourceOf("Colours")).toEqual({ kind: "name", formula: "Colours" });
+    expect(sourceOf("OFFSET($E$2,0,0,3,1)")).toEqual({ kind: "formula", formula: "OFFSET($E$2,0,0,3,1)" });
     expect(listSourceOf({ type: "whole", formula1: '"a"' })).toBeNull();
     expect(listSourceOf({ type: "list" })).toBeNull();
   });
