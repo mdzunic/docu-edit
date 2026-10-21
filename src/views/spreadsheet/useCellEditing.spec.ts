@@ -967,6 +967,11 @@ describe("sheets", () => {
   });
 });
 
+/** SPEC-130: a whole number between 1 and 10 with an alert of `style` (titled `title`). */
+function whole1to10(style: DataValidation["error"]["style"], options: { show?: boolean; title?: string } = {}): Partial<DataValidation> {
+  return { type: "whole", formula1: "1", formula2: "10", error: { show: options.show ?? true, style, title: options.title ?? "", text: "" } };
+}
+
 describe("SPEC-130: the entry gate", () => {
   let ids = 0;
   /** A rule on `sqref`: Excel's defaults, then `settings`. */
@@ -974,13 +979,6 @@ describe("SPEC-130: the entry gate", () => {
     ids += 1;
     return { id: `dv${ids}`, ranges: parseSqref(sqref), ...defaultValidationSettings(), ...settings };
   }
-  /** A whole number between 1 and 10 with an alert of `style` (titled `title`). */
-  const whole1to10 = (style: DataValidation["error"]["style"], options: { show?: boolean; title?: string } = {}): Partial<DataValidation> => ({
-    type: "whole",
-    formula1: "1",
-    formula2: "10",
-    error: { show: options.show ?? true, style, title: options.title ?? "", text: "" },
-  });
   /** Sheet1 holding `cells` under `validations` (and `sheet`'s fields), the gate wired. */
   function gated(cells: Record<string, CellSpec>, validations: DataValidation[], sheet: Partial<Sheet> = {}, extraStyles: CellStyle[] = []) {
     const parts = setup(book(cells, { sheet: { validations, ...sheet }, extraStyles }), { gate: true });
@@ -1155,6 +1153,15 @@ describe("SPEC-130: the entry gate", () => {
     validation.answer("cancel");
     await flushPromises();
     expect([cell("B3"), editing.mode.value]).toEqual([undefined, "ready"]);
+  });
+
+  it("nothing else validates: Delete clears a cell whose rule refuses blanks, and undo restores it, without an alert", () => {
+    const { undo, press, select, cell, validation } = gated({ B2: 5 }, [rule("B2", { ...whole1to10("stop"), allowBlank: false })]);
+    select("B2");
+    press("Delete");
+    expect([cell("B2")?.value, validation.alert.value]).toEqual([undefined, null]);
+    undo.undo();
+    expect([cell("B2")?.value, validation.alert.value]).toEqual([5, null]);
   });
 
   it("a pick on a locked cell of a protected sheet is refused with the protection toast", () => {

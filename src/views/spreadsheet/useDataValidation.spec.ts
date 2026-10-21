@@ -55,7 +55,7 @@ function rowsOf(cells: Record<string, CellValue>): Row[] {
     const at = parseA1(address)!;
     byRow.set(at.row, [...(byRow.get(at.row) ?? []), { col: at.col, value }]);
   }
-  return [...byRow].toSorted((a, b) => a[0] - b[0]).map(([index, cells]) => ({ index, cells: cells.toSorted((a, b) => a.col - b.col) }));
+  return [...byRow].toSorted((a, b) => a[0] - b[0]).map(([index, rowCells]) => ({ index, cells: rowCells.toSorted((a, b) => a.col - b.col) }));
 }
 
 /** A blank workbook whose Sheet1 holds `cells` and `validations`. */
@@ -66,8 +66,8 @@ function book(cells: Record<string, CellValue>, validations: DataValidation[], s
 }
 
 const at = (address: string): CellRef => {
-  const ref = parseA1(address)!;
-  return { row: ref.row, col: ref.col };
+  const parsed = parseA1(address)!;
+  return { row: parsed.row, col: parsed.col };
 };
 
 function setup(model: SpreadsheetModel, active = "A1") {
@@ -90,8 +90,8 @@ function setup(model: SpreadsheetModel, active = "A1") {
   )!;
   scopes.push(() => scope.stop());
   const select = (address: string): void => {
-    const ref = at(address);
-    current.value = { active: ref, ranges: [{ top: ref.row, left: ref.col, bottom: ref.row, right: ref.col }], activeRangeIndex: 0 };
+    const target = at(address);
+    current.value = { active: target, ranges: [{ top: target.row, left: target.col, bottom: target.row, right: target.col }], activeRangeIndex: 0 };
   };
   return { validation, editor, entered, select, workbook };
 }
