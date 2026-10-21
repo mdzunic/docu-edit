@@ -165,12 +165,13 @@ export function useSheetDrawings(deps: SheetDrawingsDeps) {
       return null;
     }
     deps.syncInto?.(m);
-    const result = command(m, sheet.id);
-    if (!result) {
-      return null;
-    }
+    // record() first: it settles a running recalculation, which can replace
+    // the sheet the command copies — a result built before would undo it.
     deps.undo.record(label, { sheetId: sheet.id });
-    applyDrawingResult(m, result);
+    const result = command(m, sheet.id);
+    if (result) {
+      applyDrawingResult(m, result);
+    }
     deps.undo.commit();
     return result;
   }

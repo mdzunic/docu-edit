@@ -50,6 +50,8 @@ function sampleDrawings(): SheetDrawing[] {
 }
 
 function harness(drawings: SheetDrawing[] = sampleDrawings(), format: SpreadsheetFormat = "xlsx") {
+  /** What the undo stack's settle() runs — a recalculation finishing. */
+  const settle: { run: (() => void) | null } = { run: null };
   const model: SpreadsheetModel = createBlankWorkbook();
   model.format = format;
   model.sheets = [{ ...model.sheets[0]!, drawings }];
@@ -62,7 +64,13 @@ function harness(drawings: SheetDrawing[] = sampleDrawings(), format: Spreadshee
   const scope = effectScope();
   scopes.push(scope);
   const { undo, drawings: controller } = scope.run(() => {
-    const stack = useSpreadsheetUndo({ model: workbook, recalc: (_keys, done) => done([]), onApplied: () => triggerRef(workbook), activateSheet: () => {} });
+    const stack = useSpreadsheetUndo({
+      model: workbook,
+      recalc: (_keys, done) => done([]),
+      onApplied: () => triggerRef(workbook),
+      activateSheet: () => {},
+      settle: () => settle.run?.(),
+    });
     const sheetDrawings = useSheetDrawings({
       book: { workbook, activeSheet },
       undo: stack,
@@ -78,7 +86,7 @@ function harness(drawings: SheetDrawing[] = sampleDrawings(), format: Spreadshee
   controller.bindGrid(hooks);
   const sheet = () => workbook.value!.sheets[0]!;
   const rectOf = (id: string) => drawingRectPx(sheet().drawings!.find((d) => d.id === id)!.anchor, buildGridMetrics(sheet()));
-  return { drawings: controller, undo, sheet, rectOf, hooks, toasts, busy, workbook };
+  return { drawings: controller, undo, sheet, rectOf, hooks, toasts, busy, workbook, settle };
 }
 
 function key(k: string, init: KeyboardEventInit = {}): KeyboardEvent {
@@ -141,6 +149,22 @@ describe("SPEC-131 useSheetDrawings", () => {
     expect(h.hooks.focusGrid).toHaveBeenCalled();
     h.undo.undo();
     expect(h.sheet().drawings).toBe(before);
+  });
+
+  it("a step records before its command runs: values a running recalculation settles on the drawing's sheet survive the step", () => {
+    const h = harness();
+    const computed = [{ index: 0, cells: [{ col: 0, value: 42 }] }];
+    // record() settles: the recalculation writes its result into a new sheet.
+    h.settle.run = () => {
+      h.settle.run = null;
+      const sheets = h.workbook.value!.sheets;
+      h.workbook.value!.sheets = [{ ...sheets[0]!, rows: computed }, ...sheets.slice(1)];
+    };
+    h.drawings.select("dr1");
+    h.drawings.onDrawingKeydown("dr1", key("ArrowRight"));
+    expect(h.undo.undoLabel.value).toBe("Move image");
+    expect(h.sheet().rows).toBe(computed);
+    expect(h.sheet().drawingsDirty).toBe(true);
   });
 
   it("Escape deselects and returns focus to the grid; Tab and Shift+Tab cycle the painted drawings in z-order, wrapping", () => {
