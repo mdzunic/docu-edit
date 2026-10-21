@@ -384,7 +384,8 @@ describe("spec124-structure.ods (LibreOffice-shaped)", () => {
     const e2 = parseA1(O.frame.ref)!;
     const frame = sheet1.drawings!.find((drawing) => drawing.content.kind === "chart")!;
     expect(frame.anchor.from).toMatchObject({ row: e2.row, col: e2.col });
-    expect(frame.content).toEqual({ kind: "chart", sourcePart: "Object 1/content.xml" });
+    // SPEC-132: the frame's content is the chart its object reads as.
+    expect(frame.content).toMatchObject({ kind: "chart", sourcePart: "Object 1/content.xml" });
     expect(frame.sourceXml).toContain(`table:end-cell-address="${O.frame.endCellAddress}"`);
     expect(frame.sourceXml).toContain(`draw:notify-on-update-of-ranges="${O.frame.notifyRanges}"`);
     expect(frame.sourceXml).toContain(`xlink:href="${O.frame.href}"`);

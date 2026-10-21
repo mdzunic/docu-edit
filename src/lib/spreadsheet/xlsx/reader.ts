@@ -12,7 +12,11 @@
 // stays byte-identical):
 // - sheets in `<sheets>` order: name, `state` → visibility, and the
 //   relationship type → kind (worksheet → "grid"; chartsheet, dialogsheet,
-//   macrosheet → "foreign", shown as a placeholder and carried verbatim);
+//   macrosheet → "foreign", shown as a placeholder and carried verbatim —
+//   but SPEC-132: a chartsheet whose drawing resolves to one chart is
+//   "chart", xlsx/drawingXml.ts readXlsxChartSheet: that drawing its one
+//   `drawings` entry, its drawing part `drawingPart`, the chartsheet part
+//   kept verbatim as `partName`; rows, columns and merges stay empty);
 // - the theme part, found through the workbook's `…/theme` relationship
 //   (core/themeDrawingMl.ts readThemePart) → `theme`;
 // - the styles part, through the `…/styles` relationship (xlsx/styles.ts):
@@ -62,7 +66,8 @@
 //   has any) and the part's name into `drawingPart`; the images its pictures
 //   embed into `media`, one part per package path across every sheet (bytes
 //   deferred). The drawing part stays in `opaque`, the splice base of a
-//   touched layer.
+//   touched layer. SPEC-132: a chart drawing's content is the chart read from
+//   its part (xlsx/chartXml.ts readXlsxChart), the part itself in `opaque`.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -84,7 +89,7 @@ import type { CalcSettings, Sheet } from "../model";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
-import { readXlsxSheetDrawings } from "./drawingXml";
+import { readXlsxChartSheet, readXlsxSheetDrawings } from "./drawingXml";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
 import { isSpreadsheetMl, readXlsxStyles } from "./styles";
 
@@ -104,6 +109,9 @@ interface WorkbookSheet {
   visibility: Sheet["visibility"];
   kind: Sheet["kind"];
   partName: string;
+  /** SPEC-132: related as a chartsheet (a "chart" sheet when its drawing
+   * resolves to one chart). */
+  chartsheet: boolean;
 }
 
 function childElements(parent: Element, local: string): Element[] {
@@ -216,6 +224,7 @@ function readWorkbook(parts: Map<string, Uint8Array>, workbookPath: string): Wor
       visibility: state === "hidden" ? "hidden" : state === "veryHidden" ? "veryHidden" : "visible",
       kind: sheetKindOf(relationship.type),
       partName: resolvePartPath(workbookPath, relationship.target),
+      chartsheet: relationship.type.endsWith("/chartsheet"),
     });
   }
   if (sheets.length === 0) {
@@ -345,6 +354,13 @@ export async function parseXlsx(
       }
       if (layer.drawings.length > 0) {
         sheet.drawings = layer.drawings;
+      }
+    } else if (entry.chartsheet && bytes) {
+      const chart = readXlsxChartSheet(parts, entry.partName, sheet);
+      if (chart) {
+        sheet.kind = "chart";
+        sheet.drawings = chart.drawings;
+        sheet.drawingPart = chart.drawingPart;
       }
     }
     sheets.push(sheet);

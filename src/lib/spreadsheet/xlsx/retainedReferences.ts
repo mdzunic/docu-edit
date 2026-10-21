@@ -14,7 +14,13 @@
 // | sheet `extLst` | `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
 // | workbook | `definedName` text (but the model's `_xlnm._FilterDatabase`s) | formula |
 // | tables | `table@ref`, `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
-// | charts (not style/colors parts) | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
+// | charts NOT modelled (not style/colors parts): out-of-catalogue `xl/charts/chart{n}.xml`, chartex `xl/charts/chartEx{n}.xml`, any part no modelled chart drawing relates | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
+//
+// - Narrowed by SPEC-132: a chart part a modelled chart drawing relates
+//   (charts.ts isModelledChart; the part drawingXml.ts chartPartResolver
+//   finds) is left alone — the `charts` adjusters move its `refs` and the
+//   writer patches the part from them (xlsx/chartParts.ts), so nothing is
+//   adjusted twice. SPEC-125's move path comes through here too.
 // | pivot caches | `worksheetSource@ref` on `@sheet` (one naming `name` or `r:id` is left alone) | range |
 // | pivot tables | `location@ref` | range |
 // | comments, threaded comments | `comment@ref`, `threadedComment@ref` | range |
@@ -101,7 +107,9 @@ import type { Sheet, SpreadsheetModel } from "../model";
 import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, decodeXmlText, escapeElementText, findAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { isModelledChart } from "../charts";
 import { FILTER_DATABASE_NAME, sheetPartHasAutoFilter } from "./autoFilter";
+import { chartPartResolver } from "./drawingXml";
 import {
   decodeUtf8,
   encodeUtf8,
@@ -975,6 +983,12 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
   }
   const run = new Rewrite(model, mapper);
   const chartHosts = new Map<string, string>();
+  // SPEC-132: a modelled chart's part is the `charts` adjusters' (its refs
+  // move; the writer patches the part from them) — never adjusted here too.
+  const resolve = chartPartResolver(run.parts);
+  const modelled = new Set(
+    model.sheets.flatMap((sheet) => (sheet.drawings ?? []).flatMap((drawing) => (drawing.content.kind === "chart" && isModelledChart(drawing.content) ? (resolve(sheet, drawing) ?? []) : []))),
+  );
   for (const sheet of model.sheets) {
     const part = sheet.partName;
     if (part === undefined || !run.has(part)) {
@@ -1003,7 +1017,7 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
         for (const chartRel of run.relationships(target)) {
           const chartKind = relationshipKind(chartRel.type);
           const chart = chartKind === "chart" || chartKind === "chartEx" ? targetPart(target, chartRel) : undefined;
-          if (chart !== undefined) {
+          if (chart !== undefined && !modelled.has(chart)) {
             const host = chartHosts.get(chart) ?? sheet.id;
             chartHosts.set(chart, host);
             own = run.rewrite(chart, (xml) => chartEdits(xml, host, run)) || own;
@@ -1041,7 +1055,7 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
   for (const name of run.names()) {
     if (PIVOT_CACHE_PART.test(name)) {
       caches.add(name);
-    } else if (CHART_PART.test(name) && !CHART_STYLE_PART.test(name) && !chartHosts.has(name)) {
+    } else if (CHART_PART.test(name) && !CHART_STYLE_PART.test(name) && !chartHosts.has(name) && !modelled.has(name)) {
       run.rewrite(name, (xml) => chartEdits(xml, "", run));
     }
   }

@@ -273,8 +273,11 @@ describe("reading xlsx drawings", () => {
       extraParts: { "xl/charts/chart1.xml": `${DECL}<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"/>`, "xl/ink/ink1.xml": `${DECL}<ink/>` },
     });
     const drawings = drawingsOf(model);
-    expect(drawings.map((drawing) => drawing.content)).toEqual([
-      { kind: "chart", sourcePart: "xl/charts/chart1.xml" },
+    // SPEC-132: a chart is its part read (readXlsxChart) — an empty chartSpace
+    // is out of the catalogue, so its visual is the placeholder.
+    expect(drawings[0]!.content).toMatchObject({ kind: "chart", sourcePart: "xl/charts/chart1.xml" });
+    expect(drawings[0]!.content).not.toHaveProperty("uncached");
+    expect(drawings.slice(1).map((drawing) => drawing.content)).toEqual([
       { kind: "foreign", label: "Chart" },
       { kind: "foreign", label: "SmartArt" },
       { kind: "foreign", label: "Object" },

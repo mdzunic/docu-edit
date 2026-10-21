@@ -19,10 +19,19 @@
 // | Element | Content |
 // | xdr:pic | image: `a:blip@r:embed` → the part's rels → one MediaPart per package path, shared (mediaId = the path, the bytes deferred with registerPendingMedia); `a:srcRect` → crop; `r:link` → foreign "Linked picture" (the embedded copy its face); an unresolvable embed → foreign "Picture" |
 // | xdr:sp, xdr:cxnSp | shape: `a:prstGeom@prst` via PRST_TO_GEOMETRY (unknown or `a:custGeom` → "rect" + unsupportedGeometryXml), avLst adjustments, fill and outline from `xdr:spPr` else the `xdr:style` refs, `xdr:txBody` → DrawingText |
-// | xdr:grpSp | group: members normalised to the group box through parseGroupChildMapping/mapGroupChild; a nested group or a frame → foreign "Object"; a hidden member is left out |
-// | xdr:graphicFrame | chart (`c:chart@r:id` → sourcePart; unresolvable → foreign "Chart"), SmartArt → foreign "SmartArt", else foreign "Object" |
+// | xdr:grpSp | group: members normalised to the group box through parseGroupChildMapping/mapGroupChild; a chart frame → foreign "Chart"; a nested group or any other frame → foreign "Object"; a hidden member is left out |
+// | xdr:graphicFrame | chart (SPEC-132): `c:chart@r:id` → the part, read by xlsx/chartXml.ts readXlsxChart into a SheetChartContent — `visual` (out of catalogue: unsupportedChartXml), `refs`, `readOnlyReason`, `sourcePart` (never `uncached`: open re-derives it); a relationship or part that does not resolve → foreign "Chart"; SmartArt → foreign "SmartArt", else foreign "Object" |
 // | xdr:contentPart | foreign "Ink" |
 // `xdr:cNvPr` gives name / descr (altText) / hidden; `a:xfrm@rot` rotationDeg.
+//
+// Chart sheets (SPEC-132 "Chart sheets"). A chartsheet's `<drawing r:id>` is
+// followed the same way (readXlsxChartSheet): when its part holds exactly one
+// top-level child, an anchor (Excel writes `xdr:absoluteAnchor`) whose
+// graphicFrame reads as a chart, that drawing is the chart sheet's one
+// drawing; anything else leaves the sheet foreign. The part a chart drawing
+// relates is the one its anchor's `c:chart@r:id` names in its sheet's drawing
+// part's `.rels` (sheetChartPart) — its `sourcePart` for a drawing that has
+// no retained XML.
 //
 // MCE. UNDERSTOOD_SHEET_DRAWING_NAMESPACES is empty: selectAlternateContent
 // always reads the Fallback, and the drawing is `foreign` with the WHOLE
@@ -47,10 +56,16 @@
 // all four were 0 in the source. Inside an `mc:AlternateContent` every
 // branch is patched alike. The content element is never regenerated; an
 // untouched drawing is byte-identical. A drawing created here is written in
-// the canonical form xlsx/drawingGolden.ts fixes. The part's `.rels` keeps a
+// the canonical form xlsx/drawingGolden.ts fixes — SPEC-132: a created chart
+// too, its anchor holding chartXml.ts's chartGraphicFrameXml (the alt text
+// and hidden flag spliced into its cNvPr) around the part the writer's chart
+// planner (xlsx/chartParts.ts) names for it. The part's `.rels` keeps a
 // relationship unless the source's drawings used it and no remaining one
-// does, and gains an image relationship per new picture part (rId = 1 +
-// highest).
+// does, and gains an image relationship per new picture part and a chart
+// relationship per new chart part (rId = 1 + highest). A chart sheet's
+// drawing part is never rewritten: only its chart part is, by the chart
+// write paths.
+import { CHART_RELATIONSHIP } from "../../core/chartPartOoxml";
 import { DRAWINGML_NAMESPACE, GEOMETRY_TO_PRST, mapGroupChild, parseAvLstAdjustments, parseGroupChildMapping, PRST_TO_GEOMETRY, type GroupChildMapping } from "../../core/drawingMl";
 import { contentTypeForPartName, registerPendingMedia, type MediaPart } from "../../core/media";
 import { adjustmentGuideName, adjustmentToGuideValue } from "../../core/shapeCatalogue";
@@ -63,7 +78,7 @@ import { anchorBehaviour, drawingRectPx, EMU_PER_PX, pointFromPx, withDerivedSiz
 import { buildGridMetrics, type GridMetrics } from "../geometry";
 import type { AnchorPoint, DrawingAnchor, DrawingText, Sheet, SheetChartContent, SheetDrawing, SheetDrawingContent } from "../model";
 import { applySplices, escapeAttributeText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
-import { readXlsxChart } from "./chartXml";
+import { chartGraphicFrameXml, readXlsxChart } from "./chartXml";
 import { elementTree, type XmlNode } from "./elementTree";
 import {
   contentTypeIn,
@@ -647,7 +662,17 @@ function memberContent(member: Element, ctx: ReadContext): MemberContent {
     const rotation = rotationOf(member);
     return rotation === undefined ? shape : { ...shape, visual: { ...shape.visual, rotationDeg: rotation } };
   }
+  if (isXdr(member, "graphicFrame") && isChartFrame(member)) {
+    return { kind: "foreign", label: "Chart" }; // a group member is never a modelled chart
+  }
   return { kind: "foreign", label: isXdr(member, "contentPart") ? "Ink" : "Object" };
+}
+
+/** Whether a graphicFrame holds a DrawingML chart. */
+function isChartFrame(frame: Element): boolean {
+  const graphic = aChild(frame, "graphic");
+  const data = graphic ? aChild(graphic, "graphicData") : undefined;
+  return CHART_URIS.has(data?.getAttribute("uri") ?? "");
 }
 
 function readGroup(grpSp: Element, ctx: ReadContext): Extract<SheetDrawingContent, { kind: "group" }> {
@@ -1025,6 +1050,65 @@ export function readXlsxSheetDrawings(parts: PartLookup, sheetPartName: string, 
   }
 }
 
+/** SPEC-132 "Chart sheets": a chartsheet part's layer when the part its
+ * `<drawing r:id>` names holds exactly one top-level child — an anchor (Excel
+ * writes `xdr:absoluteAnchor`; any anchor kind is accepted) whose
+ * graphicFrame reads as a chart (its part resolves) — read exactly as a
+ * worksheet's drawing is; undefined otherwise (the sheet stays foreign). */
+export function readXlsxChartSheet(parts: PartLookup, chartsheetPartName: string, sheet: Sheet): { drawings: SheetDrawing[]; drawingPart: string } | undefined {
+  // A chart drawing embeds no media: a scratch map keeps a rejected layer's
+  // pictures out of the workbook's.
+  const layer = readXlsxSheetDrawings(parts, chartsheetPartName, sheet, new Map());
+  const [only, ...others] = layer.drawings;
+  if (!only || others.length > 0 || layer.drawingPart === undefined || only.content.kind !== "chart") {
+    return undefined;
+  }
+  return { drawings: [only], drawingPart: layer.drawingPart };
+}
+
+/** The relationship id an anchor's `c:chart` element names. */
+function chartRelIdIn(sourceXml: string): string | undefined {
+  return /<(?:[\w.-]+:)?chart\b[^>]*?\s[\w.-]+:id\s*=\s*(["'])([^"']*)\1/.exec(sourceXml)?.[2];
+}
+
+/** SPEC-132: the part each chart drawing relates — through its sheet's
+ * drawing part: the `.rels` entry its anchor's `c:chart@r:id` names (so a
+ * duplicated sheet's copy, whose closure copy relates its own chart part,
+ * resolves to that part whatever `sourcePart` says) — else the content's
+ * `sourcePart`; undefined for any other content, or a part `parts` lacks.
+ * Each drawing part's `.rels` is read once. */
+export function chartPartResolver(parts: PartLookup): (sheet: Pick<Sheet, "drawingPart">, drawing: SheetDrawing) => string | undefined {
+  const relsByPart = new Map<string, readonly RelEntry[]>();
+  const relsOf = (drawingPart: string): readonly RelEntry[] => {
+    let rels = relsByPart.get(drawingPart);
+    if (rels === undefined) {
+      try {
+        rels = relationshipsOf(parts, drawingPart);
+      } catch (error) {
+        if (!(error instanceof XmlScanError)) {
+          throw error;
+        }
+        rels = [];
+      }
+      relsByPart.set(drawingPart, rels);
+    }
+    return rels;
+  };
+  return (sheet, drawing) => {
+    if (drawing.content.kind !== "chart") {
+      return undefined;
+    }
+    const rId = sheet.drawingPart !== undefined && drawing.sourceXml !== undefined ? chartRelIdIn(drawing.sourceXml) : undefined;
+    const rel = rId === undefined ? undefined : relsOf(sheet.drawingPart!).find((entry) => entry.id === rId && relationshipKind(entry.type) === "chart");
+    const related = rel ? targetPart(sheet.drawingPart!, rel) : undefined;
+    if (related !== undefined && parts.has(related)) {
+      return related;
+    }
+    const named = drawing.content.sourcePart;
+    return named !== undefined && parts.has(named) ? named : undefined;
+  };
+}
+
 // --- writing: the canonical forms (xlsx/drawingGolden.ts) ----------------------------------------
 
 /** A new drawing part's root start tag. */
@@ -1146,14 +1230,34 @@ function shapeXml(drawing: SheetDrawing, content: Extract<SheetDrawingContent, {
   );
 }
 
+/** SPEC-132: a created chart's `xdr:graphicFrame` (chartXml.ts
+ * chartGraphicFrameXml — the golden's scaffold) with the drawing's alt text
+ * and hidden flag set on its cNvPr, as a picture's and a shape's carry them. */
+function chartFrameXml(drawing: SheetDrawing, id: number, chartRId: string): string {
+  const frame = chartGraphicFrameXml(id, drawing.name, chartRId);
+  const cNvPr = /<(?:[\w.-]+:)?cNvPr\b[^>]*>/.exec(frame);
+  if (!cNvPr || (drawing.altText === undefined && !drawing.hidden)) {
+    return frame;
+  }
+  let tag = cNvPr[0];
+  if (drawing.altText !== undefined) {
+    tag = setAttribute(tag, "descr", drawing.altText, escapeAttributeText);
+  }
+  if (drawing.hidden) {
+    tag = setAttribute(tag, "hidden", "1");
+  }
+  return frame.slice(0, cNvPr.index) + tag + frame.slice(cNvPr.index + cNvPr[0].length);
+}
+
 /** A created drawing's anchor element in the canonical form
  * (xlsx/drawingGolden.ts): its anchor kind as the model has it — twoCell
  * with its editAs (omitted for "twoCell") and drawings.ts writtenPoints,
  * oneCell from + ext, absolute pos + ext — around an `xdr:pic` (an image;
- * `embedRId` its relationship) or an `xdr:sp` (a shape). `declare` adds
+ * `embedRId` its relationship), an `xdr:sp` (a shape) or, SPEC-132, an
+ * `xdr:graphicFrame` (a chart; `chartRId` its relationship). `declare` adds
  * namespace declarations to the anchor's start tag (a part whose root does
  * not bind `xdr`/`a`). Undefined for content without a canonical form. */
-export function canonicalAnchorXml(drawing: SheetDrawing, metrics: GridMetrics, ids: { cNvPrId: number; embedRId?: string }, declare = ""): string | undefined {
+export function canonicalAnchorXml(drawing: SheetDrawing, metrics: GridMetrics, ids: { cNvPrId: number; embedRId?: string; chartRId?: string }, declare = ""): string | undefined {
   const { anchor, content } = drawing;
   const box = anchorBoxEmu(anchor, metrics);
   let inner: string;
@@ -1161,6 +1265,8 @@ export function canonicalAnchorXml(drawing: SheetDrawing, metrics: GridMetrics, 
     inner = pictureXml(drawing, content, ids.cNvPrId, ids.embedRId, box);
   } else if (content.kind === "shape") {
     inner = shapeXml(drawing, content, ids.cNvPrId, box);
+  } else if (content.kind === "chart" && ids.chartRId !== undefined) {
+    inner = chartFrameXml(drawing, ids.cNvPrId, ids.chartRId);
   } else {
     return undefined;
   }
@@ -1526,19 +1632,22 @@ export interface DrawingPartWrite {
 /** A drawing part rebuilt (see the module header) — the retained `source`
  * the splice base, or a new part without one — holding `drawings` in
  * z-order: an imported drawing patched (canonical when there is no source
- * to patch it into), a created image or shape canonical, any other created
- * drawing left out. A created drawing's cNvPr id is k + 1 (its name's
- * number) when free, else 1 + the highest in the part. `mediaPath` names
- * the package path a created picture's media is written at (undefined: the
- * picture is left out). */
+ * to patch it into), a created image, shape or chart canonical, any other
+ * created drawing left out. A created drawing's cNvPr id is k + 1 (its
+ * name's number) when free, else 1 + the highest in the part. `mediaPath`
+ * names the package path a created picture's media is written at
+ * (undefined: the picture is left out); `chartPart` (SPEC-132) the chart
+ * part a created chart relates (undefined, or no `chartPart`: the chart is
+ * left out). */
 export function writeDrawingPart(options: {
   partName: string;
   source?: { xml: string; rels?: string };
   drawings: readonly SheetDrawing[];
   metrics: GridMetrics;
   mediaPath: (mediaId: string) => string | undefined;
+  chartPart?: (drawing: SheetDrawing) => string | undefined;
 }): DrawingPartWrite {
-  const { partName, drawings, metrics, mediaPath } = options;
+  const { partName, drawings, metrics, mediaPath, chartPart } = options;
   const layout = options.source ? partLayout(options.source.xml) : undefined;
   const declare = layout ? missingDeclarations(layout.rootTag) : "";
   const imported = layout ? drawings.filter((drawing) => drawing.sourceXml !== undefined) : [];
@@ -1555,15 +1664,16 @@ export function writeDrawingPart(options: {
     return id;
   };
   const added: string[] = [];
-  const embedByPath = new Map<string, string>();
-  const embedFor = (path: string): string => {
-    let id = embedByPath.get(path) ?? kept.find((rel) => relationshipKind(rel.type) === "image" && targetPart(partName, rel) === path)?.id;
+  const relByTarget = new Map<string, string>();
+  const relFor = (kind: "image" | "chart", type: string, path: string): string => {
+    const key = `${kind} ${path}`;
+    let id = relByTarget.get(key) ?? kept.find((rel) => relationshipKind(rel.type) === kind && targetPart(partName, rel) === path)?.id;
     if (id === undefined) {
       id = nextRelationshipId(relIds);
       relIds.add(id);
-      added.push(relationshipXml(id, IMAGE_RELATIONSHIP_TYPE, relativeTarget(partName, path)));
+      added.push(relationshipXml(id, type, relativeTarget(partName, path)));
     }
-    embedByPath.set(path, id);
+    relByTarget.set(key, id);
     return id;
   };
   const anchors: string[] = [];
@@ -1573,11 +1683,14 @@ export function writeDrawingPart(options: {
       continue;
     }
     const { content } = drawing;
-    const path = content.kind === "image" ? mediaPath(content.mediaId) : undefined;
-    if ((content.kind !== "image" && content.kind !== "shape") || (content.kind === "image" && path === undefined)) {
+    const path = content.kind === "image" ? mediaPath(content.mediaId) : content.kind === "chart" ? chartPart?.(drawing) : undefined;
+    if ((content.kind !== "shape" && path === undefined) || (content.kind !== "image" && content.kind !== "shape" && content.kind !== "chart")) {
       continue;
     }
-    const ids = { cNvPrId: mint(nameNumber(drawing)), ...(path === undefined ? {} : { embedRId: embedFor(path) }) };
+    const ids = {
+      cNvPrId: mint(nameNumber(drawing)),
+      ...(path === undefined ? {} : content.kind === "chart" ? { chartRId: relFor("chart", CHART_RELATIONSHIP, path) } : { embedRId: relFor("image", IMAGE_RELATIONSHIP_TYPE, path) }),
+    };
     const xml = canonicalAnchorXml(drawing, metrics, ids, declare);
     if (xml !== undefined) {
       anchors.push(xml);
@@ -1659,7 +1772,8 @@ function nextDrawingPartName(taken: ReadonlySet<string>): string {
  * `taken`, which it joins) with its `.rels`, the sheet relationship and the
  * worksheet's `<drawing>`; the last drawing gone the relationship and the
  * `<drawing>` removed (the part and its `.rels` then unreachable, so the
- * writer drops them). `retained` says whether the sheet part is in `parts`.
+ * writer drops them). `retained` says whether the sheet part is in `parts`;
+ * `chartPart` names the part a created chart relates (writeDrawingPart).
  * Undefined when nothing is written. */
 export function writeSheetDrawings(options: {
   parts: PartLookup;
@@ -1668,10 +1782,13 @@ export function writeSheetDrawings(options: {
   retained: boolean;
   taken: Set<string>;
   mediaPath: (mediaId: string) => string | undefined;
+  chartPart?: (drawing: SheetDrawing) => string | undefined;
 }): SheetDrawingWrite | undefined {
-  const { parts, sheet, sheetPart, retained, taken, mediaPath } = options;
+  const { parts, sheet, sheetPart, retained, taken, mediaPath, chartPart } = options;
   const found = retained ? sheetDrawingPart(parts, sheetPart) : undefined;
-  const drawings = (sheet.drawings ?? []).filter((drawing) => (found && drawing.sourceXml !== undefined) || drawing.content.kind === "image" || drawing.content.kind === "shape");
+  const drawings = (sheet.drawings ?? []).filter(
+    (drawing) => (found && drawing.sourceXml !== undefined) || drawing.content.kind === "image" || drawing.content.kind === "shape" || (drawing.content.kind === "chart" && chartPart !== undefined),
+  );
   const sheetRelsPath = relsPathFor(sheetPart);
   const sheetRelsXml = retained ? partTextOf(parts, sheetRelsPath) : undefined;
   const sheetRels = sheetRelsXml === undefined ? [] : readRels(sheetRelsXml);
@@ -1681,7 +1798,7 @@ export function writeSheetDrawings(options: {
   if (found) {
     const relsXml = partTextOf(parts, relsPathFor(found.partName));
     const source = { xml: partTextOf(parts, found.partName)!, ...(relsXml === undefined ? {} : { rels: relsXml }) };
-    const written = writeDrawingPart({ partName: found.partName, source, drawings, metrics, mediaPath });
+    const written = writeDrawingPart({ partName: found.partName, source, drawings, metrics, mediaPath, ...(chartPart ? { chartPart } : {}) });
     if (written.written > 0) {
       out.texts.set(found.partName, written.xml);
       if (written.rels !== undefined) {
@@ -1697,7 +1814,7 @@ export function writeSheetDrawings(options: {
     return out;
   }
   const partName = nextDrawingPartName(taken);
-  const written = writeDrawingPart({ partName, drawings, metrics, mediaPath });
+  const written = writeDrawingPart({ partName, drawings, metrics, mediaPath, ...(chartPart ? { chartPart } : {}) });
   if (written.written === 0) {
     return undefined;
   }
