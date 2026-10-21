@@ -16,7 +16,8 @@
 // [0, frozenW] × [frozenH, viewRows] (origin 0, frozenH + sy) and main (origin
 // frozenW + sx, frozenH + sy) — and a drawing sits in a pane at
 // (x − originX, y − originY). A drawing is mounted in every pane whose window
-// (what the pane shows, plus one screen of overscan each way) its rectangle
+// (what the pane shows, plus one screen of overscan each way along the axes
+// the pane scrolls on — a frozen band never shows more) its rectangle
 // intersects, and the pane's overflow clips each copy, so a drawing straddling
 // a freeze line shows split exactly at the line, the scrolled part moving with
 // the scroll. One copy is `primary` — the pane holding the rectangle's
@@ -114,11 +115,15 @@ export function inPaneWindow(rect: RectPx, pane: DrawingPane, overscan: { x: num
 }
 
 /** Every pane with the drawings it mounts (back to front), one screen of
- * overscan each way (see the module header). */
+ * overscan each way along its scrolled axes (see the module header). */
 export function layoutDrawingPanes(shown: readonly ShownDrawing[], layout: PaneLayout, selectedId: string | null): PaneView[] {
   const panes = drawingPanes(layout);
-  const overscan = { x: layout.viewCols, y: layout.viewRows };
-  const mounted = panes.map((pane) => shown.filter((entry) => inPaneWindow(entry.rect, pane, overscan)));
+  // Overscan only along a scrolled axis: a frozen band never shows more.
+  const overscanOf = (pane: DrawingPane) => ({
+    x: pane.id === "top" || pane.id === "main" ? layout.viewCols : 0,
+    y: pane.id === "left" || pane.id === "main" ? layout.viewRows : 0,
+  });
+  const mounted = panes.map((pane) => shown.filter((entry) => inPaneWindow(entry.rect, pane, overscanOf(pane))));
   const primary = new Map<string, DrawingPaneId>();
   for (const entry of shown) {
     const want = primaryPaneOf(entry.rect, layout);
