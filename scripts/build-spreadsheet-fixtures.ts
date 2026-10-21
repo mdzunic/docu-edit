@@ -249,5 +249,16 @@ writeFileSync(join(fixturesDir, "spec131-drawings.xlsx"), await buildSpec131Draw
 writeFileSync(join(fixturesDir, "spec131-drawings.ods"), await buildSpec131DrawingsOdsBytes());
 // --- end SPEC-131 ---------------------------------------------------------------
 
+// --- SPEC-132 -------------------------------------------------------------------
+// - spec132-charts.xlsx — Excel-shaped sheet charts: a clustered column with
+//                         caches, a c15 extLst and chartStyle/colors parts, a
+//                         pie, a 3-D column, a cx1 waterfall with Excel's
+//                         Fallback, a scatter, a line on another sheet and a
+//                         chart sheet
+import { buildSpec132ChartsXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec132-charts.xlsx"), await buildSpec132ChartsXlsxBytes());
+// --- end SPEC-132 ---------------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);
