@@ -284,6 +284,13 @@ function arrangeDisabled(end = "front") {
         :disabled="!s.canInsertDrawings"
         @select="emit('command', SHEET_MENU_COMMANDS.insertShape)"
       />
+      <MenuItem
+        label="Chart"
+        icon="chart"
+        testid="sheet-menu-insert-chart"
+        :disabled="!s.canInsertDrawings"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertChart)"
+      />
     </template>
 
     <template #arrange>

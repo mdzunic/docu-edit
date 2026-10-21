@@ -134,6 +134,29 @@
 //     later upgrade of a record made since) is re-read for its cells and
 //     keeps its stored drawings; the stored `media` is kept, the re-read's
 //     parts joining it.
+// 13 — SPEC-132: sheet charts (a chart drawing's `visual`, `refs` and
+//     `readOnlyReason`, from its `xl/charts/chartN.xml` part or its
+//     `Object N/content.xml`; an xlsx chartsheet whose drawing resolves to
+//     one chart is a `kind: "chart"` sheet). Clean sheets and chart sheets
+//     (always clean: a SPEC-131 record held them as foreign placeholders) are
+//     re-read. The step, run for each dirty sheet — and for the stored
+//     drawing layer a clean but `drawingsDirty` sheet keeps — upgrades each
+//     SPEC-131 chart placeholder in place: its part is found through the
+//     drawing's own source XML (xlsx: its `c:chart r:id` in the sheet's
+//     drawing part relationships; ods: its frame's `xlink:href`), which also
+//     corrects a SPEC-131 duplicate's placeholder naming its origin's part,
+//     and parsed from `opaque`. Charts live in their own parts, whose
+//     references SPEC-124's and SPEC-125's retained rewrites kept current
+//     through every structural edit and move made before this version, so
+//     the step reads already-adjusted references; sheet renames are still
+//     source-time text, so SPEC-121's sourceSheetRemap (a copy's own remap
+//     included) is applied to the references it reads. A placeholder whose
+//     part cannot be read becomes a foreign "Chart" drawing.
+//
+// Opening (SPEC-132 "Open trusts caches"): no chart is refreshed at open,
+// except one whose part carries a reference but no cache for it, refreshed
+// for display (refreshSheetChart forDisplay — no `cachesDirty`, so its part
+// is still written verbatim).
 //
 // SPEC-126: a csv/tsv workbook never runs a ReaderUpgrade — its source is
 // one delimited-text part, read by csv/parse.ts, which adds no element to
@@ -158,7 +181,7 @@ import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
 import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 12;
+export const SPREADSHEET_READER_VERSION = 13;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -363,7 +386,27 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       }
     },
   },
+  {
+    // SPEC-132 (12 → 13): sheet charts (see the version history).
+    from: 12,
+    async upgradeDirtySheet(model, sheet, sourceParts, record) {
+      await upgradeChartPlaceholders(model, sheet, sourceParts, record ?? model);
+    },
+  },
 ];
+
+// --- SPEC-132's step -------------------------------------------------------------------------
+
+/** A sheet's SPEC-131 chart placeholders (`{ kind: "chart", sourcePart? }`,
+ * no visual) upgraded in place (see the version history). */
+async function upgradeChartPlaceholders(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>, record: SpreadsheetModel): Promise<void> {
+  const placeholders = (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && !("visual" in drawing.content));
+  if (!placeholders) {
+    return;
+  }
+  const { upgradedChartDrawings } = await import("./chartsOpen");
+  sheet.drawings = upgradedChartDrawings(model, sheet, sourceParts, record);
+}
 
 // --- SPEC-131's step -------------------------------------------------------------------------
 
@@ -772,7 +815,12 @@ export async function readSpreadsheetBytes(
   title: string,
   parts?: Map<string, Uint8Array>,
 ): Promise<SpreadsheetModel> {
-  return assembleSpreadsheet(title, format, await parse(bytes, format, parts));
+  const model = assembleSpreadsheet(title, format, await parse(bytes, format, parts));
+  if (model.sheets.some((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && drawing.content.refs !== undefined))) {
+    const { refreshUncachedCharts } = await import("./chartsOpen");
+    refreshUncachedCharts(model);
+  }
+  return model;
 }
 
 /** Brings a stored workbook up to SPREADSHEET_READER_VERSION (see the module
@@ -912,7 +960,9 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
       return stored;
     }
     const { id: _id, name: _name, visibility: _visibility, kind: _kind, tabColor: _tab, partName: _part, sourceXml: _source, copiedFrom: _copied, ...content } = read;
-    const sheet: Sheet = { ...content, id: stored.id, name: stored.name, visibility: stored.visibility, kind: stored.kind };
+    // SPEC-132: a chartsheet a SPEC-131 record held as a foreign placeholder re-reads as a chart sheet.
+    const kind = stored.kind === "foreign" && read.kind === "chart" ? read.kind : stored.kind;
+    const sheet: Sheet = { ...content, id: stored.id, name: stored.name, visibility: stored.visibility, kind };
     if (stored.tabColor !== undefined) {
       sheet.tabColor = stored.tabColor;
     }
@@ -930,6 +980,9 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
       delete sheet.drawings;
       delete sheet.drawingPart;
       Object.assign(sheet, pick(stored, ["drawings", "drawingPart", "drawingsDirty"]));
+      if (model.readerVersion < 13) {
+        await upgradeChartPlaceholders(fresh, sheet, sourceParts, model);
+      }
     }
     return sheet;
   }

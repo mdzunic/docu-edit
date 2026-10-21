@@ -26,6 +26,21 @@ export const C_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/cha
 const R_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 export const CHART_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+
+/** A host's live source references for a regenerated part (SPEC-132): per
+ * series, index-aligned with the series written, the WIRE text of each
+ * `c:f` (`Sheet1!$B$2:$B$5` — the codec never interprets it, only escapes
+ * it). A series without `name` gets a literal `c:tx/c:v`; one without
+ * `categories` gets no `c:cat`/`c:xVal` at all (the consumer numbers the
+ * categories 1, 2, … — Excel's own form for a series with no category
+ * range); one without `values` gets a literal `c:numLit`. `plotVisibleOnly`
+ * false writes `c:plotVisOnly` 0 (absent: 1, as without refs). A part
+ * written with refs also states `c:dispBlanksAs` "gap" — the host plots a
+ * blank cell as a gap, and the element's schema default is "zero". */
+export interface ChartPartRefs {
+  series: { name?: string; categories?: string; values?: string }[];
+  plotVisibleOnly?: boolean;
+}
 export const CHART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 
 const CHART_TYPE_ELEMENT_TAGS = [
@@ -321,17 +336,20 @@ function columnLetterFor(seriesIndex: number): string {
   return String.fromCharCode(66 + (seriesIndex % 24));
 }
 
-function catXml(categories: string[]): string {
+// Each builder below takes the `c:f` text as written (already escaped): the
+// placeholder formulas when the host gave no refs, else the host's wire text.
+
+function catXml(categories: string[], f: string): string {
   const pts = categories
     .map((c, i) => (c === "" ? "" : `<c:pt idx="${i}"><c:v>${escapeXmlText(c)}</c:v></c:pt>`))
     .join("");
   return (
-    `<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$${categories.length + 1}</c:f>` +
+    `<c:cat><c:strRef><c:f>${f}</c:f>` +
     `<c:strCache><c:ptCount val="${categories.length}"/>${pts}</c:strCache></c:strRef></c:cat>`
   );
 }
 
-function xValXml(categories: string[]): string {
+function xValXml(categories: string[], f: string): string {
   const pts = categories
     .map((c, i) => {
       const n = Number(c);
@@ -339,22 +357,33 @@ function xValXml(categories: string[]): string {
     })
     .join("");
   return (
-    `<c:xVal><c:numRef><c:f>Sheet1!$A$2:$A$${categories.length + 1}</c:f>` +
+    `<c:xVal><c:numRef><c:f>${f}</c:f>` +
     `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${categories.length}"/>${pts}</c:numCache></c:numRef></c:xVal>`
   );
 }
 
-function valuesXml(tag: "val" | "yVal", values: (number | null)[], colLetter: string): string {
-  const pts = values.map((v, i) => (v === null ? "" : `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`)).join("");
+function valuePointsXml(values: (number | null)[]): string {
+  return values.map((v, i) => (v === null ? "" : `<c:pt idx="${i}"><c:v>${v}</c:v></c:pt>`)).join("");
+}
+
+function valuesXml(tag: "val" | "yVal", values: (number | null)[], f: string): string {
   return (
-    `<c:${tag}><c:numRef><c:f>Sheet1!$${colLetter}$2:$${colLetter}$${values.length + 1}</c:f>` +
-    `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${values.length}"/>${pts}</c:numCache></c:numRef></c:${tag}>`
+    `<c:${tag}><c:numRef><c:f>${f}</c:f>` +
+    `<c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="${values.length}"/>${valuePointsXml(values)}</c:numCache></c:numRef></c:${tag}>`
   );
 }
 
-function txXml(name: string, colLetter: string): string {
+/** Values with no reference (refs mode): the schema's literal, `c:numLit`. */
+function valuesLiteralXml(tag: "val" | "yVal", values: (number | null)[]): string {
   return (
-    `<c:tx><c:strRef><c:f>Sheet1!$${colLetter}$1</c:f>` +
+    `<c:${tag}><c:numLit><c:formatCode>General</c:formatCode>` +
+    `<c:ptCount val="${values.length}"/>${valuePointsXml(values)}</c:numLit></c:${tag}>`
+  );
+}
+
+function txXml(name: string, f: string): string {
+  return (
+    `<c:tx><c:strRef><c:f>${f}</c:f>` +
     `<c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>${escapeXmlText(name)}</c:v></c:pt></c:strCache></c:strRef></c:tx>`
   );
 }
@@ -369,7 +398,29 @@ function serFillXml(color: ModelColor): string {
   return hex ? `<c:spPr><a:solidFill><a:srgbClr val="${hex}"/></a:solidFill></c:spPr>` : "";
 }
 
-function serXml(chart: ChartVisual, series: ChartSeries, index: number): string {
+type SeriesWireRefs = ChartPartRefs["series"][number];
+
+/** A series' name, categories and values written from the host's
+ * references (refs mode): a reference's element carries its `c:f`; without
+ * one the name and values are literal and the categories left out — see
+ * ChartPartRefs. */
+function referencedSeriesXml(chart: ChartVisual, series: ChartSeries, wire: SeriesWireRefs): { tx: string; catOrX: string; val: string } {
+  const isScatter = chart.chartType === "scatter";
+  const valTag = isScatter ? "yVal" : "val";
+  let catOrX = "";
+  if (wire.categories !== undefined) {
+    const f = escapeXmlText(wire.categories);
+    catOrX = isScatter ? xValXml(chart.categories, f) : catXml(chart.categories, f);
+  }
+  return {
+    tx: wire.name === undefined ? `<c:tx><c:v>${escapeXmlText(series.name)}</c:v></c:tx>` : txXml(series.name, escapeXmlText(wire.name)),
+    catOrX,
+    val: wire.values === undefined ? valuesLiteralXml(valTag, series.values) : valuesXml(valTag, series.values, escapeXmlText(wire.values)),
+  };
+}
+
+/** One `c:ser`; without `wire` its formulas are SPEC-052's placeholders. */
+function serXml(chart: ChartVisual, series: ChartSeries, index: number, wire?: SeriesWireRefs): string {
   const colLetter = columnLetterFor(index);
   let marker = "";
   if (chart.chartType === "lineMarkers") {
@@ -378,15 +429,21 @@ function serXml(chart: ChartVisual, series: ChartSeries, index: number): string 
     marker = '<c:marker><c:symbol val="none"/></c:marker>';
   }
   const isScatter = chart.chartType === "scatter";
-  const catOrX = isScatter ? xValXml(chart.categories) : catXml(chart.categories);
-  const valTag = isScatter ? "yVal" : "val";
+  const placeholderCategories = `Sheet1!$A$2:$A$${chart.categories.length + 1}`;
+  const { tx, catOrX, val } = wire
+    ? referencedSeriesXml(chart, series, wire)
+    : {
+        tx: txXml(series.name, `Sheet1!$${colLetter}$1`),
+        catOrX: isScatter ? xValXml(chart.categories, placeholderCategories) : catXml(chart.categories, placeholderCategories),
+        val: valuesXml(isScatter ? "yVal" : "val", series.values, `Sheet1!$${colLetter}$2:$${colLetter}$${series.values.length + 1}`),
+      };
   return (
     `<c:ser><c:idx val="${index}"/><c:order val="${index}"/>` +
-    txXml(series.name, colLetter) +
+    tx +
     serFillXml(series.color) +
     marker +
     catOrX +
-    valuesXml(valTag, series.values, colLetter) +
+    val +
     (isScatter ? '<c:smooth val="0"/>' : "") +
     "</c:ser>"
   );
@@ -497,13 +554,16 @@ function axesXml(chart: ChartVisual): string {
 /** Regenerates a chart part's full `c:chartSpace` XML from the model — used
  * when a chart is `edited` (SPEC-052 "Rewriting a chart"). An untouched chart
  * never calls this: its part's original bytes are re-emitted verbatim from
- * the package's preserved parts instead. */
-export function chartPartXml(chart: ChartVisual): string {
+ * the package's preserved parts instead. Without `refs` every series cites
+ * SPEC-052's placeholder `Sheet1!…` formulas (nothing resolves them: no
+ * workbook is embedded); with them (SPEC-132's sheet charts) each series
+ * writes the host's own `c:f` texts instead — see ChartPartRefs. */
+export function chartPartXml(chart: ChartVisual, refs?: ChartPartRefs): string {
   // Pie/doughnut render (and so persist) only the first series — a real
   // c:pieChart/c:doughnutChart holds exactly one c:ser; the model keeps the
   // rest for the data sheet to still show (SPEC-052 "Chart catalogue").
   const seriesToWrite = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
-  const seriesXml = seriesToWrite.map((s, i) => serXml(chart, s, i)).join("");
+  const seriesXml = seriesToWrite.map((s, i) => serXml(chart, s, i, refs && (refs.series[i] ?? {}))).join("");
   const typeXml = chartTypeXml(chart, seriesXml);
   const titleXml = chart.options.title ? axTitleXml(chart.options.title) : '<c:autoTitleDeleted val="1"/>';
   const legendXml =
@@ -517,7 +577,7 @@ export function chartPartXml(chart: ChartVisual): string {
     titleXml +
     `<c:plotArea><c:layout/>${typeXml}${axesXml(chart)}</c:plotArea>` +
     legendXml +
-    '<c:plotVisOnly val="1"/>' +
+    (refs ? `<c:plotVisOnly val="${refs.plotVisibleOnly === false ? 0 : 1}"/><c:dispBlanksAs val="gap"/>` : '<c:plotVisOnly val="1"/>') +
     "</c:chart>" +
     "</c:chartSpace>"
   );

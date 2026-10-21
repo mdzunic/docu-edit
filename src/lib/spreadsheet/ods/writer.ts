@@ -95,7 +95,7 @@ import { resolveColor, resolveFont, DEFAULT_THEME } from "../../core/theme";
 import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { SheetRemap } from "../formula/sheetRefs";
-import type { CellStyle, Sheet, SpreadsheetModel } from "../model";
+import type { CellStyle, Sheet, SheetDrawing, SpreadsheetModel } from "../model";
 import type { DataValidation } from "../validation";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../numberFormat/locale";
 import { formatCodeOf } from "../numberFormat/builtin";
@@ -114,6 +114,7 @@ import {
   tableNameOf,
   tableStyleNameOf,
 } from "./package";
+import { hasOdsChartWork, planOdsCharts } from "./chartParts";
 import { odsDatabaseRangesXml, odsSuffixWithAutoFilters } from "./databaseRanges";
 import { drawingMediaIds, OdsMediaPaths } from "./drawingXml";
 import { OdsConditionalFormatWriter } from "./conditionalFormats";
@@ -187,7 +188,7 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty)) {
+  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
   return zip(mimetypeFirst(buildSubstitution(model, parts, options)));
@@ -338,8 +339,11 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const plan = mediaPlan(model);
   const contentTypes = new Map((model.media ?? []).map((part) => [part.mediaId, part.contentType] as const));
   const mediaPath = (id: string): string => plan.paths.pathOf(id, contentTypes.get(id) ?? "image/png");
+  // SPEC-132: every chart gets a new embedded object (ods/chartParts.ts).
+  const charts = planOdsCharts(model, []);
+  const chartObjectDir = (drawing: SheetDrawing): string | undefined => charts.minted.get(drawing);
   const tables = model.sheets
-    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath }))
+    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir }))
     .join("");
   const databaseRanges = odsDatabaseRangesXml(model.sheets);
   const styles = registry.xml();
@@ -350,8 +354,14 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
     `<office:body><office:spreadsheet>${calculationSettings(model)}${validations.blockXml()}${tables}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
   const active = model.sheets[model.activeSheetIndex] ?? model.sheets[0];
   // SPEC-131: every picture a drawing shows, listed in the manifest.
-  const pictures: ZipEntryInput[] = [...plan.shown].map(([path, part]) => ({ name: path, data: mediaBytes(part) }));
-  const manifest = spliceManifest(FROM_SCRATCH_ODS_MANIFEST_XML, new Set(), [...plan.shown].map(([path, part]) => manifestEntryFor(FROM_SCRATCH_ODS_MANIFEST_XML, path, part.contentType)));
+  const pictures: ZipEntryInput[] = [
+    ...[...plan.shown].map(([path, part]) => ({ name: path, data: mediaBytes(part) })),
+    ...charts.newParts.map((part) => ({ name: part.name, data: encode(part.text) })),
+  ];
+  const manifest = spliceManifest(FROM_SCRATCH_ODS_MANIFEST_XML, new Set(), [
+    ...[...plan.shown].map(([path, part]) => manifestEntryFor(FROM_SCRATCH_ODS_MANIFEST_XML, path, part.contentType)),
+    ...charts.manifestEntries,
+  ]);
   return [
     { name: "mimetype", data: encode(ODS_MIMETYPE), store: true },
     { name: "META-INF/manifest.xml", data: encode(manifest) },
@@ -475,7 +485,10 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const recoloured = new Set<string>();
   const plan = mediaPlan(model);
   const contentTypes = new Map((model.media ?? []).map((part) => [part.mediaId, part.contentType] as const));
+  // SPEC-132: the save's chart objects — minted, regenerated, patched (ods/chartParts.ts).
+  const charts = planOdsCharts(model, parts.keys());
   const context: OdsTableContext = {
+    chartObjectDir: (drawing) => charts.minted.get(drawing),
     mediaPath: (id) => plan.paths.pathOf(id, contentTypes.get(id) ?? "image/png"),
     model,
     registry,
@@ -541,7 +554,9 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     .map((table) => sourceContent.slice(table.start, table.end));
   const shownObjects = new Set(objectsReferenced(content));
   const shownPictures = new Set([...picturesReferenced(content), ...picturesReferenced(stylesXml ?? "")]);
-  const droppedObjects = deletedTexts.flatMap(objectsReferenced).filter((object) => !shownObjects.has(object));
+  // SPEC-132: an object any retained table showed that no table shows now — a deleted table's, or a
+  // deleted chart's (SPEC-131's reachability rule) — leaves with its manifest entries.
+  const droppedObjects = [...new Set([...deletedTexts.flatMap(objectsReferenced), ...objectsReferenced(sourceContent)])].filter((object) => !shownObjects.has(object));
   const droppedPictures = new Set(deletedTexts.flatMap(picturesReferenced).filter((picture) => !shownPictures.has(picture)));
   // SPEC-131: a picture of `media` no drawing shows any more leaves the package
   // only when no retained XML part mentions its path either.
@@ -580,14 +595,14 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       data = encode(withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml));
     } else if (name === "settings.xml") {
       data = encode(settingsXmlFor(decodeUtf8(bytes), model, remap, recoloured, active?.name));
-    } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0 || manifestAdds.length > 0)) {
+    } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0 || manifestAdds.length > 0 || charts.manifestEntries.length > 0)) {
       const xml = decodeUtf8(bytes);
       const entries = readManifest(xml);
       const remove = new Set(
         entries.map((entry) => entry.fullPath).filter((path) => droppedPictures.has(path) || droppedObjects.some((object) => path === `${object}/` || isObjectPart(path, object))),
       );
       const listed = new Set(entries.map((entry) => entry.fullPath));
-      const adds = manifestAdds.filter(([path]) => !listed.has(path)).map(([path, part]) => manifestEntryFor(xml, path, part.contentType));
+      const adds = [...manifestAdds.filter(([path]) => !listed.has(path)).map(([path, part]) => manifestEntryFor(xml, path, part.contentType)), ...charts.manifestEntries];
       const next = spliceManifest(xml, remove, adds);
       data = next === xml ? bytes : encode(next);
     } else if (plan.shown.has(name)) {
@@ -597,12 +612,17 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       const object = name.slice(0, name.indexOf("/"));
       const xml = decodeUtf8(bytes);
       const next = passOdsText(xml, objectRemap.get(object) ?? remap, rootNamespaces(xml));
-      data = next === xml ? bytes : encode(next);
+      // SPEC-132: a modelled chart's regenerated or patched object is model text, never passed again.
+      const own = charts.rewrite(name, next);
+      data = own !== undefined ? encode(own) : next === xml ? bytes : encode(next);
     }
     out.push({ name, data });
   }
   for (const [path, part] of manifestAdds) {
     out.push({ name: path, data: mediaBytes(part) });
+  }
+  for (const part of charts.newParts) {
+    out.push({ name: part.name, data: encode(part.text) });
   }
   return out;
 }

@@ -36,7 +36,8 @@
 // | 9 | conditionalFormats | SPEC-129: Sheet.conditionalFormats — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied format removed) and its cellIs/expression formulas re-anchored with adjustAnchoredFormula; every other formula a rule carries (cfFormulas.ts), on every sheet, via adjustFormula — see "9. conditionalFormats" |
 // | 10 | validations | SPEC-130: Sheet.validations — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied rule removed) and formula1/formula2 re-anchored with adjustAnchoredFormula; every other sheet's rule formulas via adjustFormula — see "10. validations" |
 // | 11 | drawings | SPEC-131: the edited sheet's Sheet.drawings per drawings.ts's anchor-follow table (moveAndSize drawings move, grow, shrink and go with their cells; move drawings shift with their `from`; fixed drawings never move); an xlsx sheet holding drawings gets `drawingsDirty` |
-// Later specs append theirs, in landing order — charts (132), names and tables (133), notes and hyperlinks (135),
+// | 12 | charts | SPEC-132: adjustFormula over every modelled chart's refs on every sheet (host = the chart's sheet) — `refsDirty` where one changed — then a refresh of each refreshable chart whose refs changed or read the edited sheet (`cachesDirty` when its visual changed; read-only charts only adjust); ods chart frames' notify-on-update-of-ranges synced (charts.ts adjustChartsForEdit) |
+// Later specs append theirs, in landing order — names and tables (133), notes and hyperlinks (135),
 // pageBreaks (136), pivots (139) — each with the registry contract test in
 // structure.spec.ts, retiring its rows from retainedReferences' tables in the
 // same change.
@@ -53,6 +54,7 @@ import type { CellRef, GridRange } from "./address";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { mapFormatFormulas, mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
 import { formatOrigin, renumberPriorities, sheetFormats, type ConditionalFormat } from "./conditionalFormats";
+import { adjustChartsForEdit } from "./charts";
 import type { AutoFilter, FilterColumn } from "./filter";
 import { adjustDrawingsForEdit } from "./drawings";
 import { adjustAnchoredFormula, adjustFormula, adjustFormulaReferences } from "./formula/adjust";
@@ -1063,6 +1065,19 @@ const drawingsAdjuster: ReferenceAdjuster = {
   },
 };
 
+// --- 12. charts --------------------------------------------------------------------------------
+// SPEC-132 "Reference adjustment" (charts.ts is the normative source). Every
+// modelled chart's references, on every sheet (a chart may plot another
+// sheet's data), go through adjustFormula; the chart drawing itself is
+// moved by `drawings` above. SPEC-124's retained rows for chart parts now
+// cover only the parts this spec does not model (out of catalogue,
+// chartex), so nothing is adjusted twice.
+
+const chartsAdjuster: ReferenceAdjuster = {
+  id: "charts",
+  adjust: adjustChartsForEdit,
+};
+
 // --- the registry ----------------------------------------------------------------------------
 
 export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
@@ -1077,6 +1092,7 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   conditionalFormatsAdjuster,
   validationsAdjuster,
   drawingsAdjuster,
+  chartsAdjuster,
 ];
 
 /** One structural edit (see the module header). */

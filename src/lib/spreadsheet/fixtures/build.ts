@@ -152,6 +152,22 @@
 //   `draw:g`, a `draw:control` over `office:forms`, graphic styles
 //   `gr1`…`gr6`. SPEC131_DRAWINGS_XLSX / SPEC131_DRAWINGS_ODS record the
 //   facts.
+// - spec132-charts.xlsx (SPEC-132) — Excel 365-shaped sheet charts: "Data"
+//   (A1:D5) a clustered column over Data!$A$1:$D$5 with full caches, c16
+//   uniqueIds, value labels with the c15 leader-lines extLst and its
+//   chartStyle/colors parts, a pie (per-slice c:dPt), a 3-D clustered column
+//   (view3D, walls, bar3DChart) and a waterfall chartex in a wsDr-level
+//   `mc:AlternateContent Requires="cx1"` with Excel's text-box Fallback;
+//   "Q1 Data" a scatter; "Summary" a line plotting 'Q1 Data'!$B$2:$B$13;
+//   "Sales Chart" a chart sheet (absoluteAnchor → a clustered column).
+//   SPEC132_CHARTS records the facts. spec132-charts.ods — LibreOffice
+//   24.8-shaped: "Data" the same block, a clustered column (`chart:bar`)
+//   anchored in F2 to M17 whose `draw:object` is notified of
+//   Data.A1:Data.D5, its Object 1/content.xml naming the plot area,
+//   categories, values and labels on the sheet beside the `local-table`
+//   cache, styles.xml, meta.xml and ObjectReplacements/Object 1; a
+//   page-anchored 3-D `chart:surface` (Object 2) over the same block;
+//   "Summary" the xlsx's Summary block. SPEC132_CHARTS_ODS records the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -8218,4 +8234,1060 @@ export async function buildSpec131DrawingsOdsBytes(): Promise<Uint8Array> {
 }
 // ============================================================================
 // end of SPEC-131
+// ============================================================================
+
+// ============================================================================
+// SPEC-132: spec132-charts.xlsx — sheet charts as Excel 365 writes them.
+// ============================================================================
+
+type Spec132Value = string | number;
+type Spec132Columns = Readonly<Record<string, readonly Spec132Value[]>>;
+
+/** Each worksheet's columns, top to bottom from row 1. */
+const SPEC132_COLUMNS: Readonly<Record<"Data" | "Q1 Data" | "Summary", Spec132Columns>> = {
+  Data: {
+    A: ["Quarter", "Q1", "Q2", "Q3", "Q4"],
+    B: ["North", 10, 20, 30, 40],
+    C: ["South", 15, 25, 35, 45],
+    D: ["West", 12, 30, 18, 24],
+  },
+  "Q1 Data": {
+    A: ["Week", ...Array.from({ length: 12 }, (_, i) => `W${i + 1}`)],
+    B: ["Sales", 5, 7, 6, 9, 11, 10, 12, 14, 13, 15, 17, 16],
+    C: ["Visits", 100, 120, 110, 140, 150, 160, 170, 165, 180, 190, 200, 210],
+  },
+  Summary: {
+    A: ["Item", "Alpha", "Beta", "Gamma"],
+    B: ["Plan", 4, 6, 8],
+    C: ["Actual", 5, 5, 9],
+  },
+};
+
+/** A sheet's cells, A1 → value. */
+function spec132Cells(columns: Spec132Columns): Readonly<Record<string, Spec132Value>> {
+  const cells: Record<string, Spec132Value> = {};
+  for (const [column, values] of Object.entries(columns)) {
+    values.forEach((value, index) => {
+      cells[`${column}${index + 1}`] = value;
+    });
+  }
+  return cells;
+}
+
+/** One series' wire `c:f` texts (scatter: categories = c:xVal, values = c:yVal). */
+const spec132Series = (name: string, categories: string, values: string): { name: string; categories: string; values: string } => ({ name, categories, values });
+
+/** What spec132-charts.xlsx holds, for the unit, round-trip and e2e specs.
+ * Corners are [col, colOff px, row, rowOff px] (0-based, every offset 0);
+ * `cells` the span from's cell → to's cell; `index` the frame's position
+ * among its drawing part's top-level children; `chartType` the core
+ * ChartType the part reads as (null: out of the catalogue). */
+export const SPEC132_CHARTS = {
+  title: "Charts",
+  /** Each worksheet's cells, A1 → value. */
+  cells: {
+    Data: spec132Cells(SPEC132_COLUMNS.Data),
+    "Q1 Data": spec132Cells(SPEC132_COLUMNS["Q1 Data"]),
+    Summary: spec132Cells(SPEC132_COLUMNS.Summary),
+  },
+  xlsx: {
+    file: "spec132-charts.xlsx",
+    sheetNames: ["Data", "Q1 Data", "Summary", "Sales Chart"],
+    activeSheetIndex: 0,
+    worksheets: {
+      Data: { part: "xl/worksheets/sheet1.xml", rels: "xl/worksheets/_rels/sheet1.xml.rels", dimension: "A1:D5", drawingPart: "xl/drawings/drawing1.xml", drawingRels: "xl/drawings/_rels/drawing1.xml.rels" },
+      "Q1 Data": { part: "xl/worksheets/sheet2.xml", rels: "xl/worksheets/_rels/sheet2.xml.rels", dimension: "A1:C13", drawingPart: "xl/drawings/drawing2.xml", drawingRels: "xl/drawings/_rels/drawing2.xml.rels" },
+      Summary: { part: "xl/worksheets/sheet3.xml", rels: "xl/worksheets/_rels/sheet3.xml.rels", dimension: "A1:C4", drawingPart: "xl/drawings/drawing3.xml", drawingRels: "xl/drawings/_rels/drawing3.xml.rels" },
+    },
+    /** The chart sheet: `<drawing r:id="rId1">` → drawing4's one absoluteAnchor → chart6. */
+    chartSheet: {
+      name: "Sales Chart",
+      part: "xl/chartsheets/sheet1.xml",
+      rels: "xl/chartsheets/_rels/sheet1.xml.rels",
+      relationshipType: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chartsheet",
+      contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml",
+      zoomScale: 118,
+      drawingPart: "xl/drawings/drawing4.xml",
+      drawingRels: "xl/drawings/_rels/drawing4.xml.rels",
+    },
+    charts: {
+      /** Clustered column over Data!$A$1:$D$5: caches, c16 uniqueIds, value
+       * labels with Excel's c15 leader-lines extLst on the first series,
+       * chartStyle/colors parts. */
+      column: {
+        name: "Chart 1",
+        sheet: "Data",
+        drawingPart: "xl/drawings/drawing1.xml",
+        index: 0,
+        cNvPrId: 2,
+        rId: "rId1",
+        part: "xl/charts/chart1.xml",
+        rels: "xl/charts/_rels/chart1.xml.rels",
+        style: "xl/charts/style1.xml",
+        colors: "xl/charts/colors1.xml",
+        typeElement: "barChart",
+        chartType: "columnClustered",
+        title: "Sales by region",
+        legend: "right",
+        from: [5, 0, 1, 0],
+        to: [12, 0, 16, 0],
+        cells: "F2:M17",
+        series: [
+          spec132Series("Data!$B$1", "Data!$A$2:$A$5", "Data!$B$2:$B$5"),
+          spec132Series("Data!$C$1", "Data!$A$2:$A$5", "Data!$C$2:$C$5"),
+          spec132Series("Data!$D$1", "Data!$A$2:$A$5", "Data!$D$2:$D$5"),
+        ],
+      },
+      /** Pie of North (Excel's per-slice c:dPt), automatic title. */
+      pie: {
+        name: "Chart 3",
+        sheet: "Data",
+        drawingPart: "xl/drawings/drawing1.xml",
+        index: 1,
+        cNvPrId: 3,
+        rId: "rId2",
+        part: "xl/charts/chart3.xml",
+        typeElement: "pieChart",
+        chartType: "pie",
+        legend: "bottom",
+        from: [5, 0, 18, 0],
+        to: [12, 0, 33, 0],
+        cells: "F19:M34",
+        series: [spec132Series("Data!$B$1", "Data!$A$2:$A$5", "Data!$B$2:$B$5")],
+      },
+      /** 3-D clustered column (c:view3D, floor and walls, c:bar3DChart) — out of the catalogue. */
+      column3D: {
+        name: "Chart 5",
+        sheet: "Data",
+        drawingPart: "xl/drawings/drawing1.xml",
+        index: 2,
+        cNvPrId: 4,
+        rId: "rId3",
+        part: "xl/charts/chart5.xml",
+        typeElement: "bar3DChart",
+        chartType: null,
+        legend: "bottom",
+        from: [14, 0, 1, 0],
+        to: [21, 0, 16, 0],
+        cells: "O2:V17",
+        series: [spec132Series("Data!$B$1", "Data!$A$2:$A$5", "Data!$B$2:$B$5"), spec132Series("Data!$C$1", "Data!$A$2:$A$5", "Data!$C$2:$C$5")],
+      },
+      /** Waterfall (chartex) in a wsDr-level `mc:AlternateContent Requires="cx1"`:
+       * the Choice's twoCellAnchor holds the frame, Excel's Fallback anchor
+       * the "This chart isn't available" text box. */
+      waterfall: {
+        name: "Chart 7",
+        sheet: "Data",
+        drawingPart: "xl/drawings/drawing1.xml",
+        index: 3,
+        cNvPrId: 5,
+        rId: "rId4",
+        part: "xl/charts/chartEx1.xml",
+        relationshipType: "http://schemas.microsoft.com/office/2014/relationships/chartEx",
+        contentType: "application/vnd.ms-office.chartex+xml",
+        requires: "cx1",
+        layoutId: "waterfall",
+        from: [14, 0, 18, 0],
+        to: [21, 0, 33, 0],
+        cells: "O19:V34",
+        /** `cx:f` texts in document order: the cat and val dimensions, then the series name. */
+        formulas: ["Data!$A$2:$A$5", "Data!$B$2:$B$5", "Data!$B$1"],
+        fallbackText:
+          "This chart isn't available in your version of Excel.\n\nEditing this shape or saving this workbook into a different file format will permanently break the chart.",
+      },
+      /** Scatter (lineMarker) of Visits against Sales. */
+      scatter: {
+        name: "Chart 4",
+        sheet: "Q1 Data",
+        drawingPart: "xl/drawings/drawing2.xml",
+        index: 0,
+        cNvPrId: 2,
+        rId: "rId1",
+        part: "xl/charts/chart4.xml",
+        typeElement: "scatterChart",
+        chartType: "scatter",
+        legend: "none",
+        from: [4, 0, 1, 0],
+        to: [11, 0, 16, 0],
+        cells: "E2:L17",
+        series: [spec132Series("'Q1 Data'!$C$1", "'Q1 Data'!$B$2:$B$13", "'Q1 Data'!$C$2:$C$13")],
+      },
+      /** Line with markers on "Summary" plotting "Q1 Data" (Summary's E1:L16 stays free). */
+      line: {
+        name: "Chart 2",
+        sheet: "Summary",
+        drawingPart: "xl/drawings/drawing3.xml",
+        index: 0,
+        cNvPrId: 2,
+        rId: "rId1",
+        part: "xl/charts/chart2.xml",
+        typeElement: "lineChart",
+        chartType: "lineMarkers",
+        legend: "none",
+        from: [0, 0, 19, 0],
+        to: [7, 0, 34, 0],
+        cells: "A20:H35",
+        series: [spec132Series("'Q1 Data'!$B$1", "'Q1 Data'!$A$2:$A$13", "'Q1 Data'!$B$2:$B$13")],
+      },
+      /** The chart sheet's clustered column over Data!$B$2:$C$5. */
+      chartSheet: {
+        name: "Chart 6",
+        sheet: "Sales Chart",
+        drawingPart: "xl/drawings/drawing4.xml",
+        index: 0,
+        cNvPrId: 2,
+        rId: "rId1",
+        part: "xl/charts/chart6.xml",
+        typeElement: "barChart",
+        chartType: "columnClustered",
+        title: "North and South",
+        legend: "bottom",
+        anchor: "absolute",
+        posEmu: [0, 0],
+        extEmu: [8666667, 6293304],
+        series: [spec132Series("Data!$B$1", "Data!$A$2:$A$5", "Data!$B$2:$B$5"), spec132Series("Data!$C$1", "Data!$A$2:$A$5", "Data!$C$2:$C$5")],
+      },
+    },
+    /** Every part, in package order. */
+    parts: [
+      "[Content_Types].xml",
+      "_rels/.rels",
+      "xl/workbook.xml",
+      "xl/_rels/workbook.xml.rels",
+      "xl/worksheets/sheet1.xml",
+      "xl/worksheets/sheet2.xml",
+      "xl/worksheets/sheet3.xml",
+      "xl/chartsheets/sheet1.xml",
+      "xl/theme/theme1.xml",
+      "xl/styles.xml",
+      "xl/sharedStrings.xml",
+      "xl/worksheets/_rels/sheet1.xml.rels",
+      "xl/worksheets/_rels/sheet2.xml.rels",
+      "xl/worksheets/_rels/sheet3.xml.rels",
+      "xl/chartsheets/_rels/sheet1.xml.rels",
+      "xl/drawings/drawing1.xml",
+      "xl/drawings/_rels/drawing1.xml.rels",
+      "xl/charts/chart1.xml",
+      "xl/charts/_rels/chart1.xml.rels",
+      "xl/charts/style1.xml",
+      "xl/charts/colors1.xml",
+      "xl/charts/chart3.xml",
+      "xl/charts/chart5.xml",
+      "xl/charts/chartEx1.xml",
+      "xl/drawings/drawing2.xml",
+      "xl/drawings/_rels/drawing2.xml.rels",
+      "xl/charts/chart4.xml",
+      "xl/drawings/drawing3.xml",
+      "xl/drawings/_rels/drawing3.xml.rels",
+      "xl/charts/chart2.xml",
+      "xl/drawings/drawing4.xml",
+      "xl/drawings/_rels/drawing4.xml.rels",
+      "xl/charts/chart6.xml",
+      "docProps/core.xml",
+      "docProps/app.xml",
+    ],
+  },
+} as const;
+
+/** The values a fixture reference ("Data!$B$2:$B$5", "'Q1 Data'!$C$1")
+ * covers, column by column, top to bottom — what its cache holds. */
+function spec132RefValues(ref: string): Spec132Value[] {
+  const match = /^(?:'([^']+)'|([^'!]+))!\$([A-Z])\$(\d+)(?::\$([A-Z])\$(\d+))?$/.exec(ref);
+  if (!match) {
+    throw new Error(`${ref} is not a spec132-charts reference`);
+  }
+  const columns = SPEC132_COLUMNS[(match[1] ?? match[2]) as keyof typeof SPEC132_COLUMNS];
+  const [startCol, startRow] = [match[3]!, Number(match[4])];
+  const [endCol, endRow] = [match[5] ?? startCol, Number(match[6] ?? match[4])];
+  const values: Spec132Value[] = [];
+  for (let col = startCol.charCodeAt(0); col <= endCol.charCodeAt(0); col += 1) {
+    const column = columns[String.fromCharCode(col)]!;
+    for (let row = startRow; row <= endRow; row += 1) {
+      values.push(column[row - 1]!);
+    }
+  }
+  return values;
+}
+
+const SPEC132_C_NS = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const SPEC132_CX_NS = "http://schemas.microsoft.com/office/drawing/2014/chartex";
+const SPEC132_CHART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const SPEC132_DRAWING_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawing+xml";
+
+/** `c:strRef` with its full cache. */
+function spec132StrRef(f: string): string {
+  const values = spec132RefValues(f);
+  return `<c:strRef><c:f>${f}</c:f><c:strCache><c:ptCount val="${values.length}"/>${values.map((value, idx) => `<c:pt idx="${idx}"><c:v>${value}</c:v></c:pt>`).join("")}</c:strCache></c:strRef>`;
+}
+
+/** `c:numRef` with its full cache (`c:formatCode` General). */
+const spec132NumRef = (f: string): string => `<c:numRef><c:f>${f}</c:f>${spec121NumCache(spec132RefValues(f) as number[])}</c:numRef>`;
+
+/** Excel 2016's `c16:uniqueId` extLst: the element's index first, the chart's tail after. */
+const spec132UniqueId = (index: number, tail: string): string =>
+  `<c:extLst><c:ext uri="{C3380CC4-5D6E-409C-BE32-E72D297353CC}" xmlns:c16="http://schemas.microsoft.com/office/drawing/2014/chart">` +
+  `<c16:uniqueId val="{${index.toString(16).toUpperCase().padStart(8, "0")}-${tail}}"/></c:ext></c:extLst>`;
+
+const spec132Fill = (accent: number, sp3d = false): string =>
+  `<c:spPr><a:solidFill><a:schemeClr val="accent${accent}"/></a:solidFill><a:ln><a:noFill/></a:ln><a:effectLst/>${sp3d ? "<a:sp3d/>" : ""}</c:spPr>`;
+
+/** The type-level `c:dLbls` Excel writes with every label off. */
+const spec132NoLabels = (leaderLines = false): string =>
+  `<c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/>` +
+  `<c:showBubbleSize val="0"/>${leaderLines ? `<c:showLeaderLines val="1"/>` : ""}</c:dLbls>`;
+
+/** A series' value labels as Excel 2013+ writes them, with the c15 leader-lines extLst. */
+const SPEC132_VALUE_LABELS =
+  `<c:dLbls><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr><c:dLblPos val="outEnd"/><c:showLegendKey val="0"/><c:showVal val="1"/>` +
+  `<c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:extLst><c:ext uri="{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" ` +
+  `xmlns:c15="http://schemas.microsoft.com/office/drawing/2012/chart"><c15:showLeaderLines val="1"/><c15:leaderLines><c:spPr><a:ln w="9525" cap="flat" ` +
+  `cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="35000"/><a:lumOff val="65000"/></a:schemeClr></a:solidFill><a:round/></a:ln>` +
+  `<a:effectLst/></c:spPr></c15:leaderLines></c:ext></c:extLst></c:dLbls>`;
+
+type Spec132SeriesRefs = { readonly name: string; readonly categories: string; readonly values: string };
+
+/** A bar-family `c:ser` (CT_BarSer order). */
+function spec132BarSeries(series: Spec132SeriesRefs, index: number, tail: string, sp3d: boolean, labels: boolean): string {
+  return (
+    `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx>${spec132StrRef(series.name)}</c:tx>${spec132Fill(index + 1, sp3d)}` +
+    `<c:invertIfNegative val="0"/>${labels ? SPEC132_VALUE_LABELS : ""}<c:cat>${spec132StrRef(series.categories)}</c:cat>` +
+    `<c:val>${spec132NumRef(series.values)}</c:val>${spec132UniqueId(index, tail)}</c:ser>`
+  );
+}
+
+const spec132CatAx = (id: number, crossAx: number): string =>
+  `<c:catAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/>` +
+  `<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>` +
+  `${SPEC121_CHART_LINE}${spec121ChartText(900, 65000, 35000)}<c:crossAx val="${crossAx}"/><c:crosses val="autoZero"/><c:auto val="1"/>` +
+  `<c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>`;
+
+const spec132ValAx = (id: number, crossAx: number, pos: "l" | "b", crossBetween: "between" | "midCat"): string =>
+  `<c:valAx><c:axId val="${id}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="${pos}"/>` +
+  `<c:majorGridlines>${SPEC121_CHART_LINE}</c:majorGridlines><c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/>` +
+  `<c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>` +
+  `${spec121ChartText(900, 65000, 35000)}<c:crossAx val="${crossAx}"/><c:crosses val="autoZero"/><c:crossBetween val="${crossBetween}"/></c:valAx>`;
+
+/** A rich title, or (no text) Excel's automatic one — the single series' name. */
+function spec132Title(text?: string): string {
+  const rich =
+    text === undefined
+      ? ""
+      : `<c:tx><c:rich><a:bodyPr rot="0" spcFirstLastPara="1" vertOverflow="ellipsis" vert="horz" wrap="square" anchor="ctr" anchorCtr="1"/><a:lstStyle/>` +
+        `<a:p><a:pPr><a:defRPr sz="1400" b="0" i="0" u="none" strike="noStrike" kern="1200" spc="0" baseline="0"/></a:pPr>` +
+        `<a:r><a:rPr lang="en-US"/><a:t>${text}</a:t></a:r></a:p></c:rich></c:tx>`;
+  return `<c:title>${rich}<c:overlay val="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>${spec121ChartText(1400, 65000, 35000)}</c:title>`;
+}
+
+const SPEC132_LEGEND_POS = { right: "r", bottom: "b" } as const;
+
+/** An Excel 365 `c:chartSpace` (the c14 style wrapper, the c16r3 display options, chart area and print settings). */
+function spec132ChartSpace(options: { title: string; before?: string; plot: string; legend: "right" | "bottom" | "none" }): string {
+  const legend =
+    options.legend === "none"
+      ? ""
+      : `<c:legend><c:legendPos val="${SPEC132_LEGEND_POS[options.legend]}"/><c:overlay val="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>` +
+        `${spec121ChartText(900, 65000, 35000)}</c:legend>`;
+  return (
+    XML_DECLARATION +
+    `<c:chartSpace xmlns:c="${SPEC132_C_NS}" xmlns:a="${A_NS}" xmlns:r="${REL_NS}" xmlns:c16r2="http://schemas.microsoft.com/office/drawing/2015/06/chart">` +
+    `<c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/>` +
+    `<mc:AlternateContent xmlns:mc="${MC_NS}"><mc:Choice Requires="c14" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart">` +
+    `<c14:style val="102"/></mc:Choice><mc:Fallback><c:style val="2"/></mc:Fallback></mc:AlternateContent>` +
+    `<c:chart>${options.title}<c:autoTitleDeleted val="0"/>${options.before ?? ""}<c:plotArea><c:layout/>${options.plot}` +
+    `<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr></c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/>` +
+    `<c:extLst><c:ext uri="{56B9EC1D-385E-4148-901F-78D8002777C0}" xmlns:c16r3="http://schemas.microsoft.com/office/drawing/2017/03/chart">` +
+    `<c16r3:dataDisplayOptions16><c16r3:dispNaAsBlank val="1"/></c16r3:dataDisplayOptions16></c:ext></c:extLst></c:chart>` +
+    `<c:spPr><a:solidFill><a:schemeClr val="bg1"/></a:solidFill><a:ln w="9525" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="tx1">` +
+    `<a:lumMod val="15000"/><a:lumOff val="85000"/></a:schemeClr></a:solidFill><a:round/></a:ln><a:effectLst/></c:spPr>` +
+    `<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>` +
+    `<c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`
+  );
+}
+
+/** A clustered column part (chart1, chart6). */
+function spec132ColumnChartXml(chart: { readonly title: string; readonly legend: "right" | "bottom"; readonly series: readonly Spec132SeriesRefs[] }, cat: number, val: number, tail: string, labelFirst: boolean): string {
+  return spec132ChartSpace({
+    title: spec132Title(chart.title),
+    legend: chart.legend,
+    plot:
+      `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>` +
+      chart.series.map((series, index) => spec132BarSeries(series, index, tail, false, labelFirst && index === 0)).join("") +
+      `${spec132NoLabels()}<c:gapWidth val="219"/><c:overlap val="-27"/><c:axId val="${cat}"/><c:axId val="${val}"/></c:barChart>` +
+      spec132CatAx(cat, val) +
+      spec132ValAx(val, cat, "l", "between"),
+  });
+}
+
+/** chart3: Excel 2013+'s pie — varyColors, a `c:dPt` per slice. */
+function spec132PieChartXml(): string {
+  const series = SPEC132_CHARTS.xlsx.charts.pie.series[0];
+  const tail = "3A1B-4C2D-8E3F-513200000003";
+  const points = spec132RefValues(series.values)
+    .map(
+      (_, idx) =>
+        `<c:dPt><c:idx val="${idx}"/><c:bubble3D val="0"/><c:spPr><a:solidFill><a:schemeClr val="accent${idx + 1}"/></a:solidFill>` +
+        `<a:ln w="19050"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln><a:effectLst/></c:spPr>${spec132UniqueId(2 * idx + 1, tail)}</c:dPt>`,
+    )
+    .join("");
+  return spec132ChartSpace({
+    title: spec132Title(),
+    legend: "bottom",
+    plot:
+      `<c:pieChart><c:varyColors val="1"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx>${spec132StrRef(series.name)}</c:tx>${points}` +
+      `<c:cat>${spec132StrRef(series.categories)}</c:cat><c:val>${spec132NumRef(series.values)}</c:val>${spec132UniqueId(8, tail)}</c:ser>` +
+      `${spec132NoLabels(true)}<c:firstSliceAng val="0"/></c:pieChart>`,
+  });
+}
+
+/** A 3-D chart's floor or wall, unfilled. */
+const spec132Wall = (element: string): string => `<c:${element}><c:thickness val="0"/><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/><a:sp3d/></c:spPr></c:${element}>`;
+
+/** chart5: Excel's 3-D clustered column — view3D, floor and walls, a bar3DChart (shape box, third axId 0: no series axis). */
+function spec132Column3DChartXml(): string {
+  const tail = "5C3D-4E2F-9A1B-513200000005";
+  const [cat, val] = [1290871503, 1290872943];
+  const wall = spec132Wall;
+  return spec132ChartSpace({
+    title: spec132Title("North and South (3-D)"),
+    before: `<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:depthPercent val="100"/><c:rAngAx val="1"/></c:view3D>${wall("floor")}${wall("sideWall")}${wall("backWall")}`,
+    legend: "bottom",
+    plot:
+      `<c:bar3DChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>` +
+      SPEC132_CHARTS.xlsx.charts.column3D.series.map((series, index) => spec132BarSeries(series, index, tail, true, false)).join("") +
+      `${spec132NoLabels()}<c:gapWidth val="150"/><c:shape val="box"/><c:axId val="${cat}"/><c:axId val="${val}"/><c:axId val="0"/></c:bar3DChart>` +
+      spec132CatAx(cat, val) +
+      spec132ValAx(val, cat, "l", "between"),
+  });
+}
+
+const spec132Marker =
+  `<c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:schemeClr val="accent1"/></a:solidFill>` +
+  `<a:ln w="9525"><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></a:ln><a:effectLst/></c:spPr></c:marker>`;
+
+/** chart4: Excel's scatter (lineMarker, markers only), two value axes. */
+function spec132ScatterChartXml(): string {
+  const series = SPEC132_CHARTS.xlsx.charts.scatter.series[0];
+  const [x, y] = [1873410256, 1873411696];
+  return spec132ChartSpace({
+    title: spec132Title(),
+    legend: "none",
+    plot:
+      `<c:scatterChart><c:scatterStyle val="lineMarker"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/>` +
+      `<c:tx>${spec132StrRef(series.name)}</c:tx><c:spPr><a:ln w="25400" cap="rnd"><a:noFill/><a:round/></a:ln><a:effectLst/></c:spPr>${spec132Marker}` +
+      `<c:xVal>${spec132NumRef(series.categories)}</c:xVal><c:yVal>${spec132NumRef(series.values)}</c:yVal><c:smooth val="0"/>` +
+      `${spec132UniqueId(0, "4B2C-4D3E-8F4A-513200000004")}</c:ser>${spec132NoLabels()}<c:axId val="${x}"/><c:axId val="${y}"/></c:scatterChart>` +
+      spec132ValAx(x, y, "b", "midCat") +
+      spec132ValAx(y, x, "l", "midCat"),
+  });
+}
+
+/** chart2: Excel's line with markers (grouping standard, marker 1). */
+function spec132LineChartXml(): string {
+  const series = SPEC132_CHARTS.xlsx.charts.line.series[0];
+  const [cat, val] = [2047163520, 2047164960];
+  return spec132ChartSpace({
+    title: spec132Title(),
+    legend: "none",
+    plot:
+      `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/><c:ser><c:idx val="0"/><c:order val="0"/>` +
+      `<c:tx>${spec132StrRef(series.name)}</c:tx><c:spPr><a:ln w="28575" cap="rnd"><a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:round/></a:ln>` +
+      `<a:effectLst/></c:spPr>${spec132Marker}<c:cat>${spec132StrRef(series.categories)}</c:cat><c:val>${spec132NumRef(series.values)}</c:val>` +
+      `<c:smooth val="0"/>${spec132UniqueId(0, "2E1F-4A3B-9C4D-513200000002")}</c:ser>${spec132NoLabels()}<c:marker val="1"/>` +
+      `<c:axId val="${cat}"/><c:axId val="${val}"/></c:lineChart>` +
+      spec132CatAx(cat, val) +
+      spec132ValAx(val, cat, "l", "between"),
+  });
+}
+
+/** xl/charts/chartEx1.xml: Excel's waterfall — the data block (cat and val dimensions, each `cx:f` + `cx:lvl` cache), the series named by Data!$B$1. */
+function spec132ChartExXml(): string {
+  const [categories, values, name] = SPEC132_CHARTS.xlsx.charts.waterfall.formulas;
+  const level = (ref: string, formatCode: string): string => {
+    const cache = spec132RefValues(ref);
+    return `<cx:lvl ptCount="${cache.length}"${formatCode}>${cache.map((value, idx) => `<cx:pt idx="${idx}">${value}</cx:pt>`).join("")}</cx:lvl>`;
+  };
+  return (
+    XML_DECLARATION +
+    `<cx:chartSpace xmlns:a="${A_NS}" xmlns:r="${REL_NS}" xmlns:cx="${SPEC132_CX_NS}">` +
+    `<cx:chartData><cx:data id="0"><cx:strDim type="cat"><cx:f>${categories}</cx:f>${level(categories, "")}</cx:strDim>` +
+    `<cx:numDim type="val"><cx:f>${values}</cx:f>${level(values, ` formatCode="General"`)}</cx:numDim></cx:data></cx:chartData>` +
+    `<cx:chart><cx:title pos="t" align="ctr" overlay="0"><cx:tx><cx:txData><cx:v>North by quarter</cx:v></cx:txData></cx:tx></cx:title>` +
+    `<cx:plotArea><cx:plotAreaRegion><cx:series layoutId="waterfall" uniqueId="{7D4E5F60-0132-4A1B-8C2D-3E4F5A6B7C8D}">` +
+    `<cx:tx><cx:txData><cx:f>${name}</cx:f><cx:v>${spec132RefValues(name)[0]}</cx:v></cx:txData></cx:tx>` +
+    `<cx:dataLabels pos="outEnd"><cx:visibility seriesName="0" categoryName="0" value="1"/></cx:dataLabels><cx:dataId val="0"/></cx:series></cx:plotAreaRegion>` +
+    `<cx:axis id="0"><cx:catScaling gapWidth="0.5"/><cx:tickLabels/></cx:axis><cx:axis id="1"><cx:valScaling/><cx:majorGridlines/><cx:tickLabels/></cx:axis>` +
+    `</cx:plotArea><cx:legend pos="t" align="ctr" overlay="0"/></cx:chart></cx:chartSpace>`
+  );
+}
+
+/** A chart's `xdr:graphicFrame` as Excel writes it (a16:creationId unique per drawing; a chart sheet's frame locks grouping). */
+function spec132GraphicFrame(drawing: number, id: number, name: string, data: string, chartSheet = false): string {
+  const creation = `{5132${drawing}${String(id).padStart(3, "0")}-6C2B-4D1A-8E3F-${String(drawing * 1000 + id).padStart(12, "0")}}`;
+  return (
+    `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${id}" name="${name}"><a:extLst><a:ext uri="{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}">` +
+    `<a16:creationId xmlns:a16="${A16_NS}" id="${creation}"/></a:ext></a:extLst></xdr:cNvPr>` +
+    (chartSheet ? `<xdr:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></xdr:cNvGraphicFramePr>` : `<xdr:cNvGraphicFramePr/>`) +
+    `</xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic>${data}</a:graphic></xdr:graphicFrame>`
+  );
+}
+
+const spec132ChartData = (rId: string): string => `<a:graphicData uri="${SPEC132_C_NS}"><c:chart xmlns:c="${SPEC132_C_NS}" xmlns:r="${REL_NS}" r:id="${rId}"/></a:graphicData>`;
+
+/** A worksheet chart frame in its twoCellAnchor (editAs absent). */
+const spec132Anchored = (drawing: number, chart: { readonly from: Corner; readonly to: Corner; readonly cNvPrId: number; readonly name: string; readonly rId: string }): string =>
+  spec131TwoCell(chart.from, chart.to, spec132GraphicFrame(drawing, chart.cNvPrId, chart.name, spec132ChartData(chart.rId)));
+
+const spec132Drawing = (anchors: string): string => XML_DECLARATION + `<xdr:wsDr xmlns:xdr="${XDR_NS}" xmlns:a="${A_NS}">${anchors}</xdr:wsDr>`;
+
+/** xl/drawings/drawing1.xml ("Data"): column, pie and 3-D frames, then the waterfall's cx1 wrapper with Excel's text-box Fallback. */
+function spec132DataDrawingXml(): string {
+  const { column, pie, column3D, waterfall } = SPEC132_CHARTS.xlsx.charts;
+  const fallback =
+    `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="0" name=""/><xdr:cNvSpPr><a:spLocks noTextEdit="1"/></xdr:cNvSpPr></xdr:nvSpPr>` +
+    `<xdr:spPr>${spec131Xfrm(...spec131Box(waterfall.from, waterfall.to))}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:prstClr val="white"/></a:solidFill><a:ln w="1"><a:solidFill><a:prstClr val="green"/></a:solidFill></a:ln></xdr:spPr>` +
+    `<xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="1100"/>` +
+    `<a:t>${waterfall.fallbackText}</a:t></a:r></a:p></xdr:txBody></xdr:sp>`;
+  const frame = spec132GraphicFrame(
+    1,
+    waterfall.cNvPrId,
+    waterfall.name,
+    `<a:graphicData uri="${SPEC132_CX_NS}"><cx:chart xmlns:cx="${SPEC132_CX_NS}" xmlns:r="${REL_NS}" r:id="${waterfall.rId}"/></a:graphicData>`,
+  );
+  return spec132Drawing(
+    spec132Anchored(1, column) +
+      spec132Anchored(1, pie) +
+      spec132Anchored(1, column3D) +
+      `<mc:AlternateContent xmlns:mc="${MC_NS}"><mc:Choice xmlns:cx1="http://schemas.microsoft.com/office/drawing/2015/9/8/chartex" Requires="${waterfall.requires}">` +
+      spec131TwoCell(waterfall.from, waterfall.to, frame) +
+      `</mc:Choice><mc:Fallback xmlns="">${spec131TwoCell(waterfall.from, waterfall.to, fallback)}</mc:Fallback></mc:AlternateContent>`,
+  );
+}
+
+/** A worksheet over `columns` (shared strings by `str`), its drawing last. */
+function spec132WorksheetXml(uid: string, dimension: string, selected: boolean, columns: Spec132Columns, str: (text: string) => number): string {
+  const letters = Object.keys(columns);
+  const rowCount = Math.max(...letters.map((letter) => columns[letter]!.length));
+  const rows: string[] = [];
+  for (let r = 1; r <= rowCount; r += 1) {
+    const cells = letters.map((letter) => {
+      const value = columns[letter]![r - 1];
+      return value === undefined ? "" : typeof value === "number" ? numberCell(`${letter}${r}`, value) : sharedCell(`${letter}${r}`, str(value));
+    });
+    rows.push(`<row r="${r}" spans="1:${letters.length}" x14ac:dyDescent="0.25">${cells.join("")}</row>`);
+  }
+  return (
+    XML_DECLARATION +
+    worksheetOpen(uid) +
+    `<dimension ref="${dimension}"/>` +
+    (selected
+      ? `<sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>`
+      : `<sheetViews><sheetView workbookViewId="0"/></sheetViews>`) +
+    `<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/><sheetData>${rows.join("")}</sheetData>${SPEC117_PAGE_MARGINS}<drawing r:id="rId1"/></worksheet>`
+  );
+}
+
+/** xl/workbook.xml: Excel 365's (as excelPackage writes it) over three worksheets and the chart sheet, the first tab active. */
+function spec132WorkbookXml(): string {
+  const sheets = SPEC132_CHARTS.xlsx.sheetNames.map((name, index) => `<sheet name="${name}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("");
+  return (
+    XML_DECLARATION +
+    `<workbook xmlns="${MAIN_NS}" xmlns:r="${REL_NS}" xmlns:mc="${MC_NS}" mc:Ignorable="x15 xr xr6 xr10 xr2" ` +
+    `xmlns:x15="http://schemas.microsoft.com/office/spreadsheetml/2010/11/main" xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" ` +
+    `xmlns:xr6="http://schemas.microsoft.com/office/spreadsheetml/2016/revision6" xmlns:xr10="http://schemas.microsoft.com/office/spreadsheetml/2016/revision10" ` +
+    `xmlns:xr2="http://schemas.microsoft.com/office/spreadsheetml/2015/revision2">` +
+    `<fileVersion appName="xl" lastEdited="7" lowestEdited="7" rupBuild="28127"/><workbookPr defaultThemeVersion="202300"/>` +
+    `<mc:AlternateContent xmlns:mc="${MC_NS}"><mc:Choice Requires="x15">` +
+    `<x15ac:absPath url="C:\\Users\\fixture\\Documents\\" xmlns:x15ac="http://schemas.microsoft.com/office/spreadsheetml/2010/11/ac"/></mc:Choice></mc:AlternateContent>` +
+    `<xr:revisionPtr revIDLastSave="0" documentId="8_{3C5E7A91-0132-4B2D-9E4F-6A8C0E2B4D61}" xr6:coauthVersionLast="47" ` +
+    `xr6:coauthVersionMax="47" xr10:uidLastSave="{00000000-0000-0000-0000-000000000000}"/>` +
+    `<bookViews><workbookView xWindow="-110" yWindow="-110" windowWidth="19420" windowHeight="10300" xr2:uid="{4F6A8C0E-0132-4D2B-8A6C-0E2B4D6F8A13}"/></bookViews>` +
+    `<sheets>${sheets}</sheets><calcPr calcId="191029"/></workbook>`
+  );
+}
+
+const spec132Rels = (body: string): string => XML_DECLARATION + `<Relationships xmlns="${PKG_REL_NS}">${body}</Relationships>`;
+const spec132Relationship = (id: string, type: string, target: string): string => `<Relationship Id="${id}" Type="${type}" Target="${target}"/>`;
+/** A part name relative to an xl/ subfolder's part. */
+const spec132Target = (partName: string): string => `../${partName.slice("xl/".length)}`;
+const spec132Override = (partName: string, type: string): string => `<Override PartName="/${partName}" ContentType="${type}"/>`;
+
+export async function buildSpec132ChartsXlsxBytes(): Promise<Uint8Array> {
+  const X = SPEC132_CHARTS.xlsx;
+  const C = X.charts;
+  const W = X.worksheets;
+  const strings: string[] = [];
+  const str = (text: string): number => {
+    if (!strings.includes(text)) {
+      strings.push(text);
+    }
+    return strings.indexOf(text);
+  };
+  // The worksheets first: their cells number the shared strings in sheet order.
+  const worksheets = [
+    spec132WorksheetXml("6A1B2C3D-0132-4E5F-8A9B-0C1D2E3F4A51", W.Data.dimension, true, SPEC132_COLUMNS.Data, str),
+    spec132WorksheetXml("7B2C3D4E-0132-4F60-9BAC-1D2E3F4A5B62", W["Q1 Data"].dimension, false, SPEC132_COLUMNS["Q1 Data"], str),
+    spec132WorksheetXml("8C3D4E5F-0132-4071-ACBD-2E3F4A5B6C73", W.Summary.dimension, false, SPEC132_COLUMNS.Summary, str),
+  ];
+  const chartSheet =
+    XML_DECLARATION +
+    `<chartsheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}"><sheetPr/><sheetViews><sheetView zoomScale="${X.chartSheet.zoomScale}" workbookViewId="0" zoomToFit="1"/>` +
+    `</sheetViews>${SPEC117_PAGE_MARGINS}<drawing r:id="rId1"/></chartsheet>`;
+  const rels = spec132Rels;
+  const relationship = spec132Relationship;
+  const target = spec132Target;
+  const override = spec132Override;
+  const drawingRel = (drawingPart: string): string => rels(relationship("rId1", `${REL_TYPE}/drawing`, target(drawingPart)));
+  const chartRel = (chart: { readonly rId: string; readonly part: string }): string => relationship(chart.rId, `${REL_TYPE}/chart`, target(chart.part));
+  const contentTypes =
+    XML_DECLARATION +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>` +
+    override("xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml") +
+    [W.Data, W["Q1 Data"], W.Summary].map((sheet) => override(sheet.part, WORKSHEET_CONTENT_TYPE)).join("") +
+    override(X.chartSheet.part, X.chartSheet.contentType) +
+    override("xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml") +
+    override("xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml") +
+    override("xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml") +
+    override(W.Data.drawingPart, SPEC132_DRAWING_CONTENT_TYPE) +
+    override(C.column.part, SPEC132_CHART_CONTENT_TYPE) +
+    override(C.column.style, "application/vnd.ms-office.chartstyle+xml") +
+    override(C.column.colors, "application/vnd.ms-office.chartcolorstyle+xml") +
+    override(C.pie.part, SPEC132_CHART_CONTENT_TYPE) +
+    override(C.column3D.part, SPEC132_CHART_CONTENT_TYPE) +
+    override(C.waterfall.part, C.waterfall.contentType) +
+    override(W["Q1 Data"].drawingPart, SPEC132_DRAWING_CONTENT_TYPE) +
+    override(C.scatter.part, SPEC132_CHART_CONTENT_TYPE) +
+    override(W.Summary.drawingPart, SPEC132_DRAWING_CONTENT_TYPE) +
+    override(C.line.part, SPEC132_CHART_CONTENT_TYPE) +
+    override(X.chartSheet.drawingPart, SPEC132_DRAWING_CONTENT_TYPE) +
+    override(C.chartSheet.part, SPEC132_CHART_CONTENT_TYPE) +
+    override("docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml") +
+    override("docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml") +
+    `</Types>`;
+  const app = appXml(X.sheetNames).replace(
+    `<vt:vector size="2" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>4</vt:i4></vt:variant></vt:vector>`,
+    `<vt:vector size="4" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>3</vt:i4></vt:variant>` +
+      `<vt:variant><vt:lpstr>Charts</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4></vt:variant></vt:vector>`,
+  );
+  return zip([
+    part("[Content_Types].xml", contentTypes),
+    part(
+      "_rels/.rels",
+      rels(
+        relationship("rId3", `${REL_TYPE}/extended-properties`, "docProps/app.xml") +
+          relationship("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml") +
+          relationship("rId1", `${REL_TYPE}/officeDocument`, "xl/workbook.xml"),
+      ),
+    ),
+    part("xl/workbook.xml", spec132WorkbookXml()),
+    // Excel's order: the sheets last to first, then theme, styles, strings.
+    part(
+      "xl/_rels/workbook.xml.rels",
+      rels(
+        relationship("rId4", X.chartSheet.relationshipType, "chartsheets/sheet1.xml") +
+          relationship("rId3", `${REL_TYPE}/worksheet`, "worksheets/sheet3.xml") +
+          relationship("rId2", `${REL_TYPE}/worksheet`, "worksheets/sheet2.xml") +
+          relationship("rId1", `${REL_TYPE}/worksheet`, "worksheets/sheet1.xml") +
+          relationship("rId5", `${REL_TYPE}/theme`, "theme/theme1.xml") +
+          relationship("rId6", `${REL_TYPE}/styles`, "styles.xml") +
+          relationship("rId7", `${REL_TYPE}/sharedStrings`, "sharedStrings.xml"),
+      ),
+    ),
+    part(W.Data.part, worksheets[0]!),
+    part(W["Q1 Data"].part, worksheets[1]!),
+    part(W.Summary.part, worksheets[2]!),
+    part(X.chartSheet.part, chartSheet),
+    part("xl/theme/theme1.xml", EXCEL_THEME),
+    part("xl/styles.xml", EXCEL_STYLES),
+    part("xl/sharedStrings.xml", sharedStringsXml(strings)),
+    part(W.Data.rels, drawingRel(W.Data.drawingPart)),
+    part(W["Q1 Data"].rels, drawingRel(W["Q1 Data"].drawingPart)),
+    part(W.Summary.rels, drawingRel(W.Summary.drawingPart)),
+    part(X.chartSheet.rels, drawingRel(X.chartSheet.drawingPart)),
+    part(W.Data.drawingPart, spec132DataDrawingXml()),
+    part(W.Data.drawingRels, rels(chartRel(C.column) + chartRel(C.pie) + chartRel(C.column3D) + relationship(C.waterfall.rId, C.waterfall.relationshipType, target(C.waterfall.part)))),
+    part(C.column.part, spec132ColumnChartXml(C.column, 1146207512, 1146212312, "6F3C-4A2B-8D1E-513200000001", true)),
+    part(C.column.rels, rels(relationship("rId2", SPEC121_CHART_COLORS_REL, "colors1.xml") + relationship("rId1", SPEC121_CHART_STYLE_REL, "style1.xml"))),
+    part(C.column.style, spec121ChartStyleXml()),
+    part(C.column.colors, SPEC121_CHART_COLORS),
+    part(C.pie.part, spec132PieChartXml()),
+    part(C.column3D.part, spec132Column3DChartXml()),
+    part(C.waterfall.part, spec132ChartExXml()),
+    part(W["Q1 Data"].drawingPart, spec132Drawing(spec132Anchored(2, C.scatter))),
+    part(W["Q1 Data"].drawingRels, rels(chartRel(C.scatter))),
+    part(C.scatter.part, spec132ScatterChartXml()),
+    part(W.Summary.drawingPart, spec132Drawing(spec132Anchored(3, C.line))),
+    part(W.Summary.drawingRels, rels(chartRel(C.line))),
+    part(C.line.part, spec132LineChartXml()),
+    part(
+      X.chartSheet.drawingPart,
+      spec132Drawing(
+        `<xdr:absoluteAnchor><xdr:pos x="${C.chartSheet.posEmu[0]}" y="${C.chartSheet.posEmu[1]}"/><xdr:ext cx="${C.chartSheet.extEmu[0]}" cy="${C.chartSheet.extEmu[1]}"/>` +
+          spec132GraphicFrame(4, C.chartSheet.cNvPrId, C.chartSheet.name, spec132ChartData(C.chartSheet.rId), true) +
+          `<xdr:clientData/></xdr:absoluteAnchor>`,
+      ),
+    ),
+    part(X.chartSheet.drawingRels, rels(chartRel(C.chartSheet))),
+    part(C.chartSheet.part, spec132ColumnChartXml(C.chartSheet, 1517026736, 1517028176, "8A5B-4C6D-9E7F-513200000006", false)),
+    part("docProps/core.xml", coreXml(SPEC132_CHARTS.title)),
+    part("docProps/app.xml", app),
+  ]);
+}
+
+// --- spec132-charts.ods ------------------------------------------------------
+// LibreOffice Calc 24.8-shaped: "Data" (active) holds the xlsx's Data block
+// (A1:D5) and two embedded chart objects over it — Object 1, a clustered
+// column (`chart:bar`) anchored in cell F2 to M17 (`table:end-cell-address`),
+// its `draw:object` notified of Data.A1:Data.D5, its content.xml naming the
+// plot area, the x axis categories and each series' values and label cell
+// on the sheet beside the `local-table` cache; Object 2, a 3-D
+// `chart:surface` (out of the catalogue) over the same block, anchored to the
+// page in `table:shapes` below it. Each object has its styles.xml and
+// meta.xml and an ObjectReplacements GDI-metafile stand-in, all listed in
+// the manifest in Calc's order. "Summary" holds the xlsx's Summary block
+// (A1:C4) for insert from selection.
+
+/** A Data reference of Object 1's or Object 2's content.xml, as Calc writes it ("Data.B2:Data.B5"). */
+const spec132OdsAddress = (from: string, to?: string): string => (to === undefined ? `Data.${from}` : `Data.${from}:Data.${to}`);
+
+/** Each object's series: label cell and values range on Data (the xlsx column chart's). */
+const SPEC132_ODS_SERIES = [
+  { label: spec132OdsAddress("B1"), values: spec132OdsAddress("B2", "B5") },
+  { label: spec132OdsAddress("C1"), values: spec132OdsAddress("C2", "C5") },
+  { label: spec132OdsAddress("D1"), values: spec132OdsAddress("D2", "D5") },
+] as const;
+
+/** The references readOdfChartRefs gives for either object (canonical). */
+const SPEC132_ODS_REFS = {
+  plotArea: "Data!A1:D5",
+  series: [
+    { name: "Data!B1", categories: "Data!A2:A5", values: "Data!B2:B5" },
+    { name: "Data!C1", categories: "Data!A2:A5", values: "Data!C2:C5" },
+    { name: "Data!D1", categories: "Data!A2:A5", values: "Data!D2:D5" },
+  ],
+  plotVisibleOnly: true,
+} as const;
+
+/** What spec132-charts.ods holds, for the unit, round-trip and e2e specs.
+ * Cells are 0-based [col, row]; lengths cm (Calc's default 2.258cm column,
+ * 0.452cm row). */
+export const SPEC132_CHARTS_ODS = {
+  file: "spec132-charts.ods",
+  title: "Charts",
+  tableNames: ["Data", "Summary"],
+  activeTable: "Data",
+  activeSheetIndex: 0,
+  /** Each table's cells, A1 → value (the xlsx's Data and Summary). */
+  cells: { Data: SPEC132_CHARTS.cells.Data, Summary: SPEC132_CHARTS.cells.Summary },
+  charts: {
+    /** The cell-anchored clustered column over Data.A1:Data.D5, with its local-table cache. */
+    bar: {
+      name: "Object 1",
+      object: "Object 1",
+      part: "Object 1/content.xml",
+      replacement: "ObjectReplacements/Object 1",
+      chartClass: "chart:bar",
+      chartType: "columnClustered",
+      title: "Sales by region",
+      legend: "right",
+      anchor: "twoCell",
+      cell: [5, 1],
+      endCellAddress: "Data.M17",
+      cells: "F2:M17",
+      sizeCm: [7 * SPEC131_COL_CM, 15 * SPEC131_ROW_CM],
+      notifyRanges: spec132OdsAddress("A1", "D5"),
+      plotArea: spec132OdsAddress("A1", "D5"),
+      categories: spec132OdsAddress("A2", "A5"),
+      series: SPEC132_ODS_SERIES,
+      refs: SPEC132_ODS_REFS,
+    },
+    /** The page-anchored 3-D surface chart over the same block — out of the catalogue. */
+    surface: {
+      name: "Object 2",
+      object: "Object 2",
+      part: "Object 2/content.xml",
+      replacement: "ObjectReplacements/Object 2",
+      chartClass: "chart:surface",
+      chartType: null,
+      title: "Regional surface",
+      anchor: "absolute",
+      posCm: [5 * SPEC131_COL_CM, 18 * SPEC131_ROW_CM],
+      sizeCm: [7 * SPEC131_COL_CM, 15 * SPEC131_ROW_CM],
+      notifyRanges: spec132OdsAddress("A1", "D5"),
+      plotArea: spec132OdsAddress("A1", "D5"),
+      categories: spec132OdsAddress("A2", "A5"),
+      series: SPEC132_ODS_SERIES,
+    },
+  },
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: [
+    "mimetype",
+    "meta.xml",
+    "settings.xml",
+    "content.xml",
+    "Thumbnails/thumbnail.png",
+    "Object 1/content.xml",
+    "Object 1/styles.xml",
+    "Object 1/meta.xml",
+    "Object 2/content.xml",
+    "Object 2/styles.xml",
+    "Object 2/meta.xml",
+    "ObjectReplacements/Object 1",
+    "ObjectReplacements/Object 2",
+    "styles.xml",
+    "manifest.rdf",
+    "META-INF/manifest.xml",
+  ],
+} as const;
+
+/** content.xml's automatic styles: columns, rows, the table, and the chart
+ * frames' graphic and paragraph styles (gr1, P1 — Calc's for an embedded
+ * object). */
+const SPEC132_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="none" draw:fill="none" draw:textarea-horizontal-align="center" ` +
+  `draw:textarea-vertical-align="middle" draw:color-mode="standard" draw:luminance="0%" draw:contrast="0%" draw:gamma="100%" draw:red="0%" draw:green="0%" ` +
+  `draw:blue="0%" fo:clip="rect(0cm, 0cm, 0cm, 0cm)" draw:image-opacity="100%" style:mirror="none"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:style>` +
+  `</office:automatic-styles>`;
+
+/** The namespaces Calc declares on a chart object's content.xml. */
+const SPEC132_ODS_CHART_NAMESPACES =
+  `xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
+  `xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+  `xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
+  `xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:number="urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0" ` +
+  `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" ` +
+  `xmlns:dr3d="urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0" xmlns:ooo="http://openoffice.org/2004/office" ` +
+  `xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0" xmlns:chartooo="http://openoffice.org/2010/chart" office:version="1.3"`;
+
+/** Calc's default series colours, in order. */
+const SPEC132_ODS_SERIES_COLORS = ["#004586", "#ff420e", "#ffd320"] as const;
+
+const SPEC132_ODS_TEXT_10PT = `<style:text-properties fo:font-size="10pt" style:font-size-asian="10pt" style:font-size-complex="10pt"/>`;
+
+/** A chart object's automatic styles as Calc writes them: ch1 the chart
+ * area, ch2 the title, ch3 the legend, ch4 the plot area (hidden cells
+ * excluded; `threeD`: chart:three-dimensional), ch5/ch6 the x/y axes, ch7
+ * the major grid, then (3-D) ch8 the z axis, a style per series, the wall
+ * and the floor. */
+function spec132OdsChartStyles(threeD: boolean): string {
+  const axis = (extra: string): string =>
+    `<style:chart-properties chart:display-label="true" chart:logarithmic="false" chart:reverse-direction="false" text:line-break="false" ` +
+    `chart:link-data-style-to-source="true"${extra}/><style:graphic-properties svg:stroke-color="#b3b3b3"/>${SPEC132_ODS_TEXT_10PT}`;
+  const first = threeD ? 9 : 8;
+  const series = SPEC132_ODS_SERIES_COLORS.map(
+    (color, i) =>
+      `<style:style style:name="ch${first + i}" style:family="chart" style:data-style-name="N0"><style:chart-properties chart:link-data-style-to-source="true"/>` +
+      `<style:graphic-properties draw:stroke="none" draw:fill-color="${color}"/>${SPEC132_ODS_TEXT_10PT}</style:style>`,
+  ).join("");
+  const wall = first + SPEC132_ODS_SERIES_COLORS.length;
+  return (
+    `<office:automatic-styles><number:number-style style:name="N0"><number:number number:min-integer-digits="1"/></number:number-style>` +
+    `<style:style style:name="ch1" style:family="chart"><style:graphic-properties draw:stroke="none" svg:stroke-color="#b3b3b3" draw:fill-color="#ffffff"/></style:style>` +
+    `<style:style style:name="ch2" style:family="chart"><style:chart-properties chart:auto-position="true"/><style:paragraph-properties style:writing-mode="lr-tb"/>` +
+    `<style:text-properties fo:font-size="13pt" style:font-size-asian="13pt" style:font-size-complex="13pt"/></style:style>` +
+    `<style:style style:name="ch3" style:family="chart"><style:chart-properties chart:auto-position="true"/><style:graphic-properties draw:stroke="none" ` +
+    `svg:stroke-color="#b3b3b3" draw:fill="none" draw:fill-color="#e6e6e6"/>${SPEC132_ODS_TEXT_10PT}</style:style>` +
+    `<style:style style:name="ch4" style:family="chart"><style:chart-properties chart:include-hidden-cells="false" chart:auto-position="true" chart:auto-size="true" ` +
+    `chart:treat-empty-cells="leave-gap" chart:right-angled-axes="${!threeD}"${threeD ? ` chart:three-dimensional="true" chart:deep="false"` : ""}/></style:style>` +
+    `<style:style style:name="ch5" style:family="chart" style:data-style-name="N0">` +
+    axis(` chart:axis-position="0" chart:axis-label-position="outside-start" chart:tick-mark-position="at-labels"`) +
+    `</style:style>` +
+    `<style:style style:name="ch6" style:family="chart" style:data-style-name="N0">${axis(` chart:axis-position="start"`)}</style:style>` +
+    `<style:style style:name="ch7" style:family="chart"><style:graphic-properties svg:stroke-color="#b3b3b3"/></style:style>` +
+    (threeD ? `<style:style style:name="ch8" style:family="chart" style:data-style-name="N0">${axis("")}</style:style>` : "") +
+    series +
+    `<style:style style:name="ch${wall}" style:family="chart"><style:graphic-properties draw:stroke="none" draw:fill="none"/></style:style>` +
+    `<style:style style:name="ch${wall + 1}" style:family="chart"><style:graphic-properties svg:stroke-color="#b3b3b3" draw:fill-color="#cccccc"/></style:style>` +
+    `</office:automatic-styles>`
+  );
+}
+
+/** The `local-table` Calc writes beside a chart's addresses: the corner and
+ * the series' label cells as the header row, then a row per category. */
+function spec132OdsLocalTable(): string {
+  const data = SPEC132_COLUMNS.Data;
+  const letters = ["B", "C", "D"] as const;
+  const header = letters.map((letter) => `<table:table-cell office:value-type="string"><text:p>${data[letter]![0]}</text:p></table:table-cell>`).join("");
+  const rows = data
+    .A!.slice(1)
+    .map(
+      (category, i) =>
+        `<table:table-row><table:table-cell office:value-type="string"><text:p>${category}</text:p></table:table-cell>` +
+        letters.map((letter) => `<table:table-cell office:value-type="float" office:value="${data[letter]![i + 1]}"><text:p>${data[letter]![i + 1]}</text:p></table:table-cell>`).join("") +
+        `</table:table-row>`,
+    )
+    .join("");
+  return (
+    `<table:table table:name="local-table"><table:table-header-columns><table:table-column/></table:table-header-columns>` +
+    `<table:table-columns><table:table-column table:number-columns-repeated="${letters.length}"/></table:table-columns>` +
+    `<table:table-header-rows><table:table-row><table:table-cell><text:p/></table:table-cell>${header}</table:table-row></table:table-header-rows>` +
+    `<table:table-rows>${rows}</table:table-rows></table:table>`
+  );
+}
+
+/** A chart object's content.xml as Calc writes it over Data.A1:Data.D5:
+ * the title, the legend, the plot area (Object 2's with its 3-D scene and
+ * lights, a z axis), its axes and series, the wall and floor, then the
+ * local-table. */
+function spec132OdsChartContent(chart: (typeof SPEC132_CHARTS_ODS.charts)[keyof typeof SPEC132_CHARTS_ODS.charts]): string {
+  const threeD = chart.chartClass === "chart:surface";
+  const [width, height] = chart.sizeCm;
+  const scene = threeD
+    ? ` dr3d:transform="matrix (0.893670830886674 0.102940462128667 -0.436720840538603 0 0.000337001018427 0.972829547037185 0.231521941536044 0 ` +
+      `0.448688364303066 -0.207367206662094 0.869306612770937 0 0cm 0cm 0cm)" dr3d:vrp="(17634.6218373783 10271.4823817647 39437.2480574609)" ` +
+      `dr3d:vpn="(0.416199821709347 0.173649045905254 0.892537795986984)" dr3d:vup="(-0.0733876362771618 0.984807599917971 -0.157379306090273)" ` +
+      `dr3d:projection="perspective" dr3d:distance="4.2cm" dr3d:focal-length="8cm" dr3d:shadow-slant="0" dr3d:shade-mode="flat" ` +
+      `dr3d:ambient-color="#cccccc" dr3d:lighting-mode="true"`
+    : "";
+  const lights = threeD
+    ? `<dr3d:light dr3d:diffuse-color="#b3b3b3" dr3d:direction="(0.577350269189626 0.577350269189626 0.577350269189626)" dr3d:enabled="true" dr3d:specular="true"/>` +
+      `<dr3d:light dr3d:diffuse-color="#cccccc" dr3d:direction="(0.2 0.4 1)" dr3d:enabled="false" dr3d:specular="false"/>`
+    : `<chartooo:coordinate-region svg:x="0.9cm" svg:y="1.3cm" svg:width="${cm(width - 4.1)}" svg:height="${cm(height - 2.2)}"/>`;
+  const seriesClass = threeD ? "chart:surface" : "chart:bar";
+  const firstSeriesStyle = threeD ? 9 : 8;
+  const series = chart.series
+    .map(
+      (each, i) =>
+        `<chart:series chart:style-name="ch${firstSeriesStyle + i}" chart:values-cell-range-address="${each.values}" chart:label-cell-address="${each.label}" ` +
+        `chart:class="${seriesClass}"><chart:data-point chart:repeated="4"/></chart:series>`,
+    )
+    .join("");
+  const wall = firstSeriesStyle + chart.series.length;
+  return (
+    ODF_XML_DECLARATION +
+    `<office:document-content ${SPEC132_ODS_CHART_NAMESPACES}>${spec132OdsChartStyles(threeD)}<office:body><office:chart>` +
+    `<chart:chart svg:width="${cm(width)}" svg:height="${cm(height)}" xlink:href=".." xlink:type="simple" chart:class="${chart.chartClass}" chart:style-name="ch1">` +
+    `<chart:title svg:x="${cm(width / 2 - 2.2)}" svg:y="0.2cm" chart:style-name="ch2"><text:p>${chart.title}</text:p></chart:title>` +
+    `<chart:legend chart:legend-position="end" svg:x="${cm(width - 2.4)}" svg:y="${cm(height / 2 - 0.8)}" style:legend-expansion="high" chart:style-name="ch3"/>` +
+    `<chart:plot-area chart:style-name="ch4" table:cell-range-address="${chart.plotArea}" chart:data-source-has-labels="both" svg:x="0.3cm" svg:y="1.1cm" ` +
+    `svg:width="${cm(width - 3)}" svg:height="${cm(height - 1.4)}"${scene}>${lights}` +
+    `<chart:axis chart:dimension="x" chart:name="primary-x" chart:style-name="ch5"><chart:categories table:cell-range-address="${chart.categories}"/></chart:axis>` +
+    `<chart:axis chart:dimension="y" chart:name="primary-y" chart:style-name="ch6"><chart:grid chart:style-name="ch7" chart:class="major"/></chart:axis>` +
+    (threeD ? `<chart:axis chart:dimension="z" chart:name="primary-z" chart:style-name="ch8"/>` : "") +
+    series +
+    `<chart:wall chart:style-name="ch${wall}"/><chart:floor chart:style-name="ch${wall + 1}"/></chart:plot-area>` +
+    spec132OdsLocalTable() +
+    `</chart:chart></office:chart></office:body></office:document-content>`
+  );
+}
+
+/** A chart frame's `draw:object` and replacement `draw:image`, as Calc writes them. */
+function spec132OdsObject(chart: { readonly object: string; readonly notifyRanges: string; readonly replacement: string }): string {
+  return (
+    `<draw:object draw:notify-on-update-of-ranges="${chart.notifyRanges}" xlink:href="./${chart.object}" xlink:type="simple" xlink:show="embed" ` +
+    `xlink:actuate="onLoad"><loext:p/></draw:object>` +
+    `<draw:image xlink:href="./${chart.replacement}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/>`
+  );
+}
+
+/** A table over `columns` (from A1), `inCell` (0-based "col,row" → XML) the
+ * drawings anchored in its cells, `shapes` its `table:shapes` content. */
+function spec132OdsTable(name: string, columns: Spec132Columns, inCell: Readonly<Record<string, string>> = {}, shapes = ""): string {
+  const letters = Object.keys(columns);
+  const rowCount = Math.max(...letters.map((letter) => columns[letter]!.length));
+  const rows: string[] = [];
+  for (let r = 0; r < rowCount; r += 1) {
+    let cells = letters
+      .map((letter) => {
+        const value = columns[letter]![r];
+        return value === undefined ? `<table:table-cell/>` : typeof value === "number" ? loFloat(value) : loString(value);
+      })
+      .join("");
+    let at = letters.length;
+    const anchored = Object.entries(inCell)
+      .map(([key, xml]) => ({ col: Number(key.split(",")[0]), row: Number(key.split(",")[1]), xml }))
+      .filter((entry) => entry.row === r)
+      .toSorted((a, b) => a.col - b.col);
+    for (const entry of anchored) {
+      if (entry.col > at) {
+        cells += entry.col - at === 1 ? `<table:table-cell/>` : loEmpty(entry.col - at);
+      }
+      cells += `<table:table-cell>${entry.xml}</table:table-cell>`;
+      at = entry.col + 1;
+    }
+    rows.push(loRow(cells + loEmpty(16384 - at)));
+  }
+  const forms = shapes === "" && Object.keys(inCell).length === 0 ? "" : `<office:forms form:automatic-focus="false" form:apply-design-mode="false"/>`;
+  return (
+    `<table:table table:name="${name}" table:style-name="ta1">${forms}${shapes === "" ? "" : `<table:shapes>${shapes}</table:shapes>`}` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    rows.join("") +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - rowCount) +
+    `</table:table>`
+  );
+}
+
+/** The replacement images: stand-ins for the GDI metafiles Calc stores (the "VCLMTF" signature, then a few bytes). */
+const spec132OdsReplacement = (n: number): Uint8Array =>
+  new Uint8Array([0x56, 0x43, 0x4c, 0x4d, 0x54, 0x46, 0x01, 0x00, 0x31, 0x00, 0x00, 0x00, ...encoder.encode(`SPEC-132 Object ${n}`)]);
+
+/** META-INF/manifest.xml: Calc's entries plus each object's (its files, its
+ * directory, then the replacements), in Calc's order. */
+const SPEC132_ODS_MANIFEST = LO_MANIFEST.replace(
+  `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>`,
+  `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/>` +
+    ["Object 1", "Object 2"]
+      .map(
+        (object) =>
+          `<manifest:file-entry manifest:full-path="${object}/content.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${object}/styles.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${object}/meta.xml" manifest:media-type="text/xml"/>` +
+          `<manifest:file-entry manifest:full-path="${object}/" manifest:version="1.3" manifest:media-type="application/vnd.oasis.opendocument.chart"/>`,
+      )
+      .join("") +
+    ["Object 1", "Object 2"]
+      .map(
+        (object) =>
+          `<manifest:file-entry manifest:full-path="ObjectReplacements/${object}" ` +
+          `manifest:media-type="application/x-openoffice-gdimetafile;windows_formatname=&quot;GDIMetaFile&quot;"/>`,
+      )
+      .join(""),
+);
+
+export async function buildSpec132ChartsOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC132_CHARTS_ODS;
+  const { bar, surface } = O.charts;
+  const [bx, by] = spec131OdsAt(...bar.cell);
+  const barFrame =
+    `<draw:frame table:end-cell-address="${bar.endCellAddress}" table:end-x="0cm" table:end-y="0cm" draw:z-index="0" draw:name="${bar.name}" ` +
+    `draw:style-name="gr1" draw:text-style-name="P1" svg:width="${cm(bar.sizeCm[0])}" svg:height="${cm(bar.sizeCm[1])}" svg:x="${cm(bx)}" svg:y="${cm(by)}">` +
+    `${spec132OdsObject(bar)}</draw:frame>`;
+  const surfaceFrame =
+    `<draw:frame draw:z-index="1" draw:name="${surface.name}" draw:style-name="gr1" draw:text-style-name="P1" svg:width="${cm(surface.sizeCm[0])}" ` +
+    `svg:height="${cm(surface.sizeCm[1])}" svg:x="${cm(surface.posCm[0])}" svg:y="${cm(surface.posCm[1])}">${spec132OdsObject(surface)}</draw:frame>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC132_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}` +
+    spec132OdsTable(O.tableNames[0], SPEC132_COLUMNS.Data, { [`${bar.cell[0]},${bar.cell[1]}`]: barFrame }, surfaceFrame) +
+    spec132OdsTable(O.tableNames[1], SPEC132_COLUMNS.Summary) +
+    `<table:named-expressions/></office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.cells.Data).length + Object.keys(O.cells.Summary).length;
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
+    part("meta.xml", loMeta(O.title, O.tableNames.length, cellCount, 2)),
+    part("settings.xml", loSettings(O.tableNames, O.activeTable)),
+    part("content.xml", content),
+    { name: "Thumbnails/thumbnail.png", data: THUMBNAIL_PNG },
+    part(bar.part, spec132OdsChartContent(bar)),
+    part(`${bar.object}/styles.xml`, SPEC121_ODS_CHART_STYLES),
+    part(`${bar.object}/meta.xml`, SPEC121_ODS_CHART_META),
+    part(surface.part, spec132OdsChartContent(surface)),
+    part(`${surface.object}/styles.xml`, SPEC121_ODS_CHART_STYLES),
+    part(`${surface.object}/meta.xml`, SPEC121_ODS_CHART_META),
+    { name: bar.replacement, data: spec132OdsReplacement(1) },
+    { name: surface.replacement, data: spec132OdsReplacement(2) },
+    part("styles.xml", LO_STYLES),
+    part("manifest.rdf", LO_MANIFEST_RDF),
+    part("META-INF/manifest.xml", SPEC132_ODS_MANIFEST),
+  ]);
+}
+// ============================================================================
+// end of SPEC-132
 // ============================================================================

@@ -17,7 +17,11 @@
 // sheet drawing layer (useSheetDrawings — selection, keyboard and commands
 // over the same undo stack; the grid context carries it to SheetGrid and
 // WorkbookBody, the menu reads it for Insert and Arrange, and a pasted image
-// goes to it through useSheetClipboard).
+// goes to it through useSheetClipboard). SPEC-132: the sheet charts
+// (useSheetCharts — Insert ▸ Chart's gallery, the chart toolbar's commands
+// and dialogs over the same undo stack, and the refresh each recalculation
+// pass triggers; WorkbookBody renders its surfaces, the menu opens its
+// gallery).
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -27,6 +31,7 @@ import { useConditionalFormatManager } from "./useConditionalFormatManager";
 import { useConditionalFormats } from "./useConditionalFormats";
 import { entryGateOf, useDataValidation } from "./useDataValidation";
 import type { Recalc } from "./useRecalc";
+import { useSheetCharts } from "./useSheetCharts";
 import { useSheetCommands } from "./useSheetCommands";
 import { useSheetDrawings } from "./useSheetDrawings";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -133,7 +138,17 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncInto: (model) => deps.viewState.syncInto(model),
     busy: () => cell.editing.value,
   });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings };
+  const charts = useSheetCharts({
+    book: deps.book,
+    undo,
+    recalc: deps.recalc,
+    selection: deps.selection,
+    sheetMetrics: deps.sheetMetrics,
+    drawings,
+    syncInto: (model) => deps.viewState.syncInto(model),
+    busy: () => cell.editing.value,
+  });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

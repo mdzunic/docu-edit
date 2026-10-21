@@ -27,6 +27,7 @@ import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
 import { DEFAULT_SPREADSHEET_TITLE, type Cell, type CellValue, type Row, type Sheet, type SheetDrawing, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import { readSpreadsheetBytes, SPREADSHEET_READER_VERSION } from "./open";
+import { unsupportedChartVisual } from "./charts";
 import {
   addSheet,
   cannotDuplicateReason,
@@ -1141,15 +1142,59 @@ describe("duplicateSheet", () => {
 
   it("SPEC-131: an xlsx copy's drawingPart names the drawing part its closure copy made, its drawings kept with their ids", async () => {
     const model = await openLinksXlsx();
-    const drawing: SheetDrawing = { id: "dr1", name: "Chart 1", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", sourcePart: "xl/charts/chart1.xml" }, sourceXml: "<xdr:absoluteAnchor/>" };
+    const drawing: SheetDrawing = { id: "dr1", name: "Chart 1", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", visual: unsupportedChartVisual(""), sourcePart: "xl/charts/chart1.xml" }, sourceXml: "<xdr:absoluteAnchor/>" };
     model.sheets = model.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawingPart: "xl/drawings/drawing1.xml", drawings: [drawing] } : sheet));
     duplicateSheet(model, 1);
     const copy = model.sheets[2]!;
     const target = resolvedRels(model, copy.partName!).find((rel) => rel.type.endsWith("/drawing"))!.target;
     expect(copy.drawingPart).toBe(target);
     expect(copy.drawingPart).not.toBe("xl/drawings/drawing1.xml");
-    expect(copy.drawings).toEqual([drawing]);
+    // SPEC-132: the copy's chart names the chart part its closure copy made, not its origin's.
+    const copiedChart = resolvedRels(model, copy.drawingPart!).find((rel) => rel.type.endsWith("/chart"))!.target;
+    expect(copiedChart).not.toBe("xl/charts/chart1.xml");
+    expect(copy.drawings).toEqual([{ ...drawing, content: { ...drawing.content, sourcePart: copiedChart } }]);
     expect(model.sheets[1]!.drawingPart).toBe("xl/drawings/drawing1.xml");
+    expect(model.sheets[1]!.drawings).toEqual([drawing]);
+  });
+
+  it("SPEC-132: a copy's charts plot the copy's own data — references naming the origin renamed to the copy, refsDirty; others kept", async () => {
+    const model = await openLinksXlsx();
+    const origin = model.sheets[1]!;
+    const refs = { series: [{ name: `${origin.name}!$B$1`, categories: "'Other Sheet'!$A$2:$A$5", values: `${origin.name}!$B$2:$B$5` }], plotVisibleOnly: true };
+    const drawing: SheetDrawing = { id: "dr1", name: "Chart 1", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", visual: unsupportedChartVisual(""), refs, sourcePart: "xl/charts/chart1.xml" }, sourceXml: "<xdr:absoluteAnchor/>" };
+    model.sheets = model.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawingPart: "xl/drawings/drawing1.xml", drawings: [drawing] } : sheet));
+    duplicateSheet(model, 1);
+    const copy = model.sheets[2]!;
+    const quoted = `'${copy.name}'`;
+    const content = copy.drawings![0]!.content;
+    expect(content.kind === "chart" && content.refs).toEqual({ series: [{ name: `${quoted}!$B$1`, categories: "'Other Sheet'!$A$2:$A$5", values: `${quoted}!$B$2:$B$5` }], plotVisibleOnly: true });
+    expect(content.kind === "chart" && content.refsDirty).toBe(true);
+    // The origin's chart is untouched.
+    expect(model.sheets[1]!.drawings![0]).toBe(drawing);
+  });
+
+  it("SPEC-132: an ods copy's chart names the object its frame was retargeted to, so editing the copy never writes into the origin's object", async () => {
+    const model = await openLinksOds();
+    const index = model.sheets.findIndex((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart"));
+    expect(index).toBeGreaterThanOrEqual(0);
+    const originChart = model.sheets[index]!.drawings!.find((drawing) => drawing.content.kind === "chart")!;
+    const originPart = originChart.content.kind === "chart" ? originChart.content.sourcePart : undefined;
+    expect(originPart).toMatch(/^Object \d+\/content\.xml$/);
+    duplicateSheet(model, index);
+    const copyChart = model.sheets[index + 1]!.drawings!.find((drawing) => drawing.id === originChart.id)!;
+    const copyPart = copyChart.content.kind === "chart" ? copyChart.content.sourcePart : undefined;
+    expect(copyPart).not.toBe(originPart);
+    expect(copyPart).toMatch(/^Object \d+\/content\.xml$/);
+    expect(copyChart.sourceXml).toContain(`xlink:href="./${copyPart!.replace("/content.xml", "")}"`);
+    expect(model.opaque.some((part) => part.name === copyPart)).toBe(true);
+    expect(model.sheets[index]!.drawings!.find((drawing) => drawing.id === originChart.id)).toBe(originChart);
+  });
+
+  it("SPEC-132: a chart sheet can't be duplicated yet", () => {
+    const chartSheet: Sheet = { ...gridSheet("Chart1"), kind: "chart" };
+    const model = book([gridSheet("Data"), chartSheet]);
+    expect(cannotDuplicateReason(model, 1)).toBe("Chart sheets can't be duplicated yet");
+    expect(() => duplicateSheet(model, 1)).toThrow("Chart sheets can't be duplicated yet");
   });
 
   describe("ods: the copy's own retained source", () => {
@@ -1670,7 +1715,7 @@ describe("stripRetention", () => {
     const dropped: SheetDrawing[] = [
       { id: "dr4", name: "Check Box 1", anchor, content: { kind: "foreign", label: "Form control", face: { kind: "image", mediaId: "xl/media/image9.png" } } },
       { id: "dr5", name: "Group 5", anchor, content: { kind: "group", members: [] } },
-      { id: "dr6", name: "Chart 6", anchor, content: { kind: "chart", sourcePart: "xl/charts/chart1.xml" } },
+      { id: "dr6", name: "Chart 6", anchor, content: { kind: "chart", visual: unsupportedChartVisual(""), sourcePart: "xl/charts/chart1.xml" } },
     ];
     const model = book([gridSheet("Data", { A1: 1 }, { drawings: [picture, ...dropped, again, shape], drawingPart: "xl/drawings/drawing1.xml", drawingsDirty: true })]);
     model.media = [
@@ -2037,10 +2082,8 @@ const databaseRanges = (...rangeNames: string[]): string =>
 
 describe("unconvertibleContent", () => {
   const LABELS = [
-    "chart sheets",
     "macros",
     "drawings",
-    "charts",
     "comments",
     "some conditional formatting",
     "named ranges",
@@ -2055,10 +2098,9 @@ describe("unconvertibleContent", () => {
 
   it("is the spec's table, in its order, with markers on the sides it names", () => {
     expect(UNCONVERTIBLE_CONTENT.map((row) => row.label)).toEqual(LABELS);
-    expect(unconvertibleRow("chart sheets").ods).toBeUndefined();
     expect(unconvertibleRow("custom date origin").xlsx).toBeUndefined();
     expect(unconvertibleRow("custom date origin").ods).toBeDefined();
-    for (const label of LABELS.filter((name) => name !== "chart sheets" && name !== "custom date origin")) {
+    for (const label of LABELS.filter((name) => name !== "custom date origin")) {
       expect(unconvertibleRow(label).xlsx, label).toBeDefined();
       expect(unconvertibleRow(label).ods, label).toBeDefined();
     }
@@ -2086,16 +2128,17 @@ describe("unconvertibleContent", () => {
     expect(unconvertibleContent(model, "ods")).toEqual(["untranslatable formulas"]);
   });
 
-  it("lists spec121-links.xlsx's structures in table order (a chart's drawing is the charts row, as the AC's toast \"charts, comments\" reads)", async () => {
-    // SPEC-129: its conditional format (an expression rule) crosses; SPEC-130: so do its data validations.
+  it("lists spec121-links.xlsx's structures in table order", async () => {
+    // SPEC-129: its conditional format (an expression rule) crosses; SPEC-130: so do its data validations;
+    // SPEC-132: so does its chart, a clustered column (the "charts" row is gone).
     const labels = unconvertibleContent(await openLinksXlsx(), "ods");
-    expect(labels).toEqual(["charts", "comments", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["comments", "named ranges", "tables", "hyperlinks"]);
   });
 
   it("lists spec121-links.ods's structures in table order", async () => {
-    // SPEC-130: its content validations cross.
+    // SPEC-130: its content validations cross; SPEC-132: so does its bar chart.
     const labels = unconvertibleContent(await openLinksOds(), "xlsx");
-    expect(labels).toEqual(["charts", "comments", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["comments", "named ranges", "tables", "hyperlinks"]);
   });
 
   it("SPEC-130: data validation crosses through the model — rules, and their retained wire text, are never named", () => {
@@ -2119,7 +2162,7 @@ describe("unconvertibleContent", () => {
     expect(unconvertibleContent(withRules([plain, iconRule(true)], "ods"), "xlsx")).toEqual([]);
   });
 
-  it("SPEC-131: names each drawing the copy drops — foreign, group — with its kind and sheet, once per label; a chart drawing is the charts row's; images and shapes cross", async () => {
+  it("SPEC-131: names each drawing the copy drops — foreign, group — with its kind and sheet, once per label (SPEC-132: an out-of-catalogue chart by its own name); images and shapes cross", async () => {
     const anchor = { kind: "absolute" as const, posEmu: { x: 0, y: 0 }, extEmu: { cx: 9525, cy: 9525 } };
     const drawing = (id: string, content: SheetDrawing["content"]): SheetDrawing => ({ id, name: id, anchor, content });
     const xlsx = await openLinksXlsx();
@@ -2133,13 +2176,13 @@ describe("unconvertibleContent", () => {
               drawing("dr3", { kind: "shape", visual: { geometry: "rect" } }),
               drawing("dr4", { kind: "foreign", label: "Form control" }),
               drawing("dr5", { kind: "group", members: [] }),
-              drawing("dr6", { kind: "chart" }),
+              drawing("dr6", { kind: "chart", visual: unsupportedChartVisual("") }),
             ],
           }
         : sheet,
     );
     const name = xlsx.sheets[0]!.name;
-    expect(unconvertibleContent(xlsx, "ods").slice(0, 3)).toEqual([`Form control on ${name}`, `Group on ${name}`, "charts"]);
+    expect(unconvertibleContent(xlsx, "ods").slice(0, 3)).toEqual([`Form control on ${name}`, `Group on ${name}`, `Chart "dr6" on ${name}`]);
 
     const ods = await openLinksOds();
     ods.sheets = ods.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawings: [drawing("dr1", { kind: "foreign", label: "3-D object" }), drawing("dr2", { kind: "image", mediaId: "Pictures/1.png" })] } : sheet));
@@ -2156,9 +2199,9 @@ describe("unconvertibleContent", () => {
     expect(unconvertibleContent(model, "ods")).not.toContain("named ranges");
   });
 
-  it("names chart sheets for a foreign chartsheet", () => {
+  it("names a chartsheet left a foreign placeholder, by its name (SPEC-132: the \"chart sheets\" row is gone)", () => {
     const model = book([gridSheet("Data"), foreignSheet("Chart1", "xl/chartsheets/sheet1.xml")]);
-    expect(unconvertibleContent(model, "ods")).toEqual(["chart sheets"]);
+    expect(unconvertibleContent(model, "ods")).toEqual(['Chart sheet "Chart1"']);
   });
 
   it("SPEC-128: an autofilter crosses — only a colour or icon filter (xlsx) or an ods filter that does not decompose is named, and an ods sheet's own database range is no table", () => {

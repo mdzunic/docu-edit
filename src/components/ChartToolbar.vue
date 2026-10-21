@@ -6,9 +6,12 @@ import { useTier } from "../composables/useResponsiveTier";
 // options" and delete/duplicate — disabled for an unsupported chart type
 // (AC-30), whose reason shows instead (AC-31). Positioning, chrome, ARIA and
 // dismissal live on the shared ContextualToolbar (SPEC-061 AC-22, AC-23); this
-// supplies only its own controls.
+// supplies only its own controls. SPEC-132: an optional `reason` replaces
+// the unsupported notice's default text (a read-only sheet chart says why,
+// "Pivot charts can't be edited yet"); without one the text is unchanged.
 defineProps({
   unsupported: { type: Boolean, default: false },
+  reason: { type: String, default: "" },
 });
 
 defineEmits(["edit-data", "options", "delete", "duplicate"]);
@@ -28,7 +31,8 @@ const DATA_SHEET_UNAVAILABLE_REASON = "not available on this screen size";
       class="chart-toolbar-notice"
       data-testid="chart-unsupported-reason"
     >
-      We can't edit this chart type yet — it's kept exactly as it was.
+      <template v-if="reason">{{ reason }}</template>
+      <template v-else>We can't edit this chart type yet — it's kept exactly as it was.</template>
     </span>
   </template>
   <template v-else>

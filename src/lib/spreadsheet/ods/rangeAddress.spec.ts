@@ -327,3 +327,19 @@ describe("one entry and the list", () => {
     }
   });
 });
+
+describe("SPEC-132: chart address forms", () => {
+  it("reads LibreOffice's chart addresses — a series label cell, a values range, a quoted sheet, the plot area's union — and writes them back in canonicalToOdsRangeAddress's form", () => {
+    expect(odsRangeAddressToCanonical("Data.B1")).toBe("Data!B1");
+    expect(odsRangeAddressToCanonical("Data.B2:Data.B5")).toBe("Data!B2:B5");
+    expect(odsRangeAddressToCanonical("$'Q1 Data'.$B$2:.$B$13")).toBe("'Q1 Data'!$B$2:$B$13");
+    expect(odsRangeAddressToCanonical("Data.A1:Data.A5 Data.C1:Data.D5")).toBe("(Data!A1:A5,Data!C1:D5)");
+    expect(canonicalToOdsRangeAddress("Data!B1")).toBe("$Data.B1");
+    expect(canonicalToOdsRangeAddress("'Q1 Data'!$B$2:$B$13")).toBe("$'Q1 Data'.$B$2:.$B$13");
+    expect(canonicalToOdsRangeAddress("(Data!A1:A5,Data!C1:D5)")).toBe("$Data.A1:.A5 $Data.C1:.D5");
+    for (const address of ["Data.B2:Data.B5", "$'Q1 Data'.$B$2:.$B$13", "Data.A1:Data.A5 Data.C1:Data.D5"]) {
+      const canonical = odsRangeAddressToCanonical(address)!;
+      expect(odsRangeAddressToCanonical(canonicalToOdsRangeAddress(canonical)!), address).toBe(canonical);
+    }
+  });
+});

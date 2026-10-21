@@ -20,6 +20,7 @@ import { buildSpec124StructureOdsBytes, buildSpec124StructureXlsxBytes, SPEC124_
 import { packageIntegrity } from "./fixtures/packageIntegrity";
 import { recalculate } from "./formula/recalc";
 import type { Cell, CellValue, Sheet, SpreadsheetModel } from "./model";
+import { readOdsChart } from "./ods/chartXml";
 import { readSpreadsheetBytes } from "./open";
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
@@ -384,7 +385,13 @@ describe("spec124-structure.ods (LibreOffice-shaped)", () => {
     const e2 = parseA1(O.frame.ref)!;
     const frame = sheet1.drawings!.find((drawing) => drawing.content.kind === "chart")!;
     expect(frame.anchor.from).toMatchObject({ row: e2.row, col: e2.col });
-    expect(frame.content).toEqual({ kind: "chart", sourcePart: "Object 1/content.xml" });
+    // SPEC-132: the frame's object is read as a sheet chart — visual and references from its part.
+    const chartRead = readOdsChart(await part("Object 1/content.xml"));
+    expect(frame.content).toEqual(
+      chartRead.refs
+        ? { kind: "chart", visual: chartRead.visual, refs: chartRead.refs, sourcePart: "Object 1/content.xml" }
+        : { kind: "chart", visual: chartRead.visual, sourcePart: "Object 1/content.xml" },
+    );
     expect(frame.sourceXml).toContain(`table:end-cell-address="${O.frame.endCellAddress}"`);
     expect(frame.sourceXml).toContain(`draw:notify-on-update-of-ranges="${O.frame.notifyRanges}"`);
     expect(frame.sourceXml).toContain(`xlink:href="${O.frame.href}"`);

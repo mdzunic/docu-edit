@@ -25,8 +25,15 @@
 // drawing stripRetention drops (a `foreign` or `group` one) is named with
 // its kind and sheet ("Form control on Sheet1"), once per distinct label; a
 // placeholder `chart` drawing is dropped too, and named by the "charts" row
-// (SPEC-121's toast reads "charts, comments"), not twice. A row yields item-level labels by returning them from its
-// marker.
+// (SPEC-121's toast reads "charts, comments"), not twice. SPEC-132 deleted
+// the "charts" and "chart sheets" rows: a catalogue chart crosses through
+// the model (stripRetention's crossDrawings; a chart sheet becomes, in an
+// .ods, a grid sheet holding its chart), and each chart a copy drops — out
+// of the catalogue, read-only, or an Excel chartex chart (a `foreign` "Chart"
+// drawing) — is named on its own, `Chart "Chart 5" on Data`, as is a chart
+// sheet left a foreign placeholder (`Chart sheet "Chart1"`). A row yields
+// item-level labels by returning them from its marker.
+import { isModelledChart } from "./charts";
 import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
 import type { SheetDrawing, SpreadsheetModel } from "./model";
@@ -118,25 +125,31 @@ const odsPageSetup: Marker = ({ model, parts }) => {
 // --- both ---------------------------------------------------------------------------------------
 
 /** SPEC-131: what a drawing the copy drops is called ("Form control",
- * "Group"), or undefined for one that crosses — or, a chart, that the
- * "charts" row names. */
+ * "Group"), or undefined for one that crosses. SPEC-132: a chart the copy
+ * drops — out of the catalogue, read-only or chartex — by its own name. */
 function droppedDrawingKind(drawing: SheetDrawing): string | undefined {
   switch (drawing.content.kind) {
     case "foreign":
-      return drawing.content.label;
+      return drawing.content.label === "Chart" ? `Chart "${drawing.name}"` : drawing.content.label;
     case "group":
       return "Group";
+    case "chart":
+      return isModelledChart(drawing.content) && drawing.content.readOnlyReason === undefined ? undefined : `Chart "${drawing.name}"`;
     default:
       return undefined;
   }
 }
 
 /** SPEC-131: every drawing the copy drops, as "<kind> on <sheet>", once per
- * distinct label, in sheet and z-order. */
+ * distinct label, in sheet and z-order; SPEC-132: then each chart sheet left
+ * a foreign placeholder. */
 const droppedDrawings: Marker = ({ model }) => {
   const labels = new Set<string>();
   for (const sheet of model.sheets) {
-    if (sheet.kind !== "grid") {
+    if (sheet.kind === "foreign") {
+      if (isChartSheet(model, sheet)) {
+        labels.add(`Chart sheet "${sheet.name}"`);
+      }
       continue;
     }
     for (const drawing of sheet.drawings ?? []) {
@@ -169,14 +182,12 @@ const untranslatableFormulas: Marker = ({ model }) =>
 
 /** SPEC-121's table, in its order. */
 export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
-  { label: "chart sheets", xlsx: ({ model }) => model.sheets.some((sheet) => isChartSheet(model, sheet)) },
   {
     label: "macros",
     xlsx: ({ model }) => model.packageVariant === "macroEnabled" || model.packageVariant === "macroEnabledTemplate",
     ods: anyPart(/^(?:Basic|Scripts)\//),
   },
   { label: "drawings", xlsx: droppedDrawings, ods: droppedDrawings },
-  { label: "charts", xlsx: anyPart(/^xl\/charts\/chart[^/]*\.xml$/), ods: anyTableHas("<draw:object") },
   { label: "comments", xlsx: worksheetRelationship("comments"), ods: anyTableHas("<office:annotation") },
   { label: "some conditional formatting", xlsx: someConditionalFormatting(true), ods: someConditionalFormatting(false) },
   { label: "named ranges", xlsx: xlsxNamedRanges, ods: (source) => envelopeHas("<table:named-expressions")(source) || anyTableHas("<table:named-expressions")(source) },

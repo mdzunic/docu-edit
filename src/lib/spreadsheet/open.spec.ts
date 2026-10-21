@@ -152,9 +152,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11 and SPEC-131 to 12, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(12);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11, SPEC-131 to 12 and SPEC-132 to 13, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(13);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -914,9 +914,11 @@ function storedAtVersion11(read: SpreadsheetModel, dirtyIndex: number, shift = 0
 }
 
 describe("SPEC-131's reader step: the drawing layer", () => {
-  it("moved the reader to version 12 with its step from 11, last", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(12);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(11);
+  it("moved the reader to version 12 with its step from 11 (SPEC-132's from 12 follows it)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBeGreaterThanOrEqual(12);
+    const at = READER_UPGRADES.findIndex((step) => step.from === 11);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(READER_UPGRADES[at + 1]!.from).toBe(12);
   });
 
   it("xlsx: a version-11 record re-reads its clean sheet; its dirty one reads its <drawing r:id> from the retained source and the part from opaque, its images joining the media", async () => {

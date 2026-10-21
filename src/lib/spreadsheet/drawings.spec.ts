@@ -33,6 +33,7 @@ import {
 } from "./drawings";
 import { buildGridMetrics } from "./geometry";
 import type { AnchorPoint, DrawingAnchor, Sheet, SheetDrawing, SpreadsheetModel } from "./model";
+import { unsupportedChartVisual } from "./charts";
 import { moveRange } from "./move";
 import { applyStructuralEdit, type StructuralEdit } from "./structure";
 
@@ -479,7 +480,7 @@ describe("commands", () => {
     expect(drawingNoun(a)).toBe("shape");
     expect(drawingNoun({ ...a, content: { kind: "image", mediaId: "x" } })).toBe("image");
     expect(drawingNoun({ ...a, content: { kind: "group", members: [] } })).toBe("group");
-    expect(drawingNoun({ ...a, content: { kind: "chart" } })).toBe("chart");
+    expect(drawingNoun({ ...a, content: { kind: "chart", visual: unsupportedChartVisual("") } })).toBe("chart");
     expect(drawingNoun({ ...a, content: { kind: "foreign", label: "Slicer" } })).toBe("object");
   });
 

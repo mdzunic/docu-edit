@@ -32,6 +32,7 @@
 // Layering rule (enforced by boundary.spec.ts): this directory imports only
 // its own siblings and src/lib/core — never documentModel.ts, the text
 // commands, docx/, odf/, md/, presentation/, media/, the store or Vue.
+import type { ChartVisual } from "../core/charts";
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
@@ -294,7 +295,11 @@ export interface Sheet {
   id: string; // minted at read; persisted in the store; never written to a file
   name: string;
   visibility: "visible" | "hidden" | "veryHidden";
-  kind: "grid" | "foreign"; // foreign: chartsheet/dialogsheet/macrosheet — placeholder + verbatim
+  /** grid: a worksheet; chart (SPEC-132): an xlsx chartsheet whose drawing
+   *  resolves to one chart — that drawing is the sheet's one `drawings`
+   *  entry; foreign: dialogsheet/macrosheet or an unresolvable chartsheet —
+   *  placeholder + verbatim. */
+  kind: "grid" | "chart" | "foreign";
   rows: Row[]; // sparse, ascending by index
   partName?: string; // xlsx: the sheet part ("xl/worksheets/sheet1.xml"); its bytes are in `opaque`
   sourceXml?: string; // ods: this sheet's <table:table> text, with the whitespace that preceded it
@@ -427,8 +432,40 @@ export type SheetDrawingContent =
       kind: "group";
       members: { x: number; y: number; w: number; h: number; content: Exclude<SheetDrawingContent, { kind: "group" | "chart" }> }[];
     }
-  | { kind: "chart"; sourcePart?: string } // a placeholder here; SPEC-132 widens it
+  | SheetChartContent
   | { kind: "foreign"; label: string; face?: Exclude<SheetDrawingContent, { kind: "group" | "chart" | "foreign" }> };
+
+// --- SPEC-132: the sheet chart ---------------------------------------------------------
+// SPEC-132 is the normative source for the chart content of a SheetDrawing:
+// a core ChartVisual plus its live source references (charts.ts is the
+// normative source for resolving, refreshing and the commands). A sheet
+// chart's data IS the cells; the visual is what they said at the last
+// refresh (or the file's caches, which open trusts).
+
+/** One series' source references — canonical range formulas (SPEC-119
+ *  text, sheet-qualified as read). */
+export interface SheetChartSeriesRefs {
+  name?: string; // canonical single-cell reference; absent = the literal visual name
+  categories?: string; // canonical range (c:cat / c:xVal; ODS chart:categories or chart:domain)
+  values?: string; // canonical range (c:val / c:yVal; ODS chart:values-cell-range-address)
+}
+
+export interface SheetChartRefs {
+  series: SheetChartSeriesRefs[]; // index-aligned with the part's series (and visual.series)
+  plotArea?: string; // ODS chart:plot-area@table:cell-range-address
+  plotVisibleOnly: boolean; // xlsx c:plotVisOnly (absent = true); ODS !chart:include-hidden-cells
+}
+
+export interface SheetChartContent {
+  kind: "chart";
+  visual: ChartVisual;
+  refs?: SheetChartRefs; // absent: a literal chart (data sheet editing, SPEC-052 style)
+  sourcePart?: string; // "xl/charts/chart1.xml" | "Object 1/content.xml" — a NAME into opaque
+  edited?: true; // data sheet / options / colour / source change of shape → regenerate
+  cachesDirty?: true; // visual refreshed from cells → patch caches
+  refsDirty?: true; // references changed → patch c:f / addresses
+  readOnlyReason?: string; // rendered from caches; never refreshed or edited
+}
 
 export interface SheetDrawing {
   /** Minted at read ("dr1"…), unique per sheet, never written. */

@@ -154,6 +154,10 @@ export interface XlsxSheetCopy {
   partName: string;
   /** Table display names renamed in the copy: OLD (upper-cased) → new. */
   tableRenames: Map<string, string>;
+  /** SPEC-132: every part of the origin's closure → the copy's own part
+   *  (`xl/charts/chart1.xml` → `xl/charts/chart3.xml`), so the copy's
+   *  drawings can name the parts the copy owns. */
+  partRenames: ReadonlyMap<string, string>;
 }
 
 /** Every element of a part whose local name is `local`, with its start
@@ -456,7 +460,7 @@ export function copyXlsxSheetParts(opaque: readonly OpaquePart[], originPart: st
       added.push({ name: relsPathFor(copyName), data: bytesToBase64(encodeUtf8(retargetRels(relsXml, part, copyName, renamed))) });
     }
   }
-  return { opaque: [...opaque, ...added], partName: renamed.get(originPart)!, tableRenames };
+  return { opaque: [...opaque, ...added], partName: renamed.get(originPart)!, tableRenames, partRenames: renamed };
 }
 
 /** Fix-up order: tables and threaded comments before the parts that

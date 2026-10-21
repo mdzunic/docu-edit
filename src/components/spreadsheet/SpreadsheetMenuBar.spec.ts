@@ -156,14 +156,18 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
   it("Insert offers Image… and Shapes, routing insert.image and insert.shape, disabled where drawings cannot go in", async () => {
     const wrapper = mount(SpreadsheetMenuBar, { props: { state: { canInsertDrawings: true } } });
     const menu = wrapper.get('[data-testid="menu-insert"]');
-    expect(menu.findAll('[role="menuitem"]').map((item) => item.attributes("data-testid"))).toEqual(["sheet-menu-insert-image", "sheet-menu-insert-shape"]);
-    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes"]);
+    expect(menu.findAll('[role="menuitem"]').map((item) => item.attributes("data-testid"))).toEqual(["sheet-menu-insert-image", "sheet-menu-insert-shape", "sheet-menu-insert-chart"]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart"]);
     await wrapper.get('[data-testid="sheet-menu-insert-image"]').trigger("click");
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertImage]);
     await wrapper.get('[data-testid="sheet-menu-insert-shape"]').trigger("click");
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertShape]);
+    // SPEC-132: Insert ▸ Chart opens the chart gallery.
+    await wrapper.get('[data-testid="sheet-menu-insert-chart"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertChart]);
+    expect(SHEET_MENU_COMMANDS.insertChart).toBe("insert.chart");
     const csv = mount(SpreadsheetMenuBar, { props: { state: { canInsertDrawings: false } } });
-    for (const testid of ["sheet-menu-insert-image", "sheet-menu-insert-shape"]) {
+    for (const testid of ["sheet-menu-insert-image", "sheet-menu-insert-shape", "sheet-menu-insert-chart"]) {
       expect(csv.get(`[data-testid="${testid}"]`).attributes("disabled")).toBeDefined();
     }
   });

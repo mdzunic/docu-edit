@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { resolveColor } from "../lib/core/theme";
-import { asDocumentTheme } from "../lib/documentModel";
+import { asDocumentTheme, resolveColor } from "../lib/core/theme";
 import BaseDialog from "./BaseDialog.vue";
 import ThemeSwatchRow from "./ThemeSwatchRow.vue";
 

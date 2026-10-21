@@ -45,7 +45,7 @@ export interface SpreadsheetMenuDeps {
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
-  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings">>;
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts">>;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
@@ -233,6 +233,9 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.insertShape:
         deps.editing?.drawings?.openGallery();
+        break;
+      case SHEET_MENU_COMMANDS.insertChart:
+        deps.editing?.charts?.openGallery();
         break;
       default:
         break;

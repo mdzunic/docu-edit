@@ -92,10 +92,12 @@ import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { isEmptyRemap, type SheetRemap } from "../formula/sheetRefs";
 import { buildGridMetrics, maxDigitWidthPx } from "../geometry";
-import type { Sheet, SpreadsheetModel } from "../model";
+import { isModelledChart } from "../charts";
+import type { Sheet, SheetDrawing, SpreadsheetModel } from "../model";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText, sheetPartHasAutoFilter } from "./autoFilter";
+import { sheetChartsChanged, sheetHasCreatedChart, XlsxChartWriter } from "./chartParts";
 import { DRAWING_CONTENT_TYPE, DRAWING_RELATIONSHIP_TYPE, newRelsXml, spliceWorksheetDrawing, writeDrawingPart, writeSheetDrawings } from "./drawingXml";
 import { ownedClosure } from "./duplicate";
 import {
@@ -149,7 +151,7 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
+  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheetChartsChanged(sheet))) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
   return zip(buildSubstitution(model, parts, options, "write"));
@@ -209,14 +211,18 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const modified = options.modified ?? clockNow();
   const fullCalc = options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true || model.calc?.fullCalcOnLoad === true;
   const mainType = SPREADSHEETML_MAIN_CONTENT_TYPES[model.packageVariant ?? "workbook"];
-  const sheetParts = model.sheets.map((_, index) => `xl/worksheets/sheet${index + 1}.xml`);
+  // SPEC-132: a chart sheet whose chart is modelled is a chartsheet part.
+  let chartSheets = 0;
+  const sheetParts = model.sheets.map((sheet, index) => (writesChartSheet(sheet) ? `xl/chartsheets/sheet${(chartSheets += 1)}.xml` : `xl/worksheets/sheet${index + 1}.xml`));
   const n = model.sheets.length;
   // The sheets first: they fill the string and style tables.
   const strings = new SharedStringsWriter(undefined, model.theme);
   const styles = new XlsxStyleWriter(undefined, model);
   const mdw = workbookMdw(model);
   const worksheets = model.sheets.map((sheet, index) =>
-    serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
+    isChartSheetPart(sheetParts[index]!)
+      ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
+      : serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
   );
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
@@ -226,8 +232,9 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     `<Default Extension="xml" ContentType="application/xml"/>` +
     [...layer.defaults].map(([extension, type]) => `<Default Extension="${escapeAttributeValue(extension)}" ContentType="${escapeAttributeValue(type)}"/>`).join("") +
     `<Override PartName="/xl/workbook.xml" ContentType="${mainType}"/>` +
-    sheetParts.map((part) => `<Override PartName="/${part}" ContentType="${WORKSHEET_CONTENT_TYPE}"/>`).join("") +
+    sheetParts.map((part) => `<Override PartName="/${part}" ContentType="${isChartSheetPart(part) ? CHARTSHEET_CONTENT_TYPE : WORKSHEET_CONTENT_TYPE}"/>`).join("") +
     layer.drawingParts.map((part) => `<Override PartName="/${part}" ContentType="${DRAWING_CONTENT_TYPE}"/>`).join("") +
+    layer.overrides.map((entry) => `<Override PartName="/${entry.partName}" ContentType="${entry.contentType}"/>`).join("") +
     `<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
     `<Override PartName="/xl/styles.xml" ContentType="${STYLES_CONTENT_TYPE}"/>` +
     (sharedStrings === undefined ? "" : `<Override PartName="/xl/sharedStrings.xml" ContentType="${SHARED_STRINGS_CONTENT_TYPE}"/>`) +
@@ -248,7 +255,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     `</sheets>${fromScratchDefinedNames(model)}<calcPr calcId="${CALC_ID}"${fullCalc ? ` fullCalcOnLoad="1"` : ""}/></workbook>`;
   const workbookRels =
     `${XML_DECLARATION}<Relationships xmlns="${PKG_REL_NS}">` +
-    sheetParts.map((part, index) => relationshipXml(`rId${index + 1}`, `${RELATIONSHIP_TYPE}/worksheet`, part.slice("xl/".length))).join("") +
+    sheetParts.map((part, index) => relationshipXml(`rId${index + 1}`, `${RELATIONSHIP_TYPE}/${isChartSheetPart(part) ? "chartsheet" : "worksheet"}`, part.slice("xl/".length))).join("") +
     relationshipXml(`rId${n + 1}`, `${RELATIONSHIP_TYPE}/theme`, "theme/theme1.xml") +
     relationshipXml(`rId${n + 2}`, `${RELATIONSHIP_TYPE}/styles`, "styles.xml") +
     (sharedStrings === undefined ? "" : relationshipXml(`rId${n + 3}`, `${RELATIONSHIP_TYPE}/sharedStrings`, "sharedStrings.xml")) +
@@ -268,29 +275,68 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   ];
 }
 
+/** SPEC-132: a chart sheet written from scratch as a chartsheet — one whose
+ * chart is modelled (an out-of-catalogue chart has no part to write; such a
+ * sheet is written as an empty worksheet). */
+function writesChartSheet(sheet: Sheet): boolean {
+  return sheet.kind === "chart" && chartSheetDrawing(sheet) !== undefined;
+}
+
+/** Whether a from-scratch sheet part is a chartsheet. */
+function isChartSheetPart(part: string): boolean {
+  return part.startsWith("xl/chartsheets/");
+}
+
+/** A chart sheet's one chart drawing, when it is modelled. */
+function chartSheetDrawing(sheet: Sheet): SheetDrawing | undefined {
+  return (sheet.drawings ?? []).find((drawing) => drawing.content.kind === "chart" && isModelledChart(drawing.content));
+}
+
+const CHARTSHEET_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml";
+
+/** A from-scratch chartsheet (ECMA-376 §18.3.1.12 CT_Chartsheet, as Excel
+ * writes one): its tab colour, one sheet view (selected when active, zoomed
+ * to fit), Excel's default margins and the `<drawing r:id="rId1"/>` its
+ * `.rels` resolves to the drawing holding the chart. */
+function chartsheetXml(sheet: Sheet, active: boolean, model: SpreadsheetModel): string {
+  const sheetPr = sheet.tabColor === undefined ? "" : `<sheetPr><tabColor${modelColorToXlsxAttrs(sheet.tabColor, model.theme)}/></sheetPr>`;
+  return (
+    `${XML_DECLARATION}<chartsheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}">${sheetPr}` +
+    `<sheetViews><sheetView${active ? ` tabSelected="1"` : ""} zoomToFit="1" workbookViewId="0"/></sheetViews>` +
+    `<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><drawing r:id="rId1"/></chartsheet>`
+  );
+}
+
 /** SPEC-131 from scratch: each grid sheet's image and shape drawings in a
  * canonical `xl/drawings/drawing{n}.xml` (n counting the sheets that have
  * one) with its `.rels`, the sheet's `.rels` (rId1, the from-scratch sheet
  * having no other) and `<drawing r:id="rId1"/>`; the media parts the
- * pictures embed and a `<Default>` per extension. */
+ * pictures embed and a `<Default>` per extension. SPEC-132: every modelled
+ * chart drawing too, each relating a new `xl/charts/chart{n}.xml`
+ * (xlsx/chartParts.ts) with its Override; a chart sheet's chart in its
+ * chartsheet's own drawing part. */
 function fromScratchDrawings(
   model: SpreadsheetModel,
   worksheets: readonly string[],
   sheetParts: readonly string[],
-): { worksheets: string[]; entries: ZipEntryInput[]; drawingParts: string[]; defaults: Map<string, string> } {
+): { worksheets: string[]; entries: ZipEntryInput[]; drawingParts: string[]; overrides: { partName: string; contentType: string }[]; defaults: Map<string, string> } {
   const media = mediaWrites(model, new Set(sheetParts));
+  const charts = new XlsxChartWriter(model, new Map(), new Set(sheetParts));
   const entries: ZipEntryInput[] = [];
   const mediaEntries = new Map<string, Uint8Array>();
   const drawingParts: string[] = [];
   const defaults = new Map<string, string>();
   const out = worksheets.map((xml, index) => {
     const sheet = model.sheets[index]!;
-    if (sheet.kind !== "grid" || (sheet.drawings ?? []).length === 0) {
+    const sheetPart = sheetParts[index]!;
+    const chartSheet = sheetPart.startsWith("xl/chartsheets/");
+    if ((sheet.kind !== "grid" && !chartSheet) || (sheet.drawings ?? []).length === 0) {
       return xml;
     }
-    const sheetPart = sheetParts[index]!;
     const partName = `xl/drawings/drawing${drawingParts.length + 1}.xml`;
-    const written = writeDrawingPart({ partName, drawings: sheet.drawings!, metrics: buildGridMetrics(sheet), mediaPath: media.pathOf });
+    const drawings = chartSheet ? [chartSheetDrawing(sheet)!] : sheet.drawings!;
+    const chartPart = (drawing: SheetDrawing): string | undefined => charts.partFor(sheet, drawing);
+    const written = writeDrawingPart({ partName, drawings, metrics: buildGridMetrics(sheet), mediaPath: media.pathOf, chartPart });
     if (written.written === 0) {
       return xml;
     }
@@ -307,10 +353,12 @@ function fromScratchDrawings(
         defaults.set(target.slice(target.lastIndexOf(".") + 1).toLowerCase(), part.contentType);
       }
     }
-    return spliceWorksheetDrawing(xml, "rId1");
+    return chartSheet ? xml : spliceWorksheetDrawing(xml, "rId1");
   });
   entries.push(...[...mediaEntries].map(([name, data]) => ({ name, data })));
-  return { worksheets: out, entries, drawingParts, defaults };
+  const chartWrites = charts.writes();
+  entries.push(...chartWrites.added);
+  return { worksheets: out, entries, drawingParts, overrides: chartWrites.overrides, defaults };
 }
 
 /** A from-scratch workbook's `<definedNames>`: one `_xlnm._FilterDatabase`
@@ -399,8 +447,20 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     ...workbook.rels.filter((rel) => !droppedRelIds.has(rel.id) && !rel.external).flatMap((rel) => targetPart(workbook.path, rel) ?? []),
     ...plans.map((plan) => plan.partName),
   ]);
-  // SPEC-131: the rebuilt drawing layers' relationships (a save only).
-  const drawingPlan = mode === "write" ? planDrawingWrites(model, parts, plans) : undefined;
+  // Each copy's own closure takes the copy's remap.
+  const ownerRemap = new Map<string, SheetRemap>();
+  for (const plan of plans) {
+    if (plan.sheet.copiedFrom !== undefined && !plan.generated) {
+      const own = copyRemap(remap, plan.sheet);
+      for (const part of ownedClosure(edges, plan.partName)) {
+        ownerRemap.set(part, own);
+      }
+    }
+  }
+
+  // SPEC-131: the rebuilt drawing layers' relationships (a save only), with
+  // SPEC-132's chart parts (a patched one takes its pass before the patch).
+  const drawingPlan = mode === "write" ? planDrawingWrites(model, parts, plans, (part) => ownerRemap.get(part) ?? remap) : undefined;
   for (const [owner, targets] of drawingPlan?.edges ?? []) {
     afterEdges.set(owner, targets);
   }
@@ -410,17 +470,6 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     if (!afterReach.has(part) && part !== "") {
       skipped.add(part);
       skipped.add(relsPathFor(part));
-    }
-  }
-
-  // Each copy's own closure takes the copy's remap.
-  const ownerRemap = new Map<string, SheetRemap>();
-  for (const plan of plans) {
-    if (plan.sheet.copiedFrom !== undefined && !plan.generated) {
-      const own = copyRemap(remap, plan.sheet);
-      for (const part of ownedClosure(edges, plan.partName)) {
-        ownerRemap.set(part, own);
-      }
     }
   }
 
@@ -1229,19 +1278,26 @@ interface DrawingPlan {
 }
 
 /** Every `drawingsDirty` grid sheet's layer written (xlsx/drawingXml.ts
- * writeSheetDrawings), then the new media parts the written drawing parts
- * target. A rewrite that reproduces its source's bytes is not one. */
-function planDrawingWrites(model: SpreadsheetModel, parts: Map<string, Uint8Array>, plans: readonly SheetPlan[]): DrawingPlan {
+ * writeSheetDrawings) — and SPEC-132, a grid sheet's holding a created chart
+ * (no anchor XML of its own) — then the new media parts the written drawing
+ * parts target. A rewrite that reproduces its source's bytes is not one.
+ * SPEC-132: the chart parts (xlsx/chartParts.ts) join it — a created chart's
+ * new part with its Override, and every retained chart part the model
+ * regenerates or patches, always written as planned (model text: never
+ * passed). A chart sheet's drawing part is never rewritten. */
+function planDrawingWrites(model: SpreadsheetModel, parts: Map<string, Uint8Array>, plans: readonly SheetPlan[], remapOf: (partName: string) => SheetRemap): DrawingPlan {
   const taken = new Set([...parts.keys(), ...plans.map((plan) => plan.partName)]);
   const media = mediaWrites(model, taken);
+  const charts = new XlsxChartWriter(model, parts, taken, remapOf);
   const plan: DrawingPlan = { replaced: new Map(), added: [], edges: new Map(), worksheetDrawing: new Map(), overrides: [], defaults: new Map(), media };
   for (const sheetPlan of plans) {
     const { sheet } = sheetPlan;
-    if (sheet.kind !== "grid" || !sheet.drawingsDirty) {
+    if (sheet.kind !== "grid" || !(sheet.drawingsDirty || sheetHasCreatedChart(sheet))) {
       continue;
     }
     const retained = !sheetPlan.generated && parts.has(sheetPlan.partName);
-    const write = writeSheetDrawings({ parts, sheet, sheetPart: sheetPlan.partName, retained, taken, mediaPath: media.pathOf });
+    const chartPart = (drawing: SheetDrawing): string | undefined => charts.partFor(sheet, drawing);
+    const write = writeSheetDrawings({ parts, sheet, sheetPart: sheetPlan.partName, retained, taken, mediaPath: media.pathOf, chartPart });
     for (const [name, text] of write?.texts ?? []) {
       const data = encode(text);
       const source = parts.get(name);
@@ -1261,6 +1317,12 @@ function planDrawingWrites(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       plan.overrides.push({ partName: write.addedPart, contentType: DRAWING_CONTENT_TYPE });
     }
   }
+  const chartWrites = charts.writes();
+  for (const [name, data] of chartWrites.replaced) {
+    plan.replaced.set(name, data);
+  }
+  plan.added.push(...chartWrites.added);
+  plan.overrides.push(...chartWrites.overrides);
   const typesBytes = parts.get("[Content_Types].xml");
   const types = typesBytes === undefined ? undefined : readContentTypes(decodeUtf8(typesBytes));
   for (const path of new Set([...plan.edges.values()].flat())) {
@@ -1307,8 +1369,9 @@ function appXmlFor(xml: string, workbook: SourceWorkbook, plans: readonly SheetP
   const sourceGrid = workbook.sheets.filter((sheet) => relationshipKind(sheet.relType) === "worksheet").map((sheet) => sheet.name);
   const sourceCharts = workbook.sheets.filter((sheet) => relationshipKind(sheet.relType) === "chartsheet").map((sheet) => sheet.name);
   const modelGrid = plans.filter((plan) => plan.sheet.kind === "grid").map((plan) => plan.sheet.name);
+  // A chart sheet is "chart" (SPEC-132) or, unresolvable, "foreign".
   const modelCharts = plans
-    .filter((plan) => plan.sheet.kind === "foreign" && plan.source !== undefined && relationshipKind(plan.source.relType) === "chartsheet")
+    .filter((plan) => plan.sheet.kind !== "grid" && plan.source !== undefined && relationshipKind(plan.source.relType) === "chartsheet")
     .map((plan) => plan.sheet.name);
   const renamed = new Map(Object.entries(remap.renamed).map(([from, to]) => [from.toUpperCase(), to] as const));
   const deleted = new Set(remap.deleted.map((name) => name.toUpperCase()));

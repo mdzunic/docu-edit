@@ -28,8 +28,14 @@
 //   drawing without one goes in front of every drawing that has one, in
 //   document order (`table:shapes` first, then the cells row by row). Ids
 //   are minted "dr1", "dr2"… in that order.
-// - What. `draw:frame` > `draw:object` → `chart` (`sourcePart` "Object
-//   N/content.xml" from its xlink:href); > `draw:image` (the first one) →
+// - What. `draw:frame` > `draw:object` → SPEC-132's `chart` when the object
+//   is one (the manifest types `Object N/` as
+//   application/vnd.oasis.opendocument.chart, or its content.xml has an
+//   `office:chart` body): `sourcePart` "Object N/content.xml" from its
+//   xlink:href, `visual` and `refs` from ods/chartXml.ts readOdsChart (its
+//   `uncached` collected for the reader's display refresh, never stored);
+//   another embedded object (a formula) → foreign "Object"; an object the
+//   package lacks → foreign "Chart"; > `draw:image` (the first one) →
 //   `image` (`Pictures/…` → one MediaPart per package path, shared, mediaId
 //   = the path, its type the manifest's media-type else the extension's,
 //   its bytes deferred with registerPendingMedia; `fo:clip` in the frame's
@@ -43,7 +49,8 @@
 //   adjustments (shapeCatalogue.ts's scale). `draw:rect`, `draw:ellipse`,
 //   `draw:line` → `rect`, `ellipse`, `line` (`arrow` when its style ends in
 //   a marker). `draw:g` → `group`, each member's box a fraction of the
-//   group's (a nested group or a chart member → foreign). `draw:control` →
+//   group's (a nested group or a chart member → foreign, its object never
+//   read). `draw:control` →
 //   foreign "Form control", `dr3d:scene` → "3-D object", anything else →
 //   "Object".
 // - Style. The element's automatic graphic style (`draw:style-name`,
@@ -97,32 +104,45 @@
 //   table writer's style registry, spliced into the envelope's automatic
 //   styles like SPEC-122's `de-ce` styles). Its picture path is the media
 //   part's (OdsMediaPaths re-paths anything outside `Pictures/`). A created
-//   group, chart or foreign drawing has no wire form and is not written
+//   group or foreign drawing has no wire form and is not written
 //   (SPEC-121's cross-format copy drops them first); a created picture's
 //   `crop` is not written.
+// - SPEC-132: a chart written as a new object (no `sourcePart`: created
+//   here, duplicated, carried across formats — ods/chartParts.ts mints its
+//   `Object {n}` once per save, `chartObjectDir`) is canonical whatever
+//   source it carries: SPEC-131's frame with a picture's graphic style
+//   holding ods/chartXml.ts chartObjectElementXml, notified of its
+//   references' ranges (GOLDEN_ODS_CHART_FRAME). A modelled chart's
+//   imported frame, after the retained-text pass, has its
+//   `draw:notify-on-update-of-ranges` written from its current references
+//   whenever the two name different ranges (withChartNotifyRanges) — model
+//   text no source-time pass reaches.
 //
 // The reader upgrade (open.ts, SPEC-131's step) lifts the drawing elements
 // out of a dirty stored sheet's cells' preservedXml — anchored to each
 // cell's current position — and reads table:shapes from its retained
 // sourceXml (upgradeOdsSheetDrawings).
+import { CHART_OBJECT_CONTENT_TYPE } from "../../core/chartPartOdf";
 import { decodeImageDimensions } from "../../core/imageDimensions";
 import { DRAW_TYPE_TO_GEOMETRY, GEOMETRY_TO_DRAW_TYPE } from "../../core/drawingMl";
 import { contentTypeForPartName, extensionForContentType, registerPendingMedia, type MediaPart } from "../../core/media";
-import { DRAW_NAMESPACE, odfColorToCss, odfLengthToCm, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "../../core/odfXml";
+import { DRAW_NAMESPACE, odfColorToCss, odfLengthToCm, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "../../core/odfXml";
 import { adjustmentToGuideValue, guideValueToAdjustment } from "../../core/shapeCatalogue";
 import { LINE_GEOMETRIES, normalizeRotationDeg, shapeFillBaseColor, type ShapeFill, type ShapeGeometry, type ShapeOutline, type ShapeVisual } from "../../core/shapes";
 import { DEFAULT_THEME, resolveColor, type DocumentTheme } from "../../core/theme";
 import { CM_PER_INCH, POINTS_PER_INCH, cmToEmu, emuToCm } from "../../core/units";
 import { XmlParseError } from "../../core/xml";
-import { scanXml, type XmlScanAttribute } from "../../core/xmlScanner";
+import { scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { colToLetters } from "../address";
+import { isModelledChart } from "../charts";
 import { anchorBehaviour, drawingRectPx, EMU_PER_PX, writtenPoints } from "../drawings";
 import { sheetNameNeedsQuotes } from "../formula/print";
 import { buildGridMetrics, type GridMetrics } from "../geometry";
-import { MAX_COLS, MAX_ROWS, type AnchorPoint, type Cell, type DrawingAnchor, type DrawingText, type Row, type Sheet, type SheetDrawing, type SheetDrawingContent } from "../model";
+import { MAX_COLS, MAX_ROWS, type AnchorPoint, type Cell, type DrawingAnchor, type DrawingText, type Row, type Sheet, type SheetChartContent, type SheetDrawing, type SheetDrawingContent } from "../model";
 import { applySplices, decodeXmlText, escapeAttributeText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
 import { readManifest } from "./package";
-import { parseOdsRangeAddress } from "./rangeAddress";
+import { chartObjectElementXml, notifyRangesOf, readOdsChart, withNotifyRanges } from "./chartXml";
+import { parseOdsRangeAddress, splitOdsRangeAddressList } from "./rangeAddress";
 import { namespaceDeclarations, odsStyleBookFromSource, parseOdsPart, type OdsStyleBook } from "./styles";
 
 const DR3D_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:dr3d:1.0";
@@ -500,6 +520,19 @@ export class OdsMediaReader {
     }
   }
 
+  /** SPEC-132: a package part's text (an embedded chart object's
+   * `Object 1/content.xml`), or undefined when the package lacks it. */
+  partText(name: string): string | undefined {
+    const bytes = this.parts.get(name);
+    return bytes === undefined ? undefined : new TextDecoder().decode(bytes);
+  }
+
+  /** SPEC-132: the manifest's media-type for a path (an embedded object's
+   * directory, `Object 1/`), or undefined when it lists none. */
+  mediaType(path: string): string | undefined {
+    return this.types.get(path);
+  }
+
   /** The media part at `path`, or undefined when the package has none. */
   part(path: string): MediaPart | undefined {
     let part = this.found.get(path);
@@ -550,6 +583,11 @@ export interface OdsDrawingReadContext {
   declarations: string;
   styles: OdsDrawingStyles;
   media: OdsMediaReader;
+  /** SPEC-132: collects each chart content whose object carries a reference
+   * with no data for it in its `local-table` (readOdsChart's `uncached`) —
+   * the reader refreshes those for display once every table is read; the
+   * content itself never stores it. */
+  uncachedCharts?: Set<SheetChartContent>;
 }
 
 const drawAttr = (el: Element, local: string): string | null => el.getAttributeNS(DRAW_NAMESPACE, local);
@@ -752,8 +790,9 @@ function customShapeContent(el: Element, ctx: OdsDrawingReadContext): SheetDrawi
   return shapeContent(el, geometry, ctx, adjustments.length > 0 ? { adjustments } : {});
 }
 
-/** What a drawing element paints (see the module header). */
-function contentOf(el: Element, geometry: ElementGeometry, ctx: OdsDrawingReadContext): SheetDrawingContent {
+/** What a drawing element paints (see the module header); `member`: a
+ * group's member (whose chart object is not read). */
+function contentOf(el: Element, geometry: ElementGeometry, ctx: OdsDrawingReadContext, member = false): SheetDrawingContent {
   if (el.namespaceURI === DR3D_NAMESPACE && el.localName === "scene") {
     return { kind: "foreign", label: "3-D object" };
   }
@@ -762,7 +801,7 @@ function contentOf(el: Element, geometry: ElementGeometry, ctx: OdsDrawingReadCo
   }
   switch (el.localName) {
     case "frame":
-      return frameContent(el, ctx);
+      return frameContent(el, ctx, member);
     case "custom-shape":
       return customShapeContent(el, ctx);
     case "rect":
@@ -780,13 +819,62 @@ function contentOf(el: Element, geometry: ElementGeometry, ctx: OdsDrawingReadCo
   }
 }
 
-function frameContent(el: Element, ctx: OdsDrawingReadContext): SheetDrawingContent {
+/** Whether an object's content.xml has a chart body (`office:body >
+ * office:chart`). */
+function hasChartBody(contentXml: string): boolean {
+  let found = false;
+  try {
+    scanXml(contentXml, (event) => {
+      if (event.type === "open" && event.ns === OFFICE_NAMESPACE && event.local === "chart") {
+        found = true;
+        return "stop";
+      }
+      return undefined;
+    });
+  } catch (error) {
+    if (!(error instanceof XmlScanError)) {
+      throw error;
+    }
+  }
+  return found;
+}
+
+/** A `draw:object`'s content (SPEC-132): a chart when the object is one —
+ * the manifest types its directory as a chart, or its content.xml has a
+ * chart body — read by readOdsChart (a group `member` is never a chart:
+ * foreign "Chart" without reading it); another embedded object (a formula,
+ * a drawing) foreign "Object"; an object whose part the package lacks
+ * foreign "Chart". */
+function objectContent(object: Element, ctx: OdsDrawingReadContext, member: boolean): SheetDrawingContent {
+  const sourcePart = objectPart(object);
+  const text = sourcePart === undefined ? undefined : ctx.media.partText(sourcePart);
+  if (sourcePart === undefined || text === undefined) {
+    return { kind: "foreign", label: "Chart" };
+  }
+  const dir = sourcePart.slice(0, -"content.xml".length);
+  if (ctx.media.mediaType(dir) !== CHART_OBJECT_CONTENT_TYPE && !hasChartBody(text)) {
+    return { kind: "foreign", label: "Object" };
+  }
+  if (member) {
+    return { kind: "foreign", label: "Chart" };
+  }
+  const read = readOdsChart(text);
+  const content: SheetChartContent = { kind: "chart", visual: read.visual, sourcePart };
+  if (read.refs) {
+    content.refs = read.refs;
+  }
+  if (read.uncached) {
+    ctx.uncachedCharts?.add(content);
+  }
+  return content;
+}
+
+function frameContent(el: Element, ctx: OdsDrawingReadContext, member = false): SheetDrawingContent {
   const children = elementChildren(el).filter((child) => child.namespaceURI === DRAW_NAMESPACE);
   const styleName = drawAttr(el, "style-name");
   const object = children.find((child) => child.localName === "object");
   if (object) {
-    const sourcePart = objectPart(object);
-    return sourcePart === undefined ? { kind: "chart" } : { kind: "chart", sourcePart };
+    return objectContent(object, ctx, member);
   }
   const image = children.find((child) => child.localName === "image");
   if (children.some((child) => child.localName === "object-ole")) {
@@ -810,7 +898,7 @@ function groupContent(el: Element, geometry: ElementGeometry, ctx: OdsDrawingRea
   const elements = elementChildren(el).filter((child) => isDrawingElementName(canonicalName(child.tagName, child.localName, child.namespaceURI ?? undefined)));
   const members = geometry.members.map((member, index) => {
     const child = elements[index];
-    const read = child ? contentOf(child, member.geometry, ctx) : ({ kind: "foreign", label: "Object" } as const);
+    const read = child ? contentOf(child, member.geometry, ctx, true) : ({ kind: "foreign", label: "Object" } as const);
     const content: MemberContent = read.kind === "group" ? { kind: "foreign", label: "Group" } : read.kind === "chart" ? { kind: "foreign", label: "Chart" } : read;
     const m = member.geometry.box;
     return {
@@ -892,6 +980,72 @@ export interface OdsDrawingWriteContext {
   passRetained?: (text: string) => string;
   /** The package path a media id is written under (absent: the id itself). */
   mediaPath?: (mediaId: string) => string;
+  /** SPEC-132: the embedded object (`Object {n}`) the save minted for a
+   * chart drawing written as a new object (ods/chartParts.ts) — that
+   * drawing is written in the canonical form, naming it; undefined for
+   * every other drawing (absent: no chart is minted, a created chart is not
+   * written). */
+  chartObjectDir?: (drawing: SheetDrawing) => string | undefined;
+}
+
+/** SPEC-132: a chart drawing whose `refs` the `charts` adjusters keep (a
+ * catalogue chart) — tolerating a stored SPEC-131 placeholder, which has no
+ * visual. */
+export function isModelledChartDrawing(drawing: SheetDrawing): drawing is SheetDrawing & { content: SheetChartContent } {
+  const content = drawing.content;
+  return content.kind === "chart" && (content.visual as SheetChartContent["visual"] | undefined) !== undefined && isModelledChart(content);
+}
+
+/** An address list as the ranges it names (sheet, sheetEnd and cell
+ * positions; `$` and the spelling of the sheet name ignored), each entry
+ * that does not parse by its text. */
+function rangeListKeys(list: string): string[] {
+  return splitOdsRangeAddressList(list.trim())
+    .filter((piece, k) => k % 2 === 0 && piece !== "")
+    .map((entry) => {
+      const ref = parseOdsRangeAddress(entry);
+      if (!ref) {
+        return `?${entry}`;
+      }
+      const end = ref.end ?? ref.start;
+      return [ref.sheet?.toUpperCase() ?? "", ref.sheetEnd?.toUpperCase() ?? "", ref.start.col, ref.start.row, end.col, end.row].join("|");
+    });
+}
+
+/** The `draw:object@draw:notify-on-update-of-ranges` a frame's text
+ * carries (undefined when absent). */
+function notifyRangesIn(frameXml: string): string | undefined {
+  let value: string | undefined;
+  try {
+    scanXml(frameXml, (event) => {
+      if (event.type === "open" && canonicalName(event.name, event.local, event.ns) === "draw:object") {
+        value = attrOf(event.attrs, "draw:notify-on-update-of-ranges");
+        return "stop";
+      }
+      return undefined;
+    });
+  } catch (error) {
+    if (!(error instanceof XmlScanError)) {
+      throw error;
+    }
+  }
+  return value;
+}
+
+/** SPEC-132 "Writing" 3: a modelled chart's frame text with its
+ * `draw:notify-on-update-of-ranges` written from the chart's current
+ * references (ods/chartXml.ts notifyRangesOf, model-time sheet names)
+ * whenever the two name different ranges; a list naming the same ranges
+ * keeps the producer's bytes. Applied AFTER the retained-text pass, so no
+ * source-time sheet-name pass ever reaches the model's text. */
+export function withChartNotifyRanges(frameXml: string, content: SheetChartContent): string {
+  const wanted = notifyRangesOf(content.refs);
+  const current = notifyRangesIn(frameXml);
+  const same =
+    current === undefined || wanted === undefined
+      ? current === wanted
+      : rangeListKeys(current).length === rangeListKeys(wanted).length && rangeListKeys(current).every((key, i) => key === rangeListKeys(wanted)[i]);
+  return same ? frameXml : withNotifyRanges(frameXml, wanted);
 }
 
 /** A dirty table's drawings as XML: the `table:shapes` element ("" when no
@@ -900,6 +1054,12 @@ export interface OdsDrawingWriteContext {
 export interface OdsSheetDrawingsXml {
   shapes: string;
   cells: Map<number, Map<number, string>>;
+}
+
+/** A drawing without its source XML (written canonically). */
+function withoutSource(drawing: SheetDrawing): SheetDrawing {
+  const { sourceXml: _source, ...rest } = drawing;
+  return rest;
 }
 
 /** The z-index each drawing is written with (undefined: leave the source's
@@ -927,10 +1087,19 @@ function zIndexes(drawings: readonly SheetDrawing[], sourceZ: readonly (number |
 
 /** Writes a sheet's drawings (see the module header). */
 export function odsSheetDrawingsXml(drawings: readonly SheetDrawing[], ctx: OdsDrawingWriteContext): OdsSheetDrawingsXml {
-  const sources = drawings.map((drawing) => (drawing.sourceXml === undefined ? undefined : (ctx.passRetained ?? ((text: string): string => text))(drawing.sourceXml)));
+  const pass = ctx.passRetained ?? ((text: string): string => text);
+  // SPEC-132: a chart written as a new object is canonical, whatever source it carries.
+  const minted = drawings.map((drawing) => (drawing.content.kind === "chart" ? ctx.chartObjectDir?.(drawing) : undefined));
+  const sources = drawings.map((drawing, index) => {
+    if (drawing.sourceXml === undefined || minted[index] !== undefined) {
+      return undefined;
+    }
+    const passed = pass(drawing.sourceXml);
+    return isModelledChartDrawing(drawing) ? withChartNotifyRanges(passed, drawing.content) : passed;
+  });
   const geometries = sources.map((text) => (text === undefined ? undefined : elementGeometry(text)));
   const z = zIndexes(
-    drawings,
+    drawings.map((drawing, index) => (minted[index] === undefined || drawing.sourceXml === undefined ? drawing : withoutSource(drawing))),
     geometries.map((geometry) => geometry?.z),
   );
   let shapes = "";
@@ -1306,11 +1475,23 @@ function textXml(text: DrawingText | undefined): string {
 }
 
 /** A drawing created here in its canonical form (ods/drawingGolden.ts), or
- * "" for a kind with none (a created group, chart or foreign drawing). */
+ * "" for a kind with none (a created group or foreign drawing, a chart the
+ * save minted no object for). SPEC-132: a chart is SPEC-131's frame — a
+ * picture's graphic style (no line, no fill: LibreOffice's chart frame) —
+ * holding ods/chartXml.ts's `draw:object` for its minted object, notified
+ * of its references' ranges. */
 export function canonicalOdsDrawing(drawing: SheetDrawing, z: number, ctx: OdsDrawingWriteContext): string {
   const theme = ctx.theme ?? DEFAULT_THEME;
   const box = targetBox(drawing.anchor, ctx.metrics);
   const content = drawing.content;
+  if (content.kind === "chart") {
+    const dir = ctx.chartObjectDir?.(drawing);
+    if (dir === undefined) {
+      return "";
+    }
+    const style = ctx.registry.graphicStyle(ODS_IMAGE_GRAPHIC_PROPERTIES);
+    return `<draw:frame${canonicalHead(drawing, z, style, ctx)}${boxAttributes(box)}>${chartObjectElementXml(dir, notifyRangesOf(content.refs))}${descXml(drawing.altText)}</draw:frame>`;
+  }
   if (content.kind === "image") {
     const style = ctx.registry.graphicStyle(ODS_IMAGE_GRAPHIC_PROPERTIES);
     const href = ctx.mediaPath ? ctx.mediaPath(content.mediaId) : content.mediaId;
