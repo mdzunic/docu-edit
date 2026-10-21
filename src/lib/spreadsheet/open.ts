@@ -671,6 +671,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   if (parsed.odsOrphanValidations !== undefined && parsed.odsOrphanValidations.length > 0) {
     model.odsOrphanValidations = parsed.odsOrphanValidations;
   }
+  if (parsed.media !== undefined && parsed.media.length > 0) {
+    model.media = parsed.media;
+  }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
 }
