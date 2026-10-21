@@ -20,7 +20,9 @@
 // the filter popover and its dialogs and the refusal alert
 // (SortFilterSurfaces, the grid context's `sortFilter`). SPEC-129: the
 // sheet's side panel beside the sheet (SheetSidePanel, from `editing`).
-// Runtime prop declarations per the espree constraint (see AppShell.vue).
+// SPEC-130: the data-validation alert (ValidationAlert, from `editing`'s
+// `validation`). Runtime prop declarations per the espree constraint (see
+// AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
@@ -47,6 +49,7 @@ import SheetTabMenu from "./SheetTabMenu.vue";
 import SheetTabs from "./SheetTabs.vue";
 import SheetUnhideDialog from "./SheetUnhideDialog.vue";
 import SortFilterSurfaces from "./SortFilterSurfaces.vue";
+import ValidationAlert from "./ValidationAlert.vue";
 
 const props = defineProps({
   /** useWorkbookLoad's return. */
@@ -78,6 +81,13 @@ function clipboard(action = "copy") {
 }
 const commands = computed(() => asWorkbookEditing(props.editing).commands);
 const cellEditing = computed(() => asWorkbookEditing(props.editing).cell);
+/** SPEC-130: data validation (absent when the editing wiring has none). */
+const validation = computed(() => asWorkbookEditing(props.editing).validation ?? null);
+
+/** The validation alert's answer. */
+function answerAlert(choice = "cancel") {
+  validation.value?.answer(choice === "retry" || choice === "yes" || choice === "no" || choice === "ok" ? choice : "cancel");
+}
 const panelId = "sheet-panel";
 
 /** The visible tabs with their tab colours resolved for CSS. */
@@ -243,6 +253,13 @@ const tabs = computed(() => {
     <SortFilterSurfaces
       v-if="sortFilter"
       :sort-filter="sortFilter"
+    />
+    <ValidationAlert
+      v-if="validation?.alert.value"
+      :alert-style="validation.alert.value.style"
+      :title="validation.alert.value.title"
+      :text="validation.alert.value.text"
+      @answer="answerAlert"
     />
     <SheetTabColorPicker
       v-if="commands.coloring.value"

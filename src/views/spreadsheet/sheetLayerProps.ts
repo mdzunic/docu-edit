@@ -64,14 +64,29 @@ export function cfBarsOf(cell: CellItem): CfBarView[] {
   return [view];
 }
 
+/** SPEC-130: the cell (by its `data-ref`, a merge's anchor) that an element
+ * describes — the active cell and the data-validation input message's id. */
+export interface DescribedCell {
+  ref: string;
+  id: string;
+}
+
+/** SheetCellLayer's `describedBy` (useSheetGrid's), or null. */
+export function asDescribedCell(value: unknown): DescribedCell | null {
+  return value !== null && typeof value === "object" && typeof Reflect.get(value, "ref") === "string" && typeof Reflect.get(value, "id") === "string"
+    ? (value as DescribedCell)
+    : null;
+}
+
 /** A cell element's identity and ARIA: its id (aria-activedescendant's
  * target), the gridcell role, `sheet-cell` and `data-ref`, its 1-based
  * indices past the header row and column, a merge's spans and the selected
  * state — and, for a cell whose value couldn't be recalculated (SPEC-120
- * "Stale cells"), data-stale="true" and a title saying why. A merge's paint
- * in a further frozen pane carries none of it — only aria-hidden — since the
- * merge's one element is in another pane. */
-export function cellAttributes(cell: CellItem, staleTitle?: StaleTitle): Record<string, string | number | undefined> {
+ * "Stale cells"), data-stale="true" and a title saying why; SPEC-130: the
+ * active cell's aria-describedby while its input message shows
+ * (`describedBy`). A merge's paint in a further frozen pane carries none of
+ * it — only aria-hidden — since the merge's one element is in another pane. */
+export function cellAttributes(cell: CellItem, staleTitle?: StaleTitle, describedBy?: DescribedCell | null): Record<string, string | number | undefined> {
   if (cell.paintOnly) {
     return { "aria-hidden": "true" };
   }
@@ -89,5 +104,6 @@ export function cellAttributes(cell: CellItem, staleTitle?: StaleTitle): Record<
     "aria-rowspan": cell.rowSpan > 1 ? cell.rowSpan : undefined,
     "aria-colspan": cell.colSpan > 1 ? cell.colSpan : undefined,
     "aria-selected": cell.selected ? "true" : "false",
+    "aria-describedby": describedBy && describedBy.ref === cell.ref ? describedBy.id : undefined,
   };
 }

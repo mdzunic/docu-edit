@@ -30,19 +30,29 @@
 //   checked before the editor opens and before Delete or Fill (a toast).
 // - Sheets: a tab clicked while pointing shows that sheet and keeps editing;
 //   commit or cancel returns to the edited sheet.
+// - SPEC-130's entry gate (`entryGate`, useDataValidation): after protection
+//   and parsing, a commit, a Fill (each target a rule covers, the first
+//   failure deciding) and a dropdown pick (`enterValue`) are checked against
+//   the data-validation rules before anything is written. A valid entry
+//   writes at once, as before; an invalid one opens the alert and the editor
+//   stays open (the commit reports false, so a click-away is "handled") until
+//   it is answered: "commit" writes the entry and moves on; "retry" stays in
+//   Edit mode with the whole entered text selected in the focused cell
+//   editor; "cancel" closes the editor leaving the cell as it was.
 import { computed, nextTick, ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import type { CellEntry } from "../../lib/spreadsheet/cells";
 import { MAX_TEXT_LENGTH } from "../../lib/spreadsheet/formula/values";
-import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { CellValue, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
 import { canEditCell, cellEditText, clearTargets, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
+import type { EntryGate, EntryVerdict } from "./useDataValidation";
 import { usePointMode } from "./usePointMode";
 import type { SheetMetrics } from "./useSheetMetrics";
 import type { SheetSelectionController } from "./useSheetSelection";
@@ -72,6 +82,9 @@ export interface CellEditingDeps {
    * it was made from, and after a commit's move, since applying a step
    * re-reads the view state from the model. */
   syncViewState?: (model: SpreadsheetModel) => void;
+  /** SPEC-130: the data-validation entry gate (useDataValidation's
+   * entryGateOf); absent = every entry is written unchecked. */
+  entryGate?: EntryGate;
 }
 
 const MODE_LABELS: Readonly<Record<EditMode, string>> = { ready: "Ready", enter: "Enter", edit: "Edit" };
@@ -90,6 +103,9 @@ export function useCellEditing(deps: CellEditingDeps) {
   let original = "";
   let composing = false;
   let keyFilter: ((event: KeyboardEvent) => boolean) | null = null;
+  /** The entry the gate's alert is asking about (SPEC-130): nothing commits
+   * until it is answered; finish() forgets it. */
+  let gated: object | null = null;
 
   const editing = computed(() => mode.value !== "ready");
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
@@ -192,6 +208,7 @@ export function useCellEditing(deps: CellEditingDeps) {
     const sheetId = target.value?.sheetId;
     mode.value = "ready";
     target.value = null;
+    gated = null;
     composing = false;
     point.end();
     draft.reset();
@@ -205,7 +222,7 @@ export function useCellEditing(deps: CellEditingDeps) {
   /** The edited cell's write context and the draft as its entry — or null
    * after showing why it cannot be written (the error, or for a Fill a
    * protection toast). */
-  function prepared(forFill: boolean): { ctx: CellWriteContext; at: CellRef; entry: CellEntry } | null {
+  function prepared(forFill: boolean, given?: CellEntry): { ctx: CellWriteContext; at: CellRef; entry: CellEntry } | null {
     const m = model();
     const at = target.value?.at;
     const sheetIndex = m?.sheets.findIndex((sheet) => sheet.id === target.value?.sheetId) ?? -1;
@@ -219,7 +236,7 @@ export function useCellEditing(deps: CellEditingDeps) {
       return null;
     }
     const style = cellStyle(m, effectiveStyleId(sheet, at.row, at.col));
-    const outcome = entryFromText(draft.text.value, { locale: deps.locale(), dateSystem: m.dateSystem, style });
+    const outcome = given ? { entry: given } : entryFromText(draft.text.value, { locale: deps.locale(), dateSystem: m.dateSystem, style });
     if ("error" in outcome) {
       draft.fail(outcome.error, outcome.caret);
       return null;
@@ -229,32 +246,122 @@ export function useCellEditing(deps: CellEditingDeps) {
     return { ctx: { model: m, sheetIndex, undo: deps.undo, measurer, format: deps.selection.formatContext.value }, at, entry: outcome.entry };
   }
 
-  /** Writes the draft into the edited cell (an unchanged text writes
-   * nothing) and moves on; false when it cannot be written (kept open). */
-  function commit(move: Move | null): boolean {
-    if (target.value && draft.text.value !== original) {
-      const ready = prepared(false);
-      if (!ready) {
-        return false;
-      }
-      writeEntry(ready.ctx, ready.at, ready.entry, draft.text.value);
-    }
+  /** Back to Ready after a write, applying the commit's move. */
+  function done(move: Move | null): void {
     finish();
     if (move && moves.apply(move)) {
       revealTick.value += 1;
     }
     syncViewState();
+  }
+
+  /** SPEC-130: asks the entry gate about `ready`'s entry at `targets`. False
+   * when it may be written now; true when the gate's alert opened — the
+   * editor stays open until the answer: "commit" runs `write` then `after`,
+   * "retry" selects the entered text in the cell editor, "cancel" closes it
+   * unwritten. */
+  function held(ready: { ctx: CellWriteContext; at: CellRef; entry: CellEntry }, targets: Iterable<CellRef>, write: () => void, after: () => void): boolean {
+    const gate = deps.entryGate;
+    const sheet = ready.ctx.model.sheets[ready.ctx.sheetIndex];
+    const failure = gate && sheet ? gate.firstFailure(sheet, targets, { value: ready.entry.value, formula: ready.entry.formula }, ready.at) : null;
+    if (!gate || !failure) {
+      return false;
+    }
+    const token = {};
+    gated = token;
+    void gate.alert(failure).then((verdict) => {
+      if (gated === token) {
+        gated = null;
+        answered(verdict, write, after);
+      }
+    });
+    return true;
+  }
+
+  /** The alert's answer (see `held`). */
+  function answered(verdict: EntryVerdict, write: () => void, after: () => void): void {
+    if (verdict === "commit") {
+      syncViewState();
+      write();
+      after();
+    } else if (verdict === "retry") {
+      mode.value = "edit";
+      point.end();
+      draft.focusCell();
+      draft.selectAll();
+      return;
+    } else {
+      finish();
+    }
+    draft.focusCell();
+  }
+
+  /** Writes the draft into the edited cell (an unchanged text writes
+   * nothing) and moves on; false when it cannot be written, or the entry
+   * gate's alert holds it (kept open). */
+  function commit(move: Move | null): boolean {
+    if (gated) {
+      return false;
+    }
+    if (target.value && draft.text.value !== original) {
+      const ready = prepared(false);
+      if (!ready) {
+        return false;
+      }
+      const text = draft.text.value;
+      const write = (): void => writeEntry(ready.ctx, ready.at, ready.entry, text);
+      if (held(ready, [ready.at], write, () => done(move))) {
+        return false;
+      }
+      write();
+    }
+    done(move);
     return true;
   }
 
   /** Ctrl/Cmd+Enter: the entry into every cell of the selection ("Fill"). */
   function fill(): void {
+    if (gated) {
+      return;
+    }
     const ranges = target.value?.ranges ?? [];
     const ready = prepared(true);
-    if (ready) {
-      writeFill(ready.ctx, ranges, ready.at, ready.entry);
-      finish();
+    if (!ready) {
+      return;
     }
+    const write = (): void => writeFill(ready.ctx, ranges, ready.at, ready.entry);
+    const sheet = ready.ctx.model.sheets[ready.ctx.sheetIndex];
+    const targets = deps.entryGate && sheet ? deps.entryGate.fillTargets(sheet, ranges, ready.at) : [];
+    if (held(ready, targets, write, finish)) {
+      return;
+    }
+    write();
+    finish();
+  }
+
+  /** SPEC-130's dropdown pick: `value` entered into the active cell through
+   * the commit path — an edit in progress commits first, protection refuses
+   * (a toast), the entry gate checks it, one undo step `Typing "<text>" in
+   * B2` — without moving. False when nothing was written (yet). */
+  function enterValue(value: CellValue, text: string): boolean {
+    if (gated || (editing.value && !commit(null))) {
+      return false;
+    }
+    if (!open("enter", text, "end")) {
+      return false;
+    }
+    const ready = prepared(false, { value });
+    if (!ready) {
+      finish();
+      return false;
+    }
+    const write = (): void => writeEntry(ready.ctx, ready.at, ready.entry, text);
+    if (held(ready, [ready.at], write, () => done(null))) {
+      return false;
+    }
+    write();
+    done(null);
+    return true;
   }
 
   /** Delete/Backspace in Ready (and Format ▸ Clear contents): see clearTargets. */
@@ -374,6 +481,7 @@ export function useCellEditing(deps: CellEditingDeps) {
     commit: (): boolean => commit(null),
     cancel: finish,
     fill,
+    enterValue,
     clearSelection,
     /** Replaces the focused host's selection (paste, Alt+Enter). */
     insertText: actions.insertText,
