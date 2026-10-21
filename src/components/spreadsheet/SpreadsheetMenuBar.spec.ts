@@ -72,6 +72,9 @@ describe("SpreadsheetMenuBar's Data menu (SPEC-128)", () => {
       "sheet-menu-filter",
       "sheet-menu-clear-filters",
       "sheet-menu-reapply-filter",
+      // SPEC-130: Data validation… after its own separator, below the filters.
+      "—",
+      "sheet-menu-data-validation",
     ]);
     expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual([
       "Recalculate",
@@ -81,6 +84,7 @@ describe("SpreadsheetMenuBar's Data menu (SPEC-128)", () => {
       "Filter",
       "Clear filters",
       "Reapply filter",
+      "Data validation…",
     ]);
     const filter = wrapper.get('[data-testid="sheet-menu-filter"]');
     expect(filter.attributes("role")).toBe("menuitemcheckbox");
@@ -126,5 +130,23 @@ describe("SpreadsheetMenuBar's Format menu (SPEC-129)", () => {
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.conditionalFormatting]);
     const noGrid = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
     expect(noGrid.get('[data-testid="sheet-menu-conditional-formatting"]').attributes("disabled")).toBeDefined();
+  });
+});
+
+describe("SpreadsheetMenuBar's Data menu (SPEC-130)", () => {
+  it("offers Data validation… after a separator below the filter items, routing data.validation and disabled without a grid sheet", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: true } } });
+    const menu = wrapper.get('[data-testid="menu-data"]');
+    const rows = menu.findAll('[role^="menuitem"], hr').map((row) => (row.element.tagName === "HR" ? "—" : row.attributes("data-testid")));
+    expect(rows.slice(-3)).toEqual(["sheet-menu-reapply-filter", "—", "sheet-menu-data-validation"]);
+    const item = wrapper.get('[data-testid="sheet-menu-data-validation"]');
+    expect(item.attributes("role")).toBe("menuitem");
+    expect(item.get(".menu-item-label").text()).toBe("Data validation…");
+    expect(item.attributes("disabled")).toBeUndefined();
+    await item.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.dataValidation]);
+    expect(SHEET_MENU_COMMANDS.dataValidation).toBe("data.validation");
+    const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
+    expect(foreign.get('[data-testid="sheet-menu-data-validation"]').attributes("disabled")).toBeDefined();
   });
 });

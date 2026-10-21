@@ -24,7 +24,9 @@
 // has an autofilter, Ctrl/Cmd+Shift+L), Clear filters and Reapply filter
 // (Ctrl/Cmd+Alt+L) — the last two disabled without an autofilter, stating
 // "Turn on Filter first". SPEC-129 adds Format ▸ Conditional formatting…
-// (after Cell styles ▸), which opens the side panel's rules manager.
+// (after Cell styles ▸), which opens the side panel's rules manager. SPEC-130
+// adds Data ▸ "Data validation…" after a separator below the filter items,
+// which opens the validation dialog (disabled on a foreign sheet).
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -352,6 +354,13 @@ const MENUS = [
         :disabled="!s.filterOn"
         :reason="s.hasGrid ? FILTER_OFF_REASON : ''"
         @select="emit('command', SHEET_MENU_COMMANDS.reapplyFilter)"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Data validation…"
+        testid="sheet-menu-data-validation"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.dataValidation)"
       />
     </template>
   </MenuBar>

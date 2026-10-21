@@ -8,8 +8,9 @@
 // Edit ▸ Paste special… and Fill ▸ Down/Right; SPEC-128 the Data menu's
 // sorts and filter commands and whether the sheet has an autofilter (Filter
 // is checked; without one Clear filters and Reapply filter are disabled,
-// saying "Turn on Filter first"). Later spreadsheet specs append fields as
-// they append menus and items.
+// saying "Turn on Filter first"). SPEC-130 adds Data ▸ "Data validation…"
+// (disabled with the other grid items on a foreign sheet). Later spreadsheet
+// specs append fields as they append menus and items.
 
 /** What the bar needs in order to render: what is checked, what applies. */
 export interface SpreadsheetMenuState {
@@ -92,6 +93,8 @@ export const SHEET_MENU_COMMANDS = {
   reapplyFilter: "data.reapply-filter",
   /** SPEC-129: Format ▸ Conditional formatting… (the rules manager pane). */
   conditionalFormatting: "format.conditional-formatting",
+  /** SPEC-130: Data ▸ Data validation… (the validation dialog). */
+  dataValidation: "data.validation",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
