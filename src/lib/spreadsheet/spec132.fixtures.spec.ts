@@ -105,12 +105,13 @@ describe("spec132-charts.xlsx", () => {
   });
 });
 
+/** A Calc chart object's address attribute values, in document order. */
+const addresses = (xml: string): string[] =>
+  [...xml.matchAll(/(?:table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="([^"]*)"/g)].map((match) => match[1]!);
+
 describe("spec132-charts.ods", () => {
   const O = SPEC132_CHARTS_ODS;
   const { bar, surface } = O.charts;
-  /** A Calc address attribute list's values, in document order. */
-  const addresses = (xml: string): string[] =>
-    [...xml.matchAll(/(?:table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="([^"]*)"/g)].map((match) => match[1]!);
 
   it("is deterministic, the committed bytes, whole, with exactly the listed parts", async () => {
     const built = await buildSpec132ChartsOdsBytes();

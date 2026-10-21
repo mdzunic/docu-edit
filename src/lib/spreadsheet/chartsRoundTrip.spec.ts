@@ -131,14 +131,16 @@ describe("SPEC-132 chart round trips — spec132-charts.xlsx", () => {
   });
 });
 
+/** An ODS chart object's address attribute values, in document order. */
+const addresses = (xml: string): string[] =>
+  [...xml.matchAll(/(?:table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="([^"]*)"/g)].map((match) => match[1]!);
+/** The object with its address attributes blanked: what stays when only its references move. */
+const withoutAddresses = (xml: string): string => xml.replace(/(table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="[^"]*"/g, '$1=""');
+/** The object up to its `local-table` cache. */
+const beforeLocalTable = (xml: string): string => xml.slice(0, xml.indexOf(`<table:table table:name="local-table">`));
+
 describe("SPEC-132 chart round trips — spec132-charts.ods", () => {
   const { bar, surface } = SPEC132_CHARTS_ODS.charts;
-  /** An object's address attribute values, in document order. */
-  const addresses = (xml: string): string[] =>
-    [...xml.matchAll(/(?:table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="([^"]*)"/g)].map((match) => match[1]!);
-  const withoutAddresses = (xml: string): string => xml.replace(/(table:cell-range-address|chart:values-cell-range-address|chart:label-cell-address)="[^"]*"/g, '$1=""');
-  const LOCAL_TABLE = `<table:table table:name="local-table">`;
-  const beforeLocalTable = (xml: string): string => xml.slice(0, xml.indexOf(LOCAL_TABLE));
 
   it("reads the bar chart's caches and references, the surface chart as unsupported; an untouched workbook is written byte-identical, every object part included", async () => {
     const { bytes, model } = await openedOds();
