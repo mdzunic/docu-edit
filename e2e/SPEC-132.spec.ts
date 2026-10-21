@@ -77,6 +77,15 @@ test("SPEC-132: the column chart follows its cells and a row insert; the 3-D and
   const edited = [COLUMN_VALUES[0], COLUMN_VALUES[1], [12, 90, 18, 24]];
   await expect(column).toHaveAttribute("data-chart-values", JSON.stringify(edited));
 
+  // The refresh is part of the edit's undo step: one undo takes back the cell and its bar, redo brings both back.
+  await page.getByTestId("spreadsheet-grid").focus();
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(cell(page, "D3")).toHaveText("30");
+  await expect(column).toHaveAttribute("data-chart-values", JSON.stringify(COLUMN_VALUES));
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(cell(page, "D3")).toHaveText("90");
+  await expect(column).toHaveAttribute("data-chart-values", JSON.stringify(edited));
+
   // A row inserted above the data: the chart still plots the same values.
   await page.getByTestId("sheet-row-header").filter({ hasText: /^1$/ }).click({ button: "right" });
   await page.getByTestId("sheet-header-menu").getByTestId("sheet-insert-before").click();
