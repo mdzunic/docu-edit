@@ -365,8 +365,8 @@ describe("MCE wrappers", () => {
         wrapped("a16", "http://schemas.microsoft.com/office/drawing/2014/main", anchor(box("Thing 1")), anchor(box("Thing 1", ` hidden="1"`))) +
         twoCell([4, 0, 4, 0], [6, 0, 6, 0], `<mc:AlternateContent xmlns:mc="${MC}"><mc:Choice xmlns:aink="http://schemas.microsoft.com/office/drawing/2016/ink" Requires="aink"><xdr:contentPart r:id="rId3"/></mc:Choice><mc:Fallback>${box("Ink 2")}</mc:Fallback></mc:AlternateContent>`),
     });
-    const [chart, equation, hidden, inner] = drawingsOf(model);
-    expect(chart!.content).toEqual({ kind: "foreign", label: "Chart" });
+    const [chartex, equation, hidden, inner] = drawingsOf(model);
+    expect(chartex!.content).toEqual({ kind: "foreign", label: "Chart" });
     expect(equation!.content).toMatchObject({ kind: "foreign", label: "Equation", face: { kind: "shape", text: { paragraphs: [{ text: "x = 1" }] } } });
     expect(hidden).toMatchObject({ hidden: true, content: { kind: "foreign", label: "Object" } });
     expect((hidden!.content as { face?: unknown }).face).toBeUndefined();
