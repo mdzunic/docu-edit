@@ -225,6 +225,23 @@ describe("insert from selection", () => {
     expect(insertSheetChart(model, "Summary", select(20, 20, 20, 20), "columnClustered")).toEqual({ message: NO_CHART_DATA_MESSAGE });
   });
 
+  it("names the chart \"Chart {k}\" past every name the sheet's drawings already take", () => {
+    // Imported "Chart 3" (cNvPr id 2) and "Chart 2" (id 3): the next drawing number is 3, a name "Chart 3" already takes.
+    const imported: SheetDrawing = { ...chartDrawing(), id: "dr1", name: "Chart 3", sourceXml: `<xdr:twoCellAnchor><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Chart 3"/></xdr:nvGraphicFramePr></xdr:graphicFrame></xdr:twoCellAnchor>` };
+    const second: SheetDrawing = { ...imported, id: "dr2", name: "Chart 2", sourceXml: imported.sourceXml!.replace('id="2" name="Chart 3"', 'id="3" name="Chart 2"') };
+    const model = bookOf([sheetOf("Summary", TABLE, { drawings: [imported, second] })]);
+    const names: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      const result = insertSheetChart(model, "Summary", select(0, 0, 3, 2), "line");
+      if (!("sheet" in result)) {
+        throw new Error(result.message);
+      }
+      applyDrawingResult(model, result);
+      names.push(model.sheets[0]!.drawings!.find((each) => each.id === result.drawingId)!.name);
+    }
+    expect(names).toEqual(["Chart 4", "Chart 5"]);
+  });
+
   it("with fewer data rows than columns, series run across the rows", () => {
     const model = bookOf([sheetOf("Wide", { A1: "", B1: "Jan", C1: "Feb", D1: "Mar", A2: "Sales", B2: 1, C2: 2, D2: 3 })]);
     const built = buildChartFromRange(model, "Wide", select(0, 0, 1, 3), "columnClustered");

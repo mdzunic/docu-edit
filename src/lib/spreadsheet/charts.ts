@@ -1079,6 +1079,19 @@ function contentResult(found: FoundChart, content: SheetChartContent): DrawingCo
   return { sheet: withDrawingAt(found.sheet, found.index, { ...found.drawing, content }), drawingId: found.drawing.id };
 }
 
+/** A chart created on the sheet's name, "Chart {k}": k = nextDrawingNumber
+ * (the cNvPr id the xlsx writer mints, − 1), raised past any drawing on the
+ * sheet already so named — an imported chart's number need not follow its
+ * cNvPr id (Excel numbers charts by a counter of its own). */
+function newChartName(sheet: Sheet): string {
+  const taken = new Set((sheet.drawings ?? []).map((drawing) => drawing.name.toLowerCase()));
+  let k = nextDrawingNumber(sheet);
+  while (taken.has(`chart ${k}`)) {
+    k += 1;
+  }
+  return `Chart ${k}`;
+}
+
 /** Insert ▸ Chart: the chart built from the selection, anchored twoCell
  * (editAs "twoCell") at NEW_CHART_WIDTH_CM × NEW_CHART_HEIGHT_CM with its
  * top-left two columns right of the source on the source's top row, on
@@ -1104,7 +1117,7 @@ export function insertSheetChart(
   const drawing: SheetDrawing = {
     id: nextDrawingId(sheet),
     anchor: anchorFromRectPx(rect, "moveAndSize", m),
-    name: `Chart ${nextDrawingNumber(sheet)}`,
+    name: newChartName(sheet),
     content: { kind: "chart", visual: built.visual, refs: built.refs },
   };
   return { sheet: withDrawings(model, sheet, [...(sheet.drawings ?? []), drawing]), drawingId: drawing.id };
@@ -1270,7 +1283,7 @@ export function duplicateSheetChart(model: SpreadsheetModel, sheetId: string, dr
   const copy: SheetDrawing = {
     id: nextDrawingId(sheet),
     anchor: offsetAnchor(drawing.anchor, metrics ?? buildGridMetrics(sheet)),
-    name: `Chart ${nextDrawingNumber(sheet)}`,
+    name: newChartName(sheet),
     content: content.refs ? { kind: "chart", visual: cloneVisual(content.visual), refs: cloneRefs(content.refs) } : { kind: "chart", visual: cloneVisual(content.visual) },
   };
   if (drawing.altText !== undefined) {
