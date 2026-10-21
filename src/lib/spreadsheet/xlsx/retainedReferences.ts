@@ -7,12 +7,11 @@
 // this table in the change that models its element (structure.ts).
 //
 // | Part | Element / attribute | Kind |
-// | sheet | `dataValidation@sqref`; `formula1`, `formula2` | sqref; formula |
 // | sheet | `customSheetView`'s `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | sheet | `hyperlink@ref` | range |
 // | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
-// | sheet `extLst` | `x14:dataValidation/xm:sqref`, `x14:formula1|2/xm:f`; `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
+// | sheet `extLst` | `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
 // | workbook | `definedName` text (but the model's `_xlnm._FilterDatabase`s) | formula |
 // | tables | `table@ref`, `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
 // | charts (not style/colors parts) | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
@@ -37,6 +36,15 @@
 //   `cfRule/formula`, and in the sheet `extLst` each
 //   `x14:conditionalFormatting`'s `xm:sqref` and every `xm:f` inside it —
 //   left verbatim, never removed, so nothing is adjusted twice.
+// - Retired by SPEC-130 (its `validations` adjusters, structure.ts's and
+//   move.ts's, move the model; the writer re-serialises a dirty sheet's
+//   validations from it, writing the same shifted sqref): every
+//   `dataValidation@sqref` with its `formula1` and `formula2`, and in the
+//   sheet `extLst` each `x14:dataValidation`'s `xm:sqref` and its
+//   `x14:formula1|2/xm:f` — left verbatim, never removed (nor their
+//   containers' `count`), so nothing is adjusted twice. A clean sheet's
+//   validation formulas still take the writers' sheet-name pass
+//   (sheetNamePass.ts) — that is a rename, not a structural edit.
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
@@ -54,16 +62,15 @@
 // - Range text is a whitespace-separated A1 list: each entry through
 //   `range`, a moved one printed with its own `$` markers and shape (one
 //   cell or two), an untouched or unparseable one and every separator kept
-//   as bytes. Where an element may go (dataValidation, hyperlink,
-//   protectedRange, ignoredError, cellWatch, comment, threadedComment,
-//   x14:dataValidation, x14:sparkline) an entry mapped to null is dropped,
+//   as bytes. Where an element may go (hyperlink, protectedRange,
+//   ignoredError, cellWatch, comment, threadedComment, x14:sparkline) an
+//   entry mapped to null is dropped,
 //   with the separator before it, and an element left with no entry is
 //   removed; anywhere else a null leaves the entry as it was.
 // - Removal takes the whole element and what an empty container cannot be
-//   left as: `<dataValidations>`, `<hyperlinks>`, `<protectedRanges>`,
-//   `<ignoredErrors>` and `<cellWatches>` go with their last item, a
-//   `dataValidations@count` (x14's too) is set to the items left, a
-//   sparklineGroup goes with its last sparkline, and a legacy comment takes
+//   left as: `<hyperlinks>`, `<protectedRanges>`, `<ignoredErrors>` and
+//   `<cellWatches>` go with their last item, a sparklineGroup goes with its
+//   last sparkline, and a legacy comment takes
 //   its VML `v:shape` — the one whose `x:Row`/`x:Column` (ObjectType Note)
 //   name the comment's ORIGINAL cell in the host's VML parts.
 // - Formula text: decoded, fromXlsxFormula, `formula`, toXlsxFormula,
@@ -423,14 +430,6 @@ class PartEdits {
     }
   }
 
-  /** A container's `count` set to the items it keeps. */
-  setCount(frame: Frame, qname: string, count: number): void {
-    const value = this.attribute(frame, qname);
-    if (value && value.raw !== String(count)) {
-      this.values.push({ start: value.start, end: value.end, text: String(count) });
-    }
-  }
-
   /** Every element's close: one marked `remove` goes, counted out of its
    * container. */
   close(frame: Frame, end: number): void {
@@ -478,14 +477,13 @@ interface Pass {
 /** Sheet elements an edit can empty, with their range attribute and the
  * container they are items of. */
 const REMOVABLE_SHEET_ELEMENTS: ReadonlyMap<string, { attribute: string; container: string }> = new Map([
-  ["dataValidation", { attribute: "sqref", container: "dataValidations" }],
   ["hyperlink", { attribute: "ref", container: "hyperlinks" }],
   ["protectedRange", { attribute: "sqref", container: "protectedRanges" }],
   ["ignoredError", { attribute: "sqref", container: "ignoredErrors" }],
   ["cellWatch", { attribute: "r", container: "cellWatches" }],
 ]);
 /** Containers that may not be left empty. */
-const EMPTY_CONTAINERS_REMOVED: ReadonlySet<string> = new Set(["dataValidations", "hyperlinks", "protectedRanges", "ignoredErrors", "cellWatches"]);
+const EMPTY_CONTAINERS_REMOVED: ReadonlySet<string> = new Set(["hyperlinks", "protectedRanges", "ignoredErrors", "cellWatches"]);
 /** Sheet elements whose range attribute moves but never empties them. */
 const MOVED_SHEET_ATTRIBUTES: ReadonlyMap<string, string> = new Map([
   ["autoFilter", "ref"],
@@ -506,13 +504,13 @@ function insideModelledFilter(frame: Frame): boolean {
   return false;
 }
 /** x14 elements whose `xm:sqref` child is their range, and the x14 elements
- * whose `xm:f` descendants are formulas. */
-const X14_SQREF_OWNERS: ReadonlySet<string> = new Set(["dataValidation", "sparkline"]);
-const X14_FORMULA_SCOPES: ReadonlySet<string> = new Set(["dataValidation", "sparklineGroup"]);
+ * whose `xm:f` descendants are formulas (SPEC-130 retired
+ * x14:dataValidation's). */
+const X14_SQREF_OWNERS: ReadonlySet<string> = new Set(["sparkline"]);
+const X14_FORMULA_SCOPES: ReadonlySet<string> = new Set(["sparklineGroup"]);
 
 /** Whether a worksheet's text may hold an element of the table. */
-const WORKSHEET_ELEMENTS =
-  /dataValidation|autoFilter|sortState|hyperlink|rowBreaks|colBreaks|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
+const WORKSHEET_ELEMENTS = /autoFilter|sortState|hyperlink|rowBreaks|colBreaks|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
 
 function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
   const edits = new PartEdits(xml, pass.mapper);
@@ -521,7 +519,7 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
     (frame) => {
       const parent = frame.parent;
       if (frame.ns === X14_NS) {
-        if ((frame.local === "dataValidation" && parent?.local === "dataValidations") || (frame.local === "sparkline" && parent?.local === "sparklines")) {
+        if (frame.local === "sparkline" && parent?.local === "sparklines") {
           countItem(frame);
         }
         return;
@@ -568,13 +566,8 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
         if (frame.local === "sparklines" && frame.items && frame.removedItems === frame.items && parent?.local === "sparklineGroup") {
           parent.remove = true;
         }
-      } else if ((frame.local === "formula1" || frame.local === "formula2") && hasAncestor(frame, (at) => at.local === "dataValidation" && at.ns !== X14_NS)) {
-        edits.formulaText(frame, contentEnd, host.id);
       } else if (EMPTY_CONTAINERS_REMOVED.has(frame.local) && frame.items && frame.removedItems === frame.items) {
         frame.remove = true;
-      }
-      if (frame.local === "dataValidations" && !frame.remove && frame.items && frame.removedItems) {
-        edits.setCount(frame, "count", frame.items - frame.removedItems);
       }
       edits.close(frame, end);
     },
