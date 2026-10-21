@@ -9,8 +9,12 @@
 // sorts and filter commands and whether the sheet has an autofilter (Filter
 // is checked; without one Clear filters and Reapply filter are disabled,
 // saying "Turn on Filter first"). SPEC-130 adds Data ▸ "Data validation…"
-// (disabled with the other grid items on a foreign sheet). Later spreadsheet
-// specs append fields as they append menus and items.
+// (disabled with the other grid items on a foreign sheet). SPEC-131 adds the
+// Insert menu (Image…, Shapes — disabled where the workbook cannot hold
+// drawings: a CSV or TSV file, a foreign sheet) and the Arrange menu (the four
+// z-order moves and Alt Text…, disabled without a selected drawing; Bring to
+// Front/Forward at the front, Send Backward/to Back at the back). Later
+// spreadsheet specs append fields as they append menus and items.
 
 /** What the bar needs in order to render: what is checked, what applies. */
 export interface SpreadsheetMenuState {
@@ -42,6 +46,13 @@ export interface SpreadsheetMenuState {
   freezeAtCellDisabled: boolean;
   /** SPEC-128: the active sheet has an autofilter (Data ▸ Filter checked). */
   filterOn: boolean;
+  /** SPEC-131: Insert ▸ Image… and Shapes apply (an .xlsx/.ods grid sheet). */
+  canInsertDrawings: boolean;
+  /** SPEC-131: a drawing is selected (the Arrange menu applies), and whether
+   * it is already at the front or the back of the z-order. */
+  drawingSelected: boolean;
+  drawingAtFront: boolean;
+  drawingAtBack: boolean;
 }
 
 /** SPEC-128: why Clear filters and Reapply filter are disabled. */
@@ -95,6 +106,14 @@ export const SHEET_MENU_COMMANDS = {
   conditionalFormatting: "format.conditional-formatting",
   /** SPEC-130: Data ▸ Data validation… (the validation dialog). */
   dataValidation: "data.validation",
+  /** SPEC-131: Insert ▸ Image… and Insert ▸ Shapes; the Arrange menu. */
+  insertImage: "insert.image",
+  insertShape: "insert.shape",
+  arrangeFront: "arrange.front",
+  arrangeForward: "arrange.forward",
+  arrangeBackward: "arrange.backward",
+  arrangeBack: "arrange.back",
+  altText: "arrange.alt-text",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
@@ -146,5 +165,9 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     frozen: state.frozen === true,
     freezeAtCellDisabled: state.freezeAtCellDisabled === true,
     filterOn: state.filterOn === true,
+    canInsertDrawings: state.canInsertDrawings !== false,
+    drawingSelected: state.drawingSelected === true,
+    drawingAtFront: state.drawingAtFront === true,
+    drawingAtBack: state.drawingAtBack === true,
   };
 }

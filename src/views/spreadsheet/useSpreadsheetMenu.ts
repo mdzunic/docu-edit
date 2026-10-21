@@ -17,8 +17,10 @@
 // useSortFilter's, and the bar's state says whether Filter is on. SPEC-129:
 // Format ▸ Conditional formatting… opens the side panel's rules manager
 // (useWorkbookEditing's sidePanel). SPEC-130: Data ▸ "Data validation…" opens
-// the validation dialog (useWorkbookEditing's validationDialog). Later specs
-// append commands here.
+// the validation dialog (useWorkbookEditing's validationDialog). SPEC-131:
+// Insert ▸ Image… and Shapes and the Arrange menu are the drawing layer's
+// (useWorkbookEditing's drawings), and the bar's state says whether a drawing
+// can go in and which is selected. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -27,6 +29,7 @@ import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { FillHandle } from "./useFillHandle";
 import type { Recalc } from "./useRecalc";
 import type { SheetClipboard } from "./useSheetClipboard";
+import type { DrawingAction } from "./useSheetDrawings";
 import type { SortFilter } from "./useSortFilter";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
@@ -42,7 +45,7 @@ export interface SpreadsheetMenuDeps {
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
-  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog">>;
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings">>;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
@@ -62,6 +65,15 @@ const SORT_FILTER_COMMANDS: Readonly<Record<string, "sortAscending" | "sortDesce
   [SHEET_MENU_COMMANDS.filter]: "toggleFilter",
   [SHEET_MENU_COMMANDS.clearFilters]: "clearFilters",
   [SHEET_MENU_COMMANDS.reapplyFilter]: "reapplyFilter",
+};
+
+/** SPEC-131's Arrange menu commands → the drawing actions. */
+const ARRANGE_COMMANDS: Readonly<Record<string, DrawingAction>> = {
+  [SHEET_MENU_COMMANDS.arrangeFront]: "front",
+  [SHEET_MENU_COMMANDS.arrangeForward]: "forward",
+  [SHEET_MENU_COMMANDS.arrangeBackward]: "backward",
+  [SHEET_MENU_COMMANDS.arrangeBack]: "back",
+  [SHEET_MENU_COMMANDS.altText]: "alt-text",
 };
 
 /** A Format menu command as useFormatting's (null: not one). */
@@ -109,6 +121,10 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       frozen: deps.structure?.freezeState.value.frozen === true,
       freezeAtCellDisabled: deps.structure?.freezeState.value.atA1 !== false,
       filterOn: deps.sortFilter?.filterOn.value === true,
+      canInsertDrawings: deps.editing?.drawings?.canInsert.value === true,
+      drawingSelected: deps.editing?.drawings?.order.value.selected === true,
+      drawingAtFront: deps.editing?.drawings?.order.value.atFront === true,
+      drawingAtBack: deps.editing?.drawings?.order.value.atBack === true,
     }),
   );
 
@@ -126,6 +142,11 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
     const sortFilter = SORT_FILTER_COMMANDS[command];
     if (sortFilter) {
       deps.sortFilter?.[sortFilter]();
+      return;
+    }
+    const arrange = ARRANGE_COMMANDS[command];
+    if (arrange) {
+      deps.editing?.drawings?.runAction(arrange);
       return;
     }
     const preset = zoomPresetOf(command);
@@ -206,6 +227,12 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.dataValidation:
         deps.editing?.validationDialog?.show();
+        break;
+      case SHEET_MENU_COMMANDS.insertImage:
+        deps.editing?.drawings?.pickImage();
+        break;
+      case SHEET_MENU_COMMANDS.insertShape:
+        deps.editing?.drawings?.openGallery();
         break;
       default:
         break;
