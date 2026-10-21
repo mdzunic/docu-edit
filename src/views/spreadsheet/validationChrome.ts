@@ -39,6 +39,8 @@ export interface ChromeBounds {
 export const VALIDATION_INPUT_MESSAGE_ID = "validation-input-message";
 /** The dropdown list's element id (the button's aria-controls). */
 export const VALIDATION_LIST_ID = "validation-list";
+/** The unavailable source's one disabled option. */
+export const LIST_UNAVAILABLE_TEXT = "The list source isn't available";
 export const INPUT_MESSAGE_GAP_PX = 4;
 export const DROPDOWN_BUTTON_PX = 16;
 export const LIST_ROW_PX = 20;

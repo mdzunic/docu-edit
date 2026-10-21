@@ -1,26 +1,16 @@
-// Data validation at entry, and its grid chrome (SPEC-130 "Entry gate", the
-// in-cell dropdown and the input message): THIS composable is the view's
-// entry gate and the state of the three surfaces the rules show —
-// ValidationAlert (WorkbookBody), ValidationInputMessage and
-// ValidationDropdown (SheetGrid's validation layer).
+// Data validation in the workbook view (SPEC-130 "Entry gate", the in-cell
+// dropdown and the input message): THIS composable is the view's entry gate
+// (validationGate.ts's checks, with the alert's state) and the state of the
+// surfaces the rules show — ValidationAlert (WorkbookBody),
+// ValidationInputMessage and ValidationDropdown (SheetGrid's validation
+// layer).
 //
 // - The gate: `checkEntry(targets, candidate)` resolves "commit" at once when
-//   every target accepts the candidate (validation.ts's validateValue, in the
-//   user's locale, over stored values), and otherwise opens the alert for the
-//   FIRST failing target — in the order given, which for Ctrl/Cmd+Enter's
-//   fill is the selection's (`fillTargets`, sparse: only the cells a rule
-//   covers) — and resolves with the user's answer. A rule whose `error.show`
-//   is false never alerts (the entry is committed silently, as in Excel). A
-//   formula candidate is checked by its result evaluated at each target
-//   (shifted from `origin` there, as the fill writes it); one that cannot be
-//   computed is accepted. useCellEditing's commit stays synchronous for a
-//   valid entry: it asks `firstFailure` first and only waits on `alert` when
-//   there is one (`checkEntry` is exactly the two together).
-// - The alert: `validation-alert`, its title `error.title` or "Invalid
-//   entry", its text `error.text` or the default message. Stop: Retry →
-//   "retry", Cancel → "cancel"; warning: Yes → "commit", No → "retry",
-//   Cancel → "cancel"; information: OK → "commit", Cancel → "cancel";
-//   Escape is Cancel.
+//   every target accepts the candidate, and otherwise opens the alert for
+//   the first failure and resolves with the user's answer. useCellEditing's
+//   commit path stays synchronous for a valid entry: it asks `firstFailure`
+//   and only waits on `openAlert` when there is one (`checkEntry` is exactly
+//   the two together).
 // - The input message: the active cell's rule's `input` while it shows
 //   (`input.show`, a title or a text) and the sheet's prompts are not
 //   disabled — hidden while the dropdown's list is open.
@@ -29,62 +19,28 @@
 //   SPEC-128's capture listener keeps Alt+Down on an autofilter header cell)
 //   lists `listItems` with the cell's current item selected (none when its
 //   value is not in the list); `pick` enters the item's VALUE through the
-//   cell editor's commit path (protection, this gate, one undo step) and
+//   cell editor's commit path (protection, the gate, one undo step) and
 //   returns focus to the grid. Another cell becoming active, or another
 //   sheet, closes the list.
-//
-// Nothing else validates (validation.ts's header): paste, fill, drag-move,
-// clearing, undo/redo, sort and CSV import never reach this gate.
 import { computed, shallowRef, watch, type Ref, type ShallowRef } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
-import { fillTargets as cellFillTargets } from "../../lib/spreadsheet/cells";
-import { storedValueContext } from "../../lib/spreadsheet/formula/evaluate";
-import { shiftFormula } from "../../lib/spreadsheet/formula/references";
-import { tokenize } from "../../lib/spreadsheet/formula/tokens";
-import { buildMergeIndex, mergeAt } from "../../lib/spreadsheet/merges";
-import { MAX_COLS, type CellValue, type Sheet, type SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { CellValue, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
-import { workbookFormatContext } from "../../lib/spreadsheet/numberFormat/render";
-import {
-  formulaCandidateValue,
-  itemIndexOf,
-  listItems,
-  sheetValidations,
-  storedValueAt,
-  validateValue,
-  validationAt,
-  type DataValidation,
-  type ValidationDeps,
-  type ValidationErrorStyle,
-  type ValidationListItem,
-} from "../../lib/spreadsheet/validation";
+import { itemIndexOf, listItems, storedValueAt, validationAt, type DataValidation, type ValidationDeps, type ValidationListItem } from "../../lib/spreadsheet/validation";
 import type { SheetSelectionController } from "./useSheetSelection";
-
-/** What the gate checks: the entry's value, or its formula (canonical, as
- * written at the edited cell — `origin`). */
-export interface EntryCandidate {
-  value: CellValue;
-  formula?: string;
-}
-
-/** The user's answer to the alert (or "commit" when nothing failed). */
-export type EntryVerdict = "commit" | "retry" | "cancel";
-
-/** The first target a candidate fails at, and the rule it breaks. */
-export interface ValidationFailure {
-  at: CellRef;
-  rule: DataValidation;
-}
-
-/** The alert's buttons. */
-export type ValidationAlertChoice = "retry" | "cancel" | "yes" | "no" | "ok";
-
-/** What `validation-alert` shows. */
-export interface ValidationAlertState {
-  style: ValidationErrorStyle;
-  title: string;
-  text: string;
-}
+import {
+  alertFor,
+  ALERT_VERDICTS,
+  firstValidationFailure,
+  validatedFillTargets,
+  validationDepsFor,
+  type EntryCandidate,
+  type EntryGate,
+  type EntryVerdict,
+  type ValidationAlertChoice,
+  type ValidationAlertState,
+  type ValidationFailure,
+} from "./validationGate";
 
 /** The open dropdown list. */
 export interface ValidationListState {
@@ -94,32 +50,6 @@ export interface ValidationListState {
   unavailable: boolean;
   /** The selected item's index (-1: none). */
   selected: number;
-}
-
-export const DEFAULT_ALERT_TITLE = "Invalid entry";
-export const DEFAULT_ALERT_TEXT = "This value doesn't match the data validation rules for this cell.";
-export const LIST_UNAVAILABLE_TEXT = "The list source isn't available";
-
-/** The verdict each alert button gives (see the module header). */
-export const ALERT_VERDICTS: Readonly<Record<ValidationAlertChoice, EntryVerdict>> = {
-  retry: "retry",
-  cancel: "cancel",
-  yes: "commit",
-  no: "retry",
-  ok: "commit",
-};
-
-/** SPEC-130's entry gate as useCellEditing's commit path uses it. */
-export interface EntryGate {
-  /** The first of `targets` (on `sheet`) refusing the candidate under a rule
-   * that shows its alert, or null — synchronous, so a valid entry commits at
-   * once. `origin`: where a formula candidate is written (each target
-   * evaluates it shifted from there). */
-  firstFailure(sheet: Sheet, targets: Iterable<CellRef>, candidate: EntryCandidate, origin?: CellRef): ValidationFailure | null;
-  /** The cells of a Ctrl/Cmd+Enter fill a rule covers, in fill order. */
-  fillTargets(sheet: Sheet, ranges: readonly GridRange[], origin: CellRef): Iterable<CellRef>;
-  /** Opens the alert for a failure; resolves with the user's answer. */
-  alert(failure: ValidationFailure): Promise<EntryVerdict>;
 }
 
 /** What a pick commits through (useCellEditing — which takes this
@@ -141,138 +71,6 @@ export interface DataValidationDeps {
   locale: () => SpreadsheetLocale;
   /** The cell editor a pick enters through; absent = picks do nothing. */
   editor?: () => ValidationEditor | null;
-}
-
-/** The deps validateValue and listItems evaluate with: stored values, the
- * user's locale. */
-export function validationDepsFor(model: SpreadsheetModel, locale: SpreadsheetLocale): ValidationDeps {
-  return { base: storedValueContext(model, { locale }), ctx: workbookFormatContext(model, locale) };
-}
-
-/** Whether a rule's verdict is the same at every cell it covers for a plain
- * value: no `custom` overlay, and its formulas hold only constants and
- * absolute references (no relative part, name or function — ROW() and a
- * name may depend on the cell). A fill checks such a rule once. */
-export function positionIndependent(rule: DataValidation): boolean {
-  if (rule.type === "custom") {
-    return false;
-  }
-  return [rule.formula1, rule.formula2].every(
-    (formula) =>
-      formula === undefined ||
-      tokenize(formula).every((token) => {
-        if (token.kind === "ref") {
-          const ref = token.ref;
-          const parts = ref ? [ref.start, ...(ref.end ? [ref.end] : [])] : [];
-          return parts.every((part) => (part.row === undefined || part.rowAbs) && (part.col === undefined || part.colAbs));
-        }
-        return token.kind !== "name" && token.kind !== "function" && token.kind !== "structured" && token.kind !== "external" && token.kind !== "unknown";
-      }),
-  );
-}
-
-/** The cells of a Ctrl/Cmd+Enter fill a rule covers (sparse: only the
- * rules' rectangles intersected with what the fill writes — lib's
- * fillTargets — never every cell of the selection), in fill order: range by
- * range, rows top to bottom, columns left to right; a merge's covered cells
- * and a cell already listed skipped, as the fill skips them. */
-export function* validatedFillTargets(sheet: Sheet, ranges: readonly GridRange[], origin: CellRef): Generator<CellRef> {
-  const rules = sheetValidations(sheet);
-  if (rules.length === 0) {
-    return;
-  }
-  const merges = buildMergeIndex(sheet.merges);
-  const seen = new Set<number>();
-  for (const range of cellFillTargets(sheet, ranges, origin)) {
-    const pieces: GridRange[] = [];
-    for (const rule of rules) {
-      for (const covered of rule.ranges) {
-        const top = Math.max(range.top, covered.top);
-        const bottom = Math.min(range.bottom, covered.bottom);
-        const left = Math.max(range.left, covered.left);
-        const right = Math.min(range.right, covered.right);
-        if (top <= bottom && left <= right) {
-          pieces.push({ top, left, bottom, right });
-        }
-      }
-    }
-    const byTop = pieces.toSorted((a, b) => a.top - b.top);
-    let row = byTop[0]?.top ?? 0;
-    while (byTop.length > 0) {
-      const spans = byTop.filter((piece) => piece.top <= row && row <= piece.bottom).toSorted((a, b) => a.left - b.left);
-      if (spans.length === 0) {
-        const next = byTop.find((piece) => piece.top > row);
-        if (!next) {
-          break;
-        }
-        row = next.top;
-        continue;
-      }
-      let from = 0;
-      for (const span of spans) {
-        for (let col = Math.max(from, span.left); col <= span.right; col += 1) {
-          const key = row * MAX_COLS + col;
-          const merge = mergeAt(merges, row, col);
-          if (seen.has(key) || (merge && (merge.top !== row || merge.left !== col))) {
-            continue;
-          }
-          seen.add(key);
-          yield { row, col };
-        }
-        from = Math.max(from, span.right + 1);
-      }
-      row += 1;
-    }
-  }
-}
-
-/** The first of `targets` refusing `candidate` under a rule that shows its
- * alert, or null (see the module header). */
-export function firstValidationFailure(
-  model: SpreadsheetModel,
-  sheet: Sheet,
-  targets: Iterable<CellRef>,
-  candidate: EntryCandidate,
-  deps: ValidationDeps,
-  origin?: CellRef,
-): ValidationFailure | null {
-  if (sheetValidations(sheet).length === 0) {
-    return null;
-  }
-  // A plain value under a position-independent rule is checked once per rule.
-  const settled = new Map<string, boolean>();
-  for (const at of targets) {
-    const rule = validationAt(sheet, at);
-    if (!rule || rule.type === "any" || !rule.error.show) {
-      continue;
-    }
-    const memo = candidate.formula === undefined && positionIndependent(rule);
-    let ok = memo ? settled.get(rule.id) : undefined;
-    if (ok === undefined) {
-      let value: CellValue | undefined = candidate.value;
-      if (candidate.formula !== undefined) {
-        const formula = origin ? shiftFormula(candidate.formula, at.row - origin.row, at.col - origin.col) : candidate.formula;
-        value = formulaCandidateValue(sheet, at, formula, deps);
-      }
-      ok = value === undefined || validateValue(model, sheet, at, value, deps).ok;
-      if (memo) {
-        settled.set(rule.id, ok);
-      }
-    }
-    if (!ok) {
-      return { at: { ...at }, rule };
-    }
-  }
-  return null;
-}
-
-/** The alert a failing rule shows. */
-export function alertFor(rule: DataValidation): ValidationAlertState {
-  return {
-    style: rule.error.style,
-    title: rule.error.title.trim() === "" ? DEFAULT_ALERT_TITLE : rule.error.title,
-    text: rule.error.text.trim() === "" ? DEFAULT_ALERT_TEXT : rule.error.text,
-  };
 }
 
 export function useDataValidation(deps: DataValidationDeps) {
@@ -461,16 +259,4 @@ export type DataValidationView = ReturnType<typeof useDataValidation>;
 /** The view's entry gate over useDataValidation (useCellEditing's dep). */
 export function entryGateOf(validation: DataValidationView): EntryGate {
   return { firstFailure: validation.firstFailure, fillTargets: validation.fillTargets, alert: validation.openAlert };
-}
-
-/** Narrows a component's runtime-typed `validation` prop (the .vue parser
- * bars casts). */
-export function asDataValidation(value: unknown): DataValidationView {
-  return value as DataValidationView;
-}
-
-/** The grid context's `validation`, when the view wired one (null: none). */
-export function dataValidationOf(context: unknown): DataValidationView | null {
-  const value = context !== null && typeof context === "object" ? Reflect.get(context, "validation") : undefined;
-  return value ? (value as DataValidationView) : null;
 }

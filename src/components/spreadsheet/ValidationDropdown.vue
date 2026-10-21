@@ -20,8 +20,7 @@
 // focus where it is. Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed, nextTick, onMounted, useTemplateRef, watch } from "vue";
-import { LIST_UNAVAILABLE_TEXT } from "../../views/spreadsheet/useDataValidation";
-import { listKeyAction, placeDropdownButton, placeValidationList, VALIDATION_LIST_ID } from "../../views/spreadsheet/validationChrome";
+import { LIST_UNAVAILABLE_TEXT, listKeyAction, placeDropdownButton, placeValidationList, VALIDATION_LIST_ID } from "../../views/spreadsheet/validationChrome";
 import AppIcon from "../AppIcon.vue";
 
 const props = defineProps({

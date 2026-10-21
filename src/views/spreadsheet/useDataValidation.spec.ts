@@ -1,14 +1,15 @@
 // SPEC-130 "Entry gate" and the grid chrome's state: useDataValidation's
-// checkEntry driven with each alert style and each button (the verdicts),
-// the defaults for an untitled rule, the first failure deciding across
-// several targets (an `error.show` false rule committing silently), a
-// formula candidate checked by its evaluated result, valid entries resolving
-// "commit" without an alert; the sparse fill targets and the per-rule memo;
-// the input message (prompts disabled, hidden while the list is open); the
-// dropdown (showDropdown, the listed items and the current value's item,
-// Alt+Down, the unavailable source, a pick entering the item's value through
-// the editor and returning focus to the grid, closing on another cell). Small
-// hand-built models with `validations` set directly.
+// checkEntry (over validationGate.ts) driven with each alert style and each
+// button (the verdicts), the defaults for an untitled rule, the first failure
+// deciding across several targets (an `error.show` false rule committing
+// silently), a formula candidate checked by its evaluated result, valid
+// entries resolving "commit" without an alert; the sparse fill targets and
+// the per-rule memo; the input message (prompts disabled, hidden while the
+// list is open); the dropdown (showDropdown, the listed items and the
+// current value's item, Alt+Down, the unavailable source, a pick entering
+// the item's value through the editor and returning focus to the grid,
+// closing on another cell). Small hand-built models with `validations` set
+// directly.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computed, effectScope, nextTick, ref, shallowRef } from "vue";
 import { parseA1, parseSqref, type CellRef } from "../../lib/spreadsheet/address";
@@ -17,18 +18,17 @@ import { SPREADSHEET_LOCALES } from "../../lib/spreadsheet/numberFormat/locale";
 import type { SheetSelection } from "../../lib/spreadsheet/selection";
 import { createBlankWorkbook } from "../../lib/spreadsheet/sheets";
 import { defaultValidationSettings, type DataValidation } from "../../lib/spreadsheet/validation";
+import { useDataValidation, type ValidationEditor } from "./useDataValidation";
 import {
   ALERT_VERDICTS,
   DEFAULT_ALERT_TEXT,
   DEFAULT_ALERT_TITLE,
   firstValidationFailure,
   positionIndependent,
-  useDataValidation,
   validatedFillTargets,
   validationDepsFor,
   type EntryVerdict,
-  type ValidationEditor,
-} from "./useDataValidation";
+} from "./validationGate";
 
 const scopes: Array<() => void> = [];
 afterEach(() => {
