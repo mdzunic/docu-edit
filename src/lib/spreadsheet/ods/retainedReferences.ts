@@ -76,6 +76,16 @@
 //   twice. A drawing's own source XML (an imported `draw:frame` > `draw:object`)
 //   still has its `draw:notify-on-update-of-ranges` moved, the drawing
 //   replaced copy-on-write.
+// - Narrowed by SPEC-132 (the `charts` adjusters of structure.ts and move.ts
+//   move a modelled chart's `refs`, syncChartNotifyRanges its frame; the
+//   writer patches or regenerates its object from the model): the
+//   `Object N/content.xml` rows and the `draw:object@draw:notify-on-update-
+//   of-ranges` row apply only to UNMODELLED charts — an object some drawing's
+//   modelled chart content (isModelledChart) names as its sourcePart is
+//   skipped, as is the notify list of a `draw:object` showing one (in tables,
+//   preservedXml) and every drawing whose content is a modelled chart — so
+//   nothing is adjusted twice. Out-of-catalogue charts (`chart:surface`) are
+//   still rewritten here. SPEC-125's move path runs this same rewrite.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -100,6 +110,7 @@ import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, findAttribute, type Splice } from "../xmlSplice";
 import { decodeUtf8, encodeUtf8, LazyParts } from "../xlsx/package";
 import { odsOwnedDatabaseRangeSpans } from "./databaseRanges";
+import { isModelledChartDrawing } from "./drawingXml";
 import { objectsReferenced, sourceTables } from "./package";
 import { parseOdsRangeAddress, splitOdsRangeAddressList } from "./rangeAddress";
 
@@ -399,6 +410,27 @@ class OdsRetainedRewrite {
     this.model = model;
     this.mapper = mapper;
     this.parts = new LazyParts(model.opaque);
+    for (const sheet of model.sheets) {
+      for (const drawing of sheet.drawings ?? []) {
+        if (isModelledChartDrawing(drawing) && drawing.content.sourcePart !== undefined) {
+          this.modelledParts.add(drawing.content.sourcePart);
+        }
+      }
+    }
+  }
+
+  /** SPEC-132: the `Object N/content.xml` parts some modelled chart drawing
+   * names as its sourcePart — their addresses, and the notify list of a
+   * frame showing one, are the `charts` adjusters' (never adjusted here). */
+  private readonly modelledParts = new Set<string>();
+
+  /** Whether a `draw:object` start tag shows a modelled chart's object. */
+  private showsModelledChart(tag: string): boolean {
+    if (this.modelledParts.size === 0) {
+      return false;
+    }
+    const object = objectsReferenced(tag)[0];
+    return object !== undefined && this.modelledParts.has(`${object}/content.xml`);
   }
 
   run(): Set<string> {
@@ -482,7 +514,7 @@ class OdsRetainedRewrite {
     let out: SheetDrawing[] | undefined;
     drawings?.forEach((drawing, i) => {
       const xml = drawing.sourceXml;
-      if (xml === undefined || !mentions(xml, CONTENT_ATTRIBUTES)) {
+      if (xml === undefined || isModelledChartDrawing(drawing) || !mentions(xml, CONTENT_ATTRIBUTES)) {
         return;
       }
       const splices = this.splices(`<w>${xml}</w>`, host, contentLocations).map((splice) => ({ ...splice, start: splice.start - 3, end: splice.end - 3 }));
@@ -590,7 +622,7 @@ class OdsRetainedRewrite {
     for (const part of this.model.opaque) {
       const object = OBJECT_CONTENT.exec(part.name)?.[1];
       const bytes = object === undefined ? undefined : this.parts.get(part.name);
-      if (object === undefined || !bytes) {
+      if (object === undefined || !bytes || this.modelledParts.has(part.name)) {
         continue;
       }
       const { bom, xml } = decodedPart(bytes);
@@ -666,7 +698,9 @@ class OdsRetainedRewrite {
         }
         const tracked = event.name === TRACKED_CHANGES;
         let remove = false;
-        const locations = quiet > 0 || tracked ? undefined : table(event.name);
+        // SPEC-132: a modelled chart's frame notify list is the charts adjusters'.
+        const modelledFrame = event.name === "draw:object" && this.showsModelledChart(xml.slice(event.start, event.end));
+        const locations = quiet > 0 || tracked || modelledFrame ? undefined : table(event.name);
         if (locations) {
           const result = this.element(xml.slice(event.start, event.end), event.start, locations, host);
           if (result === "remove") {

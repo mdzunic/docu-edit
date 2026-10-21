@@ -73,6 +73,7 @@ import {
   type ColumnSpan,
   type Row,
   type Sheet,
+  type SheetDrawing,
   type SpreadsheetModel,
   type TextRun,
 } from "../model";
@@ -787,6 +788,10 @@ export interface OdsTableContext {
   /** SPEC-131: the package path a drawing's media id is written under
    * (ods/drawingXml.ts OdsMediaPaths); absent, the id itself. */
   mediaPath?: (mediaId: string) => string;
+  /** SPEC-132: the embedded object the save minted for a chart drawing
+   * written as a new object (ods/chartParts.ts) — its canonical frame names
+   * it; absent, a created chart is not written. */
+  chartObjectDir?: (drawing: SheetDrawing) => string | undefined;
 }
 
 /** SPEC-130: a validated rectangle as the writer meets it — the rule's
@@ -1223,6 +1228,9 @@ class TableWriter {
     }
     if (ctx.mediaPath) {
       drawingCtx.mediaPath = ctx.mediaPath;
+    }
+    if (ctx.chartObjectDir) {
+      drawingCtx.chartObjectDir = ctx.chartObjectDir;
     }
     this.drawings = odsSheetDrawingsXml(sheet.drawings ?? [], drawingCtx);
     this.drawingRows = [...this.drawings.cells.keys()].toSorted((a, b) => a - b);

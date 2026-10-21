@@ -94,6 +94,11 @@
 //   verbatim and read once the table ends (its geometry known); a cell
 //   holding only a drawing is not stored. The pictures they show →
 //   `media`, one part per package path, its bytes deferred.
+// - SPEC-132: a frame's chart object (`Object N/content.xml`) → the
+//   drawing's chart content (ods/drawingXml.ts, ods/chartXml.ts). Open
+//   trusts its caches; only a chart whose object carries a reference with
+//   no data for it is refreshed, for display (refreshUncachedOdsCharts),
+//   once every table is read.
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -102,7 +107,8 @@ import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../co
 import { unzip, ZipError } from "../../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import type { GridRange } from "../address";
-import { toCellError, type CalcSettings, type CellFont, type CellStyle, type CellValue, type Sheet, type TextRun } from "../model";
+import { refreshSheetChart } from "../charts";
+import { toCellError, type CalcSettings, type CellFont, type CellStyle, type CellValue, type Sheet, type SheetChartContent, type SpreadsheetModel, type TextRun } from "../model";
 import {
   addressText,
   CellBudget,
@@ -472,6 +478,9 @@ interface OdsContent {
   orphanValidations: string[];
   /** SPEC-131: the pictures the sheets' drawings show, one per package path. */
   media: MediaPart[];
+  /** SPEC-132: the chart contents whose objects carry a reference with no
+   * data for it (refreshed for display once the workbook is assembled). */
+  uncachedCharts: Set<SheetChartContent>;
 }
 
 /** SPEC-120 "Calculation settings" from `table:calculation-settings` and its
@@ -506,6 +515,7 @@ export function readOdsContent(
   media: OdsMediaReader = new OdsMediaReader(new Map()),
 ): OdsContent | null {
   const sheets: Sheet[] = [];
+  const uncachedCharts = new Set<SheetChartContent>();
   /** SPEC-130: each finished table's validation names, as rectangles. */
   const validationRegions: Map<string, GridRange[]>[] = [];
   let dates: OdsContent["dates"] = { dateSystem: "1900" };
@@ -583,7 +593,7 @@ export function readOdsContent(
     }
     if (done.drawings.length > 0) {
       // SPEC-131: under the finished table's geometry (in-cell offsets are sheet-absolute).
-      sheet.drawings = readOdsDrawings(done.drawings, buildGridMetrics(sheet), { declarations, styles: styleBook(), media });
+      sheet.drawings = readOdsDrawings(done.drawings, buildGridMetrics(sheet), { declarations, styles: styleBook(), media, uncachedCharts });
     }
     sheets.push(sheet);
     validationRegions.push(done.validations.result());
@@ -934,7 +944,45 @@ export function readOdsContent(
     structureProtected,
     orphanValidations: validations.orphans,
     media: media.media(),
+    uncachedCharts,
   };
+}
+
+/** SPEC-132 "Open trusts caches": each chart whose object carries a
+ * reference but no data for it in its `local-table` is refreshed for
+ * display (refreshSheetChart `forDisplay`: the visual only, never
+ * `cachesDirty`, so its object still passes through verbatim) — against the
+ * whole workbook, since a chart may plot another sheet. Every other chart
+ * keeps the caches it was read with. */
+export function refreshUncachedOdsCharts(parsed: ParsedSpreadsheet, uncached: ReadonlySet<SheetChartContent>): void {
+  if (uncached.size === 0) {
+    return;
+  }
+  const model: SpreadsheetModel = {
+    kind: "spreadsheet",
+    id: "",
+    title: "",
+    format: "ods",
+    readerVersion: 0,
+    sheets: parsed.sheets,
+    activeSheetIndex: parsed.activeSheetIndex,
+    dateSystem: parsed.dateSystem,
+    opaque: parsed.opaque,
+    styles: parsed.styles,
+    defaultStyleId: 0,
+    dxfs: parsed.dxfs,
+  };
+  if (parsed.odsNullDate !== undefined) {
+    model.odsNullDate = parsed.odsNullDate;
+  }
+  for (const sheet of parsed.sheets) {
+    for (const drawing of sheet.drawings ?? []) {
+      if (drawing.content.kind === "chart" && uncached.has(drawing.content)) {
+        refreshSheetChart(model, sheet.id, drawing.id, { forDisplay: true });
+      }
+    }
+  }
+  parsed.sheets = model.sheets;
 }
 
 /** settings.xml's `ActiveTable` (a table name), or undefined. */
@@ -1040,5 +1088,6 @@ export async function parseOds(
   if (content.media.length > 0) {
     parsed.media = content.media;
   }
+  refreshUncachedOdsCharts(parsed, content.uncachedCharts);
   return parsed;
 }
