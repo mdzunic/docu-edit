@@ -609,10 +609,10 @@ describe("drawings, comments and VML", () => {
 
   it("leaves every drawing anchor verbatim — SPEC-131 retired the row: the drawings adjuster moves the model", () => {
     for (const edit of [["insertRows", 2, 3], ["insertCols", 0, 1], ["deleteRows", 0, 1]] as const) {
-      const book = drawingBook(ANCHORS);
-      const before = book.opaque;
-      expect(adjust(book, edit[0], edit[1], edit[2])).toEqual(new Set());
-      expect(book.opaque).toBe(before);
+      const anchored = drawingBook(ANCHORS);
+      const before = anchored.opaque;
+      expect(adjust(anchored, edit[0], edit[1], edit[2])).toEqual(new Set());
+      expect(anchored.opaque).toBe(before);
     }
   });
 
