@@ -236,5 +236,18 @@ import { buildSpec130ValidationOdsBytes } from "../src/lib/spreadsheet/fixtures/
 writeFileSync(join(fixturesDir, "spec130-validation.ods"), await buildSpec130ValidationOdsBytes());
 // --- end SPEC-130 (ODS) --------------------------------------------------------
 
+// --- SPEC-131 -------------------------------------------------------------------
+// - spec131-drawings.xlsx — Excel-shaped drawing layer: pictures (one EMF),
+//                           shapes, an arrow connector, a group, a hidden
+//                           shape and the form control, slicer and ink MCE
+//                           wrappers
+// - spec131-drawings.ods  — LibreOffice-shaped cell-anchored and page-anchored
+//                           drawings, a rotated shape, a group and a control
+import { buildSpec131DrawingsOdsBytes, buildSpec131DrawingsXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec131-drawings.xlsx"), await buildSpec131DrawingsXlsxBytes());
+writeFileSync(join(fixturesDir, "spec131-drawings.ods"), await buildSpec131DrawingsOdsBytes());
+// --- end SPEC-131 ---------------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

@@ -25,7 +25,7 @@ import type { AutoFilter } from "./filter";
 import { cellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
-import { DEFAULT_SPREADSHEET_TITLE, type Cell, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
+import { DEFAULT_SPREADSHEET_TITLE, type Cell, type CellValue, type Row, type Sheet, type SheetDrawing, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import { readSpreadsheetBytes, SPREADSHEET_READER_VERSION } from "./open";
 import {
   addSheet,
@@ -1139,6 +1139,19 @@ describe("duplicateSheet", () => {
     });
   });
 
+  it("SPEC-131: an xlsx copy's drawingPart names the drawing part its closure copy made, its drawings kept with their ids", async () => {
+    const model = await openLinksXlsx();
+    const drawing: SheetDrawing = { id: "dr1", name: "Chart 1", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", sourcePart: "xl/charts/chart1.xml" }, sourceXml: "<xdr:absoluteAnchor/>" };
+    model.sheets = model.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawingPart: "xl/drawings/drawing1.xml", drawings: [drawing] } : sheet));
+    duplicateSheet(model, 1);
+    const copy = model.sheets[2]!;
+    const target = resolvedRels(model, copy.partName!).find((rel) => rel.type.endsWith("/drawing"))!.target;
+    expect(copy.drawingPart).toBe(target);
+    expect(copy.drawingPart).not.toBe("xl/drawings/drawing1.xml");
+    expect(copy.drawings).toEqual([drawing]);
+    expect(model.sheets[1]!.drawingPart).toBe("xl/drawings/drawing1.xml");
+  });
+
   describe("ods: the copy's own retained source", () => {
     it("is the origin's table text with every xml:id/draw:id suffixed -c<k> consistently and its embedded object retargeted; table:name stays source-time", async () => {
       const model = await openLinksOds();
@@ -1182,6 +1195,24 @@ describe("duplicateSheet", () => {
           .replace(`xml:id="s2" draw:id="s2"`, `xml:id="s2${k}" draw:id="s2${k}"`)
           .replace(`draw:start-shape="s1" draw:end-shape="s2"`, `draw:start-shape="s1${k}" draw:end-shape="s2${k}"`),
       );
+    });
+
+    it("SPEC-131: the copy's drawings' source XML takes the same id suffix as its table text, a created drawing untouched", () => {
+      const rect = `<draw:rect xml:id="s1" draw:id="s1" draw:name="Box"/>`;
+      const sourceXml = `<table:table table:name="Shapes" table:style-name="ta1"><table:shapes>${rect}</table:shapes><table:table-column/><table:table-row><table:table-cell/></table:table-row></table:table>`;
+      const anchor = { kind: "absolute" as const, posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } };
+      const drawings: SheetDrawing[] = [
+        { id: "dr1", name: "Box", anchor, sourceXml: rect, content: { kind: "shape", visual: { geometry: "rect" } } },
+        { id: "dr2", name: "Rectangle 2", anchor, content: { kind: "shape", visual: { geometry: "rect" } } },
+      ];
+      const model = book([gridSheet("Shapes", {}, { sourceXml, drawings })], 0, "ods");
+      model.odsContentEnvelope = { prefix: "<office:document-content><office:body><office:spreadsheet>", suffix: "</office:spreadsheet></office:body></office:document-content>" };
+      duplicateSheet(model, 0);
+      const copy = model.sheets[1]!;
+      const k = /xml:id="s1(-c\d+)"/.exec(copy.sourceXml!)?.[1];
+      expect(copy.drawings![0]!.sourceXml).toBe(rect.replace(`xml:id="s1" draw:id="s1"`, `xml:id="s1${k}" draw:id="s1${k}"`));
+      expect(copy.drawings![1]).toEqual(drawings[1]);
+      expect(model.sheets[0]!.drawings).toBe(drawings);
     });
 
     it("copies the embedded object to the next free Object N with the manifest spliced in a NEW manifest part", async () => {
@@ -1631,6 +1662,36 @@ describe("stripRetention", () => {
     expect("packageVariant" in stripRetention({ ...xlsm, format: "ods" })).toBe(false);
   });
 
+  it("SPEC-131: carries image and shape drawings through the canonical writers — anchor kept, sourceXml dropped, images re-pathed into the target's folder — and drops foreign, group and chart drawings", () => {
+    const anchor = { kind: "twoCell" as const, editAs: "oneCell" as const, from: { col: 1, colOffEmu: 0, row: 2, rowOffEmu: 0 }, to: { col: 3, colOffEmu: 0, row: 5, rowOffEmu: 0 }, extEmu: { cx: 9525, cy: 9525 } };
+    const picture: SheetDrawing = { id: "dr1", name: "Picture 1", altText: "Logo", anchor, sourceXml: "<xdr:twoCellAnchor/>", content: { kind: "image", mediaId: "xl/media/image3.png", crop: { l: 0.1, t: 0, r: 0, b: 0 } } };
+    const again: SheetDrawing = { ...picture, id: "dr2", name: "Picture 2" };
+    const shape: SheetDrawing = { id: "dr3", name: "Rectangle 3", anchor: { kind: "absolute", posEmu: { x: 1, y: 2 }, extEmu: { cx: 3, cy: 4 } }, sourceXml: "<xdr:absoluteAnchor/>", content: { kind: "shape", visual: { geometry: "rect" } } };
+    const dropped: SheetDrawing[] = [
+      { id: "dr4", name: "Check Box 1", anchor, content: { kind: "foreign", label: "Form control", face: { kind: "image", mediaId: "xl/media/image9.png" } } },
+      { id: "dr5", name: "Group 5", anchor, content: { kind: "group", members: [] } },
+      { id: "dr6", name: "Chart 6", anchor, content: { kind: "chart", sourcePart: "xl/charts/chart1.xml" } },
+    ];
+    const model = book([gridSheet("Data", { A1: 1 }, { drawings: [picture, ...dropped, again, shape], drawingPart: "xl/drawings/drawing1.xml", drawingsDirty: true })]);
+    model.media = [
+      { mediaId: "xl/media/image3.png", contentType: "image/png", data: "AAAA" },
+      { mediaId: "xl/media/image9.png", contentType: "image/png", data: "BBBB" },
+    ];
+    const stripped = stripRetention({ ...model, format: "ods" });
+    const sheet = stripped.sheets[0]!;
+    expect(sheet.drawings!.map((each) => each.id)).toEqual(["dr1", "dr2", "dr3"]);
+    expect(sheet.drawings!.every((each) => each.sourceXml === undefined)).toBe(true);
+    expect(sheet.drawings![0]).toEqual({ id: "dr1", name: "Picture 1", altText: "Logo", anchor, content: { kind: "image", mediaId: "Pictures/image1.png", crop: { l: 0.1, t: 0, r: 0, b: 0 } } });
+    expect(sheet.drawings![1]!.content).toEqual({ kind: "image", mediaId: "Pictures/image1.png", crop: { l: 0.1, t: 0, r: 0, b: 0 } });
+    expect(sheet.drawings![2]!.anchor).toBe(shape.anchor);
+    expect(stripped.media).toEqual([{ mediaId: "Pictures/image1.png", contentType: "image/png", data: "AAAA" }]);
+    expect(["drawingPart", "drawingsDirty"].filter((field) => field in sheet)).toEqual([]);
+    // The open model is untouched.
+    expect(model.sheets[0]!.drawings![0]).toBe(picture);
+    // Nothing to carry: no media field at all.
+    expect("media" in stripRetention({ ...book([gridSheet("Data")]), media: model.media, format: "ods" })).toBe(false);
+  });
+
   it("removes foreign sheets and keeps the active sheet when it survives", () => {
     const model = book([gridSheet("Data", { A1: 1 }), foreignSheet("Chart1", "xl/chartsheets/sheet1.xml"), gridSheet("Lookup", { A1: 2 })], 2);
     const stripped = stripRetention({ ...model, format: "ods" });
@@ -1978,7 +2039,7 @@ describe("unconvertibleContent", () => {
   const LABELS = [
     "chart sheets",
     "macros",
-    "images and shapes",
+    "drawings",
     "charts",
     "comments",
     "some conditional formatting",
@@ -2058,27 +2119,34 @@ describe("unconvertibleContent", () => {
     expect(unconvertibleContent(withRules([plain, iconRule(true)], "ods"), "xlsx")).toEqual([]);
   });
 
-  it("names images and shapes for a worksheet drawing holding a picture, and for an ods frame that is not an object's", async () => {
+  it("SPEC-131: names each drawing the copy drops — foreign, group — with its kind and sheet, once per label; a chart drawing is the charts row's; images and shapes cross", async () => {
+    const anchor = { kind: "absolute" as const, posEmu: { x: 0, y: 0 }, extEmu: { cx: 9525, cy: 9525 } };
+    const drawing = (id: string, content: SheetDrawing["content"]): SheetDrawing => ({ id, name: id, anchor, content });
     const xlsx = await openLinksXlsx();
-    editPart(xlsx, "xl/drawings/drawing1.xml", (xml) =>
-      xml.replace(
-        "</xdr:wsDr>",
-        `<xdr:oneCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>8</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
-          `<xdr:ext cx="100" cy="100"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="3" name="Picture 2"/><xdr:cNvPicPr/></xdr:nvPicPr>` +
-          `<xdr:blipFill/><xdr:spPr/></xdr:pic><xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>`,
-      ),
-    );
-    const xlsxLabels = unconvertibleContent(xlsx, "ods");
-    expect(xlsxLabels.slice(0, 2)).toEqual(["images and shapes", "charts"]);
-
-    const ods = await openLinksOds();
-    ods.sheets = ods.sheets.map((sheet, index) =>
-      index === 1
-        ? { ...sheet, sourceXml: sheet.sourceXml!.replace("</table:shapes>", `<draw:frame draw:name="Image 1"><draw:image xlink:href="Pictures/1.png"/></draw:frame></table:shapes>`) }
+    xlsx.sheets = xlsx.sheets.map((sheet, index) =>
+      index === 0
+        ? {
+            ...sheet,
+            drawings: [
+              drawing("dr1", { kind: "image", mediaId: "xl/media/image1.png" }),
+              drawing("dr2", { kind: "foreign", label: "Form control" }),
+              drawing("dr3", { kind: "shape", visual: { geometry: "rect" } }),
+              drawing("dr4", { kind: "foreign", label: "Form control" }),
+              drawing("dr5", { kind: "group", members: [] }),
+              drawing("dr6", { kind: "chart" }),
+            ],
+          }
         : sheet,
     );
-    const odsLabels = unconvertibleContent(ods, "xlsx");
-    expect(odsLabels.slice(0, 2)).toEqual(["images and shapes", "charts"]);
+    const name = xlsx.sheets[0]!.name;
+    expect(unconvertibleContent(xlsx, "ods").slice(0, 3)).toEqual([`Form control on ${name}`, `Group on ${name}`, "charts"]);
+
+    const ods = await openLinksOds();
+    ods.sheets = ods.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawings: [drawing("dr1", { kind: "foreign", label: "3-D object" }), drawing("dr2", { kind: "image", mediaId: "Pictures/1.png" })] } : sheet));
+    expect(unconvertibleContent(ods, "xlsx")[0]).toBe(`3-D object on ${ods.sheets[1]!.name}`);
+    // Only image and shape drawings: nothing to name.
+    ods.sheets = ods.sheets.map((sheet) => ({ ...sheet, drawings: (sheet.drawings ?? []).filter((each) => each.content.kind === "image") }));
+    expect(unconvertibleContent(ods, "xlsx").some((label) => label.includes(" on "))).toBe(false);
   });
 
   it("ignores _xlnm names for named ranges", async () => {

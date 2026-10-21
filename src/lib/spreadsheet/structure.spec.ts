@@ -1030,6 +1030,8 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, conditionalFormats: [{ id: "f1", ranges: [range(5, 0, 5, 0)], rules: [{ id: "r1", priority: 1, kind: "expression", formula: "A6>0" }] }] }]);
     case "validations":
       return model([{ ...base, validations: [validationRule({ ranges: [range(5, 0, 5, 0)], formula1: "A6>0" })] }]);
+    case "drawings":
+      return model([{ ...base, drawings: [{ id: "dr1", name: "Picture 1", anchor: { kind: "oneCell", from: { col: 0, colOffEmu: 0, row: 5, rowOffEmu: 0 }, extEmu: { cx: 9525, cy: 9525 } }, content: { kind: "image", mediaId: "xl/media/image1.png" } }] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -1057,13 +1059,15 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.conditionalFormats[0]?.ranges[0];
     case "validations":
       return s.validations[0]?.ranges[0];
+    case "drawings":
+      return s.drawings?.[0]?.anchor.from?.row;
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats and SPEC-130's validations", () => {
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations and SPEC-131's drawings", () => {
     expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual([
       "rows",
       "formulas",
@@ -1075,6 +1079,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
       "autofilter",
       "conditionalFormats",
       "validations",
+      "drawings",
     ]);
   });
 
@@ -1114,6 +1119,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             autofilter: range(6, 0, 8, 1),
             conditionalFormats: range(6, 0, 6, 0),
             validations: range(6, 0, 6, 0),
+            drawings: 6,
           }[adjuster.id],
         );
       });

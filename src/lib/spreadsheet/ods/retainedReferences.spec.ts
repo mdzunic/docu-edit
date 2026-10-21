@@ -16,7 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { scanXml } from "../../core/xmlScanner";
 import { changedSpans } from "../fixtures/spanDiff";
-import type { Row, Sheet, SpreadsheetModel } from "../model";
+import type { Row, Sheet, SheetDrawing, SpreadsheetModel } from "../model";
 import { SPREADSHEET_READER_VERSION } from "../open";
 import { rewriteRetainedReferences } from "../retainedReferences";
 import { structuralMapper, type StructuralEdit } from "../structure";
@@ -484,7 +484,7 @@ describe("the ods location table", () => {
     }
   });
 
-  it("inside tables and Cell.preservedXml: shapes' end cells and an object's notify ranges, copy-on-write", () => {
+  it("inside tables and Cell.preservedXml: an object's notify ranges, copy-on-write — shapes' end cells stay (SPEC-131 retired them)", () => {
     const anchored = frame("Data.D6", "Data.A1:Data.B5 Other.A1:Other.A3");
     const shapes = `<table:shapes><draw:custom-shape table:end-cell-address="Data.C3" table:end-x="0in" table:end-y="0in" draw:z-index="1" svg:width="1in" svg:height="1in" svg:x="0in" svg:y="0in"/></table:shapes>`;
     const build = (): SpreadsheetModel =>
@@ -494,13 +494,8 @@ describe("the ods location table", () => {
     const before = sheetNamed(model, "Data");
     const changed = edit(model, "Data", "insertRows", 1, 2);
     const after = sheetNamed(model, "Data");
-    expect(spans(before.sourceXml!, after.sourceXml!)).toEqual([
-      ["Data.C3", "Data.C5"],
-      ["Data.D6", "Data.D8"],
-      ["Data.A1:Data.B5 Other.A1:Other.A3", "Data.A1:Data.B7 Other.A1:Other.A3"],
-    ]);
+    expect(spans(before.sourceXml!, after.sourceXml!)).toEqual([["Data.A1:Data.B5 Other.A1:Other.A3", "Data.A1:Data.B7 Other.A1:Other.A3"]]);
     expect(spans(before.rows[0]!.cells[0]!.preservedXml!, after.rows[0]!.cells[0]!.preservedXml!)).toEqual([
-      ["Data.D6", "Data.D8"],
       ["Data.A1:Data.B5 Other.A1:Other.A3", "Data.A1:Data.B7 Other.A1:Other.A3"],
     ]);
     // New rows array, row and cell for the change; the untouched row keeps its identity; nothing mutated.
@@ -520,6 +515,21 @@ describe("the ods location table", () => {
       ["Data.A1:Data.B5 Other.A1:Other.A3", "Data.A1:Data.B5 Other.A2:Other.A4"],
     ]);
     expectConsistent(other);
+  });
+
+  it("SPEC-131: a drawing's own source XML has its object's notify ranges moved, the drawing replaced copy-on-write", () => {
+    const anchored = frame("Data.D6", "Data.A1:Data.B5 Other.A1:Other.A3");
+    const model = odsBook({ tables: [{ name: "Data" }, { name: "Other" }] });
+    const data = sheetNamed(model, "Data");
+    const untouched: SheetDrawing = { id: "dr2", name: "Shape 2", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "foreign", label: "Object" }, sourceXml: "<draw:rect/>" };
+    const chart: SheetDrawing = { id: "dr1", name: "Object 1", anchor: { kind: "oneCell", from: { col: 0, colOffEmu: 0, row: 0, rowOffEmu: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart" }, sourceXml: anchored };
+    model.sheets = model.sheets.map((sheet) => (sheet === data ? { ...sheet, drawings: [chart, untouched] } : sheet));
+    edit(model, "Data", "insertRows", 1, 2);
+    const after = sheetNamed(model, "Data").drawings!;
+    expect(spans(anchored, after[0]!.sourceXml!)).toEqual([["Data.A1:Data.B5 Other.A1:Other.A3", "Data.A1:Data.B7 Other.A1:Other.A3"]]);
+    expect(after[0]).not.toBe(chart);
+    expect(after[1]).toBe(untouched);
+    expect(chart.sourceXml).toBe(anchored);
   });
 
   it("inside tables: a scenario's ranges; an emptied list keeps its text", () => {
@@ -718,14 +728,9 @@ describe("ods retained references", () => {
 
     expect(edit(onCopy, "Data (2)", "insertRows", 1, 2)).toEqual(ids(before.copy));
     const copy = sheetNamed(onCopy, "Data (2)");
-    expect(spans(before.copy.sourceXml!, copy.sourceXml!)).toEqual([
-      ["Data.D6", "Data.D8"],
-      ["Data.A1:Data.B5", "Data.A1:Data.B7"],
-    ]);
-    expect(spans(originFrame, copy.rows[0]!.cells[0]!.preservedXml!)).toEqual([
-      ["Data.D6", "Data.D8"],
-      ["Data.A1:Data.B5", "Data.A1:Data.B7"],
-    ]);
+    // SPEC-131: the frame's end cell is the drawings adjuster's, not moved here.
+    expect(spans(before.copy.sourceXml!, copy.sourceXml!)).toEqual([["Data.A1:Data.B5", "Data.A1:Data.B7"]]);
+    expect(spans(originFrame, copy.rows[0]!.cells[0]!.preservedXml!)).toEqual([["Data.A1:Data.B5", "Data.A1:Data.B7"]]);
     // The series label B1 lies above the insert: it keeps its bytes.
     expect(spans(chart, textOf(onCopy, "Object 2/content.xml"))).toEqual([
       ["Data.A1:Data.B5", "Data.A1:Data.B7"],
@@ -744,10 +749,7 @@ describe("ods retained references", () => {
     const object2 = partOf(onOrigin, "Object 2/content.xml");
     const sourceBefore = sourceOf(onOrigin, "Data");
     expect(edit(onOrigin, "Data", "insertRows", 1, 2)).toEqual(ids(onOrigin.sheets[0]!));
-    expect(spans(sourceBefore, sourceOf(onOrigin, "Data"))).toEqual([
-      ["Data.D6", "Data.D8"],
-      ["Data.A1:Data.B5", "Data.A1:Data.B7"],
-    ]);
+    expect(spans(sourceBefore, sourceOf(onOrigin, "Data"))).toEqual([["Data.A1:Data.B5", "Data.A1:Data.B7"]]);
     expect(onOrigin.sheets[1]).toBe(copyBefore);
     expect(partOf(onOrigin, "Object 2/content.xml")).toBe(object2);
     expect(textOf(onOrigin, "Object 1/content.xml")).toContain(`table:cell-range-address="Data.A1:Data.B7"`);

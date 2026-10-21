@@ -61,7 +61,7 @@ import { scanAttr, scanXml, type XmlScanAttribute } from "../../core/xmlScanner"
 import { sanitizeXmlText } from "../../core/xmlText";
 import { TABLE_NAMESPACE } from "../../core/odfXml";
 import type { GridRange } from "../address";
-import { ODS_DEFAULT_COL_WIDTH_PX, ODS_DEFAULT_ROW_HEIGHT_PT } from "../geometry";
+import { buildGridMetrics, ODS_DEFAULT_COL_WIDTH_PX, ODS_DEFAULT_ROW_HEIGHT_PT } from "../geometry";
 import { acceptMerges } from "../merges";
 import { toOdsFormula, type FormulaFields } from "../formula/dialect";
 import {
@@ -85,6 +85,7 @@ import { serialToOdsDateValue, serialToOdsTimeValue } from "../serial";
 import { cellStyle, columnSpanAt } from "../styles";
 import { sheetValidations, type DataValidation } from "../validation";
 import { withoutValidationName } from "./contentValidations";
+import { leadingWithShapes, odsSheetDrawingsXml, type OdsDrawingWriteContext, type OdsSheetDrawingsXml } from "./drawingXml";
 import { tableStartTag } from "./package";
 import type { OdsRowHeight, OdsStyleEnv, OdsStyleRegistry } from "./styles";
 
@@ -783,6 +784,9 @@ export interface OdsTableContext {
    * (OdsValidationWriter.nameOf — the save's `table:content-validations`
    * defines it); absent, or undefined for a rule, no cell names it. */
   validationName?: (sheet: Sheet, rule: DataValidation) => string | undefined;
+  /** SPEC-131: the package path a drawing's media id is written under
+   * (ods/drawingXml.ts OdsMediaPaths); absent, the id itself. */
+  mediaPath?: (mediaId: string) => string;
 }
 
 /** SPEC-130: a validated rectangle as the writer meets it — the rule's
@@ -982,8 +986,15 @@ class RunWriter {
 
   constructor(private readonly attribute: string) {}
 
-  push(element: Repeatable, count: number): void {
+  /** Adds `count` copies of `element`; a `unique` one (SPEC-131: a cell or
+   * row holding a drawing) is never compressed with its neighbours. */
+  push(element: Repeatable, count: number, unique = false): void {
     if (count <= 0) {
+      return;
+    }
+    if (unique) {
+      this.flush();
+      this.out += element.head + element.tail;
       return;
     }
     if (this.current && this.current.head === element.head && this.current.tail === element.tail) {
@@ -1186,6 +1197,10 @@ class TableWriter {
   private activeValidated: ValidatedRange[] = [];
   private readonly validatedBreaks: number[];
   private nextBreak = 0;
+  // SPEC-131: the drawings, written from the model (ods/drawingXml.ts).
+  private readonly drawings: OdsSheetDrawingsXml;
+  private readonly drawingRows: number[];
+  private nextDrawingRow = 0;
 
   constructor(sheet: Sheet, ctx: OdsTableContext) {
     this.sheet = sheet;
@@ -1202,6 +1217,15 @@ class TableWriter {
     this.merges = sheet.merges.toSorted((a, b) => a.top - b.top || a.left - b.left);
     this.validated = validatedRanges(sheet, ctx.validationName);
     this.validatedBreaks = [...new Set(this.validated.flatMap(({ range }) => [range.top, range.bottom + 1]))].toSorted((a, b) => a - b);
+    const drawingCtx: OdsDrawingWriteContext = { sheetName: sheet.name, metrics: buildGridMetrics(sheet), registry: ctx.registry, theme: this.env.theme };
+    if (ctx.passRetained) {
+      drawingCtx.passRetained = ctx.passRetained;
+    }
+    if (ctx.mediaPath) {
+      drawingCtx.mediaPath = ctx.mediaPath;
+    }
+    this.drawings = odsSheetDrawingsXml(sheet.drawings ?? [], drawingCtx);
+    this.drawingRows = [...this.drawings.cells.keys()].toSorted((a, b) => a - b);
     this.measure();
   }
 
@@ -1228,6 +1252,13 @@ class TableWriter {
     for (const { range } of this.validated) {
       rows = Math.max(rows, range.bottom + 1);
       cols = Math.max(cols, range.right + 1);
+    }
+    // SPEC-131: a drawing's anchor cell is written even when nothing is stored there.
+    for (const [row, byCol] of this.drawings.cells) {
+      rows = Math.max(rows, row + 1);
+      for (const col of byCol.keys()) {
+        cols = Math.max(cols, col + 1);
+      }
     }
     rows = Math.min(Math.max(rows, 1), MAX_ROWS);
     cols = Math.min(Math.max(cols, 1), MAX_COLS);
@@ -1348,12 +1379,16 @@ class TableWriter {
         this.nextStored += 1;
       }
       const row = stored[this.nextStored]?.index === r ? stored[this.nextStored] : undefined;
-      if (row || this.active.some((merge) => merge.top === r)) {
-        out.push(this.rowElement(row, r), 1);
+      while (this.nextDrawingRow < this.drawingRows.length && this.drawingRows[this.nextDrawingRow]! < r) {
+        this.nextDrawingRow += 1;
+      }
+      const drawn = this.drawingRows[this.nextDrawingRow] === r;
+      if (row || drawn || this.active.some((merge) => merge.top === r)) {
+        out.push(this.rowElement(row, r), 1, drawn);
         r += 1;
         continue;
       }
-      let end = Math.min(to, stored[this.nextStored]?.index ?? to);
+      let end = Math.min(to, stored[this.nextStored]?.index ?? to, this.drawingRows[this.nextDrawingRow] ?? to);
       if (this.nextMerge < this.merges.length) {
         end = Math.min(end, this.merges[this.nextMerge]!.top);
       }
@@ -1460,6 +1495,10 @@ class TableWriter {
     let next = 0; // the next stored cell
     let m = 0; // the next merge
     let col = 0;
+    // SPEC-131: the drawings anchored on this row, by column.
+    const drawn = this.drawings.cells.get(r);
+    const drawnCols = drawn ? [...drawn.keys()].toSorted((a, b) => a - b) : [];
+    let d = 0;
     while (col < this.colExtent) {
       while (m < merges.length && merges[m]!.range.right < col) {
         m += 1;
@@ -1473,12 +1512,16 @@ class TableWriter {
       const covered = merge !== undefined && !anchor;
       const segment = segmentAt(col);
       const validation = segment && segment.left <= col ? segment.name : undefined;
-      if (cell || anchor) {
-        out.push(this.cellElement(cell, covered, anchor, row, col, validation), 1);
+      while (d < drawnCols.length && drawnCols[d]! < col) {
+        d += 1;
+      }
+      const drawings = drawnCols[d] === col ? drawn!.get(col) : undefined;
+      if (cell || anchor || drawings !== undefined) {
+        out.push(this.cellElement(cell, covered, anchor, row, col, validation, drawings), 1, drawings !== undefined);
         col += 1;
         continue;
       }
-      let end = Math.min(this.colExtent, cells[next]?.col ?? this.colExtent);
+      let end = Math.min(this.colExtent, cells[next]?.col ?? this.colExtent, drawnCols[d] ?? this.colExtent);
       if (merge) {
         end = Math.min(end, merge.range.right + 1);
       } else if (merges[m]) {
@@ -1507,7 +1550,7 @@ class TableWriter {
 
   /** One cell element (see serializeTable, "Cells"). The style name is part
    * of the head, so a repeat count follows it, as LibreOffice writes. */
-  private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number, validation?: string): Repeatable {
+  private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number, validation?: string, drawings?: string): Repeatable {
     let head = covered ? "<table:covered-table-cell" : "<table:table-cell";
     const close = covered ? "</table:covered-table-cell>" : "</table:table-cell>";
     let attrs = "";
@@ -1520,7 +1563,7 @@ class TableWriter {
       attrs += ` table:number-columns-spanned="${anchor.right - anchor.left + 1}" table:number-rows-spanned="${anchor.bottom - anchor.top + 1}"`;
     }
     if (!cell) {
-      return { head, tail: `${attrs}/>` };
+      return { head, tail: drawings === undefined ? `${attrs}/>` : `${attrs}>${drawings}${close}` };
     }
     if (cell.arrayRange && cell.formula !== undefined) {
       const range = cell.arrayRange;
@@ -1571,6 +1614,8 @@ class TableWriter {
       attrs += withoutValidationName(pass(cell.preservedAttrs));
     }
     let content = cell.preservedXml === undefined ? "" : pass(cell.preservedXml);
+    // SPEC-131: after any office:annotation, before the text.
+    content += drawings ?? "";
     content += cell.preservedText !== undefined ? pass(cell.preservedText) : paragraphsXml(text);
     return { head, tail: content === "" ? `${attrs}/>` : `${attrs}>${content}${close}` };
   }
@@ -1641,6 +1686,8 @@ class TableWriter {
     if (ctx.conditionalFormats) {
       ({ leading, trailing } = ctx.conditionalFormats.splice(sheet, leading, trailing, ctx.passRetained));
     }
+    // SPEC-131: the fixed drawings, from the model, where the source's table:shapes was.
+    leading = leadingWithShapes(leading, this.drawings.shapes, this.skeleton ? tablePrefix(this.skeleton.close) : "table:");
     if (this.skeleton) {
       head = this.skeleton.head + leading;
     } else {
@@ -1652,6 +1699,12 @@ class TableWriter {
     const rows = this.axis("row", this.skeleton?.rowGroups ?? [], 0, this.rowExtent, (a, b, out) => this.rows(a, b, out));
     return head + columns + rows + trailing + (this.skeleton ? this.skeleton.close : "</table:table>");
   }
+}
+
+/** The prefix a table's close tag names it with ("table:"). */
+function tablePrefix(close: string): string {
+  const name = /^<\/([^\s>]+)/.exec(close)?.[1] ?? "table:table";
+  return name.includes(":") ? name.slice(0, name.indexOf(":") + 1) : "";
 }
 
 /** ` table:content-validation-name="…"` for a validated position ("" for none). */
@@ -1746,7 +1799,15 @@ function validatedRanges(sheet: Sheet, nameOf: OdsTableContext["validationName"]
  * table:number-columns-repeated="n"/>`); runs of empty rows split where the
  * validated rectangles start and end, and are never materialised. The
  * extent covers every validated rectangle. A stale
- * `table:content-validation-name` in `preservedAttrs` is never written. */
+ * `table:content-validation-name` in `preservedAttrs` is never written.
+ * SPEC-131: the drawings are the model's (ods/drawingXml.ts, the normative
+ * source): the `fixed` ones in a `table:shapes` that replaces the source's
+ * among the leading children (after `office:forms`; none → no element),
+ * the `moveAndSize` and `move` ones inside their `from` cell after its
+ * preservedXml (any `office:annotation`) and before its text — the cell
+ * materialised when nothing else is stored there, its row too, and neither
+ * ever repeat-compressed with a neighbour. The extent covers every anchor
+ * cell. */
 export function serializeTable(sheet: Sheet, ctx: OdsTableContext): string {
   return new TableWriter(sheet, ctx).write();
 }

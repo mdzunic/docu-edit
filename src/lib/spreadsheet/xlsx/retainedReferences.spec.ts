@@ -607,32 +607,13 @@ describe("drawings, comments and VML", () => {
     });
   }
 
-  it("xdr:from/xdr:to xdr:row and xdr:col of two-cell anchors and a one-cell anchor's from; editAs=absolute and absolute anchors untouched", () => {
-    const rows = drawingBook(ANCHORS);
-    const rowsBefore = rows.opaque;
-    expect(adjust(rows, "insertRows", 2, 3)).toEqual(new Set(["s1"]));
-    expect(spans(rowsBefore, rows, "xl/drawings/drawing1.xml")).toEqual([
-      ["4", "7"],
-      ["9", "12"],
-      ["3", "6"],
-      ["6", "9"],
-    ]);
-
-    const cols = drawingBook(ANCHORS);
-    const colsBefore = cols.opaque;
-    adjust(cols, "insertCols", 0, 1);
-    expect(spans(colsBefore, cols, "xl/drawings/drawing1.xml")).toEqual([
-      ["1", "2"],
-      ["3", "4"],
-      ["0", "1"],
-      ["2", "3"],
-      ["4", "5"],
-    ]);
-
-    const absolute = drawingBook(`<xdr:twoCellAnchor editAs="absolute">${corner("from", 5, 5)}${corner("to", 7, 8)}${SHAPE}</xdr:twoCellAnchor>`);
-    const absoluteBefore = absolute.opaque;
-    expect(adjust(absolute, "insertRows", 0, 3)).toEqual(new Set());
-    expect(absolute.opaque).toBe(absoluteBefore);
+  it("leaves every drawing anchor verbatim — SPEC-131 retired the row: the drawings adjuster moves the model", () => {
+    for (const edit of [["insertRows", 2, 3], ["insertCols", 0, 1], ["deleteRows", 0, 1]] as const) {
+      const anchored = drawingBook(ANCHORS);
+      const before = anchored.opaque;
+      expect(adjust(anchored, edit[0], edit[1], edit[2])).toEqual(new Set());
+      expect(anchored.opaque).toBe(before);
+    }
   });
 
   function notesBook(): SpreadsheetModel {

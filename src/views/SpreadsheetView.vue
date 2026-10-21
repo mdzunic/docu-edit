@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget): each composable owns its feature —
-// loading, view state, selection, editing, formatting, rows and columns, merges, clipboard, fill and move, CSV import, sort and filter; surfaces: components/.
+// loading, view state, selection, editing (drawings included), formatting, rows and columns, merges, clipboard, fill and move, CSV import, sort and filter; surfaces: components/.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -58,7 +58,7 @@ const sortFilter = useSortFilter({ book, viewState, selection, sheetMetrics, edi
 const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle, sortFilter });
 const csvImport = useCsvImport({ book, undo: editing.undo, router: useRouter() });
 const assist = useFunctionAssist({ ...editing.cell });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings }));
 </script>
 
 <template>

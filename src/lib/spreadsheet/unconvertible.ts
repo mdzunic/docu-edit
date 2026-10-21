@@ -19,13 +19,18 @@
 // reversed order (no wire form there). SPEC-130 deleted "data validation":
 // every rule type crosses through the model (stripRetention's
 // crossValidations; an ODS sort-ascending list becomes an ordinary xlsx
-// list, the one property that does not cross, and is not named here). A
-// row may also yield item-level labels (SPEC-131's "Form control on
-// Sheet1") by returning them from its marker.
+// list, the one property that does not cross, and is not named here).
+// SPEC-131 replaced "images and shapes" — image and shape drawings cross
+// through the model's canonical writers — with its item-level row: each
+// drawing stripRetention drops (a `foreign` or `group` one) is named with
+// its kind and sheet ("Form control on Sheet1"), once per distinct label; a
+// placeholder `chart` drawing is dropped too, and named by the "charts" row
+// (SPEC-121's toast reads "charts, comments"), not twice. A row yields item-level labels by returning them from its
+// marker.
 import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
-import type { SpreadsheetModel } from "./model";
-import { partTextOf, readSourceWorkbook, relationshipKind, relationshipsOf, targetPart, type PartLookup } from "./xlsx/package";
+import type { SheetDrawing, SpreadsheetModel } from "./model";
+import { partTextOf, readSourceWorkbook, relationshipKind, relationshipsOf, type PartLookup } from "./xlsx/package";
 
 /** What a marker looks at: the source model and its retained parts. */
 export interface ConversionSource {
@@ -75,22 +80,6 @@ function anyPart(pattern: RegExp): Marker {
   return ({ parts }) => [...parts.keys()].some((name) => pattern.test(name));
 }
 
-/** A worksheet drawing holding a picture or shape — not only charts, which
- * are their own row. */
-const xlsxImagesAndShapes: Marker = ({ model, parts }) =>
-  model.sheets.some((sheet) => {
-    if (sheet.partName === undefined) {
-      return false;
-    }
-    return relationshipsOf(parts, sheet.partName).some((rel) => {
-      if (relationshipKind(rel.type) !== "drawing" || rel.external) {
-        return false;
-      }
-      const drawing = partTextOf(parts, targetPart(sheet.partName!, rel) ?? "") ?? "";
-      return /<(?:\w+:)?(?:pic|sp|grpSp|cxnSp)[\s>]/.test(drawing);
-    });
-  });
-
 const xlsxNamedRanges: Marker = ({ parts }) => {
   const workbook = readSourceWorkbook(parts);
   return workbook !== undefined && [...workbook.xml.matchAll(/<(?:\w+:)?definedName\b[^>]*\bname="([^"]*)"/g)].some((match) => !match[1]!.startsWith("_xlnm."));
@@ -118,17 +107,6 @@ const odsTables: Marker = ({ model }) => {
   return [...text.matchAll(/<table:database-range\b[^>]*?\btable:name="([^"]*)"/g)].some((match) => !claimed.has(match[1]!));
 };
 
-/** Shapes, or a frame that is not an embedded object's. */
-const odsImagesAndShapes: Marker = (source) =>
-  tableTexts(source).some((text) => {
-    if (/<draw:(?:custom-shape|rect|line|ellipse|circle|path|polygon|polyline|connector|g)[\s>]/.test(text)) {
-      return true;
-    }
-    const frames = text.split("<draw:frame").length - 1;
-    const objects = text.split("<draw:object").length - 1;
-    return frames > objects;
-  });
-
 const odsPageSetup: Marker = ({ model, parts }) => {
   const styles = partTextOf(parts, "styles.xml") ?? "";
   if (/style:print-orientation="landscape"|style:scale-to(?:-pages)?="/.test(styles)) {
@@ -138,6 +116,38 @@ const odsPageSetup: Marker = ({ model, parts }) => {
 };
 
 // --- both ---------------------------------------------------------------------------------------
+
+/** SPEC-131: what a drawing the copy drops is called ("Form control",
+ * "Group"), or undefined for one that crosses — or, a chart, that the
+ * "charts" row names. */
+function droppedDrawingKind(drawing: SheetDrawing): string | undefined {
+  switch (drawing.content.kind) {
+    case "foreign":
+      return drawing.content.label;
+    case "group":
+      return "Group";
+    default:
+      return undefined;
+  }
+}
+
+/** SPEC-131: every drawing the copy drops, as "<kind> on <sheet>", once per
+ * distinct label, in sheet and z-order. */
+const droppedDrawings: Marker = ({ model }) => {
+  const labels = new Set<string>();
+  for (const sheet of model.sheets) {
+    if (sheet.kind !== "grid") {
+      continue;
+    }
+    for (const drawing of sheet.drawings ?? []) {
+      const kind = droppedDrawingKind(drawing);
+      if (kind !== undefined) {
+        labels.add(`${kind} on ${sheet.name}`);
+      }
+    }
+  }
+  return [...labels];
+};
 
 /** SPEC-128: an autofilter criterion kept verbatim — an xlsx colour or icon
  * filter (`preserved`), an ods filter that does not decompose per column. */
@@ -165,7 +175,7 @@ export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
     xlsx: ({ model }) => model.packageVariant === "macroEnabled" || model.packageVariant === "macroEnabledTemplate",
     ods: anyPart(/^(?:Basic|Scripts)\//),
   },
-  { label: "images and shapes", xlsx: xlsxImagesAndShapes, ods: odsImagesAndShapes },
+  { label: "drawings", xlsx: droppedDrawings, ods: droppedDrawings },
   { label: "charts", xlsx: anyPart(/^xl\/charts\/chart[^/]*\.xml$/), ods: anyTableHas("<draw:object") },
   { label: "comments", xlsx: worksheetRelationship("comments"), ods: anyTableHas("<office:annotation") },
   { label: "some conditional formatting", xlsx: someConditionalFormatting(true), ods: someConditionalFormatting(false) },

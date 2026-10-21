@@ -17,7 +17,6 @@
 // | charts (not style/colors parts) | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
 // | pivot caches | `worksheetSource@ref` on `@sheet` (one naming `name` or `r:id` is left alone) | range |
 // | pivot tables | `location@ref` | range |
-// | drawings | `xdr:from`/`xdr:to` `xdr:row`, `xdr:col` — a twoCellAnchor's unless `editAs="absolute"`, a oneCellAnchor's `from` | index |
 // | comments, threaded comments | `comment@ref`, `threadedComment@ref` | range |
 // | VML | `x:ClientData` `x:Row`, `x:Column`, `x:Anchor` numbers 1, 3, 5 and 7 (LeftCol, TopRow, RightCol, BottomRow) | index |
 //
@@ -45,6 +44,12 @@
 //   containers' `count`), so nothing is adjusted twice. A clean sheet's
 //   validation formulas still take the writers' sheet-name pass
 //   (sheetNamePass.ts) — that is a rename, not a structural edit.
+// - Retired by SPEC-131 (its `drawings` reference adjuster moves
+//   Sheet.drawings' anchors; the writer rebuilds a `drawingsDirty` sheet's
+//   drawing part from the model, each imported anchor patched): a drawing
+//   part's `xdr:from`/`xdr:to` `xdr:row` and `xdr:col` — left verbatim, so
+//   nothing is adjusted twice. The charts a drawing relates are still
+//   reached through it.
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
@@ -658,26 +663,6 @@ function definedNameEdits(xml: string, hosts: readonly string[], owned: (sheetId
   return edits;
 }
 
-function drawingEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
-  const edits = new PartEdits(xml, pass.mapper);
-  walk(xml, ignore, (frame, contentEnd) => {
-    if (frame.local !== "row" && frame.local !== "col") {
-      return;
-    }
-    const corner = frame.parent;
-    const anchor = corner?.parent;
-    if (!corner || !anchor || (corner.local !== "from" && corner.local !== "to")) {
-      return;
-    }
-    const moves =
-      anchor.local === "twoCellAnchor" ? scanAttr(anchor.attrs, "editAs") !== "absolute" : anchor.local === "oneCellAnchor" && corner.local === "from";
-    if (moves) {
-      edits.indexText(frame, contentEnd, host.name, frame.local === "row" ? "row" : "col");
-    }
-  });
-  return edits;
-}
-
 const cellKey = (row: number, col: number): string => `${row},${col}`;
 
 /** A comments (`comment`) or threaded comments (`threadedComment`) part; the
@@ -1015,7 +1000,6 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
       } else if (kind === "vmlDrawing") {
         vml.push(target); // after the comments, whose removals it follows
       } else if (kind === "drawing") {
-        own = run.rewrite(target, (xml) => drawingEdits(xml, sheet, run)) || own;
         for (const chartRel of run.relationships(target)) {
           const chartKind = relationshipKind(chartRel.type);
           const chart = chartKind === "chart" || chartKind === "chartEx" ? targetPart(target, chartRel) : undefined;

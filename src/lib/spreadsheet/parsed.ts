@@ -3,6 +3,7 @@
 // opaque copy of the source package. open.ts assembles a ParsedSpreadsheet
 // into a SpreadsheetModel.
 import type { DocumentProperties } from "../core/documentProperties";
+import type { MediaPart } from "../core/media";
 import { bytesToBase64Async, type OpaquePart } from "../core/packageParts";
 import type { DocumentTheme } from "../core/theme";
 import { colToLetters } from "./address";
@@ -36,6 +37,9 @@ export interface ParsedSpreadsheet {
   /** SPEC-130: ods content validations no cell references, verbatim
    *  (absent: none). */
   odsOrphanValidations?: string[];
+  /** SPEC-131: the images the sheets' drawings embed, one part per package
+   *  path (absent: none) — their bytes deferred with registerPendingMedia. */
+  media?: MediaPart[];
 }
 
 /** Counts stored cells across every sheet of one read against

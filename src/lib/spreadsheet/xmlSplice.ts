@@ -110,17 +110,20 @@ export function attributeValue(tag: string, qname: string): string | undefined {
   return span ? decodeXmlText(span.raw) : undefined;
 }
 
-/** `tag` with attribute `qname` set to `value` (escaped here) — replaced in
- * place, or appended before the tag's end — or removed when `value` is
- * null. The same string when nothing changes. */
-export function setAttribute(tag: string, qname: string, value: string | null): string {
+/** `tag` with attribute `qname` set to `value` (escaped here by `escape`) —
+ * replaced in place, keeping its quote character (an apostrophe in a
+ * single-quoted value is escaped too), or appended double-quoted before the
+ * tag's end — or removed when `value` is null. The same string when nothing
+ * changes. */
+export function setAttribute(tag: string, qname: string, value: string | null, escape: (value: string) => string = escapeAttributeValue): string {
   const span = findAttribute(tag, qname);
   if (value === null) {
     return span ? tag.slice(0, span.start) + tag.slice(span.end) : tag;
   }
-  const escaped = escapeAttributeValue(value);
+  const escaped = escape(value);
   if (span) {
-    return span.raw === escaped ? tag : tag.slice(0, span.valueStart) + escaped + tag.slice(span.valueEnd);
+    const quoted = tag[span.valueStart - 1] === "'" ? escaped.replace(/'/g, "&apos;") : escaped;
+    return span.raw === quoted ? tag : tag.slice(0, span.valueStart) + quoted + tag.slice(span.valueEnd);
   }
   const close = tag.endsWith("/>") ? tag.length - 2 : tag.length - 1;
   let insertAt = close;
@@ -133,6 +136,14 @@ export function setAttribute(tag: string, qname: string, value: string | null): 
 /** An attribute value as written between double quotes. */
 export function escapeAttributeValue(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Free text a user typed (a drawing's name or alt text) as written between
+ * double quotes: escapeAttributeValue, with tab, line feed and carriage return
+ * as character references — written raw, attribute-value normalisation would
+ * read each back as a space. */
+export function escapeAttributeText(value: string): string {
+  return escapeAttributeValue(value).replace(/\t/g, "&#x9;").replace(/\n/g, "&#xA;").replace(/\r/g, "&#xD;");
 }
 
 /** Element text as written: `&`, `<` and `>` escaped. */

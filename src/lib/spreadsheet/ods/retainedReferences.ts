@@ -12,7 +12,7 @@
 // | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
 // | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
 // | table start tag | `table:table@table:print-ranges` (emptied → the attribute removed) | list |
-// | inside tables, `Cell.preservedXml` | `draw:*@table:end-cell-address`; `draw:object@draw:notify-on-update-of-ranges` | anchor; list |
+// | inside tables, `Cell.preservedXml`, `Sheet.drawings` source XML | `draw:object@draw:notify-on-update-of-ranges` | list |
 // | inside tables | `table:scenario@table:scenario-ranges` | list |
 // | `Object N/content.xml` | `chart:plot-area@table:cell-range-address`, `chart:series@chart:values-cell-range-address`, `@chart:label-cell-address`, `chart:domain@table:cell-range-address`, `chart:categories@table:cell-range-address` | list |
 //
@@ -69,6 +69,13 @@
 //   an unchanged one from its sourceXml):
 //   `table:content-validation@table:base-cell-address` and
 //   `@table:condition` — left verbatim, so nothing is adjusted twice.
+// - Retired by SPEC-131 (its `drawings` reference adjuster moves
+//   Sheet.drawings' anchors; the table writer re-emits a dirty table's
+//   drawings from the model, an imported one's anchor patched):
+//   `draw:*@table:end-cell-address` — left verbatim, so nothing is adjusted
+//   twice. A drawing's own source XML (an imported `draw:frame` > `draw:object`)
+//   still has its `draw:notify-on-update-of-ranges` moved, the drawing
+//   replaced copy-on-write.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -87,7 +94,7 @@ import { scanXml, XmlScanError } from "../../core/xmlScanner";
 import { colToLetters, type GridRange } from "../address";
 import type { RefPart, ReferenceNode } from "../formula/references";
 import { scanQuoted } from "../formula/tokens";
-import { isOriginal, MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "../model";
+import { isOriginal, MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet, type SheetDrawing, type SpreadsheetModel } from "../model";
 import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, findAttribute, type Splice } from "../xmlSplice";
@@ -112,9 +119,6 @@ const list = (attribute: string, emptied?: "element" | "attribute"): Location =>
 const anchor = (attribute: string): Location => ({ attribute, kind: "anchor" });
 const formula = (attribute: string): Location => ({ attribute, kind: "formula" });
 
-const END_CELL = anchor("table:end-cell-address");
-/** Every `draw:*` shape: its end anchor. */
-const SHAPE_LOCATIONS: readonly Location[] = [END_CELL];
 
 const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
   ["table:label-range", [list("table:label-cell-range-address", "element"), list("table:data-cell-range-address", "element")]],
@@ -127,7 +131,7 @@ const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
   ["table:consolidation", [list("table:source-cell-range-addresses"), anchor("table:target-cell-address")]],
   ["table:table", [list("table:print-ranges", "attribute")]],
   ["table:scenario", [list("table:scenario-ranges")]],
-  ["draw:object", [list("draw:notify-on-update-of-ranges"), END_CELL]],
+  ["draw:object", [list("draw:notify-on-update-of-ranges")]],
 ]);
 
 const CHART_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
@@ -139,7 +143,7 @@ const CHART_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
 
 type LocationTable = (element: string) => readonly Location[] | undefined;
 
-const contentLocations: LocationTable = (element) => CONTENT_LOCATIONS.get(element) ?? (element.startsWith("draw:") ? SHAPE_LOCATIONS : undefined);
+const contentLocations: LocationTable = (element) => CONTENT_LOCATIONS.get(element);
 /** A verbatim ods filter (`autoFilter.odsUnmappedFilter`): its criteria range. */
 const filterLocations: LocationTable = (element) => (element === "table:filter" ? CONTENT_LOCATIONS.get(element) : undefined);
 const CRITERIA_SOURCE = /table:condition-source-range-address\s*=/;
@@ -465,7 +469,30 @@ class OdsRetainedRewrite {
       }
     }
     const rows = this.rows(sheet.rows, host);
-    return rows === sheet.rows ? next : { ...next, rows };
+    if (rows !== sheet.rows) {
+      next = { ...next, rows };
+    }
+    const drawings = this.drawings(sheet.drawings, host);
+    return drawings === sheet.drawings ? next : { ...next, drawings };
+  }
+
+  /** SPEC-131: the drawings with each one's source XML adjusted,
+   * copy-on-write (the same array when none changes). */
+  private drawings(drawings: SheetDrawing[] | undefined, host: Host): SheetDrawing[] | undefined {
+    let out: SheetDrawing[] | undefined;
+    drawings?.forEach((drawing, i) => {
+      const xml = drawing.sourceXml;
+      if (xml === undefined || !mentions(xml, CONTENT_ATTRIBUTES)) {
+        return;
+      }
+      const splices = this.splices(`<w>${xml}</w>`, host, contentLocations).map((splice) => ({ ...splice, start: splice.start - 3, end: splice.end - 3 }));
+      const sourceXml = applySplices(xml, splices);
+      if (sourceXml !== xml) {
+        out ??= drawings.slice();
+        out[i] = { ...drawing, sourceXml };
+      }
+    });
+    return out ?? drawings;
   }
 
   /** Rows with every cell's preservedXml adjusted, copy-on-write. */

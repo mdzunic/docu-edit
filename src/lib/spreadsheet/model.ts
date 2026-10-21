@@ -35,6 +35,7 @@
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
+import type { ShapeVisual } from "../core/shapes";
 import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "../core/theme";
 import type { CellRef, GridRange } from "./address";
 import type { ConditionalFormat, Dxf } from "./conditionalFormats";
@@ -366,6 +367,87 @@ export interface Sheet {
   validations: DataValidation[];
   /** xlsx `dataValidations@disablePrompts="1"`: no input message shows. */
   validationPromptsDisabled?: true;
+  // --- SPEC-131 (drawings.ts is the normative source for the commands) ---
+  /** The sheet's drawing layer in z-order, index 0 at the back. Absent or
+   *  empty: none. Copy-on-write like `rows`: every command replaces the
+   *  array and the drawings it touches; an untouched drawing keeps its
+   *  identity. */
+  drawings?: SheetDrawing[];
+  /** xlsx: the sheet's drawing part ("xl/drawings/drawing1.xml"), whose
+   *  bytes are in `opaque` — the splice base of a rebuilt layer. */
+  drawingPart?: string;
+  /** xlsx: the drawing layer changed since open — the writer rebuilds the
+   *  drawing part (and its `.rels`) only; the worksheet part stays as its
+   *  own `dirty` says. ods drawings live in the table XML, so an ods
+   *  drawing command sets `dirty` instead. */
+  drawingsDirty?: true;
+}
+
+// --- SPEC-131: the drawing layer --------------------------------------------------
+// SPEC-131 is the normative source for the cell-anchored drawing model. A
+// drawing is pinned to cells: its anchor says where, and how it follows its
+// cells under row and column edits (drawings.ts anchorBehaviour). Every
+// length is EMU (914,400 per inch; drawings.ts EMU_PER_PX = 9525 at 96 dpi).
+
+/** A cell corner plus an offset into the cell, EMU. Offsets are kept as
+ *  read, even when larger than their cell, and clamped only to render. */
+export interface AnchorPoint {
+  col: number;
+  colOffEmu: number;
+  row: number;
+  rowOffEmu: number;
+}
+
+export interface DrawingAnchor {
+  kind: "twoCell" | "oneCell" | "absolute";
+  /** twoCell only — Excel's editAs. Absent = "twoCell" (the schema default). */
+  editAs?: "twoCell" | "oneCell" | "absolute";
+  from?: AnchorPoint; // twoCell, oneCell
+  to?: AnchorPoint; // twoCell, as read or last written
+  posEmu?: { x: number; y: number }; // absolute; twoCell+editAs "absolute" (derived at read)
+  extEmu?: { cx: number; cy: number }; // oneCell, absolute; twoCell+editAs "oneCell"|"absolute" (derived at read)
+}
+
+/** The render-only subset of a shape's text (xdr:txBody / text:p). */
+export interface DrawingText {
+  paragraphs: { text: string; align?: "left" | "center" | "right" }[];
+  anchor: "top" | "middle" | "bottom";
+  /** From the first run. */
+  sizePt?: number;
+  color?: ModelColor;
+  bold?: true;
+}
+
+/** What a drawing paints. `crop` and a group member's box are fractions 0..1
+ *  (a member's of the group's box). */
+export type SheetDrawingContent =
+  | { kind: "image"; mediaId: string; crop?: { l: number; t: number; r: number; b: number } }
+  | { kind: "shape"; visual: ShapeVisual; text?: DrawingText }
+  | {
+      kind: "group";
+      members: { x: number; y: number; w: number; h: number; content: Exclude<SheetDrawingContent, { kind: "group" | "chart" }> }[];
+    }
+  | { kind: "chart"; sourcePart?: string } // a placeholder here; SPEC-132 widens it
+  | { kind: "foreign"; label: string; face?: Exclude<SheetDrawingContent, { kind: "group" | "chart" | "foreign" }> };
+
+export interface SheetDrawing {
+  /** Minted at read ("dr1"…), unique per sheet, never written. */
+  id: string;
+  anchor: DrawingAnchor;
+  /** xdr:cNvPr@name / draw:name. */
+  name: string;
+  /** xdr:cNvPr@descr / svg:desc. */
+  altText?: string;
+  /** xdr:cNvPr@hidden="1" — kept, never painted or selectable. */
+  hidden?: true;
+  /** a:xfrm@rot / draw:transform rotate, whole degrees clockwise — rendered only. */
+  rotationDeg?: number;
+  /** The verbatim source element: xlsx the wsDr child (the anchor, or the
+   *  mc:AlternateContent around it, with the whitespace before it); ods the
+   *  draw:* element. Absent for a drawing created here. Never dropped by a
+   *  move, resize or z-order change. */
+  sourceXml?: string;
+  content: SheetDrawingContent;
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -405,7 +487,11 @@ export interface SpreadsheetModel {
   opaque: OpaquePart[]; // the whole source package, verbatim, in order
   preview?: SheetPreview;
   properties?: DocumentProperties;
-  media?: MediaPart[]; // unused until SPEC-131; present so the store's media split applies unchanged
+  /** SPEC-131: the images sheet drawings show, keyed by package path
+   *  (`xl/media/image1.png`, `Pictures/…`) — one part per image, shared by
+   *  every drawing that embeds it. The writers emit a part from here, ahead
+   *  of an `opaque` twin; the store's media split applies unchanged. */
+  media?: MediaPart[];
   // --- SPEC-117 ---
   /** Every cell style, index 0 the default ("Normal") style — never empty. */
   styles: CellStyle[];

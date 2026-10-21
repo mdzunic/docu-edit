@@ -13,7 +13,11 @@
 // menu opens it, WorkbookBody renders it), whose OK is one step on that stack;
 // and data validation (useDataValidation) — the cell editor's entry gate, and
 // the alert, input message and dropdown it shows (`validation` — WorkbookBody
-// renders the alert; the grid context carries it for the rest).
+// renders the alert; the grid context carries it for the rest). SPEC-131: the
+// sheet drawing layer (useSheetDrawings — selection, keyboard and commands
+// over the same undo stack; the grid context carries it to SheetGrid and
+// WorkbookBody, the menu reads it for Insert and Arrange, and a pasted image
+// goes to it through useSheetClipboard).
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -24,6 +28,8 @@ import { useConditionalFormats } from "./useConditionalFormats";
 import { entryGateOf, useDataValidation } from "./useDataValidation";
 import type { Recalc } from "./useRecalc";
 import { useSheetCommands } from "./useSheetCommands";
+import { useSheetDrawings } from "./useSheetDrawings";
+import type { SheetMetrics } from "./useSheetMetrics";
 import { useSheetSidePanel } from "./useSheetSidePanel";
 import type { SheetViewState } from "./useSheetViewState";
 import { useSpreadsheetUndo } from "./useSpreadsheetUndo";
@@ -42,7 +48,7 @@ export interface WorkbookEditingDeps {
   recalc: Pick<Recalc, "edit" | "settle" | "onResult">;
   /** Cell entry's view inputs (SPEC-122). */
   selection: CellEditingDeps["selection"];
-  sheetMetrics: CellEditingDeps["sheetMetrics"];
+  sheetMetrics: CellEditingDeps["sheetMetrics"] & Pick<SheetMetrics, "metrics">;
   locale: () => SpreadsheetLocale;
 }
 
@@ -119,7 +125,15 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncInto: (model) => deps.viewState.syncInto(model),
     busy: () => cell.editing.value,
   });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation };
+  const drawings = useSheetDrawings({
+    book: deps.book,
+    undo,
+    selection: deps.selection,
+    sheetMetrics: deps.sheetMetrics,
+    syncInto: (model) => deps.viewState.syncInto(model),
+    busy: () => cell.editing.value,
+  });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

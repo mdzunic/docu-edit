@@ -6,6 +6,8 @@
 // (`draw:object` → `Object N/`, its `ObjectReplacements/Object N` image) is
 // copied in `opaque` to the next free `Object N` with the manifest spliced
 // — a new manifest part, never one edited in place. Pictures stay shared.
+// SPEC-131: the copy's drawings' source XML (`drawingTexts`, each a draw:*
+// element also inside the table text) takes the same suffix and retargets.
 // The copy's `table:name` stays the origin's source name until the writer
 // splices it on save. Deleting a copy drops the objects it alone showed
 // (removeCopyObjects).
@@ -40,18 +42,23 @@ function workbookIds(model: SpreadsheetModel): Set<string> {
 }
 
 /** The copy's retained source and `opaque` (see the module header). */
-export function copyOdsSheetSource(model: SpreadsheetModel, originXml: string): { sourceXml: string; opaque: OpaquePart[] } {
-  const own = declaredIds(originXml);
+export function copyOdsSheetSource(
+  model: SpreadsheetModel,
+  originXml: string,
+  drawingTexts: readonly string[] = [],
+): { sourceXml: string; opaque: OpaquePart[]; drawingTexts: string[] } {
+  const own = new Set([...declaredIds(originXml), ...drawingTexts.flatMap((text) => [...declaredIds(text)])]);
   const taken = workbookIds(model);
   let k = 1;
   while ([...own].some((id) => taken.has(`${id}-c${k}`))) {
     k += 1;
   }
   let sourceXml = suffixIds(originXml, `-c${k}`);
+  let texts = drawingTexts.map((text) => (text === "" ? text : suffixIds(text, `-c${k}`)));
 
-  const objects = objectsReferenced(sourceXml);
+  const objects = [...new Set([...objectsReferenced(sourceXml), ...texts.flatMap((text) => objectsReferenced(text))])];
   if (objects.length === 0) {
-    return { sourceXml, opaque: model.opaque };
+    return { sourceXml, opaque: model.opaque, drawingTexts: texts };
   }
   const names = model.opaque.map((part) => part.name);
   const allocated = new Set<string>();
@@ -77,13 +84,14 @@ export function copyOdsSheetSource(model: SpreadsheetModel, originXml: string): 
       }
     }
     sourceXml = retargetObject(sourceXml, object, copy);
+    texts = texts.map((text) => (text === "" ? text : retargetObject(text, object, copy)));
   }
   let opaque: OpaquePart[] = [...model.opaque, ...added];
   if (manifestXml !== undefined && newEntries.length > 0) {
     const next = spliceManifest(manifestXml, new Set(), newEntries);
     opaque = opaque.map((part) => (part.name === MANIFEST ? { name: MANIFEST, data: bytesToBase64(encoder.encode(next)) } : part));
   }
-  return { sourceXml, opaque };
+  return { sourceXml, opaque, drawingTexts: texts };
 }
 
 /** `opaque` without the embedded objects only a deleted copy's text showed

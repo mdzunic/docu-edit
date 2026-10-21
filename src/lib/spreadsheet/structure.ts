@@ -35,8 +35,8 @@
 // | 8 | autofilter | SPEC-128: Sheet.autoFilter (range, colIds, its sort record) and Sheet.sortState (ref, key columns) — see "8. autofilter" |
 // | 9 | conditionalFormats | SPEC-129: Sheet.conditionalFormats — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied format removed) and its cellIs/expression formulas re-anchored with adjustAnchoredFormula; every other formula a rule carries (cfFormulas.ts), on every sheet, via adjustFormula — see "9. conditionalFormats" |
 // | 10 | validations | SPEC-130: Sheet.validations — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied rule removed) and formula1/formula2 re-anchored with adjustAnchoredFormula; every other sheet's rule formulas via adjustFormula — see "10. validations" |
-// Later specs append theirs, in landing order — drawings
-// (131), charts (132), names and tables (133), notes and hyperlinks (135),
+// | 11 | drawings | SPEC-131: the edited sheet's Sheet.drawings per drawings.ts's anchor-follow table (moveAndSize drawings move, grow, shrink and go with their cells; move drawings shift with their `from`; fixed drawings never move); an xlsx sheet holding drawings gets `drawingsDirty` |
+// Later specs append theirs, in landing order — charts (132), names and tables (133), notes and hyperlinks (135),
 // pageBreaks (136), pivots (139) — each with the registry contract test in
 // structure.spec.ts, retiring its rows from retainedReferences' tables in the
 // same change.
@@ -54,6 +54,7 @@ import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { mapFormatFormulas, mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
 import { formatOrigin, renumberPriorities, sheetFormats, type ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter, FilterColumn } from "./filter";
+import { adjustDrawingsForEdit } from "./drawings";
 import { adjustAnchoredFormula, adjustFormula, adjustFormulaReferences } from "./formula/adjust";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { adjustOdsFilterCriteriaRanges } from "./ods/retainedReferences";
@@ -1047,6 +1048,21 @@ const validationsAdjuster: ReferenceAdjuster = {
   },
 };
 
+// --- 11. drawings ------------------------------------------------------------------------------
+// SPEC-131 "Anchors follow cells" (drawings.ts is the normative source). The
+// edited sheet's drawings follow per the anchor-follow table — a drawing that
+// does not move keeps its identity, the array its identity when none moves.
+// SPEC-124's retained rows for drawing anchors (xlsx `xdr:from`/`xdr:to`,
+// ods `draw:*@table:end-cell-address`) are retired: the model moves them and
+// the writers re-emit a touched drawing's anchor from it.
+
+const drawingsAdjuster: ReferenceAdjuster = {
+  id: "drawings",
+  adjust(model, edit) {
+    adjustDrawingsForEdit(model, edit);
+  },
+};
+
 // --- the registry ----------------------------------------------------------------------------
 
 export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
@@ -1060,6 +1076,7 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   autofilterAdjuster,
   conditionalFormatsAdjuster,
   validationsAdjuster,
+  drawingsAdjuster,
 ];
 
 /** One structural edit (see the module header). */
