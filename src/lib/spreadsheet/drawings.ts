@@ -48,6 +48,7 @@ import { bytesToBase64, type OpaquePart } from "../core/packageParts";
 import { extensionForContentType, type MediaPart } from "../core/media";
 import { shapeDefinition } from "../core/shapeCatalogue";
 import { DEFAULT_NEW_SHAPE_FILL, DEFAULT_NEW_SHAPE_OUTLINE, LINE_GEOMETRIES, type ShapeGeometry, type ShapeVisual } from "../core/shapes";
+import { sanitizeXmlText } from "../core/xmlText";
 import type { CellRef } from "./address";
 import { buildGridMetrics, type GridMetrics } from "./geometry";
 import { MAX_COLS, MAX_ROWS, type AnchorPoint, type DrawingAnchor, type Sheet, type SheetDrawing, type SpreadsheetModel } from "./model";
@@ -541,7 +542,8 @@ export function reorderDrawing(model: SpreadsheetModel, sheetId: string, drawing
   return { sheet: withDrawings(model, sheet, next), drawingId };
 }
 
-/** A drawing's alt text set — an empty (or blank) text removes it. */
+/** A drawing's alt text set — an empty (or blank) text removes it; what XML
+ * cannot carry is dropped (sanitizeXmlText). */
 export function setDrawingAltText(model: SpreadsheetModel, sheetId: string, drawingId: string, text: string): DrawingCommandResult | null {
   const sheet = sheetById(model, sheetId);
   const index = sheet?.drawings?.findIndex((drawing) => drawing.id === drawingId) ?? -1;
@@ -549,7 +551,8 @@ export function setDrawingAltText(model: SpreadsheetModel, sheetId: string, draw
     return null;
   }
   const drawing = sheet.drawings![index]!;
-  const want = text.trim() === "" ? undefined : text;
+  const clean = sanitizeXmlText(text);
+  const want = clean.trim() === "" ? undefined : clean;
   if (want === drawing.altText) {
     return null;
   }

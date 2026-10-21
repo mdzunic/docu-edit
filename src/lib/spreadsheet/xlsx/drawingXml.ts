@@ -62,7 +62,7 @@ import { scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScan
 import { anchorBehaviour, drawingRectPx, EMU_PER_PX, pointFromPx, withDerivedSize, writtenPoints } from "../drawings";
 import { buildGridMetrics, type GridMetrics } from "../geometry";
 import type { AnchorPoint, DrawingAnchor, DrawingText, Sheet, SheetDrawing, SheetDrawingContent } from "../model";
-import { applySplices, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
+import { applySplices, escapeAttributeText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
 import { elementTree, type XmlNode } from "./elementTree";
 import {
   contentTypeIn,
@@ -1072,8 +1072,8 @@ function xfrmXml(box: Box, rotationDeg: number | undefined): string {
 }
 
 function cNvPrXml(id: number, drawing: SheetDrawing): string {
-  const descr = drawing.altText === undefined ? "" : ` descr="${escapeAttributeValue(drawing.altText)}"`;
-  return `<xdr:cNvPr id="${id}" name="${escapeAttributeValue(drawing.name)}"${descr}${drawing.hidden ? ` hidden="1"` : ""}/>`;
+  const descr = drawing.altText === undefined ? "" : ` descr="${escapeAttributeText(drawing.altText)}"`;
+  return `<xdr:cNvPr id="${id}" name="${escapeAttributeText(drawing.name)}"${descr}${drawing.hidden ? ` hidden="1"` : ""}/>`;
 }
 
 const ALIGN_ATTR: Readonly<Record<string, string>> = { left: "l", center: "ctr", right: "r" };
@@ -1297,12 +1297,13 @@ function xfrmNode(content: XmlNode): XmlNode | undefined {
   return props ? childNode(props, "xfrm", isANode) : undefined;
 }
 
-/** A start tag with attributes set (null removes); the splice when it changed. */
+/** A start tag with attributes set (null removes; a typed name or alt text
+ * keeps its line breaks and tabs); the splice when it changed. */
 function tagSplice(xml: string, node: XmlNode, values: readonly (readonly [string, string | null])[]): Splice | undefined {
   const tag = xml.slice(node.start, node.tagEnd);
   let next = tag;
   for (const [name, value] of values) {
-    next = setAttribute(next, name, value);
+    next = setAttribute(next, name, value, escapeAttributeText);
   }
   return next === tag ? undefined : { start: node.start, end: node.tagEnd, text: next };
 }

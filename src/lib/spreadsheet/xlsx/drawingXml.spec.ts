@@ -465,6 +465,21 @@ describe("writing a touched layer", () => {
     expect(xml.match(/<xdr:twoCellAnchor editAs="oneCell">/g)).toHaveLength(3);
   });
 
+  it("typed alt text keeps its line breaks and tabs through save → reopen, patched or canonical; an apostrophe in a single-quoted descr stays well-formed", async () => {
+    const typed = "John's chart\n\tsecond line";
+    const { model } = await open({ drawing: twoCell([4, 0, 2, 0], [6, 0, 5, 0], sp(3, "Rounded Rectangle 2", "roundRect", "", ` descr='Old'`)) });
+    const sheetId = model.sheets[0]!.id;
+    applyDrawingResult(model, setDrawingAltText(model, sheetId, "dr1", typed)!);
+    const created = insertShape(model, sheetId, "rect", { left: 256, top: 40, width: 128, height: 100 })!;
+    applyDrawingResult(model, created);
+    applyDrawingResult(model, setDrawingAltText(model, sheetId, created.drawingId!, typed)!);
+    const xml = text(await save(model), "xl/drawings/drawing1.xml");
+    expect(xml).toContain(`<xdr:cNvPr id="3" name="Rounded Rectangle 2" descr='John&apos;s chart&#xA;&#x9;second line'/>`);
+    expect(xml).toContain(`descr="John's chart&#xA;&#x9;second line"`);
+    const reread = await readSpreadsheetBytes(await writeXlsx(model), "xlsx", "again");
+    expect(reread.sheets[0]!.drawings!.map((drawing) => drawing.altText)).toEqual([typed, typed]);
+  });
+
   it("a first drawing on a sheet adds the part, its rels, <drawing>, the sheet relationship, the Override, the media part and its Default", async () => {
     const { model } = await open();
     const sheetId = model.sheets[1]!.id;

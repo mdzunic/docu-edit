@@ -118,7 +118,7 @@ import { anchorBehaviour, drawingRectPx, EMU_PER_PX, writtenPoints } from "../dr
 import { sheetNameNeedsQuotes } from "../formula/print";
 import { buildGridMetrics, type GridMetrics } from "../geometry";
 import { MAX_COLS, MAX_ROWS, type AnchorPoint, type Cell, type DrawingAnchor, type DrawingText, type Row, type Sheet, type SheetDrawing, type SheetDrawingContent } from "../model";
-import { applySplices, decodeXmlText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
+import { applySplices, decodeXmlText, escapeAttributeText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
 import { readManifest } from "./package";
 import { parseOdsRangeAddress } from "./rangeAddress";
 import { namespaceDeclarations, odsStyleBookFromSource, parseOdsPart, type OdsStyleBook } from "./styles";
@@ -1050,7 +1050,7 @@ function patchedDrawing(text: string, geometry: ElementGeometry, drawing: SheetD
   let tag = text.slice(start, geometry.tagEnd);
   const attr = (qname: string): string | undefined => attrOf(geometry.attrs, qname);
   const set = (qname: string, value: string | null): void => {
-    tag = setAttribute(tag, qname, value);
+    tag = setAttribute(tag, qname, value, escapeAttributeText);
   };
   const target = targetBox(anchor, metrics);
   // The start position, read back in the model's anchor cell.
@@ -1248,7 +1248,7 @@ function canonicalHead(drawing: SheetDrawing, z: number, style: string, ctx: Ods
       ` table:end-x="${odsCm(emuToCm(to.colOffEmu))}" table:end-y="${odsCm(emuToCm(to.rowOffEmu))}"`;
   }
   head += ` draw:z-index="${z}"`;
-  head += ` draw:name="${escapeAttributeValue(drawing.name)}"`;
+  head += ` draw:name="${escapeAttributeText(drawing.name)}"`;
   return `${head} draw:style-name="${style}"`;
 }
 

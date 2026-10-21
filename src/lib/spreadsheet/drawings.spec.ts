@@ -418,6 +418,12 @@ describe("commands", () => {
     expect(setDrawingAltText(base(), "s1", "dr2", "")).toBeNull();
   });
 
+  it("setDrawingAltText keeps line breaks and tabs but drops what XML cannot carry", () => {
+    const set = setDrawingAltText(base(), "s1", "dr2", "Sales\u0001 by\tregion\nQ3")!;
+    expect(set.sheet.drawings![1]!.altText).toBe("Sales by\tregion\nQ3");
+    expect(setDrawingAltText(base(), "s1", "dr2", "\u0002\u0003")).toBeNull();
+  });
+
   it("insertImage lands top-left on the active cell, at natural size scaled to fit 0.8 of the visible grid, twoCell editAs oneCell, with a new media part", () => {
     const m = base();
     const bytes = new Uint8Array([1, 2, 3, 4]);
