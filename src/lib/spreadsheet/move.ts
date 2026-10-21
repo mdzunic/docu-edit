@@ -28,9 +28,9 @@
 // | 4 | retained | SPEC-124's rewriteRetainedReferences with moveMapper |
 // | 5 | autofilter | SPEC-128 "Moves": an autofilter or worksheet sort record entirely inside the source moves by the offset onto the destination sheet (see "5. autofilter") |
 // | 6 | conditionalFormats | SPEC-129 "Moves": formats travel with their cells — a format wholly inside the source moves, the part of one partly inside becomes a new format at the destination, the destination's previous rules go, every rule formula re-pointed (see "6. conditionalFormats") |
+// | 7 | validations | SPEC-130 "Moves": data-validation rules travel with their cells by the same rule — a rule wholly inside the source moves, the part of one partly inside becomes a new rule at the destination, the destination's previous rules go, every rule formula re-pointed (see "7. validations") |
 // Later specs that register a SPEC-124 ReferenceAdjuster for something that
-// travels with cells or points at them — validations (130), chart
-// references (132), defined names and tables (133), notes and hyperlinks
+// travels with cells or points at them — chart references (132), defined names and tables (133), notes and hyperlinks
 // (135), pivots (139) — register a MoveAdjuster with the same id here, with
 // its row in move.spec.ts's registry contract; drawings (131) and page
 // breaks (136) deliberately do not.
@@ -52,6 +52,16 @@ import { contains, inheritedStyleId, SheetEdit } from "./sheetEdit";
 import type { SortState } from "./sort";
 import { resolveRetainedSheetName } from "./sourceNames";
 import { NOT_A_GRID_MESSAGE, PARTIAL_ARRAY_MESSAGE } from "./structure";
+import {
+  mapValidationFormulas,
+  mintValidationId,
+  reanchorValidation,
+  sheetValidations,
+  validationOrigin,
+  withoutValidationSource,
+  withX14Placement,
+  type DataValidation,
+} from "./validation";
 import { LazyParts } from "./xlsx/package";
 
 export interface RangeMove {
@@ -637,9 +647,133 @@ const conditionalFormatsAdjuster: MoveAdjuster = {
   },
 };
 
+// --- 7. validations -----------------------------------------------------------------------------
+// SPEC-130 "Moves": data-validation rules travel with their cells, as in
+// Excel (a cut-paste or a drag-move; a copy-paste never touches them). The
+// source is read before anything is written (source and destination may
+// overlap), as for conditional formats above:
+// - Each rule on the source sheet loses the part of its ranges inside
+//   `move.from`. A rule whose every range lies inside travels whole — same
+//   id, its ranges offset onto the destination sheet (across sheets without
+//   its `odsName`: a content-validation's base cell names its sheet).
+//   Otherwise the cut-out pieces become a new rule on the destination (a
+//   fresh id, no `sourceXml` or `odsName`) whose formulas are the source's
+//   rebased (reanchorValidation, shiftFormula) onto the pieces' origin, so
+//   each piece means what it meant in place.
+// - Every rule on the destination sheet that did not just arrive loses the
+//   destination rectangle (subtractRanges) — the overwritten cells' rules go
+//   — and a rule left with no range is removed. A staying rule whose origin
+//   changed (cut or overwritten) is re-anchored onto its new origin, once,
+//   from the origin it had. An arriving rule is never merged into an
+//   identical one at the destination.
+// - Every formula of every rule on every sheet then goes through
+//   repointFormula exactly as cell formulas do — an arriving rule's as a
+//   moved formula hosted on the source sheet (references to moved cells
+//   follow them; across sheets its unqualified references gain the source
+//   sheet's name, so they keep meaning the same cells), every other rule's
+//   as its own sheet's.
+// Touched rules are replaced without their sourceXml, their x14 placement
+// re-derived for the sheet they end on (withX14Placement — a moved rule that
+// now names its old sheet is an x14 rule in an .xlsx); a sheet whose rules
+// changed is marked dirty (moveRange marks both ends anyway).
+
+/** `dv` on `ranges` (some of its own, or what is left of them): the same
+ * rule when they are its ranges, null when none is left, else re-anchored
+ * from its origin onto theirs, without its sourceXml. */
+function validationOnRanges(dv: DataValidation, ranges: GridRange[]): DataValidation | null {
+  if (ranges.length === 0) {
+    return null;
+  }
+  if (ranges.length === dv.ranges.length && ranges.every((range, i) => range === dv.ranges[i])) {
+    return dv;
+  }
+  return withoutValidationSource(reanchorValidation({ ...dv, ranges }, validationOrigin(dv), validationOrigin({ ranges })));
+}
+
+const validationsAdjuster: MoveAdjuster = {
+  id: "validations",
+  move(model, move) {
+    const from = sheetOf(model, move.fromSheetId);
+    const to = sheetOf(model, move.toSheetId);
+    const { dRow, dCol } = offsetOf(move);
+    if (!from || !to || (from === to && dRow === 0 && dCol === 0)) {
+      return;
+    }
+    const same = from === to;
+    const dest = moveDestination(move);
+    // The source's rules with the moved part cut out, and what travels.
+    const staying: { dv: DataValidation; ranges: GridRange[]; arrived?: true }[] = [];
+    const arriving: DataValidation[] = [];
+    for (const dv of sheetValidations(from)) {
+      const inside = dv.ranges.flatMap((range) => overlap(range, move.from) ?? []);
+      if (inside.length === 0) {
+        staying.push({ dv, ranges: dv.ranges });
+        continue;
+      }
+      if (dv.ranges.every((range) => contains(move.from, range))) {
+        const whole: DataValidation = { ...withoutValidationSource(dv), ranges: dv.ranges.map((range) => shifted(range, dRow, dCol)) };
+        if (same) {
+          staying.push({ dv: whole, ranges: whole.ranges, arrived: true });
+        } else {
+          const { odsName: _name, ...crossing } = whole;
+          arriving.push(crossing);
+        }
+        continue;
+      }
+      staying.push({ dv, ranges: subtractRanges(dv.ranges, move.from) });
+      const { id: _id, ranges: _ranges, sourceXml: _source, odsName: _name, ...settings } = dv;
+      arriving.push({
+        id: mintValidationId(),
+        ranges: inside.map((range) => shifted(range, dRow, dCol)),
+        ...reanchorValidation(settings, validationOrigin(dv), validationOrigin({ ranges: inside })),
+      });
+    }
+    // The destination loses the overwritten rectangle — what arrived excepted.
+    const overwritten = (dv: DataValidation, ranges: GridRange[], arrived?: true): DataValidation | null =>
+      arrived ? dv : validationOnRanges(dv, subtractRanges(ranges, dest));
+    const fromNext = same
+      ? staying.flatMap(({ dv, ranges, arrived }) => overwritten(dv, ranges, arrived) ?? [])
+      : staying.flatMap(({ dv, ranges }) => validationOnRanges(dv, ranges) ?? []);
+    const toNext = same ? fromNext : sheetValidations(to).flatMap((dv) => overwritten(dv, dv.ranges) ?? []);
+    toNext.push(...arriving);
+    const moved = new Set<DataValidation>([...arriving, ...staying.flatMap(({ dv, arrived }) => (arrived ? [dv] : []))]);
+    // Every formula re-pointed; a touched rule placed for its sheet.
+    const names = new Map(model.sheets.map((sheet) => [sheet.id, sheet.name] as const));
+    const nameOf = (id: string): string => names.get(id) ?? "";
+    let changed = false;
+    const sheets = model.sheets.map((sheet) => {
+      const before = sheetValidations(sheet);
+      const rules = sheet === to ? toNext : sheet === from ? fromNext : before;
+      const own = (formula: string): string => repointFormula(formula, sheet.id, move, nameOf);
+      const travelled = (formula: string): string => repointFormula(formula, move.fromSheetId, move, nameOf, move.toSheetId);
+      const untouched = new Set(before);
+      const next = rules.map((dv) => {
+        const mapped = mapValidationFormulas(dv, moved.has(dv) ? travelled : own);
+        return mapped === dv && untouched.has(dv) ? dv : withX14Placement(mapped, model.format, sheet.name);
+      });
+      if (next.length === before.length && next.every((dv, i) => dv === before[i])) {
+        return sheet;
+      }
+      changed = true;
+      return { ...sheet, validations: next, dirty: true as const };
+    });
+    if (changed) {
+      model.sheets = sheets;
+    }
+  },
+};
+
 // --- the registry ------------------------------------------------------------------------------
 
-export const MOVE_ADJUSTERS: MoveAdjuster[] = [cellsAdjuster, formulasAdjuster, mergesAdjuster, retainedAdjuster, autofilterAdjuster, conditionalFormatsAdjuster];
+export const MOVE_ADJUSTERS: MoveAdjuster[] = [
+  cellsAdjuster,
+  formulasAdjuster,
+  mergesAdjuster,
+  retainedAdjuster,
+  autofilterAdjuster,
+  conditionalFormatsAdjuster,
+  validationsAdjuster,
+];
 
 /** One move (see the module header). */
 export function moveRange(model: SpreadsheetModel, move: RangeMove): MoveResult {

@@ -8,6 +8,7 @@ import { setRowsHidden } from "../../lib/spreadsheet/bands";
 import { cellKey, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
 import type { Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { addSheet, createBlankWorkbook, deleteSheet, renameSheet, setTabColor } from "../../lib/spreadsheet/sheets";
+import { DATA_VALIDATION_LABEL, defaultValidationSettings, setValidation } from "../../lib/spreadsheet/validation";
 import { MAX_UNDO_STEPS, SHEET_BY_REFERENCE_FIELDS, takeSnapshot, useSpreadsheetUndo, WORKBOOK_SNAPSHOT_FIELDS } from "./useSpreadsheetUndo";
 
 const scopes: Array<() => void> = [];
@@ -99,8 +100,26 @@ describe("snapshots are by reference", () => {
     expect(model.sheets[0]!.sortState).toBe(sortState);
   });
 
+  it("holds SPEC-130's data-validation rules by reference, and an undo of a validation command restores them by identity", () => {
+    const model = createBlankWorkbook();
+    const sheetId = model.sheets[0]!.id;
+    const before = model.sheets[0]!.validations;
+    expect(takeSnapshot(model).sheets[0]!.validations).toBe(before);
+    const { undo } = mount(model);
+    undo.record(DATA_VALIDATION_LABEL, { sheetId });
+    setValidation(model, sheetId, [{ top: 0, left: 0, bottom: 9, right: 0 }], { ...defaultValidationSettings(), type: "list", formula1: '"Yes,No"' });
+    undo.commit();
+    const after = model.sheets[0]!.validations;
+    expect(after).toHaveLength(1);
+    expect(undo.undoLabel.value).toBe("Data validation");
+    undo.undo();
+    expect(model.sheets[0]!.validations).toBe(before);
+    undo.redo();
+    expect(model.sheets[0]!.validations).toBe(after);
+  });
+
   it("names the by-reference fields the spec lists", () => {
-    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState", "conditionalFormats"]);
+    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState", "conditionalFormats", "validations"]);
     expect(WORKBOOK_SNAPSHOT_FIELDS).toEqual(["activeSheetIndex", "structureDirty", "styles", "opaque", "odsContentEnvelope", "dxfs"]);
   });
 });

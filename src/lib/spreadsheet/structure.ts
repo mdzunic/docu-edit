@@ -34,7 +34,8 @@
 // | 7 | retained | rewriteRetainedReferences(model, structuralMapper(model, edit)) |
 // | 8 | autofilter | SPEC-128: Sheet.autoFilter (range, colIds, its sort record) and Sheet.sortState (ref, key columns) — see "8. autofilter" |
 // | 9 | conditionalFormats | SPEC-129: Sheet.conditionalFormats — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied format removed) and its cellIs/expression formulas re-anchored with adjustAnchoredFormula; every other formula a rule carries (cfFormulas.ts), on every sheet, via adjustFormula — see "9. conditionalFormats" |
-// Later specs append theirs, in landing order — validations (130), drawings
+// | 10 | validations | SPEC-130: Sheet.validations — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied rule removed) and formula1/formula2 re-anchored with adjustAnchoredFormula; every other sheet's rule formulas via adjustFormula — see "10. validations" |
+// Later specs append theirs, in landing order — drawings
 // (131), charts (132), names and tables (133), notes and hyperlinks (135),
 // pageBreaks (136), pivots (139) — each with the registry contract test in
 // structure.spec.ts, retiring its rows from retainedReferences' tables in the
@@ -61,6 +62,15 @@ import { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retai
 import type { SheetSelection } from "./selection";
 import type { SheetSortKey, SortState } from "./sort";
 import { resolveRetainedSheetName } from "./sourceNames";
+import {
+  mapValidationFormulas,
+  mapValidationsFormulas,
+  sheetValidations,
+  validationOrigin,
+  withoutValidationSource,
+  withX14Placement,
+  type DataValidation,
+} from "./validation";
 import { LazyParts } from "./xlsx/package";
 
 export { rewriteRetainedReferences, type RetainedReferenceMapper } from "./retainedReferences";
@@ -962,6 +972,81 @@ const conditionalFormatsAdjuster: ReferenceAdjuster = {
   },
 };
 
+// --- 10. validations ---------------------------------------------------------------------------
+// SPEC-130 "Structural edits". On the edited sheet each rule's ranges are
+// mapped with adjustRange in source order (a range fully gone is dropped —
+// the first one still standing leads; a rule left with none is removed);
+// formula1/formula2, stored relative to the rule's origin, go through
+// adjustAnchoredFormula (origin = the pre-edit ranges[0] top-left,
+// firstRange = the first range still standing, in pre-edit coordinates), so
+// deleting the origin's row or column re-anchors the rule instead of
+// producing #REF!. On every other sheet each rule's formulas go through
+// adjustFormula with that sheet as host — only references naming the edited
+// sheet move; ranges never do. A touched rule is replaced without its
+// sourceXml, its x14 placement re-derived (withX14Placement); an untouched
+// one keeps its identity, as does a sheet stored before SPEC-130 (no
+// `validations` field). A sheet whose rules changed is marked dirty, as the
+// formulas adjuster marks a sheet whose cell formulas changed: the writers
+// re-serialise a dirty sheet's rules from the model (SPEC-124's retained
+// rows for them are retired).
+
+/** `sheet`'s rules after `edit`: undefined when none changes. */
+function adjustSheetValidations(model: SpreadsheetModel, sheet: Sheet, edit: StructuralEdit, nameOf: (sheetId: string) => string): DataValidation[] | undefined {
+  const rules = sheetValidations(sheet);
+  if (sheet.id !== edit.sheetId) {
+    const mapped = mapValidationsFormulas(rules, (formula) => adjustFormula(formula, sheet.id, edit, nameOf), model.format, sheet.name);
+    return mapped === rules ? undefined : mapped;
+  }
+  let changed = false;
+  const next: DataValidation[] = [];
+  for (const dv of rules) {
+    let firstStanding: GridRange | undefined;
+    const ranges: GridRange[] = [];
+    for (const range of dv.ranges) {
+      const adjusted = adjustRange(range, edit);
+      if (adjusted !== null) {
+        firstStanding ??= range;
+        ranges.push(adjusted);
+      }
+    }
+    if (firstStanding === undefined) {
+      changed = true; // the rule is removed
+      continue;
+    }
+    const origin = validationOrigin(dv);
+    const first = firstStanding;
+    const mapped = mapValidationFormulas(dv, (formula) => adjustAnchoredFormula(formula, origin, first, sheet.id, edit, nameOf));
+    const moved = ranges.length !== dv.ranges.length || ranges.some((range, i) => range !== dv.ranges[i]);
+    if (!moved && mapped === dv) {
+      next.push(dv);
+      continue;
+    }
+    changed = true;
+    next.push(withX14Placement(withoutValidationSource(moved ? { ...mapped, ranges } : mapped), model.format, sheet.name));
+  }
+  return changed ? next : undefined;
+}
+
+const validationsAdjuster: ReferenceAdjuster = {
+  id: "validations",
+  adjust(model, edit) {
+    const names = new Map(model.sheets.map((sheet) => [sheet.id, sheet.name] as const));
+    const nameOf = (id: string): string => names.get(id) ?? "";
+    let changed = false;
+    const sheets = model.sheets.map((sheet) => {
+      const validations = adjustSheetValidations(model, sheet, edit, nameOf);
+      if (validations === undefined) {
+        return sheet;
+      }
+      changed = true;
+      return { ...sheet, validations, dirty: true as const };
+    });
+    if (changed) {
+      model.sheets = sheets;
+    }
+  },
+};
+
 // --- the registry ----------------------------------------------------------------------------
 
 export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
@@ -974,6 +1059,7 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   retainedAdjuster,
   autofilterAdjuster,
   conditionalFormatsAdjuster,
+  validationsAdjuster,
 ];
 
 /** One structural edit (see the module header). */
