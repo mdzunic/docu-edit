@@ -942,6 +942,9 @@ describe("the worksheet writer: the splice", () => {
     // SPEC-129: conditional formats are the model's — this one has none, so
     // the source's block goes, and with it the x14 ext and its extLst.
     conditionalFormatting: "",
+    // SPEC-130: data validations are the model's too — this one has none,
+    // so the source's block goes.
+    dataValidations: "",
     extLst: "",
   };
 
@@ -949,7 +952,7 @@ describe("the worksheet writer: the splice", () => {
     expect(WORKSHEET_ORDER).toEqual(SIBLINGS.map(([local]) => local));
   });
 
-  it("replaces the eight rebuilt elements (SPEC-128's autoFilter and sortState among them) and SPEC-129's conditional formats in place, with every CT_Worksheet sibling present; the declaration, root start tag and every other element stay byte-verbatim", () => {
+  it("replaces the eight rebuilt elements (SPEC-128's autoFilter and sortState among them), SPEC-129's conditional formats and SPEC-130's data validations in place, with every CT_Worksheet sibling present; the declaration, root start tag and every other element stay byte-verbatim", () => {
     const out = serializeWorksheet(model(), partWith(SIBLINGS), stubContext());
     expect(out).toBe(partWith(SIBLINGS.map(([local, xml]) => [local, REBUILT[local] ?? xml])));
   });

@@ -95,6 +95,11 @@
 // and read after it into `conditionalFormats` — an x14 rule's inline dxf
 // interned into the workbook's `dxfs` (`options.dxfs`).
 //
+// SPEC-130 (xlsx/dataValidations.ts holds the wire mapping): the first
+// root-level `<dataValidations>` is cut out the same way and read after the
+// pass, with the root start tag and the `<extLst>`'s x14 ext, into
+// `validations` and `validationPromptsDisabled`.
+//
 // The worksheet writer (SPEC-122 "The worksheet writer", normative there):
 // serializeWorksheet(sheet, base, ctx) rebuilds `dimension`, `sheetViews`,
 // `sheetFormatPr`, `cols`, `sheetData`, SPEC-128's `autoFilter` and
@@ -154,6 +159,14 @@
 //   first ext, dropped when empty (with an extLst left empty), every other
 //   ext verbatim; a base rule's dxfId goes through the style writer
 //   (dxfFor), which appends the dxfs the part lacks.
+// - dataValidations and the extLst's `{CCE6A557-…}` ext (SPEC-130,
+//   xlsx/dataValidations.ts): the block joins the rebuilt set — the source's
+//   bytes while the model places the source's own rules there unedited, else
+//   rewritten at its CT_Worksheet place (after conditionalFormatting, before
+//   hyperlinks) with `count` updated and its start tag's other attributes
+//   kept, dropped when no rule goes there; the ext likewise, rewritten in
+//   place or created after the `{78C0D931-…}` ext (else first), dropped
+//   when empty. extLstSplices makes both exts' changes in one set of splices.
 import type { DocumentTheme, ModelColor } from "../../core/theme";
 import { scanAttr, scanXml, type XmlScanAttribute, type XmlScanEvent } from "../../core/xmlScanner";
 import { colToLetters, formatA1, formatRange, parseA1, parseRange, parseSqref, usedRange, type CellRef, type GridRange } from "../address";
@@ -194,7 +207,8 @@ import {
   writeConditionalFormats,
   type WorksheetCfSource,
 } from "./conditionalFormats";
-import { elementTree, nodeAttr, whitespaceBefore } from "./elementTree";
+import { DV_EXT_URI, readValidationSource, writeDataValidations, type DvPartSource, type DvWriteOutput } from "./dataValidations";
+import { elementTree, nodeAttr, whitespaceBefore, type XmlNode } from "./elementTree";
 import { decodeXmlEscapes, encodeXlsxText, type SharedStringsWriter } from "./sharedStrings";
 import { isSpreadsheetMl, XlsxFontReader, type XlsxStyleWriter } from "./styles";
 import { modelColorToXlsxAttrs, scannedAttributes, xlsxColorFrom } from "./themeColor";
@@ -844,6 +858,8 @@ export type WorksheetContent = Pick<Sheet, "rows" | "columns" | "defaultColWidth
       | "autoFilter"
       | "sortState"
       | "conditionalFormats"
+      | "validations"
+      | "validationPromptsDisabled"
     >
   >;
 
@@ -863,6 +879,9 @@ export interface WorksheetReadOptions {
    * inline dxf is interned into (a throwaway table when absent). */
   dxfs?: Pick<SpreadsheetModel, "dxfs">;
 }
+
+/** The root-level elements the reader cuts out whole for the rule readers. */
+type CutElement = "conditionalFormatting" | "dataValidations" | "extLst";
 
 /** The root's children whose content this reader reads. */
 type Section = "sheetPr" | "sheetViews" | "cols" | "sheetData" | "mergeCells";
@@ -919,11 +938,16 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   // SPEC-129: the root start tag, each root-level <conditionalFormatting>
   // (with the whitespace before it) and the root <extLst>, cut out as the
   // pass meets them; xlsx/conditionalFormats.ts reads them after it.
+  // SPEC-130: the first root-level <dataValidations> too, which
+  // xlsx/dataValidations.ts reads with the root tag and the extLst.
   const cfSource: WorksheetCfSource = { rootTag: "", blocks: [] };
-  let cfElement: { local: "conditionalFormatting" | "extLst"; start: number } | null = null;
-  const takeCfElement = (local: "conditionalFormatting" | "extLst", start: number, end: number): void => {
+  let dvBlock: string | undefined;
+  let cfElement: { local: CutElement; start: number } | null = null;
+  const takeCfElement = (local: CutElement, start: number, end: number): void => {
     if (local === "extLst") {
       cfSource.extLst ??= xml.slice(start, end);
+    } else if (local === "dataValidations") {
+      dvBlock ??= xml.slice(start, end);
     } else {
       cfSource.blocks.push(xml.slice(whitespaceBefore(xml, start), end));
     }
@@ -1187,7 +1211,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       return undefined;
     }
     if (level === 2) {
-      if (event.local === "conditionalFormatting" || event.local === "extLst") {
+      if (event.local === "conditionalFormatting" || event.local === "extLst" || event.local === "dataValidations") {
         if (event.selfClosing) {
           takeCfElement(event.local, event.start, event.end);
         } else {
@@ -1406,6 +1430,13 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
   }
   if (cfSource.blocks.length > 0 || cfSource.extLst !== undefined) {
     content.conditionalFormats = readConditionalFormatSource(cfSource, sheetName, options.dxfs ?? { dxfs: [] }, indexedColors);
+  }
+  if (dvBlock !== undefined || cfSource.extLst !== undefined) {
+    const read = readValidationSource({ rootTag: cfSource.rootTag, ...(dvBlock === undefined ? {} : { block: dvBlock }), ...(cfSource.extLst === undefined ? {} : { extLst: cfSource.extLst }) });
+    content.validations = read.validations;
+    if (read.promptsDisabled) {
+      content.validationPromptsDisabled = true;
+    }
   }
   const activePane = pane?.activePane ?? "topLeft";
   const selection = view.selections.find((candidate) => candidate.pane === activePane);
@@ -1983,11 +2014,11 @@ function mergeCellsXml(sheet: Sheet, p: string): string {
 }
 
 /** A worksheet part for `sheet` (see the module header): the model's
- * dimension, views, default sizes, columns, cells, autofilter, sort record
- * and merges (and SPEC-128's sheetPr@filterMode) spliced into
- * `base` — the retained part with the writer's sheet-reference pass and tab
- * colour already applied — or into SPEC-121's empty-sheet template when the
- * sheet has none. */
+ * dimension, views, default sizes, columns, cells, autofilter, sort record,
+ * merges, conditional formats and data validations (and SPEC-128's
+ * sheetPr@filterMode) spliced into `base` — the retained part with the
+ * writer's sheet-reference pass and tab colour already applied — or into
+ * SPEC-121's empty-sheet template when the sheet has none. */
 export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: XlsxSheetContext): string {
   const xml = collapseSheetData(base ?? emptyWorksheetXml(sheet, ctx.active, ctx));
   const layout = scanLayout(xml);
@@ -1995,6 +2026,9 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
   const first = (local: string): RootChild | undefined => layout.children.find((child) => child.local === local);
   const range = usedRange(sheet);
   const fits: FitsPart = (text, local) => fitsPart(text, layout.rootTag, local);
+  const retained = base !== undefined;
+  const extLst = extLstLayout(xml, layout);
+  const validations = dataValidationsOut(xml, first("dataValidations"), extLst, layout, sheet, ctx, retained);
   const rebuilt: [string, string][] = [
     ["dimension", `<${p}dimension ref="${range ? formatRange(range) : "A1"}"/>`],
     ["sheetViews", sheetViewsXml(xml, first("sheetViews"), layout, sheet, ctx)],
@@ -2004,6 +2038,8 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
     ["autoFilter", filterElementXml(xml, first("autoFilter"), "autoFilter", sheet, p, fits)],
     ["sortState", filterElementXml(xml, first("sortState"), "sortState", sheet, p, fits)],
     ["mergeCells", mergeCellsXml(sheet, p)],
+    // SPEC-130: the model's validations (xlsx/dataValidations.ts).
+    ["dataValidations", validations.block],
   ];
   const splices: Splice[] = [];
   // First: a sheetPr inserted before the first child goes ahead of an
@@ -2019,8 +2055,7 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
         splices.push({ start: found.start, end: found.end, text });
       }
     } else if (text !== "") {
-      const rank = WORKSHEET_ORDER.indexOf(local);
-      const at = layout.children.find((child) => child.order > rank)?.start ?? layout.rootClose;
+      const at = insertAt(layout, local);
       splices.push({ start: at, end: at, text });
     }
   }
@@ -2029,38 +2064,135 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
   for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
     splices.push({ start: child.start, end: child.end, text: "" });
   }
-  splices.push(...conditionalFormatSplices(xml, layout, sheet, ctx, base !== undefined));
+  const cf = conditionalFormatSplices(xml, layout, extLst, sheet, ctx, retained);
+  splices.push(...cf.run);
+  splices.push(
+    ...extLstSplices(extLst, layout, [
+      { uri: CF_EXT_URI, text: cf.ext },
+      { uri: DV_EXT_URI, text: validations.ext },
+    ]),
+  );
   return applySplices(xml, splices);
 }
 
-/** SPEC-129: the splices bringing the part's `<conditionalFormatting>` run
- * and the `{78C0D931-…}` ext of its `<extLst>` in line with the model
- * (xlsx/conditionalFormats.ts) — none while the model holds the source's
- * formats unedited (every one still with its `sourceXml`, as many as the
- * source reads to), or for a sheet stored before SPEC-129. The run replaces
- * the source's blocks where the first stood (or goes in at its CT_Worksheet
- * position); the ext is rewritten in place, created as the extLst's first
- * ext (Excel's order: conditional formattings first), or dropped when empty
- * — with the extLst when nothing else is left in it. */
-function conditionalFormatSplices(xml: string, layout: WorksheetLayout, sheet: Sheet, ctx: XlsxSheetContext, retained: boolean): Splice[] {
-  const formats = sheet.conditionalFormats;
-  if (formats === undefined) {
+/** Where an absent root child named `local` goes: before the first source
+ * child that comes later in CT_Worksheet order, else before the root's end. */
+function insertAt(layout: WorksheetLayout, local: string): number {
+  const rank = WORKSHEET_ORDER.indexOf(local);
+  return layout.children.find((child) => child.order > rank)?.start ?? layout.rootClose;
+}
+
+/** The part's root `<extLst>`: the element, its text and its parsed tree. */
+interface ExtLstLayout {
+  element: RootChild | undefined;
+  text: string | undefined;
+  /** The parsed `<extLst>` (undefined when absent or not well-formed). */
+  list: XmlNode | undefined;
+}
+
+function extLstLayout(xml: string, layout: WorksheetLayout): ExtLstLayout {
+  const element = layout.children.find((child) => child.local === "extLst");
+  const text = element === undefined ? undefined : xml.slice(element.start, element.end);
+  const list = text === undefined ? undefined : elementTree(text, [layout.rootTag])?.[0];
+  return { element, text, list };
+}
+
+/** The extLst's ext with `uri` (the first), when it has one. */
+function extNamed(extLst: ExtLstLayout, uri: string): XmlNode | undefined {
+  return extLst.list?.children.find((child) => child.local === "ext" && isSpreadsheetMl(child.ns) && (nodeAttr(child, "uri") ?? "").toUpperCase() === uri.toUpperCase());
+}
+
+/** The splices bringing the part's `<extLst>` in line with the exts the
+ * model owns, given in Excel's order (SPEC-129's `{78C0D931-…}`, then
+ * SPEC-130's `{CCE6A557-…}`), each with its new text — undefined to leave
+ * the source's as it is, "" to drop it. A source ext is rewritten in place
+ * or dropped (with the whitespace before it); a new one goes right after the
+ * last ext before it in that order the part has, else first in the extLst;
+ * every other ext stays as found; an extLst left with nothing in it goes,
+ * and a part without one gains it at its CT_Worksheet position. An extLst
+ * that is not well-formed is left. */
+function extLstSplices(extLst: ExtLstLayout, layout: WorksheetLayout, owned: readonly { uri: string; text: string | undefined }[]): Splice[] {
+  const p = layout.prefix;
+  const { element, text, list } = extLst;
+  if (element === undefined) {
+    const texts = owned.map((each) => each.text ?? "").filter((each) => each !== "");
+    if (texts.length === 0) {
+      return [];
+    }
+    const at = insertAt(layout, "extLst");
+    return [{ start: at, end: at, text: `<${p}extLst>${texts.join("")}</${p}extLst>` }];
+  }
+  if (text === undefined || list === undefined) {
     return [];
   }
+  const splices: Splice[] = [];
+  const removals: Splice[] = [];
+  let written = false;
+  let anchor = list.tagEnd;
+  for (const { uri, text: next } of owned) {
+    const found = extNamed(extLst, uri);
+    if (found !== undefined) {
+      if (next === "") {
+        const removal = { start: whitespaceBefore(text, found.start), end: found.end, text: "" };
+        splices.push(removal);
+        removals.push(removal);
+      } else if (next !== undefined) {
+        splices.push({ start: found.start, end: found.end, text: next });
+        written = true;
+      }
+      anchor = found.end;
+    } else if (next !== undefined && next !== "") {
+      splices.push({ start: anchor, end: anchor, text: next });
+      written = true;
+    }
+  }
+  if (splices.length === 0) {
+    return [];
+  }
+  if (!written && /^<[^>]*>\s*<\/[^>]*>$/.test(applySplices(text, removals))) {
+    return [{ start: element.start, end: element.end, text: "" }];
+  }
+  if (list.selfClosing) {
+    const inserted = splices.map((splice) => splice.text).join("");
+    return [{ start: element.start, end: element.end, text: `${startTagAt(text, 0).replace(/\s*\/>$/, ">")}${inserted}</${list.name}>` }];
+  }
+  return splices.map((splice) => ({ start: element.start + splice.start, end: element.start + splice.end, text: splice.text }));
+}
+
+/** SPEC-129: the splices bringing the part's `<conditionalFormatting>` run
+ * in line with the model (xlsx/conditionalFormats.ts), and the text of the
+ * extLst's `{78C0D931-…}` ext (for extLstSplices) — none, and the ext left,
+ * while the model holds the source's formats unedited (every one still with
+ * its `sourceXml`, as many as the source reads to), or for a sheet stored
+ * before SPEC-129. The run replaces the source's blocks where the first
+ * stood (or goes in at its CT_Worksheet position); the ext is rewritten in
+ * place, created as the extLst's first ext (Excel's order: conditional
+ * formattings first), or dropped when empty. */
+function conditionalFormatSplices(
+  xml: string,
+  layout: WorksheetLayout,
+  extLst: ExtLstLayout,
+  sheet: Sheet,
+  ctx: XlsxSheetContext,
+  retained: boolean,
+): { run: Splice[]; ext: string | undefined } {
+  const formats = sheet.conditionalFormats;
+  const untouched = { run: [], ext: undefined };
+  if (formats === undefined) {
+    return untouched;
+  }
   const blocks = layout.children.filter((child) => child.local === "conditionalFormatting");
-  const extLst = layout.children.find((child) => child.local === "extLst");
-  const extText = extLst === undefined ? undefined : xml.slice(extLst.start, extLst.end);
   if (retained) {
     const source: WorksheetCfSource = { rootTag: layout.rootTag, blocks: blocks.map((block) => xml.slice(whitespaceBefore(xml, block.start), block.end)) };
-    if (extText !== undefined) {
-      source.extLst = extText;
+    if (extLst.text !== undefined) {
+      source.extLst = extLst.text;
     }
     const read = readConditionalFormatSource(source, sheet.name, { dxfs: [] });
     if (read.length === formats.length && formats.every((format) => format.sourceXml !== undefined)) {
-      return [];
+      return untouched;
     }
   } else if (formats.length === 0) {
-    return [];
+    return untouched;
   }
   const p = layout.prefix;
   let nextNumFmt = 164;
@@ -2072,44 +2204,48 @@ function conditionalFormatSplices(xml: string, layout: WorksheetLayout, sheet: S
     dxfId: (id) => ctx.styles.dxfFor?.(id) ?? id,
     ...(retained ? { verbatim: { pass: ctx.passFragment ?? ((text: string) => text), context: [layout.rootTag] } } : {}),
   });
-  const splices: Splice[] = [];
-  const insertAt = (local: string): number => {
-    const rank = WORKSHEET_ORDER.indexOf(local);
-    return layout.children.find((child) => child.order > rank)?.start ?? layout.rootClose;
-  };
+  const run: Splice[] = [];
   if (blocks.length > 0) {
-    splices.push({ start: blocks[0]!.start, end: blocks[0]!.end, text: out.run.replace(/^\s+/, "") });
+    run.push({ start: blocks[0]!.start, end: blocks[0]!.end, text: out.run.replace(/^\s+/, "") });
     for (const block of blocks.slice(1)) {
-      splices.push({ start: whitespaceBefore(xml, block.start), end: block.end, text: "" });
+      run.push({ start: whitespaceBefore(xml, block.start), end: block.end, text: "" });
     }
   } else if (out.run !== "") {
-    const at = insertAt("conditionalFormatting");
-    splices.push({ start: at, end: at, text: out.run });
+    const at = insertAt(layout, "conditionalFormatting");
+    run.push({ start: at, end: at, text: out.run });
   }
-  const list = extText === undefined ? undefined : elementTree(extText, [layout.rootTag])?.[0];
-  if (extLst !== undefined && extText !== undefined && list !== undefined) {
-    const exts = list.children.filter((child) => child.local === "ext" && isSpreadsheetMl(child.ns));
-    const own = exts.find((ext) => (nodeAttr(ext, "uri") ?? "").toUpperCase() === CF_EXT_URI.toUpperCase());
-    if (own !== undefined) {
-      if (out.x14.length > 0) {
-        const text = conditionalFormattingsExtXml(out.x14, p, { tag: startTagAt(extText, own.start), name: own.name });
-        splices.push({ start: extLst.start + own.start, end: extLst.start + own.end, text });
-      } else if (list.children.length === 1 && extText.slice(list.tagEnd, own.start).trim() === "" && extText.slice(own.end, list.end).replace(/<\/[^>]*>$/, "").trim() === "") {
-        splices.push({ start: extLst.start, end: extLst.end, text: "" });
-      } else {
-        splices.push({ start: extLst.start + whitespaceBefore(extText, own.start), end: extLst.start + own.end, text: "" });
-      }
-    } else if (out.x14.length > 0) {
-      const text = conditionalFormattingsExtXml(out.x14, p);
-      if (list.selfClosing) {
-        splices.push({ start: extLst.start, end: extLst.end, text: `${startTagAt(extText, 0).replace(/\s*\/>$/, ">")}${text}</${list.name}>` });
-      } else {
-        splices.push({ start: extLst.start + list.tagEnd, end: extLst.start + list.tagEnd, text });
-      }
-    }
-  } else if (extLst === undefined && out.x14.length > 0) {
-    const at = insertAt("extLst");
-    splices.push({ start: at, end: at, text: `<${p}extLst>${conditionalFormattingsExtXml(out.x14, p)}</${p}extLst>` });
+  const own = extNamed(extLst, CF_EXT_URI);
+  let ext: string | undefined;
+  if (out.x14.length > 0) {
+    ext = conditionalFormattingsExtXml(out.x14, p, own === undefined || extLst.text === undefined ? undefined : { tag: startTagAt(extLst.text, own.start), name: own.name });
+  } else {
+    ext = own === undefined ? undefined : "";
   }
-  return splices;
+  return { run, ext };
+}
+
+/** SPEC-130: the model's data validations (xlsx/dataValidations.ts) as the
+ * part's `<dataValidations>` block (for the rebuilt set) and the text of the
+ * extLst's `{CCE6A557-…}` ext (for extLstSplices). */
+function dataValidationsOut(
+  xml: string,
+  block: RootChild | undefined,
+  extLst: ExtLstLayout,
+  layout: WorksheetLayout,
+  sheet: Sheet,
+  ctx: XlsxSheetContext,
+  retained: boolean,
+): DvWriteOutput {
+  if (!retained) {
+    return writeDataValidations(sheet, undefined, { prefix: layout.prefix });
+  }
+  const own = extNamed(extLst, DV_EXT_URI);
+  const part: DvPartSource = {};
+  if (block !== undefined) {
+    part.block = xml.slice(block.start, block.end);
+  }
+  if (own !== undefined && extLst.text !== undefined) {
+    part.ext = extLst.text.slice(own.start, own.end);
+  }
+  return writeDataValidations(sheet, part, { prefix: layout.prefix, verbatim: { pass: ctx.passFragment ?? ((text: string) => text), context: [layout.rootTag] } });
 }
