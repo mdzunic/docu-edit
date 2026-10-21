@@ -81,6 +81,12 @@
 //   `style:map`s of its cells' automatic styles) → `conditionalFormats`,
 //   the named styles they apply → `dxfs` (ods/conditionalFormats.ts, after
 //   the scan, from each sheet's sourceXml).
+// - SPEC-130: content.xml's `table:content-validations` (in the envelope
+//   prefix) and the cells' `table:content-validation-name` → each sheet's
+//   `validations` and the workbook's `odsOrphanValidations`
+//   (ods/contentValidations.ts): the names are accumulated during the scan
+//   as row-run × column-run rectangles, never materialised — the attribute
+//   is modelled, so it is no longer one of a cell's `preservedAttrs`.
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -88,6 +94,7 @@ import { XmlParseError } from "../../core/xml";
 import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { unzip, ZipError } from "../../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
+import type { GridRange } from "../address";
 import { toCellError, type CalcSettings, type CellFont, type CellStyle, type CellValue, type Sheet, type TextRun } from "../model";
 import {
   addressText,
@@ -104,6 +111,7 @@ import { readOdsFormula } from "../formula/dialect";
 import type { NamedCellStyle } from "../styles";
 import type { Dxf } from "../conditionalFormats";
 import { readOdsTableConditionalFormats, type OdsCfReadContext } from "./conditionalFormats";
+import { readOdsContentValidations, ValidationRegions } from "./contentValidations";
 import { readOdsSettings, type OdsSettings } from "./settings";
 import {
   emptyOdsStyleSheet,
@@ -132,6 +140,8 @@ interface PendingTable {
   reader: OdsTableReader;
   /** SPEC-122: `table:protected="true"`. */
   protected: boolean;
+  /** SPEC-130: the cells naming each content validation. */
+  validations: ValidationRegions;
 }
 
 /** A stretch of a cell's text sharing one span font. */
@@ -185,6 +195,8 @@ const MODELLED_CELL_ATTRIBUTES: ReadonlyMap<string, ReadonlySet<string>> = new M
       "formula",
       "number-matrix-columns-spanned",
       "number-matrix-rows-spanned",
+      // SPEC-130: the model's Sheet.validations.
+      "content-validation-name",
     ]),
   ],
   [OFFICE_NAMESPACE, new Set(["value-type", "value", "date-value", "time-value", "boolean-value", "string-value", "currency"])],
@@ -441,6 +453,8 @@ interface OdsContent {
   calc: CalcSettings;
   /** SPEC-122: `office:spreadsheet@table:structure-protected="true"`. */
   structureProtected: boolean;
+  /** SPEC-130: the content validations no cell references, verbatim. */
+  orphanValidations: string[];
 }
 
 /** SPEC-120 "Calculation settings" from `table:calculation-settings` and its
@@ -473,6 +487,8 @@ export function readOdsContent(
   sheetStyles: OdsStyleSheet = emptyOdsStyleSheet(),
 ): OdsContent | null {
   const sheets: Sheet[] = [];
+  /** SPEC-130: each finished table's validation names, as rectangles. */
+  const validationRegions: Map<string, GridRange[]>[] = [];
   let dates: OdsContent["dates"] = { dateSystem: "1900" };
   let calcAttrs: readonly XmlScanAttribute[] | undefined;
   let iterationStatus: string | undefined;
@@ -510,6 +526,10 @@ export function readOdsContent(
     const typed = scanAttr(done.attrs, "value-type", OFFICE_NAMESPACE) !== undefined || scanAttr(done.attrs, "value-type", CALCEXT_NAMESPACE) !== undefined;
     // A formula with no value type has no cached value (SPEC-119).
     const value = formula && !typed ? null : odsCellValue(done, dates, where);
+    const validation = scanAttr(done.attrs, "content-validation-name", TABLE_NAMESPACE);
+    if (validation !== undefined) {
+      table!.validations.cell(validation, reader.colIndex, repeatCount(done.attrs, "number-columns-repeated"));
+    }
     return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula, cellPreserved(done, xml));
   };
 
@@ -539,6 +559,7 @@ export function readOdsContent(
       sheet.protection = { sheet: true };
     }
     sheets.push(sheet);
+    validationRegions.push(done.validations.result());
     previousTableEnd = end;
     return true;
   };
@@ -718,6 +739,7 @@ export function readOdsContent(
             level,
             reader: new OdsTableReader(name, styleBook(), budget),
             protected: scanAttr(event.attrs, "protected", TABLE_NAMESPACE) === "true",
+            validations: new ValidationRegions(),
           };
           if (tableStyle.tabColor !== undefined) {
             pending.tabColor = tableStyle.tabColor;
@@ -734,7 +756,9 @@ export function readOdsContent(
           table.reader.column(event.attrs);
         } else if (event.local === "table-row" && table !== null && !inRow) {
           table.reader.startRow(event.attrs);
+          table.validations.startRow(table.reader.rowIndex, repeatCount(event.attrs, "number-rows-repeated"));
           if (event.selfClosing) {
+            table.validations.endRow();
             if (!table.reader.endRow()) {
               tooLarge = true;
               return "stop";
@@ -784,6 +808,7 @@ export function readOdsContent(
     if (event.ns === TABLE_NAMESPACE) {
       if (event.local === "table-row" && inRow && depth === rowLevel) {
         inRow = false;
+        table!.validations.endRow();
         if (!table!.reader.endRow()) {
           tooLarge = true;
           depth -= 1;
@@ -822,16 +847,23 @@ export function readOdsContent(
   for (const sheet of sheets) {
     sheet.conditionalFormats = readOdsTableConditionalFormats(sheet.sourceXml!, cfContext, conditional);
   }
+  // SPEC-130: the prefix's content validations over the names the cells carry.
+  const prefix = xml.slice(0, firstTableStart);
+  const validations = readOdsContentValidations(prefix, validationRegions);
+  sheets.forEach((sheet, index) => {
+    sheet.validations = validations.sheets[index]!;
+  });
   return {
     sheets,
     styles: styleBook().styles,
     namedStyles: styleBook().namedStyles(),
     dxfs: conditional.dxfs,
-    prefix: xml.slice(0, firstTableStart),
+    prefix,
     suffix,
     dates,
     calc: odsCalcSettings(calcAttrs, iterationStatus),
     structureProtected,
+    orphanValidations: validations.orphans,
   };
 }
 
@@ -931,6 +963,9 @@ export async function parseOds(
   }
   if (content.namedStyles.length > 0) {
     parsed.namedStyles = content.namedStyles;
+  }
+  if (content.orphanValidations.length > 0) {
+    parsed.odsOrphanValidations = content.orphanValidations;
   }
   return parsed;
 }
