@@ -11,16 +11,22 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import { ACCEPTED_IMAGE_ACCEPT_ATTR } from "../../lib/core/media";
 import { asShapeGeometry } from "../../lib/core/shapes";
+import { asSheetCharts } from "../../views/spreadsheet/useSheetCharts";
 import { asSheetDrawings } from "../../views/spreadsheet/useSheetDrawings";
+import ChartGallery from "../ChartGallery.vue";
 import ShapeGallery from "../ShapeGallery.vue";
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
 
 const props = defineProps({
   /** useSheetDrawings' return. */
   drawings: { type: Object, required: true },
+  /** SPEC-132: useSheetCharts' return — Insert ▸ Chart's gallery
+   * (`sheet-chart-gallery-popover` around ChartGallery; a pick inserts). */
+  charts: { type: Object, default: null },
 });
 
 const drawings = computed(() => asSheetDrawings(props.drawings));
+const charts = computed(() => (props.charts ? asSheetCharts(props.charts) : null));
 const picker = useTemplateRef("picker");
 /** The popover's viewport position: under the Insert menu's title. */
 const at = ref({ left: 16, top: 64 });
@@ -29,7 +35,7 @@ onMounted(() => drawings.value.bindImagePicker(picker.value instanceof HTMLInput
 onBeforeUnmount(() => drawings.value.bindImagePicker(null));
 
 watch(
-  () => drawings.value.galleryOpen.value,
+  () => drawings.value.galleryOpen.value || charts.value?.galleryOpen.value === true,
   async (open) => {
     if (!open) {
       return;
@@ -40,7 +46,7 @@ watch(
       at.value = { left: box.left, top: box.bottom };
     }
     await nextTick();
-    const first = document.querySelector('[data-testid="sheet-shape-gallery-popover"] .shape-gallery-item');
+    const first = document.querySelector('[data-testid="sheet-shape-gallery-popover"] .shape-gallery-item, [data-testid="sheet-chart-gallery-popover"] .chart-gallery-item');
     if (first instanceof HTMLElement) {
       first.focus();
     }
@@ -88,6 +94,17 @@ function pickShape(geometry = "rect") {
       catalogue-only
       @pick="pickShape"
     />
+  </UiMenuSurface>
+  <UiMenuSurface
+    v-if="charts"
+    :open="charts.galleryOpen.value"
+    :anchor="null"
+    class="sheet-shape-gallery-popover"
+    data-testid="sheet-chart-gallery-popover"
+    :style="{ left: `${at.left}px`, top: `${at.top}px` }"
+    @dismiss="charts.closeGallery()"
+  >
+    <ChartGallery @pick="(chartType) => charts?.pickChartType(chartType)" />
   </UiMenuSurface>
 </template>
 

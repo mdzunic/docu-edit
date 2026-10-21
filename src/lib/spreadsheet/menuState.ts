@@ -109,6 +109,8 @@ export const SHEET_MENU_COMMANDS = {
   /** SPEC-131: Insert ▸ Image… and Insert ▸ Shapes; the Arrange menu. */
   insertImage: "insert.image",
   insertShape: "insert.shape",
+  /** SPEC-132: Insert ▸ Chart (the chart gallery popover). */
+  insertChart: "insert.chart",
   arrangeFront: "arrange.front",
   arrangeForward: "arrange.forward",
   arrangeBackward: "arrange.backward",

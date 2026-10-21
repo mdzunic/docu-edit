@@ -41,6 +41,8 @@ import FunctionAutocomplete from "./FunctionAutocomplete.vue";
 import InsertFunctionDialog from "./InsertFunctionDialog.vue";
 import PasteSpecialDialog from "./PasteSpecialDialog.vue";
 import SheetCellContextMenu from "./SheetCellContextMenu.vue";
+import SheetChartLayer from "./SheetChartLayer.vue";
+import SheetChartSheet from "./SheetChartSheet.vue";
 import SheetDrawingContextMenu from "./SheetDrawingContextMenu.vue";
 import SheetGrid from "./SheetGrid.vue";
 import SheetHeaderContextMenu from "./SheetHeaderContextMenu.vue";
@@ -95,6 +97,8 @@ const validation = computed(() => asWorkbookEditing(props.editing).validation ??
 
 /** SPEC-131: the drawing layer (null: not wired). */
 const drawings = computed(() => grid.value.drawings ?? null);
+/** SPEC-132: the sheet charts — the toolbar, dialogs, gallery and chart sheets (null: not wired). */
+const charts = computed(() => asWorkbookEditing(props.editing).charts ?? null);
 function drawingAction(action = "front") {
   drawings.value?.runAction(action === "forward" || action === "backward" || action === "back" || action === "alt-text" || action === "delete" ? action : "front");
 }
@@ -161,6 +165,11 @@ const tabs = computed(() => {
         >
           {{ book.foreignMessage.value }}
         </div>
+        <SheetChartSheet
+          v-else-if="book.activeSheet.value?.kind === 'chart'"
+          :sheet="book.activeSheet.value"
+          :theme="charts?.theme.value ?? null"
+        />
         <SheetGrid
           v-else-if="book.activeSheet.value"
           :key="`${book.activeSheet.value.id}:${book.generation.value}`"
@@ -168,6 +177,10 @@ const tabs = computed(() => {
           :context="grid"
           :show-formulas="grid.formulas.showFormulas.value"
           @cycle-sheet="book.cycleSheet"
+        />
+        <SheetChartLayer
+          v-if="charts"
+          :charts="charts"
         />
       </div>
       <SheetSidePanel :editing="editing" />
@@ -281,7 +294,10 @@ const tabs = computed(() => {
       @answer="answerAlert"
     />
     <template v-if="drawings">
-      <SheetInsertSurfaces :drawings="drawings" />
+      <SheetInsertSurfaces
+        :drawings="drawings"
+        :charts="charts"
+      />
       <SheetDrawingContextMenu
         :open="drawings.contextMenu.value !== null"
         :x="drawings.contextMenu.value?.x ?? 0"
@@ -328,6 +344,7 @@ const tabs = computed(() => {
 }
 
 .workbook-sheet {
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
