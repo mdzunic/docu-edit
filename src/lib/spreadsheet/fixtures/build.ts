@@ -7474,9 +7474,11 @@ export const SPEC130_VALIDATION_ODS = {
   ],
 } as const;
 
+/** An empty cell carrying only its validation's name. */
+const spec130Validated = (name: string): string => `<table:table-cell table:content-validation-name="${name}"/>`;
+
 export async function buildSpec130ValidationOdsBytes(): Promise<Uint8Array> {
   const O = SPEC130_VALIDATION_ODS;
-  const validated = (name: string): string => `<table:table-cell table:content-validation-name="${name}"/>`;
   const header =
     loString(O.labels[0], "ce5") + loString(O.headers.B1, "ce5") + loString(O.headers.C1, "ce5") + loEmpty(1) + loString(O.headers.E1, "ce5") + loEmpty(16379);
   const rows = O.labels.slice(1).map((label, index) => {
@@ -7484,17 +7486,17 @@ export async function buildSpec130ValidationOdsBytes(): Promise<Uint8Array> {
     const b =
       index === 1
         ? `<table:table-cell table:content-validation-name="${name}" office:value-type="float" office:value="${O.B3}" calcext:value-type="float"><text:p>${O.B3}</text:p></table:table-cell>`
-        : validated(name);
+        : spec130Validated(name);
     const region = O.regions[index];
     const rest = region === undefined ? loEmpty(16381) : loEmpty(1) + loString(region) + loEmpty(16379);
-    return loRow(loString(label) + b + validated("val11") + rest);
+    return loRow(loString(label) + b + spec130Validated("val11") + rest);
   });
   const form =
     `<table:table table:name="Form" table:style-name="ta1">` +
     `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
     loRow(header) +
     rows.join("") +
-    loRow(loEmpty(2) + validated("val11") + loEmpty(16381), "ro1", O.notesRun.rows) +
+    loRow(loEmpty(2) + spec130Validated("val11") + loEmpty(16381), "ro1", O.notesRun.rows) +
     loRow(loEmpty(16384), "ro1", 1_048_576 - (O.notesRun.firstRow - 1) - O.notesRun.rows) +
     `</table:table>`;
   const listRows = O.fruits.map((fruit, index) => {
