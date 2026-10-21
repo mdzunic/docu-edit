@@ -50,10 +50,17 @@
 //   names the copy's), their formulas renamed as the copy's cells' are and
 //   their x14 placement derived for the copy's name; in an .ods they lose
 //   their sourceXml, whose base-cell address names the source sheet.
+// - SPEC-131, duplicate: the copy keeps its origin's drawings (their `id`s
+//   are unique per sheet, so the copy keeps them too), written into the
+//   drawing part SPEC-121's closure copy names for the copy (xlsx: the
+//   copy's `drawingPart`); in an .ods each drawing's source XML takes the
+//   same id suffixes and object retargets as the copy's table text.
 // - `alsoRecalc` lists the formula cells whose RESULT may change though
 //   their text did not: 3-D references whose span gained, lost or reordered
 //   a sheet, and references to a name that did not exist before.
+import { ensureMediaEncoded, type MediaPart } from "../core/media";
 import { relsPathFor } from "../core/xml";
+import { nextMediaId } from "./drawings";
 import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
 import { mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
 import { mintCfId, renumberPriorities, sheetFormats, withX14Placement, type CfRule, type ConditionalFormat } from "./conditionalFormats";
@@ -70,6 +77,7 @@ import {
   type Cell,
   type Row,
   type Sheet,
+  type SheetDrawing,
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
@@ -86,7 +94,7 @@ import {
   type DataValidation,
 } from "./validation";
 import { copyXlsxSheetParts, hasOnlySafeRelationships, removeOwnedParts, renameTablesInFormula } from "./xlsx/duplicate";
-import { LazyParts } from "./xlsx/package";
+import { LazyParts, relationshipKind, relationshipsOf, targetPart } from "./xlsx/package";
 
 export { UNCONVERTIBLE_CONTENT, type UnconvertibleRow } from "./unconvertible";
 
@@ -458,11 +466,15 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
       const parts = copyXlsxSheetParts(model.opaque, partName, copy.id);
       model.opaque = parts.opaque;
       copy.partName = parts.partName;
+      copy = withCopiedDrawingPart(copy, new LazyParts(model.opaque));
       copy = rewriteFormulas(copy, (formula) => renameTablesInFormula(formula, parts.tableRenames));
     } else if (sourceXml !== undefined) {
-      const copied = copyOdsSheetSource(model, sourceXml);
+      const copied = copyOdsSheetSource(model, sourceXml, (copy.drawings ?? []).map((drawing) => drawing.sourceXml ?? ""));
       model.opaque = copied.opaque;
       copy.sourceXml = copied.sourceXml;
+      if (copy.drawings) {
+        copy.drawings = copy.drawings.map((drawing, at) => (drawing.sourceXml === undefined ? drawing : { ...drawing, sourceXml: copied.drawingTexts[at]! }));
+      }
     } else if (partName !== undefined) {
       copy.partName = partName;
     }
@@ -477,6 +489,24 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   model.structureDirty = true;
   model.activeSheetIndex = index + 1;
   return { activeIndex: index + 1, alsoRecalc: cellsToRecalc(model, before, [name]) };
+}
+
+/** A copy whose drawings live in the drawing part its closure copy made
+ * (SPEC-131): `drawingPart` names the part the copy's own `<drawing>`
+ * relationship targets — none when it has none. */
+function withCopiedDrawingPart(copy: Sheet, parts: LazyParts): Sheet {
+  if (copy.drawingPart === undefined || copy.partName === undefined) {
+    return copy;
+  }
+  const rel = relationshipsOf(parts, copy.partName).find((each) => relationshipKind(each.type) === "drawing" && !each.external);
+  const drawingPart = rel ? targetPart(copy.partName, rel) : undefined;
+  const next = { ...copy };
+  if (drawingPart === undefined) {
+    delete next.drawingPart;
+  } else {
+    next.drawingPart = drawingPart;
+  }
+  return next;
 }
 
 /** A copy's conditional formats (see the module header). */
@@ -633,7 +663,9 @@ export function setTabColor(model: SpreadsheetModel, index: number, color: Model
  * formulaForTarget, conditional formats per crossFormats and differential
  * styles without their sourceXml/sourceStyleName (SPEC-129), data-validation
  * rules per crossValidations and no `odsOrphanValidations` — the source's
- * unreferenced content-validations are its own (SPEC-130). Pure — the open
+ * unreferenced content-validations are its own (SPEC-130), drawings per
+ * crossDrawings with `media` holding only what they show, re-pathed, and no
+ * `drawingPart`/`drawingsDirty` (SPEC-131). Pure — the open
  * model is untouched; rows are shared except where a cell must change. */
 export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
   const {
@@ -646,14 +678,20 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     ...rest
   } = model;
   const kept = model.sheets.filter((sheet) => sheet.kind !== "foreign");
+  const media = new CrossedMedia(model);
   const sheets: Sheet[] = kept.map((sheet) => {
-    const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, ...fields } = sheet;
-    return {
+    const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, drawings, drawingPart: _drawingPart, drawingsDirty: _drawingsDirty, ...fields } = sheet;
+    const crossed: Sheet = {
       ...fields,
       rows: crossRows(sheet.rows, model.format),
       conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name),
       validations: crossValidations(sheetValidations(sheet), model.format, sheet.name),
     };
+    const crossedDrawings = crossDrawings(drawings ?? [], media);
+    if (crossedDrawings.length > 0) {
+      crossed.drawings = crossedDrawings;
+    }
+    return crossed;
   });
   if (sheets.length === 0) {
     const { dirty: _dirty, ...fallback } = emptySheet("Sheet1");
@@ -667,8 +705,10 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
   if (activeSheetIndex < 0 || sheets[activeSheetIndex]!.visibility !== "visible") {
     activeSheetIndex = sheets.findIndex((sheet) => sheet.visibility === "visible");
   }
+  const { media: _media, ...crossedRest } = rest;
   return {
-    ...rest,
+    ...crossedRest,
+    ...(media.parts.length > 0 ? { media: media.parts } : {}),
     opaque: [],
     sheets,
     activeSheetIndex,
@@ -681,6 +721,57 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
       return dxfRest;
     }),
   };
+}
+
+/** SPEC-131: the images crossing drawings show, re-pathed into the target's
+ * media folder (nextMediaId's naming — `xl/media/image{n}` or
+ * `Pictures/image{n}`), each part once however many drawings show it. */
+class CrossedMedia {
+  readonly parts: MediaPart[] = [];
+  private readonly renamed = new Map<string, string>();
+  private readonly source: ReadonlyMap<string, MediaPart>;
+
+  constructor(private readonly model: SpreadsheetModel) {
+    this.source = new Map((model.media ?? []).map((part) => [part.mediaId, part] as const));
+  }
+
+  /** The target path of a source image, or undefined when the model holds
+   * no such part. */
+  crossed(mediaId: string): string | undefined {
+    const known = this.renamed.get(mediaId);
+    if (known !== undefined) {
+      return known;
+    }
+    const part = this.source.get(mediaId);
+    if (!part) {
+      return undefined;
+    }
+    ensureMediaEncoded(part);
+    const next = nextMediaId({ format: this.model.format, opaque: [], media: this.parts }, part.contentType);
+    this.parts.push({ mediaId: next, contentType: part.contentType, data: part.data });
+    this.renamed.set(mediaId, next);
+    return next;
+  }
+}
+
+/** A sheet's drawings as they cross (SPEC-131 "Cross-format"): image and
+ * shape drawings through the target's canonical writers — anchor and
+ * behaviour kept, `sourceXml` dropped, an image re-pathed (CrossedMedia);
+ * `foreign`, `group` and placeholder `chart` drawings, and an image whose
+ * bytes the model does not hold, dropped (unconvertible.ts's drawings row
+ * names each one). */
+function crossDrawings(drawings: readonly SheetDrawing[], media: CrossedMedia): SheetDrawing[] {
+  return drawings.flatMap((drawing): SheetDrawing[] => {
+    const { sourceXml: _source, ...rest } = drawing;
+    if (drawing.content.kind === "shape") {
+      return [rest];
+    }
+    if (drawing.content.kind !== "image") {
+      return [];
+    }
+    const mediaId = media.crossed(drawing.content.mediaId);
+    return mediaId === undefined ? [] : [{ ...rest, content: { ...drawing.content, mediaId } }];
+  });
 }
 
 /** A sheet's conditional formats as they cross to `target` (SPEC-129): each
