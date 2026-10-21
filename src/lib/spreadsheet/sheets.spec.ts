@@ -27,6 +27,7 @@ import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
 import { DEFAULT_SPREADSHEET_TITLE, type Cell, type CellValue, type Row, type Sheet, type SheetDrawing, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import { readSpreadsheetBytes, SPREADSHEET_READER_VERSION } from "./open";
+import { unsupportedChartVisual } from "./charts";
 import {
   addSheet,
   cannotDuplicateReason,
@@ -1141,7 +1142,7 @@ describe("duplicateSheet", () => {
 
   it("SPEC-131: an xlsx copy's drawingPart names the drawing part its closure copy made, its drawings kept with their ids", async () => {
     const model = await openLinksXlsx();
-    const drawing: SheetDrawing = { id: "dr1", name: "Chart 1", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", sourcePart: "xl/charts/chart1.xml" }, sourceXml: "<xdr:absoluteAnchor/>" };
+    const drawing: SheetDrawing = { id: "dr1", name: "Chart 1", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", visual: unsupportedChartVisual(""), sourcePart: "xl/charts/chart1.xml" }, sourceXml: "<xdr:absoluteAnchor/>" };
     model.sheets = model.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawingPart: "xl/drawings/drawing1.xml", drawings: [drawing] } : sheet));
     duplicateSheet(model, 1);
     const copy = model.sheets[2]!;
@@ -1670,7 +1671,7 @@ describe("stripRetention", () => {
     const dropped: SheetDrawing[] = [
       { id: "dr4", name: "Check Box 1", anchor, content: { kind: "foreign", label: "Form control", face: { kind: "image", mediaId: "xl/media/image9.png" } } },
       { id: "dr5", name: "Group 5", anchor, content: { kind: "group", members: [] } },
-      { id: "dr6", name: "Chart 6", anchor, content: { kind: "chart", sourcePart: "xl/charts/chart1.xml" } },
+      { id: "dr6", name: "Chart 6", anchor, content: { kind: "chart", visual: unsupportedChartVisual(""), sourcePart: "xl/charts/chart1.xml" } },
     ];
     const model = book([gridSheet("Data", { A1: 1 }, { drawings: [picture, ...dropped, again, shape], drawingPart: "xl/drawings/drawing1.xml", drawingsDirty: true })]);
     model.media = [
@@ -2133,7 +2134,7 @@ describe("unconvertibleContent", () => {
               drawing("dr3", { kind: "shape", visual: { geometry: "rect" } }),
               drawing("dr4", { kind: "foreign", label: "Form control" }),
               drawing("dr5", { kind: "group", members: [] }),
-              drawing("dr6", { kind: "chart" }),
+              drawing("dr6", { kind: "chart", visual: unsupportedChartVisual("") }),
             ],
           }
         : sheet,

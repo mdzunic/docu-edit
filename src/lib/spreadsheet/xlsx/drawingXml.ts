@@ -61,8 +61,9 @@ import { MARKUP_COMPATIBILITY_NAMESPACE, parseXml, relsPathFor, selectAlternateC
 import { scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
 import { anchorBehaviour, drawingRectPx, EMU_PER_PX, pointFromPx, withDerivedSize, writtenPoints } from "../drawings";
 import { buildGridMetrics, type GridMetrics } from "../geometry";
-import type { AnchorPoint, DrawingAnchor, DrawingText, Sheet, SheetDrawing, SheetDrawingContent } from "../model";
+import type { AnchorPoint, DrawingAnchor, DrawingText, Sheet, SheetChartContent, SheetDrawing, SheetDrawingContent } from "../model";
 import { applySplices, escapeAttributeText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
+import { readXlsxChart } from "./chartXml";
 import { elementTree, type XmlNode } from "./elementTree";
 import {
   contentTypeIn,
@@ -603,7 +604,19 @@ function readGraphicFrame(frame: Element, ctx: ReadContext): SheetDrawingContent
     const rId = chart ? relAttr(chart, "id") : undefined;
     const rel = rId === undefined ? undefined : ctx.rels.get(rId);
     const sourcePart = rel ? targetPart(ctx.drawingPart, rel) : undefined;
-    return sourcePart !== undefined && ctx.parts.has(sourcePart) ? { kind: "chart", sourcePart } : { kind: "foreign", label: "Chart" };
+    const partText = sourcePart === undefined ? undefined : partTextOf(ctx.parts, sourcePart);
+    if (sourcePart === undefined || partText === undefined) {
+      return { kind: "foreign", label: "Chart" };
+    }
+    const read = readXlsxChart(partText);
+    const content: SheetChartContent = { kind: "chart", visual: read.visual, sourcePart };
+    if (read.refs) {
+      content.refs = read.refs;
+    }
+    if (read.readOnlyReason !== undefined) {
+      content.readOnlyReason = read.readOnlyReason;
+    }
+    return content;
   }
   return { kind: "foreign", label: DIAGRAM_URIS.has(uri) ? "SmartArt" : "Object" };
 }

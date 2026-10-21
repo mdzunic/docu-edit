@@ -26,6 +26,15 @@ export const C_NAMESPACE = "http://schemas.openxmlformats.org/drawingml/2006/cha
 const R_NAMESPACE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
 export const CHART_RELATIONSHIP = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+
+/** A host's live source references for a regenerated part (SPEC-132): per
+ * series, index-aligned with the series written, the WIRE text of each
+ * `c:f` (`Sheet1!$B$2:$B$5` — the codec never interprets it). A series
+ * without `name` gets a literal `c:tx/c:v`; one without `categories` or
+ * `values` gets that element's literal cache only (`c:strLit`/`c:numLit`). */
+export interface ChartPartRefs {
+  series: { name?: string; categories?: string; values?: string }[];
+}
 export const CHART_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
 
 const CHART_TYPE_ELEMENT_TAGS = [
@@ -498,7 +507,8 @@ function axesXml(chart: ChartVisual): string {
  * when a chart is `edited` (SPEC-052 "Rewriting a chart"). An untouched chart
  * never calls this: its part's original bytes are re-emitted verbatim from
  * the package's preserved parts instead. */
-export function chartPartXml(chart: ChartVisual): string {
+export function chartPartXml(chart: ChartVisual, refs?: ChartPartRefs): string {
+  void refs; // SPEC-132 skeleton: implemented by the core codec change
   // Pie/doughnut render (and so persist) only the first series — a real
   // c:pieChart/c:doughnutChart holds exactly one c:ser; the model keeps the
   // rest for the data sheet to still show (SPEC-052 "Chart catalogue").

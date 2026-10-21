@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import type { SheetDrawing, SheetDrawingContent } from "../../lib/spreadsheet/model";
+import { unsupportedChartVisual } from "../../lib/spreadsheet/charts";
 import { drawingPanes, layoutDrawingPanes, resizedRect, type PaneLayout, type ShownDrawing } from "../../views/spreadsheet/sheetDrawingLayout";
 import SheetDrawingLayer from "./SheetDrawingLayer.vue";
 
@@ -60,7 +61,7 @@ describe("SPEC-131 SheetDrawingLayer", () => {
 
   it("paints charts, face-less foreign drawings and undisplayable pictures as labelled placeholders, and a foreign face as its face", () => {
     const wrapper = mountPane([
-      { drawing: drawing("dr1", "Chart 1", { kind: "chart", sourcePart: "xl/charts/chart1.xml" }), rect: rect(0, 0, 100, 60) },
+      { drawing: drawing("dr1", "Chart 1", { kind: "chart", visual: unsupportedChartVisual(""), sourcePart: "xl/charts/chart1.xml" }), rect: rect(0, 0, 100, 60) },
       { drawing: drawing("dr2", "Check Box 2", { kind: "foreign", label: "Form control" }), rect: rect(0, 70, 100, 20) },
       { drawing: drawing("dr3", "Picture 3", { kind: "image", mediaId: "xl/media/image2.emf" }), rect: rect(0, 100, 50, 50) },
       { drawing: drawing("dr4", "Slicer 4", { kind: "foreign", label: "Slicer", face: { kind: "shape", visual: { geometry: "rect" }, text: { paragraphs: [{ text: "Region" }], anchor: "top" } } }), rect: rect(0, 160, 100, 80) },

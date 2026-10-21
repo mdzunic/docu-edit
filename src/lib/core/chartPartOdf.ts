@@ -26,6 +26,21 @@ export const CHART_NAMESPACE = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0"
 
 export const CHART_OBJECT_CONTENT_TYPE = "application/vnd.oasis.opendocument.chart";
 
+/** A host's live source references for a regenerated object (SPEC-132): WIRE
+ * cell-range-address texts (`Sheet1.B2:Sheet1.B5`, the codec never
+ * interprets them). `plotArea` → `chart:plot-area@table:cell-range-address`,
+ * `categories` → the x axis's `chart:categories@table:cell-range-address`;
+ * per series (index-aligned with the series written) `values` →
+ * `@chart:values-cell-range-address`, `label` → `@chart:label-cell-address`,
+ * `domain` → a `chart:domain@table:cell-range-address` child (scatter x). An
+ * absent entry keeps the `local-table` address the object writes without
+ * refs. */
+export interface OdfChartRefs {
+  plotArea?: string;
+  categories?: string;
+  series: { values?: string; label?: string; domain?: string }[];
+}
+
 function firstChildNS(parent: Element, ns: string, localName: string): Element | undefined {
   for (const child of Array.from(parent.children)) {
     if (child.namespaceURI === ns && child.localName === localName) {
@@ -235,6 +250,14 @@ function tableColumnLetter(index: number): string {
   return String.fromCharCode(66 + (index % 24));
 }
 
+/** The `local-table` data cache an object written from `chart` holds (the
+ * series pie/doughnut persist only) — SPEC-132's patch path replaces a
+ * source object's table with it. */
+export function odfChartTableXml(chart: ChartVisual): string {
+  const seriesToWrite = SINGLE_SERIES_CHART_TYPES.has(chart.chartType) ? chart.series.slice(0, 1) : chart.series;
+  return tableXml(chart, seriesToWrite);
+}
+
 function tableXml(chart: ChartVisual, series: ChartSeries[]): string {
   const seriesCells = series
     .map((s) => `<table:table-cell office:value-type="string"><text:p>${escapeXmlText(s.name)}</text:p></table:table-cell>`)
@@ -319,7 +342,9 @@ export function odfChartContentXml(
   widthCm: number,
   heightCm: number,
   theme: DocumentTheme = DEFAULT_THEME,
+  refs?: OdfChartRefs,
 ): string {
+  void refs; // SPEC-132 skeleton: implemented by the core codec change
   const vertical = chart.chartType !== "barClustered";
   const stacked = chart.chartType === "columnStacked";
   const classFor: Record<ChartType, string> = {

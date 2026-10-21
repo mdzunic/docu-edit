@@ -21,6 +21,7 @@ import { SPREADSHEET_READER_VERSION } from "../open";
 import { rewriteRetainedReferences } from "../retainedReferences";
 import { structuralMapper, type StructuralEdit } from "../structure";
 import { decodeXmlText } from "../xmlSplice";
+import { unsupportedChartVisual } from "../charts";
 import { sourceTables } from "./package";
 import { rewriteOdsRetainedReferences } from "./retainedReferences";
 
@@ -522,7 +523,7 @@ describe("the ods location table", () => {
     const model = odsBook({ tables: [{ name: "Data" }, { name: "Other" }] });
     const data = sheetNamed(model, "Data");
     const untouched: SheetDrawing = { id: "dr2", name: "Shape 2", anchor: { kind: "absolute", posEmu: { x: 0, y: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "foreign", label: "Object" }, sourceXml: "<draw:rect/>" };
-    const chart: SheetDrawing = { id: "dr1", name: "Object 1", anchor: { kind: "oneCell", from: { col: 0, colOffEmu: 0, row: 0, rowOffEmu: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart" }, sourceXml: anchored };
+    const chart: SheetDrawing = { id: "dr1", name: "Object 1", anchor: { kind: "oneCell", from: { col: 0, colOffEmu: 0, row: 0, rowOffEmu: 0 }, extEmu: { cx: 1, cy: 1 } }, content: { kind: "chart", visual: unsupportedChartVisual("") }, sourceXml: anchored };
     model.sheets = model.sheets.map((sheet) => (sheet === data ? { ...sheet, drawings: [chart, untouched] } : sheet));
     edit(model, "Data", "insertRows", 1, 2);
     const after = sheetNamed(model, "Data").drawings!;

@@ -122,6 +122,7 @@ import { buildGridMetrics, type GridMetrics } from "../geometry";
 import { MAX_COLS, MAX_ROWS, type AnchorPoint, type Cell, type DrawingAnchor, type DrawingText, type Row, type Sheet, type SheetDrawing, type SheetDrawingContent } from "../model";
 import { applySplices, decodeXmlText, escapeAttributeText, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
 import { readManifest } from "./package";
+import { readOdsChart } from "./chartXml";
 import { parseOdsRangeAddress } from "./rangeAddress";
 import { namespaceDeclarations, odsStyleBookFromSource, parseOdsPart, type OdsStyleBook } from "./styles";
 
@@ -500,6 +501,13 @@ export class OdsMediaReader {
     }
   }
 
+  /** SPEC-132: a package part's text (an embedded chart object's
+   * `Object 1/content.xml`), or undefined when the package lacks it. */
+  partText(name: string): string | undefined {
+    const bytes = this.parts.get(name);
+    return bytes === undefined ? undefined : new TextDecoder().decode(bytes);
+  }
+
   /** The media part at `path`, or undefined when the package has none. */
   part(path: string): MediaPart | undefined {
     let part = this.found.get(path);
@@ -786,7 +794,12 @@ function frameContent(el: Element, ctx: OdsDrawingReadContext): SheetDrawingCont
   const object = children.find((child) => child.localName === "object");
   if (object) {
     const sourcePart = objectPart(object);
-    return sourcePart === undefined ? { kind: "chart" } : { kind: "chart", sourcePart };
+    const text = sourcePart === undefined ? undefined : ctx.media.partText(sourcePart);
+    if (sourcePart === undefined || text === undefined) {
+      return { kind: "foreign", label: "Chart" };
+    }
+    const read = readOdsChart(text);
+    return read.refs ? { kind: "chart", visual: read.visual, refs: read.refs, sourcePart } : { kind: "chart", visual: read.visual, sourcePart };
   }
   const image = children.find((child) => child.localName === "image");
   if (children.some((child) => child.localName === "object-ole")) {
