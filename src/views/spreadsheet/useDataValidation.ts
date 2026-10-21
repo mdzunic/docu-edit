@@ -423,13 +423,15 @@ export function useDataValidation(deps: DataValidationDeps) {
     return openList();
   }
 
-  // Another active cell or sheet closes the list.
+  // Another active cell or sheet closes the list (at once: it never shows
+  // over another cell).
   watch(
     () => {
       const active = deps.selection.selection.value.active;
       return `${deps.book.activeSheet.value?.id ?? ""}:${active.row}:${active.col}`;
     },
     () => closeList(false),
+    { flush: "sync" },
   );
 
   return {
