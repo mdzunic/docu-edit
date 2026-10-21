@@ -47,6 +47,8 @@ import {
   buildSpec129CfXlsxBytes,
   buildSpec130ValidationOdsBytes,
   buildSpec130ValidationXlsxBytes,
+  buildSpec131DrawingsOdsBytes,
+  buildSpec131DrawingsXlsxBytes,
   SPEC123_XF,
 } from "./fixtures/build";
 import { modelledDxf } from "./conditionalFormats";
@@ -150,9 +152,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10 and SPEC-130 to 11, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(11);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11 and SPEC-131 to 12, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(12);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -751,8 +753,9 @@ function storedAtVersion9(read: SpreadsheetModel, dirtyIndex: number): Spreadshe
 
 describe("SPEC-129's reader step: conditional formats and the differential styles", () => {
   it("moved the reader to version 10 with its step from 9 (SPEC-130's from 10 follows it)", () => {
-    expect(READER_UPGRADES.findIndex((step) => step.from === 9)).toBe(READER_UPGRADES.length - 2);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(10);
+    const at = READER_UPGRADES.findIndex((step) => step.from === 9);
+    expect(at).toBeGreaterThan(0);
+    expect(READER_UPGRADES[at + 1]!.from).toBe(10);
   });
 
   for (const [format, build] of [
@@ -814,9 +817,9 @@ function storedAtVersion10(read: SpreadsheetModel, dirtyIndex: number): Spreadsh
 }
 
 describe("SPEC-130's reader step: data validations", () => {
-  it("moved the reader to version 11 with its step from 10, last", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(11);
-    expect(READER_UPGRADES.at(-1)!.from).toBe(10);
+  it("moved the reader to version 11 with its step from 10 (SPEC-131's from 11 follows it)", () => {
+    expect(READER_UPGRADES.find((step) => step.from === 10)).toBeDefined();
+    expect(READER_UPGRADES.findIndex((step) => step.from === 10)).toBe(READER_UPGRADES.findIndex((step) => step.from === 11) - 1);
   });
 
   for (const [format, build] of [
@@ -858,7 +861,7 @@ describe("SPEC-130's reader step: data validations", () => {
       { index: 1, cells: [{ col: 1, value: null, preservedAttrs: ` table:content-validation-name="${b2.odsName}"` }] },
       { index: 4, cells: [{ col: 1, value: 5, preservedAttrs: ` table:content-validation-name="${b3.odsName}" xml:id="keep"` }] },
     ];
-    await READER_UPGRADES.at(-1)!.upgradeDirtySheet(stored, sheet, decodedPartBytes(stored.opaque), stored);
+    await READER_UPGRADES.find((step) => step.from === 10)!.upgradeDirtySheet(stored, sheet, decodedPartBytes(stored.opaque), stored);
     expect(sheet.validations.map((rule) => [rule.odsName, rule.ranges])).toEqual([
       [b2.odsName, [{ top: 1, left: 1, bottom: 1, right: 1 }]],
       [b3.odsName, [{ top: 4, left: 1, bottom: 4, right: 1 }]],
@@ -873,5 +876,107 @@ describe("SPEC-130's reader step: data validations", () => {
     stored.sheets[1] = { ...born, dirty: true } as Sheet;
     const upgraded = await upgradeSpreadsheetModel(stored);
     expect(upgraded.sheets[1]!.validations).toEqual([]);
+  });
+});
+
+// --- SPEC-131 ----------------------------------------------------------------------------------
+
+/** A drawing for comparing across reads: its minted id dropped. */
+const withoutDrawingId = ({ id: _id, ...rest }: NonNullable<Sheet["drawings"]>[number]) => rest;
+
+/** A fresh read as version 11 stored it: no drawings, drawing parts or
+ * media; sheet `dirtyIndex` dirty with an edited cell; an ods dirty sheet's
+ * in-cell drawing elements back in their cells' preservedXml (version 11
+ * kept them there), its rows `shift`ed down as an insert above them since
+ * the read would have left them. */
+function storedAtVersion11(read: SpreadsheetModel, dirtyIndex: number, shift = 0): SpreadsheetModel {
+  const { media: _media, ...rest } = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+  const stored = { ...rest, readerVersion: 11 } as SpreadsheetModel;
+  stored.sheets = stored.sheets.map(({ drawings: _drawings, drawingPart: _part, ...sheet }, index) => ({ ...sheet, id: `stored-sheet-${index}` }) as Sheet);
+  const dirty = stored.sheets[dirtyIndex]!;
+  let rows = dirty.rows;
+  if (read.format === "ods") {
+    for (const drawing of read.sheets[dirtyIndex]!.drawings ?? []) {
+      const from = drawing.anchor.from;
+      if (drawing.anchor.kind === "absolute" || !from) {
+        continue;
+      }
+      const existing = rows.find((row) => row.index === from.row);
+      const cell = existing?.cells.find((each) => each.col === from.col);
+      const holder: Cell = { ...(cell ?? { col: from.col, value: null }), preservedXml: (cell?.preservedXml ?? "") + drawing.sourceXml! };
+      const row = existing ? { ...existing, cells: [...existing.cells.filter((each) => each.col !== from.col), holder].toSorted((a, b) => a.col - b.col) } : { index: from.row, cells: [holder] };
+      rows = [...rows.filter((each) => each.index !== from.row), row].toSorted((a, b) => a.index - b.index);
+    }
+  }
+  rows = rows.map((row) => ({ ...row, index: row.index + shift }));
+  stored.sheets[dirtyIndex] = { ...dirty, dirty: true, rows: [...rows, { index: 40 + shift, cells: [{ col: 0, value: "edited" }] }] };
+  return stored;
+}
+
+describe("SPEC-131's reader step: the drawing layer", () => {
+  it("moved the reader to version 12 with its step from 11, last", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(12);
+    expect(READER_UPGRADES.at(-1)!.from).toBe(11);
+  });
+
+  it("xlsx: a version-11 record re-reads its clean sheet; its dirty one reads its <drawing r:id> from the retained source and the part from opaque, its images joining the media", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec131DrawingsXlsxBytes(), "xlsx", "SPEC-131 drawings");
+    const drawn = read.sheets[0]!;
+    expect(drawn.drawings!.length).toBe(11);
+    const stored = storedAtVersion11(read, 0);
+    expect(stored.sheets[0]!.drawings).toBeUndefined();
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    const dirty = upgraded.sheets[0]!;
+    expect(dirty.id).toBe("stored-sheet-0");
+    expect(getCell(dirty, 40, 0)!.value).toBe("edited");
+    expect(dirty.drawingPart).toBe(drawn.drawingPart);
+    expect(dirty.drawings!.map(withoutDrawingId)).toEqual(drawn.drawings!.map(withoutDrawingId));
+    expect(upgraded.media!.map((part) => part.mediaId).toSorted()).toEqual(read.media!.map((part) => part.mediaId).toSorted());
+    expect(upgraded.sheets[1]!.id).toBe("stored-sheet-1");
+  });
+
+  it("ods: a dirty sheet's drawing elements leave its cells' preservedXml, anchored to the cells' current positions, and table:shapes is read from its retained sourceXml", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec131DrawingsOdsBytes(), "ods", "SPEC-131 drawings");
+    const drawn = read.sheets[0]!;
+    const inCell = drawn.drawings!.filter((drawing) => drawing.anchor.kind !== "absolute");
+    expect(inCell.length).toBeGreaterThan(3);
+    const stored = storedAtVersion11(read, 0, 2);
+    expect(stored.sheets[0]!.rows.some((row) => row.cells.some((cell) => cell.preservedXml?.includes("<draw:")))).toBe(true);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const dirty = upgraded.sheets[0]!;
+    expect(dirty.rows.some((row) => row.cells.some((cell) => cell.preservedXml?.includes("<draw:")))).toBe(false);
+    expect(getCell(dirty, 42, 0)!.value).toBe("edited");
+    const byName = new Map(dirty.drawings!.map((drawing) => [drawing.name, drawing] as const));
+    for (const drawing of drawn.drawings!) {
+      const upgradedDrawing = byName.get(drawing.name);
+      expect(upgradedDrawing, drawing.name).toBeDefined();
+      if (drawing.anchor.kind === "absolute") {
+        expect(upgradedDrawing!.anchor).toEqual(drawing.anchor);
+      } else {
+        // Anchored to the cell where the edit left it: two rows down.
+        expect(upgradedDrawing!.anchor.from, drawing.name).toMatchObject({ col: drawing.anchor.from!.col, row: drawing.anchor.from!.row + 2 });
+      }
+    }
+    expect(upgraded.media!.map((part) => part.mediaId)).toEqual(read.media!.map((part) => part.mediaId));
+  });
+
+  it("a clean record re-reads whole and gains every drawing; a clean but drawingsDirty sheet keeps its stored layer through an edited record's re-read", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec131DrawingsXlsxBytes(), "xlsx", "SPEC-131 drawings");
+    const clean = storedAtVersion11(read, 0);
+    clean.sheets[0] = { ...clean.sheets[0]!, rows: read.sheets[0]!.rows };
+    delete clean.sheets[0]!.dirty;
+    const upgraded = await upgradeSpreadsheetModel(clean);
+    expect(upgraded.sheets[0]!.drawings!.length).toBe(11);
+    expect(upgraded.sheets[0]!.id).toBe("stored-sheet-0");
+
+    // A version-11 record cannot hold drawingsDirty, but a later upgrade of a
+    // record made since can: the step for the next version re-reads it.
+    const edited = { ...read, readerVersion: 11, structureDirty: true as const };
+    const kept = read.sheets[0]!.drawings!.slice(0, 2);
+    edited.sheets = [{ ...read.sheets[0]!, drawings: kept, drawingsDirty: true }, read.sheets[1]!];
+    const again = await upgradeSpreadsheetModel(edited);
+    expect(again.sheets[0]!.drawings).toEqual(kept);
+    expect(again.sheets[0]!.drawingsDirty).toBe(true);
   });
 });

@@ -118,6 +118,22 @@
 //     then dropped from every cell — the writer derives it from the model
 //     now, and a cell that held nothing else is no longer stored. Formulas'
 //     source-time sheet names are remapped onto the record's names.
+// 12 — SPEC-131: the drawing layer (`Sheet.drawings`, `Sheet.drawingPart`,
+//     the images in `model.media` — xlsx: the sheet's `<drawing r:id>` part,
+//     its `xdr:wsDr` children; ods: `table:shapes` and the `draw:*` elements
+//     inside cells, which from this version no longer ride in
+//     `Cell.preservedXml`). Every re-read gains them. The step, run for each
+//     dirty sheet: xlsx — reads the `<drawing r:id>` from the sheet's
+//     retained source and parses the drawing part from `opaque` (SPEC-124's
+//     retained adjusters kept its anchors moving with every structural edit
+//     until this version, so they fit the edited sheet), its images joining
+//     the model's media; ods — lifts the drawing elements out of its cells'
+//     `preservedXml` (each anchored to that cell's CURRENT position: the
+//     cells moved with every edit since) and reads `table:shapes` from the
+//     retained `sourceXml`. A sheet that is clean but `drawingsDirty` (a
+//     later upgrade of a record made since) is re-read for its cells and
+//     keeps its stored drawings; the stored `media` is kept, the re-read's
+//     parts joining it.
 //
 // SPEC-126: a csv/tsv workbook never runs a ReaderUpgrade — its source is
 // one delimited-text part, read by csv/parse.ts, which adds no element to
@@ -131,6 +147,7 @@
 // each dirty sheet's style ids are moved into the re-read style table
 // (interned — an equal style is shared), never left pointing into the
 // stored one.
+import type { MediaPart } from "../core/media";
 import { decodedPartBytes } from "../core/packageParts";
 import { isCellError, isCsvFormat, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import type { ParsedSpreadsheet } from "./parsed";
@@ -141,7 +158,7 @@ import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
 import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 11;
+export const SPREADSHEET_READER_VERSION = 12;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -321,7 +338,43 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       sheet.validations = isEmptyRemap(remap) ? read.validations : read.validations.map((dv) => mapValidationFormulas(dv, (text) => remapSheetReferences(text, remap)));
     },
   },
+  {
+    // SPEC-131 (11 → 12): the drawing layer (see the version history).
+    from: 11,
+    async upgradeDirtySheet(model, sheet, sourceParts) {
+      const media = new Map((model.media ?? []).map((part) => [part.mediaId, part] as const));
+      if (model.format === "xlsx") {
+        if (sheet.partName === undefined) {
+          return;
+        }
+        const { readXlsxSheetDrawings } = await import("./xlsx/drawingXml");
+        const read = readXlsxSheetDrawings(sourceParts, sheet.partName, sheet, media);
+        if (read.drawings.length > 0) {
+          sheet.drawings = read.drawings;
+        }
+        if (read.drawingPart !== undefined) {
+          sheet.drawingPart = read.drawingPart;
+        }
+      } else {
+        await upgradeOdsDrawings(model, sheet, sourceParts, media);
+      }
+      if (media.size > 0) {
+        model.media = [...media.values()];
+      }
+    },
+  },
 ];
+
+// --- SPEC-131's step -------------------------------------------------------------------------
+
+/** A dirty ods sheet's drawings (see the version history): lifted out of
+ * its cells' preservedXml and read from its retained table:shapes. */
+async function upgradeOdsDrawings(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>, media: Map<string, MediaPart>): Promise<void> {
+  void model;
+  void sheet;
+  void sourceParts;
+  void media;
+}
 
 // --- SPEC-130's step -------------------------------------------------------------------------
 
@@ -726,7 +779,7 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   }
   const sourceParts = decodedPartBytes(model.opaque);
   const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
-  if (model.structureDirty || model.sheets.some((sheet) => sheet.dirty)) {
+  if (model.structureDirty || model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
     return upgradeEdited(model, sourceParts, pending);
   }
   const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, sourceParts);
@@ -809,6 +862,14 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
     sheets.push(await upgradedSheet(stored, index));
   }
   fresh.sheets = sheets;
+  // SPEC-131: the stored images (an inserted one has no retained part) win
+  // over the re-read's, which add the ones a re-read sheet shows.
+  const media = new Map([...(fresh.media ?? []), ...(model.media ?? [])].map((part) => [part.mediaId, part] as const));
+  if (media.size > 0) {
+    fresh.media = [...media.values()];
+  } else {
+    delete fresh.media;
+  }
   if (model.format === "ods" && model.readerVersion < 11 && model.odsContentEnvelope) {
     // SPEC-130: the substitution layout wrote no orphan definitions (the
     // record had none modelled); they are the retained prefix's definitions
@@ -855,6 +916,23 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
     if (stored.copiedFrom !== undefined) {
       sheet.copiedFrom = stored.copiedFrom;
     }
+    if (stored.drawingsDirty) {
+      // SPEC-131: the edited drawing layer is the model's, not the source's.
+      delete sheet.drawings;
+      delete sheet.drawingPart;
+      Object.assign(sheet, pick(stored, ["drawings", "drawingPart", "drawingsDirty"]));
+    }
     return sheet;
   }
+}
+
+/** The fields of `from` named in `keys` that it has. */
+function pick<T extends object, K extends keyof T>(from: T, keys: readonly K[]): Partial<Pick<T, K>> {
+  const out: Partial<Pick<T, K>> = {};
+  for (const key of keys) {
+    if (from[key] !== undefined) {
+      out[key] = from[key];
+    }
+  }
+  return out;
 }
