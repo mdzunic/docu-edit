@@ -136,9 +136,26 @@
 //   `table:filter-set-item`s, `table:visibility="filter"` and `"collapse"`
 //   rows, the trailing repeated rows. SPEC128_FILTER_XLSX /
 //   SPEC128_FILTER_ODS record the facts.
+// - spec131-drawings.xlsx (SPEC-131) — Excel 365-shaped drawing layer on
+//   "Sheet1": a picture editAs="oneCell", a rounded rectangle with text, an
+//   arrow `xdr:cxnSp`, a `oneCellAnchor` and an `absoluteAnchor` shape, a
+//   two-member group, a hidden shape, a checkbox form control wrapped
+//   `mc:AlternateContent Requires="a14"` with its empty Fallback, a slicer
+//   wrapped `Requires="sle15"` with Excel's text-box Fallback, an ink
+//   `contentPart` wrapped `Requires="aink"` with a picture Fallback (sharing
+//   the picture's media part), an EMF picture; `a16:creationId` (and the
+//   form control's `a14:compatExt`) extLsts on `cNvPr`, the worksheet's
+//   `mc:Ignorable`. "Data" has no drawings. spec131-drawings.ods —
+//   LibreOffice-shaped: a cell-anchored image with
+//   `table:end-cell-address`, a cell-anchored custom shape without it, a
+//   `table:shapes` shape, a rotated shape positioned by `draw:transform`, a
+//   `draw:g`, a `draw:control` over `office:forms`, graphic styles
+//   `gr1`…`gr6`. SPEC131_DRAWINGS_XLSX / SPEC131_DRAWINGS_ODS record the
+//   facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
+import { base64ToBytes } from "../../core/packageParts";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { dateToSerial } from "../serial";
 
@@ -7736,3 +7753,469 @@ export async function buildSpec130ValidationOdsBytes(): Promise<Uint8Array> {
   const cellCount = 4 + O.labels.length - 1 + 1 + O.regions.length + O.fruits.length + O.colours.length;
   return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
 }
+
+// ============================================================================
+// SPEC-131: spec131-drawings.xlsx and spec131-drawings.ods — the drawing
+// layer as Excel 365 and LibreOffice Calc 24.8 write it.
+// ============================================================================
+
+/** A 96 × 64 PNG (blue, green and orange blocks under a white diagonal): the
+ * pictures both drawing fixtures show. */
+export const SPEC131_PICTURE_PNG = base64ToBytes(
+  "iVBORw0KGgoAAAANSUhEUgAAAGAAAABACAIAAABqVuVZAAABUUlEQVR42u3Uyw0CMQyE4VQCjVAJF/qhCjqhFTpZDntCaJXHJvbM2JYLsD79Sdl+5/p4++7tdYfasv1NAlWAfJnggPazcIxAgY6M7JlwgUBSQgdyT4kAyDclGiCvlJiAXFLiAzJOiRLIMiViIJuUuIEMUlIAWpqSCNC6lKSAVqSkBjQ9JU2giSnJAs1KSRzofEr6QCdTigI0nFIgoLGUwgH1phQRqCuluECNKYUGakkpgSopJVCFKYGaUkogmpQKyB1HKX2eF98tUA8e0KigfYpoKcEB7WfhGIECHRnZM+ECgaSEDuSeEgGQb0o0QF4pMQG5pMQHZJwSJZBlSsRANilxAxmkpAC0NCURoHUpSQGtSEkNaHpKmkATU5IFmpWSOND5lPSBTqYUBWg4pUBAYymFA+pNKSJQV0pxgRpTCg3UklICVVJKoApTAlWMEqjC9AVkpRzR/Deu9gAAAABJRU5ErkJggg==",
+);
+
+/** A two-record EMF (header + EOF) — a picture this product cannot draw. */
+const SPEC131_EMF = base64ToBytes(
+  "AQAAAFgAAAAAAAAAAAAAAF8AAAA/AAAAAAAAAAAAAADsCQAAnQYAACBFTUYAAAEAbAAAAAIAAAABAAAAAAAAAAAAAAAAAAAAgAcAADgEAAD8AQAAHgEAAA4AAAAUAAAAAAAAABAAAAAUAAAA",
+);
+
+const SPEC131_EMU = 9525;
+const XDR_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006";
+const A14_NS = "http://schemas.microsoft.com/office/drawing/2010/main";
+const A16_NS = "http://schemas.microsoft.com/office/drawing/2014/main";
+
+/** One anchor corner: [col, colOffPx, row, rowOffPx] (0-based). */
+type Corner = readonly [number, number, number, number];
+
+/** What spec131-drawings.xlsx holds, for the unit and e2e specs. Corners
+ * are [col, colOff px, row, rowOff px] at Excel's 64 × 20 px default grid. */
+export const SPEC131_DRAWINGS_XLSX = {
+  title: "Drawings",
+  sheetNames: ["Sheet1", "Data"],
+  activeSheetIndex: 0,
+  drawingPart: "xl/drawings/drawing1.xml",
+  drawingRels: "xl/drawings/_rels/drawing1.xml.rels",
+  /** A1..A30 of Sheet1: "Item 1".."Item 30". */
+  items: 30,
+  media: { png: "xl/media/image1.png", emf: "xl/media/image2.emf" },
+  ink: "xl/ink/ink1.xml",
+  /** The drawings in z-order (back to front), as the reader models them. */
+  drawings: [
+    { name: "Picture 1", kind: "image", altText: "Company logo", anchor: "twoCell", editAs: "oneCell", from: [1, 0, 2, 0] as Corner, to: [2, 32, 5, 4] as Corner, extPx: [96, 64], rId: "rId1" },
+    { name: "Rounded Rectangle 2", kind: "shape", geometry: "roundRect", text: "Assumptions", anchor: "twoCell", from: [4, 0, 2, 0] as Corner, to: [6, 0, 5, 0] as Corner },
+    { name: "Straight Arrow Connector 3", kind: "shape", geometry: "straightConnector1", anchor: "twoCell", from: [3, 0, 7, 10] as Corner, to: [5, 0, 9, 10] as Corner },
+    { name: "Oval 4", kind: "shape", geometry: "ellipse", anchor: "oneCell", from: [7, 0, 2, 0] as Corner, extPx: [64, 40] },
+    { name: "Rectangle 5", kind: "shape", geometry: "rect", anchor: "absolute", posPx: [640, 20], extPx: [96, 40] },
+    { name: "Group 8", kind: "group", members: ["Rectangle 6", "Oval 7"], anchor: "twoCell", from: [1, 0, 11, 0] as Corner, to: [4, 0, 15, 0] as Corner },
+    { name: "Rectangle 9", kind: "shape", geometry: "rect", hidden: true, anchor: "twoCell", from: [8, 0, 11, 0] as Corner, to: [9, 0, 13, 0] as Corner },
+    { name: "Check Box 1", kind: "foreign", label: "Form control", requires: "a14", anchor: "twoCell", editAs: "absolute", from: [5, 0, 11, 0] as Corner, to: [7, 0, 12, 0] as Corner },
+    { name: "Region", kind: "foreign", label: "Slicer", requires: "sle15", anchor: "twoCell", editAs: "oneCell", from: [10, 0, 2, 0] as Corner, to: [12, 40, 12, 0] as Corner },
+    { name: "Ink 11", kind: "foreign", label: "Ink", requires: "aink", anchor: "twoCell", editAs: "oneCell", from: [1, 0, 17, 0] as Corner, to: [3, 0, 20, 0] as Corner, rId: "rId3", fallbackRId: "rId4" },
+    { name: "Picture 12", kind: "image", contentType: "image/x-emf", anchor: "twoCell", editAs: "oneCell", from: [5, 0, 17, 0] as Corner, to: [7, 0, 20, 0] as Corner, rId: "rId5" },
+  ],
+  /** Excel's text-box Fallback for a table slicer. */
+  slicerText: "This shape represents a table slicer. Table slicers are supported in Excel or later versions.",
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    "xl/drawings/drawing1.xml",
+    "xl/drawings/_rels/drawing1.xml.rels",
+    "xl/media/image1.png",
+    "xl/media/image2.emf",
+    "xl/ink/ink1.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** `<xdr:from>` / `<xdr:to>` as Excel writes them. */
+function spec131Corner(tag: "from" | "to", [col, colOff, row, rowOff]: Corner): string {
+  return (
+    `<xdr:${tag}><xdr:col>${col}</xdr:col><xdr:colOff>${colOff * SPEC131_EMU}</xdr:colOff>` +
+    `<xdr:row>${row}</xdr:row><xdr:rowOff>${rowOff * SPEC131_EMU}</xdr:rowOff></xdr:${tag}>`
+  );
+}
+
+/** A cNvPr with Excel's a16:creationId extLst (and `inner` exts before it). */
+function spec131CNvPr(id: number, name: string, options: { descr?: string; hidden?: boolean; exts?: string } = {}): string {
+  const creation = `{${(0x2a6c0000 + id).toString(16).toUpperCase()}-7A1B-4C2D-9E3F-${String(id).padStart(12, "0")}}`;
+  return (
+    `<xdr:cNvPr id="${id}" name="${name}"${options.descr === undefined ? "" : ` descr="${options.descr}"`}${options.hidden ? ` hidden="1"` : ""}>` +
+    `<a:extLst>${options.exts ?? ""}<a:ext uri="{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}"><a16:creationId xmlns:a16="${A16_NS}" id="${creation}"/></a:ext></a:extLst></xdr:cNvPr>`
+  );
+}
+
+/** An `a:xfrm` over a px box. */
+function spec131Xfrm(x: number, y: number, w: number, h: number, extra = ""): string {
+  const E = SPEC131_EMU;
+  return `<a:xfrm${extra}><a:off x="${x * E}" y="${y * E}"/><a:ext cx="${w * E}" cy="${h * E}"/></a:xfrm>`;
+}
+
+/** Excel's theme-styled shape reference block. */
+const SPEC131_SHAPE_STYLE =
+  `<xdr:style><a:lnRef idx="2"><a:schemeClr val="accent1"><a:shade val="15000"/></a:schemeClr></a:lnRef>` +
+  `<a:fillRef idx="1"><a:schemeClr val="accent1"/></a:fillRef><a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef>` +
+  `<a:fontRef idx="minor"><a:schemeClr val="lt1"/></a:fontRef></xdr:style>`;
+
+/** An `xdr:sp` as Excel writes a preset shape. */
+function spec131Shape(id: number, name: string, prst: string, box: readonly [number, number, number, number], options: { hidden?: boolean; text?: string; avLst?: string } = {}): string {
+  const text = options.text ?? "";
+  return (
+    `<xdr:sp macro="" textlink=""><xdr:nvSpPr>${spec131CNvPr(id, name, { hidden: options.hidden })}<xdr:cNvSpPr/></xdr:nvSpPr>` +
+    `<xdr:spPr>${spec131Xfrm(...box)}<a:prstGeom prst="${prst}"><a:avLst>${options.avLst ?? ""}</a:avLst></a:prstGeom></xdr:spPr>` +
+    SPEC131_SHAPE_STYLE +
+    `<xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip" rtlCol="0" anchor="ctr"/><a:lstStyle/>` +
+    (text === ""
+      ? `<a:p><a:pPr algn="l"/><a:endParaRPr lang="en-US" sz="1100"/></a:p>`
+      : `<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="en-US" sz="1100" b="1"/><a:t>${text}</a:t></a:r></a:p>`) +
+    `</xdr:txBody></xdr:sp>`
+  );
+}
+
+/** An `xdr:pic` over relationship `rId`. */
+function spec131Picture(id: number, name: string, rId: string, box: readonly [number, number, number, number], descr?: string): string {
+  return (
+    `<xdr:pic><xdr:nvPicPr>${spec131CNvPr(id, name, { descr })}<xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
+    `<xdr:blipFill><a:blip xmlns:r="${REL_NS}" r:embed="${rId}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
+    `<xdr:spPr>${spec131Xfrm(...box)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`
+  );
+}
+
+/** A corner's px position at the default 64 × 20 px grid. */
+const spec131Px = ([col, colOff, row, rowOff]: Corner): [number, number] => [col * 64 + colOff, row * 20 + rowOff];
+
+/** The box between two corners, px. */
+function spec131Box(from: Corner, to: Corner): [number, number, number, number] {
+  const [x1, y1] = spec131Px(from);
+  const [x2, y2] = spec131Px(to);
+  return [x1, y1, x2 - x1, y2 - y1];
+}
+
+function spec131TwoCell(from: Corner, to: Corner, content: string, editAs?: string): string {
+  return `<xdr:twoCellAnchor${editAs === undefined ? "" : ` editAs="${editAs}"`}>${spec131Corner("from", from)}${spec131Corner("to", to)}${content}<xdr:clientData/></xdr:twoCellAnchor>`;
+}
+
+/** xl/drawings/drawing1.xml: the eleven top-level children, in z-order. */
+export function spec131DrawingXml(): string {
+  const D = SPEC131_DRAWINGS_XLSX.drawings;
+  const E = SPEC131_EMU;
+  const [picture, rounded, arrow, oval, rectangle, group, hidden, checkbox, slicer, ink, emf] = D;
+  const groupBox = spec131Box(group.from, group.to);
+  const [gx, gy, gw, gh] = groupBox;
+  const half = gw / 2;
+  const children = [
+    spec131TwoCell(picture.from, picture.to, spec131Picture(2, picture.name, picture.rId, [...spec131Px(picture.from), 96, 64], picture.altText), "oneCell"),
+    spec131TwoCell(rounded.from, rounded.to, spec131Shape(3, rounded.name, "roundRect", spec131Box(rounded.from, rounded.to), { text: rounded.text })),
+    spec131TwoCell(
+      arrow.from,
+      arrow.to,
+      `<xdr:cxnSp macro=""><xdr:nvCxnSpPr>${spec131CNvPr(4, arrow.name)}<xdr:cNvCxnSpPr/></xdr:nvCxnSpPr>` +
+        `<xdr:spPr>${spec131Xfrm(...spec131Box(arrow.from, arrow.to))}<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>` +
+        `<a:ln w="19050"><a:solidFill><a:srgbClr val="C00000"/></a:solidFill><a:tailEnd type="triangle"/></a:ln></xdr:spPr>` +
+        `<xdr:style><a:lnRef idx="1"><a:schemeClr val="accent1"/></a:lnRef><a:fillRef idx="0"><a:schemeClr val="accent1"/></a:fillRef>` +
+        `<a:effectRef idx="0"><a:schemeClr val="accent1"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="tx1"/></a:fontRef></xdr:style></xdr:cxnSp>`,
+    ),
+    `<xdr:oneCellAnchor>${spec131Corner("from", oval.from)}<xdr:ext cx="${oval.extPx[0] * E}" cy="${oval.extPx[1] * E}"/>` +
+      spec131Shape(5, oval.name, "ellipse", [...spec131Px(oval.from), ...oval.extPx]) +
+      `<xdr:clientData/></xdr:oneCellAnchor>`,
+    `<xdr:absoluteAnchor><xdr:pos x="${rectangle.posPx[0] * E}" y="${rectangle.posPx[1] * E}"/><xdr:ext cx="${rectangle.extPx[0] * E}" cy="${rectangle.extPx[1] * E}"/>` +
+      spec131Shape(6, rectangle.name, "rect", [...rectangle.posPx, ...rectangle.extPx]) +
+      `<xdr:clientData/></xdr:absoluteAnchor>`,
+    spec131TwoCell(
+      group.from,
+      group.to,
+      `<xdr:grpSp><xdr:nvGrpSpPr>${spec131CNvPr(9, group.name)}<xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>` +
+        `<xdr:grpSpPr><a:xfrm><a:off x="${gx * E}" y="${gy * E}"/><a:ext cx="${gw * E}" cy="${gh * E}"/><a:chOff x="${gx * E}" y="${gy * E}"/><a:chExt cx="${gw * E}" cy="${gh * E}"/></a:xfrm></xdr:grpSpPr>` +
+        spec131Shape(7, group.members[0], "rect", [gx, gy, half, gh]) +
+        spec131Shape(8, group.members[1], "ellipse", [gx + half, gy, half, gh]) +
+        `</xdr:grpSp>`,
+    ),
+    spec131TwoCell(hidden.from, hidden.to, spec131Shape(10, hidden.name, "rect", spec131Box(hidden.from, hidden.to), { hidden: true })),
+    // Excel's form control: the real face is the sheet's VML; the drawing
+    // part carries a hidden stand-in under a14 and an empty Fallback.
+    `<mc:AlternateContent xmlns:mc="${MC_NS}"><mc:Choice xmlns:a14="${A14_NS}" Requires="a14">` +
+      spec131TwoCell(
+        checkbox.from,
+        checkbox.to,
+        `<xdr:sp macro="" textlink=""><xdr:nvSpPr>` +
+          spec131CNvPr(1025, checkbox.name, { hidden: true, exts: `<a:ext uri="{63B3BB69-23CF-44E3-9099-C40C66FF867C}"><a14:compatExt spid="_x0000_s1025"/></a:ext>` }) +
+          `<xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr bwMode="auto"><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+          `<a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="clip" wrap="square" lIns="27432" tIns="18288" rIns="0" bIns="18288" anchor="ctr" upright="1"/>` +
+          `<a:lstStyle/><a:p><a:pPr algn="l" rtl="0"><a:defRPr sz="1000"/></a:pPr><a:r><a:rPr lang="en-US" sz="800" b="0" i="0" u="none" strike="noStrike" baseline="0">` +
+          `<a:solidFill><a:srgbClr val="000000"/></a:solidFill><a:latin typeface="Segoe UI"/><a:cs typeface="Segoe UI"/></a:rPr><a:t>${checkbox.name}</a:t></a:r></a:p></xdr:txBody></xdr:sp>`,
+        "absolute",
+      ) +
+      `</mc:Choice><mc:Fallback/></mc:AlternateContent>`,
+    // Excel's table slicer: a sle15 graphic frame, and the text box an
+    // older reader shows instead.
+    `<mc:AlternateContent xmlns:mc="${MC_NS}"><mc:Choice xmlns:sle15="http://schemas.microsoft.com/office/drawing/2012/slicer" Requires="sle15">` +
+      spec131TwoCell(
+        slicer.from,
+        slicer.to,
+        `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr>${spec131CNvPr(11, slicer.name)}<xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>` +
+          `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2010/slicer">` +
+          `<sle:slicer xmlns:sle="http://schemas.microsoft.com/office/drawing/2010/slicer" name="${slicer.name}"/></a:graphicData></a:graphic></xdr:graphicFrame>`,
+        "oneCell",
+      ) +
+      `</mc:Choice><mc:Fallback xmlns="">` +
+      spec131TwoCell(
+        slicer.from,
+        slicer.to,
+        `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="0" name=""/><xdr:cNvSpPr><a:spLocks noTextEdit="1"/></xdr:cNvSpPr></xdr:nvSpPr>` +
+          `<xdr:spPr>${spec131Xfrm(...spec131Box(slicer.from, slicer.to))}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+          `<a:solidFill><a:prstClr val="white"/></a:solidFill><a:ln w="1"><a:solidFill><a:prstClr val="green"/></a:solidFill></a:ln></xdr:spPr>` +
+          `<xdr:txBody><a:bodyPr vertOverflow="clip" horzOverflow="clip"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="1100"/>` +
+          `<a:t>${SPEC131_DRAWINGS_XLSX.slicerText}</a:t></a:r></a:p></xdr:txBody></xdr:sp>`,
+        "oneCell",
+      ) +
+      `</mc:Fallback></mc:AlternateContent>`,
+    // Excel's ink: an InkML content part, and its picture for older readers.
+    `<mc:AlternateContent xmlns:mc="${MC_NS}"><mc:Choice xmlns:aink="http://schemas.microsoft.com/office/drawing/2016/ink" Requires="aink">` +
+      spec131TwoCell(ink.from, ink.to, `<xdr:contentPart xmlns:r="${REL_NS}" r:id="${ink.rId}"/>`, "oneCell") +
+      `</mc:Choice><mc:Fallback>` +
+      spec131TwoCell(ink.from, ink.to, spec131Picture(12, ink.name, ink.fallbackRId, spec131Box(ink.from, ink.to)), "oneCell") +
+      `</mc:Fallback></mc:AlternateContent>`,
+    spec131TwoCell(emf.from, emf.to, spec131Picture(13, emf.name, emf.rId, spec131Box(emf.from, emf.to)), "oneCell"),
+  ];
+  return XML_DECLARATION + `<xdr:wsDr xmlns:xdr="${XDR_NS}" xmlns:a="${A_NS}">${children.join("")}</xdr:wsDr>`;
+}
+
+/** xl/ink/ink1.xml: one InkML stroke. */
+const SPEC131_INK =
+  `<inkml:ink xmlns:inkml="http://www.w3.org/2003/InkML"><inkml:definitions><inkml:context xml:id="ctx0"><inkml:inkSource xml:id="inkSrc0">` +
+  `<inkml:traceFormat><inkml:channel name="X" type="integer" max="32767" units="cm"/><inkml:channel name="Y" type="integer" max="32767" units="cm"/></inkml:traceFormat>` +
+  `</inkml:inkSource></inkml:context><inkml:brush xml:id="br0"><inkml:brushProperty name="width" value="0.05" units="cm"/>` +
+  `<inkml:brushProperty name="height" value="0.05" units="cm"/><inkml:brushProperty name="color" value="#E71224"/></inkml:brush></inkml:definitions>` +
+  `<inkml:trace contextRef="#ctx0" brushRef="#br0">0 0, 100 50, 200 80, 300 40</inkml:trace></inkml:ink>`;
+
+export async function buildSpec131DrawingsXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC131_DRAWINGS_XLSX;
+  const items = Array.from({ length: F.items }, (_, i) => `Item ${i + 1}`);
+  const sheet1 =
+    XML_DECLARATION +
+    worksheetOpen("4C1F2A3B-5D6E-4F70-8192-A3B4C5D6E7F8") +
+    `<dimension ref="A1:A${F.items}"/>` +
+    `<sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>` +
+    `<sheetData>${items.map((_, i) => excelRow(i + 1, "1:1", sharedCell(`A${i + 1}`, i))).join("")}</sheetData>` +
+    SPEC117_PAGE_MARGINS +
+    `<drawing r:id="rId1"/></worksheet>`;
+  const sheet2 =
+    XML_DECLARATION +
+    worksheetOpen("5D2A3B4C-6E7F-4081-92A3-B4C5D6E7F809") +
+    `<dimension ref="A1"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>` +
+    `<sheetData><row r="1" spans="1:1" x14ac:dyDescent="0.25">${numberCell("A1", 42)}</row></sheetData>${SPEC117_PAGE_MARGINS}</worksheet>`;
+  const rels = (body: string): string => XML_DECLARATION + `<Relationships xmlns="${PKG_REL_NS}">${body}</Relationships>`;
+  const D = F.drawings;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: [
+      { name: F.sheetNames[0], xml: sheet1 },
+      { name: F.sheetNames[1], xml: sheet2 },
+    ],
+    sharedStrings: sharedStringsXml(items),
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    defaults: [`<Default Extension="emf" ContentType="image/x-emf"/>`, `<Default Extension="png" ContentType="image/png"/>`],
+    additions: {
+      parts: [
+        part("xl/worksheets/_rels/sheet1.xml.rels", rels(`<Relationship Id="rId1" Type="${REL_TYPE}/drawing" Target="../drawings/drawing1.xml"/>`)),
+        part(F.drawingPart, spec131DrawingXml()),
+        part(
+          F.drawingRels,
+          rels(
+            `<Relationship Id="${D[10].rId}" Type="${REL_TYPE}/image" Target="../media/image2.emf"/>` +
+              `<Relationship Id="${D[9].fallbackRId}" Type="${REL_TYPE}/image" Target="../media/image1.png"/>` +
+              `<Relationship Id="${D[9].rId}" Type="${REL_TYPE}/customXml" Target="../ink/ink1.xml"/>` +
+              `<Relationship Id="${D[0].rId}" Type="${REL_TYPE}/image" Target="../media/image1.png"/>`,
+          ),
+        ),
+        { name: F.media.png, data: SPEC131_PICTURE_PNG },
+        { name: F.media.emf, data: SPEC131_EMF },
+        part(F.ink, SPEC131_INK),
+      ],
+      relationships: [],
+      overrides: [
+        `<Override PartName="/${F.drawingPart}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`,
+        `<Override PartName="/${F.ink}" ContentType="application/inkml+xml"/>`,
+      ],
+    },
+  });
+}
+
+// --- spec131-drawings.ods ------------------------------------------------------
+
+/** LibreOffice's default column (0.889in = 2.258cm) and row (0.178in = 0.452cm). */
+const SPEC131_COL_CM = 2.258;
+const SPEC131_ROW_CM = 0.452;
+
+/** What spec131-drawings.ods holds. Cells are 0-based [col, row]; lengths cm. */
+export const SPEC131_DRAWINGS_ODS = {
+  title: "Drawings",
+  tableNames: ["Sheet1", "Data"],
+  activeTable: "Sheet1",
+  picture: "Pictures/10000001000000600000004079B3D4BE3C6C9E8F.png",
+  items: 30,
+  /** In z-order (draw:z-index). */
+  drawings: [
+    { name: "Image 1", kind: "image", altText: "Company logo", cell: [1, 1], anchor: "twoCell", end: "Sheet1.C7", sizeCm: [4, 2.667] },
+    { name: "Assumptions box", kind: "shape", geometry: "roundRect", text: "Assumptions", cell: [4, 11], anchor: "oneCell", offsetCm: [0.2, 0.1], sizeCm: [3, 1.5] },
+    { name: "Shape 3", kind: "shape", geometry: "rect", anchor: "absolute", posCm: [12, 1], sizeCm: [2, 1] },
+    { name: "Rotated 4", kind: "shape", geometry: "rect", cell: [1, 15], anchor: "twoCell", end: "Sheet1.C20", rotationDeg: 330, sizeCm: [2, 1] },
+    { name: "Group 5", kind: "group", members: ["Group 5 rect", "Group 5 oval"], cell: [4, 15], anchor: "twoCell", end: "Sheet1.F19" },
+    { name: "Check Box 1", kind: "foreign", label: "Form control", cell: [7, 1], anchor: "twoCell", end: "Sheet1.I4" },
+  ],
+} as const;
+
+const cm = (value: number): string => `${Number(value.toFixed(3))}cm`;
+
+/** The automatic graphic and paragraph styles Calc writes for the drawings. */
+const SPEC131_ODS_STYLES =
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="none" svg:stroke-color="#000000" draw:fill="none" ` +
+  `draw:fill-color="#ffffff" fo:min-height="0cm" fo:min-width="0cm" draw:textarea-horizontal-align="center" draw:textarea-vertical-align="middle" ` +
+  `draw:color-mode="standard" draw:luminance="0%" draw:contrast="0%" draw:gamma="100%" draw:red="0%" draw:green="0%" draw:blue="0%" ` +
+  `fo:clip="rect(0cm, 0cm, 0cm, 0cm)" draw:image-opacity="100%" style:mirror="none"/></style:style>` +
+  `<style:style style:name="gr2" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-width="0.035cm" svg:stroke-color="#3465a4" ` +
+  `draw:fill="solid" draw:fill-color="#729fcf" draw:textarea-horizontal-align="center" draw:textarea-vertical-align="middle" fo:padding-top="0.125cm" ` +
+  `fo:padding-bottom="0.125cm" fo:padding-left="0.25cm" fo:padding-right="0.25cm"/></style:style>` +
+  `<style:style style:name="gr3" style:family="graphic"><style:graphic-properties draw:stroke="dash" draw:stroke-dash="Fine_20_Dashed" svg:stroke-width="0.053cm" ` +
+  `svg:stroke-color="#c9211e" draw:fill="solid" draw:fill-color="#ffbf00" draw:textarea-horizontal-align="center" draw:textarea-vertical-align="middle"/></style:style>` +
+  `<style:style style:name="gr4" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#3465a4" draw:fill="solid" ` +
+  `draw:fill-color="#77bc65" draw:textarea-horizontal-align="center" draw:textarea-vertical-align="middle"/></style:style>` +
+  `<style:style style:name="gr5" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#3465a4" draw:fill="solid" ` +
+  `draw:fill-color="#ff8000" draw:textarea-horizontal-align="center" draw:textarea-vertical-align="middle"/></style:style>` +
+  `<style:style style:name="gr6" style:family="graphic"><style:graphic-properties draw:textarea-vertical-align="middle" draw:wrap="run-through" ` +
+  `style:run-through="foreground" draw:ole-draw-aspect="1"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:text-align="center"/></style:style>` +
+  `<style:style style:name="T1" style:family="text"><style:text-properties fo:font-size="11pt" fo:font-weight="bold" fo:color="#ffffff"/></style:style>`;
+
+/** A custom shape as Calc writes one: `geometry` is draw:type (with its
+ * enhanced path where Calc writes one), `text` its paragraph. */
+function spec131OdsShape(attrs: string, type: string, text = ""): string {
+  const geometry =
+    type === "round-rectangle"
+      ? `<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="round-rectangle" draw:modifiers="3600" ` +
+        `draw:enhanced-path="M ?f7 0 X 0 ?f8 L 0 ?f9 Y ?f7 21600 L ?f10 21600 X 21600 ?f9 L 21600 ?f8 Y ?f10 0 Z N">` +
+        `<draw:equation draw:name="f0" draw:formula="45"/><draw:equation draw:name="f1" draw:formula="$0 *sin(?f0 *(pi/180))"/>` +
+        `<draw:equation draw:name="f7" draw:formula="left+$0 "/><draw:equation draw:name="f8" draw:formula="top+$0 "/>` +
+        `<draw:equation draw:name="f9" draw:formula="bottom-$0 "/><draw:equation draw:name="f10" draw:formula="right-$0 "/>` +
+        `<draw:handle draw:handle-position="$0 top" draw:handle-switched="true" draw:handle-range-x-minimum="0" draw:handle-range-x-maximum="10800"/></draw:enhanced-geometry>`
+      : `<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="${type}" draw:enhanced-path="M 0 0 L 21600 0 21600 21600 0 21600 0 0 Z N"/>`;
+  const paragraph = text === "" ? "" : `<text:p text:style-name="P1"><text:span text:style-name="T1">${text}</text:span></text:p>`;
+  return `<draw:custom-shape ${attrs}>${paragraph}${geometry}</draw:custom-shape>`;
+}
+
+/** A cell (0-based) position, cm. */
+const spec131OdsAt = (col: number, row: number): [number, number] => [col * SPEC131_COL_CM, row * SPEC131_ROW_CM];
+
+export async function buildSpec131DrawingsOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC131_DRAWINGS_ODS;
+  const [image, box, page, rotated, group, control] = O.drawings;
+  const [ix, iy] = spec131OdsAt(...image.cell);
+  const frame =
+    `<draw:frame table:end-cell-address="${image.end}" table:end-x="1.742cm" table:end-y="0.407cm" draw:z-index="0" draw:name="${image.name}" ` +
+    `draw:style-name="gr1" draw:text-style-name="P1" svg:width="${cm(image.sizeCm[0])}" svg:height="${cm(image.sizeCm[1])}" svg:x="${cm(ix)}" svg:y="${cm(iy)}">` +
+    `<draw:image xlink:href="${O.picture}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="image/png"><text:p/></draw:image>` +
+    `<svg:desc>${image.altText}</svg:desc></draw:frame>`;
+  const [bx, by] = spec131OdsAt(...box.cell);
+  const boxShape = spec131OdsShape(
+    `draw:z-index="1" draw:name="${box.name}" draw:style-name="gr2" draw:text-style-name="P1" svg:width="${cm(box.sizeCm[0])}" svg:height="${cm(box.sizeCm[1])}" ` +
+      `svg:x="${cm(bx + box.offsetCm[0])}" svg:y="${cm(by + box.offsetCm[1])}"`,
+    "round-rectangle",
+    box.text,
+  );
+  const pageShape = spec131OdsShape(
+    `draw:z-index="2" draw:name="${page.name}" draw:style-name="gr3" draw:text-style-name="P1" svg:width="${cm(page.sizeCm[0])}" svg:height="${cm(page.sizeCm[1])}" ` +
+      `svg:x="${cm(page.posCm[0])}" svg:y="${cm(page.posCm[1])}"`,
+    "rectangle",
+  );
+  const [rx, ry] = spec131OdsAt(...rotated.cell);
+  // 30° counter-clockwise (ODF's sense) = 330° clockwise; the translation is
+  // the rotated box's reference corner.
+  const rotatedShape = spec131OdsShape(
+    `table:end-cell-address="${rotated.end}" table:end-x="0.274cm" table:end-y="0.258cm" draw:z-index="3" draw:name="${rotated.name}" draw:style-name="gr4" ` +
+      `draw:text-style-name="P1" svg:width="${cm(rotated.sizeCm[0])}" svg:height="${cm(rotated.sizeCm[1])}" ` +
+      `draw:transform="rotate (0.523598775598299) translate (${cm(rx + 0.3)} ${cm(ry + 1.2)})"`,
+    "rectangle",
+  );
+  const [gx, gy] = spec131OdsAt(...group.cell);
+  const groupXml =
+    `<draw:g table:end-cell-address="${group.end}" table:end-x="2.242cm" table:end-y="0.144cm" draw:z-index="4" draw:name="${group.name}">` +
+    spec131OdsShape(`draw:name="${group.members[0]}" draw:style-name="gr4" draw:text-style-name="P1" svg:width="2cm" svg:height="1.5cm" svg:x="${cm(gx)}" svg:y="${cm(gy)}"`, "rectangle") +
+    spec131OdsShape(`draw:name="${group.members[1]}" draw:style-name="gr5" draw:text-style-name="P1" svg:width="2cm" svg:height="1.5cm" svg:x="${cm(gx + 2.5)}" svg:y="${cm(gy)}"`, "ellipse") +
+    `</draw:g>`;
+  const [cx, cy] = spec131OdsAt(...control.cell);
+  const controlXml =
+    `<draw:control table:end-cell-address="${control.end}" table:end-x="0cm" table:end-y="0cm" draw:z-index="5" draw:name="${control.name}" draw:style-name="gr6" ` +
+    `draw:text-style-name="P1" svg:width="${cm(SPEC131_COL_CM)}" svg:height="${cm(2 * SPEC131_ROW_CM)}" svg:x="${cm(cx)}" svg:y="${cm(cy)}" draw:control="control1"/>`;
+  const forms =
+    `<office:forms form:automatic-focus="false" form:apply-design-mode="false"><form:form form:name="Form" form:apply-filter="true" ` +
+    `form:command-type="table" form:control-implementation="ooo:com.sun.star.form.component.Form" office:target-frame="">` +
+    `<form:properties><form:property form:property-name="PropertyChangeNotificationEnabled" office:value-type="boolean" office:boolean-value="true"/></form:properties>` +
+    `<form:checkbox form:name="${control.name}" form:control-implementation="ooo:com.sun.star.form.component.CheckBox" xml:id="control1" form:id="control1" ` +
+    `form:label="${control.name}" form:image-position="center"><form:properties><form:property form:property-name="DefaultControl" office:value-type="string" ` +
+    `office:string-value="com.sun.star.form.control.CheckBox"/></form:properties></form:checkbox></form:form></office:forms>`;
+  // Row r holds Item r+1 in A, and the drawings anchored on that row's cells.
+  const inCell: Record<string, string> = {
+    [`${image.cell[0]},${image.cell[1]}`]: frame,
+    [`${control.cell[0]},${control.cell[1]}`]: controlXml,
+    [`${box.cell[0]},${box.cell[1]}`]: boxShape,
+    [`${rotated.cell[0]},${rotated.cell[1]}`]: rotatedShape,
+    [`${group.cell[0]},${group.cell[1]}`]: groupXml,
+  };
+  const rows: string[] = [];
+  for (let r = 0; r < O.items; r += 1) {
+    const anchored = Object.entries(inCell)
+      .map(([key, xml]) => ({ col: Number(key.split(",")[0]), row: Number(key.split(",")[1]), xml }))
+      .filter((entry) => entry.row === r)
+      .toSorted((a, b) => a.col - b.col);
+    let cells = loString(`Item ${r + 1}`);
+    let at = 1;
+    for (const entry of anchored) {
+      if (entry.col > at) {
+        cells += entry.col - at === 1 ? `<table:table-cell/>` : loEmpty(entry.col - at);
+      }
+      cells += `<table:table-cell>${entry.xml}</table:table-cell>`;
+      at = entry.col + 1;
+    }
+    cells += loEmpty(16384 - at);
+    rows.push(loRow(cells));
+  }
+  const sheet1 =
+    `<table:table table:name="Sheet1" table:style-name="ta1">${forms}<table:shapes>${pageShape}</table:shapes>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    rows.join("") +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.items) +
+    `</table:table>`;
+  const data =
+    `<table:table table:name="Data" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loFloat(42) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 1_048_575) +
+    `</table:table>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}` +
+    LO_AUTOMATIC_STYLES.replace("</office:automatic-styles>", `${SPEC131_ODS_STYLES}</office:automatic-styles>`) +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${sheet1}${data}<table:named-expressions/></office:spreadsheet></office:body></office:document-content>`;
+  const manifest = LO_MANIFEST.replace(
+    `<manifest:file-entry manifest:full-path="Thumbnails/thumbnail.png"`,
+    `<manifest:file-entry manifest:full-path="${O.picture}" manifest:media-type="image/png"/><manifest:file-entry manifest:full-path="Thumbnails/thumbnail.png"`,
+  );
+  return zip([
+    { name: "mimetype", data: encoder.encode("application/vnd.oasis.opendocument.spreadsheet"), store: true },
+    { name: O.picture, data: SPEC131_PICTURE_PNG },
+    part("meta.xml", loMeta(O.title, O.tableNames.length, O.items + 1, O.drawings.length)),
+    part("settings.xml", loSettings(O.tableNames, O.activeTable)),
+    part("content.xml", content),
+    { name: "Thumbnails/thumbnail.png", data: THUMBNAIL_PNG },
+    part("styles.xml", LO_STYLES),
+    part("manifest.rdf", LO_MANIFEST_RDF),
+    part("META-INF/manifest.xml", manifest),
+  ]);
+}
+// ============================================================================
+// end of SPEC-131
+// ============================================================================
