@@ -1,7 +1,9 @@
 // SPEC-130's chrome placement: the input message below-right of the cell,
 // flipping left and up to stay inside the cell area; the dropdown button
 // against the cell's right edge (inside it at the area's edge); the list
-// under the cell (above when there is no room), eight rows tall at most.
+// under the cell (above when there is no room), eight rows tall at most and
+// always inside the area — the roomier side, scrolling, when neither side
+// holds it; shifted left at the right edge.
 // The list's keys are covered through ValidationDropdown.spec.ts.
 import { describe, expect, it } from "vitest";
 import { DROPDOWN_BUTTON_PX, INPUT_MESSAGE_GAP_PX, LIST_ROW_PX, nextItemStartingWith, placeDropdownButton, placeInputMessage, placeValidationList } from "./validationChrome";
@@ -36,14 +38,29 @@ describe("placeDropdownButton", () => {
 
 describe("placeValidationList", () => {
   it("opens under the cell, at least its width, at most eight rows tall", () => {
-    expect(placeValidationList(CELL, 3, BOUNDS)).toEqual({ left: 100, top: 60, minWidth: 64 + DROPDOWN_BUTTON_PX, maxHeight: 3 * LIST_ROW_PX + 2 });
+    expect(placeValidationList(CELL, 3, BOUNDS)).toEqual({ left: 100, top: 60, minWidth: 64 + DROPDOWN_BUTTON_PX, maxWidth: 500, maxHeight: 3 * LIST_ROW_PX + 2 });
     expect(placeValidationList(CELL, 50, BOUNDS).maxHeight).toBe(8 * LIST_ROW_PX + 2);
   });
 
   it("opens above the cell when the room is there and not below", () => {
     expect(placeValidationList({ ...CELL, top: 380 }, 8, BOUNDS).top).toBe(380 - (8 * LIST_ROW_PX + 2));
-    // No room either way: below.
-    expect(placeValidationList({ ...CELL, top: 100 }, 8, { width: 600, height: 200 }).top).toBe(120);
+    // A cell the area's bottom edge cuts through (QA's B10 in a short window).
+    expect(placeValidationList({ ...CELL, top: 190 }, 3, { width: 600, height: 200 })).toMatchObject({ top: 190 - (3 * LIST_ROW_PX + 2), maxHeight: 3 * LIST_ROW_PX + 2 });
+  });
+
+  it("with room on neither side, takes the roomier one and scrolls in what it holds", () => {
+    const short = { width: 600, height: 200 };
+    // 100 px above, 80 below: above, from the area's top.
+    expect(placeValidationList({ ...CELL, top: 100 }, 8, short)).toMatchObject({ top: 0, maxHeight: 100 });
+    // 60 px above, 120 below: below.
+    expect(placeValidationList({ ...CELL, top: 60 }, 8, short)).toMatchObject({ top: 80, maxHeight: 120 });
+    // Neither side holds a row: over the cell, inside the area.
+    expect(placeValidationList({ left: 100, top: 5, width: 64, height: 20 }, 8, { width: 600, height: 30 })).toMatchObject({ top: 0, maxHeight: 30 });
+  });
+
+  it("shifts left to keep its width inside the right edge, a long item cut there", () => {
+    expect(placeValidationList({ ...CELL, left: 560 }, 3, BOUNDS)).toMatchObject({ left: 600 - (64 + DROPDOWN_BUTTON_PX), maxWidth: 64 + DROPDOWN_BUTTON_PX });
+    expect(placeValidationList({ ...CELL, left: 0, width: 700 }, 3, BOUNDS)).toMatchObject({ left: 0, minWidth: 700 + DROPDOWN_BUTTON_PX });
   });
 });
 

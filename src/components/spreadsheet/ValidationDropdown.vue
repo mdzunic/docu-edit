@@ -3,7 +3,7 @@
 // the active cell's right edge (aria-label "Choose from list",
 // aria-haspopup="listbox", aria-expanded) and, while expanded, the
 // `validation-list` listbox under the cell — at least the cell's width, eight
-// rows visible then scrolling — of `validation-option`s (aria-selected on the
+// rows visible then scrolling, kept inside the cell area — of `validation-option`s (aria-selected on the
 // selected one, which aria-activedescendant names and which is scrolled into
 // view; a blank item is an empty row), or one disabled
 // `validation-list-unavailable` option when the source cannot be listed.
@@ -55,7 +55,7 @@ const buttonStyle = computed(() => {
 });
 const listStyle = computed(() => {
   const box = placeValidationList(cell.value, props.unavailable ? 1 : texts.value.length, area.value);
-  return { left: `${box.left}px`, top: `${box.top}px`, minWidth: `${box.minWidth}px`, maxHeight: `${box.maxHeight}px` };
+  return { left: `${box.left}px`, top: `${box.top}px`, minWidth: `${box.minWidth}px`, maxWidth: `${box.maxWidth}px`, maxHeight: `${box.maxHeight}px` };
 });
 const activeDescendant = computed(() => (props.selected >= 0 && props.selected < texts.value.length ? `validation-option-${props.selected}` : undefined));
 

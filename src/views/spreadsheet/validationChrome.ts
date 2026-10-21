@@ -15,7 +15,11 @@
 //   (inside it when the cell touches the area's right edge), the cell's
 //   height tall.
 // - The list opens under the cell (above it when there is no room below and
-//   there is above), at least the cell's width, eight rows tall at most.
+//   there is above), at least the cell's width, eight rows tall at most —
+//   and always inside the area: with room for it on neither side it takes
+//   the roomier side and scrolls in what that side holds (or, when neither
+//   holds a row, sits over the cell at the area's bottom); it shifts left to
+//   keep its width inside the right edge, a long item cut at that edge.
 // - List keys: Up/Down move by one, Home/End to the ends, PageUp/PageDown by
 //   eight; with nothing selected the first move selects the first item (a
 //   PageDown the eighth). A printable character selects the next item whose
@@ -47,6 +51,8 @@ export const LIST_ROW_PX = 20;
 export const LIST_VISIBLE_ROWS = 8;
 /** The list's border, top and bottom together. */
 const LIST_BORDER_PX = 2;
+/** The least the list shows: one row. */
+const LIST_MIN_PX = LIST_ROW_PX + LIST_BORDER_PX;
 
 /** The input message's top-left for its measured size (see the header). */
 export function placeInputMessage(cell: ChromeRect, size: { width: number; height: number }, bounds: ChromeBounds): { left: number; top: number } {
@@ -68,13 +74,32 @@ export function placeDropdownButton(cell: ChromeRect, bounds: ChromeBounds): Chr
   return { left, top: cell.top, width: DROPDOWN_BUTTON_PX, height: cell.height };
 }
 
-/** The list's position, minimum width and height for `rows` items (see the
+/** The list's position, width limits and height for `rows` items (see the
  * header). */
-export function placeValidationList(cell: ChromeRect, rows: number, bounds: ChromeBounds): { left: number; top: number; minWidth: number; maxHeight: number } {
-  const maxHeight = Math.min(LIST_VISIBLE_ROWS, Math.max(1, rows)) * LIST_ROW_PX + LIST_BORDER_PX;
+export function placeValidationList(
+  cell: ChromeRect,
+  rows: number,
+  bounds: ChromeBounds,
+): { left: number; top: number; minWidth: number; maxWidth: number; maxHeight: number } {
+  const wanted = Math.min(LIST_VISIBLE_ROWS, Math.max(1, rows)) * LIST_ROW_PX + LIST_BORDER_PX;
   const below = cell.top + cell.height;
-  const top = below + maxHeight > bounds.height && cell.top >= maxHeight ? cell.top - maxHeight : below;
-  return { left: Math.max(0, cell.left), top, minWidth: cell.width + DROPDOWN_BUTTON_PX, maxHeight };
+  const roomBelow = bounds.height - below;
+  const roomAbove = cell.top;
+  let top: number;
+  let maxHeight: number;
+  if (wanted <= roomBelow) {
+    [top, maxHeight] = [below, wanted];
+  } else if (wanted <= roomAbove) {
+    [top, maxHeight] = [cell.top - wanted, wanted];
+  } else if (Math.max(roomBelow, roomAbove) >= LIST_MIN_PX) {
+    [top, maxHeight] = roomBelow >= roomAbove ? [below, roomBelow] : [0, roomAbove];
+  } else {
+    maxHeight = Math.max(LIST_MIN_PX, Math.min(wanted, bounds.height));
+    top = Math.max(0, bounds.height - maxHeight);
+  }
+  const minWidth = cell.width + DROPDOWN_BUTTON_PX;
+  const left = Math.max(0, Math.min(cell.left, bounds.width - minWidth));
+  return { left, top, minWidth, maxWidth: Math.max(minWidth, bounds.width - left), maxHeight };
 }
 
 /** What a key in the list does. */
