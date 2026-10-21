@@ -72,13 +72,25 @@
 // table is re-emitted verbatim and keeps the names it carries — unless they
 // cannot be kept (a duplicate's rules), when it is rebuilt from the model.
 //
+// SPEC-131: a rebuilt or new table writes its drawings from the model
+// (ods/drawingXml.ts, the normative source — an imported one's element
+// patched, a created one canonical with a generated `de-gr` graphic style
+// among the generated automatic styles). "Media parts": `model.media` is the
+// source of truth for its paths — a picture a drawing shows is written from
+// there (taking precedence over its `opaque` twin; from scratch, every one),
+// a new one under `Pictures/` gets its manifest file entry (spliced), and a
+// picture of `media` no drawing shows leaves the package only when no
+// retained XML part mentions its path. The draw, svg and xlink namespaces
+// are declared when the content uses them.
+//
 // A cell's informative `text:p` and a locale-dependent built-in format's
 // generated number style are written in the user's locale (`locale`,
 // en-US when absent). ODS has no "recalculate on load" flag: a stale cell's
 // last known value is written as it is.
 import { now as clockNow } from "../../core/clock";
 import { buildMetaXml } from "../../core/odfMeta";
-import { decodedPartBytes } from "../../core/packageParts";
+import { ensureMediaEncoded, type MediaPart } from "../../core/media";
+import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
 import { resolveColor, resolveFont, DEFAULT_THEME } from "../../core/theme";
 import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
@@ -92,17 +104,21 @@ import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, escapeElementText, startTagAt, type Splice } from "../xmlSplice";
 import { decodeUtf8, encodeUtf8 } from "../xlsx/package";
 import {
+  declaredIds,
   isObjectPart,
   objectsReferenced,
   picturesReferenced,
   readManifest,
+  retargetObject,
   setTableAttribute,
   sourceTables,
   spliceManifest,
+  suffixIds,
   tableNameOf,
   tableStyleNameOf,
 } from "./package";
 import { odsDatabaseRangesXml, odsSuffixWithAutoFilters } from "./databaseRanges";
+import { drawingMediaIds, OdsMediaPaths } from "./drawingXml";
 import { OdsConditionalFormatWriter } from "./conditionalFormats";
 import { OdsValidationWriter } from "./contentValidations";
 import { passOdsText, removeRangesOnDeletedSheets, rootNamespaces } from "./sheetNamePass";
@@ -141,6 +157,8 @@ const OOO_NS = "http://openoffice.org/2004/office";
 const MANIFEST_NS = "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0";
 const NUMBER_NS = "urn:oasis:names:tc:opendocument:xmlns:datastyle:1.0";
 const CALCEXT_NS = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
+const DRAW_NS = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
 
 /** The prefixes generated content.xml text uses, and their namespaces. */
 const GENERATED_NAMESPACES: ReadonlyArray<readonly [string, string]> = [
@@ -153,6 +171,10 @@ const GENERATED_NAMESPACES: ReadonlyArray<readonly [string, string]> = [
   ["calcext", CALCEXT_NS],
   ["of", OF_NS],
   ["tableooo", TABLEOOO_NS],
+  // SPEC-131: the drawings and their graphic styles.
+  ["draw", DRAW_NS],
+  ["svg", SVG_NS],
+  ["xlink", XLINK_NS],
 ];
 
 /** The locale a save writes in. */
@@ -255,8 +277,56 @@ export function fromScratchSettingsXml(activeTable: string): string {
 function optionalDeclarations(text: string): string {
   return (
     (text.includes(`<number:`) ? ` xmlns:number="${NUMBER_NS}"` : "") +
-    (text.includes(` calcext:`) ? ` xmlns:calcext="${CALCEXT_NS}"` : "")
+    (text.includes(` calcext:`) ? ` xmlns:calcext="${CALCEXT_NS}"` : "") +
+    (text.includes(`<draw:`) || text.includes(` draw:`) ? ` xmlns:draw="${DRAW_NS}"` : "") +
+    (text.includes(` svg:`) || text.includes(`<svg:`) ? ` xmlns:svg="${SVG_NS}"` : "") +
+    (text.includes(` xlink:`) ? ` xmlns:xlink="${XLINK_NS}"` : "")
   );
+}
+
+// --- SPEC-131: media parts -------------------------------------------------------------------
+
+/** The model's media as a save writes it ("Media parts"): each part a
+ * drawing shows, under its package path (OdsMediaPaths), and the paths of
+ * those none shows. */
+interface MediaPlan {
+  paths: OdsMediaPaths;
+  /** Path → the part, for every part a drawing shows. */
+  shown: Map<string, MediaPart>;
+  /** The paths of the model's parts no drawing shows. */
+  unshown: Set<string>;
+}
+
+function mediaPlan(model: SpreadsheetModel): MediaPlan {
+  const media = model.media ?? [];
+  const paths = new OdsMediaPaths([...model.opaque.map((part) => part.name), ...media.map((part) => part.mediaId)]);
+  const byId = new Map(media.map((part) => [part.mediaId, part] as const));
+  const shown = new Map<string, MediaPart>();
+  for (const sheet of model.sheets) {
+    for (const drawing of sheet.drawings ?? []) {
+      for (const id of drawingMediaIds(drawing)) {
+        const part = byId.get(id);
+        if (part) {
+          shown.set(paths.pathOf(id, part.contentType), part);
+        }
+      }
+    }
+  }
+  const unshown = new Set(media.map((part) => paths.pathOf(part.mediaId, part.contentType)).filter((path) => !shown.has(path)));
+  return { paths, shown, unshown };
+}
+
+/** A media part's bytes (its deferred encode forced first). */
+function mediaBytes(part: MediaPart): Uint8Array {
+  ensureMediaEncoded(part);
+  return base64ToBytes(part.data);
+}
+
+/** A `manifest:file-entry` for a new picture, shaped like the manifest's
+ * own entries (its prefix kept). */
+function manifestEntryFor(manifestXml: string, path: string, mediaType: string): string {
+  const prefix = /<([\w.-]+:)?manifest\b/.exec(manifestXml)?.[1] ?? "manifest:";
+  return `<${prefix}file-entry ${prefix}full-path="${escapeAttributeValue(path)}" ${prefix}media-type="${escapeAttributeValue(mediaType)}"/>`;
 }
 
 function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): ZipEntryInput[] {
@@ -268,8 +338,11 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const conditionalFormats = new OdsConditionalFormatWriter(model, registry, { definesStyle: (name) => name === "Default", appendable: true });
   const validations = new OdsValidationWriter(model, undefined, () => false);
   const validationName = (sheet: Sheet, rule: DataValidation): string | undefined => validations.nameOf(sheet, rule);
+  const plan = mediaPlan(model);
+  const contentTypes = new Map((model.media ?? []).map((part) => [part.mediaId, part.contentType] as const));
+  const mediaPath = (id: string): string => plan.paths.pathOf(id, contentTypes.get(id) ?? "image/png");
   const tables = model.sheets
-    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName }))
+    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath }))
     .join("");
   const databaseRanges = odsDatabaseRangesXml(model.sheets);
   const styles = registry.xml();
@@ -279,9 +352,13 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
     `<office:automatic-styles>${styles}</office:automatic-styles>` +
     `<office:body><office:spreadsheet>${calculationSettings(model)}${validations.blockXml()}${tables}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
   const active = model.sheets[model.activeSheetIndex] ?? model.sheets[0];
+  // SPEC-131: every picture a drawing shows, listed in the manifest.
+  const pictures: ZipEntryInput[] = [...plan.shown].map(([path, part]) => ({ name: path, data: mediaBytes(part) }));
+  const manifest = spliceManifest(FROM_SCRATCH_ODS_MANIFEST_XML, new Set(), [...plan.shown].map(([path, part]) => manifestEntryFor(FROM_SCRATCH_ODS_MANIFEST_XML, path, part.contentType)));
   return [
     { name: "mimetype", data: encode(ODS_MIMETYPE), store: true },
-    { name: "META-INF/manifest.xml", data: encode(FROM_SCRATCH_ODS_MANIFEST_XML) },
+    { name: "META-INF/manifest.xml", data: encode(manifest) },
+    ...pictures,
     { name: "meta.xml", data: encode(buildMetaXml({ title: model.title }, modified)) },
     {
       name: "styles.xml",
@@ -399,7 +476,10 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   // names cannot be kept, see OdsValidationWriter).
   const validations = new OdsValidationWriter(model, envelope.prefix, (sheet) => sheet.sourceXml !== undefined && !sheet.dirty);
   const recoloured = new Set<string>();
+  const plan = mediaPlan(model);
+  const contentTypes = new Map((model.media ?? []).map((part) => [part.mediaId, part.contentType] as const));
   const context: OdsTableContext = {
+    mediaPath: (id) => plan.paths.pathOf(id, contentTypes.get(id) ?? "image/png"),
     model,
     registry,
     locale: localeOf(options),
@@ -438,7 +518,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     if (!sheet.dirty && !validations.rebuilds(sheet)) {
       return text;
     }
-    const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
+    const table = serializeTable(copyDrawings(model, sheet), { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
     rebuilt += table;
     return table;
   });
@@ -466,6 +546,15 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const shownPictures = new Set([...picturesReferenced(content), ...picturesReferenced(stylesXml ?? "")]);
   const droppedObjects = deletedTexts.flatMap(objectsReferenced).filter((object) => !shownObjects.has(object));
   const droppedPictures = new Set(deletedTexts.flatMap(picturesReferenced).filter((picture) => !shownPictures.has(picture)));
+  // SPEC-131: a picture of `media` no drawing shows any more leaves the package
+  // only when no retained XML part mentions its path either.
+  const otherXml = [...parts].filter(([name]) => name.endsWith(".xml") && name !== "content.xml" && name !== "styles.xml" && name !== "META-INF/manifest.xml");
+  for (const path of plan.unshown) {
+    if (parts.has(path) && !content.includes(path) && !(stylesXml ?? "").includes(path) && !otherXml.some(([, bytes]) => decodeUtf8(bytes).includes(path))) {
+      droppedPictures.add(path);
+    }
+  }
+  const manifestAdds = [...plan.shown].filter(([path]) => !parts.has(path));
   const dropped = (name: string): boolean => droppedPictures.has(name) || droppedObjects.some((object) => isObjectPart(name, object));
 
   // Each embedded object's chart ranges: a copy's own object takes its remap.
@@ -494,14 +583,19 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       data = encode(withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml));
     } else if (name === "settings.xml") {
       data = encode(settingsXmlFor(decodeUtf8(bytes), model, remap, recoloured, active?.name));
-    } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0)) {
+    } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0 || manifestAdds.length > 0)) {
       const xml = decodeUtf8(bytes);
+      const entries = readManifest(xml);
       const remove = new Set(
-        readManifest(xml)
-          .map((entry) => entry.fullPath)
-          .filter((path) => droppedPictures.has(path) || droppedObjects.some((object) => path === `${object}/` || isObjectPart(path, object))),
+        entries.map((entry) => entry.fullPath).filter((path) => droppedPictures.has(path) || droppedObjects.some((object) => path === `${object}/` || isObjectPart(path, object))),
       );
-      data = encode(spliceManifest(xml, remove, []));
+      const listed = new Set(entries.map((entry) => entry.fullPath));
+      const adds = manifestAdds.filter(([path]) => !listed.has(path)).map(([path, part]) => manifestEntryFor(xml, path, part.contentType));
+      const next = spliceManifest(xml, remove, adds);
+      data = next === xml ? bytes : encode(next);
+    } else if (plan.shown.has(name)) {
+      // SPEC-131: `media` is the source of truth for its paths.
+      data = mediaBytes(plan.shown.get(name)!);
     } else if (/^Object [^/]+\/content\.xml$/.test(name)) {
       const object = name.slice(0, name.indexOf("/"));
       const xml = decodeUtf8(bytes);
@@ -510,7 +604,47 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
     out.push({ name, data });
   }
+  for (const [path, part] of manifestAdds) {
+    out.push({ name: path, data: mediaBytes(part) });
+  }
   return out;
+}
+
+/** SPEC-131: a duplicated sheet's drawings as its own table text spells
+ * them. SPEC-121's duplicate suffixes the copy's ids (`-c<k>`) and retargets
+ * its embedded objects in the copy's sourceXml (ods/duplicate.ts); a drawing
+ * the copy shares with its origin (the same source text) gets the same
+ * changes here, so a rebuilt copy never repeats its origin's ids or shows
+ * its origin's object. Every other sheet comes back as it is. */
+function copyDrawings(model: SpreadsheetModel, sheet: Sheet): Sheet {
+  if (sheet.copiedFrom === undefined || sheet.sourceXml === undefined || !sheet.drawings?.some((drawing) => drawing.sourceXml !== undefined)) {
+    return sheet;
+  }
+  const originName = sheet.copiedFrom.toUpperCase();
+  const origin = model.sheets.find((each) => each.copiedFrom === undefined && each.sourceXml !== undefined && (tableNameOf(each.sourceXml) ?? "").toUpperCase() === originName);
+  if (!origin?.sourceXml) {
+    return sheet;
+  }
+  const own = declaredIds(origin.sourceXml);
+  const copyIds = declaredIds(sheet.sourceXml);
+  const k = [...own].map((id) => [...copyIds].find((each) => each.startsWith(`${id}-c`) && /^\d+$/.test(each.slice(id.length + 2)))?.slice(id.length + 2)).find((each) => each !== undefined);
+  const from = objectsReferenced(origin.sourceXml);
+  const to = objectsReferenced(sheet.sourceXml);
+  const shared = new Set((origin.drawings ?? []).map((drawing) => drawing.sourceXml));
+  const drawings = sheet.drawings.map((drawing) => {
+    if (drawing.sourceXml === undefined || !shared.has(drawing.sourceXml)) {
+      return drawing;
+    }
+    let xml = k === undefined ? drawing.sourceXml : suffixIds(drawing.sourceXml, `-c${k}`);
+    from.forEach((object, index) => {
+      const target = to[index];
+      if (target !== undefined && target !== object) {
+        xml = retargetObject(xml, object, target);
+      }
+    });
+    return xml === drawing.sourceXml ? drawing : { ...drawing, sourceXml: xml };
+  });
+  return { ...sheet, drawings };
 }
 
 // --- settings.xml ----------------------------------------------------------------------------
