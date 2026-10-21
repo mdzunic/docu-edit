@@ -166,6 +166,11 @@ async function written(model: SpreadsheetModel): Promise<{ parts: Map<string, Ui
   return { parts, content: decoder.decode(parts.get("content.xml")), bytes };
 }
 
+
+/** A frame showing an embedded object, as SPEC-132's object-kind test lays them out. */
+function objectFrame(object: string, z: number): string {
+  return `<draw:frame draw:z-index="${z}" svg:x="0in" svg:y="0in" svg:width="1in" svg:height="1in"><draw:object xlink:href="./${object}"/></draw:frame>`;
+}
 describe("reading ods drawings", () => {
   it("orders the layer by draw:z-index, a drawing without one in front, and mints ids in that order", async () => {
     const sheet = (await open()).sheets[0]!;
@@ -225,8 +230,7 @@ describe("reading ods drawings", () => {
   });
 
   it("SPEC-132: reads only a chart object as a chart — by the manifest's media type or an office:chart body; another embedded object is foreign Object, a missing part foreign Chart, a group's chart member foreign Chart", async () => {
-    const frame = (object: string, z: number): string =>
-      `<draw:frame draw:z-index="${z}" svg:x="0in" svg:y="0in" svg:width="1in" svg:height="1in"><draw:object xlink:href="./${object}"/></draw:frame>`;
+    const frame = objectFrame;
     const table =
       `<table:table table:name="Sheet1"><table:table-column table:style-name="co1" table:number-columns-repeated="16384"/>` +
       row(cell(frame("Object 2", 0)) + cell(frame("Object 3", 1)) + cell(frame("Object 4", 2)) + cell(frame("Object 5", 3)) + cell(`<draw:g draw:name="G">${frame("Object 1", 4)}${frame("Object 2", 5)}</draw:g>`) + empty(16379)) +
