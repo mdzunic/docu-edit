@@ -29,13 +29,15 @@
 // | 5 | autofilter | SPEC-128 "Moves": an autofilter or worksheet sort record entirely inside the source moves by the offset onto the destination sheet (see "5. autofilter") |
 // | 6 | conditionalFormats | SPEC-129 "Moves": formats travel with their cells — a format wholly inside the source moves, the part of one partly inside becomes a new format at the destination, the destination's previous rules go, every rule formula re-pointed (see "6. conditionalFormats") |
 // | 7 | validations | SPEC-130 "Moves": data-validation rules travel with their cells by the same rule — a rule wholly inside the source moves, the part of one partly inside becomes a new rule at the destination, the destination's previous rules go, every rule formula re-pointed (see "7. validations") |
+// | 8 | charts | SPEC-132 "Reference adjustment": repointFormula over every modelled chart's refs on every sheet (`refsDirty` where one changed), then a refresh of each refreshable chart whose refs changed or read either sheet; the chart drawing stays put (charts.ts moveChartsForMove) |
 // Later specs that register a SPEC-124 ReferenceAdjuster for something that
-// travels with cells or points at them — chart references (132), defined names and tables (133), notes and hyperlinks
+// travels with cells or points at them — defined names and tables (133), notes and hyperlinks
 // (135), pivots (139) — register a MoveAdjuster with the same id here, with
 // its row in move.spec.ts's registry contract; drawings (131) and page
 // breaks (136) deliberately do not.
 import { subtractRanges, type CellRef, type GridRange } from "./address";
 import { mapFormatFormulas, withoutFormatSource } from "./cfFormulas";
+import { moveChartsForMove } from "./charts";
 import { forEachPosition, PASTE_MERGE_MESSAGE, PASTE_PAST_EDGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
 import { firstLockedCell, isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { MAX_COPY_CELLS } from "./clipboardPayload";
@@ -773,6 +775,7 @@ export const MOVE_ADJUSTERS: MoveAdjuster[] = [
   autofilterAdjuster,
   conditionalFormatsAdjuster,
   validationsAdjuster,
+  { id: "charts", move: moveChartsForMove },
 ];
 
 /** One move (see the module header). */

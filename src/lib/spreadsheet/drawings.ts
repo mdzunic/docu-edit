@@ -466,7 +466,7 @@ function sheetById(model: SpreadsheetModel, sheetId: string): Sheet | undefined 
 }
 
 /** The sheet with `drawings` installed and marked changed. */
-function withDrawings(model: SpreadsheetModel, sheet: Sheet, drawings: SheetDrawing[]): Sheet {
+export function withDrawings(model: SpreadsheetModel, sheet: Sheet, drawings: SheetDrawing[]): Sheet {
   const next: Sheet = { ...sheet, drawings };
   markDrawingsChanged(model, next);
   return next;
