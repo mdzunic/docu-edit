@@ -378,13 +378,17 @@ describe("spec124-structure.ods (LibreOffice-shaped)", () => {
   it("keeps E2's chart frame directly in the cell, before any text:p, pointing at the embedded chart object", async () => {
     const model = await read();
     const sheet1 = sheetNamed(model, "Sheet1");
-    const e2 = cellAt(sheet1, O.frame.ref)!;
-    expect(e2.value).toBeNull();
-    expect(e2.preservedXml).toContain(`table:end-cell-address="${O.frame.endCellAddress}"`);
-    expect(e2.preservedXml).toContain(`draw:notify-on-update-of-ranges="${O.frame.notifyRanges}"`);
-    expect(e2.preservedXml).toContain(`xlink:href="${O.frame.href}"`);
-    expect(e2.preservedXml).toContain(`xlink:href="${O.frame.replacementHref}"`);
-    expect(e2.preservedText).toBeUndefined();
+    expect(sheet1.sourceXml).toMatch(/<table:table-cell><draw:frame [^>]*table:end-cell-address=/);
+    // SPEC-131: the frame is the sheet's drawing anchored at E2, no longer the cell's preservedXml.
+    expect(cellAt(sheet1, O.frame.ref)).toBeUndefined();
+    const e2 = parseA1(O.frame.ref)!;
+    const frame = sheet1.drawings!.find((drawing) => drawing.content.kind === "chart")!;
+    expect(frame.anchor.from).toMatchObject({ row: e2.row, col: e2.col });
+    expect(frame.content).toEqual({ kind: "chart", sourcePart: "Object 1/content.xml" });
+    expect(frame.sourceXml).toContain(`table:end-cell-address="${O.frame.endCellAddress}"`);
+    expect(frame.sourceXml).toContain(`draw:notify-on-update-of-ranges="${O.frame.notifyRanges}"`);
+    expect(frame.sourceXml).toContain(`xlink:href="${O.frame.href}"`);
+    expect(frame.sourceXml).toContain(`xlink:href="${O.frame.replacementHref}"`);
     const chart = await part("Object 1/content.xml");
     expect(chart).toContain(`table:cell-range-address="${O.chart.plotAreaRange}"`);
     expect(chart).toContain(`<chart:categories table:cell-range-address="${O.chart.categoriesRange}"/>`);
