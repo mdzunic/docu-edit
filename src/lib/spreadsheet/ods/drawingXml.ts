@@ -74,7 +74,7 @@
 //   cell's own start (read clamped: the cell moved under an edit, or the
 //   source was inconsistent) counts as moved: the start position (svg:x/svg:y, or the
 //   last `translate` of a draw:transform — appended when none — or a line's
-//   svg:x1…y2, or a group's own translate), the size (svg:width/svg:height:
+//   svg:x1…y2, or a group's members' own), the size (svg:width/svg:height:
 //   a oneCell or absolute anchor's extEmu; a twoCell's from→to box, only
 //   once its anchor moved), the end cell (`table:end-cell-address` and
 //   `table:end-x`/`-y`: a moveAndSize anchor's `to`; a move or fixed
@@ -84,7 +84,9 @@
 //   address keeps the source's spelling of the sheet name ($, quotes) while
 //   it names the table's own sheet; otherwise — the sheet was renamed and
 //   no pass rewrote it — the model's current name, quoted per ODF. A group
-//   moves by its own translate; its size is not patched.
+//   moves by its members — ODF gives draw:g no position (and no
+//   draw:transform) of its own, so each member's start is shifted alike,
+//   nested groups' members too; its size is not patched.
 // - z-index: walking the array back to front, a drawing keeps its source
 //   value while that is above every value written before it, else takes
 //   one more than the last; a new drawing takes one more than the last; an
@@ -1099,6 +1101,7 @@ function patchedDrawing(text: string, geometry: ElementGeometry, drawing: SheetD
   const sizedH = sizeCounts && differs(geometry.box.h, target.h);
   const w = sizedW ? target.w : geometry.box.w;
   const h = sizedH ? target.h : geometry.box.h;
+  const memberSplices: Splice[] = [];
   switch (geometry.position) {
     case "xy":
       if (movedX) {
@@ -1149,10 +1152,11 @@ function patchedDrawing(text: string, geometry: ElementGeometry, drawing: SheetD
       }
       break;
     case "group":
+      // ODF gives draw:g no position of its own: its members move.
       if (movedX || movedY) {
         const dx = movedX ? target.x - geometry.box.x : 0;
         const dy = movedY ? target.y - geometry.box.y : 0;
-        set("draw:transform", translatedTransform(attr("draw:transform") ?? "", geometry.transform ?? [], dx, dy));
+        memberMoveSplices(text, geometry, dx, dy, memberSplices);
       }
       break;
   }
@@ -1167,7 +1171,45 @@ function patchedDrawing(text: string, geometry: ElementGeometry, drawing: SheetD
     // A self-closing element gains a body for its alt text.
     return `${tag.replace(/\s*\/>$/, ">")}<svg:desc>${escapeElementText(altText)}</svg:desc></${geometry.qname}>`;
   }
-  return tag + bodyWithDesc(text, geometry, altText);
+  return tag + bodyWithDesc(text, geometry, altText, memberSplices);
+}
+
+/** The splices (offsets into `text`) moving every member of a group by
+ * (dx, dy) EMU, sheet-absolute: svg:x/svg:y, the last translate of a
+ * draw:transform, a line's ends, a nested group's members. A group's own
+ * draw:transform (read, though ODF has none) is undone first: its rotation
+ * turns the shift into its members' frame. */
+function memberMoveSplices(text: string, group: ElementGeometry, dx: number, dy: number, splices: Splice[]): void {
+  const turn = (group.transform ?? []).reduce((sum, step) => sum + (step.kind === "rotate" ? step.values[0]! : 0), 0);
+  const [mx, my] = turn === 0 ? [dx, dy] : rotateCcw(dx, dy, -turn);
+  for (const { geometry: member, start } of group.members) {
+    if (member.position === "group") {
+      memberMoveSplices(text, member, mx, my, splices);
+      continue;
+    }
+    const attr = (qname: string): string | undefined => attrOf(member.attrs, qname);
+    const tag = text.slice(start, member.tagEnd);
+    let next = tag;
+    const shift = (qname: string, by: number): void => {
+      if (differs(by, 0)) {
+        next = setAttribute(next, qname, lengthLike((lengthEmu(attr(qname)) ?? 0) + by, attr(qname)));
+      }
+    };
+    if (member.position === "transform") {
+      next = setAttribute(next, "draw:transform", translatedTransform(attr("draw:transform")!, member.transform!, mx, my));
+    } else if (member.position === "line") {
+      shift("svg:x1", mx);
+      shift("svg:y1", my);
+      shift("svg:x2", mx);
+      shift("svg:y2", my);
+    } else {
+      shift("svg:x", mx);
+      shift("svg:y", my);
+    }
+    if (next !== tag) {
+      splices.push({ start, end: member.tagEnd, text: next });
+    }
+  }
 }
 
 /** A draw:transform with its last translate moved by (dx, dy) EMU — one
@@ -1186,15 +1228,16 @@ function translatedTransform(value: string, steps: readonly TransformStep[], dx:
 /** The element's text after its start tag with its svg:desc set to
  * `altText` ("" removes it): the child replaced, removed, or inserted after
  * an svg:title — else last in a frame (after its content, ODF 1.2 §10.4.2)
- * and first in a shape (§9.2.21). */
-function bodyWithDesc(text: string, geometry: ElementGeometry, altText: string): string {
+ * and first in a shape (§9.2.21) — and `inner` (offsets into `text`: a
+ * group's moved members) applied. */
+function bodyWithDesc(text: string, geometry: ElementGeometry, altText: string, inner: readonly Splice[] = []): string {
   const rest = text.slice(geometry.tagEnd);
-  if (altText === (geometry.desc?.text ?? "") || (geometry.closeStart < 0 && altText === "")) {
-    return rest;
-  }
   const at = (offset: number): number => offset - geometry.tagEnd;
+  const splices: Splice[] = inner.map((splice) => ({ ...splice, start: at(splice.start), end: at(splice.end) }));
+  if (altText === (geometry.desc?.text ?? "") || (geometry.closeStart < 0 && altText === "")) {
+    return applySplices(rest, splices);
+  }
   const element = altText === "" ? "" : `<svg:desc>${escapeElementText(altText)}</svg:desc>`;
-  const splices: Splice[] = [];
   if (geometry.desc) {
     splices.push({ start: at(geometry.desc.start), end: at(geometry.desc.end), text: element });
   } else {

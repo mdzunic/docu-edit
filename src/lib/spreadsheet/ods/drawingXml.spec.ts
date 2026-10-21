@@ -310,6 +310,29 @@ describe("writing a dirty table's drawings", () => {
     expect(named(reread, "Box").anchor).toEqual(model.sheets[0]!.drawings!.find((drawing) => drawing.name === "Box")!.anchor);
   });
 
+  it("moves a group by its members — svg:x/svg:y, a draw:transform's translate, a line's ends, a nested group's — never a draw:transform on draw:g", async () => {
+    const rotated = `<draw:custom-shape svg:width="1in" svg:height="0.5in" draw:transform="rotate (1.5707963267949) translate (2in 1.5in)"><draw:enhanced-geometry draw:type="non-primitive"/></draw:custom-shape>`;
+    const group =
+      `<draw:g draw:name="G2"><draw:rect svg:x="0in" svg:y="0.5in" svg:width="1in" svg:height="1in"/><draw:line svg:x1="1in" svg:y1="0.5in" svg:x2="2in" svg:y2="1in"/>` +
+      `${rotated}<draw:g><draw:ellipse svg:x="2in" svg:y="0.5in" svg:width="1in" svg:height="1in"/></draw:g></draw:g>`;
+    const model = await open(TABLE.replace(GROUP, group));
+    const sheet = model.sheets[0]!;
+    const moved = named(sheet, "G2");
+    const rect = drawingRectPx(moved.anchor, buildGridMetrics(sheet));
+    applyDrawingResult(model, setDrawingRect(model, sheet.id, moved.id, { ...rect, left: rect.left + 96, top: rect.top + 48 })!);
+    const { content, bytes } = await written(model);
+    expect(content).toContain(
+      `<draw:g draw:name="G2"><draw:rect svg:x="1in" svg:y="1in" svg:width="1in" svg:height="1in"/><draw:line svg:x1="2in" svg:y1="1in" svg:x2="3in" svg:y2="1.5in"/>` +
+        `${rotated.replace("translate (2in 1.5in)", "translate (3in 2in)")}<draw:g><draw:ellipse svg:x="3in" svg:y="1in" svg:width="1in" svg:height="1in"/></draw:g></draw:g>`,
+    );
+    const reread = named((await readSpreadsheetBytes(bytes, "ods", "t2")).sheets[0]!, "G2");
+    const now = named(model.sheets[0]!, "G2");
+    expect(reread.anchor).toEqual(now.anchor);
+    // The members keep their places in the group (to float noise).
+    const members = (drawing: SheetDrawing): unknown => drawing.content.kind === "group" && drawing.content.members.map(({ x, y, w, h, content }) => [x, y, w, h].map((n) => n.toFixed(9)).concat(content.kind));
+    expect(members(reread)).toEqual(members(moved));
+  });
+
   it("writes a renamed sheet's touched drawing's end cell with the new name", async () => {
     const model = await open();
     renameSheet(model, 0, "My Data");
