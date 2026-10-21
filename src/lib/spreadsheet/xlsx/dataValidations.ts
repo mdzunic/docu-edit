@@ -331,12 +331,15 @@ export function baseValidationXml(rule: DataValidation, p: string): string {
   return children === "" ? `${head}/>` : `${head}>${children}</${p}dataValidation>`;
 }
 
+/** An x14 rule's `<x14:formula1|2>`: the canonical text as `<xm:f>`. */
+function x14Formula(local: string, text: string | undefined): string {
+  return text === undefined ? "" : `<x14:${local}><xm:f>${escapeElementText(toXlsxFormula(text))}</xm:f></x14:${local}>`;
+}
+
 /** A rule as an `<x14:dataValidation>`. */
 export function x14ValidationXml(rule: DataValidation): string {
-  const formula = (local: string, text: string | undefined): string =>
-    text === undefined ? "" : `<x14:${local}><xm:f>${escapeElementText(toXlsxFormula(text))}</xm:f></x14:${local}>`;
   return (
-    `<x14:dataValidation${ruleAttributes(rule)}>${formula("formula1", rule.formula1)}${formula("formula2", rule.formula2)}` +
+    `<x14:dataValidation${ruleAttributes(rule)}>${x14Formula("formula1", rule.formula1)}${x14Formula("formula2", rule.formula2)}` +
     `<xm:sqref>${sqrefText(rule.ranges)}</xm:sqref></x14:dataValidation>`
   );
 }

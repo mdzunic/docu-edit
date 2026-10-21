@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { equalBytes } from "../core/equality";
 import { unzip } from "../core/zip";
-import { getCell, parseA1, parseRange } from "./address";
+import { getCell, parseA1, parseRange, type GridRange } from "./address";
 import { buildSpec130ValidationXlsxBytes, SPEC130_VALIDATION_XLSX } from "./fixtures/build";
 import { packageIntegrity } from "./fixtures/packageIntegrity";
 import { storedValueContext } from "./formula/evaluate";
@@ -39,6 +39,7 @@ function withoutId(rule: DataValidation): Omit<DataValidation, "id"> {
 }
 
 const noMessage = { show: true, title: "", text: "" };
+const at = (a1: string): GridRange[] => [parseRange(a1)!];
 const stop = { show: true, style: "stop", title: "", text: "" } as const;
 
 describe("spec130-validation.xlsx", () => {
@@ -79,8 +80,8 @@ describe("spec130-validation.xlsx", () => {
     expect(getCell(form, 1, 3)).toBeUndefined();
     const deps = { base: storedValueContext(model), ctx: workbookFormatContext(model, SPREADSHEET_LOCALES[DEFAULT_SPREADSHEET_LOCALE]) };
     const items = (a1: string): string[] => {
-      const at = parseA1(a1)!;
-      return listItems(model, form, validationAt(form, at)!, at, deps).items.map((item) => item.text);
+      const ref = parseA1(a1)!;
+      return listItems(model, form, validationAt(form, ref)!, ref, deps).items.map((item) => item.text);
     };
     expect(items("B2")).toEqual(["Low", "Medium", "High"]);
     expect(items("B8")).toEqual([...F.form.options]);
@@ -94,7 +95,6 @@ describe("spec130-validation.xlsx", () => {
     const [form, lists] = model.sheets;
     expect(lists!.validations).toEqual([]);
     expect(form!.validationPromptsDisabled).toBeUndefined();
-    const at = (a1: string) => [parseRange(a1)!];
     expect(form!.validations.map(withoutId)).toEqual([
       {
         ranges: at("B2"),
