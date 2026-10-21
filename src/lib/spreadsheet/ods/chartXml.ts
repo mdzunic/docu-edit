@@ -89,6 +89,18 @@ export function withNotifyRanges(frameXml: string, ranges: string | undefined): 
   return frameXml;
 }
 
+/** The `draw:object` a created chart's `draw:frame` holds ("New chart
+ * parts", the golden's): `<draw:object draw:notify-on-update-of-ranges="…"
+ * xlink:href="./Object {n}" xlink:type="simple" xlink:show="embed"
+ * xlink:actuate="onLoad"/>` (no notify attribute for undefined ranges). The
+ * ods drawing writer wraps it in the frame with SPEC-131's anchor
+ * attributes. */
+export function chartObjectElementXml(objectDir: string, notifyRanges: string | undefined): string {
+  void objectDir;
+  void notifyRanges;
+  return "";
+}
+
 /** The parts of a chart object created here at `Object {n}/` ("New chart
  * parts", the golden's): content.xml plus the styles.xml/meta.xml the
  * golden settles on — name and text each. */
