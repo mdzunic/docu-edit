@@ -16,7 +16,9 @@
 // useFillHandle's. SPEC-128: the Data menu's sorts and filter commands are
 // useSortFilter's, and the bar's state says whether Filter is on. SPEC-129:
 // Format ▸ Conditional formatting… opens the side panel's rules manager
-// (useWorkbookEditing's sidePanel). Later specs append commands here.
+// (useWorkbookEditing's sidePanel). SPEC-130: Data ▸ "Data validation…" opens
+// the validation dialog (useWorkbookEditing's validationDialog). Later specs
+// append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -40,7 +42,7 @@ export interface SpreadsheetMenuDeps {
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
-  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel">>;
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog">>;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
@@ -201,6 +203,9 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.conditionalFormatting:
         deps.editing?.sidePanel?.open("conditionalFormats");
+        break;
+      case SHEET_MENU_COMMANDS.dataValidation:
+        deps.editing?.validationDialog?.show();
         break;
       default:
         break;

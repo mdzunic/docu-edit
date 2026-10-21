@@ -20,6 +20,7 @@
 // the filter popover and its dialogs and the refusal alert
 // (SortFilterSurfaces, the grid context's `sortFilter`). SPEC-129: the
 // sheet's side panel beside the sheet (SheetSidePanel, from `editing`).
+// SPEC-130: the Data validation dialog (ValidationDialog, from `editing`).
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
@@ -47,6 +48,7 @@ import SheetTabMenu from "./SheetTabMenu.vue";
 import SheetTabs from "./SheetTabs.vue";
 import SheetUnhideDialog from "./SheetUnhideDialog.vue";
 import SortFilterSurfaces from "./SortFilterSurfaces.vue";
+import ValidationDialog from "./ValidationDialog.vue";
 
 const props = defineProps({
   /** useWorkbookLoad's return. */
@@ -78,6 +80,7 @@ function clipboard(action = "copy") {
 }
 const commands = computed(() => asWorkbookEditing(props.editing).commands);
 const cellEditing = computed(() => asWorkbookEditing(props.editing).cell);
+const validationDialog = computed(() => asWorkbookEditing(props.editing).validationDialog);
 const panelId = "sheet-panel";
 
 /** The visible tabs with their tab colours resolved for CSS. */
@@ -243,6 +246,10 @@ const tabs = computed(() => {
     <SortFilterSurfaces
       v-if="sortFilter"
       :sort-filter="sortFilter"
+    />
+    <ValidationDialog
+      v-if="validationDialog.open.value"
+      :dialog="validationDialog"
     />
     <SheetTabColorPicker
       v-if="commands.coloring.value"

@@ -9,7 +9,8 @@
 // SPEC-129: the view's one side panel (useSheetSidePanel — the Format menu
 // opens it, WorkbookBody renders it) and its conditional-formatting rules
 // manager (useConditionalFormatManager), whose steps run on the same undo
-// stack.
+// stack. SPEC-130: the Data validation dialog (useValidationDialog — the Data
+// menu opens it, WorkbookBody renders it), whose OK is one step on that stack.
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -22,6 +23,7 @@ import { useSheetCommands } from "./useSheetCommands";
 import { useSheetSidePanel } from "./useSheetSidePanel";
 import type { SheetViewState } from "./useSheetViewState";
 import { useSpreadsheetUndo } from "./useSpreadsheetUndo";
+import { useValidationDialog } from "./useValidationDialog";
 import { useWorkbookDownload } from "./useWorkbookDownload";
 
 export interface WorkbookEditingDeps {
@@ -99,7 +101,16 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncInto: (model) => deps.viewState.syncInto(model),
     busy: () => cell.editing.value,
   });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager };
+  const validationDialog = useValidationDialog({
+    model: () => deps.book.workbook.value,
+    sheet: () => deps.book.activeSheet.value,
+    selection: () => deps.selection.selection.value,
+    undo,
+    formatContext: () => deps.selection.formatContext.value,
+    syncInto: (model) => deps.viewState.syncInto(model),
+    busy: () => cell.editing.value,
+  });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;
