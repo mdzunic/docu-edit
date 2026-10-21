@@ -152,6 +152,15 @@
 //   `draw:g`, a `draw:control` over `office:forms`, graphic styles
 //   `gr1`…`gr6`. SPEC131_DRAWINGS_XLSX / SPEC131_DRAWINGS_ODS record the
 //   facts.
+// - spec132-charts.xlsx (SPEC-132) — Excel 365-shaped sheet charts: "Data"
+//   (A1:D5) a clustered column over Data!$A$1:$D$5 with full caches, c16
+//   uniqueIds, value labels with the c15 leader-lines extLst and its
+//   chartStyle/colors parts, a pie (per-slice c:dPt), a 3-D clustered column
+//   (view3D, walls, bar3DChart) and a waterfall chartex in a wsDr-level
+//   `mc:AlternateContent Requires="cx1"` with Excel's text-box Fallback;
+//   "Q1 Data" a scatter; "Summary" a line plotting 'Q1 Data'!$B$2:$B$13;
+//   "Sales Chart" a chart sheet (absoluteAnchor → a clustered column).
+//   SPEC132_CHARTS records the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
