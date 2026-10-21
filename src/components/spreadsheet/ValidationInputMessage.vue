@@ -5,10 +5,14 @@
 // text, line breaks kept. SheetGrid places it in its validation layer from
 // the active cell's rect (unscaled paper px, so it follows scroll and zoom):
 // below-right of the cell, flipped left or up to stay inside the cell area —
-// validationChrome's placeInputMessage, given the size measured here. It
-// never takes the pointer. Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
-import { computed, onMounted, ref, useTemplateRef, watch } from "vue";
+// validationChrome's placeInputMessage, given the size measured here. That
+// size is the box's natural one — max-content, wrapped at 16rem or the
+// area's width — never the room left at where it last sat (an absolute box
+// shrinks to that, and a message measured squeezed against the right edge
+// never flipped); it is re-measured whenever the box resizes. It never takes
+// the pointer. Runtime prop declarations per the espree constraint (see
+// AppShell.vue).
+import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import { placeInputMessage, VALIDATION_INPUT_MESSAGE_ID } from "../../views/spreadsheet/validationChrome";
 
 const props = defineProps({
@@ -33,8 +37,16 @@ function measure() {
   }
 }
 
-onMounted(measure);
-watch(() => [props.title, props.text], measure, { flush: "post" });
+const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+onMounted(() => {
+  measure();
+  if (observer && box.value) observer.observe(box.value);
+});
+onBeforeUnmount(() => observer?.disconnect());
+watch(() => [props.title, props.text, props.bounds.width], measure, { flush: "post" });
+
+/** The widest it may wrap at: the cell area's width (16rem caps it in CSS). */
+const room = computed(() => `${Math.max(0, Number(props.bounds.width) || 0)}px`);
 
 const position = computed(() => {
   const cell = props.cellRect;
@@ -54,7 +66,7 @@ const position = computed(() => {
     class="validation-input-message"
     role="tooltip"
     data-testid="validation-input-message"
-    :style="{ left: `${position.left}px`, top: `${position.top}px` }"
+    :style="{ left: `${position.left}px`, top: `${position.top}px`, '--validation-input-room': room }"
   >
     <div
       v-if="props.title"
@@ -77,7 +89,8 @@ const position = computed(() => {
 .validation-input-message {
   position: absolute;
   box-sizing: border-box;
-  max-width: 16rem;
+  width: max-content;
+  max-width: min(16rem, var(--validation-input-room, 16rem));
   padding: var(--space-1) var(--space-2);
   pointer-events: none;
   color: var(--text-primary);

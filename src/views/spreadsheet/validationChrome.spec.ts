@@ -24,6 +24,18 @@ describe("placeInputMessage", () => {
   it("never leaves the area's top-left", () => {
     expect(placeInputMessage({ left: 10, top: 10, width: 20, height: 20 }, { width: 900, height: 900 }, BOUNDS)).toEqual({ left: 0, top: 0 });
   });
+
+  it("flips left at the right edge and stays below when there is room there (QA's right-edge cell)", () => {
+    const edge = { left: 520, top: 40, width: 64, height: 20 };
+    expect(placeInputMessage(edge, { width: 221, height: 40 }, BOUNDS)).toEqual({ left: 520 - 221, top: 60 + INPUT_MESSAGE_GAP_PX });
+  });
+
+  it("fitting on neither side, stays inside the area as near below-right as it can", () => {
+    // Too wide for either side of the cell: inside the right edge.
+    expect(placeInputMessage({ left: 250, top: 40, width: 64, height: 20 }, { width: 280, height: 40 }, { width: 300, height: 400 }).left).toBe(20);
+    // Too tall for either side: as low as stays inside, not pinned at the top.
+    expect(placeInputMessage({ left: 100, top: 100, width: 64, height: 20 }, { width: 120, height: 150 }, { width: 600, height: 200 }).top).toBe(50);
+  });
 });
 
 describe("placeDropdownButton", () => {

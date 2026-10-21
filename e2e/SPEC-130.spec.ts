@@ -15,7 +15,8 @@ import { fileURLToPath } from "node:url";
 // a repeated run of empty cells, shows its input message. And B10, whose
 // Source is the defined name Colours, lists the named cells (AC-5) — in a
 // window so short that B10 is cut by the grid's bottom edge too, where its
-// list opens inside the grid (AC-23).
+// list opens inside the grid (AC-23). And an input message on a cell at the
+// grid's right edge flips to the cell's left at its natural width (AC-20).
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -221,4 +222,49 @@ test("B10's defined-name Source lists what Colours names, and its list opens ins
   await page.keyboard.press("Enter");
   await expect(list).toBeHidden();
   await expect(cell(page, "B10")).toHaveText("Green");
+});
+
+test("an input message at the grid's right edge flips to the cell's left at its natural width (AC-20)", async ({ page }) => {
+  await open(page, join(fixtures, "spec130-validation.xlsx"));
+
+  // Row 3 of the last column whose cell still has less room on its right
+  // than the message is wide.
+  const grid = (await page.getByTestId("spreadsheet-grid").boundingBox())!;
+  const headers = page.getByTestId("sheet-col-header");
+  let letters = "";
+  for (let index = (await headers.count()) - 1; index >= 0 && letters === ""; index -= 1) {
+    const box = await headers.nth(index).boundingBox();
+    if (box && box.x + box.width <= grid.x + grid.width - 20) {
+      letters = (await headers.nth(index).innerText()).trim();
+    }
+  }
+  expect(letters).toMatch(/^[A-Z]+$/);
+  const ref = `${letters}3`;
+  await clickCell(page, ref);
+
+  // An input message on it through Data ▸ Data validation….
+  await page.getByTestId("menu-title-data").click();
+  await page.getByTestId("sheet-menu-data-validation").click();
+  const dialog = page.getByTestId("validation-dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByTestId("validation-tab-input").click();
+  await dialog.getByTestId("validation-show-input").check();
+  await dialog.getByTestId("validation-input-title").fill("Score");
+  await dialog.getByTestId("validation-input-text").fill("Enter a whole number between 1 and 10");
+  await dialog.getByTestId("validation-ok").click();
+  await expect(dialog).toBeHidden();
+
+  // It sits to the cell's left, still below it, whole inside the grid — not
+  // squeezed into the strip left at the right edge, words broken mid-word.
+  const message = page.getByTestId("validation-input-message");
+  await expect(message).toBeVisible();
+  await expect(message).toContainText("Score");
+  const cellBox = (await cell(page, ref).boundingBox())!;
+  const box = (await message.boundingBox())!;
+  expect(box.width).toBeGreaterThan(120);
+  expect(box.x + box.width).toBeLessThanOrEqual(cellBox.x + 1);
+  expect(box.x).toBeGreaterThanOrEqual(grid.x);
+  expect(box.y).toBeGreaterThanOrEqual(cellBox.y + cellBox.height);
+  const titleBox = (await message.getByTestId("validation-input-title").boundingBox())!;
+  expect(titleBox.height).toBeLessThan(cellBox.height * 1.5);
 });

@@ -10,7 +10,9 @@
 // - The input message sits below-right of the cell (its top-left at the
 //   cell's bottom-right corner, a small gap down), flipping to the cell's
 //   left when it would cross the right edge and above the cell when it would
-//   cross the bottom.
+//   cross the bottom — and, when it fits on neither side, as far toward
+//   below-right as stays inside the area. Its size is its natural one (see
+//   ValidationInputMessage), never the room left at where it last sat.
 // - The dropdown button sits against the cell's right edge, just outside it
 //   (inside it when the cell touches the area's right edge), the cell's
 //   height tall.
@@ -54,17 +56,26 @@ const LIST_BORDER_PX = 2;
 /** The least the list shows: one row. */
 const LIST_MIN_PX = LIST_ROW_PX + LIST_BORDER_PX;
 
+/** Where a box of `size` starts along one axis of an area `room` long: from
+ * `after` when it fits there, else ending at `before` when that fits, else
+ * as near `after` as keeps it inside (from 0 when it is longer than the
+ * room). */
+function besideCell(before: number, after: number, size: number, room: number): number {
+  if (after + size <= room) {
+    return after;
+  }
+  if (before - size >= 0) {
+    return before - size;
+  }
+  return Math.max(0, Math.min(after, room - size));
+}
+
 /** The input message's top-left for its measured size (see the header). */
 export function placeInputMessage(cell: ChromeRect, size: { width: number; height: number }, bounds: ChromeBounds): { left: number; top: number } {
-  let left = cell.left + cell.width;
-  let top = cell.top + cell.height + INPUT_MESSAGE_GAP_PX;
-  if (left + size.width > bounds.width) {
-    left = cell.left - size.width;
-  }
-  if (top + size.height > bounds.height) {
-    top = cell.top - size.height - INPUT_MESSAGE_GAP_PX;
-  }
-  return { left: Math.max(0, left), top: Math.max(0, top) };
+  return {
+    left: besideCell(cell.left, cell.left + cell.width, size.width, bounds.width),
+    top: besideCell(cell.top - INPUT_MESSAGE_GAP_PX, cell.top + cell.height + INPUT_MESSAGE_GAP_PX, size.height, bounds.height),
+  };
 }
 
 /** The dropdown button's box (see the header). */
