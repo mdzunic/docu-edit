@@ -101,6 +101,23 @@
 //     positions fit the edited sheet — each rule's dxf interned into the
 //     model's table (internDxf finds the source entry it came from) and its
 //     formulas' source-time sheet names remapped onto the record's names.
+// 11 — SPEC-130: data validations (`Sheet.validations` — xlsx
+//     `<dataValidations>` with the worksheet's x14 ext `{CCE6A557…}` and
+//     `disablePrompts`, ods `table:content-validations` with the cells'
+//     `table:content-validation-name`; the workbook's
+//     `odsOrphanValidations`). Every re-read gains them. The step, run for
+//     each dirty sheet, parses only the sheet's validations: xlsx from its
+//     retained part (base block and x14 ext), whose references SPEC-124's and
+//     SPEC-125's retained adjusters kept moving with every structural edit
+//     and move; ods from the retained prefix's definitions — likewise moved —
+//     over the names the sheet's retained table text gives its cells. Those
+//     names reached a version-10 model as each cell's preserved
+//     `table:content-validation-name` (SPEC-122), which moved with its cell:
+//     when the dirty sheet's cells carry them, they place the rules (the
+//     retained table text keeps source-time positions), and the attribute is
+//     then dropped from every cell — the writer derives it from the model
+//     now, and a cell that held nothing else is no longer stored. Formulas'
+//     source-time sheet names are remapped onto the record's names.
 //
 // SPEC-126: a csv/tsv workbook never runs a ReaderUpgrade — its source is
 // one delimited-text part, read by csv/parse.ts, which adds no element to
@@ -121,9 +138,10 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/
 import { workbookFormatContext } from "./numberFormat/render";
 import { buildPreview } from "./preview";
 import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
+import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 10;
+export const SPREADSHEET_READER_VERSION = 11;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -278,7 +296,107 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
       }));
     },
   },
+  {
+    // SPEC-130 (10 → 11): data validations (see the version history).
+    from: 10,
+    async upgradeDirtySheet(model, sheet, sourceParts, record) {
+      const stored = record ?? model;
+      const read = await retainedValidations(model, sheet, sourceParts);
+      if (model.format === "ods") {
+        // The names live in the model now: a stale attribute would be written twice.
+        sheet.rows = withoutValidationNames(sheet.rows);
+      }
+      if (read.promptsDisabled) {
+        sheet.validationPromptsDisabled = true;
+      }
+      if (read.validations.length === 0) {
+        sheet.validations = [];
+        return;
+      }
+      const { remapSheetReferences, isEmptyRemap } = await import("./formula/sheetRefs");
+      const { copyRemap, sourceSheetRemap } = await import("./sourceNames");
+      const { LazyParts } = await import("./xlsx/package");
+      const { mapValidationFormulas } = await import("./validation");
+      const remap = copyRemap(sourceSheetRemap(stored, new LazyParts(stored.opaque)), sheet);
+      sheet.validations = isEmptyRemap(remap) ? read.validations : read.validations.map((dv) => mapValidationFormulas(dv, (text) => remapSheetReferences(text, remap)));
+    },
+  },
 ];
+
+// --- SPEC-130's step -------------------------------------------------------------------------
+
+/** A dirty sheet's validations parsed from its retained source alone (see
+ * the version history): none when it has no source to read. */
+async function retainedValidations(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>): Promise<{ validations: DataValidation[]; promptsDisabled: boolean }> {
+  if (model.format === "xlsx") {
+    const bytes = sheet.partName === undefined ? undefined : sourceParts.get(sheet.partName);
+    if (!bytes) {
+      return { validations: [], promptsDisabled: false };
+    }
+    const { readWorksheetValidations } = await import("./xlsx/dataValidations");
+    return readWorksheetValidations(new TextDecoder().decode(bytes));
+  }
+  const prefix = model.odsContentEnvelope?.prefix;
+  if (prefix === undefined || sheet.sourceXml === undefined) {
+    return { validations: [], promptsDisabled: false };
+  }
+  const { rangesFromCellNames, readTableValidations } = await import("./ods/contentValidations");
+  const named = [...preservedValidationNames(sheet.rows)];
+  const ranges = named.length > 0 ? rangesFromCellNames(named) : undefined;
+  return { validations: readTableValidations(prefix, sheet.sourceXml, sheet.name, ranges), promptsDisabled: false };
+}
+
+const PRESERVED_VALIDATION_NAME = /\s[\w.-]*:?content-validation-name\s*=\s*(?:"([^"]*)"|'([^']*)')/;
+
+/** Every stored cell's preserved `table:content-validation-name`. */
+function* preservedValidationNames(rows: readonly Row[]): Generator<{ row: number; col: number; name: string }> {
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      const match = cell.preservedAttrs === undefined ? null : PRESERVED_VALIDATION_NAME.exec(cell.preservedAttrs);
+      if (match) {
+        yield { row: row.index, col: cell.col, name: unescapeXml(match[1] ?? match[2] ?? "") };
+      }
+    }
+  }
+}
+
+function unescapeXml(text: string): string {
+  return text.replace(/&(lt|gt|quot|apos|amp);/g, (_, entity: string) => ({ lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" })[entity]!);
+}
+
+/** The rows without any preserved `table:content-validation-name` (a cell
+ * left holding nothing is dropped, a row left empty too) — the same array
+ * when no cell carries one. */
+function withoutValidationNames(rows: Row[]): Row[] {
+  let out: Row[] | null = null;
+  rows.forEach((row, at) => {
+    if (!row.cells.some((cell) => cell.preservedAttrs !== undefined && PRESERVED_VALIDATION_NAME.test(cell.preservedAttrs))) {
+      return;
+    }
+    const cells: Cell[] = [];
+    for (const cell of row.cells) {
+      if (cell.preservedAttrs === undefined || !PRESERVED_VALIDATION_NAME.test(cell.preservedAttrs)) {
+        cells.push(cell);
+        continue;
+      }
+      const attrs = cell.preservedAttrs.replace(new RegExp(PRESERVED_VALIDATION_NAME.source, "g"), "");
+      const next: Cell = { ...cell, preservedAttrs: attrs };
+      if (attrs === "") {
+        delete next.preservedAttrs;
+      }
+      const { col: _col, value, ...rest } = next;
+      if (value !== null || Object.keys(rest).length > 0) {
+        cells.push(next);
+      }
+    }
+    out ??= rows.slice();
+    out[at] = { ...row, cells };
+  });
+  if (!out) {
+    return rows;
+  }
+  return (out as Row[]).filter((row) => row.cells.length > 0 || row.heightPt !== undefined || row.hidden || row.filterHidden || row.styleId !== undefined || row.sourceAttrs !== undefined || row.sourceStyleName !== undefined || row.customHeight);
+}
 
 // --- SPEC-129's step -------------------------------------------------------------------------
 
@@ -630,10 +748,10 @@ async function upgradeCsvModel(model: SpreadsheetModel, format: "csv" | "tsv"): 
   const sheet = model.sheets[0];
   const unedited = dialect !== undefined && model.sheets.length === 1 && sheet?.id === dialect.sheetId && !sheet.dirty && !model.structureDirty;
   if (!unedited) {
-    // Re-stamped, never re-read: SPEC-129's fields start empty, as a read
+    // Re-stamped, never re-read: SPEC-129's and SPEC-130's fields start empty, as a read
     // of a delimited-text file leaves them.
-    const sheets = model.sheets.some((each) => each.conditionalFormats === undefined)
-      ? model.sheets.map((each) => (each.conditionalFormats === undefined ? { ...each, conditionalFormats: [] } : each))
+    const sheets = model.sheets.some((each) => each.conditionalFormats === undefined || each.validations === undefined)
+      ? model.sheets.map((each) => (each.conditionalFormats === undefined || each.validations === undefined ? { ...each, conditionalFormats: each.conditionalFormats ?? [], validations: each.validations ?? [] } : each))
       : model.sheets;
     return { ...model, sheets, dxfs: model.dxfs ?? [], readerVersion: SPREADSHEET_READER_VERSION };
   }
@@ -688,6 +806,19 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
     sheets.push(await upgradedSheet(stored, index));
   }
   fresh.sheets = sheets;
+  if (model.format === "ods" && model.readerVersion < 11 && model.odsContentEnvelope) {
+    // SPEC-130: the substitution layout wrote no orphan definitions (the
+    // record had none modelled); they are the retained prefix's definitions
+    // no upgraded sheet's rule names.
+    const { readOdsContentValidations } = await import("./ods/contentValidations");
+    const regions = sheets.map((sheet) => new Map((sheet.validations ?? []).flatMap((rule) => (rule.odsName === undefined ? [] : [[rule.odsName, rule.ranges] as const]))));
+    const { orphans } = readOdsContentValidations(model.odsContentEnvelope.prefix, regions);
+    if (orphans.length > 0) {
+      fresh.odsOrphanValidations = orphans;
+    } else {
+      delete fresh.odsOrphanValidations;
+    }
+  }
   fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
   return fresh;
 
@@ -699,6 +830,8 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
         }
       }
       adoptStyles(stored, model.styles, fresh, model.readerVersion < 7);
+      // A sheet born after the read (no source) had no rules to read.
+      stored.validations ??= [];
       return stored;
     }
     const read = fresh.sheets[index];
