@@ -734,6 +734,27 @@ export function mapValidationFormulas(dv: DataValidation, map: (formula: string)
   return withoutValidationSource(next);
 }
 
+/** A sheet's rules with every formula mapped (mapValidationFormulas), each
+ * changed rule placed for `format`'s writer on `sheetName`
+ * (withX14Placement) — the structural, move and sheet-command rewrites.
+ * The same array when nothing changes. */
+export function mapValidationsFormulas(
+  rules: readonly DataValidation[],
+  map: (formula: string) => string,
+  format: SpreadsheetModel["format"],
+  sheetName: string,
+): DataValidation[] {
+  let out: DataValidation[] | null = null;
+  rules.forEach((dv, at) => {
+    const next = mapValidationFormulas(dv, map);
+    if (next !== dv) {
+      out ??= rules.slice();
+      out[at] = withX14Placement(next, format, sheetName);
+    }
+  });
+  return out ?? (rules as DataValidation[]);
+}
+
 /** The value a candidate cell holds — what the gate checks when the entry is
  * a formula (its evaluated result at the target) or a value. Uncomputable
  * formulas yield undefined (the entry is accepted). */
