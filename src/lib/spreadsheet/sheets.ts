@@ -63,6 +63,7 @@ import { relsPathFor } from "../core/xml";
 import { nextMediaId } from "./drawings";
 import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
 import { mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
+import { CHART_SHEET_DUPLICATE_TITLE, chartContentOf, isModelledChart, remapChartReferences, syncChartNotifyRanges } from "./charts";
 import { mintCfId, renumberPriorities, sheetFormats, withX14Placement, type CfRule, type ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter } from "./filter";
 import { cellKey, type CellKey } from "./formula/dependencies";
@@ -75,13 +76,16 @@ import {
   DEFAULT_SPREADSHEET_TITLE,
   isCsvFormat,
   type Cell,
+  type DrawingAnchor,
   type Row,
   type Sheet,
+  type SheetChartRefs,
   type SheetDrawing,
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
 import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
+import { objectsReferenced } from "./ods/package";
 import { SPREADSHEET_READER_VERSION } from "./open";
 import { sourceNameOf } from "./sourceNames";
 import { UNCONVERTIBLE_CONTENT, type ConversionSource } from "./unconvertible";
@@ -424,6 +428,7 @@ export function renameSheet(model: SpreadsheetModel, index: number, name: string
     const remapped = rewriteRuleFormulas(model.format, rewritten, (formula) => remapSheetReferences(formula, remap), at === index ? name : each.name);
     return at === index ? { ...remapped, name } : remapped;
   });
+  remapChartReferences(model, remap);
   model.structureDirty = true;
   return { activeIndex: model.activeSheetIndex, alsoRecalc: cellsToRecalc(model, before, [name]) };
 }
@@ -431,6 +436,9 @@ export function renameSheet(model: SpreadsheetModel, index: number, name: string
 /** Why the sheet at `index` cannot be duplicated, or null. */
 export function cannotDuplicateReason(model: SpreadsheetModel, index: number): string | null {
   const sheet = sheetAt(model, index);
+  if (sheet.kind === "chart") {
+    return CHART_SHEET_DUPLICATE_TITLE;
+  }
   if (sheet.kind === "foreign") {
     return FOREIGN_SHEET_COPY_MESSAGE;
   }
@@ -467,6 +475,7 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
       model.opaque = parts.opaque;
       copy.partName = parts.partName;
       copy = withCopiedDrawingPart(copy, new LazyParts(model.opaque));
+      copy = withCopiedChartParts(copy, (part) => parts.partRenames.get(part));
       copy = rewriteFormulas(copy, (formula) => renameTablesInFormula(formula, parts.tableRenames));
     } else if (sourceXml !== undefined) {
       const copied = copyOdsSheetSource(model, sourceXml, (copy.drawings ?? []).map((drawing) => drawing.sourceXml ?? ""));
@@ -474,6 +483,10 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
       copy.sourceXml = copied.sourceXml;
       if (copy.drawings) {
         copy.drawings = copy.drawings.map((drawing, at) => (drawing.sourceXml === undefined ? drawing : { ...drawing, sourceXml: copied.drawingTexts[at]! }));
+        copy = withCopiedChartParts(copy, (_part, drawing) => {
+          const object = drawing.sourceXml === undefined ? undefined : objectsReferenced(drawing.sourceXml)[0];
+          return object === undefined ? undefined : `${object}/content.xml`;
+        });
       }
     } else if (partName !== undefined) {
       copy.partName = partName;
@@ -483,9 +496,11 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   }
   copy = rewriteFormulas(copy, (formula) => renameSheetInFormula(formula, source.name, name));
   copy = rewriteRuleFormulas(model.format, copy, (formula) => renameSheetInFormula(formula, source.name, name));
+  copy = withRenamedChartRefs(copy, (formula) => renameSheetInFormula(formula, source.name, name));
   const sheets = model.sheets.slice();
   sheets.splice(index + 1, 0, copy);
   model.sheets = sheets;
+  syncChartNotifyRanges(model);
   model.structureDirty = true;
   model.activeSheetIndex = index + 1;
   return { activeIndex: index + 1, alsoRecalc: cellsToRecalc(model, before, [name]) };
@@ -507,6 +522,75 @@ function withCopiedDrawingPart(copy: Sheet, parts: LazyParts): Sheet {
     next.drawingPart = drawingPart;
   }
   return next;
+}
+
+/** SPEC-132: a copy whose chart drawings name the chart parts its closure
+ * copy made — `copied(sourcePart, drawing)` answers the copy's own part
+ * (xlsx: the closure copy's rename; ods: the object the drawing's
+ * retargeted frame shows). The chart write paths key on `sourcePart`, so a
+ * copy left naming its origin's part would patch or regenerate the
+ * ORIGIN's chart and leave its own stale. */
+function withCopiedChartParts(copy: Sheet, copied: (sourcePart: string, drawing: SheetDrawing) => string | undefined): Sheet {
+  if (!copy.drawings?.some((drawing) => chartContentOf(drawing)?.sourcePart !== undefined)) {
+    return copy;
+  }
+  const drawings = copy.drawings.map((drawing) => {
+    const content = chartContentOf(drawing);
+    const own = content?.sourcePart === undefined ? undefined : copied(content.sourcePart, drawing);
+    return content && own !== undefined && own !== content.sourcePart ? { ...drawing, content: { ...content, sourcePart: own } } : drawing;
+  });
+  return { ...copy, drawings };
+}
+
+/** SPEC-132: a copy's chart references renamed as its cells' formulas are
+ * (Excel's copy plots the copy's own data), `refsDirty` where one changed. */
+function withRenamedChartRefs(copy: Sheet, rename: (formula: string) => string): Sheet {
+  if (!copy.drawings?.some((drawing) => chartContentOf(drawing)?.refs !== undefined)) {
+    return copy;
+  }
+  const drawings = copy.drawings.map((drawing) => {
+    const content = chartContentOf(drawing);
+    if (!content?.refs) {
+      return drawing;
+    }
+    const refs = renamedChartRefs(content.refs, rename);
+    return refs === content.refs ? drawing : { ...drawing, content: { ...content, refs, refsDirty: true as const } };
+  });
+  return { ...copy, drawings };
+}
+
+/** Chart references through `rename` — the same object when none changes. */
+function renamedChartRefs(refs: SheetChartRefs, rename: (formula: string) => string): SheetChartRefs {
+  let changed = false;
+  const each = (text: string | undefined): string | undefined => {
+    if (text === undefined) {
+      return undefined;
+    }
+    const next = rename(text);
+    changed ||= next !== text;
+    return next;
+  };
+  const series = refs.series.map((ref) => {
+    const next: SheetChartRefs["series"][number] = {};
+    const name = each(ref.name);
+    const categories = each(ref.categories);
+    const values = each(ref.values);
+    if (name !== undefined) {
+      next.name = name;
+    }
+    if (categories !== undefined) {
+      next.categories = categories;
+    }
+    if (values !== undefined) {
+      next.values = values;
+    }
+    return next;
+  });
+  const plotArea = each(refs.plotArea);
+  if (!changed) {
+    return refs;
+  }
+  return plotArea === undefined ? { series, plotVisibleOnly: refs.plotVisibleOnly } : { series, plotArea, plotVisibleOnly: refs.plotVisibleOnly };
 }
 
 /** A copy's conditional formats (see the module header). */
@@ -586,6 +670,7 @@ export function deleteSheet(model: SpreadsheetModel, index: number): SheetComman
     }
   }
   model.sheets = sheets;
+  remapChartReferences(model, remap);
   model.structureDirty = true;
   model.activeSheetIndex = activeIndex;
   return { activeIndex, alsoRecalc: cellsToRecalc(model, before, []) };
@@ -688,6 +773,15 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
       validations: crossValidations(sheetValidations(sheet), model.format, sheet.name),
     };
     const crossedDrawings = crossDrawings(drawings ?? [], media);
+    if (sheet.kind === "chart" && model.format !== "xlsx") {
+      // SPEC-132: a chart sheet becomes a grid sheet holding its chart at the top-left.
+      crossed.kind = "grid";
+      crossed.drawings = crossedDrawings.map((drawing) => ({ ...drawing, anchor: topLeftAnchor(drawing.anchor) }));
+      if (crossed.drawings.length === 0) {
+        delete crossed.drawings;
+      }
+      return crossed;
+    }
     if (crossedDrawings.length > 0) {
       crossed.drawings = crossedDrawings;
     }
@@ -757,14 +851,25 @@ class CrossedMedia {
 /** A sheet's drawings as they cross (SPEC-131 "Cross-format"): image and
  * shape drawings through the target's canonical writers — anchor and
  * behaviour kept, `sourceXml` dropped, an image re-pathed (CrossedMedia);
- * `foreign`, `group` and placeholder `chart` drawings, and an image whose
- * bytes the model does not hold, dropped (unconvertible.ts's drawings row
- * names each one). */
+ * SPEC-132: a catalogue chart through the target's regenerate path — its
+ * visual and canonical references kept (the target's writer converts them:
+ * toXlsxFormula / canonicalToOdsRangeAddress), its `sourcePart` and write
+ * flags dropped, so the target mints a new part; `foreign` (a chartex chart
+ * among them), `group`, out-of-catalogue and read-only `chart` drawings, and
+ * an image whose bytes the model does not hold, dropped (unconvertible.ts's
+ * drawings row names each one). */
 function crossDrawings(drawings: readonly SheetDrawing[], media: CrossedMedia): SheetDrawing[] {
   return drawings.flatMap((drawing): SheetDrawing[] => {
     const { sourceXml: _source, ...rest } = drawing;
     if (drawing.content.kind === "shape") {
       return [rest];
+    }
+    if (drawing.content.kind === "chart") {
+      const { visual, refs, readOnlyReason } = drawing.content;
+      if (!isModelledChart(drawing.content) || readOnlyReason !== undefined) {
+        return [];
+      }
+      return [{ ...rest, content: refs ? { kind: "chart", visual, refs } : { kind: "chart", visual } }];
     }
     if (drawing.content.kind !== "image") {
       return [];
@@ -773,6 +878,16 @@ function crossDrawings(drawings: readonly SheetDrawing[], media: CrossedMedia): 
     return mediaId === undefined ? [] : [{ ...rest, content: { ...drawing.content, mediaId } }];
   });
 }
+
+/** SPEC-132: where a chart sheet's chart lands on the grid sheet an .ods
+ * copy makes of it — the top-left cell, at the chart's own size. */
+function topLeftAnchor(anchor: DrawingAnchor): DrawingAnchor {
+  const origin = { col: 0, colOffEmu: 0, row: 0, rowOffEmu: 0 };
+  return { kind: "oneCell", from: origin, extEmu: anchor.extEmu ?? { cx: CHART_SHEET_FALLBACK_EMU.cx, cy: CHART_SHEET_FALLBACK_EMU.cy } };
+}
+
+/** A chart sheet's chart with no extent of its own: 12 × 7.5 cm (SPEC-052's new chart). */
+const CHART_SHEET_FALLBACK_EMU = { cx: 4320000, cy: 2700000 };
 
 /** A sheet's conditional formats as they cross to `target` (SPEC-129): each
  * without its sourceXml; each rule without its x14 GUID and placed for the
