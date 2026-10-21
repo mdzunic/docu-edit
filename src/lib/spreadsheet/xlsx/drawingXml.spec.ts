@@ -126,6 +126,16 @@ const PICTURE = twoCell([1, 0, 2, 0], [2, 304800, 5, 38100], pic(2, "Picture 1",
 
 // --- reading -------------------------------------------------------------------------------
 
+/** A group member shape over a child-space box. */
+const member = (id: number, name: string, prst: string, [x, y, cx, cy]: readonly number[], attrs = ""): string =>
+  `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="${name}"${attrs}/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+  `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></xdr:spPr></xdr:sp>`;
+/** A graphic frame holding `inner` under `uri`. */
+const frame = (id: number, uri: string, inner: string): string =>
+  `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${id}" name="Frame ${id}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>` +
+  `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="${uri}">${inner}</a:graphicData></a:graphic></xdr:graphicFrame>`;
+const chart = (rId: string): string => `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="${rId}"/>`;
+
 describe("reading xlsx drawings", () => {
   it("reads each anchor kind: twoCell (editAs always set), oneCell, absolute; move and fixed twoCell anchors gain their size truth", async () => {
     const { model } = await open({
@@ -229,9 +239,6 @@ describe("reading xlsx drawings", () => {
     const connector =
       `<xdr:cxnSp macro=""><xdr:nvCxnSpPr><xdr:cNvPr id="4" name="Straight Arrow Connector 3"/><xdr:cNvCxnSpPr/></xdr:nvCxnSpPr>` +
       `<xdr:spPr><a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom><a:ln w="19050"><a:solidFill><a:srgbClr val="C00000"/></a:solidFill><a:tailEnd type="triangle"/></a:ln></xdr:spPr></xdr:cxnSp>`;
-    const member = (id: number, name: string, prst: string, [x, y, cx, cy]: readonly number[], attrs = ""): string =>
-      `<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="${id}" name="${name}"${attrs}/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr><a:xfrm><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
-      `<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="4472C4"/></a:solidFill></xdr:spPr></xdr:sp>`;
     const group =
       `<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id="9" name="Group 8"/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr>` +
       `<xdr:grpSpPr><a:xfrm><a:off x="1000" y="2000"/><a:ext cx="4000" cy="2000"/><a:chOff x="0" y="0"/><a:chExt cx="400" cy="200"/></a:xfrm></xdr:grpSpPr>` +
@@ -254,10 +261,6 @@ describe("reading xlsx drawings", () => {
   });
 
   it("graphic frames: a chart (sourcePart), an unresolvable chart, SmartArt, any other object; a content part is Ink; an unknown child a hidden Object", async () => {
-    const frame = (id: number, uri: string, inner: string): string =>
-      `<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="${id}" name="Frame ${id}"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr>` +
-      `<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="${uri}">${inner}</a:graphicData></a:graphic></xdr:graphicFrame>`;
-    const chart = (rId: string): string => `<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" r:id="${rId}"/>`;
     const { model } = await open({
       drawing:
         twoCell([0, 0, 0, 0], [4, 0, 8, 0], frame(2, "http://schemas.openxmlformats.org/drawingml/2006/chart", chart("rId1"))) +
