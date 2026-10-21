@@ -7242,3 +7242,219 @@ export async function buildSpec129LegacyOdsBytes(): Promise<Uint8Array> {
     `</office:spreadsheet></office:body></office:document-content>`;
   return loPackage(content, loMeta(O.title, 1, 5 * 6), loSettings(O.tableNames, O.activeTable), SPEC129_ODS_STYLES);
 }
+
+// ============================================================================
+// SPEC-130 (xlsx) — spec130-validation.xlsx: data validation and in-cell
+// dropdowns, as Excel 365 writes them
+// ============================================================================
+//
+// Excel's shapes: the worksheet root with `mc:Ignorable="x14ac xr xr2 xr3"`,
+// every `<dataValidation>` carrying an `xr:uid` (attributes in the schema's
+// order, as Excel writes them), one with `imeMode="noControl"`, a list
+// hiding its arrow with `showDropDown="1"`, and the cross-sheet list Excel
+// 2010+ moves into the worksheet extLst's `{CCE6A557-…}` ext as an
+// `x14:dataValidation` (`xm:f`, `xm:sqref`, the ext declaring `xmlns:x14`,
+// the list `xmlns:xm`). A workbook-scoped `definedName` "Colours" names
+// Lists!$B$1:$B$3 (docProps/app.xml lists it under Named Ranges).
+// "Form" (active): labels in A2:A10, B3 holds 5 and the rest of B2:B10 is
+// empty, E2:E6 the five options B8 lists, D2 empty and under no rule:
+//   B2  list "Low,Medium,High", input message Priority / Pick one, stop alert
+//   B3  whole between 1 and 10, warning alert
+//   B4  decimal greater than 0, information alert, imeMode="noControl"
+//   B5  date between 2026-01-01 and 2026-12-31 (1900 serials)
+//   B6  text length <= 5
+//   B7  custom ISNUMBER(SEARCH("@",B7))
+//   B8  list $E$2:$E$6 with showDropDown="1" (no arrow)
+//   B9  list Lists!$A$1:$A$4 — the x14 ext
+//   B10 list Colours (the defined name)
+// "Lists": A1:A4 the regions B9 lists, B1:B3 the colours "Colours" names.
+// SPEC130_VALIDATION_XLSX records the facts.
+
+const SPEC130_X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
+const SPEC130_XM_NS = "http://schemas.microsoft.com/office/excel/2006/main";
+const SPEC130_FORM_UID = "1A2B3C4D-0130-4E5F-8A6B-7C8D9E0F1A2B";
+const SPEC130_LISTS_UID = "2B3C4D5E-0130-4F60-9B7C-8D9E0F1A2B3C";
+const SPEC130_DATE_FROM = dateToSerial(2026, 1, 1, "1900");
+const SPEC130_DATE_TO = dateToSerial(2026, 12, 31, "1900");
+
+/** "Form"'s base rules, verbatim, in document order. */
+const SPEC130_BASE_RULES = {
+  priority:
+    `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" errorTitle="Invalid priority" error="Choose Low, Medium or High." ` +
+    `promptTitle="Priority" prompt="Pick one" sqref="B2" xr:uid="{3C4D5E6F-0130-4071-AC8D-9E0F1A2B3C4D}"><formula1>"Low,Medium,High"</formula1></dataValidation>`,
+  score:
+    `<dataValidation type="whole" errorStyle="warning" allowBlank="1" showInputMessage="1" showErrorMessage="1" errorTitle="Out of range" ` +
+    `error="Scores run from 1 to 10." sqref="B3" xr:uid="{4D5E6F70-0130-4182-BD9E-0F1A2B3C4D5E}"><formula1>1</formula1><formula2>10</formula2></dataValidation>`,
+  amount:
+    `<dataValidation type="decimal" errorStyle="information" imeMode="noControl" operator="greaterThan" allowBlank="1" showInputMessage="1" showErrorMessage="1" ` +
+    `sqref="B4" xr:uid="{5E6F7081-0130-4293-8EAF-1A2B3C4D5E6F}"><formula1>0</formula1></dataValidation>`,
+  due:
+    `<dataValidation type="date" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B5" xr:uid="{6F708192-0130-43A4-9FB0-2B3C4D5E6F70}">` +
+    `<formula1>${SPEC130_DATE_FROM}</formula1><formula2>${SPEC130_DATE_TO}</formula2></dataValidation>`,
+  code:
+    `<dataValidation type="textLength" operator="lessThanOrEqual" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B6" ` +
+    `xr:uid="{708192A3-0130-44B5-A0C1-3C4D5E6F7081}"><formula1>5</formula1></dataValidation>`,
+  email:
+    `<dataValidation type="custom" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B7" xr:uid="{8192A3B4-0130-45C6-B1D2-4D5E6F708192}">` +
+    `<formula1>ISNUMBER(SEARCH("@",B7))</formula1></dataValidation>`,
+  option:
+    `<dataValidation type="list" allowBlank="1" showDropDown="1" showInputMessage="1" showErrorMessage="1" sqref="B8" xr:uid="{92A3B4C5-0130-46D7-82E3-5E6F708192A3}">` +
+    `<formula1>$E$2:$E$6</formula1></dataValidation>`,
+  colour:
+    `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B10" xr:uid="{A3B4C5D6-0130-47E8-93F4-6F708192A3B4}">` +
+    `<formula1>Colours</formula1></dataValidation>`,
+} as const;
+
+/** The cross-sheet list, verbatim, as Excel 2010+ writes it. */
+const SPEC130_X14_RULE =
+  `<x14:dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" xr:uid="{B4C5D6E7-0130-48F9-A405-708192A3B4C5}">` +
+  `<x14:formula1><xm:f>Lists!$A$1:$A$4</xm:f></x14:formula1><xm:sqref>B9</xm:sqref></x14:dataValidation>`;
+
+/** "Form"'s `<dataValidations>` block, verbatim. */
+const SPEC130_BLOCK = `<dataValidations count="${Object.keys(SPEC130_BASE_RULES).length}">${Object.values(SPEC130_BASE_RULES).join("")}</dataValidations>`;
+
+/** "Form"'s data-validation ext, verbatim. */
+const SPEC130_EXT =
+  `<ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}" xmlns:x14="${SPEC130_X14_NS}">` +
+  `<x14:dataValidations count="1" xmlns:xm="${SPEC130_XM_NS}">${SPEC130_X14_RULE}</x14:dataValidations></ext>`;
+
+/** What spec130-validation.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC130_VALIDATION_XLSX = {
+  title: "Data validation",
+  sheetNames: ["Form", "Lists"],
+  activeSheetIndex: 0,
+  /** cellXfs: 2 a bold header (EXCEL_STYLES). */
+  xf: { header: 2 },
+  definedName: { name: "Colours", text: "Lists!$B$1:$B$3" },
+  form: {
+    partName: "xl/worksheets/sheet1.xml",
+    dimension: "A1:E10",
+    headers: { A1: "Field", B1: "Entry", E1: "Options" },
+    /** A2..A10. */
+    labels: ["Priority", "Score", "Amount", "Due date", "Code", "Email", "Option", "Item", "Colour"],
+    /** B3's number — the only value in B2:B10. */
+    score: { ref: "B3", value: 5 },
+    /** E2..E6, the list B8 offers. */
+    options: ["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
+    /** A cell under no rule. */
+    free: "D2",
+    rules: SPEC130_BASE_RULES,
+    x14Rule: SPEC130_X14_RULE,
+    block: SPEC130_BLOCK,
+    ext: SPEC130_EXT,
+    dates: { from: SPEC130_DATE_FROM, to: SPEC130_DATE_TO },
+  },
+  lists: {
+    partName: "xl/worksheets/sheet2.xml",
+    dimension: "A1:B4",
+    /** A1..A4, the list B9 offers. */
+    regions: ["North", "South", "East", "West"],
+    /** B1..B3, what "Colours" names. */
+    colours: ["Red", "Green", "Blue"],
+  },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** A worksheet in Excel 365's CT_Worksheet order: `after` follows sheetData. */
+function spec130WorksheetXml(options: { uid: string; dimension: string; selected: boolean; sheetData: string; after: string }): string {
+  return (
+    XML_DECLARATION +
+    worksheetOpen(options.uid) +
+    `<dimension ref="${options.dimension}"/>` +
+    `<sheetViews><sheetView ${options.selected ? 'tabSelected="1" ' : ""}workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/>` +
+    `<sheetData>${options.sheetData}</sheetData>` +
+    options.after +
+    `</worksheet>`
+  );
+}
+
+/** docProps/app.xml with the Worksheets and Named Ranges heading pairs. */
+function spec130AppXml(): string {
+  const F = SPEC130_VALIDATION_XLSX;
+  const titles = [...F.sheetNames, F.definedName.name];
+  return (
+    XML_DECLARATION +
+    `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
+    `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">` +
+    `<Application>Microsoft Excel</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop>` +
+    `<HeadingPairs><vt:vector size="4" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>${F.sheetNames.length}</vt:i4></vt:variant>` +
+    `<vt:variant><vt:lpstr>Named Ranges</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4></vt:variant></vt:vector></HeadingPairs>` +
+    `<TitlesOfParts><vt:vector size="${titles.length}" baseType="lpstr">${titles.map((title) => `<vt:lpstr>${title}</vt:lpstr>`).join("")}</vt:vector></TitlesOfParts>` +
+    `<Company></Company><LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc>` +
+    `<HyperlinksChanged>false</HyperlinksChanged><AppVersion>16.0300</AppVersion></Properties>`
+  );
+}
+
+export async function buildSpec130ValidationXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC130_VALIDATION_XLSX;
+  const sst: string[] = [];
+  const sstIndex = new Map<string, number>();
+  const text = (ref: string, value: string, style?: number): string => {
+    let index = sstIndex.get(value);
+    if (index === undefined) {
+      index = sst.length;
+      sst.push(value);
+      sstIndex.set(value, index);
+    }
+    return sharedCell(ref, index, style);
+  };
+
+  const formRows: string[] = [excelRow(1, "1:5", text("A1", F.form.headers.A1, F.xf.header) + text("B1", F.form.headers.B1, F.xf.header) + text("E1", F.form.headers.E1, F.xf.header))];
+  F.form.labels.forEach((label, i) => {
+    const r = i + 2;
+    const score = `B${r}` === F.form.score.ref ? numberCell(F.form.score.ref, F.form.score.value) : "";
+    const option = F.form.options[i];
+    formRows.push(excelRow(r, "1:5", text(`A${r}`, label) + score + (option === undefined ? "" : text(`E${r}`, option))));
+  });
+  const form = spec130WorksheetXml({
+    uid: SPEC130_FORM_UID,
+    dimension: F.form.dimension,
+    selected: true,
+    sheetData: formRows.join(""),
+    after: F.form.block + SPEC117_PAGE_MARGINS + `<extLst>${F.form.ext}</extLst>`,
+  });
+
+  const listRows = F.lists.regions.map((region, i) => {
+    const colour = F.lists.colours[i];
+    return excelRow(i + 1, "1:2", text(`A${i + 1}`, region) + (colour === undefined ? "" : text(`B${i + 1}`, colour)));
+  });
+  const lists = spec130WorksheetXml({ uid: SPEC130_LISTS_UID, dimension: F.lists.dimension, selected: false, sheetData: listRows.join(""), after: SPEC117_PAGE_MARGINS });
+
+  const worksheets = [form, lists];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${sst.length}">` +
+    sst.map((value) => `<si><t>${xmlText(value)}</t></si>`).join("") +
+    `</sst>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheetNames.map((name, index) => ({ name, xml: worksheets[index]! })),
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    additions: {
+      parts: [],
+      relationships: [],
+      overrides: [],
+      workbookAfterSheets: `<definedNames><definedName name="${F.definedName.name}">${F.definedName.text}</definedName></definedNames>`,
+    },
+    app: spec130AppXml(),
+  });
+}
+// ============================================================================
+// end of SPEC-130 (xlsx)
+// ============================================================================

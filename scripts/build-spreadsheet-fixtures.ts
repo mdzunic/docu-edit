@@ -212,5 +212,18 @@ writeFileSync(join(fixturesDir, "spec129-cf.ods"), await buildSpec129CfOdsBytes(
 writeFileSync(join(fixturesDir, "spec129-legacy.ods"), await buildSpec129LegacyOdsBytes());
 // --- end SPEC-129 (ODS) --------------------------------------------------------
 
+// --- SPEC-130 (xlsx) -----------------------------------------------------------
+// - spec130-validation.xlsx — Excel-shaped data validation: "Form" with a
+//                             literal list (input message, stop alert), whole
+//                             (warning), decimal (information, imeMode),
+//                             date, text-length and custom rules, a range
+//                             list with showDropDown="1", a cross-sheet list
+//                             in the x14 ext and a defined-name list; xr:uids;
+//                             "Lists" the sources; the "Colours" definedName
+import { buildSpec130ValidationXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec130-validation.xlsx"), await buildSpec130ValidationXlsxBytes());
+// --- end SPEC-130 (xlsx) -------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);
