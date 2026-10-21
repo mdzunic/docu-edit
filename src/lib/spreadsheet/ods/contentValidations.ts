@@ -49,7 +49,9 @@
 //   covering the same columns as one ending on the row just above extends
 //   it. Clamped to the grid. A definition referenced from two tables is one
 //   DataValidation per sheet, with the same `odsName` and `sourceXml`.
-//   Rules are in the order of their definitions.
+//   Rules are in the order of their definitions; a rule's ranges in
+//   document order, but the one whose top-left is the base cell first (the
+//   origin the writer wrote it at).
 //
 // Writing (OdsValidationWriter, one per save — ods/writer.ts):
 // - Every rule gets the name its cells are written with (nameOf; the table
@@ -92,7 +94,7 @@ import { OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/od
 import { scanXml, XmlScanError } from "../../core/xmlScanner";
 import { sanitizeXmlText } from "../../core/xmlText";
 import type { CellRef, GridRange } from "../address";
-import { fromOdsFormula, toOdsFormula } from "../formula/dialect";
+import { fromOdsFormula, OOOC_NAMESPACE, OPENFORMULA_NAMESPACE, toOdsFormula } from "../formula/dialect";
 import { FormulaSyntaxError } from "../formula/parse";
 import { shiftFormula } from "../formula/references";
 import { MAX_COLS, MAX_ROWS, type Sheet, type SpreadsheetModel } from "../model";
@@ -148,6 +150,12 @@ const COMPARISON_WRITE: Readonly<Record<Exclude<ValidationOperator, "between" | 
   greaterThanOrEqual: ">=",
   lessThanOrEqual: "<=",
 };
+
+/** The dialect prefixes a condition may carry when the root binds none. */
+const DIALECTS: ReadonlyMap<string, string> = new Map([
+  ["of", OPENFORMULA_NAMESPACE],
+  ["oooc", OOOC_NAMESPACE],
+]);
 
 const COMPARISON = /^(<=|>=|!=|<>|<|>|=)([\s\S]*)$/;
 
@@ -441,6 +449,10 @@ function readCondition(condition: string | undefined, namespaces: ReadonlyMap<st
   }
   const prefixed = /^([A-Za-z_][\w.-]*):(?!=)/.exec(text);
   const dialect = prefixed ? prefixed[1]! : "of";
+  const uri = namespaces.get(dialect) ?? DIALECTS.get(dialect);
+  if (uri !== OPENFORMULA_NAMESPACE && uri !== OOOC_NAMESPACE) {
+    return null;
+  }
   const body = (prefixed ? text.slice(prefixed[0].length) : text).trim();
   const operand = (raw: string | undefined): string | undefined => {
     const expression = raw?.trim() ?? "";
@@ -627,7 +639,12 @@ function rebase(formula: string, base: CellRef, origin: CellRef): string {
 }
 
 /** The rule a definition makes over `ranges` (see the module header). */
-export function validationFromDefinition(definition: OdsValidationDefinition, ranges: GridRange[]): DataValidation {
+export function validationFromDefinition(definition: OdsValidationDefinition, cellRanges: GridRange[]): DataValidation {
+  // The range whose top-left is the base cell leads (the writer's origin), so
+  // a rule written from the model reads back with the same origin.
+  const base = definition.base;
+  const lead = base ? cellRanges.findIndex((range) => range.top === base.row && range.left === base.col) : -1;
+  const ranges = lead > 0 ? [cellRanges[lead]!, ...cellRanges.slice(0, lead), ...cellRanges.slice(lead + 1)] : cellRanges;
   const origin = validationOrigin({ ranges });
   const rule: DataValidation = {
     id: mintValidationId(),
@@ -643,10 +660,9 @@ export function validationFromDefinition(definition: OdsValidationDefinition, ra
   };
   const condition = definition.condition;
   if (condition) {
-    const base = definition.base ?? origin;
     try {
       const formulas = [condition.formula1, condition.formula2].map((formula) =>
-        formula === undefined || condition.literal ? formula : rebase(formula, base, origin),
+        formula === undefined || condition.literal ? formula : rebase(formula, base ?? origin, origin),
       );
       rule.type = condition.type;
       rule.operator = condition.operator;
