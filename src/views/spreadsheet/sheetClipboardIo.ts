@@ -11,6 +11,11 @@
 // - payloadAttribute parses the HTML on a detached DOMParser document (so
 //   nothing in it executes or loads) and returns the attribute of its
 //   `table[data-docu-edit-cells]`, or null.
+// - pastedImage (SPEC-131 "Paste") finds a paste's image: a clipboard item of
+//   an accepted image type, when the text/html flavour (if any) holds no
+//   <table> and no internal payload — a screenshot inserts as a picture, a
+//   range copied from Excel (which also carries a PNG) pastes as cells.
+import { isAcceptedImageType } from "../../lib/core/media";
 import { PAYLOAD_ATTRIBUTE } from "../../lib/spreadsheet/clipboard";
 
 export interface ClipboardFlavours {
@@ -61,6 +66,21 @@ export function payloadAttribute(html: string): string | null {
   }
   const table = new DOMParser().parseFromString(html, "text/html").querySelector(`table[${PAYLOAD_ATTRIBUTE}]`);
   return table?.getAttribute(PAYLOAD_ATTRIBUTE) ?? null;
+}
+
+/** The image a paste inserts as a drawing, or null (see the module header). */
+export function pastedImage(data: Pick<DataTransfer, "getData" | "items" | "files">): File | null {
+  const html = data.getData("text/html");
+  if (html && (/<table[\s>]/i.test(html) || html.includes(PAYLOAD_ATTRIBUTE))) {
+    return null;
+  }
+  for (const item of Array.from(data.items ?? [])) {
+    const file = item.kind === "file" && isAcceptedImageType(item.type) ? item.getAsFile() : null;
+    if (file) {
+      return file;
+    }
+  }
+  return Array.from(data.files ?? []).find((file) => isAcceptedImageType(file.type)) ?? null;
 }
 
 let cuts = 0;
