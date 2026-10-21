@@ -16,9 +16,12 @@
 // their ranges and differential styles cross — with "some conditional
 // formatting", what its stripRetention drops: a `preserved` rule (another
 // format's XML, in either direction) and, going to .ods, an icon set's
-// reversed order (no wire form there). A row may also yield item-level
-// labels (SPEC-131's "Form control on Sheet1") by returning them from its
-// marker.
+// reversed order (no wire form there). SPEC-130 deleted "data validation":
+// every rule type crosses through the model (stripRetention's
+// crossValidations; an ODS sort-ascending list becomes an ordinary xlsx
+// list, the one property that does not cross, and is not named here). A
+// row may also yield item-level labels (SPEC-131's "Form control on
+// Sheet1") by returning them from its marker.
 import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
 import type { SpreadsheetModel } from "./model";
@@ -166,7 +169,6 @@ export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
   { label: "charts", xlsx: anyPart(/^xl\/charts\/chart[^/]*\.xml$/), ods: anyTableHas("<draw:object") },
   { label: "comments", xlsx: worksheetRelationship("comments"), ods: anyTableHas("<office:annotation") },
   { label: "some conditional formatting", xlsx: someConditionalFormatting(true), ods: someConditionalFormatting(false) },
-  { label: "data validation", xlsx: anyWorksheetHas("<dataValidations"), ods: envelopeHas("<table:content-validations") },
   { label: "named ranges", xlsx: xlsxNamedRanges, ods: (source) => envelopeHas("<table:named-expressions")(source) || anyTableHas("<table:named-expressions")(source) },
   { label: "tables", xlsx: anyPart(/^xl\/tables\/[^/]+\.xml$/), ods: odsTables },
   { label: "colour and icon filters", xlsx: verbatimFilters, ods: verbatimFilters },
