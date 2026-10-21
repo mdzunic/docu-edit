@@ -50,6 +50,7 @@ import type { CellValue, Sheet, SpreadsheetModel } from "./model";
 import { formatCodeOf } from "./numberFormat/builtin";
 import { parseInput } from "./numberFormat/input";
 import { formatValue, plainText, type FormatContext } from "./numberFormat/render";
+import { sourceDefinedName } from "./sourceDefinedNames";
 import { cellStyle, effectiveStyleId } from "./styles";
 
 // --- the rule model ----------------------------------------------------------------------------
@@ -238,18 +239,19 @@ export interface ValidationList {
   unavailable?: true;
 }
 
-/** A rule formula's result at `at`, or null when it does not parse or
- * cannot be computed here (an unknown name until SPEC-133, an unsupported
- * function …). `overlay` answers one cell's value instead of the model's. */
+/** A formula's result at `at` — its relative parts relative to `origin` (a
+ * rule's, see the header) — or null when it does not parse or cannot be
+ * computed here (an unknown name until SPEC-133, an unsupported function …).
+ * `overlay` answers one cell's value instead of the model's. */
 function evaluateAt(
   sheet: Sheet,
-  dv: DataValidation,
+  origin: CellRef,
   formula: string,
   at: CellRef,
   deps: ValidationDeps,
   overlay?: { at: CellRef; value: CellValue },
 ): { value: ReturnType<typeof evaluate>; ctx: EvalContext } | null {
-  const parsed = parseFormulaAt(formula, validationOrigin(dv));
+  const parsed = parseFormulaAt(formula, origin);
   if (parsed instanceof FormulaSyntaxError || formulaFacts(parsed.node).reason !== undefined) {
     return null;
   }
@@ -299,7 +301,7 @@ function boundAt(sheet: Sheet, dv: DataValidation, formula: string | undefined, 
   if (formula === undefined || formula.trim() === "") {
     return null;
   }
-  const result = evaluateAt(sheet, dv, formula, at, deps);
+  const result = evaluateAt(sheet, validationOrigin(dv), formula, at, deps);
   if (!result) {
     return null;
   }
@@ -308,6 +310,19 @@ function boundAt(sheet: Sheet, dv: DataValidation, formula: string | undefined, 
     return 0;
   }
   return typeof scalar === "number" ? scalar : null;
+}
+
+/** A name Source's result at `at`: what the source file defines the name as
+ * (sourceDefinedName — provisional until SPEC-133's names model), evaluated
+ * relative to the definition's own origin; null for a name it does not
+ * define. */
+function evaluateName(model: SpreadsheetModel, sheet: Sheet, formula: string, at: CellRef, deps: ValidationDeps): ReturnType<typeof evaluateAt> {
+  const node = rootOf(parseFormula(formula));
+  if (node.kind !== "name") {
+    return null;
+  }
+  const defined = sourceDefinedName(model, node.name, sheet.id, node.sheet);
+  return defined ? evaluateAt(sheet, defined.origin, defined.formula, at, deps) : null;
 }
 
 /** The text of a source cell's value through its own number format. */
@@ -333,6 +348,7 @@ function scalarText(value: CellValue, deps: ValidationDeps): string {
  * cell's value as stored, its text through its own number format; blank
  * cells as empty items; duplicates kept), capped at VALIDATION_LIST_MAX; or
  * `unavailable` for a 2-D result, an error or an uncomputable source. A
+ * name is what the source file defines it as (evaluateName). A
  * `sort-ascending` ODS list is sorted (sortItemsAscending). */
 export function listItems(
   model: SpreadsheetModel,
@@ -349,7 +365,8 @@ export function listItems(
   if (source.kind === "literal") {
     items = source.items.slice(0, VALIDATION_LIST_MAX).map((text) => ({ value: literalItemValue(text, deps.ctx), text }));
   } else {
-    const result = evaluateAt(sheet, dv, source.formula, at, deps);
+    const result =
+      source.kind === "name" ? evaluateName(model, sheet, source.formula, at, deps) : evaluateAt(sheet, validationOrigin(dv), source.formula, at, deps);
     if (!result) {
       return { items: [], unavailable: true };
     }
@@ -533,7 +550,7 @@ function ruleAccepts(model: SpreadsheetModel, sheet: Sheet, dv: DataValidation, 
       if (dv.formula1 === undefined) {
         return true;
       }
-      const result = evaluateAt(sheet, dv, dv.formula1, at, deps, { at, value: v });
+      const result = evaluateAt(sheet, validationOrigin(dv), dv.formula1, at, deps, { at, value: v });
       if (!result) {
         return true;
       }

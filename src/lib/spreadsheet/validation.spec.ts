@@ -344,7 +344,7 @@ describe("list sources", () => {
     expect(itemsAt(model, "A5").items.map((item) => item.text)).toEqual(["a", "b", "c"]);
   });
 
-  it("a defined name is unavailable until SPEC-133 resolves names — and accepts the entry", () => {
+  it("a name the source file does not define (a workbook with no source here) is unavailable — and accepts the entry", () => {
     const model = book({}, [rule("B10", { type: "list", formula1: "Colours" })]);
     expect(itemsAt(model, "B10")).toEqual({ items: [], unavailable: true });
     expect(valid(model, "B10", "anything")).toBe(true);
