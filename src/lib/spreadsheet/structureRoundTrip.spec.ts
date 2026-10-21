@@ -127,10 +127,14 @@ describe("SPEC-124 round trip — spec124-structure.ods", () => {
     expect(content).toContain(`table:print-ranges="Sheet1.A1:Sheet1.D11"`);
     expect(content).toContain(`table:base-cell-address="Sheet1.D2"`);
     expect(content).toContain(`table:end-cell-address="Sheet1.H8"`);
-    expect(content).toContain(`draw:notify-on-update-of-ranges="Sheet1.A1:Sheet1.C11"`);
+    // SPEC-132: the chart is modelled — the charts adjuster moved its references and the
+    // ods writer wrote the moved addresses through canonicalToOdsRangeAddress (the frame's
+    // notify list and the object's patched addresses); the unmoved categories keep LibreOffice's spelling.
+    expect(content).toContain(`draw:notify-on-update-of-ranges="$Sheet1.A1:.C11"`);
     const chart = text(out.get("Object 1/content.xml"));
-    expect(chart).toContain(`chart:values-cell-range-address="Sheet1.C2:Sheet1.C11"`);
-    expect(chart).toContain(`chart:label-cell-address="Sheet1.C1"`);
+    expect(chart).toContain(`chart:values-cell-range-address="$Sheet1.C2:.C11"`);
+    expect(chart).toContain(`chart:label-cell-address="$Sheet1.C1"`);
+    expect(chart).toContain(`table:cell-range-address="Sheet1.A2:Sheet1.A11"`);
     expect(equalBytes(out.get("styles.xml")!, source.get("styles.xml")!)).toBe(true);
     expect(equalBytes(out.get("settings.xml")!, source.get("settings.xml")!)).toBe(true);
   });

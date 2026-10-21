@@ -531,7 +531,9 @@ describe("SPEC-132: chart objects at open", () => {
     vi.mocked(readOdsChart).mockReturnValueOnce({ visual: structuredClone(visual), refs, uncached: true });
     const sheet = await openWithChart();
     const drawing = sheet.drawings![0]!;
-    expect(drawing.content).toEqual({ kind: "chart", visual, refs, sourcePart: "Object 1/content.xml" });
+    // The display refresh may rebuild the visual from the cells; refs and part stay, `uncached` is never stored.
+    expect(drawing.content).toMatchObject({ kind: "chart", refs, sourcePart: "Object 1/content.xml" });
+    expect(Object.keys(drawing.content).toSorted()).toEqual(["kind", "refs", "sourcePart", "visual"]);
     expect(refreshSheetChart).toHaveBeenCalledTimes(1);
     const [model, sheetId, drawingId, options] = vi.mocked(refreshSheetChart).mock.calls[0]!;
     expect([sheetId, drawingId, options]).toEqual([sheet.id, drawing.id, { forDisplay: true }]);

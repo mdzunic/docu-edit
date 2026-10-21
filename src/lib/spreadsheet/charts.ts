@@ -1381,10 +1381,12 @@ export function moveChartsForMove(model: SpreadsheetModel, move: RangeMove): voi
 /** Sheet rename and delete (SPEC-121's commands call this with their
  * SheetRemap): remapSheetReferences over every chart's refs — a reference
  * into a deleted sheet becomes #REF! and its series keeps its caches —
- * `refsDirty` where one changed, then the notify sync (ods). */
+ * `refsDirty` where one changed. No notify sync: a frame's notify list is
+ * retained text in source-time names, which SPEC-121's write-time
+ * sheet-name pass renames in a clean table (and the ods writer re-syncs a
+ * rebuilt table's frames after it), so a rename leaves its sheet clean. */
 export function remapChartReferences(model: SpreadsheetModel, remap: SheetRemap): void {
   adjustCharts(model, (text) => remapSheetReferences(text, remap));
-  syncChartNotifyRanges(model);
 }
 
 /** ods: every chart frame whose `draw:notify-on-update-of-ranges` (in its
