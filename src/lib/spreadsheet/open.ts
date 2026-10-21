@@ -370,10 +370,19 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
 /** A dirty ods sheet's drawings (see the version history): lifted out of
  * its cells' preservedXml and read from its retained table:shapes. */
 async function upgradeOdsDrawings(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>, media: Map<string, MediaPart>): Promise<void> {
-  void model;
-  void sheet;
-  void sourceParts;
-  void media;
+  const prefix = model.odsContentEnvelope?.prefix;
+  if (prefix === undefined || sheet.sourceXml === undefined) {
+    return;
+  }
+  const { upgradeOdsSheetDrawings } = await import("./ods/drawingXml");
+  const read = upgradeOdsSheetDrawings({ sheet, prefix, parts: sourceParts, media: [...media.values()] });
+  sheet.rows = read.rows;
+  if (read.drawings.length > 0) {
+    sheet.drawings = read.drawings;
+  }
+  for (const part of read.media) {
+    media.set(part.mediaId, part);
+  }
 }
 
 // --- SPEC-130's step -------------------------------------------------------------------------

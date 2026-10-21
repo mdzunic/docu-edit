@@ -22,9 +22,10 @@
 // list, the one property that does not cross, and is not named here).
 // SPEC-131 replaced "images and shapes" — image and shape drawings cross
 // through the model's canonical writers — with its item-level row: each
-// drawing stripRetention drops (a `foreign`, `group` or placeholder `chart`
-// one) is named with its kind and sheet ("Form control on Sheet1"), once per
-// distinct label. A row yields item-level labels by returning them from its
+// drawing stripRetention drops (a `foreign` or `group` one) is named with
+// its kind and sheet ("Form control on Sheet1"), once per distinct label; a
+// placeholder `chart` drawing is dropped too, and named by the "charts" row
+// (SPEC-121's toast reads "charts, comments"), not twice. A row yields item-level labels by returning them from its
 // marker.
 import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
@@ -117,15 +118,14 @@ const odsPageSetup: Marker = ({ model, parts }) => {
 // --- both ---------------------------------------------------------------------------------------
 
 /** SPEC-131: what a drawing the copy drops is called ("Form control",
- * "Group", "Chart"), or undefined for one that crosses. */
+ * "Group"), or undefined for one that crosses — or, a chart, that the
+ * "charts" row names. */
 function droppedDrawingKind(drawing: SheetDrawing): string | undefined {
   switch (drawing.content.kind) {
     case "foreign":
       return drawing.content.label;
     case "group":
       return "Group";
-    case "chart":
-      return "Chart";
     default:
       return undefined;
   }

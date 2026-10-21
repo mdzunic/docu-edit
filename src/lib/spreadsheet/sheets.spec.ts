@@ -2119,7 +2119,7 @@ describe("unconvertibleContent", () => {
     expect(unconvertibleContent(withRules([plain, iconRule(true)], "ods"), "xlsx")).toEqual([]);
   });
 
-  it("SPEC-131: names each drawing the copy drops — foreign, group, placeholder chart — with its kind and sheet, once per label; images and shapes cross", async () => {
+  it("SPEC-131: names each drawing the copy drops — foreign, group — with its kind and sheet, once per label; a chart drawing is the charts row's; images and shapes cross", async () => {
     const anchor = { kind: "absolute" as const, posEmu: { x: 0, y: 0 }, extEmu: { cx: 9525, cy: 9525 } };
     const drawing = (id: string, content: SheetDrawing["content"]): SheetDrawing => ({ id, name: id, anchor, content });
     const xlsx = await openLinksXlsx();
@@ -2139,7 +2139,7 @@ describe("unconvertibleContent", () => {
         : sheet,
     );
     const name = xlsx.sheets[0]!.name;
-    expect(unconvertibleContent(xlsx, "ods").slice(0, 3)).toEqual([`Form control on ${name}`, `Group on ${name}`, `Chart on ${name}`]);
+    expect(unconvertibleContent(xlsx, "ods").slice(0, 3)).toEqual([`Form control on ${name}`, `Group on ${name}`, "charts"]);
 
     const ods = await openLinksOds();
     ods.sheets = ods.sheets.map((sheet, index) => (index === 1 ? { ...sheet, drawings: [drawing("dr1", { kind: "foreign", label: "3-D object" }), drawing("dr2", { kind: "image", mediaId: "Pictures/1.png" })] } : sheet));

@@ -104,16 +104,13 @@ import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, escapeElementText, startTagAt, type Splice } from "../xmlSplice";
 import { decodeUtf8, encodeUtf8 } from "../xlsx/package";
 import {
-  declaredIds,
   isObjectPart,
   objectsReferenced,
   picturesReferenced,
   readManifest,
-  retargetObject,
   setTableAttribute,
   sourceTables,
   spliceManifest,
-  suffixIds,
   tableNameOf,
   tableStyleNameOf,
 } from "./package";
@@ -518,7 +515,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     if (!sheet.dirty && !validations.rebuilds(sheet)) {
       return text;
     }
-    const table = serializeTable(copyDrawings(model, sheet), { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
+    const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
     rebuilt += table;
     return table;
   });
@@ -608,43 +605,6 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     out.push({ name: path, data: mediaBytes(part) });
   }
   return out;
-}
-
-/** SPEC-131: a duplicated sheet's drawings as its own table text spells
- * them. SPEC-121's duplicate suffixes the copy's ids (`-c<k>`) and retargets
- * its embedded objects in the copy's sourceXml (ods/duplicate.ts); a drawing
- * the copy shares with its origin (the same source text) gets the same
- * changes here, so a rebuilt copy never repeats its origin's ids or shows
- * its origin's object. Every other sheet comes back as it is. */
-function copyDrawings(model: SpreadsheetModel, sheet: Sheet): Sheet {
-  if (sheet.copiedFrom === undefined || sheet.sourceXml === undefined || !sheet.drawings?.some((drawing) => drawing.sourceXml !== undefined)) {
-    return sheet;
-  }
-  const originName = sheet.copiedFrom.toUpperCase();
-  const origin = model.sheets.find((each) => each.copiedFrom === undefined && each.sourceXml !== undefined && (tableNameOf(each.sourceXml) ?? "").toUpperCase() === originName);
-  if (!origin?.sourceXml) {
-    return sheet;
-  }
-  const own = declaredIds(origin.sourceXml);
-  const copyIds = declaredIds(sheet.sourceXml);
-  const k = [...own].map((id) => [...copyIds].find((each) => each.startsWith(`${id}-c`) && /^\d+$/.test(each.slice(id.length + 2)))?.slice(id.length + 2)).find((each) => each !== undefined);
-  const from = objectsReferenced(origin.sourceXml);
-  const to = objectsReferenced(sheet.sourceXml);
-  const shared = new Set((origin.drawings ?? []).map((drawing) => drawing.sourceXml));
-  const drawings = sheet.drawings.map((drawing) => {
-    if (drawing.sourceXml === undefined || !shared.has(drawing.sourceXml)) {
-      return drawing;
-    }
-    let xml = k === undefined ? drawing.sourceXml : suffixIds(drawing.sourceXml, `-c${k}`);
-    from.forEach((object, index) => {
-      const target = to[index];
-      if (target !== undefined && target !== object) {
-        xml = retargetObject(xml, object, target);
-      }
-    });
-    return xml === drawing.sourceXml ? drawing : { ...drawing, sourceXml: xml };
-  });
-  return { ...sheet, drawings };
 }
 
 // --- settings.xml ----------------------------------------------------------------------------
