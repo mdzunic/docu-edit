@@ -2048,13 +2048,10 @@ export function documentThemeOf(model: { theme?: DocumentTheme } | null | undefi
   return model?.theme ?? DEFAULT_THEME;
 }
 
-/** Typed pass-through for a theme prop arriving through a runtime-declared
- * Object (espree bars the annotation in `.vue` scripts — see asRenderEntries
- * for the same pattern). A missing/null prop falls back to the product
- * default theme. */
-export function asDocumentTheme(value: unknown): DocumentTheme {
-  return (value ?? DEFAULT_THEME) as DocumentTheme;
-}
+// The typed theme-prop pass-through lives in core since SPEC-132 (the reused
+// chart components import it from there); re-exported here so every text
+// import is unchanged.
+export { asDocumentTheme } from "./core/theme";
 
 /** A `ModelColor` detached from any reactive dialog draft that held it. A
  * theme reference stored into a Vue `ref` draft comes back as a reactive

@@ -32,3 +32,22 @@ describe("ChartToolbar — compact-tier data sheet gating (SPEC-068 AC-12/13)", 
     expect(wrapper.get('[data-testid="chart-duplicate-button"]').attributes("disabled")).toBeUndefined();
   });
 });
+
+describe("ChartToolbar — the unsupported notice's reason (SPEC-132)", () => {
+  it("shows the default text for an unsupported chart without a reason, and the given reason instead of it", () => {
+    const plain = mount(ChartToolbar, { props: { unsupported: true } });
+    expect(plain.get('[data-testid="chart-unsupported-reason"]').text()).toBe("We can't edit this chart type yet — it's kept exactly as it was.");
+    expect(plain.find('[data-testid="chart-edit-data-button"]').exists()).toBe(false);
+    expect(plain.find('[data-testid="chart-options-button"]').exists()).toBe(false);
+    const reasoned = mount(ChartToolbar, { props: { unsupported: true, reason: "Pivot charts can't be edited yet" } });
+    expect(reasoned.get('[data-testid="chart-unsupported-reason"]').text()).toBe("Pivot charts can't be edited yet");
+    expect(reasoned.find('[data-testid="chart-edit-data-button"]').exists()).toBe(false);
+  });
+
+  it("ignores a reason on a supported chart: the edit controls show and no notice does", () => {
+    const wrapper = mount(ChartToolbar, { props: { reason: "Pivot charts can't be edited yet" } });
+    expect(wrapper.find('[data-testid="chart-unsupported-reason"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="chart-edit-data-button"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="chart-options-button"]').exists()).toBe(true);
+  });
+});
