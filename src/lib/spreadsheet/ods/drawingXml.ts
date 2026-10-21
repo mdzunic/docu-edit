@@ -70,7 +70,9 @@
 //   the write-time geometry and in the model's anchor cell, and rewritten
 //   only when that read-back differs from the model by more than
 //   PATCH_TOLERANCE_EMU (a tenth of a pixel: rounding never rewrites, a
-//   one-pixel nudge always does): the start position (svg:x/svg:y, or the
+//   one-pixel nudge always does) — and a source start before its anchor
+//   cell's own start (read clamped: the cell moved under an edit, or the
+//   source was inconsistent) counts as moved: the start position (svg:x/svg:y, or the
 //   last `translate` of a draw:transform — appended when none — or a line's
 //   svg:x1…y2, or a group's own translate), the size (svg:width/svg:height:
 //   a oneCell or absolute anchor's extEmu; a twoCell's from→to box, only
@@ -1059,9 +1061,12 @@ function patchedDrawing(text: string, geometry: ElementGeometry, drawing: SheetD
     movedX = differs(geometry.box.x, target.x);
     movedY = differs(geometry.box.y, target.y);
   } else {
+    const left = metrics.colLeft(anchor.from.col) * EMU_PER_PX;
+    const top = metrics.rowTop(anchor.from.row) * EMU_PER_PX;
     readFrom = { col: anchor.from.col, colOffEmu: offsetInto(geometry.box.x, metrics.colLeft(anchor.from.col)), row: anchor.from.row, rowOffEmu: offsetInto(geometry.box.y, metrics.rowTop(anchor.from.row)) };
-    movedX = differs(readFrom.colOffEmu, anchor.from.colOffEmu);
-    movedY = differs(readFrom.rowOffEmu, anchor.from.rowOffEmu);
+    // A source position before the anchor cell's start reads back clamped: its cell moved.
+    movedX = differs(readFrom.colOffEmu, anchor.from.colOffEmu) || geometry.box.x < left - PATCH_TOLERANCE_EMU;
+    movedY = differs(readFrom.rowOffEmu, anchor.from.rowOffEmu) || geometry.box.y < top - PATCH_TOLERANCE_EMU;
   }
   // The end cell.
   let wantEnd: AnchorPoint | undefined;
