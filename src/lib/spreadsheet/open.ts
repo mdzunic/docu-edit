@@ -550,6 +550,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   if (parsed.namedStyles !== undefined && parsed.namedStyles.length > 0) {
     model.namedStyles = parsed.namedStyles;
   }
+  if (parsed.odsOrphanValidations !== undefined && parsed.odsOrphanValidations.length > 0) {
+    model.odsOrphanValidations = parsed.odsOrphanValidations;
+  }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
 }

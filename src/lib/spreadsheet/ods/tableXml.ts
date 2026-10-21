@@ -83,6 +83,8 @@ import { formatValue, plainText, workbookFormatContext, type FormatContext } fro
 import { addressText, type CellBudget, outOfGridError } from "../parsed";
 import { serialToOdsDateValue, serialToOdsTimeValue } from "../serial";
 import { cellStyle, columnSpanAt } from "../styles";
+import { sheetValidations, type DataValidation } from "../validation";
+import { withoutValidationName } from "./contentValidations";
 import { tableStartTag } from "./package";
 import type { OdsRowHeight, OdsStyleEnv, OdsStyleRegistry } from "./styles";
 
@@ -777,6 +779,25 @@ export interface OdsTableContext {
    * table: the cells using it get a generated `de-ce` style without the
    * map, so a rule deleted from the model cannot come back. */
   mappedCellStyle?: (name: string) => boolean;
+  /** SPEC-130: the name a sheet's validation rule is written under
+   * (OdsValidationWriter.nameOf — the save's `table:content-validations`
+   * defines it); absent, or undefined for a rule, no cell names it. */
+  validationName?: (sheet: Sheet, rule: DataValidation) => string | undefined;
+}
+
+/** SPEC-130: a validated rectangle as the writer meets it — the rule's
+ * place in model order (the first covering rule wins) and its name. */
+interface ValidatedRange {
+  range: GridRange;
+  order: number;
+  name: string;
+}
+
+/** A row's validated column segments, ascending and disjoint. */
+interface ValidatedSegment {
+  left: number;
+  right: number;
+  name: string;
 }
 
 type Axis = "row" | "col";
@@ -1158,6 +1179,13 @@ class TableWriter {
   private nextMerge = 0;
   private active: GridRange[] = [];
   private readonly merges: GridRange[];
+  // SPEC-130: the validated rectangles by top, those the current row meets,
+  // and the rows where that set changes (a run of empty rows splits there).
+  private readonly validated: ValidatedRange[];
+  private nextValidated = 0;
+  private activeValidated: ValidatedRange[] = [];
+  private readonly validatedBreaks: number[];
+  private nextBreak = 0;
 
   constructor(sheet: Sheet, ctx: OdsTableContext) {
     this.sheet = sheet;
@@ -1172,6 +1200,8 @@ class TableWriter {
       this.env.namedStyleParent = ctx.namedStyleParent;
     }
     this.merges = sheet.merges.toSorted((a, b) => a.top - b.top || a.left - b.left);
+    this.validated = validatedRanges(sheet, ctx.validationName);
+    this.validatedBreaks = [...new Set(this.validated.flatMap(({ range }) => [range.top, range.bottom + 1]))].toSorted((a, b) => a - b);
     this.measure();
   }
 
@@ -1193,6 +1223,11 @@ class TableWriter {
     }
     for (const span of sheet.columns) {
       cols = Math.max(cols, span.max + 1);
+    }
+    // SPEC-130: a validated cell is written even when nothing is stored there.
+    for (const { range } of this.validated) {
+      rows = Math.max(rows, range.bottom + 1);
+      cols = Math.max(cols, range.right + 1);
     }
     rows = Math.min(Math.max(rows, 1), MAX_ROWS);
     cols = Math.min(Math.max(cols, 1), MAX_COLS);
@@ -1308,6 +1343,7 @@ class TableWriter {
         this.nextMerge += 1;
       }
       this.active = this.active.filter((merge) => merge.bottom >= r);
+      this.meetValidated(r);
       while (this.nextStored < stored.length && stored[this.nextStored]!.index < r) {
         this.nextStored += 1;
       }
@@ -1324,9 +1360,66 @@ class TableWriter {
       for (const merge of this.active) {
         end = Math.min(end, merge.bottom + 1);
       }
+      end = Math.min(end, this.nextValidatedBreak(r));
       out.push(this.rowElement(undefined, r), Math.max(end - r, 1));
       r = Math.max(end, r + 1);
     }
+  }
+
+  /** The validated rectangles row `r` meets (rows ascend). */
+  private meetValidated(r: number): void {
+    if (this.validated.length === 0) {
+      return;
+    }
+    while (this.nextValidated < this.validated.length && this.validated[this.nextValidated]!.range.top <= r) {
+      this.activeValidated.push(this.validated[this.nextValidated]!);
+      this.nextValidated += 1;
+    }
+    this.activeValidated = this.activeValidated.filter(({ range }) => range.bottom >= r);
+  }
+
+  /** The first row after `r` where the validated set changes. */
+  private nextValidatedBreak(r: number): number {
+    const breaks = this.validatedBreaks;
+    while (this.nextBreak < breaks.length && breaks[this.nextBreak]! <= r) {
+      this.nextBreak += 1;
+    }
+    return breaks[this.nextBreak] ?? Number.POSITIVE_INFINITY;
+  }
+
+  /** The current row's validated column segments: each column takes the
+   * first covering rule in model order. */
+  private validatedSegments(): ValidatedSegment[] {
+    const active = this.activeValidated;
+    if (active.length === 0) {
+      return [];
+    }
+    if (active.length === 1) {
+      const { range, name } = active[0]!;
+      return [{ left: range.left, right: range.right, name }];
+    }
+    const points = [...new Set(active.flatMap(({ range }) => [range.left, range.right + 1]))].toSorted((a, b) => a - b);
+    const segments: ValidatedSegment[] = [];
+    for (let i = 0; i + 1 < points.length; i += 1) {
+      const left = points[i]!;
+      const right = points[i + 1]! - 1;
+      let best: ValidatedRange | undefined;
+      for (const each of active) {
+        if (each.range.left <= left && each.range.right >= left && (!best || each.order < best.order)) {
+          best = each;
+        }
+      }
+      if (!best) {
+        continue;
+      }
+      const last = segments.at(-1);
+      if (last && last.name === best.name && last.right + 1 === left) {
+        last.right = right;
+      } else {
+        segments.push({ left, right, name: best.name });
+      }
+    }
+    return segments;
   }
 
   private rowElement(row: Row | undefined, r: number): Repeatable {
@@ -1351,6 +1444,15 @@ class TableWriter {
   private cells(row: Row | undefined, r: number): string {
     const out = new RunWriter("table:number-columns-repeated");
     const cells = row?.cells ?? [];
+    // SPEC-130: the validation name each column is written with.
+    const segments = this.validatedSegments();
+    let s = 0;
+    const segmentAt = (col: number): ValidatedSegment | undefined => {
+      while (s < segments.length && segments[s]!.right < col) {
+        s += 1;
+      }
+      return segments[s];
+    };
     const merges: MergeInRow[] = this.active
       .filter((merge) => merge.top <= r && merge.bottom >= r)
       .map((range) => ({ range, anchor: range.top === r }))
@@ -1369,8 +1471,10 @@ class TableWriter {
       const cell = cells[next]?.col === col ? cells[next] : undefined;
       const anchor = merge?.anchor && merge.range.left === col ? merge.range : undefined;
       const covered = merge !== undefined && !anchor;
+      const segment = segmentAt(col);
+      const validation = segment && segment.left <= col ? segment.name : undefined;
       if (cell || anchor) {
-        out.push(this.cellElement(cell, covered, anchor, row, col), 1);
+        out.push(this.cellElement(cell, covered, anchor, row, col, validation), 1);
         col += 1;
         continue;
       }
@@ -1380,7 +1484,11 @@ class TableWriter {
       } else if (merges[m]) {
         end = Math.min(end, merges[m]!.range.left);
       }
-      out.push({ head: covered ? "<table:covered-table-cell" : "<table:table-cell", tail: "/>" }, Math.max(end - col, 1));
+      if (segment) {
+        end = Math.min(end, validation === undefined ? segment.left : segment.right + 1);
+      }
+      const head = (covered ? "<table:covered-table-cell" : "<table:table-cell") + validationAttribute(validation);
+      out.push({ head, tail: "/>" }, Math.max(end - col, 1));
       col = Math.max(end, col + 1);
     }
     out.flush();
@@ -1399,7 +1507,7 @@ class TableWriter {
 
   /** One cell element (see serializeTable, "Cells"). The style name is part
    * of the head, so a repeat count follows it, as LibreOffice writes. */
-  private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number): Repeatable {
+  private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number, validation?: string): Repeatable {
     let head = covered ? "<table:covered-table-cell" : "<table:table-cell";
     const close = covered ? "</table:covered-table-cell>" : "</table:table-cell>";
     let attrs = "";
@@ -1407,6 +1515,7 @@ class TableWriter {
     if (cell?.styleId !== undefined && cell.styleId !== positionDefault) {
       head += ` table:style-name="${attributeText(this.styleName(cell.styleId))}"`;
     }
+    head += validationAttribute(validation);
     if (anchor) {
       attrs += ` table:number-columns-spanned="${anchor.right - anchor.left + 1}" table:number-rows-spanned="${anchor.bottom - anchor.top + 1}"`;
     }
@@ -1458,7 +1567,8 @@ class TableWriter {
     }
     const pass = this.ctx.passRetained ?? ((retained: string): string => retained);
     if (cell.preservedAttrs !== undefined) {
-      attrs += pass(cell.preservedAttrs);
+      // A name captured before SPEC-130 modelled it: the model's wins.
+      attrs += withoutValidationName(pass(cell.preservedAttrs));
     }
     let content = cell.preservedXml === undefined ? "" : pass(cell.preservedXml);
     content += cell.preservedText !== undefined ? pass(cell.preservedText) : paragraphsXml(text);
@@ -1544,6 +1654,31 @@ class TableWriter {
   }
 }
 
+/** ` table:content-validation-name="…"` for a validated position ("" for none). */
+function validationAttribute(name: string | undefined): string {
+  return name === undefined ? "" : ` table:content-validation-name="${attributeText(name)}"`;
+}
+
+/** A sheet's named validation rectangles, clamped to the grid, by top. */
+function validatedRanges(sheet: Sheet, nameOf: OdsTableContext["validationName"]): ValidatedRange[] {
+  if (!nameOf) {
+    return [];
+  }
+  const out: ValidatedRange[] = [];
+  sheetValidations(sheet).forEach((rule, order) => {
+    const name = nameOf(sheet, rule);
+    if (name === undefined) {
+      return;
+    }
+    for (const range of rule.ranges) {
+      if (range.top < MAX_ROWS && range.left < MAX_COLS && range.bottom >= range.top && range.right >= range.left) {
+        out.push({ range: { ...range, bottom: Math.min(range.bottom, MAX_ROWS - 1), right: Math.min(range.right, MAX_COLS - 1) }, order, name });
+      }
+    }
+  });
+  return out.toSorted((a, b) => a.range.top - b.range.top || a.order - b.order);
+}
+
 /** One sheet as a `<table:table>` (SPEC-122 "The table writer"), in order:
  * 1. the start tag — the source's (with SPEC-121's splices, applied by the
  *    caller), or generated for a new sheet (its `de-ta` style);
@@ -1601,7 +1736,17 @@ class TableWriter {
  * in the user's locale (strings as typed; rich runs as `text:span`s in
  * `de-T` styles; runs of spaces as `text:s`, tabs as `text:tab`). A formula
  * cell with no value has no value type; a stale cell's last known value is
- * written. Preserved content passes through `passRetained`. */
+ * written. Preserved content passes through `passRetained`.
+ * SPEC-130: with a `validationName` in the context, every position a rule
+ * of `Sheet.validations` covers (the first covering rule in model order)
+ * carries `table:content-validation-name` after its style name — part of
+ * the repeat-compression key, so validated and unvalidated neighbours split
+ * runs, and an empty validated run is one attribute-only element
+ * (`<table:table-cell table:content-validation-name="x"
+ * table:number-columns-repeated="n"/>`); runs of empty rows split where the
+ * validated rectangles start and end, and are never materialised. The
+ * extent covers every validated rectangle. A stale
+ * `table:content-validation-name` in `preservedAttrs` is never written. */
 export function serializeTable(sheet: Sheet, ctx: OdsTableContext): string {
   return new TableWriter(sheet, ctx).write();
 }

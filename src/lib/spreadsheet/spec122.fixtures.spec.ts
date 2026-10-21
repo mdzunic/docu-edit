@@ -271,12 +271,17 @@ describe("spec122-shapes.ods (LibreOffice-shaped)", () => {
     expect(model.odsContentEnvelope!.prefix).toContain(`<table:content-validation table:name="${O.data.validation.name}"`);
   });
 
-  it("captures the annotation, the link paragraph and the validation name — and nothing else", async () => {
+  it("captures the annotation and the link paragraph — and nothing else; the validation name is modelled (SPEC-130)", async () => {
     const model = await read();
     const data = sheetNamed(model, "Data");
     expect(cellsWith(data, "preservedXml")).toEqual({ [O.data.annotation.a1]: O.data.annotation.xml });
     expect(cellsWith(data, "preservedText")).toEqual({ [O.data.link.a1]: O.data.link.paragraph });
-    expect(cellsWith(data, "preservedAttrs")).toEqual({ [O.data.validation.a1]: O.data.validation.preservedAttrs });
+    // SPEC-130: B16's table:content-validation-name is no longer a preserved
+    // attribute — it is the Data sheet's rule.
+    expect(cellsWith(data, "preservedAttrs")).toEqual({});
+    expect(data.validations.map((rule) => ({ ranges: rule.ranges, type: rule.type, operator: rule.operator, formula1: rule.formula1, formula2: rule.formula2, odsName: rule.odsName }))).toEqual([
+      { ranges: [parseRange(O.data.validation.a1)], type: "whole", operator: "between", formula1: "1", formula2: "10", odsName: O.data.validation.name },
+    ]);
     expect(model.sheets.map((sheet) => [cellsWith(sheet, "preservedXml"), cellsWith(sheet, "preservedText"), cellsWith(sheet, "preservedAttrs")]).slice(1)).toEqual([[{}, {}, {}]]);
   });
 

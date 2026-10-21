@@ -215,7 +215,7 @@ const ids = (...sheets: Sheet[]): Set<string> => new Set(sheets.map((sheet) => s
 // --- the table, row by row ------------------------------------------------------------------
 
 describe("the ods location table", () => {
-  it("envelope prefix: a content validation's base cell and every bracketed reference in its condition", () => {
+  it("envelope prefix: a content validation is retired (SPEC-130) — its base cell and condition stay verbatim, the model's rules move instead", () => {
     const validations =
       `<table:content-validations>` +
       `<table:content-validation table:name="val1" table:condition="of:cell-content-is-in-list([$Data.$A$10:.$A$12])" table:allow-empty-cell="true" table:base-cell-address="Data.A2"/>` +
@@ -228,14 +228,10 @@ describe("the ods location table", () => {
 
     const changed = edit(model, "Data", "insertRows", 1, 2);
 
-    // The sheet-less [.B3] is on Data (val2's base cell); the string "[.B3]" and every entity stay.
-    expect(spans(before.prefix, prefixOf(model))).toEqual([
-      ["of:cell-content-is-in-list([$Data.$A$10:.$A$12])", "of:cell-content-is-in-list([$Data.$A$12:.$A$14])"],
-      ["Data.A2", "Data.A4"],
-      ["of:cell-content() &gt; [.B3] and cell-content() &lt;&gt; &quot;[.B3]&quot;", "of:cell-content() &gt; [.B5] and cell-content() &lt;&gt; &quot;[.B3]&quot;"],
-      ["Data.B3", "Data.B5"],
-    ]);
-    expect(model.odsContentEnvelope).not.toBe(before.envelope);
+    // Nothing is adjusted twice: the validations adjuster moves Sheet.validations
+    // and the writer regenerates the block from the model.
+    expect(prefixOf(model)).toBe(before.prefix);
+    expect(model.odsContentEnvelope).toBe(before.envelope);
     expect(suffixOf(model)).toBe(before.suffix);
     // Workbook-level text: no sheet's own text changed.
     expect(changed).toEqual(new Set());
@@ -614,14 +610,16 @@ describe("ods retained references", () => {
       `<table:deletion table:type="row" table:position="3" table:id="ct2"><office:change-info><dc:creator>Ann</dc:creator><dc:date>2026-01-01T00:00:00</dc:date></office:change-info>` +
       `<table:content-validation table:name="old" table:condition="of:[.A9]&gt;0" table:base-cell-address="Data.A9"/></table:deletion>` +
       `</table:tracked-changes>`;
-    const validations = `<table:content-validations><table:content-validation table:name="val1" table:condition="of:[.A9]&gt;0" table:base-cell-address="Data.A9"/></table:content-validations>`;
-    const model = odsBook({ prefix: tracked + validations, tables: [{ name: "Data" }] });
+    // SPEC-130 retired the content validations' rows: a label range is the
+    // envelope text that moves beside the history.
+    const labels = `<table:label-ranges><table:label-range table:label-cell-range-address="$Data.$A$9:.$A$9" table:data-cell-range-address="$Data.$B$9:.$B$9" table:orientation="column"/></table:label-ranges>`;
+    const model = odsBook({ prefix: tracked + labels, tables: [{ name: "Data" }] });
     const before = prefixOf(model);
 
     edit(model, "Data", "insertRows", 1, 2);
     expect(spans(before, prefixOf(model))).toEqual([
-      ["of:[.A9]&gt;0", "of:[.A11]&gt;0"],
-      ["Data.A9", "Data.A11"],
+      ["$Data.$A$9:.$A$9", "$Data.$A$11:.$A$11"],
+      ["$Data.$B$9:.$B$9", "$Data.$B$11:.$B$11"],
     ]);
     expect(prefixOf(model)).toContain(tracked);
     expectConsistent(model);

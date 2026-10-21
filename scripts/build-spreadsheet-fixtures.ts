@@ -225,5 +225,16 @@ import { buildSpec130ValidationXlsxBytes } from "../src/lib/spreadsheet/fixtures
 writeFileSync(join(fixturesDir, "spec130-validation.xlsx"), await buildSpec130ValidationXlsxBytes());
 // --- end SPEC-130 (xlsx) -------------------------------------------------------
 
+// --- SPEC-130 (ODS) ------------------------------------------------------------
+// - spec130-validation.ods — LibreOffice-shaped `table:content-validations`:
+//                            every condition form, a sorted list, a rule over
+//                            C2:C1000 carried by a repeated run of empty cells,
+//                            a two-paragraph help message, an error macro and
+//                            an orphan definition
+import { buildSpec130ValidationOdsBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec130-validation.ods"), await buildSpec130ValidationOdsBytes());
+// --- end SPEC-130 (ODS) --------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

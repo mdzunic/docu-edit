@@ -6,7 +6,6 @@
 // rules remove); every other byte stays verbatim.
 //
 // | Where | Element@attribute | Kind |
-// | envelope prefix | `table:content-validation@table:base-cell-address`, `@table:condition` | anchor; formula |
 // | envelope prefix | `table:label-range@table:label-cell-range-address`, `@table:data-cell-range-address` | list, emptied → element removed |
 // | suffix, inside tables | `table:named-range@table:cell-range-address` (emptied → removed), `@table:base-cell-address`; `table:named-expression@table:expression`, `@table:base-cell-address` | list; anchor; formula |
 // | suffix, not a database range the model owns | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
@@ -64,6 +63,12 @@
 //   `calcext:formatting-entry@calcext:value` — left verbatim, an emptied
 //   format and an emptied `calcext:conditional-formats` never removed, so
 //   nothing is adjusted twice.
+// - Retired by SPEC-130 (the `validations` adjusters of structure.ts and
+//   move.ts move Sheet.validations; the writer regenerates the prefix's
+//   `table:content-validations` from the model, a changed rule serialised,
+//   an unchanged one from its sourceXml):
+//   `table:content-validation@table:base-cell-address` and
+//   `@table:condition` — left verbatim, so nothing is adjusted twice.
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -112,7 +117,6 @@ const END_CELL = anchor("table:end-cell-address");
 const SHAPE_LOCATIONS: readonly Location[] = [END_CELL];
 
 const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
-  ["table:content-validation", [anchor("table:base-cell-address"), formula("table:condition")]],
   ["table:label-range", [list("table:label-cell-range-address", "element"), list("table:data-cell-range-address", "element")]],
   ["table:named-range", [list("table:cell-range-address", "element"), anchor("table:base-cell-address")]],
   ["table:named-expression", [formula("table:expression"), anchor("table:base-cell-address")]],
