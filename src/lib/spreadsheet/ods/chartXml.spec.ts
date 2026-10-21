@@ -210,10 +210,11 @@ describe("spec132-charts.ods's objects", () => {
   });
 });
 
-describe("the frame's notify list", () => {
-  const frame = (notify: string): string =>
-    `<draw:frame draw:name="Object 1"><draw:object draw:notify-on-update-of-ranges="${notify}" xlink:href="./Object 1" xlink:type="simple"><loext:p/></draw:object></draw:frame>`;
+/** A chart frame notified of `notify`. */
+const frame = (notify: string): string =>
+  `<draw:frame draw:name="Object 1"><draw:object draw:notify-on-update-of-ranges="${notify}" xlink:href="./Object 1" xlink:type="simple"><loext:p/></draw:object></draw:frame>`;
 
+describe("the frame's notify list", () => {
   it("keeps the producer's bytes when the list names the same ranges, rewrites it when they differ, and drops it for none", () => {
     const calc = frame("Data.A1:Data.B5");
     expect(withNotifyRanges(calc, "$Data.A1:.B5")).toBe(calc);
