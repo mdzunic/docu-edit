@@ -516,7 +516,9 @@ describe("setValidation and clearValidation", () => {
     setValidation(model, "s1", [range("B9")], { ...LIST, formula1: "Lists!$A$1:$A$4" });
     expect(model.sheets[0]!.validations[0]!.x14).toBe(true);
     setValidation(model, "s1", [range("B2")], LIST);
-    expect(model.sheets[0]!.validations[1]!.x14).toBeUndefined();
+    expect(model.sheets[0]!.validations[0]!.x14).toBeUndefined();
+    // A new base rule goes before the x14 one — the order an xlsx file lists them in.
+    expect(model.sheets[0]!.validations.map((dv) => dv.formula1)).toEqual(['"a,b"', "Lists!$A$1:$A$4"]);
     expect(withX14Placement({ formula1: "Lists!A1", x14: true as const }, "ods", "Form")).toEqual({ formula1: "Lists!A1" });
   });
 

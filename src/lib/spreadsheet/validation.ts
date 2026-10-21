@@ -700,7 +700,8 @@ function commitValidations(model: SpreadsheetModel, sheetId: string, validations
  * (see the module header): the target is subtracted from every other rule,
  * then added to an existing rule whose settings are identical (its formulas
  * compared re-anchored onto that rule's origin), or else a new rule over the
- * target is appended. Returns the id of the rule now covering the target. */
+ * target is appended (in an xlsx workbook a base-block rule before the x14
+ * ones, the order the file lists them in). Returns the id of the rule now covering the target. */
 export function setValidation(model: SpreadsheetModel, sheetId: string, ranges: readonly GridRange[], rule: ValidationSettings): string {
   if (ranges.length === 0) {
     throw new Error("A data validation rule needs a range");
@@ -719,7 +720,11 @@ export function setValidation(model: SpreadsheetModel, sheetId: string, ranges: 
     return merged.id;
   }
   const created: DataValidation = { id: mintValidationId(), ranges: target, ...structuredClone(settings) };
-  commitValidations(model, sheetId, [...rest, created]);
+  // An xlsx file lists the base block's rules before the x14 ext's: a new
+  // base rule goes before the first x14 one, so a save → reopen keeps the
+  // model's order (and with it which overlapping rule comes first).
+  const x14At = created.x14 ? -1 : rest.findIndex((dv) => dv.x14);
+  commitValidations(model, sheetId, x14At < 0 ? [...rest, created] : [...rest.slice(0, x14At), created, ...rest.slice(x14At)]);
   return created.id;
 }
 

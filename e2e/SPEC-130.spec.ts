@@ -169,5 +169,8 @@ test("spec130-validation.ods: a rule carried by a repeated run of empty cells sh
   await keyDownTo(page, "C", 500);
   const message = page.getByTestId("validation-input-message");
   await expect(message).toBeVisible();
+  // Its title, and its two-paragraph text on two lines.
+  await expect(message).toContainText("Notes");
+  expect(await message.innerText()).toContain("Free text\nKeep it short");
   await expect(cell(page, "C500")).toHaveAttribute("aria-describedby", (await message.getAttribute("id"))!);
 });
