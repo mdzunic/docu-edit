@@ -43,14 +43,15 @@ describe("goldens", () => {
     expect(odsChartManifestEntries("Object 1")).toBe(GOLDEN_ODS_CHART_MANIFEST_ENTRIES);
   });
 
-  it("a created object reads back its references and visual; patching it with the same refs and visual is the identical string", () => {
+  it("a created object reads back its references (plotVisibleOnly included) and visual; patching it with the same refs and visual is the identical string", () => {
     for (const [content, refs] of [
       [GOLDEN_ODS_COLUMN_CONTENT, GOLDEN_ODS_COLUMN_REFS],
       [GOLDEN_ODS_SCATTER_CONTENT, GOLDEN_ODS_SCATTER_REFS],
+      [GOLDEN_ODS_PIE_CONTENT, GOLDEN_ODS_PIE_REFS],
     ] as const) {
       const read = readOdsChart(content);
       expect(read.uncached).toBeUndefined();
-      expect(read.refs).toEqual({ ...refs, plotVisibleOnly: false });
+      expect(read.refs).toEqual(refs);
       expect(patchOdfChartContent(content, refs, read.visual)).toBe(content);
     }
   });

@@ -36,6 +36,14 @@
 //   literal name still travels in the `local-table` header;
 // - the `local-table` data cache (§9.1.1 `table:table`, ODF 1.2 §11.3.4's
 //   local table) is still written — what a consumer without the sheet shows;
+// - a chart that plots visible cells only (`plotVisibleOnly`, every chart
+//   insert from selection makes) says so the way LibreOffice does: one
+//   automatic chart style `ch1` (§16.2, `style:family="chart"`) whose
+//   `style:chart-properties` carry `chart:include-hidden-cells="false"`
+//   (§20.21 — its default is true, so a chart without it plots hidden cells
+//   too), named by the plot area's `chart:style-name` (its first attribute),
+//   the root declaring the style namespace before `office:version`; a chart
+//   that includes hidden cells writes no style (the default says so);
 // - the frame holds `<draw:object>` (§10.4.6) with `draw:notify-on-update-
 //   of-ranges` (§19.130) first, then `xlink:href="./Object {n}"` and the
 //   simple/embed/onLoad triple as LibreOffice writes it; the list is the
@@ -82,6 +90,17 @@ const GOLDEN_ROOT =
 
 const GOLDEN_END = `</chart:chart></office:chart></office:body></office:document-content>`;
 
+/** The root, automatic styles and body opening of a chart that plots
+ * visible cells only: the style namespace declared, `ch1` excluding hidden
+ * cells. */
+const GOLDEN_VISIBLE_ONLY_ROOT =
+  `<?xml version="1.0" encoding="UTF-8"?>` +
+  `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:chart="urn:oasis:names:tc:opendocument:xmlns:chart:1.0" ` +
+  `xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ` +
+  `xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.2">` +
+  `<office:automatic-styles><style:style style:name="ch1" style:family="chart"><style:chart-properties chart:include-hidden-cells="false"/></style:style></office:automatic-styles>` +
+  `<office:body><office:chart>`;
+
 /** A string cell and a float cell of the `local-table`. */
 const str = (text: string): string => `<table:table-cell office:value-type="string"><text:p>${text}</text:p></table:table-cell>`;
 const num = (value: number): string => `<table:table-cell office:value-type="float" office:value="${value}"><text:p>${value}</text:p></table:table-cell>`;
@@ -99,13 +118,14 @@ export const GOLDEN_ODS_COLUMN_LOCAL_TABLE =
   `</table:table-rows></table:table>`;
 
 /** A new (or regenerated) reference column chart's `Object {n}/content.xml`:
- * the plot-area range, the x axis's categories, each series' values and
- * label on the sheet, then the cache. */
+ * visible cells only (`ch1` on the plot area), the plot-area range, the x
+ * axis's categories, each series' values and label on the sheet, then the
+ * cache. */
 export const GOLDEN_ODS_COLUMN_CONTENT =
-  GOLDEN_ROOT +
+  GOLDEN_VISIBLE_ONLY_ROOT +
   `<chart:chart chart:class="chart:bar" chart:vertical="true" chart:stacked="false" svg:width="12cm" svg:height="7.5cm">` +
   `<chart:legend chart:legend-position="end"/>` +
-  `<chart:plot-area table:cell-range-address="$Data.$A$1:.$C$4">` +
+  `<chart:plot-area chart:style-name="ch1" table:cell-range-address="$Data.$A$1:.$C$4">` +
   `<chart:axis chart:dimension="x" chart:name="primary-x"><chart:categories table:cell-range-address="$Data.$A$2:.$A$4"/></chart:axis>` +
   `<chart:axis chart:dimension="y" chart:name="primary-y"><chart:grid chart:class="major"/></chart:axis>` +
   `<chart:series chart:class="chart:bar" chart:color="#4472c4" chart:values-cell-range-address="$Data.$B$2:.$B$4" chart:label-cell-address="$Data.$B$1"/>` +
@@ -142,13 +162,13 @@ export const GOLDEN_ODS_SCATTER_REFS: SheetChartRefs = {
   plotVisibleOnly: true,
 };
 
-/** The scatter's content.xml: no categories on the x axis — every series
- * carries its x values as a `chart:domain`. */
+/** The scatter's content.xml: visible cells only, no categories on the x
+ * axis — every series carries its x values as a `chart:domain`. */
 export const GOLDEN_ODS_SCATTER_CONTENT =
-  GOLDEN_ROOT +
+  GOLDEN_VISIBLE_ONLY_ROOT +
   `<chart:chart chart:class="chart:scatter" svg:width="12cm" svg:height="7.5cm">` +
   `<chart:title><text:p>Fit</text:p></chart:title>` +
-  `<chart:plot-area>` +
+  `<chart:plot-area chart:style-name="ch1">` +
   `<chart:axis chart:dimension="x" chart:name="primary-x"></chart:axis>` +
   `<chart:axis chart:dimension="y" chart:name="primary-y"></chart:axis>` +
   `<chart:series chart:class="chart:scatter" chart:color="#4472c4" chart:values-cell-range-address="$'Q1 Data'.$B$2:.$B$4" chart:label-cell-address="$'Q1 Data'.$B$1">` +
@@ -184,8 +204,9 @@ export const GOLDEN_ODS_PIE_REFS: SheetChartRefs = {
   plotVisibleOnly: false,
 };
 
-/** The pie's content.xml: an x axis carrying just the categories, the
- * literal name's empty label address, its text in the `local-table` header. */
+/** The pie's content.xml (hidden cells included: no style): an x axis
+ * carrying just the categories, the literal name's empty label address, its
+ * text in the `local-table` header. */
 export const GOLDEN_ODS_PIE_CONTENT =
   GOLDEN_ROOT +
   `<chart:chart chart:class="chart:circle" svg:width="12cm" svg:height="7.5cm">` +

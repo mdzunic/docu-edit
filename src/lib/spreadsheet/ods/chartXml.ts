@@ -24,6 +24,8 @@
 //   chart a literal one: no refs.
 // - plotVisibleOnly = the plot area's chart style (office:automatic-styles)
 //   says `chart:include-hidden-cells="false"`; absent is ODF's default, true.
+//   A regenerated or new object that plots visible cells only writes that
+//   style (`ch1`, chartGolden.ts) around core's document, which has none.
 // - Writing a reference: canonicalToOdsRangeAddress; one with no ODS form
 //   (`#REF!`, a name) and a series' literal name write the empty address,
 //   never a `local-table` one beside sheet ones (LibreOffice detaches a chart
@@ -475,10 +477,53 @@ export function odfChartWireRefs(refs: SheetChartRefs, visual: ChartVisual): Odf
   return wire;
 }
 
+/** The automatic style a chart plotting visible cells only names on its
+ * plot area (chartGolden.ts): LibreOffice's `chart:include-hidden-cells="false"`. */
+const VISIBLE_ONLY_STYLE_NAME = "ch1";
+const VISIBLE_ONLY_STYLES =
+  `<office:automatic-styles><style:style style:name="${VISIBLE_ONLY_STYLE_NAME}" style:family="chart">` +
+  `<style:chart-properties chart:include-hidden-cells="false"/></style:style></office:automatic-styles>`;
+
+/** Core's chart document with the visible-cells-only style spliced in: the
+ * style namespace declared on the root (before `office:version`), the
+ * automatic styles before `office:body`, the plot area naming the style
+ * first. The text unchanged when it has no plot area. */
+function withVisibleOnlyStyle(xml: string): string {
+  const rootStart = xml.indexOf("<office:document-content");
+  const rootEnd = rootStart < 0 ? -1 : xml.indexOf(">", rootStart);
+  const body = xml.indexOf("<office:body>", rootEnd);
+  const plotArea = body < 0 ? -1 : xml.indexOf("<chart:plot-area", body);
+  if (rootEnd < 0 || body < 0 || plotArea < 0) {
+    return xml;
+  }
+  const root = xml.slice(rootStart, rootEnd + 1);
+  const declared = attributeValue(root, "xmlns:style") !== undefined;
+  const version = root.indexOf(" office:version=");
+  const styledRoot = declared
+    ? root
+    : version < 0
+      ? setAttribute(root, "xmlns:style", STYLE_NAMESPACE)
+      : `${root.slice(0, version)} xmlns:style="${STYLE_NAMESPACE}"${root.slice(version)}`;
+  const tagAt = plotArea + "<chart:plot-area".length;
+  return (
+    xml.slice(0, rootStart) +
+    styledRoot +
+    xml.slice(rootEnd + 1, body) +
+    VISIBLE_ONLY_STYLES +
+    xml.slice(body, tagAt) +
+    ` chart:style-name="${VISIBLE_ONLY_STYLE_NAME}"` +
+    xml.slice(tagAt)
+  );
+}
+
 /** A regenerated or new object's content.xml: odfChartContentXml(visual, w,
- * h, theme, odfChartWireRefs(refs)). */
+ * h, theme, odfChartWireRefs(refs)), with the visible-cells-only style when
+ * the references plot visible cells only (core writes no automatic styles;
+ * without it the chart reads back, here and in LibreOffice, as including
+ * hidden cells). */
 export function odsChartContentXml(visual: ChartVisual, widthCm: number, heightCm: number, theme: DocumentTheme | undefined, refs: SheetChartRefs | undefined): string {
-  return odfChartContentXml(visual, widthCm, heightCm, theme ?? DEFAULT_THEME, refs && odfChartWireRefs(refs, visual));
+  const xml = odfChartContentXml(visual, widthCm, heightCm, theme ?? DEFAULT_THEME, refs && odfChartWireRefs(refs, visual));
+  return refs?.plotVisibleOnly ? withVisibleOnlyStyle(xml) : xml;
 }
 
 // --- the frame ---------------------------------------------------------------------
