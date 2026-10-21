@@ -225,6 +225,16 @@ export const DEFAULT_THEME: DocumentTheme = {
   fonts: { major: "Calibri Light", minor: "Calibri" },
 };
 
+/** Typed pass-through for a theme prop arriving through a runtime-declared
+ * Object (espree bars the annotation in `.vue` scripts — see asRenderEntries
+ * for the same pattern). A missing/null prop falls back to the product
+ * default theme. SPEC-132 moved it here from documentModel.ts (which
+ * re-exports it) so the reused chart components — ChartOptionsDialog among
+ * them — import no product layer. */
+export function asDocumentTheme(value: unknown): DocumentTheme {
+  return (value ?? DEFAULT_THEME) as DocumentTheme;
+}
+
 /** The six built-in themes the gallery offers, Office first. */
 export const BUILT_IN_THEMES: DocumentTheme[] = [
   DEFAULT_THEME,

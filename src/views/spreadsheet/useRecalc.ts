@@ -47,6 +47,7 @@ import {
   uncomputableReasonOf,
   type RecalcOptions,
   type RecalcPass,
+  type RecalcReason,
 } from "../../lib/spreadsheet/formula/recalc";
 import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
@@ -117,9 +118,11 @@ export function useRecalc(deps: RecalcDeps) {
   let passModel: SpreadsheetModel | null = null;
   /** SPEC-121: the edit pipeline's callback for the running pass. */
   let passDone: ((changedSheetIds: string[]) => void) | null = null;
-  /** SPEC-129: the running pass's own keys, and who hears each result. */
+  /** SPEC-129: the running pass's own keys, and who hears each result —
+   * SPEC-132: with the pass's reason. */
   let passKeys: CellKey[] = [];
-  const resultListeners: ((changed: CellKey[]) => void)[] = [];
+  let passReason: RecalcReason = "edit";
+  const resultListeners: ((changed: CellKey[], reason?: RecalcReason) => void)[] = [];
   let slot: IdleHandle | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -152,9 +155,10 @@ export function useRecalc(deps: RecalcDeps) {
     }
     reportCycles(model);
     const changed = [...passKeys, ...current.result.valueChanged];
+    const reason = passReason;
     passKeys = [];
     for (const listener of resultListeners) {
-      listener(changed);
+      listener(changed, reason);
     }
     const done = passDone;
     passDone = null;
@@ -209,11 +213,15 @@ export function useRecalc(deps: RecalcDeps) {
     }
     let inherited: CellKey[] = [];
     let carried: ((changedSheetIds: string[]) => void) | null = null;
+    // An open pass that takes over an edit's cells reports as the edit did.
+    let reason: RecalcReason = options.reason ?? "edit";
     if (pass && passModel === model) {
       inherited = pass.cancel();
       carried = passDone;
+      reason = reason === "open" ? passReason : reason;
     }
     stopDriving();
+    passReason = reason;
     passKeys = [...new Set([...inherited, ...changed])];
     const current = startRecalc(model, passKeys, { ...options, settings: { locale: deps.locale() } });
     pass = current;
@@ -331,8 +339,10 @@ export function useRecalc(deps: RecalcDeps) {
   }
 
   /** SPEC-129: calls `listener` with every completed pass's changed keys —
-   * the cells it was started on and those whose value it changed. */
-  function onResult(listener: (changed: CellKey[]) => void): void {
+   * the cells it was started on and those whose value it changed — and
+   * (SPEC-132) the pass's reason: "open", "edit" (a committed step, an undo
+   * or a redo) or "manual". */
+  function onResult(listener: (changed: CellKey[], reason?: RecalcReason) => void): void {
     resultListeners.push(listener);
   }
 

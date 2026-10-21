@@ -33,6 +33,14 @@ function mountPane(shown: ShownDrawing[], selectedId: string | null = null, layo
 
 const rect = (left: number, top: number, width: number, height: number) => ({ left, top, width, height });
 
+/** A two-category column chart whose second value is `q2`. */
+const columnVisual = (q2: number) => ({
+  chartType: "columnClustered" as const,
+  categories: ["Q1", "Q2"],
+  series: [{ name: "Revenue", values: [10, q2], color: "#4472c4" }],
+  options: { legend: "right" as const, dataLabels: false, gridlines: true },
+});
+
 describe("SPEC-131 SheetDrawingLayer", () => {
   it("paints each drawing as a focusable sheet-drawing: img for an image, group otherwise, named by alt text else name, with data-kind", () => {
     const wrapper = mountPane([
@@ -59,7 +67,7 @@ describe("SPEC-131 SheetDrawingLayer", () => {
     expect(items[2]!.findAll('[data-testid="sheet-drawing-member"]')).toHaveLength(2);
   });
 
-  it("paints charts, face-less foreign drawings and undisplayable pictures as labelled placeholders, and a foreign face as its face", () => {
+  it("paints face-less foreign drawings and undisplayable pictures as labelled placeholders, an out-of-catalogue chart as paintChart's own placeholder (SPEC-132), and a foreign face as its face", () => {
     const wrapper = mountPane([
       { drawing: drawing("dr1", "Chart 1", { kind: "chart", visual: unsupportedChartVisual(""), sourcePart: "xl/charts/chart1.xml" }), rect: rect(0, 0, 100, 60) },
       { drawing: drawing("dr2", "Check Box 2", { kind: "foreign", label: "Form control" }), rect: rect(0, 70, 100, 20) },
@@ -67,10 +75,45 @@ describe("SPEC-131 SheetDrawingLayer", () => {
       { drawing: drawing("dr4", "Slicer 4", { kind: "foreign", label: "Slicer", face: { kind: "shape", visual: { geometry: "rect" }, text: { paragraphs: [{ text: "Region" }], anchor: "top" } } }), rect: rect(0, 160, 100, 80) },
     ]);
     const items = wrapper.findAll('[data-testid="sheet-drawing"]');
-    expect(items.slice(0, 3).map((item) => item.get('[data-testid="sheet-drawing-placeholder"]').text())).toEqual(["Chart", "Form control", "Picture"]);
+    expect(items.slice(1, 3).map((item) => item.get('[data-testid="sheet-drawing-placeholder"]').text())).toEqual(["Form control", "Picture"]);
     expect(items.map((item) => item.attributes("data-kind"))).toEqual(["chart", "foreign", "image", "foreign"]);
+    // The chart outside the catalogue paints on its canvas (paintChart's
+    // dashed "Chart not supported"), not as a DOM placeholder.
+    expect(items[0]!.find('[data-testid="sheet-drawing-placeholder"]').exists()).toBe(false);
+    expect(items[0]!.get('[data-testid="sheet-chart-canvas"]').attributes("data-chart-unsupported")).toBe("true");
     expect(items[3]!.find('[data-testid="sheet-drawing-placeholder"]').exists()).toBe(false);
     expect(items[3]!.get('[data-testid="sheet-drawing-text"]').text()).toBe("Region");
+  });
+
+  it("SPEC-132: paints a catalogue chart's visual on its canvas at the drawing's box, stating what it plots, and repaints when the visual changes", async () => {
+    const calls: string[] = [];
+    const context = new Proxy({} as Record<string | symbol, unknown>, {
+      get: (target, key) => {
+        if (key === "measureText") {
+          return () => ({ width: 10 });
+        }
+        if (!(key in target)) {
+          target[key] = (..._args: unknown[]) => calls.push(String(key));
+        }
+        return target[key];
+      },
+      set: () => true,
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(context as unknown as CanvasRenderingContext2D);
+    const shown = (d3: number) => [{ drawing: drawing("dr1", "Chart 1", { kind: "chart", visual: columnVisual(d3) }), rect: rect(0, 0, 300, 200) }];
+    const wrapper = mountPane(shown(20));
+    const canvas = wrapper.get('[data-testid="sheet-chart-canvas"]');
+    expect(canvas.attributes("data-chart-type")).toBe("columnClustered");
+    expect(canvas.attributes("data-chart-categories")).toBe('["Q1","Q2"]');
+    expect(canvas.attributes("data-chart-values")).toBe("[[10,20]]");
+    expect(canvas.attributes("data-chart-legend")).toBe("right");
+    expect(canvas.attributes("data-chart-unsupported")).toBeUndefined();
+    expect(canvas.attributes("style")).toContain("width: 300px; height: 200px");
+    expect(calls.filter((call) => call === "fillRect").length).toBeGreaterThanOrEqual(2);
+    const painted = calls.length;
+    await wrapper.setProps({ pane: layoutDrawingPanes(shown(35), NO_FREEZE, null)[0]! });
+    expect(wrapper.get('[data-testid="sheet-chart-canvas"]').attributes("data-chart-values")).toBe("[[10,35]]");
+    expect(calls.length).toBeGreaterThan(painted);
   });
 
   it("marks the selected drawing aria-selected with its eight handles, and emits its presses, keys and menu", async () => {
