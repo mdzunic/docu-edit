@@ -1537,7 +1537,8 @@ export function odsPropertyElements(properties: OdsCellStyleProperties): string 
  * table-cell: odsCellStyleProperties, `style:parent-style-name` the common
  * style of the style's `namedStyle` — parentStyleName, SPEC-123 — and
  * `style:data-style-name` = a `de-N<n>` for a code other than General),
- * `de-T<n>` (family text: a rich run's font) and `de-N<n>` (SPEC-118's
+ * `de-T<n>` (family text: a rich run's font), `de-gr<n>` (SPEC-131: family
+ * graphic, a created sheet drawing's fill and line) and `de-N<n>` (SPEC-118's
  * odsNumberStyleXml, its `de-N<n>P0`… sub-styles included; a
  * `builtinFormatId` written as that built-in's code in the user's locale) —
  * each family deduplicated by its properties. Each prefix's counter starts
