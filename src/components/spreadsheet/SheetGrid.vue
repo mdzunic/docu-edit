@@ -43,6 +43,12 @@
 // press opens the column's popover, the view's useSortFilter through the
 // context's `sortFilter`), and while the filter holds a criterion the row
 // headers of its data rows carry data-filtered="true" in the accent colour.
+// SPEC-130: data validation's chrome sits in its own layer beside the
+// active-cell outline, above the editor layer (not among the aria-hidden
+// overlays): the input message (ValidationInputMessage, the active cell's
+// aria-describedby while it shows) and the dropdown button and its list
+// (ValidationDropdown), placed from the active cell's rect in unscaled px so
+// they follow scroll and zoom; Alt+Down opens the list (useSheetGrid).
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
@@ -55,6 +61,8 @@ import FillOptionsChip from "./FillOptionsChip.vue";
 import SheetCellLayer from "./SheetCellLayer.vue";
 import SheetCopyMarquee from "./SheetCopyMarquee.vue";
 import SheetFillHandle from "./SheetFillHandle.vue";
+import ValidationDropdown from "./ValidationDropdown.vue";
+import ValidationInputMessage from "./ValidationInputMessage.vue";
 
 const props = defineProps({
   /** The grid Sheet on show. */
@@ -96,6 +104,21 @@ const filterButton = computed(() => sortFilter.value?.filterButtonAt);
 
 function onFilterButton(col = 0, anchor = { left: 0, top: 0 }) {
   sortFilter.value?.pressFilterButton(col, anchor);
+}
+
+/** SPEC-130: the dropdown's events, to data validation. */
+const validationChrome = computed(() => grid.validationChrome.value);
+function toggleList() {
+  grid.validation.value?.toggleList();
+}
+function selectItem(index = 0) {
+  grid.validation.value?.selectItem(index);
+}
+function pickItem(index = 0) {
+  grid.validation.value?.pick(index);
+}
+function closeList(focusGrid = false) {
+  grid.validation.value?.closeList(focusGrid);
 }
 
 /** A row header's data-filtered (SPEC-128). */
@@ -170,6 +193,7 @@ function unscroll(event = new Event("scroll")) {
             :frozen-width="vp.frozenW.value"
             :stale-title="grid.staleTitle"
             :filter-button="filterButton"
+            :described-by="grid.describedBy.value ?? undefined"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
             @filter-button="onFilterButton"
           />
@@ -252,6 +276,34 @@ function unscroll(event = new Event("scroll")) {
               :box-style="grid.editor.value.boxStyle"
               :text-style="grid.editor.value.textStyle"
               :label="grid.editor.value.label"
+            />
+          </div>
+          <div
+            v-if="validationChrome"
+            class="sheet-validation-layer"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+            @scroll="unscroll"
+          >
+            <ValidationInputMessage
+              v-if="validationChrome.message"
+              :title="validationChrome.message.title"
+              :text="validationChrome.message.text"
+              :cell-rect="validationChrome.rect"
+              :bounds="validationChrome.bounds"
+            />
+            <ValidationDropdown
+              v-if="validationChrome.dropdown"
+              :cell-rect="validationChrome.rect"
+              :bounds="validationChrome.bounds"
+              :expanded="validationChrome.dropdown.expanded"
+              :items="validationChrome.list?.texts ?? []"
+              :selected="validationChrome.list?.selected ?? -1"
+              :unavailable="validationChrome.list?.unavailable ?? false"
+              @toggle="toggleList"
+              @select="selectItem"
+              @pick="pickItem"
+              @close="closeList(true)"
+              @dismiss="closeList(false)"
             />
           </div>
           <div
@@ -482,6 +534,16 @@ function unscroll(event = new Event("scroll")) {
 /* The in-cell editor's layer: over the paper and the overlays, under the
    headers; it only clips — the editor takes the pointer while editing. */
 .sheet-editor-layer {
+  position: absolute;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* SPEC-130: data validation's input message and dropdown, over the editor
+   layer and under the headers; only the button and the list take the
+   pointer. */
+.sheet-validation-layer {
   position: absolute;
   z-index: 1;
   overflow: hidden;

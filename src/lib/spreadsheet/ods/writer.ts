@@ -21,8 +21,9 @@
 //  2. Retained package, nothing changed: every part verbatim (mimetype first
 //     and STOREd).
 //  3. The substitution path: content.xml = the envelope prefix (the
-//     generated `de-` styles appended to its automatic styles; the
-//     sheet-reference pass over its content validations; a namespace the
+//     generated `de-` styles appended to its automatic styles; its content
+//     validations regenerated from the model, SPEC-130 — the
+//     sheet-reference pass over the retained ones; a namespace the
 //     rebuilt tables use declared on the root when the source did not) +
 //     each sheet's table text + the suffix (the pass, and the named ranges
 //     and database ranges on deleted sheets removed; SPEC-128: the database
@@ -61,6 +62,16 @@
 // re-emitted in a rebuilt table as a generated `de-ce` style without it. A
 // clean table keeps its source, conditional formats included.
 //
+// SPEC-130: the content validations are the model's (one
+// OdsValidationWriter per save, ods/contentValidations.ts — the normative
+// source): every rebuilt or new table's cells carry the names it assigns,
+// and `table:content-validations` is regenerated — from scratch after
+// `table:calculation-settings`; on the substitution path in the envelope
+// prefix, where it was (or where a new one belongs), retained definitions
+// and orphans through the sheet-name pass, generated ones not. A clean
+// table is re-emitted verbatim and keeps the names it carries — unless they
+// cannot be kept (a duplicate's rules), when it is rebuilt from the model.
+//
 // A cell's informative `text:p` and a locale-dependent built-in format's
 // generated number style are written in the user's locale (`locale`,
 // en-US when absent). ODS has no "recalculate on load" flag: a stale cell's
@@ -73,6 +84,7 @@ import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { SheetRemap } from "../formula/sheetRefs";
 import type { CellStyle, Sheet, SpreadsheetModel } from "../model";
+import type { DataValidation } from "../validation";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../numberFormat/locale";
 import { formatCodeOf } from "../numberFormat/builtin";
 import { odsNumberStyleXml } from "../numberFormat/odsNumberStyles";
@@ -92,6 +104,7 @@ import {
 } from "./package";
 import { odsDatabaseRangesXml, odsSuffixWithAutoFilters } from "./databaseRanges";
 import { OdsConditionalFormatWriter } from "./conditionalFormats";
+import { OdsValidationWriter } from "./contentValidations";
 import { passOdsText, removeRangesOnDeletedSheets, rootNamespaces } from "./sheetNamePass";
 import {
   odsCellStyleProperties,
@@ -253,8 +266,10 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   // The generated styles.xml defines "Default" alone: every other named style is appended.
   const named = new OdsNamedStyles(model, { defines: (name) => name === "Default", appendable: true }, registry, locale);
   const conditionalFormats = new OdsConditionalFormatWriter(model, registry, { definesStyle: (name) => name === "Default", appendable: true });
+  const validations = new OdsValidationWriter(model, undefined, () => false);
+  const validationName = (sheet: Sheet, rule: DataValidation): string | undefined => validations.nameOf(sheet, rule);
   const tables = model.sheets
-    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats }))
+    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName }))
     .join("");
   const databaseRanges = odsDatabaseRangesXml(model.sheets);
   const styles = registry.xml();
@@ -262,7 +277,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
     `${ODF_DECLARATION}<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}" ` +
     `xmlns:table="${TABLE_NS}" xmlns:fo="${FO_NS}" xmlns:of="${OF_NS}" xmlns:tableooo="${TABLEOOO_NS}"${optionalDeclarations(styles + tables)} office:version="1.2">` +
     `<office:automatic-styles>${styles}</office:automatic-styles>` +
-    `<office:body><office:spreadsheet>${calculationSettings(model)}${tables}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
+    `<office:body><office:spreadsheet>${calculationSettings(model)}${validations.blockXml()}${tables}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
   const active = model.sheets[model.activeSheetIndex] ?? model.sheets[0];
   return [
     { name: "mimetype", data: encode(ODS_MIMETYPE), store: true },
@@ -380,6 +395,9 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     definesStyle: (name) => book.commonCellStyle(name),
     appendable: stylesXml !== undefined,
   });
+  // SPEC-130: a clean table is re-emitted as it is (unless its validation
+  // names cannot be kept, see OdsValidationWriter).
+  const validations = new OdsValidationWriter(model, envelope.prefix, (sheet) => sheet.sourceXml !== undefined && !sheet.dirty);
   const recoloured = new Set<string>();
   const context: OdsTableContext = {
     model,
@@ -391,6 +409,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     layoutStyles: book,
     conditionalFormats,
     mappedCellStyle: (name) => book.cellStyleMaps(name) !== undefined,
+    validationName: (sheet, rule) => validations.nameOf(sheet, rule),
   };
   let rebuilt = "";
 
@@ -416,7 +435,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
         recoloured.add(sheet.name);
       }
     }
-    if (!sheet.dirty) {
+    if (!sheet.dirty && !validations.rebuilds(sheet)) {
       return text;
     }
     const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
@@ -430,7 +449,11 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     sheetPass: (sheet, retained) => passOdsText(retained, copyRemap(remap, sheet), namespaces),
   });
   const generated = registry.xml();
-  const prefix = withNamespaces(withGeneratedStyles(passOdsText(envelope.prefix, remap, namespaces), generated), generated + rebuilt + databases.generated);
+  const passPrefix = (retained: string): string => passOdsText(retained, remap, namespaces);
+  const prefix = withNamespaces(
+    withGeneratedStyles(validations.splicePrefix(passPrefix(envelope.prefix), passPrefix), generated),
+    generated + rebuilt + databases.generated + validations.generatedXml,
+  );
   const suffix = databases.suffix;
   const content = prefix + tables.join("") + suffix;
 

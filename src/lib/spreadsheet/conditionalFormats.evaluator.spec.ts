@@ -27,7 +27,7 @@ function book(values: number[], formats: ConditionalFormat[], extra: Row[] = [])
     title: "Book",
     format: "xlsx",
     readerVersion: 10,
-    sheets: [{ id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], conditionalFormats: formats }],
+    sheets: [{ id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], validations: [], conditionalFormats: formats }],
     activeSheetIndex: 0,
     dateSystem: "1900",
     opaque: [],

@@ -24,6 +24,7 @@ const EMPTY_SHEET: Sheet = {
   defaultRowHeightPt: 15,
   merges: [],
   conditionalFormats: [],
+  validations: [],
 };
 
 export function useSheetMetrics(sheet: () => Sheet | null) {

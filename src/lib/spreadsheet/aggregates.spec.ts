@@ -42,7 +42,7 @@ function sheetOf(cells: Record<string, CellValue>, hidden: { rows?: number[]; co
     .toSorted(([a], [b]) => a - b)
     .map(([index, rowCells]): Row => ({ index, cells: rowCells.toSorted((a, b) => a.col - b.col), ...(hiddenRows.has(index) ? { hidden: true } : {}) }));
   const columns = (hidden.cols ?? []).toSorted((a, b) => a - b).map((col): ColumnSpan => ({ min: col, max: col, hidden: true }));
-  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns, defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
+  return { conditionalFormats: [], validations: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns, defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 }
 
 function visibility(sheet: Sheet): Pick<NavContext, "isRowHidden" | "isColHidden"> {

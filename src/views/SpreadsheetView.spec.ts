@@ -121,13 +121,13 @@ function gridSheet(
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { conditionalFormats: [], id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], validations: [], id: crypto.randomUUID(), name, visibility, kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** A foreign sheet (chartsheet, dialogsheet, macrosheet): a placeholder, its
  * part carried verbatim. */
 function foreignSheet(name: string, partName: string): Sheet {
-  return { conditionalFormats: [], id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], validations: [], id: crypto.randomUUID(), name, visibility: "visible", kind: "foreign", rows: [], partName, ...DEFAULT_LAYOUT };
 }
 
 /** A hand-built workbook with no source package (`opaque` is empty, so it
@@ -177,7 +177,7 @@ function millionRowSheet(): Sheet {
     }
     rows.push({ index, cells });
   }
-  return { conditionalFormats: [], id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
+  return { conditionalFormats: [], validations: [], id: crypto.randomUUID(), name: "Big", visibility: "visible", kind: "grid", rows, ...DEFAULT_LAYOUT };
 }
 
 /** The tab strip, one "name:aria-selected:tabindex" string per tab. */
@@ -870,5 +870,46 @@ describe("SpreadsheetView conditional formatting (SPEC-129)", () => {
     await undo.trigger("click");
     await flushPromises();
     expect(descriptions()).toEqual(["Cell value > 100"]);
+  });
+});
+
+describe("SpreadsheetView data validation (SPEC-130)", () => {
+  it("Data ▸ Data validation… puts a list rule on the selection as one step Edit ▸ Undo names and takes back", async () => {
+    const { store, mountSheets } = await loadModules();
+    const sheet = gridSheet("Form", [[0, 3, "Answer"]]);
+    const d2 = { top: 1, left: 3, bottom: 1, right: 3 };
+    sheet.selection = { active: { row: 1, col: 3 }, ranges: [d2], activeRangeIndex: 0 };
+    const model = handBuiltBook([sheet]);
+    store.storeSpreadsheet(model);
+    const { wrapper } = await mountSheets(model.id);
+    expect(wrapper.find('[data-testid="validation-dialog"]').exists()).toBe(false);
+
+    await wrapper.get('[data-testid="menu-title-data"]').trigger("click");
+    await wrapper.get('[data-testid="sheet-menu-data-validation"]').trigger("click");
+    await flushPromises();
+    const dialog = wrapper.get('[data-testid="validation-dialog"]');
+    expect(dialog.get('[role="dialog"]').attributes("aria-labelledby")).toBe("validation-dialog-title");
+    await dialog.get('[data-testid="validation-allow"]').setValue("list");
+    await dialog.get('[data-testid="validation-value-1"]').setValue("Yes,No");
+    await dialog.get('[data-testid="validation-ok"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="validation-dialog"]').exists()).toBe(false);
+    const rules = () => store.getSpreadsheet(model.id)?.sheets[0]?.validations;
+    expect(rules()).toEqual([expect.objectContaining({ ranges: [d2], type: "list", formula1: '"Yes,No"', showDropdown: true })]);
+
+    // Reopened on D2, the dialog loads the rule.
+    await wrapper.get('[data-testid="menu-title-data"]').trigger("click");
+    await wrapper.get('[data-testid="sheet-menu-data-validation"]').trigger("click");
+    await flushPromises();
+    expect((wrapper.get('[data-testid="validation-value-1"]').element as HTMLInputElement).value).toBe("Yes,No");
+    await wrapper.get('[data-testid="validation-cancel"]').trigger("click");
+    await flushPromises();
+
+    await wrapper.get('[data-testid="menu-title-edit"]').trigger("click");
+    const undo = wrapper.get('[data-testid="sheet-menu-undo"]');
+    expect(undo.text()).toContain("Undo Data validation");
+    await undo.trigger("click");
+    await flushPromises();
+    expect(rules()).toEqual([]);
   });
 });

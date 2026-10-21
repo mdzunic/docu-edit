@@ -38,7 +38,7 @@ function formulaSheet(kind: Sheet["kind"] = "grid"): Sheet {
     },
     { index: 1, cells: [{ col: 1, value: 2 }, { col: 2, value: 2 }, { col: 3, value: 20 }] },
   ];
-  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind, rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
+  return { conditionalFormats: [], validations: [], id: "s1", name: "Sheet1", visibility: "visible", kind, rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 }
 
 function bookOf(sheet: Sheet, format: SpreadsheetModel["format"] = "xlsx"): SpreadsheetModel {

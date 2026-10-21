@@ -17,7 +17,11 @@
 // formulas and number formats. SPEC-129: the conditional-format fixtures
 // download byte-identical, a dirty sheet re-emits unedited rules verbatim,
 // rules edited, saved and reopened come back with their dxfs, and a copy in
-// the other format carries every modelled rule.
+// the other format carries every modelled rule. SPEC-130: the validation
+// fixtures download byte-identical, set → save → reopen reproduces the rules
+// in both formats, and a copy in the other format maps every type through
+// the model (an x14 rule into the ODS form; a sort-ascending list into an
+// ordinary xlsx list, the one property that does not cross).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -51,6 +55,8 @@ import {
   buildSpec129CfOdsBytes,
   buildSpec129CfXlsxBytes,
   buildSpec129LegacyOdsBytes,
+  buildSpec130ValidationOdsBytes,
+  buildSpec130ValidationXlsxBytes,
   SPEC116_VBA_PROJECT,
   SPEC128_FILTER_XLSX,
   SPEC129_CF_ODS,
@@ -77,6 +83,7 @@ import { packageIntegrity } from "./fixtures/packageIntegrity";
 import { workbookForCompare } from "./fixtures/workbookForCompare";
 import { addSheet, createBlankWorkbook, duplicateSheet, moveSheet, renameSheet, setSheetHidden, setTabColor, stripRetention } from "./sheets";
 import { cellStyle, effectiveStyleId, internDxf, styleKey } from "./styles";
+import { clearValidation, defaultValidationSettings, formatListLiteral, setValidation } from "./validation";
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
 const NUMBERS_XLSX = new Uint8Array(readFileSync(join(E2E_FIXTURES, "spec116-numbers.xlsx")));
@@ -978,6 +985,90 @@ describe("SPEC-129: a copy in the other format carries every modelled rule", () 
       const back = await readSpreadsheetBytes(bytes, target, "copy");
       expect(carriedRules(back, target)).toEqual(carriedRules(model, target));
       expect(carriedRules(back, target).flat().length).toBeGreaterThan(10);
+    });
+  }
+});
+
+// --- SPEC-130 ------------------------------------------------------------------------------------
+
+/** A sheet's rules as a round trip compares them: no minted ids, no source
+ * text, no minted ODS name (wire identities, re-made on every write). */
+function rulesForCompare(sheet: Sheet) {
+  return sheet.validations.map(({ id: _id, sourceXml: _xml, odsName: _name, ...rule }) => rule);
+}
+
+/** What crosses formats: the rules without their placement in the source
+ * format (x14) and, into an xlsx, without LibreOffice's sort order — as a
+ * set: an xlsx file lists its x14 ext's rules after the base block's, so a
+ * cross-sheet rule's place among the others cannot cross. */
+function crossedRules(sheet: Sheet, target: SpreadsheetFormat) {
+  return rulesForCompare(sheet)
+    .map(({ x14: _x14, odsListOrder, ...rule }) => (target === "ods" && odsListOrder !== undefined ? { ...rule, odsListOrder } : rule))
+    .map((rule) => JSON.stringify(rule))
+    .toSorted();
+}
+
+describe("SPEC-130: data validations round trip", () => {
+  for (const [file, format, build] of [
+    ["spec130-validation.xlsx", "xlsx", buildSpec130ValidationXlsxBytes],
+    ["spec130-validation.ods", "ods", buildSpec130ValidationOdsBytes],
+  ] as const) {
+    it(`${file}: an untouched download is equalBytes per part, in order — after the store's JSON trip too`, async () => {
+      const source = await build();
+      const model = await readSpreadsheetBytes(source, format, "book");
+      expect(model.sheets[0]!.validations.length).toBeGreaterThan(5);
+      const original = await unzip(source);
+      for (const candidate of [model, JSON.parse(JSON.stringify(model)) as SpreadsheetModel]) {
+        const out = await unzip((await spreadsheetDownload(candidate)).bytes);
+        expect([...out.keys()]).toEqual([...original.keys()]);
+        for (const [name, bytes] of original) {
+          expect(equalBytes(out.get(name)!, bytes), name).toBe(true);
+        }
+      }
+    });
+
+    it(`${file}: set → save → reopen reproduces the validations (minus minted ids and source text)`, async () => {
+      const model = await readSpreadsheetBytes(await build(), format, "book");
+      const form = model.sheets[0]!;
+      // The e2e's D2 list, a custom rule over a block, and B4's rule cleared.
+      setValidation(model, form.id, [parseRange("D2")!], { ...defaultValidationSettings(), type: "list", formula1: formatListLiteral(["Yes", "No"]) });
+      setValidation(model, form.id, [parseRange("G2:H5")!], {
+        ...defaultValidationSettings(),
+        type: "custom",
+        formula1: "G2>$B$3",
+        input: { show: true, title: "Above B3", text: "Greater than\nB3" },
+        error: { show: true, style: "warning", title: "Too small", text: "Pick more" },
+      });
+      clearValidation(model, form.id, [parseRange("B4")!]);
+      const back = await readSpreadsheetBytes((await spreadsheetDownload(model)).bytes, format, "book");
+      expect(rulesForCompare(back.sheets[0]!)).toEqual(rulesForCompare(model.sheets[0]!));
+      expect(back.sheets[0]!.validations.some((rule) => rule.formula1 === '"Yes,No"')).toBe(true);
+      expect(back.odsOrphanValidations).toEqual(model.odsOrphanValidations);
+    });
+
+    it(`${file}: a copy in the other format maps every type through the model`, async () => {
+      const model = await readSpreadsheetBytes(await build(), format, "book");
+      const target: SpreadsheetFormat = format === "xlsx" ? "ods" : "xlsx";
+      const { bytes } = await spreadsheetDownload(model, target);
+      expect(await packageIntegrity(bytes)).toEqual([]);
+      const back = await readSpreadsheetBytes(bytes, target, "copy");
+      for (const [index, sheet] of model.sheets.entries()) {
+        expect(crossedRules(back.sheets[index]!, target), sheet.name).toEqual(crossedRules(sheet, target));
+      }
+      const types = new Set(back.sheets[0]!.validations.map((rule) => rule.type));
+      for (const type of ["list", "whole", "decimal", "date", "textLength", "custom"] as const) {
+        expect(types.has(type), type).toBe(true);
+      }
+      if (target === "ods") {
+        // The x14 cross-sheet list took the ODS form.
+        expect(model.sheets[0]!.validations.some((rule) => rule.x14)).toBe(true);
+        expect(back.sheets[0]!.validations.some((rule) => rule.formula1 === "Lists!$A$1:$A$4")).toBe(true);
+      } else {
+        // The sort-ascending list became an ordinary list; the cross-sheet one went to the x14 ext.
+        expect(model.sheets[0]!.validations.some((rule) => rule.odsListOrder === "sort-ascending")).toBe(true);
+        expect(back.sheets[0]!.validations.some((rule) => rule.odsListOrder !== undefined)).toBe(false);
+        expect(back.sheets[0]!.validations.find((rule) => rule.formula1?.startsWith("Lists!"))?.x14).toBe(true);
+      }
     });
   }
 });

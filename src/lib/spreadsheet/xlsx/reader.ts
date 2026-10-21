@@ -52,6 +52,11 @@
 //   and each worksheet's conditional formats (xlsx/conditionalFormats.ts,
 //   from the blocks and extLst sheetXml.ts cuts out), an x14 rule's inline
 //   dxf interned into the same `dxfs`.
+// - SPEC-130: each worksheet's data validations — the `<dataValidations>`
+//   block, then the extLst's x14 ones (xlsx/dataValidations.ts, from what
+//   sheetXml.ts cuts out) — into `validations`, and either container's
+//   `disablePrompts` into `validationPromptsDisabled`; a foreign sheet's
+//   `validations` stay `[]`.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -309,6 +314,7 @@ export async function parseXlsx(
       defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
       merges: [],
       conditionalFormats: [],
+      validations: [],
     };
     const bytes = parts.get(entry.partName);
     if (entry.kind === "grid" && bytes) {

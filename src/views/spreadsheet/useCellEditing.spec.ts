@@ -10,10 +10,15 @@
 // draft's own undo while editing, and the refusals for protection and
 // arrays. Driven the way the grid drives it: the editor's keydown first, and
 // a key it passes on is SPEC-117's navigation (useSheetGrid's fallback); a
-// typed character lands natively and is read back through `input`.
+// typed character lands natively and is read back through `input`. SPEC-130:
+// the entry gate (useDataValidation) — a valid entry still commits at once,
+// an invalid one keeps the editor open until the alert answers (commit,
+// retry with the entered text selected, cancel), a Fill checks every target
+// a rule covers, a dropdown pick (`enterValue`) goes the same way.
+import { flushPromises } from "@vue/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computed, effectScope, nextTick, ref, shallowRef, triggerRef } from "vue";
-import { getCell, parseA1 } from "../../lib/spreadsheet/address";
+import { getCell, parseA1, parseSqref } from "../../lib/spreadsheet/address";
 import { fixedMeasurer } from "../../lib/spreadsheet/autofit";
 import { cellKey, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
 import { recalculate } from "../../lib/spreadsheet/formula/recalc";
@@ -21,6 +26,7 @@ import type { Cell, CellStyle, CellValue, Row, Sheet, SpreadsheetModel, TextRun 
 import { SPREADSHEET_LOCALES } from "../../lib/spreadsheet/numberFormat/locale";
 import { addSheet, createBlankWorkbook } from "../../lib/spreadsheet/sheets";
 import { cellStyle } from "../../lib/spreadsheet/styles";
+import { defaultValidationSettings, type DataValidation } from "../../lib/spreadsheet/validation";
 import type { SheetViewFields } from "./useSheetViewState";
 
 const platform = { mac: false };
@@ -33,6 +39,7 @@ const { useCellEditing } = await import("./useCellEditing");
 const { useSheetMetrics } = await import("./useSheetMetrics");
 const { useSheetSelection } = await import("./useSheetSelection");
 const { useSpreadsheetUndo } = await import("./useSpreadsheetUndo");
+const { entryGateOf, useDataValidation } = await import("./useDataValidation");
 const { ARRAY_PART_MESSAGE, FORMULA_ERROR_MESSAGE, FORMULA_TOO_LONG_MESSAGE, PROTECTED_CELL_MESSAGE } = await import("./cellEntry");
 
 const scopes: Array<() => void> = [];
@@ -85,7 +92,7 @@ const PAGE = { rows: 20, cols: 8 };
  * selection, metrics and undo stack (its recalculation a synchronous lib
  * pass), a per-sheet in-memory view state, a toast spy and a fixed measurer
  * (7 px per character, 20 px lines: one line is the default 15 pt row). */
-function setup(model: SpreadsheetModel) {
+function setup(model: SpreadsheetModel, options: { gate?: boolean } = {}) {
   const workbook = shallowRef<SpreadsheetModel | null>(model);
   const activeIndex = ref(model.activeSheetIndex);
   const activeSheet = computed(() => workbook.value?.sheets[activeIndex.value] ?? null);
@@ -120,6 +127,11 @@ function setup(model: SpreadsheetModel) {
         activeIndex.value = model.sheets.findIndex((sheet) => sheet.id === id);
       },
     });
+    // SPEC-130: the view's entry gate, as useWorkbookEditing wires it.
+    let editor: ReturnType<typeof useCellEditing> | null = null;
+    const validation = options.gate
+      ? useDataValidation({ book: { workbook, activeSheet }, selection, locale: () => SPREADSHEET_LOCALES["en-US"], editor: () => editor })
+      : null;
     const editing = useCellEditing({
       book: {
         workbook,
@@ -135,11 +147,13 @@ function setup(model: SpreadsheetModel) {
       locale: () => SPREADSHEET_LOCALES["en-US"],
       toast: (message) => toasts.push(message),
       measurer: fixedMeasurer(7, 20),
+      ...(validation ? { entryGate: entryGateOf(validation) } : {}),
     });
-    return { selection, undo, editing };
+    editor = editing;
+    return { selection, undo, editing, validation };
   })!;
   scopes.push(() => scope.stop());
-  const { selection, undo, editing } = parts;
+  const { selection, undo, editing, validation } = parts;
 
   /** A key as the grid delivers it: the editor's table first, else
    * SPEC-117's navigation. */
@@ -194,7 +208,7 @@ function setup(model: SpreadsheetModel) {
   const active = (): string => selection.nameBoxText.value;
   const ranges = () => selection.selection.value.ranges;
 
-  return { model, workbook, activeIndex, selection, undo, editing, toasts, recalls, press, type, select, cell, active, ranges };
+  return { model, workbook, activeIndex, selection, undo, editing, validation, toasts, recalls, press, type, select, cell, active, ranges };
 }
 
 describe("modes", () => {
@@ -950,5 +964,212 @@ describe("sheets", () => {
     await nextTick();
     expect(editing.openEdit()).toBe(false);
     expect(editing.input("x", 1)).toBe(false);
+  });
+});
+
+/** SPEC-130: a whole number between 1 and 10 with an alert of `style` (titled `title`). */
+function whole1to10(style: DataValidation["error"]["style"], options: { show?: boolean; title?: string } = {}): Partial<DataValidation> {
+  return { type: "whole", formula1: "1", formula2: "10", error: { show: options.show ?? true, style, title: options.title ?? "", text: "" } };
+}
+
+describe("SPEC-130: the entry gate", () => {
+  let ids = 0;
+  /** A rule on `sqref`: Excel's defaults, then `settings`. */
+  function rule(sqref: string, settings: Partial<DataValidation> = {}): DataValidation {
+    ids += 1;
+    return { id: `dv${ids}`, ranges: parseSqref(sqref), ...defaultValidationSettings(), ...settings };
+  }
+  /** Sheet1 holding `cells` under `validations` (and `sheet`'s fields), the gate wired. */
+  function gated(cells: Record<string, CellSpec>, validations: DataValidation[], sheet: Partial<Sheet> = {}, extraStyles: CellStyle[] = []) {
+    const parts = setup(book(cells, { sheet: { validations, ...sheet }, extraStyles }), { gate: true });
+    return { ...parts, validation: parts.validation! };
+  }
+
+  it("a valid entry commits at once, exactly as without the gate", () => {
+    const { editing, undo, type, press, select, cell, active, validation } = gated({}, [rule("B2:B5", whole1to10("stop"))]);
+    select("B2");
+    type("7");
+    press("Enter");
+    expect([cell("B2")?.value, editing.mode.value, active(), validation.alert.value]).toEqual([7, "ready", "B3", null]);
+    expect(undo.undoLabel.value).toBe('Typing "7" in B2');
+  });
+
+  it("an invalid entry keeps the editor open with the alert up, writing nothing and not moving", () => {
+    const { editing, undo, type, press, select, cell, active, validation } = gated({ B2: 5 }, [rule("B2:B5", whole1to10("stop"))]);
+    select("B2");
+    type("42");
+    press("Enter");
+    expect(validation.alert.value?.style).toBe("stop");
+    expect([cell("B2")?.value, editing.mode.value, editing.text.value, active()]).toEqual([5, "enter", "42", "B2"]);
+    expect(undo.canUndo.value).toBe(false);
+    // Nothing else commits while the alert asks: a click-away is handled and
+    // the selection stays.
+    expect(editing.pressCell({ row: 6, col: 6 }, false, false)).toBe("handled");
+    expect(editing.pressOutside()).toBe(false);
+    expect(editing.commit()).toBe(false);
+    expect(active()).toBe("B2");
+  });
+
+  it("Retry: back into Edit mode with the whole entered text selected; the next entry commits", async () => {
+    const { editing, type, press, select, cell, validation } = gated({}, [rule("B2", { type: "list", formula1: '"Low,Medium,High"' })]);
+    select("B2");
+    type("Urgent");
+    press("Enter");
+    validation.answer("retry");
+    await flushPromises();
+    expect([editing.mode.value, editing.text.value, editing.draft.anchor.value, editing.caret.value]).toEqual(["edit", "Urgent", 0, 6]);
+    expect(cell("B2")).toBeUndefined();
+    // Typing replaces the selection (the host reads the new text back).
+    editing.input("High", 4);
+    expect(editing.draft.anchor.value).toBeNull();
+    press("Enter");
+    expect([cell("B2")?.value, editing.mode.value]).toEqual(["High", "ready"]);
+  });
+
+  it("Cancel: the editor closes and the old value stays, recording nothing", async () => {
+    const { editing, undo, type, press, select, cell, active, validation } = gated({ B3: 5 }, [rule("B3", whole1to10("warning"))]);
+    select("B3");
+    type("42");
+    press("Tab");
+    validation.answer("cancel");
+    await flushPromises();
+    expect([cell("B3")?.value, editing.mode.value, active()]).toEqual([5, "ready", "B3"]);
+    expect(undo.canUndo.value).toBe(false);
+  });
+
+  it("warning No is a retry; Escape from there cancels the edit", async () => {
+    const { editing, type, press, select, cell, validation } = gated({ B3: 5 }, [rule("B3", whole1to10("warning"))]);
+    select("B3");
+    type("42");
+    press("Enter");
+    validation.answer("no");
+    await flushPromises();
+    expect([editing.mode.value, editing.text.value, editing.draft.anchor.value]).toEqual(["edit", "42", 0]);
+    press("Escape");
+    expect([cell("B3")?.value, editing.mode.value]).toEqual([5, "ready"]);
+  });
+
+  it("warning Yes and information OK commit the entry as one step and apply the commit's move", async () => {
+    const information: Partial<DataValidation> = { type: "decimal", operator: "greaterThan", formula1: "0", error: { show: true, style: "information", title: "", text: "" } };
+    const { editing, undo, type, press, select, cell, active, validation } = gated({}, [rule("B3", whole1to10("warning")), rule("B4", information)]);
+    select("B3");
+    type("42");
+    press("Enter");
+    validation.answer("yes");
+    await flushPromises();
+    expect([cell("B3")?.value, editing.mode.value, active()]).toEqual([42, "ready", "B4"]);
+    expect(undo.undoLabel.value).toBe('Typing "42" in B3');
+    type("-1");
+    press("Tab");
+    expect(validation.alert.value?.style).toBe("information");
+    validation.answer("ok");
+    await flushPromises();
+    expect([cell("B4")?.value, active()]).toEqual([-1, "C4"]);
+  });
+
+  it("an invalid entry under a rule whose error.show is false commits silently", () => {
+    const { type, press, select, cell, validation } = gated({}, [rule("B2", whole1to10("stop", { show: false }))]);
+    select("B2");
+    type("99");
+    press("Enter");
+    expect([cell("B2")?.value, validation.alert.value]).toEqual([99, null]);
+  });
+
+  it("a formula entry is checked by its evaluated result", async () => {
+    const { type, press, select, cell, validation } = gated({ A1: 3, A2: 30 }, [rule("B1:B2", whole1to10("stop"))]);
+    select("B1");
+    type("=A1*2");
+    press("Enter");
+    expect([cell("B1")?.formula, validation.alert.value]).toEqual(["A1*2", null]);
+    type("=A2*2");
+    press("Enter");
+    expect(validation.alert.value?.style).toBe("stop");
+    validation.answer("cancel");
+    await flushPromises();
+    expect(cell("B2")).toBeUndefined();
+  });
+
+  it("an unchanged text validates nothing (an invalid stored value stays)", () => {
+    const { editing, press, select, validation } = gated({ B2: 99 }, [rule("B2", whole1to10("stop"))]);
+    select("B2");
+    press("F2");
+    press("Enter");
+    expect([editing.mode.value, validation.alert.value]).toEqual(["ready", null]);
+  });
+
+  it("protection refuses a locked cell before validation is asked", () => {
+    const { toasts, type, select, validation, editing } = gated({}, [rule("A1", whole1to10("stop"))], { protection: { sheet: true } });
+    select("A1");
+    type("42");
+    expect([editing.mode.value, validation.alert.value]).toEqual(["ready", null]);
+    expect(toasts).toEqual([PROTECTED_CELL_MESSAGE, PROTECTED_CELL_MESSAGE]);
+  });
+
+  it("Ctrl+Enter checks every target a rule covers, the first failure deciding for the whole fill", async () => {
+    const { editing, undo, type, press, select, cell, validation } = gated({}, [rule("D2", whole1to10("stop", { title: "D2" })), rule("D3", whole1to10("warning", { title: "D3" }))]);
+    select("D1:D4");
+    type("42");
+    press("Enter", { ctrlKey: true });
+    expect(validation.alert.value?.title).toBe("D2"); // selection order: D2 before D3
+    expect([cell("D1"), editing.mode.value]).toEqual([undefined, "enter"]);
+    validation.answer("cancel");
+    await flushPromises();
+    expect([cell("D1"), cell("D2"), editing.mode.value]).toEqual([undefined, undefined, "ready"]);
+    expect(undo.canUndo.value).toBe(false);
+
+    select("D3:D4");
+    type("42");
+    press("Enter", { ctrlKey: true });
+    expect(validation.alert.value?.title).toBe("D3");
+    validation.answer("yes");
+    await flushPromises();
+    expect([cell("D3")?.value, cell("D4")?.value, editing.mode.value]).toEqual([42, 42, "ready"]);
+    expect(undo.undoLabel.value).toBe("Fill");
+  });
+
+  it("Ctrl+Enter whose every covered target passes fills at once", () => {
+    const { type, press, select, cell, validation } = gated({}, [rule("D1:D3", whole1to10("stop"))]);
+    select("D1:D4");
+    type("5");
+    press("Enter", { ctrlKey: true });
+    expect([cell("D1")?.value, cell("D4")?.value, validation.alert.value]).toEqual([5, 5, null]);
+  });
+
+  it("a dropdown pick enters the item's value as one typing step, through the gate", async () => {
+    const { editing, undo, select, cell, active, validation } = gated({ E2: 10, E3: 20 }, [
+      rule("B2", { type: "list", formula1: "$E$2:$E$3" }),
+      rule("B3", { type: "list", formula1: '"a,,b"', allowBlank: false }),
+    ]);
+    select("B2");
+    expect(validation.openList()).toBe(true);
+    expect(validation.pick(1)).toBe(true);
+    expect([cell("B2")?.value, editing.mode.value, active()]).toEqual([20, "ready", "B2"]);
+    expect(undo.undoLabel.value).toBe('Typing "20" in B2');
+    // A blank item under allowBlank false meets the alert as a typed blank would.
+    select("B3");
+    validation.openList();
+    expect(validation.pick(1)).toBe(false);
+    expect(validation.alert.value?.style).toBe("stop");
+    validation.answer("cancel");
+    await flushPromises();
+    expect([cell("B3"), editing.mode.value]).toEqual([undefined, "ready"]);
+  });
+
+  it("nothing else validates: Delete clears a cell whose rule refuses blanks, and undo restores it, without an alert", () => {
+    const { undo, press, select, cell, validation } = gated({ B2: 5 }, [rule("B2", { ...whole1to10("stop"), allowBlank: false })]);
+    select("B2");
+    press("Delete");
+    expect([cell("B2")?.value, validation.alert.value]).toEqual([undefined, null]);
+    undo.undo();
+    expect([cell("B2")?.value, validation.alert.value]).toEqual([5, null]);
+  });
+
+  it("a pick on a locked cell of a protected sheet is refused with the protection toast", () => {
+    const { toasts, select, cell, validation } = gated({}, [rule("A1", { type: "list", formula1: '"a,b"' })], { protection: { sheet: true } });
+    select("A1");
+    validation.openList();
+    expect(validation.listView.value?.texts).toEqual(["a", "b"]);
+    expect(validation.pick(0)).toBe(false);
+    expect([cell("A1"), toasts]).toEqual([undefined, [PROTECTED_CELL_MESSAGE]]);
   });
 });

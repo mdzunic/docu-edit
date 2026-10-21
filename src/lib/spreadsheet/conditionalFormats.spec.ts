@@ -43,7 +43,7 @@ function sheetOf(values: Record<string, CellValue>, formats: ConditionalFormat[]
     rows.set(ref.row, [...(rows.get(ref.row) ?? []), { col: ref.col, value }]);
   }
   const sorted: Row[] = [...rows.entries()].toSorted(([a], [b]) => a - b).map(([index, cells]) => ({ index, cells: cells.toSorted((a, b) => a.col - b.col) }));
-  return { id, name, visibility: "visible", kind: "grid", rows: sorted, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], conditionalFormats: formats };
+  return { id, name, visibility: "visible", kind: "grid", rows: sorted, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], validations: [], conditionalFormats: formats };
 }
 
 function book(values: Record<string, CellValue>, formats: ConditionalFormat[] = [], dxfs: Dxf[] = [RED, GREEN, ITALIC]): SpreadsheetModel {

@@ -45,6 +45,7 @@ import {
   unconvertibleContent,
   validateSheetName,
 } from "./sheets";
+import type { DataValidation } from "./validation";
 
 // --- messages, as "Sheet names" and the AC spell them -----------------------------------
 
@@ -88,6 +89,7 @@ function gridSheet(name: string, cells: Record<string, CellSpec> = {}, extra: Pa
   }
   return {
     conditionalFormats: [],
+    validations: [],
     id: crypto.randomUUID(),
     name,
     visibility: "visible",
@@ -280,6 +282,7 @@ describe("createBlankWorkbook", () => {
           columns: [],
           merges: [],
           conditionalFormats: [],
+          validations: [],
           defaultColWidthPx: 64,
           defaultRowHeightPt: 15,
           dirty: true,
@@ -1849,6 +1852,124 @@ describe("SPEC-129: conditional formats through the sheet commands", () => {
 
 // =========================================================================================
 
+/** A list rule on A1:A10 whose source is `formula1`. */
+const dv = (id: string, formula1: string, extra: Partial<DataValidation> = {}): DataValidation => ({
+  id,
+  ranges: [{ top: 0, left: 0, bottom: 9, right: 0 }],
+  type: "list",
+  operator: "between",
+  formula1,
+  allowBlank: true,
+  showDropdown: true,
+  input: { show: true, title: "", text: "" },
+  error: { show: true, style: "stop", title: "", text: "" },
+  ...extra,
+});
+const validationsOf = (model: SpreadsheetModel, name: string): DataValidation[] => sheetNamed(model, name).validations;
+
+describe("SPEC-130: data validations through the sheet commands", () => {
+  it("createBlankWorkbook and addSheet start every sheet with no rule", () => {
+    const model = createBlankWorkbook();
+    addSheet(model, 0);
+    expect(model.sheets.map((sheet) => sheet.validations)).toEqual([[], []]);
+  });
+
+  it("rename remaps every rule formula naming the sheet on every sheet — a changed rule loses its sourceXml, keeps its odsName, its sheet stays clean", () => {
+    const list = dv("r", "Data!$A$1:$A$5", { x14: true, sourceXml: "<x14:dataValidation/>", odsName: "val1" });
+    const bounds = dv("b", "Data!$C$1", { type: "whole", formula2: "Data!$C$2" });
+    const untouched = dv("u", "$Z$1:$Z$3", { sourceXml: "<dataValidation/>" });
+    // A rule naming its own sheet: placed for the sheet's NEW name (not another sheet: no x14).
+    const self = dv("s", "Data!$B$1:$B$3", { x14: true });
+    const model = freezeContents(book([gridSheet("Data", {}, { validations: [self] }), gridSheet("Report", {}, { validations: [list, bounds, untouched] })]));
+    renameSheet(model, 0, "Facts 2025");
+    const [renamed, renamedBounds, same] = validationsOf(model, "Report");
+    expect(renamed).toMatchObject({ id: "r", formula1: "'Facts 2025'!$A$1:$A$5", x14: true, odsName: "val1" });
+    expect(renamed!.sourceXml).toBeUndefined();
+    expect(renamedBounds).toMatchObject({ formula1: "'Facts 2025'!$C$1", formula2: "'Facts 2025'!$C$2" });
+    expect(same).toBe(untouched);
+    const [own] = validationsOf(model, "Facts 2025");
+    expect(own).toMatchObject({ formula1: "'Facts 2025'!$B$1:$B$3" });
+    expect(own!.x14).toBeUndefined();
+    // Only rules changed: the writers' sheet-reference pass rewrites the retained text.
+    expect(sheetNamed(model, "Report").dirty).toBeUndefined();
+  });
+
+  it("rename leaves a sheet whose rules name no renamed sheet untouched by identity", () => {
+    const model = book([gridSheet("Data"), gridSheet("Report", {}, { validations: [dv("r", "Other!$A$1:$A$3")] }), gridSheet("Other")]);
+    const report = model.sheets[1];
+    renameSheet(model, 0, "Facts");
+    expect(model.sheets[1]).toBe(report);
+  });
+
+  it("delete turns a deleted sheet's references into #REF! — an x14 rule that no longer references another sheet leaves x14", () => {
+    const report = dv("r", "Data!$A$1:$A$5", { x14: true, sourceXml: "<x14:dataValidation/>" });
+    const custom = dv("c", "A1<>Data!$B$1", { type: "custom" });
+    const model = freezeContents(book([gridSheet("Data"), gridSheet("Report", {}, { validations: [report, custom] })], 1));
+    deleteSheet(model, 0);
+    const [list, formula] = validationsOf(model, "Report");
+    expect(list).toMatchObject({ id: "r", formula1: "#REF!" });
+    expect(list!.x14).toBeUndefined();
+    expect(list!.sourceXml).toBeUndefined();
+    expect(formula).toMatchObject({ formula1: "A1<>#REF!" });
+    expect(sheetNamed(model, "Report").dirty).toBeUndefined();
+  });
+
+  it("duplicate copies the rules with fresh ids and no odsName, the copy's own-name references renamed, placed for the copy's name", () => {
+    const own = dv("o", "Data!$Z$1:$Z$3", { sourceXml: "<dataValidation/>", odsName: "val1" });
+    const lists = dv("l", "Lists!$A$1:$A$4", { x14: true, sourceXml: "<x14:dataValidation/>", odsName: "val2" });
+    const plain = dv("p", "$E$2:$E$6", { sourceXml: "<dataValidation/>" });
+    const made = dv("m", "Lists!$B$1:$B$4"); // made in the dialog before a save: no source, placed afresh
+    const model = freezeContents(book([gridSheet("Data", {}, { validations: [own, lists, plain, made] }), gridSheet("Lists")]));
+    duplicateSheet(model, 0);
+    const copies = validationsOf(model, "Data (2)");
+    expect(copies.map((rule) => rule.id).filter((id) => ["o", "l", "p", "m"].includes(id))).toEqual([]);
+    expect(new Set(copies.map((rule) => rule.id)).size).toBe(4);
+    expect(copies.some((rule) => "odsName" in rule)).toBe(false);
+    expect(copies[0]).toMatchObject({ formula1: "'Data (2)'!$Z$1:$Z$3" });
+    expect(copies[0]!.sourceXml).toBeUndefined();
+    expect(copies[1]).toMatchObject({ formula1: "Lists!$A$1:$A$4", x14: true, sourceXml: "<x14:dataValidation/>" });
+    expect(copies[2]).toMatchObject({ formula1: "$E$2:$E$6", sourceXml: "<dataValidation/>" });
+    expect(copies[3]).toMatchObject({ formula1: "Lists!$B$1:$B$4", x14: true });
+    // The source's rules are untouched.
+    const originals = validationsOf(model, "Data");
+    [own, lists, plain, made].forEach((rule, i) => expect(originals[i]).toBe(rule));
+
+    // An .ods copy's rules drop their sourceXml (its base-cell address names the source sheet).
+    const ods = book([gridSheet("Data", {}, { validations: [dv("p", "$E$2:$E$6", { sourceXml: "<table:content-validation/>", odsName: "val1" })] })], 0, "ods");
+    duplicateSheet(ods, 0);
+    const [copy] = validationsOf(ods, "Data (2)");
+    expect(copy).toMatchObject({ formula1: "$E$2:$E$6" });
+    expect("sourceXml" in copy! || "odsName" in copy!).toBe(false);
+  });
+
+  it("stripRetention: no sourceXml, odsName or odsOrphanValidations; x14 placed for the target; odsListOrder kept only into .ods", () => {
+    const crossSheet = dv("a", "Other!$A$1:$A$3", { x14: true, sourceXml: "<x14:dataValidation/>", odsName: "val1", odsListOrder: "sort-ascending" });
+    const literal = dv("b", '"Low,High"', { sourceXml: "<dataValidation/>", odsName: "val2" });
+    const model = book([gridSheet("Data", {}, { validations: [crossSheet, literal] }), gridSheet("Other")], 0, "ods");
+    model.odsOrphanValidations = [`<table:content-validation table:name="orphan"/>`];
+    const before = structuredClone(model);
+    const { sourceXml: _a, odsName: _an, odsListOrder: _order, ...crossSheetBare } = crossSheet;
+    const { sourceXml: _b, odsName: _bn, ...literalBare } = literal;
+
+    const toXlsx = stripRetention({ ...model, format: "xlsx" });
+    expect(model).toEqual(before);
+    expect("odsOrphanValidations" in toXlsx).toBe(false);
+    // An ODS sort-ascending list becomes an ordinary xlsx list; a cross-sheet one goes to x14.
+    expect(validationsOf(toXlsx, "Data")).toEqual([crossSheetBare, literalBare]);
+
+    const toOds = stripRetention({ ...model, format: "ods" });
+    const { x14: _x14, ...odsBare } = crossSheetBare;
+    expect(validationsOf(toOds, "Data")).toEqual([{ ...odsBare, odsListOrder: "sort-ascending" }, literalBare]);
+    expect("odsOrphanValidations" in toOds).toBe(false);
+
+    // An .ods rule naming another sheet goes to an .xlsx copy's x14 ext, whatever its flag said.
+    const unplaced = book([gridSheet("Data", {}, { validations: [dv("c", "Other!$A$1:$A$3")] }), gridSheet("Other")], 0, "ods");
+    expect(validationsOf(stripRetention({ ...unplaced, format: "xlsx" }), "Data")[0]).toMatchObject({ x14: true });
+  });
+});
+
+// =========================================================================================
+
 /** An ods content suffix holding database ranges on Data!A1:B10. */
 const databaseRanges = (...rangeNames: string[]): string =>
   `<table:database-ranges>${rangeNames.map((name) => `<table:database-range table:name="${name}" table:target-range-address="Data.A1:Data.B10"/>`).join("")}</table:database-ranges>`;
@@ -1861,7 +1982,6 @@ describe("unconvertibleContent", () => {
     "charts",
     "comments",
     "some conditional formatting",
-    "data validation",
     "named ranges",
     "tables",
     "colour and icon filters",
@@ -1906,14 +2026,25 @@ describe("unconvertibleContent", () => {
   });
 
   it("lists spec121-links.xlsx's structures in table order (a chart's drawing is the charts row, as the AC's toast \"charts, comments\" reads)", async () => {
-    // SPEC-129: its conditional format (an expression rule) crosses.
+    // SPEC-129: its conditional format (an expression rule) crosses; SPEC-130: so do its data validations.
     const labels = unconvertibleContent(await openLinksXlsx(), "ods");
-    expect(labels).toEqual(["charts", "comments", "data validation", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["charts", "comments", "named ranges", "tables", "hyperlinks"]);
   });
 
   it("lists spec121-links.ods's structures in table order", async () => {
+    // SPEC-130: its content validations cross.
     const labels = unconvertibleContent(await openLinksOds(), "xlsx");
-    expect(labels).toEqual(["charts", "comments", "data validation", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["charts", "comments", "named ranges", "tables", "hyperlinks"]);
+  });
+
+  it("SPEC-130: data validation crosses through the model — rules, and their retained wire text, are never named", () => {
+    const xlsx = book([gridSheet("Data", {}, { validations: [dv("v", '"Low,High"', { sourceXml: "<dataValidation/>" })] })]);
+    expect(unconvertibleContent(xlsx, "ods")).toEqual([]);
+    const ods = book([gridSheet("Data", {}, { validations: [dv("v", '"Low,High"', { odsName: "val1", odsListOrder: "sort-ascending" })] })], 0, "ods");
+    ods.odsContentEnvelope = { prefix: `<table:content-validations><table:content-validation table:name="val1"/></table:content-validations>`, suffix: "" };
+    ods.odsOrphanValidations = [`<table:content-validation table:name="orphan"/>`];
+    expect(unconvertibleContent(ods, "xlsx")).toEqual([]);
+    expect(UNCONVERTIBLE_CONTENT.some((row) => /validation/i.test(row.label))).toBe(false);
   });
 
   it("SPEC-129: conditional formatting crosses — only a preserved rule (either direction) or, to .ods, a reversed icon set is named", () => {

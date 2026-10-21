@@ -78,6 +78,7 @@ function handBuiltModel(): SpreadsheetModel {
     sheets: [
       {
         conditionalFormats: [],
+        validations: [],
         id: "sheet-a",
         name: "Summary",
         visibility: "visible",
@@ -138,6 +139,7 @@ function handBuiltModel(): SpreadsheetModel {
       },
       {
         conditionalFormats: [],
+        validations: [],
         id: "sheet-b",
         name: "Chart1",
         visibility: "hidden",
@@ -151,6 +153,7 @@ function handBuiltModel(): SpreadsheetModel {
       },
       {
         conditionalFormats: [],
+        validations: [],
         id: "sheet-c",
         name: "Secret",
         visibility: "veryHidden",

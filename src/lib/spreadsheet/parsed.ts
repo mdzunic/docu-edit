@@ -33,6 +33,9 @@ export interface ParsedSpreadsheet {
   /** SPEC-129: the differential styles (xlsx `<dxfs>` by index, ods the
    *  named styles conditional formats apply) — `[]` when there are none. */
   dxfs: Dxf[];
+  /** SPEC-130: ods content validations no cell references, verbatim
+   *  (absent: none). */
+  odsOrphanValidations?: string[];
 }
 
 /** Counts stored cells across every sheet of one read against

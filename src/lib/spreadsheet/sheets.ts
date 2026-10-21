@@ -34,14 +34,22 @@
 //   conditional-format rule formula on every sheet (cfFormulas.ts's table —
 //   value objects and a preserved xlsx rule's texts included) goes through
 //   remapSheetReferences the same way; a changed format is replaced without
-//   its sourceXml (a dirty sheet then writes it from the model). Unlike a
-//   cell-formula rewrite this leaves the sheet clean: its retained part's
-//   rule text goes through the writers' sheet-reference pass, as a
-//   validation's or a hyperlink's does.
+//   its sourceXml (a dirty sheet then writes it from the model). SPEC-130:
+//   so does every data-validation rule's formula1/formula2 on every sheet
+//   (mapValidationsFormulas — a changed rule without its sourceXml, its x14
+//   placement re-derived for its sheet's name once the command is done).
+//   Unlike a cell-formula rewrite neither leaves the sheet dirty: its
+//   retained rule text goes through the writers' sheet-reference pass, as a
+//   hyperlink's does.
 // - SPEC-129, duplicate: the copy's conditional formats get fresh format and
 //   rule ids (x14Ids kept — a GUID pairs only within one worksheet), their
 //   formulas renamed as the copy's cells' are, and in an .ods they lose
 //   their sourceXml, which names the source sheet in its target address.
+// - SPEC-130, duplicate: the copy's data-validation rules get fresh ids and
+//   no `odsName` (the content-validation is the source sheet's; the writer
+//   names the copy's), their formulas renamed as the copy's cells' are and
+//   their x14 placement derived for the copy's name; in an .ods they lose
+//   their sourceXml, whose base-cell address names the source sheet.
 // - `alsoRecalc` lists the formula cells whose RESULT may change though
 //   their text did not: 3-D references whose span gained, lost or reordered
 //   a sheet, and references to a name that did not exist before.
@@ -69,6 +77,14 @@ import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
 import { SPREADSHEET_READER_VERSION } from "./open";
 import { sourceNameOf } from "./sourceNames";
 import { UNCONVERTIBLE_CONTENT, type ConversionSource } from "./unconvertible";
+import {
+  mapValidationsFormulas,
+  mintValidationId,
+  sheetValidations,
+  withoutValidationSource,
+  withX14Placement as placeValidation,
+  type DataValidation,
+} from "./validation";
 import { copyXlsxSheetParts, hasOnlySafeRelationships, removeOwnedParts, renameTablesInFormula } from "./xlsx/duplicate";
 import { LazyParts } from "./xlsx/package";
 
@@ -119,6 +135,7 @@ export function emptySheet(name: string): Sheet {
     columns: [],
     merges: [],
     conditionalFormats: [],
+    validations: [],
     defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
     defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
     dirty: true,
@@ -230,15 +247,27 @@ function rewriteFormulas(sheet: Sheet, rewrite: (formula: string) => string): Sh
   return rows ? { ...sheet, rows, dirty: true } : sheet;
 }
 
-/** A sheet with every conditional-format rule formula passed through
- * `rewrite` (cfFormulas.ts): the same object when nothing changed, else a
- * new sheet whose changed formats lost their sourceXml — its dirty flag
- * untouched (see the header). `sheetName`: the sheet's name once the
- * command is done (x14 placement). */
+/** A sheet with every conditional-format rule formula (cfFormulas.ts) and
+ * every data-validation rule formula passed through `rewrite`: the same
+ * object when nothing changed, else a new sheet whose changed formats and
+ * rules lost their sourceXml — its dirty flag untouched (see the header).
+ * `sheetName`: the sheet's name once the command is done (x14 placement). */
 function rewriteRuleFormulas(format: SpreadsheetFormat, sheet: Sheet, rewrite: (formula: string) => string, sheetName = sheet.name): Sheet {
   const formats = sheetFormats(sheet);
-  const next = mapFormatsFormulas(formats, rewrite, { format, sheetName });
-  return next === formats ? sheet : { ...sheet, conditionalFormats: next };
+  const nextFormats = mapFormatsFormulas(formats, rewrite, { format, sheetName });
+  const validations = sheetValidations(sheet);
+  const nextValidations = mapValidationsFormulas(validations, rewrite, format, sheetName);
+  if (nextFormats === formats && nextValidations === validations) {
+    return sheet;
+  }
+  const next: Sheet = { ...sheet };
+  if (nextFormats !== formats) {
+    next.conditionalFormats = nextFormats;
+  }
+  if (nextValidations !== validations) {
+    next.validations = nextValidations;
+  }
+  return next;
 }
 
 /** Every formula cell (parsed formulas only) of the model, with its key. */
@@ -419,6 +448,7 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
     copy.autoFilter = copiedAutoFilter(copy.autoFilter, model.format);
   }
   copy.conditionalFormats = copiedFormats(sheetFormats(copy), model.format);
+  copy.validations = copiedValidations(sheetValidations(copy), model.format, name);
   if (partName !== undefined || sourceXml !== undefined) {
     copy.copiedFrom = source.copiedFrom ?? sourceNameOf(model, source);
     if (source.dirty) {
@@ -454,6 +484,18 @@ function copiedFormats(formats: readonly ConditionalFormat[], format: Spreadshee
   return formats.map((each) => {
     const copy: ConditionalFormat = { ...each, id: mintCfId(), rules: each.rules.map((rule) => ({ ...rule, id: mintCfId() })) };
     return format === "ods" ? withoutFormatSource(copy) : copy;
+  });
+}
+
+/** A copy's data-validation rules (see the module header) — before its
+ * formulas are renamed, which re-derives a renamed rule's placement. A rule
+ * still carrying its source keeps the location that source has. */
+function copiedValidations(rules: readonly DataValidation[], format: SpreadsheetFormat, copyName: string): DataValidation[] {
+  return rules.map((each) => {
+    const { odsName: _name, ...rest } = each;
+    const copy: DataValidation = { ...rest, id: mintValidationId() };
+    const own = format === "ods" ? withoutValidationSource(copy) : copy;
+    return own.sourceXml === undefined ? placeValidation(own, format, copyName) : own;
   });
 }
 
@@ -589,15 +631,29 @@ export function setTabColor(model: SpreadsheetModel, index: number, color: Model
  * package, no source on any sheet, no CSV dialect (SPEC-126), foreign sheets
  * gone, styles without their source indices, every formula cell through
  * formulaForTarget, conditional formats per crossFormats and differential
- * styles without their sourceXml/sourceStyleName (SPEC-129). Pure — the
- * open model is untouched; rows are shared except where a cell must
- * change. */
+ * styles without their sourceXml/sourceStyleName (SPEC-129), data-validation
+ * rules per crossValidations and no `odsOrphanValidations` — the source's
+ * unreferenced content-validations are its own (SPEC-130). Pure — the open
+ * model is untouched; rows are shared except where a cell must change. */
 export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
-  const { opaque: _opaque, odsContentEnvelope: _envelope, structureDirty: _structure, packageVariant: _variant, csv: _csv, ...rest } = model;
+  const {
+    opaque: _opaque,
+    odsContentEnvelope: _envelope,
+    structureDirty: _structure,
+    packageVariant: _variant,
+    csv: _csv,
+    odsOrphanValidations: _orphans,
+    ...rest
+  } = model;
   const kept = model.sheets.filter((sheet) => sheet.kind !== "foreign");
   const sheets: Sheet[] = kept.map((sheet) => {
     const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, ...fields } = sheet;
-    return { ...fields, rows: crossRows(sheet.rows, model.format), conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name) };
+    return {
+      ...fields,
+      rows: crossRows(sheet.rows, model.format),
+      conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name),
+      validations: crossValidations(sheetValidations(sheet), model.format, sheet.name),
+    };
   });
   if (sheets.length === 0) {
     const { dirty: _dirty, ...fallback } = emptySheet("Sheet1");
@@ -654,6 +710,22 @@ function crossFormats(formats: readonly ConditionalFormat[], target: Spreadsheet
     return rules.length === 0 ? [] : [{ ...withoutFormatSource(format), rules }];
   });
   return dropped ? renumberPriorities(crossed) : crossed;
+}
+
+/** A sheet's data-validation rules as they cross to `target` (SPEC-130
+ * "Round trip"): every type crosses through the model — each rule without
+ * its sourceXml and odsName (the writer serialises and names it afresh),
+ * placed for the target (validation.ts's withX14Placement: an x14 rule
+ * becomes an ordinary ODS one, a cross-sheet one goes to an .xlsx copy's
+ * x14 ext), and — to anything but .ods — without `odsListOrder`, the one
+ * property that does not cross (an ODS sort-ascending list becomes an
+ * ordinary xlsx list). */
+function crossValidations(rules: readonly DataValidation[], target: SpreadsheetFormat, sheetName: string): DataValidation[] {
+  return rules.map((rule) => {
+    const { sourceXml: _source, odsName: _name, odsListOrder, ...rest } = rule;
+    const crossed: DataValidation = target === "ods" && odsListOrder !== undefined ? { ...rest, odsListOrder } : rest;
+    return placeValidation(crossed, target, sheetName);
+  });
 }
 
 /** Whether a cell carries content only its source format can carry

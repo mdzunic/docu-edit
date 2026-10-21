@@ -88,6 +88,7 @@ describe("FormulaBar edit text (SPEC-118)", () => {
   ];
   const sheet: Sheet = {
     conditionalFormats: [],
+    validations: [],
     id: "s1",
     name: "Sheet1",
     visibility: "visible",

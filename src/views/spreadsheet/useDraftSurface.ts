@@ -16,6 +16,9 @@
 // - The formula bar shows the active cell's text in Ready; a click in it
 //   opens Edit mode at the clicked character (keyboard focus: at the end),
 //   and a commit from it returns focus to the in-cell editor.
+// - SPEC-130: a selection the draft asks for (its `anchor` — a validation
+//   alert's Retry selects the entered text) is rendered in the focused host;
+//   once the host's own selection collapses the draft forgets it.
 import { onBeforeUnmount, onMounted, watch, type Ref } from "vue";
 import { sanitizeXmlText } from "../../lib/core/xmlText";
 import { caretOffsetAtPoint, caretOffsetIn, placeCaretIn, readDraftText, renderDraft, selectionOffsetsIn } from "./cellEditorDom";
@@ -56,7 +59,9 @@ export function useDraftSurface(
     const editing = e?.editing.value === true;
     renderDraft(el, editing ? e.text.value : readyText(), editing ? e.point.spans.value : []);
     if (editing && focused()) {
-      placeCaretIn(el, e.caret.value);
+      const anchor = e.draft.anchor.value;
+      const caret = e.caret.value;
+      placeCaretIn(el, anchor === null ? caret : Math.min(anchor, caret), anchor === null ? caret : Math.max(anchor, caret));
     }
   }
 
@@ -157,6 +162,10 @@ export function useDraftSurface(
     const e = editor();
     if (el && e?.editing.value && !composing && focused()) {
       e.caret.value = caretOffsetIn(el) ?? e.caret.value;
+      const range = selectionOffsetsIn(el);
+      if (e.draft.anchor.value !== null && (!range || range.start === range.end)) {
+        e.draft.anchor.value = null;
+      }
     }
   }
 

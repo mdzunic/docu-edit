@@ -40,7 +40,7 @@ function sheetOf(cells: ReadonlyArray<readonly [number, number, Cell["value"]]>,
       rows.push({ index, cells: [{ col, value }] });
     }
   }
-  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...extra };
+  return { conditionalFormats: [], validations: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...extra };
 }
 
 /** `sheet` with row `index` hidden. */

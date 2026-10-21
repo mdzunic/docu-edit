@@ -309,6 +309,7 @@ export function readCsvBytes(bytes: Uint8Array, format: "csv" | "tsv", title: st
     columns: [],
     merges: [],
     conditionalFormats: [],
+    validations: [],
     defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
     defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
   };

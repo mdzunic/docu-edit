@@ -43,7 +43,7 @@ export function sourceNameOf(model: SpreadsheetModel, sheet: Sheet, parts?: Part
     return tableNameOf(sheet.sourceXml);
   }
   if (sheet.partName !== undefined && model.format === "xlsx") {
-    return xlsxSourceNames(parts ?? lazyLookup(model)).get(sheet.partName);
+    return xlsxSourceNames(parts ?? sourcePartsOf(model)).get(sheet.partName);
   }
   return undefined;
 }
@@ -126,7 +126,7 @@ export function resolveRetainedSheetName(
 const LAZY = new WeakMap<SpreadsheetModel["opaque"], PartLookup>();
 
 /** A lookup over the model's opaque parts, kept per `opaque` array. */
-function lazyLookup(model: SpreadsheetModel): PartLookup {
+export function sourcePartsOf(model: SpreadsheetModel): PartLookup {
   let lookup = LAZY.get(model.opaque);
   if (!lookup) {
     lookup = new LazyParts(model.opaque);

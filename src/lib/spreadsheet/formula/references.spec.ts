@@ -131,7 +131,7 @@ describe("findArrayAnchor", () => {
     { index: 1, cells: [anchor] },
     { index: 2, cells: [{ col: 2, value: 4 }] },
   ];
-  const sheet: Sheet = { conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
+  const sheet: Sheet = { conditionalFormats: [], validations: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 
   it("finds the anchor whose arrayRange holds a position — its own and every member's, stored or not", () => {
     expect(findArrayAnchor(sheet, 1, 1)).toBe(anchor);

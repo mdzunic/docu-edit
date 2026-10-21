@@ -21,11 +21,12 @@ import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { blockFromPayload, blockFromText, pasteBlock, pasteCapabilities, planPaste, transposeFormula, type PasteBlock, type PasteOptions, type PasteTarget } from "./paste";
 import { PARTIAL_ARRAY_MESSAGE } from "./structure";
 import { cellStyle } from "./styles";
+import type { DataValidation } from "./validation";
 
 const EN_US = SPREADSHEET_LOCALES["en-US"];
 
 function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
-  return { conditionalFormats: [], id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], validations: [], id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 function model(sheets: Sheet[], fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {
@@ -453,5 +454,36 @@ describe("copy-on-write", () => {
     expect(m.sheets[0]!.rows.find((each) => each.index === 40)).toBe(untouched);
     expect(m.sheets[1]).toBe(sheet2);
     expect(JSON.parse(JSON.stringify(m))).toEqual(m);
+  });
+});
+
+/** A data-validation rule on `ranges` (SPEC-130). */
+const rule = (id: string, ranges: GridRange[], fields: Partial<DataValidation>): DataValidation => ({
+  id,
+  ranges,
+  type: "list",
+  operator: "between",
+  allowBlank: true,
+  showDropdown: true,
+  input: { show: false, title: "", text: "" },
+  error: { show: true, style: "stop", title: "", text: "" },
+  ...fields,
+});
+
+describe("SPEC-130: a copy-paste carries no data-validation rules", () => {
+  it("leaves the destination's rules as they were and adds none of the source's, under Paste (All), on either sheet", () => {
+    const m = source();
+    const copiedRule = rule("src", [range(1, 1, 2, 2)], { formula1: '"Low,Medium,High"' }); // B2:C3, the copied block
+    const destRule = rule("dst", [range(9, 4, 10, 5)], { type: "whole", formula1: "1", formula2: "10", sourceXml: "<dataValidation/>" }); // E10:F11
+    m.sheets = [{ ...m.sheets[0]!, validations: [copiedRule, destRule] }, m.sheets[1]!];
+    const validations = m.sheets[0]!.validations;
+    const { block } = copied(m, range(1, 1, 2, 2));
+    expect(pasteBlock(m, "s1", at(9, 4), block, ALL)).toMatchObject({ ok: true });
+    expect(cellOf(m, 9, 4)?.value).toBe(1); // the cells arrived
+    // The rules did not: the same array, the same objects, the destination's sourceXml kept.
+    expect(m.sheets[0]!.validations).toBe(validations);
+    expect(m.sheets[0]!.validations[1]).toBe(destRule);
+    pasteBlock(m, "s2", at(0, 0), block, ALL);
+    expect(m.sheets[1]!.validations).toEqual([]);
   });
 });

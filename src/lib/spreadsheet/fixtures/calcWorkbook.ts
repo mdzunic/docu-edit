@@ -79,6 +79,7 @@ export function calcSheet(name: string, cells: Record<string, CellSpec>, kind: S
     defaultRowHeightPt: 15,
     merges: [],
     conditionalFormats: [],
+    validations: [],
   };
 }
 

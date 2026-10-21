@@ -24,29 +24,31 @@
 //   handler takes them first, so useSpreadsheetUndo's listener never fires
 //   mid-edit). Enter, Tab, arrows and Escape are ignored while an IME
 //   composition is active.
-// - Commit (cellEntry.ts): parse, validate, one undo step, refit, move; a
-//   formula error keeps the editor open with the message and the caret at
-//   the error; an unchanged text records nothing. Protection and arrays are
-//   checked before the editor opens and before Delete or Fill (a toast).
+// - Commit (cellCommit.ts over cellEntry.ts): parse, validate, one undo
+//   step, refit, move; a formula error keeps the editor open with the message
+//   and the caret at the error; an unchanged text records nothing.
+//   Protection and arrays are checked before the editor opens and before
+//   Delete or Fill (a toast). SPEC-130: then the data-validation entry gate
+//   (`entryGate`) — for a commit, a Fill and a dropdown pick (`enterValue`).
 // - Sheets: a tab clicked while pointing shows that sheet and keeps editing;
 //   commit or cancel returns to the edited sheet.
 import { computed, nextTick, ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
-import type { CellEntry } from "../../lib/spreadsheet/cells";
 import { MAX_TEXT_LENGTH } from "../../lib/spreadsheet/formula/values";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
-import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
+import { createCommitPath } from "./cellCommit";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
-import { canEditCell, cellEditText, clearTargets, entryFromText, refusalFor, writeClear, writeEntry, writeFill, type CellWriteContext } from "./cellEntry";
+import { canEditCell, cellEditText, clearTargets, refusalFor, writeClear } from "./cellEntry";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { usePointMode } from "./usePointMode";
 import type { SheetMetrics } from "./useSheetMetrics";
 import type { SheetSelectionController } from "./useSheetSelection";
 import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
+import type { EntryGate } from "./validationGate";
 
 export type { EditMode } from "./cellEditorKeys";
 export type { DraftSurface, SurfaceKind } from "./cellDraft";
@@ -72,6 +74,9 @@ export interface CellEditingDeps {
    * it was made from, and after a commit's move, since applying a step
    * re-reads the view state from the model. */
   syncViewState?: (model: SpreadsheetModel) => void;
+  /** SPEC-130: the data-validation entry gate (useDataValidation's
+   * entryGateOf); absent = every entry is written unchecked. */
+  entryGate?: EntryGate;
 }
 
 const MODE_LABELS: Readonly<Record<EditMode, string>> = { ready: "Ready", enter: "Enter", edit: "Edit" };
@@ -192,6 +197,7 @@ export function useCellEditing(deps: CellEditingDeps) {
     const sheetId = target.value?.sheetId;
     mode.value = "ready";
     target.value = null;
+    path.forget();
     composing = false;
     point.end();
     draft.reset();
@@ -202,60 +208,38 @@ export function useCellEditing(deps: CellEditingDeps) {
     }
   }
 
-  /** The edited cell's write context and the draft as its entry — or null
-   * after showing why it cannot be written (the error, or for a Fill a
-   * protection toast). */
-  function prepared(forFill: boolean): { ctx: CellWriteContext; at: CellRef; entry: CellEntry } | null {
-    const m = model();
-    const at = target.value?.at;
-    const sheetIndex = m?.sheets.findIndex((sheet) => sheet.id === target.value?.sheetId) ?? -1;
-    const sheet = m?.sheets[sheetIndex];
-    if (!m || !at || !sheet) {
-      return null;
-    }
-    const refusal = forFill ? refusalFor(m, sheetIndex, target.value?.ranges ?? []) : null;
-    if (refusal) {
-      toast(refusal);
-      return null;
-    }
-    const style = cellStyle(m, effectiveStyleId(sheet, at.row, at.col));
-    const outcome = entryFromText(draft.text.value, { locale: deps.locale(), dateSystem: m.dateSystem, style });
-    if ("error" in outcome) {
-      draft.fail(outcome.error, outcome.caret);
-      return null;
-    }
-    measurer ??= createCanvasCellMeasurer();
-    syncViewState();
-    return { ctx: { model: m, sheetIndex, undo: deps.undo, measurer, format: deps.selection.formatContext.value }, at, entry: outcome.entry };
-  }
-
-  /** Writes the draft into the edited cell (an unchanged text writes
-   * nothing) and moves on; false when it cannot be written (kept open). */
-  function commit(move: Move | null): boolean {
-    if (target.value && draft.text.value !== original) {
-      const ready = prepared(false);
-      if (!ready) {
-        return false;
-      }
-      writeEntry(ready.ctx, ready.at, ready.entry, draft.text.value);
-    }
+  /** Back to Ready after a write, applying the commit's move. */
+  function done(move: Move | null): void {
     finish();
     if (move && moves.apply(move)) {
       revealTick.value += 1;
     }
     syncViewState();
-    return true;
   }
 
-  /** Ctrl/Cmd+Enter: the entry into every cell of the selection ("Fill"). */
-  function fill(): void {
-    const ranges = target.value?.ranges ?? [];
-    const ready = prepared(true);
-    if (ready) {
-      writeFill(ready.ctx, ranges, ready.at, ready.entry);
-      finish();
-    }
-  }
+  /** The commit path: commit, Fill and a dropdown pick (cellCommit.ts). */
+  const path = createCommitPath({
+    model,
+    target: () => target.value,
+    draft,
+    original: () => original,
+    editing: () => editing.value,
+    locale: deps.locale,
+    format: () => deps.selection.formatContext.value,
+    undo: deps.undo,
+    measurer: () => (measurer ??= createCanvasCellMeasurer()),
+    toast,
+    syncViewState,
+    open: (text) => open("enter", text, "end"),
+    finish,
+    done,
+    edit: () => {
+      mode.value = "edit";
+      point.end();
+    },
+    entryGate: deps.entryGate,
+  });
+  const { commit, fill } = path;
 
   /** Delete/Backspace in Ready (and Format ▸ Clear contents): see clearTargets. */
   function clearSelection(): void {
@@ -374,6 +358,8 @@ export function useCellEditing(deps: CellEditingDeps) {
     commit: (): boolean => commit(null),
     cancel: finish,
     fill,
+    /** SPEC-130's dropdown pick (cellCommit.ts). */
+    enterValue: path.enterValue,
     clearSelection,
     /** Replaces the focused host's selection (paste, Alt+Enter). */
     insertText: actions.insertText,

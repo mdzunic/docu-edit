@@ -7242,3 +7242,497 @@ export async function buildSpec129LegacyOdsBytes(): Promise<Uint8Array> {
     `</office:spreadsheet></office:body></office:document-content>`;
   return loPackage(content, loMeta(O.title, 1, 5 * 6), loSettings(O.tableNames, O.activeTable), SPEC129_ODS_STYLES);
 }
+
+// ============================================================================
+// SPEC-130 (xlsx) — spec130-validation.xlsx: data validation and in-cell
+// dropdowns, as Excel 365 writes them
+// ============================================================================
+//
+// Excel's shapes: the worksheet root with `mc:Ignorable="x14ac xr xr2 xr3"`,
+// every `<dataValidation>` carrying an `xr:uid` (attributes in the schema's
+// order, as Excel writes them), one with `imeMode="noControl"`, a list
+// hiding its arrow with `showDropDown="1"`, and the cross-sheet list Excel
+// 2010+ moves into the worksheet extLst's `{CCE6A557-…}` ext as an
+// `x14:dataValidation` (`xm:f`, `xm:sqref`, the ext declaring `xmlns:x14`,
+// the list `xmlns:xm`). A workbook-scoped `definedName` "Colours" names
+// Lists!$B$1:$B$3 (docProps/app.xml lists it under Named Ranges).
+// "Form" (active): labels in A2:A10, B3 holds 5 and the rest of B2:B10 is
+// empty, E2:E6 the five options B8 lists, D2 empty and under no rule:
+//   B2  list "Low,Medium,High", input message Priority / Pick one, stop alert
+//   B3  whole between 1 and 10, warning alert
+//   B4  decimal greater than 0, information alert, imeMode="noControl"
+//   B5  date between 2026-01-01 and 2026-12-31 (1900 serials)
+//   B6  text length <= 5
+//   B7  custom ISNUMBER(SEARCH("@",B7))
+//   B8  list $E$2:$E$6 with showDropDown="1" (no arrow)
+//   B9  list Lists!$A$1:$A$4 — the x14 ext
+//   B10 list Colours (the defined name)
+// "Lists": A1:A4 the regions B9 lists, B1:B3 the colours "Colours" names.
+// SPEC130_VALIDATION_XLSX records the facts.
+
+const SPEC130_X14_NS = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
+const SPEC130_XM_NS = "http://schemas.microsoft.com/office/excel/2006/main";
+const SPEC130_FORM_UID = "1A2B3C4D-0130-4E5F-8A6B-7C8D9E0F1A2B";
+const SPEC130_LISTS_UID = "2B3C4D5E-0130-4F60-9B7C-8D9E0F1A2B3C";
+const SPEC130_DATE_FROM = dateToSerial(2026, 1, 1, "1900");
+const SPEC130_DATE_TO = dateToSerial(2026, 12, 31, "1900");
+
+/** "Form"'s base rules, verbatim, in document order. */
+const SPEC130_BASE_RULES = {
+  priority:
+    `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" errorTitle="Invalid priority" error="Choose Low, Medium or High." ` +
+    `promptTitle="Priority" prompt="Pick one" sqref="B2" xr:uid="{3C4D5E6F-0130-4071-AC8D-9E0F1A2B3C4D}"><formula1>"Low,Medium,High"</formula1></dataValidation>`,
+  score:
+    `<dataValidation type="whole" errorStyle="warning" allowBlank="1" showInputMessage="1" showErrorMessage="1" errorTitle="Out of range" ` +
+    `error="Scores run from 1 to 10." sqref="B3" xr:uid="{4D5E6F70-0130-4182-BD9E-0F1A2B3C4D5E}"><formula1>1</formula1><formula2>10</formula2></dataValidation>`,
+  amount:
+    `<dataValidation type="decimal" errorStyle="information" imeMode="noControl" operator="greaterThan" allowBlank="1" showInputMessage="1" showErrorMessage="1" ` +
+    `sqref="B4" xr:uid="{5E6F7081-0130-4293-8EAF-1A2B3C4D5E6F}"><formula1>0</formula1></dataValidation>`,
+  due:
+    `<dataValidation type="date" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B5" xr:uid="{6F708192-0130-43A4-9FB0-2B3C4D5E6F70}">` +
+    `<formula1>${SPEC130_DATE_FROM}</formula1><formula2>${SPEC130_DATE_TO}</formula2></dataValidation>`,
+  code:
+    `<dataValidation type="textLength" operator="lessThanOrEqual" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B6" ` +
+    `xr:uid="{708192A3-0130-44B5-A0C1-3C4D5E6F7081}"><formula1>5</formula1></dataValidation>`,
+  email:
+    `<dataValidation type="custom" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B7" xr:uid="{8192A3B4-0130-45C6-B1D2-4D5E6F708192}">` +
+    `<formula1>ISNUMBER(SEARCH("@",B7))</formula1></dataValidation>`,
+  option:
+    `<dataValidation type="list" allowBlank="1" showDropDown="1" showInputMessage="1" showErrorMessage="1" sqref="B8" xr:uid="{92A3B4C5-0130-46D7-82E3-5E6F708192A3}">` +
+    `<formula1>$E$2:$E$6</formula1></dataValidation>`,
+  colour:
+    `<dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" sqref="B10" xr:uid="{A3B4C5D6-0130-47E8-93F4-6F708192A3B4}">` +
+    `<formula1>Colours</formula1></dataValidation>`,
+} as const;
+
+/** The cross-sheet list, verbatim, as Excel 2010+ writes it. */
+const SPEC130_X14_RULE =
+  `<x14:dataValidation type="list" allowBlank="1" showInputMessage="1" showErrorMessage="1" xr:uid="{B4C5D6E7-0130-48F9-A405-708192A3B4C5}">` +
+  `<x14:formula1><xm:f>Lists!$A$1:$A$4</xm:f></x14:formula1><xm:sqref>B9</xm:sqref></x14:dataValidation>`;
+
+/** "Form"'s `<dataValidations>` block, verbatim. */
+const SPEC130_BLOCK = `<dataValidations count="${Object.keys(SPEC130_BASE_RULES).length}">${Object.values(SPEC130_BASE_RULES).join("")}</dataValidations>`;
+
+/** "Form"'s data-validation ext, verbatim. */
+const SPEC130_EXT =
+  `<ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}" xmlns:x14="${SPEC130_X14_NS}">` +
+  `<x14:dataValidations count="1" xmlns:xm="${SPEC130_XM_NS}">${SPEC130_X14_RULE}</x14:dataValidations></ext>`;
+
+/** What spec130-validation.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC130_VALIDATION_XLSX = {
+  title: "Data validation",
+  sheetNames: ["Form", "Lists"],
+  activeSheetIndex: 0,
+  /** cellXfs: 2 a bold header (EXCEL_STYLES). */
+  xf: { header: 2 },
+  definedName: { name: "Colours", text: "Lists!$B$1:$B$3" },
+  form: {
+    partName: "xl/worksheets/sheet1.xml",
+    dimension: "A1:E10",
+    headers: { A1: "Field", B1: "Entry", E1: "Options" },
+    /** A2..A10. */
+    labels: ["Priority", "Score", "Amount", "Due date", "Code", "Email", "Option", "Item", "Colour"],
+    /** B3's number — the only value in B2:B10. */
+    score: { ref: "B3", value: 5 },
+    /** E2..E6, the list B8 offers. */
+    options: ["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
+    /** A cell under no rule. */
+    free: "D2",
+    rules: SPEC130_BASE_RULES,
+    x14Rule: SPEC130_X14_RULE,
+    block: SPEC130_BLOCK,
+    ext: SPEC130_EXT,
+    dates: { from: SPEC130_DATE_FROM, to: SPEC130_DATE_TO },
+  },
+  lists: {
+    partName: "xl/worksheets/sheet2.xml",
+    dimension: "A1:B4",
+    /** A1..A4, the list B9 offers. */
+    regions: ["North", "South", "East", "West"],
+    /** B1..B3, what "Colours" names. */
+    colours: ["Red", "Green", "Blue"],
+  },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** A worksheet in Excel 365's CT_Worksheet order: `after` follows sheetData. */
+function spec130WorksheetXml(options: { uid: string; dimension: string; selected: boolean; sheetData: string; after: string }): string {
+  return (
+    XML_DECLARATION +
+    worksheetOpen(options.uid) +
+    `<dimension ref="${options.dimension}"/>` +
+    `<sheetViews><sheetView ${options.selected ? 'tabSelected="1" ' : ""}workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/>` +
+    `<sheetData>${options.sheetData}</sheetData>` +
+    options.after +
+    `</worksheet>`
+  );
+}
+
+/** docProps/app.xml with the Worksheets and Named Ranges heading pairs. */
+function spec130AppXml(): string {
+  const F = SPEC130_VALIDATION_XLSX;
+  const titles = [...F.sheetNames, F.definedName.name];
+  return (
+    XML_DECLARATION +
+    `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
+    `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">` +
+    `<Application>Microsoft Excel</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop>` +
+    `<HeadingPairs><vt:vector size="4" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>${F.sheetNames.length}</vt:i4></vt:variant>` +
+    `<vt:variant><vt:lpstr>Named Ranges</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4></vt:variant></vt:vector></HeadingPairs>` +
+    `<TitlesOfParts><vt:vector size="${titles.length}" baseType="lpstr">${titles.map((title) => `<vt:lpstr>${title}</vt:lpstr>`).join("")}</vt:vector></TitlesOfParts>` +
+    `<Company></Company><LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc>` +
+    `<HyperlinksChanged>false</HyperlinksChanged><AppVersion>16.0300</AppVersion></Properties>`
+  );
+}
+
+export async function buildSpec130ValidationXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC130_VALIDATION_XLSX;
+  const sst: string[] = [];
+  const sstIndex = new Map<string, number>();
+  const text = (ref: string, value: string, style?: number): string => {
+    let index = sstIndex.get(value);
+    if (index === undefined) {
+      index = sst.length;
+      sst.push(value);
+      sstIndex.set(value, index);
+    }
+    return sharedCell(ref, index, style);
+  };
+
+  const formRows: string[] = [excelRow(1, "1:5", text("A1", F.form.headers.A1, F.xf.header) + text("B1", F.form.headers.B1, F.xf.header) + text("E1", F.form.headers.E1, F.xf.header))];
+  F.form.labels.forEach((label, i) => {
+    const r = i + 2;
+    const score = `B${r}` === F.form.score.ref ? numberCell(F.form.score.ref, F.form.score.value) : "";
+    const option = F.form.options[i];
+    formRows.push(excelRow(r, "1:5", text(`A${r}`, label) + score + (option === undefined ? "" : text(`E${r}`, option))));
+  });
+  const form = spec130WorksheetXml({
+    uid: SPEC130_FORM_UID,
+    dimension: F.form.dimension,
+    selected: true,
+    sheetData: formRows.join(""),
+    after: F.form.block + SPEC117_PAGE_MARGINS + `<extLst>${F.form.ext}</extLst>`,
+  });
+
+  const listRows = F.lists.regions.map((region, i) => {
+    const colour = F.lists.colours[i];
+    return excelRow(i + 1, "1:2", text(`A${i + 1}`, region) + (colour === undefined ? "" : text(`B${i + 1}`, colour)));
+  });
+  const lists = spec130WorksheetXml({ uid: SPEC130_LISTS_UID, dimension: F.lists.dimension, selected: false, sheetData: listRows.join(""), after: SPEC117_PAGE_MARGINS });
+
+  const worksheets = [form, lists];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${sst.length}">` +
+    sst.map((value) => `<si><t>${xmlText(value)}</t></si>`).join("") +
+    `</sst>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: F.sheetNames.map((name, index) => ({ name, xml: worksheets[index]! })),
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    additions: {
+      parts: [],
+      relationships: [],
+      overrides: [],
+      workbookAfterSheets: `<definedNames><definedName name="${F.definedName.name}">${F.definedName.text}</definedName></definedNames>`,
+    },
+    app: spec130AppXml(),
+  });
+}
+// ============================================================================
+// end of SPEC-130 (xlsx)
+// ============================================================================
+// SPEC-130 (ODS): spec130-validation.ods — LibreOffice-shaped content
+// validations: the prefix's `table:content-validations` (Calc 24.8's
+// attribute order, `of:` conditions, between operands joined with `,`) and
+// the cells' `table:content-validation-name`; a rule over C2:C1000 carried
+// by a `table:number-rows-repeated` run of attribute-only empty cells, a
+// sorted list, a two-paragraph help message, an error macro and an orphan.
+// ============================================================================
+
+/** One `table:content-validation` as Calc writes it. */
+function spec130OdsValidation(
+  name: string,
+  condition: string,
+  base: string,
+  options: {
+    displayList?: "unsorted" | "none" | "sort-ascending";
+    help?: { title: string; paragraphs: readonly string[] };
+    error?: { type: "stop" | "warning" | "information"; title?: string; paragraphs?: readonly string[]; display: boolean };
+    macro?: string;
+  },
+): string {
+  const paragraphs = (lines: readonly string[] | undefined): string => (lines ?? []).map((line) => `<text:p>${xmlText(line)}</text:p>`).join("");
+  let children = "";
+  if (options.help) {
+    children += `<table:help-message table:title="${xmlEscape(options.help.title)}" table:display="true">${paragraphs(options.help.paragraphs)}</table:help-message>`;
+  }
+  if (options.error) {
+    const E = options.error;
+    children +=
+      `<table:error-message table:message-type="${E.type}"${E.title === undefined ? "" : ` table:title="${xmlEscape(E.title)}"`} table:display="${E.display}"` +
+      (E.paragraphs ? `>${paragraphs(E.paragraphs)}</table:error-message>` : `/>`);
+  }
+  if (options.macro !== undefined) {
+    children +=
+      `<table:error-macro table:execute="true"/><office:event-listeners><script:event-listener script:language="ooo:script" script:event-name="dom:error" ` +
+      `xlink:href="${xmlEscape(options.macro)}" xlink:type="simple"/></office:event-listeners>`;
+  }
+  return (
+    `<table:content-validation table:name="${name}" table:condition="${xmlEscape(condition)}" table:allow-empty-cell="true"` +
+    `${options.displayList === undefined ? "" : ` table:display-list="${options.displayList}"`} table:base-cell-address="${base}">${children}</table:content-validation>`
+  );
+}
+
+const SPEC130_ODS_STOP = { type: "stop", display: true } as const;
+
+/** Form's rules, val1–val11 in Calc's order (each B cell's own, then the
+ * notes column's), verbatim. */
+const SPEC130_ODS_DEFINITIONS = [
+  spec130OdsValidation("val1", `of:cell-content-is-in-list("Low";"Medium";"High")`, "Form.B2", {
+    displayList: "unsorted",
+    help: { title: "Priority", paragraphs: ["Pick one"] },
+    error: { type: "stop", title: "Invalid priority", paragraphs: ["Choose Low, Medium or High"], display: true },
+  }),
+  spec130OdsValidation("val2", "of:cell-content-is-whole-number() and cell-content-is-between(1,10)", "Form.B3", {
+    error: { type: "warning", title: "Out of range", paragraphs: ["Enter a whole number from 1 to 10"], display: true },
+  }),
+  spec130OdsValidation("val3", "of:cell-content-is-decimal-number() and cell-content()>0", "Form.B4", {
+    error: { type: "information", paragraphs: ["Prices are positive"], display: true },
+  }),
+  spec130OdsValidation("val4", "of:cell-content-is-date() and cell-content-is-between(45658,46022)", "Form.B5", { error: SPEC130_ODS_STOP }),
+  spec130OdsValidation("val5", "of:cell-content-text-length()<=5", "Form.B6", { error: SPEC130_ODS_STOP }),
+  spec130OdsValidation("val6", `of:is-true-formula(ISNUMBER(SEARCH("@";[.B7])))`, "Form.B7", { error: SPEC130_ODS_STOP }),
+  spec130OdsValidation("val7", "of:cell-content-is-in-list([.$E$2:.$E$6])", "Form.B8", { displayList: "none", error: SPEC130_ODS_STOP }),
+  spec130OdsValidation("val8", "of:cell-content-is-in-list([$Lists.$A$1:.$A$4])", "Form.B9", { displayList: "sort-ascending", error: SPEC130_ODS_STOP }),
+  spec130OdsValidation("val9", "of:cell-content-is-in-list(Colours)", "Form.B10", { displayList: "unsorted", error: SPEC130_ODS_STOP }),
+  spec130OdsValidation("val10", "of:cell-content-is-whole-number() and cell-content()>=0", "Form.B11", {
+    macro: "vnd.sun.star.script:Standard.Checks.RejectCode?language=Basic&location=application",
+  }),
+  spec130OdsValidation("val11", "of:cell-content-text-length()<=200", "Form.C2", {
+    help: { title: "Notes", paragraphs: ["Free text", "Keep it short"] },
+    error: { type: "stop", display: false },
+  }),
+] as const;
+
+/** A definition no cell references. */
+const SPEC130_ODS_ORPHAN = spec130OdsValidation("val12", "of:cell-content-is-decimal-number() and cell-content()>=0", "Form.F2", { error: SPEC130_ODS_STOP });
+
+const SPEC130_ODS_NO_INPUT = { show: false, title: "", text: "" } as const;
+const SPEC130_ODS_STOP_ERROR = { show: true, style: "stop", title: "", text: "" } as const;
+
+/** What spec130-validation.ods holds, for the unit and e2e specs. Ranges in
+ * A1 notation; formulas canonical, relative to each rule's origin. */
+export const SPEC130_VALIDATION_ODS = {
+  title: "Data validation",
+  tableNames: ["Form", "Lists"],
+  activeTable: "Form",
+  /** A1:A11. */
+  labels: ["Field", "Priority", "Quantity", "Price", "Due", "Code", "Email", "Region", "Fruit", "Colour", "Check"],
+  headers: { B1: "Value", C1: "Notes", E1: "Regions" },
+  /** B3's value; the rest of B2:B11 and all of C2:C1000 are empty. */
+  B3: 5,
+  /** E2:E6, B8's list source. */
+  regions: ["North", "South", "East", "West", "Centre"],
+  /** Lists!A1:A4 (B9's sorted list) and Lists!B1:B3 (the name Colours). */
+  fruits: ["Pear", "Apple", "Mango", "Banana"],
+  colours: ["Red", "Green", "Blue"],
+  namedRange: { name: "Colours", baseCellAddress: "$Lists.$B$1", cellRangeAddress: "$Lists.$B$1:.$B$3" },
+  definitions: SPEC130_ODS_DEFINITIONS,
+  orphan: SPEC130_ODS_ORPHAN,
+  /** The notes rule's rows 12–1000: one repeated row of attribute-only cells. */
+  notesRun: { firstRow: 12, rows: 989 },
+  /** Form's rules as the reader makes them (model order = definition order). */
+  rules: [
+    {
+      ranges: ["B2"],
+      type: "list",
+      operator: "between",
+      formula1: `"Low,Medium,High"`,
+      allowBlank: true,
+      showDropdown: true,
+      input: { show: true, title: "Priority", text: "Pick one" },
+      error: { show: true, style: "stop", title: "Invalid priority", text: "Choose Low, Medium or High" },
+      odsName: "val1",
+    },
+    {
+      ranges: ["B3"],
+      type: "whole",
+      operator: "between",
+      formula1: "1",
+      formula2: "10",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: { show: true, style: "warning", title: "Out of range", text: "Enter a whole number from 1 to 10" },
+      odsName: "val2",
+    },
+    {
+      ranges: ["B4"],
+      type: "decimal",
+      operator: "greaterThan",
+      formula1: "0",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: { show: true, style: "information", title: "", text: "Prices are positive" },
+      odsName: "val3",
+    },
+    {
+      ranges: ["B5"],
+      type: "date",
+      operator: "between",
+      formula1: "45658",
+      formula2: "46022",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: SPEC130_ODS_STOP_ERROR,
+      odsName: "val4",
+    },
+    {
+      ranges: ["B6"],
+      type: "textLength",
+      operator: "lessThanOrEqual",
+      formula1: "5",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: SPEC130_ODS_STOP_ERROR,
+      odsName: "val5",
+    },
+    {
+      ranges: ["B7"],
+      type: "custom",
+      operator: "between",
+      formula1: `ISNUMBER(SEARCH("@",B7))`,
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: SPEC130_ODS_STOP_ERROR,
+      odsName: "val6",
+    },
+    {
+      ranges: ["B8"],
+      type: "list",
+      operator: "between",
+      formula1: "$E$2:$E$6",
+      allowBlank: true,
+      showDropdown: false,
+      input: SPEC130_ODS_NO_INPUT,
+      error: SPEC130_ODS_STOP_ERROR,
+      odsName: "val7",
+    },
+    {
+      ranges: ["B9"],
+      type: "list",
+      operator: "between",
+      formula1: "Lists!$A$1:$A$4",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: SPEC130_ODS_STOP_ERROR,
+      odsName: "val8",
+      odsListOrder: "sort-ascending",
+    },
+    {
+      ranges: ["B10"],
+      type: "list",
+      operator: "between",
+      formula1: "Colours",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      error: SPEC130_ODS_STOP_ERROR,
+      odsName: "val9",
+    },
+    {
+      ranges: ["B11"],
+      type: "whole",
+      operator: "greaterThanOrEqual",
+      formula1: "0",
+      allowBlank: true,
+      showDropdown: true,
+      input: SPEC130_ODS_NO_INPUT,
+      // The error macro is kept, never run: the rule enforces nothing.
+      error: { show: false, style: "stop", title: "", text: "" },
+      odsName: "val10",
+    },
+    {
+      ranges: ["C2:C1000"],
+      type: "textLength",
+      operator: "lessThanOrEqual",
+      formula1: "200",
+      allowBlank: true,
+      showDropdown: true,
+      input: { show: true, title: "Notes", text: "Free text\nKeep it short" },
+      error: { show: false, style: "stop", title: "", text: "" },
+      odsName: "val11",
+    },
+  ],
+} as const;
+
+/** An empty cell carrying only its validation's name. */
+const spec130Validated = (name: string): string => `<table:table-cell table:content-validation-name="${name}"/>`;
+
+export async function buildSpec130ValidationOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC130_VALIDATION_ODS;
+  const header =
+    loString(O.labels[0], "ce5") + loString(O.headers.B1, "ce5") + loString(O.headers.C1, "ce5") + loEmpty(1) + loString(O.headers.E1, "ce5") + loEmpty(16379);
+  const rows = O.labels.slice(1).map((label, index) => {
+    const name = `val${index + 1}`;
+    const b =
+      index === 1
+        ? `<table:table-cell table:content-validation-name="${name}" office:value-type="float" office:value="${O.B3}" calcext:value-type="float"><text:p>${O.B3}</text:p></table:table-cell>`
+        : spec130Validated(name);
+    const region = O.regions[index];
+    const rest = region === undefined ? loEmpty(16381) : loEmpty(1) + loString(region) + loEmpty(16379);
+    return loRow(loString(label) + b + spec130Validated("val11") + rest);
+  });
+  const form =
+    `<table:table table:name="Form" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(header) +
+    rows.join("") +
+    loRow(loEmpty(2) + spec130Validated("val11") + loEmpty(16381), "ro1", O.notesRun.rows) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - (O.notesRun.firstRow - 1) - O.notesRun.rows) +
+    `</table:table>`;
+  const listRows = O.fruits.map((fruit, index) => {
+    const colour = O.colours[index];
+    return loRow(loString(fruit) + (colour === undefined ? loEmpty(16383) : loString(colour) + loEmpty(16382)));
+  });
+  const lists =
+    `<table:table table:name="Lists" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    listRows.join("") +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.fruits.length) +
+    `</table:table>`;
+  const N = O.namedRange;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${LO_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}` +
+    `<table:content-validations>${O.definitions.join("")}${O.orphan}</table:content-validations>` +
+    form +
+    lists +
+    `<table:named-expressions><table:named-range table:name="${N.name}" table:base-cell-address="${N.baseCellAddress}" table:cell-range-address="${N.cellRangeAddress}"/></table:named-expressions>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = 4 + O.labels.length - 1 + 1 + O.regions.length + O.fruits.length + O.colours.length;
+  return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
+}
