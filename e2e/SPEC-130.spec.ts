@@ -12,7 +12,10 @@ import { fileURLToPath } from "node:url";
 // B8 (showDropDown="1") has no arrow → D2 gets a List rule "Yes,No" through
 // Data ▸ Data validation… and shows the arrow → download → reopen → D2 still
 // offers Yes, No. Then spec130-validation.ods: C500, inside a rule carried by
-// a repeated run of empty cells, shows its input message.
+// a repeated run of empty cells, shows its input message. And B10, whose
+// Source is the defined name Colours, lists the named cells (AC-5) — in a
+// window so short that B10 is cut by the grid's bottom edge too, where its
+// list opens inside the grid (AC-23).
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
@@ -59,6 +62,15 @@ async function download(page: Page, fileName: string): Promise<string> {
   await saved.saveAs(path);
   return path;
 }
+
+/** Whether an element is what a pointer at its centre would hit — shown,
+ * not clipped away or under other chrome. */
+const hitAtCentre = (target: Locator): Promise<boolean> =>
+  target.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const top = el.ownerDocument.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return top !== null && el.contains(top);
+  });
 
 /** The selected text of the in-cell editor. */
 const editorSelection = (page: Page): Promise<string> =>
@@ -173,4 +185,40 @@ test("spec130-validation.ods: a rule carried by a repeated run of empty cells sh
   await expect(message).toContainText("Notes");
   expect(await message.innerText()).toContain("Free text\nKeep it short");
   await expect(cell(page, "C500")).toHaveAttribute("aria-describedby", (await message.getAttribute("id"))!);
+});
+
+test("B10's defined-name Source lists what Colours names, and its list opens inside a short grid (AC-5, AC-23)", async ({ page }) => {
+  await open(page, join(fixtures, "spec130-validation.xlsx"));
+  await clickCell(page, "B10");
+  await page.keyboard.press("Alt+ArrowDown");
+  const list = page.getByTestId("validation-list");
+  const options = list.getByTestId("validation-option");
+  await expect(options).toHaveText(["Red", "Green", "Blue"]);
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+
+  // "Purple" is not one of them: the stop alert; Cancel leaves B10 empty.
+  await page.keyboard.type("Purple");
+  await page.keyboard.press("Enter");
+  const alert = page.getByTestId("validation-alert");
+  await expect(alert).toBeVisible();
+  await alert.getByTestId("validation-alert-cancel").click();
+  await expect(alert).toBeHidden();
+  await expect(cell(page, "B10")).toHaveText("");
+
+  // A window so short that B10, the grid's last row, is cut by its bottom edge.
+  await page.setViewportSize({ width: 900, height: 260 });
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("name-box")).toHaveValue("B10");
+  await page.getByTestId("validation-dropdown").click();
+  await expect(options).toHaveCount(3);
+  await expect.poll(() => hitAtCentre(options.first())).toBe(true);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect(options.nth(1)).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => hitAtCentre(options.nth(1))).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(list).toBeHidden();
+  await expect(cell(page, "B10")).toHaveText("Green");
 });
