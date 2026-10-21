@@ -7,9 +7,9 @@
 // (core/xmlScanner.ts, in xlsx/sheetXml.ts) — a million-cell sheet as a DOM
 // costs an order of magnitude more memory than its text.
 //
-// What is read (everything else — drawings, comments, tables, calcChain,
-// VBA, custom XML — stays in `opaque`, untouched; nothing here writes, so a
-// download stays byte-identical):
+// What is read (everything else — comments, tables, calcChain, VBA, custom
+// XML — stays in `opaque`, untouched; nothing here writes, so a download
+// stays byte-identical):
 // - sheets in `<sheets>` order: name, `state` → visibility, and the
 //   relationship type → kind (worksheet → "grid"; chartsheet, dialogsheet,
 //   macrosheet → "foreign", shown as a placeholder and carried verbatim);
@@ -57,6 +57,12 @@
 //   sheetXml.ts cuts out) — into `validations`, and either container's
 //   `disablePrompts` into `validationPromptsDisabled`; a foreign sheet's
 //   `validations` stay `[]`.
+// - SPEC-131: each grid sheet's drawing layer (xlsx/drawingXml.ts) — the
+//   anchors of the part its `<drawing r:id>` names into `drawings` (when it
+//   has any) and the part's name into `drawingPart`; the images its pictures
+//   embed into `media`, one part per package path across every sheet (bytes
+//   deferred). The drawing part stays in `opaque`, the splice base of a
+//   touched layer.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -69,6 +75,7 @@ import { parseRelationships, parseXml, relsPathFor, resolvePartPath, XmlParseErr
 import { XmlScanError } from "../../core/xmlScanner";
 import { unzip, ZipError } from "../../core/zip";
 import type { DocumentProperties } from "../../core/documentProperties";
+import type { MediaPart } from "../../core/media";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import { classifyHiddenRows } from "../filter";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, maxDigitWidthPx } from "../geometry";
@@ -77,6 +84,7 @@ import type { CalcSettings, Sheet } from "../model";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
+import { readXlsxSheetDrawings } from "./drawingXml";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
 import { isSpreadsheetMl, readXlsxStyles } from "./styles";
 
@@ -301,6 +309,8 @@ export async function parseXlsx(
   const sheets: Sheet[] = [];
   // SPEC-129: styles.xml's dxfs, which an x14 rule's inline dxf joins.
   const dxfs = { dxfs: styleTable.dxfs };
+  // SPEC-131: the images the drawings embed, one part per package path.
+  const media = new Map<string, MediaPart>();
   for (const entry of workbook.sheets) {
     const sheet: Sheet = {
       id: crypto.randomUUID(),
@@ -328,6 +338,13 @@ export async function parseXlsx(
       const filter = sheet.autoFilter?.range;
       if (filter !== undefined && sheet.rows.some((row) => row.hidden === true && row.index > filter.top && row.index <= filter.bottom)) {
         sheet.rows = classifyHiddenRows({ styles: styleTable.styles }, sheet, formatContext);
+      }
+      const layer = readXlsxSheetDrawings(parts, entry.partName, sheet, media);
+      if (layer.drawingPart !== undefined) {
+        sheet.drawingPart = layer.drawingPart;
+      }
+      if (layer.drawings.length > 0) {
+        sheet.drawings = layer.drawings;
       }
     }
     sheets.push(sheet);
@@ -359,6 +376,9 @@ export async function parseXlsx(
   }
   if (workbook.structureProtected) {
     parsed.structureProtected = true;
+  }
+  if (media.size > 0) {
+    parsed.media = [...media.values()];
   }
   return parsed;
 }

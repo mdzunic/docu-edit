@@ -54,6 +54,24 @@
 //     verbatim — the pass touches only the parts that mention a remapped
 //     name.
 //
+// SPEC-131 (xlsx/drawingXml.ts is the normative source for the wire forms):
+// `drawingsDirty` joins the rebuild triggers. On the substitution path (a
+// save, not substitutedXlsxParts) each `drawingsDirty` grid sheet's drawing
+// part and its `.rels` are rebuilt from the model, a sheet gaining its first
+// drawing gets `xl/drawings/drawing{n}.xml` (next free), its `.rels`, the
+// worksheet's `<drawing r:id>` (in CT_Worksheet order, clean sheet or dirty),
+// the sheet relationship and the drawing Override, and the last drawing gone
+// takes the `<drawing>` and the relationship with it — the part, its `.rels`
+// and its Override then fall to the reachability rule, as does a media or
+// chart part no relationship targets any more (one still targeted from
+// elsewhere — a header image, another sheet's drawing — survives). Media
+// ("Media parts"): `model.media` is the source of truth for its paths — a
+// part there is written from it ahead of an `opaque` twin, a new one at its
+// `xl/media/` path (any other mediaId at the next free
+// `xl/media/image{n}.{ext}`), with a `<Default>` for an extension
+// `[Content_Types].xml` lacks. From scratch, every grid sheet's image and
+// shape drawings are written in the canonical form with the same parts.
+//
 // `calcPr@fullCalcOnLoad="1"` is written (SPEC-122 "calcChain and calcPr")
 // when the caller asks (`options.fullCalcOnLoad`) or a recalculation left a
 // stale cell (`model.forceFullCalcOnLoad`, SPEC-120 — set, never cleared),
@@ -62,20 +80,23 @@
 // model with the values the edit pipeline recalculated (a stale cell's last
 // value as it is), so an edit alone never asks the consumer to recalculate.
 import { now as clockNow } from "../../core/clock";
+import { equalBytes } from "../../core/equality";
+import { ensureMediaEncoded, extensionForContentType, pendingMediaByteLength, type MediaPart } from "../../core/media";
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { OFFICE_THEME_XML } from "../../core/officeThemeXml";
-import { decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
 import { SPREADSHEETML_MAIN_CONTENT_TYPES } from "../../core/packageDetect";
 import { DEFAULT_THEME, resolveFont, sameModelColor } from "../../core/theme";
 import { relsPathFor } from "../../core/xml";
 import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { isEmptyRemap, type SheetRemap } from "../formula/sheetRefs";
-import { maxDigitWidthPx } from "../geometry";
+import { buildGridMetrics, maxDigitWidthPx } from "../geometry";
 import type { Sheet, SpreadsheetModel } from "../model";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText, sheetPartHasAutoFilter } from "./autoFilter";
+import { DRAWING_CONTENT_TYPE, DRAWING_RELATIONSHIP_TYPE, newRelsXml, spliceWorksheetDrawing, writeDrawingPart, writeSheetDrawings } from "./drawingXml";
 import { ownedClosure } from "./duplicate";
 import {
   contentTypeIn,
@@ -128,7 +149,7 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty)) {
+  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
   return zip(buildSubstitution(model, parts, options, "write"));
@@ -198,12 +219,15 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
   );
   const sharedStrings = strings.xml();
+  const layer = fromScratchDrawings(model, worksheets, sheetParts);
   const contentTypes =
     `${XML_DECLARATION}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` +
+    [...layer.defaults].map(([extension, type]) => `<Default Extension="${escapeAttributeValue(extension)}" ContentType="${escapeAttributeValue(type)}"/>`).join("") +
     `<Override PartName="/xl/workbook.xml" ContentType="${mainType}"/>` +
     sheetParts.map((part) => `<Override PartName="/${part}" ContentType="${WORKSHEET_CONTENT_TYPE}"/>`).join("") +
+    layer.drawingParts.map((part) => `<Override PartName="/${part}" ContentType="${DRAWING_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
     `<Override PartName="/xl/styles.xml" ContentType="${STYLES_CONTENT_TYPE}"/>` +
     (sharedStrings === undefined ? "" : `<Override PartName="/xl/sharedStrings.xml" ContentType="${SHARED_STRINGS_CONTENT_TYPE}"/>`) +
@@ -239,8 +263,54 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     { name: "xl/theme/theme1.xml", data: encode(OFFICE_THEME_XML) },
     { name: "xl/styles.xml", data: encode(styles.xml()) },
     ...(sharedStrings === undefined ? [] : [{ name: "xl/sharedStrings.xml", data: encode(sharedStrings) }]),
-    ...worksheets.map((xml, index) => ({ name: sheetParts[index]!, data: encode(xml) })),
+    ...layer.worksheets.map((xml, index) => ({ name: sheetParts[index]!, data: encode(xml) })),
+    ...layer.entries,
   ];
+}
+
+/** SPEC-131 from scratch: each grid sheet's image and shape drawings in a
+ * canonical `xl/drawings/drawing{n}.xml` (n counting the sheets that have
+ * one) with its `.rels`, the sheet's `.rels` (rId1, the from-scratch sheet
+ * having no other) and `<drawing r:id="rId1"/>`; the media parts the
+ * pictures embed and a `<Default>` per extension. */
+function fromScratchDrawings(
+  model: SpreadsheetModel,
+  worksheets: readonly string[],
+  sheetParts: readonly string[],
+): { worksheets: string[]; entries: ZipEntryInput[]; drawingParts: string[]; defaults: Map<string, string> } {
+  const media = mediaWrites(model, new Set(sheetParts));
+  const entries: ZipEntryInput[] = [];
+  const mediaEntries = new Map<string, Uint8Array>();
+  const drawingParts: string[] = [];
+  const defaults = new Map<string, string>();
+  const out = worksheets.map((xml, index) => {
+    const sheet = model.sheets[index]!;
+    if (sheet.kind !== "grid" || (sheet.drawings ?? []).length === 0) {
+      return xml;
+    }
+    const sheetPart = sheetParts[index]!;
+    const partName = `xl/drawings/drawing${drawingParts.length + 1}.xml`;
+    const written = writeDrawingPart({ partName, drawings: sheet.drawings!, metrics: buildGridMetrics(sheet), mediaPath: media.pathOf });
+    if (written.written === 0) {
+      return xml;
+    }
+    drawingParts.push(partName);
+    entries.push({ name: relsPathFor(sheetPart), data: encode(newRelsXml([relationshipXml("rId1", DRAWING_RELATIONSHIP_TYPE, relativeTarget(sheetPart, partName))])) });
+    entries.push({ name: partName, data: encode(written.xml) });
+    if (written.rels !== undefined) {
+      entries.push({ name: relsPathFor(partName), data: encode(written.rels) });
+    }
+    for (const target of written.targets) {
+      const part = media.partAt(target);
+      if (part && !mediaEntries.has(target)) {
+        mediaEntries.set(target, mediaBytes(part, undefined));
+        defaults.set(target.slice(target.lastIndexOf(".") + 1).toLowerCase(), part.contentType);
+      }
+    }
+    return spliceWorksheetDrawing(xml, "rId1");
+  });
+  entries.push(...[...mediaEntries].map(([name, data]) => ({ name, data })));
+  return { worksheets: out, entries, drawingParts, defaults };
 }
 
 /** A from-scratch workbook's `<definedNames>`: one `_xlnm._FilterDatabase`
@@ -329,6 +399,11 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     ...workbook.rels.filter((rel) => !droppedRelIds.has(rel.id) && !rel.external).flatMap((rel) => targetPart(workbook.path, rel) ?? []),
     ...plans.map((plan) => plan.partName),
   ]);
+  // SPEC-131: the rebuilt drawing layers' relationships (a save only).
+  const drawingPlan = mode === "write" ? planDrawingWrites(model, parts, plans) : undefined;
+  for (const [owner, targets] of drawingPlan?.edges ?? []) {
+    afterEdges.set(owner, targets);
+  }
   const afterReach = reachableFrom([""], afterEdges);
   const skipped = new Set<string>();
   for (const part of sourceReach) {
@@ -380,11 +455,16 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     };
   };
   const sheetBytes = new Map<string, Uint8Array>();
+  // SPEC-131: a sheet whose drawing part comes or goes gets its <drawing>.
+  const withDrawing = (partName: string, bytes: Uint8Array): Uint8Array => {
+    const rId = drawingPlan?.worksheetDrawing.get(partName);
+    return rId === undefined ? bytes : encode(spliceWorksheetDrawing(decodeUtf8(bytes), rId));
+  };
   for (const plan of plans) {
     const active = plan.index === activeIndex;
     if (plan.generated) {
       const xml = write && plan.sheet.kind === "grid" ? serializeWorksheet(plan.sheet, undefined, context(plan)) : emptyWorksheetXml(plan.sheet, active, model);
-      sheetBytes.set(plan.partName, encode(xml));
+      sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(xml)));
       continue;
     }
     const bytes = parts.get(plan.partName);
@@ -394,9 +474,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const sheetRemap = ownerRemap.get(plan.partName) ?? remap;
     sheetBytes.set(
       plan.partName,
-      write && plan.sheet.dirty && plan.sheet.kind === "grid"
-        ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
-        : sheetPartFor(bytes, plan, active, sheetRemap, model),
+      withDrawing(
+        plan.partName,
+        write && plan.sheet.dirty && plan.sheet.kind === "grid"
+          ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
+          : sheetPartFor(bytes, plan, active, sheetRemap, model),
+      ),
     );
   }
 
@@ -435,7 +518,13 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const appended = (): ZipEntryInput[] => [
     ...generated.map((plan) => ({ name: plan.partName, data: sheetBytes.get(plan.partName)! })),
     ...added.map((part) => ({ name: part.name, data: part.data })),
+    ...(drawingPlan?.added ?? []),
   ];
+  // SPEC-131 "Media parts": a model media part is written from the model.
+  const modelMedia = (name: string, bytes: Uint8Array): Uint8Array | undefined => {
+    const part = drawingPlan?.media.partAt(name);
+    return part ? mediaBytes(part, bytes) : undefined;
+  };
 
   for (const [name, bytes] of parts) {
     if (skipped.has(name)) {
@@ -446,7 +535,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
     let data = bytes;
     if (name === contentTypesName) {
-      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added));
+      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added, drawingPlan));
     } else if (name === workbook.path) {
       data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, write ? filterDatabaseScope(model, parts) : undefined));
     } else if (name === workbook.relsPath) {
@@ -454,7 +543,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     } else if (name === appPath) {
       data = encode(appXmlFor(decodeUtf8(bytes), workbook, plans, remap));
     } else {
-      data = sheetBytes.get(name) ?? replaced.get(name) ?? passed(name, bytes, ownerRemap.get(name) ?? remap);
+      data = sheetBytes.get(name) ?? drawingPlan?.replaced.get(name) ?? replaced.get(name) ?? modelMedia(name, bytes) ?? passed(name, bytes, ownerRemap.get(name) ?? remap);
     }
     out.push({ name, data });
     if (name === lastWorksheet) {
@@ -994,6 +1083,7 @@ function contentTypesFor(
   workbook: SourceWorkbook,
   calcChainRels: readonly { target: string; external: boolean; id: string; type: string; start: number; end: number }[],
   addedParts: readonly AddedPart[],
+  drawingPlan: DrawingPlan | undefined,
 ): string {
   const types = readContentTypes(xml);
   const remove = new Set<string>();
@@ -1020,6 +1110,7 @@ function contentTypesFor(
   for (const part of addedParts) {
     add.push({ partName: part.name, contentType: part.contentType });
   }
+  add.push(...(drawingPlan?.overrides ?? []));
   // A part a duplicate added takes its origin's Override (the extension's
   // Default — application/xml for every .xml — would misdeclare it).
   const overridden = new Set(types.overrides.map((entry) => entry.partName));
@@ -1032,7 +1123,158 @@ function contentTypesFor(
       add.push({ partName: name, contentType: type });
     }
   }
-  return remove.size === 0 && add.length === 0 ? xml : spliceContentTypes(xml, remove, add);
+  const out = remove.size === 0 && add.length === 0 ? xml : spliceContentTypes(xml, remove, add);
+  return drawingPlan === undefined ? out : spliceDefaults(out, drawingPlan.defaults);
+}
+
+/** `[Content_Types].xml` with a `<Default>` per extension in `defaults`,
+ * after the last Default (else first inside the root). */
+function spliceDefaults(xml: string, defaults: ReadonlyMap<string, string>): string {
+  if (defaults.size === 0) {
+    return xml;
+  }
+  let at = -1;
+  let rootEnd = -1;
+  let prefix = "";
+  scanXml(xml, (event) => {
+    if (event.type === "open" && event.local === "Types") {
+      rootEnd = event.end;
+      prefix = event.name.includes(":") ? event.name.slice(0, event.name.indexOf(":") + 1) : "";
+    } else if ((event.type === "open" || event.type === "close") && event.local === "Default") {
+      at = event.end;
+    }
+  });
+  const elements = [...defaults]
+    .map(([extension, type]) => `<${prefix}Default Extension="${escapeAttributeValue(extension)}" ContentType="${escapeAttributeValue(type)}"/>`)
+    .join("");
+  const insert = at >= 0 ? at : rootEnd;
+  return insert < 0 ? xml : xml.slice(0, insert) + elements + xml.slice(insert);
+}
+
+// --- SPEC-131: drawing layers and media ----------------------------------------------------------
+
+/** A media part path the xlsx writers keep as it is. */
+const XLSX_MEDIA_PATH = /^xl\/media\/[^/]+$/;
+
+/** Where a save writes each media part ("Media parts"). */
+interface MediaWrites {
+  /** The package path a mediaId is written at: its own when it is an
+   * `xl/media/` path, else the next free `xl/media/image{n}.{ext}` (once per
+   * id); undefined for an id neither the model nor the package holds. */
+  pathOf(mediaId: string): string | undefined;
+  /** The model media part written at a package path. */
+  partAt(path: string): MediaPart | undefined;
+}
+
+function mediaWrites(model: Pick<SpreadsheetModel, "media">, taken: Set<string>): MediaWrites {
+  const byId = new Map((model.media ?? []).map((part) => [part.mediaId, part] as const));
+  const byPath = new Map([...byId].filter(([id]) => XLSX_MEDIA_PATH.test(id)));
+  const assigned = new Map<string, string>();
+  const nextPath = (contentType: string): string => {
+    let max = 0;
+    for (const name of [...taken, ...byPath.keys()]) {
+      const match = /^xl\/media\/image(\d+)\.[^/]*$/.exec(name);
+      if (match) {
+        max = Math.max(max, Number(match[1]));
+      }
+    }
+    return `xl/media/image${max + 1}.${extensionForContentType(contentType)}`;
+  };
+  return {
+    pathOf(mediaId) {
+      const part = byId.get(mediaId);
+      if (!part) {
+        return taken.has(mediaId) ? mediaId : undefined;
+      }
+      if (XLSX_MEDIA_PATH.test(mediaId)) {
+        return mediaId;
+      }
+      let path = assigned.get(mediaId);
+      if (path === undefined) {
+        path = nextPath(part.contentType);
+        assigned.set(mediaId, path);
+        byPath.set(path, part);
+        taken.add(path);
+      }
+      return path;
+    },
+    partAt: (path) => byPath.get(path),
+  };
+}
+
+/** A media part's bytes: the retained twin's while the part is still the
+ * bytes as read (its encode deferred), else its decoded `data`. */
+function mediaBytes(part: MediaPart, source: Uint8Array | undefined): Uint8Array {
+  if (source !== undefined && pendingMediaByteLength(part) > 0) {
+    return source;
+  }
+  ensureMediaEncoded(part);
+  return part.data === "" && source !== undefined ? source : base64ToBytes(part.data);
+}
+
+/** What a save's drawing layers change in the package. */
+interface DrawingPlan {
+  /** Retained parts rewritten (drawing parts, their `.rels`, sheet `.rels`). */
+  replaced: Map<string, Uint8Array>;
+  /** Parts added (new drawing parts and `.rels`, new media). */
+  added: ZipEntryInput[];
+  /** Relationship edges after the save, by owner. */
+  edges: Map<string, string[]>;
+  /** Worksheet parts whose `<drawing r:id>` is set (an id) or removed (null). */
+  worksheetDrawing: Map<string, string | null>;
+  overrides: { partName: string; contentType: string }[];
+  /** Extensions `[Content_Types].xml` gains a `<Default>` for. */
+  defaults: Map<string, string>;
+  media: MediaWrites;
+}
+
+/** Every `drawingsDirty` grid sheet's layer written (xlsx/drawingXml.ts
+ * writeSheetDrawings), then the new media parts the written drawing parts
+ * target. A rewrite that reproduces its source's bytes is not one. */
+function planDrawingWrites(model: SpreadsheetModel, parts: Map<string, Uint8Array>, plans: readonly SheetPlan[]): DrawingPlan {
+  const taken = new Set([...parts.keys(), ...plans.map((plan) => plan.partName)]);
+  const media = mediaWrites(model, taken);
+  const plan: DrawingPlan = { replaced: new Map(), added: [], edges: new Map(), worksheetDrawing: new Map(), overrides: [], defaults: new Map(), media };
+  for (const sheetPlan of plans) {
+    const { sheet } = sheetPlan;
+    if (sheet.kind !== "grid" || !sheet.drawingsDirty) {
+      continue;
+    }
+    const retained = !sheetPlan.generated && parts.has(sheetPlan.partName);
+    const write = writeSheetDrawings({ parts, sheet, sheetPart: sheetPlan.partName, retained, taken, mediaPath: media.pathOf });
+    for (const [name, text] of write?.texts ?? []) {
+      const data = encode(text);
+      const source = parts.get(name);
+      if (source === undefined) {
+        plan.added.push({ name, data });
+      } else if (!equalBytes(source, data)) {
+        plan.replaced.set(name, data);
+      }
+    }
+    for (const [owner, targets] of write?.edges ?? []) {
+      plan.edges.set(owner, targets);
+    }
+    if (write?.worksheetDrawing !== undefined) {
+      plan.worksheetDrawing.set(sheetPlan.partName, write.worksheetDrawing);
+    }
+    if (write?.addedPart !== undefined) {
+      plan.overrides.push({ partName: write.addedPart, contentType: DRAWING_CONTENT_TYPE });
+    }
+  }
+  const typesBytes = parts.get("[Content_Types].xml");
+  const types = typesBytes === undefined ? undefined : readContentTypes(decodeUtf8(typesBytes));
+  for (const path of new Set([...plan.edges.values()].flat())) {
+    const part = parts.has(path) ? undefined : media.partAt(path);
+    if (!part) {
+      continue;
+    }
+    plan.added.push({ name: path, data: mediaBytes(part, undefined) });
+    const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+    if (types?.defaults.has(extension) !== true && !plan.defaults.has(extension)) {
+      plan.defaults.set(extension, part.contentType);
+    }
+  }
+  return plan;
 }
 
 // --- docProps/app.xml ----------------------------------------------------------------------
