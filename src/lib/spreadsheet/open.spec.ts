@@ -519,7 +519,8 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
       ],
       [
         `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float">`,
-        `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float" table:content-validation-name="val1">`,
+        // SPEC-130 models table:content-validation-name: xml:id is the unmodelled attribute.
+        `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float" xml:id="cell-B2">`,
       ],
       [`<text:p>Gadget</text:p>`, `${annotation("Edited away")}<text:p>Gadget</text:p>`],
       [`<text:p>Done</text:p>`, `${annotation("Kept")}<text:p>Done</text:p>`],
@@ -530,7 +531,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(inventory.protection).toEqual({ sheet: true });
     const link = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`;
     expect(getCell(inventory, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
-    expect(getCell(inventory, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' table:content-validation-name="val1"' });
+    expect(getCell(inventory, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' xml:id="cell-B2"' });
     expect(getCell(inventory, 2, 0)).toMatchObject({ value: "Gadget", preservedXml: annotation("Edited away") });
     expect(getCell(inventory, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
 
@@ -543,7 +544,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(sheet.id).toBe("stored-sheet-1");
     expect(sheet.protection).toEqual({ sheet: true });
     expect(getCell(sheet, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
-    expect(getCell(sheet, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' table:content-validation-name="val1"' });
+    expect(getCell(sheet, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' xml:id="cell-B2"' });
     expect(getCell(sheet, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
     // The edited cell keeps its edit and regains nothing.
     expect(getCell(sheet, 2, 0)!.value).toBe("Gizmo");

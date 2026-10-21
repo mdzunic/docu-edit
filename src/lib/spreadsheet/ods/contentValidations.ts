@@ -68,7 +68,7 @@
 //   another definition; every other rule is serialised under a fresh
 //   `de-val<n>` colliding with no name in use (a definition's, a rule's, an
 //   orphan's, or one a kept table names).
-// - The block (spliceBlock): the source's start tag and closing text kept;
+// - The block (blockXml, splicePrefix): the source's start tag and closing text kept;
 //   the definitions in the source's order (with the whitespace before each),
 //   orphans re-emitted verbatim in place, new ones appended; retained text
 //   through the writer's sheet-name pass, generated text not. A new block
@@ -80,7 +80,8 @@
 //   `;` — an ODS item holding a comma became two items when read),
 //   `table:allow-empty-cell` (whenever there is a condition, or false),
 //   `table:display-list` (always for a list, else when not unsorted),
-//   `table:base-cell-address` (the origin, sheet-qualified: `$Form.B2`),
+//   `table:base-cell-address` (the origin, sheet-qualified as LibreOffice
+//   writes it: `Form.B2`),
 //   then `table:help-message` and `table:error-message` (each written when
 //   shown or holding a title, text or a style other than stop), one `text:p`
 //   per line.
@@ -964,7 +965,9 @@ export function odsValidationXml(name: string, rule: DataValidation, sheetName: 
   if (rule.type === "list" || display !== "unsorted") {
     attributes += ` table:display-list="${display}"`;
   }
-  attributes += ` table:base-cell-address="${escapeAttributeValue(formatOdsRangeAddress({ sheet: sheetName, start: { row: origin.row, col: origin.col, rowAbs: false, colAbs: false } }))}"`;
+  // LibreOffice's form: the sheet without `$` (`Form.B2`).
+  const base = formatOdsRangeAddress({ sheet: sheetName, start: { row: origin.row, col: origin.col, rowAbs: false, colAbs: false } }).slice(1);
+  attributes += ` table:base-cell-address="${escapeAttributeValue(base)}"`;
   let children = "";
   const input = rule.input;
   if (input.show || input.title !== "" || input.text !== "") {

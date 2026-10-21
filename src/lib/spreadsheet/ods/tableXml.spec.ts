@@ -821,7 +821,8 @@ describe("SPEC-122 serializeTable: cells", () => {
             {
               col: 0,
               value: "See it",
-              preservedAttrs: ` table:content-validation-name="v1"`,
+              // SPEC-130 models table:content-validation-name: xml:id is unmodelled.
+              preservedAttrs: ` xml:id="c1"`,
               preservedXml: `<office:annotation><text:p>note</text:p></office:annotation>`,
               preservedText: `<text:p>See <text:a xlink:href="https://example.com/">it</text:a></text:p>`,
             },
@@ -834,7 +835,7 @@ describe("SPEC-122 serializeTable: cells", () => {
       newTable(
         defaultColumns(2) +
           newRow(
-            `<table:table-cell office:value-type="string" calcext:value-type="string" table:content-validation-name="v1">` +
+            `<table:table-cell office:value-type="string" calcext:value-type="string" xml:id="c1">` +
               `<office:annotation><text:p>note</text:p></office:annotation><text:p>See <text:a xlink:href="https://example.com/">it</text:a></text:p></table:table-cell>` +
               `<table:table-cell><office:annotation><text:p>New!A1</text:p></office:annotation></table:table-cell>`,
           ),
