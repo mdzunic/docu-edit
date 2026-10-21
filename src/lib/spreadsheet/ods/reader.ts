@@ -59,8 +59,9 @@
 //   `table:formula`, `office:value-type`, the value attributes,
 //   `office:currency` and `calcext:value-type` — verbatim with their leading
 //   whitespace, in source order (`preservedAttrs`); every child element but
-//   the text paragraphs (annotations, frames, unknown elements), verbatim in
-//   source order (`preservedXml`); and the cell's `text:p` sequence verbatim
+//   the text paragraphs and (SPEC-131) the drawings (annotations, unknown
+//   elements), verbatim in source order (`preservedXml`); and the cell's
+//   `text:p` sequence verbatim
 //   (`preservedText`) when a paragraph holds inline content the model does
 //   not — an attribute on the paragraph, a heading, or any element other
 //   than text:s, text:tab, text:line-break and a text:span whose only
@@ -87,6 +88,12 @@
 //   (ods/contentValidations.ts): the names are accumulated during the scan
 //   as row-run × column-run rectangles, never materialised — the attribute
 //   is modelled, so it is no longer one of a cell's `preservedAttrs`.
+// - SPEC-131: each table's drawing layer → `Sheet.drawings`
+//   (ods/drawingXml.ts, the normative source): every `table:shapes` child
+//   and every `draw:*`/`dr3d:scene` child of a cell, sliced out of the scan
+//   verbatim and read once the table ends (its geometry known); a cell
+//   holding only a drawing is not stored. The pictures they show →
+//   `media`, one part per package path, its bytes deferred.
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -122,7 +129,10 @@ import {
   type OdsStyleSheet,
 } from "./styles";
 import { readOdsAutoFilters } from "./databaseRanges";
+import { isDrawingElement, OdsMediaReader, readOdsDrawings, type OdsDrawingSource } from "./drawingXml";
 import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved } from "./tableXml";
+import { buildGridMetrics } from "../geometry";
+import type { MediaPart } from "../../core/media";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
 const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
@@ -142,6 +152,9 @@ interface PendingTable {
   protected: boolean;
   /** SPEC-130: the cells naming each content validation. */
   validations: ValidationRegions;
+  /** SPEC-131: the drawing elements met — `table:shapes` children and
+   * cells' draw:* children — in document order. */
+  drawings: OdsDrawingSource[];
 }
 
 /** A stretch of a cell's text sharing one span font. */
@@ -178,6 +191,8 @@ interface PendingCell {
    * whether it is a paragraph. */
   childStart: number;
   childIsParagraph: boolean;
+  /** SPEC-131: the open direct child is a drawing (a Sheet.drawings entry, never preservedXml). */
+  childIsDrawing: boolean;
   /** A paragraph holds inline content the model does not. */
   inline: boolean;
 }
@@ -455,6 +470,8 @@ interface OdsContent {
   structureProtected: boolean;
   /** SPEC-130: the content validations no cell references, verbatim. */
   orphanValidations: string[];
+  /** SPEC-131: the pictures the sheets' drawings show, one per package path. */
+  media: MediaPart[];
 }
 
 /** SPEC-120 "Calculation settings" from `table:calculation-settings` and its
@@ -479,12 +496,14 @@ function odsCalcSettings(attrs: readonly XmlScanAttribute[] | undefined, iterati
   return calc;
 }
 
-/** Reads content.xml, `sheetStyles` being styles.xml's declarations.
+/** Reads content.xml, `sheetStyles` being styles.xml's declarations and
+ * `media` the package's pictures (SPEC-131: what the drawings show).
  * Returns null when the cell ceiling stopped the scan. */
 export function readOdsContent(
   xml: string,
   budget: CellBudget,
   sheetStyles: OdsStyleSheet = emptyOdsStyleSheet(),
+  media: OdsMediaReader = new OdsMediaReader(new Map()),
 ): OdsContent | null {
   const sheets: Sheet[] = [];
   /** SPEC-130: each finished table's validation names, as rectangles. */
@@ -505,6 +524,10 @@ export function readOdsContent(
    * element): a text box there may hold a table of its own, whose rows are
    * not the sheet's. */
   let drawingDepth = 0;
+  /** SPEC-131: the level of the open `table:shapes` (-1: none), and where
+   * its open child (a drawing) starts. */
+  let shapesLevel = -1;
+  let shapeStart = -1;
   let tooLarge = false;
   let structureProtected = false;
   /** content.xml's style sections, sliced verbatim, and the namespace
@@ -558,6 +581,10 @@ export function readOdsContent(
     if (done.protected) {
       sheet.protection = { sheet: true };
     }
+    if (done.drawings.length > 0) {
+      // SPEC-131: under the finished table's geometry (in-cell offsets are sheet-absolute).
+      sheet.drawings = readOdsDrawings(done.drawings, buildGridMetrics(sheet), { declarations, styles: styleBook(), media });
+    }
     sheets.push(sheet);
     validationRegions.push(done.validations.result());
     previousTableEnd = end;
@@ -584,7 +611,11 @@ export function readOdsContent(
           return undefined;
         }
         if (depth === inside.level + 1 && inside.childStart >= 0) {
-          captureChild(inside, xml, inside.childIsParagraph, inside.childStart, event.end);
+          if (inside.childIsDrawing) {
+            table!.drawings.push({ xml: xml.slice(inside.childStart, event.end), cell: { row: table!.reader.rowIndex, col: table!.reader.colIndex } });
+          } else {
+            captureChild(inside, xml, inside.childIsParagraph, inside.childStart, event.end);
+          }
           inside.childStart = -1;
         }
         if (inside.skipDepth > 0) {
@@ -604,11 +635,18 @@ export function readOdsContent(
         if (paragraph && (event.local === "h" || event.attrs.length > 0)) {
           inside.inline = true;
         }
+        // SPEC-131: a drawing is the sheet's (Sheet.drawings), anchored to this cell.
+        const drawing = isDrawingElement(event.ns, event.local);
         if (event.selfClosing) {
-          captureChild(inside, xml, paragraph, event.start, event.end);
+          if (drawing) {
+            table!.drawings.push({ xml: xml.slice(event.start, event.end), cell: { row: table!.reader.rowIndex, col: table!.reader.colIndex } });
+          } else {
+            captureChild(inside, xml, paragraph, event.start, event.end);
+          }
         } else {
           inside.childStart = event.start;
           inside.childIsParagraph = paragraph;
+          inside.childIsDrawing = drawing;
         }
       } else if (inside.childIsParagraph && inside.childStart >= 0 && !inside.inline && !modelledInline(event.ns, event.local, event.attrs, styleBook)) {
         inside.inline = true;
@@ -617,7 +655,7 @@ export function readOdsContent(
         if (!event.selfClosing) {
           inside.skipDepth += 1;
         }
-      } else if ((event.ns === OFFICE_NAMESPACE && event.local === "annotation") || event.ns === DRAW_NAMESPACE) {
+      } else if ((event.ns === OFFICE_NAMESPACE && event.local === "annotation") || event.ns === DRAW_NAMESPACE || isDrawingElement(event.ns, event.local)) {
         if (!event.selfClosing) {
           inside.skipDepth = 1;
         }
@@ -673,6 +711,35 @@ export function readOdsContent(
       return undefined;
     }
 
+    if (shapesLevel > 0) {
+      // SPEC-131: inside a table's `table:shapes` — each child is an absolute drawing.
+      if (event.type === "open") {
+        if (depth + 1 === shapesLevel + 1) {
+          if (event.selfClosing) {
+            table!.drawings.push({ xml: xml.slice(event.start, event.end) });
+          } else {
+            shapeStart = event.start;
+          }
+        }
+        depth += event.selfClosing ? 0 : 1;
+      } else {
+        if (depth === shapesLevel + 1 && shapeStart >= 0) {
+          table!.drawings.push({ xml: xml.slice(shapeStart, event.end) });
+          shapeStart = -1;
+        } else if (depth === shapesLevel) {
+          shapesLevel = -1;
+        }
+        depth -= 1;
+      }
+      return undefined;
+    }
+    if (event.type === "open" && table !== null && !inRow && depth + 1 === table.level + 1 && event.ns === TABLE_NAMESPACE && event.local === "shapes") {
+      if (!event.selfClosing) {
+        shapesLevel = depth + 1;
+        depth += 1;
+      }
+      return undefined;
+    }
     if (drawingDepth > 0) {
       if (event.type === "open" && !event.selfClosing) {
         drawingDepth += 1;
@@ -740,6 +807,7 @@ export function readOdsContent(
             reader: new OdsTableReader(name, styleBook(), budget),
             protected: scanAttr(event.attrs, "protected", TABLE_NAMESPACE) === "true",
             validations: new ValidationRegions(),
+            drawings: [],
           };
           if (tableStyle.tabColor !== undefined) {
             pending.tabColor = tableStyle.tabColor;
@@ -786,6 +854,7 @@ export function readOdsContent(
             paragraphRanges: [],
             childStart: -1,
             childIsParagraph: false,
+            childIsDrawing: false,
             inline: false,
           };
           if (event.selfClosing) {
@@ -864,6 +933,7 @@ export function readOdsContent(
     calc: odsCalcSettings(calcAttrs, iterationStatus),
     structureProtected,
     orphanValidations: validations.orphans,
+    media: media.media(),
   };
 }
 
@@ -922,7 +992,7 @@ export async function parseOds(
   const sheetStyles = stylesBytes
     ? scanned("styles.xml", () => readOdsStyleSheet(partText(stylesBytes)))
     : emptyOdsStyleSheet();
-  const content = scanned("content.xml", () => readOdsContent(partText(contentBytes), new CellBudget(), sheetStyles));
+  const content = scanned("content.xml", () => readOdsContent(partText(contentBytes), new CellBudget(), sheetStyles, new OdsMediaReader(parts)));
   if (content === null) {
     throw new SpreadsheetOpenError(WORKBOOK_TOO_LARGE_MESSAGE);
   }
@@ -966,6 +1036,9 @@ export async function parseOds(
   }
   if (content.orphanValidations.length > 0) {
     parsed.odsOrphanValidations = content.orphanValidations;
+  }
+  if (content.media.length > 0) {
+    parsed.media = content.media;
   }
   return parsed;
 }

@@ -68,7 +68,7 @@
 //   through exact rationals so "0.178in" is 12.816 pt, not 12.8159999….
 // - Absent properties are omitted — a CellStyle never carries an
 //   `undefined`-valued key (the model is plain JSON).
-import { FO_NAMESPACE, NUMBER_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE } from "../../core/odfXml";
+import { DRAW_NAMESPACE, FO_NAMESPACE, NUMBER_NAMESPACE, OFFICE_NAMESPACE, STYLE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE } from "../../core/odfXml";
 import { DEFAULT_THEME, resolveColor, resolveFont, type DocumentTheme, type ModelColor } from "../../core/theme";
 import { escapeXmlAttribute, parseXml, XmlParseError } from "../../core/xml";
 import { INDENT_PX_PER_LEVEL } from "../geometry";
@@ -101,9 +101,11 @@ const PREFIX_BY_NAMESPACE: ReadonlyMap<string, string> = new Map([
   [TABLE_NAMESPACE, "table"],
   [SVG_NAMESPACE, "svg"],
   [TABLEOOO_NAMESPACE, "tableooo"],
+  // SPEC-131: a graphic style's draw:fill, draw:stroke…
+  [DRAW_NAMESPACE, "draw"],
 ]);
 
-type PropertyKind = "table-cell" | "paragraph" | "text" | "table-column" | "table-row" | "table";
+type PropertyKind = "table-cell" | "paragraph" | "text" | "table-column" | "table-row" | "table" | "graphic";
 const PROPERTY_KINDS: ReadonlySet<string> = new Set<PropertyKind>([
   "table-cell",
   "paragraph",
@@ -111,6 +113,8 @@ const PROPERTY_KINDS: ReadonlySet<string> = new Set<PropertyKind>([
   "table-column",
   "table-row",
   "table",
+  // SPEC-131: the sheet drawings' graphic styles.
+  "graphic",
 ]);
 
 /** One `style:*-properties` element's attributes, keyed "prefix:local". */
@@ -1178,6 +1182,30 @@ export class OdsStyleBook {
     return height;
   }
 
+  /** SPEC-131: a graphic style's flattened `style:graphic-properties` —
+   * the family default-style, the parent chain, the style — keyed
+   * "prefix:local" (`draw:fill`, `svg:stroke-color`, `fo:clip`…); empty for
+   * a name no part defines. */
+  graphicProperties(name: string | undefined): ReadonlyMap<string, string> {
+    return this.flatten("graphic", name).graphic ?? EMPTY_PROPS;
+  }
+
+  /** SPEC-131: the font a `graphic`, `paragraph` or `text` style's
+   * `style:text-properties` give (its parents included, never a family
+   * default), or undefined — a drawing's text, render-only. */
+  styleFont(family: "graphic" | "paragraph" | "text", name: string | undefined): CellFont | undefined {
+    if (name === undefined) {
+      return undefined;
+    }
+    const text = this.flatten(family, name, { withDefault: false }).text;
+    return text ? fontFrom(text, this.fontFaces) : undefined;
+  }
+
+  /** SPEC-131: a paragraph style's `fo:text-align` (its parents included). */
+  paragraphAlign(name: string | undefined): string | undefined {
+    return name === undefined ? undefined : this.flatten("paragraph", name).paragraph?.get("fo:text-align");
+  }
+
   /** A table style's `table:display="false"` (hidden) and
    * `tableooo:tab-color`. */
   tableStyle(name: string | undefined): OdsTableStyle {
@@ -1579,6 +1607,13 @@ export class OdsStyleRegistry {
       (name) =>
         `<style:style style:name="${name}" style:family="table-row"><style:table-row-properties style:row-height="${height}" style:use-optimal-row-height="${optimal}"/></style:style>`,
     );
+  }
+
+  /** SPEC-131: a `de-gr<n>` graphic style whose `style:graphic-properties`
+   * carry `properties` (attribute text, each with its leading space — see
+   * ods/drawingXml.ts); equal property runs share one name. */
+  graphicStyle(properties: string): string {
+    return this.add("gr", properties, (name) => `<style:style style:name="${name}" style:family="graphic"><style:graphic-properties${properties}/></style:style>`);
   }
 
   /** SPEC-122: a `de-N<n>` data style for a format code (equal codes share
