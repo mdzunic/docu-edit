@@ -457,19 +457,20 @@ describe("copy-on-write", () => {
   });
 });
 
-describe("SPEC-130: a copy-paste carries no data-validation rules", () => {
-  const rule = (id: string, ranges: GridRange[], fields: Partial<DataValidation>): DataValidation => ({
-    id,
-    ranges,
-    type: "list",
-    operator: "between",
-    allowBlank: true,
-    showDropdown: true,
-    input: { show: false, title: "", text: "" },
-    error: { show: true, style: "stop", title: "", text: "" },
-    ...fields,
-  });
+/** A data-validation rule on `ranges` (SPEC-130). */
+const rule = (id: string, ranges: GridRange[], fields: Partial<DataValidation>): DataValidation => ({
+  id,
+  ranges,
+  type: "list",
+  operator: "between",
+  allowBlank: true,
+  showDropdown: true,
+  input: { show: false, title: "", text: "" },
+  error: { show: true, style: "stop", title: "", text: "" },
+  ...fields,
+});
 
+describe("SPEC-130: a copy-paste carries no data-validation rules", () => {
   it("leaves the destination's rules as they were and adds none of the source's, under Paste (All), on either sheet", () => {
     const m = source();
     const copiedRule = rule("src", [range(1, 1, 2, 2)], { formula1: '"Low,Medium,High"' }); // B2:C3, the copied block
