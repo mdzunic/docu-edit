@@ -1032,6 +1032,24 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, validations: [validationRule({ ranges: [range(5, 0, 5, 0)], formula1: "A6>0" })] }]);
     case "drawings":
       return model([{ ...base, drawings: [{ id: "dr1", name: "Picture 1", anchor: { kind: "oneCell", from: { col: 0, colOffEmu: 0, row: 5, rowOffEmu: 0 }, extEmu: { cx: 9525, cy: 9525 } }, content: { kind: "image", mediaId: "xl/media/image1.png" } }] }]);
+    case "charts":
+      return model([
+        {
+          ...base,
+          drawings: [
+            {
+              id: "dr1",
+              name: "Chart 1",
+              anchor: { kind: "twoCell", editAs: "twoCell", from: { col: 4, colOffEmu: 0, row: 0, rowOffEmu: 0 }, to: { col: 8, colOffEmu: 0, row: 3, rowOffEmu: 0 } },
+              content: {
+                kind: "chart",
+                visual: { chartType: "line", categories: ["1"], series: [{ name: "S", values: [1], color: "#000000" }], options: { legend: "none", dataLabels: false, gridlines: false } },
+                refs: { series: [{ values: "Sheet1!$A$6" }], plotVisibleOnly: true },
+              },
+            },
+          ],
+        },
+      ]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -1061,13 +1079,17 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.validations[0]?.ranges[0];
     case "drawings":
       return s.drawings?.[0]?.anchor.from?.row;
+    case "charts": {
+      const content = s.drawings?.[0]?.content;
+      return content?.kind === "chart" ? content.refs?.series[0]?.values : undefined;
+    }
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations and SPEC-131's drawings", () => {
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-131's drawings and SPEC-132's charts", () => {
     expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual([
       "rows",
       "formulas",
@@ -1080,6 +1102,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
       "conditionalFormats",
       "validations",
       "drawings",
+      "charts",
     ]);
   });
 
@@ -1120,6 +1143,7 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             conditionalFormats: range(6, 0, 6, 0),
             validations: range(6, 0, 6, 0),
             drawings: 6,
+            charts: "Sheet1!$A$7",
           }[adjuster.id],
         );
       });

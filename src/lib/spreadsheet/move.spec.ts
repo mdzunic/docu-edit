@@ -535,6 +535,24 @@ function withStructure(id: string): SpreadsheetModel {
       return model([{ ...base, conditionalFormats: [cfFormat("f1", [range(0, 0, 1, 1)], "A1>0")] }]);
     case "validations":
       return model([{ ...base, validations: [dvRule("v1", [range(0, 0, 1, 1)])] }]);
+    case "charts":
+      return model([
+        {
+          ...base,
+          drawings: [
+            {
+              id: "dr1",
+              name: "Chart 1",
+              anchor: { kind: "twoCell", editAs: "twoCell", from: { col: 4, colOffEmu: 0, row: 0, rowOffEmu: 0 }, to: { col: 8, colOffEmu: 0, row: 3, rowOffEmu: 0 } },
+              content: {
+                kind: "chart",
+                visual: { chartType: "line", categories: ["1", "2"], series: [{ name: "S", values: [1, 2], color: "#000000" }], options: { legend: "none", dataLabels: false, gridlines: false } },
+                refs: { series: [{ values: "Sheet1!$A$1:$A$2" }], plotVisibleOnly: true },
+              },
+            },
+          ],
+        },
+      ]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -555,6 +573,10 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return s.conditionalFormats[0]?.ranges;
     case "validations":
       return s.validations[0]?.ranges;
+    case "charts": {
+      const content = s.drawings?.[0]?.content;
+      return content?.kind === "chart" ? content.refs?.series[0]?.values : undefined;
+    }
     default:
       return undefined;
   }
@@ -563,8 +585,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
 describe("MOVE_ADJUSTERS — the registry contract", () => {
   const MOVE: RangeMove = { fromSheetId: "s1", from: range(0, 0, 1, 1), toSheetId: "s1", toTop: 10, toLeft: 3 };
 
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats and SPEC-130's validations", () => {
-    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats", "validations"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations and SPEC-132's charts", () => {
+    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats", "validations", "charts"]);
   });
 
   for (const adjuster of MOVE_ADJUSTERS) {
@@ -596,6 +618,7 @@ describe("MOVE_ADJUSTERS — the registry contract", () => {
             autofilter: range(10, 3, 11, 4),
             conditionalFormats: [range(10, 3, 11, 4)],
             validations: [range(10, 3, 11, 4)],
+            charts: "Sheet1!$D$11:$D$12",
           }[adjuster.id],
         );
       });
