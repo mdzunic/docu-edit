@@ -12,8 +12,18 @@
 //   weight;
 // - a group member by member (`sheet-drawing-member`, each at its fractions
 //   of the group's box, painted by this component in turn);
-// - and a chart, a face-less foreign drawing or an image the browser cannot
-//   show (EMF, WMF, TIFF, a missing part) as the labelled placeholder
+// - a chart (SPEC-132) through core/chartCanvas on a canvas
+//   (`sheet-chart-canvas`, on the chart's white paper; the backing store at
+//   the device pixel ratio — and, like the shape canvas, the zoom — the
+//   theme the workbook's), repainted when its visual object, box, zoom or
+//   theme changes; a chart outside the catalogue paints paintChart's own
+//   placeholder. The canvas states what it plots for tests and tools:
+//   `data-chart-type`, `data-chart-categories` and `data-chart-values` (JSON:
+//   the categories, and each series' values with null for a gap),
+//   `data-chart-legend`, and `data-chart-unsupported="true"` on the
+//   placeholder;
+// - and a face-less foreign drawing or an image the browser cannot show
+//   (EMF, WMF, TIFF, a missing part) as the labelled placeholder
 //   (`sheet-drawing-placeholder`): paintChart's unsupported-chart look, a
 //   dashed 1.5 px #888888 rectangle with the label centred. A foreign
 //   drawing with a face paints the face.
@@ -24,6 +34,7 @@
 // SheetCellLayer). Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
 import { computed, onMounted, useTemplateRef, watch } from "vue";
+import { DEFAULT_CHART_CHROME, paintChart, paintChartIntoCanvas } from "../../lib/core/chartCanvas";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
 import { fontStack } from "../../lib/fonts/substitution";
 import { asDocumentTheme, asDrawingContent, asImageSrc, croppedImageBox, drawingPaint, drawingTextView } from "../../views/spreadsheet/sheetDrawingLayout";
@@ -71,6 +82,46 @@ function repaint() {
 onMounted(repaint);
 watch([paint, () => props.width, () => props.height, () => props.zoom, theme], repaint, { flush: "post" });
 
+/** SPEC-132: a chart drawing's visual, null for any other kind. */
+const chart = computed(() => {
+  const content = asDrawingContent(props.content);
+  return content.kind === "chart" ? content.visual : null;
+});
+const chartCategories = computed(() => JSON.stringify(chart.value?.categories ?? []));
+const chartValues = computed(() => JSON.stringify((chart.value?.series ?? []).map((series) => series.values)));
+const chartCanvas = useTemplateRef("chartCanvas");
+
+function repaintChart() {
+  const element = chartCanvas.value;
+  const visual = chart.value;
+  if (!(element instanceof HTMLCanvasElement) || !visual) {
+    return;
+  }
+  const zoom = props.zoom || 1;
+  if (zoom === 1) {
+    paintChartIntoCanvas(element, visual, props.width, props.height, theme.value);
+    return;
+  }
+  // paintChartIntoCanvas with the grid's zoom in the backing store, as the
+  // shape canvas has it, so the zoom transform does not blur the chart.
+  const width = Math.max(1, Math.ceil(props.width));
+  const height = Math.max(1, Math.ceil(props.height));
+  const scale = (window.devicePixelRatio || 1) * zoom;
+  element.width = Math.max(1, Math.round(width * scale));
+  element.height = Math.max(1, Math.round(height * scale));
+  element.style.width = `${width}px`;
+  element.style.height = `${height}px`;
+  const ctx = element.getContext("2d");
+  if (ctx) {
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    paintChart(ctx, visual, width, height, DEFAULT_CHART_CHROME, theme.value);
+  }
+}
+
+onMounted(repaintChart);
+watch([chart, () => props.width, () => props.height, () => props.zoom, theme], repaintChart, { flush: "post" });
+
 function px(value = 0) {
   return `${value}px`;
 }
@@ -86,8 +137,20 @@ function memberStyle(box = { x: 0, y: 0, w: 0, h: 0 }) {
     class="sheet-drawing-paint"
     :style="{ width: px(props.width), height: px(props.height) }"
   >
+    <canvas
+      v-if="chart"
+      ref="chartCanvas"
+      class="sheet-drawing-canvas sheet-chart-canvas"
+      data-testid="sheet-chart-canvas"
+      :data-chart-type="chart.chartType"
+      :data-chart-categories="chartCategories"
+      :data-chart-values="chartValues"
+      :data-chart-legend="chart.options.legend"
+      :data-chart-unsupported="chart.unsupportedChartXml !== undefined ? 'true' : undefined"
+      aria-hidden="true"
+    />
     <div
-      v-if="paint.kind === 'image'"
+      v-else-if="paint.kind === 'image'"
       class="sheet-drawing-crop"
     >
       <img
@@ -173,6 +236,11 @@ function memberStyle(box = { x: 0, y: 0, w: 0, h: 0 }) {
 .sheet-drawing-canvas {
   position: absolute;
   pointer-events: none;
+}
+
+/* A chart's paper: Excel's and LibreOffice's default chart area is white. */
+.sheet-chart-canvas {
+  background: #ffffff;
 }
 
 /* Excel's default text insets: 0.1" left and right, 0.05" top and bottom. */
