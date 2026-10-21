@@ -239,13 +239,17 @@ export function isDrawingShown(drawing: SheetDrawing, metrics: GridMetrics): boo
   if (anchorBehaviour(anchor) !== "moveAndSize" || !anchor.from || !anchor.to) {
     return true;
   }
-  const span = (first: number, lastPoint: number, lastOff: number, start: (i: number) => number): number => {
-    const last = Math.max(first, lastOff > 0 ? lastPoint : lastPoint - 1);
-    return start(last + 1) - start(first);
-  };
-  const rows = span(anchor.from.row, anchor.to.row, anchor.to.rowOffEmu, metrics.rowTop);
-  const cols = span(anchor.from.col, anchor.to.col, anchor.to.colOffEmu, metrics.colLeft);
+  const rows = spanSize(anchor.from.row, anchor.to.row, anchor.to.rowOffEmu, metrics.rowTop);
+  const cols = spanSize(anchor.from.col, anchor.to.col, anchor.to.colOffEmu, metrics.colLeft);
   return rows > 0 && cols > 0;
+}
+
+/** The px an anchor's cells span along one axis: from its first index to
+ * the last one it reaches into (`to`'s own cell only when its offset is past
+ * the cell's start). */
+function spanSize(first: number, lastPoint: number, lastOff: number, start: (i: number) => number): number {
+  const last = Math.max(first, lastOff > 0 ? lastPoint : lastPoint - 1);
+  return start(last + 1) - start(first);
 }
 
 /** The drawings that paint, back to front. */
