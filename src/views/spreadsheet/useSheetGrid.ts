@@ -26,7 +26,9 @@
 // active cell's rect, with the cell area's size to stay inside), the input
 // message's id as the active cell's aria-describedby (`describedBy`), and
 // Alt+Down opening the dropdown's list from the grid (useDataValidation's
-// onGridKey, before SPEC-117's navigation).
+// onGridKey, before SPEC-117's navigation). SPEC-131: the drawing layer
+// (useDrawingGestures over the context's `drawings`) — its panes for SheetGrid,
+// and its move, resize and draw gestures ahead of the pointer's own handlers.
 import { computed, watch, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
@@ -36,6 +38,8 @@ import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/local
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
 import type { DataValidationView } from "./useDataValidation";
+import { useDrawingGestures } from "./useDrawingGestures";
+import type { SheetDrawings } from "./useSheetDrawings";
 import type { ConditionalFormatsView } from "./useConditionalFormats";
 import type { FunctionAssist } from "./useFunctionAssist";
 import type { FillHandle } from "./useFillHandle";
@@ -95,6 +99,8 @@ export interface SheetGridContext {
   rangeMove?: RangeMoveController;
   /** SPEC-130: data validation's input message and dropdown; absent = none. */
   validation?: DataValidationView;
+  /** SPEC-131: the sheet's drawing layer; absent = none painted. */
+  drawings?: SheetDrawings;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -159,6 +165,7 @@ export function useSheetGrid(
     outline: () => outline.value,
     painting: () => Boolean(context().painter?.mode.value),
   });
+  const drawingGestures = useDrawingGestures({ scroller, viewport, metrics, drawings: () => context().drawings, focusGrid: focusEditor });
 
   /** SPEC-125's overlays, in paper px (see the module header). */
   const transfer = computed(() => {
@@ -336,7 +343,9 @@ export function useSheetGrid(
     viewport,
     bands: cells.bands,
     overlays,
-    pointer,
+    /** The grid element's pointer handlers: SPEC-131's drawing gestures first. */
+    pointer: { ...pointer, ...drawingGestures.wrap(pointer) },
+    drawingGestures,
     editor,
     onDblClick,
     focusEditor,

@@ -10,12 +10,21 @@
 // icon makes every cell the same width. Names that no longer show stay
 // reachable as the button's tooltip, accessible name and search term.
 //
+// SPEC-131: `catalogueOnly` (default false, so the document and slide
+// galleries are unchanged) hides the Connectors and Freeform groups — a
+// sheet's drawing layer inserts catalogue shapes only.
+//
 // The buttons deliberately carry no menuitem role (see MenuBar.vue). Runtime
 // prop/emit declarations per the espree constraint (see AppShell.vue).
 import { computed, ref } from "vue";
 import { asShapeGeometry, LINE_GEOMETRIES } from "../lib/core/shapes";
 import { SHAPE_DEFINITIONS } from "../lib/core/shapeCatalogue";
 import { SHAPE_ICON_SIZE, shapeIconPath } from "../lib/core/shapeIcons";
+
+const props = defineProps({
+  /** Only the shape catalogue: no Connectors or Freeform groups (SPEC-131). */
+  catalogueOnly: { type: Boolean, default: false },
+});
 
 defineEmits(["pick", "pick-connector", "pick-freeform"]);
 
@@ -127,7 +136,7 @@ function iconClass(geometry = "rect") {
         </div>
       </div>
       <div
-        v-if="!query.trim()"
+        v-if="!query.trim() && !props.catalogueOnly"
         class="shape-gallery-group"
         data-testid="connector-gallery-group"
       >
@@ -162,7 +171,7 @@ function iconClass(geometry = "rect") {
         </div>
       </div>
       <div
-        v-if="!query.trim()"
+        v-if="!query.trim() && !props.catalogueOnly"
         class="shape-gallery-group"
         data-testid="freeform-gallery-group"
       >
