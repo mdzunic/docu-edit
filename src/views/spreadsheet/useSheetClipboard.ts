@@ -34,7 +34,8 @@
 //   PasteSpecialDialog with what the source can supply ("Paste special").
 // - Every paste is ONE undo step with the rows it wrote refitted
 //   (sheetSteps.ts); a refusal toasts and records nothing. SPEC-131: a pasted
-//   image (sheetClipboardIo's pastedImage) inserts as a drawing instead.
+//   image (sheetClipboardIo's pastedImage) inserts as a drawing instead,
+//   where the workbook can hold drawings (not CSV/TSV, whose cells paste).
 import { onScopeDispose, shallowRef, watch, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { isMacPlatform } from "../../lib/core/platform";
@@ -73,7 +74,7 @@ export interface SheetClipboardDeps {
   book: { workbook: ShallowRef<SpreadsheetModel | null>; activeSheet: Readonly<Ref<Sheet | null>> };
   viewState: Pick<SheetViewState, "syncInto">;
   selection: Pick<SheetSelectionController, "selection" | "set" | "formatContext">;
-  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit" | "revision">; cell: Pick<CellEditing, "editing" | "focusCell">; drawings?: Pick<SheetDrawings, "insertImageFile"> };
+  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit" | "revision">; cell: Pick<CellEditing, "editing" | "focusCell">; drawings?: Pick<SheetDrawings, "canInsert" | "insertImageFile"> };
   locale: () => SpreadsheetLocale;
   /** Shows a toast — default: useToasts' addToast. */
   toast?: (message: string) => void;
@@ -271,9 +272,10 @@ export function useSheetClipboard(deps: SheetClipboardDeps) {
     }
     event.preventDefault();
     event.stopPropagation();
-    const image = deps.editing.drawings ? pastedImage(data) : null;
+    const drawings = deps.editing.drawings;
+    const image = drawings?.canInsert.value ? pastedImage(data) : null;
     if (image) {
-      void deps.editing.drawings?.insertImageFile(image);
+      void drawings!.insertImageFile(image);
       return;
     }
     const source = resolve(data.getData("text/html"), data.getData("text/plain"), false);

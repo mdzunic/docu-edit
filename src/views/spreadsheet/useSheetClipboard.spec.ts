@@ -77,7 +77,7 @@ function rowsOf(): Row[] {
   ];
 }
 
-function harness(options: { clipboard?: Clipboard; rows?: Row[] } = {}) {
+function harness(options: { clipboard?: Clipboard; rows?: Row[]; drawings?: { canInsert: boolean } } = {}) {
   const model: SpreadsheetModel = createBlankWorkbook();
   model.styles = [{}, { font: { bold: true } }];
   model.sheets = [{ ...model.sheets[0]!, name: "Sheet1", rows: options.rows ?? rowsOf() }, { ...model.sheets[0]!, id: "other", name: "Sheet2", rows: [] }];
@@ -92,6 +92,8 @@ function harness(options: { clipboard?: Clipboard; rows?: Row[] } = {}) {
   const target = document.createElement("div");
   grid.append(target);
   document.body.append(grid);
+  const insertImageFile = vi.fn(async () => true);
+  const drawings = options.drawings ? { canInsert: computed(() => options.drawings!.canInsert), insertImageFile } : undefined;
   const scope = effectScope();
   scopes.push(scope);
   const { undo, clipboard } = scope.run(() => {
@@ -106,7 +108,7 @@ function harness(options: { clipboard?: Clipboard; rows?: Row[] } = {}) {
         },
         formatContext: computed(() => ({ locale: EN_US, dateSystem: "1900" as const })),
       },
-      editing: { undo: stack, cell: { editing: computed(() => editing.value), focusCell: vi.fn() } },
+      editing: { undo: stack, cell: { editing: computed(() => editing.value), focusCell: vi.fn() }, drawings },
       locale: () => EN_US,
       toast: (message) => toasts.push(message),
       measurer: fixedMeasurer(7, 20),
@@ -118,7 +120,7 @@ function harness(options: { clipboard?: Clipboard; rows?: Row[] } = {}) {
     selection.value = { active: { row: r.top, col: r.left }, ranges: [r], activeRangeIndex: 0 };
   };
   const cellAt = (r: number, c: number, sheet = 0) => getCell(workbook.value!.sheets[sheet]!, r, c);
-  return { clipboard, undo, workbook, selection, select, editing, toasts, target, cellAt, activeIndex };
+  return { clipboard, undo, workbook, selection, select, editing, toasts, target, cellAt, activeIndex, insertImageFile };
 }
 
 describe("SPEC-125 useSheetClipboard — copy and cut", () => {
@@ -390,6 +392,29 @@ describe("SPEC-125 useSheetClipboard — the cell menu and Paste special", () =>
     h.clipboard.confirmPasteSpecial({ what: "values" });
     await nextTick();
     expect(h.clipboard.marquee.value?.mode).toBe("copy");
+  });
+
+  it("SPEC-131: a pasted image (no table in the HTML) inserts as a drawing; where drawings cannot go (CSV/TSV) the text pastes into the cells", () => {
+    const png = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+    const withImage = (): FakeData => {
+      const data = Object.assign(new FakeData(), { items: [{ kind: "file", type: png.type, getAsFile: () => png }], files: [png] });
+      data.setData("text/plain", "pasted");
+      return data;
+    };
+    const book = harness({ drawings: { canInsert: true } });
+    book.select(range(5, 0, 5, 0));
+    book.clipboard.onPaste(clipboardEvent(withImage(), book.target));
+    expect(book.insertImageFile).toHaveBeenCalledWith(png);
+    expect(book.cellAt(5, 0)).toBeUndefined();
+
+    const csv = harness({ drawings: { canInsert: false } });
+    csv.select(range(5, 0, 5, 0));
+    const event = clipboardEvent(withImage(), csv.target);
+    csv.clipboard.onPaste(event);
+    expect(csv.insertImageFile).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(csv.cellAt(5, 0)?.value).toBe("pasted");
+    expect(csv.undo.undoLabel.value).toBe("Paste");
   });
 
   it("Ctrl+Shift+V and Ctrl+Alt+V in the grid open Paste special (jsdom is not a Mac)", async () => {
