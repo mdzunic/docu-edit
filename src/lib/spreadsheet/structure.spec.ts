@@ -35,6 +35,7 @@ const colsEdit = (kind: "insertCols" | "deleteCols", at: number, count: number, 
 function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
   return {
     conditionalFormats: [],
+    validations: [],
     id,
     name,
     visibility: "visible",

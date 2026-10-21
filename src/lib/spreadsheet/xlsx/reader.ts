@@ -309,6 +309,7 @@ export async function parseXlsx(
       defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
       merges: [],
       conditionalFormats: [],
+      validations: [],
     };
     const bytes = parts.get(entry.partName);
     if (entry.kind === "grid" && bytes) {

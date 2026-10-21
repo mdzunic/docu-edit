@@ -22,6 +22,7 @@ const { useSheetViewState, VIEW_STATE_PERSIST_DELAY_MS } = await import("./useSh
 function sheetOf(id: string): Sheet {
   return {
     conditionalFormats: [],
+    validations: [],
     id,
     name: id,
     visibility: "visible",

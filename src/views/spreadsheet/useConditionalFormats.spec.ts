@@ -24,6 +24,7 @@ function sheet(id: string, values: number[], formats: ConditionalFormat[]): Shee
     defaultRowHeightPt: 15,
     merges: [],
     conditionalFormats: formats,
+    validations: [],
   };
 }
 

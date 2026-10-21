@@ -31,6 +31,7 @@ import type { CellStyle, ColumnSpan, Row, Sheet } from "./model";
 function sheetWith(partial: Partial<Sheet> = {}): Sheet {
   return {
     conditionalFormats: [],
+    validations: [],
     id: "sheet-1",
     name: "Sheet1",
     visibility: "visible",

@@ -61,7 +61,7 @@ function sheetOf(cells: Array<[number, Cell]>): Sheet {
       rows.push({ index, cells: [cell] });
     }
   }
-  return { conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
+  return { conditionalFormats: [], validations: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 }
 
 describe("printFormula is the parser's oracle", () => {

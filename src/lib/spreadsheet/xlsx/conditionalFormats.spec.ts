@@ -80,7 +80,7 @@ function readPart(xml: string, holder: { dxfs: Dxf[] } = { dxfs: [] }): Conditio
 }
 
 function sheetWith(conditionalFormats: ConditionalFormat[]): Sheet {
-  return { conditionalFormats, id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], dirty: true };
+  return { conditionalFormats, validations: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], dirty: true };
 }
 
 function context(dxfs: Dxf[] = []): XlsxSheetContext {

@@ -530,6 +530,7 @@ export function readOdsContent(
       defaultRowHeightPt: layout.defaultRowHeightPt,
       merges: layout.merges,
       conditionalFormats: [],
+      validations: [],
     };
     if (done.tabColor !== undefined) {
       sheet.tabColor = done.tabColor;

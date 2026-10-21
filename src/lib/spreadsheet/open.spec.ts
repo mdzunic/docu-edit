@@ -175,7 +175,7 @@ describe("reader versions", () => {
 
   it("omits empty optional fields when assembling (styles, the default style id and SPEC-129's dxfs are required)", () => {
     const model = assembleSpreadsheet("t", "xlsx", {
-      sheets: [{ conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
+      sheets: [{ conditionalFormats: [], validations: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] }],
       styles: [{}],
       dxfs: [],
       activeSheetIndex: 0,

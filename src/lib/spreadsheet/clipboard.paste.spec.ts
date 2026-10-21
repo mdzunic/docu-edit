@@ -25,7 +25,7 @@ import { cellStyle } from "./styles";
 const EN_US = SPREADSHEET_LOCALES["en-US"];
 
 function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
-  return { conditionalFormats: [], id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], validations: [], id, name, visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 function model(sheets: Sheet[], fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {

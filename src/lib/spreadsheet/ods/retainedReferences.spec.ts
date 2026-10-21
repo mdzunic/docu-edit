@@ -91,6 +91,7 @@ function tableXml(spec: Omit<TableSpec, "modelName" | "cells">): string {
 function grid(name: string, sourceXml: string, rows: Row[]): Sheet {
   return {
     conditionalFormats: [],
+    validations: [],
     id: `sheet:${name}`,
     name,
     visibility: "visible",

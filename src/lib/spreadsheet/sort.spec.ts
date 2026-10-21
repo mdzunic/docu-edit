@@ -21,7 +21,7 @@ import {
 } from "./sort";
 
 function sheet(fields: Partial<Sheet> = {}): Sheet {
-  return { conditionalFormats: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], validations: [], id: "s1", name: "Sheet1", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 function model(s: Sheet, fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {

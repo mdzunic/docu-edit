@@ -568,7 +568,7 @@ const EN_US = SPREADSHEET_LOCALES["en-US"];
 
 /** A sheet with nothing stored: 64 px columns, 15 pt rows. */
 function sheetOf(fields: Partial<Sheet>): Sheet {
-  return { conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], validations: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 /** serializeTable for a new sheet (no source): the table and the styles the

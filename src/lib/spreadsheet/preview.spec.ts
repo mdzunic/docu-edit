@@ -12,7 +12,7 @@ const EN_US = SPREADSHEET_LOCALES["en-US"];
 const DE_DE = SPREADSHEET_LOCALES["de-DE"];
 
 function sheet(name: string, rows: Row[], kind: Sheet["kind"] = "grid", partName?: string): Sheet {
-  return { conditionalFormats: [], id: name, name, visibility: "visible", kind, rows, partName, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
+  return { conditionalFormats: [], validations: [], id: name, name, visibility: "visible", kind, rows, partName, columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [] };
 }
 
 function model(sheets: Sheet[], activeSheetIndex = 0, opaque: SpreadsheetModel["opaque"] = []): SpreadsheetModel {

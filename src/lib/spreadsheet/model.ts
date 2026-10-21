@@ -43,6 +43,7 @@ import type { SpreadsheetLocaleTag } from "./numberFormat/locale";
 import type { SheetSelection } from "./selection";
 import type { SortState } from "./sort";
 import type { NamedCellStyle } from "./styles";
+import type { DataValidation } from "./validation";
 
 export type SpreadsheetFormat = "xlsx" | "ods" | "csv" | "tsv";
 export type PackageVariant = "macroEnabled" | "template" | "macroEnabledTemplate";
@@ -358,6 +359,13 @@ export interface Sheet {
    *  precedence is each rule's sheet-global `priority`. Copy-on-write: every
    *  command replaces the array and the formats it touches. */
   conditionalFormats: ConditionalFormat[];
+  // --- SPEC-130 (validation.ts is the normative source) ---
+  /** The sheet's data-validation rules, in source order (new ones
+   *  appended); the first rule covering a cell is its rule. Copy-on-write:
+   *  every command replaces the array and the rules it touches. */
+  validations: DataValidation[];
+  /** xlsx `dataValidations@disablePrompts="1"`: no input message shows. */
+  validationPromptsDisabled?: true;
 }
 
 /** A workbook's calculation settings (SPEC-120 "Calculation settings"), read
@@ -435,6 +443,11 @@ export interface SpreadsheetModel {
    *  array when it appends, never removes or reorders an entry, so every
    *  dxfId stays valid. */
   dxfs: Dxf[];
+  // --- SPEC-130 ---
+  /** ods: the `table:content-validation` elements no cell references,
+   *  verbatim (with their preceding whitespace), re-emitted by the writer
+   *  whenever it regenerates `table:content-validations`. */
+  odsOrphanValidations?: string[];
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or

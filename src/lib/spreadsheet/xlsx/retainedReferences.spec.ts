@@ -104,7 +104,7 @@ function book(specs: readonly SheetSpec[], parts: Readonly<Record<string, string
 }
 
 function sheetOf(id: string, name: string, partName: string, kind: Sheet["kind"] = "grid", extra: Partial<Sheet> = {}): Sheet {
-  return { conditionalFormats: [], id, name, partName, rows: [], columns: [], merges: [], visibility: "visible", kind, defaultColWidthPx: 64, defaultRowHeightPt: 15, ...extra };
+  return { conditionalFormats: [], validations: [], id, name, partName, rows: [], columns: [], merges: [], visibility: "visible", kind, defaultColWidthPx: 64, defaultRowHeightPt: 15, ...extra };
 }
 
 function textOf(opaque: readonly OpaquePart[], name: string): string {

@@ -641,7 +641,7 @@ const DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 
 /** A grid sheet with SPEC-117's defaults and `fields`. */
 function sheetOf(fields: Partial<Sheet> = {}): Sheet {
-  return { conditionalFormats: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
+  return { conditionalFormats: [], validations: [], id: "s", name: "S", visibility: "visible", kind: "grid", rows: [], columns: [], defaultColWidthPx: 64, defaultRowHeightPt: 15, merges: [], ...fields };
 }
 
 /** A save context with stub tables: a string cell is written with its

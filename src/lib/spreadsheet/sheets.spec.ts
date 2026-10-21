@@ -88,6 +88,7 @@ function gridSheet(name: string, cells: Record<string, CellSpec> = {}, extra: Pa
   }
   return {
     conditionalFormats: [],
+    validations: [],
     id: crypto.randomUUID(),
     name,
     visibility: "visible",
@@ -280,6 +281,7 @@ describe("createBlankWorkbook", () => {
           columns: [],
           merges: [],
           conditionalFormats: [],
+          validations: [],
           defaultColWidthPx: 64,
           defaultRowHeightPt: 15,
           dirty: true,

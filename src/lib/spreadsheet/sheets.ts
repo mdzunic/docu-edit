@@ -119,6 +119,7 @@ export function emptySheet(name: string): Sheet {
     columns: [],
     merges: [],
     conditionalFormats: [],
+    validations: [],
     defaultColWidthPx: DEFAULT_COL_WIDTH_PX,
     defaultRowHeightPt: DEFAULT_ROW_HEIGHT_PT,
     dirty: true,
