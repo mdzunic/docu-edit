@@ -25,7 +25,7 @@ import type { Sheet, SpreadsheetModel } from "../model";
 import { readSpreadsheetBytes } from "../open";
 import { deleteSheet, duplicateSheet, stripRetention } from "../sheets";
 import { applyStructuralEdit } from "../structure";
-import { readXlsxPersons, readXlsxSheetAnnotations } from "./annotations";
+import { readXlsxPersons, readXlsxSheetAnnotations, spliceWorksheetAnnotations } from "./annotations";
 import { placeholderAuthor, placeholderCommentXml, placeholderText, THREAD_PLACEHOLDER_PREAMBLE } from "./threadPlaceholder";
 import { defaultNoteAnchor, vmlDrawingXml, vmlNoteShapeFor } from "./vmlNoteGolden";
 import { writeXlsx } from "./writer";
@@ -330,6 +330,33 @@ describe("writing: the writer rules", () => {
     expect(await packageIntegrity(bytes)).toEqual([]);
     const reopened = await open(bytes);
     expect(fields(reopened.sheets[1]!)).toEqual(fields(model.sheets[1]!));
+  });
+});
+
+describe("writing: the worksheet splice and dangerous schemes", () => {
+  it("a javascript: link is kept in the model and the file — its relationship and <hyperlink> survive an annotation edit", async () => {
+    const { model } = await fixture();
+    expect(summaryOf(model).hyperlinks![4]!.target).toEqual({ kind: "url", href: "javascript:alert(1)" });
+    addNote(model, summaryOf(model).id, { row: 3, col: 3 }, "x", "You");
+    const written = await unzip(await writeXlsx(model));
+    expect(textOf(written, SUMMARY_RELS)).toContain(`<Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="javascript:alert(1)" TargetMode="External"/>`);
+    expect(textOf(written, F.sheets.Summary.partName)).toContain(`<hyperlink ref="B8" r:id="rId4" xr:uid="${F.hyperlinks[4].uid}"/>`);
+  });
+
+  it("splices into a prefixed worksheet with the root's prefixes, declaring r: and xr: locally when the root lacks them", () => {
+    const xml =
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
+      `<x:sheetData/><x:pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/><x:tableParts count="0"/></x:worksheet>`;
+    const link = { linkId: "{9C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E39}", range: { top: 0, left: 0, bottom: 1, right: 0 }, target: { kind: "url" as const, href: "https://x.example/" } };
+    const out = spliceWorksheetAnnotations(xml, [{ link, relId: "rId7" }], "rId8");
+    expect(out).toBe(
+      xml.replace(
+        "<x:pageMargins",
+        `<x:hyperlinks xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+          `<x:hyperlink ref="A1:A2" r:id="rId7" xr:uid="${link.linkId}"/></x:hyperlinks><x:pageMargins`,
+      ).replace("<x:tableParts", `<x:legacyDrawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId8"/><x:tableParts`),
+    );
+    expect(spliceWorksheetAnnotations(out, [], null)).toBe(xml);
   });
 });
 
