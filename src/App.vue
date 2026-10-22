@@ -135,6 +135,33 @@ body.is-print-preview .doc-field-shaded {
     left: auto !important;
   }
 
+  /* SPEC-136: printing a sheet job shows its off-screen pages (teleported
+     to <body>) and nothing else, each at its natural size on its own sheet
+     of paper — the injected @page rules size the paper, margin 0. */
+  body.is-sheet-printing > :not(.sheet-print-sheet) {
+    display: none !important;
+  }
+
+  body.is-sheet-printing .sheet-print-sheet {
+    position: static !important;
+    left: auto !important;
+  }
+
+  body.is-sheet-printing .sheet-print-page {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  body.is-sheet-printing .sheet-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  /* The preview's pages print at their natural size: its fit-to-area scale is dropped. */
+  body.is-sheet-print-preview .sheet-print-scaled {
+    transform: none !important;
+  }
+
   /* Page backgrounds are opt-in on paper (SPEC-074 AC-25), matching both
      source applications' "print background colours" setting. The page
      BORDER has no such switch — it always prints. */

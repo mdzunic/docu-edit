@@ -51,6 +51,13 @@
 // all notes (`sheet-menu-show-all-notes`, session-only).
 // SPEC-133 adds the Formulas menu after Format: Name Manager…
 // (`sheet-menu-name-manager`, Ctrl/Cmd+F3), which opens the Name Manager.
+// SPEC-136 adds File ▸ Page setup… (`sheet-menu-page-setup`), Print area ▸
+// (Set print area / Clear print area, `sheet-menu-set-print-area`,
+// `sheet-menu-clear-print-area`) and Print… (`sheet-menu-print`, Ctrl/Cmd+P)
+// before Close; View ▸ Page breaks (`sheet-menu-page-breaks`, a
+// session-only check item) after Freeze ▸; and, ending the Insert menu after
+// a separator, Page break, Remove page break and Reset all page breaks
+// (`sheet-menu-insert-page-break`, `-remove-page-break`, `-reset-page-breaks`).
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -95,6 +102,7 @@ const nameManagerShortcut = shortcutLabel("sheet.nameManager", isMacPlatform(), 
 const linkShortcut = shortcutLabel("sheet.insertLink", isMacPlatform(), SHEET_SHORTCUTS);
 const noteShortcut = shortcutLabel("sheet.note", isMacPlatform(), SHEET_SHORTCUTS);
 const commentShortcut = shortcutLabel("sheet.newComment", isMacPlatform(), SHEET_SHORTCUTS);
+const printShortcut = shortcutLabel("sheet.print", isMacPlatform(), SHEET_SHORTCUTS);
 // SPEC-128: the Data menu's sorts.
 const SORTS = [
   { label: "Sort A to Z", command: SHEET_MENU_COMMANDS.sortAscending, testid: "sheet-menu-sort-asc" },
@@ -163,6 +171,37 @@ function arrangeDisabled(end = "front") {
         :disabled="s.copyDisabledReason !== ''"
         :reason="s.copyDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.downloadCopy)"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Page setup…"
+        testid="sheet-menu-page-setup"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.pageSetup)"
+      />
+      <MenuSubmenu
+        label="Print area"
+        testid="sheet-menu-print-area"
+      >
+        <MenuItem
+          label="Set print area"
+          testid="sheet-menu-set-print-area"
+          :disabled="!s.hasGrid"
+          @select="emit('command', SHEET_MENU_COMMANDS.setPrintArea)"
+        />
+        <MenuItem
+          label="Clear print area"
+          testid="sheet-menu-clear-print-area"
+          :disabled="!s.hasGrid || !s.hasPrintArea"
+          @select="emit('command', SHEET_MENU_COMMANDS.clearPrintArea)"
+        />
+      </MenuSubmenu>
+      <MenuItem
+        label="Print…"
+        icon="print"
+        testid="sheet-menu-print"
+        :shortcut="printShortcut"
+        @select="emit('command', SHEET_MENU_COMMANDS.print)"
       />
       <hr class="menu-separator">
       <MenuItem
@@ -287,6 +326,13 @@ function arrangeDisabled(end = "front") {
           @select="emit('command', SHEET_MENU_COMMANDS.unfreeze)"
         />
       </MenuSubmenu>
+      <MenuCheckItem
+        label="Page breaks"
+        testid="sheet-menu-page-breaks"
+        :checked="s.pageBreaks"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.pageBreaks)"
+      />
       <hr class="menu-separator">
       <MenuCheckItem
         label="Comments"
@@ -358,6 +404,25 @@ function arrangeDisabled(end = "front") {
         :disabled="!s.canComment"
         :reason="s.commentDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.insertComment)"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Page break"
+        testid="sheet-menu-insert-page-break"
+        :disabled="!s.canInsertPageBreak"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertPageBreak)"
+      />
+      <MenuItem
+        label="Remove page break"
+        testid="sheet-menu-remove-page-break"
+        :disabled="!s.canRemovePageBreak"
+        @select="emit('command', SHEET_MENU_COMMANDS.removePageBreak)"
+      />
+      <MenuItem
+        label="Reset all page breaks"
+        testid="sheet-menu-reset-page-breaks"
+        :disabled="!s.canResetPageBreaks"
+        @select="emit('command', SHEET_MENU_COMMANDS.resetPageBreaks)"
       />
     </template>
 

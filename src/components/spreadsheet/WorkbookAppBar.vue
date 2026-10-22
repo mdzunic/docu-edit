@@ -12,16 +12,25 @@ import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import UiIconButton from "../ui/UiIconButton.vue";
 import SpreadsheetAppBar from "./SpreadsheetAppBar.vue";
+import { asSheetPrinting } from "../../views/spreadsheet/useSheetPrint";
 
 const props = defineProps({
   /** useWorkbookLoad's return. */
   book: { type: Object, required: true },
   /** useWorkbookEditing's return. */
   editing: { type: Object, required: true },
+  /** SPEC-136: the view's SheetPrinting (the download menu's "PDF (.pdf)…"). */
+  printing: { type: Object, default: null },
 });
 
 const book = computed(() => asWorkbookBook(props.book));
 const editing = computed(() => asWorkbookEditing(props.editing));
+
+function exportPdf() {
+  if (props.printing) {
+    void asSheetPrinting(props.printing).pdf.exportPdf();
+  }
+}
 </script>
 
 <template>
@@ -43,6 +52,7 @@ const editing = computed(() => asWorkbookEditing(props.editing));
     @download-copy-ods="editing.download.downloadCopyOds()"
     @download-copy-csv="editing.download.downloadSheetCopy('csv')"
     @download-copy-tsv="editing.download.downloadSheetCopy('tsv')"
+    @export-pdf="exportPdf()"
     @close="book.close()"
   />
 </template>

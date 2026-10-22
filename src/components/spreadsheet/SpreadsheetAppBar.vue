@@ -28,7 +28,7 @@ const props = defineProps({
   copyOdsLabel: { type: String, default: "" },
 });
 
-const emit = defineEmits(["undo", "redo", "download", "download-copy", "download-copy-ods", "download-copy-csv", "download-copy-tsv", "close"]);
+const emit = defineEmits(["undo", "redo", "download", "download-copy", "download-copy-ods", "download-copy-csv", "download-copy-tsv", "export-pdf", "close"]);
 </script>
 
 <template>
@@ -58,6 +58,7 @@ const emit = defineEmits(["undo", "redo", "download", "download-copy", "download
         @download-copy-ods="emit('download-copy-ods')"
         @download-copy-csv="emit('download-copy-csv')"
         @download-copy-tsv="emit('download-copy-tsv')"
+        @export-pdf="emit('export-pdf')"
       />
     </template>
     <UiIconButton

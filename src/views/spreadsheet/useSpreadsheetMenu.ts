@@ -25,7 +25,9 @@
 // link dialog (useWorkbookEditing's links); Insert ▸ Note and View ▸ Show all
 // notes are the notes' (useWorkbookEditing's notes), Insert ▸ Comment and
 // View ▸ Comments the comments pane's (its comments), and the bar's state
-// says which apply and what is checked. Later specs append commands here.
+// says which apply and what is checked. SPEC-136: File ▸ Page setup…,
+// Print… and Print area ▸, View ▸ Page breaks and Insert ▸ the page breaks
+// are `printing`'s (usePageSetup, useSheetPrint). Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -33,6 +35,7 @@ import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { FillHandle } from "./useFillHandle";
 import type { Names } from "./useNames";
+import type { SheetPrinting } from "./useSheetPrint";
 import type { Recalc } from "./useRecalc";
 import type { SheetClipboard } from "./useSheetClipboard";
 import type { SheetTables } from "./useSheetTables";
@@ -66,6 +69,8 @@ export interface SpreadsheetMenuDeps {
   tables?: Pick<SheetTables, "openCreate">;
   /** SPEC-133: Formulas ▸ Name Manager…. */
   names?: Pick<Names, "openManager">;
+  /** SPEC-136: page setup, printing, page breaks and the print area. */
+  printing?: Pick<SheetPrinting, "pageSetup" | "print">;
 }
 
 /** SPEC-128's Data menu commands → useSortFilter's. */
@@ -144,6 +149,11 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       linkDisabledReason: deps.editing?.links?.linkDisabledReason.value ?? "",
       commentsOpen: deps.editing?.comments?.isOpen.value === true,
       showAllNotes: deps.editing?.notes?.showAll.value === true,
+      pageBreaks: deps.printing?.pageSetup.pageBreaks.shown.value === true,
+      canInsertPageBreak: deps.printing?.pageSetup.state.value.canInsert === true,
+      canRemovePageBreak: deps.printing?.pageSetup.state.value.canRemove === true,
+      canResetPageBreaks: deps.printing?.pageSetup.state.value.canReset === true,
+      hasPrintArea: deps.printing?.pageSetup.state.value.hasPrintArea === true,
     }),
   );
 
@@ -276,6 +286,30 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.showAllNotes:
         deps.editing?.notes?.toggleShowAll();
+        break;
+      case SHEET_MENU_COMMANDS.pageSetup:
+        deps.printing?.pageSetup.dialog.show();
+        break;
+      case SHEET_MENU_COMMANDS.print:
+        deps.printing?.print.open();
+        break;
+      case SHEET_MENU_COMMANDS.setPrintArea:
+        deps.printing?.pageSetup.setArea();
+        break;
+      case SHEET_MENU_COMMANDS.clearPrintArea:
+        deps.printing?.pageSetup.clearArea();
+        break;
+      case SHEET_MENU_COMMANDS.pageBreaks:
+        deps.printing?.pageSetup.pageBreaks.toggle();
+        break;
+      case SHEET_MENU_COMMANDS.insertPageBreak:
+        deps.printing?.pageSetup.insertBreak();
+        break;
+      case SHEET_MENU_COMMANDS.removePageBreak:
+        deps.printing?.pageSetup.removeBreak();
+        break;
+      case SHEET_MENU_COMMANDS.resetPageBreaks:
+        deps.printing?.pageSetup.resetBreaks();
         break;
       default:
         break;

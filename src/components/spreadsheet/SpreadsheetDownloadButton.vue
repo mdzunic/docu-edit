@@ -23,7 +23,7 @@ const props = defineProps({
   copyOdsLabel: { type: String, default: "" },
 });
 
-const emit = defineEmits(["download", "download-copy", "download-copy-ods", "download-copy-csv", "download-copy-tsv"]);
+const emit = defineEmits(["download", "download-copy", "download-copy-ods", "download-copy-csv", "download-copy-tsv", "export-pdf"]);
 
 const open = ref(false);
 const caret = useTemplateRef("caret");
@@ -64,7 +64,7 @@ function step(event = new KeyboardEvent("keydown")) {
 /** Closes the menu and emits the item's event. */
 function choose(event = "download-copy") {
   open.value = false;
-  if (event === "download-copy-ods" || event === "download-copy-csv" || event === "download-copy-tsv") {
+  if (event === "download-copy-ods" || event === "download-copy-csv" || event === "download-copy-tsv" || event === "export-pdf") {
     emit(event);
   } else {
     emit("download-copy");
@@ -133,6 +133,17 @@ function choose(event = "download-copy") {
         @click="choose('download-copy-ods')"
       >
         {{ props.copyOdsLabel }}
+      </button>
+      <!-- SPEC-136: the active sheet as a PDF (useSheetPdfExport). -->
+      <button
+        type="button"
+        role="menuitem"
+        class="download-menu-item"
+        data-testid="spreadsheet-export-pdf"
+        tabindex="-1"
+        @click="choose('export-pdf')"
+      >
+        PDF (.pdf)…
       </button>
       <button
         type="button"

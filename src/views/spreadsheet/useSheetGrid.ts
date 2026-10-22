@@ -61,6 +61,7 @@ import { useSheetCells } from "./useSheetCells";
 import { useSheetOverlays } from "./useSheetOverlays";
 import { useSheetPointer } from "./useSheetPointer";
 import type { SheetSelectionController } from "./useSheetSelection";
+import type { SheetPrinting } from "./useSheetPrint";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, useSheetViewport } from "./useSheetViewport";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
@@ -107,6 +108,8 @@ export interface SheetGridContext {
   drawings?: SheetDrawings;
   /** SPEC-135: notes — indicators, popovers, boxes, the editor; absent = none. */
   notes?: CellNotes;
+  /** SPEC-136: page setup, the print preview and PDF export; absent = none. */
+  printing?: SheetPrinting;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */

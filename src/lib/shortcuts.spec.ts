@@ -260,6 +260,7 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.note",
   "sheet.newComment",
   "sheet.insertLink",
+  "sheet.print",
 ];
 
 /** The keydown a binding describes on one platform, for sweeping a whole
@@ -299,7 +300,7 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's twenty-five commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter, SPEC-134's Go to under Navigation, SPEC-135's note and New comment under Notes and comments and its Insert link under Links — one binding each but paste special's and Go to's two", () => {
+  it("declares the sheet's twenty-six commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter, SPEC-134's Go to under Navigation, SPEC-135's note and New comment under Notes and comments and its Insert link under Links, SPEC-136's Print under Printing — one binding each but paste special's and Go to's two", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
     const pasteAndFill = ["sheet.pasteSpecial", "sheet.fillDown", "sheet.fillRight"];
     const sortAndFilter = ["sheet.toggleFilter", "sheet.reapplyFilter"];
@@ -316,6 +317,8 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
               ? "Notes and comments"
             : definition.id === "sheet.insertLink"
               ? "Links"
+            : definition.id === "sheet.print"
+              ? "Printing"
             : pasteAndFill.includes(definition.id)
               ? "Paste and fill"
               : sortAndFilter.includes(definition.id)
@@ -559,6 +562,8 @@ describe("the text registry after SPEC-123", () => {
       ["sheet.fillRight", "paragraph.alignRight"],
       ["sheet.newComment", "insert.comment"],
       ["sheet.insertLink", "app.commandPalette"],
+      // SPEC-136: Ctrl/Cmd+P is Print on both sides.
+      ["sheet.print", "file.print"],
     ]);
     for (const { isMac, name } of PLATFORMS) {
       for (const definition of sheetShortcutDefinitions(isMac)) {

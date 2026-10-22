@@ -162,27 +162,29 @@ function sameMargins(a: SheetMargins, b: SheetMargins): boolean {
 }
 
 function sortedUnique(values: readonly number[]): number[] {
-  return [...new Set(values.filter((value) => Number.isInteger(value) && value > 0))].sort((a, b) => a - b);
+  return [...new Set(values.filter((value) => Number.isInteger(value) && value > 0))].toSorted((a, b) => a - b);
+}
+
+/** A header/footer pair without its empty sections. */
+function pair(value: SheetHeaderFooter["odd"] | undefined): SheetHeaderFooter["odd"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const out: SheetHeaderFooter["odd"] = {};
+  for (const key of ["header", "footer"] as const) {
+    const sections = value[key];
+    if (sections === undefined) {
+      continue;
+    }
+    const kept = Object.fromEntries(Object.entries(sections).filter(([, text]) => text !== undefined && text !== ""));
+    if (Object.keys(kept).length > 0) {
+      out[key] = kept;
+    }
+  }
+  return out;
 }
 
 function normalizeHeaderFooter(hf: SheetHeaderFooter): SheetHeaderFooter | undefined {
-  const pair = (value: SheetHeaderFooter["odd"] | undefined): SheetHeaderFooter["odd"] | undefined => {
-    if (value === undefined) {
-      return undefined;
-    }
-    const out: SheetHeaderFooter["odd"] = {};
-    for (const key of ["header", "footer"] as const) {
-      const sections = value[key];
-      if (sections === undefined) {
-        continue;
-      }
-      const kept = Object.fromEntries(Object.entries(sections).filter(([, text]) => text !== undefined && text !== ""));
-      if (Object.keys(kept).length > 0) {
-        out[key] = kept;
-      }
-    }
-    return out;
-  };
   const next: SheetHeaderFooter = { odd: pair(hf.odd) ?? {} };
   const even = pair(hf.even);
   const first = pair(hf.first);

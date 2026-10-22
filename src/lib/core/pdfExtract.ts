@@ -63,7 +63,18 @@ export interface ExtractOptions {
    * handout frames, note lines). Absent (the default) extracts no rects and
    * emits no `rects` key at all. */
   rectSelector?: string;
+  /** SPEC-136: the elements whose computed background and per-edge borders
+   * become cell fill and border paths (default DEFAULT_CELL_SELECTOR, the
+   * text product's table cells). */
+  cellSelector?: string;
+  /** SPEC-136: text inside an element matching this selector is clipped to
+   * that element's box — a character whose box extends past it is dropped,
+   * never drawn in part. Absent (the default): no clipping. */
+  clipSelector?: string;
 }
+
+/** The cell-chrome loop's default elements (SPEC-076). */
+export const DEFAULT_CELL_SELECTOR = "td.doc-table-cell";
 
 /** Parses a computed CSS color into 0..1 rgb. Only the rgb()/rgba() forms
  * computed styles produce are handled; anything else renders black. */
@@ -331,6 +342,8 @@ function parseDashArray(value: string): number[] {
 interface LineFragment {
   text: string;
   rect: DOMRect;
+  /** The fragment's first UTF-16 offset in its text node. */
+  start: number;
 }
 
 function visibleRects(range: Range): DOMRect[] {
@@ -368,11 +381,54 @@ function lineFragmentsOf(node: Text): LineFragment[] {
     if (rects.length > 0) {
       const rect =
         rects.length === 1 ? rects[0] : (range.getBoundingClientRect() as DOMRect);
-      fragments.push({ text: textContent.slice(pos, lo), rect });
+      fragments.push({ text: textContent.slice(pos, lo), rect, start: pos });
     }
     pos = lo;
   }
   return fragments;
+}
+
+/** SPEC-136's clip: the part of a line fragment whose characters lie
+ * wholly inside `box` (horizontally, half a pixel of tolerance) — the first
+ * such run, measured character by character; null when none does. A
+ * fragment inside the box is returned as it is. */
+function clippedFragment(node: Text, fragment: LineFragment, box: DOMRect): LineFragment | null {
+  const TOLERANCE = 0.5;
+  if (fragment.rect.left >= box.left - TOLERANCE && fragment.rect.right <= box.right + TOLERANCE) {
+    return fragment;
+  }
+  const doc = node.ownerDocument;
+  const range = doc.createRange();
+  let first = -1;
+  let last = -1;
+  let left = 0;
+  let right = 0;
+  let index = 0;
+  for (const char of Array.from(fragment.text)) {
+    const start = fragment.start + index;
+    index += char.length;
+    range.setStart(node, start);
+    range.setEnd(node, start + char.length);
+    const rect = range.getBoundingClientRect();
+    const inside = rect.left >= box.left - TOLERANCE && rect.right <= box.right + TOLERANCE;
+    if (inside && last === -1) {
+      if (first === -1) {
+        first = start;
+        left = rect.left;
+      }
+      right = rect.right;
+    } else if (!inside && first !== -1) {
+      last = start;
+    }
+  }
+  range.detach?.();
+  if (first === -1) {
+    return null;
+  }
+  const end = last === -1 ? fragment.start + fragment.text.length : last;
+  const text = node.data.slice(first, end);
+  const rect = new DOMRect(left, fragment.rect.top, Math.max(0, right - left), fragment.rect.height);
+  return { text, rect, start: first };
 }
 
 /** Extracts everything the PDF needs from one realized page element. The
@@ -467,8 +523,11 @@ export function extractPageContent(
     const italic = style.fontStyle.includes("italic") || style.fontStyle.includes("oblique");
     const face = faceKeyFor(style.fontFamily, bold, italic);
     const color = parseCssColor(style.color);
-    for (const fragment of lineFragmentsOf(node as Text)) {
-      if (fragment.text.trim().length === 0) {
+    const clip = options.clipSelector === undefined ? null : parent.closest(options.clipSelector);
+    const clipBox = clip === null ? null : clip.getBoundingClientRect();
+    for (const whole of lineFragmentsOf(node as Text)) {
+      const fragment = clipBox === null ? whole : clippedFragment(node as Text, whole, clipBox);
+      if (fragment === null || fragment.text.trim().length === 0) {
         continue;
       }
       const baselinePx =
@@ -583,7 +642,7 @@ export function extractPageContent(
   // before the connector paths so connectors stay painted above tables.
   const cellFills: PdfPathItem[] = [];
   const cellBorders: PdfPathItem[] = [];
-  for (const element of Array.from(pageEl.querySelectorAll("td.doc-table-cell"))) {
+  for (const element of Array.from(pageEl.querySelectorAll(options.cellSelector ?? DEFAULT_CELL_SELECTOR))) {
     if (element.closest(EXCLUDED_SELECTOR)) {
       continue;
     }

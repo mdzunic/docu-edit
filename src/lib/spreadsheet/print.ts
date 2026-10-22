@@ -85,6 +85,9 @@ export interface SheetPrintPage {
   footer?: HeaderFooterSections;
   /** Which of the sheet's print ranges the page belongs to (0-based). */
   area: number;
+  /** With printHeadings: the row-number column's width and the column-letter
+   * row's height, pt at 100%. */
+  headingsPt?: { width: number; height: number };
 }
 
 export interface SheetPrintJob {
@@ -505,6 +508,9 @@ export function paginateSheet(model: Pick<SpreadsheetModel, "styles" | "names">,
         originPt,
         area,
       };
+      if (setup?.printHeadings) {
+        page.headingsPt = { width: geometry.headingW, height: geometry.headingH };
+      }
       if (pair.header !== undefined) {
         page.header = { ...pair.header };
       }
@@ -560,7 +566,7 @@ export function autoBreaks(job: SheetPrintJob, sheetId: string): { rows: number[
       cols.add(page.cols[0]!);
     }
   }
-  return { rows: [...rows].sort((a, b) => a - b), cols: [...cols].sort((a, b) => a - b) };
+  return { rows: [...rows].toSorted((a, b) => a - b), cols: [...cols].toSorted((a, b) => a - b) };
 }
 
 export interface PageBreakLine {

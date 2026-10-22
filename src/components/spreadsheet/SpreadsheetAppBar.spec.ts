@@ -87,7 +87,8 @@ describe("SpreadsheetAppBar (SPEC-121)", () => {
     await flushPromises();
     expect(wrapper.find('[data-testid="spreadsheet-download-copy-ods"]').exists()).toBe(false);
     const items = wrapper.findAll('[role="menuitem"]').map((item) => item.attributes("data-testid"));
-    expect(items).toEqual(["spreadsheet-download-copy", "spreadsheet-download-copy-csv", "spreadsheet-download-copy-tsv"]);
+    // SPEC-136: "PDF (.pdf)…" sits before the sheet copies.
+    expect(items).toEqual(["spreadsheet-download-copy", "spreadsheet-export-pdf", "spreadsheet-download-copy-csv", "spreadsheet-download-copy-tsv"]);
     expect(wrapper.get('[data-testid="spreadsheet-download-copy-csv"]').text()).toBe("Download a copy as CSV (current sheet)");
     expect(wrapper.get('[data-testid="spreadsheet-download-copy-tsv"]').text()).toBe("Download a copy as TSV (current sheet)");
     await wrapper.get('[data-testid="spreadsheet-download-copy-csv"]').trigger("click");
