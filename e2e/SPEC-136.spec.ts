@@ -144,6 +144,69 @@ test("spec136-print.xlsx: page setup, the preview, a break, PDF, the workbook sc
   await expect(page.locator('[data-testid="sheet-page-break-line"][data-axis="row"][data-index="35"]')).toHaveAttribute("data-kind", "manual");
 });
 
+test("spec136-print.xlsx in one session: each preview shows the sheet on show and the model as it is now — a link typed after the first one reaches the PDF — the page-break lines follow a cell, and an empty sheet has nothing to print (AC-31, AC-36, AC-38, AC-49, AC-56)", async ({ page }) => {
+  await open(page, join(fixtures, "spec136-print.xlsx"));
+  const tab = (name: string) => page.getByTestId("sheet-tab").filter({ hasText: name });
+  const count = page.getByTestId("print-page-count");
+  const printCell = (ref: string) => page.locator(`[data-testid="sheet-print-cell"][data-ref="${ref}"]`);
+
+  // AC-31: a tab switch between previews changes the sheet they print.
+  await openPreview(page);
+  await expect(count).toHaveText("3 pages");
+  await page.getByTestId("print-preview-close").click();
+  await tab("Notes").click();
+  await openPreview(page);
+  await expect(count).toHaveText("1 page");
+  await expect(printCell("A1")).toHaveText("Prepared by");
+  await page.getByTestId("print-preview-close").click();
+  await tab("Budget").click();
+  await openPreview(page);
+  await expect(count).toHaveText("3 pages");
+  await expect(printCell("A1").first()).toHaveText("Account");
+  await expect(page.getByTestId("sheet-print-cell").filter({ hasText: "Prepared by" })).toHaveCount(0);
+  await page.getByTestId("print-preview-close").click();
+
+  // AC-38, AC-49: a HYPERLINK() typed after those previews prints as a link and becomes a /Link annotation.
+  await clickCell(page, "H2");
+  await page.keyboard.type('=HYPERLINK("https://example.com/budget","Site")');
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="sheet-cell"][data-ref="H2"]')).toHaveText("Site");
+  await openPreview(page);
+  const link = printCell("H2").locator("a[data-doc-link]");
+  await expect(link).toHaveText("Site");
+  await expect(link).toHaveAttribute("href", "https://example.com/budget");
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("sheet-print-download-pdf").click();
+  const pdf = pdfText(readFileSync(await (await downloadPromise).path()));
+  expect(pdf).toContain("/Subtype /Link");
+  expect(pdf).toContain("/URI (https://example.com/budget)");
+  await page.getByTestId("print-preview-close").click();
+
+  // AC-56: the lines closing the preview turned on follow the model — the
+  // print area cleared (a name), then a value typed below the data.
+  const rowLine = (index: number) => page.locator(`[data-testid="sheet-page-break-line"][data-axis="row"][data-index="${index}"]`);
+  await expect(page.locator('[data-testid="sheet-page-break-line"][data-axis="row"]')).toHaveCount(2);
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("sheet-menu-print-area").click();
+  await page.getByTestId("sheet-menu-clear-print-area").click();
+  await expect(page.getByTestId("sheet-menu-print-area-flyout")).toBeHidden();
+  await expect(rowLine(89)).toHaveCount(0);
+  await page.getByTestId("name-box").fill("A120");
+  await page.getByTestId("name-box").press("Enter");
+  await page.keyboard.type("Below the data");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('[data-testid="sheet-cell"][data-ref="A120"]')).toHaveText("Below the data");
+  await expect(rowLine(89)).toHaveAttribute("data-kind", "auto");
+
+  // AC-36: a new sheet is empty — nothing to print, and Print is off.
+  await page.getByTestId("sheet-add").click();
+  await openPreview(page);
+  await expect(count).toHaveText("0 pages");
+  await expect(page.getByTestId("print-no-pages")).toHaveText("This sheet has nothing to print.");
+  await expect(page.getByTestId("print-confirm")).toBeDisabled();
+  await expect(page.getByTestId("sheet-print-page")).toHaveCount(0);
+});
+
 test("spec136-print.ods: the read half, and a header edit on Budget leaves Notes' master page untouched (AC-83)", async ({ page }) => {
   const source = await unzip(new Uint8Array(readFileSync(join(fixtures, "spec136-print.ods"))));
   const sourceStyles = new TextDecoder().decode(source.get("styles.xml"));
