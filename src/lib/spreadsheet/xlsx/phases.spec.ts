@@ -128,7 +128,7 @@ describe("readXlsxIndexedColors — phase 1's palette", () => {
     for (const name of fixtures) {
       const parts = await unzip(new Uint8Array(readFileSync(join(FIXTURES, name))));
       for (const [part, bytes] of parts) {
-        if (/styles\.xml$/.test(part)) {
+        if (part.endsWith("styles.xml")) {
           const text = partText(bytes);
           expect(readXlsxIndexedColors(text), `${name} ${part}`).toEqual(readXlsxStyles(text, undefined).indexedColors);
         }
