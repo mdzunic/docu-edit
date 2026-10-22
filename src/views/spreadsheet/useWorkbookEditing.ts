@@ -67,6 +67,8 @@ export interface WorkbookEditingDeps {
     sheetsChanged(): void;
     /** SPEC-126: shows a re-read model in place of the one on show. */
     replace(model: SpreadsheetModel): void;
+    /** SPEC-137: the workbook's storage came back incomplete — read-only. */
+    storageIncomplete?: Readonly<Ref<boolean>>;
   };
   /** `update`: SPEC-135's comments select a thread's cell on its sheet. */
   viewState: Pick<SheetViewState, "syncInto" | "update">;
@@ -78,7 +80,10 @@ export interface WorkbookEditingDeps {
 }
 
 export function useWorkbookEditing(deps: WorkbookEditingDeps) {
+  // SPEC-137: no edit reaches a workbook whose storage came back incomplete.
+  const readOnly = (): boolean => deps.book.storageIncomplete?.value === true;
   const undo = useSpreadsheetUndo({
+    readOnly,
     model: deps.book.workbook,
     recalc: (changed, done) => deps.recalc.edit(changed, done),
     settle: () => deps.recalc.settle(),
@@ -116,6 +121,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     locale: deps.locale,
     syncViewState: (model) => deps.viewState.syncInto(model),
     entryGate: entryGateOf(validation),
+    readOnly,
   });
   editor = cell;
   /** SpreadsheetAppBar's undo/redo and split-download props, bound as one

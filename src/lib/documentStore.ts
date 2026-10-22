@@ -10,7 +10,6 @@ import type { PresentationModel } from "./presentation/model";
 import type { MediaModel } from "./media/model";
 import type { PackageVariant, Row, SheetPreview, SpreadsheetModel } from "./spreadsheet/model";
 import { spreadsheetLocaleFor } from "./spreadsheet/numberFormat/locale";
-import { upgradeSpreadsheetModel } from "./spreadsheet/open";
 import { SPREADSHEET_READER_VERSION } from "./spreadsheet/readerVersion";
 import { buildPreview } from "./spreadsheet/preview";
 import type { OpenedFile } from "./openDocument";
@@ -18,7 +17,33 @@ import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } 
 import { PAPER_SIZES } from "./core/pageSetup";
 import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
 import { normaliseShapeFill } from "./core/shapes";
-import { deleteRecord, getRecord, loadAllRecords, putRecord } from "./idb";
+import { deleteRecord, getRecord, loadAllRecords, putRecord, writeBatch, type WriteBatchOp } from "./idb";
+import {
+  emptyLatch,
+  joinWorkbook,
+  latchMatches,
+  legacySheetRowsKey,
+  legacyWorkbookShell,
+  planWorkbookWrite,
+  sheetRowsChunkKey,
+  SHEET_ROWS_KEY_PREFIX,
+  SHEET_SOURCE_KEY_PREFIX,
+  sourceLatchOf,
+  workbookRowsRange,
+  workbookShell,
+  workbookSourceKey,
+  workbookStoredBytes,
+  type SheetRowsChunkRecord,
+  type SheetRowsRecord,
+  type SheetStoreManifest,
+  type WorkbookLatch,
+  type WorkbookSourceRecord,
+} from "./workbookStorage";
+
+// SPEC-137's storage layout lives in workbookStorage.ts; the store re-exports
+// its names so callers keep one import.
+export { SHEET_ROWS_CHUNK, SHEET_ROWS_KEY_PREFIX, SHEET_SOURCE_KEY_PREFIX } from "./workbookStorage";
+export type { SheetRowsChunkRecord, SheetRowsRecord, SheetStoreManifest, WorkbookSourceRecord } from "./workbookStorage";
 import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
 import type { CaretPosition } from "./textEditing";
 
@@ -68,6 +93,11 @@ export interface StoredDocumentRecord {
    * set is excluded from listDocuments() and from every enumeration; it keeps
    * its id and content, so restoreDocument returns it intact. */
   trashedAt?: number;
+  /** A workbook shell's manifest (SPEC-137 "The storage layout"): the chunk
+   * records storage holds per sheet and the estimated stored bytes. Absent
+   * on a workbook never persisted and on a SPEC-116-era record (whose rows
+   * live in per-sheet records and sources inline — migrated on load). */
+  sheetStore?: SheetStoreManifest;
 }
 
 /** The autosave journal (SPEC-010): written on the 2 s / 30 s cadence,
@@ -103,23 +133,17 @@ export interface MediaRecord {
   media: MediaPart[];
 }
 
-/** One workbook sheet's rows, persisted as their own record (SPEC-116): the
- * shell record stores every sheet with `rows: []`, and each sheet's rows go
- * here — written only when that array's reference changed since the last
- * write (see persistSheetRows). The model's copy-on-write invariant (an edit
- * replaces the rows array it touches and nothing else) is what makes the
- * reference check sound, so a rename, a star or a library listing never
- * structured-clones a cell. */
-export interface SheetRowsRecord {
-  /** The IndexedDB key: SHEET_ROWS_KEY_PREFIX + docId + ":" + sheetId. */
-  id: string;
-  docId: string;
-  sheetId: string;
-  rows: Row[];
-}
-
-/** Everything the documents object store can hold. */
-export type PersistedRecord = StoredDocumentRecord | DraftRecord | MediaRecord | SheetRowsRecord;
+/** Everything the documents object store can hold. A workbook (SPEC-137) is
+ * a slim shell, one SheetRowsChunkRecord per 512-row band of each sheet and
+ * one WorkbookSourceRecord; a SPEC-116-era workbook still awaiting migration
+ * has a SheetRowsRecord per sheet. */
+export type PersistedRecord =
+  | StoredDocumentRecord
+  | DraftRecord
+  | MediaRecord
+  | SheetRowsRecord
+  | SheetRowsChunkRecord
+  | WorkbookSourceRecord;
 
 export const DRAFT_KEY_PREFIX = "draft:";
 export const MEDIA_KEY_PREFIX = "media:";
@@ -130,7 +154,6 @@ export const MEDIA_KEY_PREFIX = "media:";
  * shared the committed media record, a draft that deleted an image would
  * already have destroyed the committed copy of it. */
 export const DRAFT_MEDIA_KEY_PREFIX = "draftmedia:";
-export const SHEET_ROWS_KEY_PREFIX = "sheetrows:";
 
 function draftKey(docId: string): string {
   return DRAFT_KEY_PREFIX + docId;
@@ -142,10 +165,6 @@ function mediaKey(docId: string): string {
 
 function draftMediaKey(docId: string): string {
   return DRAFT_MEDIA_KEY_PREFIX + docId;
-}
-
-function sheetRowsKey(docId: string, sheetId: string): string {
-  return `${SHEET_ROWS_KEY_PREFIX}${docId}:${sheetId}`;
 }
 
 export function isDraftRecord(record: PersistedRecord): record is DraftRecord {
@@ -160,8 +179,17 @@ export function isDraftMediaRecord(record: PersistedRecord): record is MediaReco
   return record.id.startsWith(DRAFT_MEDIA_KEY_PREFIX);
 }
 
-export function isSheetRowsRecord(record: PersistedRecord): record is SheetRowsRecord {
+/** A workbook rows record: a chunk (SPEC-137) or a SPEC-116 per-sheet one. */
+export function isSheetRowsRecord(record: PersistedRecord): record is SheetRowsRecord | SheetRowsChunkRecord {
   return record.id.startsWith(SHEET_ROWS_KEY_PREFIX);
+}
+
+export function isSheetRowsChunkRecord(record: PersistedRecord): record is SheetRowsChunkRecord {
+  return isSheetRowsRecord(record) && "chunk" in record && typeof record.chunk === "number";
+}
+
+export function isWorkbookSourceRecord(record: PersistedRecord): record is WorkbookSourceRecord {
+  return record.id.startsWith(SHEET_SOURCE_KEY_PREFIX);
 }
 
 /** Row-level metadata the library list renders; no document content. */
@@ -279,15 +307,6 @@ function persistMedia(docId: string, media: MediaPart[] | undefined): Promise<vo
 // The draft's own copy of the latch — see persistDraftMedia.
 const lastDraftPersistedMedia = new Map<string, MediaPart[] | undefined>();
 
-// The rows array last written for each sheet (keyed by its record id), so
-// persistSheetRows skips every sheet whose rows reference is unchanged — the
-// same latch discipline as lastPersistedMedia, seeded from storage on load
-// only for records that actually exist there.
-const lastPersistedRows = new Map<string, Row[]>();
-// Per document, the sheet-rows record ids stored (or being written) — so the
-// next persist deletes the record of a sheet that no longer exists, and
-// deleteDocument finds every one.
-const sheetRowsKeys = new Map<string, Set<string>>();
 
 /** The draft-flavoured persistMedia (SPEC-047 AC-15): writes the draft's
  * media under DRAFT_MEDIA_KEY_PREFIX so an autosave can never overwrite the
@@ -345,14 +364,10 @@ function rejoinMedia(model: StoredModel, media: MediaPart[] | undefined): Stored
   return model;
 }
 
-/** The shell record's model: media stripped (stripMedia), and for a workbook
- * every sheet's rows emptied — they live in their own SheetRowsRecords. */
+/** The shell record's model: media stripped (stripMedia). A workbook's
+ * shell goes through writeWorkbook instead (SPEC-137). */
 function shellModel<M extends StoredModel>(model: M): M {
-  const shell = stripMedia(model);
-  if (isSpreadsheetModel(shell)) {
-    shell.sheets = shell.sheets.map((sheet) => ({ ...sheet, rows: [] }));
-  }
-  return shell;
+  return stripMedia(model);
 }
 
 /** A workbook's card preview in the user's number locale (SPEC-118: the
@@ -362,65 +377,377 @@ function workbookPreview(model: SpreadsheetModel): SheetPreview {
   return buildPreview(model, spreadsheetLocaleFor(loadPreferences().spreadsheetLocale));
 }
 
-/** Writes a workbook's sheet rows as their own records — only the sheets
- * whose `rows` reference differs from the last one written (SPEC-116's
- * copy-on-write invariant makes that sound) — and deletes the record of any
- * sheet the model no longer has. When any rows changed, the card preview is
- * recomputed first so the shell written after this carries it. Returns the
- * writes' promises; a failed write clears its latch (so the next persist
- * retries) and is handed to `onFailure`. */
-function persistSheetRows(docId: string, model: StoredModel, onFailure: (error: unknown) => void): Promise<void>[] {
-  if (!isSpreadsheetModel(model)) {
-    return [];
-  }
-  const writes: Promise<void>[] = [];
-  const current = new Set<string>();
-  for (const sheet of model.sheets) {
-    const key = sheetRowsKey(docId, sheet.id);
-    current.add(key);
-    const rows = sheet.rows;
-    if (lastPersistedRows.get(key) === rows) {
-      continue;
-    }
-    lastPersistedRows.set(key, rows);
-    const record: SheetRowsRecord = { id: key, docId, sheetId: sheet.id, rows };
-    writes.push(
-      putRecordYielding(record).catch((error: unknown) => {
-        if (lastPersistedRows.get(key) === rows) {
-          lastPersistedRows.delete(key);
-        }
-        onFailure(error);
-      }),
-    );
-  }
-  for (const key of sheetRowsKeys.get(docId) ?? []) {
-    if (!current.has(key)) {
-      lastPersistedRows.delete(key);
-      deleteRecord(key).catch(() => {});
-    }
-  }
-  sheetRowsKeys.set(docId, current);
-  if (writes.length > 0) {
-    model.preview = workbookPreview(model);
-  }
-  return writes;
+// --- workbook residency and persistence (SPEC-137) --------------------------
+//
+// A workbook is RESIDENT while its record's model is the whole workbook —
+// rows and retained sources in memory; otherwise the record holds the slim
+// shell (workbookStorage.ts), which is all the library, the guards and the
+// cards ever read. loadSpreadsheet makes it resident (one get per chunk,
+// yielding between them), releaseSpreadsheet drops rows and sources again
+// once storage holds them. A persist of a resident workbook writes exactly
+// what changed since the last one — the chunks whose slice differs by
+// identity, the deletions, the source record when a source changed — and
+// the shell, in ONE writeBatch; a workbook that is not resident writes its
+// shell alone, never rows or sources.
+
+interface WorkbookState {
+  resident: boolean;
+  /** Stored in SPEC-116's layout (no manifest): the next persist of the
+   * resident model migrates it, in the same one batch. */
+  legacy: boolean;
+  /** The load found a record the manifest names missing: read-only, and
+   * never written back (WORKBOOK_STORAGE_INCOMPLETE_MESSAGE). */
+  incomplete: boolean;
+  /** Bumped by every load request and store: a release that started before
+   * the latest one stands down. */
+  requests: number;
+  releasing: boolean;
+  /** What storage holds (see WorkbookLatch); meaningful while resident. */
+  latch: WorkbookLatch;
+  loading: Promise<SpreadsheetModel | undefined> | null;
+  /** The persist running, and the one queued behind it (persists of one
+   * workbook never overlap, so the latch always describes storage). */
+  persisting: Promise<boolean> | null;
+  queued: Promise<boolean> | null;
 }
 
-/** Rejoins a workbook's sheet rows (read back from their own records) into a
- * model whose stored shell had them emptied — applied on every read path.
- * Seeds the latch only for rows that really exist in storage, and records
- * every stored key for the document (orphans included, so the next persist
- * removes them). */
-function rejoinSheetRows(docId: string, model: SpreadsheetModel, stored: readonly SheetRowsRecord[]): void {
-  const bySheet = new Map(stored.map((record) => [record.sheetId, record.rows]));
-  for (const sheet of model.sheets) {
-    const rows = bySheet.get(sheet.id);
-    if (rows !== undefined) {
-      sheet.rows = rows;
-      lastPersistedRows.set(sheetRowsKey(docId, sheet.id), rows);
+const workbooks = new Map<string, WorkbookState>();
+
+function workbookState(id: string, resident = false): WorkbookState {
+  let state = workbooks.get(id);
+  if (!state) {
+    state = {
+      resident,
+      legacy: false,
+      incomplete: false,
+      requests: 0,
+      releasing: false,
+      latch: emptyLatch(),
+      loading: null,
+      persisting: null,
+      queued: null,
+    };
+    workbooks.set(id, state);
+  }
+  return state;
+}
+
+/** Whether storage holds everything the resident model has: the latch
+ * matches it (and, in the chunked layout, a manifest exists). */
+function storageHolds(state: WorkbookState, record: StoredDocumentRecord): boolean {
+  if (!isSpreadsheetModel(record.model) || (!state.legacy && record.sheetStore === undefined)) {
+    return false;
+  }
+  return latchMatches(state.latch, record.model);
+}
+
+/** Queues one persist of workbook `id` behind the running one (a persist
+ * already queued is shared: it reads the record when it starts). Resolves
+ * true once written, false on a storage failure (already latched). */
+function persistWorkbook(id: string): Promise<boolean> {
+  const state = workbookState(id);
+  if (state.queued) {
+    return state.queued;
+  }
+  const after = state.persisting ?? Promise.resolve(true);
+  const run: Promise<boolean> = after.then(async () => {
+    state.queued = null;
+    state.persisting = run;
+    try {
+      return await writeWorkbook(id, state);
+    } finally {
+      if (state.persisting === run) {
+        state.persisting = null;
+      }
+    }
+  });
+  state.queued = run;
+  return run;
+}
+
+/** One persist (see persistWorkbook): plans against the latch and commits
+ * the plan and the shell in one writeBatch; the latch and manifest advance
+ * only once it committed. */
+async function writeWorkbook(id: string, state: WorkbookState): Promise<boolean> {
+  // SPEC-047 AC-15/16: never clone in the task that triggered the write.
+  await yieldToMainThread();
+  const record = records.get(id);
+  if (!record || !isSpreadsheetModel(record.model) || workbooks.get(id) !== state || state.incomplete) {
+    // Gone, or a partial model that must never be written back.
+    return true;
+  }
+  const model = record.model;
+  let ops: WriteBatchOp[];
+  let adopt = (): void => {};
+  if (!state.resident) {
+    // Only the shell: the rows and sources stay exactly as storage holds
+    // them (a 116-era shell keeps its inline sources).
+    ops = [{ put: { ...record, model: stripMedia(state.legacy ? legacyWorkbookShell(model) : workbookShell(model)) } }];
+  } else {
+    const plan = planWorkbookWrite(id, model, { manifest: record.sheetStore, latch: state.latch, legacy: state.legacy });
+    if (plan.rowsChanged) {
+      model.preview = workbookPreview(model);
+    }
+    const manifest: SheetStoreManifest = { chunks: plan.chunks, storedBytes: workbookStoredBytes(model) };
+    ops = [...plan.ops, { put: { ...record, model: stripMedia(workbookShell(model)), sheetStore: manifest } }];
+    adopt = () => {
+      state.latch = plan.latch;
+      state.legacy = false;
+      record.sheetStore = manifest;
+    };
+  }
+  try {
+    await writeBatch(ops);
+    adopt();
+    return true;
+  } catch {
+    markStorageUnavailable();
+    return false;
+  }
+}
+
+/** A stored record by key; a read that fails counts as not returned. */
+async function readStored(key: string): Promise<PersistedRecord | undefined> {
+  try {
+    return await getRecord(key);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reads a workbook's rows and sources back (one get per record, a yield
+ * between them) and joins them into its shell. */
+async function readWorkbook(
+  id: string,
+  shell: SpreadsheetModel,
+  manifest: SheetStoreManifest | undefined,
+): Promise<{ model: SpreadsheetModel; latch: WorkbookLatch; incomplete: boolean }> {
+  const rows = new Map<string, Row[]>();
+  let incomplete = false;
+  if (!manifest) {
+    // SPEC-116's layout: each sheet's rows in its own record, the sources
+    // inline in the shell. An absent record leaves the shell's rows (a
+    // record stored before rows were split out); a failed read is missing.
+    for (const sheet of shell.sheets) {
+      await yieldToMainThread();
+      try {
+        const stored = await getRecord(legacySheetRowsKey(id, sheet.id));
+        rows.set(sheet.id, stored && isSheetRowsRecord(stored) ? stored.rows : sheet.rows);
+      } catch {
+        incomplete = true;
+        rows.set(sheet.id, sheet.rows);
+      }
+    }
+    const model = { ...shell, sheets: shell.sheets.map((sheet) => ({ ...sheet, rows: rows.get(sheet.id) ?? [] })) };
+    return { model, latch: { rows, source: sourceLatchOf(model) }, incomplete };
+  }
+  const stored = await readStored(workbookSourceKey(id));
+  const source = stored && isWorkbookSourceRecord(stored) ? stored : undefined;
+  incomplete = source === undefined;
+  for (const sheet of shell.sheets) {
+    const parts: Row[][] = [];
+    for (const chunk of manifest.chunks[sheet.id] ?? []) {
+      await yieldToMainThread();
+      const record = await readStored(sheetRowsChunkKey(id, sheet.id, chunk));
+      if (record && isSheetRowsChunkRecord(record)) {
+        parts.push(record.rows);
+      } else {
+        incomplete = true;
+      }
+    }
+    rows.set(sheet.id, parts.length === 1 ? parts[0]! : parts.flat());
+  }
+  const model = joinWorkbook(shell, rows, source);
+  return { model, latch: { rows, source: source ? sourceLatchOf(model) : null }, incomplete };
+}
+
+/** Brings a resident workbook up to the current reader version in place
+ * (SPEC-116 "Reader versions"): only the model is replaced, so the record
+ * keeps its id, starred and trash state, and upgradeSpreadsheetModel keeps
+ * the title and every sheet's id. The re-read runs off the main thread
+ * (SPEC-137: readSpreadsheetOffThread; both modules load on demand, so the
+ * store never pulls the readers into the start-up graph). A record that
+ * cannot be re-read stays exactly as it was. Resolves whether it upgraded. */
+async function upgradeResidentWorkbook(record: StoredDocumentRecord): Promise<boolean> {
+  const model = record.model;
+  if (!isSpreadsheetModel(model) || model.readerVersion >= SPREADSHEET_READER_VERSION) {
+    return false;
+  }
+  try {
+    const [{ upgradeSpreadsheetModel }, { readSpreadsheetOffThread }] = await Promise.all([
+      import("./spreadsheet/open"),
+      import("./workers/spreadsheetParseClient"),
+    ]);
+    const upgraded = await upgradeSpreadsheetModel(model, readSpreadsheetOffThread);
+    if (records.get(record.id) === record && record.model === model) {
+      record.model = upgraded;
+      return true;
+    }
+  } catch {
+    // Kept as it was.
+  }
+  return false;
+}
+
+/** The workbook stored under `id` as its shell — always, resident or not
+ * (SPEC-137): the library, the routing guards and the cards read this. A
+ * shell that is not resident has no rows and no sources. Undefined for an
+ * absent id and for every other kind. */
+export function getSpreadsheetShell(id: string): SpreadsheetModel | undefined {
+  const model = records.get(id)?.model;
+  return model !== undefined && isSpreadsheetModel(model) ? model : undefined;
+}
+
+/** Whether the workbook `id` is resident (its rows and sources in memory). */
+export function isSpreadsheetResident(id: string): boolean {
+  return workbooks.get(id)?.resident === true && getSpreadsheetShell(id) !== undefined;
+}
+
+/** Whether the workbook `id`'s last load came back incomplete — some record
+ * its manifest names was not returned by storage. The view shows
+ * WORKBOOK_STORAGE_INCOMPLETE_MESSAGE and refuses edits; the store never
+ * writes that partial model back. */
+export function isSpreadsheetStorageIncomplete(id: string): boolean {
+  const state = workbooks.get(id);
+  return state?.resident === true && state.incomplete;
+}
+
+/** Makes the workbook `id` resident and resolves to the whole model: rejoins
+ * the source record and every chunk the manifest names (one get per chunk,
+ * yieldToMainThread() between them), migrates a SPEC-116-era record (its
+ * per-sheet records rejoined, then rewritten as chunks, a source record and
+ * a slim shell, the legacy records deleted — one writeBatch), and runs the
+ * reader-version upgrade when behind. Idempotent; concurrent callers share
+ * one promise. Undefined for an absent id and for every other kind. */
+export function loadSpreadsheet(id: string): Promise<SpreadsheetModel | undefined> {
+  const record = records.get(id);
+  if (!record || !isSpreadsheetModel(record.model)) {
+    return Promise.resolve(undefined);
+  }
+  const state = workbookState(id);
+  state.requests += 1;
+  if (state.loading) {
+    return state.loading;
+  }
+  if (state.resident && (state.incomplete || record.model.readerVersion >= SPREADSHEET_READER_VERSION)) {
+    return Promise.resolve(record.model);
+  }
+  const loading: Promise<SpreadsheetModel | undefined> = (async () => {
+    if (!state.resident) {
+      const shell = record.model as SpreadsheetModel;
+      const read = await readWorkbook(id, shell, state.legacy ? undefined : record.sheetStore);
+      if (records.get(id) !== record || workbooks.get(id) !== state || record.model !== shell) {
+        return getSpreadsheet(id);
+      }
+      record.model = read.model;
+      state.resident = true;
+      state.incomplete = read.incomplete;
+      state.latch = read.latch;
+    }
+    if (!state.incomplete && ((await upgradeResidentWorkbook(record)) || state.legacy)) {
+      void persist(record);
+    }
+    return getSpreadsheet(id);
+  })().finally(() => {
+    if (state.loading === loading) {
+      state.loading = null;
+    }
+  });
+  state.loading = loading;
+  return loading;
+}
+
+/** Drops the workbook `id`'s rows and sources from memory, keeping its
+ * shell — once its pending persistence has flushed and storage holds what
+ * the model has. Stands down when the workbook was requested again
+ * meanwhile, and keeps a workbook storage could not take (memory is then its
+ * only copy). */
+export async function releaseSpreadsheet(id: string): Promise<void> {
+  const state = workbooks.get(id);
+  if (!state) {
+    return;
+  }
+  const requests = state.requests;
+  state.releasing = true;
+  try {
+    if (state.loading) {
+      await state.loading;
+    }
+    if (!state.resident) {
+      return;
+    }
+    if (!state.incomplete) {
+      await (state.queued ?? state.persisting);
+      const current = records.get(id);
+      if (current && state.resident && !storageHolds(state, current)) {
+        await persistWorkbook(id);
+      }
+    }
+    const record = records.get(id);
+    if (
+      !record ||
+      !isSpreadsheetModel(record.model) ||
+      workbooks.get(id) !== state ||
+      state.requests !== requests ||
+      !state.resident ||
+      (!state.incomplete && !storageHolds(state, record))
+    ) {
+      return;
+    }
+    record.model = state.legacy ? legacyWorkbookShell(record.model) : workbookShell(record.model);
+    state.resident = false;
+    state.incomplete = false;
+    state.latch = emptyLatch();
+  } finally {
+    state.releasing = false;
+  }
+}
+
+/** Load-then-release (SPEC-137): runs `use` over the whole workbook `id`,
+ * loading it when it is not resident and releasing it afterwards — unless
+ * something else held it resident before, or asked for it meanwhile. The
+ * library's download and duplicate and the idle migration go through this. */
+export async function withLoadedSpreadsheet<T>(
+  id: string,
+  use: (model: SpreadsheetModel) => T | Promise<T>,
+): Promise<T | undefined> {
+  const before = workbooks.get(id);
+  const held = before?.resident === true && !before.releasing;
+  const model = await loadSpreadsheet(id);
+  const requests = workbooks.get(id)?.requests;
+  try {
+    return model ? await use(model) : undefined;
+  } finally {
+    if (!held && workbooks.get(id)?.requests === requests) {
+      await releaseSpreadsheet(id);
     }
   }
-  sheetRowsKeys.set(docId, new Set(stored.map((record) => record.id)));
+}
+
+/** The idle migration pass (SPEC-137): after initLibrary, each SPEC-116-era
+ * workbook nobody opens is loaded (which rewrites it in the chunked layout)
+ * and released, one per runWhenIdle callback, so its heavy shell stops being
+ * read at start-up. */
+function migrateLegacyWorkbooksWhenIdle(ids: readonly string[]): void {
+  const queue = [...ids];
+  const next = (): void => {
+    const id = queue.shift();
+    if (id !== undefined) {
+      runWhenIdle(() => {
+        void migrateLegacyWorkbook(id).finally(next);
+      }, 3000);
+    }
+  };
+  next();
+}
+
+async function migrateLegacyWorkbook(id: string): Promise<void> {
+  const state = workbooks.get(id);
+  if (!state?.legacy || state.resident || state.loading) {
+    // Deleted, or opened meanwhile — that load migrates it.
+    return;
+  }
+  await withLoadedSpreadsheet(id, () => undefined);
 }
 
 /** SPEC-073 migration (AC-30): a model stored by an earlier version carries
@@ -459,44 +786,14 @@ function normaliseStoredShapeFills(model: StoredModel): void {
  * with nothing to wait for ignore the promise, as they always have. */
 function persist(record: StoredDocumentRecord): Promise<void> {
   const media = persistMedia(record.id, record.model.media)?.catch(() => markStorageUnavailable());
-  const rows = persistSheetRows(record.id, record.model, () => markStorageUnavailable());
+  if (isSpreadsheetModel(record.model)) {
+    // SPEC-137: the shell, changed chunks and sources go in one batch.
+    return Promise.all([media, persistWorkbook(record.id)]).then(() => undefined);
+  }
   const shell = putRecordYielding({ ...record, model: shellModel(record.model) }).catch(() =>
     markStorageUnavailable(),
   );
-  return Promise.all([media, ...rows, shell]).then(() => undefined);
-}
-
-/** Brings a stored workbook up to the current reader version in place
- * (SPEC-116 "Reader versions"): only the model is replaced, so the record
- * keeps its id, starred and trash state, and upgradeSpreadsheetModel keeps
- * the title and every sheet's id; the upgraded record is written back once.
- * A record that cannot be re-read stays exactly as it was. */
-async function upgradeSpreadsheetRecord(record: StoredDocumentRecord): Promise<void> {
-  const model = record.model;
-  if (!isSpreadsheetModel(model) || model.readerVersion >= SPREADSHEET_READER_VERSION) {
-    return;
-  }
-  let upgraded: SpreadsheetModel;
-  try {
-    upgraded = await upgradeSpreadsheetModel(model);
-  } catch {
-    return;
-  }
-  if (records.get(record.id) === record && record.model === model) {
-    record.model = upgraded;
-    void persist(record);
-  }
-}
-
-/** The view's half of the upgrade path (useWorkbookLoad): upgrades the
- * workbook stored under `id` if it is behind the reader version, resolving
- * to the current model — undefined for a missing or non-workbook id. */
-export async function upgradeStoredSpreadsheet(id: string): Promise<SpreadsheetModel | undefined> {
-  const record = records.get(id);
-  if (record) {
-    await upgradeSpreadsheetRecord(record);
-  }
-  return getSpreadsheet(id);
+  return Promise.all([media, shell]).then(() => undefined);
 }
 
 // --- hydration -------------------------------------------------------------
@@ -509,39 +806,41 @@ let initPromise: Promise<void> | null = null;
  * awaits this before mounting the app. */
 export function initLibrary(): Promise<void> {
   initPromise ??= loadAllRecords()
-    .then(async (stored) => {
+    .then((stored) => {
       const mediaByDocId = new Map<string, MediaPart[]>();
-      const sheetRowsByDocId = new Map<string, SheetRowsRecord[]>();
       for (const record of stored) {
         // Strictly committed media only — a draft's media copy
         // (isDraftMediaRecord) must never rejoin the committed shell.
-        if (isDraftMediaRecord(record)) {
-          continue;
-        }
-        if (isMediaRecord(record)) {
+        if (!isDraftMediaRecord(record) && isMediaRecord(record)) {
           mediaByDocId.set(record.docId, record.media);
-        } else if (isSheetRowsRecord(record)) {
-          const forDoc = sheetRowsByDocId.get(record.docId) ?? [];
-          forDoc.push(record);
-          sheetRowsByDocId.set(record.docId, forDoc);
         }
       }
-      const behindReaderVersion: StoredDocumentRecord[] = [];
+      const legacyWorkbooks: string[] = [];
       for (const record of stored) {
-        // Drafts, media and sheet-rows records live in the same object
-        // store but are not library entries; the editor loads a draft
-        // explicitly via loadDraft, and media and rows rejoin their
-        // document record below.
-        if (isDraftRecord(record) || isMediaRecord(record) || isDraftMediaRecord(record) || isSheetRowsRecord(record)) {
+        // Drafts, media and a workbook's rows and source records live in the
+        // same object store but are not library entries; the editor loads a
+        // draft explicitly via loadDraft, media rejoins its document record
+        // below, and a workbook's rows and sources (SPEC-137: outside the
+        // start-up read's key ranges anyway) wait for loadSpreadsheet.
+        if (
+          isDraftRecord(record) ||
+          isMediaRecord(record) ||
+          isDraftMediaRecord(record) ||
+          isSheetRowsRecord(record) ||
+          isWorkbookSourceRecord(record)
+        ) {
           continue;
         }
         if (!records.has(record.id)) {
           const media = mediaByDocId.get(record.id);
           rejoinMedia(record.model, media);
           if (isSpreadsheetModel(record.model)) {
-            rejoinSheetRows(record.id, record.model, sheetRowsByDocId.get(record.id) ?? []);
-            if (record.model.readerVersion < SPREADSHEET_READER_VERSION) {
-              behindReaderVersion.push(record);
+            // Its shell only — not resident. A shell without a manifest is
+            // SPEC-116's layout, migrated by the idle pass or its first load.
+            const state = workbookState(record.id);
+            state.legacy = record.sheetStore === undefined;
+            if (state.legacy) {
+              legacyWorkbooks.push(record.id);
             }
           }
           // Seed the skip-map ONLY when a MediaRecord actually exists in
@@ -556,11 +855,7 @@ export function initLibrary(): Promise<void> {
           records.set(record.id, record);
         }
       }
-      // SPEC-116: a workbook stored by an older reader is re-read from its
-      // retained package before anything reads it.
-      for (const record of behindReaderVersion) {
-        await upgradeSpreadsheetRecord(record);
-      }
+      migrateLegacyWorkbooksWhenIdle(legacyWorkbooks);
     })
     .catch(() => markStorageUnavailable());
   return initPromise;
@@ -595,10 +890,12 @@ export function getMedia(id: string): MediaModel | undefined {
 }
 
 /** The workbook counterpart of `getDocument`/`getPresentation`/`getMedia`
- * (SPEC-116): undefined for absent ids and for every other kind. */
+ * (SPEC-116): undefined for absent ids and for every other kind — and
+ * (SPEC-137) for a workbook that is not resident: only then is the model the
+ * whole workbook. getSpreadsheetShell reads any; loadSpreadsheet makes one
+ * resident. */
 export function getSpreadsheet(id: string): SpreadsheetModel | undefined {
-  const model = records.get(id)?.model;
-  return model !== undefined && isSpreadsheetModel(model) ? model : undefined;
+  return isSpreadsheetResident(id) ? getSpreadsheetShell(id) : undefined;
 }
 
 /** Which product owns a stored id — the routing guard's question ("is
@@ -782,6 +1079,13 @@ export function duplicateDocument(
   if (!source) {
     return undefined;
   }
+  const sourceState = workbooks.get(id);
+  if (isSpreadsheetModel(source.model) && (!sourceState?.resident || sourceState.incomplete)) {
+    // SPEC-137: a workbook that is not resident is only its shell in memory —
+    // cloned, it would store an empty copy — and a partial one must never be
+    // written back. The library loads it first (duplicateStoredDocument).
+    return undefined;
+  }
   const copyId = crypto.randomUUID();
   const model = structuredClone(source.model);
   model.id = copyId;
@@ -793,7 +1097,24 @@ export function duplicateDocument(
     model,
   };
   records.set(copyId, copy);
+  if (isSpreadsheetModel(model)) {
+    workbookState(copyId, true);
+  }
   persist(copy);
+  return copy;
+}
+
+/** The library's duplicate: a workbook is loaded first (SPEC-137
+ * load-then-release), duplicated whole, and released again — its copy too,
+ * once written. Every other kind duplicates synchronously. */
+export async function duplicateStoredDocument(id: string): Promise<StoredDocumentRecord | undefined> {
+  if (getSpreadsheetShell(id) === undefined) {
+    return duplicateDocument(id);
+  }
+  const copy = await withLoadedSpreadsheet(id, () => duplicateDocument(id));
+  if (copy) {
+    void releaseSpreadsheet(copy.id);
+  }
   return copy;
 }
 
@@ -874,11 +1195,11 @@ function approximateRecordBytes(record: StoredDocumentRecord): number {
   if (isMediaModel(record.model)) {
     return record.model.byteLength;
   }
-  // A workbook (SPEC-116) counts its shell plus every sheet's rows record —
-  // each rows array measured once per reference (copy-on-write: an
-  // unchanged sheet is never re-serialised to be sized).
+  // A workbook (SPEC-137) is never serialised to be sized: its manifest
+  // carries the estimate made when it was last persisted; one never
+  // persisted is estimated the same way from what memory holds.
   if (isSpreadsheetModel(record.model)) {
-    return record.model.sheets.reduce((total, sheet) => total + rowsBytes(sheet.rows), jsonBytes(shellModel(record.model)));
+    return record.sheetStore?.storedBytes ?? workbookStoredBytes(record.model);
   }
   return jsonBytes(record.model);
 }
@@ -893,17 +1214,6 @@ function jsonBytes(value: unknown): number {
   }
 }
 
-const rowsByteCache = new WeakMap<Row[], number>();
-
-function rowsBytes(rows: Row[]): number {
-  let bytes = rowsByteCache.get(rows);
-  if (bytes === undefined) {
-    bytes = jsonBytes(rows);
-    rowsByteCache.set(rows, bytes);
-  }
-  return bytes;
-}
-
 /** Removes a document from the session and from storage, along with any
  * autosave draft. */
 export function deleteDocument(id: string): void {
@@ -913,23 +1223,27 @@ export function deleteDocument(id: string): void {
   }
   lastPersistedMedia.delete(id);
   lastDraftPersistedMedia.delete(id);
-  deleteRecord(id).catch(() => markStorageUnavailable());
-  // Draft/media/rows cleanup is best-effort and not a SPEC-003 write-through
+  if (model && isSpreadsheetModel(model)) {
+    // SPEC-137: the shell, every rows record (chunks and any SPEC-116
+    // per-sheet record — one range) and the source record, in one batch.
+    workbooks.delete(id);
+    void deleteWorkbookRecords(id);
+  } else {
+    deleteRecord(id).catch(() => markStorageUnavailable());
+  }
+  // Draft/media cleanup is best-effort and not a SPEC-003 write-through
   // failure.
   deleteRecord(draftKey(id)).catch(() => {});
   deleteRecord(mediaKey(id)).catch(() => {});
   deleteRecord(draftMediaKey(id)).catch(() => {});
-  const rowsKeys = new Set(sheetRowsKeys.get(id));
-  if (model && isSpreadsheetModel(model)) {
-    for (const sheet of model.sheets) {
-      rowsKeys.add(sheetRowsKey(id, sheet.id));
-    }
+}
+
+async function deleteWorkbookRecords(id: string): Promise<void> {
+  try {
+    await writeBatch([{ delete: id }, { deleteRange: workbookRowsRange(id) }, { delete: workbookSourceKey(id) }]);
+  } catch {
+    markStorageUnavailable();
   }
-  for (const key of rowsKeys) {
-    lastPersistedRows.delete(key);
-    deleteRecord(key).catch(() => {});
-  }
-  sheetRowsKeys.delete(id);
 }
 
 // --- autosave (SPEC-010) ---------------------------------------------------
@@ -1029,15 +1343,13 @@ export async function commitDocument(
   record.caret = caret;
   record.scroll = scroll;
   const mediaWrite = persistMedia(id, record.model.media);
-  const failures: unknown[] = [];
-  const rowsWrites = persistSheetRows(id, record.model, (error) => failures.push(error));
-  await Promise.all([
-    mediaWrite ?? Promise.resolve(),
-    ...rowsWrites,
-    putRecordYielding({ ...record, model: shellModel(record.model) }),
-  ]);
-  if (failures.length > 0) {
-    throw failures[0];
+  if (isSpreadsheetModel(record.model)) {
+    const [written] = await Promise.all([persistWorkbook(id), mediaWrite ?? Promise.resolve()]);
+    if (!written) {
+      throw new Error(`Workbook ${id} could not be written`);
+    }
+  } else {
+    await Promise.all([mediaWrite ?? Promise.resolve(), putRecordYielding({ ...record, model: shellModel(record.model) })]);
   }
   await deleteDraft(id);
 }
@@ -1058,20 +1370,17 @@ export async function refreshDocumentFromStorage(
       !isDraftRecord(stored) &&
       !isMediaRecord(stored) &&
       !isSheetRowsRecord(stored) &&
+      !isWorkbookSourceRecord(stored) &&
       (!current || stored.lastModified > current.lastModified)
     ) {
       const mediaRecord = await getRecord(mediaKey(id));
       const media = mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined;
       rejoinMedia(stored.model, media);
       if (isSpreadsheetModel(stored.model)) {
-        const rowsRecords: SheetRowsRecord[] = [];
-        for (const sheet of stored.model.sheets) {
-          const rowsRecord = await getRecord(sheetRowsKey(id, sheet.id));
-          if (rowsRecord && isSheetRowsRecord(rowsRecord)) {
-            rowsRecords.push(rowsRecord);
-          }
-        }
-        rejoinSheetRows(id, stored.model, rowsRecords);
+        // SPEC-137: adopted as its shell, not resident — loadSpreadsheet
+        // rejoins its rows and sources (and upgrades it) on demand.
+        workbooks.delete(id);
+        workbookState(id).legacy = stored.sheetStore === undefined;
       }
       // Same rule as initLibrary: only a found MediaRecord may seed the
       // skip-map. A legacy record (inline media, no MediaRecord) must leave
@@ -1086,12 +1395,6 @@ export async function refreshDocumentFromStorage(
     }
   } catch {
     // Fall through to the in-memory record.
-  }
-  // SPEC-116: whichever record is now current, a workbook behind the reader
-  // version is upgraded before it is handed out.
-  const record = records.get(id);
-  if (record) {
-    await upgradeSpreadsheetRecord(record);
   }
   return records.get(id);
 }
@@ -1189,7 +1492,17 @@ export async function storeMediaEdit(model: MediaModel): Promise<void> {
  * records like every other kind's payload. */
 export function storeSpreadsheet(model: SpreadsheetModel): void {
   model.preview = workbookPreview(model);
+  const previous = records.get(model.id);
+  // SPEC-137: a freshly opened workbook is resident; re-stored over an id,
+  // it keeps what storage holds so the first persist writes only the diff.
+  const state = workbookState(model.id);
+  state.resident = true;
+  state.incomplete = false;
+  state.requests += 1;
   storeRecord(model, model.format);
+  if (previous?.sheetStore) {
+    records.get(model.id)!.sheetStore = previous.sheetStore;
+  }
 }
 
 /** Writes a workbook's view state (SPEC-117 "View state": each sheet's
@@ -1198,15 +1511,17 @@ export function storeSpreadsheet(model: SpreadsheetModel): void {
  * `lastModified`: viewing is not editing, so it never touches the document
  * (no touchDocument), never marks a sheet dirty and, because a view-state
  * change replaces sheet objects but keeps each sheet's `rows` array, never
- * writes a rows record (persistSheetRows skips an unchanged reference).
+ * writes a chunk record (the per-chunk latch skips an unchanged reference).
  * `model` replaces the record's model; a missing or non-workbook id is a
  * no-op. Resolves once the write has settled (never rejects). */
 export function storeSpreadsheetViewState(model: SpreadsheetModel): Promise<void> {
   const record = records.get(model.id);
-  if (!record || !isSpreadsheetModel(record.model)) {
+  if (!record || !isSpreadsheetModel(record.model) || workbooks.get(model.id)?.incomplete) {
     return Promise.resolve();
   }
   record.model = model;
+  // The view only ever holds a whole workbook (loadSpreadsheet's).
+  workbookState(model.id).resident = true;
   return persist(record);
 }
 
@@ -1217,10 +1532,12 @@ export function storeSpreadsheetViewState(model: SpreadsheetModel): Promise<void
  * non-workbook id is a no-op. */
 export function storeSpreadsheetEdit(model: SpreadsheetModel): Promise<void> {
   const record = records.get(model.id);
-  if (!record || !isSpreadsheetModel(record.model)) {
+  if (!record || !isSpreadsheetModel(record.model) || workbooks.get(model.id)?.incomplete) {
+    // SPEC-137: a workbook whose storage came back incomplete is read-only.
     return Promise.resolve();
   }
   record.model = model;
+  workbookState(model.id).resident = true;
   return touchDocument(model.id);
 }
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from "vue";
-import { getDocument, getMedia, getPresentation, getSpreadsheet } from "../../lib/documentStore";
+import { getDocument, getMedia, getPresentation, getSpreadsheetShell } from "../../lib/documentStore";
 import SlideMiniature from "./SlideMiniature.vue";
 import SheetMiniature from "./SheetMiniature.vue";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
@@ -75,7 +75,7 @@ const presentationAspect = computed(() => {
 const isSpreadsheetEntry = computed(() => kindOfFormat(props.format) === "spreadsheet");
 // Seeded from a miss so the ref's inferred type is the model's preview
 // (an annotation is barred in .vue scripts).
-const sheetPreview = ref(getSpreadsheet("")?.preview ?? null);
+const sheetPreview = ref(getSpreadsheetShell("")?.preview ?? null);
 const mediaRaster = ref(getCachedMediaThumbnail(props.id, props.lastModified) ?? "");
 // Seeded null-ish so the inferred type carries the placeholder shape.
 const pdfInfo = ref({ aspectRatio: 0, pageCount: 0, pageSize: "" });
@@ -174,7 +174,8 @@ function produce() {
       return;
     }
     if (isSpreadsheetEntry.value) {
-      const workbook = getSpreadsheet(props.id);
+      // SPEC-137: the shell's stored preview — never the rows.
+      const workbook = getSpreadsheetShell(props.id);
       if (workbook) {
         sheetPreview.value = workbook.preview ?? { sheetName: "", cells: [] };
       } else {
