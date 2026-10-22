@@ -211,6 +211,134 @@ test("spec136-print.xlsx in one session: each preview shows the sheet on show an
   await expect(page.getByTestId("sheet-print-page")).toHaveCount(0);
 });
 
+test("spec136-print.xlsx: the dialog validates and records one undo step, header codes render, and the preview's range, its print and its refusals (AC-20, AC-21, AC-29, AC-30, AC-35, AC-43, AC-45, AC-53, AC-54)", async ({ page }) => {
+  await open(page, join(fixtures, "spec136-print.xlsx"));
+  const undo = page.getByRole("button", { name: /^Undo/ });
+  const dialog = page.getByTestId("sheet-page-setup-dialog");
+  await expect(undo).toHaveAttribute("aria-label", "Undo (Ctrl+Z)");
+
+  // AC-29: a scale outside 10–400 is refused; AC-30: Cancel, and OK on a form left as shown, change nothing.
+  await openPageSetup(page);
+  await page.getByTestId("sheet-page-scale-mode-percent").check();
+  await page.getByTestId("sheet-page-scale").fill("401");
+  await expect(dialog.getByRole("alert")).toHaveText("Enter a scale between 10% and 400%");
+  await expect(page.getByTestId("sheet-page-setup-ok")).toBeDisabled();
+  await page.getByTestId("sheet-page-setup-cancel").click();
+  await openPageSetup(page);
+  await expect(page.getByTestId("sheet-page-scale-mode-fit")).toBeChecked();
+  await page.getByTestId("sheet-page-setup-ok").click();
+  await expect(dialog).toBeHidden();
+  await expect(undo).toHaveAttribute("aria-label", "Undo (Ctrl+Z)");
+
+  // AC-20, AC-21: every header code on one page, recorded as one "Page setup" step.
+  await openPageSetup(page);
+  await page.getByTestId("sheet-page-setup-tab-headerFooter").click();
+  await page.getByTestId("sheet-hf-different-first").uncheck();
+  await page.getByTestId("sheet-header-left").fill('&P+1|&P-1|&N|&F|&A|a&&b|&"Courier New,Italic"&14&KFF0000Red|&B&UDeco');
+  await page.getByTestId("sheet-header-center").fill("");
+  await page.getByTestId("sheet-header-right").fill("z[&Z]g[&G]x[&X]y[&Y]o[&O]h[&H]k[&K01+000Theme]q[&Q]");
+  await page.getByTestId("sheet-page-setup-ok").click();
+  await expect(undo).toHaveAttribute("aria-label", "Undo Page setup (Ctrl+Z)");
+  await openPreview(page);
+  const header = page.getByTestId("sheet-print-page").first().getByTestId("sheet-print-header");
+  await expect(header).toHaveText("2|0|3|spec136-print|Budget|a&b|Red|Decoz[]g[]x[]y[]o[]h[]k[Theme]q[&Q]");
+  const red = header.locator("span span").filter({ hasText: "Red|" });
+  await expect(red).toHaveCSS("color", "rgb(255, 0, 0)");
+  await expect(red).toHaveCSS("font-style", "italic");
+  await expect(red).toHaveAttribute("style", /font-family: "Courier New"; font-size: 14pt;/);
+  await expect(header.locator("span span").filter({ hasText: "Deco" })).toHaveCSS("font-weight", "700");
+  await expect(header.locator("span span").filter({ hasText: /Theme/ })).not.toHaveAttribute("style", /color/);
+  await page.getByTestId("print-preview-close").click();
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(undo).toHaveAttribute("aria-label", "Undo (Ctrl+Z)");
+
+  // AC-35: a custom range through parseNumberRange; AC-43: Print hands the browser only that range, on its @page rules.
+  await openPreview(page);
+  await page.getByRole("radio", { name: "Custom" }).check();
+  const range = page.getByTestId("print-preview").getByRole("textbox");
+  await range.fill("5");
+  await expect(page.getByTestId("print-preview").getByRole("alert")).toHaveText("Pages go from 1 to 3");
+  await expect(page.getByTestId("print-confirm")).toBeDisabled();
+  await range.fill("2-3");
+  await expect(page.getByTestId("print-confirm")).toBeEnabled();
+  await page.evaluate(() => {
+    const w = window as unknown as { printed: unknown[] };
+    w.printed = [];
+    window.print = () => {
+      const rules: string[] = [];
+      for (const sheet of Array.from(document.styleSheets)) {
+        let list: CSSRule[] = [];
+        try {
+          list = Array.from(sheet.cssRules);
+        } catch {
+          // A cross-origin sheet's rules are unreadable; ours are all same-origin.
+        }
+        for (const rule of list) if (rule.cssText.startsWith("@page")) rules.push(rule.cssText);
+      }
+      const pages = Array.from(document.querySelectorAll(".sheet-print-sheet .sheet-print-page"));
+      w.printed.push({ body: document.body.className, rules, pages: pages.map((p) => getComputedStyle(p).getPropertyValue("page")) });
+    };
+  });
+  await page.getByTestId("print-confirm").click();
+  const printed = () => page.evaluate(() => (window as unknown as { printed: { body: string; rules: string[]; pages: string[] }[] }).printed);
+  await expect.poll(async () => (await printed()).length).toBe(1);
+  const [job] = await printed();
+  expect(job!.body.split(" ")).toContain("is-sheet-printing");
+  expect(job!.rules).toEqual(["@page { size: 841.89pt 595.28pt; margin: 0px; }", "@page sheet-page-84189x59528 { size: 841.89pt 595.28pt; margin: 0px; }"]);
+  expect(job!.pages).toEqual(["sheet-page-84189x59528", "sheet-page-84189x59528"]);
+  await expect(page.locator("body")).not.toHaveClass(/is-sheet-printing/);
+  await page.getByTestId("print-preview-close").click();
+
+  // A job far below the data: the print area cleared, 100%, a value at A40000.
+  await page.getByTestId("menu-title-file").click();
+  await page.getByTestId("sheet-menu-print-area").click();
+  await page.getByTestId("sheet-menu-clear-print-area").click();
+  await openPageSetup(page);
+  await page.getByTestId("sheet-page-scale-mode-percent").check();
+  await page.getByTestId("sheet-page-scale").fill("100");
+  await page.getByTestId("sheet-page-setup-ok").click();
+  await expect(dialog).toBeHidden();
+  const typeAt = async (ref: string, text: string): Promise<void> => {
+    await page.getByTestId("name-box").fill(ref);
+    await page.getByTestId("name-box").press("Enter");
+    await page.keyboard.type(text);
+    await page.keyboard.press("Enter");
+    await expect(page.locator(`[data-testid="sheet-cell"][data-ref="${ref}"]`)).toHaveText(text);
+  };
+  await typeAt("A40000", "far");
+  let downloads = 0;
+  page.on("download", () => downloads++);
+
+  // AC-45: over 250 pages, Print is refused and the browser is never asked.
+  await openPreview(page);
+  await expect(page.getByTestId("print-page-count")).toHaveText(/^\d,?\d{3} pages$/);
+  await page.getByRole("radio", { name: "All pages" }).check();
+  await page.getByTestId("print-confirm").click();
+  await expect(page.getByTestId("sheet-print-notice")).toHaveText("This print job is over 250 pages — download a PDF instead");
+  expect(await printed()).toHaveLength(1);
+
+  // AC-53: the export's progress, and Stop — no download, no model change.
+  await page.getByTestId("sheet-print-download-pdf").click();
+  const progress = page.getByTestId("sheet-print-progress");
+  await expect(progress).toHaveAttribute("role", "status");
+  await expect(progress).toHaveText(/^Page \d+ of \d,?\d{3}$/);
+  await page.getByTestId("sheet-print-abort").click();
+  await expect(progress).toBeHidden();
+  await page.waitForTimeout(1000);
+  expect(downloads).toBe(0);
+  await expect(undo).toHaveAttribute("aria-label", 'Undo Typing "far" in A40000 (Ctrl+Z)');
+  await page.getByTestId("print-preview-close").click();
+
+  // AC-54: over 2,000 pages, the export is refused before it starts.
+  await typeAt("A60000", "farther");
+  await openPreview(page);
+  await page.getByTestId("sheet-print-download-pdf").click();
+  await expect(page.getByTestId("sheet-print-notice")).toHaveText("This export is over 2,000 pages — set a print area first");
+  await expect(progress).toBeHidden();
+  await page.waitForTimeout(500);
+  expect(downloads).toBe(0);
+});
+
 test("spec136-print.ods: the read half, and a header edit on Budget leaves Notes' master page untouched (AC-83)", async ({ page }) => {
   const source = await unzip(new Uint8Array(readFileSync(join(fixtures, "spec136-print.ods"))));
   const sourceStyles = new TextDecoder().decode(source.get("styles.xml"));
