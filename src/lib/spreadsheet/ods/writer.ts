@@ -100,7 +100,7 @@
 import { now as clockNow } from "../../core/clock";
 import { buildMetaXml } from "../../core/odfMeta";
 import { ensureMediaEncoded, type MediaPart } from "../../core/media";
-import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes, decodedPartBytesAsync } from "../../core/packageParts";
 import { resolveColor, resolveFont, DEFAULT_THEME } from "../../core/theme";
 import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
@@ -140,7 +140,8 @@ import {
   odsStyleBookFromSource,
   OdsStyleRegistry,
 } from "./styles";
-import { serializeTable, type OdsTableContext } from "./tableXml";
+import { serializeTable, serializeTableAsync, type OdsTableContext } from "./tableXml";
+import { createSliceClock } from "../serialiseSlices";
 
 export interface WriteOdsOptions {
   /** meta.xml's `dc:date` from scratch (defaults to core `now()`). */
@@ -196,9 +197,12 @@ const encode = (text: string): Uint8Array => encodeUtf8(text);
 /** Serialises a workbook to .ods bytes (see the module header). */
 export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions = {}): Promise<Uint8Array> {
   if (model.opaque.length === 0) {
-    return zip(buildFromScratch(model, options));
+    return zip(await buildFromScratch(model, options));
   }
-  const parts = decodedPartBytes(model.opaque);
+  // SPEC-137 AC-46: decode large retained parts through the chunked,
+  // yielding decode rather than one synchronous atob over the whole
+  // retained package.
+  const parts = await decodedPartBytesAsync(model.opaque);
   if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
@@ -344,7 +348,7 @@ function manifestEntryFor(manifestXml: string, path: string, mediaType: string):
   return `<${prefix}file-entry ${prefix}full-path="${escapeAttributeValue(path)}" ${prefix}media-type="${escapeAttributeValue(mediaType)}"/>`;
 }
 
-function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): ZipEntryInput[] {
+async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Promise<ZipEntryInput[]> {
   const modified = options.modified ?? clockNow();
   const locale = localeOf(options);
   const registry = new OdsStyleRegistry();
@@ -360,9 +364,17 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const charts = planOdsCharts(model, []);
   const chartObjectDir = (drawing: SheetDrawing): string | undefined => charts.minted.get(drawing);
   const localNames = (sheet: Sheet, trailing: string): string => odsTrailingWithNames(trailing, model, sheet, new Map());
-  const tables = model.sheets
-    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }))
-    .join("");
+  // SPEC-137: one shared clock, sheets serialised sequentially (never
+  // Promise.all) — each sheet's table appends to the shared `registry` in
+  // sheet order, which concurrent calls would interleave incorrectly.
+  const clock = createSliceClock();
+  const tableTexts: string[] = [];
+  for (const sheet of model.sheets) {
+    tableTexts.push(
+      await serializeTableAsync(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }, clock),
+    );
+  }
+  const tables = tableTexts.join("");
   const namedExpressions = odsNamedExpressionsXml(model, odsScopeNames(model, undefined));
   const databaseRanges = odsWithTableDatabaseRanges(odsDatabaseRangesXml(model.sheets), model.sheets).text;
   const styles = registry.xml();

@@ -199,6 +199,7 @@ import { odsDateValueToSerial } from "../serial";
 import type { SortState } from "../sort";
 import { columnSpanAt } from "../styles";
 import { applySplices, attributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { createSliceClock, type SliceClock } from "../serialiseSlices";
 import type { Dxf } from "../conditionalFormats";
 import { autoFilterXml, fitsPart, readAutoFilterXml, readSortStateXml, sortStateXml, type FitsPart } from "./autoFilter";
 import {
@@ -1969,6 +1970,66 @@ function sheetDataXml(sheet: Sheet, ctx: XlsxSheetContext, p: string): string {
   return out.join("");
 }
 
+/** How many rows `sheetDataXmlAsync` builds between clock checks —
+ * `performance.now()` is cheap but not free, so it is read every few rows
+ * rather than every one. */
+const ROWS_PER_SLICE_CHECK = 64;
+
+/** The async twin of `sheetDataXml` (SPEC-137 "Saving stays responsive"):
+ * identical row-by-row construction — the same array-of-pieces joined once
+ * — but yields to the main thread (`clock`) every `ROWS_PER_SLICE_CHECK`
+ * rows once `SERIALISE_SLICE_MS` has elapsed, so a 25,000-row sheet's save
+ * reads as many short tasks instead of one long one. */
+async function sheetDataXmlAsync(sheet: Sheet, ctx: XlsxSheetContext, p: string, clock: SliceClock): Promise<string> {
+  if (sheet.rows.length === 0) {
+    return `<${p}sheetData/>`;
+  }
+  const arrays: GridRange[] = [];
+  for (const row of sheet.rows) {
+    for (const cell of row.cells) {
+      if (cell.arrayRange !== undefined) {
+        arrays.push(cell.arrayRange);
+      }
+    }
+  }
+  const memo = new Map<string, string>();
+  const out: string[] = [`<${p}sheetData>`];
+  let sinceCheck = 0;
+  for (const row of sheet.rows) {
+    let attrs = ` r="${row.index + 1}"`;
+    if (row.styleId !== undefined) {
+      attrs += ` s="${ctx.styles.xfFor(row.styleId)}" customFormat="1"`;
+    }
+    if (row.heightPt !== undefined) {
+      attrs += ` ht="${numberText(row.heightPt)}"${row.customHeight ? ` customHeight="1"` : ""}`;
+    }
+    if (row.hidden || row.filterHidden) {
+      attrs += ` hidden="1"`;
+    }
+    if (row.sourceAttrs !== undefined) {
+      attrs += rowSourceAttrs(row.sourceAttrs, memo);
+    }
+    if (row.cells.length === 0) {
+      out.push(`<${p}row${attrs}/>`);
+    } else {
+      out.push(`<${p}row${attrs}>`);
+      for (const cell of row.cells) {
+        out.push(cellXml(cell, row, sheet, ctx, p, arrays));
+      }
+      out.push(`</${p}row>`);
+    }
+    sinceCheck += 1;
+    if (sinceCheck >= ROWS_PER_SLICE_CHECK) {
+      sinceCheck = 0;
+      if (clock.due()) {
+        await clock.yield();
+      }
+    }
+  }
+  out.push(`</${p}sheetData>`);
+  return out.join("");
+}
+
 /** SPEC-128: the rebuilt `<autoFilter>` and `<sortState>` — the model's
  * (xlsx/autoFilter.ts: its sourceXml while that fits the part, else
  * serialised), "" when the model has none and the source's is one the reader
@@ -2070,6 +2131,70 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
   }
   // CT_Worksheet allows several <cols>; the reader read every one into the
   // model's spans, which the first now carries — the rest go.
+  for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
+    splices.push({ start: child.start, end: child.end, text: "" });
+  }
+  const cf = conditionalFormatSplices(xml, layout, extLst, sheet, ctx, retained);
+  splices.push(...cf.run);
+  splices.push(
+    ...extLstSplices(extLst, layout, [
+      { uri: CF_EXT_URI, text: cf.ext },
+      { uri: DV_EXT_URI, text: validations.ext },
+    ]),
+  );
+  return applySplices(xml, splices);
+}
+
+/** The async, yielding twin of `serializeWorksheet` (SPEC-137 "Saving stays
+ * responsive"): identical splices, built the same way — only the
+ * `sheetData` block (the one part of this that scales with row count) is
+ * built by the yielding `sheetDataXmlAsync`; everything else here is
+ * O(columns) or O(merges/validations), never large enough on its own to
+ * threaten the main-thread-block budget. Byte-identical to
+ * `serializeWorksheet` for the same inputs. `serializeWorksheet` itself
+ * stays synchronous and unchanged — the substitution save path
+ * (`xlsx/writer.ts`'s `buildSubstitution`, which the reader-upgrade path's
+ * `substitutedXlsxParts` also calls and must stay synchronous for) keeps
+ * using it; `writeXlsx`'s from-scratch path uses this twin, which
+ * large-sheet saves actually need. */
+export async function serializeWorksheetAsync(sheet: Sheet, base: string | undefined, ctx: XlsxSheetContext, clock: SliceClock = createSliceClock()): Promise<string> {
+  const xml = collapseSheetData(base ?? emptyWorksheetXml(sheet, ctx.active, ctx));
+  const layout = scanLayout(xml);
+  const p = layout.prefix;
+  const first = (local: string): RootChild | undefined => layout.children.find((child) => child.local === local);
+  const range = usedRange(sheet);
+  const fits: FitsPart = (text, local) => fitsPart(text, layout.rootTag, local);
+  const retained = base !== undefined;
+  const extLst = extLstLayout(xml, layout);
+  const validations = dataValidationsOut(xml, first("dataValidations"), extLst, layout, sheet, ctx, retained);
+  const sheetData = await sheetDataXmlAsync(sheet, ctx, p, clock);
+  const rebuilt: [string, string][] = [
+    ["dimension", `<${p}dimension ref="${range ? formatRange(range) : "A1"}"/>`],
+    ["sheetViews", sheetViewsXml(xml, first("sheetViews"), layout, sheet, ctx)],
+    ["sheetFormatPr", sheetFormatPrXml(xml, first("sheetFormatPr"), sheet, ctx, p)],
+    ["cols", colsXml(sheet, ctx, p)],
+    ["sheetData", sheetData],
+    ["autoFilter", filterElementXml(xml, first("autoFilter"), "autoFilter", sheet, p, fits)],
+    ["sortState", filterElementXml(xml, first("sortState"), "sortState", sheet, p, fits)],
+    ["mergeCells", mergeCellsXml(sheet, p)],
+    ["dataValidations", validations.block],
+  ];
+  const splices: Splice[] = [];
+  const filterMode = filterModeSplice(xml, layout, sheet);
+  if (filterMode !== undefined) {
+    splices.push(filterMode);
+  }
+  for (const [local, text] of rebuilt) {
+    const found = first(local);
+    if (found !== undefined) {
+      if (xml.slice(found.start, found.end) !== text) {
+        splices.push({ start: found.start, end: found.end, text });
+      }
+    } else if (text !== "") {
+      const at = insertAt(layout, local);
+      splices.push({ start: at, end: at, text });
+    }
+  }
   for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
     splices.push({ start: child.start, end: child.end, text: "" });
   }
