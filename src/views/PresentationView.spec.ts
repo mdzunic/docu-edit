@@ -293,3 +293,49 @@ describe("PresentationView text editing (SPEC-081)", () => {
     wrapper.unmount();
   });
 });
+
+// SPEC-104 — the print-and-export entry points reach one dialog: the Download
+// menu's "PDF (.pdf)…" / "Images (.png)…" open it on the matching tab, and
+// Cmd/Ctrl+P opens it on the PDF tab; the editor still selects a hidden slide.
+async function hiddenDeck(): Promise<PresentationModel> {
+  const { buildPptxHiddenFixtureBytes } = await import("../lib/presentation/fixtures/build");
+  const { readPresentationBytes } = await import("../lib/presentation/open");
+  return readPresentationBytes(await buildPptxHiddenFixtureBytes(), "pptx", "hidden");
+}
+
+describe("PresentationView print & export (SPEC-104)", () => {
+  it("the Download menu opens the dialog on the PDF or Images tab", async () => {
+    const { wrapper } = await mountWith(await hiddenDeck());
+    await wrapper.get('[data-testid="presentation-download-menu"]').trigger("click");
+    await wrapper.get('[data-testid="presentation-export-pdf"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="deck-print-dialog"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="deck-print-tab-pdf"]').attributes("aria-selected")).toBe("true");
+    await wrapper.get('[data-testid="deck-print-cancel"]').trigger("click");
+    expect(wrapper.find('[data-testid="deck-print-dialog"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="presentation-download-menu"]').trigger("click");
+    await wrapper.get('[data-testid="presentation-export-images"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="deck-print-tab-images"]').attributes("aria-selected")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("Cmd/Ctrl+P opens the dialog on the PDF tab", async () => {
+    const { wrapper } = await mountWith(await hiddenDeck());
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, cancelable: true }));
+    await flushPromises();
+    expect(wrapper.find('[data-testid="deck-print-dialog"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="deck-print-tab-pdf"]').attributes("aria-selected")).toBe("true");
+    wrapper.unmount();
+  });
+
+  it("marks the hidden thumbnail and still selects it — PageDown reaches it too", async () => {
+    const { wrapper } = await mountWith(await hiddenDeck());
+    const thumbs = wrapper.findAll('[data-testid="filmstrip-slide"]');
+    expect(thumbs[1].classes()).toContain("filmstrip-hidden");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
+    await flushPromises();
+    expect(wrapper.findAll('[data-testid="filmstrip-slide"]')[1].attributes("aria-selected")).toBe("true");
+    wrapper.unmount();
+  });
+});

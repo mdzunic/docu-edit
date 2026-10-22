@@ -7,7 +7,7 @@
 // (SPEC-048). Because both the screen and this classifier key off the same
 // first family, the PDF embeds the same face the screen rendered.
 // Framework-free per the src/lib convention.
-import { substituteFor } from "../fonts/substitution";
+import { substituteFor } from "./fontSubstitution";
 
 export type FaceKey =
   | "sans-regular"
@@ -130,4 +130,42 @@ export function faceFileName(face: FaceKey): string {
 /** Every face key, for tests and preloading. */
 export function allFaceKeys(): FaceKey[] {
   return Object.keys(FACE_FILES) as FaceKey[];
+}
+
+/** The bundled family that carries each face group — the very file
+ * `faceFileName` names, as the CSS family it registers under (SPEC-048). */
+const GROUP_FAMILIES: Record<string, { family: string; generic: string }> = {
+  sans: { family: "Liberation Sans", generic: "sans-serif" },
+  serif: { family: "Liberation Serif", generic: "serif" },
+  mono: { family: "Liberation Mono", generic: "monospace" },
+  calibri: { family: "Carlito", generic: "sans-serif" },
+  cambria: { family: "Caladea", generic: "serif" },
+};
+
+/** A face as the CSS font descriptors its bundled file registers under:
+ * family, weight and style (what a `FontFace` for `faceFileName(face)` takes)
+ * plus the generic it falls back to. */
+export function faceFontDescriptor(face: FaceKey): {
+  family: string;
+  generic: string;
+  weight: "normal" | "bold";
+  style: "normal" | "italic";
+} {
+  const [group, variant] = face.split("-");
+  const { family, generic } = GROUP_FAMILIES[group] ?? GROUP_FAMILIES.sans;
+  return {
+    family,
+    generic,
+    weight: variant === "bold" || variant === "bolditalic" ? "bold" : "normal",
+    style: variant === "italic" || variant === "bolditalic" ? "italic" : "normal",
+  };
+}
+
+/** The CSS `font` shorthand a canvas paints a face with at `sizePx` — the
+ * same bundled face the PDF embeds for it (SPEC-104's raster export), e.g.
+ * `italic bold 24px "Carlito", sans-serif`. */
+export function faceCssFont(face: FaceKey, sizePx: number): string {
+  const { family, generic, weight, style } = faceFontDescriptor(face);
+  const prefix = `${style === "italic" ? "italic " : ""}${weight === "bold" ? "bold " : ""}`;
+  return `${prefix}${Math.max(0, Math.round(sizePx * 100) / 100)}px "${family}", ${generic}`;
 }

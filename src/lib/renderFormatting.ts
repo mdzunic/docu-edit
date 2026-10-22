@@ -42,7 +42,7 @@ import { HIGHLIGHT_HEX } from "./core/colors";
 // family name; here it becomes the CSS stack that renders the bundled twin
 // when the original is unavailable. Measurement (textMetrics) routes the same
 // family through the same helper, so measure and paint agree.
-import { fontStack } from "./fonts/substitution";
+import { fontStack } from "./core/fontSubstitution";
 import { resolvedShapeAdjustments, shapeDefinition } from "./core/shapeCatalogue";
 // The single resolution point for theme colour/font references (SPEC-077
 // AC-7): every colour painted here resolves through resolveColor against the
@@ -433,7 +433,7 @@ export function tableCellStyle(cell: TableCell, theme: DocumentTheme): Record<st
  * a `background-image` gradient laid OVER the cell's `background-color`
  * rather than instead of it. Selection is transient UI state; the computed
  * `background-color` is also the PDF export's only source for cell shading
- * (lib/pdf/domExtract.ts), so the highlight must never displace it. */
+ * (lib/core/pdfExtract.ts), so the highlight must never displace it. */
 export const CELL_SELECTION_OVERLAY =
   "linear-gradient(rgb(66 133 244 / 0.22), rgb(66 133 244 / 0.22))";
 

@@ -45,6 +45,8 @@ const emit = defineEmits([
   "download",
   "download-copy",
   "export-html",
+  "export-pdf",
+  "export-images",
   "close",
 ]);
 </script>
@@ -65,6 +67,8 @@ const emit = defineEmits([
       @download="emit('download')"
       @download-copy="emit('download-copy')"
       @export-html="emit('export-html')"
+      @export-pdf="emit('export-pdf')"
+      @export-images="emit('export-images')"
     />
     <SaveStateBadge
       v-if="saveStateText"

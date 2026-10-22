@@ -5,7 +5,7 @@ import {
   fontStack,
   isBundledFamily,
   substituteFor,
-} from "./substitution";
+} from "./fontSubstitution";
 
 describe("substituteFor", () => {
   it("maps the common Microsoft fonts to their bundled metric twins (AC-1)", () => {

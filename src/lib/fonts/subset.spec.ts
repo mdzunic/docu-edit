@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseSfnt } from "../pdf/sfnt";
+import { parseSfnt } from "../core/sfnt";
 import { subsetFont } from "./subset";
 
 function bundled(file: string): Uint8Array {

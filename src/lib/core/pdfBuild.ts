@@ -6,8 +6,8 @@
 // /Outlines tree, and the document title lands in the Info dictionary.
 // package.json is frozen for feature work, so no PDF library — the writer
 // emits objects, xref and trailer itself. Framework-free per src/lib.
-import { deflate } from "../core/deflate";
-import type { FaceKey } from "./fontMap";
+import { deflate } from "./deflate";
+import type { FaceKey } from "./pdfFonts";
 import type { SfntFont } from "./sfnt";
 
 /** One positioned text fragment (a single rendered line of one styled run).
@@ -114,16 +114,41 @@ export interface PdfPathItem {
   onTop?: boolean;
 }
 
-/** A filled rectangle — SPEC-108's sheet background. Coordinates match
- * PdfImageItem: the box's top-left, in points from the page's TOP-left.
- * Rects paint first, beneath every image, path and text item. */
+/** A filled and/or stroked rectangle — SPEC-108's sheet background, and
+ * SPEC-104's slide backgrounds, frame fills and strokes, handout frames and
+ * note lines. Coordinates match PdfImageItem: the box's top-left, in points
+ * from the page's TOP-left. Rects paint first, beneath every image, path and
+ * text item — unless `onTop`, which paints them after the text. */
 export interface PdfRectItem {
   xPt: number;
   yPt: number;
   widthPt: number;
   heightPt: number;
-  /** "#rrggbb"; anything else paints nothing. */
-  fill: string;
+  /** "#rrggbb" (SPEC-108) or rgb 0..1 (SPEC-104); any other string paints no
+   * fill. */
+  fill?: string | [number, number, number];
+  /** rgb 0..1: the outline, centred on the box edge (PDF's own stroke rule). */
+  stroke?: [number, number, number];
+  /** The outline's width; 0.75 pt when absent. */
+  strokeWidthPt?: number;
+  /** Painted over the text rather than under it, like PdfImageItem.onTop. */
+  onTop?: true;
+}
+
+/** Default outline width of a stroked rect, in points (one CSS px). */
+export const DEFAULT_RECT_STROKE_PT = 0.75;
+
+/** A rect's fill as rgb 0..1, or null when it paints none: a "#rrggbb" string
+ * is decoded, an rgb triple passes through, anything else is no fill. */
+export function rectFillRgb(fill: PdfRectItem["fill"]): [number, number, number] | null {
+  if (Array.isArray(fill)) {
+    return fill;
+  }
+  const hex = typeof fill === "string" ? /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(fill) : null;
+  if (!hex) {
+    return null;
+  }
+  return [parseInt(hex[1], 16) / 255, parseInt(hex[2], 16) / 255, parseInt(hex[3], 16) / 255];
 }
 
 export interface PdfPageInput {
@@ -136,8 +161,9 @@ export interface PdfPageInput {
   /** Vector paths (SPEC-070 connectors). Optional: a page input built before
    * this existed draws none. */
   paths?: PdfPathItem[];
-  /** Filled rectangles under everything else (SPEC-108). Optional: a page
-   * input built before this existed draws none. */
+  /** Filled/stroked rectangles, under everything else unless `onTop`
+   * (SPEC-108, SPEC-104). Optional: a page input built before this existed
+   * draws none, and the extractor emits the key only for a `rectSelector`. */
   rects?: PdfRectItem[];
   /** The page's /Rotate — how a viewer turns it for display, clockwise.
    * Absent or 0 writes no entry. SPEC-107's fixture needs a rotated page. */
@@ -626,18 +652,25 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
     return ops;
   };
 
-  /** The fill operators for one page's rects, flipped into PDF space. */
-  const drawRects = (page: PdfPageInput): string => {
+  /** The fill and stroke operators for one page's rects in the requested
+   * layer, flipped into PDF space: `r g b rg x y w h re f` and/or
+   * `r g b RG w w x y w h re S`. */
+  const drawRects = (page: PdfPageInput, onTop: boolean): string => {
     let ops = "";
     for (const rect of page.rects ?? []) {
-      const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(rect.fill);
-      if (!hex) {
+      if (Boolean(rect.onTop) !== onTop) {
         continue;
       }
-      const rgb = hex.slice(1).map((channel) => fmt(parseInt(channel, 16) / 255));
       const y = page.heightPt - rect.yPt - rect.heightPt;
-      ops +=
-        `q ${rgb.join(" ")} rg ${fmt(rect.xPt)} ${fmt(y)} ${fmt(rect.widthPt)} ${fmt(rect.heightPt)} re f Q\n`;
+      const box = `${fmt(rect.xPt)} ${fmt(y)} ${fmt(rect.widthPt)} ${fmt(rect.heightPt)} re`;
+      const fill = rectFillRgb(rect.fill);
+      if (fill) {
+        ops += `q ${fill.map(fmt).join(" ")} rg ${box} f Q\n`;
+      }
+      if (rect.stroke) {
+        const width = Math.max(0, rect.strokeWidthPt ?? DEFAULT_RECT_STROKE_PT);
+        ops += `q ${rect.stroke.map(fmt).join(" ")} RG ${fmt(width)} w ${box} S Q\n`;
+      }
     }
     return ops;
   };
@@ -651,7 +684,7 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
   for (const [pageIndex, page] of input.pages.entries()) {
     // Behind-the-text images first, then the text, then the images that sit
     // in front of it — PDF paints in content-stream order.
-    let content = drawRects(page) + drawImages(page, false) + drawPaths(page, false);
+    let content = drawRects(page, false) + drawImages(page, false) + drawPaths(page, false);
     for (const item of page.items) {
       if (item.text.length === 0) {
         continue;
@@ -664,7 +697,7 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
         `1 0 0 1 ${fmt(item.xPt)} ${fmt(page.heightPt - item.yPt)} Tm ` +
         `<${encodeText(usage, item.text)}> Tj ET\n`;
     }
-    content += drawImages(page, true) + drawPaths(page, true);
+    content += drawRects(page, true) + drawImages(page, true) + drawPaths(page, true);
     // Page content is operator text — highly compressible, and the bulk of
     // any document long enough for the fonts not to dominate.
     contentIds.push(objects.stream("/Filter /FlateDecode", await deflate(asciiBytes(content))));

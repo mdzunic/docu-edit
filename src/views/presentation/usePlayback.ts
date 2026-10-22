@@ -31,8 +31,13 @@ export interface UsePlaybackDeps {
    * moving to the next slide; back lands on a slide fully-built. Absent = a
    * deck with no builds (every slide reports 0), preserving SPEC-084 behaviour. */
   buildCountAt?: (slideIndex: number) => number;
-  /** The starting slide index (0-based); clamped into range. */
+  /** The starting slide index (0-based); clamped into range. A hidden start
+   * is honoured — a deep link to a hidden slide still shows it (SPEC-104). */
   start?: number;
+  /** Whether slide `i` is hidden (SPEC-104): advance/back/goTo step over a
+   * hidden slide, and the end screen follows the last VISIBLE slide. Absent
+   * = nothing is hidden, preserving SPEC-084 behaviour. */
+  isHidden?: (slideIndex: number) => boolean;
 }
 
 export interface UsePlayback {
@@ -57,6 +62,23 @@ export function usePlayback(deps: UsePlaybackDeps): UsePlayback {
     if (!Number.isFinite(index)) return 0;
     return Math.min(Math.max(Math.trunc(index), 0), lastIndex());
   }
+  function hidden(slideIndex: number): boolean {
+    return deps.isHidden ? deps.isHidden(slideIndex) : false;
+  }
+  /** The first visible slide after `slideIndex`, or -1 when none is left. */
+  function nextVisible(slideIndex: number): number {
+    for (let index = slideIndex + 1; index <= lastIndex(); index += 1) {
+      if (!hidden(index)) return index;
+    }
+    return -1;
+  }
+  /** The last visible slide before `slideIndex`, or -1 when none is left. */
+  function previousVisible(slideIndex: number): number {
+    for (let index = Math.min(slideIndex, lastIndex() + 1) - 1; index >= 0; index -= 1) {
+      if (!hidden(index)) return index;
+    }
+    return -1;
+  }
 
   const current = ref<PlaybackStep>({ slideIndex: clampIndex(deps.start ?? 0), buildIndex: 0 });
   const atEnd = ref(false);
@@ -71,31 +93,42 @@ export function usePlayback(deps: UsePlaybackDeps): UsePlayback {
       current.value = { slideIndex, buildIndex: buildIndex + 1 };
       return;
     }
-    if (slideIndex >= lastIndex()) {
+    const next = nextVisible(slideIndex);
+    if (next < 0) {
       atEnd.value = true;
       return;
     }
-    current.value = { slideIndex: slideIndex + 1, buildIndex: 0 };
+    current.value = { slideIndex: next, buildIndex: 0 };
   }
 
   /** Previous slide, landed fully-built (builds collapse on back — SPEC-084's
-   * rule, AC-22). From the end screen it steps back onto the last slide. */
+   * rule, AC-22). From the end screen it steps back onto the last (visible)
+   * slide. */
   function back(): void {
     if (atEnd.value) {
       atEnd.value = false;
-      current.value = { slideIndex: lastIndex(), buildIndex: buildCount(lastIndex()) };
+      const last = hidden(lastIndex()) ? previousVisible(lastIndex()) : lastIndex();
+      const target = last < 0 ? current.value.slideIndex : last;
+      current.value = { slideIndex: target, buildIndex: buildCount(target) };
       return;
     }
-    if (current.value.slideIndex <= 0) return;
-    const prev = current.value.slideIndex - 1;
+    const prev = previousVisible(current.value.slideIndex);
+    if (prev < 0) return;
     current.value = { slideIndex: prev, buildIndex: buildCount(prev) };
   }
 
   /** Jump straight to a slide (Home/End, number-then-Enter), clearing the end
-   * screen. Out-of-range indices clamp. */
+   * screen. Out-of-range indices clamp; a hidden target steps over to the
+   * next visible slide (the previous one when none follows). */
   function goTo(slideIndex: number): void {
     atEnd.value = false;
-    current.value = { slideIndex: clampIndex(slideIndex), buildIndex: 0 };
+    let target = clampIndex(slideIndex);
+    if (hidden(target)) {
+      const next = nextVisible(target);
+      const prev = next < 0 ? previousVisible(target) : -1;
+      target = next >= 0 ? next : prev >= 0 ? prev : target;
+    }
+    current.value = { slideIndex: target, buildIndex: 0 };
   }
 
   return { current, atEnd, reducedMotion, advance, back, goTo };

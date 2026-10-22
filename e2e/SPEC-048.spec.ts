@@ -4,7 +4,7 @@ import { embedFontsIntoDocx } from "../src/lib/fonts/embedDocx";
 import { unzip } from "../src/lib/core/zip";
 import { createDocument as buildDocumentModel } from "../src/lib/documentModel";
 import { writeDocx } from "../src/lib/docx/writer";
-import { DOCUMENTED_DEFAULT_FAMILY, fontStack } from "../src/lib/fonts/substitution";
+import { DOCUMENTED_DEFAULT_FAMILY, fontStack } from "../src/lib/core/fontSubstitution";
 
 // SPEC-048 — font fallback & embedding. Substitution keeps the original family
 // name in the model while rendering (and measuring, and exporting) on a bundled

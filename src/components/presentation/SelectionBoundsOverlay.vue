@@ -32,7 +32,7 @@ const boxStyle = computed(() => {
 
 <template>
   <div
-    class="overlay"
+    class="overlay print-exclude"
     aria-hidden="true"
   >
     <div

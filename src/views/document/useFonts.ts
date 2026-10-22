@@ -10,8 +10,8 @@ import { documentFontFamilies } from "../../lib/fonts";
 import { BUNDLED_FACES } from "../../lib/fonts/bundledFaces";
 import { extractEmbeddedFonts } from "../../lib/fonts/embeddedFonts";
 import { documentFontReport, type FontReportEntry } from "../../lib/fonts/report";
-import { fontStack } from "../../lib/fonts/substitution";
-import { faceFileName, faceKeyFor } from "../../lib/pdf/fontMap";
+import { fontStack } from "../../lib/core/fontSubstitution";
+import { faceFileName, faceKeyFor } from "../../lib/core/pdfFonts";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import {
   collectFontUsage,

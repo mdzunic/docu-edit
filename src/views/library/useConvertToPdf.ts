@@ -12,8 +12,8 @@
 // SPEC-003's duplicate numbering. Both save and download report a failure
 // without having written anything.
 import { computed, ref, shallowRef, type ComputedRef, type Ref } from "vue";
-import { buildPdf, PDF_MIME_TYPE, pdfFileName, type PdfImageData, type PdfPageInput } from "../../lib/pdf/buildPdf";
-import { cropImage, encodeImage } from "../../lib/pdf/imageEncode";
+import { buildPdf, PDF_MIME_TYPE, pdfFileName, type PdfImageData, type PdfPageInput } from "../../lib/core/pdfBuild";
+import { cropImage, encodeImage } from "../../lib/core/pdfImages";
 import { convertSvgToPng, type ConvertedPng } from "../../lib/core/svgToPng";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { bytesToBase64 } from "../../lib/core/packageParts";

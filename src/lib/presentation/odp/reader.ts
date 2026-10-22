@@ -135,6 +135,7 @@ class StyleResolver {
   private readonly cache = new Map<string, RunProps>();
   private readonly drawingPageTransitions = new Map<string, OdpTransitionAttrs>();
   private readonly drawingPageDisplays = new Map<string, OdpDisplayFlags>();
+  private readonly drawingPageVisibilities = new Map<string, string>();
   private readonly rawStyles = new Map<string, Element>();
   private readonly listStyles = new Map<string, Element>();
 
@@ -186,6 +187,10 @@ class StyleResolver {
       if (dpProps) {
         this.drawingPageTransitions.set(name, readDrawingPageTransition(dpProps));
         this.drawingPageDisplays.set(name, readDrawingPageDisplay(dpProps));
+        const visibility = presentationAttr(dpProps, "visibility");
+        if (visibility !== null) {
+          this.drawingPageVisibilities.set(name, visibility);
+        }
       }
     }
     this.styles.set(name, entry);
@@ -235,6 +240,13 @@ class StyleResolver {
     }
     const attrs = this.drawingPageTransitions.get(name);
     return attrs && attrs.smilType ? attrs : undefined;
+  }
+
+  /** The `presentation:visibility` a page's drawing-page style declares
+   * (SPEC-104, ODF 1.2 §15.36: `visible` | `hidden`), or undefined when it
+   * declares none (read as visible). */
+  drawingPageVisibility(name: string | null | undefined): string | undefined {
+    return name ? this.drawingPageVisibilities.get(name) : undefined;
   }
 
   /** The `presentation:display-*` field flags a page's drawing-page style
@@ -2143,6 +2155,11 @@ function parsePage(page: Element, ctx: OdpContext, pageSource?: string): Slide {
   }
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
+  }
+  // SPEC-104: a hidden page's drawing-page style says so; the style name
+  // itself stays in `preserved["@page"]`, so nothing is consumed.
+  if (ctx.styles.drawingPageVisibility(drawAttr(page, "style-name")) === "hidden") {
+    slide.hidden = true;
   }
   const fields = odpPageFields(page, ctx);
   if (fields.length > 0) {

@@ -711,3 +711,46 @@ describe("SPEC-097 links (odp)", () => {
     expect(read?.kind).toBe("foreign");
   });
 });
+
+// --- SPEC-104 hidden pages ---------------------------------------------------
+import { GOLDEN_ODP_HIDDEN_PAGE_ATTR, GOLDEN_ODP_HIDDEN_STYLE, ODP_HIDDEN_VISIBILITY_PROP } from "./visibilityGolden";
+
+describe("odp visibility golden (SPEC-104)", () => {
+  it("a hidden from-scratch page mints exactly the golden drawing-page style and reference", () => {
+    const registry = new StyleRegistry();
+    const xml = serializePage({ id: "s", frames: [], hidden: true }, registry, new Set(), "Default");
+    expect(xml).toBe(`<draw:page draw:name="page" draw:master-page-name="Default"${GOLDEN_ODP_HIDDEN_PAGE_ATTR}></draw:page>`);
+    expect(registry.xml()).toContain(GOLDEN_ODP_HIDDEN_STYLE);
+  });
+
+  it("strips an inherited visibility from the copied base and states the page's own", () => {
+    const source =
+      `<style:style style:name="dp1" style:family="drawing-page">` +
+      `<style:drawing-page-properties draw:fill="solid" draw:fill-color="#112233" presentation:visibility="visible"/></style:style>`;
+    const registry = new StyleRegistry();
+    const xml = serializePage(
+      { id: "s", frames: [], hidden: true, preserved: { "@page": ` draw:name="p1" draw:style-name="dp1"` } },
+      registry,
+      new Set(),
+      "Default",
+      source,
+    );
+    expect(xml).toContain(`draw:style-name="de-DP1"`);
+    expect(registry.xml()).toContain(
+      `<style:drawing-page-properties draw:fill="solid" draw:fill-color="#112233" ${ODP_HIDDEN_VISIBILITY_PROP}/>`,
+    );
+  });
+
+  it("a shown page whose style states nothing about visibility keeps its style", () => {
+    const source = `<style:style style:name="dp1" style:family="drawing-page"><style:drawing-page-properties draw:fill="none"/></style:style>`;
+    const registry = new StyleRegistry();
+    const xml = serializePage(
+      { id: "s", frames: [], preserved: { "@page": ` draw:name="p1" draw:style-name="dp1"` } },
+      registry,
+      new Set(),
+      "Default",
+      source,
+    );
+    expect(xml).toBe(`<draw:page draw:name="p1" draw:style-name="dp1"></draw:page>`);
+  });
+});

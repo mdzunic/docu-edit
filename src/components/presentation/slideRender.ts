@@ -199,7 +199,7 @@ export function frameRole(frame: SlideFrame): string | undefined {
 }
 
 // --- positioning & fills ----------------------------------------------------
-export function framePositionStyle(frame: SlideFrame): Record<string, string> {
+export function framePositionStyle(frame: SlideFrame, flatRotation = false): Record<string, string> {
   const style: Record<string, string> = {
     position: "absolute",
     left: cmPx(frame.xCm),
@@ -207,7 +207,9 @@ export function framePositionStyle(frame: SlideFrame): Record<string, string> {
     width: cmPx(frame.widthCm),
     height: cmPx(frame.heightCm),
   };
-  if (frame.rotationDeg) {
+  // SPEC-104's print/export sheet renders every frame at its axis-aligned
+  // box (a shape bakes its rotation into its canvas instead).
+  if (frame.rotationDeg && !flatRotation) {
     style.transform = `rotate(${frame.rotationDeg}deg)`;
     style.transformOrigin = "center";
   }
@@ -774,6 +776,15 @@ export const SLIDE_MENU_ITEMS: SlideMenuItem[] = [
   { action: "move-up", label: "Move up", testid: "slide-menu-move-up" },
   { action: "move-down", label: "Move down", testid: "slide-menu-move-down" },
 ];
+
+/** The filmstrip's slide menu (SPEC-104): the shared items plus the
+ * Hide/Show toggle, labelled for the slide the menu was opened on. */
+export function filmstripMenuItems(slideHidden: boolean): SlideMenuItem[] {
+  return [
+    ...SLIDE_MENU_ITEMS,
+    { action: "hide", label: slideHidden ? "Show slide" : "Hide slide", testid: "slide-menu-hide" },
+  ];
+}
 
 /** The modifier state of a pointer/keyboard event, as a plain object the
  * shared slide selection reads (SPEC-099). */

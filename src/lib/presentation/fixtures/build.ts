@@ -2196,3 +2196,67 @@ export async function buildSpec099PptxFixtureBytes(): Promise<Uint8Array> {
 export async function buildSpec099OdpFixtureBytes(): Promise<Uint8Array> {
   return (await writeOdp(spec099Model("odp"), { now: SPEC099_FIXTURE_INSTANT, modified: SPEC099_FIXTURE_INSTANT })).bytes;
 }
+
+// ============================================================================
+// SPEC-104 hidden-slide fixtures (spec104-hidden)
+// ============================================================================
+// Three 16:9 slides built through the from-scratch writers (the SPEC-097
+// precedent), the middle one hidden — pptx `p:sld show="0"`, odp a
+// drawing-page style carrying `presentation:visibility="hidden"` — and slide
+// 1 carrying speaker notes and a theme-coloured shape, so print layouts have
+// notes to lay out and a canvas-painted frame to export. The four mini-deck
+// slides above are not touched.
+
+/** Each slide's title, in deck order. */
+export const SPEC104_TITLES = ["Welcome", "Backup data", "Thank you"];
+/** `hidden` per slide, in deck order — the fixtures' expectation table. */
+export const EXPECTED_HIDDEN_FLAGS: readonly boolean[] = [false, true, false];
+/** Slide 1's speaker notes, and its accent1-filled shape's box (cm). */
+export const SPEC104_NOTES = ["Thank the organisers", "Mention the handout"];
+export const SPEC104_SHAPE_BOX: [number, number, number, number] = [20, 9, 8, 5];
+
+const SPEC104_FIXTURE_INSTANT = new Date("2026-10-20T09:00:00Z");
+
+function spec104Model(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Hidden slides fixture";
+  model.theme = { name: DEFAULT_THEME.name, colors: { ...DEFAULT_THEME.colors }, fonts: { ...DEFAULT_THEME.fonts } };
+  addSlide(model, 0);
+  addSlide(model, 1);
+  model.slides.forEach((slide, index) => {
+    const title = slide.frames[0] as TextFrame;
+    title.paragraphs = [{ runs: [{ text: SPEC104_TITLES[index] }] }];
+    const body = slide.frames[1] as TextFrame;
+    body.paragraphs = [{ runs: [{ text: `Slide ${index + 1} body` }] }];
+  });
+  const [x, y, w, h] = SPEC104_SHAPE_BOX;
+  model.slides[0].frames.push({
+    id: crypto.randomUUID(),
+    kind: "shape",
+    geometry: "roundRect",
+    xCm: x,
+    yCm: y,
+    widthCm: w,
+    heightCm: h,
+    fill: { type: "solid", color: { theme: "accent1" } },
+  });
+  model.slides[0].notes = [...SPEC104_NOTES];
+  EXPECTED_HIDDEN_FLAGS.forEach((hidden, index) => {
+    if (hidden) {
+      model.slides[index].hidden = true;
+    }
+  });
+  delete model.structureDirty;
+  return model;
+}
+
+/** `spec104-hidden.pptx`: slide 2's `p:sld` carries `show="0"`. */
+export async function buildPptxHiddenFixtureBytes(): Promise<Uint8Array> {
+  return (await writePptx(spec104Model("pptx"), { now: SPEC104_FIXTURE_INSTANT, modified: SPEC104_FIXTURE_INSTANT })).bytes;
+}
+
+/** `spec104-hidden.odp`: slide 2's page references a hidden drawing-page style. */
+export async function buildOdpHiddenFixtureBytes(): Promise<Uint8Array> {
+  return (await writeOdp(spec104Model("odp"), { now: SPEC104_FIXTURE_INSTANT, modified: SPEC104_FIXTURE_INSTANT })).bytes;
+}

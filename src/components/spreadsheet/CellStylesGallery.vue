@@ -6,7 +6,7 @@
 // style as it would apply (sheetToolbar.ts's cellStyleGroups). Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
-import { fontStack } from "../../lib/fonts/substitution";
+import { fontStack } from "../../lib/core/fontSubstitution";
 
 const props = defineProps({
   /** cellStyleGroups' groups. */

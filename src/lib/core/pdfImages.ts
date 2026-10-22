@@ -10,10 +10,10 @@
 //  - everything else (PNG, GIF, converted SVG, progressive or CMYK JPEG) is
 //    drawn to a canvas and embedded as zlib-compressed RGB samples, with the
 //    alpha channel split out into an /SMask when the image is transparent.
-import type { PdfImageData } from "./buildPdf";
+import type { PdfImageData } from "./pdfBuild";
 // Shared with buildPdf.ts, which deflates its font and content streams —
 // see core/deflate.ts for why it lives there rather than here.
-import { deflate } from "../core/deflate";
+import { deflate } from "./deflate";
 
 /** The frame header of a JPEG: what /DCTDecode needs to know before the
  * original bytes can be handed to a PDF viewer unchanged. */

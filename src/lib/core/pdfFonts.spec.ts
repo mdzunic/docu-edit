@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseCssColor } from "./domExtract";
-import { allFaceKeys, classifyFamily, faceFileName, faceKeyFor, firstFamilyName } from "./fontMap";
+import { parseCssColor } from "./pdfExtract";
+import {
+  allFaceKeys,
+  classifyFamily,
+  faceCssFont,
+  faceFileName,
+  faceFontDescriptor,
+  faceKeyFor,
+  firstFamilyName,
+} from "./pdfFonts";
 
 describe("firstFamilyName", () => {
   it("takes the first family, unquoted and lowercased", () => {
@@ -71,5 +79,26 @@ describe("parseCssColor", () => {
   it("falls back to black for unparseable colors", () => {
     expect(parseCssColor("currentcolor")).toEqual([0, 0, 0]);
     expect(parseCssColor("")).toEqual([0, 0, 0]);
+  });
+});
+
+describe("faceCssFont (SPEC-104)", () => {
+  it("names the bundled family each face embeds, with its weight and slant", () => {
+    expect(faceCssFont("sans-regular", 16)).toBe('16px "Liberation Sans", sans-serif');
+    expect(faceCssFont("serif-bold", 24)).toBe('bold 24px "Liberation Serif", serif');
+    expect(faceCssFont("mono-italic", 10.5)).toBe('italic 10.5px "Liberation Mono", monospace');
+    expect(faceCssFont("calibri-bolditalic", 12)).toBe('italic bold 12px "Carlito", sans-serif');
+    expect(faceCssFont("cambria-regular", 9)).toBe('9px "Caladea", serif');
+  });
+
+  it("agrees with faceFileName on every face (the raster paints the very file the PDF embeds)", () => {
+    for (const face of allFaceKeys()) {
+      const { family, weight, style } = faceFontDescriptor(face);
+      const stem = faceFileName(face).replace(/-.*$/, "");
+      expect(stem).toBe(family.replace(/\s+/g, ""));
+      const suffix = faceFileName(face).replace(/^.*-|\.ttf$/g, "");
+      const expected = { Regular: "normal-normal", Bold: "bold-normal", Italic: "normal-italic", BoldItalic: "bold-italic" }[suffix];
+      expect(`${weight}-${style}`).toBe(expected);
+    }
   });
 });

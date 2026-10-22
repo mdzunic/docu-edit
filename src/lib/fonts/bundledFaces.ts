@@ -1,9 +1,9 @@
 // The bundled font faces the app registers as @font-face so the browser can
 // render the metric-compatible substitutes (SPEC-048 AC-1). These are the
-// same files the PDF exporter embeds (lib/pdf/fontMap), listed here by family
+// same files the PDF exporter embeds (lib/core/pdfFonts), listed here by family
 // × weight × slant for the CSS Font Loading API. Framework-free (no Vue, no
 // FontFace construction — that is the browser-only composable's job).
-import { BUNDLED_FAMILIES, type BundledFamily } from "./substitution";
+import { BUNDLED_FAMILIES, type BundledFamily } from "../core/fontSubstitution";
 
 export interface BundledFace {
   family: BundledFamily;

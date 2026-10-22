@@ -89,6 +89,13 @@ const props = defineProps({
   /** SPEC-094: the deck's theme, so scheme references resolve at render.
    * Null/absent = Office (`DEFAULT_THEME`). */
   theme: { type: Object, default: null },
+  /** SPEC-104: passed to paintShapeIntoCanvas as its zoom (fifth) argument,
+   * so an export sheet's shape canvases get a dpr × rasterScale backing store. */
+  rasterScale: { type: Number, default: 1 },
+  /** SPEC-104 export/print sheets: no CSS rotation — the frame sits at its
+   * axis-aligned box (its text prints unrotated) and a shape's rotation is
+   * painted into its canvas pixels instead. */
+  flatRotation: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -111,7 +118,7 @@ const testId = computed(() => (props.topLevel ? "slide-frame" : undefined));
 const role = computed(() => (props.topLevel ? frameRole(frame.value) : undefined));
 const ariaName = computed(() => (props.topLevel ? frameAccessibleName(frame.value) : undefined));
 const tabIndex = computed(() => (props.topLevel ? 0 : undefined));
-const position = computed(() => framePositionStyle(frame.value));
+const position = computed(() => framePositionStyle(frame.value, props.flatRotation));
 const paragraphs = computed(() => markedParagraphs(frame.value));
 const textFill = computed(() => textFrameFill(frame.value, deckTheme.value));
 const children = computed(() => groupChildren(frame.value));
@@ -423,8 +430,11 @@ function paint() {
   if (!el || !visual) {
     return;
   }
+  if (props.flatRotation && frame.value.rotationDeg) {
+    visual.rotationDeg = frame.value.rotationDeg; // baked into the pixels
+  }
   try {
-    paintShapeIntoCanvas(el, visual, cmToPx(frame.value.widthCm), cmToPx(frame.value.heightCm));
+    paintShapeIntoCanvas(el, visual, cmToPx(frame.value.widthCm), cmToPx(frame.value.heightCm), props.rasterScale);
   } catch {
     // A host without a real 2D canvas (jsdom) can't paint; rendering must
     // never break the view.
@@ -503,7 +513,7 @@ watch([() => props.frame, deckTheme], () => {
       :style="textBodyStyle"
     >
       <div
-        class="ph-prompt"
+        class="ph-prompt print-exclude"
         data-testid="slide-placeholder-prompt"
       >
         {{ promptText }}
@@ -673,7 +683,7 @@ watch([() => props.frame, deckTheme], () => {
         <button
           v-if="mediaBlocked"
           type="button"
-          class="media-play media-blocked"
+          class="media-play media-blocked print-exclude"
           data-testid="media-blocked"
           aria-label="Click to play"
           @click.stop="startPlayback"
@@ -683,7 +693,7 @@ watch([() => props.frame, deckTheme], () => {
         <button
           v-else-if="mediaDescriptor.playable"
           type="button"
-          class="media-play"
+          class="media-play print-exclude"
           data-testid="media-play"
           aria-label="Play"
           @click.stop="activateMedia"
@@ -847,6 +857,8 @@ watch([() => props.frame, deckTheme], () => {
         :resolve-media="resolveMedia"
         :top-level="false"
         :theme="theme"
+        :raster-scale="rasterScale"
+        :flat-rotation="flatRotation"
       />
     </div>
   </div>
@@ -953,7 +965,7 @@ watch([() => props.frame, deckTheme], () => {
       <div
         v-for="b in colBoundaries"
         :key="`col-${b.index}`"
-        class="col-resize-handle"
+        class="col-resize-handle print-exclude"
         data-testid="table-col-resize"
         :data-boundary="b.index"
         :style="{ left: `${b.offsetPct}%` }"
@@ -962,7 +974,7 @@ watch([() => props.frame, deckTheme], () => {
       <div
         v-for="b in rowBoundaries"
         :key="`row-${b.index}`"
-        class="row-resize-handle"
+        class="row-resize-handle print-exclude"
         data-testid="table-row-resize"
         :data-boundary="b.index"
         :style="{ top: `${b.offsetPct}%` }"

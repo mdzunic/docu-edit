@@ -3,9 +3,8 @@
 //
 // How each file is produced (the production note SPEC-107 asks for):
 // - spec107-pages.pdf — the app's OWN PDF writer, buildPdf, so the file is
-//   reproducible from this script alone. SPEC-104's src/lib/core/pdfBuild.ts
-//   does not exist in this tree, so the writer is imported from
-//   src/lib/pdf/buildPdf.ts. Three pages of mixed sizes — US Letter portrait,
+//   reproducible from this script alone. The writer is imported from
+//   src/lib/core/pdfBuild.ts (moved there by SPEC-104). Three pages of mixed sizes — US Letter portrait,
 //   A4 with /Rotate 90, and a 720 × 540 pt landscape page — each drawn as
 //   vector paths only (a text item would need a font embedded), plus an
 //   /Info dictionary with a title, author, producer and creation date.
@@ -29,7 +28,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildPdf, type PdfPageInput, type PdfPathSubpath } from "../src/lib/pdf/buildPdf";
+import { buildPdf, type PdfPageInput, type PdfPathSubpath } from "../src/lib/core/pdfBuild";
 import {
   buildEncryptedPdfBytes,
   buildGifFixtureBytes,

@@ -45,7 +45,7 @@
 // never restyled here. Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
-import { fontStack } from "../../lib/fonts/substitution";
+import { fontStack } from "../../lib/core/fontSubstitution";
 import { annotationMarksOf, asBandItems, asDescribedCell, asFindMarks, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import { isLinkedCell } from "../../views/spreadsheet/cellLinks";
 import AppIcon from "../AppIcon.vue";

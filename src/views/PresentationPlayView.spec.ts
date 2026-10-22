@@ -242,3 +242,35 @@ describe("PresentationPlayView links (SPEC-097)", () => {
     expect(wrapper.get('[data-testid="presentation-play"]').attributes("data-building")).toBe("true");
   });
 });
+
+// SPEC-104 — hidden slides: a deep link to one still shows it, and only
+// advancing/going back steps over one.
+async function hiddenDeck(): Promise<PresentationModel> {
+  const { buildPptxHiddenFixtureBytes } = await import("../lib/presentation/fixtures/build");
+  const { readPresentationBytes } = await import("../lib/presentation/open");
+  return readPresentationBytes(await buildPptxHiddenFixtureBytes(), "pptx", "hidden");
+}
+
+describe("PresentationPlayView hidden slides (SPEC-104)", () => {
+  it("advancing from slide 1 steps over the hidden slide 2 onto slide 3, and back again", async () => {
+    const deck = await hiddenDeck();
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/1`, deck);
+    const counter = () => wrapper.get('[data-testid="play-slide-counter"]').text();
+    expect(counter()).toBe("1 / 3");
+    key("ArrowRight");
+    await flushPromises();
+    expect(counter()).toBe("3 / 3");
+    key("ArrowLeft");
+    await flushPromises();
+    expect(counter()).toBe("1 / 3");
+  });
+
+  it("a deep link to the hidden slide still shows it", async () => {
+    const deck = await hiddenDeck();
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/2`, deck);
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("2 / 3");
+    key("ArrowRight");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("3 / 3");
+  });
+});

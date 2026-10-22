@@ -63,7 +63,12 @@ function buildCountAt(index = 0) {
   const slide = presentation.value?.slides[index];
   return slide ? slideBuildCount(slide) : 0;
 }
-const playback = usePlayback({ slideCount, reducedMotion, start: routeStartIndex(), buildCountAt });
+// SPEC-104: hidden slides are stepped over by advance/back/goTo — never by
+// the deep link itself (see loadPresentation).
+function isHidden(index = 0) {
+  return presentation.value?.slides[index]?.hidden === true;
+}
+const playback = usePlayback({ slideCount, reducedMotion, start: routeStartIndex(), buildCountAt, isHidden });
 const currentSlide = computed(() => presentation.value?.slides[playback.current.value.slideIndex] ?? null);
 // SPEC-093: the playing slide's resolved deck field band.
 const currentFields = computed(() => {
@@ -146,7 +151,10 @@ async function loadPresentation() {
   presentation.value = model;
   loaded.value = true;
   if (model) {
-    playback.goTo(routeStartIndex()); // clamp the deep-link n into range
+    // Clamp the deep-link n into range and land exactly on it: a deep link to
+    // a hidden slide still shows it (SPEC-104), which goTo would step over.
+    playback.atEnd.value = false;
+    playback.current.value = { slideIndex: Math.min(Math.max(Math.trunc(routeStartIndex()), 0), Math.max(0, slideCount.value - 1)), buildIndex: 0 };
     syncUrl(); // reflect the clamp even when the index did not change (AC-5)
     if (currentSlide.value) {
       buildPreview.settle(currentSlide.value, playback.current.value.buildIndex); // hide unbuilt frames (AC-20)

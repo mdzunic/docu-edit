@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MAX_DPI, dataUriBytes, parseJpegHeader, sampleSize } from "./imageEncode";
+import { DEFAULT_MAX_DPI, dataUriBytes, parseJpegHeader, sampleSize } from "./pdfImages";
 
 /** Assembles a JPEG far enough to carry a frame header: SOI, an APP0 segment
  * that must be skipped by its length, then the frame. */

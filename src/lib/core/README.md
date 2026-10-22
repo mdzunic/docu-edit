@@ -33,6 +33,13 @@ What lives here, by area:
 - **Layout measurement** — `pageMetrics.ts` (LineBox/BlockMetrics and the
   DOM measurers; the pagination engine itself is document-shaped and stays
   in `lib/pagination.ts`).
+- **PDF** (SPEC-034's writer, moved here by SPEC-104 so both products can
+  export) — `pdfBuild.ts` (the PDF 1.7 writer), `pdfExtract.ts` (a realised
+  DOM page → `PdfPageInput`, with configurable image/canvas/rect selectors),
+  `pdfImages.ts` (image XObject encoding), `pdfFonts.ts` (CSS family → bundled
+  face), `sfnt.ts`, `svgPath.ts`, `fontSubstitution.ts` (SPEC-048's metric
+  twins), `pageRange.ts` (page/slide range parsing) and `pdfRaster.ts` (one
+  extracted page painted to PNG bytes).
 - **Package plumbing** — `zip.ts`, `zipWriter.ts`, `xml.ts` (parsing, OPC
   relationships, canonicalization, the XML escape family — the canonical
   text/attribute pair plus the writers' full-entity `escapeXml`),

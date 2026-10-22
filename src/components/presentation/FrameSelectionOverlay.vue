@@ -101,7 +101,7 @@ function onOverlayDblclick(event = new MouseEvent("dblclick")) {
 
 <template>
   <div
-    class="overlay"
+    class="overlay print-exclude"
     aria-hidden="false"
   >
     <!-- Alignment guides span the whole surface -->
