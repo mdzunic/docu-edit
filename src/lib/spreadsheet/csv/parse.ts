@@ -49,7 +49,7 @@ import {
   type SpreadsheetModel,
 } from "../model";
 import { SPREADSHEET_LOCALES, type SpreadsheetLocaleTag } from "../numberFormat/locale";
-import { SPREADSHEET_READER_VERSION } from "../open";
+import { SPREADSHEET_READER_VERSION } from "../readerVersion";
 import { buildPreview } from "../preview";
 import { cellStyle, defaultStyles, internStyle } from "../styles";
 import { inferCsvField } from "./infer";

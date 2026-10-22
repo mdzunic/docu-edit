@@ -214,7 +214,9 @@ import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
 import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 15;
+import { SPREADSHEET_READER_VERSION } from "./readerVersion";
+
+export { SPREADSHEET_READER_VERSION };
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -886,11 +888,19 @@ export async function readSpreadsheetBytes(
   return model;
 }
 
+/** Reads an inflated package into a fresh model — readSpreadsheetBytes by
+ * default; the store passes SPEC-137's off-thread reader, which this layer
+ * cannot import (lib/workers is the app layer's). */
+export type SpreadsheetPartsReader = (parts: Map<string, Uint8Array>, format: SpreadsheetFormat, title: string) => Promise<SpreadsheetModel>;
+
+const readInline: SpreadsheetPartsReader = (parts, format, title) => readSpreadsheetBytes(new Uint8Array(0), format, title, parts);
+
 /** Brings a stored workbook up to SPREADSHEET_READER_VERSION (see the module
  * header). A current record comes back as the same object; an older one is
  * re-read from its retained package — wholesale when nothing was edited,
- * sheet by sheet when something was (upgradeEdited). */
-export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<SpreadsheetModel> {
+ * sheet by sheet when something was (upgradeEdited). `read` does the re-reading
+ * (SPEC-137: readSpreadsheetBytes unless the caller passes another). */
+export async function upgradeSpreadsheetModel(model: SpreadsheetModel, read: SpreadsheetPartsReader = readInline): Promise<SpreadsheetModel> {
   if (model.readerVersion >= SPREADSHEET_READER_VERSION) {
     return model;
   }
@@ -900,9 +910,9 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   const sourceParts = decodedPartBytes(model.opaque);
   const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
   if (model.structureDirty || model.namesDirty || model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
-    return upgradeEdited(model, sourceParts, pending);
+    return upgradeEdited(model, sourceParts, pending, read);
   }
-  const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, sourceParts);
+  const fresh = await read(sourceParts, model.format, model.title);
   fresh.id = model.id;
   if (model.forceFullCalcOnLoad) {
     fresh.forceFullCalcOnLoad = true;
@@ -966,12 +976,17 @@ async function upgradeCsvModel(model: SpreadsheetModel, format: "csv" | "tsv"): 
  * formulas read name the sheets as the model does, while the record keeps
  * its retained package untouched. Dirty sheets run the pending steps (a step
  * never runs on a sheet with no source). */
-async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, Uint8Array>, pending: readonly ReaderUpgrade[]): Promise<SpreadsheetModel> {
+async function upgradeEdited(
+  model: SpreadsheetModel,
+  sourceParts: Map<string, Uint8Array>,
+  pending: readonly ReaderUpgrade[],
+  read: SpreadsheetPartsReader,
+): Promise<SpreadsheetModel> {
   const layout =
     model.format === "xlsx"
       ? (await import("./xlsx/writer")).substitutedXlsxParts(model)
       : (await import("./ods/writer")).substitutedOdsParts(model);
-  const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, layout);
+  const fresh = await read(layout, model.format, model.title);
   fresh.id = model.id;
   fresh.opaque = model.opaque;
   if (model.odsContentEnvelope) {

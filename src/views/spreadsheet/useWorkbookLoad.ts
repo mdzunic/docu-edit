@@ -12,7 +12,7 @@ import { formatBadgeLabel, spreadsheetFormatLabel } from "../../lib/format";
 import { downloadSpreadsheet } from "../../lib/spreadsheet/download";
 import { foreignSheetMessage } from "../../lib/spreadsheet/foreign";
 import type { SheetPreview, SpreadsheetModel } from "../../lib/spreadsheet/model";
-import { SPREADSHEET_READER_VERSION } from "../../lib/spreadsheet/open";
+import { SPREADSHEET_READER_VERSION } from "../../lib/spreadsheet/readerVersion";
 
 /** One sheet tab: the sheet's index in the model, its id and name. */
 export interface SheetTab {
