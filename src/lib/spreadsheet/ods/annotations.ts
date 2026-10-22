@@ -62,11 +62,14 @@
 //   included); otherwise the text is regenerated from the value with the
 //   model's link. A linked position with no text carries no link.
 //
-// The reader upgrade (open.ts's ReaderUpgrade, the coordinator's): a dirty
-// sheet from before SPEC-135 holds its annotations in its cells'
-// preservedXml (liftOdsSheetNotes) and its links only in its retained
-// sourceXml (retainedOdsLinks / upgradeOdsSheetLinks — attached only where
-// the cell at the source address still holds the source's value).
+// The reader upgrade (open.ts's ReaderUpgrade calls upgradeOdsSheetAnnotations
+// for a dirty sheet): a sheet stored before SPEC-135 holds its annotations
+// in its cells' preservedXml (liftOdsSheetNotes: each anchored to the cell's
+// CURRENT position) — or, stored before SPEC-122, nowhere but its retained
+// sourceXml — and its links only in that sourceXml (retainedOdsAnnotations:
+// an annotation or link at a source-time address is attached only where the
+// cell there still holds the source's value; a value or structural edit
+// since read makes the address unreliable, and nothing is resurrected).
 import { DC_NAMESPACE, odfLengthToCm, OFFICE_NAMESPACE, SVG_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE, XLINK_NAMESPACE } from "../../core/odfXml";
 import { scanAttr, scanXml, type XmlScanAttribute } from "../../core/xmlScanner";
 import { formatA1, getCell, type CellRef } from "../address";
@@ -571,7 +574,15 @@ export interface RetainedOdsLink {
   sourceValue: CellValue;
 }
 
-/** The source value of a linked cell as the reader computes it (reader.ts
+/** An annotation a retained table text carries: the cell (source-time
+ * address), its verbatim element and the value the source cell held. */
+export interface RetainedOdsAnnotation {
+  ref: CellRef;
+  xml: string;
+  sourceValue: CellValue;
+}
+
+/** The source value of a cell as the reader computes it (reader.ts
  * odsCellValue) — null where it cannot be read. */
 function sourceCellValue(attrs: readonly XmlScanAttribute[], text: string, dates: Pick<SpreadsheetModel, "dateSystem" | "odsNullDate">): CellValue {
   const office = (local: string): string | undefined => attr(attrs, OFFICE_NAMESPACE, local, `office:${local}`);
@@ -608,15 +619,23 @@ function sourceCellValue(attrs: readonly XmlScanAttribute[], text: string, dates
   }
 }
 
-/** Every cell link a retained table text (`sourceXml`) carries — each
- * cell's first `text:a`, at its source-time address — with the value the
- * cell held. `prefix` is the retained content envelope's prefix. */
-export function retainedOdsLinks(sourceXml: string | undefined, prefix: string, dates: Pick<SpreadsheetModel, "dateSystem" | "odsNullDate">): RetainedOdsLink[] {
-  if (sourceXml === undefined || !/<[\w.-]+:a[\s>]/.test(sourceXml)) {
-    return [];
+/** Every cell annotation and link a retained table text (`sourceXml`)
+ * carries — each cell's first `office:annotation` (verbatim) and first
+ * `text:a`, at its source-time address (every repetition of a repeated
+ * run) — with the value the cell held. `prefix` is the retained content
+ * envelope's prefix (its root declares the namespaces). */
+export function retainedOdsAnnotations(
+  sourceXml: string | undefined,
+  prefix: string,
+  dates: Pick<SpreadsheetModel, "dateSystem" | "odsNullDate">,
+): { annotations: RetainedOdsAnnotation[]; links: RetainedOdsLink[] } {
+  const annotations: RetainedOdsAnnotation[] = [];
+  const links: RetainedOdsLink[] = [];
+  if (sourceXml === undefined || !/<[\w.-]+:(?:a|annotation)[\s>/]/.test(sourceXml)) {
+    return { annotations, links };
   }
   const declarations = prefixDeclarations(prefix);
-  const out: RetainedOdsLink[] = [];
+  const head = `<ods-table ${declarations}>`;
   const is = (event: { ns: string | undefined; local: string; name: string }, ns: string, local: string, prefixName: string): boolean => named(event, ns, local, `${prefixName}:${local}`);
   const count = (attrs: readonly XmlScanAttribute[], local: string): number => {
     const value = Number(attr(attrs, TABLE_NAMESPACE, local, `table:${local}`));
@@ -627,28 +646,37 @@ export function retainedOdsLinks(sourceXml: string | undefined, prefix: string, 
   let rowRepeat = 1;
   let rowLevel = -1;
   let col = 0;
-  // The open cell.
+  // The open cell: its level, attributes, paragraphs, first annotation and link.
   let cellLevel = -1;
   let cellAttrs: readonly XmlScanAttribute[] = [];
   let paragraphs: string[] = [];
   let paragraph: string | null = null;
   let paragraphLevel = -1;
   let skip = 0;
+  let annotationStart = -1;
+  let annotation: string | undefined;
   let link: OdsWireLink | null = null;
   const finishCell = (): void => {
     const repeat = count(cellAttrs, "number-columns-repeated");
-    if (link) {
+    if (link || annotation !== undefined) {
       const value = sourceCellValue(cellAttrs, paragraphs.join("\n"), dates);
       for (let r = row; r < Math.min(row + rowRepeat, MAX_ROWS); r += 1) {
         for (let c = col; c < Math.min(col + repeat, MAX_COLS); c += 1) {
-          out.push({ ref: { row: r, col: c }, hyperlink: odsHyperlink(link, { row: r, col: c }), sourceValue: value });
+          const ref = { row: r, col: c };
+          if (annotation !== undefined) {
+            annotations.push({ ref, xml: annotation, sourceValue: value });
+          }
+          if (link) {
+            links.push({ ref, hyperlink: odsHyperlink(link, ref), sourceValue: value });
+          }
         }
       }
     }
     col += repeat;
   };
+  const wrapped = `${head}${sourceXml}</ods-table>`;
   try {
-    scanXml(`<ods-table ${declarations}>${sourceXml}</ods-table>`, (event) => {
+    scanXml(wrapped, (event) => {
       if (event.type === "text") {
         if (paragraph !== null && skip === 0) {
           paragraph += event.text;
@@ -664,6 +692,10 @@ export function retainedOdsLinks(sourceXml: string | undefined, prefix: string, 
           rowLevel = -1;
         } else if (skip > 0) {
           skip -= 1;
+          if (skip === 0 && annotationStart >= 0) {
+            annotation ??= wrapped.slice(annotationStart, event.end);
+            annotationStart = -1;
+          }
         } else if (depth === paragraphLevel && paragraph !== null) {
           paragraphs.push(paragraph);
           paragraph = null;
@@ -686,6 +718,8 @@ export function retainedOdsLinks(sourceXml: string | undefined, prefix: string, 
           paragraphs = [];
           paragraph = null;
           link = null;
+          annotation = undefined;
+          annotationStart = -1;
           skip = 0;
           if (event.selfClosing) {
             finishCell();
@@ -699,8 +733,14 @@ export function retainedOdsLinks(sourceXml: string | undefined, prefix: string, 
         }
       } else if (level === cellLevel + 1 && !(is(event, TEXT_NAMESPACE, "p", "text") || is(event, TEXT_NAMESPACE, "h", "text"))) {
         // An annotation, a drawing, anything but a paragraph: not the cell's text.
-        if (!event.selfClosing) {
+        const isAnnotation = is(event, OFFICE_NAMESPACE, "annotation", "office");
+        if (event.selfClosing) {
+          if (isAnnotation) {
+            annotation ??= wrapped.slice(event.start, event.end);
+          }
+        } else {
           skip = 1;
+          annotationStart = isAnnotation && annotation === undefined ? event.start : -1;
         }
       } else if (level === cellLevel + 1) {
         if (event.selfClosing) {
@@ -721,9 +761,9 @@ export function retainedOdsLinks(sourceXml: string | undefined, prefix: string, 
       return undefined;
     });
   } catch {
-    return [];
+    return { annotations: [], links: [] };
   }
-  return out;
+  return { annotations, links };
 }
 
 /** Whether two cell values are the same (errors by code). */
@@ -734,32 +774,91 @@ function sameValue(a: CellValue, b: CellValue): boolean {
   return a === b;
 }
 
-/** SPEC-135's reader-upgrade step for a dirty .ods sheet's links: each link
- * its retained `sourceXml` carries, attached only where the sheet's cell at
- * that address still holds the source cell's value (a value or structural
- * edit since read makes the address unreliable, and such a link is not
- * resurrected). `remapLocation` maps a `place` location's source-time sheet
- * names onto the record's (SPEC-121's sourceSheetRemap through
- * remapSheetReferences); absent, locations are kept as read. Sorted by
- * (row, col); empty when nothing survives. */
-export function upgradeOdsSheetLinks(input: {
+/** Whether the sheet's cell at `ref` still holds `sourceValue` (a null
+ * source value never matches: an empty cell's address says nothing). */
+function stillHolds(sheet: Pick<Sheet, "rows">, ref: CellRef, sourceValue: CellValue): boolean {
+  return sourceValue !== null && sameValue(getCell(sheet as Sheet, ref.row, ref.col)?.value ?? null, sourceValue);
+}
+
+/** What the upgrade's input is: the dirty stored sheet, the retained
+ * content envelope's prefix, the workbook's date system, and an optional
+ * remap of a `place` location's source-time sheet names onto the record's
+ * (SPEC-121's sourceSheetRemap through remapSheetReferences; absent,
+ * locations are kept as read). */
+export interface OdsAnnotationsUpgradeInput {
   sheet: Pick<Sheet, "rows" | "sourceXml">;
   prefix: string;
   dates: Pick<SpreadsheetModel, "dateSystem" | "odsNullDate">;
   remapLocation?: (location: string) => string;
-}): CellHyperlink[] {
+}
+
+/** SPEC-135's reader-upgrade step for a dirty .ods sheet's links: each link
+ * its retained `sourceXml` carries, attached only where the sheet's cell at
+ * that address still holds the source cell's value (a value or structural
+ * edit since read makes the address unreliable, and such a link is not
+ * resurrected). Sorted by (row, col); empty when nothing survives. */
+export function upgradeOdsSheetLinks(input: OdsAnnotationsUpgradeInput): CellHyperlink[] {
+  return attachLinks(input, retainedOdsAnnotations(input.sheet.sourceXml, input.prefix, input.dates).links);
+}
+
+function attachLinks(input: OdsAnnotationsUpgradeInput, retained: readonly RetainedOdsLink[]): CellHyperlink[] {
   const { sheet, remapLocation } = input;
   const out: CellHyperlink[] = [];
-  for (const { ref, hyperlink, sourceValue } of retainedOdsLinks(sheet.sourceXml, input.prefix, input.dates)) {
-    const current = getCell(sheet as Sheet, ref.row, ref.col)?.value ?? null;
-    if (sourceValue === null || !sameValue(current, sourceValue)) {
+  for (const { ref, hyperlink, sourceValue } of retained) {
+    if (!stillHolds(sheet, ref, sourceValue)) {
       continue;
     }
-    if (remapLocation && hyperlink.target.kind === "place") {
-      out.push({ ...hyperlink, target: { kind: "place", location: remapLocation(hyperlink.target.location) } });
-    } else {
-      out.push(hyperlink);
-    }
+    out.push(remapLocation && hyperlink.target.kind === "place" ? { ...hyperlink, target: { kind: "place", location: remapLocation(hyperlink.target.location) } } : hyperlink);
   }
   return out.toSorted((a, b) => a.range.top - b.range.top || a.range.left - b.range.left);
+}
+
+/** SPEC-135's whole reader-upgrade step for a dirty .ods sheet — the one
+ * call open.ts's ReaderUpgrade makes:
+ * - notes: every annotation its cells' preservedXml hold (records read by
+ *   SPEC-122's to SPEC-133's readers), at each cell's current position
+ *   (liftOdsSheetNotes); then each annotation its retained sourceXml
+ *   carries that is not one of those (by its verbatim element) — the only
+ *   source for a record older than SPEC-122's reader, whose step 5
+ *   re-read with today's reader leaves annotations out of preservedXml —
+ *   attached where no note is and the cell at its address still holds the
+ *   source's value;
+ * - links: upgradeOdsSheetLinks.
+ * `rows` is the sheet's rows with the lifted annotations gone
+ * (copy-on-write, see liftOdsSheetNotes); the arrays are sorted by (row,
+ * col) and empty when there is nothing — the caller sets `notes` and
+ * `hyperlinks` only when non-empty. */
+export function upgradeOdsSheetAnnotations(input: OdsAnnotationsUpgradeInput): { rows: Row[]; notes: CellNote[]; hyperlinks: CellHyperlink[] } {
+  const lifted = liftOdsSheetNotes({ sheet: input.sheet, prefix: input.prefix });
+  const retained = retainedOdsAnnotations(input.sheet.sourceXml, input.prefix, input.dates);
+  const declarations = prefixDeclarations(input.prefix);
+  const notes = [...lifted.notes];
+  const taken = new Set(notes.map((note) => note.noteId));
+  const at = new Set(notes.map((note) => `${note.ref.row}:${note.ref.col}`));
+  // Each lifted element accounts for one retained twin.
+  const liftedXml = new Map<string, number>();
+  for (const note of lifted.notes) {
+    const xml = note.source!.odsAnnotation!;
+    liftedXml.set(xml, (liftedXml.get(xml) ?? 0) + 1);
+  }
+  for (const { ref, xml, sourceValue } of retained.annotations) {
+    const twins = liftedXml.get(xml) ?? 0;
+    if (twins > 0) {
+      liftedXml.set(xml, twins - 1);
+      continue;
+    }
+    if (at.has(`${ref.row}:${ref.col}`) || !stillHolds({ rows: lifted.rows }, ref, sourceValue)) {
+      continue;
+    }
+    const note = odsNote(xml, declarations, ref, taken);
+    if (note) {
+      notes.push(note);
+      at.add(`${ref.row}:${ref.col}`);
+    }
+  }
+  return {
+    rows: lifted.rows,
+    notes: notes.toSorted((a, b) => compareRefs(a.ref, b.ref)),
+    hyperlinks: attachLinks({ ...input, sheet: { ...input.sheet, rows: lifted.rows } }, retained.links),
+  };
 }
