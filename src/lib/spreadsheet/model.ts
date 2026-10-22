@@ -434,7 +434,15 @@ export interface CellNote {
   /** The source elements verbatim — dropped by a command that changes the
    *  note's content; kept by an adjuster or remap that only moves it (the
    *  writer then patches the position fields). */
-  source?: { xlsxComment?: string; vmlShape?: string; odsAnnotation?: string };
+  source?: {
+    xlsxComment?: string;
+    vmlShape?: string;
+    odsAnnotation?: string;
+    /** The cell `odsAnnotation` was read on: written anywhere else (the
+     *  note moved), the element loses its stale caption position
+     *  (ods/annotations.ts). */
+    odsRef?: CellRef;
+  };
 }
 
 /** One message of an Excel 365 thread. */
