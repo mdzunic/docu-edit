@@ -199,7 +199,7 @@ export function frameRole(frame: SlideFrame): string | undefined {
 }
 
 // --- positioning & fills ----------------------------------------------------
-export function framePositionStyle(frame: SlideFrame): Record<string, string> {
+export function framePositionStyle(frame: SlideFrame, flatRotation = false): Record<string, string> {
   const style: Record<string, string> = {
     position: "absolute",
     left: cmPx(frame.xCm),
@@ -207,7 +207,9 @@ export function framePositionStyle(frame: SlideFrame): Record<string, string> {
     width: cmPx(frame.widthCm),
     height: cmPx(frame.heightCm),
   };
-  if (frame.rotationDeg) {
+  // SPEC-104's print/export sheet renders every frame at its axis-aligned
+  // box (a shape bakes its rotation into its canvas instead).
+  if (frame.rotationDeg && !flatRotation) {
     style.transform = `rotate(${frame.rotationDeg}deg)`;
     style.transformOrigin = "center";
   }

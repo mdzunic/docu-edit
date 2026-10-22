@@ -124,6 +124,17 @@ body.is-print-preview .doc-field-shaded {
     display: none !important;
   }
 
+  /* SPEC-104: printing a deck shows its off-screen print sheet (teleported
+     to <body>) and nothing else, back on the page in normal flow. */
+  body.is-deck-print > :not(.deck-print-sheet) {
+    display: none !important;
+  }
+
+  body.is-deck-print .deck-print-sheet {
+    position: static !important;
+    left: auto !important;
+  }
+
   /* Page backgrounds are opt-in on paper (SPEC-074 AC-25), matching both
      source applications' "print background colours" setting. The page
      BORDER has no such switch — it always prints. */

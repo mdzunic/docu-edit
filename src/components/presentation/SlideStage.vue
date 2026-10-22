@@ -76,6 +76,14 @@ const props = defineProps({
   /** SPEC-094: the deck's theme, threaded to every frame so scheme references
    * resolve at render. Null/absent = Office. */
   theme: { type: Object, default: null },
+  /** SPEC-104: extra backing-store density for canvas-painted frames — the
+   * fifth (zoom) argument of paintShapeIntoCanvas, so an export sheet's
+   * shapes carry devicePixelRatio × rasterScale pixels. */
+  rasterScale: { type: Number, default: 1 },
+  /** SPEC-104 export/print sheets: frames render unrotated at their
+   * axis-aligned box, with a shape's rotation baked into its canvas pixels
+   * instead — what the PDF extractor can place exactly. */
+  flatRotation: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -190,6 +198,8 @@ const previewStyle = computed(() => {
         :play-style="frameStyles[frame.id] || null"
         :playback-mode="playbackMode"
         :theme="theme"
+        :raster-scale="rasterScale"
+        :flat-rotation="flatRotation"
         @select="(id, ev) => emit('frame-select', id, ev)"
         @start-edit="(id, point) => emit('frame-start-edit', id, point)"
         @start-edit-cell="(id, row, col, point) => emit('frame-start-edit-cell', id, row, col, point)"
@@ -228,14 +238,14 @@ const previewStyle = computed(() => {
       />
       <div
         v-if="marqueeStyle"
-        class="marquee-box"
+        class="marquee-box print-exclude"
         data-testid="marquee-box"
         aria-hidden="true"
         :style="marqueeStyle"
       />
       <div
         v-if="previewStyle"
-        class="draw-preview"
+        class="draw-preview print-exclude"
         aria-hidden="true"
         :style="previewStyle"
       />

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // The deck's Download split-button (SPEC-080): a primary "Download" (own
-// format) plus a ▾ menu offering "Download a copy as…" the other format.
+// format) plus a ▾ menu offering "Download a copy as…" the other format,
+// SPEC-088's HTML export and SPEC-104's "PDF (.pdf)…" / "Images (.png)…"
+// (both open the print-and-export dialog, on its matching tab).
 // Extracted from PresentationView so the view stays a wiring hub
 // (PresentationView.size.spec.ts). Runtime prop/emit declarations per the
 // espree constraint (see AppShell.vue).
@@ -12,7 +14,7 @@ defineProps({
   otherFormatLabel: { type: String, default: "" },
 });
 
-const emit = defineEmits(["download", "download-copy", "export-html"]);
+const emit = defineEmits(["download", "download-copy", "export-html", "export-pdf", "export-images"]);
 const menuOpen = ref(false);
 
 function downloadCopy() {
@@ -23,6 +25,16 @@ function downloadCopy() {
 function exportHtml() {
   menuOpen.value = false;
   emit("export-html");
+}
+
+function exportPdf() {
+  menuOpen.value = false;
+  emit("export-pdf");
+}
+
+function exportImages() {
+  menuOpen.value = false;
+  emit("export-images");
 }
 </script>
 
@@ -68,6 +80,24 @@ function exportHtml() {
         @click="exportHtml"
       >
         Export to HTML (.html)…
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        class="download-menu-item"
+        data-testid="presentation-export-pdf"
+        @click="exportPdf"
+      >
+        PDF (.pdf)…
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        class="download-menu-item"
+        data-testid="presentation-export-images"
+        @click="exportImages"
+      >
+        Images (.png)…
       </button>
     </div>
     <div

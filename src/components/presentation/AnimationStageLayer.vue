@@ -72,7 +72,7 @@ onBeforeUnmount(() => buildPreview.stop());
     <!-- Numbered badges over each animated frame -->
     <div
       v-if="!previewing"
-      class="badge-viewport"
+      class="badge-viewport print-exclude"
       :style="viewportStyle"
     >
       <button

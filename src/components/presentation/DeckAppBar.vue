@@ -22,6 +22,8 @@ const props = defineProps({
   saveStateText: { type: String, default: "" },
   /** The useDeckActions controller (present / download / export / close). */
   deckActions: { type: Object, required: true },
+  /** SPEC-104: the useDeckExport controller (the print-and-export dialog). */
+  deckExport: { type: Object, default: null },
 });
 
 const c = props;
@@ -44,6 +46,8 @@ const c = props;
     @download="c.deckActions.download()"
     @download-copy="c.deckActions.downloadCopy()"
     @export-html="c.deckActions.openHtmlExport()"
+    @export-pdf="c.deckExport?.open('pdf')"
+    @export-images="c.deckExport?.open('images')"
     @close="c.deckActions.close()"
   />
 </template>

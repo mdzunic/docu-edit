@@ -14,8 +14,7 @@ import PresentationNotFound from "../components/presentation/PresentationNotFoun
 import DeckBody from "../components/presentation/DeckBody.vue";
 import SlideSorter from "../components/presentation/SlideSorter.vue";
 import ReuseSlidesDialog from "../components/presentation/ReuseSlidesDialog.vue";
-import SlideToolbarHost from "../components/presentation/SlideToolbarHost.vue";
-import SlideRibbon from "../components/presentation/SlideRibbon.vue";
+import PresentationRibbon from "../components/presentation/PresentationRibbon.vue";
 import DeckAppBar from "../components/presentation/DeckAppBar.vue";
 import PresentationDialogs from "../components/presentation/PresentationDialogs.vue";
 import HeaderFooterDialog from "../components/presentation/HeaderFooterDialog.vue";
@@ -34,13 +33,13 @@ import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useSlideSorter } from "./presentation/useSlideSorter";
 import { usePresentationMenu } from "./presentation/usePresentationMenu";
-import PresentationMenuBar from "../components/presentation/PresentationMenuBar.vue";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useWindowKeys } from "./presentation/useWindowKeys";
 import { useDeckActions } from "./presentation/useDeckActions";
 import { useDeckSetup } from "./presentation/useDeckSetup";
 import { useHeaderFooter } from "./presentation/useHeaderFooter";
 import { useSlideTextDepth } from "./presentation/useSlideTextDepth";
+import { useDeckExport } from "./presentation/useDeckExport";
 
 const route = useRoute();
 const router = useRouter();
@@ -74,8 +73,6 @@ const { addToast } = useToasts();
 const { commit, refresh, bumpMedia, saveState, saveStateText } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => {} });
 
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
-const canUndo = slideUndo.canUndo;
-const canRedo = slideUndo.canRedo;
 // Deck navigation — slide commands, derived facts, Add slide and the filmstrip
 // dispatch — lives in useDeckNavigation (SPEC-099 extraction).
 const { slideCommands, title, badge, formatName, slideTotal, slideCountLabel, currentSlide, liveLabel, deckMedia, deckFields, selectSlide, addSlideAction, onFilmstripCommand, onFilmstripReorder } =
@@ -161,6 +158,9 @@ const deckSetup = useDeckSetup({
 // --- header & footer: deck footer/date fields (SPEC-093) -------------------
 const headerFooter = useHeaderFooter({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit });
 
+// --- print & export: PDF, images, handouts, notes pages (SPEC-104) ---------
+const deckExport = useDeckExport({ model: presentation, currentIndex, slideTotal, reportError: (message) => addToast(message) });
+
 // --- the menu bar (SPEC-049's model, for slides): routes to every composable above, so it is built last
 const menu = usePresentationMenu({
   undo: slideUndo, deckActions, deckSetup, notes, transitions, animations, layouts, tables, media,
@@ -168,7 +168,7 @@ const menu = usePresentationMenu({
 });
 
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
-useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut]);
+useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut, deckExport.onPrintShortcut]);
 </script>
 
 <template>
@@ -184,57 +184,16 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
       v-if="presentation"
       #menubar
     >
-      <SlideRibbon
-        :can-undo="canUndo"
-        :can-redo="canRedo"
-        :notes-open="notes.open.value"
-        :transition-open="transitions.open.value"
-        :animate-open="animations.open.value"
-        :layout-open="layouts.open.value"
-        :table-open="tables.open.value"
-        :media-open="media.open.value"
-        :header-footer-open="headerFooter.open.value"
-        :theme-open="themePanel.open.value"
-        :text-open="textDepth.panelOpen.value"
-        :sorter-open="sorter.open.value"
-        @undo="slideUndo.undo()"
-        @redo="slideUndo.redo()"
-        @notes-toggle="notes.toggle()"
-        @theme-toggle="themePanel.toggle()"
-        @text-toggle="textDepth.togglePanel()"
-        @transition-toggle="transitions.toggle()"
-        @animate-toggle="animations.toggle()"
-        @layout-toggle="layouts.toggle()"
-        @table-toggle="tables.toggle()"
-        @media-toggle="media.toggle()"
-        @header-footer-toggle="headerFooter.show()"
-        @sorter-toggle="sorter.toggle()"
-      >
-        <template #menu>
-          <PresentationMenuBar
-            :state="menu.state.value"
-            @command="menu.run"
-          />
-        </template>
-        <!-- Both strips' bindings live in SlideToolbarHost (SPEC-097). -->
-        <template #home>
-          <SlideToolbarHost
-            :stage-edit="stageEdit"
-            :text-depth="textDepth"
-            :theme="presentation.theme"
-          />
-        </template>
-        <template #insert>
-          <SlideToolbarHost
-            strip="insert"
-            :stage-edit="stageEdit"
-            :text-depth="textDepth"
-            :theme="presentation.theme"
-            :charts="charts"
-            :slide="currentSlide ?? undefined"
-          />
-        </template>
-      </SlideRibbon>
+      <PresentationRibbon
+        :undo="slideUndo"
+        :panels="{ notes, transitions, animations, layouts, tables, media, headerFooter, themePanel, sorter }"
+        :menu="menu"
+        :stage-edit="stageEdit"
+        :text-depth="textDepth"
+        :charts="charts"
+        :theme="presentation.theme"
+        :slide="currentSlide ?? undefined"
+      />
     </template>
     <!-- One identity line, like the word processor's — see DeckAppBar. -->
     <template
@@ -247,6 +206,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
         :save-state="saveState"
         :save-state-text="saveStateText"
         :deck-actions="deckActions"
+        :deck-export="deckExport"
       />
     </template>
     <PresentationNotFound
@@ -304,6 +264,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
       :deck-actions="deckActions"
       :layouts="layouts"
       :deck-setup="deckSetup"
+      :deck-export="deckExport"
       :slide-number="currentIndex + 1"
     />
     <ReuseSlidesDialog

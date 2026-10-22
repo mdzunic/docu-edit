@@ -65,12 +65,19 @@
 //                    <ReuseSlidesDialog> mounts and the Sorter toggle prop
 //                    pair; the spec mandates a drop of at least 15
 //                    (view at 329 lines)
+//   2026-10-22  295  SPEC-104 — extracted the ribbon block (SlideRibbon's
+//                    toggles, the menu bar and both SlideToolbarHost strips)
+//                    into PresentationRibbon — the stage-fit code the spec
+//                    names already lives in SlideStageArea (see SPEC-094's
+//                    row), so this is its sanctioned equivalent — paying for
+//                    the useDeckExport wiring call, the Ctrl+P shortcut and
+//                    the deck-export prop pair (view at 289 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 335;
+const LINE_BUDGET = 295;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
