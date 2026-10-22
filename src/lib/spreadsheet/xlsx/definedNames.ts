@@ -45,6 +45,7 @@ import { FormulaSyntaxError, parseFormulaAt } from "../formula/parse";
 import { isEmptyRemap, remapSheetReferences, type SheetRemap } from "../formula/sheetRefs";
 import type { DefinedName, Sheet } from "../model";
 import { isOrphanName } from "../names";
+import { copyRemap } from "../sourceNames";
 import { structuredFromXlsx, structuredToXlsx } from "../tables";
 import { attributeValue, escapeAttributeValue, escapeElementText, setAttribute, type Splice } from "../xmlSplice";
 import { partTextOf, readSourceWorkbook, type PartLookup } from "./package";
@@ -235,30 +236,43 @@ function sourceSheetIds(parts: PartLookup, sheets: readonly Sheet[]): (string | 
   return workbook.sheets.map((source) => sheets.find((sheet) => sheet.copiedFrom === undefined && sheet.partName !== undefined && sheet.partName === source.partName)?.id);
 }
 
+/** A parsed name's formula through `remap`. */
+function remappedName(name: DefinedName, remap: SheetRemap): DefinedName {
+  return !isEmptyRemap(remap) && !name.formulaUnparsed ? { ...name, formula: remapSheetReferences(name.formula, remap) } : name;
+}
+
 /** The retained workbook part's names mapped onto the model (SPEC-133
  * "Reader upgrade"): `localSheetId` through the SOURCE sheet order to the
  * model sheet holding that part — a name scoped to a sheet no longer present
- * dropped — and every parsed formula through `remap` (sourceSheetRemap).
- * For a step that adopts names from the retained source. */
-export function readSourceDefinedNames(parts: PartLookup, sheets: readonly Sheet[], remap?: SheetRemap): DefinedName[] {
+ * dropped — and every parsed formula through `remap` (sourceSheetRemap). A
+ * copy (SPEC-121's `copiedFrom`, the source sheet it copies) gets each name
+ * that sheet scopes, right after the origin's (in its place when the origin
+ * is gone), through the copy's own remap: the names SPEC-121's writer
+ * duplicated at write time before this version, which the retained part
+ * never held. For a step that adopts names from the retained source. */
+export function readSourceDefinedNames(parts: PartLookup, sheets: readonly Sheet[], remap: SheetRemap = { renamed: {}, deleted: [], orderBefore: [] }): DefinedName[] {
+  const workbook = readSourceWorkbook(parts);
   const ids = sourceSheetIds(parts, sheets);
-  const path = readSourceWorkbook(parts)?.path;
-  const xml = path === undefined ? undefined : partTextOf(parts, path);
-  if (ids === undefined || xml === undefined || !xml.includes("definedName")) {
+  const xml = workbook === undefined ? undefined : partTextOf(parts, workbook.path);
+  if (workbook === undefined || ids === undefined || xml === undefined || !xml.includes("definedName")) {
     return [];
   }
   const out: DefinedName[] = [];
   for (const element of scanDefinedNames(xml).elements) {
     const local = element.localSheetId;
     const index = local !== undefined && /^\d+$/.test(local) ? Number(local) : undefined;
-    if (index !== undefined && index < ids.length && ids[index] === undefined) {
-      continue; // its sheet was deleted
+    // A name of a deleted sheet is dropped; its copies still get theirs.
+    const name = index !== undefined && index < ids.length && ids[index] === undefined ? undefined : nameFrom(element, (at) => ids[at]);
+    if (name) {
+      out.push(remappedName(name, remap));
     }
-    const name = nameFrom(element, (at) => ids[at]);
-    if (!name) {
-      continue;
+    const origin = index === undefined ? undefined : workbook.sheets[index]?.name.toUpperCase();
+    for (const copy of origin === undefined ? [] : sheets.filter((sheet) => sheet.copiedFrom?.toUpperCase() === origin)) {
+      const clone = nameFrom(element, () => copy.id);
+      if (clone) {
+        out.push(remappedName(clone, copyRemap(remap, copy)));
+      }
     }
-    out.push(remap !== undefined && !isEmptyRemap(remap) && !name.formulaUnparsed ? { ...name, formula: remapSheetReferences(name.formula, remap) } : name);
   }
   return out;
 }

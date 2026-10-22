@@ -70,6 +70,7 @@ import {
   upgradeSpreadsheetModel,
   type ReaderUpgrade,
 } from "./open";
+import { duplicateSheet } from "./sheets";
 
 /** The shipped upgrade list, restored after each test that swaps it. */
 const SHIPPED_UPGRADES = [...READER_UPGRADES];
@@ -1020,6 +1021,13 @@ function namesOnStoredSheets(read: SpreadsheetModel): DefinedName[] {
   );
 }
 
+/** The sheet-scoped names but `_xlnm._FilterDatabase`: name, scope sheet's name, formula. */
+function sheetScopedNames(model: SpreadsheetModel): [string, string, string][] {
+  return model.names
+    .filter((name) => name.scopeSheetId !== undefined && !name.name.startsWith("_xlnm._F"))
+    .map((name) => [name.name, model.sheets.find((sheet) => sheet.id === name.scopeSheetId)!.name, name.formula]);
+}
+
 /** `model`'s retained part `name` with `edits` applied — what SPEC-124's
  * retained rewrite left it as before version 14. */
 function patchRetained(model: SpreadsheetModel, name: string, edits: [string, string][]): void {
@@ -1126,6 +1134,47 @@ describe("SPEC-133's reader step: defined names and tables", () => {
     // Next (Sheet2!A2) follows the rename; Sheet1's own names keep its stored id.
     expect(upgraded.names).toEqual(namesOnStoredSheets(read).map((name) => (name.name === "Next" ? { ...name, formula: "Stock!A2" } : name)));
     expect(upgraded.sheets.map((sheet) => sheet.tables)).toEqual([undefined, undefined]);
+  });
+
+  it("xlsx: a copy SPEC-121 made gets each name its origin's source sheet scopes, through the copy's own remap, right after the origin's — or in its place when the origin is gone", async () => {
+    // The names SPEC-121's writer duplicated at write time, never in the retained workbook part.
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    duplicateSheet(read, 0);
+    const stored = storedAtVersion13(read);
+    stored.sheets[1] = { ...stored.sheets[1]!, dirty: true };
+    expect([stored.sheets[1]!.name, stored.sheets[1]!.copiedFrom]).toEqual(["Data (2)", "Data"]);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(sheetScopedNames(upgraded)).toEqual([
+      ["_xlnm.Print_Area", "Data", "Data!$A$1:$E$6"],
+      ["_xlnm.Print_Area", "Data (2)", "'Data (2)'!$A$1:$E$6"],
+      ["Above", "Data", "Data!A1048576"],
+      ["Above", "Data (2)", "'Data (2)'!A1048576"],
+      ["Local", "Lists", "Lists!$A$2:$A$4"],
+    ]);
+    // The copy's table is its copied part's, already renamed by SPEC-121.
+    expect(upgraded.sheets[1]!.tables!.map((table) => [table.name, table.columns[3]!.calculatedFormula])).toEqual([["Sales_2", "Sales_2[@Price]*Sales_2[@Qty]"]]);
+
+    const gone = storedAtVersion13(read);
+    gone.sheets = [{ ...gone.sheets[1]!, dirty: true }, ...gone.sheets.slice(2)];
+    expect(sheetScopedNames(await upgradeSpreadsheetModel(gone))).toEqual([
+      ["_xlnm.Print_Area", "Data (2)", "'Data (2)'!$A$1:$E$6"],
+      ["Above", "Data (2)", "'Data (2)'!A1048576"],
+      ["Local", "Lists", "Lists!$A$2:$A$4"],
+    ]);
+  });
+
+  it("ods: a copy SPEC-121 made reads its own names from its retained table text — its origin's — through the copy's own remap", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec133NamesOdsBytes(), "ods", "SPEC-133");
+    duplicateSheet(read, 0);
+    const stored = storedAtVersion13(read);
+    expect([stored.sheets[1]!.name, stored.sheets[1]!.copiedFrom]).toEqual(["Sheet1 (2)", "Sheet1"]);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const copy = upgraded.sheets[1]!;
+    expect(upgraded.names.filter((name) => name.scopeSheetId === copy.id).map((name) => [name.name, name.formula])).toEqual([
+      ["LocalExpr", "XFD1*2"],
+      ["LocalRange", "'Sheet1 (2)'!$B$3:$B$5"],
+    ]);
+    expect(upgraded.names.filter((name) => name.scopeSheetId === upgraded.sheets[0]!.id).map((name) => name.formula)).toEqual(["XFD1*2", "Sheet1!$B$3:$B$5"]);
   });
 
   it("a record whose only edit is to its names (namesDirty) is an edited one, never re-read wholesale: its names are kept", async () => {
