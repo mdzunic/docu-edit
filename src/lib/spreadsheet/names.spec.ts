@@ -258,8 +258,12 @@ describe("SPEC-121's sheet commands reach names and tables", () => {
     expect(getCell(copy, 2, 2)?.formula).toBe("SUM(Sales_2[Price])");
     expect(getCell(m.sheets[0]!, 2, 2)?.formula).toBe("SUM(Sales[Price])");
     expect(copy.dirty).toBe(true);
-    expect(m.names.slice(3)).toEqual([
+    // Each copy right after its origin (SPEC-121's write order).
+    expect(m.names).toEqual([
+      { name: "Margin", formula: "Sheet2!$A$1" },
+      { name: "_xlnm.Print_Area", scopeSheetId: "s1", formula: "Sheet1!$A$1:$B$2" },
       { name: "_xlnm.Print_Area", scopeSheetId: copy.id, formula: "'Sheet1 (2)'!$A$1:$B$2" },
+      { name: "Total", scopeSheetId: "s1", formula: "SUM(Sales[Price])" },
       { name: "Total", scopeSheetId: copy.id, formula: "SUM(Sales_2[Price])" },
     ]);
     expect(m.namesDirty).toBe(true);

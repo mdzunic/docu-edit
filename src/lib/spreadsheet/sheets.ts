@@ -61,13 +61,19 @@
 //   drops the sheet's local names and its tables, their references becoming
 //   #REF! everywhere. Duplicate copies the origin's tables on the model —
 //   fresh ids and workbook-unique xlsxIds (max + 1), `uniqueTableName`
-//   names (`<name>_<n>`), no partName, `dirty` — with the copy's cell,
-//   calculated and totals formulas renamed to them (renameTableInFormula,
-//   instead of the xlsx closure copy's renames: the model holds the tables)
-//   and the copy `dirty`, so its `<tableParts>` is rebuilt; and clones the
-//   origin's local names with the copy's scope, their formulas renamed as
-//   the copy's cells' are. A cross-format copy keeps names and tables, each
-//   table without its partName (the package is gone) and `dirty`.
+//   names (`<name>_<n>`), `dirty` — with the copy's cell, calculated and
+//   totals formulas renamed to them (renameTableInFormula, instead of the
+//   xlsx closure copy's renames: the model holds the tables) and the copy
+//   `dirty`, so its `<tableParts>` is rebuilt. A copied table's `partName`
+//   is the part SPEC-121's closure copy made of its origin's (none without
+//   one), so the writer regenerates that part — keeping its unmodelled XML
+//   (`dataDxfId`, `xr3:uid`, …) — rather than dropping it for a golden one.
+//   It also clones the origin's local names with the copy's scope, their
+//   formulas renamed as the copy's cells' are, each placed right after its
+//   origin (SPEC-121's order) — but a `_xlnm._FilterDatabase`, which goes
+//   first, where SPEC-128 writes a sheet's new one. A cross-format copy
+//   keeps names and tables, each table without its partName (the package is
+//   gone) and `dirty`.
 // - `alsoRecalc` lists the formula cells whose RESULT may change though
 //   their text did not: 3-D references whose span gained, lost or reordered
 //   a sheet, and references to a name that did not exist before.
@@ -77,7 +83,7 @@ import { nextMediaId } from "./drawings";
 import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
 import { mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
 import { mapNameFormulas, mapTableFormulas, removeTableReferencesEverywhere } from "./nameTableAdjusters";
-import { uniqueTableName } from "./names";
+import { RESERVED_PREFIX, uniqueTableName } from "./names";
 import { allTables, renameTableInFormula } from "./tables";
 import { CHART_SHEET_DUPLICATE_TITLE, chartContentOf, isModelledChart, remapChartReferences, syncChartNotifyRanges } from "./charts";
 import { mintCfId, renumberPriorities, sheetFormats, withX14Placement, type CfRule, type ConditionalFormat } from "./conditionalFormats";
@@ -92,6 +98,7 @@ import {
   DEFAULT_SPREADSHEET_TITLE,
   isCsvFormat,
   type Cell,
+  type DefinedName,
   type DrawingAnchor,
   type Row,
   type Sheet,
@@ -491,6 +498,7 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   }
   copy.conditionalFormats = copiedFormats(sheetFormats(copy), model.format);
   copy.validations = copiedValidations(sheetValidations(copy), model.format, name);
+  let partRenames: ReadonlyMap<string, string> | undefined;
   if (partName !== undefined || sourceXml !== undefined) {
     copy.copiedFrom = source.copiedFrom ?? sourceNameOf(model, source);
     if (source.dirty) {
@@ -500,6 +508,7 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
       const parts = copyXlsxSheetParts(model.opaque, partName, copy.id);
       model.opaque = parts.opaque;
       copy.partName = parts.partName;
+      partRenames = parts.partRenames;
       copy = withCopiedDrawingPart(copy, new LazyParts(model.opaque));
       copy = withCopiedChartParts(copy, (part) => parts.partRenames.get(part));
       if (!copy.tables?.length) {
@@ -526,16 +535,26 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   copy = rewriteFormulas(copy, (formula) => renameSheetInFormula(formula, source.name, name));
   copy = rewriteRuleFormulas(model.format, copy, (formula) => renameSheetInFormula(formula, source.name, name));
   copy = withRenamedChartRefs(copy, (formula) => renameSheetInFormula(formula, source.name, name));
-  const renameTables = copiedTables(model, copy);
+  const renameTables = copiedTables(model, copy, partRenames);
   if (copy.tables?.length) {
     copy = rewriteFormulas(copy, renameTables.rename);
     copy.tables = renameTables.tables;
     copy.dirty = true;
   }
-  const local = model.names.filter((defined) => defined.scopeSheetId === source.id);
-  if (local.length > 0) {
+  if (model.names.some((defined) => defined.scopeSheetId === source.id)) {
     const rewrite = (formula: string): string => renameTables.rename(renameSheetInFormula(formula, source.name, name));
-    model.names = [...model.names, ...local.map((defined) => (defined.formulaUnparsed ? { ...defined, scopeSheetId: copy.id } : { ...defined, scopeSheetId: copy.id, formula: rewrite(defined.formula) }))];
+    const filterDatabase = `${RESERVED_PREFIX}_FilterDatabase`.toUpperCase();
+    const first: DefinedName[] = [];
+    const rest: DefinedName[] = [];
+    for (const defined of model.names) {
+      rest.push(defined);
+      if (defined.scopeSheetId !== source.id) {
+        continue;
+      }
+      const cloned = defined.formulaUnparsed ? { ...defined, scopeSheetId: copy.id } : { ...defined, scopeSheetId: copy.id, formula: rewrite(defined.formula) };
+      (defined.name.toUpperCase() === filterDatabase ? first : rest).push(cloned);
+    }
+    model.names = [...first, ...rest];
     model.namesDirty = true;
   }
   const sheets = model.sheets.slice();
@@ -636,7 +655,7 @@ function renamedChartRefs(refs: SheetChartRefs, rename: (formula: string) => str
 
 /** SPEC-133: a copy's tables (see the module header) and the rewrite of a
  * formula's references to the origin's tables into the copies'. */
-function copiedTables(model: SpreadsheetModel, copy: Sheet): { tables: SheetTable[]; rename: (formula: string) => string } {
+function copiedTables(model: SpreadsheetModel, copy: Sheet, partRenames: ReadonlyMap<string, string> | undefined): { tables: SheetTable[]; rename: (formula: string) => string } {
   const origin = copy.tables ?? [];
   if (origin.length === 0) {
     return { tables: [], rename: (formula) => formula };
@@ -649,8 +668,9 @@ function copiedTables(model: SpreadsheetModel, copy: Sheet): { tables: SheetTabl
     taken.push(name);
     renames.push([table.name, name]);
     xlsxId += 1;
-    const { partName: _part, ...rest } = table;
-    return { ...rest, id: crypto.randomUUID(), name, xlsxId, dirty: true };
+    const { partName, ...rest } = table;
+    const copiedPart = partName === undefined ? undefined : partRenames?.get(partName);
+    return { ...rest, id: crypto.randomUUID(), name, xlsxId, dirty: true, ...(copiedPart === undefined ? {} : { partName: copiedPart }) };
   });
   const rename = (formula: string): string => renames.reduce((text, [from, to]) => renameTableInFormula(text, from, to), formula);
   const renamed = tables.map((table) => ({
@@ -855,7 +875,7 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     };
     if (fields.tables) {
       // SPEC-133: the table parts stay behind with the package.
-      crossed.tables = fields.tables.map(({ partName: _part, ...table }) => ({ ...table, dirty: true as const }));
+      crossed.tables = fields.tables.map(({ partName: _tablePart, ...table }) => ({ ...table, dirty: true as const }));
     }
     const crossedDrawings = crossDrawings(drawings ?? [], media);
     if (sheet.kind === "chart" && model.format !== "xlsx") {

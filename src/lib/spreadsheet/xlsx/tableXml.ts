@@ -35,7 +35,8 @@
 // - Each written grid sheet whose `tables` are known (or which is dirty —
 //   absent then means none): a table relationship the sheet no longer needs
 //   (deleted, moved away, or a part SPEC-121's closure copy duplicated for a
-//   copy, whose tables the model holds) is removed — the part, its `.rels`
+//   copy that none of the copy's tables claims — sheets.ts gives each copied
+//   table its closure-copied part) is removed — the part, its `.rels`
 //   and Override then fall to the writer's reachability rule — and
 //   `<tableParts>` is rewritten (in CT_Worksheet order, before `extLst`)
 //   whenever its relationship list changed. A part the reader could not
@@ -207,13 +208,14 @@ function filterRange(table: SheetTable): GridRange {
   return { ...table.ref, bottom: table.ref.bottom - (table.totalsRow ? 1 : 0) };
 }
 
+const onOff = (value: boolean): string => (value ? "1" : "0");
+
 function styleInfoAttrs(table: SheetTable): string {
   const { style } = table;
-  const flag = (value: boolean): string => (value ? "1" : "0");
   return (
     (style.name === undefined ? "" : ` name="${escapeAttributeValue(style.name)}"`) +
-    ` showFirstColumn="${flag(style.showFirstColumn)}" showLastColumn="${flag(style.showLastColumn)}"` +
-    ` showRowStripes="${flag(style.showRowStripes)}" showColumnStripes="${flag(style.showColumnStripes)}"`
+    ` showFirstColumn="${onOff(style.showFirstColumn)}" showLastColumn="${onOff(style.showLastColumn)}"` +
+    ` showRowStripes="${onOff(style.showRowStripes)}" showColumnStripes="${onOff(style.showColumnStripes)}"`
   );
 }
 
@@ -600,21 +602,21 @@ function partTableId(xml: string): number | undefined {
   return match ? Number(match[1]) : undefined;
 }
 
+/** What sameTable compares of a table. */
+function tableShape(each: Omit<SheetTable, "id">): string {
+  return JSON.stringify([
+    each.name,
+    formatRange(each.ref),
+    each.headerRow,
+    each.totalsRow,
+    each.columns.map((column) => [column.name, column.xlsxId, column.totalsFunction, column.totalsFormula, column.totalsLabel, column.calculatedFormula]),
+    [each.style.name, each.style.showFirstColumn, each.style.showLastColumn, each.style.showRowStripes, each.style.showColumnStripes],
+    each.autoFilter !== undefined,
+    each.locked === true,
+  ]);
+}
+
 /** Whether a part still says what the model's table says. */
 function sameTable(source: Omit<SheetTable, "id"> | null, table: SheetTable): boolean {
-  if (source === null) {
-    return false;
-  }
-  const shape = (each: Omit<SheetTable, "id">): string =>
-    JSON.stringify([
-      each.name,
-      formatRange(each.ref),
-      each.headerRow,
-      each.totalsRow,
-      each.columns.map((column) => [column.name, column.xlsxId, column.totalsFunction, column.totalsFormula, column.totalsLabel, column.calculatedFormula]),
-      [each.style.name, each.style.showFirstColumn, each.style.showLastColumn, each.style.showRowStripes, each.style.showColumnStripes],
-      each.autoFilter !== undefined,
-      each.locked === true,
-    ]);
-  return shape(source) === shape(table);
+  return source !== null && tableShape(source) === tableShape(table);
 }

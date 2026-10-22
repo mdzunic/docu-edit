@@ -109,7 +109,7 @@ describe("SPEC-133 round trip — spec133-names.ods", () => {
     // The workbook's element stays right after the last table; each sheet's is its table's last child.
     expect(xml).toContain(
       `</table:table><table:named-expressions>` +
-        `<table:named-range table:name="Next" table:base-cell-address="$Sheet1.$A$1" table:cell-range-address="$Sheet1.A2"/>` +
+        `<table:named-range table:name="Next" table:base-cell-address="$Sheet1.$A$1" table:cell-range-address="$Sheet2.A2"/>` +
         `<table:named-range table:name="Prices" table:base-cell-address="$Sheet1.$A$1" table:cell-range-address="$Sheet1.$A$2:.$A$4"/>` +
         `<table:named-expression table:name="Rate" table:base-cell-address="$Sheet1.$A$1" table:expression="of:=0.25"/>` +
         `<table:named-range table:name="Margin" table:base-cell-address="$Sheet1.$A$1" table:cell-range-address="$Sheet2.$B$2:.$B$4"/>` +

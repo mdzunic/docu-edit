@@ -27,9 +27,10 @@
 //   (every non-empty data cell a number, at least one) or count in the last
 //   (a one-column table gets just the function); later times write each
 //   column's kept function/label. Turning it off first reads the row's cells
-//   back into the columns (a SUBTOTAL this module writes → its function, any
-//   other formula → "custom", text → label, empty → none), so what the user
-//   saw is what comes back.
+//   back into the columns — a SUBTOTAL this module writes → its function
+//   (its reference in either spelling: Excel's `T['#Units]` is the canonical
+//   `T[['#Units]]`), any other formula → "custom", text → label, empty →
+//   none — so what the user saw is what comes back.
 // - Resize keeps the columns by sheet position; a table with a totals row
 //   keeps it as the new range's last row, moving it there when the bottom
 //   changes (refused when that row holds content).
@@ -57,6 +58,7 @@ import {
   removeTableReferences,
   renameColumnInFormula,
   renameTableInFormula,
+  rewriteStructured,
   tableAt,
 } from "./tables";
 
@@ -491,7 +493,9 @@ function columnsFromTotalsRow(sheet: Sheet, table: SheetTable): SheetTableColumn
       return rest;
     }
     if (cell!.formula !== undefined && !cell!.formulaUnparsed) {
-      const fn = (Object.keys(SUBTOTAL_CODES) as Exclude<TotalsFunction, "custom">[]).find((each) => totalsFormulaOf(table, column, each) === cell!.formula);
+      // Compared in the canonical spelling: Excel writes `T['#Units]` for `T[['#Units]]`.
+      const spelled = rewriteStructured(cell!.formula, (spec) => formatStructured(spec));
+      const fn = (Object.keys(SUBTOTAL_CODES) as Exclude<TotalsFunction, "custom">[]).find((each) => totalsFormulaOf(table, column, each) === spelled);
       return fn ? { ...rest, totalsFunction: fn } : { ...rest, totalsFunction: "custom", totalsFormula: cell!.formula };
     }
     return typeof cell!.value === "string" ? { ...rest, totalsLabel: cell!.value } : column;

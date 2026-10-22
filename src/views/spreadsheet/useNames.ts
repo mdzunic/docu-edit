@@ -78,6 +78,8 @@ export interface NameEditorState {
   fields: NameEditorFields;
 }
 
+const definedByKey = (m: SpreadsheetModel, key: string | undefined | null): DefinedName | undefined => (key ? visibleNames(m).find((name) => nameKey(name) === key) : undefined);
+
 export function useNames(deps: NamesDeps) {
   const toast = deps.toast ?? useToasts().addToast;
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
@@ -88,8 +90,6 @@ export function useNames(deps: NamesDeps) {
     const active = deps.selection.selection.value.active;
     return sheet ? { sheetId: sheet.id, row: active.row, col: active.col } : null;
   }
-  const definedByKey = (m: SpreadsheetModel, key: string | undefined | null): DefinedName | undefined =>
-    key ? visibleNames(m).find((name) => nameKey(name) === key) : undefined;
 
   /** One undo step: the view state synced, recorded, changed, committed. */
   function mutate(label: string, scope: UndoScope, change: (m: SpreadsheetModel) => void): void {

@@ -220,9 +220,9 @@ export function getReservedName(model: Pick<SpreadsheetModel, "names">, sheetId:
 }
 
 /** Sets (or, with null, removes) a sheet's reserved name: an existing one
- * keeps its place, spelling and other fields; a new one is appended,
- * `_FilterDatabase` hidden as Excel writes it. Marks `namesDirty` when
- * anything changed. */
+ * keeps its place, spelling and other fields; a new one is appended — but a
+ * new `_FilterDatabase` goes first, hidden, where Excel and SPEC-128 write
+ * it. Marks `namesDirty` when anything changed. */
 export function setReservedName(model: SpreadsheetModel, sheetId: string, short: string, formula: string | null): void {
   const existing = getReservedName(model, sheetId, short);
   if (formula === null) {
@@ -243,8 +243,10 @@ export function setReservedName(model: SpreadsheetModel, sheetId: string, short:
   const added: DefinedName = { name: RESERVED_PREFIX + short, scopeSheetId: sheetId, formula };
   if (short.toLowerCase() === "_filterdatabase") {
     added.hidden = true;
+    model.names = [added, ...model.names];
+  } else {
+    model.names = [...model.names, added];
   }
-  model.names = [...model.names, added];
   model.namesDirty = true;
 }
 

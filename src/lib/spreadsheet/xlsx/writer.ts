@@ -88,7 +88,7 @@ import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
 import { SPREADSHEETML_MAIN_CONTENT_TYPES } from "../../core/packageDetect";
 import { DEFAULT_THEME, resolveFont, sameModelColor } from "../../core/theme";
 import { relsPathFor } from "../../core/xml";
-import { scanAttr, scanXml } from "../../core/xmlScanner";
+import { scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { isEmptyRemap, type SheetRemap } from "../formula/sheetRefs";
 import { buildGridMetrics, maxDigitWidthPx } from "../geometry";
@@ -395,7 +395,7 @@ const FILTER_DATABASE_SHORT = FILTER_DATABASE_NAME.slice(RESERVED_PREFIX.length)
  * (`scratch.names` replaced, never mutated): a sheet with an autofilter
  * keeps its first `_xlnm._FilterDatabase` while it names the autofilter's
  * range (however written), else gets the range written as Excel does
- * (`'Sheet'!$A$1:$D$20`, xlsx/autoFilter.ts) — a new one appended, hidden;
+ * (`'Sheet'!$A$1:$D$20`, xlsx/autoFilter.ts) — a new one first, hidden;
  * a sheet without one loses it; a sheet's further ones go. */
 function reconcileFilterDatabase(scratch: SpreadsheetModel, sheet: Sheet): void {
   const key = FILTER_DATABASE_NAME.toUpperCase();

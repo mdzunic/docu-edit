@@ -547,9 +547,9 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
     if (!sheet.dirty && !validations.rebuilds(sheet) && !hasTables(sheet)) {
       // SPEC-133: a clean table still carries the model's names.
-      const named = odsTableTextWithNames(text, model, sheet, namespaces);
-      rebuilt += named.generated;
-      return named.text;
+      const withNames = odsTableTextWithNames(text, model, sheet, namespaces);
+      rebuilt += withNames.generated;
+      return withNames.text;
     }
     const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
     rebuilt += table;

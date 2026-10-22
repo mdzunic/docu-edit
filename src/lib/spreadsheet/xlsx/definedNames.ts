@@ -18,8 +18,11 @@
 //   text — `#NAME?` — parses) and written back as read.
 //
 // Writing `<definedNames>` from `model.names` (writer.ts, whenever the
-// workbook part is rebuilt): model order (source order, new names
-// appended); a name scoped to a sheet no longer in the model is not written;
+// workbook part is rebuilt): model order — source order, new names
+// appended, except where the model places them as SPEC-121 and SPEC-128
+// always wrote them (names.ts setReservedName puts a new
+// `_xlnm._FilterDatabase` first; sheets.ts duplicateSheet puts a copy's
+// local name right after its origin's); a name scoped to a sheet no longer in the model is not written;
 // zero names write no `<definedNames>` (one the source has is left empty, as
 // SPEC-128 leaves it). Each name is matched to the source
 // element it was read from (same name, case-insensitively, and the same
@@ -336,12 +339,24 @@ function patchedElement(element: SourceDefinedNameElement, name: DefinedName, in
   return `${open}${body}${close}`;
 }
 
+/** A name compared case-insensitively. */
+const keyOf = (text: string | undefined): string => (text ?? "").toUpperCase();
+
+/** Whether a source element's `localSheetId` is `local`: as numbers when
+ * both are, else as written (an orphan's `x` matches only `x`). */
+function sameLocalSheetId(source: string | undefined, local: string): boolean {
+  if (source === undefined) {
+    return false;
+  }
+  const numeric = /^\d+$/;
+  return numeric.test(local) ? numeric.test(source) && Number(source) === Number(local) : source === local;
+}
+
 /** The splices bringing a workbook part's `<definedNames>` in line with
  * `names` (see the module header). */
 export function definedNamesSplices(xml: string, layout: DefinedNamesLayout, names: readonly DefinedName[], ctx: DefinedNamesWriteContext): Splice[] {
   const p = layout.prefix;
   const claimed = new Set<SourceDefinedNameElement>();
-  const keyOf = (text: string | undefined): string => (text ?? "").toUpperCase();
   const findSource = (name: DefinedName): SourceDefinedNameElement | undefined => {
     let local: string | undefined;
     if (isOrphanName(name)) {
@@ -353,7 +368,7 @@ export function definedNamesSplices(xml: string, layout: DefinedNamesLayout, nam
       }
       local = String(at);
     }
-    return layout.elements.find((element) => !claimed.has(element) && keyOf(element.name) === keyOf(name.name) && (local === undefined ? element.localSheetId === undefined : element.localSheetId !== undefined && Number(element.localSheetId) === Number(local) && /^\d+$/.test(element.localSheetId) === /^\d+$/.test(local)));
+    return layout.elements.find((element) => !claimed.has(element) && keyOf(element.name) === keyOf(name.name) && (local === undefined ? element.localSheetId === undefined : sameLocalSheetId(element.localSheetId, local)));
   };
   const firstWs = layout.elements[0] ? xml.slice(layout.elements[0].wsStart, layout.elements[0].start) : "";
   let content = "";
