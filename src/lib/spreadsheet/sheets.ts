@@ -108,6 +108,7 @@ import {
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
+import { crossAnnotations, remapPlaceSheets } from "./annotations";
 import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
 import { objectsReferenced } from "./ods/package";
 import { SPREADSHEET_READER_VERSION } from "./open";
@@ -464,6 +465,8 @@ export function renameSheet(model: SpreadsheetModel, index: number, name: string
 function remapNamesAndTables(model: SpreadsheetModel, remap: SheetRemap): void {
   mapNameFormulas(model, (defined) => remapSheetReferences(defined.formula, remap));
   mapTableFormulas(model, (text) => remapSheetReferences(text, remap));
+  // SPEC-135: every hyperlink's place location, beside Cell.formula.
+  remapPlaceSheets(model, remap);
 }
 
 /** Why the sheet at `index` cannot be duplicated, or null. */
@@ -862,17 +865,33 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     packageVariant: _variant,
     csv: _csv,
     odsOrphanValidations: _orphans,
+    persons: _persons,
     ...rest
   } = model;
   const kept = model.sheets.filter((sheet) => sheet.kind !== "foreign");
   const media = new CrossedMedia(model);
   const sheets: Sheet[] = kept.map((sheet) => {
-    const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, drawings, drawingPart: _drawingPart, drawingsDirty: _drawingsDirty, ...fields } = sheet;
+    const {
+      partName: _part,
+      sourceXml: _source,
+      copiedFrom: _copied,
+      dirty: _dirty,
+      drawings,
+      drawingPart: _drawingPart,
+      drawingsDirty: _drawingsDirty,
+      notes: _notes,
+      threads: _threads,
+      hyperlinks: _hyperlinks,
+      annotationsDirty: _annotationsDirty,
+      ...fields
+    } = sheet;
     const crossed: Sheet = {
       ...fields,
       rows: crossRows(sheet.rows, model.format),
       conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name),
       validations: crossValidations(sheetValidations(sheet), model.format, sheet.name),
+      // SPEC-135: notes, threads and links cross field for field, without their sources.
+      ...crossAnnotations(sheet, model.format),
     };
     if (fields.tables) {
       // SPEC-133: the table parts stay behind with the package.
@@ -906,9 +925,12 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     activeSheetIndex = sheets.findIndex((sheet) => sheet.visibility === "visible");
   }
   const { media: _media, ...crossedRest } = rest;
+  // SPEC-135: the thread authors cross to an .xlsx, without their source.
+  const persons = model.format === "xlsx" ? (model.persons ?? []).map(({ source: _personSource, ...person }) => person) : [];
   return {
     ...crossedRest,
     ...(media.parts.length > 0 ? { media: media.parts } : {}),
+    ...(persons.length > 0 ? { persons } : {}),
     opaque: [],
     sheets,
     activeSheetIndex,

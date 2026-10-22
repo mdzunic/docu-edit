@@ -119,8 +119,8 @@ describe("snapshots are by reference", () => {
   });
 
   it("names the by-reference fields the spec lists", () => {
-    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState", "conditionalFormats", "validations", "drawings", "tables"]);
-    expect(WORKBOOK_SNAPSHOT_FIELDS).toEqual(["activeSheetIndex", "structureDirty", "styles", "opaque", "odsContentEnvelope", "dxfs", "media", "names", "namesDirty"]);
+    expect(SHEET_BY_REFERENCE_FIELDS).toEqual(["rows", "sourceXml", "columns", "merges", "frozen", "autoFilter", "sortState", "conditionalFormats", "validations", "drawings", "tables", "notes", "threads", "hyperlinks"]);
+    expect(WORKBOOK_SNAPSHOT_FIELDS).toEqual(["activeSheetIndex", "structureDirty", "styles", "opaque", "odsContentEnvelope", "dxfs", "media", "names", "namesDirty", "persons"]);
   });
 });
 

@@ -53,6 +53,7 @@
 // Inserted rows are visible: they inherit neither `hidden` nor SPEC-128's
 // `filterHidden`.
 import type { CellRef, GridRange } from "./address";
+import { adjustHyperlinksForEdit, adjustNotesForEdit } from "./annotations";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { mapFormatFormulas, mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
 import { formatOrigin, renumberPriorities, sheetFormats, type ConditionalFormat } from "./conditionalFormats";
@@ -1099,6 +1100,9 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   // SPEC-133 (nameTableAdjusters.ts); called through arrows, as the modules import each other.
   { id: "names", adjust: (model, edit) => adjustNamesForEdit(model, edit) },
   { id: "tables", adjust: (model, edit) => adjustTablesForEdit(model, edit) },
+  // SPEC-135 (annotations.ts): notes and threads, then hyperlinks and every place location.
+  { id: "notes", adjust: (model, edit) => adjustNotesForEdit(model, edit) },
+  { id: "hyperlinks", adjust: (model, edit) => adjustHyperlinksForEdit(model, edit) },
 ];
 
 /** One structural edit (see the module header). */

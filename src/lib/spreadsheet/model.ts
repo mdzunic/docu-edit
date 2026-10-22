@@ -33,6 +33,7 @@
 // its own siblings and src/lib/core — never documentModel.ts, the text
 // commands, docx/, odf/, md/, presentation/, media/, the store or Vue.
 import type { ChartVisual } from "../core/charts";
+import type { CommentMessage } from "../core/comments";
 import type { DocumentProperties } from "../core/documentProperties";
 import type { MediaPart } from "../core/media";
 import type { OpaquePart } from "../core/packageParts";
@@ -392,6 +393,86 @@ export interface Sheet {
    *  tables it touches. A table's change marks the sheet `dirty` (its
    *  `<tableParts>` follows `tables`). */
   tables?: SheetTable[];
+  // --- SPEC-135 (annotations.ts is the normative source for the commands) ---
+  /** The sheet's cell notes (legacy xlsx comments, ods office:annotation),
+   *  sorted by (row, col), at most one per cell. Absent or empty: none.
+   *  Copy-on-write: every command replaces the array. */
+  notes?: CellNote[];
+  /** The sheet's Excel 365 threads, sorted by (row, col), at most one per
+   *  cell (xlsx only). Copy-on-write like `notes`. */
+  threads?: CellThread[];
+  /** The sheet's cell and range hyperlinks, sorted by (row, col) of their
+   *  range's top-left. Copy-on-write like `notes`. A `HYPERLINK()` formula
+   *  is never one of these. */
+  hyperlinks?: CellHyperlink[];
+  /** xlsx: the annotations changed since open — the writer rebuilds the
+   *  comments, VML and threaded parts and splices `<hyperlinks>` and
+   *  `<legacyDrawing>` into the retained worksheet XML; nothing else in the
+   *  worksheet changes unless the sheet is also `dirty`. ods annotations
+   *  live in the table XML, so an ods annotation command sets `dirty`. */
+  annotationsDirty?: true;
+}
+
+// --- SPEC-135: notes, threads and hyperlinks ------------------------------------------------
+// SPEC-135 is the normative source for the cell annotation model, its wire
+// mappings (xlsx/annotations.ts, ods/annotations.ts), the thread
+// placeholder rule (xlsx/threadPlaceholder.ts) and which link targets a
+// sheet opens (annotations.ts openHyperlinkTarget). Ids are derived from the
+// wire, so re-reading a written file twice yields identical ids.
+
+/** A cell note: Excel's legacy comment (with its VML shape), ODF's
+ *  office:annotation. */
+export interface CellNote {
+  noteId: string; // xlsx `n-${A1 at read}`; ods office:name, else `n-${A1}`
+  ref: CellRef;
+  author: string; // "" when the wire names none
+  createdAt?: string; // ods dc:date; legacy xlsx notes carry no date
+  text: string; // plain text; paragraphs joined with "\n"
+  runs?: TextRun[]; // xlsx rich runs, kept while the note is unedited
+  visible?: true;
+  box?: { widthPx: number; heightPx: number }; // absent → NOTE_DEFAULT_BOX (144 × 79)
+  /** The source elements verbatim — dropped by a command that changes the
+   *  note's content; kept by an adjuster or remap that only moves it (the
+   *  writer then patches the position fields). */
+  source?: { xlsxComment?: string; vmlShape?: string; odsAnnotation?: string };
+}
+
+/** One message of an Excel 365 thread. */
+export interface ThreadMessage extends CommentMessage {
+  personId: string;
+  mentions?: string; // the retained <mentions> element, while unedited
+  /** The source threadedComment element verbatim, while unedited. */
+  source?: string;
+}
+
+export interface CellThread {
+  threadId: string; // the root threadedComment@id, "{GUID}" as written
+  ref: CellRef;
+  messages: ThreadMessage[]; // [0] opens the thread
+  resolved: boolean;
+}
+
+/** A person of xl/persons/person.xml. */
+export interface ThreadPerson {
+  personId: string;
+  displayName: string;
+  userId?: string;
+  providerId?: string;
+  /** The source person element verbatim, while unchanged. */
+  source?: string;
+}
+
+export type HyperlinkTarget =
+  | { kind: "url"; href: string; subaddress?: string }
+  | { kind: "place"; location: string }; // canonical reference text, or a defined name
+
+export interface CellHyperlink {
+  linkId: string; // xr:uid, else `h-${A1 of range start}`
+  range: GridRange;
+  target: HyperlinkTarget;
+  tooltip?: string;
+  display?: string; // xlsx @display, retained
+  source?: { relId?: string };
 }
 
 // --- SPEC-133: defined names and tables -----------------------------------------------
@@ -635,6 +716,10 @@ export interface SpreadsheetModel {
   /** A name changed since open: the writers rebuild xlsx `<definedNames>`
    *  and the ODS named expressions from `names`. */
   namesDirty?: true;
+  // --- SPEC-135 ---
+  /** xl/persons/person.xml's people, the authors of every thread message.
+   *  Replaced, never mutated, when a new author is added. */
+  persons?: ThreadPerson[];
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or

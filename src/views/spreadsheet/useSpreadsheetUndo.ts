@@ -9,14 +9,16 @@
 // SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, SPEC-124's `columns`,
 // `merges` and `frozen`, SPEC-128's `autoFilter` and `sortState`,
 // SPEC-129's `conditionalFormats`, SPEC-130's `validations`, SPEC-131's
-// `drawings` and SPEC-133's `tables`, which every
+// `drawings`, SPEC-133's `tables` and SPEC-135's `notes`, `threads` and
+// `hyperlinks`, which every
 // command replaces and never mutates), kept by reference because
 // copy-on-write makes that safe — so an undo
 // restores them by identity — plus every WORKBOOK_SNAPSHOT_FIELDS value by
 // reference (each a primitive or copy-on-write: `styles` and SPEC-129's
 // `dxfs` grow by replacement, `opaque` and `odsContentEnvelope` are replaced
 // when they change, SPEC-131's `media` is replaced when an image goes in,
-// SPEC-133's `names` is copy-on-write). Taking one costs O(sheets + small metadata), never O(cells) or
+// SPEC-133's `names` is copy-on-write, SPEC-135's `persons` is replaced
+// when a new author joins). Taking one costs O(sheets + small metadata), never O(cells) or
 // O(package). A later spec that adds a sheet field able to grow with the
 // cell count makes it copy-on-write and appends it to
 // SHEET_BY_REFERENCE_FIELDS; one that adds workbook-level state appends to
@@ -74,6 +76,9 @@ export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = [
   "validations",
   "drawings",
   "tables",
+  "notes",
+  "threads",
+  "hyperlinks",
 ];
 
 export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
@@ -86,6 +91,7 @@ export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
   "media",
   "names",
   "namesDirty",
+  "persons",
 ];
 
 export interface SpreadsheetUndoDeps {
