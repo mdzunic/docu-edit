@@ -775,6 +775,15 @@ export const SLIDE_MENU_ITEMS: SlideMenuItem[] = [
   { action: "move-down", label: "Move down", testid: "slide-menu-move-down" },
 ];
 
+/** The filmstrip's slide menu (SPEC-104): the shared items plus the
+ * Hide/Show toggle, labelled for the slide the menu was opened on. */
+export function filmstripMenuItems(slideHidden: boolean): SlideMenuItem[] {
+  return [
+    ...SLIDE_MENU_ITEMS,
+    { action: "hide", label: slideHidden ? "Show slide" : "Hide slide", testid: "slide-menu-hide" },
+  ];
+}
+
 /** The modifier state of a pointer/keyboard event, as a plain object the
  * shared slide selection reads (SPEC-099). */
 export function gestureModifiers(event: MouseEvent | KeyboardEvent): { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean } {

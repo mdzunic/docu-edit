@@ -10,8 +10,11 @@
 // the menu the shared SlideContextMenu, and when the view hands in the shared
 // slide `selection` (useSlideSelection) clicks and the selection keys go
 // through it — the same multi-selection the slide sorter shows — with
-// `selectedIndexes` driving aria-selected. Runtime prop/emit declarations,
-// not defineProps<{...}>() generics (espree lints .vue scripts).
+// `selectedIndexes` driving aria-selected. SPEC-104 adds Hide/Show slide to
+// the menu; a hidden slide's item carries `filmstrip-hidden` and its thumbnail
+// dims (the editor still reaches and edits it like any other slide). Runtime
+// prop/emit declarations, not defineProps<{...}>() generics (espree lints .vue
+// scripts).
 import { computed, nextTick, ref, useTemplateRef } from "vue";
 import SlideThumb from "./SlideThumb.vue";
 import SlideContextMenu from "./SlideContextMenu.vue";
@@ -20,9 +23,9 @@ import {
   asSlides,
   asStageFieldsBySlide,
   filmstripLabel,
+  filmstripMenuItems,
   filmstripThumbScale,
   gestureModifiers,
-  SLIDE_MENU_ITEMS,
 } from "./slideRender";
 
 const props = defineProps({
@@ -65,8 +68,12 @@ const dropTarget = ref(-1);
 const announcement = ref("");
 
 function label(slide = slides.value[0], index = 0) {
-  return filmstripLabel(slide, index, slides.value.length);
+  // SPEC-104: the struck-through number is visual only, so say it.
+  return `${filmstripLabel(slide, index, slides.value.length)}${slide.hidden ? " (hidden)" : ""}`;
 }
+
+// SPEC-104: the slide menu's Hide/Show entry names the state it switches to.
+const menuItems = computed(() => filmstripMenuItems(slides.value[menuIndex.value]?.hidden === true));
 
 function optionId(index = 0) {
   return `filmstrip-option-${index}`;
@@ -240,6 +247,7 @@ function announceMove(from = 0, to = 0) {
           selected: index === currentIndex,
           'multi-selected': index !== currentIndex && selected.includes(index),
           'drop-target': index === dropTarget && dragFrom !== index,
+          'filmstrip-hidden': slide.hidden === true,
         }"
         role="option"
         :aria-selected="selected.includes(index)"
@@ -262,6 +270,7 @@ function announceMove(from = 0, to = 0) {
           :scale="scale"
           :fields="fieldsBySlide[index] || []"
           :theme="theme"
+          :is-hidden="slide.hidden === true"
         />
         <button
           type="button"
@@ -288,7 +297,7 @@ function announceMove(from = 0, to = 0) {
 
     <SlideContextMenu
       v-if="menuIndex >= 0"
-      :items="SLIDE_MENU_ITEMS"
+      :items="menuItems"
       :x="menuPos.x"
       :y="menuPos.y"
       @run="runMenu"

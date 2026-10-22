@@ -5,7 +5,7 @@
 // directory so PresentationView stays a thin wiring hub.
 import type { Ref } from "vue";
 import type { PresentationModel } from "../../lib/presentation/model";
-import { addSlide, deleteSlide, duplicateSlide, moveSlide } from "../../lib/presentation/slides";
+import { addSlide, deleteSlide, duplicateSlide, moveSlide, setSlideHidden } from "../../lib/presentation/slides";
 
 export interface SlideCommandsDeps {
   model: Ref<PresentationModel | null>;
@@ -25,6 +25,9 @@ export interface SlideCommands {
   moveUp: (index?: number) => void;
   moveDown: (index?: number) => void;
   reorder: (from: number, to: number) => void;
+  /** Hides a shown slide or shows a hidden one (SPEC-104) — one undo entry,
+   * "Hide slide" / "Show slide". The slide stays selected. */
+  toggleHidden: (index?: number) => void;
 }
 
 export function useSlideCommands(deps: SlideCommandsDeps): SlideCommands {
@@ -46,5 +49,13 @@ export function useSlideCommands(deps: SlideCommandsDeps): SlideCommands {
     moveUp: (index = deps.currentIndex.value) => run("Move slide up", (model) => moveSlide(model, index, index - 1)),
     moveDown: (index = deps.currentIndex.value) => run("Move slide down", (model) => moveSlide(model, index, index + 1)),
     reorder: (from, to) => run("Move slide", (model) => moveSlide(model, from, to)),
+    toggleHidden: (index = deps.currentIndex.value) => {
+      const slide = deps.model.value?.slides[index];
+      if (!slide) {
+        return;
+      }
+      const hidden = slide.hidden === true;
+      run(hidden ? "Show slide" : "Hide slide", (model) => setSlideHidden(model, index, !hidden));
+    },
   };
 }

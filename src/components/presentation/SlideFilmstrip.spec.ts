@@ -39,9 +39,10 @@ describe("SlideFilmstrip management", () => {
     const wrapper = mountStrip();
     await wrapper.findAll('[data-testid="presentation-slide-menu"]')[0].trigger("click");
     expect(wrapper.find('[data-testid="slide-context-menu"]').exists()).toBe(true);
-    // Seven items: new / new-with-layout / duplicate / change-layout / delete /
-    // move-up / move-down (SPEC-089 added the two layout entries).
-    expect(wrapper.findAll('[data-testid="slide-context-menu"] [role="menuitem"]')).toHaveLength(7);
+    // Eight items: new / new-with-layout / duplicate / change-layout / delete /
+    // move-up / move-down (SPEC-089 added the two layout entries) and
+    // hide/show (SPEC-104).
+    expect(wrapper.findAll('[data-testid="slide-context-menu"] [role="menuitem"]')).toHaveLength(8);
   });
 
   it("drag-reorders with a visible drop indicator (AC-38)", async () => {
@@ -115,5 +116,46 @@ describe("SlideFilmstrip — SPEC-099 shared selection", () => {
     await wrapper.findAll('[data-testid="filmstrip-slide"]')[2].trigger("contextmenu");
     await wrapper.get('[data-testid="slide-menu-delete"]').trigger("click");
     expect(wrapper.emitted("command")?.[0]?.[0]).toEqual({ action: "delete", index: 2 });
+  });
+});
+
+// SPEC-104 — Hide slide / Show slide in the filmstrip's slide menu, and the
+// hidden thumbnail's look.
+function mountHidden() {
+  const deck = [
+    { id: "s0", frames: [] },
+    { id: "s1", frames: [], hidden: true },
+    { id: "s2", frames: [] },
+  ];
+  return mount(SlideFilmstrip, { props: { slides: deck, widthCm: 33.867, heightCm: 19.05, currentIndex: 0 } });
+}
+
+describe("SlideFilmstrip hidden slides (SPEC-104)", () => {
+  it("marks a hidden slide's item filmstrip-hidden and dims its thumbnail", () => {
+    const wrapper = mountHidden();
+    const items = wrapper.findAll('[data-testid="filmstrip-slide"]');
+    expect(items.map((item) => item.classes().includes("filmstrip-hidden"))).toEqual([false, true, false]);
+    expect(items[1].find(".slide-thumb").classes()).toContain("is-hidden");
+    expect(items[1].attributes("aria-label")).toContain("(hidden)");
+    expect(items[0].attributes("aria-label")).not.toContain("(hidden)");
+  });
+
+  it("offers Hide slide on a shown slide and Show slide on a hidden one, emitting the hide intent", async () => {
+    const wrapper = mountHidden();
+    await wrapper.findAll('[data-testid="filmstrip-slide"]')[0].trigger("contextmenu");
+    expect(wrapper.get('[data-testid="slide-menu-hide"]').text()).toBe("Hide slide");
+    await wrapper.get('[data-testid="slide-menu-hide"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([{ action: "hide", index: 0 }]);
+
+    await wrapper.findAll('[data-testid="filmstrip-slide"]')[1].trigger("contextmenu");
+    expect(wrapper.get('[data-testid="slide-menu-hide"]').text()).toBe("Show slide");
+    await wrapper.get('[data-testid="slide-menu-hide"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([{ action: "hide", index: 1 }]);
+  });
+
+  it("still selects a hidden slide on click — the editor never skips one", async () => {
+    const wrapper = mountHidden();
+    await wrapper.findAll('[data-testid="filmstrip-slide"]')[1].trigger("click");
+    expect(wrapper.emitted("select")?.at(-1)).toEqual([1]);
   });
 });

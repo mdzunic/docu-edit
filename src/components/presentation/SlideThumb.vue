@@ -22,13 +22,16 @@ defineProps({
   /** SPEC-094: the deck's theme. */
   theme: { type: Object, default: null },
   stacked: { type: Boolean, default: false },
+  /** SPEC-104: the slide is hidden — the stage dims to 45% and the number is
+   * struck through. */
+  isHidden: { type: Boolean, default: false },
 });
 </script>
 
 <template>
   <div
     class="slide-thumb"
-    :class="{ stacked }"
+    :class="{ stacked, 'is-hidden': isHidden }"
   >
     <span
       class="thumb-number"
@@ -79,5 +82,14 @@ defineProps({
 .thumb-stage {
   /* The thumbnail stage is decorative and non-interactive. */
   pointer-events: none;
+}
+
+/* SPEC-104: a hidden slide's thumbnail. */
+.is-hidden .thumb-stage {
+  opacity: 0.45;
+}
+
+.is-hidden .thumb-number {
+  text-decoration: line-through;
 }
 </style>

@@ -35,6 +35,8 @@ export function useFilmstripCommands(deps: FilmstripCommandsDeps) {
       deps.commands.moveUp(index);
     } else if (action === "move-down") {
       deps.commands.moveDown(index);
+    } else if (action === "hide") {
+      deps.commands.toggleHidden(index);
     }
   }
 
