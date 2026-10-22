@@ -98,7 +98,7 @@ import { equalBytes } from "../../core/equality";
 import { ensureMediaEncoded, extensionForContentType, pendingMediaByteLength, type MediaPart } from "../../core/media";
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { OFFICE_THEME_XML } from "../../core/officeThemeXml";
-import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes, decodedPartBytesAsync } from "../../core/packageParts";
 import { SPREADSHEETML_MAIN_CONTENT_TYPES } from "../../core/packageDetect";
 import { DEFAULT_THEME, resolveFont, sameModelColor } from "../../core/theme";
 import { relsPathFor } from "../../core/xml";
@@ -149,7 +149,8 @@ import {
 } from "./package";
 import { SharedStringsWriter } from "./sharedStrings";
 import { mentionsAnyName, passFor, remappedNames } from "./sheetNamePass";
-import { emptyWorksheetXml, serializeWorksheet, type XlsxSheetContext } from "./sheetXml";
+import { emptyWorksheetXml, serializeWorksheet, serializeWorksheetAsync, type XlsxSheetContext } from "./sheetXml";
+import { createSliceClock } from "../serialiseSlices";
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
@@ -176,9 +177,12 @@ const CALC_ID = "191029";
 /** Serialises a workbook to .xlsx bytes (see the module header). */
 export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptions = {}): Promise<Uint8Array> {
   if (model.opaque.length === 0) {
-    return zip(buildFromScratch(model, options));
+    return zip(await buildFromScratch(model, options));
   }
-  const parts = decodedPartBytes(model.opaque);
+  // SPEC-137 AC-46: a retained worksheet part's base64 can run to tens of MB
+  // on a large workbook — decoded through the chunked, yielding decode
+  // rather than one synchronous atob over the whole retained package.
+  const parts = await decodedPartBytesAsync(model.opaque);
   if (
     !model.structureDirty &&
     !model.namesDirty &&
@@ -245,7 +249,7 @@ export const FROM_SCRATCH_APP_XML =
   `${XML_DECLARATION}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
   `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>docu-edit</Application></Properties>`;
 
-function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): ZipEntryInput[] {
+async function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Promise<ZipEntryInput[]> {
   const modified = options.modified ?? clockNow();
   const fullCalc = options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true || model.calc?.fullCalcOnLoad === true;
   const mainType = SPREADSHEETML_MAIN_CONTENT_TYPES[model.packageVariant ?? "workbook"];
@@ -257,11 +261,18 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const strings = new SharedStringsWriter(undefined, model.theme);
   const styles = new XlsxStyleWriter(undefined, model);
   const mdw = workbookMdw(model);
-  const worksheets = model.sheets.map((sheet, index) =>
-    isChartSheetPart(sheetParts[index]!)
-      ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
-      : serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
-  );
+  // SPEC-137: one shared clock across every sheet, sequential (never
+  // Promise.all) — each sheet's serialisation appends to `strings`/`styles`
+  // in sheet order, which concurrent calls would interleave incorrectly.
+  const clock = createSliceClock();
+  const worksheets: string[] = [];
+  for (const [index, sheet] of model.sheets.entries()) {
+    worksheets.push(
+      isChartSheetPart(sheetParts[index]!)
+        ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
+        : await serializeWorksheetAsync(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }, clock),
+    );
+  }
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
   const tables = fromScratchTables(model, sheetParts, layer);

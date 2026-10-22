@@ -91,6 +91,7 @@ import { addressText, type CellBudget, outOfGridError } from "../parsed";
 import { serialToOdsDateValue, serialToOdsTimeValue } from "../serial";
 import { cellStyle, columnSpanAt } from "../styles";
 import { sheetValidations, type DataValidation } from "../validation";
+import { createSliceClock, type SliceClock } from "../serialiseSlices";
 import { withoutValidationName } from "./contentValidations";
 import { leadingWithShapes, odsSheetDrawingsXml, type OdsDrawingWriteContext, type OdsSheetDrawingsXml } from "./drawingXml";
 import { linkedParagraphsXml, odsNoteXml, paragraphsMatchLink } from "./annotations";
@@ -996,11 +997,14 @@ interface Repeatable {
 }
 
 /** Accumulates runs of identical elements and writes each run once, its
- * count in `attribute`. */
+ * count in `attribute`. SPEC-137: a long sheet has no repeats worth
+ * compressing (25,000 distinct rows, say), so `flush` runs once per row —
+ * `out` is an array of pieces joined ONCE by the `out` getter, never a
+ * string grown by repeated `+=` across a sheet's whole row count. */
 class RunWriter {
   private current: Repeatable | null = null;
   private count = 0;
-  out = "";
+  private pieces: string[] = [];
 
   constructor(private readonly attribute: string) {}
 
@@ -1012,7 +1016,7 @@ class RunWriter {
     }
     if (unique) {
       this.flush();
-      this.out += element.head + element.tail;
+      this.pieces.push(element.head + element.tail);
       return;
     }
     if (this.current && this.current.head === element.head && this.current.tail === element.tail) {
@@ -1026,10 +1030,15 @@ class RunWriter {
 
   flush(): void {
     if (this.current) {
-      this.out += this.count > 1 ? `${this.current.head} ${this.attribute}="${this.count}"${this.current.tail}` : this.current.head + this.current.tail;
+      this.pieces.push(this.count > 1 ? `${this.current.head} ${this.attribute}="${this.count}"${this.current.tail}` : this.current.head + this.current.tail);
     }
     this.current = null;
     this.count = 0;
+  }
+
+  /** Every piece written so far, joined once. */
+  get out(): string {
+    return this.pieces.join("");
   }
 }
 
@@ -1497,6 +1506,60 @@ class TableWriter {
     }
   }
 
+  /** The async twin of `rows` (SPEC-137 "Saving stays responsive"):
+   * identical row selection and run-compression logic — only every `r`'s
+   * loop body is the same code, checking `clock` so a long sheet's save
+   * yields to the main thread instead of blocking it for the whole table. */
+  private async rowsAsync(from: number, to: number, out: RunWriter, clock: SliceClock): Promise<void> {
+    const stored = this.sheet.rows;
+    let r = from;
+    while (r < to) {
+      while (this.nextMerge < this.merges.length && this.merges[this.nextMerge]!.top <= r) {
+        this.active.push(this.merges[this.nextMerge]!);
+        this.nextMerge += 1;
+      }
+      this.active = this.active.filter((merge) => merge.bottom >= r);
+      this.meetValidated(r);
+      this.meetLinks(r);
+      while (this.nextStored < stored.length && stored[this.nextStored]!.index < r) {
+        this.nextStored += 1;
+      }
+      const row = stored[this.nextStored]?.index === r ? stored[this.nextStored] : undefined;
+      while (this.nextDrawingRow < this.drawingRows.length && this.drawingRows[this.nextDrawingRow]! < r) {
+        this.nextDrawingRow += 1;
+      }
+      const drawn = this.drawingRows[this.nextDrawingRow] === r;
+      while (this.nextNoteRow < this.noteRows.length && this.noteRows[this.nextNoteRow]! < r) {
+        this.nextNoteRow += 1;
+      }
+      const noted = this.noteRows[this.nextNoteRow] === r;
+      const inTable = this.tables.some((table) => table.ref.top <= r && table.ref.bottom >= r);
+      if (row || drawn || noted || inTable || this.active.some((merge) => merge.top === r)) {
+        out.push(this.rowElement(row, r), 1, drawn || noted);
+        r += 1;
+      } else {
+        let end = Math.min(to, stored[this.nextStored]?.index ?? to, this.drawingRows[this.nextDrawingRow] ?? to, this.noteRows[this.nextNoteRow] ?? to);
+        if (this.nextMerge < this.merges.length) {
+          end = Math.min(end, this.merges[this.nextMerge]!.top);
+        }
+        for (const merge of this.active) {
+          end = Math.min(end, merge.bottom + 1);
+        }
+        end = Math.min(end, this.nextValidatedBreak(r));
+        for (const table of this.tables) {
+          if (table.ref.top > r) {
+            end = Math.min(end, table.ref.top);
+          }
+        }
+        out.push(this.rowElement(undefined, r), Math.max(end - r, 1));
+        r = Math.max(end, r + 1);
+      }
+      if (clock.due()) {
+        await clock.yield();
+      }
+    }
+  }
+
   /** SPEC-135: the hyperlinks row `r` meets (rows ascend). */
   private meetLinks(r: number): void {
     if (this.links.length === 0) {
@@ -1841,6 +1904,38 @@ class TableWriter {
     return xml;
   }
 
+  /** The async twin of `axis` (SPEC-137): identical grouping logic, awaiting
+   * the (also async) row emitter instead of calling it synchronously. Only
+   * used for the "row" axis — columns are few enough on any sheet that they
+   * are never worth yielding over. */
+  private async axisAsync(groups: readonly SkeletonGroup[], from: number, to: number, clock: SliceClock): Promise<string> {
+    let xml = "";
+    let at = from;
+    const run = async (a: number, b: number): Promise<void> => {
+      if (b > a) {
+        const out = new RunWriter("table:number-rows-repeated");
+        await this.rowsAsync(a, b, out, clock);
+        out.flush();
+        xml += out.out;
+      }
+    };
+    for (const group of groups) {
+      const start = Math.max(group.from, at);
+      await run(at, Math.min(start, to));
+      if (group.selfClosing) {
+        xml += group.open;
+      } else {
+        const end = Math.max(Math.min(group.to, to), start);
+        xml += group.open + (await this.axisAsync(group.children, start, end, clock)) + `</${group.qname}>`;
+        at = end;
+        continue;
+      }
+      at = Math.max(at, start);
+    }
+    await run(at, to);
+    return xml;
+  }
+
   write(): string {
     const sheet = this.sheet;
     const ctx = this.ctx;
@@ -1865,6 +1960,36 @@ class TableWriter {
     }
     const columns = this.axis("col", this.skeleton?.colGroups ?? [], 0, this.colExtent, (a, b, out) => this.columns(a, b, out));
     const rows = this.axis("row", this.skeleton?.rowGroups ?? [], 0, this.rowExtent, (a, b, out) => this.rows(a, b, out));
+    return head + columns + rows + trailing + (this.skeleton ? this.skeleton.close : "</table:table>");
+  }
+
+  /** The async twin of `write` (SPEC-137 "Saving stays responsive"):
+   * identical output, built the same way — only the row axis (the one
+   * that can run to tens of thousands of iterations) is built by the
+   * yielding `axisAsync`/`rowsAsync`; columns are always few, so they stay
+   * on the plain synchronous `axis`. */
+  async writeAsync(clock: SliceClock): Promise<string> {
+    const sheet = this.sheet;
+    const ctx = this.ctx;
+    let head: string;
+    let leading = this.skeleton?.leading ?? "";
+    let trailing = this.skeleton?.trailing ?? "";
+    if (ctx.conditionalFormats) {
+      ({ leading, trailing } = ctx.conditionalFormats.splice(sheet, leading, trailing, ctx.passRetained));
+    }
+    if (ctx.localNames) {
+      trailing = ctx.localNames(sheet, trailing);
+    }
+    leading = leadingWithShapes(leading, this.drawings.shapes, this.skeleton ? tablePrefix(this.skeleton.close) : "table:");
+    if (this.skeleton) {
+      head = this.skeleton.head + leading;
+    } else {
+      const tabColor = sheet.tabColor === undefined ? undefined : resolveColor(sheet.tabColor, ctx.model.theme ?? DEFAULT_THEME);
+      const style = ctx.registry.tableStyle({ masterPage: "Default", display: sheet.visibility === "visible", ...(tabColor === undefined ? {} : { tabColor }) });
+      head = `<table:table table:name="${attributeText(sheet.name)}" table:style-name="${style}">` + leading;
+    }
+    const columns = this.axis("col", this.skeleton?.colGroups ?? [], 0, this.colExtent, (a, b, out) => this.columns(a, b, out));
+    const rows = await this.axisAsync(this.skeleton?.rowGroups ?? [], 0, this.rowExtent, clock);
     return head + columns + rows + trailing + (this.skeleton ? this.skeleton.close : "</table:table>");
   }
 }
@@ -1986,4 +2111,16 @@ function validatedRanges(sheet: Sheet, nameOf: OdsTableContext["validationName"]
  * text's first `text:a` still matches the model's link (paragraphsMatchLink). */
 export function serializeTable(sheet: Sheet, ctx: OdsTableContext): string {
   return new TableWriter(sheet, ctx).write();
+}
+
+/** The async, yielding twin of `serializeTable` (SPEC-137 "Saving stays
+ * responsive"): byte-identical output, but yields to the main thread
+ * (`clock`, default `createSliceClock()`) every `SERIALISE_SLICE_MS` of
+ * work. `serializeTable` itself stays synchronous and unchanged — the
+ * substitution save path (`ods/writer.ts`'s `buildSubstitution`, which the
+ * reader-upgrade path's `substitutedOdsParts` also calls and must stay
+ * synchronous for) keeps using it; `writeOds`'s from-scratch path uses this
+ * twin, which large-sheet saves actually need. */
+export async function serializeTableAsync(sheet: Sheet, ctx: OdsTableContext, clock: SliceClock = createSliceClock()): Promise<string> {
+  return new TableWriter(sheet, ctx).writeAsync(clock);
 }
