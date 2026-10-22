@@ -310,6 +310,12 @@ export interface FindArea {
   range: GridRange;
 }
 
+/** Whether Within = Sheet searches the selection rather than the sheet: it
+ * covers more than one cell (a merged cell is one). */
+export function searchesSelection(sheet: Sheet, selection: SheetSelection): boolean {
+  return selectionSpansMultipleCells(selection.ranges, lookupOf(sheet).merges);
+}
+
 /** The scope (see the header), in search order. */
 export function findAreas(model: SpreadsheetModel, within: FindWithin, activeSheetId: string, selection: SheetSelection): FindArea[] {
   if (within === "workbook") {
@@ -319,7 +325,7 @@ export function findAreas(model: SpreadsheetModel, within: FindWithin, activeShe
   if (!sheet || sheet.kind !== "grid") {
     return [];
   }
-  if (selectionSpansMultipleCells(selection.ranges, lookupOf(sheet).merges)) {
+  if (searchesSelection(sheet, selection)) {
     return selection.ranges.map((range) => ({ sheet, range }));
   }
   return [{ sheet, range: FULL_SHEET }];
