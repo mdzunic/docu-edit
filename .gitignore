@@ -17,3 +17,8 @@ examples/output/
 # (scripts/build-spec047-fixture.mjs), never committed — see specs/047's
 # "The benchmark fixture".
 /e2e/fixtures/spec-047-fixture.docx
+# SPEC-137: the workbook performance-benchmark fixtures are generated on
+# demand (scripts/build-spec137-fixtures.ts), never committed — see
+# specs/137's "The benchmark fixtures".
+/e2e/fixtures/spec137-large.xlsx
+/e2e/fixtures/spec137-library.xlsx
