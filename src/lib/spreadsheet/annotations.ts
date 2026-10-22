@@ -58,13 +58,14 @@ import { urlScheme } from "../core/urls";
 import { sanitizeXmlText } from "../core/xmlText";
 import { formatA1, type CellRef, type GridRange } from "./address";
 import { adjustFormula } from "./formula/adjust";
+import { toScalar } from "./formula/areas";
 import type { FormulaNode } from "./formula/ast";
 import { storedValueContext, evaluate } from "./formula/evaluate";
 import { FormulaSyntaxError, parseFormula, parseFormulaAt } from "./formula/parse";
 import { formatReference, formatSheetPrefix } from "./formula/print";
 import { withReferenceHooks } from "./formula/referenceHooks";
 import { remapSheetReferences, type SheetRemap } from "./formula/sheetRefs";
-import { isArray, isEmpty, isError, isRange, type EvalValue } from "./formula/values";
+import { isEmpty, isError, type ScalarValue } from "./formula/values";
 import type { Cell, CellHyperlink, CellNote, CellThread, HyperlinkTarget, Sheet, SpreadsheetFormat, SpreadsheetModel, ThreadMessage, ThreadPerson } from "./model";
 import { moveDestination, repointFormula, type RangeMove } from "./move";
 import { adjustIndex, adjustRange, editAxis, type StructuralEdit } from "./structure";
@@ -499,9 +500,9 @@ export function hyperlinkFormulaCall(cell: Pick<Cell, "formula" | "formulaUnpars
   return node.kind === "function" && node.name.toUpperCase() === "HYPERLINK" && node.args.length > 0 ? node : null;
 }
 
-/** The text an evaluation gives, or null (an error, an empty value). */
-function evaluatedText(value: EvalValue): string | null {
-  if (isError(value) || isEmpty(value) || isRange(value) || isArray(value)) {
+/** The text a scalar gives, or null (an error, an empty value). */
+function evaluatedText(value: ScalarValue): string | null {
+  if (isError(value) || isEmpty(value)) {
     return null;
   }
   if (typeof value === "boolean") {
@@ -511,7 +512,10 @@ function evaluatedText(value: EvalValue): string | null {
 }
 
 /** A `HYPERLINK()` cell's target, computed now: its first argument
- * evaluated for that cell (SPEC-120) and coerced to text — `#…` is a place
+ * evaluated for that cell (SPEC-120), reduced to one value the way the
+ * function's own single-value argument reads it (a reference dereferenced,
+ * a range intersected with the cell, an array's top-left) and coerced to
+ * text — `#…` is a place
  * (the rest canonicalised), anything else a url (a bare `Sheet!A1` too,
  * which the open rule then refuses as a relative path); null when it gives
  * no text. */
@@ -524,7 +528,7 @@ export function hyperlinkFormulaTarget(model: SpreadsheetModel, sheetId: string,
   let text: string | null;
   try {
     const ctx = withReferenceHooks({ ...storedValueContext(model), host: { sheetId, row: ref.row, col: ref.col }, origin: parsed.origin, arrayMode: false });
-    text = evaluatedText(evaluate(call.args[0]!, ctx));
+    text = evaluatedText(toScalar(ctx, evaluate(call.args[0]!, ctx)));
   } catch {
     return null;
   }

@@ -97,6 +97,25 @@ test.describe("SPEC-135 links", () => {
     expect(page.context().pages()).toHaveLength(1);
   });
 
+  test("a HYPERLINK() whose first argument is a cell reference follows that cell's text (AC-40)", async ({ page }) => {
+    await page.context().route("https://first.example/**", (route) => route.fulfill({ body: "" }));
+    await openFixture(page, "spec135-annotations.xlsx");
+    await pressCell(page, "H2");
+    await page.keyboard.type("https://first.example/");
+    await page.keyboard.press("Enter");
+    await pressCell(page, "C9");
+    await page.keyboard.type('=HYPERLINK(H2,"ref")');
+    await page.keyboard.press("Enter");
+    await expect(cellAt(page, "C9")).toHaveText("ref");
+    await expect(cellAt(page, "C9")).toHaveAttribute("data-link", "true");
+    await pressCell(page, "C9");
+    await expect(page.getByTestId("link-chip-target")).toHaveText("https://first.example/");
+    await pressCell(page, "A1");
+    await cellAt(page, "C9").locator(".sheet-cell-link").click({ modifiers: ["ControlOrMeta"] });
+    await expect.poll(() => opens(page)).toEqual([["https://first.example/", "_blank", "noopener,noreferrer"]]);
+    await expect(page.getByTestId("name-box")).toHaveValue("A1");
+  });
+
   test("an .ods workbook's links read: A7 and B7 carry data-link, and following B7 activates Data with A1 selected", async ({ page }) => {
     await openFixture(page, "spec135-annotations.ods");
     await expect(cellAt(page, "A7")).toHaveAttribute("data-link", "true");

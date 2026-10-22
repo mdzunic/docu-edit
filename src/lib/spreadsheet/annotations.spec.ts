@@ -309,6 +309,23 @@ describe("HYPERLINK() cells", () => {
     expect(hyperlinkFormulaTarget(m, "s1", ref(4, 0), blank)).toBeNull();
   });
 
+  it("dereferences a reference first argument — relative, absolute, on another sheet, a column intersected with the cell", () => {
+    const relative = value(0, "ref", { formula: 'HYPERLINK(H2,"ref")' });
+    const absolute = value(1, "https://first.example/", { formula: "HYPERLINK($H$2)" });
+    const other = value(2, "other sheet", { formula: 'HYPERLINK(Data!A1,"other sheet")' });
+    const column = value(3, "col", { formula: 'HYPERLINK(H1:H3,"col")' });
+    const m = model([
+      sheet("s1", "Sheet1", { rows: [row(1, [relative, absolute, other, column, value(7, "https://first.example/")])] }),
+      sheet("s2", "Data", { rows: [row(0, [value(0, "#Sheet1!B2")])] }),
+    ]);
+    expect(hyperlinkFormulaTarget(m, "s1", ref(1, 0), relative)).toEqual({ kind: "url", href: "https://first.example/" });
+    expect(hyperlinkFormulaTarget(m, "s1", ref(1, 1), absolute)).toEqual({ kind: "url", href: "https://first.example/" });
+    expect(hyperlinkFormulaTarget(m, "s1", ref(1, 2), other)).toEqual({ kind: "place", location: "Sheet1!B2" });
+    expect(hyperlinkFormulaTarget(m, "s1", ref(1, 3), column)).toEqual({ kind: "url", href: "https://first.example/" });
+    const block = value(0, "block", { formula: 'HYPERLINK(H1:I3,"block")' });
+    expect(hyperlinkFormulaTarget(m, "s1", ref(4, 0), block)).toBeNull();
+  });
+
   it("is never stored as a hyperlink", () => {
     const cell = value(0, "Site", { formula: 'HYPERLINK("https://example.com","Site")' });
     const m = model([sheet("s1", "Sheet1", { rows: [row(0, [cell])] })]);
