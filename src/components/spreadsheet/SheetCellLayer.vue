@@ -200,10 +200,10 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
                 :key="i"
                 :class="{ 'sheet-cell-link': isLinkedCell(cell, props.linkAt) }"
                 :style="textStyle(run.style)"
-              >{{ run.text }}</span></template><template v-else-if="cell.fill"><span>{{ cell.fill.before }}</span><span
+              >{{ run.text }}</span></template><template v-else-if="cell.fill"><span :class="{ 'sheet-cell-link': isLinkedCell(cell, props.linkAt) }">{{ cell.fill.before }}</span><span
                 class="sheet-cell-fill"
                 aria-hidden="true"
-              >{{ cell.fill.run }}</span><span>{{ cell.fill.after }}</span></template><span
+              >{{ cell.fill.run }}</span><span :class="{ 'sheet-cell-link': isLinkedCell(cell, props.linkAt) }">{{ cell.fill.after }}</span></template><span
                 v-else-if="isLinkedCell(cell, props.linkAt)"
                 class="sheet-cell-link"
               >{{ cell.text }}</span><template v-else>{{ cell.text }}</template></span>
