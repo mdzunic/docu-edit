@@ -9,10 +9,13 @@
 //   hyperlinks come from the retained worksheet XML, which already carries
 //   SPEC-124's textual `@ref` adjustments.
 // - ods: every `office:annotation` moves out of `Cell.preservedXml` into
-//   `notes`; a link of the retained `sourceXml` is attached only where the
-//   current cell at its address still holds the source cell's value (a value
-//   or structural edit since read makes the address unreliable, and SPEC-122
-//   had already dropped such a link from any save).
+//   `notes`; each cell's own link comes out of its `preservedText` at the
+//   cell's current position (it moved with the cell; a value edit dropped
+//   it); a link of the retained `sourceXml` no lifted link accounts for is
+//   attached only where the current cell at its address still holds the
+//   source cell's value (a value or structural edit since read makes the
+//   address unreliable, and SPEC-122 had already dropped such a link from
+//   any save).
 // Either way a `place` location is source-time text, so SPEC-121's
 // sourceSheetRemap (a copy's own remap included) renames it. Nothing is
 // marked dirty: the annotations are as the file holds them.

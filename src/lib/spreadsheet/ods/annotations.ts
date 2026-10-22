@@ -797,25 +797,61 @@ export interface OdsAnnotationsUpgradeInput {
   remapLocation?: (location: string) => string;
 }
 
-/** SPEC-135's reader-upgrade step for a dirty .ods sheet's links: each link
- * its retained `sourceXml` carries, attached only where the sheet's cell at
- * that address still holds the source cell's value (a value or structural
- * edit since read makes the address unreliable, and such a link is not
- * resurrected). Sorted by (row, col); empty when nothing survives. */
+/** SPEC-135's reader-upgrade step for a dirty .ods sheet's links:
+ * - first each cell's own first `text:a` in its `preservedText` (SPEC-122's
+ *   capture), at the cell's CURRENT position: the verbatim paragraphs move
+ *   with their cell on a row or column insert or delete, and any value
+ *   edit drops them (Cell's drop rules), so a cell still holding them still
+ *   holds its source value and its link — exactly what the previous reader
+ *   saved;
+ * - then each link the retained `sourceXml` carries that no lifted link
+ *   accounts for (by target and title — each lifted link accounts for one
+ *   retained twin, so a moved link is neither duplicated at its old address
+ *   nor attached to whatever moved there), attached only where no link is
+ *   and the sheet's cell at that address still holds the source cell's
+ *   value (a value or structural edit since read makes the address
+ *   unreliable, and such a link is not resurrected) — the only source for a
+ *   record whose cells carry no preservedText.
+ * Sorted by (row, col); empty when nothing survives. */
 export function upgradeOdsSheetLinks(input: OdsAnnotationsUpgradeInput): CellHyperlink[] {
   return attachLinks(input, retainedOdsAnnotations(input.sheet.sourceXml, input.prefix, input.dates).links);
 }
 
+/** The key a lifted link and its retained twin share. */
+const linkTwinKey = (link: Pick<CellHyperlink, "target" | "tooltip">): string => `${odsLinkHref(link.target)}\u0000${link.tooltip ?? ""}`;
+
 function attachLinks(input: OdsAnnotationsUpgradeInput, retained: readonly RetainedOdsLink[]): CellHyperlink[] {
   const { sheet, remapLocation } = input;
   const out: CellHyperlink[] = [];
+  const at = new Set<string>();
+  const twins = new Map<string, number>();
+  for (const row of sheet.rows) {
+    for (const cell of row.cells) {
+      const wire = cell.preservedText === undefined ? null : firstOdsLink(cell.preservedText);
+      if (wire) {
+        const hyperlink = odsHyperlink(wire, { row: row.index, col: cell.col });
+        out.push(hyperlink);
+        at.add(`${row.index}:${cell.col}`);
+        twins.set(linkTwinKey(hyperlink), (twins.get(linkTwinKey(hyperlink)) ?? 0) + 1);
+      }
+    }
+  }
   for (const { ref, hyperlink, sourceValue } of retained) {
-    if (!stillHolds(sheet, ref, sourceValue)) {
+    const key = linkTwinKey(hyperlink);
+    const unclaimed = twins.get(key) ?? 0;
+    if (unclaimed > 0) {
+      twins.set(key, unclaimed - 1);
       continue;
     }
-    out.push(remapLocation && hyperlink.target.kind === "place" ? { ...hyperlink, target: { kind: "place", location: remapLocation(hyperlink.target.location) } } : hyperlink);
+    if (at.has(`${ref.row}:${ref.col}`) || !stillHolds(sheet, ref, sourceValue)) {
+      continue;
+    }
+    out.push(hyperlink);
+    at.add(`${ref.row}:${ref.col}`);
   }
-  return out.toSorted((a, b) => a.range.top - b.range.top || a.range.left - b.range.left);
+  return out
+    .map((hyperlink) => (remapLocation && hyperlink.target.kind === "place" ? { ...hyperlink, target: { kind: "place" as const, location: remapLocation(hyperlink.target.location) } } : hyperlink))
+    .toSorted((a, b) => a.range.top - b.range.top || a.range.left - b.range.left);
 }
 
 /** SPEC-135's whole reader-upgrade step for a dirty .ods sheet — the one
@@ -828,7 +864,9 @@ function attachLinks(input: OdsAnnotationsUpgradeInput, retained: readonly Retai
  *   re-read with today's reader leaves annotations out of preservedXml —
  *   attached where no note is and the cell at its address still holds the
  *   source's value;
- * - links: upgradeOdsSheetLinks.
+ * - links: upgradeOdsSheetLinks (each cell's own preservedText first, at
+ *   its current position; then the retained sourceXml's unaccounted links
+ *   where the value still matches).
  * `rows` is the sheet's rows with the lifted annotations gone
  * (copy-on-write, see liftOdsSheetNotes); the arrays are sorted by (row,
  * col) and empty when there is nothing — the caller sets `notes` and

@@ -500,4 +500,33 @@ describe("the reader-upgrade helpers", () => {
     ]);
     expect(upgradeOdsSheetLinks({ sheet: stored, prefix, dates })[0]!.target).toEqual(O.links.B7.target);
   });
+
+  it("upgradeOdsSheetLinks: a linked cell moved by a structural edit keeps its link from its own preservedText, and its old address gains none", async () => {
+    const model = await open();
+    const prefix = model.odsContentEnvelope!.prefix;
+    const summary = sheetNamed(model, "Summary");
+    // A previous reader's dirty record: a row inserted above row 7 moved A7
+    // and B7 (their verbatim paragraphs with them) to row 8; C9 kept its
+    // place; a value equal to A7's source value was typed into the new A7
+    // (no paragraphs) — it must not pick up the moved link.
+    const stored: Pick<Sheet, "rows" | "sourceXml"> = {
+      sourceXml: summary.sourceXml,
+      rows: [
+        { index: 6, cells: [{ col: 0, value: "Example site" }] },
+        { index: 7, cells: [{ col: 0, value: "Example site", preservedText: O.links.A7.paragraph }, { col: 1, value: "See data", preservedText: O.links.B7.paragraph }] },
+        { index: 8, cells: [{ col: 2, value: "One and Two", preservedText: O.links.C9.paragraph }] },
+      ],
+    };
+    const links = upgradeOdsSheetLinks({ sheet: stored, prefix, dates, remapLocation: (location) => location.replace("Data!", "Facts!") });
+    expect(links.map((link) => [formatA1({ row: link.range.top, col: link.range.left }), link.target, link.tooltip])).toEqual([
+      ["A8", O.links.A7.target, O.links.A7.tooltip],
+      ["B8", { kind: "place", location: "Facts!A1" }, undefined],
+      ["C9", O.links.C9.target, undefined],
+    ]);
+    // The same read through the whole step; the cells keep their paragraphs,
+    // which the writer re-emits verbatim while they match the model's link.
+    const upgraded = upgradeOdsSheetAnnotations({ sheet: stored, prefix, dates });
+    expect(upgraded.hyperlinks.map((link) => link.linkId)).toEqual(["h-A8", "h-B8", "h-C9"]);
+    expect(upgraded.rows).toBe(stored.rows);
+  });
 });
