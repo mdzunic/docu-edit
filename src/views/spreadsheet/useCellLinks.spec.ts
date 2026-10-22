@@ -19,7 +19,7 @@ import { singleCell } from "../../lib/spreadsheet/selection";
 import { createBlankWorkbook } from "../../lib/spreadsheet/sheets";
 import { cellStyle, effectiveStyleId } from "../../lib/spreadsheet/styles";
 import { FORMULA_ERROR_MESSAGE } from "./cellEntry";
-import { isAutomaticColor, isLinkedCell, LINK_REF_INVALID_MESSAGE, LINK_SCHEME_NOT_ALLOWED_MESSAGE, linkDialogResult, normaliseAddress, placeFields } from "./cellLinks";
+import { isAutomaticColor, isLinkedCell, LINK_REF_INVALID_MESSAGE, LINK_SCHEME_NOT_ALLOWED_MESSAGE, linkDialogResult, linkedLookup, normaliseAddress, placeFields } from "./cellLinks";
 import { HIDDEN_SHEET_MESSAGE } from "./nameBox";
 import { linksOf, useCellLinks } from "./useCellLinks";
 import type { SheetViewFields } from "./useSheetViewState";
@@ -153,6 +153,13 @@ describe("cellLinks — the dialog's rules", () => {
     expect(isAutomaticColor({ theme: "dk1", tint: 0.5 })).toBe(false);
     expect(isAutomaticColor("#000000")).toBe(false);
     expect(isAutomaticColor({ theme: "hlink" })).toBe(false);
+  });
+
+  it("looks a cell's link up through the row index, a tall range and a HYPERLINK() call alike", () => {
+    const sheet = { ...workbook().sheets[0]!, hyperlinks: [...LINKS, { linkId: "h-Z1", range: { top: 0, left: 25, bottom: 999, right: 25 }, target: { kind: "url" as const, href: "https://z.example/" } }] };
+    const linked = linkedLookup(sheet);
+    expect([linked(5, 0), linked(5, 1), linked(5, 2), linked(500, 25), linked(500, 24), linked(8, 3), linked(8, 4)]).toEqual([true, true, false, true, false, true, false]);
+    expect(linkedLookup({ ...sheet, kind: "chart" } as Sheet)(5, 0)).toBe(false);
   });
 
   it("a merge's paint-only copy is never linked", () => {

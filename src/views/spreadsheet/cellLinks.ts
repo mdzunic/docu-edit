@@ -93,6 +93,44 @@ export function linkAtCell(sheet: Sheet, at: CellRef): CellLink | null {
   return cell && hyperlinkFormulaCall(cell, at) ? { kind: "formula" } : null;
 }
 
+/** Rows a stored link may span and still be indexed by row (taller ones
+ * are scanned per lookup — a sheet has few). */
+const INDEXED_LINK_ROWS = 256;
+
+/** Whether `range` covers (row, col). */
+const covers = (range: GridRange, row: number, col: number): boolean => row >= range.top && row <= range.bottom && col >= range.left && col <= range.right;
+
+/** linkAtCell as a yes/no lookup for every rendered cell (data-link): the
+ * stored links indexed by row once, then a top-level HYPERLINK() call. */
+export function linkedLookup(sheet: Sheet): (row: number, col: number) => boolean {
+  if (sheet.kind !== "grid") {
+    return () => false;
+  }
+  const byRow = new Map<number, GridRange[]>();
+  const tall: GridRange[] = [];
+  for (const { range } of sheet.hyperlinks ?? []) {
+    if (range.bottom - range.top >= INDEXED_LINK_ROWS) {
+      tall.push(range);
+      continue;
+    }
+    for (let row = range.top; row <= range.bottom; row += 1) {
+      const ranges = byRow.get(row);
+      if (ranges) {
+        ranges.push(range);
+      } else {
+        byRow.set(row, [range]);
+      }
+    }
+  }
+  return (row, col) => {
+    if ((byRow.get(row) ?? []).some((range) => covers(range, row, col)) || tall.some((range) => covers(range, row, col))) {
+      return true;
+    }
+    const cell = getCell(sheet, row, col);
+    return cell !== undefined && hyperlinkFormulaCall(cell, { row, col }) !== null;
+  };
+}
+
 /** A cell's link target now: stored, or its HYPERLINK() call evaluated. */
 export function linkTargetAt(model: SpreadsheetModel, sheet: Sheet, at: CellRef): HyperlinkTarget | null {
   const link = linkAtCell(sheet, at);

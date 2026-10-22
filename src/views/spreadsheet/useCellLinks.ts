@@ -48,6 +48,7 @@ import {
   linkAtCell,
   linkDialogFields,
   linkDialogResult,
+  linkedLookup,
   linkNameOptions,
   linkRange,
   linkSheetOptions,
@@ -125,10 +126,11 @@ export function useCellLinks(deps: CellLinksDeps) {
   }
 
   /** Whether the sheet on show's cell is linked (data-link, the text's span). */
-  function isLinked(row: number, col: number): boolean {
+  const linkedAt = computed(() => {
     const sheet = gridSheet();
-    return sheet !== null && linkAtCell(sheet, { row, col }) !== null;
-  }
+    return sheet ? linkedLookup(sheet) : () => false;
+  });
+  const isLinked = (row: number, col: number): boolean => linkedAt.value(row, col);
 
   // --- the dialog --------------------------------------------------------------------------------
 
