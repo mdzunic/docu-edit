@@ -43,6 +43,9 @@
 // it (`sheet.reapplyFilter`) — best effort on macOS, where Chrome keeps
 // Cmd+Option+L for its Downloads page; Data ▸ Reapply filter is the
 // guaranteed path. useSortFilter runs both.
+//
+// SPEC-135 adds the notes and comments pair: Shift+F2 (`sheet.note`) and
+// Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, by physical key `KeyM`).
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -68,13 +71,16 @@ export type SheetShortcutId =
   | "sheet.insertFunction"
   | "sheet.toggleFilter"
   | "sheet.reapplyFilter"
-  | "sheet.nameManager";
+  | "sheet.nameManager"
+  | "sheet.note"
+  | "sheet.newComment";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
 const PASTE_CATEGORY = "Paste and fill";
 const FORMULA_CATEGORY = "Formulas";
 const FILTER_CATEGORY = "Sort and filter";
+const ANNOTATION_CATEGORY = "Notes and comments";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -125,6 +131,13 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // SPEC-133: Formulas ▸ Name Manager…, Excel's Ctrl+F3 — best effort on
     // macOS, whose Cmd+F3 shows the desktop; the menu item is the guaranteed path.
     { id: "sheet.nameManager", label: "Name Manager", category: FORMULA_CATEGORY, bindings: [{ key: "F3", mod: true }] },
+    // SPEC-135: Excel's Shift+F2 (a new note, or the note's editor) and
+    // Ctrl+Alt+M / Cmd+Option+M (New comment, by physical key — best effort
+    // on macOS, whose Option+Cmd+M minimises the windows; the cell context
+    // menu's New comment is the guaranteed path). useCellNotes and
+    // useSheetComments run them.
+    { id: "sheet.note", label: "New or edit note", category: ANNOTATION_CATEGORY, bindings: [{ key: "F2", shift: true }] },
+    { id: "sheet.newComment", label: "New comment", category: ANNOTATION_CATEGORY, bindings: [{ key: "M", code: "KeyM", mod: true, alt: true }] },
   ];
   return definitions;
 }

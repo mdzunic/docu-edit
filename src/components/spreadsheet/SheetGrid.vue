@@ -54,7 +54,13 @@
 // the cell area) painting the sheet's drawings in unscaled px, so the content
 // box's zoom transform scales them; presses on a drawing never reach the
 // grid's own handling. While a shape is armed the grid carries
-// data-drawing-armed="true" and the crosshair cursor.
+// data-drawing-armed="true" and the crosshair cursor. SPEC-135: the paper
+// draws each cell's note and thread indicators (useCellNotes' marksAt); the
+// note layer (SheetNoteLayer — the shown notes' boxes, the note editor, the
+// hover popover and the active cell's annotation text for its
+// aria-describedby) sits above the validation layer, placed from each cell's
+// rect in unscaled px; the pointer resting on a cell or a popover goes to the
+// notes through useSheetGrid's notePointer.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
@@ -68,6 +74,7 @@ import SheetCellLayer from "./SheetCellLayer.vue";
 import SheetCopyMarquee from "./SheetCopyMarquee.vue";
 import SheetDrawingLayer from "./SheetDrawingLayer.vue";
 import SheetFillHandle from "./SheetFillHandle.vue";
+import SheetNoteLayer from "./SheetNoteLayer.vue";
 import ValidationDropdown from "./ValidationDropdown.vue";
 import ValidationInputMessage from "./ValidationInputMessage.vue";
 
@@ -125,6 +132,9 @@ function drawingMenu(id = "", x = 0, y = 0) {
 function drawingFocus(id = "") {
   drawings.value?.select(id, false);
 }
+
+/** SPEC-135: notes (null: not wired). */
+const notes = computed(() => asSheetGridContext(props.context).notes ?? null);
 
 /** SPEC-130: the dropdown's events, to data validation. */
 const validationChrome = computed(() => grid.validationChrome.value);
@@ -194,6 +204,8 @@ function unscroll(event = new Event("scroll")) {
     @pointermove="grid.pointer.onPointerMove"
     @pointerup="grid.pointer.onPointerUp"
     @pointercancel="grid.pointer.onPointerUp"
+    @pointerover="grid.notePointer.over"
+    @pointerleave="grid.notePointer.leave"
   >
     <div
       class="grid-area"
@@ -215,6 +227,7 @@ function unscroll(event = new Event("scroll")) {
             :stale-title="grid.staleTitle"
             :filter-button="filterButton"
             :described-by="grid.describedBy.value ?? undefined"
+            :annotation-marks="notes?.marksAt"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
             @filter-button="onFilterButton"
           />
@@ -347,6 +360,13 @@ function unscroll(event = new Event("scroll")) {
               @dismiss="closeList(false)"
             />
           </div>
+          <SheetNoteLayer
+            v-if="notes"
+            :controller="notes"
+            :anchor="grid.noteAnchor"
+            :bounds="{ width: vp.viewCols.value, height: vp.viewRows.value }"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+          />
           <div
             class="sheet-col-headers"
             role="row"

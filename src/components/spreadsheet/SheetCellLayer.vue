@@ -30,11 +30,16 @@
 // sits at the left edge, the text aligned in the width that remains; a
 // winning bar or icon with showValue false hides the text. SPEC-130: the
 // active cell is described by the data-validation input message while it
-// shows (`describedBy`, cellAttributes). Runtime prop declarations per the
-// espree constraint (see AppShell.vue).
+// shows (`describedBy`, cellAttributes). SPEC-135: a cell with a note draws
+// `sheet-note-indicator` — a 6 px red triangle in its top-right corner — and
+// one with a thread `sheet-thread-indicator`, a purple corner marker dimmed
+// when the thread is resolved (`annotationMarks`, useCellNotes' marksAt);
+// neither restyles the cell, and both are hidden from assistive technology
+// (the active cell's aria-describedby carries the text). Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems, asDescribedCell, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { annotationMarksOf, asBandItems, asDescribedCell, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import AppIcon from "../AppIcon.vue";
 import CfIcon from "./CfIcon.vue";
 
@@ -51,6 +56,8 @@ const props = defineProps({
   filterButton: { type: Function, default: undefined },
   /** SPEC-130: { ref, id } — the cell the input message describes; null = none. */
   describedBy: { type: Object, default: undefined },
+  /** SPEC-135: a cell's note and thread marks by position (useCellNotes' marksAt). */
+  annotationMarks: { type: Function, default: undefined },
 });
 
 const emit = defineEmits(["filter-button"]);
@@ -236,6 +243,14 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
             >
               <AppIcon :name="button.icon" />
             </button>
+            <span
+              v-for="mark in annotationMarksOf(cell, props.annotationMarks)"
+              :key="mark.kind"
+              :class="['sheet-annotation-mark', `is-${mark.kind}`, { 'is-resolved': mark.resolved }]"
+              :data-testid="mark.testid"
+              :data-resolved="mark.resolved ? 'true' : undefined"
+              aria-hidden="true"
+            />
           </div>
         </div>
       </div>
@@ -447,6 +462,35 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
 .sheet-filter-button :deep(.app-icon) {
   width: 14px;
   height: 14px;
+}
+
+/* SPEC-135: a note's 6 px red triangle in the top-right corner, and a
+   thread's purple marker beside it (dimmed when resolved) — over the text,
+   never taking the pointer. */
+.sheet-annotation-mark {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  border-style: solid;
+  border-width: 0 6px 6px 0;
+  border-color: transparent #ff0000 transparent transparent;
+}
+
+.sheet-annotation-mark.is-thread {
+  border-width: 0 8px 8px 0;
+  border-color: transparent #7030a0 transparent transparent;
+}
+
+.sheet-annotation-mark.is-note + .sheet-annotation-mark.is-thread {
+  right: 7px;
+}
+
+.sheet-annotation-mark.is-resolved {
+  opacity: 0.4;
 }
 
 .sheet-border {

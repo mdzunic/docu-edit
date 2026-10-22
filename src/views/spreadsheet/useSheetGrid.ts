@@ -29,6 +29,8 @@
 // onGridKey, before SPEC-117's navigation). SPEC-131: the drawing layer
 // (useDrawingGestures over the context's `drawings`) — its panes for SheetGrid,
 // and its move, resize and draw gestures ahead of the pointer's own handlers.
+// SPEC-135: the notes (the context's `notes`) — sheetNoteLayout's
+// noteGridHooks, and the active cell's note text in its aria-describedby.
 import { computed, watch, type Ref } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
@@ -37,6 +39,8 @@ import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { cellEditorView } from "./cellEditorView";
 import type { CellEditing } from "./useCellEditing";
+import { NOTE_DESCRIPTION_ID, type CellNotes } from "./useCellNotes";
+import { noteGridHooks } from "./sheetNoteLayout";
 import type { DataValidationView } from "./useDataValidation";
 import { useDrawingGestures } from "./useDrawingGestures";
 import type { SheetDrawings } from "./useSheetDrawings";
@@ -101,6 +105,8 @@ export interface SheetGridContext {
   validation?: DataValidationView;
   /** SPEC-131: the sheet's drawing layer; absent = none painted. */
   drawings?: SheetDrawings;
+  /** SPEC-135: notes — indicators, popovers, boxes, the editor; absent = none. */
+  notes?: CellNotes;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -254,8 +260,13 @@ export function useSheetGrid(
       list: validation.listView.value,
     };
   });
-  /** The active cell's aria-describedby while the input message shows. */
-  const describedBy = computed(() => (validationChrome.value?.message ? { ref: activeDescendant.value.slice("sheet-cell-".length), id: VALIDATION_INPUT_MESSAGE_ID } : null));
+  /** The active cell's aria-describedby: the input message while it shows,
+   * and (SPEC-135) the element holding its note or thread text. */
+  const describedBy = computed(() => {
+    const ids = [validationChrome.value?.message ? VALIDATION_INPUT_MESSAGE_ID : "", context().notes?.activeDescription.value ? NOTE_DESCRIPTION_ID : ""].filter(Boolean);
+    return ids.length > 0 ? { ref: activeDescendant.value.slice("sheet-cell-".length), id: ids.join(" ") } : null;
+  });
+  const { noteAnchor, notePointer } = noteGridHooks({ notes: () => context().notes, rectOf: overlays.rectOf, metrics, merges });
 
   const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
   /** A stale cell's title on this sheet (SPEC-120), for the paper. */
@@ -364,6 +375,9 @@ export function useSheetGrid(
     fillChip: computed(() => context().fillHandle ?? null),
     validationChrome,
     describedBy,
+    /** SPEC-135: the note layer's cell rects and the pointer's hover. */
+    noteAnchor,
+    notePointer,
     /** SPEC-130: data validation (null: not wired). */
     validation: computed(() => context().validation ?? null),
   };

@@ -64,6 +64,34 @@ export function cfBarsOf(cell: CellItem): CfBarView[] {
   return [view];
 }
 
+/** SPEC-135: one corner indicator a cell element draws — a note's red
+ * triangle or a thread's purple marker (dimmed when resolved). */
+export interface AnnotationMarkView {
+  kind: "note" | "thread";
+  testid: "sheet-note-indicator" | "sheet-thread-indicator";
+  resolved: boolean;
+}
+
+/** A cell's annotation marks by position (useCellNotes' marksAt). */
+export type AnnotationMarksAt = (row: number, col: number) => { note: boolean; thread: "open" | "resolved" | null } | null;
+
+/** The indicators a cell element draws (SPEC-135): none, a note's, a
+ * thread's or both. A merge's paint-only copy draws none. */
+export function annotationMarksOf(cell: CellItem, at: unknown): AnnotationMarkView[] {
+  const marks = typeof at === "function" && !cell.paintOnly ? (at as AnnotationMarksAt)(cell.row, cell.col) : null;
+  if (!marks) {
+    return [];
+  }
+  const views: AnnotationMarkView[] = [];
+  if (marks.note) {
+    views.push({ kind: "note", testid: "sheet-note-indicator", resolved: false });
+  }
+  if (marks.thread) {
+    views.push({ kind: "thread", testid: "sheet-thread-indicator", resolved: marks.thread === "resolved" });
+  }
+  return views;
+}
+
 /** SPEC-130: the cell (by its `data-ref`, a merge's anchor) that an element
  * describes — the active cell and the data-validation input message's id. */
 export interface DescribedCell {
