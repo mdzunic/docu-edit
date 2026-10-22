@@ -43,7 +43,7 @@ function makeIdb(initial: Array<{ id: string }> = []) {
         } else if ("delete" in op) {
           data.delete(op.delete);
         } else {
-          for (const key of [...data.keys()]) {
+          for (const key of data.keys()) {
             if (key >= op.deleteRange[0] && key <= op.deleteRange[1]) {
               data.delete(key);
             }
@@ -71,9 +71,9 @@ async function flush(ticks = 12) {
 }
 
 function rowsOf(count: number, step = 1, cols = 2): Row[] {
-  return Array.from({ length: count }, (_, i) => ({
+  return Array.from({ length: count }, (_row, i) => ({
     index: i * step,
-    cells: Array.from({ length: cols }, (_, col) => ({ col, value: col === 0 ? i : `r${i}c${col}` })),
+    cells: Array.from({ length: cols }, (_cell, col) => ({ col, value: col === 0 ? i : `r${i}c${col}` })),
   }));
 }
 

@@ -3,11 +3,12 @@
 // workbook in the library. Extracted from SpreadsheetView (SPEC-121) so the
 // view stays a wiring hub within SpreadsheetView.size.spec.ts's budget.
 // SPEC-137: while a stored workbook is read back from browser storage
-// (`loading`), it shows the loading state instead — never "doesn't exist".
-// Runtime prop declarations per the espree constraint (see AppShell.vue).
-defineProps({
-  loading: { type: Boolean, default: false },
-});
+// (useWorkbookLoad provides the flag), it shows the loading state instead —
+// never "doesn't exist".
+import { inject, ref } from "vue";
+import { WORKBOOK_LOADING_KEY } from "../../views/spreadsheet/useWorkbookLoad";
+
+const loading = inject(WORKBOOK_LOADING_KEY, ref(false));
 </script>
 
 <template>

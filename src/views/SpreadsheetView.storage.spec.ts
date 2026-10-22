@@ -20,7 +20,7 @@ const writeBatch = vi.fn(async (ops: WriteBatchOp[]) => {
     } else if ("delete" in op) {
       data.delete(op.delete);
     } else {
-      for (const key of [...data.keys()]) {
+      for (const key of data.keys()) {
         if (key >= op.deleteRange[0] && key <= op.deleteRange[1]) {
           data.delete(key);
         }
@@ -87,8 +87,8 @@ async function mountSheets(id: string) {
 describe("the workbook view over lazy residency", () => {
   it("shows the loading state (not not-found) while the workbook loads, then the grid; releases it on unmount", async () => {
     const { store, model } = await storedWorkbook();
-    let open = (): void => {};
-    getGate.wait = new Promise((resolve) => {
+    let open: (() => void) | undefined;
+    getGate.wait = new Promise<void>((resolve) => {
       open = resolve;
     });
     const wrapper = await mountSheets(model.id);
@@ -96,7 +96,7 @@ describe("the workbook view over lazy residency", () => {
     expect(wrapper.find('[data-testid="spreadsheet-loading"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="spreadsheet-not-found"]').exists()).toBe(false);
 
-    open();
+    open?.();
     await vi.waitFor(() => expect(wrapper.find('[data-testid="spreadsheet-grid"]').exists()).toBe(true), { timeout: 5_000 });
     expect(wrapper.get('[data-ref="A1"]').text()).toBe("v0");
     expect(store.getSpreadsheet(model.id)?.sheets[0]!.rows).toHaveLength(1_100);

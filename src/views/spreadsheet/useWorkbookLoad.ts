@@ -9,7 +9,7 @@
 // is true meanwhile, so the view shows its loading state, not the not-found
 // one — and released when the view goes (releaseSpreadsheet); a load that
 // came back incomplete sets `storageIncomplete` (read-only).
-import { computed, onScopeDispose, shallowRef, ref, watch, type ComputedRef } from "vue";
+import { computed, onScopeDispose, provide, shallowRef, ref, watch, type ComputedRef, type InjectionKey, type Ref } from "vue";
 import type { Router } from "vue-router";
 import { editorPathFor } from "../../lib/documentKinds";
 import {
@@ -51,6 +51,10 @@ export function asWorkbookBook(value: unknown): ReturnType<typeof useWorkbookLoa
   return value as ReturnType<typeof useWorkbookLoad>;
 }
 
+/** SPEC-137: the view's "reading the workbook back from storage" flag,
+ * provided to WorkbookNotFound so it shows the loading state instead. */
+export const WORKBOOK_LOADING_KEY: InjectionKey<Readonly<Ref<boolean>>> = Symbol("workbook-loading");
+
 export interface WorkbookLoadDeps {
   workbookId: ComputedRef<string>;
   router: Router;
@@ -83,6 +87,7 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
   /** SPEC-137: its load came back incomplete — read-only, with
    * WORKBOOK_STORAGE_INCOMPLETE_MESSAGE. */
   const storageIncomplete = ref(false);
+  provide(WORKBOOK_LOADING_KEY, loading);
   /** The workbook this view made resident, released when it goes. */
   let held: string | null = null;
   let disposed = false;

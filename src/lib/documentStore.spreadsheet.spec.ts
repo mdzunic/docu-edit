@@ -35,7 +35,7 @@ function makeIdbMock(loaded: Array<{ id: string }> = []) {
         } else if ("delete" in op) {
           data.delete(op.delete);
         } else {
-          for (const key of [...data.keys()]) {
+          for (const key of data.keys()) {
             if (key >= op.deleteRange[0] && key <= op.deleteRange[1]) {
               data.delete(key);
             }

@@ -86,12 +86,11 @@ export class FakeIndexedDb {
   }
 
   private factory() {
-    const fake = this;
     return {
-      open(_name: string, _version: number) {
+      open: (_name: string, _version: number) => {
         const request = new FakeRequest();
         setTimeout(() => {
-          const db = fake.database();
+          const db = this.database();
           request.result = db;
           request.fire("upgradeneeded");
           request.fire("success");
@@ -102,20 +101,24 @@ export class FakeIndexedDb {
   }
 
   private database() {
-    const fake = this;
     return {
-      objectStoreNames: { contains: (name: string) => fake.stores.has(name) },
-      createObjectStore(name: string) {
-        fake.stores.set(name, new Map());
+      objectStoreNames: { contains: (name: string) => this.stores.has(name) },
+      createObjectStore: (name: string) => {
+        this.stores.set(name, new Map());
       },
-      transaction(name: string, mode: "readonly" | "readwrite") {
-        return fake.transaction(name, mode);
-      },
+      transaction: (name: string, mode: "readonly" | "readwrite") => this.transaction(name, mode),
     };
   }
 
   private transaction(name: string, mode: "readonly" | "readwrite") {
-    const fake = this;
+    const log = this.log;
+    const failing = (key: string): boolean => {
+      if (this.failPutPrefix !== null && key.startsWith(this.failPutPrefix)) {
+        this.failPutPrefix = null;
+        return true;
+      }
+      return false;
+    };
     const id = (this.transactions += 1);
     const data = this.stores.get(name)!;
     const journal = new Map<string, unknown>();
@@ -148,7 +151,7 @@ export class FakeIndexedDb {
           }
         }
       }
-      fake.log.push({ kind, transaction: id });
+      log.push({ kind, transaction: id });
       if (kind === "complete") {
         transaction.oncomplete?.({ target: transaction });
       }
@@ -196,13 +199,13 @@ export class FakeIndexedDb {
       if (!active || finished) {
         throw new Error("TransactionInactiveError");
       }
-      fake.log.push({ kind: "issue", op, key, transaction: id });
+      log.push({ kind: "issue", op, key, transaction: id });
       const request = new FakeRequest();
       queue.push({
         request,
         run: () => {
           const result = run();
-          fake.log.push({ kind: "success", op, key, transaction: id });
+          log.push({ kind: "success", op, key, transaction: id });
           return result;
         },
       });
@@ -211,7 +214,7 @@ export class FakeIndexedDb {
     const keysIn = (range: FakeKeyRange | string | undefined): string[] =>
       [...data.keys()].filter((key) => (range === undefined ? true : typeof range === "string" ? key === range : range.includes(key))).toSorted();
     const read = (key: string): unknown => {
-      fake.log.push({ kind: "read", key, transaction: id });
+      log.push({ kind: "read", key, transaction: id });
       return structuredClone(data.get(key));
     };
     const store = {
@@ -223,8 +226,7 @@ export class FakeIndexedDb {
         }
         const copy = structuredClone(value);
         return enqueue("put", value.id, () => {
-          if (fake.failPutPrefix !== null && value.id.startsWith(fake.failPutPrefix)) {
-            fake.failPutPrefix = null;
+          if (failing(value.id)) {
             throw new Error("QuotaExceededError");
           }
           remember(value.id);
