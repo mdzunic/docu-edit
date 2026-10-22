@@ -18,8 +18,8 @@
 // - the FIRST `text:a` in a cell's paragraphs is a link over that one cell:
 //   `xlink:href="#…"` is a `place` — an ODS address (`#Sheet2.A1`,
 //   `#'My Sheet'.A1:B2`, `#$Sheet2.$A$1`) through
-//   odsRangeAddressToCanonical, a sheet name holding a space retried
-//   quoted; anything else after the `#` (`#MyName`) is the location as
+//   odsRangeAddressToCanonical (a range end without its `.` and a sheet
+//   name holding a space written bare retried); anything else after the `#` (`#MyName`) is the location as
 //   written (a defined name) — and every other href a `url`, a dangerous
 //   scheme included (kept, never opened: openHyperlinkTarget refuses it);
 //   `office:title` → `tooltip`; `linkId` is `h-${A1}`. A `text:a` whose
@@ -298,11 +298,14 @@ export function odsHyperlinkTarget(href: string): HyperlinkTarget {
   const address = href.slice(1);
   let canonical = odsRangeAddressToCanonical(address);
   if (canonical === null) {
-    // A sheet name holding a space, written bare: retried quoted.
-    const bare = /^(\$?)([^'.$][^.']*)\.([^.]+)$/.exec(address);
+    // Two lenient spellings: a range's end without its `.` (`Sheet.A1:B2`),
+    // and a sheet name holding a space written bare — each retried.
+    let retry = address.replace(/:(?=\$?[A-Za-z]+\$?[0-9]+$)/, ":.");
+    const bare = /^(\$?)([^'.$][^.']*)\.(.+)$/.exec(retry);
     if (bare && /\s/.test(bare[2]!)) {
-      canonical = odsRangeAddressToCanonical(`${bare[1]}'${bare[2]}'.${bare[3]}`);
+      retry = `${bare[1]}'${bare[2]}'.${bare[3]}`;
     }
+    canonical = retry === address ? null : odsRangeAddressToCanonical(retry);
   }
   return { kind: "place", location: canonical ?? address };
 }
