@@ -203,10 +203,23 @@
 // each dirty sheet's style ids are moved into the re-read style table
 // (interned — an equal style is shared), never left pointing into the
 // stored one.
+import { yieldToMainThread } from "../core/idleScheduler";
 import type { MediaPart } from "../core/media";
 import { decodedPartBytes } from "../core/packageParts";
-import { isCellError, isCsvFormat, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
-import type { ParsedSpreadsheet } from "./parsed";
+import { isCellError, isCsvFormat, MAX_WORKBOOK_CELLS, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
+import { partText, type ParsedSpreadsheet } from "./parsed";
+import { odsSourcePartNames, prepareOdsSources, readOdsShell, startOdsSheetScan } from "./ods/phases";
+import {
+  takeShellCompletion,
+  type RowChunk,
+  type ScanBudget,
+  type ScanContext,
+  type SheetScanJob,
+  type SheetScanResult,
+  type SheetScanSteps,
+  type WorkbookSources,
+} from "./readPhases";
+import { prepareXlsxSources, readXlsxShell, startXlsxSheetScan, xlsxSourcePartNames } from "./xlsx/phases";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { workbookFormatContext } from "./numberFormat/render";
 import { buildPreview } from "./preview";
@@ -217,6 +230,7 @@ import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./st
 import { SPREADSHEET_READER_VERSION } from "./readerVersion";
 
 export { SPREADSHEET_READER_VERSION };
+export type { RowChunk, ScanBudget, ScanContext, SheetScanJob, SheetScanResult, SheetScanSteps, WorkbookSources } from "./readPhases";
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -888,6 +902,152 @@ export async function readSpreadsheetBytes(
   return model;
 }
 
+// --- SPEC-137: the read phases ---------------------------------------------------------------
+// readPhases.ts holds the types and the rules; each format's module
+// (xlsx/phases.ts, ods/phases.ts) implements them. Phases 1 and 3 never touch
+// DOMParser (open.workerSafety.spec.ts runs them with it stubbed away), so
+// the parse worker (parseSession.ts) can run them; phases 2 and 4 run on the
+// main thread.
+
+/** A package format the phases read (csv/tsv are one delimited-text part,
+ * read by csv/parse.ts). */
+function packageFormat(format: SpreadsheetFormat): "xlsx" | "ods" {
+  if (format !== "xlsx" && format !== "ods") {
+    throw new Error(`a .${format} workbook is read by readCsvBytes, not as a package`);
+  }
+  return format;
+}
+
+/** The parts phases 1 and 3 read (xlsx: the shared strings and the
+ * worksheets; ods: content.xml) — main thread, before phase 1: the parse
+ * client posts copies of exactly these to the worker. */
+export function sourcePartNames(parts: Map<string, Uint8Array>, format: SpreadsheetFormat): string[] {
+  return packageFormat(format) === "xlsx" ? xlsxSourcePartNames(parts) : odsSourcePartNames(parts);
+}
+
+/** Phase 1 (DOMParser-free): `texts` holds the decoded source parts. */
+export function prepareWorkbookSources(texts: Map<string, string>, format: SpreadsheetFormat): WorkbookSources {
+  return packageFormat(format) === "xlsx" ? prepareXlsxSources(texts) : prepareOdsSources(texts);
+}
+
+/** Phase 2 (main thread, may use parseXml): the shell, the scan jobs and
+ * their context. */
+export async function readWorkbookShell(
+  parts: Map<string, Uint8Array>,
+  sources: WorkbookSources,
+  title: string,
+): Promise<{ shell: SpreadsheetModel; jobs: SheetScanJob[]; context: ScanContext }> {
+  return packageFormat(sources.format) === "xlsx" ? readXlsxShell(parts, sources, title) : readOdsShell(parts, sources, title);
+}
+
+/** Phase 3, stepwise (see SheetScanSteps). */
+export function startSheetScan(
+  job: SheetScanJob,
+  text: string,
+  sources: WorkbookSources,
+  context: ScanContext,
+  emit: (chunk: RowChunk) => void,
+  budget: ScanBudget,
+): SheetScanSteps {
+  return context.format === "xlsx"
+    ? startXlsxSheetScan(job, text, sources, context, emit, budget)
+    : startOdsSheetScan(job, text, sources, context, emit, budget);
+}
+
+/** Phase 3 (DOMParser-free): one worksheet part or one ods table, all of it
+ * — its rows emitted as RowChunks, everything else returned. */
+export function scanSheet(
+  job: SheetScanJob,
+  text: string,
+  sources: WorkbookSources,
+  context: ScanContext,
+  emit: (chunk: RowChunk) => void,
+  budget: ScanBudget,
+): SheetScanResult {
+  const scan = startSheetScan(job, text, sources, context, emit, budget);
+  while (!scan.step(Number.POSITIVE_INFINITY)) {
+    // one step reads the whole sheet
+  }
+  return scan.result();
+}
+
+/** Phase 4 (main thread): every chunk's rows into its sheet (chunks of one
+ * sheet arrive in chunk order), every result's fields onto its sheet, the
+ * tables the scans appended to onto the model's, then the format's
+ * completion (readPhases.ts setShellCompletion) — the finished model. */
+export function assembleWorkbook(shell: SpreadsheetModel, results: readonly SheetScanResult[], chunks: readonly RowChunk[]): SpreadsheetModel {
+  const rows = new Map<number, Row[]>();
+  for (const chunk of chunks) {
+    const into = rows.get(chunk.sheetIndex);
+    if (into) {
+      for (const row of chunk.rows) {
+        into.push(row);
+      }
+    } else {
+      rows.set(chunk.sheetIndex, chunk.rows.slice());
+    }
+  }
+  const ordered = results.toSorted((a, b) => a.sheetIndex - b.sheetIndex);
+  for (const result of ordered) {
+    const sheet = shell.sheets[result.sheetIndex];
+    if (!sheet) {
+      continue;
+    }
+    Object.assign(sheet, result.fields);
+    if (result.appended?.styles && result.appended.styles.length > 0) {
+      shell.styles = [...shell.styles, ...result.appended.styles];
+    }
+    if (result.appended?.dxfs && result.appended.dxfs.length > 0) {
+      shell.dxfs = [...(shell.dxfs ?? []), ...result.appended.dxfs];
+    }
+  }
+  for (const [sheetIndex, sheetRows] of rows) {
+    const sheet = shell.sheets[sheetIndex];
+    if (sheet) {
+      sheet.rows = sheetRows;
+    }
+  }
+  takeShellCompletion(shell)?.(shell, ordered);
+  return shell;
+}
+
+/** How readPhased runs inline: `yieldEveryRows` hands the main thread back
+ * every that many rows scanned (SPEC-137's SCAN_YIELD_ROWS when no Worker
+ * exists); `onProgress` hears 0..1 as the sheets are scanned. */
+export interface PhasedReadOptions {
+  yieldEveryRows?: number;
+  onProgress?: (fraction: number) => void;
+}
+
+/** Every phase, inline, over an inflated package: what readSpreadsheetBytes
+ * runs, and what the parse client falls back to without a Worker. The scan
+ * context is cloned first, as posting it to the worker would. */
+export async function readPhased(parts: Map<string, Uint8Array>, format: SpreadsheetFormat, title: string, options: PhasedReadOptions = {}): Promise<SpreadsheetModel> {
+  const texts = new Map<string, string>();
+  for (const name of sourcePartNames(parts, format)) {
+    const bytes = parts.get(name);
+    if (bytes) {
+      texts.set(name, partText(bytes));
+    }
+  }
+  const sources = prepareWorkbookSources(texts, format);
+  const { shell, jobs, context } = await readWorkbookShell(parts, sources, title);
+  const scanContext = structuredClone(context);
+  const budget: ScanBudget = { cellsLeft: MAX_WORKBOOK_CELLS };
+  const results: SheetScanResult[] = [];
+  const chunks: RowChunk[] = [];
+  const step = options.yieldEveryRows ?? Number.POSITIVE_INFINITY;
+  for (const [at, job] of jobs.entries()) {
+    const scan = startSheetScan(job, texts.get(job.partName) ?? "", sources, scanContext, (chunk) => chunks.push(chunk), budget);
+    while (!scan.step(step)) {
+      await yieldToMainThread();
+    }
+    results.push(scan.result());
+    options.onProgress?.((at + 1) / jobs.length);
+  }
+  return assembleWorkbook(shell, results, chunks);
+}
+
 /** Reads an inflated package into a fresh model — readSpreadsheetBytes by
  * default; the store passes SPEC-137's off-thread reader, which this layer
  * cannot import (lib/workers is the app layer's). */
@@ -1053,13 +1213,13 @@ async function upgradeEdited(
       stored.validations ??= [];
       return stored;
     }
-    const read = fresh.sheets[index];
-    if (!read) {
+    const reread = fresh.sheets[index];
+    if (!reread) {
       return stored;
     }
-    const { id: _id, name: _name, visibility: _visibility, kind: _kind, tabColor: _tab, partName: _part, sourceXml: _source, copiedFrom: _copied, ...content } = read;
+    const { id: _id, name: _name, visibility: _visibility, kind: _kind, tabColor: _tab, partName: _part, sourceXml: _source, copiedFrom: _copied, ...content } = reread;
     // SPEC-132: a chartsheet a SPEC-131 record held as a foreign placeholder re-reads as a chart sheet.
-    const kind = stored.kind === "foreign" && read.kind === "chart" ? read.kind : stored.kind;
+    const kind = stored.kind === "foreign" && reread.kind === "chart" ? reread.kind : stored.kind;
     const sheet: Sheet = { ...content, id: stored.id, name: stored.name, visibility: stored.visibility, kind };
     if (stored.tabColor !== undefined) {
       sheet.tabColor = stored.tabColor;
