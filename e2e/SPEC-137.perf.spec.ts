@@ -375,7 +375,9 @@ async function measureEmptyLibraryHeapMB(browser: Browser): Promise<number> {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto("/");
-  await expect(page.getByTestId("library")).toBeVisible();
+  // An empty library renders its empty state, not the `library` list: the
+  // picker is the mounted-app barrier (SPEC-047's 5bf8ccc), as in measureOpen.
+  await page.getByTestId("open-document-input").waitFor({ state: "attached" });
   await page.waitForTimeout(500);
   const heapMB = await measureHeapMB(page);
   await context.close();

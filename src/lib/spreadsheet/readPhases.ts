@@ -2,8 +2,11 @@
 // types every phase hands to the next, on both sides of the parse worker's
 // boundary, and the one piece of main-thread state a shell phase leaves for
 // assembly. open.ts runs the phases (inline, or with phases 1 and 3 in
-// workers/spreadsheetParse.worker.ts through parseSession.ts); each format's
-// module (xlsx/phases.ts, ods/phases.ts) implements them.
+// workers/spreadsheetParse.worker.ts through parseSession.ts); xlsx/phases.ts
+// implements them for the .xlsx family. The ods fields below are the shape
+// an .ods phase split fills (one scan of content.xml cut into its envelope
+// and each table's offsets); until it lands, an .ods workbook is read in one
+// pass by parseOds.
 //
 // 1. prepareWorkbookSources — DOMParser-free: the O(cells) source texts
 //    (xlsx: the shared strings; ods: content.xml cut into its envelope and
@@ -23,7 +26,6 @@
 //    into the finished model, then the format's completion (setShellCompletion).
 import type { Dxf } from "./conditionalFormats";
 import type { CellStyle, Row, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
-import type { OdsScanContext, OdsScanDeferred } from "./ods/phases";
 import type { SharedStringTable } from "./xlsx/sharedStrings";
 import type { XlsxScanContext, XlsxScanDeferred } from "./xlsx/phases";
 
@@ -51,7 +53,7 @@ export interface SheetScanJob {
  * tables, the sheet names for messages …), discriminated by `format`. A
  * later spec that must resolve something per cell against a workbook-level
  * table adds it here; it never parses a part with DOMParser in phase 3. */
-export type ScanContext = XlsxScanContext | OdsScanContext;
+export type ScanContext = XlsxScanContext;
 
 /** Rows with index in [chunk·512, chunk·512 + 512) of one sheet. */
 export interface RowChunk {
@@ -70,7 +72,7 @@ export interface SheetScanResult {
    * assembleWorkbook appends them to the model's, result by result. */
   appended?: { styles?: CellStyle[]; dxfs?: Dxf[] };
   /** What only the main thread can finish (see the header), plain data. */
-  deferred?: XlsxScanDeferred | OdsScanDeferred;
+  deferred?: XlsxScanDeferred;
 }
 
 /** The cells every job of one read may still store (MAX_WORKBOOK_CELLS at

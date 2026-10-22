@@ -208,7 +208,6 @@ import type { MediaPart } from "../core/media";
 import { decodedPartBytes } from "../core/packageParts";
 import { isCellError, isCsvFormat, MAX_WORKBOOK_CELLS, type Cell, type CellStyle, type CellValue, type Row, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import { partText, type ParsedSpreadsheet } from "./parsed";
-import { odsSourcePartNames, prepareOdsSources, readOdsShell, startOdsSheetScan } from "./ods/phases";
 import {
   takeShellCompletion,
   type RowChunk,
@@ -909,31 +908,38 @@ export async function readSpreadsheetBytes(
 }
 
 // --- SPEC-137: the read phases ---------------------------------------------------------------
-// readPhases.ts holds the types and the rules; each format's module
-// (xlsx/phases.ts, ods/phases.ts) implements them. Phases 1 and 3 never touch
-// DOMParser (open.workerSafety.spec.ts runs them with it stubbed away), so
-// the parse worker (parseSession.ts) can run them; phases 2 and 4 run on the
-// main thread.
+// readPhases.ts holds the types and the rules; xlsx/phases.ts implements them
+// for the .xlsx family. Phases 1 and 3 never touch DOMParser
+// (open.workerSafety.spec.ts runs them with it stubbed away), so the parse
+// worker (parseSession.ts) can run them; phases 2 and 4 run on the main
+// thread. An .ods/.ots workbook has no phase split yet: readSpreadsheetBytes
+// reads it in one pass (parseOds), on the main thread, and the parse client
+// reads it that way too.
 
-/** A package format the phases read (csv/tsv are one delimited-text part,
- * read by csv/parse.ts). */
-function packageFormat(format: SpreadsheetFormat): "xlsx" | "ods" {
-  if (format !== "xlsx" && format !== "ods") {
-    throw new Error(`a .${format} workbook is read by readCsvBytes, not as a package`);
+/** The package format the phases read: the .xlsx family. */
+function phasedFormat(format: SpreadsheetFormat): "xlsx" {
+  if (format !== "xlsx") {
+    throw new Error(
+      isCsvFormat(format)
+        ? `a .${format} workbook is read by readCsvBytes, not as a package`
+        : `a .${format} workbook is read in one pass by readSpreadsheetBytes — the read phases cover the .xlsx family`,
+    );
   }
   return format;
 }
 
-/** The parts phases 1 and 3 read (xlsx: the shared strings and the
- * worksheets; ods: content.xml) — main thread, before phase 1: the parse
+/** The parts phases 1 and 3 read (the shared strings, the styles part's
+ * palette and the worksheets) — main thread, before phase 1: the parse
  * client posts copies of exactly these to the worker. */
 export function sourcePartNames(parts: Map<string, Uint8Array>, format: SpreadsheetFormat): string[] {
-  return packageFormat(format) === "xlsx" ? xlsxSourcePartNames(parts) : odsSourcePartNames(parts);
+  phasedFormat(format);
+  return xlsxSourcePartNames(parts);
 }
 
 /** Phase 1 (DOMParser-free): `texts` holds the decoded source parts. */
 export function prepareWorkbookSources(texts: Map<string, string>, format: SpreadsheetFormat): WorkbookSources {
-  return packageFormat(format) === "xlsx" ? prepareXlsxSources(texts) : prepareOdsSources(texts);
+  phasedFormat(format);
+  return prepareXlsxSources(texts);
 }
 
 /** Phase 2 (main thread, may use parseXml): the shell, the scan jobs and
@@ -943,7 +949,8 @@ export async function readWorkbookShell(
   sources: WorkbookSources,
   title: string,
 ): Promise<{ shell: SpreadsheetModel; jobs: SheetScanJob[]; context: ScanContext }> {
-  return packageFormat(sources.format) === "xlsx" ? readXlsxShell(parts, sources, title) : readOdsShell(parts, sources, title);
+  phasedFormat(sources.format);
+  return readXlsxShell(parts, sources, title);
 }
 
 /** Phase 3, stepwise (see SheetScanSteps). */
@@ -955,12 +962,10 @@ export function startSheetScan(
   emit: (chunk: RowChunk) => void,
   budget: ScanBudget,
 ): SheetScanSteps {
-  return context.format === "xlsx"
-    ? startXlsxSheetScan(job, text, sources, context, emit, budget)
-    : startOdsSheetScan(job, text, sources, context, emit, budget);
+  return startXlsxSheetScan(job, text, sources, context, emit, budget);
 }
 
-/** Phase 3 (DOMParser-free): one worksheet part or one ods table, all of it
+/** Phase 3 (DOMParser-free): one worksheet part, all of it
  * — its rows emitted as RowChunks, everything else returned. */
 export function scanSheet(
   job: SheetScanJob,
