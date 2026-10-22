@@ -911,12 +911,12 @@ async function upgradeCsvModel(model: SpreadsheetModel, format: "csv" | "tsv"): 
   const sheet = model.sheets[0];
   const unedited = dialect !== undefined && model.sheets.length === 1 && sheet?.id === dialect.sheetId && !sheet.dirty && !model.structureDirty;
   if (!unedited) {
-    // Re-stamped, never re-read: SPEC-129's and SPEC-130's fields start empty, as a read
+    // Re-stamped, never re-read: SPEC-129's, SPEC-130's and SPEC-133's fields start empty, as a read
     // of a delimited-text file leaves them.
     const sheets = model.sheets.some((each) => each.conditionalFormats === undefined || each.validations === undefined)
       ? model.sheets.map((each) => (each.conditionalFormats === undefined || each.validations === undefined ? { ...each, conditionalFormats: each.conditionalFormats ?? [], validations: each.validations ?? [] } : each))
       : model.sheets;
-    return { ...model, sheets, dxfs: model.dxfs ?? [], readerVersion: SPREADSHEET_READER_VERSION };
+    return { ...model, sheets, dxfs: model.dxfs ?? [], names: model.names ?? [], readerVersion: SPREADSHEET_READER_VERSION };
   }
   const { csvSourceBytes, readCsvBytes } = await import("./csv/parse");
   const fresh = readCsvBytes(csvSourceBytes(model), format, model.title, {
