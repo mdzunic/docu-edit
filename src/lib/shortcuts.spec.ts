@@ -258,6 +258,7 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.nameManager",
   "sheet.note",
   "sheet.newComment",
+  "sheet.insertLink",
 ];
 
 /** The keydown a binding describes on one platform, for sweeping a whole
@@ -297,7 +298,7 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter, SPEC-135's note and New comment under Notes and comments — one binding each but paste special's two", () => {
+  it("declares the sheet's commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter, SPEC-135's note and New comment under Notes and comments and its Insert link under Links — one binding each but paste special's two", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
     const pasteAndFill = ["sheet.pasteSpecial", "sheet.fillDown", "sheet.fillRight"];
     const sortAndFilter = ["sheet.toggleFilter", "sheet.reapplyFilter"];
@@ -312,6 +313,8 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
             ? "Formulas"
             : annotations.includes(definition.id)
               ? "Notes and comments"
+            : definition.id === "sheet.insertLink"
+              ? "Links"
             : pasteAndFill.includes(definition.id)
               ? "Paste and fill"
               : sortAndFilter.includes(definition.id)
@@ -358,6 +361,16 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
       // Option+M types "µ" on macOS: the key matches by code.
       expect(findShortcut(keydown({ key: isMac ? "µ" : "m", code: "KeyM", altKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.newComment");
       expect(findShortcut(keydown({ key: "m", code: "KeyM", ...mod }), isMac, definitions)).toBeUndefined();
+    }
+  });
+
+  it("binds SPEC-135's Insert link to Ctrl/Cmd+K, and not Ctrl/Cmd+Alt+K or Ctrl/Cmd+Shift+K", () => {
+    for (const { isMac } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      const mod = isMac ? { metaKey: true } : { ctrlKey: true };
+      expect(findShortcut(keydown({ key: "k", code: "KeyK", ...mod }), isMac, definitions)?.id).toBe("sheet.insertLink");
+      expect(findShortcut(keydown({ key: "k", code: "KeyK", altKey: true, ...mod }), isMac, definitions)).toBeUndefined();
+      expect(findShortcut(keydown({ key: "K", code: "KeyK", shiftKey: true, ...mod }), isMac, definitions)).toBeUndefined();
     }
   });
 
@@ -520,8 +533,9 @@ describe("the text registry after SPEC-123", () => {
     // Ctrl/Cmd+B/I/U, and macOS Cmd+Shift+X, are the text editor's own
     // commands on the same keys — as SPEC-125's Ctrl/Cmd+Shift+V (paste
     // without formatting) and Ctrl/Cmd+R (align right) are, and SPEC-135's
-    // Ctrl+Alt+M / Cmd+Option+M (insert comment, the same command); no other
-    // sheet press means anything to it.
+    // Ctrl+Alt+M / Cmd+Option+M (insert comment, the same command), and its
+    // Ctrl/Cmd+K is the text side's command palette (a view the workbook
+    // never mounts it in); no other sheet press means anything to it.
     const sameKeys = new Map([
       ["sheet.bold", "format.bold"],
       ["sheet.italic", "format.italic"],
@@ -529,6 +543,7 @@ describe("the text registry after SPEC-123", () => {
       ["sheet.pasteSpecial", "edit.pastePlain"],
       ["sheet.fillRight", "paragraph.alignRight"],
       ["sheet.newComment", "insert.comment"],
+      ["sheet.insertLink", "app.commandPalette"],
     ]);
     for (const { isMac, name } of PLATFORMS) {
       for (const definition of sheetShortcutDefinitions(isMac)) {

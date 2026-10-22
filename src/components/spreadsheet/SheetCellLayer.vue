@@ -35,11 +35,17 @@
 // one with a thread `sheet-thread-indicator`, a purple corner marker dimmed
 // when the thread is resolved (`annotationMarks`, useCellNotes' marksAt);
 // neither restyles the cell, and both are hidden from assistive technology
-// (the active cell's aria-describedby carries the text). Runtime prop
-// declarations per the espree constraint (see AppShell.vue).
+// (the active cell's aria-describedby carries the text). A linked cell
+// (`linkAt`, useCellLinks' isLinked — a stored hyperlink or a top-level
+// HYPERLINK() formula) carries data-link="true" and its text sits in a
+// `.sheet-cell-link` span with the pointer cursor — the area a Ctrl/Cmd+click
+// follows the link over; its colour and underline are the cell's own style,
+// never restyled here. Runtime prop declarations per the espree constraint
+// (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
 import { annotationMarksOf, asBandItems, asDescribedCell, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { isLinkedCell } from "../../views/spreadsheet/cellLinks";
 import AppIcon from "../AppIcon.vue";
 import CfIcon from "./CfIcon.vue";
 
@@ -58,6 +64,8 @@ const props = defineProps({
   describedBy: { type: Object, default: undefined },
   /** SPEC-135: a cell's note and thread marks by position (useCellNotes' marksAt). */
   annotationMarks: { type: Function, default: undefined },
+  /** SPEC-135: whether a cell is linked, by position (useCellLinks' isLinked). */
+  linkAt: { type: Function, default: undefined },
 });
 
 const emit = defineEmits(["filter-button"]);
@@ -147,6 +155,7 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
             class="sheet-cell"
             :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
             v-bind="cellAttributes(cell, staleTitleOf, describedCell)"
+            :data-link="isLinkedCell(cell, props.linkAt) ? 'true' : undefined"
             :style="cell.boxStyle"
           >
             <div
@@ -189,11 +198,15 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
               ><template v-if="cell.runs"><span
                 v-for="(run, i) in cell.runs"
                 :key="i"
+                :class="{ 'sheet-cell-link': isLinkedCell(cell, props.linkAt) }"
                 :style="textStyle(run.style)"
               >{{ run.text }}</span></template><template v-else-if="cell.fill"><span>{{ cell.fill.before }}</span><span
                 class="sheet-cell-fill"
                 aria-hidden="true"
-              >{{ cell.fill.run }}</span><span>{{ cell.fill.after }}</span></template><template v-else>{{ cell.text }}</template></span>
+              >{{ cell.fill.run }}</span><span>{{ cell.fill.after }}</span></template><span
+                v-else-if="isLinkedCell(cell, props.linkAt)"
+                class="sheet-cell-link"
+              >{{ cell.text }}</span><template v-else>{{ cell.text }}</template></span>
             </div>
             <svg
               v-if="cell.diagonal"
@@ -372,6 +385,11 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
 
 .sheet-cell-content {
   display: block;
+}
+
+/* SPEC-135: a linked cell's text — the pointer cursor over the glyphs only. */
+.sheet-cell-link {
+  cursor: pointer;
 }
 
 /* A format's fill: the run takes whatever width the text leaves. */

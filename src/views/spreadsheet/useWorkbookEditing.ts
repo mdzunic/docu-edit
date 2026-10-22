@@ -29,13 +29,16 @@
 // boxes and editor the grid context carries to SheetGrid; the menu and the
 // cell context menu run its commands) and the comments pane
 // (useSheetComments — the side panel's "comments" pane, the app bar's
-// toggle), each step on the same undo stack.
+// toggle), each step on the same undo stack; and links on cells
+// (useCellLinks — the link dialog WorkbookBody renders, the chip and the
+// data-link the grid context carries to SheetGrid, Ctrl/Cmd+K and following).
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { useRouter } from "vue-router";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { useCellEditing, type CellEditing, type CellEditingDeps } from "./useCellEditing";
+import { useCellLinks } from "./useCellLinks";
 import { useCellNotes } from "./useCellNotes";
 import { useConditionalFormatManager } from "./useConditionalFormatManager";
 import { useConditionalFormats } from "./useConditionalFormats";
@@ -187,7 +190,8 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     openThread: comments.openThread,
     focusGrid: () => cell.focusCell(),
   });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport, notes, comments };
+  const links = useCellLinks({ book: deps.book, selection: deps.selection, viewState: deps.viewState, undo, cell, locale: deps.locale });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport, notes, comments, links };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

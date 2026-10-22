@@ -45,7 +45,10 @@
 // guaranteed path. useSortFilter runs both.
 //
 // SPEC-135 adds the notes and comments pair: Shift+F2 (`sheet.note`) and
-// Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, by physical key `KeyM`).
+// Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, by physical key `KeyM`),
+// and the link dialog's Ctrl/Cmd+K (`sheet.insertLink`, useCellLinks) — the
+// key the text side's command palette takes, which the workbook view never
+// mounts.
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -73,7 +76,8 @@ export type SheetShortcutId =
   | "sheet.reapplyFilter"
   | "sheet.nameManager"
   | "sheet.note"
-  | "sheet.newComment";
+  | "sheet.newComment"
+  | "sheet.insertLink";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
@@ -81,6 +85,7 @@ const PASTE_CATEGORY = "Paste and fill";
 const FORMULA_CATEGORY = "Formulas";
 const FILTER_CATEGORY = "Sort and filter";
 const ANNOTATION_CATEGORY = "Notes and comments";
+const LINK_CATEGORY = "Links";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -138,6 +143,8 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // useSheetComments run them.
     { id: "sheet.note", label: "New or edit note", category: ANNOTATION_CATEGORY, bindings: [{ key: "F2", shift: true }] },
     { id: "sheet.newComment", label: "New comment", category: ANNOTATION_CATEGORY, bindings: [{ key: "M", code: "KeyM", mod: true, alt: true }] },
+    // SPEC-135: Insert ▸ Link… (the link dialog), Excel's Ctrl/Cmd+K.
+    { id: "sheet.insertLink", label: "Insert link", category: LINK_CATEGORY, bindings: [{ key: "k", mod: true }] },
   ];
   return definitions;
 }
