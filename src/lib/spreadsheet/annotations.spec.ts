@@ -33,7 +33,7 @@ import {
 } from "./annotations";
 import type { Cell, CellHyperlink, CellNote, CellThread, Row, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
 import { moveRange } from "./move";
-import { deleteSheet, renameSheet, stripRetention } from "./sheets";
+import { deleteSheet, duplicateSheet, renameSheet, stripRetention } from "./sheets";
 import { sortRange } from "./sort";
 import { applyStructuralEdit } from "./structure";
 
@@ -412,6 +412,18 @@ describe("sheet rename and delete", () => {
     const m = places();
     renameSheet(m, 1, "Figures");
     expect(sheetOf(m, "s1").hyperlinks![0]!.target).toEqual({ kind: "place", location: "Figures!A10" });
+  });
+
+  it("a duplicate's threads get fresh ids, so no thread id repeats in the workbook", () => {
+    const m = model([sheet("s1", "Sheet1", { partName: undefined, threads: [thread("{T1}", ref(0, 0))], notes: [note("n-A1", ref(0, 0))] })]);
+    duplicateSheet(m, 0);
+    const copy = m.sheets[1]!;
+    expect(copy.notes).toEqual(m.sheets[0]!.notes);
+    const ids = m.sheets.flatMap((each) => (each.threads ?? []).flatMap((t) => t.messages.map((message) => message.messageId)));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(copy.threads![0]!.threadId).toBe(copy.threads![0]!.messages[0]!.messageId);
+    expect(copy.threads![0]!.messages.map((message) => message.text)).toEqual(["Why?", "Because."]);
+    expect(copy.threads![0]!.messages[0]!.source).toBeUndefined();
   });
 
   it("a delete turns its places into #REF! and takes the sheet's own annotations with it", () => {

@@ -98,6 +98,7 @@ import {
   DEFAULT_SPREADSHEET_TITLE,
   isCsvFormat,
   type Cell,
+  type CellThread,
   type DefinedName,
   type DrawingAnchor,
   type Row,
@@ -108,7 +109,7 @@ import {
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
-import { crossAnnotations, remapPlaceSheets } from "./annotations";
+import { crossAnnotations, newGuid, remapPlaceSheets } from "./annotations";
 import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
 import { objectsReferenced } from "./ods/package";
 import { SPREADSHEET_READER_VERSION } from "./open";
@@ -501,6 +502,12 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   }
   copy.conditionalFormats = copiedFormats(sheetFormats(copy), model.format);
   copy.validations = copiedValidations(sheetValidations(copy), model.format, name);
+  if (copy.threads?.length) {
+    // SPEC-135: a thread id is unique in the workbook — the copy's threads
+    // get fresh ones, and its comment parts are rebuilt from the model.
+    copy.threads = copiedThreads(copy.threads);
+    copy.annotationsDirty = true;
+  }
   let partRenames: ReadonlyMap<string, string> | undefined;
   if (partName !== undefined || sourceXml !== undefined) {
     copy.copiedFrom = source.copiedFrom ?? sourceNameOf(model, source);
@@ -708,6 +715,15 @@ function copiedValidations(rules: readonly DataValidation[], format: Spreadsheet
 }
 
 /** A copy's autofilter (see the module header). */
+/** SPEC-135: a copy's threads, every thread and message under a fresh GUID
+ * and without its source. */
+function copiedThreads(threads: readonly CellThread[]): CellThread[] {
+  return threads.map((thread) => {
+    const messages = thread.messages.map(({ source: _source, ...message }) => ({ ...message, messageId: newGuid() }));
+    return { ...thread, threadId: messages[0]?.messageId ?? newGuid(), messages };
+  });
+}
+
 function copiedAutoFilter(filter: AutoFilter, format: SpreadsheetFormat): AutoFilter {
   const { odsName: _name, sourceXml, ...rest } = filter;
   return format === "ods" || sourceXml === undefined ? rest : { ...rest, sourceXml };
