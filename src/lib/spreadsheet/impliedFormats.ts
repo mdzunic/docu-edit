@@ -28,11 +28,17 @@ export function isGeneralStyle(style: CellStyle | undefined): boolean {
   return style?.numberFormat === undefined && style?.builtinFormatId === undefined;
 }
 
-/** The derived styles of one workbook read, appended to its style table. */
+/** The derived styles of one workbook read, appended to its style table.
+ * `derived` records each derived style's id by `${baseId}:${code}`: a read
+ * whose sheets are scanned one job at a time (SPEC-137's read phases, where
+ * the style table and this record travel in the scan context as plain JSON)
+ * passes the same record to every job, so a later sheet reuses an earlier
+ * one's derived style exactly as one reader instance would. */
 export class ImpliedFormatStyles {
-  private readonly derived = new Map<string, number>();
-
-  constructor(private readonly styles: CellStyle[]) {}
+  constructor(
+    private readonly styles: CellStyle[],
+    private readonly derived: Record<string, number> = {},
+  ) {}
 
   /** The style a value with an implied `code` shows: `baseId` itself when
    * that style formats it already, else the derived copy carrying `code`. */
@@ -42,7 +48,7 @@ export class ImpliedFormatStyles {
       return baseId;
     }
     const key = `${baseId}:${code}`;
-    let id = this.derived.get(key);
+    let id = Object.hasOwn(this.derived, key) ? this.derived[key] : undefined;
     if (id === undefined) {
       const copy: CellStyle = base ? structuredClone(base) : {};
       delete copy.sourceXf;
@@ -50,7 +56,7 @@ export class ImpliedFormatStyles {
       copy.numberFormat = code;
       id = this.styles.length;
       this.styles.push(copy);
-      this.derived.set(key, id);
+      this.derived[key] = id;
     }
     return id;
   }

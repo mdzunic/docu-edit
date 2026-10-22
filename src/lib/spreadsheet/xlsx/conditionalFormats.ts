@@ -220,6 +220,9 @@ interface ReadContext {
   sheetName: string;
   holder: Pick<SpreadsheetModel, "dxfs">;
   indexedColors: readonly string[] | undefined;
+  /** Names each format and rule (mintCfId; SPEC-137's worksheet scan passes
+   * placeholders the main thread re-mints, so the scan never needs crypto). */
+  mint: () => string;
 }
 
 function colorOf(node: XmlNode | undefined, ctx: ReadContext): ModelColor | undefined {
@@ -404,9 +407,9 @@ function baseBody(node: XmlNode, ctx: ReadContext): (CfRuleBody & { x14Id?: stri
 
 /** The fields every rule shares: a minted id, its written priority (to be
  * renumbered), `stopIfTrue`. */
-function ruleBase(node: XmlNode): { id: string; priority: number; stopIfTrue?: true } {
+function ruleBase(node: XmlNode, ctx: ReadContext): { id: string; priority: number; stopIfTrue?: true } {
   const priority = parseNumber(nodeAttr(node, "priority"));
-  const base: { id: string; priority: number; stopIfTrue?: true } = { id: mintCfId(), priority: priority ?? NO_PRIORITY };
+  const base: { id: string; priority: number; stopIfTrue?: true } = { id: ctx.mint(), priority: priority ?? NO_PRIORITY };
   if (isOn(nodeAttr(node, "stopIfTrue"))) {
     base.stopIfTrue = true;
   }
@@ -414,7 +417,7 @@ function ruleBase(node: XmlNode): { id: string; priority: number; stopIfTrue?: t
 }
 
 function readBaseRule(node: XmlNode, text: string, ctx: ReadContext): CfRule {
-  const base = ruleBase(node);
+  const base = ruleBase(node, ctx);
   const body = baseBody(node, ctx);
   if (body === null) {
     return { id: base.id, priority: base.priority, kind: "preserved", xml: text.slice(node.start, node.end), where: "base" };
@@ -468,7 +471,7 @@ function overlayDataBar(bar: CfDataBar, node: XmlNode, ctx: ReadContext): void {
 
 /** An x14 rule with no base twin (see the module header). */
 function readX14Rule(node: XmlNode, text: string, ctx: ReadContext): CfRule {
-  const base = ruleBase(node);
+  const base = ruleBase(node, ctx);
   const id = nodeAttr(node, "id");
   const preserved: CfRule = { id: base.id, priority: base.priority, kind: "preserved", xml: text.slice(node.start, node.end), where: "x14" };
   const type = nodeAttr(node, "type");
@@ -510,14 +513,15 @@ function readX14Rule(node: XmlNode, text: string, ctx: ReadContext): CfRule {
 
 /** A worksheet's conditional formats from what the reader cut out of its
  * part (see the module header); x14 inline dxfs are interned into
- * `holder.dxfs`. */
+ * `holder.dxfs`. `mint` names each format and rule (default mintCfId). */
 export function readConditionalFormatSource(
   source: WorksheetCfSource,
   sheetName: string,
   holder: Pick<SpreadsheetModel, "dxfs">,
   indexedColors?: readonly string[],
+  mint: () => string = mintCfId,
 ): ConditionalFormat[] {
-  const ctx: ReadContext = { sheetName, holder, indexedColors };
+  const ctx: ReadContext = { sheetName, holder, indexedColors, mint };
   const context = [source.rootTag];
   const formats: ConditionalFormat[] = [];
   const twins = new Map<string, Extract<CfRule, { kind: "dataBar" }>>();
@@ -533,7 +537,7 @@ export function readConditionalFormatSource(
         twins.set(rule.x14Id.toUpperCase(), rule);
       }
     }
-    const format: ConditionalFormat = { id: mintCfId(), ranges, rules, sourceXml: block };
+    const format: ConditionalFormat = { id: mint(), ranges, rules, sourceXml: block };
     if (isOn(nodeAttr(node, "pivot"))) {
       format.pivot = true;
     }
@@ -562,7 +566,7 @@ export function readConditionalFormatSource(
         if (ranges.length === 0 || rules.length === 0) {
           continue;
         }
-        const format: ConditionalFormat = { id: mintCfId(), ranges, rules };
+        const format: ConditionalFormat = { id: mint(), ranges, rules };
         if (isOn(nodeAttr(block, "pivot"))) {
           format.pivot = true;
         }

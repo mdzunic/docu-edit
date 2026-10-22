@@ -220,6 +220,7 @@ import {
   type WorkbookSources,
 } from "./readPhases";
 import { prepareXlsxSources, readXlsxShell, startXlsxSheetScan, xlsxSourcePartNames } from "./xlsx/phases";
+import { unzipXlsx } from "./xlsx/reader";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { workbookFormatContext } from "./numberFormat/render";
 import { buildPreview } from "./preview";
@@ -887,13 +888,18 @@ async function parse(
 /** Reads and parses workbook bytes into a new SpreadsheetModel, with no
  * `File`/FileReader involved (the Node-friendly split readDocxBytes and
  * readPresentationBytes make). `parts`, when the caller already inflated the
- * package, is used instead of `bytes`. */
+ * package, is used instead of `bytes`. SPEC-137: an .xlsx package is read
+ * through the read phases, inline (readPhased — the same model the single
+ * pass assembled, open.spec.ts pins it); .ods keeps the single pass. */
 export async function readSpreadsheetBytes(
   bytes: Uint8Array,
   format: SpreadsheetFormat,
   title: string,
   parts?: Map<string, Uint8Array>,
 ): Promise<SpreadsheetModel> {
+  if (format === "xlsx") {
+    return readPhased(parts ?? (await unzipXlsx(bytes)), format, title);
+  }
   const model = assembleSpreadsheet(title, format, await parse(bytes, format, parts));
   if (model.sheets.some((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && drawing.content.refs !== undefined))) {
     const { refreshUncachedCharts } = await import("./chartsOpen");

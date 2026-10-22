@@ -90,7 +90,7 @@ import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import { classifyHiddenRows } from "../filter";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, maxDigitWidthPx } from "../geometry";
 import { ImpliedFormatStyles } from "../impliedFormats";
-import type { CalcSettings, Sheet } from "../model";
+import type { CalcSettings, PackageVariant, Sheet } from "../model";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
@@ -160,7 +160,7 @@ function readRelationships(parts: Map<string, Uint8Array>, partPath: string): Ma
 
 /** What the workbook part says: its sheets, date system and active tab, and
  * the shared strings, theme and styles parts its relationships point at. */
-interface WorkbookInfo {
+export interface WorkbookInfo {
   sheets: WorkbookSheet[];
   date1904: boolean;
   activeTab: number;
@@ -198,7 +198,7 @@ function readCalcPr(calcPr: Element | undefined): CalcSettings {
 }
 
 /** The workbook part (see WorkbookInfo). */
-function readWorkbook(parts: Map<string, Uint8Array>, workbookPath: string): WorkbookInfo {
+export function readWorkbook(parts: Map<string, Uint8Array>, workbookPath: string): WorkbookInfo {
   const bytes = parts.get(workbookPath);
   if (!bytes) {
     throw parseError(workbookPath, "the workbook part is missing");
@@ -258,12 +258,12 @@ function readWorkbook(parts: Map<string, Uint8Array>, workbookPath: string): Wor
 }
 
 /** The workbook's theme part, read (undefined: none, or not a usable theme). */
-function readTheme(parts: Map<string, Uint8Array>, themePath: string | undefined): DocumentTheme | undefined {
+export function readTheme(parts: Map<string, Uint8Array>, themePath: string | undefined): DocumentTheme | undefined {
   const bytes = themePath ? parts.get(themePath) : undefined;
   return bytes ? readThemePart(partText(bytes)) : undefined;
 }
 
-function coreProperties(parts: Map<string, Uint8Array>): DocumentProperties {
+export function coreProperties(parts: Map<string, Uint8Array>): DocumentProperties {
   const rootRelationships = readRelationships(parts, "");
   const core = [...rootRelationships.values()].find((rel) => rel.type === CORE_PROPERTIES_RELATIONSHIP);
   const bytes = core ? parts.get(resolvePartPath("", core.target)) : undefined;
@@ -271,7 +271,7 @@ function coreProperties(parts: Map<string, Uint8Array>): DocumentProperties {
 }
 
 /** Wraps a scanner failure in a part as the workbook's parse error. */
-function scanned<T>(partName: string, read: () => T): T {
+export function scanned<T>(partName: string, read: () => T): T {
   try {
     return read();
   } catch (error) {
@@ -282,6 +282,30 @@ function scanned<T>(partName: string, read: () => T): T {
   }
 }
 
+const NOT_AN_EXCEL_WORKBOOK = "This file isn't an Excel workbook we can open";
+
+/** The package's parts, a zip that does not inflate refused as no workbook. */
+export async function unzipXlsx(data: Uint8Array | ArrayBuffer): Promise<Map<string, Uint8Array>> {
+  try {
+    return await unzip(data);
+  } catch (error) {
+    if (error instanceof ZipError) {
+      throw new SpreadsheetOpenError(NOT_AN_EXCEL_WORKBOOK);
+    }
+    throw error;
+  }
+}
+
+/** The package's main part and variant — refused unless it is SpreadsheetML. */
+export function detectXlsx(parts: Map<string, Uint8Array>): { info: { mainPartPath: string }; detected: { packageVariant?: PackageVariant } } {
+  const info = detectPackage(parts);
+  const detected = spreadsheetFormatOf(info);
+  if (info.container !== "opc" || detected === null || detected === "xlsb" || detected.format !== "xlsx") {
+    throw new SpreadsheetOpenError(NOT_AN_EXCEL_WORKBOOK);
+  }
+  return detected.packageVariant ? { info, detected: { packageVariant: detected.packageVariant } } : { info, detected: {} };
+}
+
 /** Parses an `.xlsx` (or `.xlsm`/`.xltx`/`.xltm`) package. `preunzipped`,
  * when the open funnel already inflated the package, is used instead of
  * `data` (an upgrade passes the retained parts and no bytes at all). */
@@ -289,22 +313,8 @@ export async function parseXlsx(
   data: Uint8Array | ArrayBuffer,
   preunzipped?: Map<string, Uint8Array>,
 ): Promise<ParsedSpreadsheet> {
-  let parts = preunzipped;
-  if (!parts) {
-    try {
-      parts = await unzip(data);
-    } catch (error) {
-      if (error instanceof ZipError) {
-        throw new SpreadsheetOpenError("This file isn't an Excel workbook we can open");
-      }
-      throw error;
-    }
-  }
-  const info = detectPackage(parts);
-  const detected = spreadsheetFormatOf(info);
-  if (info.container !== "opc" || detected === null || detected === "xlsb" || detected.format !== "xlsx") {
-    throw new SpreadsheetOpenError("This file isn't an Excel workbook we can open");
-  }
+  const parts = preunzipped ?? (await unzipXlsx(data));
+  const { info, detected } = detectXlsx(parts);
   const workbook = readWorkbook(parts, info.mainPartPath);
   const dateSystem = workbook.date1904 ? "1904" : "1900";
   const theme = readTheme(parts, workbook.themePath);
