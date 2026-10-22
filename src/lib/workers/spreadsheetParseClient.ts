@@ -15,7 +15,8 @@
 //             yieldToMainThread() between pulls — so no single message
 //             deserialises more than one chunk here — reporting
 //             (index + 1) / chunkCount as the open's progress;
-//   dispose   then phase 4, assembleWorkbook, here.
+//   dispose   then phase 4, assembleWorkbook, here — the format's completion
+//             finishing what needs the package or DOMParser, as inline.
 //
 // The worker is created for the open and terminated when the open settles,
 // on every path. The read degrades, never fails: without a Worker (Vitest,
@@ -146,13 +147,13 @@ async function readInWorker(
   // Every row is here: a worker failing now costs the read nothing, and it
   // is terminated when the open settles either way.
   await client.call({ op: "dispose", session }).catch(() => undefined);
-  return finishRead(assembleWorkbook(shell, results, chunks));
+  return assembleWorkbook(shell, results, chunks);
 }
 
 /** The same phases inline, handing the main thread back every
  * SCAN_YIELD_ROWS rows. */
 async function readInline(parts: Map<string, Uint8Array>, format: SpreadsheetFormat, title: string, options: OffThreadReadOptions): Promise<SpreadsheetModel> {
-  return finishRead(await readPhased(parts, format, title, { yieldEveryRows: SCAN_YIELD_ROWS, onProgress: options.onProgress }));
+  return readPhased(parts, format, title, { yieldEveryRows: SCAN_YIELD_ROWS, onProgress: options.onProgress });
 }
 
 /** One request answered with `op`; else rejected — with the read's own
@@ -199,16 +200,4 @@ function internStrings(chunk: RowChunk, strings: Map<string, string>): void {
       }
     }
   }
-}
-
-/** readSpreadsheetBytes's last step, after the phases (SPEC-132 "Open trusts
- * caches"): a modelled chart whose part names a reference with no cache
- * beside it is refreshed for display. The chart codec loads only when a
- * workbook holds such a chart. */
-async function finishRead(model: SpreadsheetModel): Promise<SpreadsheetModel> {
-  if (model.sheets.some((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && drawing.content.refs !== undefined))) {
-    const { refreshUncachedCharts } = await import("../spreadsheet/chartsOpen");
-    refreshUncachedCharts(model);
-  }
-  return model;
 }
