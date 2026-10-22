@@ -182,7 +182,8 @@ export function useCellNotes(deps: CellNotesDeps) {
       }, NOTE_HIDE_GRACE_MS);
     }
   }
-  /** Hides the popover now (a press, a scroll, the editor opening). */
+  /** Hides the popover now (the editor opening, the sheet on show
+   * changing, `sheet-thread-open`). */
   function dismissPopover(): void {
     clearShow();
     clearHide();

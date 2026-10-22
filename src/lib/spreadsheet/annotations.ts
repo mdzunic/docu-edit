@@ -511,8 +511,10 @@ function evaluatedText(value: EvalValue): string | null {
 }
 
 /** A `HYPERLINK()` cell's target, computed now: its first argument
- * evaluated for that cell (SPEC-120) and coerced to text — `#…` (and a bare
- * `Sheet!A1`) is a place, anything else a url; null when it gives no text. */
+ * evaluated for that cell (SPEC-120) and coerced to text — `#…` is a place
+ * (the rest canonicalised), anything else a url (a bare `Sheet!A1` too,
+ * which the open rule then refuses as a relative path); null when it gives
+ * no text. */
 export function hyperlinkFormulaTarget(model: SpreadsheetModel, sheetId: string, ref: CellRef, cell: Pick<Cell, "formula" | "formulaUnparsed">): HyperlinkTarget | null {
   const call = hyperlinkFormulaCall(cell, ref);
   const parsed = call === null ? null : parseFormulaAt(cell.formula!, ref);
