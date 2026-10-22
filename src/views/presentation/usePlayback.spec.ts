@@ -108,3 +108,84 @@ describe("usePlayback step machine", () => {
     expect(machine(3).reducedMotion.value).toBe(false);
   });
 });
+
+// SPEC-104 — the optional isHidden dep: hidden slides are stepped over by
+// advance/back/goTo, the end screen follows the last visible slide, and a
+// deep-linked start on a hidden slide still shows it.
+describe("usePlayback hidden slides (SPEC-104)", () => {
+  function hiddenMachine(count: number, hidden: number[], start = 0, builds: Record<number, number> = {}) {
+    return usePlayback({
+      slideCount: ref(count),
+      start,
+      isHidden: (index) => hidden.includes(index),
+      buildCountAt: (index) => builds[index] ?? 0,
+    });
+  }
+
+  it("absent isHidden hides nothing", () => {
+    const p = machine(3, 0);
+    p.advance();
+    expect(p.current.value.slideIndex).toBe(1);
+  });
+
+  it("advance steps over a hidden slide", () => {
+    const p = hiddenMachine(3, [1]);
+    p.advance();
+    expect(p.current.value).toEqual({ slideIndex: 2, buildIndex: 0 });
+  });
+
+  it("advance walks a slide's builds before stepping over the hidden one", () => {
+    const p = hiddenMachine(3, [1], 0, { 0: 1 });
+    p.advance();
+    expect(p.current.value).toEqual({ slideIndex: 0, buildIndex: 1 });
+    p.advance();
+    expect(p.current.value).toEqual({ slideIndex: 2, buildIndex: 0 });
+  });
+
+  it("atEnd is reached when no later visible slide exists (a hidden tail)", () => {
+    const p = hiddenMachine(4, [2, 3]);
+    p.advance();
+    expect(p.current.value.slideIndex).toBe(1);
+    p.advance();
+    expect(p.atEnd.value).toBe(true);
+    expect(p.current.value.slideIndex).toBe(1);
+  });
+
+  it("back steps over a hidden slide and stops at the first visible one", () => {
+    const p = hiddenMachine(4, [0, 2], 3);
+    p.back();
+    expect(p.current.value.slideIndex).toBe(1);
+    p.back(); // slide 0 is hidden: nowhere further back to go
+    expect(p.current.value.slideIndex).toBe(1);
+  });
+
+  it("back from the end screen lands on the last visible slide, fully built", () => {
+    const p = hiddenMachine(4, [3], 2, { 2: 2 });
+    p.advance();
+    p.advance();
+    p.advance();
+    expect(p.atEnd.value).toBe(true);
+    p.back();
+    expect(p.atEnd.value).toBe(false);
+    expect(p.current.value).toEqual({ slideIndex: 2, buildIndex: 2 });
+  });
+
+  it("goTo steps over a hidden target — forward, else back", () => {
+    const p = hiddenMachine(5, [0, 2, 4]);
+    p.goTo(0);
+    expect(p.current.value.slideIndex).toBe(1);
+    p.goTo(2);
+    expect(p.current.value.slideIndex).toBe(3);
+    p.goTo(4); // nothing visible after the last: the previous visible one
+    expect(p.current.value.slideIndex).toBe(3);
+    p.goTo(100); // clamps to 4, which is hidden
+    expect(p.current.value.slideIndex).toBe(3);
+  });
+
+  it("a deep-linked start on a hidden slide still shows it; advancing then steps over hidden ones", () => {
+    const p = hiddenMachine(4, [1, 2], 1);
+    expect(p.current.value).toEqual({ slideIndex: 1, buildIndex: 0 });
+    p.advance();
+    expect(p.current.value.slideIndex).toBe(3);
+  });
+});

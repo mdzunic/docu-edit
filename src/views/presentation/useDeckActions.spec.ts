@@ -43,6 +43,14 @@ describe("useDeckActions playback entry", () => {
     expect(push).toHaveBeenCalledWith("/slides/deck-1/present/3");
   });
 
+  it("present() from a hidden current slide pushes that very slide's route (SPEC-104 AC-11)", () => {
+    const { actions, push } = harness({ current: 1 });
+    // The model's hidden flags are the play view's concern: the deep link
+    // always names the current slide, so presenting from a hidden one opens on it.
+    actions.present();
+    expect(push).toHaveBeenCalledWith("/slides/deck-1/present/2");
+  });
+
   it("present() is a no-op on an empty deck", () => {
     const { actions, push } = harness({ slides: 0 });
     actions.present();
