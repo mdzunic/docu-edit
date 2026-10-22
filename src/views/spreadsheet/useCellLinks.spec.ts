@@ -11,9 +11,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { computed, effectScope, nextTick, ref, shallowRef, triggerRef } from "vue";
 import { getCell } from "../../lib/spreadsheet/address";
-import { LINK_DESTINATION_MISSING_MESSAGE, LINK_NOT_OPENABLE_MESSAGE } from "../../lib/spreadsheet/annotations";
+import { CSV_NO_LINKS_TITLE, LINK_DESTINATION_MISSING_MESSAGE, LINK_NOT_OPENABLE_MESSAGE, LINKS_KEPT_AS_READ_TITLE } from "../../lib/spreadsheet/annotations";
 import { fixedMeasurer } from "../../lib/spreadsheet/autofit";
-import type { CellHyperlink, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { CellHyperlink, Sheet, SpreadsheetFormat, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { SPREADSHEET_LOCALES } from "../../lib/spreadsheet/numberFormat/locale";
 import { singleCell } from "../../lib/spreadsheet/selection";
 import { createBlankWorkbook } from "../../lib/spreadsheet/sheets";
@@ -63,9 +63,12 @@ function workbook(): SpreadsheetModel {
   return model;
 }
 
-function setup(options: { editing?: boolean } = {}) {
+function setup(options: { editing?: boolean; format?: SpreadsheetFormat; blocked?: () => string } = {}) {
   const scope = effectScope();
   const model = workbook();
+  if (options.format) {
+    model.format = options.format;
+  }
   const wb = shallowRef<SpreadsheetModel | null>(model);
   const activeIndex = ref(0);
   const activeSheet = computed(() => wb.value?.sheets[activeIndex.value] ?? null);
@@ -97,6 +100,7 @@ function setup(options: { editing?: boolean } = {}) {
       openWindow,
       copyText,
       measurer: fixedMeasurer(7, 20),
+      ...(options.blocked ? { blocked: options.blocked } : {}),
     });
     return { undo, links };
   })!;
@@ -472,5 +476,41 @@ describe("useCellLinks — the chip, HYPERLINK() cells and the pointer", () => {
     expect(linksOf({})).toBeNull();
     expect(linksOf(null)).toBeNull();
     t.stop();
+  });
+});
+
+describe("useCellLinks — where a link could not be kept (AC-34, AC-11)", () => {
+  it("a CSV or TSV workbook offers no Link…: disabled with CSV_NO_LINKS_TITLE, the dialog never opens, Ctrl/Cmd+K included", () => {
+    for (const format of ["csv", "tsv"] as const) {
+      const view = setup({ format });
+      expect(view.links.canLink.value).toBe(false);
+      expect(view.links.linkDisabledReason.value).toBe(CSV_NO_LINKS_TITLE);
+      view.links.openDialog();
+      expect(view.links.dialog.value).toBeNull();
+      const grid = document.createElement("div");
+      grid.dataset.testid = "spreadsheet-grid";
+      document.body.append(grid);
+      pressModK(grid);
+      expect(view.links.dialog.value).toBeNull();
+      grid.remove();
+      view.stop();
+    }
+  });
+
+  it("an .xlsx sheet whose <hyperlinks> stay as read refuses with LINKS_KEPT_AS_READ_TITLE; an .xlsx or .ods sheet that keeps links offers it", () => {
+    const kept = setup({ blocked: () => LINKS_KEPT_AS_READ_TITLE });
+    expect(kept.links.canLink.value).toBe(false);
+    expect(kept.links.linkDisabledReason.value).toBe(LINKS_KEPT_AS_READ_TITLE);
+    kept.links.openDialog();
+    expect(kept.links.dialog.value).toBeNull();
+    kept.stop();
+    for (const format of ["xlsx", "ods"] as const) {
+      const view = setup({ format, blocked: () => "" });
+      expect(view.links.canLink.value).toBe(true);
+      expect(view.links.linkDisabledReason.value).toBe("");
+      view.links.openDialog();
+      expect(view.links.dialog.value).not.toBeNull();
+      view.stop();
+    }
   });
 });

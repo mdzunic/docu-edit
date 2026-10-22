@@ -8,7 +8,7 @@
 // activating a thread selecting its sheet and cell.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computed, effectScope, nextTick, ref, shallowRef, triggerRef, type EffectScope } from "vue";
-import { COMMENT_UNDO_LABELS, ODS_NOTES_ONLY_TITLE } from "../../lib/spreadsheet/annotations";
+import { COMMENT_UNDO_LABELS, NOTES_KEPT_AS_READ_TITLE, ODS_NOTES_ONLY_TITLE } from "../../lib/spreadsheet/annotations";
 import type { CellThread, Sheet, SpreadsheetFormat, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { createBlankWorkbook } from "../../lib/spreadsheet/sheets";
 import { messageTime, useSheetComments } from "./useSheetComments";
@@ -50,7 +50,7 @@ function workbook(format: SpreadsheetFormat): SpreadsheetModel {
   return model;
 }
 
-function setup(format: SpreadsheetFormat = "xlsx") {
+function setup(format: SpreadsheetFormat = "xlsx", blocked?: () => string) {
   const wb = shallowRef<SpreadsheetModel | null>(workbook(format));
   const activeIndex = ref(0);
   const activeSheet = computed(() => wb.value?.sheets[activeIndex.value] ?? null);
@@ -68,7 +68,16 @@ function setup(format: SpreadsheetFormat = "xlsx") {
     return {
       undo: stack,
       sidePanel: panel,
-      comments: useSheetComments({ book: { workbook: wb, activeSheet, activeIndex }, undo: stack, selection: { selection }, viewState, cell, sidePanel: panel, busy: () => busy.value }),
+      comments: useSheetComments({
+        book: { workbook: wb, activeSheet, activeIndex },
+        undo: stack,
+        selection: { selection },
+        viewState,
+        cell,
+        sidePanel: panel,
+        busy: () => busy.value,
+        ...(blocked ? { blocked } : {}),
+      }),
     };
   })!;
   const threadsOf = (index: number) => wb.value!.sheets[index]!.threads ?? [];
@@ -233,5 +242,15 @@ describe("useSheetComments — the pane and navigation (SPEC-135)", () => {
     expect(cell.revealTick.value).toBe(1);
     comments.activate("s1", "{D2}", { row: 1, col: 3 });
     expect(fields.value.s1?.selection?.active).toEqual({ row: 1, col: 3 });
+  });
+});
+
+describe("useSheetComments — a sheet whose comments stay as read (AC-11)", () => {
+  it("disables New comment with NOTES_KEPT_AS_READ_TITLE; the .ods reason wins in an .ods workbook", () => {
+    const kept = setup("xlsx", () => NOTES_KEPT_AS_READ_TITLE);
+    expect(kept.comments.canComment.value).toBe(false);
+    expect(kept.comments.newCommentDisabledReason.value).toBe(NOTES_KEPT_AS_READ_TITLE);
+    expect(setup("ods", () => NOTES_KEPT_AS_READ_TITLE).comments.newCommentDisabledReason.value).toBe(ODS_NOTES_ONLY_TITLE);
+    expect(setup("xlsx", () => "").comments.canComment.value).toBe(true);
   });
 });

@@ -235,6 +235,22 @@ describe("hyperlink commands", () => {
   });
 });
 
+describe("text XML 1.0 cannot carry", () => {
+  it("every command drops pasted control characters (U+000B, U+000C read as line breaks) before the model holds them", () => {
+    const m = model([sheet("s1", "Sheet1")]);
+    expect(addNote(m, "s1", ref(0, 0), "one\u000Btwo\u0001", "Pat\u0007")).toMatchObject({ text: "one\ntwo", author: "Pat" });
+    expect(editNote(m, "s1", "n-A1", "three\u0002")).toMatchObject({ text: "three" });
+    const started = addThread(m, "s1", ref(1, 1), "Why\u0008?", "Ada\u001F")!;
+    expect(started.messages[0]).toMatchObject({ text: "Why?", author: "Ada" });
+    expect(m.persons?.map((person) => person.displayName)).toEqual(["Ada"]);
+    const replied = replyToThread(m, "s1", started.threadId, "Because\u000C.", "Ada")!;
+    expect(replied.messages[1]!.text).toBe("Because\n.");
+    expect(editThreadMessage(m, "s1", started.threadId, started.threadId, "Why not\u0003?")!.messages[0]!.text).toBe("Why not?");
+    const linked = setHyperlink(m, "s1", range(2, 0, 2, 0), { kind: "url", href: "https://example.com/\u0001a", subaddress: "Sheet1!A1\u0002" }, "Tip\u0004");
+    expect(linked).toMatchObject({ target: { kind: "url", href: "https://example.com/a", subaddress: "Sheet1!A1" }, tooltip: "Tip" });
+  });
+});
+
 describe("openHyperlinkTarget — which targets a sheet opens", () => {
   const cases: [string, ReturnType<typeof openHyperlinkTarget>][] = [
     ["https://example.com/contract", "external"],

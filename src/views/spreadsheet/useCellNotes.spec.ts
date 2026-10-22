@@ -8,7 +8,7 @@
 // behind them (cellNoteViews, sheetNoteLayout).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computed, effectScope, ref, shallowRef, triggerRef, type EffectScope } from "vue";
-import { NOTE_DEFAULT_BOX, NOTE_HOVER_DELAY_MS, NOTE_UNDO_LABELS } from "../../lib/spreadsheet/annotations";
+import { NOTE_DEFAULT_BOX, NOTE_HOVER_DELAY_MS, NOTE_UNDO_LABELS, NOTES_KEPT_AS_READ_TITLE } from "../../lib/spreadsheet/annotations";
 import type { CellNote, CellThread, Sheet, SpreadsheetFormat, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { buildMergeIndex } from "../../lib/spreadsheet/merges";
 import { createBlankWorkbook } from "../../lib/spreadsheet/sheets";
@@ -61,7 +61,7 @@ function workbook(format: SpreadsheetFormat = "xlsx"): SpreadsheetModel {
   return model;
 }
 
-function setup(format: SpreadsheetFormat = "xlsx") {
+function setup(format: SpreadsheetFormat = "xlsx", blocked?: () => string) {
   const wb = shallowRef<SpreadsheetModel | null>(workbook(format));
   const activeIndex = ref(0);
   const activeSheet = computed(() => wb.value?.sheets[activeIndex.value] ?? null);
@@ -74,7 +74,10 @@ function setup(format: SpreadsheetFormat = "xlsx") {
   scopes.push(scope);
   const { undo, notes } = scope.run(() => {
     const stack = useSpreadsheetUndo({ model: wb, recalc: (_keys, done) => done([]), onApplied: () => triggerRef(wb), activateSheet: () => {} });
-    return { undo: stack, notes: useCellNotes({ book: { workbook: wb, activeSheet }, undo: stack, selection: { selection }, busy: () => busy.value, openThread, focusGrid, author: () => "Pat Doe" }) };
+    return {
+      undo: stack,
+      notes: useCellNotes({ book: { workbook: wb, activeSheet }, undo: stack, selection: { selection }, busy: () => busy.value, openThread, focusGrid, author: () => "Pat Doe", ...(blocked ? { blocked } : {}) }),
+    };
   })!;
   const sheet = (): Sheet => wb.value!.sheets[0]!;
   return { wb, activeIndex, active, busy, openThread, focusGrid, undo, notes, sheet };
@@ -269,6 +272,21 @@ describe("useCellNotes — the note editor and the note commands (SPEC-135)", ()
     busy.busy.value = true;
     expect(busy.notes.openEditor()).toBe(false);
     expect(gridKey({ key: "F2", code: "F2", shiftKey: true }).defaultPrevented).toBe(false);
+  });
+
+  it("a sheet whose source's notes stay as read (AC-11) offers no note: disabled with NOTES_KEPT_AS_READ_TITLE, neither the editor nor Shift+F2 opens", () => {
+    const reason = ref(NOTES_KEPT_AS_READ_TITLE);
+    const kept = setup("xlsx", () => reason.value);
+    expect(kept.notes.canAnnotate.value).toBe(false);
+    expect(kept.notes.noteDisabledReason.value).toBe(NOTES_KEPT_AS_READ_TITLE);
+    expect(kept.notes.openEditor()).toBe(false);
+    expect(gridKey({ key: "F2", code: "F2", shiftKey: true }).defaultPrevented).toBe(false);
+    expect(kept.notes.editor.value).toBeNull();
+    reason.value = "";
+    expect(kept.notes.canAnnotate.value).toBe(true);
+    expect(kept.notes.noteDisabledReason.value).toBe("");
+    // A CSV workbook has no reason to give: it never holds notes.
+    expect(setup("csv", () => NOTES_KEPT_AS_READ_TITLE).notes.noteDisabledReason.value).toBe("");
   });
 
   it("switching sheets commits the open editor", () => {
