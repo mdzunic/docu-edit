@@ -3,7 +3,10 @@
 // grid area beside the reused PrintPreviewDialog, whose options slot holds
 // the scope ("Active sheet" | "Selection" | "Entire workbook") and whose
 // actions slot holds "Page setup…" and "Download PDF". The job is print.ts's
-// paginateWorkbook of the scope; the page range parses through
+// paginateSheet of the sheet on show ("Active sheet", "Selection") or
+// paginateWorkbook ("Entire workbook"), recomputed — and its pages laid out
+// afresh — on every change to the model, which commands, undo, redo and
+// recalculation make in place; the page range parses through
 // core/pageRange.ts's parseNumberRange(input, total, "page"); an empty job
 // says "This sheet has nothing to print." and cannot print. Print marks
 // `body.is-sheet-printing`, injects the job's `@page` rules
@@ -18,6 +21,7 @@ import { isMacPlatform } from "../../lib/core/platform";
 import { findShortcut } from "../../lib/shortcuts";
 import {
   NOTHING_TO_PRINT_MESSAGE,
+  paginateSheet,
   paginateWorkbook,
   PRINT_LIMIT_MESSAGE,
   PRINT_PAGE_LIMIT,
@@ -26,7 +30,6 @@ import {
   type SheetPrintJob,
   type SheetPrintPage,
 } from "../../lib/spreadsheet/print";
-import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { defaultPrintFont, layoutPrintPage, printSheetContext, type PrintPageLayout, type PrintSheetContext } from "./sheetPrintLayout";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
@@ -63,15 +66,23 @@ export function asLayoutFor(value: unknown): (placed: PlacedPage, total: number)
 }
 
 export function useSheetPrint(deps: SheetPrintDeps) {
-  // Each page laid out once per model state (layouts are pure functions of it).
-  let layoutModel: SpreadsheetModel | null = null;
+  /** Bumped on every change to the model on show: another model, a
+   * triggerRef (a command, undo or redo) or the book's revision (those, a
+   * recalculation pass, a chart refresh) — each mutates the one model object
+   * in place, so its identity alone never says it changed. */
+  const modelTick = ref(0);
+  watch([deps.book.workbook, deps.book.revision], () => (modelTick.value += 1), { flush: "sync" });
+
+  // Each page laid out once per model state (layouts are pure functions of
+  // it). Reading the tick makes a render that lays pages out follow it.
+  let layoutTick = -1;
   let layoutDate = new Date();
   const contexts = new Map<string, PrintSheetContext>();
   const layouts = new Map<string, PrintPageLayout>();
   function layoutFor(placed: PlacedPage, total: number): PrintPageLayout {
     const model = deps.book.workbook.value!;
-    if (model !== layoutModel || contexts.size > 64) {
-      layoutModel = model;
+    if (modelTick.value !== layoutTick || contexts.size > 64) {
+      layoutTick = modelTick.value;
       layoutDate = new Date();
       contexts.clear();
       layouts.clear();
@@ -117,16 +128,30 @@ export function useSheetPrint(deps: SheetPrintDeps) {
     }
   });
 
-  /** The job a scope prints, from the live model (never written). */
+  /** The job a scope prints, from the live model (never written): the sheet
+   * on show for "Active sheet" and "Selection" — the view's, which the
+   * model's stored activeSheetIndex catches up with only when a command
+   * syncs the view state into it — or every visible grid sheet. */
   function jobFor(which: PrintScope): SheetPrintJob {
     const model = deps.book.workbook.value;
     if (!model) {
       return { pages: [] };
     }
-    return paginateWorkbook(model, which, { selection: deps.selection.selection.value.ranges, preferences: deps.pageSetup.printPreferences.value });
+    const options = { selection: deps.selection.selection.value.ranges, preferences: deps.pageSetup.printPreferences.value };
+    if (which === "workbook") {
+      return paginateWorkbook(model, which, options);
+    }
+    const sheet = deps.book.activeSheet.value;
+    return sheet === null ? { pages: [] } : paginateSheet(model, sheet, { ...options, scope: which });
   }
 
-  const job = computed((): SheetPrintJob => (isOpen.value ? jobFor(scope.value) : { pages: [] }));
+  const job = computed((): SheetPrintJob => {
+    if (!isOpen.value) {
+      return { pages: [] };
+    }
+    void modelTick.value;
+    return jobFor(scope.value);
+  });
   const pageCount = computed(() => job.value.pages.length);
   const range = computed(() => (rangeMode.value === "custom" ? parseNumberRange(rangeText.value, pageCount.value, "page") : null));
   const rangeError = computed(() => range.value?.error ?? "");

@@ -12,7 +12,8 @@
 //   ".sheet-print-cell", clipSelector: ".sheet-print-cell", imageSelector,
 //   canvasSelector }); one level-1 heading per sheet (its name) on its first
 //   page; `/Title` the workbook's title; saved as pdfFileName(title,
-//   DEFAULT_SPREADSHEET_TITLE).
+//   DEFAULT_SPREADSHEET_TITLE). A page prints its job's total (`&N`, "Page
+//   N of M") as the preview does, whichever range of it is exported.
 // - `progress` reads "Page {done} of {total}"; abort() stops at the next page
 //   boundary with no download; an export over MAX_SHEET_PDF_PAGES is refused.
 //   Nothing here writes the model.
@@ -40,7 +41,7 @@ export const PDF_FAILED_MESSAGE = "Couldn't export the PDF";
 
 export interface SheetPdfExportDeps {
   book: ReturnType<typeof asWorkbookBook>;
-  print: Pick<SheetPrint, "chosen" | "jobFor" | "isOpen">;
+  print: Pick<SheetPrint, "chosen" | "jobFor" | "isOpen" | "pageCount">;
 }
 
 /** The off-screen sheet's element for a page of the job. */
@@ -61,20 +62,37 @@ export function useSheetPdfExport(deps: SheetPdfExportDeps) {
   const notice = ref("");
   /** The pages mounted off-screen now (the rolling window). */
   const sheetPages = shallowRef<PlacedPage[]>([]);
+  /** The page count of the job the export's pages come from — the `&N` and
+   * "Page N of M" they print, as in the preview, whatever range is chosen. */
+  const jobTotal = ref(0);
   let abortRequested = false;
 
   function abort(): void {
     abortRequested = true;
   }
 
+  /** What an export prints and its job's page count: `pages` of a job of
+   * `total`, else the preview's chosen pages of its job, else the sheet on
+   * show's whole job. */
+  function planFor(pages: PlacedPage[] | undefined, total: number | undefined): { plan: PlacedPage[]; total: number } {
+    if (pages !== undefined) {
+      return { plan: pages, total: total ?? pages.length };
+    }
+    if (deps.print.isOpen.value) {
+      return { plan: deps.print.chosen.value, total: deps.print.pageCount.value };
+    }
+    const job = deps.print.jobFor("sheet");
+    return { plan: job.pages.map((page, index) => ({ page, index })), total: job.pages.length };
+  }
+
   /** Exports `pages` (default: the preview's chosen pages, else the active
    * sheet's job) as a PDF download. */
-  async function exportPdf(pages?: PlacedPage[]): Promise<void> {
+  async function exportPdf(pages?: PlacedPage[], total?: number): Promise<void> {
     const model = deps.book.workbook.value;
     if (busy.value || !model) {
       return;
     }
-    const plan = pages ?? (deps.print.isOpen.value ? deps.print.chosen.value : deps.print.jobFor("sheet").pages.map((page, index) => ({ page, index })));
+    const { plan, total: pagesInJob } = planFor(pages, total);
     notice.value = "";
     if (plan.length > MAX_SHEET_PDF_PAGES) {
       notice.value = PDF_LIMIT_MESSAGE;
@@ -85,6 +103,7 @@ export function useSheetPdfExport(deps: SheetPdfExportDeps) {
     }
     busy.value = true;
     abortRequested = false;
+    jobTotal.value = pagesInJob;
     progress.value = { done: 0, total: plan.length };
     const sheetNames = new Map(model.sheets.map((sheet) => [sheet.id, sheet.name]));
     const seenSheets = new Set<string>();
@@ -125,10 +144,11 @@ export function useSheetPdfExport(deps: SheetPdfExportDeps) {
       sheetPages.value = [];
       busy.value = false;
       progress.value = { done: 0, total: 0 };
+      jobTotal.value = 0;
     }
   }
 
-  return { busy, progress, notice, sheetPages, exportPdf, abort };
+  return { busy, progress, notice, sheetPages, jobTotal, exportPdf, abort };
 }
 
 export type SheetPdfExport = ReturnType<typeof useSheetPdfExport>;

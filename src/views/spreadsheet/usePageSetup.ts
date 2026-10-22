@@ -1,6 +1,7 @@
 // SPEC-136's page setup in the workbook view: the Page Setup dialog
 // (SheetPageSetupDialog — its fields are pageSetupForm.ts's, OK one undo
-// step "Page setup", Cancel nothing), the manual-break and print-area
+// step "Page setup" — none for a form left as shown — Cancel nothing), the
+// manual-break and print-area
 // commands (Insert ▸ Page break / Remove page break / Reset all page breaks,
 // File ▸ Print area ▸ Set / Clear — each one undo step through record(label,
 // { sheetId }) before mutating and commit() after), and View ▸ Page breaks:
@@ -101,6 +102,9 @@ export function usePageSetup(deps: PageSetupDeps) {
   const form = ref<PageSetupForm | null>(null);
   const focused = ref<{ part: "header" | "footer"; section: keyof SectionFields }>({ part: "header", section: "center" });
   const problem = computed(() => (form.value === null ? null : validateForm(form.value, unit.value)));
+  /** The form as shown: OK on it unchanged writes nothing (no step, no
+   * paper pinned on a sheet that names none, nothing marked dirty). */
+  let shownForm = "";
 
   function show(at: PageSetupTab = "page"): void {
     const model = deps.book.workbook.value;
@@ -109,6 +113,7 @@ export function usePageSetup(deps: PageSetupDeps) {
       return;
     }
     form.value = formFromSetup(sheet.pageSetup, effectivePaper(sheet, printPreferences.value), unit.value, printAreaOf(model, sheet), printTitlesOf(model, sheet));
+    shownForm = JSON.stringify(form.value);
     tab.value = at;
     focused.value = { part: "header", section: "center" };
     open.value = true;
@@ -122,6 +127,10 @@ export function usePageSetup(deps: PageSetupDeps) {
   function ok(): void {
     const value = form.value;
     if (value === null || problem.value !== null) {
+      return;
+    }
+    if (JSON.stringify(value) === shownForm) {
+      cancel();
       return;
     }
     const sheet = gridSheet();
@@ -211,7 +220,11 @@ export function usePageSetup(deps: PageSetupDeps) {
     }, 300);
   }
 
-  watch([() => deps.book.workbook.value, () => deps.book.activeSheet.value, linesShown, printPreferences], recompute, { immediate: true });
+  // Commands, undo, redo and recalculation mutate the model in place, a print
+  // area (a name) without touching the sheet: the workbook ref itself (a
+  // shallow ref, so its triggerRef fires this) and the book's revision say
+  // the model changed, whatever changed in it.
+  watch([deps.book.workbook, deps.book.revision, () => deps.book.activeSheet.value, linesShown, printPreferences], recompute, { immediate: true });
 
   function toggleLines(): void {
     const sheet = gridSheet();
