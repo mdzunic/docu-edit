@@ -116,6 +116,73 @@ test.describe("SPEC-135 links", () => {
     await expect(page.getByTestId("name-box")).toHaveValue("A1");
   });
 
+  test("a HYPERLINK() whose first argument is an absolute or another sheet's reference follows that cell's text at follow time (AC-40)", async ({ page }) => {
+    for (const host of ["second", "third", "data"]) {
+      await page.context().route(`https://${host}.example/**`, (route) => route.fulfill({ body: "" }));
+    }
+    /** Selects a cell through the name box — a linked cell's chip covers
+     * the cell under it, so a click there would land on the chip. */
+    const goTo = async (ref: string): Promise<void> => {
+      const box = page.getByTestId("name-box");
+      await box.fill(ref);
+      await box.press("Enter");
+      await expect(box).toHaveValue(ref);
+    };
+    const enter = async (ref: string, text: string): Promise<void> => {
+      await goTo(ref);
+      await page.keyboard.type(text);
+      await page.keyboard.press("Enter");
+    };
+    await openFixture(page, "spec135-annotations.xlsx");
+    await sheetTab(page, "Data").click();
+    await enter("B1", "https://data.example/page");
+    await enter("B2", "#Summary!B4");
+    await sheetTab(page, "Summary").click();
+    await expect(sheetTab(page, "Summary")).toHaveAttribute("aria-selected", "true");
+    await enter("H2", "https://second.example/");
+    await enter("C10", "=HYPERLINK($H$2)");
+    await enter("C11", '=HYPERLINK(Data!B1,"other sheet")');
+    await enter("C12", '=HYPERLINK(Data!B2,"place via ref")');
+    await expect(cellAt(page, "C10")).toHaveText("https://second.example/");
+    await expect(cellAt(page, "C11")).toHaveText("other sheet");
+    for (const ref of ["C10", "C11", "C12"]) {
+      await expect(cellAt(page, ref)).toHaveAttribute("data-link", "true");
+    }
+    await goTo("C10");
+    await expect(page.getByTestId("link-chip-target")).toHaveText("https://second.example/");
+    await goTo("C11");
+    await expect(page.getByTestId("link-chip-target")).toHaveText("https://data.example/page");
+    await goTo("C12");
+    await expect(page.getByTestId("link-chip-target")).toHaveText("Summary!B4");
+
+    // Ctrl/Cmd+click follows the other sheet's text; nothing is added to the selection.
+    await goTo("A1");
+    await cellAt(page, "C11").locator(".sheet-cell-link").click({ modifiers: ["ControlOrMeta"] });
+    await expect.poll(() => opens(page)).toEqual([["https://data.example/page", "_blank", "noopener,noreferrer"]]);
+    await expect(page.getByTestId("name-box")).toHaveValue("A1");
+    await expect(page.getByTestId("sheet-selection")).toHaveCount(0);
+    // A reference that holds a #place selects that place.
+    await cellAt(page, "C12").locator(".sheet-cell-link").click({ modifiers: ["ControlOrMeta"] });
+    await expect(page.getByTestId("name-box")).toHaveValue("B4");
+    await expect(sheetTab(page, "Summary")).toHaveAttribute("aria-selected", "true");
+    // The target is computed when followed: H2's new text is what opens.
+    await enter("H2", "https://third.example/");
+    await goTo("A1");
+    await cellAt(page, "C10").locator(".sheet-cell-link").click({ modifiers: ["ControlOrMeta"] });
+    await expect.poll(async () => (await opens(page)).at(-1)).toEqual(["https://third.example/", "_blank", "noopener,noreferrer"]);
+    expect(await opens(page)).toHaveLength(2);
+
+    // Never stored as a link of the sheet: no <hyperlink> for the formula cells.
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("spreadsheet-download").click();
+    const saved = await downloadPromise;
+    const path = join(tmpdir(), `spec135-hyperlink-references-${Date.now()}.xlsx`);
+    await saved.saveAs(path);
+    const sheet = new TextDecoder().decode((await unzip(new Uint8Array(readFileSync(path)))).get("xl/worksheets/sheet1.xml"));
+    expect(sheet).toContain('<f>HYPERLINK(Data!B1,"other sheet")</f>');
+    expect([...sheet.matchAll(/<hyperlink ref="([A-Z]+\d+(?::[A-Z]+\d+)?)"/g)].map((match) => match[1])).toEqual(["A6:B6", "A7", "B7", "A8", "B8"]);
+  });
+
   test("an .ods workbook's links read: A7 and B7 carry data-link, and following B7 activates Data with A1 selected", async ({ page }) => {
     await openFixture(page, "spec135-annotations.ods");
     await expect(cellAt(page, "A7")).toHaveAttribute("data-link", "true");
