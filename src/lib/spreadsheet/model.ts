@@ -411,6 +411,85 @@ export interface Sheet {
    *  worksheet changes unless the sheet is also `dirty`. ods annotations
    *  live in the table XML, so an ods annotation command sets `dirty`. */
   annotationsDirty?: true;
+  // --- SPEC-136 (pageSetup.ts is the normative source for the commands) ---
+  /** How the sheet prints. Absent: the file said nothing about it, and every
+   *  field takes its default. Replaced, never mutated, by every command. */
+  pageSetup?: SheetPageSetup;
+  /** xlsx: the page setup changed since open — the writer splices the page
+   *  elements (and `sheetPr/pageSetUpPr`) into the retained worksheet XML,
+   *  attribute by attribute; nothing else in the worksheet changes unless
+   *  the sheet is also `dirty`. ods page setup lives in `styles.xml` and the
+   *  table's start tag (pageSetup.ts markPageSetupEdited). */
+  pageSetupDirty?: true;
+}
+
+// --- SPEC-136: page setup ---------------------------------------------------------------------
+// SPEC-136 is the normative source for the sheet page-setup model, both wire
+// mappings (xlsx/pageSetup.ts, ods/pageSetup.ts), the header/footer code
+// language (headerFooter.ts) and the pagination algorithm (print.ts). Plain
+// JSON; an absent field means the default pageSetup.ts pins.
+
+/** Page margins in cm; header/footer = page edge → header top / footer bottom. */
+export interface SheetMargins {
+  topCm: number;
+  rightCm: number;
+  bottomCm: number;
+  leftCm: number;
+  headerCm: number;
+  footerCm: number;
+}
+
+/** One header or footer's sections, each Excel code text (`&P of &N`). */
+export interface HeaderFooterSections {
+  left?: string;
+  center?: string;
+  right?: string;
+}
+
+export interface HeaderFooterPair {
+  header?: HeaderFooterSections;
+  footer?: HeaderFooterSections;
+}
+
+export interface SheetHeaderFooter {
+  odd: HeaderFooterPair;
+  /** Used iff differentOddEven. */
+  even?: HeaderFooterPair;
+  /** Used iff differentFirst. */
+  first?: HeaderFooterPair;
+  differentOddEven?: true;
+  differentFirst?: true;
+  /** Absent = true (Excel's defaults). */
+  scaleWithDoc?: false;
+  alignWithMargins?: false;
+}
+
+export interface SheetPageSetup {
+  /** Absent = portrait. */
+  orientation?: "landscape";
+  /** Portrait dimensions; `xlsxPaperSize` the xlsx code it came from or maps to. */
+  paper?: { widthCm: number; heightCm: number; xlsxPaperSize?: number };
+  /** 10..400; absent = 100. */
+  scale?: number;
+  /** Pages, 0 = unconstrained; present ⇒ fit mode. */
+  fitTo?: { width: number; height: number };
+  /** ods `style:scale-to-pages`: fit into N pages in total. */
+  odsScaleToPages?: number;
+  /** Absent = DEFAULT_SHEET_MARGINS. */
+  margins?: SheetMargins;
+  centerHorizontally?: true;
+  centerVertically?: true;
+  printGridLines?: true;
+  printHeadings?: true;
+  /** Absent = down, then over. */
+  pageOrder?: "overThenDown";
+  /** Absent = automatic. */
+  firstPageNumber?: number;
+  headerFooter?: SheetHeaderFooter;
+  /** 0-based rows that START a page; ascending, unique. */
+  rowBreaks?: number[];
+  /** 0-based columns that START a page; ascending, unique. */
+  colBreaks?: number[];
 }
 
 // --- SPEC-135: notes, threads and hyperlinks ------------------------------------------------

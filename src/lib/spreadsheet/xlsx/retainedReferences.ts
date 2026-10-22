@@ -8,7 +8,6 @@
 //
 // | Part | Element / attribute | Kind |
 // | sheet | `customSheetView`'s `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
-// | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
 // | sheet `extLst` | `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
 // | tables | `sortState@ref`, `sortCondition@ref`; on a part no model table holds also `table@ref`, `autoFilter@ref` | range |
@@ -76,6 +75,11 @@
 //   the one whose `x:Row`/`x:Column` name the comment's ORIGINAL cell),
 //   the VML `x:Row`, `x:Column` and `x:Anchor` numbers 1, 3, 5 and 7
 //   (index), and `hyperlink@ref` (range, removable).
+// - Retired by SPEC-136 (its `pageBreaks` adjuster, structure.ts's, moves
+//   Sheet.pageSetup's manual breaks; the writer splices a page-setup-edited
+//   or dirty sheet's `<rowBreaks>`/`<colBreaks>` from the model —
+//   xlsx/pageSetup.ts): `rowBreaks/brk@id` and `colBreaks/brk@id` — left
+//   verbatim, so nothing is adjusted twice.
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
@@ -539,7 +543,7 @@ const X14_SQREF_OWNERS: ReadonlySet<string> = new Set(["sparkline"]);
 const X14_FORMULA_SCOPES: ReadonlySet<string> = new Set(["sparklineGroup"]);
 
 /** Whether a worksheet's text may hold an element of the table. */
-const WORKSHEET_ELEMENTS = /autoFilter|sortState|hyperlink|rowBreaks|colBreaks|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
+const WORKSHEET_ELEMENTS = /autoFilter|sortState|hyperlink|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
 
 /** `linksModelled`: SPEC-135's `hyperlinks` adjuster owns the sheet's
  * `hyperlink@ref`s (the reader modelled them), left alone here. */
@@ -573,8 +577,6 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass, linksModelled = fa
         if (frame.local === "inputCells" || !insideModelledFilter(frame)) {
           edits.rangeAttribute(frame, moved, host.name, false);
         }
-      } else if (frame.local === "brk" && (parent?.local === "rowBreaks" || parent?.local === "colBreaks")) {
-        edits.indexAttribute(frame, "id", host.name, parent.local === "rowBreaks" ? "row" : "col");
       } else if (frame.local === "dataRef" && scanAttr(frame.attrs, "ref") !== undefined && !hasRelationshipId(frame.attrs)) {
         const named = scanAttr(frame.attrs, "sheet");
         const on = named === undefined ? host : resolveRetainedSheetName(pass.model, pass.parts, named, host.id);

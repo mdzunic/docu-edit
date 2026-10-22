@@ -153,6 +153,7 @@ import { emptyWorksheetXml, serializeWorksheet, type XlsxSheetContext } from "./
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
+import { spliceXlsxPageSetup } from "./pageSetup";
 
 export { emptyWorksheetXml } from "./sheetXml";
 
@@ -182,7 +183,7 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
   if (
     !model.structureDirty &&
     !model.namesDirty &&
-    !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheet.annotationsDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))
+    !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheet.annotationsDirty || sheet.pageSetupDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))
   ) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
@@ -260,7 +261,10 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const worksheets = model.sheets.map((sheet, index) =>
     isChartSheetPart(sheetParts[index]!)
       ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
-      : serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
+      : spliceXlsxPageSetup(
+          serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
+          sheet.pageSetup,
+        ),
   );
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
@@ -705,11 +709,20 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const next = annotate(xml);
     return next === xml ? tabled : encode(next);
   };
+  // SPEC-136: then a dirty or page-setup-edited sheet's page elements.
+  const withPageSetup = (sheet: Sheet, bytes: Uint8Array): Uint8Array => {
+    if (!write || sheet.kind !== "grid" || !(sheet.dirty || sheet.pageSetupDirty)) {
+      return bytes;
+    }
+    const xml = decodeUtf8(bytes);
+    const next = spliceXlsxPageSetup(xml, sheet.pageSetup);
+    return next === xml ? bytes : encode(next);
+  };
   for (const plan of plans) {
     const active = plan.index === activeIndex;
     if (plan.generated) {
       const xml = write && plan.sheet.kind === "grid" ? serializeWorksheet(plan.sheet, undefined, context(plan)) : emptyWorksheetXml(plan.sheet, active, model);
-      sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(xml)));
+      sheetBytes.set(plan.partName, withPageSetup(plan.sheet, withDrawing(plan.partName, encode(xml))));
       continue;
     }
     const bytes = parts.get(plan.partName);
@@ -719,11 +732,14 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const sheetRemap = ownerRemap.get(plan.partName) ?? remap;
     sheetBytes.set(
       plan.partName,
-      withDrawing(
-        plan.partName,
-        write && plan.sheet.dirty && plan.sheet.kind === "grid"
-          ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
-          : sheetPartFor(bytes, plan, active, sheetRemap, model),
+      withPageSetup(
+        plan.sheet,
+        withDrawing(
+          plan.partName,
+          write && plan.sheet.dirty && plan.sheet.kind === "grid"
+            ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
+            : sheetPartFor(bytes, plan, active, sheetRemap, model),
+        ),
       ),
     );
   }
