@@ -155,7 +155,7 @@ export function createParseSessions(): ParseSessions {
     return { op: "scanned", results, chunkCount: chunks.length };
   }
 
-  function chunk(id: number, index: number): SheetParseResponse {
+  function sendChunk(id: number, index: number): SheetParseResponse {
     const session = sessionOf(id);
     const sent = session.chunks?.[index];
     if (!sent) {
@@ -174,7 +174,7 @@ export function createParseSessions(): ParseSessions {
           case "scan":
             return scan(request.session, request.jobs, request.context);
           case "chunk":
-            return chunk(request.session, request.index);
+            return sendChunk(request.session, request.index);
           case "dispose":
             open.delete(request.session);
             return { op: "disposed" };

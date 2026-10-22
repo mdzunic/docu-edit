@@ -435,7 +435,7 @@ describe("readSpreadsheetOffThread with a Worker: the parse protocol", () => {
   });
 
   describe("an error the read raised in the worker comes back as a reply, rethrown as the same class and message and never retried", () => {
-    it.each([
+    it.each<{ what: string; sheets: Record<string, string[]>; thrown: (error: unknown) => void }>([
       {
         what: "the cell-ceiling refusal, counted across every sheet",
         sheets: { First: ["!take 1500000"], Second: ["!take 600000"] },
@@ -529,14 +529,9 @@ describe("readSpreadsheetOffThread with a Worker: the parse protocol", () => {
     ])("$what", async ({ misbehave, construct, shells }) => {
       InProcessWorker.misbehave = misbehave;
       if (construct === "throws") {
-        vi.stubGlobal(
-          "Worker",
-          class {
-            constructor() {
-              throw new DOMException("Refused to create a worker", "SecurityError");
-            }
-          },
-        );
+        vi.stubGlobal("Worker", function refusedWorker(): never {
+          throw new DOMException("Refused to create a worker", "SecurityError");
+        });
       }
       const parts = book();
       const { model, progress } = await readOffThread(parts);
