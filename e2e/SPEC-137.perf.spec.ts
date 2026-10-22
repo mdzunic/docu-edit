@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Browser } from "@playwright/test";
+import { test, expect, type Page, type Browser, type BrowserContext } from "@playwright/test";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -322,10 +322,12 @@ async function measureSave(page: Page): Promise<{ sheetSaveMs: number; sheetMain
 }
 
 /** Opens spec137-library.xlsx `count` times through the real open path in
- * one context, closing back to the library between opens, then hands back a
- * storageState that carries those documents' IndexedDB records into a fresh
- * context (Playwright 1.63 captures IndexedDB in storageState). */
-async function seedLibrary(browser: Browser, count: number): Promise<string> {
+ * one context, closing back to the library between opens, and waits until
+ * every workbook has reached IndexedDB. The context stays open for the
+ * landings: its storage IS the seeded library (handing twenty workbooks'
+ * records to a fresh context through storageState is tens of MB of JSON,
+ * which the browser does not survive). */
+async function seedLibrary(browser: Browser, count: number): Promise<BrowserContext> {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto("/");
@@ -337,8 +339,7 @@ async function seedLibrary(browser: Browser, count: number): Promise<string> {
     await page.getByTestId("close-document").click();
     await expect(page.getByTestId("library")).toBeVisible();
   }
-  // The write-through runs at idle: wait until all `count` shells are in
-  // IndexedDB before capturing it (only `{ indexedDB: true }` captures it).
+  // The write-through runs at idle: wait until every workbook's records are in.
   await expect
     .poll(
       () =>
@@ -359,17 +360,15 @@ async function seedLibrary(browser: Browser, count: number): Promise<string> {
       { timeout: 60_000 },
     )
     .toBeGreaterThanOrEqual(count);
-  const state = await context.storageState({ indexedDB: true });
-  await context.close();
-  return JSON.stringify(state);
+  await page.close();
+  return context;
 }
 
-/** Reload "/" with `storageStateJson`'s documents already in IndexedDB ->
- * performance.now() (navigation-relative) when the 20th library-row
- * attaches, plus the settled heap of that landing. */
-async function measureLibraryLanding(browser: Browser, storageStateJson: string, expectedRows: number): Promise<{ sheetLibraryLandingMs: number; heapMB: number }> {
-  const context = await browser.newContext({ storageState: JSON.parse(storageStateJson) });
-  const page = await context.newPage();
+/** A fresh page of the seeded context loads "/" -> performance.now()
+ * (navigation-relative) when the 20th library-row attaches, plus the
+ * settled heap of that landing. */
+async function measureLibraryLanding(seeded: BrowserContext, expectedRows: number): Promise<{ sheetLibraryLandingMs: number; heapMB: number }> {
+  const page = await seeded.newPage();
   await page.addInitScript((n: number) => {
     const w = window as unknown as { __libraryLandingMs?: number };
     const check = () => {
@@ -392,7 +391,7 @@ async function measureLibraryLanding(browser: Browser, storageStateJson: string,
   const sheetLibraryLandingMs = await page.evaluate(() => (window as unknown as { __libraryLandingMs: number }).__libraryLandingMs);
   await page.waitForTimeout(500); // let the landing settle before sampling heap
   const heapMB = await measureHeapMB(page);
-  await context.close();
+  await page.close();
   return { sheetLibraryLandingMs, heapMB };
 }
 
@@ -459,12 +458,14 @@ test("holds every SPEC-137 workbook performance budget on spec137-large.xlsx, me
     samples.sheetHeapAfterSettleMB.push(await measureHeapMB(page));
     await context.close();
 
-    const landing = await measureLibraryLanding(browser, seeded, 20);
+    const landing = await measureLibraryLanding(seeded, 20);
     samples.sheetLibraryLandingMs.push(landing.sheetLibraryLandingMs);
     samples.sheetLibraryHeapDeltaMB.push(landing.heapMB - emptyHeapMB);
     // eslint-disable-next-line no-console
     console.log(`[SPEC-137] run ${run + 1}: ${Object.entries(samples).map(([key, values]) => `${key}=${values.at(-1)?.toFixed(1)}`).join(" ")}`);
   }
+
+  await seeded.close();
 
   for (const name of Object.keys(BUDGETS)) {
     assertBudget(name, samples[name], baseline);
