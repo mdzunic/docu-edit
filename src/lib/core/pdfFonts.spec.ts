@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseCssColor } from "./domExtract";
-import { allFaceKeys, classifyFamily, faceFileName, faceKeyFor, firstFamilyName } from "./fontMap";
+import { parseCssColor } from "./pdfExtract";
+import { allFaceKeys, classifyFamily, faceFileName, faceKeyFor, firstFamilyName } from "./pdfFonts";
 
 describe("firstFamilyName", () => {
   it("takes the first family, unquoted and lowercased", () => {

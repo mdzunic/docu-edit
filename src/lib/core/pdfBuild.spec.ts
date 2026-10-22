@@ -9,8 +9,8 @@ import {
   type PdfImageItem,
   type PdfPageInput,
   type PdfPathItem,
-} from "./buildPdf";
-import type { FaceKey } from "./fontMap";
+} from "./pdfBuild";
+import type { FaceKey } from "./pdfFonts";
 import { parseSfnt, type SfntFont } from "./sfnt";
 
 function loadFace(file: string): SfntFont {

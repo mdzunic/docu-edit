@@ -10,7 +10,7 @@ import {
   parseCssPaint,
   parseOpaqueCssColor,
   type PdfRect,
-} from "./domExtract";
+} from "./pdfExtract";
 
 describe("parseOpaqueCssColor", () => {
   it("parses the opaque rgb() form computed styles produce", () => {

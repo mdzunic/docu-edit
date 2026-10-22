@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSvgPath } from "./svgPath";
-import { pointsToSvg, routeConnector, routedPathToSvg } from "../core/connectors";
+import { pointsToSvg, routeConnector, routedPathToSvg } from "./connectors";
 
 describe("parseSvgPath", () => {
   it("reads the poly-line form routedPathToSvg emits", () => {

@@ -14,49 +14,20 @@ import {
   sectionPageSize,
   type DocumentModel,
 } from "./documentModel";
+import { parseNumberRange, rangeHint, type NumberRangeResult } from "./core/pageRange";
 
 /** A parsed page range: the 1-based page numbers to print, ascending, or a
  * user-facing validation error. Exactly one of the two is set. */
-export interface PageRangeResult {
-  pages?: number[];
-  error?: string;
-}
+export type PageRangeResult = NumberRangeResult;
 
-export const RANGE_HINT = 'Use page numbers like "1-3, 5"';
+export const RANGE_HINT = rangeHint("page");
 
 /** Parses a custom page-range string ("2", "1-3", "1-2, 5") against the
  * document's page count. Errors on non-numeric tokens, ranges whose start
- * is after their end, and pages outside 1..totalPages (AC-28). */
+ * is after their end, and pages outside 1..totalPages (AC-28). A thin wrapper
+ * over core/pageRange.ts (SPEC-104), which owns the rules. */
 export function parsePageRange(input: string, totalPages: number): PageRangeResult {
-  const trimmed = input.trim();
-  if (trimmed.length === 0) {
-    return { error: `Enter a page range. ${RANGE_HINT}` };
-  }
-  const selected = new Set<number>();
-  for (const token of trimmed.split(",")) {
-    const part = token.trim();
-    const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(part);
-    if (!match) {
-      return { error: `"${part}" is not a page number. ${RANGE_HINT}` };
-    }
-    const start = Number.parseInt(match[1], 10);
-    const end = match[2] === undefined ? start : Number.parseInt(match[2], 10);
-    if (end < start) {
-      return { error: `"${part}" starts after it ends` };
-    }
-    if (start < 1 || end > totalPages) {
-      return {
-        error:
-          totalPages === 1
-            ? "This document only has 1 page"
-            : `Pages go from 1 to ${totalPages}`,
-      };
-    }
-    for (let page = start; page <= end; page += 1) {
-      selected.add(page);
-    }
-  }
-  return { pages: Array.from(selected).toSorted((a, b) => a - b) };
+  return parseNumberRange(input, totalPages, "page");
 }
 
 /** Whether the document has no printable content: every section's block
