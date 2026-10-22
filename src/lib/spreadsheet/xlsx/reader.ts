@@ -68,6 +68,11 @@
 //   deferred). The drawing part stays in `opaque`, the splice base of a
 //   touched layer. SPEC-132: a chart drawing's content is the chart read from
 //   its part (xlsx/chartXml.ts readXlsxChart), the part itself in `opaque`.
+// - SPEC-135: the workbook's persons (xl/persons/person.xml) → `persons`,
+//   and each grid sheet's notes, threads and hyperlinks
+//   (xlsx/annotations.ts readXlsxSheetAnnotations: the comments, VML and
+//   threaded parts its relationships name, its `<hyperlinks>`); the parts
+//   stay in `opaque`, the splice base of a rebuilt sheet's.
 // A foreign sheet keeps the defaults: no columns, no merges, 64 px columns
 // and 15 pt rows. The cell ceiling stops the scan the moment the stored
 // count would pass MAX_WORKBOOK_CELLS; a cell or row past the grid is a parse
@@ -89,6 +94,7 @@ import type { CalcSettings, Sheet } from "../model";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
+import { readXlsxPersons, readXlsxSheetAnnotations } from "./annotations";
 import { readXlsxDefinedNames } from "./definedNames";
 import { readXlsxChartSheet, readXlsxSheetDrawings } from "./drawingXml";
 import { partTextOf, workbookPathOf } from "./package";
@@ -323,6 +329,8 @@ export async function parseXlsx(
   const dxfs = { dxfs: styleTable.dxfs };
   // SPEC-131: the images the drawings embed, one part per package path.
   const media = new Map<string, MediaPart>();
+  // SPEC-135: the thread authors every sheet's messages name.
+  const persons = readXlsxPersons(parts);
   for (const entry of workbook.sheets) {
     const sheet: Sheet = {
       id: crypto.randomUUID(),
@@ -363,6 +371,9 @@ export async function parseXlsx(
       if (tables.length > 0) {
         sheet.tables = tables;
       }
+      // SPEC-135: notes, threads and hyperlinks.
+      const annotations = readXlsxSheetAnnotations(parts, entry.partName, partText(bytes), { ...(persons ? { persons } : {}), ...(indexedColors ? { indexedColors } : {}) });
+      Object.assign(sheet, annotations);
     } else if (entry.chartsheet && bytes) {
       const chart = readXlsxChartSheet(parts, entry.partName, sheet);
       if (chart) {
@@ -413,6 +424,9 @@ export async function parseXlsx(
   }
   if (media.size > 0) {
     parsed.media = [...media.values()];
+  }
+  if (persons !== undefined && persons.length > 0) {
+    parsed.persons = persons;
   }
   return parsed;
 }
