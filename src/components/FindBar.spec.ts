@@ -107,3 +107,50 @@ describe("FindBar", () => {
     expect(wrapper.emitted("replace-all")).toHaveLength(1);
   });
 });
+
+describe("FindBar — the products' props and options slot (SPEC-098, SPEC-134)", () => {
+  it("defaults to the text editor's scope, placeholder and Whole words toggle", () => {
+    const wrapper = mountBar();
+    const scope = wrapper.get('[data-testid="find-scope"]');
+    expect(scope.text()).toBe("Body text only");
+    expect(scope.attributes("title")).toBe("Search covers body text only. Headers, footers and footnotes are excluded.");
+    expect(wrapper.get('[data-testid="find-query"]').attributes("placeholder")).toBe("Find in document");
+    expect(wrapper.find('[data-testid="find-whole-words"]').exists()).toBe(true);
+  });
+
+  it("renders a product's scope label and title in the find-scope span", () => {
+    const wrapper = mountBar({ scopeLabel: "Cells only", scopeTitle: "Search covers cell values and formulas." });
+    const scope = wrapper.get('[data-testid="find-scope"]');
+    expect(scope.text()).toBe("Cells only");
+    expect(scope.attributes("title")).toBe("Search covers cell values and formulas.");
+  });
+
+  it("takes the query field's placeholder from a prop", () => {
+    const wrapper = mountBar({ placeholder: "Find in sheet" });
+    expect(wrapper.get('[data-testid="find-query"]').attributes("placeholder")).toBe("Find in sheet");
+  });
+
+  it("hides the Whole words toggle when showWholeWords is false, keeping the other two", () => {
+    const wrapper = mountBar({ showWholeWords: false });
+    expect(wrapper.find('[data-testid="find-whole-words"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="find-match-case"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="find-regex"]').exists()).toBe(true);
+  });
+
+  it("renders the options slot inside .find-options, after the regex toggle and before the scope", () => {
+    const wrapper = mount(FindBar, {
+      props: { visible: true, query: "cat", matchCount: 1, currentIndex: 0 },
+      slots: { options: '<button type="button" data-testid="extra-option">Match entire cell</button>' },
+      attachTo: document.body,
+    });
+    const row = wrapper.get(".find-options");
+    const ids = row.findAll("[data-testid]").map((element) => element.attributes("data-testid"));
+    expect(ids).toEqual(["find-match-case", "find-whole-words", "find-regex", "extra-option", "find-scope"]);
+  });
+
+  it("renders nothing extra without the options slot", () => {
+    const wrapper = mountBar();
+    const ids = wrapper.get(".find-options").findAll("[data-testid]").map((element) => element.attributes("data-testid"));
+    expect(ids).toEqual(["find-match-case", "find-whole-words", "find-regex", "find-scope"]);
+  });
+});

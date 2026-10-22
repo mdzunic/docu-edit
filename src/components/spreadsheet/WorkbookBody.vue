@@ -29,7 +29,8 @@
 // the Name Manager and its editor, from the grid context's `names`; the
 // table surfaces (SheetTableSurfaces, the grid context's `tables`) — the
 // design bar and the ODS notice sit BELOW the sheet, between it and the tabs,
-// so they never move a cell under the pointer. SPEC-135: the link dialog
+// so they never move a cell under the pointer. SPEC-134: the grid's find
+// marks, from the grid context's `find`. SPEC-135: the link dialog
 // (SheetLinkDialog, from `editing`'s links), which the cell menu's Link…
 // opens too; the cell menu's notes and comments items (`editing`'s notes
 // and comments).
@@ -40,6 +41,7 @@ import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
 import { namesOf } from "../../views/spreadsheet/useNames";
+import { findOf } from "../../views/spreadsheet/useSheetFind";
 import { tablesOf } from "../../views/spreadsheet/useSheetTables";
 import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
@@ -102,6 +104,8 @@ const sortFilter = computed(() => sortFilterOf(props.grid));
 const names = computed(() => namesOf(props.grid));
 /** SPEC-133: the tables' design bar, dialogs and notice (null: not wired). */
 const tables = computed(() => tablesOf(props.grid));
+/** SPEC-134: the find bar's marks on the grid (null: none). */
+const findMarks = computed(() => findOf(props.grid)?.marks.value ?? undefined);
 
 /** The cell menu's Cut, Copy, Paste and Paste special… (SPEC-125). */
 function clipboard(action = "copy") {
@@ -221,6 +225,7 @@ const tabs = computed(() => {
           :sheet="book.activeSheet.value"
           :context="grid"
           :show-formulas="grid.formulas.showFormulas.value"
+          :find-marks="findMarks"
           @cycle-sheet="book.cycleSheet"
         />
         <SheetChartLayer

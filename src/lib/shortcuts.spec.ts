@@ -256,6 +256,7 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.toggleFilter",
   "sheet.reapplyFilter",
   "sheet.nameManager",
+  "sheet.goTo",
   "sheet.note",
   "sheet.newComment",
   "sheet.insertLink",
@@ -298,7 +299,7 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter, SPEC-135's note and New comment under Notes and comments and its Insert link under Links — one binding each but paste special's two", () => {
+  it("declares the sheet's twenty-five commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter, SPEC-134's Go to under Navigation, SPEC-135's note and New comment under Notes and comments and its Insert link under Links — one binding each but paste special's and Go to's two", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
     const pasteAndFill = ["sheet.pasteSpecial", "sheet.fillDown", "sheet.fillRight"];
     const sortAndFilter = ["sheet.toggleFilter", "sheet.reapplyFilter"];
@@ -319,9 +320,11 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
               ? "Paste and fill"
               : sortAndFilter.includes(definition.id)
                 ? "Sort and filter"
-                : "Sheet formatting";
+                : definition.id === "sheet.goTo"
+                  ? "Navigation"
+                  : "Sheet formatting";
         expect(definition.category).toBe(structural ? "Rows and columns" : category);
-        expect(definition.bindings).toHaveLength(definition.id === "sheet.pasteSpecial" ? 2 : 1);
+        expect(definition.bindings).toHaveLength(definition.id === "sheet.pasteSpecial" || definition.id === "sheet.goTo" ? 2 : 1);
       }
     }
   });
@@ -350,6 +353,18 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
       expect(findShortcut(keydown({ key: isMac ? "¬" : "l", code: "KeyL", altKey: true, ...mod }), isMac, definitions)?.id).toBe("sheet.reapplyFilter");
       expect(findShortcut(keydown({ key: "l", code: "KeyL", ...mod }), isMac, definitions)).toBeUndefined();
     }
+  });
+
+  it("binds SPEC-134's Go to to Control+G on every platform and to F5 — macOS keeps Cmd+G", () => {
+    for (const { isMac } of PLATFORMS) {
+      const definitions = sheetShortcutDefinitions(isMac);
+      expect(findShortcut(keydown({ key: "g", code: "KeyG", ctrlKey: true }), isMac, definitions)?.id).toBe("sheet.goTo");
+      expect(findShortcut(keydown({ key: "F5", code: "F5" }), isMac, definitions)?.id).toBe("sheet.goTo");
+      expect(findShortcut(keydown({ key: "g", code: "KeyG", ctrlKey: true, shiftKey: true }), isMac, definitions)).toBeUndefined();
+    }
+    // Cmd+G (find-next on macOS) and Cmd+Control+G are no binding of the sheet's.
+    expect(findShortcut(keydown({ key: "g", code: "KeyG", metaKey: true }), true, sheetShortcutDefinitions(true))).toBeUndefined();
+    expect(findShortcut(keydown({ key: "g", code: "KeyG", metaKey: true, ctrlKey: true }), true, sheetShortcutDefinitions(true))).toBeUndefined();
   });
 
   it("binds SPEC-135's note to Shift+F2 and New comment to Ctrl+Alt+M / Cmd+Option+M by physical key", () => {

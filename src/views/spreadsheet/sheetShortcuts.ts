@@ -44,6 +44,12 @@
 // Cmd+Option+L for its Downloads page; Data ▸ Reapply filter is the
 // guaranteed path. useSortFilter runs both.
 //
+// SPEC-134 adds Go To (`sheet.goTo`): Control+G on every platform (`ctrl`, so
+// macOS keeps Cmd+G for find-next, which useSheetFind handles while the find
+// bar is open — Excel for Mac's arrangement) and F5. useSheetGoTo takes both
+// while a workbook view is mounted and no dialog is open, so F5 never
+// reloads the page there.
+//
 // SPEC-135 adds the notes and comments pair: Shift+F2 (`sheet.note`) and
 // Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, by physical key `KeyM`),
 // and the link dialog's Ctrl/Cmd+K (`sheet.insertLink`, useCellLinks) — the
@@ -75,6 +81,7 @@ export type SheetShortcutId =
   | "sheet.toggleFilter"
   | "sheet.reapplyFilter"
   | "sheet.nameManager"
+  | "sheet.goTo"
   | "sheet.note"
   | "sheet.newComment"
   | "sheet.insertLink";
@@ -84,6 +91,7 @@ const STRUCTURE_CATEGORY = "Rows and columns";
 const PASTE_CATEGORY = "Paste and fill";
 const FORMULA_CATEGORY = "Formulas";
 const FILTER_CATEGORY = "Sort and filter";
+const NAVIGATION_CATEGORY = "Navigation";
 const ANNOTATION_CATEGORY = "Notes and comments";
 const LINK_CATEGORY = "Links";
 
@@ -136,6 +144,8 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // SPEC-133: Formulas ▸ Name Manager…, Excel's Ctrl+F3 — best effort on
     // macOS, whose Cmd+F3 shows the desktop; the menu item is the guaranteed path.
     { id: "sheet.nameManager", label: "Name Manager", category: FORMULA_CATEGORY, bindings: [{ key: "F3", mod: true }] },
+    // SPEC-134: Go To — Control+G everywhere, and F5.
+    { id: "sheet.goTo", label: "Go to", category: NAVIGATION_CATEGORY, bindings: [{ key: "g", ctrl: true }, { key: "F5" }] },
     // SPEC-135: Excel's Shift+F2 (a new note, or the note's editor) and
     // Ctrl+Alt+M / Cmd+Option+M (New comment, by physical key — best effort
     // on macOS, whose Option+Cmd+M minimises the windows; the cell context
