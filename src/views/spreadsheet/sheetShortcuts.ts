@@ -43,6 +43,12 @@
 // it (`sheet.reapplyFilter`) — best effort on macOS, where Chrome keeps
 // Cmd+Option+L for its Downloads page; Data ▸ Reapply filter is the
 // guaranteed path. useSortFilter runs both.
+//
+// SPEC-134 adds Go To (`sheet.goTo`): Control+G on every platform (`ctrl`, so
+// macOS keeps Cmd+G for find-next, which useSheetFind handles while the find
+// bar is open — Excel for Mac's arrangement) and F5. useSheetGoTo takes both
+// while a workbook view is mounted and no dialog is open, so F5 never
+// reloads the page there.
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -68,13 +74,15 @@ export type SheetShortcutId =
   | "sheet.insertFunction"
   | "sheet.toggleFilter"
   | "sheet.reapplyFilter"
-  | "sheet.nameManager";
+  | "sheet.nameManager"
+  | "sheet.goTo";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
 const PASTE_CATEGORY = "Paste and fill";
 const FORMULA_CATEGORY = "Formulas";
 const FILTER_CATEGORY = "Sort and filter";
+const NAVIGATION_CATEGORY = "Navigation";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -125,6 +133,8 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // SPEC-133: Formulas ▸ Name Manager…, Excel's Ctrl+F3 — best effort on
     // macOS, whose Cmd+F3 shows the desktop; the menu item is the guaranteed path.
     { id: "sheet.nameManager", label: "Name Manager", category: FORMULA_CATEGORY, bindings: [{ key: "F3", mod: true }] },
+    // SPEC-134: Go To — Control+G everywhere, and F5.
+    { id: "sheet.goTo", label: "Go to", category: NAVIGATION_CATEGORY, bindings: [{ key: "g", ctrl: true }, { key: "F5" }] },
   ];
   return definitions;
 }
