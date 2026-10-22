@@ -22,6 +22,10 @@ defineProps({
   canPrint: { type: Boolean, required: true },
   /** "Print background colours" (SPEC-074 AC-25). */
   printBackground: { type: Boolean, default: false },
+  /** SPEC-136: what an empty job says (the sheet's "This sheet has nothing to print."). */
+  emptyMessage: { type: String, default: "This document has no content to print." },
+  /** SPEC-136: the background-colours option (a sheet prints its fills always). */
+  showBackgroundOption: { type: Boolean, default: true },
 });
 
 const emit = defineEmits([
@@ -87,7 +91,7 @@ function handleBackgroundToggle(event = new Event("change")) {
       class="panel-empty"
       data-testid="print-no-pages"
     >
-      This document has no content to print.
+      {{ emptyMessage }}
     </p>
     <fieldset
       class="panel-range"
@@ -135,9 +139,14 @@ function handleBackgroundToggle(event = new Event("change")) {
         {{ error }}
       </p>
     </fieldset>
+    <!-- SPEC-136: a product's own options (the sheet's print scope). -->
+    <slot name="options" />
     <!-- A page background is a screen decoration until asked for on paper
          (SPEC-074 AC-25); page borders always print, so they get no switch. -->
-    <label class="panel-option">
+    <label
+      v-if="showBackgroundOption"
+      class="panel-option"
+    >
       <input
         type="checkbox"
         :checked="printBackground"
@@ -147,6 +156,8 @@ function handleBackgroundToggle(event = new Event("change")) {
       Print background colours
     </label>
     <footer class="panel-actions">
+      <!-- SPEC-136: a product's own actions (the sheet's Page setup…, Download PDF). -->
+      <slot name="actions" />
       <button
         ref="printButton"
         type="button"
@@ -257,6 +268,7 @@ function handleBackgroundToggle(event = new Event("change")) {
 
 .panel-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-3);
   margin-top: var(--space-5);
 }

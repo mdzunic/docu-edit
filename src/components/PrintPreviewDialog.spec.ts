@@ -82,3 +82,24 @@ describe("PrintPreviewDialog", () => {
     ).toBe(true);
   });
 });
+
+describe("PrintPreviewDialog's product slots and props (SPEC-136)", () => {
+  it("defaults leave the text view's panel unchanged: the empty message and the background option", () => {
+    const empty = mountPanel({ pageCount: 0 });
+    expect(empty.get('[data-testid="print-no-pages"]').text()).toBe("This document has no content to print.");
+    expect(empty.find('[data-testid="print-background"]').exists()).toBe(true);
+  });
+
+  it("an options slot after the Pages fieldset, an actions slot before Print, emptyMessage and showBackgroundOption", () => {
+    const wrapper = mount(PrintPreviewDialog, {
+      props: { pageCount: 0, rangeMode: "all", rangeText: "", error: "", canPrint: false, emptyMessage: "This sheet has nothing to print.", showBackgroundOption: false },
+      slots: { options: '<select data-testid="scope"></select>', actions: '<button data-testid="extra">Extra</button>' },
+    });
+    expect(wrapper.get('[data-testid="print-no-pages"]').text()).toBe("This sheet has nothing to print.");
+    expect(wrapper.find('[data-testid="print-background"]').exists()).toBe(false);
+    const html = wrapper.html();
+    expect(html.indexOf('data-testid="scope"')).toBeGreaterThan(html.indexOf("</fieldset>"));
+    expect(html.indexOf('data-testid="extra"')).toBeLessThan(html.indexOf('data-testid="print-confirm"'));
+    expect(wrapper.get('[data-testid="print-confirm"]').attributes("disabled")).toBeDefined();
+  });
+});

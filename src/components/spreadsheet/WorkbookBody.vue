@@ -38,6 +38,7 @@
 // (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
+import SheetPrintSurfaces from "./SheetPrintSurfaces.vue";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
 import { namesOf } from "../../views/spreadsheet/useNames";
@@ -231,6 +232,12 @@ const tabs = computed(() => {
         <SheetChartLayer
           v-if="charts"
           :charts="charts"
+        />
+        <SheetPrintSurfaces
+          v-if="grid.printing"
+          :printing="grid.printing"
+          :theme="grid.model?.theme ?? undefined"
+          :image-src="grid.drawings?.imageSrc"
         />
       </div>
       <SheetSidePanel :editing="editing" />

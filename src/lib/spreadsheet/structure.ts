@@ -54,6 +54,7 @@
 // `filterHidden`.
 import type { CellRef, GridRange } from "./address";
 import { adjustHyperlinksForEdit, adjustNotesForEdit } from "./annotations";
+import { adjustPageBreaksForEdit } from "./pageSetup";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { mapFormatFormulas, mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
 import { formatOrigin, renumberPriorities, sheetFormats, type ConditionalFormat } from "./conditionalFormats";
@@ -1103,6 +1104,8 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   // SPEC-135 (annotations.ts): notes and threads, then hyperlinks and every place location.
   { id: "notes", adjust: (model, edit) => adjustNotesForEdit(model, edit) },
   { id: "hyperlinks", adjust: (model, edit) => adjustHyperlinksForEdit(model, edit) },
+  // SPEC-136 (pageSetup.ts): the edited sheet's manual page breaks. Print areas and titles have none — `names` moves them.
+  { id: "pageBreaks", adjust: (model, edit) => adjustPageBreaksForEdit(model, edit) },
 ];
 
 /** One structural edit (see the module header). */

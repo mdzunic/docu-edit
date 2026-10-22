@@ -10,7 +10,6 @@
 // | suffix, not a database range the model owns | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
 // | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
 // | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
-// | table start tag | `table:table@table:print-ranges` (emptied → the attribute removed) | list |
 // | inside tables, `Cell.preservedXml`, `Sheet.drawings` source XML | `draw:object@draw:notify-on-update-of-ranges` | list |
 // | inside tables | `table:scenario@table:scenario-ranges` | list |
 // | `Object N/content.xml` | `chart:plot-area@table:cell-range-address`, `chart:series@chart:values-cell-range-address`, `@chart:label-cell-address`, `chart:domain@table:cell-range-address`, `chart:categories@table:cell-range-address` | list |
@@ -80,6 +79,11 @@
 //   preservedXml) and every drawing whose content is a modelled chart — so
 //   nothing is adjusted twice. Out-of-catalogue charts (`chart:surface`) are
 //   still rewritten here. SPEC-125's move path runs this same rewrite.
+// - Retired by SPEC-136 (print areas are SPEC-133's `_xlnm.Print_Area`
+//   names, moved by the `names` adjusters; the writer writes the table's
+//   `table:print-ranges` from the model's name — ods/pageSetup.ts):
+//   `table:table@table:print-ranges` — left verbatim, so nothing is
+//   adjusted twice.
 // - Retired by SPEC-133 (the `names` adjusters of structure.ts and move.ts
 //   move the model's defined names, which the writer reconciles with the
 //   retained `table:named-expressions` of the suffix and of each table —
@@ -141,7 +145,6 @@ const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
   ["table:data-pilot-table", [list("table:target-range-address")]],
   ["table:source-cell-range", [list("table:cell-range-address")]],
   ["table:consolidation", [list("table:source-cell-range-addresses"), anchor("table:target-cell-address")]],
-  ["table:table", [list("table:print-ranges", "attribute")]],
   ["table:scenario", [list("table:scenario-ranges")]],
   ["draw:object", [list("draw:notify-on-update-of-ranges")]],
 ]);

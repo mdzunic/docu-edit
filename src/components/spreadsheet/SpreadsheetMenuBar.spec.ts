@@ -32,9 +32,13 @@ describe("SpreadsheetMenuBar (SPEC-121)", () => {
       props: { state: { copyLabel: "Download a copy as OpenDocument Spreadsheet (.ods)…" } },
     });
     const items = wrapper.get('[data-testid="menu-file"]').findAll('[role="menuitem"]');
+    // SPEC-136: Page setup…, Print area ▸ (its flyout holds Set / Clear) and Print… come before Close.
     expect(items.map((item) => item.attributes("data-testid"))).toEqual([
       "sheet-menu-download",
       "sheet-menu-download-copy",
+      "sheet-menu-page-setup",
+      "sheet-menu-print-area",
+      "sheet-menu-print",
       "sheet-menu-close",
     ]);
     await items[1].trigger("click");
@@ -165,8 +169,23 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
       "sheet-menu-insert-link",
       "sheet-menu-insert-note",
       "sheet-menu-insert-comment",
+      "sheet-menu-insert-page-break",
+      "sheet-menu-remove-page-break",
+      "sheet-menu-reset-page-breaks",
     ]);
-    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart", "Table…", "Link…", "Note", "Comment"]);
+    // SPEC-136 ends the menu with the page breaks.
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual([
+      "Image…",
+      "Shapes",
+      "Chart",
+      "Table…",
+      "Link…",
+      "Note",
+      "Comment",
+      "Page break",
+      "Remove page break",
+      "Reset all page breaks",
+    ]);
     await wrapper.get('[data-testid="sheet-menu-insert-image"]').trigger("click");
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertImage]);
     await wrapper.get('[data-testid="sheet-menu-insert-shape"]').trigger("click");

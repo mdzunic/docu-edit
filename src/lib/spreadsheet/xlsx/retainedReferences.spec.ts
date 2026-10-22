@@ -380,28 +380,19 @@ describe("the sheet part", () => {
     expect(spans(before, model, SHEET1)).toEqual([["A5", "A6"]]);
   });
 
-  it("rowBreaks/brk@id moves with rows, colBreaks/brk@id with columns; a break in a deleted band goes to its start", () => {
+  it("SPEC-136 retired rowBreaks/brk@id and colBreaks/brk@id: the pageBreaks adjuster moves the model's breaks, the retained text stays verbatim", () => {
     const breaks =
       `<rowBreaks count="2" manualBreakCount="2"><brk id="10" max="16383" man="1"/><brk id="20" max="16383" man="1"/></rowBreaks>` +
       `<colBreaks count="1" manualBreakCount="1"><brk id="3" max="1048575" man="1"/></colBreaks>`;
-    const cases: [StructuralEdit["kind"], number, number, [string, string][]][] = [
-      ["insertRows", 15, 2, [["20", "22"]]],
-      ["insertCols", 0, 1, [["3", "4"]]],
-      [
-        "deleteRows",
-        9,
-        2,
-        [
-          ["10", "9"],
-          ["20", "18"],
-        ],
-      ],
-    ];
-    for (const [kind, at, count, expected] of cases) {
+    for (const [kind, at, count] of [
+      ["insertRows", 15, 2],
+      ["insertCols", 0, 1],
+      ["deleteRows", 9, 2],
+    ] as [StructuralEdit["kind"], number, number][]) {
       const model = book([{ name: "Sheet1", xml: worksheet(breaks) }]);
       const before = model.opaque;
       adjust(model, kind, at, count);
-      expect(spans(before, model, SHEET1), kind).toEqual(expected);
+      expect(spans(before, model, SHEET1), kind).toEqual([]);
     }
   });
 
@@ -835,7 +826,6 @@ describe("sheet names in retained text", () => {
     expect(model.opaque).toBe(before);
     // SPEC-133: the workbook's definedName text is never asked about.
     expect(calls).toEqual([
-      "index Data row 4",
       "range Data A1:A10",
       "formula s1 Sheet1!$A1:$E1",
       "range Data F1",

@@ -96,6 +96,7 @@ import { leadingWithShapes, odsSheetDrawingsXml, type OdsDrawingWriteContext, ty
 import { linkedParagraphsXml, odsNoteXml, paragraphsMatchLink } from "./annotations";
 import { tableStartTag } from "./package";
 import type { OdsRowHeight, OdsStyleEnv, OdsStyleRegistry } from "./styles";
+import { printTitlesOf, type PrintTitles } from "../pageSetup";
 
 /** What the table reader needs from the workbook's styles (OdsStyleBook). */
 export interface OdsLayoutStyles {
@@ -774,7 +775,7 @@ export interface OdsTableContext {
   /** The source's column and row styles as the reader measured them — how
    * the source's default (last-run) column and row styles are recognised and
    * reused for default-sized columns and rows. */
-  layoutStyles?: Pick<OdsLayoutStyles, "columnWidthPx" | "rowHeight">;
+  layoutStyles?: Pick<OdsLayoutStyles, "columnWidthPx" | "rowHeight"> & { breaksBefore?(family: "table-row" | "table-column", name: string | undefined): boolean };
   /** The retained-text sheet-reference pass, for a cell's preserved content
    * (source-time text, like sourceXml). */
   passRetained?: (text: string) => string;
@@ -1225,6 +1226,7 @@ class TableWriter {
   private readonly notes = new Map<number, Map<number, CellNote>>();
   private readonly noteRows: number[];
   private nextNoteRow = 0;
+  private nextRowBreak = 0;
   private readonly links: CellHyperlink[];
   private nextLink = 0;
   private activeLinks: CellHyperlink[] = [];
@@ -1232,6 +1234,12 @@ class TableWriter {
   private readonly tables: readonly SheetTable[];
   private readonly lookStyles = new Map<CellStyle, Map<number, string | null>>();
   private readonly workbookHasTables: boolean;
+  // SPEC-136: the manual page breaks (their row or column style breaks the
+  // page) and the print titles (wrapped in header rows / columns).
+  private readonly rowBreaks: number[];
+  private readonly colBreaks: ReadonlySet<number>;
+  /** Undefined when the model carries no names: the source's header groups stay as they are. */
+  private readonly titles: PrintTitles | null | undefined;
 
   constructor(sheet: Sheet, ctx: OdsTableContext) {
     this.sheet = sheet;
@@ -1274,6 +1282,9 @@ class TableWriter {
     this.links = (sheet.hyperlinks ?? []).toSorted((a, b) => a.range.top - b.range.top);
     this.tables = sheet.tables ?? [];
     this.workbookHasTables = ctx.model.sheets?.some((each) => (each.tables?.length ?? 0) > 0) ?? false;
+    this.rowBreaks = (sheet.pageSetup?.rowBreaks ?? []).filter((row) => row < MAX_ROWS);
+    this.colBreaks = new Set((sheet.pageSetup?.colBreaks ?? []).filter((col) => col < MAX_COLS));
+    this.titles = ctx.model.names === undefined ? undefined : printTitlesOf({ names: ctx.model.names }, sheet);
     this.measure();
   }
 
@@ -1295,6 +1306,19 @@ class TableWriter {
     }
     for (const span of sheet.columns) {
       cols = Math.max(cols, span.max + 1);
+    }
+    // SPEC-136: a broken row or column is written, its style carrying the break.
+    for (const row of this.rowBreaks) {
+      rows = Math.max(rows, row + 1);
+    }
+    for (const col of this.colBreaks) {
+      cols = Math.max(cols, col + 1);
+    }
+    if (this.titles?.rows !== undefined) {
+      rows = Math.max(rows, Math.min(this.titles.rows[1], MAX_ROWS - 1) + 1);
+    }
+    if (this.titles?.cols !== undefined) {
+      cols = Math.max(cols, Math.min(this.titles.cols[1], MAX_COLS - 1) + 1);
     }
     // SPEC-130: a validated cell is written even when nothing is stored there.
     for (const { range } of this.validated) {
@@ -1421,26 +1445,51 @@ class TableWriter {
     while (col < to) {
       const span = index >= 0 && index < spans.length ? spans[index] : undefined;
       if (span && span.min <= col) {
-        const end = Math.min(span.max + 1, to);
-        out.push(this.columnElement(span), end - col);
+        const end = this.untilBreak(col, Math.min(span.max + 1, to));
+        out.push(this.columnElement(span, col), end - col);
         col = end;
-        index += 1;
+        if (end > span.max) {
+          index += 1;
+        }
       } else {
-        const end = Math.min(span ? span.min : to, to);
-        out.push(this.columnElement(undefined), end - col);
+        const end = this.untilBreak(col, Math.min(span ? span.min : to, to));
+        out.push(this.columnElement(undefined, col), end - col);
         col = end;
       }
     }
   }
 
-  private columnElement(span: ColumnSpan | undefined): Repeatable {
+  /** SPEC-136: a run of columns from `col` stops before a broken column (a
+   * broken column is a run of its own). */
+  private untilBreak(col: number, end: number): number {
+    if (this.colBreaks.has(col)) {
+      return col + 1;
+    }
+    for (let next = col + 1; next < end; next += 1) {
+      if (this.colBreaks.has(next)) {
+        return next;
+      }
+    }
+    return end;
+  }
+
+  /** SPEC-136: whether a source style name breaks the page before it. */
+  private sourceBreaks(family: "table-row" | "table-column", name: string | undefined): boolean {
+    return name !== undefined && this.ctx.layoutStyles?.breaksBefore?.(family, name) === true;
+  }
+
+  private columnElement(span: ColumnSpan | undefined, col: number): Repeatable {
     const width = span?.widthPx ?? this.sheet.defaultColWidthPx;
+    const broken = this.colBreaks.has(col);
+    const sourceStyle = this.ctx.sourceStyleNames ? span?.sourceStyleName : undefined;
     const style =
-      this.ctx.sourceStyleNames && span?.sourceStyleName !== undefined
-        ? span.sourceStyleName
-        : width === this.sheet.defaultColWidthPx
-          ? this.defaultColumnStyle()
-          : this.ctx.registry.columnStyle(width);
+      sourceStyle !== undefined && this.sourceBreaks("table-column", sourceStyle) === broken
+        ? sourceStyle
+        : broken
+          ? this.ctx.registry.columnStyle(width, true)
+          : width === this.sheet.defaultColWidthPx
+            ? this.defaultColumnStyle()
+            : this.ctx.registry.columnStyle(width);
     return {
       head: `<table:table-column table:style-name="${attributeText(style)}"`,
       tail: `${span?.hidden ? ` table:visibility="collapse"` : ""} table:default-cell-style-name="${attributeText(this.styleName(span?.styleId ?? 0))}"/>`,
@@ -1474,7 +1523,11 @@ class TableWriter {
       }
       const noted = this.noteRows[this.nextNoteRow] === r;
       const inTable = this.tables.some((table) => table.ref.top <= r && table.ref.bottom >= r);
-      if (row || drawn || noted || inTable || this.active.some((merge) => merge.top === r)) {
+      while (this.nextRowBreak < this.rowBreaks.length && this.rowBreaks[this.nextRowBreak]! < r) {
+        this.nextRowBreak += 1;
+      }
+      const broken = this.rowBreaks[this.nextRowBreak] === r;
+      if (row || drawn || noted || inTable || broken || this.active.some((merge) => merge.top === r)) {
         out.push(this.rowElement(row, r), 1, drawn || noted);
         r += 1;
         continue;
@@ -1486,7 +1539,7 @@ class TableWriter {
       for (const merge of this.active) {
         end = Math.min(end, merge.bottom + 1);
       }
-      end = Math.min(end, this.nextValidatedBreak(r));
+      end = Math.min(end, this.nextValidatedBreak(r), this.rowBreaks[this.nextRowBreak] ?? to);
       for (const table of this.tables) {
         if (table.ref.top > r) {
           end = Math.min(end, table.ref.top);
@@ -1574,10 +1627,13 @@ class TableWriter {
 
   private rowElement(row: Row | undefined, r: number): Repeatable {
     let style: string;
-    if (this.ctx.sourceStyleNames && row?.sourceStyleName !== undefined) {
+    const broken = this.rowBreaks[this.nextRowBreak] === r;
+    const height = row?.heightPt ?? this.sheet.defaultRowHeightPt;
+    if (this.ctx.sourceStyleNames && row?.sourceStyleName !== undefined && this.sourceBreaks("table-row", row.sourceStyleName) === broken) {
       style = row.sourceStyleName;
+    } else if (broken) {
+      style = this.ctx.registry.rowStyle(height, !row?.customHeight, true);
     } else {
-      const height = row?.heightPt ?? this.sheet.defaultRowHeightPt;
       style = height === this.sheet.defaultRowHeightPt && !row?.customHeight ? this.defaultRowStyle() : this.ctx.registry.rowStyle(height, !row?.customHeight);
     }
     // SPEC-128: the user's hidden wins — "collapse" whatever filterHidden is.
@@ -1863,10 +1919,42 @@ class TableWriter {
       const style = ctx.registry.tableStyle({ masterPage: "Default", display: sheet.visibility === "visible", ...(tabColor === undefined ? {} : { tabColor }) });
       head = `<table:table table:name="${attributeText(sheet.name)}" table:style-name="${style}">` + leading;
     }
-    const columns = this.axis("col", this.skeleton?.colGroups ?? [], 0, this.colExtent, (a, b, out) => this.columns(a, b, out));
-    const rows = this.axis("row", this.skeleton?.rowGroups ?? [], 0, this.rowExtent, (a, b, out) => this.rows(a, b, out));
+    const prefix = tablePrefix(this.skeleton?.close ?? "</table:table>");
+    const colGroups = this.titles === undefined ? (this.skeleton?.colGroups ?? []) : withHeaderGroup(this.skeleton?.colGroups ?? [], "col", this.titles?.cols, this.colExtent, prefix);
+    const rowGroups = this.titles === undefined ? (this.skeleton?.rowGroups ?? []) : withHeaderGroup(this.skeleton?.rowGroups ?? [], "row", this.titles?.rows, this.rowExtent, prefix);
+    const columns = this.axis("col", colGroups, 0, this.colExtent, (a, b, out) => this.columns(a, b, out));
+    const rows = this.axis("row", rowGroups, 0, this.rowExtent, (a, b, out) => this.rows(a, b, out));
     return head + columns + rows + trailing + (this.skeleton ? this.skeleton.close : "</table:table>");
   }
+}
+
+/** SPEC-136: the axis's groups with its header group (`table:table-header-
+ * rows` / `-columns`) around the print titles' span `titles`: a source
+ * header group over exactly that span kept as it is, any other dropped (its
+ * children kept in place), a new one added where the titles start — when no
+ * other group crosses the span. */
+function withHeaderGroup(groups: readonly SkeletonGroup[], axis: Axis, titles: [number, number] | undefined, extent: number, prefix: string): SkeletonGroup[] {
+  const local = axis === "row" ? "table-header-rows" : "table-header-columns";
+  const isHeader = (group: SkeletonGroup): boolean => group.qname.endsWith(local);
+  const span = titles === undefined || titles[0] >= extent ? undefined : { from: titles[0], to: Math.min(titles[1] + 1, extent) };
+  const kept: SkeletonGroup[] = [];
+  let found = false;
+  for (const group of groups) {
+    if (!isHeader(group)) {
+      kept.push(group);
+    } else if (span !== undefined && group.from === span.from && group.to === span.to && !found) {
+      kept.push(group);
+      found = true;
+    } else {
+      kept.push(...group.children);
+    }
+  }
+  if (span === undefined || found || kept.some((group) => group.from < span.to && group.to > span.from)) {
+    return kept;
+  }
+  const header: SkeletonGroup = { axis, qname: `${prefix}${local}`, open: `<${prefix}${local}>`, selfClosing: false, from: span.from, to: span.to, children: [] };
+  const at = kept.findIndex((group) => group.from >= span.to);
+  return at < 0 ? [...kept, header] : [...kept.slice(0, at), header, ...kept.slice(at)];
 }
 
 /** The prefix a table's close tag names it with ("table:"). */

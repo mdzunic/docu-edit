@@ -436,7 +436,7 @@ export function borderShorthand(style: SheetBorderStyle, color: string): string 
 }
 
 /** A border edge's resolved colour; automatic is black. */
-function edgeColor(edge: CellBorderEdge, theme: DocumentTheme): string {
+export function edgeColor(edge: CellBorderEdge, theme: DocumentTheme): string {
   return edge.color === undefined ? AUTOMATIC_COLOR : resolveColor(edge.color, theme);
 }
 

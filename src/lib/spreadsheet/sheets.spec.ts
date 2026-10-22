@@ -2117,7 +2117,6 @@ describe("unconvertibleContent", () => {
     "tables",
     "colour and icon filters",
     "pivot tables",
-    "page setup",
     "untranslatable formulas",
     "custom date origin",
   ];

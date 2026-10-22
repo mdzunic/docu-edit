@@ -186,6 +186,19 @@
 //     `sourceXml` only where the cell at its address still holds the source
 //     cell's value. Place locations get SPEC-121's sourceSheetRemap.
 //
+// 16 — SPEC-136: page setup (Sheet.pageSetup — xlsx `printOptions`,
+//     `pageMargins`, `pageSetup`, `headerFooter`, `rowBreaks`/`colBreaks`,
+//     `sheetPr/pageSetUpPr`; ods the table style's master page and page
+//     layout, `fo:break-before` rows and columns) and the ods print area and
+//     titles as `_xlnm.Print_Area`/`_xlnm.Print_Titles` (`table:print-ranges`,
+//     `table:table-header-rows`/`-columns`). Clean sheets are re-read. The
+//     step (pageSetupOpen.ts): a dirty xlsx sheet reads its page elements
+//     from its retained worksheet XML; a dirty ods sheet its master page from
+//     `styles.xml` in `opaque`, its breaks and header rows/columns from its
+//     retained table text; every ods sheet of an edited record its print
+//     area and titles from its retained text, unless the record names them.
+//     A clean sheet whose setup was edited (`pageSetupDirty`) keeps it.
+//
 // Opening (SPEC-132 "Open trusts caches"): no chart is refreshed at open,
 // except one whose part carries a reference but no cache for it, refreshed
 // for display (refreshSheetChart forDisplay — no `cachesDirty`, so its part
@@ -214,7 +227,7 @@ import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
 import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 15;
+export const SPREADSHEET_READER_VERSION = 16;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -450,6 +463,18 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
     async upgradeDirtySheet(model, sheet, sourceParts, record) {
       const { upgradeSheetAnnotations } = await import("./annotationsOpen");
       await upgradeSheetAnnotations(model, sheet, sourceParts, record ?? model);
+    },
+  },
+  {
+    // SPEC-136 (15 → 16): page setup, and the ods print area and titles (see the version history).
+    from: 15,
+    async upgradeDirtySheet(model, sheet, sourceParts, record) {
+      const { upgradeSheetPageSetup } = await import("./pageSetupOpen");
+      upgradeSheetPageSetup(model, sheet, sourceParts, record ?? model);
+    },
+    async upgradeWorkbook(model, sourceParts) {
+      const { upgradeWorkbookPrintNames } = await import("./pageSetupOpen");
+      upgradeWorkbookPrintNames(model, sourceParts);
     },
   },
 ];
@@ -899,7 +924,7 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   }
   const sourceParts = decodedPartBytes(model.opaque);
   const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
-  if (model.structureDirty || model.namesDirty || model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
+  if (model.structureDirty || model.namesDirty || model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheet.pageSetupDirty)) {
     return upgradeEdited(model, sourceParts, pending);
   }
   const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, sourceParts);
@@ -1057,6 +1082,11 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
     }
     if (stored.copiedFrom !== undefined) {
       sheet.copiedFrom = stored.copiedFrom;
+    }
+    if (stored.pageSetupDirty) {
+      // SPEC-136: the edited page setup is the model's, not the source's.
+      delete sheet.pageSetup;
+      Object.assign(sheet, pick(stored, ["pageSetup", "pageSetupDirty"]));
     }
     if (stored.drawingsDirty) {
       // SPEC-131: the edited drawing layer is the model's, not the source's.

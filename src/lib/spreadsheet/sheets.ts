@@ -902,6 +902,7 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
       threads: _threads,
       hyperlinks: _hyperlinks,
       annotationsDirty: _annotationsDirty,
+      pageSetupDirty: _pageSetupDirty,
       ...fields
     } = sheet;
     const crossed: Sheet = {

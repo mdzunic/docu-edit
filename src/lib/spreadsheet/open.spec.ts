@@ -72,6 +72,7 @@ import {
 } from "./open";
 import { duplicateSheet } from "./sheets";
 import { buildSpec135AnnotationsOdsBytes, buildSpec135AnnotationsXlsxBytes, SPEC135_ANNOTATIONS_ODS } from "./fixtures/build";
+import { buildSpec136PrintOdsBytes, buildSpec136PrintXlsxBytes } from "./fixtures/build";
 
 /** The shipped upgrade list, restored after each test that swaps it. */
 const SHIPPED_UPGRADES = [...READER_UPGRADES];
@@ -164,8 +165,8 @@ afterEach(() => {
 
 describe("reader versions", () => {
   it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11, SPEC-131 to 12, SPEC-132 to 13, SPEC-133 to 14 and SPEC-135 to 15, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(15);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+    expect(SPREADSHEET_READER_VERSION).toBe(16);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -1047,7 +1048,8 @@ describe("SPEC-133's reader step: defined names and tables", () => {
   it("moved the reader to version 14 with its step from 13 — the first with a workbook-level upgradeWorkbook", () => {
     const step = READER_UPGRADES.find((each) => each.from === 13);
     expect(step?.upgradeWorkbook).toBeTypeOf("function");
-    expect(READER_UPGRADES.filter((each) => each.upgradeWorkbook !== undefined)).toEqual([step]);
+    // SPEC-136's step from 15 is the second (the ods print area and titles).
+    expect(READER_UPGRADES.filter((each) => each.upgradeWorkbook !== undefined)).toEqual([step, READER_UPGRADES.find((each) => each.from === 15)]);
   });
 
   it("xlsx: a clean version-13 record re-reads whole and gains every name and table", async () => {
@@ -1235,8 +1237,8 @@ const annotationsOf = (sheet: Sheet) => ({ notes: sheet.notes, threads: sheet.th
 
 describe("SPEC-135's reader step: notes, threads and hyperlinks", () => {
   it("moved the reader to version 15 with its step from 14", () => {
-    expect(READER_UPGRADES.at(-1)!.from).toBe(14);
-    expect(SPREADSHEET_READER_VERSION).toBe(15);
+    expect(READER_UPGRADES.find((step) => step.from === 14)).toBeDefined();
+    expect(SPREADSHEET_READER_VERSION).toBeGreaterThanOrEqual(15);
   });
 
   it("xlsx: a clean version-14 record re-reads whole and gains every note, thread, link and person", async () => {
@@ -1283,5 +1285,62 @@ describe("SPEC-135's reader step: notes, threads and hyperlinks", () => {
     expect(readLinks.some((link) => link.range.top === 6 && link.range.left === 0)).toBe(true);
     expect(sheet.hyperlinks).toEqual(readLinks.filter((link) => !(link.range.top === 6 && link.range.left === 0)));
     expect(sheet.dirty).toBe(true);
+  });
+});
+
+// --- SPEC-136 ----------------------------------------------------------------------------------
+
+/** `read` as SPEC-135's reader (version 15) stored it: no page setups, and
+ * no ods print area or titles (an xlsx's are SPEC-133's names already). */
+function storedAtVersion15(read: SpreadsheetModel): SpreadsheetModel {
+  const stored = { ...(JSON.parse(JSON.stringify(read)) as SpreadsheetModel), readerVersion: 15 };
+  stored.sheets = stored.sheets.map(({ pageSetup: _setup, pageSetupDirty: _dirty, ...sheet }) => sheet as Sheet);
+  if (read.format === "ods") {
+    stored.names = stored.names.filter((name) => !name.name.startsWith("_xlnm."));
+  }
+  return stored;
+}
+
+describe("SPEC-136's reader step: page setup", () => {
+  it("moved the reader to version 16 with its step from 15", () => {
+    expect(READER_UPGRADES.at(-1)!.from).toBe(15);
+    expect(SPREADSHEET_READER_VERSION).toBe(16);
+  });
+
+  it("a clean version-15 record re-reads whole and gains every page setup (both formats) and the ods print area and titles", async () => {
+    for (const [format, bytes] of [
+      ["xlsx", await buildSpec136PrintXlsxBytes()],
+      ["ods", await buildSpec136PrintOdsBytes()],
+    ] as const) {
+      const read = await readSpreadsheetBytes(bytes, format, "SPEC-136");
+      const upgraded = await upgradeSpreadsheetModel(storedAtVersion15(read));
+      expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+      expect(upgraded.sheets.map((sheet) => sheet.pageSetup), format).toEqual(read.sheets.map((sheet) => sheet.pageSetup));
+      expect(upgraded.names.map((name) => name.name), format).toEqual(expect.arrayContaining(["_xlnm.Print_Area", "_xlnm.Print_Titles"]));
+    }
+  });
+
+  it("an edited version-15 record: a dirty xlsx sheet reads its page elements from its retained worksheet XML", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec136PrintXlsxBytes(), "xlsx", "SPEC-136");
+    const stored = storedAtVersion15(read);
+    stored.sheets[0] = { ...stored.sheets[0]!, dirty: true, rows: [...stored.sheets[0]!.rows, { index: 80, cells: [{ col: 0, value: "edited" }] }] };
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.sheets[0]!.dirty).toBe(true);
+    expect(getCell(upgraded.sheets[0]!, 80, 0)!.value).toBe("edited");
+    expect(upgraded.sheets[0]!.pageSetup).toEqual(read.sheets[0]!.pageSetup);
+  });
+
+  it("an edited version-15 record: a dirty ods sheet reads its master page from styles.xml, its breaks from its retained table; every ods sheet its print area and titles", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec136PrintOdsBytes(), "ods", "SPEC-136");
+    const stored = storedAtVersion15(read);
+    stored.sheets[0] = { ...stored.sheets[0]!, dirty: true };
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.sheets[0]!.pageSetup).toEqual(read.sheets[0]!.pageSetup);
+    expect(upgraded.sheets[1]!.pageSetup).toEqual(read.sheets[1]!.pageSetup);
+    const budget = upgraded.sheets[0]!.id;
+    expect(upgraded.names.filter((name) => name.scopeSheetId === budget).map((name) => [name.name, name.formula])).toEqual([
+      ["_xlnm.Print_Area", "Budget!$A$1:$H$70"],
+      ["_xlnm.Print_Titles", "Budget!$1:$1"],
+    ]);
   });
 });

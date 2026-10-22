@@ -53,6 +53,9 @@ const props = defineProps({
   imageSrc: { type: Function, default: undefined },
   /** The host element rotates the drawing (a top-level drawing). */
   hostRotates: { type: Boolean, default: false },
+  /** SPEC-136: an extra class on a chart's canvas (a printed page's
+   * `sheet-print-chart`, which the PDF extractor reads as an image). */
+  chartCanvasClass: { type: String, default: "" },
 });
 
 const theme = computed(() => asDocumentTheme(props.theme));
@@ -141,6 +144,7 @@ function memberStyle(box = { x: 0, y: 0, w: 0, h: 0 }) {
       v-if="chart"
       ref="chartCanvas"
       class="sheet-drawing-canvas sheet-chart-canvas"
+      :class="props.chartCanvasClass"
       data-testid="sheet-chart-canvas"
       :data-chart-type="chart.chartType"
       :data-chart-categories="chartCategories"

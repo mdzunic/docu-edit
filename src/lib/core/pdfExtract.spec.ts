@@ -14,6 +14,7 @@ import {
   DEFAULT_IMAGE_SELECTOR,
   extractPageContent,
   rectItemsFor,
+  DEFAULT_CELL_SELECTOR,
   type BorderSide,
 } from "./pdfExtract";
 
@@ -277,5 +278,50 @@ describe("extractPageContent selectors (SPEC-104)", () => {
       { src: "data:image/png;base64,AB==", xPt: 75, yPt: 75, widthPt: 30, heightPt: 30, onTop: false },
     ]);
     page.remove();
+  });
+});
+
+/** A run of 10 px characters' box, [start, end) from x = 0. */
+function charRect(start: number, end: number): DOMRect {
+  return { left: start * 10, right: end * 10, top: 0, bottom: 16, width: (end - start) * 10, height: 16, x: start * 10, y: 0, toJSON: () => ({}) } as DOMRect;
+}
+
+describe("extractPageContent cellSelector and clipSelector (SPEC-136)", () => {
+  it("defaults to the text product's table cells; a cellSelector reads another element's fill and borders", () => {
+    expect(DEFAULT_CELL_SELECTOR).toBe("td.doc-table-cell");
+    const page = pageWith('<div class="sheet-print-cell" style="background-color: rgb(255, 255, 0); border-top: 2px solid rgb(0, 0, 0)"></div>');
+    placeAt(page.querySelector(".sheet-print-cell")!, 40, 20, 100, 30);
+    expect(extractPageContent(page, 300, 225).paths).toEqual([]);
+    const paths = extractPageContent(page, 300, 225, { cellSelector: ".sheet-print-cell" }).paths!;
+    expect(paths[0]).toEqual(filledRectItem({ xPt: 30, yPt: 15, widthPt: 75, heightPt: 22.5 }, [1, 1, 0]));
+    expect(paths.length).toBeGreaterThan(1);
+    page.remove();
+  });
+
+  it("clips text inside a clipSelector element to its box — whole characters only — and leaves text alone without one", () => {
+    const page = pageWith('<div class="clip"><span style="font-size: 16px">ABCDEF</span></div>');
+    const clip = page.querySelector(".clip")!;
+    placeAt(clip, 0, 0, 30, 20);
+    const text = page.querySelector("span")!.firstChild as Text;
+    // Each character is 10 px wide from x = 0 (charRect): D, E and F lie past the 30 px box.
+    const ranges = { start: 0, end: 0 };
+    const proto = Range.prototype as unknown as Record<string, unknown>;
+    const saved = { setStart: proto.setStart, setEnd: proto.setEnd, getClientRects: proto.getClientRects, getBoundingClientRect: proto.getBoundingClientRect };
+    proto.setStart = function (this: Range, _node: Node, offset: number) {
+      ranges.start = offset;
+    };
+    proto.setEnd = function (this: Range, _node: Node, offset: number) {
+      ranges.end = offset;
+    };
+    proto.getClientRects = () => [charRect(ranges.start, ranges.end)];
+    proto.getBoundingClientRect = () => charRect(ranges.start, ranges.end);
+    try {
+      expect(text.data).toBe("ABCDEF");
+      expect(extractPageContent(page, 300, 225).items.map((item) => item.text)).toEqual(["ABCDEF"]);
+      expect(extractPageContent(page, 300, 225, { clipSelector: ".clip" }).items.map((item) => item.text)).toEqual(["ABC"]);
+    } finally {
+      Object.assign(proto, saved);
+      page.remove();
+    }
   });
 });

@@ -54,7 +54,8 @@
 // Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, by physical key `KeyM`),
 // and the link dialog's Ctrl/Cmd+K (`sheet.insertLink`, useCellLinks) — the
 // key the text side's command palette takes, which the workbook view never
-// mounts.
+// mounts. SPEC-136 adds File ▸ Print…'s Ctrl/Cmd+P (`sheet.print`,
+// useSheetPrint), which the browser's print otherwise takes.
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -84,7 +85,8 @@ export type SheetShortcutId =
   | "sheet.goTo"
   | "sheet.note"
   | "sheet.newComment"
-  | "sheet.insertLink";
+  | "sheet.insertLink"
+  | "sheet.print";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
@@ -94,6 +96,7 @@ const FILTER_CATEGORY = "Sort and filter";
 const NAVIGATION_CATEGORY = "Navigation";
 const ANNOTATION_CATEGORY = "Notes and comments";
 const LINK_CATEGORY = "Links";
+const PRINT_CATEGORY = "Printing";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -155,6 +158,8 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     { id: "sheet.newComment", label: "New comment", category: ANNOTATION_CATEGORY, bindings: [{ key: "M", code: "KeyM", mod: true, alt: true }] },
     // SPEC-135: Insert ▸ Link… (the link dialog), Excel's Ctrl/Cmd+K.
     { id: "sheet.insertLink", label: "Insert link", category: LINK_CATEGORY, bindings: [{ key: "k", mod: true }] },
+    // SPEC-136: File ▸ Print… (the print preview, useSheetPrint), the browser's own Ctrl/Cmd+P.
+    { id: "sheet.print", label: "Print", category: PRINT_CATEGORY, bindings: [{ key: "p", mod: true }], overridesBrowser: true },
   ];
   return definitions;
 }
