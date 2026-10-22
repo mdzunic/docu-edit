@@ -175,6 +175,10 @@ test("spec136-print.xlsx in one session: each preview shows the sheet on show an
   const link = printCell("H2").locator("a[data-doc-link]");
   await expect(link).toHaveText("Site");
   await expect(link).toHaveAttribute("href", "https://example.com/budget");
+  // The preview never follows it.
+  await link.dispatchEvent("click");
+  await expect(page).toHaveURL(/\/sheets\/.+/);
+  await expect(page.getByTestId("print-preview")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("sheet-print-download-pdf").click();
   const pdf = pdfText(readFileSync(await (await downloadPromise).path()));

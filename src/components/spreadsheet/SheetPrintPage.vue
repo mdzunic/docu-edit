@@ -2,7 +2,8 @@
 // One printed sheet page (SPEC-136): what sheetPrintLayout.ts laid out —
 // header and footer bands, the headings, the cells (`sheet-print-cell`, each
 // carrying its resolved style as CSS, its text clipped to its box; a link as
-// `a[data-doc-link]`), and the drawings and charts of the page's band
+// `a[data-doc-link]` — the PDF's /Link, never followed from the preview),
+// and the drawings and charts of the page's band
 // through SheetDrawingView (charts painted into `canvas.sheet-print-chart`).
 // The page is paper: white, 1:1, its scale laid out rather than transformed.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
@@ -100,6 +101,7 @@ const bandBox = computed(() => ({
         data-doc-link=""
         :href="cell.href"
         :style="cell.text"
+        @click.prevent
       >{{ cell.content }}</a>
       <span
         v-else-if="cell.content"
