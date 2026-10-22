@@ -417,7 +417,7 @@ function clippedFragment(node: Text, fragment: LineFragment, box: DOMRect): Line
         left = rect.left;
       }
       right = rect.right;
-    } else if (!inside && first !== -1) {
+    } else if (!inside && first !== -1 && last === -1) {
       last = start;
     }
   }
