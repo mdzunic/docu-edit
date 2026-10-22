@@ -337,7 +337,29 @@ async function seedLibrary(browser: Browser, count: number): Promise<string> {
     await page.getByTestId("close-document").click();
     await expect(page.getByTestId("library")).toBeVisible();
   }
-  const state = await context.storageState();
+  // The write-through runs at idle: wait until all `count` shells are in
+  // IndexedDB before capturing it (only `{ indexedDB: true }` captures it).
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const request = indexedDB.open("docu-edit");
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+            const request = db.transaction("documents").objectStore("documents").getAllKeys();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          db.close();
+          return keys.map(String).filter((key) => key.startsWith("sheetsource:")).length;
+        }),
+      { timeout: 60_000 },
+    )
+    .toBeGreaterThanOrEqual(count);
+  const state = await context.storageState({ indexedDB: true });
   await context.close();
   return JSON.stringify(state);
 }
@@ -440,6 +462,8 @@ test("holds every SPEC-137 workbook performance budget on spec137-large.xlsx, me
     const landing = await measureLibraryLanding(browser, seeded, 20);
     samples.sheetLibraryLandingMs.push(landing.sheetLibraryLandingMs);
     samples.sheetLibraryHeapDeltaMB.push(landing.heapMB - emptyHeapMB);
+    // eslint-disable-next-line no-console
+    console.log(`[SPEC-137] run ${run + 1}: ${Object.entries(samples).map(([key, values]) => `${key}=${values.at(-1)?.toFixed(1)}`).join(" ")}`);
   }
 
   for (const name of Object.keys(BUDGETS)) {
