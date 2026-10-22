@@ -41,6 +41,7 @@ function harness(at: GridRange = { top: 29, left: 0, bottom: 29, right: 0 }, oth
     return workbook.value?.sheets[activeIndex.value] ?? null;
   });
   const selection = ref<SheetSelection>({ active: { row: at.top, col: at.left }, ranges: [at], activeRangeIndex: 0 });
+  const locale = shallowRef(SPREADSHEET_LOCALES["en-US"]);
   const scope = effectScope();
   scopes.push(scope);
   const parts = scope.run(() => {
@@ -52,7 +53,7 @@ function harness(at: GridRange = { top: 29, left: 0, bottom: 29, right: 0 }, oth
     const undo = useSpreadsheetUndo({ model: workbook, recalc: (_keys, done) => done([]), onApplied, activateSheet: () => {} });
     const book = { workbook, activeIndex, revision, activeSheet } as unknown as Parameters<typeof usePageSetup>[0]["book"];
     const pageSetup = usePageSetup({ book, viewState: { syncInto: vi.fn() }, selection: { selection: computed(() => selection.value) }, editing: { undo, cell: { editing: computed(() => false) } } as never });
-    const print = useSheetPrint({ book, selection: { selection: computed(() => selection.value) }, pageSetup, locale: () => SPREADSHEET_LOCALES["en-US"] });
+    const print = useSheetPrint({ book, selection: { selection: computed(() => selection.value) }, pageSetup, locale: () => locale.value });
     const pdf = useSheetPdfExport({ book, print });
     return { undo, pageSetup, print, pdf };
   })!;
@@ -66,7 +67,7 @@ function harness(at: GridRange = { top: 29, left: 0, bottom: 29, right: 0 }, oth
     workbook.value!.sheets = [{ ...sheet(), rows: [...kept, ...added].toSorted((a, b) => a.index - b.index) }, ...workbook.value!.sheets.slice(1)];
     parts.undo.commit();
   };
-  return { ...parts, sheet, workbook, activeIndex, revision, write };
+  return { ...parts, sheet, workbook, activeIndex, revision, locale, write };
 }
 
 /** The idle callback the page-break lines recompute on (setTimeout under jsdom). */
@@ -191,17 +192,20 @@ describe("useSheetPrint and useSheetPdfExport", () => {
     expect(h.print.pageCount.value).toBe(2);
   });
 
-  it("pages laid out before a change show it: a command's cell and its link, a recalculation's value", () => {
+  it("pages laid out before a change show it: a command's cell and its link, a recalculation's value, another locale", () => {
     const h = harness();
     h.print.open();
-    const a1 = () => h.print.layoutFor(h.print.chosen.value[0]!, h.print.pageCount.value).cells.find((cell) => cell.ref === "A1" && cell.heading === undefined);
-    expect(a1()?.content).toBe("0");
-    h.write({ 0: [{ col: 0, value: "Example", formula: 'HYPERLINK("https://example.com","Example")' }] });
-    expect(a1()).toMatchObject({ content: "Example", href: "https://example.com" });
+    const at = (address: string) => h.print.layoutFor(h.print.chosen.value[0]!, h.print.pageCount.value).cells.find((cell) => cell.ref === address && cell.heading === undefined);
+    expect(at("A1")?.content).toBe("0");
+    h.write({ 0: [{ col: 0, value: "Example", formula: 'HYPERLINK("https://example.com","Example")' }], 1: [{ col: 0, value: 1234.5 }] });
+    expect(at("A1")).toMatchObject({ content: "Example", href: "https://example.com" });
     // A recalculation pass rewrites values in place and says so through sheetsChanged alone.
     h.workbook.value!.sheets = [{ ...h.sheet(), rows: h.sheet().rows.map((row) => (row.index === 0 ? { ...row, cells: [{ col: 0, value: "Recalculated" }] } : row)) }];
     h.revision.value += 1;
-    expect(a1()?.content).toBe("Recalculated");
+    expect(at("A1")?.content).toBe("Recalculated");
+    expect(at("A2")?.content).toBe("1234.5");
+    h.locale.value = SPREADSHEET_LOCALES["de-DE"];
+    expect(at("A2")?.content).toBe("1234,5");
   });
 
   it("an export of part of the job prints the job's total, as the preview does", async () => {

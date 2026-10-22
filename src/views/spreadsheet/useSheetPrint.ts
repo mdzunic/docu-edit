@@ -73,16 +73,20 @@ export function useSheetPrint(deps: SheetPrintDeps) {
   const modelTick = ref(0);
   watch([deps.book.workbook, deps.book.revision], () => (modelTick.value += 1), { flush: "sync" });
 
-  // Each page laid out once per model state (layouts are pure functions of
-  // it). Reading the tick makes a render that lays pages out follow it.
+  // Each page laid out once per model state and locale (layouts are pure
+  // functions of them). Reading both makes a render that lays pages out
+  // follow them.
   let layoutTick = -1;
+  let layoutLocale: SpreadsheetLocale | null = null;
   let layoutDate = new Date();
   const contexts = new Map<string, PrintSheetContext>();
   const layouts = new Map<string, PrintPageLayout>();
   function layoutFor(placed: PlacedPage, total: number): PrintPageLayout {
     const model = deps.book.workbook.value!;
-    if (modelTick.value !== layoutTick || contexts.size > 64) {
+    const locale = deps.locale();
+    if (modelTick.value !== layoutTick || locale !== layoutLocale || contexts.size > 64) {
       layoutTick = modelTick.value;
+      layoutLocale = locale;
       layoutDate = new Date();
       contexts.clear();
       layouts.clear();
@@ -93,7 +97,7 @@ export function useSheetPrint(deps: SheetPrintDeps) {
       let ctx = contexts.get(placed.page.sheetId);
       const sheet = model.sheets.find((each) => each.id === placed.page.sheetId);
       if (ctx === undefined || ctx.sheet !== sheet) {
-        ctx = printSheetContext(model, sheet!, deps.locale(), layoutDate);
+        ctx = printSheetContext(model, sheet!, locale, layoutDate);
         contexts.set(placed.page.sheetId, ctx);
       }
       layout = layoutPrintPage(ctx, placed.page, total);
