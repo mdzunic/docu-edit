@@ -1,36 +1,32 @@
 <script setup lang="ts">
 // The workbook view at /sheets/:id, a wiring hub (SpreadsheetView.size.spec.ts holds its budget): each composable owns its feature —
-// loading, view state, selection, editing (drawings, CSV import included), formatting, rows and columns, merges, clipboard, fill and move, sort and filter, names; surfaces: components/.
+// loading, view state, selection, editing (drawings, CSV import included), the grid's tools (useSheetTools), find, Go To; surfaces: components/.
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
+import FindBar from "../components/FindBar.vue";
 import CsvImportBar from "../components/spreadsheet/CsvImportBar.vue";
 import CsvImportDialog from "../components/spreadsheet/CsvImportDialog.vue";
+import GoToDialog from "../components/spreadsheet/GoToDialog.vue";
+import GoToSpecialDialog from "../components/spreadsheet/GoToSpecialDialog.vue";
+import SheetFindOptions from "../components/spreadsheet/SheetFindOptions.vue";
+import SheetFindResults from "../components/spreadsheet/SheetFindResults.vue";
 import WorkbookAppBar from "../components/spreadsheet/WorkbookAppBar.vue";
 import WorkbookBody from "../components/spreadsheet/WorkbookBody.vue";
 import WorkbookCommandBar from "../components/spreadsheet/WorkbookCommandBar.vue";
 import WorkbookNotFound from "../components/spreadsheet/WorkbookNotFound.vue";
 import WorkbookStatusBar from "../components/spreadsheet/WorkbookStatusBar.vue";
 import { useTheme } from "../composables/useTheme";
-import { useFillHandle } from "./spreadsheet/useFillHandle";
-import { useFormatPainter } from "./spreadsheet/useFormatPainter";
-import { useFormatting } from "./spreadsheet/useFormatting";
 import { useFormulaDisplay } from "./spreadsheet/useFormulaDisplay";
-import { useHeaderResize } from "./spreadsheet/useHeaderResize";
-import { useMerges } from "./spreadsheet/useMerges";
-import { useNames } from "./spreadsheet/useNames";
 import { useRecalc } from "./spreadsheet/useRecalc";
-import { useRangeMove } from "./spreadsheet/useRangeMove";
-import { useSheetClipboard } from "./spreadsheet/useSheetClipboard";
+import { useSheetFind } from "./spreadsheet/useSheetFind";
+import { useSheetGoTo } from "./spreadsheet/useSheetGoTo";
 import { useSheetMetrics } from "./spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "./spreadsheet/useSheetSelection";
-import { useSheetTables } from "./spreadsheet/useSheetTables";
+import { useSheetTools } from "./spreadsheet/useSheetTools";
 import { useSheetViewState } from "./spreadsheet/useSheetViewState";
 import { useSheetZoom } from "./spreadsheet/useSheetZoom";
-import { useSortFilter } from "./spreadsheet/useSortFilter";
 import { useSpreadsheetLocale } from "./spreadsheet/useSpreadsheetLocale";
-import { useSpreadsheetMenu } from "./spreadsheet/useSpreadsheetMenu";
-import { useStructure } from "./spreadsheet/useStructure";
 import { useWorkbookEditing } from "./spreadsheet/useWorkbookEditing";
 import { useWorkbookLoad } from "./spreadsheet/useWorkbookLoad";
 
@@ -46,19 +42,10 @@ const selection = useSheetSelection({ sheet: () => book.activeSheet.value, sheet
 const formulas = useFormulaDisplay({ sheet: () => book.activeSheet.value, model: () => book.workbook.value, viewState, selection });
 const recalc = useRecalc({ book, locale: () => sheetLocale.locale.value });
 const editing = useWorkbookEditing({ book, viewState, recalc, selection, sheetMetrics, locale: () => sheetLocale.locale.value });
-const formatting = useFormatting({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
-const structure = useStructure({ book, viewState, selection, sheetMetrics, editing });
-const headerResize = useHeaderResize({ book, structure, selection, sheetMetrics, zoom });
-const merges = useMerges({ book, viewState, selection, sheetMetrics, editing });
-const painter = useFormatPainter({ book, selection, formatting, merges });
-const clipboard = useSheetClipboard({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
-const fillHandle = useFillHandle({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
-const rangeMove = useRangeMove({ book, viewState, selection, editing });
-const sortFilter = useSortFilter({ book, viewState, selection, sheetMetrics, editing, locale: () => sheetLocale.locale.value });
-const names = useNames({ book, viewState, selection, editing });
-const tables = useSheetTables({ book, viewState, selection, sheetMetrics, editing, locale: () => sheetLocale.locale.value });
-const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle, sortFilter, names, tables });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist: editing.assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings, names, tables }));
+const { formatting, structure, headerResize, merges, painter, clipboard, fillHandle, rangeMove, sortFilter, names, tables, menu } = useSheetTools({ book, viewState, selection, sheetMetrics, zoom, formulas, recalc, editing, locale: () => sheetLocale.locale.value });
+const find = useSheetFind({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
+const goTo = useSheetGoTo({ book, viewState, selection, editing, names });
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist: editing.assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings, names, tables, find }));
 </script>
 
 <template>
@@ -76,12 +63,24 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       <WorkbookCommandBar v-bind="{ menu, formatting, painter, merges }" />
       <CsvImportBar :csv-import="editing.csvImport" />
     </template>
+    <SheetFindResults :find="find">
+      <FindBar
+        v-bind="find.bar.value"
+        v-on="find.barEvents"
+      >
+        <template #options>
+          <SheetFindOptions :find="find" />
+        </template>
+      </FindBar>
+    </SheetFindResults>
     <WorkbookBody
       v-if="book.workbook.value"
       v-bind="{ book, grid, editing, assist: editing.assist }"
     />
     <WorkbookNotFound v-else />
     <CsvImportDialog :csv-import="editing.csvImport" />
+    <GoToDialog :go-to="goTo" />
+    <GoToSpecialDialog :go-to="goTo" />
     <template
       v-if="book.workbook.value"
       #status-bar

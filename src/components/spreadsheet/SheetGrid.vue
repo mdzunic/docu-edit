@@ -54,13 +54,17 @@
 // the cell area) painting the sheet's drawings in unscaled px, so the content
 // box's zoom transform scales them; presses on a drawing never reach the
 // grid's own handling. While a shape is armed the grid carries
-// data-drawing-armed="true" and the crosshair cursor.
+// data-drawing-armed="true" and the crosshair cursor. SPEC-134: `findMarks`
+// (useSheetFind's marks for the sheet on show) has the paper mark every
+// matching cell data-find-match="true" and the current one
+// data-find-current="true"; null — the find bar closed — marks nothing.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
 import { asSheetGridContext, useSheetGrid } from "../../views/spreadsheet/useSheetGrid";
 import { asSheet, COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX } from "../../views/spreadsheet/useSheetViewport";
 import { refColor } from "../../views/spreadsheet/cellEditorDom";
+import { asFindMarks } from "../../views/spreadsheet/sheetLayerProps";
 import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import CellEditor from "./CellEditor.vue";
 import FillOptionsChip from "./FillOptionsChip.vue";
@@ -78,6 +82,8 @@ const props = defineProps({
   context: { type: Object, required: true },
   /** View ▸ Show formulas for the sheet on show (SPEC-119). */
   showFormulas: { type: Boolean, default: false },
+  /** SPEC-134: the find bar's marks (sheetLayerProps' FindMarks); absent = none. */
+  findMarks: { type: Object, default: undefined },
 });
 
 const emit = defineEmits(["cycle-sheet"]);
@@ -105,6 +111,11 @@ const resizeGuide = computed(() => grid.resize.value?.guide.value ?? null);
 const resizeTooltip = computed(() => grid.resize.value?.tooltip.value ?? null);
 /** SPEC-125: the ants, the fill handle, the previews, the chip, the cursor. */
 const transfer = computed(() => grid.transfer.value);
+/** SPEC-134: the find marks, when they are this sheet's. */
+const findMarks = computed(() => {
+  const marks = asFindMarks(props.findMarks);
+  return marks && marks.sheetId === asSheet(props.sheet).id ? marks : null;
+});
 /** SPEC-128: sort and filter (null: not wired). */
 const sortFilter = computed(() => sortFilterOf(props.context));
 const filterButton = computed(() => sortFilter.value?.filterButtonAt);
@@ -215,6 +226,7 @@ function unscroll(event = new Event("scroll")) {
             :stale-title="grid.staleTitle"
             :filter-button="filterButton"
             :described-by="grid.describedBy.value ?? undefined"
+            :find-marks="findMarks ?? undefined"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
             @filter-button="onFilterButton"
           />
