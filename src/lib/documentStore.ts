@@ -478,7 +478,7 @@ async function writeWorkbook(id: string, state: WorkbookState): Promise<boolean>
   }
   const model = record.model;
   let ops: WriteBatchOp[];
-  let adopt = (): void => {};
+  let adopt: (() => void) | null = null;
   if (!state.resident) {
     // Only the shell: the rows and sources stay exactly as storage holds
     // them (a 116-era shell keeps its inline sources).
@@ -498,7 +498,7 @@ async function writeWorkbook(id: string, state: WorkbookState): Promise<boolean>
   }
   try {
     await writeBatch(ops);
-    adopt();
+    adopt?.();
     return true;
   } catch {
     markStorageUnavailable();

@@ -77,7 +77,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       v-if="book.workbook.value"
       v-bind="{ book, grid, editing, assist: editing.assist }"
     />
-    <WorkbookNotFound v-else :loading="book.loading.value" />
+    <WorkbookNotFound v-else />
     <CsvImportDialog :csv-import="editing.csvImport" />
     <GoToDialog :go-to="goTo" />
     <GoToSpecialDialog :go-to="goTo" />
