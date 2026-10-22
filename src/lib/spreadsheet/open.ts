@@ -173,6 +173,18 @@
 //     record whose only edit is to its names (`namesDirty` — a later upgrade
 //     of a record made since) is an edited one: its names are kept, never
 //     re-read.
+// 15 — SPEC-135: cell notes (xlsx legacy comments + their VML shapes, ods
+//     `office:annotation` — lifted out of SPEC-122's `Cell.preservedXml`),
+//     Excel 365 threads with `model.persons`, and hyperlinks (xlsx
+//     `<hyperlinks>`, the first ods `text:a` of a cell). Clean sheets are
+//     re-read. The step, run for each dirty sheet (annotationsOpen.ts): xlsx
+//     reads notes and threads from the parts its retained part's `.rels`
+//     name in `opaque` (`model.persons` once from the workbook rels when
+//     absent) and hyperlinks from the retained worksheet XML, which SPEC-124's
+//     textual `@ref` rewrite kept current; ods moves every annotation out of
+//     `preservedXml` into `notes` and attaches a link of the retained
+//     `sourceXml` only where the cell at its address still holds the source
+//     cell's value. Place locations get SPEC-121's sourceSheetRemap.
 //
 // Opening (SPEC-132 "Open trusts caches"): no chart is refreshed at open,
 // except one whose part carries a reference but no cache for it, refreshed
@@ -202,7 +214,7 @@ import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
 import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 14;
+export const SPREADSHEET_READER_VERSION = 15;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -430,6 +442,14 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
     async upgradeWorkbook(model, sourceParts) {
       const { upgradeWorkbookNames } = await import("./namesTablesOpen");
       upgradeWorkbookNames(model, sourceParts);
+    },
+  },
+  {
+    // SPEC-135 (14 → 15): notes, threads and hyperlinks (see the version history).
+    from: 14,
+    async upgradeDirtySheet(model, sheet, sourceParts, record) {
+      const { upgradeSheetAnnotations } = await import("./annotationsOpen");
+      await upgradeSheetAnnotations(model, sheet, sourceParts, record ?? model);
     },
   },
 ];
