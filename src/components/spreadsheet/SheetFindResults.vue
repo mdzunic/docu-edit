@@ -143,7 +143,7 @@ function onRowKey(index = 0, event = new KeyboardEvent("keydown")) {
   padding: var(--space-1) var(--space-3);
   background: var(--surface-sunken);
   color: var(--text-secondary);
-  font-weight: 600;
+  font-weight: var(--weight-bold);
   text-align: left;
 }
 
