@@ -112,16 +112,16 @@ describe("usePlayback step machine", () => {
 // SPEC-104 — the optional isHidden dep: hidden slides are stepped over by
 // advance/back/goTo, the end screen follows the last visible slide, and a
 // deep-linked start on a hidden slide still shows it.
-describe("usePlayback hidden slides (SPEC-104)", () => {
-  function hiddenMachine(count: number, hidden: number[], start = 0, builds: Record<number, number> = {}) {
-    return usePlayback({
-      slideCount: ref(count),
-      start,
-      isHidden: (index) => hidden.includes(index),
-      buildCountAt: (index) => builds[index] ?? 0,
-    });
-  }
+function hiddenMachine(count: number, hidden: number[], start = 0, builds: Record<number, number> = {}) {
+  return usePlayback({
+    slideCount: ref(count),
+    start,
+    isHidden: (index) => hidden.includes(index),
+    buildCountAt: (index) => builds[index] ?? 0,
+  });
+}
 
+describe("usePlayback hidden slides (SPEC-104)", () => {
   it("absent isHidden hides nothing", () => {
     const p = machine(3, 0);
     p.advance();
