@@ -27,25 +27,26 @@ import { useSpreadsheetUndo } from "./useSpreadsheetUndo";
 
 const EN = SPREADSHEET_LOCALES["en-US"];
 
-function a1(ref: string): { row: number; col: number } {
-  const [, letters, digits] = /^([A-Z]+)(\d+)$/.exec(ref)!;
+function a1(address: string): { row: number; col: number } {
+  const [, letters, digits] = /^([A-Z]+)(\d+)$/.exec(address)!;
   return { row: Number(digits) - 1, col: letters!.charCodeAt(0) - 65 };
 }
 
 function rowsOf(cells: Record<string, string | number | Partial<Cell>>): Row[] {
   const rows = new Map<number, Cell[]>();
-  for (const [ref, spec] of Object.entries(cells)) {
-    const { row, col } = a1(ref);
+  for (const [address, spec] of Object.entries(cells)) {
+    const { row, col } = a1(address);
     rows.set(row, [...(rows.get(row) ?? []), typeof spec === "object" ? { col, value: null, ...spec } : { col, value: spec }]);
   }
-  return [...rows].toSorted(([a], [b]) => a - b).map(([index, cells]) => ({ index, cells: cells.toSorted((x, y) => x.col - y.col) }));
+  return [...rows].toSorted(([a], [b]) => a - b).map(([index, list]) => ({ index, cells: list.toSorted((x, y) => x.col - y.col) }));
 }
+
+const ifNorth = (n: number, value: number): Partial<Cell> => ({ formula: `IF(A${n}="North",1,0)`, value });
 
 /** The fixture's shape: Sales (active), the protected Locked, the hidden Archive. */
 function workbook(): SpreadsheetModel {
   const model = createBlankWorkbook();
   const base = model.sheets[0]!;
-  const ifNorth = (n: number, value: number): Partial<Cell> => ({ formula: `IF(A${n}="North",1,0)`, value });
   const sheet = (id: string, name: string, rows: Row[], extra: Partial<Sheet> = {}): Sheet => ({ ...base, id, name, rows, ...extra });
   model.sheets = [
     sheet("sales", "Sales", rowsOf({ A1: "Region", A2: "North", C2: ifNorth(2, 1), A3: "South", C3: ifNorth(3, 0), A4: "Northwest", C4: ifNorth(4, 0), B5: 300, C5: { formula: "B5/0", value: { error: "#DIV/0!" } }, A6: "north", C6: ifNorth(6, 0) })),
@@ -57,6 +58,15 @@ function workbook(): SpreadsheetModel {
   }
   return model;
 }
+
+/** A keydown dispatched at `target` (default the window), as the browser would. */
+function dispatchKey(init: KeyboardEventInit, target: EventTarget = window): KeyboardEvent {
+  const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+  target.dispatchEvent(event);
+  return event;
+}
+
+const press = (init: KeyboardEventInit): KeyboardEvent => new KeyboardEvent("keydown", init);
 
 let scopes: (() => void)[] = [];
 beforeEach(() => {
@@ -79,7 +89,7 @@ function setup(model = workbook(), options: { isMac?: boolean; clockStep?: numbe
     syncInto: () => {},
   };
   const selection = computed((): SheetSelection => fields.value[activeSheet.value?.id ?? ""]?.selection ?? singleCell({ row: 0, col: 0 }));
-  const select = (ref: string, ...ranges: GridRange[]) => viewState.update(activeSheet.value!.id, { selection: { active: a1(ref), ranges: ranges.length > 0 ? ranges : [{ top: a1(ref).row, left: a1(ref).col, bottom: a1(ref).row, right: a1(ref).col }], activeRangeIndex: 0 } });
+  const select = (at: string, ...ranges: GridRange[]) => viewState.update(activeSheet.value!.id, { selection: { active: a1(at), ranges: ranges.length > 0 ? ranges : [{ top: a1(at).row, left: a1(at).col, bottom: a1(at).row, right: a1(at).col }], activeRangeIndex: 0 } });
   const editing = ref(false);
   const focusCell = vi.fn();
   const recalcs: number[] = [];
@@ -132,16 +142,11 @@ function setup(model = workbook(), options: { isMac?: boolean; clockStep?: numbe
       await nextTick();
     }
   };
-  const key = (init: KeyboardEventInit, target: EventTarget = window) => {
-    const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
-    target.dispatchEvent(event);
-    return event;
-  };
   const active = () => {
     const { row, col } = selection.value.active;
     return `${activeSheet.value?.name}!${String.fromCharCode(65 + col)}${row + 1}`;
   };
-  return { ...result, model, wb, activeIndex, selection, select, editing, focusCell, recalcs, slots, budgets, drain, settle, key, active };
+  return { ...result, model, wb, activeIndex, selection, select, editing, focusCell, recalcs, slots, budgets, drain, settle, key: dispatchKey, active };
 }
 
 async function searchFor(t: ReturnType<typeof setup>, text: string): Promise<void> {
@@ -207,7 +212,6 @@ describe("useSheetFind — the keys", () => {
   });
 
   it("classifies the keys through findKeyAction", () => {
-    const press = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init);
     expect(findKeyAction(press({ key: "f", ctrlKey: true }), false, false)).toBe("open");
     expect(findKeyAction(press({ key: "h", metaKey: true }), false, true)).toBe("openReplace");
     expect(findKeyAction(press({ key: "g", metaKey: true }), true, true)).toBe("next");
