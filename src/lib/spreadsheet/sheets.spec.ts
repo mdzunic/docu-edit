@@ -25,7 +25,7 @@ import type { AutoFilter } from "./filter";
 import { cellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
-import { DEFAULT_SPREADSHEET_TITLE, type Cell, type CellValue, type Row, type Sheet, type SheetDrawing, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
+import { DEFAULT_SPREADSHEET_TITLE, type Cell, type CellValue, type DefinedName, type Row, type Sheet, type SheetDrawing, type SheetTable, type SpreadsheetFormat, type SpreadsheetModel } from "./model";
 import { readSpreadsheetBytes, SPREADSHEET_READER_VERSION } from "./open";
 import { unsupportedChartVisual } from "./charts";
 import {
@@ -1737,6 +1737,32 @@ describe("stripRetention", () => {
     expect(model.sheets[0]!.drawings![0]).toBe(picture);
     // Nothing to carry: no media field at all.
     expect("media" in stripRetention({ ...book([gridSheet("Data")]), media: model.media, format: "ods" })).toBe(false);
+  });
+
+  it("SPEC-133: tables cross without their parts, dirty for the target's writer; names cross but one kept unparsed in the source's dialect", () => {
+    const sales: SheetTable = {
+      id: "t1",
+      name: "Sales",
+      ref: { top: 0, left: 0, bottom: 1, right: 0 },
+      headerRow: true,
+      totalsRow: false,
+      columns: [{ name: "Item", xlsxId: 1 }],
+      style: { name: "TableStyleMedium2", showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+      autoFilter: {},
+      partName: "xl/tables/table1.xml",
+      xlsxId: 1,
+    };
+    const model = book([gridSheet("Data", { A1: "Item", A2: "x" }, { tables: [sales] })], 0, "ods");
+    const rate: DefinedName = { name: "Rate", formula: "0.15" };
+    const broken: DefinedName = { name: "Broken", formula: "$#REF!.$A$1", formulaUnparsed: true, sourceAttrs: ` table:base-cell-address="$Data.$A$1" table:cell-range-address="$#REF!.$A$1"` };
+    model.names = [rate, broken];
+    const stripped = stripRetention({ ...model, format: "xlsx" });
+    const { partName: _part, ...crossed } = sales;
+    expect(stripped.sheets[0]!.tables).toEqual([{ ...crossed, dirty: true }]);
+    expect(stripped.names).toEqual([rate]);
+    // The open model is untouched.
+    expect(model.names).toEqual([rate, broken]);
+    expect(model.sheets[0]!.tables![0]).toBe(sales);
   });
 
   it("removes foreign sheets and keeps the active sheet when it survives", () => {

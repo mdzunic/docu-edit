@@ -851,7 +851,8 @@ export function setTabColor(model: SpreadsheetModel, index: number, color: Model
  * rules per crossValidations and no `odsOrphanValidations` — the source's
  * unreferenced content-validations are its own (SPEC-130), drawings per
  * crossDrawings with `media` holding only what they show, re-pathed, and no
- * `drawingPart`/`drawingsDirty` (SPEC-131). Pure — the open
+ * `drawingPart`/`drawingsDirty` (SPEC-131), every table without its
+ * `partName` and `dirty`, and no name kept unparsed (SPEC-133). Pure — the open
  * model is untouched; rows are shared except where a cell must change. */
 export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
   const {
@@ -911,6 +912,9 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     opaque: [],
     sheets,
     activeSheetIndex,
+    // SPEC-133: a name kept unparsed is text in the source's dialect, which
+    // the target cannot read (formulaForTarget drops such a cell formula too).
+    names: (model.names ?? []).filter((name) => !name.formulaUnparsed),
     styles: model.styles.map((style) => {
       const { sourceXf: _xf, sourceStyleName: _name, ...styleRest } = style;
       return styleRest;
