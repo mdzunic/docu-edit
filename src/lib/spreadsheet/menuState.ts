@@ -114,6 +114,8 @@ export const SHEET_MENU_COMMANDS = {
   /** SPEC-133: Insert ▸ Table… (the Create Table dialog; no shortcut —
    * Ctrl/Cmd+T is the browser's). */
   insertTable: "insert.table",
+  /** SPEC-135: Insert ▸ Link… (the link dialog, Ctrl/Cmd+K). */
+  insertLink: "insert.link",
   arrangeFront: "arrange.front",
   arrangeForward: "arrange.forward",
   arrangeBackward: "arrange.backward",

@@ -21,7 +21,8 @@
 // Insert ▸ Image… and Shapes and the Arrange menu are the drawing layer's
 // (useWorkbookEditing's drawings), and the bar's state says whether a drawing
 // can go in and which is selected. SPEC-133: Insert ▸ Table… opens
-// useSheetTables' Create Table dialog. Later specs append commands here.
+// useSheetTables' Create Table dialog. SPEC-135: Insert ▸ Link… opens the
+// link dialog (useWorkbookEditing's links). Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -48,7 +49,7 @@ export interface SpreadsheetMenuDeps {
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
-  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts">>;
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts" | "links">>;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
@@ -249,6 +250,9 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.insertTable:
         deps.tables?.openCreate();
+        break;
+      case SHEET_MENU_COMMANDS.insertLink:
+        deps.editing?.links?.openDialog();
         break;
       default:
         break;

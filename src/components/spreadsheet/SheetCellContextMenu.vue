@@ -6,7 +6,8 @@
 // any other selection opens SheetInsertDeleteDialog); SPEC-125 puts Cut,
 // Copy, Paste and Paste special… first (`clipboard`: useSheetClipboard's
 // menu — Cut and Copy fire the native events through execCommand, Paste
-// reads the async clipboard); later specs append theirs. UiMenuSurface owns
+// reads the async clipboard); SPEC-135 adds "Link…" (`link`: the link
+// dialog on the active cell); later specs append theirs. UiMenuSurface owns
 // outside-click and Escape dismissal. Runtime prop declarations per the
 // espree constraint (see AppShell.vue).
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
@@ -17,7 +18,7 @@ const props = defineProps({
   y: { type: Number, default: 0 },
 });
 
-const emit = defineEmits(["run", "structure", "clipboard", "close"]);
+const emit = defineEmits(["run", "structure", "clipboard", "link", "close"]);
 
 const CLIPBOARD = [
   { action: "cut", label: "Cut", testid: "sheet-cell-menu-cut" },
@@ -39,6 +40,11 @@ function choose(command = Object()) {
 function structure(mode = "insert") {
   emit("close");
   emit("structure", mode);
+}
+
+function link() {
+  emit("close");
+  emit("link");
 }
 </script>
 
@@ -103,6 +109,19 @@ function structure(mode = "insert") {
       @click="structure('delete')"
     >
       Delete…
+    </button>
+    <hr
+      class="menu-separator"
+      role="separator"
+    >
+    <button
+      type="button"
+      role="menuitem"
+      data-testid="sheet-cell-menu-link"
+      @mousedown.prevent
+      @click="link"
+    >
+      Link…
     </button>
   </UiMenuSurface>
 </template>

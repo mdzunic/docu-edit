@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import SpreadsheetMenuBar from "./SpreadsheetMenuBar.vue";
 import { asSpreadsheetMenuState, FILTER_OFF_REASON, SHEET_MENU_COMMANDS } from "../../lib/spreadsheet/menuState";
+import { isMacPlatform } from "../../lib/core/platform";
 import { shortcutLabel } from "../../lib/shortcuts";
 import { SHEET_SHORTCUTS } from "../../views/spreadsheet/sheetShortcuts";
 
@@ -161,8 +162,9 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
       "sheet-menu-insert-shape",
       "sheet-menu-insert-chart",
       "sheet-menu-insert-table",
+      "sheet-menu-insert-link",
     ]);
-    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart", "Table…"]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart", "Table…", "Link…"]);
     await wrapper.get('[data-testid="sheet-menu-insert-image"]').trigger("click");
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertImage]);
     await wrapper.get('[data-testid="sheet-menu-insert-shape"]').trigger("click");
@@ -187,6 +189,18 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
     expect(SHEET_MENU_COMMANDS.insertTable).toBe("insert.table");
     const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
     expect(foreign.get('[data-testid="sheet-menu-insert-table"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("SPEC-135: Insert ▸ Link… routes insert.link with Ctrl/Cmd+K and is disabled off a grid sheet", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: true } } });
+    const item = wrapper.get('[data-testid="sheet-menu-insert-link"]');
+    expect(item.attributes("disabled")).toBeUndefined();
+    expect(item.get(".menu-shortcut").text()).toBe(shortcutLabel("sheet.insertLink", isMacPlatform(), SHEET_SHORTCUTS));
+    await item.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertLink]);
+    expect(SHEET_MENU_COMMANDS.insertLink).toBe("insert.link");
+    const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
+    expect(foreign.get('[data-testid="sheet-menu-insert-link"]').attributes("disabled")).toBeDefined();
   });
 
   it("Arrange offers the four z-order moves and Alt Text…, disabled without a selected drawing and at the z-order's ends", async () => {
