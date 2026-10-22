@@ -243,7 +243,7 @@ describe("tableCellBandedStyle — selection is an overlay, not a substitution (
   it("keeps a selected cell's opaque background-color and adds the highlight as a gradient", () => {
     const style = tableCellBandedStyle(shadedTable, [], 0, 0, true, DEFAULT_THEME);
     // The PDF export reads computed background-color off this DOM
-    // (lib/pdf/domExtract.ts) — a selection must never blank it.
+    // (lib/core/pdfExtract.ts) — a selection must never blank it.
     expect(style.backgroundColor).toBe("#d9e2f3");
     expect(style.backgroundImage).toBe(CELL_SELECTION_OVERLAY);
   });

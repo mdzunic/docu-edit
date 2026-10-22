@@ -17,13 +17,13 @@ import {
   pdfFileName,
   type PdfImageData,
   type PdfPageInput,
-} from "../../lib/pdf/buildPdf";
-import { extractPageContent, PT_PER_CM } from "../../lib/pdf/domExtract";
-import { encodeImage } from "../../lib/pdf/imageEncode";
-import { faceFileName, type FaceKey } from "../../lib/pdf/fontMap";
+} from "../../lib/core/pdfBuild";
+import { extractPageContent, PT_PER_CM } from "../../lib/core/pdfExtract";
+import { encodeImage } from "../../lib/core/pdfImages";
+import { faceFileName, type FaceKey } from "../../lib/core/pdfFonts";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { yieldToMainThread } from "../../lib/core/idleScheduler";
-import { parseSfnt, type SfntFont } from "../../lib/pdf/sfnt";
+import { parseSfnt, type SfntFont } from "../../lib/core/sfnt";
 import { isDocumentContentEmpty } from "../../lib/printRange";
 import type { PaginationController } from "../../composables/usePagination";
 import type { EditorContext } from "./context";

@@ -36,7 +36,7 @@
 import { computed, onMounted, useTemplateRef, watch } from "vue";
 import { DEFAULT_CHART_CHROME, paintChart, paintChartIntoCanvas } from "../../lib/core/chartCanvas";
 import { paintShapeIntoCanvas } from "../../lib/core/shapeCanvas";
-import { fontStack } from "../../lib/fonts/substitution";
+import { fontStack } from "../../lib/core/fontSubstitution";
 import { asDocumentTheme, asDrawingContent, asImageSrc, croppedImageBox, drawingPaint, drawingTextView } from "../../views/spreadsheet/sheetDrawingLayout";
 
 const props = defineProps({

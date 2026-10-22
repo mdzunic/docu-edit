@@ -7,7 +7,7 @@
 // supply a deterministic fake.
 import type { DocumentModel } from "../documentModel";
 import { documentFontFamilies } from "../fonts";
-import { isBundledFamily, substituteFor } from "./substitution";
+import { isBundledFamily, substituteFor } from "../core/fontSubstitution";
 
 export type FontStatus = "available" | "substituted" | "missing";
 

@@ -167,15 +167,16 @@ describe("format layer boundaries", () => {
   });
 
   // The media product (SPEC-107), reverse direction: nothing in core, the
-  // text product (its model layer, its .docx/.odt/.md format layers and its
-  // PDF writer) or the presentation layer may import media/ — the media
+  // text product (its model layer and its .docx/.odt/.md format layers; the
+  // PDF writer is core since SPEC-104) or the presentation layer may import
+  // media/ — the media
   // layer's own side of the rule (only siblings and core) is
   // media/boundary.spec.ts. Subdirectories count (presentation/pptx/,
   // presentation/keynote/, …). Note the trailing slash in the banned
   // segment: core/media.ts ("./media", SPEC-024's media-part module) is a
   // core sibling, not the media product, and stays importable everywhere.
   it("no core, text-product or presentation module imports from media/", () => {
-    const dirs = ["core", "docx", "odf", "md", "pdf", "presentation"].map((name) => join(libDir, name));
+    const dirs = ["core", "docx", "odf", "md", "presentation"].map((name) => join(libDir, name));
     const scanned = dirs.flatMap((dir) => nestedRuntimeModules(dir).map((name) => ({ dir, name })));
     expect(scanned.some(({ name }) => name.includes("/"))).toBe(true);
     const violations = [
@@ -186,13 +187,14 @@ describe("format layer boundaries", () => {
   });
 
   // The spreadsheet product (SPEC-116), reverse direction: nothing in core,
-  // the text product (its model layer and its .docx/.odt/.md format layers,
-  // its PDF writer), the presentation layer or the media layer may import
+  // the text product (its model layer and its .docx/.odt/.md format layers;
+  // the PDF writer is core since SPEC-104), the presentation layer or the
+  // media layer may import
   // spreadsheet/ — the spreadsheet layer's own side of the rule (only
   // siblings and core) is spreadsheet/boundary.spec.ts. Subdirectories
   // count (presentation/pptx/, presentation/keynote/, media/fixtures/, …).
   it("no core, text-product, presentation or media module imports from spreadsheet/", () => {
-    const dirs = ["core", "docx", "odf", "md", "pdf", "presentation", "media"].map((name) => join(libDir, name));
+    const dirs = ["core", "docx", "odf", "md", "presentation", "media"].map((name) => join(libDir, name));
     const scanned = dirs.flatMap((dir) => nestedRuntimeModules(dir).map((name) => ({ dir, name })));
     expect(scanned.some(({ name }) => name.includes("/"))).toBe(true);
     const violations = [

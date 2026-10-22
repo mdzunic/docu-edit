@@ -17,7 +17,7 @@
 // callers keep their estimates and the DOM path.
 import type { Paragraph, RunFormatting, TabStop } from "./documentModel";
 import { DEFAULT_THEME, resolveFont, type DocumentTheme } from "./core/theme";
-import { fontStack } from "./fonts/substitution";
+import { fontStack } from "./core/fontSubstitution";
 import { listIndentCm } from "./core/lists";
 import { type BlockMetrics, type LineBox } from "./core/pageMetrics";
 import { PX_PER_CM } from "./core/units";

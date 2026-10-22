@@ -7,8 +7,7 @@
 // territory and runs identically under Node and the browser.
 //
 // spec107-pages.pdf is NOT built here: the fixture script writes it with the
-// app's own buildPdf (src/lib/pdf/buildPdf.ts), which this module cannot
-// import — the media layer imports only its siblings and core. The unit
+// app's own buildPdf (src/lib/core/pdfBuild.ts since SPEC-104). The unit
 // specs read that checked-in file directly.
 //
 // Production notes (AC: fixtures are checked in "with a note recording how
