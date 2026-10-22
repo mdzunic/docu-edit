@@ -10,6 +10,7 @@ import {
   type PdfPageInput,
   type PdfPathItem,
 } from "./pdfBuild";
+import { equalBytes } from "./equality";
 import type { FaceKey } from "./pdfFonts";
 import { parseSfnt, type SfntFont } from "./sfnt";
 
@@ -424,6 +425,80 @@ describe("filled rects (SPEC-108)", () => {
       pages: [page({ items: [], rects: [{ xPt: 0, yPt: 0, widthPt: 5, heightPt: 5, fill: "transparent" }] }), page({ items: [] })],
     });
     expect(pdf).not.toContain(" re f");
+  });
+});
+
+describe("stroked and on-top rects (SPEC-104)", () => {
+  it("fills an rgb-triple rect exactly as the matching #rrggbb one", async () => {
+    const pdf = await build({
+      pages: [page({ items: [], rects: [{ xPt: 10, yPt: 100, widthPt: 20, heightPt: 50, fill: [1, 0.5, 0] }] })],
+    });
+    expect(pdf).toContain("q 1 0.5 0 rg 10 691.89 20 50 re f Q");
+  });
+
+  it("strokes a rect with its colour and width, defaulting to 0.75 pt", async () => {
+    const pdf = await build({
+      pages: [
+        page({
+          items: [],
+          rects: [
+            { xPt: 10, yPt: 100, widthPt: 20, heightPt: 50, stroke: [0, 0, 0] },
+            { xPt: 0, yPt: 0, widthPt: 5, heightPt: 5, stroke: [0.5, 0.5, 0.5], strokeWidthPt: 0.5 },
+          ],
+        }),
+      ],
+    });
+    expect(pdf).toContain("q 0 0 0 RG 0.75 w 10 691.89 20 50 re S Q");
+    expect(pdf).toContain("q 0.5 0.5 0.5 RG 0.5 w 0 836.89 5 5 re S Q");
+    expect(pdf).not.toContain(" re f");
+  });
+
+  it("fills then strokes a rect carrying both", async () => {
+    const pdf = await build({
+      pages: [page({ items: [], rects: [{ xPt: 0, yPt: 0, widthPt: 10, heightPt: 10, fill: "#ffffff", stroke: [0, 0, 0] }] })],
+    });
+    const fill = pdf.indexOf("q 1 1 1 rg 0 831.89 10 10 re f Q");
+    const stroke = pdf.indexOf("q 0 0 0 RG 0.75 w 0 831.89 10 10 re S Q");
+    expect(fill).toBeGreaterThan(-1);
+    expect(stroke).toBeGreaterThan(fill);
+  });
+
+  it("paints a rect before the text run, and an onTop rect after it", async () => {
+    const pdf = await build({
+      pages: [
+        page({
+          rects: [
+            { xPt: 0, yPt: 0, widthPt: 10, heightPt: 10, fill: "#ff0000" },
+            { xPt: 0, yPt: 0, widthPt: 10, heightPt: 10, fill: "#0000ff", onTop: true },
+          ],
+        }),
+      ],
+    });
+    const under = pdf.indexOf("q 1 0 0 rg");
+    const text = pdf.indexOf(" Tj ");
+    const over = pdf.indexOf("q 0 0 1 rg");
+    expect(under).toBeGreaterThan(-1);
+    expect(text).toBeGreaterThan(under);
+    expect(over).toBeGreaterThan(text);
+  });
+});
+
+describe("determinism (SPEC-104 AC-40)", () => {
+  it("builds byte-identical files from the same input — the writer stamps no date", async () => {
+    const input: PdfBuildInput = {
+      title: "Deck",
+      pages: [
+        page({
+          rects: [{ xPt: 0, yPt: 0, widthPt: 20, heightPt: 20, fill: [0.2, 0.4, 0.6], stroke: [0, 0, 0] }],
+          headings: [{ level: 1, title: "Slide 1", yPt: 0 }],
+        }),
+      ],
+      fonts: fonts(),
+    };
+    const first = await buildPdf(input);
+    const second = await buildPdf(input);
+    expect(equalBytes(first, second)).toBe(true);
+    expect(new TextDecoder("latin1").decode(first)).not.toContain("/CreationDate");
   });
 });
 

@@ -10,6 +10,11 @@ import {
   parseCssPaint,
   parseOpaqueCssColor,
   type PdfRect,
+  DEFAULT_CANVAS_SELECTOR,
+  DEFAULT_IMAGE_SELECTOR,
+  extractPageContent,
+  rectItemsFor,
+  type BorderSide,
 } from "./pdfExtract";
 
 describe("parseOpaqueCssColor", () => {
@@ -177,5 +182,100 @@ describe("edgePaintItems — non-solid border styles (AC-29)", () => {
     });
     expect(items[0].stroke?.dashPt).toEqual([6, 6]);
     expect(items[1].fill).toEqual(black);
+  });
+});
+
+// --- SPEC-104: the rect primitive and the configurable selectors -----------
+
+const NO_SIDE: BorderSide = { widthPt: 0, style: "none", color: "rgb(0, 0, 0)" };
+const box: PdfRect = { xPt: 10, yPt: 20, widthPt: 100, heightPt: 50 };
+
+describe("rectItemsFor (SPEC-104)", () => {
+  it("emits a background fill over the whole border box", () => {
+    expect(
+      rectItemsFor(box, "rgb(255, 0, 0)", { top: NO_SIDE, right: NO_SIDE, bottom: NO_SIDE, left: NO_SIDE }),
+    ).toEqual([{ ...box, fill: [1, 0, 0] }]);
+  });
+
+  it("skips a fully transparent background", () => {
+    const none = { top: NO_SIDE, right: NO_SIDE, bottom: NO_SIDE, left: NO_SIDE };
+    expect(rectItemsFor(box, "rgba(0, 0, 0, 0)", none)).toEqual([]);
+    expect(rectItemsFor(box, "transparent", none)).toEqual([]);
+  });
+
+  it("strokes a uniform border inset by half its width, carrying the fill too", () => {
+    const side: BorderSide = { widthPt: 2, style: "solid", color: "rgb(0, 0, 0)" };
+    expect(rectItemsFor(box, "rgb(255, 255, 255)", { top: side, right: side, bottom: side, left: side })).toEqual([
+      { xPt: 11, yPt: 21, widthPt: 98, heightPt: 48, stroke: [0, 0, 0], strokeWidthPt: 2, fill: [1, 1, 1] },
+    ]);
+  });
+
+  it("paints a non-uniform border as one filled strip per painted side", () => {
+    const top: BorderSide = { widthPt: 0.5, style: "solid", color: "rgb(128, 128, 128)" };
+    const items = rectItemsFor(box, "transparent", { top, right: NO_SIDE, bottom: NO_SIDE, left: NO_SIDE });
+    expect(items).toEqual([{ ...box, heightPt: 0.5, fill: [128 / 255, 128 / 255, 128 / 255] }]);
+  });
+});
+
+/** Stubs an element's on-screen box (jsdom lays nothing out). */
+function placeAt(el: Element, left: number, top: number, width: number, height: number): void {
+  el.getBoundingClientRect = () =>
+    ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
+}
+
+function pageWith(html: string): HTMLElement {
+  const page = document.createElement("div");
+  page.innerHTML = html;
+  document.body.append(page);
+  placeAt(page, 0, 0, 400, 300);
+  return page;
+}
+
+describe("extractPageContent selectors (SPEC-104)", () => {
+  it("keeps SPEC-034's defaults: doc images and doc shape/chart canvases", () => {
+    expect(DEFAULT_IMAGE_SELECTOR).toBe("img.doc-image");
+    expect(DEFAULT_CANVAS_SELECTOR).toBe("canvas.doc-shape-canvas, canvas.doc-chart-canvas");
+  });
+
+  it("emits no rects key without a rectSelector, so a SPEC-034 page input is unchanged", () => {
+    const page = pageWith('<div class="slide-bg" style="background-color: rgb(255, 0, 0)"></div>');
+    placeAt(page.querySelector(".slide-bg")!, 0, 0, 400, 300);
+    const input = extractPageContent(page, 300, 225);
+    expect("rects" in input).toBe(false);
+    expect(Object.keys(input).toSorted()).toEqual(["headings", "heightPt", "images", "items", "links", "paths", "widthPt"]);
+    page.remove();
+  });
+
+  it("extracts a matched element's background and uniform border as rects, in points", () => {
+    const page = pageWith(
+      '<div class="slide-bg" style="background-color: rgb(0, 0, 255)"></div>' +
+        '<div class="frame-box" style="border: 2px solid rgb(0, 0, 0)"></div>' +
+        '<div class="slide-bg print-exclude" style="background-color: rgb(255, 0, 0)"></div>',
+    );
+    const [bg, frame, excluded] = Array.from(page.children);
+    placeAt(bg, 0, 0, 400, 300);
+    placeAt(frame, 40, 40, 80, 40);
+    placeAt(excluded, 0, 0, 400, 300);
+    // 400 px wide on screen → 300 pt: 0.75 pt per px.
+    const input = extractPageContent(page, 300, 225, { rectSelector: ".slide-bg, .frame-box" });
+    expect(input.rects).toEqual([
+      { xPt: 0, yPt: 0, widthPt: 300, heightPt: 225, fill: [0, 0, 1] },
+      { xPt: 30.75, yPt: 30.75, widthPt: 58.5, heightPt: 28.5, stroke: [0, 0, 0], strokeWidthPt: 1.5 },
+    ]);
+    page.remove();
+  });
+
+  it("places images by the imageSelector it is given, and only those", () => {
+    const page = pageWith('<img class="doc-image" src="data:image/png;base64,AA=="><img class="frame-image" src="data:image/png;base64,AB==">');
+    const [docImage, frameImage] = Array.from(page.querySelectorAll("img"));
+    placeAt(docImage, 0, 0, 40, 40);
+    placeAt(frameImage, 100, 100, 40, 40);
+    const byDefault = extractPageContent(page, 300, 225);
+    expect(byDefault.images.map((image) => image.src)).toEqual(["data:image/png;base64,AA=="]);
+    const slides = extractPageContent(page, 300, 225, { imageSelector: "img.frame-image" });
+    expect(slides.images).toEqual([
+      { src: "data:image/png;base64,AB==", xPt: 75, yPt: 75, widthPt: 30, heightPt: 30, onTop: false },
+    ]);
+    page.remove();
   });
 });

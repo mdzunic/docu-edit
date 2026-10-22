@@ -15,6 +15,7 @@ import type {
   PdfPageInput,
   PdfPathItem,
   PdfPathSubpath,
+  PdfRectItem,
   PdfTextItem,
 } from "./pdfBuild";
 import { faceKeyFor } from "./pdfFonts";
@@ -39,10 +40,29 @@ const EXCLUDED_SELECTOR = ".print-exclude";
  * areas) do not become outline entries. */
 const NON_BODY_SELECTOR = ".page-header-band, .page-footer-band, .page-note-area";
 
+/** The word processor's placed images — `ExtractOptions.imageSelector`'s
+ * default (SPEC-034). */
+export const DEFAULT_IMAGE_SELECTOR = "img.doc-image";
+
+/** The word processor's shape and chart canvases, read back as images —
+ * `ExtractOptions.canvasSelector`'s default (SPEC-051/052). */
+export const DEFAULT_CANVAS_SELECTOR = "canvas.doc-shape-canvas, canvas.doc-chart-canvas";
+
 export interface ExtractOptions {
   /** Resolves an internal link anchor (href="#name") to its 0-based target
    * page index, or null when the anchor no longer exists. */
   destPageForAnchor?: (anchor: string) => number | null;
+  /** The `<img>` elements placed as images (default DEFAULT_IMAGE_SELECTOR). */
+  imageSelector?: string;
+  /** The `<canvas>` elements read back as images (default
+   * DEFAULT_CANVAS_SELECTOR). A comma list is walked one selector at a time,
+   * in list order — the shapes-then-charts order SPEC-034's pages paint in. */
+  canvasSelector?: string;
+  /** The elements whose computed background and uniform border become
+   * `PdfRectItem`s (SPEC-104 — slide backgrounds, frame fills and strokes,
+   * handout frames, note lines). Absent (the default) extracts no rects and
+   * emits no `rects` key at all. */
+  rectSelector?: string;
 }
 
 /** Parses a computed CSS color into 0..1 rgb. Only the rgb()/rgba() forms
@@ -93,6 +113,77 @@ export function parseOpaqueCssColor(value: string): [number, number, number] | n
     return null;
   }
   return parseCssColor(trimmed);
+}
+
+/** One side of an element's computed border, as `rectItemsFor` reads it. */
+export interface BorderSide {
+  /** The painted width, already in points. */
+  widthPt: number;
+  /** The computed `border-*-style`. */
+  style: string;
+  /** The computed `border-*-color`. */
+  color: string;
+}
+
+function paintedSide(side: BorderSide): [number, number, number] | null {
+  if (side.style === "none" || side.style === "hidden" || !(side.widthPt > 0)) {
+    return null;
+  }
+  return parseCssPaint(side.color);
+}
+
+/** The rect items one matched element contributes (SPEC-104): its computed
+ * background (skipped when fully transparent) and its border. A uniform
+ * border — four painted sides of one width, style and colour — is a single
+ * stroked rect inset by half the width, so PDF's centred stroke lands exactly
+ * where CSS painted the border inside the box; a non-uniform one becomes a
+ * filled strip per painted side. `box` is the element's border box in points. */
+export function rectItemsFor(
+  box: PdfRect,
+  backgroundColor: string,
+  sides: { top: BorderSide; right: BorderSide; bottom: BorderSide; left: BorderSide },
+): PdfRectItem[] {
+  const fill = parseCssPaint(backgroundColor);
+  const painted = [sides.top, sides.right, sides.bottom, sides.left].map(paintedSide);
+  const [top, right, bottom, left] = painted;
+  const uniform =
+    top !== null &&
+    painted.every((rgb) => rgb !== null && rgb.every((channel, i) => channel === top[i])) &&
+    [sides.right, sides.bottom, sides.left].every(
+      (side) => side.widthPt === sides.top.widthPt && side.style === sides.top.style,
+    );
+  if (uniform) {
+    const width = sides.top.widthPt;
+    const item: PdfRectItem = {
+      xPt: box.xPt + width / 2,
+      yPt: box.yPt + width / 2,
+      widthPt: Math.max(0, box.widthPt - width),
+      heightPt: Math.max(0, box.heightPt - width),
+      stroke: top,
+      strokeWidthPt: width,
+    };
+    if (fill) {
+      item.fill = fill;
+    }
+    return [item];
+  }
+  const items: PdfRectItem[] = [];
+  if (fill) {
+    items.push({ ...box, fill });
+  }
+  if (top) {
+    items.push({ ...box, heightPt: sides.top.widthPt, fill: top });
+  }
+  if (bottom) {
+    items.push({ ...box, yPt: box.yPt + box.heightPt - sides.bottom.widthPt, heightPt: sides.bottom.widthPt, fill: bottom });
+  }
+  if (left) {
+    items.push({ ...box, widthPt: sides.left.widthPt, fill: left });
+  }
+  if (right) {
+    items.push({ ...box, xPt: box.xPt + box.widthPt - sides.right.widthPt, widthPt: sides.right.widthPt, fill: right });
+  }
+  return items;
 }
 
 /** A rectangle in PDF points, measured from the page's top-left like every
@@ -300,10 +391,55 @@ export function extractPageContent(
   const headings: PdfHeading[] = [];
   const images: PdfImageItem[] = [];
   const paths: PdfPathItem[] = [];
+  const rects: PdfRectItem[] = [];
+  // The `rects` key exists only when a rectSelector asked for rects, so a
+  // SPEC-034 page input is exactly what it always was.
+  const withRects = (page: PdfPageInput): PdfPageInput => (options.rectSelector ? { ...page, rects } : page);
   const doc = pageEl.ownerDocument;
   const view = doc.defaultView;
   if (!view) {
-    return { widthPt, heightPt, items, links, headings, images, paths };
+    return withRects({ widthPt, heightPt, items, links, headings, images, paths });
+  }
+
+  // Backgrounds and borders (SPEC-104), measured like every other box: the
+  // on-screen border box mapped into points, the computed border widths
+  // scaled by the element's own on-screen/layout ratio (a slide stage is
+  // fitted with transform: scale, which offsetWidth does not see).
+  if (options.rectSelector) {
+    for (const element of Array.from(pageEl.querySelectorAll(options.rectSelector))) {
+      if (element.closest(EXCLUDED_SELECTOR)) {
+        continue;
+      }
+      const rect = element.getBoundingClientRect();
+      if (rect.width <= 0.1 || rect.height <= 0.1) {
+        continue;
+      }
+      const style = view.getComputedStyle(element);
+      const layoutWidth = element instanceof HTMLElement ? element.offsetWidth : 0;
+      const unit = (layoutWidth > 0 ? rect.width / layoutWidth : 1) * scale;
+      const side = (width: string, borderStyle: string, color: string): BorderSide => ({
+        widthPt: (Number.parseFloat(width) || 0) * unit,
+        style: borderStyle,
+        color,
+      });
+      rects.push(
+        ...rectItemsFor(
+          {
+            xPt: (rect.left - pageRect.left) * scale,
+            yPt: (rect.top - pageRect.top) * scale,
+            widthPt: rect.width * scale,
+            heightPt: rect.height * scale,
+          },
+          style.backgroundColor,
+          {
+            top: side(style.borderTopWidth, style.borderTopStyle, style.borderTopColor),
+            right: side(style.borderRightWidth, style.borderRightStyle, style.borderRightColor),
+            bottom: side(style.borderBottomWidth, style.borderBottomStyle, style.borderBottomColor),
+            left: side(style.borderLeftWidth, style.borderLeftStyle, style.borderLeftColor),
+          },
+        ),
+      );
+    }
   }
 
   const walker = doc.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
@@ -351,7 +487,7 @@ export function extractPageContent(
   // Images are placed by their rendered border box, so a resized, floated or
   // absolutely positioned (wrap behind/in front) image lands in the PDF
   // exactly where the pagination engine put it on screen.
-  for (const element of Array.from(pageEl.querySelectorAll("img.doc-image"))) {
+  for (const element of Array.from(pageEl.querySelectorAll(options.imageSelector ?? DEFAULT_IMAGE_SELECTOR))) {
     if (element.closest(EXCLUDED_SELECTOR)) {
       continue;
     }
@@ -382,76 +518,51 @@ export function extractPageContent(
   // Rotation is already baked into the canvas's own pixels (paintShape
   // rotates before painting), so the canvas element's own on-screen
   // (unrotated) bounding box is the right placement rectangle.
-  for (const element of Array.from(pageEl.querySelectorAll("canvas.doc-shape-canvas"))) {
-    if (element.closest(EXCLUDED_SELECTOR)) {
-      continue;
-    }
-    const anchorEl = element.closest(".doc-shape-anchor");
-    if (anchorEl && anchorEl.closest(EXCLUDED_SELECTOR)) {
-      continue;
-    }
-    const canvas = element as HTMLCanvasElement;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0.1 || rect.height <= 0.1) {
-      continue;
-    }
-    let src = "";
-    try {
-      src = canvas.toDataURL("image/png");
-    } catch {
-      continue;
-    }
-    if (!src || src === "data:,") {
-      continue;
-    }
-    const shapeEl = canvas.closest(".doc-shape");
-    const zIndex = shapeEl ? Number.parseInt(view.getComputedStyle(shapeEl).zIndex, 10) : NaN;
-    images.push({
-      src,
-      xPt: (rect.left - pageRect.left) * scale,
-      yPt: (rect.top - pageRect.top) * scale,
-      widthPt: rect.width * scale,
-      heightPt: rect.height * scale,
-      onTop: Number.isFinite(zIndex) && zIndex > 0,
-    });
-  }
-
+  //
   // Charts (SPEC-052 AC-34, AC-35) paint into a real <canvas> (DocChartBlock.vue)
   // exactly like a shape's — reused here the same way, at the canvas's own
   // painted pixel resolution (devicePixelRatio-scaled, not the CSS display
   // size stretched up), never an upscaled bitmap.
-  for (const element of Array.from(pageEl.querySelectorAll("canvas.doc-chart-canvas"))) {
-    if (element.closest(EXCLUDED_SELECTOR)) {
-      continue;
+  //
+  // The selector list is walked one entry at a time, so the default places
+  // every shape before every chart, as it always has; a slide sheet
+  // (SPEC-104) passes its own frame canvases.
+  const canvasSelectors = (options.canvasSelector ?? DEFAULT_CANVAS_SELECTOR)
+    .split(",")
+    .map((selector) => selector.trim())
+    .filter((selector) => selector.length > 0);
+  for (const selector of canvasSelectors) {
+    for (const element of Array.from(pageEl.querySelectorAll(selector))) {
+      if (element.closest(EXCLUDED_SELECTOR) || !(element instanceof HTMLCanvasElement)) {
+        continue;
+      }
+      const canvas = element;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0.1 || rect.height <= 0.1) {
+        continue;
+      }
+      let src = "";
+      try {
+        src = canvas.toDataURL("image/png");
+      } catch {
+        continue;
+      }
+      if (!src || src === "data:,") {
+        continue;
+      }
+      // In front of text when the block hosting the canvas is (its wrap's
+      // positive z-index, as for images).
+      const hostEl = canvas.closest(".doc-shape, .doc-chart");
+      const zIndex = hostEl ? Number.parseInt(view.getComputedStyle(hostEl).zIndex, 10) : NaN;
+      images.push({
+        src,
+        xPt: (rect.left - pageRect.left) * scale,
+        yPt: (rect.top - pageRect.top) * scale,
+        widthPt: rect.width * scale,
+        heightPt: rect.height * scale,
+        onTop: Number.isFinite(zIndex) && zIndex > 0,
+      });
     }
-    const anchorEl = element.closest(".doc-chart-anchor");
-    if (anchorEl && anchorEl.closest(EXCLUDED_SELECTOR)) {
-      continue;
-    }
-    const canvas = element as HTMLCanvasElement;
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 0.1 || rect.height <= 0.1) {
-      continue;
-    }
-    let src = "";
-    try {
-      src = canvas.toDataURL("image/png");
-    } catch {
-      continue;
-    }
-    if (!src || src === "data:,") {
-      continue;
-    }
-    const chartEl = canvas.closest(".doc-chart");
-    const zIndex = chartEl ? Number.parseInt(view.getComputedStyle(chartEl).zIndex, 10) : NaN;
-    images.push({
-      src,
-      xPt: (rect.left - pageRect.left) * scale,
-      yPt: (rect.top - pageRect.top) * scale,
-      widthPt: rect.width * scale,
-      heightPt: rect.height * scale,
-      onTop: Number.isFinite(zIndex) && zIndex > 0,
-    });
   }
 
   // Connectors (SPEC-070) are the one thing the page paints as SVG rather
@@ -626,5 +737,5 @@ export function extractPageContent(
     });
   }
 
-  return { widthPt, heightPt, items, links, headings, images, paths };
+  return withRects({ widthPt, heightPt, items, links, headings, images, paths });
 }
