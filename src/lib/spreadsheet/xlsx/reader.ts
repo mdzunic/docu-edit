@@ -7,7 +7,7 @@
 // (core/xmlScanner.ts, in xlsx/sheetXml.ts) — a million-cell sheet as a DOM
 // costs an order of magnitude more memory than its text.
 //
-// What is read (everything else — comments, tables, calcChain, VBA, custom
+// What is read (everything else — calcChain, VBA, custom
 // XML — stays in `opaque`, untouched; nothing here writes, so a download
 // stays byte-identical):
 // - sheets in `<sheets>` order: name, `state` → visibility, and the
