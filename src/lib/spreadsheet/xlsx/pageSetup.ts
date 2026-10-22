@@ -18,9 +18,10 @@
 //   `copies`, `blackAndWhite`, `draft`, `cellComments`, `errors`,
 //   `gridLinesSet` …) keeping its bytes and position (the SPEC-104 `@show`
 //   precedent); a missing element inserted at its CT_Worksheet place; a
-//   header or footer whose text reads the same keeping its bytes. Margins are
-//   written to 1/1000 inch (a sanctioned delta). An unchanged setup returns
-//   the very string.
+//   header or footer whose text reads the same keeping its bytes; a break
+//   list's entries that stay — and every `brk` that is not manual, which the
+//   model does not hold — keeping theirs. Margins are written to 1/1000 inch
+//   (a sanctioned delta). An unchanged setup returns the very string.
 import { CM_PER_INCH } from "../../core/units";
 import { formatHeaderFooter, parseHeaderFooter } from "../headerFooter";
 import type { HeaderFooterPair, HeaderFooterSections, SheetHeaderFooter, SheetMargins, SheetPageSetup } from "../model";
@@ -392,13 +393,39 @@ function headerFooterXml(xml: string, located: Located | undefined, source: Shee
   return `${tag}${children}</${prefix}headerFooter>`;
 }
 
-function breaksXml(local: "rowBreaks" | "colBreaks", breaks: readonly number[], prefix: string): string {
-  if (breaks.length === 0) {
-    return "";
+/** `<rowBreaks>`/`<colBreaks>` holding `breaks` as its manual breaks, over
+ * the part's own element (`source`, its text, when it has one): its start
+ * tag with `count`/`manualBreakCount` set; its entries that stay — a manual
+ * break still wanted, and every break that is not manual, which the model
+ * does not hold (unless a manual one now takes its place) — verbatim; new
+ * manual breaks generated; in id order. "" when no entry is left. */
+function breaksXml(local: "rowBreaks" | "colBreaks", breaks: readonly number[], prefix: string, source?: string): string {
+  const wanted = new Set(breaks);
+  const kept = new Set<number>();
+  const entries: { id: number; text: string }[] = [];
+  for (const match of (source ?? "").matchAll(BRK)) {
+    const attrs = match[1]!;
+    const id = wholeNumber(/\bid\s*=\s*["']([^"']*)["']/.exec(attrs)?.[1]) ?? 0;
+    const manual = truthy(/\bman\s*=\s*["']([^"']*)["']/.exec(attrs)?.[1]);
+    if (manual ? wanted.has(id) && !kept.has(id) : !wanted.has(id)) {
+      entries.push({ id, text: match[0] });
+      if (manual) {
+        kept.add(id);
+      }
+    }
   }
   const max = local === "rowBreaks" ? 16383 : 1048575;
-  const items = breaks.map((id) => `<${prefix}brk id="${id}" max="${max}" man="1"/>`).join("");
-  return `<${prefix}${local} count="${breaks.length}" manualBreakCount="${breaks.length}">${items}</${prefix}${local}>`;
+  for (const id of breaks) {
+    if (!kept.has(id)) {
+      entries.push({ id, text: `<${prefix}brk id="${id}" max="${max}" man="1"/>` });
+    }
+  }
+  if (entries.length === 0) {
+    return "";
+  }
+  const open = source === undefined ? `<${prefix}${local}>` : source.slice(0, source.indexOf(">") + 1).replace(/\s*\/>$/, ">");
+  const tag = setAttribute(setAttribute(open, "count", String(entries.length)), "manualBreakCount", String(breaks.length));
+  return `${tag}${entries.toSorted((a, b) => a.id - b.id).map((entry) => entry.text).join("")}</${prefix}${local}>`;
 }
 
 /** The worksheet part with its page elements spliced to `setup` (see the
@@ -471,7 +498,8 @@ export function spliceXlsxPageSetup(xml: string, setup: SheetPageSetup | undefin
   // rowBreaks, colBreaks
   for (const local of ["rowBreaks", "colBreaks"] as const) {
     if (JSON.stringify(want[local] ?? []) !== JSON.stringify(source[local] ?? [])) {
-      replace(layout.elements[local], local, breaksXml(local, want[local] ?? [], p));
+      const located = layout.elements[local];
+      replace(located, local, breaksXml(local, want[local] ?? [], p, located === undefined ? undefined : xml.slice(located.start, located.end)));
     }
   }
 

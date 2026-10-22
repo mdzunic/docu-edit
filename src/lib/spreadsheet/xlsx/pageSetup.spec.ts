@@ -87,6 +87,23 @@ describe("spliceXlsxPageSetup", () => {
     expect(formatInches(1.778)).toBe("0.7");
   });
 
+  it("a break list rewritten keeps its start tag, the breaks that stay and every break that is not manual verbatim", () => {
+    const breaks = `<rowBreaks count="3" manualBreakCount="2" x14:extra="kept"><brk id="10" max="16383" man="1" pt="1"/><brk id="20" max="16383"/><brk id="30" max="16383" man="1"/></rowBreaks>`;
+    const xml = worksheet(breaks);
+    const setup = readXlsxPageSetup(xml)!;
+    expect(setup.rowBreaks).toEqual([10, 30]);
+    // 30 removed, 25 added: 10 and the automatic 20 keep their bytes.
+    expect(spliceXlsxPageSetup(xml, { ...setup, rowBreaks: [10, 25] })).toBe(
+      worksheet(
+        `<rowBreaks count="3" manualBreakCount="2" x14:extra="kept"><brk id="10" max="16383" man="1" pt="1"/><brk id="20" max="16383"/><brk id="25" max="16383" man="1"/></rowBreaks>`,
+      ),
+    );
+    // A manual break where an automatic one was replaces it; with no manual break left the automatic ones stay.
+    expect(spliceXlsxPageSetup(xml, { ...setup, rowBreaks: [10, 20] })).toContain(`<brk id="10" max="16383" man="1" pt="1"/><brk id="20" max="16383" man="1"/></rowBreaks>`);
+    expect(spliceXlsxPageSetup(xml, { ...setup, rowBreaks: undefined })).toContain(`<rowBreaks count="1" manualBreakCount="0" x14:extra="kept"><brk id="20" max="16383"/></rowBreaks>`);
+    expect(spliceXlsxPageSetup(worksheet(`<rowBreaks count="1" manualBreakCount="1"><brk id="4" max="16383" man="1"/></rowBreaks>`), {})).toBe(worksheet(""));
+  });
+
   it("an ods scale-to-pages setup writes as fit 1 × N", () => {
     const next = spliceXlsxPageSetup(worksheet(""), { odsScaleToPages: 3 });
     expect(readXlsxPageSetup(next)).toEqual({ paper: { widthCm: 21.59, heightCm: 27.94, xlsxPaperSize: 1 }, fitTo: { width: 1, height: 3 } });
