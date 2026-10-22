@@ -56,7 +56,7 @@ import { adjustFormula } from "./formula/adjust";
 import type { FormulaNode } from "./formula/ast";
 import { storedValueContext, evaluate } from "./formula/evaluate";
 import { FormulaSyntaxError, parseFormula, parseFormulaAt } from "./formula/parse";
-import { printFormula } from "./formula/print";
+import { formatReference, formatSheetPrefix } from "./formula/print";
 import { withReferenceHooks } from "./formula/referenceHooks";
 import { remapSheetReferences, type SheetRemap } from "./formula/sheetRefs";
 import { isArray, isEmpty, isError, isRange, type EvalValue } from "./formula/values";
@@ -435,14 +435,24 @@ export function hyperlinkLabel(target: HyperlinkTarget): string {
   return target.kind === "url" ? externalHref(target) : target.location;
 }
 
-/** A `place` location as canonical reference text (SPEC-119): a reference
- * or name that parses is printed canonically; anything else (`#REF!` left
- * by a deletion, text in no dialect) is kept as written. */
+/** A `place` location as canonical reference text (SPEC-119): a lone
+ * reference, name or error that parses is written back in canonical form
+ * (one token, so no whitespace of the user's is lost — not a print(parse())
+ * of a formula); anything else (text in no dialect) is kept as written. */
 export function canonicalPlaceLocation(text: string): string {
   const trimmed = text.trim().replace(/^=/, "");
   try {
     const node = parseFormula(trimmed);
-    return node.kind === "ref" || node.kind === "name" || node.kind === "error" ? printFormula(node) : trimmed;
+    switch (node.kind) {
+      case "ref":
+        return formatReference(node.ref);
+      case "name":
+        return node.sheet === undefined ? node.name : formatSheetPrefix(node.sheet) + node.name;
+      case "error":
+        return node.text;
+      default:
+        return trimmed;
+    }
   } catch (error) {
     if (error instanceof FormulaSyntaxError) {
       return trimmed;

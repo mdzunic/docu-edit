@@ -714,7 +714,6 @@ function copiedValidations(rules: readonly DataValidation[], format: Spreadsheet
   });
 }
 
-/** A copy's autofilter (see the module header). */
 /** SPEC-135: a copy's threads, every thread and message under a fresh GUID
  * and without its source. */
 function copiedThreads(threads: readonly CellThread[]): CellThread[] {
@@ -724,6 +723,7 @@ function copiedThreads(threads: readonly CellThread[]): CellThread[] {
   });
 }
 
+/** A copy's autofilter (see the module header). */
 function copiedAutoFilter(filter: AutoFilter, format: SpreadsheetFormat): AutoFilter {
   const { odsName: _name, sourceXml, ...rest } = filter;
   return format === "ods" || sourceXml === undefined ? rest : { ...rest, sourceXml };

@@ -31,7 +31,7 @@
 //   reference (its element's data-ref: a merge's anchor, the cell whose text
 //   overflows there); anywhere else in the cell gives null.
 import { getCell, parseA1, parseRange, type CellRef, type GridRange } from "../../lib/spreadsheet/address";
-import { isThemeColor, type ModelColor } from "../../lib/core/theme";
+import { sameModelColor, type ModelColor } from "../../lib/core/theme";
 import { isDangerousUrl, sanitizeHref, urlScheme } from "../../lib/core/urls";
 import { canonicalPlaceLocation, externalHref, hyperlinkAt, hyperlinkFormulaCall, hyperlinkFormulaTarget } from "../../lib/spreadsheet/annotations";
 import { cellDisplay } from "../../lib/spreadsheet/cellRender";
@@ -263,11 +263,13 @@ export function linkRange(active: GridRange, existing: CellHyperlink | null): Gr
   return existing && single ? existing.range : active;
 }
 
+const TEXT_1: ModelColor = { theme: "dk1" };
+
 /** Whether a font colour reads as automatic: none, or the theme's Text 1
  * (`dk1`) untransformed — what a Normal style carries for it (Excel's
  * `theme="1"`, createBlankWorkbook's). */
 export function isAutomaticColor(color: ModelColor | undefined): boolean {
-  return color === undefined || (isThemeColor(color) && color.theme === "dk1" && [color.lumMod, color.lumOff, color.shade, color.tint].every((each) => each === undefined));
+  return color === undefined || sameModelColor(color, TEXT_1);
 }
 
 /** Whether a position's effective font colour is automatic. */
