@@ -2,7 +2,8 @@
 // fixtures: a no-edit download is byte-identical part for part (equalBytes
 // after unzip); add/edit/reply/resolve/link → save → reopen reproduces every
 // modelled field (ids and retention excluded, equalStructural over the
-// annotation arrays); writing the reopened model twice is byte-stable. The
+// annotation arrays); writing the reopened model twice is byte-stable, clean
+// and with every sheet's annotations rebuilt. The
 // sanctioned deltas are pinned beside each format's wire tests:
 // xlsx/annotations.spec.ts (a moved note's box keeps its size but not its
 // position; an edited thread message loses its <mentions>) and
@@ -91,5 +92,18 @@ describe.each(FORMATS)("SPEC-135 annotations round trip ($format)", ({ format, b
     const once = await unzip(await write(reopened));
     const twice = await unzip(await write(reopened));
     expect(changedParts(once, twice)).toEqual([]);
+    // The same with every sheet's annotations rebuilt (a clean reopened model
+    // would re-emit its source bytes): two writes, the same bytes, which
+    // read back to the same annotations.
+    const rebuilt: SpreadsheetModel = {
+      ...reopened,
+      sheets: reopened.sheets.map((sheet) => (sheet.kind !== "grid" ? sheet : format === "xlsx" ? { ...sheet, annotationsDirty: true as const } : { ...sheet, dirty: true as const })),
+    };
+    const first = await write(rebuilt);
+    expect(changedParts(await unzip(first), await unzip(await write(rebuilt)))).toEqual([]);
+    const again = await open(first, format);
+    for (const [index, sheet] of model.sheets.entries()) {
+      expect(fields(again.sheets[index]!)).toEqual(fields(sheet));
+    }
   });
 });
