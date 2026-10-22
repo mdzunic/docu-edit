@@ -744,6 +744,7 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
     opaque: parsed.opaque,
     styles: parsed.styles.length > 0 ? parsed.styles : defaultStyles(),
     defaultStyleId: 0,
+    names: [],
     dxfs: parsed.dxfs,
   };
   if (parsed.theme !== undefined) {

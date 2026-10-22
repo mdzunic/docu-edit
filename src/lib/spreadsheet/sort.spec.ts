@@ -25,7 +25,7 @@ function sheet(fields: Partial<Sheet> = {}): Sheet {
 }
 
 function model(s: Sheet, fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {
-  return { dxfs: [], kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 9, sheets: [s], activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}, { font: { bold: true } }], defaultStyleId: 0, ...fields };
+  return { names: [], dxfs: [], kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 9, sheets: [s], activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}, { font: { bold: true } }], defaultStyleId: 0, ...fields };
 }
 
 const cell = (col: number, value: CellValue, extra: Partial<Cell> = {}): Cell => ({ col, value, ...extra });

@@ -70,6 +70,7 @@ function drawingBook(): SpreadsheetModel {
     ],
   };
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: crypto.randomUUID(),

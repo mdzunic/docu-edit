@@ -135,6 +135,7 @@ function foreignSheet(name: string, partName: string): Sheet {
  * current reader version so no upgrade runs. */
 function handBuiltBook(sheets: Sheet[], activeSheetIndex = 0): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: crypto.randomUUID(),

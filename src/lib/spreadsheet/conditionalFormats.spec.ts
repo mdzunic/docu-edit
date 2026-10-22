@@ -60,6 +60,7 @@ function book(values: Record<string, CellValue>, formats: ConditionalFormat[] = 
     styles: [{}],
     defaultStyleId: 0,
     dxfs,
+    names: [],
   };
 }
 

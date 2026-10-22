@@ -53,6 +53,7 @@ function hideRow(sheet: Sheet, index: number): Sheet {
 
 function bookOf(sheet: Sheet, styles: CellStyle[] = [{}]): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "book",

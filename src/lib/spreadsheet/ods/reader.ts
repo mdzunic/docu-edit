@@ -970,6 +970,7 @@ export function refreshUncachedOdsCharts(parsed: ParsedSpreadsheet, uncached: Re
     opaque: parsed.opaque,
     styles: parsed.styles,
     defaultStyleId: 0,
+    names: [],
     dxfs: parsed.dxfs,
   };
   if (parsed.odsNullDate !== undefined) {

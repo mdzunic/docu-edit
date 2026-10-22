@@ -128,6 +128,7 @@ describe("SpreadsheetStatusBar formatted aggregates and the locale control (SPEC
     merges: [],
   };
   const model: SpreadsheetModel = {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "w",

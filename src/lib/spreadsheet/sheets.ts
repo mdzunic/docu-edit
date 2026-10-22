@@ -174,6 +174,7 @@ export function createBlankWorkbook(): SpreadsheetModel {
     defaultStyleId: 0,
     theme: structuredClone(DEFAULT_THEME),
     dxfs: [],
+    names: [],
   };
 }
 

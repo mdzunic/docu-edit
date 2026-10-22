@@ -45,6 +45,7 @@ function sheet(fields: Partial<Sheet> = {}): Sheet {
 
 function model(s: Sheet): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "book",

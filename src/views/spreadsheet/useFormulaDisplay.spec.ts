@@ -43,6 +43,7 @@ function formulaSheet(kind: Sheet["kind"] = "grid"): Sheet {
 
 function bookOf(sheet: Sheet, format: SpreadsheetModel["format"] = "xlsx"): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "book",

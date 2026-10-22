@@ -30,7 +30,7 @@ function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
 }
 
 function model(sheets: Sheet[], fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {
-  return { dxfs: [], kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 8, sheets, activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}], defaultStyleId: 0, ...fields };
+  return { names: [], dxfs: [], kind: "spreadsheet", id: "book", title: "T", format: "xlsx", readerVersion: 8, sheets, activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: [{}], defaultStyleId: 0, ...fields };
 }
 
 const value = (col: number, v: Cell["value"], extra: Partial<Cell> = {}): Cell => ({ col, value: v, ...extra });

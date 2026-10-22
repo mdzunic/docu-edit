@@ -386,6 +386,62 @@ export interface Sheet {
    *  own `dirty` says. ods drawings live in the table XML, so an ods
    *  drawing command sets `dirty` instead. */
   drawingsDirty?: true;
+  // --- SPEC-133 (tables.ts is the normative source for the commands) ---
+  /** The sheet's Excel tables, in source order (new ones appended). Absent
+   *  or empty: none. Copy-on-write: every command replaces the array and the
+   *  tables it touches. A table's change marks the sheet `dirty` (its
+   *  `<tableParts>` follows `tables`). */
+  tables?: SheetTable[];
+}
+
+// --- SPEC-133: defined names and tables -----------------------------------------------
+// SPEC-133 is the normative source for defined names (names.ts: validity,
+// resolution, the reserved `_xlnm.*` names) and Excel tables (tables.ts:
+// structured references, the commands; tableStyles.ts: how a style renders).
+
+/** A defined name. Relative parts of `formula` are relative to A1. */
+export interface DefinedName {
+  name: string; // as written; compared case-insensitively
+  scopeSheetId?: string; // absent = workbook scope
+  formula: string; // canonical; relative parts are relative to A1
+  hidden?: true;
+  comment?: string;
+  formulaUnparsed?: true; // kept in its source dialect, never evaluated
+  sourceAttrs?: string; // xlsx: unmodelled attributes verbatim; ods: table:range-usable-as
+}
+
+export type TotalsFunction = "sum" | "min" | "max" | "average" | "count" | "countNums" | "stdDev" | "var" | "custom";
+
+export interface SheetTableColumn {
+  name: string; // always equals the header cell's string when there is a header row
+  xlsxId?: number; // tableColumn@id (new columns: 1 + max)
+  totalsFunction?: TotalsFunction;
+  totalsFormula?: string; // canonical; "custom" only
+  totalsLabel?: string;
+  calculatedFormula?: string; // canonical
+}
+
+export interface SheetTableStyle {
+  name?: string; // absent = no style ("None")
+  showRowStripes: boolean;
+  showColumnStripes: boolean;
+  showFirstColumn: boolean;
+  showLastColumn: boolean;
+}
+
+export interface SheetTable {
+  id: string; // minted at read, never written
+  name: string; // displayName — what formulas use
+  ref: GridRange; // header + data + totals
+  headerRow: boolean;
+  totalsRow: boolean;
+  columns: SheetTableColumn[];
+  style: SheetTableStyle;
+  autoFilter?: { sourceXml?: string }; // present = filter buttons; criteria are SPEC-128's
+  locked?: true; // tableType queryTable/xml: style options only
+  partName?: string; // "xl/tables/table1.xml" — bytes stay in opaque
+  xlsxId?: number; // table@id, unique in the workbook
+  dirty?: true; // regenerate the part
 }
 
 // --- SPEC-131: the drawing layer --------------------------------------------------
@@ -571,6 +627,14 @@ export interface SpreadsheetModel {
    *  verbatim (with their preceding whitespace), re-emitted by the writer
    *  whenever it regenerates `table:content-validations`. */
   odsOrphanValidations?: string[];
+  // --- SPEC-133 (names.ts is the normative source) ---
+  /** Every defined name, in source order (new ones appended) — workbook and
+   *  sheet scope, reserved `_xlnm.*` names included. Copy-on-write: every
+   *  command replaces the array and the names it touches. */
+  names: DefinedName[];
+  /** A name changed since open: the writers rebuild xlsx `<definedNames>`
+   *  and the ODS named expressions from `names`. */
+  namesDirty?: true;
 }
 
 /** Whether a sheet "has a source" (SPEC-121): an xlsx part in `opaque` or

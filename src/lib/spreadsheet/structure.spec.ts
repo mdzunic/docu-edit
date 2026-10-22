@@ -52,6 +52,7 @@ function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
 
 function model(sheets: Sheet[]): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "m",

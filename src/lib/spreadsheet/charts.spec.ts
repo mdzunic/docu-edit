@@ -60,6 +60,7 @@ function bookOf(sheets: Sheet[]): SpreadsheetModel {
     opaque: [],
     styles: defaultStyles(),
     defaultStyleId: 0,
+    names: [],
     dxfs: [],
   };
 }

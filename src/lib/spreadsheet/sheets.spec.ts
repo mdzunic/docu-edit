@@ -110,6 +110,7 @@ function foreignSheet(name: string, partName: string, extra: Partial<Sheet> = {}
 
 function book(sheets: Sheet[], activeSheetIndex = 0, format: SpreadsheetFormat = "xlsx"): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: crypto.randomUUID(),

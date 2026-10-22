@@ -17,6 +17,7 @@ function sheet(name: string, rows: Row[], kind: Sheet["kind"] = "grid", partName
 
 function model(sheets: Sheet[], activeSheetIndex = 0, opaque: SpreadsheetModel["opaque"] = []): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "w",

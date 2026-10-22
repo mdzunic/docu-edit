@@ -33,6 +33,7 @@ function book(values: number[], formats: ConditionalFormat[], extra: Row[] = [])
     opaque: [],
     styles: [{}],
     defaultStyleId: 0,
+    names: [],
     dxfs: [RED],
   };
 }

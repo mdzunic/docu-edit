@@ -92,6 +92,7 @@ function book(specs: readonly SheetSpec[], parts: Readonly<Record<string, string
   });
   Object.assign(files, parts);
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "retained",

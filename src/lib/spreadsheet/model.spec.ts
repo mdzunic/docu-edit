@@ -68,6 +68,7 @@ const ACCENT1_DARKER_25: SheetColorRef = { theme: "accent1", lumMod: 0.75, xlsxT
 /** A model with every optional field populated and every kind of value. */
 function handBuiltModel(): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "doc-1",

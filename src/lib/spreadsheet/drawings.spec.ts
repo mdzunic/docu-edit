@@ -69,6 +69,7 @@ function book(sheets: Sheet[], format: SpreadsheetModel["format"] = "xlsx"): Spr
     opaque: [],
     styles: [{}],
     defaultStyleId: 0,
+    names: [],
     dxfs: [],
   };
 }
