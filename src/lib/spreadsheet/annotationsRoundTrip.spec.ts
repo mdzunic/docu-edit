@@ -41,6 +41,9 @@ function fields(sheet: Sheet): unknown {
   };
 }
 
+/** The workbook's thread authors' display names, sorted. */
+const personNames = (model: SpreadsheetModel): string[] => (model.persons ?? []).map((person) => person.displayName).toSorted();
+
 /** The names of the parts whose bytes differ (or exist on one side only). */
 function changedParts(a: Map<string, Uint8Array>, b: Map<string, Uint8Array>): string[] {
   const names = new Set([...a.keys(), ...b.keys()]);
@@ -83,8 +86,7 @@ describe.each(FORMATS)("SPEC-135 annotations round trip ($format)", ({ format, b
       expect(got).toEqual(want);
     }
     if (format === "xlsx") {
-      const names = (m: SpreadsheetModel) => (m.persons ?? []).map((person) => person.displayName).toSorted();
-      expect(names(reopened)).toEqual(names(model));
+      expect(personNames(reopened)).toEqual(personNames(model));
     }
     const once = await unzip(await write(reopened));
     const twice = await unzip(await write(reopened));
