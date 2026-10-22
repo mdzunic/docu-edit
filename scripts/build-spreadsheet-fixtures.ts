@@ -294,5 +294,17 @@ import { buildSpec135AnnotationsOdsBytes } from "../src/lib/spreadsheet/fixtures
 writeFileSync(join(fixturesDir, "spec135-annotations.ods"), await buildSpec135AnnotationsOdsBytes());
 // --- end SPEC-135 spec135-annotations.ods ----------------------------------------
 
+// --- SPEC-135 spec135-annotations.xlsx -------------------------------------------
+// - spec135-annotations.xlsx — Excel 365-shaped notes (a rich-text one led by
+//                              the bold author, a shown one with a custom
+//                              box), two threads with their placeholders and
+//                              persons, a VML part also holding a form-control
+//                              checkbox, and range/external/internal/mailto:/
+//                              javascript: hyperlinks with a tooltip
+import { buildSpec135AnnotationsXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec135-annotations.xlsx"), await buildSpec135AnnotationsXlsxBytes());
+// --- end SPEC-135 spec135-annotations.xlsx ---------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);
