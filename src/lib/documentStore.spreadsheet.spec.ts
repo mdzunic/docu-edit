@@ -335,7 +335,7 @@ describe("loadSpreadsheet rejoins the rows (SPEC-137's lazy residency)", () => {
 
   it("an orphaned chunk (a sheet the shell no longer has, still in the manifest) is deleted on the next persist", async () => {
     const { model, records } = await persisted();
-    const shell = records.find((record) => record.id === model.id) as { sheetStore: { chunks: Record<string, number[]> } };
+    const shell = records.find((record) => record.id === model.id) as unknown as { sheetStore: { chunks: Record<string, number[]> } };
     shell.sheetStore.chunks.gone = [0];
     const orphan = { id: `sheetrows:${model.id}:gone:0000`, docId: model.id, sheetId: "gone", chunk: 0, rows: [] };
     const { store, idb } = await loadStore([...records, orphan]);
