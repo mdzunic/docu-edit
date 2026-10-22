@@ -27,12 +27,18 @@
 //                    useSortFilter call; its surfaces ride the grid context)
 //                    — 96 -> 92 lines, measured 93 with the final newline, no
 //                    headroom
+//   2026-10-22   92  SPEC-134: the grid's tool composables (formatting
+//                    through tables, and the menu) moved into one
+//                    useSheetTools call as find and Go To arrived (the
+//                    useSheetFind and useSheetGoTo calls, the FindBar dock and
+//                    three hookups) — 92 -> 91 lines, measured 92 with the
+//                    final newline, no headroom
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 93;
+const LINE_BUDGET = 92;
 
 describe("SpreadsheetView size budget", () => {
   it(`SpreadsheetView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
