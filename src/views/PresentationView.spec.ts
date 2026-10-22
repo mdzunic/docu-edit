@@ -331,8 +331,8 @@ describe("PresentationView print & export (SPEC-104)", () => {
 
   it("marks the hidden thumbnail and still selects it — PageDown reaches it too", async () => {
     const { wrapper } = await mountWith(await hiddenDeck());
-    const options = wrapper.findAll('[data-testid="filmstrip-slide"]');
-    expect(options[1].classes()).toContain("filmstrip-hidden");
+    const thumbs = wrapper.findAll('[data-testid="filmstrip-slide"]');
+    expect(thumbs[1].classes()).toContain("filmstrip-hidden");
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown" }));
     await flushPromises();
     expect(wrapper.findAll('[data-testid="filmstrip-slide"]')[1].attributes("aria-selected")).toBe("true");
