@@ -78,13 +78,13 @@ test("hidden slides: filmstrip mark, PDF/handout and PNG export, playback skip, 
   await expect(page.getByTestId("deck-print-hidden")).not.toBeChecked();
   await expect(page.getByTestId("deck-print-frame")).toBeChecked();
   const handout = await capture(page, () => page.getByTestId("deck-print-pdf").click());
-  expect(handout.download.suggestedFilename()).toBe("Hidden slides fixture.pdf");
+  expect(handout.download.suggestedFilename()).toBe("spec104-hidden.pdf");
   expect(handout.bytes.subarray(0, 8).toString("latin1")).toBe("%PDF-1.7");
   expect(pageTreeCount(handout.bytes)).toBe(1);
   // Real pages, not screenshots: bookmarks per slide, the deck title, and
   // text as Tj runs against an embedded face with a /ToUnicode map.
   const handoutText = handout.bytes.toString("latin1");
-  expect(handoutText).toContain("/Title (Hidden slides fixture)");
+  expect(handoutText).toContain("/Title (spec104-hidden)");
   expect(handoutText).toContain("/Title (Welcome)");
   expect(handoutText).toContain("/Title (Thank you)");
   expect(handoutText).not.toContain("/Title (Backup data)");
@@ -110,7 +110,7 @@ test("hidden slides: filmstrip mark, PDF/handout and PNG export, playback skip, 
   await page.getByTestId("deck-print-range-input").fill("1");
   await expect(page.getByTestId("deck-print-estimate")).toContainText("2560 × 1440");
   const png = await capture(page, () => page.getByTestId("deck-print-images").click());
-  expect(png.download.suggestedFilename()).toBe("Hidden slides fixture-slide-01.png");
+  expect(png.download.suggestedFilename()).toBe("spec104-hidden-slide-01.png");
   expect(png.bytes.subarray(1, 4).toString("latin1")).toBe("PNG");
   expect(png.bytes.subarray(12, 16).toString("latin1")).toBe("IHDR");
   expect([png.bytes.readUInt32BE(16), png.bytes.readUInt32BE(20)]).toEqual([2560, 1440]);
