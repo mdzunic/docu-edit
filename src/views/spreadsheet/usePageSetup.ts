@@ -1,14 +1,13 @@
 // SPEC-136's page setup in the workbook view: the Page Setup dialog
 // (SheetPageSetupDialog — its fields are pageSetupForm.ts's, OK one undo
 // step "Page setup" — none for a form left as shown — Cancel nothing), the
-// manual-break and print-area
-// commands (Insert ▸ Page break / Remove page break / Reset all page breaks,
-// File ▸ Print area ▸ Set / Clear — each one undo step through record(label,
-// { sheetId }) before mutating and commit() after), and View ▸ Page breaks:
-// a session-only, never-written toggle per sheet drawing the active sheet's
-// breaks (paginateSheet's, recomputed on an idle callback after a model or
-// setup change). Closing a print preview turns the lines on for its sheet,
-// as Excel does (showFor).
+// manual-break and print-area commands (Insert ▸ Page break / Remove page
+// break / Reset all page breaks, File ▸ Print area ▸ Set / Clear — each one
+// undo step through record(label, { sheetId }) before mutating and commit()
+// after), and View ▸ Page breaks: a session-only, never-written toggle per
+// sheet drawing the active sheet's breaks (paginateSheet's, recomputed on an
+// idle callback after a model or setup change). Closing a print preview
+// turns the lines on for its sheet, as Excel does (showFor).
 import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from "vue";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import type { MeasurementUnit } from "../../lib/core/units";
