@@ -231,8 +231,8 @@ describe("self-closing source roots (AC-49)", () => {
     const parts = await unzip(await buildSpec135AnnotationsXlsxBytes());
     const empty = (name: string, root: string): void => {
       const xml = textOf(parts, name);
-      const open = new RegExp(`<${root}\\b[^>]*>`).exec(xml)![0];
-      parts.set(name, encoder.encode(xml.slice(0, xml.indexOf(open)) + open.replace(/>$/, "/>")));
+      const start = new RegExp(`<${root}\\b[^>]*>`).exec(xml)![0];
+      parts.set(name, encoder.encode(xml.slice(0, xml.indexOf(start)) + start.replace(/>$/, "/>")));
     };
     empty(F.comments.partName, "comments");
     empty(F.threadedComments.partName, "ThreadedComments");
