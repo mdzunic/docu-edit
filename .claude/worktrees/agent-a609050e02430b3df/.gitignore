@@ -1,0 +1,19 @@
+# No trailing slash: `node_modules/` matches only a directory, so a
+# SYMLINK named node_modules slips past it and can be committed by a
+# `git add -A` (which is how one reached main in 696ce5f).
+node_modules
+dist/
+.DS_Store
+*.log
+test-results/
+playwright-report/
+demo-results/
+demo-videos/
+blob-report/
+.vite/
+coverage/
+examples/output/
+# SPEC-047: the performance-benchmark fixture is generated on demand
+# (scripts/build-spec047-fixture.mjs), never committed — see specs/047's
+# "The benchmark fixture".
+/e2e/fixtures/spec-047-fixture.docx

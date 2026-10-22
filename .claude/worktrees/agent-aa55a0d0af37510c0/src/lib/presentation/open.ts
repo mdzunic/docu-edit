@@ -1,0 +1,103 @@
+// Ties presentation file bytes to the presentation model: classify an
+// already-detected package as `.pptx`/`.odp`, parse it, and assemble a
+// PresentationModel ready to store and navigate to — the presentation twin
+// of openDocument.ts's assembleDocumentModel tail. The app-level funnel
+// (openDocument.ts) owns choosing between products; this module owns
+// everything from "it's a presentation" down, plus the SPEC-079 migration of
+// preparation-milestone records.
+import {
+  DEFAULT_PRESENTATION_TITLE,
+  type ParsedPresentation,
+  type PresentationFormat,
+  type PresentationModel,
+} from "./model";
+import { parsePptx, PptxOpenError } from "./pptx/reader";
+import { OdpOpenError, parseOdp } from "./odp/reader";
+import { writePptx } from "./pptx/writer";
+import { writeOdp } from "./odp/writer";
+
+export { PptxOpenError, OdpOpenError };
+export { presentationFormatOf } from "./detect";
+
+/** Assembles a parsed package into a fresh PresentationModel: the shared
+ * tail of every presentation open path, minting a new id the way
+ * assembleDocumentModel does. Empty optional fields are omitted, matching
+ * the text model's convention. */
+export function assemblePresentation(
+  title: string,
+  format: PresentationFormat,
+  parsed: ParsedPresentation,
+): PresentationModel {
+  const model: PresentationModel = {
+    kind: "presentation",
+    id: crypto.randomUUID(),
+    title,
+    format,
+    slides: parsed.slides,
+    slideWidthCm: parsed.slideWidthCm,
+    slideHeightCm: parsed.slideHeightCm,
+    layouts: parsed.layouts,
+  };
+  // Omitted when empty (SPEC-087 AC-14): a Keynote import retains no source
+  // package, and an absent `opaque` is the writers' from-scratch state —
+  // native .pptx/.odp parses always have parts, so nothing changes for them.
+  if (parsed.opaque.length > 0) {
+    model.opaque = parsed.opaque;
+  }
+  if (parsed.theme) {
+    model.theme = parsed.theme;
+  }
+  if (parsed.firstSlideNumber !== undefined && parsed.firstSlideNumber !== 1) {
+    // Only a non-default origin is stored (SPEC-090); absent = counts from 1.
+    model.firstSlideNumber = parsed.firstSlideNumber;
+  }
+  if (parsed.headerFooter) {
+    model.headerFooter = parsed.headerFooter;
+  }
+  if (parsed.media.length > 0) {
+    model.media = parsed.media;
+  }
+  if (Object.keys(parsed.properties).length > 0) {
+    model.properties = parsed.properties;
+  }
+  if (parsed.odpContentEnvelope) {
+    model.odpContentEnvelope = parsed.odpContentEnvelope;
+  }
+  // Absent unless the package declares sections (SPEC-099); `[]` never stored.
+  if (parsed.sections && parsed.sections.length > 0) {
+    model.sections = parsed.sections;
+  }
+  return model;
+}
+
+/** Re-parses a package from a format's bytes. */
+async function parseBytes(bytes: Uint8Array | ArrayBuffer, format: PresentationFormat): Promise<ParsedPresentation> {
+  return format === "pptx" ? parsePptx(bytes) : parseOdp(bytes);
+}
+
+/** Reads and parses presentation bytes directly into a new
+ * PresentationModel, with no `File`/FileReader involved — the Node-friendly
+ * counterpart of the app's open path (the same split as readDocxBytes /
+ * readOdtBytes, SPEC-045 AC-17). */
+export async function readPresentationBytes(
+  bytes: Uint8Array | ArrayBuffer,
+  format: PresentationFormat,
+  title: string = DEFAULT_PRESENTATION_TITLE,
+): Promise<PresentationModel> {
+  const parsed = await parseBytes(bytes, format);
+  return assemblePresentation(title, format, parsed);
+}
+
+/** Upgrades a preparation-milestone record (its model still holding the
+ * outline-shaped slides, no `slideWidthCm`) to the SPEC-079 slide model
+ * (AC-54..56): re-emit its retained package via the format's writer (pure
+ * part re-emission — nothing about the writers changes), re-parse via the new
+ * reader, and keep the same id/title so the store overwrites in place. No
+ * data is lost — the retained `opaque` is the source of truth. */
+export async function upgradePresentationModel(model: PresentationModel): Promise<PresentationModel> {
+  const { bytes } = model.format === "odp" ? await writeOdp(model) : await writePptx(model);
+  const parsed = await parseBytes(bytes, model.format);
+  const upgraded = assemblePresentation(model.title, model.format, parsed);
+  upgraded.id = model.id;
+  return upgraded;
+}

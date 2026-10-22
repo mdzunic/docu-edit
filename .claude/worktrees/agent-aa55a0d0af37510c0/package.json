@@ -1,0 +1,35 @@
+{
+  "name": "docu-edit",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "NODE_OPTIONS=--max-old-space-size=4096 vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "NODE_OPTIONS=--max-old-space-size=4096 vue-tsc --noEmit",
+    "lint": "oxlint src && eslint \"src/**/*.vue\""
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.3.289",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.0",
+    "wordlist-english": "^1.2.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^26.4.0",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.5.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-vue": "^10.10.0",
+    "jsdom": "^25.0.1",
+    "oxlint": "^1.80.0",
+    "typescript": "~5.6.3",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.3.11"
+  }
+}

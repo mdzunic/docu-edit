@@ -1,0 +1,934 @@
+// The pagination controller (SPEC-028): owns the measurement cache and the
+// measure → layout loop that turns the pure engine (lib/pagination) plus
+// measurements into the pages the canvas renders.
+//
+// Every model change re-runs the LAYOUT synchronously (cheap math), so the
+// rendered pages always agree with the model's block indices; MEASUREMENT
+// is what stays incremental and asynchronous: metrics are cached per block
+// object (commands replace only the blocks they touch — see commands.ts),
+// so a keystroke re-measures one block, and a 200-page document settles
+// within the AC-50 budget without ever blocking the UI (AC-49..51).
+//
+// Two measurement backends share the cache:
+//  - blocks rendered on a realized page are measured off their own DOM
+//    elements (lib/pageMetrics) — exact, and the only option for tables,
+//    images and break markers;
+//  - unrendered paragraphs (their pages are virtualized empty boxes — see
+//    DocumentView's realization) are measured with canvas text metrics
+//    (lib/textMetrics), which also yields their line-start offsets for
+//    free. This is what makes the bulk pass over a 200-page document cheap:
+//    no DOM is mounted to measure it.
+// Unrendered non-paragraphs keep their estimates ("deferred"): the settle
+// loop finishes once a full pass makes no progress, and DocumentView
+// re-schedules when realization changes so they are measured the moment
+// they render.
+import { ref, shallowRef, type Ref, type ShallowRef } from "vue";
+import {
+  isBreak,
+  isImage,
+  isTable,
+  isToc,
+  isTof,
+  type Block,
+  type DocumentModel,
+  type NoteKind,
+  type Paragraph,
+} from "../lib/documentModel";
+import {
+  estimateMetrics,
+  reconcilePages,
+  sectionColumnFlowWidthPx,
+  type MetricsProvider,
+  type PageLayout,
+} from "../lib/pagination";
+import { type BlockMetrics } from "../lib/core/pageMetrics";
+import { layoutWithNotes, type NoteArea, type NoteMetricsProvider } from "../lib/notesLayout";
+import { paragraphWithNoteLabels, renderedOffsetToModel } from "../lib/notes";
+import { renderedOffsetsToModel } from "../lib/domCaret";
+import {
+  combineSliceMetrics,
+  lineStartOffsets,
+  measureBlockElement,
+  measureTableElement,
+} from "../lib/core/pageMetrics";
+import {
+  createCanvasTextMeasurer,
+  measureParagraphText,
+  paragraphTabLayout,
+  type BaseFont,
+  type CanvasTextMeasurer,
+  type TabLayoutConfig,
+} from "../lib/textMetrics";
+import type { ParagraphTabLayout } from "../lib/tabLayout";
+import { tabContextFor } from "../lib/styles";
+import { decimalSeparatorFor } from "../lib/core/language";
+import { sliceStartOf } from "../lib/domCaret";
+import { scheduleEagerWork, type IdleHandle } from "../lib/core/idleScheduler";
+import type { CaretPosition } from "../lib/textEditing";
+
+interface CacheEntry {
+  metrics: BlockMetrics;
+  /** Character offset each line starts at. Known immediately for
+   * canvas-measured paragraphs (the wrap decided them); computed lazily
+   * with Range hit-testing for DOM-measured blocks the layout actually
+   * splits across pages. */
+  lineOffsets?: number[];
+}
+
+interface PendingTarget {
+  section: number;
+  block: number;
+  ref: Block;
+}
+
+/** One block's page placements, char-windowed for split paragraphs — the
+ * caret page indicator's lookup table (AC-3). */
+interface PagePlacement {
+  page: number;
+  startChar: number;
+  endChar: number;
+}
+
+/** How long measurement must run before the "Paginating…" indicator shows —
+ * brief re-measures (typing) never flash it. */
+const BUSY_DELAY_MS = 200;
+
+/** Per-slot measurement budget: slots chain on macrotasks (near-100% duty,
+ * which is what gets a 200-page settle inside AC-50's budget), so this is
+ * also the longest an input event can wait behind one slot. */
+const SLOT_BUDGET_MS = 24;
+
+/** How long after the user's last interaction bulk measurement stays
+ * paused — their keystroke/scroll/click (and whatever work it triggers,
+ * e.g. a find refresh) always wins the main thread. */
+const INTERACTION_PAUSE_MS = 250;
+
+/** Retry cadence while bulk work is paused for interaction. */
+const PAUSED_RETRY_MS = 50;
+
+/** Per-relayout budget for resolving DOM-measured split blocks' line-start
+ * character offsets (Range hit-testing is the most expensive read this
+ * module does). Canvas-measured paragraphs never need this. */
+const OFFSETS_BUDGET_MS = 12;
+
+/** Full passes over the pending list with zero progress before the loop
+ * settles: what remains is deferred (unrendered non-paragraphs keeping
+ * their estimates until realization renders them). Two passes, not one, so
+ * a Vue patch that is about to render them gets a chance to land. */
+const MAX_STALLED_PASSES = 2;
+
+/** One relayout's note areas (SPEC-031), aligned with `pages` by index. */
+export interface PageNoteAreas {
+  footnotes: (NoteArea | null)[];
+  endnotes: (NoteArea | null)[];
+}
+
+export interface PaginationController {
+  pages: ShallowRef<PageLayout[]>;
+  /** Per-page footnote/endnote areas (SPEC-031). */
+  noteAreas: ShallowRef<PageNoteAreas>;
+  /** The page each footnote reference renders on, aligned with
+   * collectNoteRefs(model, "footnote") — noteLabels' per-page restart
+   * input (SPEC-031 AC-19). */
+  footnoteRefPages: ShallowRef<number[]>;
+  /** True while a long measurement pass runs (drives "Paginating…"). */
+  busy: Ref<boolean>;
+  /** "measuring" while any rendered page still uses estimated metrics;
+   * "clean" once the layout is fully measured — the canvas exposes it as
+   * data-pagination-state so tests get a positive settled signal. */
+  state: Ref<"clean" | "measuring">;
+  /** Whether unrendered paragraphs can be measured without mounting them
+   * (canvas metrics available) — the gate for page virtualization: without
+   * it every page must realize so the DOM path can measure it. */
+  canMeasureOffscreen: boolean;
+  /** Opens the layout gate (SPEC-047 AC-16): every schedule/measure/
+   * invalidate request before this is only recorded — pre-priming nothing
+   * rendered from `pages` exists, so there are no stale indices for the
+   * synchronous contract to protect, and running the collapsed layout here,
+   * in the view's own post-mount frame task, keeps the estimate pass out of
+   * the mount task. Idempotent. */
+  prime: () => void;
+  /** Re-lays-out synchronously and schedules measurement of anything the
+   * cache misses. Call on every model change (and when realization renders
+   * previously virtual pages, so their blocks get exact DOM metrics). */
+  schedule: () => void;
+  /** Kicks measurement WITHOUT `schedule()`'s synchronous relayout when the
+   * measure loop is already running (SPEC-047 AC-16): a running loop
+   * re-lays-out at the end of its pass anyway, so a caller whose model
+   * hasn't changed (a mount kick, newly realized pages) doesn't need — and
+   * during the open burst can't afford — a full extra relayout fused into
+   * the same task. Callers reacting to an actual model change must keep
+   * calling `schedule()`: its synchronous relayout is what keeps rendered
+   * pages agreeing with the new model's block indices before Vue patches
+   * the canvas. */
+  scheduleMeasure: () => void;
+  /** Drops every cached measurement (formatting-marks toggle, font load —
+   * anything that reflows text without replacing block objects). */
+  invalidateAll: () => void;
+  /** Whether a block has real (non-estimated) metrics at its current
+   * width — split rendering is only allowed then. */
+  isMeasured: (block: Block, contentWidthPx: number) => boolean;
+  /** The character offset each of the block's lines starts at, or null
+   * until measured — the renderer's slice windows and the caret page
+   * refinement both read it. */
+  lineOffsetsFor: (block: Block) => number[] | null;
+  /** The resolved tab geometry for a paragraph (SPEC-054) — the DOM renderer
+   * sizes tab boxes and draws bar rules from it, using the same measurer as
+   * the wrap predictor so the two agree. Null when text cannot be measured. */
+  tabLayoutFor: (model: DocumentModel, paragraph: Paragraph) => ParagraphTabLayout | null;
+  /** The 0-based page the caret renders on. */
+  pageOfCaret: (caret: CaretPosition) => number;
+  stop: () => void;
+}
+
+function sameArea(a: NoteArea | null, b: NoteArea | null): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (!a || !b) {
+    return false;
+  }
+  return (
+    a.kind === b.kind &&
+    Math.abs(a.heightPx - b.heightPx) < 0.5 &&
+    a.items.length === b.items.length &&
+    a.items.every((item, index) => {
+      const other = b.items[index];
+      return (
+        item.noteId === other.noteId &&
+        item.blockIndex === other.blockIndex &&
+        item.startLine === other.startLine &&
+        item.endLine === other.endLine
+      );
+    })
+  );
+}
+
+function sameAreaLists(a: (NoteArea | null)[], b: (NoteArea | null)[]): boolean {
+  return a.length === b.length && a.every((area, index) => sameArea(area, b[index]));
+}
+
+// Shared empty set so the default (nothing collapsed) allocates nothing per
+// call and the layout fast-paths straight past the hidden check.
+const EMPTY_HIDDEN: ReadonlySet<string> = new Set();
+
+/** The tab context a paragraph is laid out against (SPEC-054): its effective
+ * stops (style-inherited until it sets its own), the document default
+ * interval and the document language's decimal separator. */
+function tabConfigFor(model: DocumentModel, paragraph: Paragraph): TabLayoutConfig {
+  return {
+    stops: tabContextFor(model, paragraph),
+    defaultTabStopCm: model.defaultStyles.defaultTabStopCm ?? 1.27,
+    decimalSeparator: decimalSeparatorFor(model.defaultStyles.language),
+  };
+}
+
+function isParagraphBlock(block: Block): block is Paragraph {
+  return !isTable(block) && !isImage(block) && !isBreak(block) && !isToc(block) && !isTof(block);
+}
+
+export function usePagination(
+  docOf: () => DocumentModel | null,
+  rootOf: () => HTMLElement | null,
+  noteLabelOf: (noteId: string, kind: NoteKind) => string = () => "",
+  hiddenOf: () => ReadonlySet<string> = () => EMPTY_HIDDEN,
+): PaginationController {
+  const pages = shallowRef<PageLayout[]>([]);
+  const noteAreas = shallowRef<PageNoteAreas>({ footnotes: [], endnotes: [] });
+  const footnoteRefPages = shallowRef<number[]>([]);
+  const busy = ref(false);
+  const state = ref<"clean" | "measuring">("clean");
+
+  let cache = new WeakMap<Block, CacheEntry>();
+  let pending: PendingTarget[] = [];
+  let placements = new Map<string, PagePlacement[]>();
+  let slot: IdleHandle | null = null;
+  let running = false;
+  let stalledFrames = 0;
+  let stalledPasses = 0;
+  let busyTimer: ReturnType<typeof setTimeout> | null = null;
+  let pausedTimer: ReturnType<typeof setTimeout> | null = null;
+  // One `[data-section][data-block]` walk of the rendered canvas, indexed by
+  // address, so slice lookup is O(1) instead of a full-tree querySelectorAll
+  // per measured block — a large pass that way cost O(n^2) DOM walks, which
+  // blew the AC-50 2s budget at ~200 pages. Invalidated whenever a relayout
+  // assigns new pages (the only time the rendered slice set can change);
+  // within a pass the DOM is stable, so one walk serves every block.
+  let sliceIndex: Map<string, Element[]> | null = null;
+  /** SPEC-076: the same index for table blocks, keyed by their own attrs. */
+  let tableIndex: Map<string, Element[]> | null = null;
+  // Measurement cursor into `pending` between re-layouts: measuring does
+  // not need a fresh layout every frame (elements are found in whatever is
+  // currently rendered), so mid-pass re-layouts are throttled — they are
+  // what makes a long pass expensive, not the measuring itself.
+  let cursor = 0;
+  let framesSinceLayout = 0;
+  let measuredThisPass = 0;
+  let lastInteraction = 0;
+  // The last relayout's converged footnote-area reserves (SPEC-047 AC-6),
+  // fed back into layoutWithNotes as its seed — see that function's own
+  // comment for why this is safe even when stale. Gated on two things
+  // (both required) before it's offered:
+  //  - `fromSchedule`: only a schedule()-triggered relayout (an actual
+  //    model change) seeds, never one measureLoop() runs mid-settle, where
+  //    body pagination is still using *estimated* metrics for whatever it
+  //    hasn't measured yet — which page a footnote reference lands on (and
+  //    so its reserves) shifts between those calls independently of
+  //    whether the footnotes' own content changed.
+  //  - `hasEverSettled` (below): schedule() alone isn't enough — the
+  //    initial mount's fused watcher chain (the document watcher, the
+  //    hidden-body-blocks watcher, document.fonts.ready, the viewport-range
+  //    watcher — see specs/047's "the open-phase ceiling" note) fires
+  //    several schedule() calls in a synchronous burst with no macrotask
+  //    yield between them, so `fromSchedule` alone doesn't exclude it.
+  let lastNoteReserves: number[] | undefined;
+  // Set once finish() first runs (see below) and never unset — a one-time
+  // latch, not a continuously-rechecked "is it settled right now" state.
+  // The latter was tried first via both `pending.length` and
+  // `state.value === "clean"`: a document with images/tables (deferred
+  // "keep the estimate until realized" blocks, never real-measured while
+  // virtualized — this fixture alone carries ~700 of them) never actually
+  // reaches zero unresolved work again after the first settle, so
+  // schedule() restarts the whole measure-loop machinery on every single
+  // keystroke and `state` spends most of a continuous typing burst back in
+  // "measuring" — reading either signal per-call reliably disabled seeding
+  // during typing too, the opposite of what AC-6 needs. Once true, later
+  // measuring cycles (typing's own re-triggers included) no longer need to
+  // prove themselves again.
+  let hasEverSettled = false;
+
+  // The canvas measurer's DOM probe host: the pages wrapper (the content
+  // root's parent), OUTSIDE the contenteditable root so probe text can
+  // never leak into canvas-vs-model text comparisons, but inside the app's
+  // font context.
+  const measurer: CanvasTextMeasurer | null = createCanvasTextMeasurer(
+    () => rootOf()?.parentElement ?? null,
+  );
+  let baseFont: BaseFont | null = null;
+
+  function baseFontOf(root: HTMLElement): BaseFont {
+    if (!baseFont) {
+      const style = root.ownerDocument.defaultView?.getComputedStyle(root);
+      baseFont = {
+        family: style?.fontFamily || "sans-serif",
+        sizePx: style ? Number.parseFloat(style.fontSize) || 16 : 16,
+      };
+    }
+    return baseFont;
+  }
+
+  /** The tab config only when the paragraph actually contains a tab — the
+   * wrap predictor needs stops only then, and resolving the style chain for
+   * every tab-free paragraph would be wasted work on a bulk document. */
+  function measureTabConfig(model: DocumentModel, paragraph: Paragraph): TabLayoutConfig | undefined {
+    return paragraph.runs.some((run) => run.text.includes("\t"))
+      ? tabConfigFor(model, paragraph)
+      : undefined;
+  }
+
+  /** The resolved tab geometry for a rendered paragraph (SPEC-054), for the
+   * DOM renderer to size tab boxes and draw bar rules with — computed against
+   * the same measurer and base font as the wrap predictor, so the two agree.
+   * Null when text cannot be measured (jsdom). */
+  function tabLayoutFor(model: DocumentModel, paragraph: Paragraph): ParagraphTabLayout | null {
+    const root = rootOf();
+    if (!root || !measurer) {
+      return null;
+    }
+    return paragraphTabLayout(paragraph, tabConfigFor(model, paragraph), baseFontOf(root), measurer);
+  }
+
+  function noteInteraction(): void {
+    lastInteraction = performance.now();
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("keydown", noteInteraction, { capture: true, passive: true });
+    document.addEventListener("pointerdown", noteInteraction, { capture: true, passive: true });
+    document.addEventListener("input", noteInteraction, { capture: true, passive: true });
+  }
+
+  function entryFor(block: Block, contentWidthPx: number): CacheEntry | null {
+    const entry = cache.get(block);
+    return entry && Math.abs(entry.metrics.contentWidthPx - contentWidthPx) < 0.5 ? entry : null;
+  }
+
+  function relayout(
+    model: DocumentModel,
+    fromSchedule = false,
+  ): { unresolved: number; resolved: number } {
+    pending = [];
+    const seen = new Set<Block>();
+    const provider: MetricsProvider = {
+      metricsFor(sectionIndex, blockIndex, block, contentWidthPx) {
+        const entry = entryFor(block, contentWidthPx);
+        if (entry) {
+          return entry.metrics;
+        }
+        if (!seen.has(block)) {
+          seen.add(block);
+          pending.push({ section: sectionIndex, block: blockIndex, ref: block });
+        }
+        return estimateMetrics(block, contentWidthPx, model.defaultStyles.fontSizePt);
+      },
+    };
+    // Note content (SPEC-031) is measured synchronously with canvas metrics
+    // (notes are small and never DOM-measured — their areas render from the
+    // same cache these measurements land in).
+    const noteProvider: NoteMetricsProvider = {
+      noteMetricsFor(_note, _blockIndex, block, contentWidthPx) {
+        const entry = entryFor(block, contentWidthPx);
+        if (entry) {
+          return entry.metrics;
+        }
+        const root = rootOf();
+        if (root && measurer && isParagraphBlock(block)) {
+          const measured = measureParagraphText(
+            block,
+            contentWidthPx,
+            baseFontOf(root),
+            model.showFormattingMarks === true,
+            measurer,
+            measureTabConfig(model, block),
+          );
+          if (measured) {
+            cache.set(block, { metrics: measured.metrics, lineOffsets: measured.lineOffsets });
+            return measured.metrics;
+          }
+        }
+        return estimateMetrics(block, contentWidthPx, model.defaultStyles.fontSizePt);
+      },
+    };
+    const hidden = hiddenOf();
+    const isHidden =
+      hidden.size === 0
+        ? undefined
+        : (sectionIndex: number, blockIndex: number) => hidden.has(`${sectionIndex}:${blockIndex}`);
+    const notesLayout = layoutWithNotes(
+      model,
+      provider,
+      noteProvider,
+      (block) => cache.get(block)?.lineOffsets ?? null,
+      isHidden,
+      fromSchedule && hasEverSettled ? lastNoteReserves : undefined,
+    );
+    lastNoteReserves = notesLayout.reserves;
+    const layout = notesLayout.pages;
+    if (
+      !sameAreaLists(noteAreas.value.footnotes, notesLayout.footnoteAreas) ||
+      !sameAreaLists(noteAreas.value.endnotes, notesLayout.endnoteAreas)
+    ) {
+      noteAreas.value = {
+        footnotes: notesLayout.footnoteAreas,
+        endnotes: notesLayout.endnoteAreas,
+      };
+    }
+    if (
+      footnoteRefPages.value.length !== notesLayout.footnoteRefPages.length ||
+      footnoteRefPages.value.some((page, index) => page !== notesLayout.footnoteRefPages[index])
+    ) {
+      footnoteRefPages.value = notesLayout.footnoteRefPages;
+    }
+    const offsets = ensureLineOffsets(model, layout);
+    buildPlacements(model, layout);
+    const reconciled = reconcilePages(pages.value, layout);
+    // Skip the assignment when nothing changed — during a long measurement
+    // pass most re-layouts refine only later pages, and every assignment
+    // costs a full render-entry rebuild downstream.
+    if (
+      reconciled.length !== pages.value.length ||
+      reconciled.some((entry, index) => entry !== pages.value[index])
+    ) {
+      pages.value = reconciled;
+      sliceIndex = null; // The rendered slice set is about to change.
+      tableIndex = null;
+    }
+    return { unresolved: pending.length + offsets.missing, resolved: offsets.resolved };
+  }
+
+  // Character offsets for every split block the new layout contains that
+  // still lacks them (DOM-measured blocks only — canvas measurement stores
+  // offsets at measure time), read from the block's CURRENT rendering
+  // (whole, or sliced by the previous layout — either holds all its
+  // lines). Budgeted: Range hit-testing is expensive, so leftovers are
+  // counted and resolved on later frames — an unresolved split renders
+  // whole meanwhile (see renderEntryFor).
+  function ensureLineOffsets(
+    model: DocumentModel,
+    layout: PageLayout[],
+  ): { missing: number; resolved: number } {
+    const root = rootOf();
+    if (!root) {
+      return { missing: 0, resolved: 0 };
+    }
+    const started = performance.now();
+    let missing = 0;
+    let resolved = 0;
+    for (const page of layout) {
+      for (const item of page.items) {
+        if (item.startLine === undefined && item.endLine === undefined) {
+          continue;
+        }
+        const block = model.sections[item.sectionIndex]?.blocks[item.blockIndex];
+        if (!block) {
+          continue;
+        }
+        if (isTable(block)) {
+          // A table splits at rows, not characters (SPEC-076): there are no
+          // line-start offsets to resolve, and Range hit-testing a whole
+          // table would be pure cost.
+          continue;
+        }
+        const entry = cache.get(block);
+        if (!entry || entry.lineOffsets) {
+          continue;
+        }
+        if (resolved > 0 && performance.now() - started > OFFSETS_BUDGET_MS) {
+          missing += 1;
+          continue;
+        }
+        const slices = sliceElements(root, item.sectionIndex, item.blockIndex);
+        if (slices.length === 0) {
+          continue;
+        }
+        const offsets: number[] = [];
+        for (const element of slices) {
+          const base = sliceStartOf(element);
+          const measured = measureBlockElement(element, entry.metrics.contentWidthPx, true);
+          // DOM-measured offsets are in rendered text space; note reference
+          // labels (SPEC-031) may be longer than their model placeholder.
+          for (const offset of renderedOffsetsToModel(
+            element,
+            lineStartOffsets(element, measured.lines),
+          )) {
+            offsets.push(base + offset);
+          }
+        }
+        entry.lineOffsets = offsets;
+        resolved += 1;
+      }
+    }
+    return { missing, resolved };
+  }
+
+  function buildPlacements(model: DocumentModel, layout: PageLayout[]): void {
+    placements = new Map();
+    for (let p = 0; p < layout.length; p += 1) {
+      for (const item of layout[p].items) {
+        const key = `${item.sectionIndex}:${item.blockIndex}`;
+        const list = placements.get(key) ?? [];
+        if (item.startLine === undefined) {
+          list.push({ page: p, startChar: 0, endChar: Number.POSITIVE_INFINITY });
+        } else {
+          const block = model.sections[item.sectionIndex]?.blocks[item.blockIndex];
+          const offsets = block ? cache.get(block)?.lineOffsets : undefined;
+          if (!offsets) {
+            // Unmeasured splits render whole on their first page.
+            if (item.startLine === 0) {
+              list.push({ page: p, startChar: 0, endChar: Number.POSITIVE_INFINITY });
+            }
+          } else {
+            const startChar = offsets[item.startLine] ?? 0;
+            const endChar =
+              item.endLine !== undefined && item.endLine < offsets.length
+                ? offsets[item.endLine]
+                : Number.POSITIVE_INFINITY;
+            list.push({ page: p, startChar, endChar });
+          }
+        }
+        placements.set(key, list);
+      }
+    }
+  }
+
+  function sliceElements(root: HTMLElement, section: number, block: number): Element[] {
+    if (sliceIndex === null) {
+      // One walk, grouped by address. Row elements inside tables repeat the
+      // parent block's data-block (SPEC-022) and are not slices, so they are
+      // excluded the same way the per-address query was.
+      const index = new Map<string, Element[]>();
+      for (const el of Array.from(root.querySelectorAll("[data-section][data-block]:not([data-row])"))) {
+        const address = `${el.getAttribute("data-section")}:${el.getAttribute("data-block")}`;
+        const group = index.get(address);
+        if (group) {
+          group.push(el);
+        } else {
+          index.set(address, [el]);
+        }
+      }
+      for (const group of index.values()) {
+        group.sort((a, b) => sliceStartOf(a) - sliceStartOf(b));
+      }
+      sliceIndex = index;
+    }
+    return sliceIndex.get(`${section}:${block}`) ?? [];
+  }
+
+  /** The rendered `<table>` elements of one table block, in page order
+   * (SPEC-076). A table carries no `data-section`/`data-block` of its own —
+   * those live on its cell paragraphs, which `sliceElements` deliberately
+   * excludes — so it is indexed by its own pair of attributes. One entry per
+   * page the table runs onto, which `combineSliceMetrics` concatenates into
+   * the whole table's row list. */
+  function tableElements(root: HTMLElement, section: number, block: number): Element[] {
+    if (tableIndex === null) {
+      const index = new Map<string, Element[]>();
+      for (const el of Array.from(root.querySelectorAll("[data-table-section][data-table-block]"))) {
+        const address = `${el.getAttribute("data-table-section")}:${el.getAttribute("data-table-block")}`;
+        const group = index.get(address);
+        if (group) {
+          group.push(el);
+        } else {
+          index.set(address, [el]);
+        }
+      }
+      for (const group of index.values()) {
+        group.sort(
+          (a, b) => Number(a.getAttribute("data-row-start") ?? 0) - Number(b.getAttribute("data-row-start") ?? 0),
+        );
+      }
+      tableIndex = index;
+    }
+    return tableIndex.get(`${section}:${block}`) ?? [];
+  }
+
+  function measureOne(root: HTMLElement, model: DocumentModel, target: PendingTarget): boolean {
+    const block = model.sections[target.section]?.blocks[target.block];
+    if (block !== target.ref) {
+      return true; // the model moved on; the new layout re-listed what matters
+    }
+    const width = sectionColumnFlowWidthPx(model, target.section);
+    if (isTable(block)) {
+      // SPEC-076: a table measures one line box per MODEL row, so the engine
+      // splits it at row boundaries and can redraw its header run on every
+      // continuation. Repeated header rows are excluded from the measurement,
+      // so the run costs one measurement per table, not one per page (AC-11).
+      const tables = tableElements(root, target.section, target.block);
+      if (tables.length === 0) {
+        return false; // not realized yet; the estimate stands
+      }
+      cache.set(block, {
+        metrics: combineSliceMetrics(tables.map((element) => measureTableElement(element, width))),
+      });
+      return true;
+    }
+    const elements = sliceElements(root, target.section, target.block);
+    if (elements.length > 0) {
+      const splittable = isParagraphBlock(block);
+      const metrics = combineSliceMetrics(
+        elements.map((element) => measureBlockElement(element, width, splittable)),
+      );
+      cache.set(block, { metrics });
+      return true;
+    }
+    // Not rendered (its page is a virtualized empty box): paragraphs are
+    // measured with canvas text metrics; anything else keeps its estimate
+    // until realization renders it. Note reference marks measure at their
+    // rendered label text (SPEC-031), with line offsets mapped back to
+    // model space.
+    if (measurer && isParagraphBlock(block)) {
+      const rendered = paragraphWithNoteLabels(block, noteLabelOf);
+      const measured = measureParagraphText(
+        rendered,
+        width,
+        baseFontOf(root),
+        model.showFormattingMarks === true,
+        measurer,
+        measureTabConfig(model, rendered),
+      );
+      if (measured) {
+        const lineOffsets =
+          rendered === block
+            ? measured.lineOffsets
+            : measured.lineOffsets.map((offset) => renderedOffsetToModel(block, noteLabelOf, offset));
+        cache.set(block, { metrics: measured.metrics, lineOffsets });
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function finish(): void {
+    running = false;
+    stalledFrames = 0;
+    stalledPasses = 0;
+    if (busyTimer !== null) {
+      clearTimeout(busyTimer);
+      busyTimer = null;
+    }
+    busy.value = false;
+    state.value = "clean";
+    hasEverSettled = true;
+  }
+
+  // Measurement chains in budgeted macrotask slots: input events and
+  // rendering interleave between slots, which is what keeps a 200-page
+  // pass from ever freezing or janking the UI (AC-49/51), while the
+  // near-100% duty cycle keeps the settle inside AC-50's budget.
+  function measureLoop(): void {
+    slot = scheduleEagerWork((budgetMs) => {
+      const root = rootOf();
+      const model = docOf();
+      if (!root || !model) {
+        finish();
+        return;
+      }
+      // Bulk work yields to live interaction: while the user is typing or
+      // clicking, a large pass waits (their input owns the thread); a tiny
+      // pass (the one block a keystroke re-measures) still runs immediately
+      // so split paragraphs update under the caret.
+      if (
+        pending.length - cursor > 3 &&
+        performance.now() - lastInteraction < INTERACTION_PAUSE_MS
+      ) {
+        pausedTimer = setTimeout(() => {
+          pausedTimer = null;
+          measureLoop();
+        }, PAUSED_RETRY_MS);
+        return;
+      }
+      const started = performance.now();
+      const startCursor = cursor;
+      let measured = 0;
+      while (cursor < pending.length) {
+        // The budget break holds regardless of progress — skipped (deferred)
+        // targets count too — so one idle slot can never turn into an
+        // unbounded walk; at least one target advances per slot.
+        if (cursor > startCursor && performance.now() - started > budgetMs) {
+          break;
+        }
+        if (measureOne(root, model, pending[cursor])) {
+          measured += 1;
+        }
+        cursor += 1;
+      }
+      measuredThisPass += measured;
+      framesSinceLayout += 1;
+      // Re-layouts are the expensive part of a pass (page fill + offset
+      // resolution + a render-entry rebuild downstream), so they happen
+      // only when the pending list is exhausted — with a generous safety
+      // valve — never every frame.
+      const exhausted = cursor >= pending.length;
+      let relaidOut = false;
+      if (exhausted || framesSinceLayout >= 60) {
+        const { unresolved, resolved } = relayout(model);
+        relaidOut = true;
+        cursor = 0;
+        framesSinceLayout = 0;
+        if (unresolved === 0) {
+          finish();
+          return;
+        }
+        // A full pass that neither measured a block nor resolved offsets
+        // made no progress: what's left is deferred until realization
+        // renders it. Settle rather than spin — DocumentView re-schedules
+        // when realization changes.
+        if (exhausted) {
+          stalledPasses = measuredThisPass === 0 && resolved === 0 ? stalledPasses + 1 : 0;
+          measuredThisPass = 0;
+          if (stalledPasses >= MAX_STALLED_PASSES) {
+            finish();
+            return;
+          }
+        }
+      }
+      // No progress at all — nothing measured, no movement through the
+      // pending list, no relayout this frame: retry a few frames, then give
+      // up until the next schedule() rather than spinning.
+      stalledFrames =
+        measured === 0 && cursor === startCursor && !relaidOut ? stalledFrames + 1 : 0;
+      if (stalledFrames > 8) {
+        finish();
+        return;
+      }
+      measureLoop();
+    }, SLOT_BUDGET_MS);
+  }
+
+  function startMeasuring(): void {
+    state.value = "measuring";
+    if (busyTimer === null && !busy.value) {
+      busyTimer = setTimeout(() => {
+        busyTimer = null;
+        busy.value = true;
+      }, BUSY_DELAY_MS);
+    }
+    if (!running) {
+      running = true;
+      stalledFrames = 0;
+      stalledPasses = 0;
+      measuredThisPass = 0;
+      measureLoop();
+    }
+  }
+
+  // Until prime() runs, every layout request is only recorded (SPEC-047
+  // AC-16): the immediate doc watcher, document.fonts.ready and anything
+  // else firing during the view's setup/mount would otherwise each run the
+  // full estimate relayout synchronously INSIDE the component's mount task
+  // — pre-priming there is nothing rendered from `pages` yet, so there are
+  // no stale block indices for schedule()'s synchronous contract to
+  // protect, and one deferred layout at prime() time is equivalent.
+  let primed = false;
+  let primeRequested = false;
+
+  function schedule(): void {
+    if (!primed) {
+      primeRequested = true;
+      return;
+    }
+    const model = docOf();
+    if (!model) {
+      pages.value = [];
+      finish();
+      return;
+    }
+    const { unresolved } = relayout(model, true);
+    cursor = 0;
+    framesSinceLayout = 0;
+    if (unresolved === 0) {
+      finish();
+      return;
+    }
+    if (typeof requestAnimationFrame !== "function") {
+      // Non-browser environment: keep the estimated layout.
+      finish();
+      return;
+    }
+    startMeasuring();
+  }
+
+  /** Opens the layout gate (called from the view's mount kick, in its own
+   * frame task): runs the one layout every pre-prime request collapsed
+   * into. Idempotent. */
+  function prime(): void {
+    if (primed) {
+      return;
+    }
+    primed = true;
+    if (primeRequested) {
+      primeRequested = false;
+      schedule();
+    }
+  }
+
+  /** The caller just told an ACTIVE measure loop that new work exists (a
+   * fresh realization, a cleared cache) without going through schedule()'s
+   * synchronous relayout: force the loop's next slot to re-lay-out — which
+   * rebuilds `pending` so the new work enters it — and clear the stall
+   * counters, because a pass that was about to settle for lack of progress
+   * must not count that stall against work it hasn't seen yet. Without the
+   * reset, an invalidateAll landing in the settle's stalled endgame could
+   * let the loop finish() on an all-estimates layout with nothing left to
+   * restart it. */
+  function kickRunningLoop(): void {
+    framesSinceLayout = 60; // >= the safety valve: next slot re-lays-out
+    stalledFrames = 0;
+    stalledPasses = 0;
+    measuredThisPass = 0;
+  }
+
+  function scheduleMeasure(): void {
+    if (!primed) {
+      primeRequested = true;
+      return;
+    }
+    if (running) {
+      kickRunningLoop();
+      return;
+    }
+    schedule();
+  }
+
+  function invalidateAll(): void {
+    cache = new WeakMap();
+    baseFont = null;
+    lastNoteReserves = undefined;
+    measurer?.reset();
+    if (!primed) {
+      // Caches are dropped either way; the layout itself waits for prime()
+      // like every other pre-prime request (document.fonts.ready often
+      // resolves inside the open's mount task — the exact fusion prime()
+      // exists to prevent).
+      primeRequested = true;
+      return;
+    }
+    // With the measure loop already running, the cache reset plus a kick is
+    // enough: the loop's next slot re-lays-out against the now-empty cache,
+    // re-collecting every block, so the extra synchronous relayout here
+    // would recompute a layout that pass is about to replace — during open,
+    // document.fonts.ready resolves inside the mount task and this was one
+    // of the relayouts fused into it (SPEC-047 AC-16). The last-applied
+    // layout stays visible until that pass lands, which is also what the
+    // old immediate relayout's all-estimates layout was: an interim state,
+    // just a worse one.
+    if (running) {
+      kickRunningLoop();
+      return;
+    }
+    schedule();
+  }
+
+  function isMeasured(block: Block, contentWidthPx: number): boolean {
+    return entryFor(block, contentWidthPx) !== null;
+  }
+
+  function lineOffsetsFor(block: Block): number[] | null {
+    return cache.get(block)?.lineOffsets ?? null;
+  }
+
+  function pageOfCaret(caret: CaretPosition): number {
+    const list = placements.get(`${caret.section}:${caret.block}`);
+    if (!list || list.length === 0) {
+      return Math.max(0, pages.value.length - 1);
+    }
+    for (const placement of list) {
+      if (caret.offset >= placement.startChar && caret.offset < placement.endChar) {
+        return placement.page;
+      }
+    }
+    return list[list.length - 1].page;
+  }
+
+  function stop(): void {
+    if (typeof document !== "undefined") {
+      document.removeEventListener("keydown", noteInteraction, { capture: true });
+      document.removeEventListener("pointerdown", noteInteraction, { capture: true });
+      document.removeEventListener("input", noteInteraction, { capture: true });
+    }
+    slot?.cancel();
+    slot = null;
+    if (pausedTimer !== null) {
+      clearTimeout(pausedTimer);
+      pausedTimer = null;
+    }
+    finish();
+  }
+
+  // Web fonts arriving reflow every line: measurements taken before they
+  // loaded are wrong, so drop them all once.
+  if (typeof document !== "undefined" && document.fonts?.ready) {
+    void document.fonts.ready.then(() => {
+      if (docOf()) {
+        invalidateAll();
+      }
+    });
+  }
+
+  return {
+    pages,
+    noteAreas,
+    footnoteRefPages,
+    busy,
+    state,
+    canMeasureOffscreen: measurer !== null,
+    prime,
+    schedule,
+    scheduleMeasure,
+    invalidateAll,
+    isMeasured,
+    lineOffsetsFor,
+    tabLayoutFor,
+    pageOfCaret,
+    stop,
+  };
+}

@@ -1,0 +1,393 @@
+<!doctype html>
+<!-- The presentations-preparation engineering note (2026-08-24), saved from
+     the published artifact so it is versioned with the code it describes.
+     Self-contained: open directly in a browser (web fonts degrade to the
+     system stack offline). The plain-text map is presentations-architecture.md. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>docu-edit Two-Product Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #FAFBFC;
+    --surface: #FFFFFF;
+    --ink: #1B2733;
+    --muted: #5A6B7C;
+    --line: #DCE3EA;
+    --line-soft: #E8EDF2;
+    --text-prod: #1F5FD6;
+    --text-prod-wash: #EDF3FE;
+    --pres-prod: #B4610E;
+    --pres-prod-wash: #FBF2E6;
+    --core-tone: #4E6474;
+    --core-wash: #EFF3F6;
+    --good: #1D7A4A;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #131920;
+      --surface: #1A222B;
+      --ink: #E7EDF3;
+      --muted: #93A5B5;
+      --line: #2C3946;
+      --line-soft: #232E3A;
+      --text-prod: #7CA8F2;
+      --text-prod-wash: #1B2839;
+      --pres-prod: #E5A055;
+      --pres-prod-wash: #2C2317;
+      --core-tone: #9DB2C1;
+      --core-wash: #202A34;
+      --good: #5CBF8A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #131920;
+    --surface: #1A222B;
+    --ink: #E7EDF3;
+    --muted: #93A5B5;
+    --line: #2C3946;
+    --line-soft: #232E3A;
+    --text-prod: #7CA8F2;
+    --text-prod-wash: #1B2839;
+    --pres-prod: #E5A055;
+    --pres-prod-wash: #2C2317;
+    --core-tone: #9DB2C1;
+    --core-wash: #202A34;
+    --good: #5CBF8A;
+  }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 47rem;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 5rem;
+  }
+  .wide { max-width: 60rem; margin-left: auto; margin-right: auto; }
+
+  header.masthead { margin-bottom: 3rem; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 0.75rem;
+  }
+  h1 {
+    font-family: "Archivo", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 700;
+    font-size: clamp(1.9rem, 4.5vw, 2.6rem);
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+  .lede { font-size: 1.08rem; color: var(--muted); max-width: 40rem; margin: 0; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    margin: 2.25rem 0 0;
+  }
+  .fact { background: var(--surface); padding: 0.9rem 1.1rem; }
+  .fact b {
+    display: block;
+    font-family: "Archivo", sans-serif;
+    font-weight: 600;
+    font-size: 1.25rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .fact span { font-size: 0.8rem; color: var(--muted); }
+
+  section { margin-top: 3.25rem; }
+  h2 {
+    font-family: "Archivo", sans-serif;
+    font-weight: 650;
+    font-size: 1.35rem;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.9rem;
+    text-wrap: balance;
+  }
+  h2 .no { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; margin-right: 0.5rem; }
+  h3 { font-family: "Archivo", sans-serif; font-weight: 600; font-size: 1.02rem; margin: 1.6rem 0 0.4rem; }
+  p { margin: 0 0 1rem; }
+  section p, section li { max-width: 44rem; }
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.86em;
+    background: var(--line-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+  }
+  a { color: var(--text-prod); }
+
+  ul { padding-left: 1.2rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.45rem; }
+  li::marker { color: var(--muted); }
+
+  figure { margin: 1.5rem 0 0; }
+  figure svg { display: block; max-width: 100%; height: auto; }
+  figcaption { font-size: 0.84rem; color: var(--muted); margin-top: 0.7rem; max-width: 44rem; }
+  .diagram-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 1.25rem; }
+
+  table.moves {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    margin: 0.5rem 0 1rem;
+  }
+  table.moves th {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 0.5rem 0.9rem 0.5rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  table.moves td {
+    padding: 0.55rem 0.9rem 0.55rem 0;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+  }
+  table.moves td:first-child { white-space: nowrap; }
+  .table-scroll { overflow-x: auto; }
+
+  .verify {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 1.1rem 1.3rem;
+    margin-top: 0.75rem;
+  }
+  .verify ul { margin: 0; padding: 0; list-style: none; }
+  .verify li { display: flex; gap: 0.6rem; align-items: baseline; margin-bottom: 0.4rem; }
+  .verify li:last-child { margin-bottom: 0; }
+  .tick { color: var(--good); font-weight: 600; flex: none; }
+
+  .prodtag {
+    display: inline-block;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 0.12rem 0.6rem;
+    margin-right: 0.35rem;
+  }
+  .prodtag.text { color: var(--text-prod); background: var(--text-prod-wash); }
+  .prodtag.pres { color: var(--pres-prod); background: var(--pres-prod-wash); }
+  .prodtag.core { color: var(--core-tone); background: var(--core-wash); }
+
+  .stepgrid { counter-reset: step; display: grid; gap: 0.9rem; margin-top: 0.5rem; }
+  .step {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 0.95rem 1.15rem 0.9rem;
+  }
+  .step h3 { margin: 0 0 0.3rem; display: flex; gap: 0.6rem; align-items: baseline; }
+  .step h3::before {
+    counter-increment: step;
+    content: counter(step);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    width: 1.45rem; height: 1.45rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex: none;
+    transform: translateY(-0.1rem);
+  }
+  .step p { margin: 0; font-size: 0.92rem; color: var(--muted); }
+  .step p strong, .step p code { color: var(--ink); }
+
+  footer.colophon {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">docu-edit · engineering note · 2026-08-24</p>
+    <h1>One repo, two document products</h1>
+    <p class="lede">docu-edit now carries a second product beside the word processor: <strong>presentations</strong>. A <code>.pptx</code> or <code>.odp</code> opens from every open path, lives in the same library, previews read-only at <code>/slides/:id</code>, and downloads back with <strong>every source part byte-identical</strong>. This note is the architecture that makes the two products share an engine without ever touching each other.</p>
+    <div class="facts">
+      <div class="fact"><b>docx · odt · md</b><span>text product formats</span></div>
+      <div class="fact"><b>pptx · odp</b><span>presentation formats, new</span></div>
+      <div class="fact"><b>1,476 → 651</b><span>HomeView lines, ratcheted</span></div>
+      <div class="fact"><b>3 boundary specs</b><span>layering enforced as tests</span></div>
+    </div>
+  </header>
+
+  <section class="wide">
+    <h2>The layering</h2>
+    <p class="wrap-note" style="max-width:44rem">Three layers, one rule: the products meet only in the app layer, and everything both need is product-neutral by definition and lives in <code>core</code>. The dashed struck edge is the load-bearing decision — it is a test, not a convention.</p>
+    <div class="diagram-scroll">
+      <figure style="margin:0">
+        <svg viewBox="0 0 880 604" role="img" aria-label="Layer diagram: routes at top feed an app layer; below it the text product and presentation product sit side by side with a forbidden edge between them; both import only the shared core layer at the bottom." font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="12" fill="none" stroke-linecap="round">
+          <defs>
+            <marker id="arr" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0.5 0.5 L7.5 4 L0.5 7.5 Z" fill="currentColor" stroke="none"/>
+            </marker>
+          </defs>
+
+          <!-- routes -->
+          <rect x="120" y="16" width="240" height="64" rx="8" fill="var(--text-prod-wash)" stroke="var(--text-prod)"/>
+          <text x="240" y="42" text-anchor="middle" fill="var(--text-prod)" font-weight="500">/doc/:id</text>
+          <text x="240" y="62" text-anchor="middle" fill="var(--text-prod)">DocumentView (editor)</text>
+
+          <rect x="520" y="16" width="240" height="64" rx="8" fill="var(--pres-prod-wash)" stroke="var(--pres-prod)"/>
+          <text x="640" y="42" text-anchor="middle" fill="var(--pres-prod)" font-weight="500">/slides/:id</text>
+          <text x="640" y="62" text-anchor="middle" fill="var(--pres-prod)">PresentationView (preview)</text>
+
+          <!-- guard arrows between routes -->
+          <path d="M362 36 H518" stroke="currentColor" marker-end="url(#arr)"/>
+          <path d="M518 60 H362" stroke="currentColor" marker-end="url(#arr)"/>
+          <text x="440" y="28" text-anchor="middle" fill="currentColor">guards redirect</text>
+          <text x="440" y="82" text-anchor="middle" fill="currentColor">by stored kind</text>
+
+          <!-- app layer -->
+          <rect x="60" y="122" width="760" height="112" rx="10" fill="var(--surface)" stroke="currentColor"/>
+          <text x="76" y="146" fill="currentColor" font-weight="500" letter-spacing="1">APP LAYER — the only place the products compose</text>
+          <text x="76" y="172" fill="currentColor">documentKinds.ts   kind registry: format → kind, routes, accept list</text>
+          <text x="76" y="192" fill="currentColor">openDocument.ts    openAnyDocumentFile: unzip once → detect → dispatch</text>
+          <text x="76" y="212" fill="currentColor">documentStore.ts   one store, model union · HomeView + views/library/*</text>
+
+          <path d="M240 84 V118" stroke="currentColor" marker-end="url(#arr)"/>
+          <path d="M640 84 V118" stroke="currentColor" marker-end="url(#arr)"/>
+
+          <!-- product columns -->
+          <rect x="60" y="286" width="340" height="152" rx="10" fill="var(--text-prod-wash)" stroke="var(--text-prod)"/>
+          <text x="80" y="312" fill="var(--text-prod)" font-weight="500" letter-spacing="1">TEXT PRODUCT</text>
+          <text x="80" y="338" fill="var(--text-prod)">documentModel.ts · commands.*</text>
+          <text x="80" y="358" fill="var(--text-prod)">textEditing · pagination · styles</text>
+          <text x="80" y="384" fill="var(--text-prod)">formats: docx/ · odf/ · md/</text>
+          <text x="80" y="410" fill="var(--text-prod)">edits, tracks, merges, paginates</text>
+
+          <rect x="480" y="286" width="340" height="152" rx="10" fill="var(--pres-prod-wash)" stroke="var(--pres-prod)"/>
+          <text x="500" y="312" fill="var(--pres-prod)" font-weight="500" letter-spacing="1">PRESENTATION PRODUCT</text>
+          <text x="500" y="338" fill="var(--pres-prod)">model.ts (kind: "presentation")</text>
+          <text x="500" y="358" fill="var(--pres-prod)">pptx/ · odp/ readers + writers</text>
+          <text x="500" y="384" fill="var(--pres-prod)">open.ts · download.ts · fixtures/</text>
+          <text x="500" y="410" fill="var(--pres-prod)">slide outline + whole package verbatim</text>
+
+          <!-- app -> products -->
+          <path d="M230 238 V282" stroke="var(--text-prod)" marker-end="url(#arr)"/>
+          <text x="242" y="264" fill="var(--text-prod)">stores, opens, routes</text>
+          <path d="M650 238 V282" stroke="var(--pres-prod)" marker-end="url(#arr)"/>
+          <text x="500" y="264" fill="var(--pres-prod)" text-anchor="start">stores, opens, routes</text>
+
+          <!-- forbidden edge -->
+          <path d="M404 356 H476" stroke="currentColor" stroke-dasharray="6 5"/>
+          <path d="M427 340 L453 372 M453 340 L427 372" stroke="currentColor" stroke-width="2"/>
+          <text x="440" y="398" text-anchor="middle" fill="currentColor">never</text>
+          <text x="440" y="416" text-anchor="middle" fill="currentColor">import</text>
+          <text x="440" y="462" text-anchor="middle" fill="currentColor">boundary specs enforce the gap</text>
+
+          <!-- core -->
+          <rect x="60" y="492" width="760" height="96" rx="10" fill="var(--core-wash)" stroke="var(--core-tone)"/>
+          <text x="76" y="516" fill="var(--core-tone)" font-weight="500" letter-spacing="1">CORE — product-neutral, imports only core siblings</text>
+          <text x="76" y="542" fill="var(--core-tone)">zip · zipWriter · xml/OPC rels · packageDetect · packageParts · opcProperties · odfMeta · odfXml</text>
+          <text x="76" y="562" fill="var(--core-tone)">documentProperties · media · units · shapes/charts/tables painters · schedulers · idb · triggerDownload</text>
+
+          <!-- products -> core -->
+          <path d="M230 438 V488" stroke="var(--text-prod)" marker-end="url(#arr)"/>
+          <text x="242" y="468" fill="var(--text-prod)">imports</text>
+          <path d="M650 438 V488" stroke="var(--pres-prod)" marker-end="url(#arr)"/>
+          <text x="600" y="468" fill="var(--pres-prod)" text-anchor="start">imports</text>
+        </svg>
+        <figcaption>The two products never share an edge. Text ↔ presentation isolation is enforced by <code>presentation/boundary.spec.ts</code> (presentation may import only itself + core) and the extended format-layer block in <code>core/boundary.spec.ts</code> (docx/odf/model-layer may not import presentation).</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>What shipped in this preparation</h2>
+    <ul>
+      <li><span class="prodtag pres">new</span><strong>A working presentations slice.</strong> Content-based detection (never extensions) recognises PresentationML and ODF-presentation packages; readers extract a per-slide text outline (titles from placeholders, grouped shapes included) and retain <em>every</em> package part verbatim; writers re-emit the package — the SPEC-008 promise applied wholesale, with <code>.odp</code>'s <code>mimetype</code> first and STOREd.</li>
+      <li><span class="prodtag pres">new</span><strong><code>/slides/:id</code>.</strong> A deliberately read-only PresentationView: title, format, slide outline, byte-preserving Download, honest "editing isn't supported yet" note. Router guards redirect each kind's ids to its own view, so neither product can load the other's model.</li>
+      <li><span class="prodtag core">shared</span><strong>The library is now kind-aware.</strong> One store holds both models (<code>StoredModel</code> union discriminated by <code>kind</code>); rows carry PPTX/ODP badges and filter chips; grid cards show "3 slides" instead of pages·words; bulk download dispatches per kind; text-only accessors (<code>getDocument</code>, drafts, autosave) are hard-narrowed so a deck can never be clobbered by editor state.</li>
+      <li><span class="prodtag core">shared</span><strong>The landing page is its own module.</strong> HomeView (1,476 → 651 lines) is a wiring hub over six product-neutral <code>src/views/library/</code> components; product knowledge (what can be created, where kinds route) stays in the hub. <code>HomeView.size.spec.ts</code> ratchets it, DocumentView-style.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Word-processor code that became shared</h2>
+    <p>Everything a presentation package needs that the word processor already had — none of it was word-shaped, all of it moved to <code>core</code> (text-side imports kept working via re-exports where the surface was wide):</p>
+    <div class="table-scroll">
+      <table class="moves">
+        <thead><tr><th>Now in core</th><th>Was</th><th>Why it's shared</th></tr></thead>
+        <tbody>
+          <tr><td><code>opcProperties.ts</code></td><td><code>docx/docProps.ts</code></td><td><code>docProps/core.xml</code>+<code>custom.xml</code> are OPC package parts — identical in .pptx</td></tr>
+          <tr><td><code>odfMeta.ts</code></td><td><code>odf/meta.ts</code></td><td><code>meta.xml</code> is an ODF package part — identical in .odp</td></tr>
+          <tr><td><code>odfXml.ts</code></td><td><code>odf/xml.ts</code></td><td>ODF namespaces + attr readers; gained <code>PRESENTATION_NAMESPACE</code></td></tr>
+          <tr><td><code>documentProperties.ts</code></td><td><code>documentModel.ts</code></td><td>metadata types both package families carry</td></tr>
+          <tr><td><code>packageParts.ts</code></td><td><code>documentModel</code> + <code>opaque.ts</code></td><td><code>OpaquePart</code> + base64 codecs — the retention machinery itself</td></tr>
+          <tr><td><code>packageDetect.ts</code></td><td>new</td><td>one container classifier (ODF mimetype / OPC main content type) for every open path</td></tr>
+          <tr><td><code>triggerDownload.ts</code></td><td><code>downloadDocument.ts</code></td><td>the object-URL download mechanism, once</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Already neutral before this (the earlier core extraction): zip read/write, XML parse/serialise/escape + OPC relationships, media content-types, shape/chart/table geometry and canvas painters, units, schedulers, IndexedDB. Presentations reuse all of it for free.</p>
+    <p><strong>Deliberately not moved yet</strong> — each needs a design pass, not a move, and becomes relevant when slide <em>editing</em> lands: the DrawingML shape/chart parsing in <code>docx/</code> (pptx shapes are the same DrawingML), the <code>text:</code>-namespace paragraph parsing in <code>odf/reader.ts</code> (odp text boxes use it), the text-wrap engine, and a first-class OPC relationship writer.</p>
+  </section>
+
+  <section>
+    <h2>How the refactor ran</h2>
+    <div class="stepgrid">
+      <div class="step"><h3>Neutral moves into core</h3><p>Metadata types, docProps/meta parsers, ODF namespaces, opaque-part machinery, package detection — moved with re-export shims where import surfaces were wide, direct rewires where they were narrow. Green after: typecheck + boundary + round-trip suites.</p></div>
+      <div class="step"><h3>Kind registry + store union</h3><p><code>documentKinds.ts</code> becomes the single encoding of "pptx means presentations at /slides". The store's record model widens to a discriminated union; accessors narrow by kind; <code>LibraryEntry</code> carries <code>kind</code>. Format chips, badges and counts widen compile-checked.</p></div>
+      <div class="step"><h3>The presentation layer</h3><p><code>lib/presentation/</code>: minimal model, pptx/odp readers (outline + full retention), verbatim writers, funnel, download — plus its own boundary spec and a round-trip suite proving part-level byte identity both ways.</p></div>
+      <div class="step"><h3>App integration</h3><p><code>openAnyDocumentFile</code> union funnel (single-unzip detection; text-only entry points keep their contract and reject decks honestly), <code>/slides/:id</code> + router kind-guards (kept out of DocumentView, which sat one line under its ratchet), AppShell drop, URL-open, HomeView, kind-aware cards and downloads.</p></div>
+      <div class="step"><h3>Landing page module</h3><p>Six product-neutral components extracted from HomeView into <code>src/views/library/</code> with every test-id and ARIA role preserved; shared logic into <code>useLibrary</code> and <code>lib/libraryMenu</code>; a new size ratchet holds the floor.</p></div>
+      <div class="step"><h3>Fixtures + end-to-end proof</h3><p>One DOM-free builder generates both the unit fixtures and the checked-in <code>e2e/fixtures/mini-deck.pptx|odp</code>; <code>e2e/presentations.spec.ts</code> walks open → badge → preview → kind-redirect → download and byte-compares every part against the source.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <div class="verify">
+      <ul>
+        <li><span class="tick">✓</span><span><strong>4,940 unit tests</strong> across 292 files — all passing (was 4,921/291 before; the suite grew with the new layers)</span></li>
+        <li><span class="tick">✓</span><span><strong>780 e2e tests</strong> (desktop + compact-touch projects), including 6 new presentation flows — all passing in 4.9 min against the dev server</span></li>
+        <li><span class="tick">✓</span><span><strong>Typecheck + lint</strong> clean (one pre-existing warning in an untouched file)</span></li>
+        <li><span class="tick">✓</span><span><strong>Four behavioural strings updated with their exact-match tests</strong>: the picker accept list and the drop error now name .pptx/.odp</span></li>
+      </ul>
+    </div>
+    <p style="margin-top:1rem">Reference docs in-repo: <code>docs/presentations-architecture.md</code> (the full map, including what future slides specs must keep) and the updated <code>CLAUDE.md</code> layering rules.</p>
+  </section>
+
+  <footer class="colophon">
+    docu-edit presentations preparation · main working tree, 2026-08-24 · fixtures regenerate with <code>npx&nbsp;vite-node&nbsp;scripts/build-presentation-fixtures.ts</code>
+  </footer>
+</div>
+</body>
+</html>

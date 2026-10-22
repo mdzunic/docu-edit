@@ -1,0 +1,2454 @@
+// The in-memory document model: a serialisable tree every later spec reads
+// and writes. Plain data only (no classes, no functions on the objects) so
+// `JSON.stringify`/`JSON.parse` round-trips it without loss — that property
+// is what SPEC-006/007 (save) and SPEC-004/005 (open) will rely on.
+import { DEFAULT_LANGUAGE } from "./core/language";
+import { DEFAULT_THEME } from "./core/theme";
+import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "./core/theme";
+import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
+import type { OpaquePart } from "./core/packageParts";
+import type { CommentMessage } from "./core/comments";
+import type {
+  ArrowheadKind,
+  ArrowheadSize,
+  ShapeFill,
+  ShapeGeometry,
+  ShapeOutline,
+  ShapeShadow,
+} from "./core/shapes";
+import type { ShapePath } from "./core/shapePath";
+import type { ConnectorKind } from "./core/connectors";
+import type { ChartOptions, ChartSeries, ChartType } from "./core/charts";
+import type { MeasurementUnit } from "./core/units";
+import type { Margins, PageSize } from "./core/pageSetup";
+import type { ListDefinition, ListFormatting } from "./core/lists";
+import type {
+  CellBorders,
+  CellVerticalAlign,
+  TableAlignment,
+  TableWidthMode,
+} from "./core/tables";
+import type { BorderSide } from "./core/borders";
+import type { MediaPart } from "./core/media";
+// Type-only, erased at compile time — no runtime cycle with textEditing.ts,
+// which imports this module's guards (forEachParagraph below reports each
+// paragraph's address in textEditing's shared address shape).
+import type { ParagraphAddress } from "./textEditing";
+
+/** Sub/superscript (`w:vertAlign` / `style:text-position`). Mutually
+ * exclusive by construction: one field holds either value (SPEC-013). */
+export type VerticalAlignment = "subscript" | "superscript";
+
+/** Character-level formatting applied to a run's text. Empty until SPEC-012
+ * (character formatting) and later specs add fields such as bold/italic. */
+export interface RunFormatting {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /** A literal family ("Calibri") or a theme font reference (SPEC-077).
+   * Resolved through resolveFont against documentThemeOf(model). */
+  fontFamily?: ModelFont;
+  fontSizePt?: number;
+  /** CSS-ready colour ("#ff0000") or a theme colour reference (SPEC-077).
+   * Resolved through resolveColor against documentThemeOf(model). */
+  color?: ModelColor;
+  /** OOXML highlight colour name ("yellow") for the 16-colour palette, a
+   * lowercase "#rrggbb" for any other colour, `false` for an explicit
+   * "No colour" — distinct from undefined (not set) the same way the
+   * boolean toggles distinguish explicit-off from unset (SPEC-013) — or a
+   * theme colour reference (SPEC-077). */
+  highlight?: string | false | ThemeColorRef;
+  /** Run shading (`w:shd` fill) as lowercase "#rrggbb" or a theme reference —
+   * a preservation slot set only when a source run carried both `w:highlight`
+   * and `w:shd` (SPEC-013). Never shown in the picker; the highlight wins on
+   * screen. */
+  shadingFill?: ModelColor;
+  vertAlign?: VerticalAlignment;
+  /** External hyperlink target (SPEC-025) — an absolute URL. Two scalar
+   * fields rather than one `{href}` object so run coalescing and formatting
+   * equality keep working on `===` per key (see textEditing's
+   * sameFormatting). At most one of `linkHref`/`linkAnchor` is set. */
+  linkHref?: string;
+  /** Internal link target (SPEC-025): a bookmark name or a derived heading
+   * anchor (see lib/links.ts) in this document. */
+  linkAnchor?: string;
+  /** This run's language (SPEC-035), e.g. "en-US" — see lib/language.ts.
+   * Absent means the document's default language (`DefaultStyles.language`)
+   * applies; explicitly set here only when a run/style diverges from it, so
+   * opening a document does not stamp every run with the document default
+   * (see docx/styles.ts's and odf/styles.ts's docDefault "lift-out", which
+   * keeps this field absent on the common case). Drives dictionary
+   * selection, the rendered `lang` attribute for assistive technology, and
+   * round-trips as `w:lang` (.docx) / `fo:language`+`fo:country` (.odt). */
+  lang?: string;
+  /** "Do not check spelling" (SPEC-035 AC-11): when true, the spell checker
+   * skips this run entirely regardless of language/dictionary availability.
+   * Round-trips as `w:noProof` (.docx); .odt has no equivalent flag, so it
+   * maps to the special `fo:language="zxx"` ("no linguistic content", see
+   * lib/language.ts's ODF_NO_LINGUISTIC_CONTENT) convention instead. */
+  noProof?: boolean;
+}
+
+/** The run-formatting fields SPEC-012's toolbar toggles: bold, italic,
+ * underline and strikethrough. */
+export type CharacterFormatKey = "bold" | "italic" | "underline" | "strikethrough";
+
+/** A collapsed caret's not-yet-typed format override (SPEC-012 AC-9..11):
+ * a key present here forces that format for the next inserted text
+ * regardless of the run the caret sits in; an absent key falls through to
+ * that run's own formatting. Lives outside the document model — there is
+ * nothing to persist until text is actually typed with it.
+ *
+ * SPEC-013 widens it to a general run-format patch, also the argument to
+ * the selection-formatting command. Per-key off semantics: `false` on a
+ * boolean toggle or on `vertAlign` removes the key (the text ends up as if
+ * never formatted); `false` on `highlight` is stored — "No colour" is an
+ * explicit off that must survive saving (SPEC-013). */
+export interface PendingFormat {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  fontFamily?: ModelFont;
+  fontSizePt?: number;
+  color?: ModelColor;
+  highlight?: string | false | ThemeColorRef;
+  vertAlign?: VerticalAlignment | false;
+  /** SPEC-035's language selector, applied to a real selection via
+   * applyFormat. */
+  lang?: string;
+  /** SPEC-035's "Do not check spelling"; `false` clears it (same
+   * delete-the-key semantics as the boolean character formats — see
+   * withFormat), not an explicit off. */
+  noProof?: boolean;
+}
+
+/** Typed pass-through for a character-format key coming from a `.vue`
+ * template's plain string (a click handler's event payload) — .vue scripts
+ * are parsed by espree, so a type guard/annotation isn't available there
+ * (see lib/opaque.ts's `asDropRecords` for the same pattern). */
+export function asCharacterFormatKey(value: string): CharacterFormatKey {
+  return value as CharacterFormatKey;
+}
+
+/** Typed pass-through for an alignment coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asParagraphAlignment(value: string): ParagraphAlignment {
+  return value as ParagraphAlignment;
+}
+
+
+/** The page-number field kinds Insert → Page number offers (SPEC-029
+ * AC-14, AC-19): "page" is the current page's number, "numpages" the
+ * document's total page count. "Page X of Y" is two field runs (one of
+ * each kind) either side of a literal " of " text run, not a composite
+ * field. Round-trips as `PAGE`/`NUMPAGES` fields (.docx) and
+ * `text:page-number`/`text:page-count` (.odt). */
+export type FieldKind = "page" | "numpages";
+
+/** Mail-merge chip kinds (SPEC-046): `merge` substitutes a named field's
+ * value, `if`/`endif` delimit a conditional block, `each` marks a table row
+ * that repeats over an array field. See "Merge chips in the model" in
+ * specs/046-template-gallery-and-mail-merge.md. */
+export type MergeChipKind = "merge" | "if" | "endif" | "each";
+
+/** A mail-merge chip's spec (SPEC-046). `name` holds the field or array
+ * name — deliberately not `id`: lib/equality.ts's IGNORED_KEYS drops bare
+ * `id` keys from structural comparison, which would let a chip pointing at
+ * the wrong field pass a round-trip test (the same reasoning as
+ * BookmarkAnchor). `endif` carries no name — it only closes the nearest
+ * open `if`. */
+export type MergeFieldSpec =
+  | { kind: "merge"; name: string }
+  | { kind: "if"; name: string }
+  | { kind: "endif" }
+  | { kind: "each"; name: string };
+
+/** The numbering formats Insert → Page number offers (SPEC-029 AC-16..18)
+ * — deliberately the same vocabulary as lib/lists.ts's `ListMarkerStyle`
+ * (its `formatOrdinal` is reused to render a field's value), just narrowed
+ * to the three the dialog actually offers. */
+export type PageNumberFormat = "decimal" | "lowerRoman" | "lowerAlpha";
+
+/** Typed pass-through for a page-number format coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asPageNumberFormat(value: string): PageNumberFormat {
+  return value as PageNumberFormat;
+}
+
+/** Typed pass-through for a `DocumentModel` passed into a `.vue` component
+ * as a runtime `Object` prop (espree bars writing `PropType<DocumentModel>`
+ * — see CommentsPane.vue's header comment for the same constraint). */
+export function asDocumentModel(value: unknown): DocumentModel {
+  return value as DocumentModel;
+}
+
+/** A date/time field's stored picture string (SPEC-053). A closed catalogue
+ * of supported patterns lives in `lib/fields.ts` (`SUPPORTED_DATE_TIME_FORMATS`);
+ * a picture string opened from a file that is not in that catalogue is kept
+ * here verbatim and the field renders its `cached` value read-only, because
+ * implementing Word's picture-string language is a spec of its own. Typed as
+ * a bare string, not a literal union, precisely so an unsupported picture
+ * survives a round trip. */
+export type DateTimeFormat = string;
+
+/** What a cross-reference (`ref`/`pageRef`, SPEC-053) shows about its target:
+ * its `text`, the `page` it sits on, or its `position` relative to the
+ * reference (rendered as the computed word "above"/"below", Word's `\p`
+ * switch — the user picks "position", the word follows from layout).
+ * `pageRef` always carries `"page"`; `ref` carries any of the others.
+ *
+ * SPEC-055 widens this with the four caption-reference formats: `full` is the
+ * caption's entire text ("Figure 3: Revenue by quarter"), `labelAndNumber`
+ * its label and number ("Figure 3"), `numberOnly` just the number ("3") and
+ * `textOnly` the caption text past the separator ("Revenue by quarter"). They
+ * only differ from `text` on a caption target (whose number lives in a `seq`
+ * field, not literal text); on any other target they fall back to the target
+ * paragraph's plain text. The dialog's "Above/below" is `position`. */
+export type RefFormat =
+  | "text"
+  | "page"
+  | "position"
+  | "full"
+  | "labelAndNumber"
+  | "numberOnly"
+  | "textOnly";
+
+/** The numbering formats a `seq` field (SPEC-055) offers — the same three
+ * SPEC-029 fixes for page numbers (1, 2, 3 / i, ii, iii / a, b, c), reused so
+ * the caption dialog, both writers and `formatOrdinal` share one vocabulary. */
+export type NumberFormat = PageNumberFormat;
+
+/** The kinds SPEC-053 adds to the field union that carry a `cached` result —
+ * everything except `page`/`numpages` (recomputed every paint) and merge
+ * chips (resolved once by a merge run). Used to narrow a `FieldSpec` to the
+ * members whose last-computed value round-trips in the file. */
+export type EvaluatedFieldKind =
+  | "date" | "time"
+  | "author" | "docTitle" | "docSubject" | "docKeywords" | "fileName" | "wordCount"
+  | "docProperty" | "ref" | "pageRef" | "seq" | "unsupported";
+
+/** A run that renders as a computed value instead of literal text
+ * (SPEC-029, widened by SPEC-046 and SPEC-053): a page-number/page-count
+ * field, a mail-merge chip, or one of SPEC-053's computed fields. `Run.text`
+ * still holds a one-character placeholder so the field behaves like a normal
+ * single-character atom for caret/selection arithmetic (blockLength,
+ * splitRuns, …) — every renderer substitutes the live value at paint time
+ * instead of reading it.
+ *
+ * `cached` is the last-computed result string, document content Word and
+ * Writer display without recalculating; it is compared by
+ * `equality.ts`'s `equalStructural`, which is why field values are
+ * deterministic under test (see `lib/clock.ts`) and opening a document
+ * never updates a field. `page`/`numpages` and merge chips carry no `cached`
+ * — the former recompute on every paint, the latter resolve once.
+ * `locked` (SPEC-053 Recalculation rule 4) skips a field from every update
+ * path. `unsupported` holds the SPEC-008 preservation case: a field type
+ * outside the catalogue keeps its instruction `code` and `cached` result
+ * byte-for-byte and is never recomputed. */
+export type FieldSpec =
+  | { kind: "page" | "numpages"; format: PageNumberFormat }
+  | MergeFieldSpec
+  | { kind: "date" | "time"; format: DateTimeFormat; cached: string; locked?: true }
+  | {
+      kind: "author" | "docTitle" | "docSubject" | "docKeywords" | "wordCount";
+      cached: string;
+      locked?: true;
+    }
+  | { kind: "fileName"; path?: true; cached: string; locked?: true }
+  | { kind: "docProperty"; name: string; cached: string; locked?: true }
+  | { kind: "ref" | "pageRef"; target: string; show: RefFormat; cached: string; locked?: true }
+  | { kind: "seq"; label: string; format: NumberFormat; cached: string; locked?: true }
+  | { kind: "unsupported"; code: string; cached: string };
+
+/** Narrows a `FieldSpec` to a merge chip (SPEC-046), as opposed to a
+ * SPEC-029 page-number/page-count field or a SPEC-053 computed field. */
+export function isMergeChipField(field: FieldSpec): field is MergeFieldSpec {
+  return field.kind === "merge" || field.kind === "if" || field.kind === "endif" || field.kind === "each";
+}
+
+/** A field this spec computes and caches (everything but `page`/`numpages`
+ * and merge chips): the members that carry a `cached` string. */
+export function isEvaluatedField(
+  field: FieldSpec,
+): field is Extract<FieldSpec, { cached: string }> {
+  return "cached" in field;
+}
+
+/** The SPEC-008 preservation case: a field type outside the catalogue,
+ * displayed read-only and never recomputed. */
+export function isUnsupportedField(
+  field: FieldSpec,
+): field is Extract<FieldSpec, { kind: "unsupported" }> {
+  return field.kind === "unsupported";
+}
+
+/** Fields whose value depends on pagination (SPEC-053 Recalculation rule 1):
+ * recomputed on every paint like `page`, so they carry no stable live value.
+ * `ref` counts only when it shows a page (`show: "page"`). */
+export function isPaginationDependentField(field: FieldSpec): boolean {
+  return (
+    field.kind === "page" ||
+    field.kind === "numpages" ||
+    field.kind === "pageRef" ||
+    (field.kind === "ref" && field.show === "page")
+  );
+}
+
+/** Whether a field is locked (SPEC-053 Recalculation rule 4) and so skipped
+ * by every update path. Only evaluated fields can be locked. */
+export function isFieldLocked(field: FieldSpec): boolean {
+  return "locked" in field && field.locked === true;
+}
+
+/** Builds a run carrying an arbitrary SPEC-053 field spec — the same
+ * one-character placeholder convention as `createFieldRun`/`createChipRun`,
+ * so the field is atomic for caret/selection arithmetic. */
+export function createFieldSpecRun(field: FieldSpec, formatting: RunFormatting = {}): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, field };
+}
+
+/** Which note stream a reference belongs to (SPEC-031): footnotes render at
+ * the bottom of the page holding their reference, endnotes in one area at
+ * the end of the document. */
+export type NoteKind = "footnote" | "endnote";
+
+/** An inline footnote/endnote reference mark (SPEC-031) carried on a run —
+ * the same convention as FieldSpec: the run's text stays a one-character
+ * placeholder so the mark behaves as a single caret atom, and every
+ * renderer substitutes the computed note number at paint time. `noteId`
+ * references a `DocumentModel.notes` entry; deliberately not named `id`
+ * (see BookmarkAnchor for the equality.ts IGNORED_KEYS rule). */
+export interface NoteRef {
+  noteId: string;
+  kind: NoteKind;
+}
+
+/** The smallest unit of text: a string plus the formatting applied to it.
+ * Tabs and forced line breaks are preserved as literal "\t" / "\n"
+ * characters in `text` — renderers use `white-space: pre-wrap` so both
+ * display exactly as the source document intended. */
+export interface Run {
+  text: string;
+  formatting: RunFormatting;
+  /** Marks this run as a computed page-number/page-count field (SPEC-029)
+   * rather than literal text; see FieldSpec. */
+  field?: FieldSpec;
+  /** Marks this run as a footnote/endnote reference mark (SPEC-031); see
+   * NoteRef. Mutually exclusive with `field` by construction. */
+  note?: NoteRef;
+  /** Marks this run as an inline/display equation (SPEC-056); see
+   * EquationSpec. Mutually exclusive with `field` and `note` by
+   * construction — the run's `text` is the one-character
+   * FIELD_PLACEHOLDER_TEXT so the equation is a single caret atom and the
+   * renderer substitutes the laid-out equation at paint time. */
+  equation?: EquationSpec;
+  /** Character-style reference (SPEC-042), independent of the containing
+   * paragraph's `styleId`: `w:rStyle` (.docx) / a `text:span`'s
+   * `text:style-name` resolving to a family="text" style (.odt). Baked
+   * formatting still carries the resolved effect, the same "reference kept
+   * alongside the resolved formatting" convention as `Paragraph.styleId`. */
+  styleId?: string;
+  /** Pending tracked-change state (SPEC-039); see RunTrackedChanges. */
+  changes?: RunTrackedChanges;
+}
+
+/** A field run's placeholder text — a single character so it occupies
+ * exactly one caret position, like Image/BreakBlock's length-1 atom
+ * convention, while still sitting inline mid-paragraph. */
+export const FIELD_PLACEHOLDER_TEXT = "1";
+
+/** Builds a page-number/page-count field run (SPEC-029): the "Insert page
+ * number" dialog's per-format insertion and the .docx/.odt readers' PAGE /
+ * NUMPAGES / text:page-number / text:page-count parsing both create runs
+ * this way, so every field run in the model has the same placeholder text. */
+export function createFieldRun(
+  kind: FieldKind,
+  format: PageNumberFormat,
+  formatting: RunFormatting = {},
+): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, field: { kind, format } };
+}
+
+/** Builds a mail-merge chip run (SPEC-046) — the same one-character
+ * placeholder convention as createFieldRun, so a chip is atomic for
+ * caret/selection arithmetic. */
+export function createChipRun(field: MergeFieldSpec, formatting: RunFormatting = {}): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, field };
+}
+
+/** The closed construct set of an equation (SPEC-056). A math expression is a
+ * `MathNode[]` — an ordered row of nodes — and every node's slots are
+ * themselves `MathNode[]`. The set is deliberately closed: the layout engine
+ * is written for this spec (no KaTeX/MathJax) and anything outside the set is
+ * preserved as an `opaqueMath` node rather than approximated.
+ *
+ * `sym.variant` carries the italic/upright decision (SPEC-056 Layout rules);
+ * it is set by the linear parser and mapped from OMML `m:sty` / MathML
+ * `mathvariant` by the readers. `opaqueMath` is SPEC-008's opaque-node rule
+ * applied inside an equation: `source` holds the original OMML or MathML
+ * subtree verbatim (compared with `canonicalizeXml`), `linear` the best
+ * plain-text rendering shown in the read-only box. */
+export type MathNode =
+  | { kind: "sym"; text: string; variant: "italic" | "upright" }
+  | { kind: "frac"; num: MathNode[]; den: MathNode[]; bar: boolean }
+  | { kind: "script"; base: MathNode[]; sup?: MathNode[]; sub?: MathNode[] }
+  | { kind: "radical"; radicand: MathNode[]; index?: MathNode[] }
+  | { kind: "nary"; op: string; lower?: MathNode[]; upper?: MathNode[]; body: MathNode[] }
+  | { kind: "delim"; open: string; close: string; body: MathNode[] }
+  | { kind: "matrix"; rows: MathNode[][][] }
+  | { kind: "accent"; accent: string; base: MathNode[] }
+  | { kind: "func"; name: string; body: MathNode[] }
+  | { kind: "text"; text: string }
+  | { kind: "opaqueMath"; source: string; linear: string };
+
+/** An inline or display equation carried on a `Run` (SPEC-056). A display
+ * equation is a paragraph whose only run carries an `EquationSpec` with
+ * `display: "block"`; the paragraph centres it. `altText` defaults to the
+ * linear form regenerated from `body`; an empty string means "no alt text". */
+export interface EquationSpec {
+  display: "inline" | "block";
+  body: MathNode[];
+  /** Defaults to the linear form; "" means none. */
+  altText?: string;
+}
+
+/** Builds a run carrying an equation (SPEC-056) — the same one-character
+ * placeholder convention as `createFieldRun`, so the equation is atomic for
+ * caret/selection arithmetic. */
+export function createEquationRun(equation: EquationSpec, formatting: RunFormatting = {}): Run {
+  return { text: FIELD_PLACEHOLDER_TEXT, formatting, equation };
+}
+
+/** Typed pass-through for an EquationSpec coming from a `.vue` template's
+ * runtime `Object` prop (same espree constraint as asParagraph/asImage — a
+ * `.vue` script cannot carry a type annotation or cast). */
+export function asEquationSpec(value: unknown): EquationSpec {
+  return value as EquationSpec;
+}
+
+/** Typed pass-through for a `MathNode[]` body coming from a `.vue` template's
+ * runtime `Array` prop (same espree constraint as asEquationSpec). */
+export function asMathNodes(value: unknown): MathNode[] {
+  return (Array.isArray(value) ? value : []) as MathNode[];
+}
+
+/** The typed no-op default for the `activateEquation` inject (SPEC-056): a
+ * `.vue` script cannot write `inject<(spec) => void>(…)` (espree parses the
+ * generic as comparisons), so the fallback's signature is supplied here. */
+export function noopEquationActivate(_spec: unknown): void {}
+
+export type ParagraphAlignment = "left" | "center" | "right" | "justify";
+
+/** Paragraph writing direction; absent means `"ltr"`. Readers only ever
+ * record `"rtl"` (SPEC-014) — an explicit `"ltr"` never reaches the model,
+ * which keeps the field round-trip-stable across both writers. */
+export type ParagraphDirection = "ltr" | "rtl";
+
+/** Block-level formatting applied to a paragraph (SPEC-014). Indents are
+ * held as *logical* start/end values: `direction` decides which physical
+ * edge each paints on — in the renderer, the ruler and both writers. */
+export interface ParagraphFormatting {
+  alignment?: ParagraphAlignment;
+  /** Indent on the edge the text starts from (left for LTR, right for RTL). */
+  indentStartCm?: number;
+  /** Indent on the edge the text runs toward. */
+  indentEndCm?: number;
+  /** Positive indents the first line; negative produces a hanging indent.
+   * Start-relative in both file formats, so no direction mapping applies. */
+  indentFirstLineCm?: number;
+  spaceBeforePt?: number;
+  spaceAfterPt?: number;
+  /** Line height as a multiplier of the font size (CSS `line-height`-style),
+   * used when the source expresses spacing as a proportional line rule. */
+  lineSpacing?: number;
+  /** Line height as an absolute point size, used when the source expresses
+   * spacing as a fixed/minimum line rule. Takes precedence over
+   * `lineSpacing` when both would otherwise apply. */
+  lineSpacingPt?: number;
+  /** How `lineSpacingPt` binds: "exact" is a fixed line height ("Exactly" in
+   * the spacing dialog); absent means "at least" — the historical default
+   * both writers emitted, kept as the absent value so models saved before
+   * SPEC-014 keep their meaning. Meaningless without `lineSpacingPt`. */
+  lineSpacingRule?: "exact";
+  direction?: ParagraphDirection;
+  /** Keep this paragraph on the same page as the start of the next block
+   * (SPEC-028 AC-22/23, `w:keepNext` / `fo:keep-with-next`). */
+  keepNext?: boolean;
+  /** Never split this paragraph's lines across a page boundary (SPEC-028
+   * AC-24/25, `w:keepLines` / `style:keep-together`). */
+  keepLines?: boolean;
+  /** Start a new page before this paragraph (SPEC-028 AC-26/27,
+   * `w:pageBreakBefore` / `fo:break-before` on the paragraph style). This is
+   * paragraph formatting, distinct from a manual break (BreakBlock). */
+  pageBreakBefore?: boolean;
+  /** Widow/orphan control (SPEC-028 AC-28/29). Absent means ON — both file
+   * formats default it on, so only the explicit-off (`false`) and an
+   * explicit re-enable after an off (`true`) are ever stored. */
+  widowControl?: boolean;
+  /** Custom tab stops (SPEC-032 AC-19..25), ordered by position. Absent
+   * means the default tab grid only. Round-trips as `w:tabs` (.docx) and
+   * `style:tab-stops` (.odt). */
+  tabStops?: TabStop[];
+  /** Paragraph borders (SPEC-074 AC-4); absent means none. */
+  borders?: ParagraphBorders;
+  /** Paragraph background as a CSS-ready "#rrggbb" or a theme reference
+   * (SPEC-074 AC-5, SPEC-077). Absent means no fill, which is distinct
+   * from "#ffffff". */
+  shadingFill?: ModelColor;
+}
+
+// --- paragraph borders and shading (SPEC-074) -------------------------------
+
+/** The default space between a paragraph border and its text, in points
+ * (SPEC-074 AC-9) — what an absent `paddingPt` entry means. Matches Word's
+ * and Writer's own default for a newly boxed paragraph. */
+export const DEFAULT_PARAGRAPH_BORDER_PADDING_PT = 4;
+
+/** A paragraph's borders (SPEC-074): the same four physical edges a table
+ * cell has, plus the `between` edge that draws at each internal boundary of
+ * a run of consecutive identically-bordered paragraphs (see
+ * lib/paragraphBorders.ts). Round-trips as `w:pBdr` (.docx) and the
+ * `fo:border*`/`fo:padding*` family (.odt). */
+export interface ParagraphBorders {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+  /** Drawn between consecutive paragraphs that share identical borders —
+   *  see lib/paragraphBorders.ts's borderRuns. */
+  between?: BorderSide;
+  /** Space between each border and the text, in points. Absent — for the
+   * whole object or for one edge — means DEFAULT_PARAGRAPH_BORDER_PADDING_PT. */
+  paddingPt?: { top?: number; bottom?: number; left?: number; right?: number };
+}
+
+/** A section's page border (SPEC-074 AC-19..22): an art-free line on any of
+ * the four edges, offset from either the page edge or the text area. */
+export interface PageBorders {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+  /** Distance from the reference edge, in points. */
+  offsetPt?: number;
+  /** What `offsetPt` measures from; absent means "page". */
+  measureFrom?: PageBorderMeasureFrom;
+  /** Which pages of the section get it; absent means "allPages". */
+  appliesTo?: PageBorderAppliesTo;
+}
+
+export type PageBorderMeasureFrom = "page" | "text";
+export type PageBorderAppliesTo = "allPages" | "firstPage" | "exceptFirstPage";
+
+/** Typed pass-through for a page-border reference edge coming from a `.vue`
+ * template's plain string (espree bars the annotation — see
+ * asCharacterFormatKey). */
+export function asPageBorderMeasureFrom(value: string): PageBorderMeasureFrom {
+  return value as PageBorderMeasureFrom;
+}
+
+/** Typed pass-through for a page-border applies-to coming from a `.vue`
+ * template's plain string. */
+export function asPageBorderAppliesTo(value: string): PageBorderAppliesTo {
+  return value as PageBorderAppliesTo;
+}
+
+/** Typed pass-through for a `ParagraphBorders` arriving from a `.vue`
+ * component's untyped Object prop (same espree constraint as asTabStops). */
+export function asParagraphBorders(value: unknown): ParagraphBorders | undefined {
+  return (value ?? undefined) as ParagraphBorders | undefined;
+}
+
+/** Typed pass-through for a `PageBorders` arriving from a `.vue`
+ * component's untyped Object prop. */
+export function asPageBorders(value: unknown): PageBorders | undefined {
+  return (value ?? undefined) as PageBorders | undefined;
+}
+
+// --- lists (SPEC-018; multilevel definitions SPEC-032) ----------------------
+// The list types moved to core/lists.ts (product-neutral); imported for
+// this module's own type definitions and re-exported so existing import
+// paths keep working.
+
+
+// --- tab stops (SPEC-032) ---------------------------------------------------
+
+/** A custom tab stop's alignment (SPEC-032 AC-19..22, SPEC-054): where the
+ * tabbed text sits relative to the stop — "decimal" aligns on the decimal
+ * separator; "bar" (SPEC-054) draws a vertical rule at the position and
+ * consumes no tab advance. */
+export type TabStopAlignment = "left" | "right" | "center" | "decimal" | "bar";
+
+/** The leader drawn in the space a tab jumps over (AC-23); absent means
+ * none. */
+export type TabLeader = "dot" | "hyphen" | "underscore";
+
+/** One custom tab stop on a paragraph (SPEC-032 AC-19..25). `positionCm`
+ * is measured from the text area's start edge (the left margin for LTR),
+ * matching `w:tab/@w:pos` and ODF's `style:position`. */
+export interface TabStop {
+  positionCm: number;
+  alignment: TabStopAlignment;
+  leader?: TabLeader;
+}
+
+/** Typed pass-through for a `TabStop[]` arriving from a `.vue` component's
+ * untyped Array prop (same espree constraint as asCharacterFormatKey). */
+export function asTabStops(value: unknown): TabStop[] {
+  return value as TabStop[];
+}
+
+/** Typed pass-through for a tab alignment coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asTabStopAlignment(value: string): TabStopAlignment {
+  return value as TabStopAlignment;
+}
+
+
+// --- paragraph styles (SPEC-019) --------------------------------------------
+
+/** A style's family (SPEC-042): which kind of thing it applies to and how
+ * it groups in the Styles pane. Absent on `NamedStyle.type` means
+ * `"paragraph"` — the only family that existed before SPEC-042, kept as the
+ * unmarked default so every style built by SPEC-019 code stays exactly as
+ * it was. */
+export type StyleType = "paragraph" | "character" | "list" | "table";
+
+/** One region's conditional formatting inside a table style (SPEC-076): what
+ * a banded row, a banded column or one of the four edge regions overrides on
+ * the cells it covers. Deliberately just shading, weight and borders —
+ * `w:tblStylePr` can carry far more, and a style whose regions need more than
+ * this stays `unmodeled` and round-trips verbatim (AC-71). */
+export interface TableConditionalFormat {
+  /** Background as a CSS-ready "#rrggbb". */
+  /** A literal "#rrggbb" or a theme reference (SPEC-077). Resolved at
+   * paint time by renderFormatting's tableCellStyle, and at write time by
+   * each format's own writer. */
+  shading?: ModelColor;
+  bold?: boolean;
+  borders?: CellBorders;
+}
+
+/** A band region's conditional formatting (SPEC-076 AC-22, AC-37): the same
+ * shading/bold/borders every other region carries, plus how many rows or
+ * columns one band spans (1 = every other). The two band regions are NOT a
+ * narrower type than the four edge regions — the style editor exposes the
+ * same three controls for all six, so all six must store them. */
+export interface TableBandFormat extends TableConditionalFormat {
+  size: number;
+}
+
+/** A table style's conditional formatting (SPEC-076) — the model of .docx's
+ * `w:tblStylePr` regions plus `w:tblStyleRowBandSize`/`w:tblStyleColBandSize`,
+ * and of ODF's `table:table-template` children. Every region is
+ * independently settable and independently absent. Which regions a given
+ * table actually uses is the table's own `look`, not this. */
+export interface TableStyleBanding {
+  /** Formatting applied to alternate row/column bands. */
+  bandedRows?: TableBandFormat;
+  bandedColumns?: TableBandFormat;
+  firstRow?: TableConditionalFormat;
+  lastRow?: TableConditionalFormat;
+  firstColumn?: TableConditionalFormat;
+  lastColumn?: TableConditionalFormat;
+}
+
+/** Which parts of its style's banding a table uses (SPEC-076) — the direct
+ * model of `w:tblLook`, and of ODF's `table:use-*-styles` attributes. It is a
+ * separate object from the style on purpose: the style says what a banded row
+ * looks like, the table says whether to use it. Absent, or present with every
+ * flag false, applies no banding at all (AC-23). */
+export interface TableLook {
+  firstRow?: boolean;
+  lastRow?: boolean;
+  firstColumn?: boolean;
+  lastColumn?: boolean;
+  bandedRows?: boolean;
+  bandedColumns?: boolean;
+}
+
+/** Whether a look enables at least one region (AC-23's "present with every
+ * flag false applies no banding"). */
+export function tableLookIsEmpty(look: TableLook | undefined): boolean {
+  return (
+    !look ||
+    (!look.firstRow &&
+      !look.lastRow &&
+      !look.firstColumn &&
+      !look.lastColumn &&
+      !look.bandedRows &&
+      !look.bandedColumns)
+  );
+}
+
+/** One style of the document's style catalogue (SPEC-019 paragraph styles;
+ * SPEC-042 widens the catalogue to character/list/table styles too): its
+ * *own* (non-inherited) formatting plus the parent link resolution follows
+ * (`w:basedOn` / `style:parent-style-name`). For a `.docx` these mirror the
+ * `w:style` elements of styles.xml; for a `.odt`, the named styles of its
+ * styles.xml. The model keeps paragraph/run formatting *baked* (effective)
+ * on each paragraph/run, so the catalogue is not needed to render — it
+ * drives the style picker/pane, the diff that separates direct formatting
+ * from style formatting, and the writers' style definitions. */
+/** SPEC-050: the built-in style id a Markdown thematic break (`---`) round-
+ * trips through — declared here (not lib/styles.ts, which defines the style
+ * itself) so lib/renderFormatting.ts can key its `<hr>` rendering off it
+ * without an import cycle (styles.ts already imports renderFormatting.ts). */
+export const HORIZONTAL_RULE_STYLE_ID = "HorizontalRule";
+
+export interface NamedStyle {
+  /** Style identity as referenced by `Paragraph.styleId`/`Run.styleId`. */
+  id: string;
+  /** Display name shown in the picker/pane. */
+  name?: string;
+  /** The style's family; absent means `"paragraph"`. */
+  type?: StyleType;
+  /** Parent style id the style inherits from. */
+  basedOn?: string;
+  /** The style id applied to a new paragraph typed after one in this style
+   * (SPEC-042 AC-3/AC-4's "style for following paragraph") — `w:next` /
+   * `style:next-style-name`. Meaningful for paragraph/list styles only. */
+  next?: string;
+  /** The style's own paragraph formatting; absent when it sets none. */
+  paragraphFormatting?: ParagraphFormatting;
+  /** The style's own run formatting; absent when it sets none. */
+  runFormatting?: RunFormatting;
+  /** ODF-only: a proportional font size ("130%" in the source), resolved
+   * against the inherited size during chain resolution. */
+  fontSizePercent?: number;
+  /** Markdown-only (SPEC-050): a fenced code block's info string (the text
+   * after the opening ` ``` `), carried by a style based on the built-in
+   * "Code" paragraph style so paragraphs from fences with different info
+   * strings resolve to distinct styles (`Code:<language>`) instead of
+   * colliding on one shared id. Absent for a fence with no info string. */
+  language?: string;
+  /** 1-based outline level; presence makes this a heading style. */
+  headingLevel?: number;
+  /** List-type styles only (SPEC-042): the `DocumentModel.listDefinitions`
+   * entry this style's numbering comes from — applying the style links a
+   * paragraph to it the same way a heading-numbering link does (see
+   * commands.ts's styleLinkFor). */
+  listDefinitionId?: string;
+  /** Table-type styles only (SPEC-042): default cell borders a table using
+   * this style bakes onto cells that carry no border of their own. Table
+   * banding (per-region overrides) is out of scope — a single border/shading
+   * set applies uniformly. */
+  cellBorders?: CellBorders;
+  /** Table-type styles only (SPEC-042): default cell background a table
+   * using this style bakes onto cells that carry no shading of their own.
+   * A literal "#rrggbb" or a theme reference (SPEC-077). */
+  cellShadingFill?: ModelColor;
+  /** Table-type styles only (SPEC-076): the style's conditional formatting —
+   * row/column banding and the four edge regions. Resolved at render time by
+   * lib/tableStyles.ts against the table's own `look`; never baked onto
+   * cells, which is what makes toggling a band off restore the cell's own
+   * shading by construction (AC-26). */
+  banding?: TableStyleBanding;
+  /** True for a style read from a source document the editor cannot fully
+   * model (SPEC-042 AC-15..18) — a real table style with banding regions, a
+   * `w:type="numbering"` entry, or any style carrying structure the reader
+   * does not parse. Still listed in the pane and can be applied by
+   * reference (`rawXml` is what the writer re-emits verbatim); `Modify` is
+   * unavailable for it since the editor cannot express its own properties. */
+  unmodeled?: boolean;
+  /** The style's original source XML (a `<w:style>`/`<style:style>` element,
+   * serialised), preserved verbatim for `unmodeled` styles so export writes
+   * it back unchanged (AC-18). Absent for styles the editor fully models. */
+  rawXml?: string;
+}
+
+/** Typed empty seed for `NamedStyle[]` refs/props in `.vue` scripts (espree
+ * bars the type annotation — see asCharacterFormatKey). */
+export function noNamedStyles(): NamedStyle[] {
+  return [];
+}
+
+/** Typed pass-through for a style catalogue arriving as a `.vue` template's
+ * plain `Array` prop (espree bars the annotation there — same idiom as
+ * core/lists.ts's asListDefinitions). */
+export function asNamedStyles(value: unknown): NamedStyle[] {
+  return (value ?? []) as NamedStyle[];
+}
+
+/** An inline XML element the reader does not model (SPEC-008) — e.g. a
+ * `w:drawing`-carrying run or an ODF `draw:frame` — held verbatim and
+ * anchored to its position between the paragraph's runs so the writer can
+ * re-emit it in place. `xml` is a self-contained serialisation (namespace
+ * declarations included); it is compared with XML canonicalization, never
+ * byte-for-byte. */
+export interface OpaqueInline {
+  xml: string;
+  /** The node sits immediately before `runs[runIndex]`; `runs.length` means
+   * after the last run. */
+  runIndex: number;
+}
+
+/** A named point location in a paragraph's text (SPEC-025) — the model form
+ * of `w:bookmarkStart/End` (.docx) and `text:bookmark` (.odt). Bookmarks are
+ * points, not ranges: the editor's "Insert bookmark" names a location, and a
+ * ranged source bookmark is anchored at its start. Deliberately not named
+ * `id`: lib/equality.ts's IGNORED_KEYS drops bare "id" keys from structural
+ * comparison, which would let a wrong reference pass a round-trip test. */
+export interface BookmarkAnchor {
+  /** Unique document-wide, no spaces (validated in lib/links.ts). */
+  name: string;
+  /** Character offset into the paragraph's concatenated run text. */
+  offset: number;
+  /** A bookmark auto-created at a heading so a SPEC-053 cross-reference can
+   * target it (`Insert → Cross-reference` on a heading with no bookmark).
+   * Word does the same, and it lets `.odt`'s `text:bookmark-ref` carry the
+   * reference. Hidden bookmarks are not listed by SPEC-025's bookmark
+   * manager (`listBookmarks`); cross-reference resolution reads them through
+   * `bookmarkCaretIncludingHidden`. */
+  hidden?: true;
+}
+
+/** Which edge of a comment thread's anchored range a `CommentAnchor` marks
+ * (SPEC-038) — mirrors OOXML's split `w:commentRangeStart`/
+ * `w:commentRangeEnd` tags and ODF's `office:annotation`/
+ * `office:annotation-end`. */
+export type CommentAnchorBoundary = "start" | "end";
+
+/** One edge of a comment thread's anchored range (SPEC-038) — a
+ * character-offset point stored as a paragraph-level side-list, the same
+ * shape as `BookmarkAnchor`. A thread's `"start"` and `"end"` points are
+ * matched by `threadId`, not by array position or paragraph: the common
+ * case has both in the same paragraph, but a range spanning a paragraph
+ * break puts them in different paragraphs. Offset maintenance across edits
+ * (insert/delete/split/merge) follows the exact same rules as
+ * `BookmarkAnchor` — see textEditing.ts's `anchorsAfterInsert`/
+ * `anchorsAfterDelete`/`mergedAnchors`, shared by both. Deliberately not
+ * named `id`: lib/equality.ts's IGNORED_KEYS drops bare "id" keys from
+ * structural comparison (see BookmarkAnchor for the same reasoning). */
+export interface CommentAnchor {
+  threadId: string;
+  boundary: CommentAnchorBoundary;
+  offset: number;
+}
+
+/** One message in a comment thread (SPEC-038) — defined in
+ * core/comments.ts since SPEC-101's phase one (performed by SPEC-135, whose
+ * cell threads share it) and re-exported here so every existing import path
+ * keeps working unchanged. */
+export type { CommentMessage } from "./core/comments";
+
+/** A comment thread anchored to a range of document text (SPEC-038): the
+ * in-memory, format-agnostic shape of OOXML's
+ * `w:commentRangeStart/End`+`w:commentReference` and ODF's
+ * `office:annotation`+`office:annotation-end`. `messages[0]` is the
+ * thread's opening comment; `messages[1..]` are replies. A thread stays in
+ * `DocumentModel.comments` even after its anchoring range is deleted from
+ * the body — visibility (which highlight to paint, whether the thread
+ * shows up anywhere) is always DERIVED from live `CommentAnchor`s
+ * (lib/comments.ts's `visibleCommentThreads`), never cascade-deleted — the
+ * same contract `NoteContent` uses (SPEC-031), which is what lets undo (and
+ * a cut-and-pasted-back range) find the thread's content again. Not named
+ * `id` — same equality.ts reason as BookmarkAnchor. */
+export interface CommentThread {
+  threadId: string;
+  messages: CommentMessage[];
+  /** Whether the thread is resolved (SPEC-038): resolving hides its
+   * highlight and moves it to the "Resolved" section of the comments UI; it
+   * can be reopened. Never affects the anchor itself. */
+  resolved: boolean;
+}
+
+// --- track changes (SPEC-039) -----------------------------------------------
+
+/** One tracked edit's author and timestamp — the common shape every kind of
+ * tracked change (insertion, deletion, formatting change) carries. Not
+ * named `id` (same equality.ts IGNORED_KEYS reason as BookmarkAnchor);
+ * `changeId` mirrors the threadId/messageId/noteId convention. */
+export interface TrackedChangeInfo {
+  changeId: string;
+  /** The settable identity (lib/commentIdentity.ts) at the time of the edit. */
+  author: string;
+  /** ISO 8601 timestamp. */
+  date: string;
+}
+
+/** A run's pending formatting change (SPEC-039, `w:rPrChange` / ODF
+ * `text:format-change`): the formatting the run had before the change,
+ * restored verbatim if the change is rejected (AC "rejecting... restores
+ * the exact original text and formatting"). */
+export interface RunFormatChange extends TrackedChangeInfo {
+  previous: RunFormatting;
+}
+
+/** Tracked-change state carried on a single run (SPEC-039). A run can be
+ * both inserted and deleted at once: editing over another author's
+ * still-pending insertion nests the deletion on top of it instead of
+ * losing the insertion outright (AC "produces a nested change, not a lost
+ * one") — accepting the deletion then removes the run, rejecting it drops
+ * back to the plain pending insertion. */
+export interface RunTrackedChanges {
+  insert?: TrackedChangeInfo;
+  delete?: TrackedChangeInfo;
+  formatChange?: RunFormatChange;
+}
+
+/** A paragraph's pending formatting change (SPEC-039, `w:pPrChange`). */
+export interface ParagraphFormatChange extends TrackedChangeInfo {
+  previous: ParagraphFormatting | undefined;
+}
+
+/** Tracked-change state carried on a paragraph (SPEC-039): its own trailing
+ * mark (the paragraph break) and/or its block-level formatting. A split
+ * (Enter) sets `markInsert` on the paragraph before the new break; a merge
+ * (Backspace at a paragraph start) sets `markDelete` on the paragraph being
+ * folded into its successor rather than physically merging it, so rejecting
+ * the deletion simply clears the marker and the paragraphs stay apart. */
+export interface ParagraphTrackedChanges {
+  markInsert?: TrackedChangeInfo;
+  markDelete?: TrackedChangeInfo;
+  formatChange?: ParagraphFormatChange;
+}
+
+/** Tracked insertion/deletion of a whole block (SPEC-039): a table row or an
+ * image added or removed while tracking is on (AC "changes made by list,
+ * table and image operations are tracked"). Unlike a run/paragraph, a
+ * deleted block has nothing to render struck through in place, so the
+ * review pane and margin change bar are its only visible trace until
+ * accepted/rejected. */
+export interface BlockTrackedChanges {
+  insert?: TrackedChangeInfo;
+  delete?: TrackedChangeInfo;
+}
+
+/** A table cell's pending property edit (SPEC-039 AC-15): a merge/split
+ * (colSpan/rowSpan changed) or a border/shading/padding/vertical-alignment
+ * edit — `w:tcPrChange`/`w:cellMerge` on `.docx`. Restored verbatim if
+ * rejected. `.odt` has no standard slot for "previous" cell-property state
+ * (the same documented gap as RunFormatChange on a `.odt` source), so an
+ * `.odt`-sourced cell property change is accepted (applied) and reported as
+ * a SPEC-008 DropRecord on a cross-format save to `.odt` (AC-19) rather
+ * than tracked there. */
+export interface CellPropertyChange extends TrackedChangeInfo {
+  previous: {
+    colSpan?: number;
+    rowSpan?: number;
+    borders?: CellBorders;
+    shadingFill?: ModelColor;
+    paddingCm?: number;
+    verticalAlign?: CellVerticalAlign;
+  };
+}
+
+/** Tracked-change state carried on a table cell (SPEC-039 AC-15): insertion/
+ * deletion (a column added/removed while tracking is on) alongside
+ * `BlockTrackedChanges`, plus a pending property change/merge. */
+export interface CellTrackedChanges extends BlockTrackedChanges {
+  propertyChange?: CellPropertyChange;
+}
+
+/** A table row's pending property edit (SPEC-039 AC-15): a height change —
+ * `w:trPrChange` on `.docx`. See CellPropertyChange for the `.odt`
+ * documented gap this shares. */
+export interface RowPropertyChange extends TrackedChangeInfo {
+  previous: { minHeightCm?: number };
+}
+
+/** Tracked-change state carried on a table row (SPEC-039): insertion/
+ * deletion alongside `BlockTrackedChanges`, plus a pending row-property
+ * change. */
+export interface RowTrackedChanges extends BlockTrackedChanges {
+  propertyChange?: RowPropertyChange;
+}
+
+/** A table's pending property edit (SPEC-039 AC-15): column widths,
+ * alignment or width-mode changed — `w:tblPrChange`/`w:tblGridChange` on
+ * `.docx`. See CellPropertyChange for the `.odt` documented gap this
+ * shares. */
+export interface TablePropertyChange extends TrackedChangeInfo {
+  previous: {
+    columnWidthsCm?: number[];
+    alignment?: TableAlignment;
+    widthMode?: TableWidthMode;
+    widthPercent?: number;
+  };
+}
+
+/** Tracked-change state carried on a table (SPEC-039): just its own pending
+ * property change — a table itself is never inserted/deleted as a unit
+ * (only its rows/cells are). */
+export interface TableTrackedChanges {
+  propertyChange?: TablePropertyChange;
+}
+
+/** A fresh, session-unique tracked-change id. */
+export function createChangeId(): string {
+  return `change-${crypto.randomUUID()}`;
+}
+
+/** The review pane's display-mode selector (SPEC-039 AC): "All markup"
+ * shows every insertion/deletion/formatting mark; "Simple markup" shows
+ * only the margin change bars; "No markup" renders as if every change were
+ * accepted; "Original" renders as if every change were rejected. Documents
+ * always open in `"all"`. */
+export type TrackChangesDisplayMode = "all" | "simple" | "noMarkup" | "original";
+
+/** Typed pass-through for a display mode coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asTrackChangesDisplayMode(value: string): TrackChangesDisplayMode {
+  return value as TrackChangesDisplayMode;
+}
+
+/** A paragraph is a block-level element made of inline runs. */
+export interface Paragraph {
+  type: "paragraph";
+  runs: Run[];
+  formatting?: ParagraphFormatting;
+  /** Bulleted/numbered list membership (SPEC-018); absent for a normal
+   * paragraph. */
+  list?: ListFormatting;
+  /** Raw style reference (e.g. `w:pStyle`'s value), kept alongside the
+   * resolved `formatting`/run formatting so later specs (save) can re-emit
+   * a style reference instead of only direct formatting. */
+  styleId?: string;
+  /** 1-based outline level resolved from the paragraph's style chain;
+   * undefined for body text. */
+  headingLevel?: number;
+  /** Unmodelled inline XML preserved through a same-format save (SPEC-008).
+   * A side-list (rather than a run union) so `runs` stays a plain `Run[]`
+   * for every renderer and editing consumer; order follows `runIndex`. */
+  opaqueInlines?: OpaqueInline[];
+  /** Named point locations in this paragraph (SPEC-025), ordered by
+   * `offset`. A side-list like `opaqueInlines` so `runs` stays plain;
+   * offsets are maintained by the textEditing primitives. */
+  bookmarks?: BookmarkAnchor[];
+  /** Comment anchor points in this paragraph (SPEC-038), ordered by
+   * `offset`. See `CommentAnchor`; offsets are maintained by the
+   * textEditing primitives the same way `bookmarks` are. */
+  commentAnchors?: CommentAnchor[];
+  /** Pending tracked-change state for this paragraph's own mark/formatting
+   * (SPEC-039); see ParagraphTrackedChanges. */
+  changes?: ParagraphTrackedChanges;
+  /** Pairs this paragraph with the floating drawings anchored to it
+   * (SPEC-078): present only while at least one Shape/Chart block's own
+   * `anchorOrdinal` references it. Unique per paragraph document-wide;
+   * maintained by lib/drawingAnchors.ts and the shape/chart commands, never
+   * serialized (both file formats carry the pairing by containment).
+   * Deliberately not named `id` — see IGNORED_KEYS in lib/equality.ts; a
+   * pairing hidden from equalStructural would let a broken anchor
+   * round-trip green, the same trap `groupOrdinal`'s name guards against. */
+  anchorOrdinal?: number;
+}
+
+// --- images (SPEC-024) -------------------------------------------------------
+
+/** How an image sits relative to the surrounding text (SPEC-024 AC-13,
+ * AC-14; widened with `"topAndBottom"` by SPEC-051): `"inline"` flows with
+ * the text like a character; `"square"` floats with text wrapping around its
+ * rectangle; `"topAndBottom"` floats with no side wrapping but keeps text
+ * flow above and below it; `"behind"`/`"infront"` float without wrapping,
+ * stacked behind or in front of the text. */
+export type ImageWrapMode = "inline" | "square" | "topAndBottom" | "behind" | "infront";
+
+/** Everything a block needs in order to sit somewhere other than in the text
+ * flow (SPEC-051). Extended by `Image` (SPEC-024), `Shape` (here) and `Chart`
+ * (SPEC-052) — every field `Image` already shipped keeps its exact path, so
+ * lifting them here is additive, not a rename. */
+export interface DrawingPlacement {
+  widthCm: number;
+  heightCm: number;
+  wrap: ImageWrapMode;
+  /** `wp:docPr/@descr` (.docx) / `svg:desc` (.odt). */
+  altText?: string;
+  /** Offset from the reference edges; absent means the wrap mode's default
+   * (see "Default position" in specs/051-drawing-shapes-and-text-boxes.md) —
+   * never "recentre" or "undefined". Ignored entirely when `wrap` is
+   * `"inline"`. */
+  offsetXCm?: number;
+  offsetYCm?: number;
+  relativeToH?: "page" | "margin" | "column";
+  relativeToV?: "page" | "margin" | "paragraph";
+  /** Ascending = nearer the reader; negative renders behind body text;
+   * absent means zero. Only meaningful for `"behind"`/`"infront"` wrap. */
+  zOrder?: number;
+  /** Whole degrees clockwise, 0-359. */
+  rotationDeg?: number;
+  /** Group membership as an ordinal — deliberately not named `id`: see
+   * IGNORED_KEYS in lib/equality.ts, the same trap `NoteRef.noteId` is named
+   * around. */
+  groupOrdinal?: number;
+  /** The `anchorOrdinal` of this drawing's anchor paragraph (SPEC-078).
+   * Only ever set on floating (non-`inline`) Shape/Chart blocks; absent
+   * means "resolve by adjacency" — every pre-SPEC-078 document (see
+   * lib/drawingAnchors.ts's resolveAnchorBlockIndex). Never set on Image,
+   * which has no anchor-relative offsets to measure. */
+  anchorOrdinal?: number;
+}
+
+/** An image block (SPEC-024): a block-level object addressed by `CaretPosition`
+ * the same way `Table` is — a length-1 atom (see textEditing.blockLength) a
+ * caret sits before or after, never inside. Real .docx/.odt inline images
+ * live mid-run in the source XML; the reader splits the paragraph around one
+ * on open (mirroring how a body-level `w:tbl` already breaks the block
+ * sequence) so every image, inline or floating, is one section block here —
+ * one caret/selection/rendering model for both, instead of a second
+ * inline-anchor system alongside `OpaqueInline`. `"inline"` wrap renders as a
+ * plain block (no float); `"square"` floats with text wrapping around it;
+ * `"behind"`/`"infront"` float out of flow, stacked behind or in front of
+ * surrounding text (AC-13, AC-14). */
+export interface Image extends DrawingPlacement {
+  type: "image";
+  /** References a `DocumentModel.media` entry's `mediaId`. */
+  mediaId: string;
+  /** The source image's pixel dimensions, fixed at insertion time — the
+   * "Reset size" button's target (AC-21) and the fit-to-text-area check's
+   * input (AC-5, AC-6), both independent of the current display size below. */
+  naturalWidthPx: number;
+  naturalHeightPx: number;
+  /** Pending tracked insertion/deletion of this image block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+}
+
+// --- shapes and text boxes (SPEC-051) ---------------------------------------
+// The product-neutral half — ShapeGeometry, ShapeOutline, the catalogue and
+// LINE_GEOMETRIES — moved to core/shapes.ts; imported for this module's own
+// type definitions and re-exported so existing import paths keep working.
+
+
+/** Rich text held inside a shape (SPEC-051 AC-17..24): `blocks` rather than a
+ * flat run list so a shape can hold lists and tables, not only paragraphs —
+ * every character- and paragraph-level feature body text accepts. */
+export interface ShapeTextFrame {
+  blocks: Block[];
+  vAlign: "top" | "middle" | "bottom";
+}
+
+/** A shape or text box block (SPEC-051): a drawing placed on the page,
+ * painted on the canvas layer with an ARIA proxy element for hit testing,
+ * keyboard access and its editable text (see "Rendering and test surface").
+ * A text box is not a fourteenth geometry — it is `geometry: "rect"` with
+ * `fill`/`outline` absent and a `text` frame; both write/read as `wps:txbx`
+ * (.docx) / `draw:text-box` (.odt) so the two paths cannot drift. */
+export interface Shape extends DrawingPlacement {
+  type: "shape";
+  geometry: ShapeGeometry;
+  /** Absent means no fill. SPEC-073 widened this from a "#rrggbb" string to
+   * the `ShapeFill` union — legacy stored strings are migrated on load by
+   * `normaliseShapeFill` (the document-store read path), so the field is
+   * never `string | ShapeFill` (AC-29). */
+  fill?: ShapeFill;
+  /** Absent means no outline. */
+  outline?: ShapeOutline;
+  /** Outer shadow (SPEC-073 AC-8); absent means none. */
+  shadow?: ShapeShadow;
+  /** Verbatim source styling the model could not express (SPEC-073 AC-35):
+   * the unparsed `a:spPr`/`a:effectLst` property elements (.docx) or
+   * graphic-style properties (.odt), re-emitted unchanged on a SAME-format
+   * save. Never re-emitted cross-format; each unexpressible property reports
+   * a `"shapeStyle"` DropRecord instead. */
+  unsupportedStyleXml?: string;
+  /** Text inside the shape. Absent for a shape that holds none, e.g. a line
+   * or arrow. */
+  text?: ShapeTextFrame;
+  /** Geometry adjustment values (SPEC-069), in the order the geometry's
+   * `ShapeDefinition` declares them, each a fraction in that adjustment's
+   * declared range. Absent means every adjustment is at its default.
+   * Round-trips as `a:avLst/a:gd` (.docx) and `draw:modifiers` (.odt); a
+   * value outside our declared range is clamped only for rendering and
+   * preserved verbatim on a same-format save (AC-7). */
+  adjustments?: number[];
+  /** Pending tracked insertion/deletion of this shape block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+  /** Present when the source file's geometry was outside "Shape catalogue"
+   * (SPEC-008 preservation, AC-60): the verbatim geometry XML
+   * (`a:custGeom`/an unrecognised `a:prstGeom` for `.docx`, an unrecognised
+   * `draw:enhanced-geometry` for `.odt`), re-emitted unchanged on a
+   * same-format save. `geometry` is then just a bounding-box stand-in
+   * (`"rect"`) — never painted or re-derived; the shape instead paints as a
+   * dashed placeholder at its true bounds (AC-60) and cannot have its
+   * geometry edited. A cross-format save of a shape with this field set
+   * cannot carry it and reports a `"shapeGeometry"` DropRecord (AC-61). */
+  unsupportedGeometryXml?: string;
+  /** A custom outline (SPEC-071). When present it is the shape's geometry,
+   * and `geometry` is only a bounding-box stand-in (`"rect"`), the same
+   * convention `unsupportedGeometryXml` uses — it takes precedence over
+   * `geometry` for rendering, hit-testing and serialization. Round-trips as
+   * `a:custGeom` (.docx) and `draw:enhanced-path` (.odt). Mutually exclusive
+   * with `unsupportedGeometryXml`: a shape whose path we modelled has nothing
+   * to preserve, and a preserved shape has no path to edit. */
+  path?: ShapePath;
+  /** Present only when `path` was reduced from primitives the model does not
+   * carry — OOXML `a:arcTo`/`a:quadBezTo`, ODF `A`/`Q`/`T` (SPEC-071
+   * "Primitive reduction") — holding the verbatim source geometry XML and
+   * the format it came from. A same-format save re-emits it unchanged (no
+   * fidelity loss, no `DropRecord`); a cross-format save writes the converted
+   * cubics from `path` instead and reports a `"shapeGeometry"` `DropRecord`
+   * (AC-30). Absent for a path with no lost primitives (a drawn freeform, or
+   * a source already in move/line/cubic/close), which carries losslessly in
+   * both directions. The nested `xml` is canonicalised by `equalStructural`
+   * (it shares the XML-valued `xml` key). */
+  pathSource?: { format: "docx" | "odt"; xml: string };
+}
+
+/** Whether a block is a shape — the isTable-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isShape(block: Block | undefined): block is Shape {
+  return block?.type === "shape";
+}
+
+/** Typed pass-through for a Shape arriving as a runtime-declared Object prop
+ * (espree bars the type annotation — see tables.ts's asTable for the same
+ * pattern). */
+export function asShape(value: unknown): Shape {
+  return value as Shape;
+}
+
+/** Typed pass-through for a wrap mode coming from a `.vue` template's plain
+ * string (same espree constraint as asCharacterFormatKey). */
+export function asImageWrapMode(value: string): ImageWrapMode {
+  return value as ImageWrapMode;
+}
+
+// --- connectors (SPEC-070) --------------------------------------------------
+
+export type { ConnectorKind } from "./core/connectors";
+
+/** One endpoint's binding to a shape and one of its nine connection sites
+ * ("Connection sites"). Held as a *position* — the target's block index
+ * within the section (SPEC-057's flat containment, never an id: see
+ * IGNORED_KEYS in lib/equality.ts) — so `equalStructural` compares it and
+ * every block-reordering edit re-indexes it (see reindexAttachments). */
+export interface ConnectorAttachment {
+  /** Index of the attached drawing block within the connector's section.
+   * `path` is reserved for a future nested-group container model; today's
+   * grouping is flat (`groupOrdinal`), so it is left unset. */
+  target: { block: number; path?: number[] };
+  /** Which connection site, 0-8 per "Connection sites". */
+  site: number;
+}
+
+/** A connector drawing block (SPEC-070): a line that *remembers what it is
+ * attached to*. Its painted geometry is always derived — from its
+ * attachments where it has them, from `start`/`end` where it does not — so
+ * moving/resizing/rotating an attached shape re-routes it with no stored
+ * second source of truth. An anchored drawing like any other (wrap, z-order,
+ * alt text via `DrawingPlacement`); it can join a group, where its
+ * attachments resolve within the group. */
+export interface Connector extends DrawingPlacement {
+  type: "connector";
+  kind: ConnectorKind;
+  /** Endpoints in cm, relative to the connector's own placement box — always
+   * present, and always the truth when an end is unattached. When an end IS
+   * attached, they are the last routed position, kept so a detached-by-
+   * deletion endpoint has somewhere to be and a reader that ignores
+   * attachment still draws the right line. */
+  start: { xCm: number; yCm: number };
+  end: { xCm: number; yCm: number };
+  startAttachment?: ConnectorAttachment;
+  endAttachment?: ConnectorAttachment;
+  /** Routing adjustment for elbow/curved kinds: the fraction (0-1) along the
+   * connector at which the middle segment sits. Absent means 0.5. */
+  adjustments?: number[];
+  outline?: ShapeOutline;
+  startArrow?: ArrowheadKind;
+  /** Defaults to "triangle" when absent (an arrow at the end). */
+  endArrow?: ArrowheadKind;
+  /** Arrowhead sizes (SPEC-073 AC-14); absent means "medium". */
+  startArrowSize?: ArrowheadSize;
+  endArrowSize?: ArrowheadSize;
+  /** Outer shadow (SPEC-073 AC-11); absent means none. */
+  shadow?: ShapeShadow;
+  /** Verbatim unmodelled source styling (SPEC-073 AC-35) — same contract as
+   * `Shape.unsupportedStyleXml`. */
+  unsupportedStyleXml?: string;
+  /** Pending tracked insertion/deletion of this connector block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+}
+
+/** Whether a block is a connector — the isShape-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts). */
+export function isConnector(block: Block | undefined): block is Connector {
+  return block?.type === "connector";
+}
+
+/** Typed pass-through for a Connector arriving as a runtime-declared Object
+ * prop (espree bars the type annotation — see asShape for the same pattern). */
+export function asConnector(value: unknown): Connector {
+  return value as Connector;
+}
+
+/** Typed pass-through for a connector kind coming from a `.vue` template's
+ * plain string (same espree constraint as asShapeGeometry). */
+export function asConnectorKind(value: string): ConnectorKind {
+  return value as ConnectorKind;
+}
+
+/** Whether a block is an image — the isTable-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isImage(block: Block | undefined): block is Image {
+  return block?.type === "image";
+}
+
+/** Whether a block is a paragraph — the isTable-style narrowing helper. */
+export function isParagraph(block: Block | undefined): block is Paragraph {
+  return block?.type === "paragraph";
+}
+
+/** Typed pass-through for an Image arriving as a runtime-declared Object prop
+ * (espree bars the type annotation — see tables.ts's asTable for the same
+ * pattern). */
+export function asImage(value: unknown): Image {
+  return value as Image;
+}
+
+// --- charts (SPEC-052) -------------------------------------------------------
+// The product-neutral half — ChartType, ChartSeries, ChartOptions, the
+// catalogue and palette — moved to core/charts.ts; imported for this
+// module's own type definitions and re-exported so existing import paths
+// keep working.
+
+
+/** A chart block (SPEC-052): a drawing placed on the page, painted on the
+ * canvas layer with an ARIA proxy element exactly like Shape (see
+ * "Rendering and test surface" in specs/051-drawing-shapes-and-text-boxes.md).
+ * Mirrors Shape's unsupported-content convention: a chart whose source type
+ * is outside the catalogue keeps `chartType` as a harmless bounding-box
+ * stand-in (`"columnClustered"`) and sets `unsupportedChartXml`, so it paints
+ * as a placeholder and is never rewritten (AC-29..AC-31), the same shape
+ * `unsupportedGeometryXml` plays for a geometry outside its own catalogue. */
+export interface Chart extends DrawingPlacement {
+  type: "chart";
+  chartType: ChartType;
+  categories: string[];
+  series: ChartSeries[];
+  options: ChartOptions;
+  /** Part name of the preserved original in `DocumentModel.opaque`
+   * (`src/lib/opaque.ts`'s `OpaquePart`) — absent for a chart created here.
+   * Deliberately not named `id` (see IGNORED_KEYS in lib/equality.ts and the
+   * same convention on NoteRef.noteId). Bytes never live on the block itself:
+   * that would give the same part two owners and break the model's
+   * plain-JSON invariant. */
+  sourcePart?: string;
+  /** True once the data sheet or the options panel changed this chart — the
+   * switch the writer reads to decide whether to regenerate the part from
+   * the model or re-emit `sourcePart`'s bytes unchanged. Moving, resizing,
+   * rotating, re-anchoring or re-ordering a chart never sets this: none of
+   * those touch the chart part. */
+  edited?: boolean;
+  /** Present when the source chart's type was outside "Chart catalogue"
+   * (SPEC-008 preservation): the verbatim chart XML, re-emitted unchanged on
+   * a same-format save. `chartType`/`categories`/`series` are then just
+   * placeholder stand-ins — never painted or editable; the chart instead
+   * paints as a dashed placeholder at its true bounds and cannot be edited
+   * (AC-29..AC-31). A cross-format save of a chart with this field set
+   * cannot carry it and reports a `"chart"` DropRecord. */
+  unsupportedChartXml?: string;
+  /** Pending tracked insertion/deletion of this chart block (SPEC-039). */
+  changes?: BlockTrackedChanges;
+}
+
+/** Whether a block is a chart — the isTable-style narrowing helper (also
+ * usable from espree-parsed `.vue` scripts, which cannot write the type
+ * predicate themselves). */
+export function isChart(block: Block | undefined): block is Chart {
+  return block?.type === "chart";
+}
+
+/** Typed pass-through for a Chart arriving as a runtime-declared Object prop
+ * (espree bars the type annotation — see tables.ts's asTable for the same
+ * pattern). */
+export function asChart(value: unknown): Chart {
+  return value as Chart;
+}
+
+// MediaPart moved to core/media.ts (product-neutral media storage);
+// imported for this module's own type definitions and re-exported so
+// existing import paths keep working.
+
+// --- tables (SPEC-022, cell/border formatting SPEC-023) ---------------------
+// The border/alignment/width-mode types moved to core/tables.ts
+// (product-neutral); imported for this module's own type definitions and
+// re-exported so existing import paths keep working.
+
+
+/** One table cell: a nested block container holding paragraphs only (nested
+ * tables are out of scope — SPEC-022). A real (non-covered) cell always has
+ * at least one paragraph, so a caret can land in it. */
+export interface TableCell {
+  blocks: Paragraph[];
+  /** Grid columns this cell spans rightward, including itself; absent means
+   * 1 (SPEC-023 AC-6, AC-24, AC-28). */
+  colSpan?: number;
+  /** Grid rows this cell spans downward, including itself; absent means 1
+   * (SPEC-023 AC-6, AC-24, AC-28). */
+  rowSpan?: number;
+  /** True when this grid slot is covered by a neighbouring cell's
+   * `colSpan`/`rowSpan` (SPEC-023): the slot has no content of its own
+   * (`blocks` is empty) and is never an editing/navigation target — the
+   * spanning cell's own `<td>` (or `w:tc`/`table:covered-table-cell`) covers
+   * it visually and on disk. */
+  covered?: boolean;
+  /** This cell's own border overrides (SPEC-023 AC-10..14). */
+  borders?: CellBorders;
+  /** Background shading as a CSS-ready "#rrggbb" or a theme reference
+   * (SPEC-023 AC-15, SPEC-077). */
+  shadingFill?: ModelColor;
+  /** Cell padding in cm, all four sides (SPEC-023 AC-16); absent uses the
+   * renderer/writer's own default padding. */
+  paddingCm?: number;
+  /** Content's vertical alignment within the cell (SPEC-023 AC-17). */
+  verticalAlign?: CellVerticalAlign;
+  /** Verbatim `w:tcPr` from a .docx source, re-emitted on a same-format
+   * save so unmodelled cell properties survive (SPEC-008's fidelity rule).
+   * Cleared by any SPEC-023 command that edits this cell's modelled
+   * properties, so the writer regenerates `w:tcPr` from them instead of
+   * reproducing stale XML. Absent on cells created/edited in the editor. */
+  docxTcPr?: string;
+  /** `table:style-name` of the source .odt cell — re-emitted so the
+   * preserved automatic style (sourceXml.odtAutomaticStyles) applies
+   * again. Cleared the same way as `docxTcPr` when a command edits the
+   * cell's modelled properties. */
+  odtStyleName?: string;
+  /** Pending tracked insertion/deletion/property-change of this cell
+   * (SPEC-039 AC-15: a column insert/delete, a merge/split, or a border/
+   * shading/padding/vertical-alignment edit made while tracking is on). */
+  changes?: CellTrackedChanges;
+}
+
+/** One table row. */
+export interface TableRow {
+  cells: TableCell[];
+  /** The row's minimum height in cm (SPEC-023 AC-4, AC-5): dragging a row
+   * boundary sets this floor, but the row still grows taller to fit its
+   * content — it is never a fixed height. */
+  minHeightCm?: number;
+  /** Whether this row repeats as the table's header row (SPEC-043's "table
+   * without a header row" check): `w:tblHeader` (.docx) — a per-row flag —
+   * or membership in a leading `table:table-header-rows` wrapper (.odt),
+   * which only supports one contiguous leading run of header rows. Absent
+   * means an ordinary body row. */
+  isHeader?: boolean;
+  /** Verbatim `w:trPr` from a .docx source (row height, header flag, …). */
+  docxTrPr?: string;
+  /** `table:style-name` of the source .odt row. */
+  odtStyleName?: string;
+  /** Pending tracked insertion/deletion/property-change of this row
+   * (SPEC-039 AC "table row/cell insert/delete", AC-15's row property
+   * changes). */
+  changes?: RowTrackedChanges;
+}
+
+/** A table block (SPEC-022, formatting SPEC-023): a rectangular grid of
+ * cells. Every row has exactly `columnWidthsCm.length` cells — a merged
+ * cell's covered neighbours are present as placeholder (`covered: true`)
+ * cells, so the grid stays regular for indexing purposes even though it
+ * renders and saves as merged. */
+export interface Table {
+  type: "table";
+  rows: TableRow[];
+  /** Column widths in cm, one per column — the `w:tblGrid` / ODF
+   * table-column definitions both readers resolve and both writers emit. */
+  columnWidthsCm: number[];
+  /** The table's alignment on the page (SPEC-023 AC-22); absent means left
+   * (both formats' default). */
+  alignment?: TableAlignment;
+  /** How the table's width is determined (SPEC-023 AC-23); absent means
+   * `"fixed"`. */
+  widthMode?: TableWidthMode;
+  /** Percentage (0..100) of the text area the table spans; meaningful only
+   * when `widthMode` is `"percent"` (SPEC-023 AC-23). */
+  widthPercent?: number;
+  /** Verbatim `w:tblPr` from a .docx source (table style ref, look flags,
+   * …); re-emitted on a same-format save for whatever SPEC-023 does not
+   * model. Cleared by any command that edits `alignment`/`widthMode`/
+   * `widthPercent`, so the writer regenerates the affected parts of
+   * `w:tblPr` instead of reproducing stale XML. */
+  docxTblPr?: string;
+  /** `table:name` of the source .odt table (user-facing table name). */
+  odtName?: string;
+  /** `table:style-name` of the source .odt table. */
+  odtStyleName?: string;
+  /** A custom table style applied from the Styles pane (SPEC-042), by
+   * reference into `DocumentModel.styles`. Distinct from `odtStyleName`/
+   * `docxTblPr`, which hold a source document's own (possibly unmodelled)
+   * table styling — applying a catalogue style bakes its borders/shading
+   * onto the table's cells and records the reference here for in-use
+   * tracking and re-bake on Modify. */
+  styleId?: string;
+  /** Which of the style's banding regions this table uses (SPEC-076) —
+   * `w:tblLook` / ODF's `table:use-*-styles`. Absent applies no banding. */
+  look?: TableLook;
+  /** Per-column `table:style-name`s of the source .odt table's
+   * `table:table-column` elements; entries may be undefined for columns
+   * inserted in the editor (the writer generates a style for those). */
+  odtColumnStyleNames?: Array<string | undefined>;
+  /** Pending tracked property change of this table (SPEC-039 AC-15: column
+   * widths, alignment or width-mode edited while tracking is on). */
+  changes?: TableTrackedChanges;
+}
+
+/** Whether a block is a table — the one narrowing helper every consumer of
+ * the widened Block union shares (also usable from espree-parsed `.vue`
+ * scripts, which cannot write the type predicate themselves). */
+export function isTable(block: Block | undefined): block is Table {
+  return block?.type === "table";
+}
+
+/** Typed pass-through for a Block a `.vue` template renders down the
+ * paragraph branch — the branch itself guards on the block kind, but the
+ * espree-parsed script cannot express the narrowing (same constraint as
+ * asCharacterFormatKey). */
+export function asParagraphBlock(value: Block): Paragraph {
+  return value as Paragraph;
+}
+
+/** The same pass-through for a whole run of paragraphs arriving as a `.vue`
+ * template's plain `Array` prop (SPEC-076's conversion dialog). */
+export function asParagraphBlocks(value: unknown): Paragraph[] {
+  return (value ?? []) as Paragraph[];
+}
+
+/** The block as a paragraph, throwing on anything else — the narrowing for
+ * call sites that know the block kind by construction (tests and fixture
+ * builders), where silently reading a table as a paragraph would hide a
+ * real defect. */
+export function asParagraph(block: Block | undefined): Paragraph {
+  if (!block || block.type !== "paragraph") {
+    throw new Error("expected a paragraph block");
+  }
+  return block;
+}
+
+/** A block-level XML element the reader does not model (SPEC-008) — e.g. a
+ * block-level `w:sdt` content control, a complex (merged-cell/nested)
+ * table, or an ODF `draw:frame` — held verbatim, anchored to its position
+ * among the section's blocks, and re-emitted in place on a same-format
+ * save. */
+export interface OpaqueBlock {
+  /** Self-contained XML serialisation, compared canonically (see
+   * OpaqueInline.xml). */
+  xml: string;
+  /** The node sits immediately before `blocks[blockIndex]`; `blocks.length`
+   * means after the last block. */
+  blockIndex: number;
+}
+
+// --- breaks and sections (SPEC-028) -----------------------------------------
+
+/** The manual break kinds Insert → Break offers (SPEC-028 AC-9/10). Column
+ * breaks are stored and round-tripped but have no layout effect — they sit
+ * inertly in the flow (marker visible when formatting marks are on) until
+ * columns exist (SPEC-030). */
+export type BreakKind = "page" | "column";
+
+/** A manual break (SPEC-028): a block-level atom (blockLength 1, like Image)
+ * sitting between the content before and after it. Pagination ends the
+ * current page at a `"page"` break. Round-trips as a `w:br w:type="page"`
+ * run (.docx) / `fo:break-before` on the following paragraph (.odt); a
+ * source break in the middle of a paragraph splits the paragraph on open,
+ * mirroring how inline images become blocks (see Image). */
+export interface BreakBlock {
+  type: "break";
+  kind: BreakKind;
+}
+
+/** Whether a block is a manual break — the isTable-style narrowing helper
+ * (also usable from espree-parsed `.vue` scripts). */
+export function isBreak(block: Block | undefined): block is BreakBlock {
+  return block?.type === "break";
+}
+
+/** Which header/footer variant a section stores content for (SPEC-029
+ * AC-11..13): `"default"` applies to every page unless overridden;
+ * `"first"` applies to the section's first page (only consulted when
+ * `Section.titlePage` is set) and `"even"` to even-numbered pages (only
+ * consulted when `Section.evenAndOddHeaders` is set). Mirrors OOXML's
+ * `w:headerReference`/`w:footerReference` `w:type` values; ODF represents
+ * the same split as separate master-page header/footer elements. */
+export type HeaderFooterKind = "default" | "first" | "even";
+
+/** Which band a header/footer command addresses (SPEC-029). */
+export type HeaderFooterPart = "header" | "footer";
+
+/** Typed pass-through for a header/footer part coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asHeaderFooterPart(value: string): HeaderFooterPart {
+  return value as HeaderFooterPart;
+}
+
+/** One header or footer's content: a block flow like a section's own body
+ * (SPEC-029 AC-3..6 — text, formatting, tables and images all reuse the
+ * same `Block` union) — minus manual breaks, since header/footer content
+ * never paginates. Absent for a kind that has never been edited: distinct
+ * from an explicit empty content the user cleared, and from "this kind
+ * does not apply" (see resolveHeaderFooterKind in lib/pageNumbering.ts) —
+ * a section with `titlePage` set but no `headers.first` entry shows a
+ * genuinely blank first-page header, matching Word's own behaviour. */
+export interface HeaderFooterContent {
+  blocks: Block[];
+}
+
+/** How a section begins relative to the previous one (SPEC-028 AC-8/9):
+ * `"nextPage"` starts on a fresh page, `"continuous"` continues on the same
+ * page. Mirrors OOXML's `w:type` inside the section's own `w:sectPr`.
+ * Meaningless on a document's first section. */
+export type SectionStart = "nextPage" | "continuous";
+
+/** Typed pass-through for a section start coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asSectionStart(value: string): SectionStart {
+  return value as SectionStart;
+}
+
+/** Typed pass-through for a break kind coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asBreakKind(value: string): BreakKind {
+  return value as BreakKind;
+}
+
+/** A section's multi-column layout (SPEC-030). `count` is 1..6; a `count`
+ * of 1 (or an absent `columns`) is an ordinary single-column section and
+ * behaves exactly as before this spec. Widths and the gutter are stored in
+ * cm; when `equalWidth` is true (AC-3a) the per-column widths are computed
+ * evenly from the section's content width and `widthsCm` is ignored. */
+export interface SectionColumns {
+  /** Number of columns, 1..6 (AC-2). */
+  count: number;
+  /** Whether the columns share one computed width (AC-3a). When false,
+   * `widthsCm` gives each column's own width. */
+  equalWidth: boolean;
+  /** The gutter (spacing) between adjacent columns, in cm (AC-3). Uniform
+   * across gutters — the dialog and ruler both treat it as one value. */
+  gapCm: number;
+  /** "Line between columns" (AC-4): a vertical rule drawn in each gutter. */
+  separator: boolean;
+  /** Per-column widths in cm when `equalWidth` is false (AC-3); one entry
+   * per column. Ignored (and normally absent) for equal columns. */
+  widthsCm?: number[];
+}
+
+/** The inclusive column-count bounds the Columns dialog accepts (AC-2). */
+export const MIN_COLUMN_COUNT = 1;
+export const MAX_COLUMN_COUNT = 6;
+
+/** Word's default column gutter (0.5", 720 twips ≈ 1.27cm) — the spacing a
+ * freshly applied multi-column layout starts with (AC-3). */
+export const DEFAULT_COLUMN_GAP_CM = 1.27;
+
+/** The smallest width a section column may be dragged/entered to (AC-14, and
+ * the dialog's per-column validation). */
+export const MIN_SECTION_COLUMN_WIDTH_CM = 1.27;
+
+/** A section's effective column layout: its own, else a single column. */
+export function sectionColumns(model: DocumentModel, sectionIndex: number): SectionColumns {
+  return (
+    model.sections[sectionIndex]?.columns ?? {
+      count: 1,
+      equalWidth: true,
+      gapCm: DEFAULT_COLUMN_GAP_CM,
+      separator: false,
+    }
+  );
+}
+
+/** The content width (cm) available to a section's text: its page width less
+ * its horizontal margins. */
+export function sectionContentWidthCm(model: DocumentModel, sectionIndex: number): number {
+  const pageSize = sectionPageSize(model, sectionIndex);
+  const margins = sectionMargins(model, sectionIndex);
+  return Math.max(0.1, pageSize.widthCm - margins.leftCm - margins.rightCm);
+}
+
+/** The resolved width (cm) of every column in a layout, given the section's
+ * content width. Equal columns split the content width (minus gutters)
+ * evenly; unequal columns keep their stored proportions rescaled to fill the
+ * content width exactly, so the total is always preserved (AC-14) even after
+ * a page-size or margin change. */
+export function resolveColumnWidthsCm(
+  columns: SectionColumns,
+  contentWidthCm: number,
+): number[] {
+  const count = Math.max(1, Math.min(MAX_COLUMN_COUNT, Math.round(columns.count)));
+  const gutters = Math.max(0, columns.gapCm) * (count - 1);
+  const available = Math.max(0.1, contentWidthCm - gutters);
+  if (columns.equalWidth || !columns.widthsCm || columns.widthsCm.length !== count) {
+    const each = available / count;
+    return Array.from({ length: count }, () => each);
+  }
+  const total = columns.widthsCm.reduce((sum, w) => sum + Math.max(0, w), 0) || 1;
+  return columns.widthsCm.map((w) => (Math.max(0, w) / total) * available);
+}
+
+/** The width (cm) of a section's caret column for content sized to fit a
+ * single column — the smallest column, so new tables/images fit any column
+ * (AC-13, AC-15). For a single-column section this is just the content
+ * width. */
+export function sectionColumnWidthCm(model: DocumentModel, sectionIndex: number): number {
+  const columns = sectionColumns(model, sectionIndex);
+  if (columns.count <= 1) {
+    return sectionContentWidthCm(model, sectionIndex);
+  }
+  return Math.min(...resolveColumnWidthsCm(columns, sectionContentWidthCm(model, sectionIndex)));
+}
+
+/** Typed pass-through for a SectionColumns arriving from a `.vue` template as
+ * a runtime-declared Object (same espree constraint as asParagraphBlock). */
+export function asSectionColumns(value: unknown): SectionColumns {
+  return value as SectionColumns;
+}
+
+// --- table of contents (SPEC-033) -------------------------------------------
+
+/** One heading included in a table of contents: the entry text, outline
+ * level (1-6) and the heading's derived anchor (lib/links.ts's
+ * headingAnchor) an entry click jumps to — the same anchor scheme internal
+ * hyperlinks use (SPEC-025), so a TOC entry is a pre-resolved internal link.
+ * `pageNumber` is the page the heading fell on when the TOC was last
+ * generated or updated; null until pagination has resolved it once. Staying
+ * a plain snapshot (rather than a live lookup) is what makes "headings
+ * changed" and "pagination changed" two independently detectable staleness
+ * conditions (SPEC-033 AC-10/11, see lib/toc.ts). */
+export interface TocEntry {
+  text: string;
+  level: number;
+  anchor: string;
+  pageNumber: number | null;
+}
+
+/** A table of contents's configuration (SPEC-033 AC-5..7): which heading
+ * levels (1-6) it includes, whether it shows page numbers, and whether
+ * entries render as plain dot-leader-and-page-number rows or as hyperlinks
+ * only — Word's "Use hyperlinks instead of page numbers": no dot leader, no
+ * page number, the heading text itself is the clickable link. Every entry
+ * is clickable either way (AC-8); this only decides what else is shown. */
+export interface TocOptions {
+  /** Heading levels (1-6) to include, e.g. [1, 2, 3]. */
+  levels: number[];
+  showPageNumbers: boolean;
+  hyperlinksOnly: boolean;
+}
+
+/** Typed pass-through for a TocOptions arriving from a `.vue` template as a
+ * runtime-declared Object (same espree constraint as asParagraphBlock). */
+export function asTocOptions(value: unknown): TocOptions {
+  return value as TocOptions;
+}
+
+/** A table of contents block (SPEC-033): a generated, block-level atom —
+ * blockLength 1, like Image/BreakBlock (see textEditing.blockLength), a
+ * caret sits before or after it, never inside. Built from the document's
+ * Heading 1-6 paragraphs (lib/links.ts's listHeadings) and not directly
+ * editable; its `entries` are only ever replaced wholesale, by the insert
+ * command or the "Update table of contents" commands (lib/toc.ts), never
+ * typed into. Round-trips as a `TOC` field with a cached result (.docx) and
+ * `text:table-of-content` (.odt). */
+export interface TableOfContents {
+  type: "toc";
+  options: TocOptions;
+  entries: TocEntry[];
+}
+
+/** Whether a block is a table of contents — the isTable-style narrowing
+ * helper (also usable from espree-parsed `.vue` scripts). */
+export function isToc(block: Block | undefined): block is TableOfContents {
+  return block?.type === "toc";
+}
+
+/** Typed pass-through for a TableOfContents arriving as a runtime-declared
+ * Object prop (espree bars the type annotation — see asImage for the same
+ * pattern). */
+export function asToc(value: unknown): TableOfContents {
+  return value as TableOfContents;
+}
+
+// --- table of figures (SPEC-055) --------------------------------------------
+
+/** One caption listed in a table of figures: the caption's rendered text (its
+ * label, number and text — the number taken from its `seq` field's cached
+ * value, not the placeholder character), the page it fell on when the block
+ * was last generated/updated (null until pagination has resolved it once, the
+ * same snapshot rule as `TocEntry.pageNumber`), and the derived anchor an
+ * entry click jumps to and page numbers resolve through (captions.ts's
+ * `captionAnchor`). Deliberately not named `id`, per the equality.ts rule. */
+export interface TofEntry {
+  text: string;
+  page: number | null;
+  targetBookmark: string;
+}
+
+/** A table of figures's configuration (SPEC-055), mirroring `TocOptions`:
+ * which label it lists, and — like the TOC — whether it shows page numbers,
+ * a dot leader, and hyperlinked entries. */
+export interface TofOptions {
+  pageNumbers: boolean;
+  dotLeader: boolean;
+  hyperlinks: boolean;
+}
+
+/** Typed pass-through for a TofOptions arriving from a `.vue` template as a
+ * runtime-declared Object (same espree constraint as asTocOptions). */
+export function asTofOptions(value: unknown): TofOptions {
+  return value as TofOptions;
+}
+
+/** Typed pass-through for a `string[]` arriving from a `.vue` component's
+ * untyped Array prop (same espree constraint as asTabStops) — the caption
+ * dialog's label list. */
+export function asStringList(value: unknown[]): string[] {
+  return value as string[];
+}
+
+/** A table of figures block (SPEC-055): a generated, block-level atom that
+ * mirrors `TableOfContents` — built from the document's Caption-styled
+ * paragraphs of one `label` (captions.ts's `listCaptions`) rather than its
+ * headings, and not directly editable. Round-trips as a `TOC \c "Figure"`
+ * field with a cached result (.docx) and `text:illustration-index` /
+ * `text:table-index` (.odt). A document may hold one per label. */
+export interface TableOfFigures {
+  type: "tof";
+  /** "Figure", "Table", or a custom label. */
+  label: string;
+  options: TofOptions;
+  entries: TofEntry[];
+}
+
+/** Whether a block is a table of figures — the isToc-style narrowing helper
+ * (also usable from espree-parsed `.vue` scripts). */
+export function isTof(block: Block | undefined): block is TableOfFigures {
+  return block?.type === "tof";
+}
+
+/** Typed pass-through for a TableOfFigures arriving as a runtime-declared
+ * Object prop (same espree constraint as asToc). */
+export function asTof(value: unknown): TableOfFigures {
+  return value as TableOfFigures;
+}
+
+/** Block-level children of a section: paragraphs, tables (SPEC-022),
+ * images (SPEC-024), manual breaks (SPEC-028), tables of contents
+ * (SPEC-033) and tables of figures (SPEC-055). */
+export type Block =
+  | Paragraph
+  | Table
+  | Image
+  | BreakBlock
+  | TableOfContents
+  | TableOfFigures
+  | Shape
+  | Chart
+  | Connector;
+
+/** A section groups block-level content; documents have one or more. A
+ * section boundary IS the section break (SPEC-028): inserting a section
+ * break splits a section in two, deleting one merges neighbours back. */
+export interface Section {
+  blocks: Block[];
+  /** Unmodelled block-level XML preserved through a same-format save
+   * (SPEC-008). A side-list (rather than a Block union member) so `blocks`
+   * stays renderable/editable without narrowing; order follows
+   * `blockIndex`. */
+  opaqueBlocks?: OpaqueBlock[];
+  /** How this section begins (SPEC-028); absent means `"nextPage"`. */
+  start?: SectionStart;
+  /** This section's own page size; absent falls back to
+   * `defaultStyles.pageSize` (SPEC-028 AC-17/18). */
+  pageSize?: PageSize;
+  /** This section's own margins; absent falls back to
+   * `defaultStyles.margins` (SPEC-028 AC-19). */
+  margins?: Margins;
+  /** This section's multi-column layout (SPEC-030); absent means a single
+   * column. Round-trips as `w:cols` (.docx) / `style:columns` (.odt). */
+  columns?: SectionColumns;
+  /** Verbatim `w:sectPr` of a non-final .docx section (SPEC-028) — the one
+   * inside its last paragraph's `w:pPr` — re-emitted on a same-format save
+   * so unmodelled section properties survive (the SPEC-008 fidelity rule;
+   * the final section's sectPr lives in `SourceXml.docxSectPr`). Cleared by
+   * any command that edits this section's modelled page setup, so the
+   * writer regenerates it instead of reproducing stale XML. */
+  docxSectPr?: string;
+  /** This section's header content, by kind (SPEC-029). */
+  headers?: Partial<Record<HeaderFooterKind, HeaderFooterContent>>;
+  /** This section's footer content, by kind (SPEC-029). */
+  footers?: Partial<Record<HeaderFooterKind, HeaderFooterContent>>;
+  /** The header band's distance from the page's top edge, in centimetres
+   * (SPEC-029), exposed for direct manipulation by the vertical ruler
+   * (SPEC-064 AC-3a). Absent means the product default,
+   * DEFAULT_HEADER_FOOTER_DISTANCE_CM (0.5 in). A display/layout preference
+   * on the section — like the other unmodelled band metrics it is not mapped
+   * back to a `.docx`/`.odt` distance by this spec. */
+  headerDistanceCm?: number;
+  /** The footer band's distance from the page's bottom edge, in centimetres
+   * (SPEC-029, SPEC-064 AC-3b). Absent means
+   * DEFAULT_HEADER_FOOTER_DISTANCE_CM. */
+  footerDistanceCm?: number;
+  /** "Different first page" (SPEC-029 AC-11, AC-13): when set, the
+   * section's first page uses `headers.first`/`footers.first` instead of
+   * `headers.default`/`footers.default`. Round-trips as `w:titlePg`
+   * (.docx) — a separate master page referenced by the section's first
+   * paragraph (.odt). */
+  titlePage?: boolean;
+  /** "Different odd and even pages" (SPEC-029 AC-12, AC-13): when set,
+   * even-numbered pages (other than a title page) use
+   * `headers.even`/`footers.even` instead of the default. OOXML only
+   * models this as the document-wide `w:evenAndOddHeaders` setting; the
+   * writer ORs every section's flag together into that one setting and
+   * every reader section reads back the same document-wide value (see
+   * SPEC-029's docx writer/reader). */
+  evenAndOddHeaders?: boolean;
+  /** "Start numbering at" (SPEC-029 AC-22, AC-23): the displayed page
+   * number of this section's first page. Presence restarts numbering at
+   * this value; absence continues counting from the previous section (the
+   * document's first section always continues from 1 when absent).
+   * Mirrors `w:pgNumType/@w:start` (.docx) and an explicit
+   * `style:page-number` on the section's first paragraph (.odt). */
+  pageNumberStart?: number;
+  /** Page border for this section (SPEC-074 AC-19..22); absent means none.
+   * Round-trips as `w:pgBorders` in `w:sectPr` (.docx) and the master page's
+   * page-layout border properties (.odt). */
+  pageBorders?: PageBorders;
+  /** Page background as "#rrggbb" (SPEC-074 AC-23); absent means none
+   * (paper white). A *section* field even though `.docx` stores it
+   * document-wide (`w:background`) and `.odt` per master page: the writers
+   * reconcile (the .docx writer writes the first section's value and reports
+   * a DropRecord if sections disagree), because modelling per section and
+   * losing on write beats being unable to read a valid `.odt`. A literal
+   * "#rrggbb" or a theme reference (SPEC-077). */
+  pageBackground?: ModelColor;
+}
+
+// PageSize and Margins moved to core/pageSetup.ts and MeasurementUnit (the
+// SPEC-027 AC-4/AC-6 display-unit preference) to core/units.ts — all three
+// are product-neutral surface geometry; imported for this module's own type
+// definitions and re-exported so existing import paths keep working.
+
+/** Document-wide defaults new content is created with. */
+export interface DefaultStyles {
+  pageSize: PageSize;
+  margins: Margins;
+  /** A literal family or a theme font reference (SPEC-077). */
+  fontFamily: ModelFont;
+  fontSizePt: number;
+  /** The document's default language (SPEC-035), e.g. "en-US" — see
+   * lib/language.ts. Absent means the product default (DEFAULT_LANGUAGE);
+   * a run's own `RunFormatting.lang` overrides this for its own text. */
+  language?: string;
+  /** The document-level default tab interval (SPEC-054): a tab past the last
+   * explicit stop advances to the next multiple of this distance. Absent
+   * means `DEFAULT_TAB_STOP_CM` (1.27 cm). Round-trips as `w:defaultTabStop`
+   * (.docx, in settings.xml) and `style:tab-stop-distance` (.odt). */
+  defaultTabStopCm?: number;
+}
+
+/** The default tab interval when a document sets none (SPEC-054): 1.27 cm =
+ * 0.5 in = 720 twips, Word's own default. */
+export const DEFAULT_TAB_STOP_CM = 1.27;
+
+/** The default header/footer band distance from the page edge (SPEC-029,
+ * SPEC-064): 1.27 cm = 0.5 in = 720 twips, Word's own default. Used when a
+ * section carries no explicit `headerDistanceCm`/`footerDistanceCm`. */
+export const DEFAULT_HEADER_FOOTER_DISTANCE_CM = 1.27;
+
+/** The source format a document was opened from, if any — drives the format
+ * badge in the app bar. Undefined for documents created blank (SPEC-002).
+ * `"md"` (SPEC-050) is Markdown — a plain-text format with no package, held
+ * to the same three-way union everywhere a source/target format is decided
+ * so a missing branch is a compile error rather than a silent fallback. */
+export type DocumentFormat = "docx" | "odt" | "md";
+
+// The opaque-part shape (SPEC-008) is package plumbing shared by every
+// product's model, so it lives in core; re-exported here because the whole
+// word-processor layer imports it from the model.
+export type { OpaquePart } from "./core/packageParts";
+
+/** Verbatim XML captured from the source package's modelled parts that the
+ * model itself cannot express, re-emitted on a same-format save (SPEC-008).
+ * Each field is format-specific; all are compared canonically. */
+export interface SourceXml {
+  /** .docx: the original body-level `w:sectPr`, emitted in place of a
+   * generated one so unmodelled section properties (header/footer
+   * references, columns, …) survive. Page size/margins cannot yet diverge
+   * from `defaultStyles` — no spec edits them. */
+  docxSectPr?: string;
+  /** .odt: the original `office:font-face-decls` of content.xml. */
+  odtFontFaceDecls?: string;
+  /** .odt: original automatic-style definitions of content.xml other than
+   * paragraph/text `style:style`s (graphic, table, list, … families) —
+   * kept because opaque nodes may reference them. Paragraph/text styles are
+   * regenerated from the model's resolved formatting instead. */
+  odtAutomaticStyles?: string[];
+}
+
+// --- document properties and metadata (SPEC-041) ----------------------------
+//
+// The metadata types themselves (DocumentProperties, CustomProperty, …) are
+// package-family-neutral — the same vocabulary rides in `.docx`/`.pptx`
+// docProps and `.odt`/`.odp` meta.xml — so they live in
+// core/documentProperties.ts; re-exported here because the word-processor
+// layer imports them from the model. The dialog-facing helpers below stay.
+export type {
+  CustomProperty,
+  CustomPropertyType,
+  DocumentProperties,
+  ExtraMetadataField,
+  UnsupportedCustomProperty,
+} from "./core/documentProperties";
+
+/** The types the Custom Properties tab's add-property form offers, in menu
+ * order. */
+export const CUSTOM_PROPERTY_TYPES: readonly CustomPropertyType[] = ["text", "number", "date", "boolean"];
+
+/** Typed pass-through for a custom-property type coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asCustomPropertyType(value: string): CustomPropertyType {
+  return value as CustomPropertyType;
+}
+
+/** `DocumentProperties` with `customProperties` guaranteed present — what
+ * PropertiesDialog.vue's local draft actually needs (it always pushes/
+ * splices that array), so its script never has to narrow an optional
+ * property itself (the espree constraint rules out both a `!` assertion and
+ * an inline non-optional type annotation there). */
+export interface DocumentPropertiesDraft extends DocumentProperties {
+  customProperties: CustomProperty[];
+}
+
+/** A plain-JSON deep clone of `properties` (or a fresh empty draft when
+ * absent) — PropertiesDialog.vue's local editable draft seed. Declared here,
+ * not the `.vue` file, so vue-tsc infers its return type without a `.vue`
+ * script needing the TS-only generic/cast syntax espree can't parse (same
+ * convention as noActiveNote/noBlocks above). */
+export function cloneDocumentProperties(properties?: DocumentProperties): DocumentPropertiesDraft {
+  const cloned = properties ? (JSON.parse(JSON.stringify(properties)) as DocumentProperties) : {};
+  return { ...cloned, customProperties: cloned.customProperties ?? [] };
+}
+
+/** The document's colour and font scheme (SPEC-077): the shared
+ * twelve-colour/two-font DocumentTheme plus this product's bookkeeping —
+ * which package part it came from and whether the user edited it. The
+ * word-processor mirror of the presentation product's DeckTheme. */
+export interface DocTheme extends DocumentTheme {
+  /** The package part the theme was read from (e.g. "word/theme/theme1.xml").
+   * Absent for a theme that has no part yet (blank document, .odt, .md). */
+  partName?: string;
+  /** Set when the user applied or customised the theme this session
+   * (SPEC-077 AC-18); opening a document leaves it unset. The .docx writer
+   * splices the edited scheme into the preserved part only when set. */
+  dirty?: true;
+}
+
+/** The single way a document surface obtains its theme (SPEC-077 AC-3):
+ * the document's own theme, else the product default. */
+export function documentThemeOf(model: { theme?: DocumentTheme } | null | undefined): DocumentTheme {
+  return model?.theme ?? DEFAULT_THEME;
+}
+
+// The typed theme-prop pass-through lives in core since SPEC-132 (the reused
+// chart components import it from there); re-exported here so every text
+// import is unchanged.
+export { asDocumentTheme } from "./core/theme";
+
+/** A `ModelColor` detached from any reactive dialog draft that held it. A
+ * theme reference stored into a Vue `ref` draft comes back as a reactive
+ * Proxy, and a Proxy cannot pass the structured-clone boundaries the model
+ * must cross (the word-count worker's postMessage, IndexedDB persistence) —
+ * every draft→model conversion routes its colour values through here so the
+ * model only ever holds plain objects (SPEC-077 AC-22). */
+export function plainModelColor<T extends ModelColor | null | undefined>(color: T): T {
+  return (typeof color === "object" && color !== null ? { ...color } : color) as T;
+}
+
+/** The root of the document tree. */
+export interface DocumentModel {
+  id: string;
+  title: string;
+  sections: Section[];
+  defaultStyles: DefaultStyles;
+  /** The document's colour and font scheme (SPEC-077). Absent means the
+   * product default theme (see documentThemeOf). */
+  theme?: DocTheme;
+  /** The document's own paragraph-style catalogue (SPEC-019), read from the
+   * opened file's styles.xml. Absent for blank documents — the picker then
+   * offers the built-in set from lib/styles.ts. */
+  styles?: NamedStyle[];
+  /** Multilevel list definitions (SPEC-032) referenced by
+   * `ListFormatting.defId`. Absent when the document has none. */
+  listDefinitions?: ListDefinition[];
+  /** Footnote/endnote content (SPEC-031) referenced by `NoteRef.noteId`.
+   * Absent when the document has none. */
+  notes?: NoteContent[];
+  /** Footnote numbering settings (SPEC-031 AC-17..20); absent means the
+   * defaults (decimal, start 1, continuous). */
+  footnoteSettings?: NoteSettings;
+  /** Endnote numbering settings (SPEC-031); absent means the defaults
+   * (lowerRoman, start 1, continuous). */
+  endnoteSettings?: NoteSettings;
+  format?: DocumentFormat;
+  /** Image bytes referenced by `Image.mediaId` (SPEC-024), deduplicated —
+   * one entry per distinct image regardless of how many times it is used. */
+  media?: MediaPart[];
+  /** Unmodelled package parts retained from the opened file (SPEC-008). */
+  opaque?: OpaquePart[];
+  /** Unmodelled XML retained from the opened file's parsed parts. */
+  sourceXml?: SourceXml;
+  /** True once the user ticked "Don't show again for this document" on the
+   * conversion report dialog (SPEC-008); persisted with the document. */
+  suppressConversionReport?: boolean;
+  /** The Page setup dialog's measurement-unit preference (SPEC-027 AC-6,
+   * AC-7); absent means "cm", the product default. */
+  measurementUnit?: MeasurementUnit;
+  /** Whether the horizontal ruler is shown (SPEC-027 AC-14). Absent means
+   * shown — the ruler predates this toggle (SPEC-014) and was always visible,
+   * so an unset field must keep reading as visible. View → Rulers flips this
+   * and `showVerticalRuler` together; View → Horizontal ruler flips it alone. */
+  showRuler?: boolean;
+  /** Whether the vertical ruler is shown (SPEC-064); absent means shown, the
+   * same convention as `showRuler`. Separately toggleable from the horizontal
+   * ruler (View → Vertical ruler), and persisted like `showRuler` — an app
+   * preference on the document, never written to a `.docx`/`.odt`. */
+  showVerticalRuler?: boolean;
+  /** Whether formatting marks (¶, spaces, tabs, break markers) are shown
+   * (SPEC-028 AC-12..16); absent means hidden, the product default. A
+   * document-level app preference persisted like `showRuler` — neither
+   * reader/writer maps it to anything in a `.docx`/`.odt`. */
+  showFormattingMarks?: boolean;
+  /** Comment threads (SPEC-038), addressed into `Section.blocks` by the
+   * `CommentAnchor` side-lists on their anchoring paragraphs. Absent when
+   * the document has none. Deliberately outside `Section.blocks` (like
+   * `notes`) so block-tree walks (word count, pagination, TOC, outline, …)
+   * never need to know comments exist. */
+  comments?: CommentThread[];
+  /** Whether track-changes recording was ON when the document was last
+   * saved (SPEC-039) — round-trips through `.docx` settings.xml
+   * (`w:trackChanges`) and `.odt` settings.xml (`RecordChanges`), but never
+   * drives the toggle's initial UI state on open (AC "leaves the toggle
+   * OFF"): that is always session-local, starting OFF regardless of this
+   * flag's value, per the explicit AC covering documents that already
+   * contain tracked changes. */
+  trackChangesRecording?: boolean;
+  /** Document properties and metadata (SPEC-041) — absent means a document
+   * with no known metadata (e.g. never opened from or saved to a file). */
+  properties?: DocumentProperties;
+  /** A `.md` source's YAML front matter (SPEC-050), verbatim including its
+   * `---` delimiters — never parsed, re-emitted at the top of the file
+   * unchanged on a `.md` save. Absent for a document with none, and never
+   * set by a `.docx`/`.odt` reader. */
+  frontMatter?: string;
+}
+
+export const DEFAULT_TITLE = "Untitled document";
+
+const A4_PAGE_SIZE: PageSize = { widthCm: 21, heightCm: 29.7 };
+
+const STANDARD_MARGINS: Margins = {
+  topCm: 2.54,
+  rightCm: 2.54,
+  bottomCm: 2.54,
+  leftCm: 2.54,
+};
+
+// Calibri 11pt is Word's modern default body font; picked as the product
+// default since OOXML (.docx) is this project's primary format.
+const DEFAULT_FONT_FAMILY = "Calibri";
+const DEFAULT_FONT_SIZE_PT = 11;
+
+// --- footnotes and endnotes (SPEC-031) --------------------------------------
+
+/** One footnote/endnote's content (SPEC-031): a block flow like a
+ * header/footer's, referenced by `NoteRef.noteId` from a body run. Notes are
+ * document-scoped (like `media`), not section-scoped: OOXML keeps them all
+ * in one footnotes.xml/endnotes.xml part regardless of sections.
+ *
+ * A note whose reference mark has been deleted stays in this list but is
+ * invisible everywhere (numbering, note areas and both writers derive from
+ * the reference marks, never from this list alone) — which is what makes
+ * deleting a mark delete its note (AC-10) while still letting undo, and a
+ * cut mark pasted back, find the content again. */
+export interface NoteContent {
+  /** Identity referenced by `NoteRef.noteId` — not named `id` for the same
+   * equality.ts reason as `BookmarkAnchor.name`. */
+  noteId: string;
+  kind: NoteKind;
+  blocks: Block[];
+}
+
+/** The numbering formats the footnote settings dialog offers (SPEC-031
+ * AC-17): 1 2 3 / i ii iii / a b c / * † ‡ §. The first three reuse
+ * lists.ts's formatOrdinal vocabulary; "symbol" cycles the traditional
+ * footnote symbols, doubling each full cycle (* † ‡ § ** †† …). */
+export type NoteNumberFormat = "decimal" | "lowerRoman" | "lowerAlpha" | "symbol";
+
+/** When note numbering restarts (SPEC-031 AC-19, AC-20); absent means
+ * continuous through the document. Mirrors `w:numRestart` (.docx) and
+ * `text:start-numbering-at` (.odt). */
+export type NoteRestart = "continuous" | "page" | "section";
+
+/** One note stream's numbering settings (SPEC-031 AC-17..20). Every field
+ * optional with a documented default so an untouched document stores
+ * nothing: footnotes default to decimal, endnotes to lowerRoman (Word's own
+ * defaults), both starting at 1 and numbering continuously. */
+export interface NoteSettings {
+  numberFormat?: NoteNumberFormat;
+  startAt?: number;
+  restart?: NoteRestart;
+}
+
+/** Typed pass-through for a note kind coming from a `.vue` template's plain
+ * string (same espree constraint as asCharacterFormatKey). */
+export function asNoteKind(value: string): NoteKind {
+  return value as NoteKind;
+}
+
+/** Typed pass-through for a note number format coming from a `.vue`
+ * template's plain string (same espree constraint as asCharacterFormatKey). */
+export function asNoteNumberFormat(value: string): NoteNumberFormat {
+  return value as NoteNumberFormat;
+}
+
+/** Typed pass-through for a note restart coming from a `.vue` template's
+ * plain string (same espree constraint as asCharacterFormatKey). */
+export function asNoteRestart(value: string): NoteRestart {
+  return value as NoteRestart;
+}
+
+/** A note reference mark's placeholder text — a single character so the mark
+ * occupies exactly one caret position (see FIELD_PLACEHOLDER_TEXT, the same
+ * convention). */
+export const NOTE_PLACEHOLDER_TEXT = "1";
+
+/** Builds a note reference run (SPEC-031 AC-1, AC-3): superscript by
+ * construction — the mark renders and saves as a superscript reference in
+ * both file formats. */
+export function createNoteRun(
+  noteId: string,
+  kind: NoteKind,
+  formatting: RunFormatting = {},
+): Run {
+  return {
+    text: NOTE_PLACEHOLDER_TEXT,
+    formatting: { ...formatting, vertAlign: "superscript" },
+    note: { noteId, kind },
+  };
+}
+
+/** A new, empty note content — the seed a freshly inserted footnote/endnote
+ * starts from (one empty paragraph, like a blank document's section). */
+export function createEmptyNoteContent(noteId: string, kind: NoteKind): NoteContent {
+  return { noteId, kind, blocks: [{ type: "paragraph", runs: [] }] };
+}
+
+/** Which note DocumentView is currently editing (SPEC-031) — UI state like
+ * ActiveHeaderFooterTarget, declared here purely for espree-parsed `.vue`
+ * scripts' typed ref seeds. */
+export interface ActiveNoteTarget {
+  noteId: string;
+  kind: NoteKind;
+}
+
+/** Typed `null` seed for activeNote refs in `.vue` scripts (same espree
+ * constraint as asCharacterFormatKey). */
+export function noActiveNote(): ActiveNoteTarget | null {
+  return null;
+}
+
+/** Typed `null` seed for note-content parameters in `.vue` scripts (same
+ * espree constraint as asCharacterFormatKey). */
+export function noNoteContent(): NoteContent | null {
+  return null;
+}
+
+/** The product's built-in fallback styles (A4, standard margins, Calibri
+ * 11pt) — the starting point for a blank document, and the fallback the
+ * `.docx` reader falls back to for anything a source file doesn't specify. */
+export function createDefaultStyles(): DefaultStyles {
+  return {
+    pageSize: { ...A4_PAGE_SIZE },
+    margins: { ...STANDARD_MARGINS },
+    fontFamily: DEFAULT_FONT_FAMILY,
+    fontSizePt: DEFAULT_FONT_SIZE_PT,
+    language: DEFAULT_LANGUAGE,
+  };
+}
+
+/** A section's effective page size: its own, else the document default
+ * (SPEC-028 AC-17/18). */
+export function sectionPageSize(model: DocumentModel, sectionIndex: number): PageSize {
+  return model.sections[sectionIndex]?.pageSize ?? model.defaultStyles.pageSize;
+}
+
+/** A section's effective margins: its own, else the document default
+ * (SPEC-028 AC-19). */
+export function sectionMargins(model: DocumentModel, sectionIndex: number): Margins {
+  return model.sections[sectionIndex]?.margins ?? model.defaultStyles.margins;
+}
+
+/** A section's header/footer content for one kind, or undefined when that
+ * kind has never been given content (SPEC-029) — see HeaderFooterContent's
+ * "absent means genuinely blank" contract. There is deliberately no
+ * fallback to `"default"` here: resolveHeaderFooterKind already decides
+ * which kind applies to a given page. */
+export function sectionHeaderFooter(
+  model: DocumentModel,
+  sectionIndex: number,
+  part: HeaderFooterPart,
+  kind: HeaderFooterKind,
+): HeaderFooterContent | undefined {
+  const section = model.sections[sectionIndex];
+  return (part === "header" ? section?.headers : section?.footers)?.[kind];
+}
+
+function createEmptyParagraph(): Paragraph {
+  return { type: "paragraph", runs: [] };
+}
+
+/** A new, empty header/footer content — the seed used the first time a
+ * section's header/footer kind is edited (SPEC-029). */
+export function createEmptyHeaderFooterContent(): HeaderFooterContent {
+  return { blocks: [createEmptyParagraph()] };
+}
+
+/** Typed empty seed for a `Block[]` default parameter in `.vue` scripts
+ * (same espree constraint as asCharacterFormatKey). */
+export function noBlocks(): Block[] {
+  return [];
+}
+
+/** Which header/footer band DocumentView is currently editing (SPEC-029) —
+ * UI state, not part of the document model itself; declared here purely so
+ * `.vue` scripts (espree-parsed, no inline type annotations) get a typed
+ * `ref()` seed the same way noImageLocation/noCaret do elsewhere. */
+export interface ActiveHeaderFooterTarget {
+  sectionIndex: number;
+  part: HeaderFooterPart;
+  kind: HeaderFooterKind;
+  /** The page (0-based, into DocumentView's pagedViews) whose band is the
+   * live editable one — every other page of the section mirrors the same
+   * content read-only. */
+  pageIndex: number;
+}
+
+/** Typed `null` seed for activeHeaderFooter refs in `.vue` scripts (same
+ * espree constraint as asCharacterFormatKey). */
+export function noActiveHeaderFooter(): ActiveHeaderFooterTarget | null {
+  return null;
+}
+
+/** Creates a new blank document: one section, one empty paragraph, and the
+ * product's default styles. Pass an id to control it (e.g. a route param);
+ * otherwise one is generated. */
+export function createDocument(id: string = crypto.randomUUID()): DocumentModel {
+  return {
+    id,
+    title: DEFAULT_TITLE,
+    sections: [{ blocks: [createEmptyParagraph()] }],
+    defaultStyles: createDefaultStyles(),
+  };
+}
+
+// --- shared structural helpers ----------------------------------------------
+// Used by commands.ts and by every command module outside it (clipboard.ts,
+// tables.ts, links.ts, comments.ts, …). They live here — not in commands.ts —
+// because commands.undo.spec.ts's completeness guard requires every export of
+// that file to be a registered command or query, and these are neither.
+
+/** Clones the containers the editing primitives mutate (the model object,
+ * its sections array, each section and its blocks array); blocks and
+ * everything below them are shared by reference with the input model. That
+ * sharing is what keeps every command O(edit), and what lets the renderer
+ * (`v-memo`) and the track-changes/version diff layers detect untouched
+ * blocks by object identity. */
+export function cloneContainers(model: DocumentModel): DocumentModel {
+  return {
+    ...model,
+    sections: model.sections.map((section) => ({
+      ...section,
+      blocks: [...section.blocks],
+    })),
+  };
+}
+
+/** A paragraph split into two around a character offset, both halves keeping
+ * the block-level formatting. Pure — unlike textEditing.ts's splitParagraph,
+ * the caret-driven primitive that writes into the model in place; the block
+ * insert commands (tables/images/shapes/charts) use this to make room for a
+ * block without touching the model yet. */
+export function splitParagraphAt(paragraph: Paragraph, offset: number): [Paragraph, Paragraph] {
+  let consumed = 0;
+  const before: Paragraph = { ...paragraph, runs: [] };
+  const after: Paragraph = {
+    ...paragraph,
+    runs: [],
+    formatting: paragraph.formatting ? { ...paragraph.formatting } : undefined,
+  };
+  // The first half keeps the paragraph's top edge, which is what a floating
+  // drawing's offsets are measured from — so it alone keeps the anchor
+  // pairing (SPEC-078); ordinals are unique per paragraph document-wide.
+  delete after.anchorOrdinal;
+  const beforeRuns = [];
+  const afterRuns = [];
+  for (const run of paragraph.runs) {
+    const end = consumed + run.text.length;
+    if (end <= offset) {
+      beforeRuns.push(run);
+    } else if (consumed >= offset) {
+      afterRuns.push(run);
+    } else {
+      const cut = offset - consumed;
+      beforeRuns.push({ text: run.text.slice(0, cut), formatting: { ...run.formatting } });
+      afterRuns.push({ text: run.text.slice(cut), formatting: { ...run.formatting } });
+    }
+    consumed = end;
+  }
+  before.runs = beforeRuns;
+  after.runs = afterRuns;
+  return [before, after];
+}
+
+/** Visits every paragraph in the main body flow (section blocks and table
+ * cells) with its address — the shared walk behind links.ts's bookmarks and
+ * comments.ts's anchors. Header/footer content is out of scope on purpose:
+ * it is edited through a throwaway synthetic single-section model
+ * (commands.ts's withHeaderFooterModel), so it is never reachable from
+ * `model.sections` walks like this one. */
+export function forEachParagraph(
+  model: DocumentModel,
+  visit: (paragraph: Paragraph, address: ParagraphAddress) => void,
+): void {
+  model.sections.forEach((section, sectionIndex) => {
+    section.blocks.forEach((block, blockIndex) => {
+      if (isTable(block)) {
+        block.rows.forEach((row, rowIndex) => {
+          row.cells.forEach((cell, colIndex) => {
+            cell.blocks.forEach((paragraph, cellBlockIndex) => {
+              visit(paragraph, {
+                section: sectionIndex,
+                block: blockIndex,
+                cell: { row: rowIndex, col: colIndex, block: cellBlockIndex },
+              });
+            });
+          });
+        });
+      } else if (!isImage(block) && !isShape(block) && !isChart(block) && !isConnector(block) && !isBreak(block) && !isToc(block) && !isTof(block)) {
+        visit(block, { section: sectionIndex, block: blockIndex });
+      }
+    });
+  });
+}
+
+/** Layers one RunFormatting over another: every key `override` explicitly
+ * carries wins, `base` fills the rest. A plain spread, but named — and
+ * format-neutral, living here rather than in either format's reader — so
+ * every layering site (the docx/odf readers' style-chain resolution,
+ * commands.ts/styles.ts's style application, equality.ts's semantic
+ * resolve, opaque.ts's formatting masks) provably composes layers the same
+ * way. An explicit `false`/`0` in `override` overrides `base`; only an
+ * absent key inherits. */
+export function mergeRunFormatting(base: RunFormatting, override: RunFormatting): RunFormatting {
+  return { ...base, ...override };
+}
+
+/** The ParagraphFormatting counterpart of mergeRunFormatting — same
+ * present-keys-win layering rule. */
+export function mergeParagraphFormatting(
+  base: ParagraphFormatting,
+  override: ParagraphFormatting,
+): ParagraphFormatting {
+  return { ...base, ...override };
+}

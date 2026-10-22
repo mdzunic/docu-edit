@@ -1,0 +1,3 @@
+# SPEC-126: the delimited-text fixtures are byte-exact producer emulations
+# (CRLF, lone CR, Windows-1252, UTF-16) — never let git normalise them.
+spec126-* -text

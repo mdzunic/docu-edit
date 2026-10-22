@@ -1,0 +1,494 @@
+// Headers, footers and page numbers (SPEC-029). The one-live-editable-surface
+// band (mirroring notes), header/footer/page options dialogs, and page-number
+// insertion. `applyHeaderFooterEdit` is applyEdit's header/footer sibling: it
+// folds a command result built against withHeaderFooterModel's synthetic
+// single-section model back into the real document and commits it.
+//
+// Headers and notes each call the other's `exit*` at runtime (one live surface
+// at a time), so headers receives `getExitNoteEditing` — a late-binding getter
+// that resolves once useNotes is set up — to break the two-way dependency.
+import { nextTick, ref } from "vue";
+import { noCaret } from "../../lib/textEditing";
+import { modelRangeFromSelection, setDomCaret, setDomSelection } from "../../lib/domCaret";
+import {
+  caretSelection,
+  commitHeaderFooterModel,
+  deleteBackward,
+  deleteForward,
+  deleteRange,
+  documentStart,
+  insertLineBreak,
+  insertPageNumberCommand,
+  insertText,
+  isCollapsed,
+  noPendingFormat,
+  noSelection,
+  setHeaderFooterOptions,
+  splitBlock,
+  withHeaderFooterModel,
+} from "../../lib/commands";
+import { recordEdit as recordHistoryEdit } from "../../lib/undoHistory";
+import { replaceDocumentModel } from "../../lib/documentStore";
+import {
+  asHeaderFooterPart,
+  asPageNumberFormat,
+  asParagraphAlignment,
+  noActiveHeaderFooter,
+  type ActiveHeaderFooterTarget,
+} from "../../lib/documentModel";
+import { resolveHeaderFooterKind } from "../../lib/pageNumbering";
+import { findShortcut } from "../../lib/shortcuts";
+import type { EditorContext } from "./context";
+import type { CaretPosition } from "../../lib/textEditing";
+import type { CommandResult, ModelSelection } from "../../lib/commands";
+import type { DocumentModel } from "../../lib/documentModel";
+import type { PageLayout } from "../../lib/pagination";
+
+export interface HeadersFootersDeps extends EditorContext {
+  /** These are declared later in the view than this composable runs, so they
+   * are passed as lazy getters evaluated only at call time. */
+  getPaginationPages: () => PageLayout[];
+  getPageNumbers: () => number[];
+  getCaretSectionIndex: () => number;
+  pageOfCaret: (caret: CaretPosition) => number;
+  /** Late-binding: images is set up later than this composable, so its
+   * clearImageSelection is resolved through a getter. */
+  getClearImageSelection: () => () => void;
+  /** Late-binding: the note composable's exitNoteEditing (set up later). */
+  getExitNoteEditing: () => () => void;
+  /** Late-binding: useFields' surface-scoped F9 update (set up later), which
+   * runs the command against the band's synthetic model — see
+   * `updateFieldInBand`. */
+  getUpdateFieldInSurface: () => (
+    surfaceModel: DocumentModel,
+    selection: ModelSelection,
+  ) => CommandResult | null;
+}
+
+/** The range a double-click's own word selection left in the band, read
+ * against the band element itself rather than `hfRootEl()`: on the click
+ * that *enters* the band the element is not editable yet, so it carries no
+ * `data-hf-editable`. Turning the band editable does not change the shape of
+ * its rendered entries, so positions read here stay valid afterwards. */
+function bandSelection(band: EventTarget | null): ModelSelection | null {
+  if (!(band instanceof HTMLElement)) {
+    return noSelection();
+  }
+  const range = modelRangeFromSelection(band, document.getSelection());
+  if (!range) {
+    return noSelection();
+  }
+  return { anchor: range.start, focus: range.end };
+}
+
+export function useHeadersFooters(deps: HeadersFootersDeps) {
+  const {
+    doc,
+    contentRoot,
+    editable,
+    documentId,
+    currentSelection,
+    applyEdit,
+    getPaginationPages,
+    getPageNumbers,
+    getCaretSectionIndex,
+    pageOfCaret,
+    clearCellSelection,
+    getClearImageSelection,
+    getExitNoteEditing,
+    getUpdateFieldInSurface,
+    getCaret,
+    markDirty,
+    refreshUndoRedoState,
+  } = deps;
+
+  const activeHeaderFooter = ref<ActiveHeaderFooterTarget | null>(noActiveHeaderFooter());
+  let hfCaret: CaretPosition | null = noCaret();
+  let hfSelectionAnchor: CaretPosition | null = noCaret();
+  let hfPendingFormat: ReturnType<typeof noPendingFormat> = null;
+  let hfComposing = false;
+  let hfCompositionRange: ModelSelection | null = noSelection();
+  const hfRemountEpoch = ref(0);
+  const headerFooterOptionsOpen = ref(false);
+  const headerFooterOptionsInitial = ref({});
+  const pageNumberDialogOpen = ref(false);
+
+  /** The one DOM element currently rendering as an editable header/footer band. */
+  function hfRootEl(): HTMLElement | null {
+    const found = contentRoot.value?.querySelector("[data-hf-editable]");
+    return found instanceof HTMLElement ? found : null;
+  }
+
+  /** The header/footer content's live selection, falling back to hfCaret when
+   * the DOM selection is not inside the band (a toolbar control took focus). */
+  function currentHfSelection(): ModelSelection | null {
+    const root = hfRootEl();
+    if (root) {
+      const range = modelRangeFromSelection(root, document.getSelection());
+      if (range) {
+        return { anchor: range.start, focus: range.end };
+      }
+    }
+    return hfCaret ? { anchor: hfSelectionAnchor ?? hfCaret, focus: hfCaret } : null;
+  }
+
+  /** Leaves header/footer editing and returns focus to the body (AC-7, AC-8). */
+  function exitHeaderFooterEditing(): void {
+    if (!activeHeaderFooter.value) {
+      return;
+    }
+    activeHeaderFooter.value = null;
+    hfCaret = noCaret();
+    hfSelectionAnchor = noCaret();
+    void nextTick().then(() => (contentRoot.value as HTMLElement | null)?.focus());
+  }
+
+  /** Enters header/footer editing for the given page's band (AC-1, AC-2).
+   * `initial` places the band's selection when the caller already knows where
+   * it belongs — the word a double-click selected; without it the caret goes
+   * to the start of the band, which is where every other entry point wants
+   * it. */
+  function enterHeaderFooterEditing(
+    pageIndex = 0,
+    part = asHeaderFooterPart("header"),
+    initial: ModelSelection | null = noSelection(),
+  ) {
+    const model = doc.value;
+    if (!model || !editable.value) {
+      return;
+    }
+    const pages = getPaginationPages();
+    const page = pages[pageIndex];
+    if (!page) {
+      return;
+    }
+    const pageNumber = getPageNumbers()[pageIndex] ?? 1;
+    const kind = resolveHeaderFooterKind(model, pages, pageIndex, pageNumber);
+    clearCellSelection();
+    getClearImageSelection()();
+    getExitNoteEditing()();
+    activeHeaderFooter.value = { sectionIndex: page.sectionIndex, part, kind, pageIndex };
+    hfCaret = initial ? initial.focus : { section: 0, block: 0, offset: 0 };
+    hfSelectionAnchor = initial && !isCollapsed(initial) ? initial.anchor : noCaret();
+    void nextTick().then(() => {
+      const root = hfRootEl();
+      if (!root) {
+        return;
+      }
+      root.focus();
+      const caret = hfCaret ?? { section: 0, block: 0, offset: 0 };
+      if (hfSelectionAnchor) {
+        setDomSelection(root, hfSelectionAnchor, caret);
+      } else {
+        setDomCaret(root, caret);
+      }
+    });
+  }
+
+  /** Whether the band on `pageIndex`/`part` is the one already being edited. */
+  function isLiveBand(pageIndex: number, part: string): boolean {
+    const active = activeHeaderFooter.value;
+    return !!active && active.pageIndex === pageIndex && active.part === part;
+  }
+
+  /** A double-click on a band both enters it and — this is the browser's own
+   * gesture, already applied to the DOM by the time the event runs — selects
+   * the word under the pointer. Entering must therefore adopt that selection
+   * instead of collapsing to the band's start, and a double-click *inside* the
+   * band that is already live must not re-enter at all: re-entering would
+   * re-place the caret and wipe the word the user just selected. */
+  function handleDblclickBand(pageIndex: number, part: ActiveHeaderFooterTarget["part"], event?: MouseEvent) {
+    const selection = bandSelection(event?.currentTarget ?? null);
+    if (isLiveBand(pageIndex, part)) {
+      if (selection) {
+        hfCaret = selection.focus;
+        hfSelectionAnchor = isCollapsed(selection) ? noCaret() : selection.anchor;
+      }
+      return;
+    }
+    enterHeaderFooterEditing(pageIndex, part, selection);
+  }
+
+  function handleDblclickHeader(pageIndex = 0, event?: MouseEvent) {
+    handleDblclickBand(pageIndex, "header", event);
+  }
+  function handleDblclickFooter(pageIndex = 0, event?: MouseEvent) {
+    handleDblclickBand(pageIndex, "footer", event);
+  }
+  function handleDblclickBody() {
+    exitHeaderFooterEditing();
+    getExitNoteEditing()();
+  }
+
+  /** Opens "Insert -> Header/Footer" (AC-2): the caret's own section. */
+  function openInsertHeaderFooter(part = asHeaderFooterPart("header")) {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    const pageIndex = getCaret() ? pageOfCaret(getCaret() as CaretPosition) : 0;
+    enterHeaderFooterEditing(pageIndex, part);
+  }
+
+  /** Folds a header/footer command's result back into the real document and
+   * commits it — applyEdit's header/footer sibling. */
+  function applyHeaderFooterEdit(
+    resultModel: DocumentModel,
+    resultSelection: ModelSelection,
+    label = "",
+  ): void {
+    const active = activeHeaderFooter.value;
+    const before = doc.value;
+    if (!active || !before || !resultSelection) {
+      return;
+    }
+    const nextModel = commitHeaderFooterModel(before, active.sectionIndex, active.part, active.kind, resultModel);
+    const bodyFiller = caretSelection(getCaret() ?? documentStart());
+    recordHistoryEdit(documentId.value, {
+      before: { model: before, selection: bodyFiller },
+      after: { model: nextModel, selection: bodyFiller },
+      label,
+      groupable: false,
+    });
+    doc.value = replaceDocumentModel(documentId.value, nextModel);
+    hfCaret = resultSelection.focus;
+    hfSelectionAnchor = isCollapsed(resultSelection) ? noCaret() : resultSelection.anchor;
+    markDirty();
+    refreshUndoRedoState();
+    void nextTick().then(() => {
+      const root = hfRootEl();
+      if (!root || !hfCaret) {
+        return;
+      }
+      if (hfSelectionAnchor) {
+        setDomSelection(root, hfSelectionAnchor, hfCaret);
+      } else {
+        setDomCaret(root, hfCaret);
+      }
+    });
+  }
+
+  function handleHfBeforeInput(event: InputEvent) {
+    const type = event.inputType;
+    if (hfComposing || event.isComposing || type === "insertCompositionText") {
+      return;
+    }
+    event.preventDefault();
+    const active = activeHeaderFooter.value;
+    const model = doc.value;
+    if (!active || !model || !editable.value) {
+      return;
+    }
+    const selection = currentHfSelection();
+    if (!selection) {
+      return;
+    }
+    const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+    let result: { model: DocumentModel; selection: ModelSelection } | null = null;
+    let label = "";
+    if (type === "insertText" || type === "insertFromPaste") {
+      const text = event.data ?? (event.dataTransfer ? event.dataTransfer.getData("text/plain") : "");
+      if (text) {
+        result = insertText(synthetic, selection, text, hfPendingFormat);
+        label = "typing";
+      }
+    } else if (type === "insertParagraph") {
+      result = splitBlock(synthetic, selection);
+      label = "new paragraph";
+    } else if (type === "insertLineBreak") {
+      result = insertLineBreak(synthetic, selection);
+      label = "line break";
+    } else if (type === "deleteContentBackward") {
+      result = deleteBackward(synthetic, selection);
+      label = "delete";
+    } else if (type === "deleteContentForward") {
+      result = deleteForward(synthetic, selection);
+      label = "delete";
+    } else if (type === "deleteByCut" || type === "deleteContent") {
+      result = isCollapsed(selection) ? null : deleteRange(synthetic, selection);
+      label = "delete";
+    }
+    if (result) {
+      applyHeaderFooterEdit(result.model, result.selection, label);
+    }
+  }
+
+  /** F9 inside the band (SPEC-053 AC-15 with AC-33): the field at the
+   * header/footer caret is recomputed and the result folded back like any
+   * other band edit. It is dispatched here rather than by the canvas shortcut
+   * registry because the band stops keydown before the canvas sees it — which
+   * is right: a registry command reads the *body* caret, so anything it did
+   * here would edit the wrong surface. Only this one command is forwarded;
+   * the rest stay body-scoped until they grow a band-aware path of their
+   * own. */
+  function updateFieldInBand(): void {
+    const active = activeHeaderFooter.value;
+    const model = doc.value;
+    const selection = currentHfSelection();
+    if (!active || !model || !editable.value || !selection) {
+      return;
+    }
+    const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+    const updated = getUpdateFieldInSurface()(synthetic, selection);
+    if (updated) {
+      applyHeaderFooterEdit(updated.model, updated.selection, "update field");
+    }
+  }
+
+  function handleHfKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      exitHeaderFooterEditing();
+      return;
+    }
+    if (findShortcut(event)?.id === "field.update") {
+      event.preventDefault();
+      updateFieldInBand();
+    }
+  }
+
+  function handleHfCompositionStart() {
+    const root = hfRootEl();
+    if (!root || !editable.value) {
+      return;
+    }
+    hfComposing = true;
+    hfCompositionRange = currentHfSelection();
+  }
+
+  function handleHfCompositionEnd(event: CompositionEvent) {
+    hfComposing = false;
+    const range = hfCompositionRange;
+    hfCompositionRange = null;
+    const active = activeHeaderFooter.value;
+    const model = doc.value;
+    if (!active || !model || !editable.value || !range) {
+      return;
+    }
+    const data = event.data ?? "";
+    if (!data) {
+      return;
+    }
+    const synthetic = withHeaderFooterModel(model, active.sectionIndex, active.part, active.kind);
+    const result = insertText(synthetic, range, data, null);
+    applyHeaderFooterEdit(result.model, result.selection, "typing");
+    hfRemountEpoch.value += 1;
+  }
+
+  /** "Header/footer options" (AC-11..23), prefilled from the band's or the
+   * caret's section. */
+  function openHeaderFooterOptions() {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    const sectionIndex = activeHeaderFooter.value?.sectionIndex ?? getCaretSectionIndex();
+    const section = model.sections[sectionIndex];
+    headerFooterOptionsInitial.value = {
+      sectionIndex,
+      titlePage: section?.titlePage === true,
+      evenAndOddHeaders: section?.evenAndOddHeaders === true,
+      pageNumberStart: section?.pageNumberStart ?? null,
+    };
+    headerFooterOptionsOpen.value = true;
+  }
+
+  function handleHeaderFooterOptionsApply(
+    payload = { sectionIndex: 0, titlePage: false, evenAndOddHeaders: false, pageNumberStart: null },
+  ) {
+    headerFooterOptionsOpen.value = false;
+    const model = doc.value;
+    const root = contentRoot.value as HTMLElement | null;
+    if (!model || !root) {
+      return;
+    }
+    const selection = currentSelection(root) ?? caretSelection(getCaret() ?? documentStart());
+    applyEdit(
+      setHeaderFooterOptions(model, selection, payload.sectionIndex, {
+        titlePage: payload.titlePage,
+        evenAndOddHeaders: payload.evenAndOddHeaders,
+        pageNumberStart: payload.pageNumberStart,
+      }),
+      selection,
+      "header/footer options",
+    );
+  }
+
+  function handleHeaderFooterOptionsCancel() {
+    headerFooterOptionsOpen.value = false;
+  }
+
+  /** "Insert page number" (AC-14..19). */
+  function openPageNumberDialog() {
+    if (!doc.value) {
+      return;
+    }
+    pageNumberDialogOpen.value = true;
+  }
+
+  function handlePageNumberInsert(
+    options = { part: "footer", position: "center", format: "decimal", pageXofY: false },
+  ) {
+    pageNumberDialogOpen.value = false;
+    const model = doc.value;
+    const root = contentRoot.value as HTMLElement | null;
+    if (!model || !root) {
+      return;
+    }
+    const sectionIndex = activeHeaderFooter.value?.sectionIndex ?? getCaretSectionIndex();
+    const selection = currentSelection(root) ?? caretSelection(getCaret() ?? documentStart());
+    applyEdit(
+      insertPageNumberCommand(model, selection, sectionIndex, {
+        part: asHeaderFooterPart(options.part),
+        position: asParagraphAlignment(options.position),
+        format: asPageNumberFormat(options.format),
+        pageXofY: !!options.pageXofY,
+      }),
+      selection,
+      "insert page number",
+    );
+  }
+
+  function handlePageNumberCancel() {
+    pageNumberDialogOpen.value = false;
+  }
+
+  // --- header-mirror formatting (the header/footer surface's pending-format
+  // store in useFormattingSurfaces' surface table) ---------------------
+
+  function getHfPendingFormat(): ReturnType<typeof noPendingFormat> {
+    return hfPendingFormat;
+  }
+  function setHfPendingFormat(pending: ReturnType<typeof noPendingFormat>): void {
+    hfPendingFormat = pending;
+  }
+
+  return {
+    activeHeaderFooter,
+    hfRemountEpoch,
+    headerFooterOptionsOpen,
+    headerFooterOptionsInitial,
+    pageNumberDialogOpen,
+    hfRootEl,
+    currentHfSelection,
+    applyHeaderFooterEdit,
+    getHfPendingFormat,
+    setHfPendingFormat,
+    exitHeaderFooterEditing,
+    enterHeaderFooterEditing,
+    handleDblclickHeader,
+    handleDblclickFooter,
+    handleDblclickBody,
+    openInsertHeaderFooter,
+    handleHfBeforeInput,
+    handleHfKeyDown,
+    handleHfCompositionStart,
+    handleHfCompositionEnd,
+    openHeaderFooterOptions,
+    handleHeaderFooterOptionsApply,
+    handleHeaderFooterOptionsCancel,
+    openPageNumberDialog,
+    handlePageNumberInsert,
+    handlePageNumberCancel,
+  };
+}

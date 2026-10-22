@@ -1,0 +1,6 @@
+<!-- SPEC-107 fixture: a mark with a doctype and this comment before the root -->
+<!DOCTYPE svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="72" viewBox="0 0 96 72">
+  <rect x="4" y="4" width="88" height="64" rx="8" fill="#1f77b4" />
+  <circle cx="48" cy="36" r="20" fill="#ff7f0e" />
+</svg>

@@ -1,0 +1,267 @@
+// The product-neutral half of tables (SPEC-022, cell/border formatting
+// SPEC-023): the border/alignment/width-mode types, the grid limits, the
+// rectangular cell-range arithmetic and the DOM resize-preview helpers.
+// Everything here is independent of the document model — a Slides product's
+// tables carry the same border and range semantics; only cell *content*
+// (paragraph blocks) is product-specific and stays on lib/documentModel.ts's
+// TableCell. The editing commands stay in lib/tables.ts.
+
+// The border vocabulary moved to core/borders.ts (SPEC-074 AC-1): a border
+// is not a table concept, and paragraphs and pages now carry the same edges.
+// Re-exported here so every SPEC-023 import and test compiles untouched
+// (AC-2) — the move is a relocation, not a rename.
+export type { BorderLineStyle, BorderSide } from "./borders";
+import type { BorderLineStyle, BorderSide } from "./borders";
+
+/** A cell's four borders, each independently set or left unset (SPEC-023).
+ * Table-wide and per-selected-cell border operations (AC-13, AC-14) both
+ * write into this same per-cell shape — "apply to the whole table" is just
+ * "apply to every cell" (see lib/tables.ts's border-preset commands), which
+ * is also why the round trip is always per-cell (`w:tcBorders` /
+ * .odt cell styles — AC-25, AC-29), never a table-level default. */
+export interface CellBorders {
+  top?: BorderSide;
+  bottom?: BorderSide;
+  left?: BorderSide;
+  right?: BorderSide;
+}
+
+/** A cell's content vertical alignment within its (possibly taller, due to
+ * sibling cells) row (SPEC-023 AC-17). */
+export type CellVerticalAlign = "top" | "center" | "bottom";
+
+/** Table alignment on the page (SPEC-023 AC-22). */
+export type TableAlignment = "left" | "center" | "right";
+
+/** How a table's overall width is determined (SPEC-023 AC-23): `"fixed"`
+ * (absent also means fixed, for models saved before SPEC-023) uses the
+ * `columnWidthsCm` sum as-is; `"percent"` scales `widthPercent`% of the
+ * text area, redistributing `columnWidthsCm` proportionally; `"auto"` sizes
+ * the table to its content, ignoring `columnWidthsCm` for layout (the field
+ * is kept as the last explicit widths, reused if the mode changes back). */
+export type TableWidthMode = "auto" | "fixed" | "percent";
+
+/** Typed pass-through for a border line style coming from a `.vue`
+ * template's plain string (espree bars the annotation in `.vue` scripts). */
+export function asBorderLineStyle(value: string): BorderLineStyle {
+  return value as BorderLineStyle;
+}
+
+/** Typed pass-through for a cell vertical alignment coming from a `.vue`
+ * template's plain string (same espree constraint as asBorderLineStyle). */
+export function asCellVerticalAlign(value: string): CellVerticalAlign {
+  return value as CellVerticalAlign;
+}
+
+/** Typed pass-through for a table alignment coming from a `.vue` template's
+ * plain string (same espree constraint as asBorderLineStyle). */
+export function asTableAlignment(value: string): TableAlignment {
+  return value as TableAlignment;
+}
+
+/** Typed pass-through for a table width mode coming from a `.vue`
+ * template's plain string (same espree constraint as asBorderLineStyle). */
+export function asTableWidthMode(value: string): TableWidthMode {
+  return value as TableWidthMode;
+}
+
+// --- grid limits (SPEC-022) --------------------------------------------------
+
+/** The picker grid's bounds (AC-1) and the dialog's upper limits (AC-2). */
+export const PICKER_MAX_ROWS = 10;
+export const PICKER_MAX_COLS = 10;
+export const MAX_TABLE_ROWS = 200;
+export const MAX_TABLE_COLS = 63;
+
+/** The smallest width a dragged column boundary can leave a column (AC-2). */
+export const MIN_COLUMN_WIDTH_CM = 0.5;
+
+/** The smallest minimum height a dragged row boundary can set (AC-4). */
+export const MIN_ROW_HEIGHT_CM = 0.4;
+
+// --- cell-range selection (AC-15, AC-16) ------------------------------------
+
+/** A rectangular cell range within one table: `anchor` is where the drag
+ * started, `focus` the cell under the pointer. Held by the view while a
+ * drag is active; the model's own text selection stays collapsed. */
+export interface CellRange {
+  section: number;
+  block: number;
+  anchor: { row: number; col: number };
+  focus: { row: number; col: number };
+}
+
+/** Typed `null` seed for cell-range refs in `.vue` scripts (espree bars the
+ * annotation, same constraint as commands.noSelection). */
+export function noCellRange(): CellRange | null {
+  return null;
+}
+
+/** Typed pass-through for a cell range arriving as a runtime-declared
+ * Object prop (espree bars the prop generic — see asParagraphBlock). */
+export function asCellRange(value: unknown): CellRange | null {
+  return (value ?? null) as CellRange | null;
+}
+
+/** The range's normalised bounds (inclusive). */
+export function cellRangeBounds(range: CellRange): {
+  top: number;
+  left: number;
+  bottom: number;
+  right: number;
+} {
+  return {
+    top: Math.min(range.anchor.row, range.focus.row),
+    left: Math.min(range.anchor.col, range.focus.col),
+    bottom: Math.max(range.anchor.row, range.focus.row),
+    right: Math.max(range.anchor.col, range.focus.col),
+  };
+}
+
+/** Whether a cell lies inside the (normalised) range — the per-cell
+ * highlight predicate (AC-16). */
+export function isCellInRange(
+  range: CellRange | null,
+  section: number,
+  block: number,
+  row: number,
+  col: number,
+): boolean {
+  if (!range || range.section !== section || range.block !== block) {
+    return false;
+  }
+  const bounds = cellRangeBounds(range);
+  return row >= bounds.top && row <= bounds.bottom && col >= bounds.left && col <= bounds.right;
+}
+
+// --- merged-cell owner grid (SPEC-023) ---------------------------------------
+
+/** The minimal table shape the owner grid reads. Structural on purpose:
+ * core cannot import the document model (boundary.spec.ts), and
+ * lib/documentModel.ts's Table satisfies this as-is — `rows` is the regular
+ * R×C grid (covered slots included as placeholder cells), `columnWidthsCm`
+ * fixes the column count. */
+export interface OwnerGridTable {
+  rows: Array<{ cells: Array<{ rowSpan?: number; colSpan?: number }> }>;
+  columnWidthsCm: number[];
+}
+
+/** A grid slot's owning (real) cell: the cell at `originRow`/`originCol`
+ * whose `rowSpan`×`colSpan` rectangle covers the slot — itself when the slot
+ * is not covered by anything. Every merge/split/border/shading/padding
+ * operation resolves through this so a click anywhere in a merged cell's
+ * rectangle (or a range that only partly overlaps it) resolves to the same
+ * whole cell; the docx/odf writers walk the same grid to decide which slots
+ * emit a real cell versus a `w:gridSpan`/`w:vMerge` continuation or a
+ * `<table:covered-table-cell/>`. */
+export interface CellOwner {
+  originRow: number;
+  originCol: number;
+  rowSpan: number;
+  colSpan: number;
+}
+
+/** Every grid slot's owner, computed in one forward pass: row-major order
+ * always visits a cell's own (top-left) slot before any slot it covers, so
+ * each covered slot's owner is already known by the time it is reached. */
+export function computeOwnerGrid(table: OwnerGridTable): CellOwner[][] {
+  const rowCount = table.rows.length;
+  const colCount = table.columnWidthsCm.length;
+  const grid: CellOwner[][] = Array.from({ length: rowCount }, () => Array.from<CellOwner>({ length: colCount }));
+  for (let r = 0; r < rowCount; r++) {
+    for (let c = 0; c < colCount; c++) {
+      if (grid[r][c]) {
+        continue;
+      }
+      // A well-formed table's rows are the full R×C grid; a ragged row (one
+      // shorter than columnWidthsCm declares) reads as plain 1×1 slots rather
+      // than throwing — this runs on every layout pass (SPEC-076).
+      const cell = table.rows[r].cells[c] ?? {};
+      const owner: CellOwner = {
+        originRow: r,
+        originCol: c,
+        rowSpan: cell.rowSpan ?? 1,
+        colSpan: cell.colSpan ?? 1,
+      };
+      for (let dr = 0; dr < owner.rowSpan && r + dr < rowCount; dr++) {
+        for (let dc = 0; dc < owner.colSpan && c + dc < colCount; dc++) {
+          grid[r + dr][c + dc] = owner;
+        }
+      }
+    }
+  }
+  return grid;
+}
+
+/** Which row boundaries a vertical merge crosses. Entry `r` is true when a
+ * cell owned by some row above `r` still spans row `r`.
+ *
+ * SPEC-076 made tables split across pages at row boundaries; a break at a
+ * crossed boundary would tear a merged cell in half. The page above would
+ * carry a `rowspan` reaching past its last drawn row (rendering taller than
+ * it measured), and the continuation would open on a covered slot whose
+ * owning cell it does not draw, shifting every later cell a column left.
+ * The pagination engine therefore only ever splits where this reads false.
+ *
+ * Entry 0 is always false — the table's own top is never inside a merge —
+ * as is the boundary one past the last row, which is off the end. */
+export function verticalMergeCrossings(table: OwnerGridTable): boolean[] {
+  const rowCount = table.rows.length;
+  const crossings = Array.from({ length: rowCount }, () => false);
+  for (let r = 0; r < rowCount; r++) {
+    const cells = table.rows[r].cells;
+    for (let c = 0; c < cells.length; c++) {
+      // Covered placeholders never carry a span of their own, so reading
+      // every cell's rowSpan counts each merge exactly once.
+      const rowSpan = cells[c]?.rowSpan ?? 1;
+      for (let dr = 1; dr < rowSpan && r + dr < rowCount; dr++) {
+        crossings[r + dr] = true;
+      }
+    }
+  }
+  return crossings;
+}
+
+// --- border presets (SPEC-023 AC-18..21) -------------------------------------
+
+/** The standard border presets a table properties dialog offers (AC-18..21). */
+export type BorderPreset = "all" | "outer" | "inner" | "none";
+
+/** Typed pass-through for a border preset coming from a `.vue` template's
+ * plain string (same espree constraint as asBorderLineStyle). */
+export function asBorderPreset(value: string): BorderPreset {
+  return value as BorderPreset;
+}
+
+// --- live resize preview (SPEC-023 AC-1..5) ----------------------------------
+// DOM helpers for the column/row resize preview. DOM-touching but
+// model-free: they paint whatever widths/heights they are given into a live
+// table element (clamping is the caller's job).
+
+/** One row's `<tr>` element by index, or null out of range. */
+export function tableRowElement(tableEl: HTMLTableElement, rowIndex: number): HTMLTableRowElement | null {
+  const row = tableEl.querySelectorAll(":scope > tbody > tr")[rowIndex];
+  return row instanceof HTMLTableRowElement ? row : null;
+}
+
+/** Live-previews a column resize (AC-1) directly on the DOM: every `<col>`'s
+ * width, and the table's own width when it isn't sized by its content
+ * (`table-layout: auto`, SPEC-023 AC-23's "auto" width mode) — clamping to
+ * the minimum width is the caller's job (MIN_COLUMN_WIDTH_CM); this just
+ * paints whatever it is given. */
+export function previewColumnWidths(tableEl: HTMLTableElement, widthsCm: number[]): void {
+  tableEl.querySelectorAll("colgroup col").forEach((col, index) => {
+    if (widthsCm[index] !== undefined && col instanceof HTMLElement) {
+      col.style.width = `${widthsCm[index]}cm`;
+    }
+  });
+  if (tableEl.style.tableLayout !== "auto") {
+    tableEl.style.width = `${widthsCm.reduce((sum, w) => sum + w, 0)}cm`;
+  }
+}
+
+/** Live-previews a row's minimum height (AC-4): a floor in table layout, so
+ * the row still renders taller than this for its content (AC-5). */
+export function previewRowHeight(trEl: HTMLTableRowElement, heightCm: number): void {
+  trEl.style.height = `${heightCm}cm`;
+}

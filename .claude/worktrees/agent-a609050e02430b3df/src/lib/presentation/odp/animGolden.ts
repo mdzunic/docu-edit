@@ -1,0 +1,17 @@
+// The NORMATIVE canonical odp `anim:*` bytes (SPEC-086) — hand-authored against
+// ODF 1.2 §16.29 and the preset table in `anim.ts`, checked in so the
+// serialiser output is pinned (serialize.spec.ts asserts equality) and the
+// reader is proven to accept exactly what the writer emits. ANIM_GOLDEN encodes
+// the shared GOLDEN_ANIMATIONS (from pptx/timingGolden.ts) with wire ids
+// "de-f2".."de-f8". Cross-app verification (opening in Impress) is manual QA
+// outside CI, recorded in the PR description.
+import { GOLDEN_ANIMATIONS } from "../pptx/timingGolden";
+
+export { GOLDEN_ANIMATIONS };
+
+/** The wire-id map ANIM_GOLDEN assumes: frame id "fN" -> "de-fN". */
+export function goldenTargetFor(frameId: string): string {
+  return `de-${frameId}`;
+}
+
+export const ANIM_GOLDEN = "<anim:par xmlns:anim=\"urn:oasis:names:tc:opendocument:xmlns:animation:1.0\" xmlns:smil=\"urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0\" presentation:node-type=\"timing-root\"><anim:seq presentation:node-type=\"main-sequence\"><anim:par smil:begin=\"next\"><anim:par smil:begin=\"0s\"><anim:par presentation:node-type=\"on-click\" presentation:preset-class=\"entrance\" presentation:preset-id=\"ooo-entrance-appear\" smil:begin=\"0s\"><anim:set smil:attributeName=\"visibility\" smil:to=\"visible\" smil:targetElement=\"de-f2\"/></anim:par><anim:par presentation:node-type=\"with-previous\" presentation:preset-class=\"entrance\" presentation:preset-id=\"ooo-entrance-fade-in\" smil:begin=\"0s\"><anim:transitionFilter smil:type=\"fade\" smil:direction=\"forward\" smil:dur=\"0.5s\" smil:targetElement=\"de-f3\"/></anim:par><anim:par presentation:node-type=\"after-previous\" presentation:preset-class=\"entrance\" presentation:preset-id=\"ooo-entrance-fly-in\" smil:begin=\"0.25s\" presentation:preset-sub-type=\"from-right\"><anim:animate smil:attributeName=\"x\" smil:from=\"100%\" smil:to=\"0%\" smil:dur=\"0.5s\" smil:targetElement=\"de-f4\"/></anim:par></anim:par></anim:par><anim:par smil:begin=\"next\"><anim:par smil:begin=\"0s\"><anim:par presentation:node-type=\"on-click\" presentation:preset-class=\"entrance\" presentation:preset-id=\"ooo-entrance-wipe\" smil:begin=\"0s\" presentation:preset-sub-type=\"from-top\"><anim:transitionFilter smil:type=\"barWipe\" smil:subtype=\"topToBottom\" smil:dur=\"0.8s\" smil:targetElement=\"de-f5\"/></anim:par><anim:par presentation:node-type=\"with-previous\" presentation:preset-class=\"entrance\" presentation:preset-id=\"ooo-entrance-zoom\" smil:begin=\"0s\" presentation:preset-sub-type=\"in\"><anim:animateTransform smil:attributeName=\"transform\" smil:type=\"scale\" smil:from=\"0,0\" smil:to=\"1,1\" smil:dur=\"0.5s\" smil:targetElement=\"de-f6\"/></anim:par></anim:par></anim:par><anim:par smil:begin=\"next\"><anim:par smil:begin=\"0s\"><anim:par presentation:node-type=\"on-click\" presentation:preset-class=\"exit\" presentation:preset-id=\"ooo-exit-fade-out\" smil:begin=\"0s\"><anim:transitionFilter smil:type=\"fade\" smil:direction=\"reverse\" smil:dur=\"0.5s\" smil:targetElement=\"de-f7\"/><anim:set smil:attributeName=\"visibility\" smil:to=\"hidden\" smil:targetElement=\"de-f7\"/></anim:par><anim:par presentation:node-type=\"after-previous\" presentation:preset-class=\"exit\" presentation:preset-id=\"ooo-exit-fly-out\" smil:begin=\"0s\" presentation:preset-sub-type=\"from-bottom\"><anim:animate smil:attributeName=\"y\" smil:from=\"0%\" smil:to=\"100%\" smil:dur=\"0.5s\" smil:targetElement=\"de-f8\"/></anim:par></anim:par></anim:par></anim:seq></anim:par>";

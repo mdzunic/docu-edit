@@ -1,0 +1,317 @@
+// The Page setup dialog (SPEC-027 AC-1..7), the Format → Columns dialog
+// (SPEC-030), the ruler visibility toggles (both rulers together, or each on
+// its own), and the ruler's caret-section geometry (page width, margins and
+// column boundaries). With
+// per-section page setup (SPEC-028 AC-20) both dialogs prefill from — and
+// the ruler follows — the section under the caret, read live through
+// getCaretSectionIndex. The ruler's marker-drag handler (handleRulerUpdate)
+// stays in DocumentView: it dispatches indent/margin/column/tab-stop
+// commands through the view's applyParagraphCommand chokepoint.
+import { computed, ref, triggerRef } from "vue";
+import { applyColumns, asColumnsScope } from "../../lib/columns";
+import { asPageSetupScope, setPageBorders, setPageSetup } from "../../lib/commands";
+import { noPageBackground, noPageBorders } from "../../lib/pageBorders";
+import { asMeasurementUnit } from "../../lib/core/units";
+import {
+  resolveColumnWidthsCm,
+  sectionColumns,
+  sectionContentWidthCm,
+  sectionMargins,
+  sectionPageSize,
+} from "../../lib/documentModel";
+import { touchDocument } from "../../lib/documentStore";
+import type { ModelSelection } from "../../lib/commands";
+import type { EditorContext } from "./context";
+
+export interface PageSetupDialogsDeps extends EditorContext {
+  /** DocumentView's paragraphSelection always resolves to a selection. */
+  paragraphSelection: (root?: HTMLElement | null) => ModelSelection;
+  /** Live read of the view's reactive caret-section mirror
+   * (`caretSectionIndex`) — a getter over a ref, so a computed reading it
+   * re-runs when the caret crosses into another section. */
+  getCaretSectionIndex: () => number;
+}
+
+export function usePageSetupDialogs(deps: PageSetupDialogsDeps) {
+  const { doc, contentRoot, editable, applyEdit, paragraphSelection, getCaretSectionIndex } = deps;
+
+  // The Page setup dialog (SPEC-027 AC-1..7): open flag plus the prefill
+  // taken from the document's own page geometry/unit at the moment it opens.
+  const pageSetupOpen = ref(false);
+  const pageSetupInitial = ref({
+    pageSize: { widthCm: 21, heightCm: 29.7 },
+    margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
+    measurementUnit: "cm",
+    applyTo: "wholeDocument",
+    // The Borders tab's prefill (SPEC-074 AC-19..AC-23). Absent is `null`,
+    // never `""`: the dialog reads "is there a background?" as "is this a
+    // string?", so an empty string would open the tab with the background
+    // switch already on and commit `""` as the section's colour.
+    pageBorders: noPageBorders(),
+    pageBackground: noPageBackground(),
+  });
+  // The Format → Columns dialog (SPEC-030): open flag plus the prefill taken
+  // from the caret's section columns and content width at the moment it opens.
+  const columnsDialogOpen = ref(false);
+  const columnsDialogInitial = ref({
+    columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false },
+    contentWidthCm: 16,
+    applyTo: "thisSection",
+  });
+
+  // --- page setup and ruler visibility (SPEC-027) -----------------------
+
+  /** Opens the Page setup dialog prefilled from the document's own page
+   * geometry and measurement-unit preference (AC-8; absent unit reads as
+   * "cm", createDefaultStyles's own convention). */
+  function openPageSetup() {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    // Prefilled from the caret's section (SPEC-028 AC-20): with per-section
+    // page setup, "what the dialog shows" is the geometry under the caret.
+    const sectionIndex = Math.min(getCaretSectionIndex(), model.sections.length - 1);
+    pageSetupInitial.value = {
+      pageSize: { ...sectionPageSize(model, sectionIndex) },
+      margins: { ...sectionMargins(model, sectionIndex) },
+      measurementUnit: model.measurementUnit ?? "cm",
+      applyTo: "wholeDocument",
+      // The caret's section owns its border and background (SPEC-074). A
+      // section with no background prefills as `null`, not `""` — see the
+      // seed above.
+      pageBorders: model.sections[sectionIndex]?.pageBorders ?? noPageBorders(),
+      pageBackground: model.sections[sectionIndex]?.pageBackground ?? noPageBackground(),
+    };
+    pageSetupOpen.value = true;
+  }
+
+  /** The dialog's OK (AC-5): one combined edit — page size, margins and the
+   * measurement-unit preference — applied as a single undo step, which
+   * re-renders the page and re-flows text immediately (doc.value's
+   * replacement is what drives pageStyle/marginStyle's recompute). */
+  function handlePageSetupApply(
+    payload = {
+      pageSize: { widthCm: 21, heightCm: 29.7 },
+      margins: { topCm: 2.54, rightCm: 2.54, bottomCm: 2.54, leftCm: 2.54 },
+      measurementUnit: "cm",
+      applyTo: "wholeDocument",
+      pageBorders: noPageBorders(),
+      pageBackground: noPageBackground(),
+    },
+  ) {
+    pageSetupOpen.value = false;
+    const root = contentRoot.value as HTMLElement | null;
+    const model = doc.value;
+    if (!root || !model || !editable.value) {
+      return;
+    }
+    const selection = paragraphSelection(root);
+    const scope = asPageSetupScope(payload.applyTo ?? "wholeDocument");
+    const geometry = setPageSetup(
+      model,
+      selection,
+      {
+        pageSize: payload.pageSize,
+        margins: payload.margins,
+        measurementUnit: asMeasurementUnit(payload.measurementUnit),
+      },
+      scope,
+    );
+    // The Borders tab commits with the rest, as ONE undo step (SPEC-074
+    // AC-19..AC-23): the border command runs on the geometry command's own
+    // result, so a single applyEdit carries both.
+    applyEdit(
+      setPageBorders(
+        geometry.model,
+        geometry.selection,
+        {
+          pageBorders: payload.pageBorders ?? null,
+          pageBackground: payload.pageBackground ?? null,
+        },
+        scope,
+      ),
+      selection,
+      "page setup",
+    );
+    root.focus();
+  }
+
+  /** Format → Columns (SPEC-030 AC-1..AC-5): prefilled from the caret's
+   * section columns and its content width. */
+  function openColumnsDialog() {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    const sectionIndex = Math.min(getCaretSectionIndex(), model.sections.length - 1);
+    columnsDialogInitial.value = {
+      columns: { ...sectionColumns(model, sectionIndex) },
+      contentWidthCm: sectionContentWidthCm(model, sectionIndex),
+      applyTo: "thisSection",
+    };
+    columnsDialogOpen.value = true;
+  }
+
+  /** The Columns dialog's OK (AC-6/AC-7): applies the layout to the caret's
+   * section or wraps the selection in a continuous section, as one undo step. */
+  function handleColumnsApply(
+    payload = {
+      columns: { count: 1, equalWidth: true, gapCm: 1.27, separator: false, widthsCm: undefined },
+      applyTo: "thisSection",
+    },
+  ) {
+    columnsDialogOpen.value = false;
+    const root = contentRoot.value as HTMLElement | null;
+    const model = doc.value;
+    if (!root || !model || !editable.value) {
+      return;
+    }
+    const selection = paragraphSelection(root);
+    applyEdit(
+      applyColumns(model, selection, payload.columns, asColumnsScope(payload.applyTo ?? "thisSection")),
+      selection,
+      "columns",
+    );
+    root.focus();
+  }
+
+  // --- ruler visibility (SPEC-027 AC-14, SPEC-064 AC-7) ---------------------
+  // Two per-document flags, absent reading as shown (documentModel.ts's own
+  // convention): `showRuler` for the horizontal ruler, `showVerticalRuler` for
+  // the vertical one. View → Rulers flips both together (one control, as
+  // SPEC-064 asked); View → Horizontal ruler / Vertical ruler flip one each.
+
+  /** True while the horizontal ruler is shown. */
+  const showHorizontalRuler = computed(() => doc.value?.showRuler !== false);
+  /** True while the vertical ruler is enabled (it still hides in web layout,
+   * see useVerticalRuler). */
+  const showVerticalRuler = computed(() => doc.value?.showVerticalRuler !== false);
+  /** The View → Rulers check state: checked when both rulers are shown,
+   * "mixed" when only one is, unchecked when neither. */
+  const rulersCheckState = computed(() =>
+    showHorizontalRuler.value && showVerticalRuler.value
+      ? true
+      : showHorizontalRuler.value || showVerticalRuler.value
+        ? "mixed"
+        : false,
+  );
+
+  /** Writes the two flags. A view preference, not an undo-able content edit —
+   * same direct-mutation + touchDocument pattern as handleTitleUpdate, and
+   * triggerRef is required for the same reason (doc is a shallowRef; mutating
+   * a field on its current value alone doesn't re-render). */
+  function setRulerVisibility(horizontal = true, vertical = true) {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    model.showRuler = horizontal;
+    model.showVerticalRuler = vertical;
+    triggerRef(doc);
+    touchDocument(model.id);
+  }
+
+  /** View → Rulers: hides both rulers when both are shown, otherwise shows
+   * both — one control that always lands on an all-or-nothing state. */
+  function toggleRuler() {
+    const bothShown = showHorizontalRuler.value && showVerticalRuler.value;
+    setRulerVisibility(!bothShown, !bothShown);
+  }
+
+  /** View → Horizontal ruler: flips the horizontal ruler alone. */
+  function toggleHorizontalRuler() {
+    setRulerVisibility(!showHorizontalRuler.value, showVerticalRuler.value);
+  }
+
+  /** View → Vertical ruler: flips the vertical ruler alone. */
+  function toggleVerticalRuler() {
+    setRulerVisibility(showHorizontalRuler.value, !showVerticalRuler.value);
+  }
+
+  /** Sets the document's measurement-unit preference from a ruler right-click
+   * (SPEC-064 AC-10a). Writes the same `measurementUnit` field the Page setup
+   * dialog writes (AC-10b); like the ruler toggle it is a persisted app
+   * preference, not an undoable content edit, so it uses the same direct
+   * mutation + triggerRef + touchDocument path. */
+  function setMeasurementUnit(unit = "cm") {
+    const model = doc.value;
+    if (!model) {
+      return;
+    }
+    model.measurementUnit = asMeasurementUnit(unit);
+    triggerRef(doc);
+    touchDocument(model.id);
+  }
+
+  // The ruler and the Page setup dialog follow the caret's section (AC-17..21)
+  // so a per-section page setup is edited where the caret sits.
+  const rulerSectionIndex = computed(() => {
+    const model = doc.value;
+    return model ? Math.min(getCaretSectionIndex(), model.sections.length - 1) : 0;
+  });
+  const rulerPageWidthCm = computed(() =>
+    doc.value ? sectionPageSize(doc.value, rulerSectionIndex.value).widthCm : 21,
+  );
+  const rulerMarginLeftCm = computed(() =>
+    doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).leftCm : 2.54,
+  );
+  const rulerMarginRightCm = computed(() =>
+    doc.value ? sectionMargins(doc.value, rulerSectionIndex.value).rightCm : 2.54,
+  );
+  // The caret section's column boundaries for the ruler (SPEC-030 AC-14): each
+  // gutter's centre, measured from the content area's start; null when the
+  // section has a single column (no boundary handles).
+  const rulerColumns = computed(() => {
+    const model = doc.value;
+    if (!model) {
+      return undefined;
+    }
+    const columns = sectionColumns(model, rulerSectionIndex.value);
+    if (columns.count <= 1) {
+      return undefined;
+    }
+    const widthsCm = resolveColumnWidthsCm(columns, sectionContentWidthCm(model, rulerSectionIndex.value));
+    const boundaries = [];
+    let offset = 0;
+    for (let i = 0; i < widthsCm.length - 1; i += 1) {
+      offset += widthsCm[i];
+      boundaries.push({ index: i, centerCm: offset + columns.gapCm / 2 });
+      offset += columns.gapCm;
+    }
+    return { boundaries };
+  });
+
+  // The View -> ruler command ids (SPEC-027 AC-14, SPEC-064): the master
+  // Rulers toggle and the per-axis toggles, owned beside the visibility
+  // state they flip.
+  const commands: Array<[string, () => void]> = [
+    ["view.ruler", toggleRuler],
+    ["view.horizontal-ruler", toggleHorizontalRuler],
+    ["view.vertical-ruler", toggleVerticalRuler],
+  ];
+
+  return {
+    commands,
+    pageSetupOpen,
+    pageSetupInitial,
+    columnsDialogOpen,
+    columnsDialogInitial,
+    openPageSetup,
+    handlePageSetupApply,
+    openColumnsDialog,
+    handleColumnsApply,
+    showHorizontalRuler,
+    showVerticalRuler,
+    rulersCheckState,
+    toggleRuler,
+    toggleHorizontalRuler,
+    toggleVerticalRuler,
+    setMeasurementUnit,
+    rulerSectionIndex,
+    rulerPageWidthCm,
+    rulerMarginLeftCm,
+    rulerMarginRightCm,
+    rulerColumns,
+  };
+}
