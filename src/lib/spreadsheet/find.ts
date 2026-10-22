@@ -61,13 +61,14 @@
 //   the same left and right; more than GO_TO_SPECIAL_MAX_RANGES rectangles is
 //   refused.
 import { compileQuery, isQueryError, type QueryError } from "../core/findQuery";
-import { findRow, getCell, usedRange, type CellRef, type GridRange } from "./address";
+import { findRow, formatRange, getCell, usedRange, type CellRef, type GridRange } from "./address";
 import { selectionSpansMultipleCells } from "./aggregates";
 import { cellDisplay } from "./cellRender";
 import { firstLockedCell } from "./cells";
 import { findArrayAnchor } from "./formula/anchors";
 import { storedValueContext } from "./formula/evaluate";
 import { FormulaSyntaxError, parseFormula } from "./formula/parse";
+import { formatSheetPrefix } from "./formula/print";
 import type { ReferenceNode } from "./formula/references";
 import { evaluateDefinedName } from "./formula/referenceHooks";
 import { joinTokens, tokenize, type Token } from "./formula/tokens";
@@ -630,6 +631,12 @@ function partTarget(model: SpreadsheetModel, part: string, activeSheetId: string
     }
   }
   return invalid();
+}
+
+/** A selection as Go To text — `Sales!A1:B2`, each range sheet-qualified —
+ * what the recent list remembers and resolveGoToTarget reads back. */
+export function goToReferenceText(sheetName: string, ranges: readonly GridRange[]): string {
+  return ranges.map((range) => formatSheetPrefix(sheetName) + formatRange(range)).join(",");
 }
 
 /** What a Go To (or Name Box) entry selects (see the header). `at` is the

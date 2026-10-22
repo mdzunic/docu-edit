@@ -2,8 +2,10 @@
 // the Name Box, Formulas ▸ Name Manager… and its editor (nameBox.ts: what an
 // entry means; names.ts: the commands).
 // - Name Box: typing fills `draft`; Enter `submit`s it through
-//   interpretNameBox — a jump selects the target's ranges (switching sheet;
-//   view state only) and refocuses the grid; a new name is defined for the
+//   interpretNameBox (SPEC-134: references and names through Go To's
+//   resolveGoToTarget) — a jump selects the target's ranges (sheetJump.ts:
+//   switching sheet, view state only) and refocuses the grid; `setJump`
+//   (useSheetGoTo) swaps in the jump that remembers its origin; a new name is defined for the
 //   selection (absoluteRangesFormula) as ONE step "Define name"; a refusal
 //   toasts and changes nothing; Escape (`cancel`) restores the address;
 //   `options` are the dropdown's. Nothing happens while a cell is edited.
@@ -16,11 +18,10 @@
 //   active cell and stored relative to A1. Refers-to's point mode (SPEC-122):
 //   `startPick` collapses the dialogs while the grid's selection is written
 //   in as an absolute, sheet-qualified reference; `endPick` returns.
-import { computed, nextTick, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from "vue";
+import { computed, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { isMacPlatform } from "../../lib/core/platform";
 import { findShortcut } from "../../lib/shortcuts";
-import type { GridRange } from "../../lib/spreadsheet/address";
 import type { DefinedName, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { absoluteRangesFormula, defineName, deleteName, NAME_PROBLEM_MESSAGES, updateName, validateName, visibleNames } from "../../lib/spreadsheet/names";
 import { canPointAt, placePointReference } from "../../lib/spreadsheet/pointMode";
@@ -40,6 +41,7 @@ import {
   type NameHost,
 } from "./nameBox";
 import type { CellEditing } from "./useCellEditing";
+import { createSheetJump, type SheetJump } from "./sheetJump";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 import type { SheetSelectionController } from "./useSheetSelection";
 import type { SheetViewState } from "./useSheetViewState";
@@ -107,24 +109,8 @@ export function useNames(deps: NamesDeps) {
   /** What is typed in the box; null shows the address. */
   const draft = ref<string | null>(null);
 
-  /** Selects `ranges` on `sheetId`: the top-left revealed first, then the ranges. */
-  async function jump(sheetId: string, ranges: GridRange[]): Promise<void> {
-    const index = model()?.sheets.findIndex((sheet) => sheet.id === sheetId) ?? -1;
-    const first = ranges[0];
-    if (index < 0 || !first) {
-      return;
-    }
-    if (index !== deps.book.activeIndex.value) {
-      deps.book.selectSheet(index);
-    }
-    const active = { row: first.top, col: first.left };
-    deps.viewState.update(sheetId, { selection: { active, ranges: [{ top: first.top, left: first.left, bottom: first.top, right: first.left }], activeRangeIndex: 0 } });
-    await nextTick();
-    deps.editing.cell.revealTick.value += 1;
-    await nextTick();
-    deps.viewState.update(sheetId, { selection: { active, ranges: ranges.map((range) => ({ ...range })), activeRangeIndex: 0 } });
-    deps.editing.cell.focusCell();
-  }
+  /** Selects a jump's ranges: the top-left revealed first, then the ranges. */
+  let jump: SheetJump = createSheetJump({ book: deps.book, viewState: deps.viewState, cell: deps.editing.cell });
 
   /** Defines a workbook-scope name for the active sheet's selection. */
   function defineForSelection(name: string): void {
@@ -360,6 +346,7 @@ export function useNames(deps: NamesDeps) {
     draft,
     input: (text: string): void => void (draft.value = text),
     submit,
+    setJump: (next: SheetJump): void => void (jump = next),
     cancel,
     options,
     pick,

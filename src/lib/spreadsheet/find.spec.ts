@@ -6,7 +6,6 @@
 // Special per option and type filter, rectangle coalescing and the range
 // limit.
 import { describe, expect, it } from "vitest";
-import { isQueryError } from "../core/findQuery";
 import type { CellRef, GridRange } from "./address";
 import {
   breaksFormulaMessage,
@@ -82,7 +81,7 @@ function book(sheets: Partial<Sheet>[]): SpreadsheetModel {
 
 function query(text: string, options: Partial<SheetFindOptions> = {}): CompiledCellQuery {
   const compiled = compileCellQuery(text, { ...OPTIONS, ...options });
-  if (compiled === null || isQueryError(compiled)) {
+  if (compiled === null || "error" in compiled) {
     throw new Error(`"${text}" did not compile`);
   }
   return compiled;
