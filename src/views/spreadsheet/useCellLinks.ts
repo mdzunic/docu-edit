@@ -320,10 +320,14 @@ export function useCellLinks(deps: CellLinksDeps) {
     return { label: hyperlinkLabel(link.target), external: link.target.kind === "url" };
   });
 
+  /** Follows the active cell's link — a HYPERLINK() target computed now. */
   function openFromChip(): void {
     const link = active.value;
-    if (link) {
-      void follow(link.target, { sheetId: link.sheetId, row: link.at.row, col: link.at.col });
+    const m = model();
+    const sheet = gridSheet();
+    const target = link && m && sheet ? linkTargetAt(m, sheet, link.at) : null;
+    if (link && target) {
+      void follow(target, { sheetId: link.sheetId, row: link.at.row, col: link.at.col });
     }
   }
 
