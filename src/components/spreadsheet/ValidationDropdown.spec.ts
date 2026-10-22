@@ -30,7 +30,24 @@ async function dropdownOf(props: Record<string, unknown> = {}) {
     host.remove();
   });
   await flushPromises();
+  await pastMountMillisecond();
   return wrapper;
+}
+
+/**
+ * Lets the clock leave the millisecond the dropdown mounted in, as it has by
+ * the time a user presses anything. Vue stamps an event with Date.now() at the
+ * first handler it reaches and skips every later handler attached in that
+ * millisecond or after (its guard against listeners a patch adds mid-event),
+ * so a press dispatched straight after the mount ran the button's
+ * `@mousedown.prevent` but skipped the root's `@mousedown.stop`, and reached
+ * the host in about half the runs.
+ */
+async function pastMountMillisecond() {
+  const mountedAt = Date.now();
+  while (Date.now() <= mountedAt) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 }
 
 /** A key on the open list: the emitted events it caused. */
