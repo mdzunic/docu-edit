@@ -161,7 +161,7 @@ export function nameBoxOptions(model: SpreadsheetModel, sheetId: string): NameBo
   for (const { table } of allTables(model)) {
     options.push({ kind: "table", name: table.name, key: `table:${table.id}` });
   }
-  return options.sort(byName);
+  return options.toSorted(byName);
 }
 
 /** A name's evaluation as the Name Manager's Value column shows it. */
@@ -211,5 +211,5 @@ export function nameManagerRows(model: SpreadsheetModel, host: NameHost): NameMa
       scope: sheetName(name.scopeSheetId),
       ...(name.scopeSheetId === undefined ? {} : { scopeSheetId: name.scopeSheetId }),
     }))
-    .sort((a, b) => byName(a, b) || (a.scopeSheetId === undefined ? -1 : b.scopeSheetId === undefined ? 1 : a.scope.localeCompare(b.scope)));
+    .toSorted((a, b) => byName(a, b) || (a.scopeSheetId === undefined ? -1 : b.scopeSheetId === undefined ? 1 : a.scope.localeCompare(b.scope)));
 }

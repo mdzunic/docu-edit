@@ -63,7 +63,7 @@ import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selec
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
 import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
-import { styleOverLook, tableCellLook } from "../../lib/spreadsheet/tableStyles";
+import { lookKey, styleOverLook, tableCellLook } from "../../lib/spreadsheet/tableStyles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
 import type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
@@ -136,21 +136,8 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     return look ? styleOverLook(look, styleOf(id), styleOf(0)) : styleOf(id);
   }
 
-  /** A number per table-look object for the css cache key, so a looked cell
-   * never shares a plain cell's entry. */
-  const lookIds = new WeakMap<CellStyle, number>();
-  let nextLookId = 1;
-  function lookId(look: CellStyle): number {
-    let id = lookIds.get(look);
-    if (id === undefined) {
-      id = nextLookId++;
-      lookIds.set(look, id);
-    }
-    return id;
-  }
-
   function cssFor(id: number, kind: ReturnType<typeof valueKind>, alignHint: FormattedValue["alignHint"], left = false, look?: CellStyle): ReturnType<typeof cellCss> {
-    const key = `${id}|${kind}|${alignHint ?? ""}|${left ? "left" : ""}|${look ? lookId(look) : ""}`;
+    const key = `${id}|${kind}|${alignHint ?? ""}|${left ? "left" : ""}|${look ? lookKey(look) : ""}`;
     let css = cssCache.value.get(key);
     if (!css) {
       const style = overLook(id, look);

@@ -49,11 +49,10 @@ import { joinTokens, tokenize } from "./formula/tokens";
 import { rangesIntersect } from "./merges";
 import type { DefinedName, Sheet, SheetTable, SheetTableColumn, SpreadsheetModel } from "./model";
 import { moveDestination, repointFormula, type RangeMove } from "./move";
-import { formulaMentions, rewriteWorkbookFormulas } from "./names";
 import { contains, SheetEdit } from "./sheetEdit";
 import { adjustIndex, adjustSpan, editAxis, isInsert, type StructuralEdit } from "./structure";
-import { dataBody, removeTableReferences, sheetTables } from "./tables";
-import { removeTableReferencesEverywhere, removeTables } from "./tableRemoval";
+import { dataBody, sheetTables } from "./tables";
+import { removeTableReferencesEverywhere } from "./tableRemoval";
 
 export { removeTableReferencesEverywhere, removeTables } from "./tableRemoval";
 

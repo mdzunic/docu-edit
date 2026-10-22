@@ -204,6 +204,15 @@ export function resolveDefinedName(
   return workbook;
 }
 
+/** SPEC-132's chart hook (resolveChartRange's `resolveName`): the formula a
+ * name means on a sheet; null for none, or one kept unparsed. */
+export function nameFormulaResolver(model: Pick<SpreadsheetModel, "names" | "sheets">): (name: string, sheetId: string) => string | null {
+  return (name, sheetId) => {
+    const found = resolveDefinedName(model, name, undefined, sheetId);
+    return found && !found.formulaUnparsed ? found.formula : null;
+  };
+}
+
 /** A reserved name of a sheet by its short form (`Print_Area`). */
 export function getReservedName(model: Pick<SpreadsheetModel, "names">, sheetId: string, short: string): DefinedName | undefined {
   const key = (RESERVED_PREFIX + short).toUpperCase();

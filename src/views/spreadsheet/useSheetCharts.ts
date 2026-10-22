@@ -6,21 +6,20 @@
 //   a chart sheet's one chart (implicitly selected, never duplicated or
 //   deleted as a drawing). One outside the catalogue or read-only (`locked`)
 //   offers neither Edit data nor Chart options.
-// - Every command is ONE SPEC-121 undo step on the chart's sheet: `record`
-//   (which settles a running pass) before it, `commit` after, labelled
-//   CHART_UNDO_LABELS' (Delete is SPEC-131's "Delete chart"); one that
-//   changes nothing — an Insert ▸ Chart refused with a toast — records
-//   nothing. Nothing runs while a cell is being edited (`busy`).
-// - A dialog keeps the chart it opened on, so Select Data can point:
-//   "Select cells" collapses it (`picking`) while the grid's selection, on
-//   any sheet, fills its range; Done returns to the chart's sheet.
+// - Every command is ONE SPEC-121 undo step on the chart's sheet (`record`
+//   settles a running pass), labelled CHART_UNDO_LABELS' (Delete is
+//   SPEC-131's "Delete chart"); one changing nothing — an Insert ▸ Chart
+//   refused with a toast — records nothing. Nothing runs while a cell is
+//   being edited (`busy`). SPEC-133: chart references resolve names.
+// - A dialog keeps its chart, so Select Data can point: "Select cells"
+//   collapses it (`picking`) while the grid's selection, on any sheet,
+//   fills its range; Done returns to the chart's sheet.
 // - Refresh: each completed pass but an "open" one (open trusts caches)
 //   refreshes the charts chartsAffectedBy names for its cells, plus those
-//   chartsReadingSheet names for a sheet whose row or column visibility
-//   changed (a per-sheet signature, recomputed only when its rows or columns
-//   array changed). useRecalc reports a step's pass before the pipeline
-//   writes through, so the refresh joins the triggering step's undo entry
-//   (undo restores its snapshot) and never records one of its own.
+//   chartsReadingSheet names for a sheet whose rows' or columns' visibility
+//   changed (a per-sheet signature). useRecalc reports a step's pass before
+//   the pipeline writes through, so the refresh joins the triggering step's
+//   undo entry and never records one of its own.
 import { computed, ref, shallowRef, triggerRef, watch, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { lostChartFeatures } from "../../lib/core/chartFeatures";
@@ -28,14 +27,14 @@ import { asChartType, SINGLE_SERIES_CHART_TYPES, type ChartOptions, type ChartSe
 import { base64ToBytes, type OpaquePart } from "../../lib/core/packageParts";
 import { DEFAULT_THEME, type ModelColor } from "../../lib/core/theme";
 import { colToLetters, type GridRange } from "../../lib/spreadsheet/address";
-import { CHART_UNDO_LABELS, chartContentOf, chartRangeOf, chartRefsFromRange, chartsAffectedBy, chartsReadingSheet, type ChartNameResolver, type ChartSourceFlags } from "../../lib/spreadsheet/charts";
+import { CHART_UNDO_LABELS, chartContentOf, chartRangeOf, chartRefsFromRange, chartsAffectedBy, chartsReadingSheet, type ChartSourceFlags } from "../../lib/spreadsheet/charts";
 import { duplicateSheetChart, insertSheetChart, refreshSheetChart, setSheetChartData, setSheetChartOptions, setSheetChartSeriesColor, setSheetChartSource } from "../../lib/spreadsheet/charts";
 import { applyDrawingResult, type DrawingCommandResult } from "../../lib/spreadsheet/drawings";
 import type { CellKey } from "../../lib/spreadsheet/formula/dependencies";
 import { quoteSheetName } from "../../lib/spreadsheet/formula/print";
 import type { RecalcReason } from "../../lib/spreadsheet/formula/recalc";
 import type { Sheet, SheetChartContent, SheetDrawing, SpreadsheetModel } from "../../lib/spreadsheet/model";
-import { resolveDefinedName } from "../../lib/spreadsheet/names";
+import { nameFormulaResolver } from "../../lib/spreadsheet/names";
 import type { Recalc } from "./useRecalc";
 import type { SheetDrawings } from "./useSheetDrawings";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -44,14 +43,6 @@ import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
 
 /** Select Data's Apply over a range that names no data. */
 export const INVALID_CHART_RANGE_MESSAGE = "Enter a cell range on one sheet, such as Sheet1!$A$1:$D$5";
-/** SPEC-133: chart references resolve defined names — resolveChartRange's
- * hook, the found name's formula (null: none, or one kept unparsed). */
-export function chartNameResolver(model: SpreadsheetModel): ChartNameResolver {
-  return (name, sheetId) => {
-    const found = resolveDefinedName(model, name, undefined, sheetId);
-    return found && !found.formulaUnparsed ? found.formula : null;
-  };
-}
 /** The flags a too-complex range opens with (Excel's defaults). */
 export const DEFAULT_CHART_SOURCE_FLAGS: ChartSourceFlags = { seriesIn: "columns", firstRowNames: true, firstColCategories: true };
 
@@ -374,7 +365,7 @@ export function useSheetCharts(deps: SheetChartsDeps) {
     }
     const targets = new Map<string, DialogTarget>();
     const add = (target: DialogTarget) => targets.set(`${target.sheetId}\n${target.drawingId}`, target);
-    const resolveName = chartNameResolver(m);
+    const resolveName = nameFormulaResolver(m);
     chartsAffectedBy(m, changed, resolveName).forEach(add);
     hiddenChanged.forEach((sheetId) => chartsReadingSheet(m, sheetId).forEach(add));
     let refreshed = false;

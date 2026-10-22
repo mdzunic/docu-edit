@@ -1,38 +1,21 @@
-// SPEC-133's names in the workbook view ("The Name Box", "View wiring"): the
-// Name Box's typed entry and dropdown, Formulas ▸ Name Manager… and its
-// editor. nameBox.ts decides what an entry means and what the lists show;
-// names.ts owns the commands.
-//
-// - The Name Box: typing only fills `draft` (the box shows it instead of
-//   the address); Enter `submit`s it through interpretNameBox — a jump
-//   selects the target's ranges with the active cell at the first range's
-//   top-left, switching sheet when needed (view state only), reveals it and
-//   returns focus to the grid; a new name is defined for the selection
-//   (absoluteRangesFormula: absolute, sheet-qualified, a union for several
-//   areas) as ONE undo step "Define name"; a refusal is a toast and changes
-//   nothing. Escape (`cancel`) restores the address. `options` are the
-//   dropdown's (`pick` jumps as Enter would). Nothing happens while a cell
-//   is being edited.
-// - The Name Manager (`managerOpen`): its rows (nameManagerRows), the
-//   selected one (`selectedKey`), Delete — ONE step "Delete name" — and
-//   New/Edit opening the editor (`editor`). Ctrl+F3 (Cmd+F3 on macOS, best
-//   effort — the menu item is the guaranteed path; `sheet.nameManager` in
-//   SHEET_SHORTCUTS) opens it from the grid, never from the cell editor, an
-//   input or a dialog.
-// - The editor: name, scope (Workbook or a sheet; fixed when editing, as in
-//   Excel), comment and refers-to, validated live (`editorError`:
-//   validateName in the chosen scope, the edited name excepted, then the
-//   formula must parse — FORMULA_PROBLEM_MESSAGE). New opens on the
-//   selection's reference. OK is ONE step: "Define name" (defineName) or
-//   "Edit name" (updateName — a changed name rewrites every formula that
-//   used it). Relative parts are entered and shown relative to the active
-//   cell and stored relative to A1, as Excel does.
-// - Refers to's point mode (SPEC-122, the way SPEC-132's Select Data points):
-//   `startPick` collapses the dialogs while the grid's selection — on any
-//   sheet — is written into the formula as an absolute, sheet-qualified
-//   reference: inserted at the caret where a reference may start
-//   (canPointAt), replacing the whole formula otherwise, and replaced by
-//   each further selection; `endPick` returns to the editor.
+// SPEC-133's names in the workbook view ("The Name Box", "View wiring"):
+// the Name Box, Formulas ▸ Name Manager… and its editor (nameBox.ts: what an
+// entry means; names.ts: the commands).
+// - Name Box: typing fills `draft`; Enter `submit`s it through
+//   interpretNameBox — a jump selects the target's ranges (switching sheet;
+//   view state only) and refocuses the grid; a new name is defined for the
+//   selection (absoluteRangesFormula) as ONE step "Define name"; a refusal
+//   toasts and changes nothing; Escape (`cancel`) restores the address;
+//   `options` are the dropdown's. Nothing happens while a cell is edited.
+// - Name Manager (`managerOpen`): rows, Delete (ONE step "Delete name"),
+//   New/Edit; Ctrl/Cmd+F3 (`sheet.nameManager`) opens it from the grid only.
+// - Editor: name, scope (fixed when editing, as in Excel), comment and
+//   refers-to, validated live (validateName, then the formula must parse);
+//   OK is ONE step "Define name" or "Edit name" (updateName rewrites every
+//   formula using a renamed name). Relative parts are shown relative to the
+//   active cell and stored relative to A1. Refers-to's point mode (SPEC-122):
+//   `startPick` collapses the dialogs while the grid's selection is written
+//   in as an absolute, sheet-qualified reference; `endPick` returns.
 import { computed, nextTick, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { isMacPlatform } from "../../lib/core/platform";

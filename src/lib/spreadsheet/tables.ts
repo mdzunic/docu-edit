@@ -524,8 +524,9 @@ export function resolveStructuredReference(
   host: { sheetId: string; row: number; col: number },
 ): RangeValue | CellError {
   let found: { sheet: Sheet; table: SheetTable } | undefined;
-  if (node.table !== undefined) {
-    found = findTable(model, node.table);
+  if (node.table !== undefined || !node.text.includes("[")) {
+    // A bare `T` names its table by its whole text.
+    found = findTable(model, node.table ?? node.text);
   } else {
     const sheet = model.sheets.find((each) => each.id === host.sheetId);
     const table = sheet ? tableAt(sheet, host.row, host.col) : undefined;

@@ -1,32 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getCell, type GridRange } from "./address";
-import { DEFAULT_THEME } from "../core/theme";
-import { clearContents, PROTECTED_CELL_MESSAGE } from "./cells";
-import { toOdsFormula } from "./formula/dialect";
-import { NAME_PROBLEM_MESSAGES } from "./names";
-import {
-  convertTableToRange,
-  createTable,
-  detectHeaderRow,
-  expandTableForEntry,
-  fillCalculatedColumn,
-  headerEditColumn,
-  LOCKED_TABLE_MESSAGE,
-  qualifyEntryFormula,
-  renameTable,
-  renameTableColumn,
-  RESIZE_TABLE_MESSAGE,
-  resizeTable,
-  setHeaderRow,
-  setTableOptions,
-  setTableStyle,
-  setTotalsFunction,
-  setTotalsRow,
-  SUBTOTAL_CODES,
-  TABLE_ARRAY_MESSAGE,
-  TABLES_OVERLAP_MESSAGE,
-  TOTALS_FUNCTIONS,
-} from "./tableCommands";
+import { clearContents } from "./cells";
+import { TABLE_ARRAY_MESSAGE, TABLES_OVERLAP_MESSAGE, TOTALS_FUNCTIONS } from "./tableCommands";
 import {
   columnNeedsBrackets,
   escapeColumnName,
@@ -209,5 +184,132 @@ describe("tables follow cells", () => {
     clearContents(m, 0, [range(1, 1, 2, 2), range(3, 0, 4, 5)]);
     expect(m.sheets[0]!.tables).toEqual([]);
     expect(formulasOn2(m)).toEqual(["SUM(#REF!)", "#REF!", "SUM(#REF!)"]);
+  });
+});
+
+describe("structured references resolve (\"Structured references\")", () => {
+  // Sales at A1:D10 on s1: header row 1, data 2–9, totals row 10.
+  const sales: SheetTable = {
+    id: "t",
+    name: "Sales",
+    ref: { top: 0, left: 0, bottom: 9, right: 3 },
+    headerRow: true,
+    totalsRow: true,
+    columns: [{ name: "Region" }, { name: "Price" }, { name: "Amount" }, { name: "a.b" }],
+    style: { name: "TableStyleMedium2", showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+  };
+  const book = { sheets: [{ id: "s1", name: "Data", tables: [sales] } as unknown as Sheet] };
+  const at = (row: number, col = 5) => ({ sheetId: "s1", row, col });
+  const area = (text: string, host = at(4)) => {
+    const open = text.indexOf("[");
+    const value = resolveStructuredReference(book, open > 0 ? { table: text.slice(0, open), text } : { text }, host);
+    return "error" in value ? value.error : (({ top, left, bottom, right }) => [top, left, bottom, right])(value.areas[0]!);
+  };
+
+  it.each([
+    ["Sales", [1, 0, 8, 3]],
+    ["Sales[#Data]", [1, 0, 8, 3]],
+    ["Sales[#All]", [0, 0, 9, 3]],
+    ["Sales[#Headers]", [0, 0, 0, 3]],
+    ["Sales[#Totals]", [9, 0, 9, 3]],
+    ["Sales[Amount]", [1, 2, 8, 2]],
+    ["Sales[[Amount]]", [1, 2, 8, 2]],
+    ["Sales[[#Headers],[Amount]]", [0, 2, 0, 2]],
+    ["Sales[[#Totals],[Amount]]", [9, 2, 9, 2]],
+    ["Sales[[#All],[Amount]]", [0, 2, 9, 2]],
+    ["Sales[[#Headers],[#Data],[Amount]]", [0, 2, 8, 2]],
+    ["Sales[[#Data],[#Totals],[Amount]]", [1, 2, 9, 2]],
+    ["Sales[[Price]:[a.b]]", [1, 1, 8, 3]],
+    ["Sales[[a.b]:[Price]]", [1, 1, 8, 3]],
+    ["Sales[[#Headers],[#Totals]]", "#REF!"],
+    ["Sales[Missing]", "#REF!"],
+    ["Nope[Amount]", "#REF!"],
+  ] as const)("%s → %j", (text, expected) => {
+    expect(area(text)).toEqual(expected);
+  });
+
+  it("this-row forms take the host's row inside the data body, #VALUE! outside it", () => {
+    expect(area("Sales[@Amount]", at(4, 2))).toEqual([4, 2, 4, 2]);
+    expect(area("Sales[@]", at(4, 2))).toEqual([4, 0, 4, 3]);
+    expect(area("Sales[@[Price]:[Amount]]", at(4, 2))).toEqual([4, 1, 4, 2]);
+    expect(area("[@Amount]", at(4, 2))).toEqual([4, 2, 4, 2]);
+    expect(area("Sales[@Amount]", at(0, 2))).toBe("#VALUE!");
+    expect(area("Sales[@Amount]", at(9, 2))).toBe("#VALUE!");
+    expect(area("Sales[@Amount]", at(4, 5))).toBe("#VALUE!");
+  });
+
+  it("a missing header or totals row is #REF!", () => {
+    const bare = { sheets: [{ id: "s1", name: "Data", tables: [{ ...sales, headerRow: false, totalsRow: false }] } as unknown as Sheet] };
+    expect(resolveStructuredReference(bare, { table: "Sales", text: "Sales[#Headers]" }, at(4))).toEqual({ error: "#REF!" });
+    expect(resolveStructuredReference(bare, { table: "Sales", text: "Sales[#Totals]" }, at(4))).toEqual({ error: "#REF!" });
+  });
+
+  it("maps @ to and from the file's [#This Row] form, leaving every other token as written", () => {
+    const pairs: [string, string][] = [
+      ["Sales[@Amount]*2", "Sales[[#This Row],[Amount]]*2"],
+      ["Sales[@]", "Sales[#This Row]"],
+      ["SUM(Sales[@[Price]:[Amount]])", "SUM(Sales[[#This Row],[Price]:[Amount]])"],
+      ["Sales[@['#Units]]", "Sales[[#This Row],['#Units]]"],
+      ["SUM(Sales[Amount]) + A1", "SUM(Sales[Amount]) + A1"],
+    ];
+    for (const [canonical, wire] of pairs) {
+      expect(structuredToXlsx(canonical)).toBe(wire);
+      expect(structuredFromXlsx(wire)).toBe(canonical);
+    }
+  });
+});
+
+describe("token-level table rewrites", () => {
+  it("renames a table, a column, and turns a removed table or column into #REF!, touching only its tokens", () => {
+    expect(renameTableInFormula("SUM(Sales[Amount]) + sales[@Price] + Sales + Other[X]", "Sales", "Orders")).toBe("SUM(Orders[Amount]) + Orders[@Price] + Orders + Other[X]");
+    expect(renameColumnInFormula("Sales[Amount] + Sales[[Price]:[amount]] + Other[Amount]", "Sales", "Amount", "a.b")).toBe("Sales[[a.b]] + Sales[[Price]:[a.b]] + Other[Amount]");
+    expect(removeTableReferences("SUM(Sales[Amount]) + Sales + Other[X]", "Sales")).toBe("SUM(#REF!) + #REF! + Other[X]");
+    expect(removeTableReferences("Sales[Amount] + Sales[Price]", "Sales", "amount")).toBe("#REF! + Sales[Price]");
+    expect(renameTableInFormula("A1 +  B2", "Sales", "Orders")).toBe("A1 +  B2");
+  });
+});
+
+describe("the grammar, escapes, qualification and ODS expansion", () => {
+  it("parses and prints the canonical spelling, escaping [ ] # ' and bracketing special column names", () => {
+    expect(parseStructuredText("Sales[[#This Row],['#Units]]")).toEqual({ table: "Sales", items: [], thisRow: true, columns: { first: "#Units" } });
+    expect(formatStructured({ table: "Sales", items: [], thisRow: true, columns: { first: "#Units" } })).toBe("Sales[@['#Units]]");
+    expect(formatStructured({ table: "T", items: [], thisRow: false, columns: { first: "a.b" } })).toBe("T[[a.b]]");
+    expect(formatStructured({ table: "T", items: [], thisRow: false, columns: { first: "Unit Price" } })).toBe("T[Unit Price]");
+    expect(columnNeedsBrackets("Unit Price")).toBe(false);
+    expect(["a,b", "a:b", "a.b", "a[b", "a]b", "a#b", "a'b", 'a"b', "a{b", "a}b", "a$b", "a^b", "a&b", "a*b", "a+b", "a=b", "a-b", "a>b", "a<b", "a/b", "a\tb", "a\nb"].every(columnNeedsBrackets)).toBe(true);
+    expect(escapeColumnName("[x]#'")).toBe("'[x']'#''");
+    expect(parseStructuredText("Sales[[#Headers],[#Data],[Amount]]")).toEqual({ table: "Sales", items: ["#Headers", "#Data"], thisRow: false, columns: { first: "Amount" } });
+  });
+
+  it("qualifies a formula's unnamed references with the host table, @ for this-row", () => {
+    expect(qualifyStructuredReferences("[@Price]*2+[Qty]+Other[X]", "Sales")).toBe("Sales[@Price]*2+Sales[Qty]+Other[X]");
+    expect(qualifyStructuredReferences("[[#This Row],[Price]]", "Sales")).toBe("Sales[@Price]");
+  });
+
+  it("expands every structured reference to its A1 equivalent for ODS (\"Canonical and wire forms\")", () => {
+    const sales: SheetTable = {
+      id: "t",
+      name: "Sales",
+      ref: { top: 0, left: 0, bottom: 9, right: 3 },
+      headerRow: true,
+      totalsRow: false,
+      columns: [{ name: "Region" }, { name: "Price" }, { name: "Amount" }, { name: "Qty" }],
+      style: { showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+    };
+    const book = { names: [], sheets: [{ id: "s1", name: "Data", tables: [sales] } as unknown as Sheet] };
+    const host = { sheetId: "s1", row: 6, col: 2 };
+    expect(expandStructuredReferences(book, "Sales[@Amount]", host)).toBe("$C7");
+    expect(expandStructuredReferences(book, "Sales[@]", host)).toBe("$A7:$D7");
+    expect(expandStructuredReferences(book, "Sales[Amount]", host)).toBe("$C$2:$C$10");
+    expect(expandStructuredReferences(book, "SUBTOTAL(109,Sales[Amount])", host)).toBe("SUBTOTAL(109,$C$2:$C$10)");
+  });
+});
+
+describe("the table commands' pinned texts", () => {
+  it("refuses with the spec's messages and offers the nine totals functions", () => {
+    expect(TABLES_OVERLAP_MESSAGE).toBe("Tables can't overlap");
+    expect(TABLE_ARRAY_MESSAGE).toBe("Tables can't contain multi-cell array formulas");
+    expect(TOTALS_FUNCTIONS).toHaveLength(9);
+    expect(TOTALS_FUNCTIONS).toEqual(expect.arrayContaining(["none", "average", "count", "countNums", "max", "min", "sum", "stdDev", "var"]));
   });
 });

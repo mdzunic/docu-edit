@@ -189,7 +189,8 @@ const sections = computed(() =>
 
 .tile[aria-selected="true"] {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 var(--border-width) var(--accent);
+  outline: var(--border-width) solid var(--accent);
+  outline-offset: calc(-1 * var(--border-width));
 }
 
 /* The sample is paper: white under its cells, whatever the app theme. */
@@ -199,7 +200,7 @@ const sections = computed(() =>
   width: 68px;
   height: 64px;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--sheet-paper);
 }
 
 .preview-cell {

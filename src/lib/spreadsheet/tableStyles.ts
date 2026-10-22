@@ -529,3 +529,17 @@ export function styleOverLook(look: CellStyle | undefined, own: CellStyle, norma
   }
   return changed ? style : own;
 }
+
+const lookKeys = new WeakMap<CellStyle, number>();
+let nextLookKey = 1;
+
+/** A number per look object (tableCellLook's are identity-stable) — for a
+ * css cache key, so a cell under a look never shares a plain cell's entry. */
+export function lookKey(look: CellStyle): number {
+  let key = lookKeys.get(look);
+  if (key === undefined) {
+    key = nextLookKey++;
+    lookKeys.set(look, key);
+  }
+  return key;
+}
