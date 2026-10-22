@@ -724,6 +724,35 @@ export function readXlsxSheetAnnotations(
   return out;
 }
 
+/** Whether a sheet's notes and threads read as modelled — false when its
+ * comments, VML or threaded part breaks the subset (the reader then leaves
+ * them, and the writer every one of those parts, verbatim). SPEC-124's
+ * retained-references pass still moves an unmodelled sheet's parts
+ * (xlsx/retainedReferences.ts); a modelled one's are the "notes" adjuster's.
+ * The VML part is the sheet's `vmlDrawing` relationship's (the worksheet
+ * text is not read). */
+export function xlsxNotesModelled(parts: PartLookup, sheetPart: string, persons: readonly ThreadPerson[] | undefined): boolean {
+  const rels = relationshipsOf(parts, sheetPart);
+  const vml = rels.filter((rel) => relationshipKind(rel.type) === "vmlDrawing");
+  const found = sheetParts(parts, sheetPart, rels, undefined);
+  if (vml.length === 1) {
+    const part = relatedPart(parts, sheetPart, vml[0]);
+    if (part) {
+      found.vml = part;
+    }
+  }
+  if (found.comments === undefined && found.vml === undefined && found.threaded === undefined) {
+    return true;
+  }
+  return readNotes(found, persons, undefined).modelled;
+}
+
+/** Whether a worksheet's `<hyperlinks>` read as modelled (false: the reader
+ * left them, and the writer the element, verbatim). */
+export function xlsxHyperlinksModelled(parts: PartLookup, sheetPart: string, worksheetXml: string): boolean {
+  return readLinks(worksheetXml, relationshipsOf(parts, sheetPart)).links !== undefined;
+}
+
 // --- writing: helpers ----------------------------------------------------------------------------
 
 /** The prefix (with its colon) a start tag binds to `ns`, if any. */
