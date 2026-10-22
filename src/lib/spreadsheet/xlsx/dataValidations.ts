@@ -160,13 +160,13 @@ function readRule(node: XmlNode, sourceXml: string, ranges: GridRange[], formula
 }
 
 /** A base `<dataValidation>`. */
-function readBaseRule(node: XmlNode, text: string, mint: () => string): DataValidation | null {
+function readBaseRule(node: XmlNode, text: string, mint: () => string = mintValidationId): DataValidation | null {
   const formula = (local: string): string | undefined => formulaText(childNodes(node, local, inMain)[0]);
   return readRule(node, text.slice(node.start, node.end), parseCfSqref(nodeAttr(node, "sqref") ?? ""), formula("formula1"), formula("formula2"), false, mint);
 }
 
 /** An `<x14:dataValidation>`. */
-function readX14Rule(node: XmlNode, text: string, mint: () => string): DataValidation | null {
+function readX14Rule(node: XmlNode, text: string, mint: () => string = mintValidationId): DataValidation | null {
   const formula = (local: string): string | undefined => {
     const holder = childNodes(node, local, inX14)[0];
     return formulaText(holder ? childNodes(holder, "f", inXm)[0] : undefined);

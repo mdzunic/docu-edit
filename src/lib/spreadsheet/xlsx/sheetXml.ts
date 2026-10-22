@@ -1438,7 +1438,7 @@ export function startWorksheetRead(xml: string, sheetName: string, options: Work
   });
 
   let done = false;
-  let content: WorksheetContent | null = null;
+  let outcome: WorksheetContent | null = null;
   return {
     step(limit: number): boolean {
       if (done) {
@@ -1449,14 +1449,14 @@ export function startWorksheetRead(xml: string, sheetName: string, options: Work
         return false;
       }
       done = true;
-      content = tooLarge ? null : finish();
+      outcome = tooLarge ? null : finish();
       return true;
     },
     content(): WorksheetContent | null {
       if (!done) {
         throw new Error("startWorksheetRead: the part is not read yet");
       }
-      return content;
+      return outcome;
     },
     withoutCells(): string {
       if (!done) {
