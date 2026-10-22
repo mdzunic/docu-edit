@@ -73,7 +73,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       v-if="book.workbook.value"
       #menubar
     >
-      <WorkbookCommandBar v-bind="{ menu, formatting, painter, merges, tables }" />
+      <WorkbookCommandBar v-bind="{ menu, formatting, painter, merges }" />
       <CsvImportBar :csv-import="editing.csvImport" />
     </template>
     <WorkbookBody

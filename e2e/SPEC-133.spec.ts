@@ -71,7 +71,7 @@ async function downloadAndReopen(page: Page, trigger: () => Promise<void>, fileN
 }
 
 async function nameManagerNames(page: Page): Promise<string[]> {
-  await page.getByTestId("sheet-menu-formulas").click();
+  await page.getByTestId("menu-title-formulas").click();
   await page.getByTestId("sheet-menu-name-manager").click();
   const manager = page.getByTestId("name-manager");
   await expect(manager).toBeVisible();
@@ -153,7 +153,7 @@ test("names, tables and both formats (AC-61–AC-63)", async ({ page }) => {
   await enter(page, "J14", "9");
   await clickCell(page, "I12");
   await clickCell(page, "J14", ["Shift"]);
-  await page.getByTestId("sheet-menu-insert").click();
+  await page.getByTestId("menu-title-insert").click();
   await page.getByTestId("sheet-menu-insert-table").click();
   const create = page.getByTestId("sheet-create-table");
   await expect(create).toBeVisible();

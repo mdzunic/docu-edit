@@ -26,7 +26,10 @@
 // picker and shape gallery popover (SheetInsertSurfaces), the drawing context
 // menu (SheetDrawingContextMenu) and the alt-text dialog
 // (DrawingAltTextDialog). SPEC-133: the Name Box's names (the formula bar) and
-// the Name Manager and its editor, from the grid context's `names`.
+// the Name Manager and its editor, from the grid context's `names`; the
+// table surfaces (SheetTableSurfaces, the grid context's `tables`) — the
+// design bar and the ODS notice sit BELOW the sheet, between it and the tabs,
+// so they never move a cell under the pointer.
 // Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
@@ -34,6 +37,7 @@ import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
 import { namesOf } from "../../views/spreadsheet/useNames";
+import { tablesOf } from "../../views/spreadsheet/useSheetTables";
 import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import DrawingAltTextDialog from "./DrawingAltTextDialog.vue";
@@ -55,6 +59,7 @@ import SheetMergeWarningDialog from "./SheetMergeWarningDialog.vue";
 import SheetMoveOverwriteDialog from "./SheetMoveOverwriteDialog.vue";
 import SheetSidePanel from "./SheetSidePanel.vue";
 import SheetSizeDialog from "./SheetSizeDialog.vue";
+import SheetTableSurfaces from "./SheetTableSurfaces.vue";
 import SheetTabColorPicker from "./SheetTabColorPicker.vue";
 import SheetTabDeleteDialog from "./SheetTabDeleteDialog.vue";
 import SheetTabMenu from "./SheetTabMenu.vue";
@@ -91,6 +96,8 @@ const grid = computed(() => asSheetGridContext(props.grid));
 const sortFilter = computed(() => sortFilterOf(props.grid));
 /** SPEC-133: the Name Box, the Name Manager and its editor (null: not wired). */
 const names = computed(() => namesOf(props.grid));
+/** SPEC-133: the tables' design bar, dialogs and notice (null: not wired). */
+const tables = computed(() => tablesOf(props.grid));
 
 /** The cell menu's Cut, Copy, Paste and Paste special… (SPEC-125). */
 function clipboard(action = "copy") {
@@ -193,6 +200,10 @@ const tabs = computed(() => {
       </div>
       <SheetSidePanel :editing="editing" />
     </div>
+    <SheetTableSurfaces
+      v-if="tables"
+      :tables="tables"
+    />
     <SheetTabs
       :tabs="tabs"
       :active-index="book.activeIndex.value"
