@@ -20,7 +20,8 @@
 // Writing `<definedNames>` from `model.names` (writer.ts, whenever the
 // workbook part is rebuilt): model order (source order, new names
 // appended); a name scoped to a sheet no longer in the model is not written;
-// zero names write no `<definedNames>`. Each name is matched to the source
+// zero names write no `<definedNames>` (one the source has is left empty, as
+// SPEC-128 leaves it). Each name is matched to the source
 // element it was read from (same name, case-insensitively, and the same
 // scope — a scoped name through its sheet's source position, an orphan by
 // its raw `localSheetId`); a matched name keeps the source start tag — so
@@ -375,8 +376,8 @@ export function definedNamesSplices(xml: string, layout: DefinedNamesLayout, nam
   if (container === null) {
     return written === 0 ? [] : [{ start: layout.insertAt, end: layout.insertAt, text: `<${p}definedNames>${content}</${p}definedNames>` }];
   }
-  if (written === 0) {
-    return layout.elements.length === 0 ? [] : [{ start: container.start, end: container.end, text: "" }];
+  if (written === 0 && container.selfClosing) {
+    return [];
   }
   if (container.selfClosing) {
     const tag = xml.slice(container.start, container.end);

@@ -152,6 +152,18 @@ export function readTablePart(xml: string): Omit<SheetTable, "id"> | null {
   return table;
 }
 
+/** A `.rels` part's relationships; none for an absent or unreadable one. */
+function relsIn(text: string | undefined): RelEntry[] {
+  if (text === undefined || text.trim() === "") {
+    return [];
+  }
+  try {
+    return readRels(text);
+  } catch {
+    return [];
+  }
+}
+
 /** The relationship ids a worksheet's `<tableParts>` lists, in order;
  * undefined when it has none. */
 export function worksheetTablePartIds(xml: string): string[] | undefined {
@@ -172,7 +184,7 @@ export function readXlsxSheetTables(parts: PartLookup, sheetPartName: string, sh
     return [];
   }
   const ids = worksheetTablePartIds(sheetXml) ?? [];
-  const rels = new Map(readRels(partTextOf(parts, relsPathFor(sheetPartName)) ?? "").map((rel) => [rel.id, rel] as const));
+  const rels = new Map(relsIn(partTextOf(parts, relsPathFor(sheetPartName))).map((rel) => [rel.id, rel] as const));
   const tables: SheetTable[] = [];
   for (const rId of ids) {
     const rel = rels.get(rId);
@@ -470,7 +482,7 @@ export function planTableWrites(parts: PartLookup, plans: readonly TableSheetPla
     return readCache.get(partName)!;
   };
   const processed = plans.filter((plan) => plan.sheet.kind === "grid" && (plan.sheet.tables !== undefined || plan.sheet.dirty === true));
-  const relsOf = new Map(plans.map((plan) => [plan.partName, readRels(relsText(plan.partName) ?? "")] as const));
+  const relsOf = new Map(plans.map((plan) => [plan.partName, relsIn(relsText(plan.partName))] as const));
   const tableRels = (plan: TableSheetPlan): RelEntry[] => (relsOf.get(plan.partName) ?? []).filter((rel) => relationshipKind(rel.type) === "table" && !rel.external);
   // Parts another (unprocessed) sheet still relates.
   const foreign = new Set(plans.filter((plan) => !processed.includes(plan)).flatMap((plan) => tableRels(plan).flatMap((rel) => targetPart(plan.partName, rel) ?? [])));

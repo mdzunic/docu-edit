@@ -93,12 +93,14 @@ import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import { isEmptyRemap, type SheetRemap } from "../formula/sheetRefs";
 import { buildGridMetrics, maxDigitWidthPx } from "../geometry";
 import { isModelledChart } from "../charts";
-import type { Sheet, SheetDrawing, SpreadsheetModel } from "../model";
+import type { DefinedName, Sheet, SheetDrawing, SpreadsheetModel } from "../model";
+import { RESERVED_PREFIX, setReservedName } from "../names";
 import { copyRemap, sourceSheetRemap } from "../sourceNames";
-import { applySplices, attributeValue, decodeXmlText, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { applySplices, attributeValue, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText, sheetPartHasAutoFilter } from "./autoFilter";
 import { sheetChartsChanged, sheetHasCreatedChart, XlsxChartWriter } from "./chartParts";
 import { DRAWING_CONTENT_TYPE, DRAWING_RELATIONSHIP_TYPE, newRelsXml, spliceWorksheetDrawing, writeDrawingPart, writeSheetDrawings } from "./drawingXml";
+import { definedNamesSplices, definedNamesXml, scanDefinedNames } from "./definedNames";
 import { ownedClosure } from "./duplicate";
 import {
   contentTypeIn,
@@ -121,9 +123,10 @@ import {
   type SourceWorkbook,
 } from "./package";
 import { SharedStringsWriter } from "./sharedStrings";
-import { mentionsAnyName, passFor, remapXlsxFormula, remappedNames } from "./sheetNamePass";
+import { mentionsAnyName, passFor, remappedNames } from "./sheetNamePass";
 import { emptyWorksheetXml, serializeWorksheet, type XlsxSheetContext } from "./sheetXml";
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
+import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
 
 export { emptyWorksheetXml } from "./sheetXml";
@@ -151,10 +154,16 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheetChartsChanged(sheet))) {
+  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
   return zip(buildSubstitution(model, parts, options, "write"));
+}
+
+/** SPEC-133: a sheet holding a table to regenerate or to write as a new
+ * part (a deleted table marks its sheet dirty). */
+function sheetTablesChanged(sheet: Sheet): boolean {
+  return (sheet.tables ?? []).some((table) => table.dirty === true || table.partName === undefined);
 }
 
 /** The substitution path's parts for any model with a retained package —
@@ -226,6 +235,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   );
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
+  const tables = fromScratchTables(model, sheetParts, layer);
   const contentTypes =
     `${XML_DECLARATION}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -235,6 +245,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     sheetParts.map((part) => `<Override PartName="/${part}" ContentType="${isChartSheetPart(part) ? CHARTSHEET_CONTENT_TYPE : WORKSHEET_CONTENT_TYPE}"/>`).join("") +
     layer.drawingParts.map((part) => `<Override PartName="/${part}" ContentType="${DRAWING_CONTENT_TYPE}"/>`).join("") +
     layer.overrides.map((entry) => `<Override PartName="/${entry.partName}" ContentType="${entry.contentType}"/>`).join("") +
+    tables.overrides.map((part) => `<Override PartName="/${part}" ContentType="${TABLE_CONTENT_TYPE}"/>`).join("") +
     `<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
     `<Override PartName="/xl/styles.xml" ContentType="${STYLES_CONTENT_TYPE}"/>` +
     (sharedStrings === undefined ? "" : `<Override PartName="/xl/sharedStrings.xml" ContentType="${SHARED_STRINGS_CONTENT_TYPE}"/>`) +
@@ -272,6 +283,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     ...(sharedStrings === undefined ? [] : [{ name: "xl/sharedStrings.xml", data: encode(sharedStrings) }]),
     ...layer.worksheets.map((xml, index) => ({ name: sheetParts[index]!, data: encode(xml) })),
     ...layer.entries,
+    ...tables.entries,
   ];
 }
 
@@ -361,19 +373,96 @@ function fromScratchDrawings(
   return { worksheets: out, entries, drawingParts, overrides: chartWrites.overrides, defaults };
 }
 
-/** A from-scratch workbook's `<definedNames>`: one `_xlnm._FilterDatabase`
- * per sheet with an autofilter (SPEC-128); "" when none has one. */
+/** A from-scratch workbook's `<definedNames>` (SPEC-133): every model name
+ * in model order, each sheet's `_xlnm._FilterDatabase` first reconciled with
+ * its autofilter (SPEC-128: one hidden name per filtered sheet); a name kept
+ * unparsed in another format's dialect is not written. "" when none. */
 function fromScratchDefinedNames(model: SpreadsheetModel): string {
-  const names = model.sheets.flatMap((sheet, index) => (sheet.kind === "grid" && sheet.autoFilter ? [filterDatabaseXml(sheet, index, "")] : []));
-  return names.length === 0 ? "" : `<definedNames>${names.join("")}</definedNames>`;
+  const scratch: SpreadsheetModel = { ...model, names: model.names ?? [] };
+  for (const sheet of model.sheets) {
+    if (sheet.kind === "grid") {
+      reconcileFilterDatabase(scratch, sheet);
+    }
+  }
+  const names = model.format === "xlsx" ? scratch.names : scratch.names.filter((name) => !name.formulaUnparsed);
+  const index = new Map(model.sheets.map((sheet, at) => [sheet.id, at] as const));
+  return definedNamesXml(names, (sheetId) => index.get(sheetId));
 }
 
-/** One `_xlnm._FilterDatabase` definedName, as Excel writes it. */
-function filterDatabaseXml(sheet: Sheet, index: number, prefix: string): string {
-  return (
-    `<${prefix}definedName name="${FILTER_DATABASE_NAME}" localSheetId="${index}" hidden="1">` +
-    `${escapeText(filterDatabaseText(sheet.name, sheet.autoFilter!.range))}</${prefix}definedName>`
+const FILTER_DATABASE_SHORT = FILTER_DATABASE_NAME.slice(RESERVED_PREFIX.length);
+
+/** SPEC-128 through SPEC-133's names.ts, on a COPY of the caller's model
+ * (`scratch.names` replaced, never mutated): a sheet with an autofilter
+ * keeps its first `_xlnm._FilterDatabase` while it names the autofilter's
+ * range (however written), else gets the range written as Excel does
+ * (`'Sheet'!$A$1:$D$20`, xlsx/autoFilter.ts) — a new one appended, hidden;
+ * a sheet without one loses it; a sheet's further ones go. */
+function reconcileFilterDatabase(scratch: SpreadsheetModel, sheet: Sheet): void {
+  const key = FILTER_DATABASE_NAME.toUpperCase();
+  const own = scratch.names.filter((name) => name.scopeSheetId === sheet.id && name.name.toUpperCase() === key);
+  if (own.length > 1) {
+    const extra = new Set(own.slice(1));
+    scratch.names = scratch.names.filter((name) => !extra.has(name));
+  }
+  const filter = sheet.autoFilter;
+  if (filter === undefined) {
+    setReservedName(scratch, sheet.id, FILTER_DATABASE_SHORT, null);
+    return;
+  }
+  const existing = own[0];
+  if (existing === undefined || existing.formulaUnparsed || !filterDatabaseNames(existing.formula, sheet.name, filter.range)) {
+    setReservedName(scratch, sheet.id, FILTER_DATABASE_SHORT, filterDatabaseText(sheet.name, filter.range));
+  }
+}
+
+/** The names a save writes: the model's, with the `_xlnm._FilterDatabase`
+ * of every sheet `reconciled` accepts brought in line (the same array when
+ * nothing changed). */
+function namesToWrite(model: SpreadsheetModel, plans: readonly SheetPlan[], reconciled: (plan: SheetPlan) => boolean): DefinedName[] {
+  const scratch: SpreadsheetModel = { ...model, names: model.names };
+  for (const plan of plans) {
+    if (reconciled(plan)) {
+      reconcileFilterDatabase(scratch, plan.sheet);
+    }
+  }
+  return scratch.names;
+}
+
+/** SPEC-133 "Tables on the wire", from scratch: every grid sheet's tables as
+ * new parts (xlsx/tableXml.ts planTableWrites over an empty package) — the
+ * parts, the sheets' relationships (joining a drawing's `.rels` when the
+ * sheet has one), `<tableParts>` and the Overrides. */
+function fromScratchTables(model: SpreadsheetModel, sheetParts: readonly string[], layer: { worksheets: string[]; entries: ZipEntryInput[] }): { entries: ZipEntryInput[]; overrides: string[] } {
+  if (!model.sheets.some((sheet) => (sheet.tables ?? []).length > 0)) {
+    return { entries: [], overrides: [] };
+  }
+  const relsEntry = (sheetPart: string): number => layer.entries.findIndex((entry) => entry.name === relsPathFor(sheetPart));
+  const plan = planTableWrites(
+    new Map(),
+    model.sheets.map((sheet, index) => ({ sheet, partName: sheetParts[index]!, retained: false })),
+    (sheetPart) => {
+      const at = relsEntry(sheetPart);
+      return at < 0 ? undefined : decodeUtf8(layer.entries[at]!.data);
+    },
+    new Set([...sheetParts, ...layer.entries.map((entry) => entry.name)]),
   );
+  layer.worksheets = layer.worksheets.map((xml, index) => {
+    const ids = plan.tableParts.get(sheetParts[index]!);
+    return ids === undefined ? xml : spliceWorksheetTableParts(xml, ids);
+  });
+  const entries: ZipEntryInput[] = [];
+  for (const [relsPath, text] of plan.rels) {
+    const at = layer.entries.findIndex((entry) => entry.name === relsPath);
+    if (at >= 0) {
+      layer.entries[at] = { name: relsPath, data: encode(text) };
+    } else {
+      entries.push({ name: relsPath, data: encode(text) });
+    }
+  }
+  for (const [name, text] of plan.texts) {
+    entries.push({ name, data: encode(text) });
+  }
+  return { entries, overrides: plan.added };
 }
 
 // --- substitution -------------------------------------------------------------------------
@@ -440,7 +529,9 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   // What the package reaches before and after: the workbook's edges are its
   // surviving relationships plus every planned sheet part.
   const edges = packageEdges(parts);
-  const sourceReach = reachableFrom([""], edges);
+  // A copy's own closure (SPEC-121) counts as reached: a part of it the save
+  // no longer relates (SPEC-133: a table part the model now holds) goes.
+  const sourceReach = reachableFrom(["", ...plans.filter((plan) => !plan.generated && parts.has(plan.partName)).map((plan) => plan.partName)], edges);
   const droppedRelIds = new Set([...deletedSources.map((sheet) => sheet.rId), ...calcChainRels.map((rel) => rel.id)]);
   const afterEdges = new Map(edges);
   afterEdges.set(workbook.path, [
@@ -462,6 +553,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   // SPEC-132's chart parts (a patched one takes its pass before the patch).
   const drawingPlan = mode === "write" ? planDrawingWrites(model, parts, plans, (part) => ownerRemap.get(part) ?? remap) : undefined;
   for (const [owner, targets] of drawingPlan?.edges ?? []) {
+    afterEdges.set(owner, targets);
+  }
+  // SPEC-133: the tables' parts and relationships (a save only), over the
+  // sheet `.rels` the drawing layer left.
+  const tablePlan = mode === "write" ? planSubstitutionTables(parts, plans, drawingPlan) : undefined;
+  for (const [owner, targets] of tablePlan?.edges ?? []) {
     afterEdges.set(owner, targets);
   }
   const afterReach = reachableFrom([""], afterEdges);
@@ -505,9 +602,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   };
   const sheetBytes = new Map<string, Uint8Array>();
   // SPEC-131: a sheet whose drawing part comes or goes gets its <drawing>.
+  // SPEC-133: then the `<tableParts>` the table plan rewrote.
   const withDrawing = (partName: string, bytes: Uint8Array): Uint8Array => {
     const rId = drawingPlan?.worksheetDrawing.get(partName);
-    return rId === undefined ? bytes : encode(spliceWorksheetDrawing(decodeUtf8(bytes), rId));
+    const drawn = rId === undefined ? bytes : encode(spliceWorksheetDrawing(decodeUtf8(bytes), rId));
+    const ids = tablePlan?.tableParts.get(partName);
+    return ids === undefined ? drawn : encode(spliceWorksheetTableParts(decodeUtf8(drawn), ids));
   };
   for (const plan of plans) {
     const active = plan.index === activeIndex;
@@ -564,10 +664,23 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   const appPath = appPropertiesPath(parts);
   const lastWorksheet = [...parts.keys()].filter((name) => name.startsWith("xl/worksheets/") && !skipped.has(name)).at(-1);
   const generated = plans.filter((plan) => plan.generated);
+  // SPEC-133: regenerated table parts and rewritten sheet `.rels` replace
+  // the retained ones (never passed: model text); new ones are appended.
+  const tableReplaced = new Map<string, Uint8Array>();
+  const tableAdded: ZipEntryInput[] = [];
+  for (const [name, xml] of [...(tablePlan?.rels ?? []), ...(tablePlan?.texts ?? [])]) {
+    const data = encode(xml);
+    if (parts.has(name) || drawingPlan?.added.some((entry) => entry.name === name)) {
+      tableReplaced.set(name, data);
+    } else {
+      tableAdded.push({ name, data });
+    }
+  }
   const appended = (): ZipEntryInput[] => [
     ...generated.map((plan) => ({ name: plan.partName, data: sheetBytes.get(plan.partName)! })),
     ...added.map((part) => ({ name: part.name, data: part.data })),
-    ...(drawingPlan?.added ?? []),
+    ...(drawingPlan?.added ?? []).map((entry) => ({ name: entry.name, data: tableReplaced.get(entry.name) ?? entry.data })),
+    ...tableAdded,
   ];
   // SPEC-131 "Media parts": a model media part is written from the model.
   const modelMedia = (name: string, bytes: Uint8Array): Uint8Array | undefined => {
@@ -584,15 +697,21 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
     let data = bytes;
     if (name === contentTypesName) {
-      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added, drawingPlan));
+      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added, drawingPlan, tablePlan?.added ?? []));
     } else if (name === workbook.path) {
-      data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, write ? filterDatabaseScope(model, parts) : undefined));
+      data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, workbookNames(model, plans, write ? filterDatabaseScope(model, parts) : undefined)));
     } else if (name === workbook.relsPath) {
       data = encode(workbookRelsFor(workbook, plans, droppedRelIds, added));
     } else if (name === appPath) {
       data = encode(appXmlFor(decodeUtf8(bytes), workbook, plans, remap));
     } else {
-      data = sheetBytes.get(name) ?? drawingPlan?.replaced.get(name) ?? replaced.get(name) ?? modelMedia(name, bytes) ?? passed(name, bytes, ownerRemap.get(name) ?? remap);
+      data =
+        sheetBytes.get(name) ??
+        tableReplaced.get(name) ??
+        drawingPlan?.replaced.get(name) ??
+        replaced.get(name) ??
+        modelMedia(name, bytes) ??
+        passed(name, bytes, ownerRemap.get(name) ?? remap);
     }
     out.push({ name, data });
     if (name === lastWorksheet) {
@@ -603,6 +722,36 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     out.push(...appended());
   }
   return out;
+}
+
+/** SPEC-133 "Names on the wire": the names workbookXmlFor rebuilds
+ * `<definedNames>` from — the model's, the `_xlnm._FilterDatabase`s of the
+ * sheets `reconciled` accepts brought in line (a save); undefined (the part's
+ * names left as written) when the model holds none to speak of (a record no
+ * reader upgrade gave names) or nothing changed them. */
+function workbookNames(model: SpreadsheetModel, plans: readonly SheetPlan[], reconciled: ((plan: SheetPlan) => boolean) | undefined): readonly DefinedName[] | undefined {
+  if (model.names === undefined) {
+    return undefined;
+  }
+  const names = reconciled === undefined ? model.names : namesToWrite(model, plans, reconciled);
+  return model.namesDirty || model.structureDirty || names !== model.names ? names : undefined;
+}
+
+/** SPEC-133 "Tables on the wire": the save's table writes over the planned
+ * sheets, each sheet's `.rels` as the drawing layer left it. */
+function planSubstitutionTables(parts: Map<string, Uint8Array>, plans: readonly SheetPlan[], drawingPlan: DrawingPlan | undefined): TableWritePlan {
+  const relsText = (sheetPart: string): string | undefined => {
+    const relsPath = relsPathFor(sheetPart);
+    const bytes = drawingPlan?.replaced.get(relsPath) ?? drawingPlan?.added.find((entry) => entry.name === relsPath)?.data ?? parts.get(relsPath);
+    return bytes === undefined ? undefined : decodeUtf8(bytes);
+  };
+  const taken = new Set([...parts.keys(), ...plans.map((plan) => plan.partName), ...(drawingPlan?.added ?? []).map((entry) => entry.name)]);
+  return planTableWrites(
+    parts,
+    plans.map((plan) => ({ sheet: plan.sheet, partName: plan.partName, retained: !plan.generated && parts.has(plan.partName) })),
+    relsText,
+    taken,
+  );
 }
 
 /** A dirty sheet's retained text with the pass and its tab colour applied —
@@ -793,138 +942,42 @@ function filterDatabaseScope(model: SpreadsheetModel, parts: ReadonlyMap<string,
     }
     return had;
   };
+  const key = FILTER_DATABASE_NAME.toUpperCase();
+  const named = (sheetId: string): boolean => (model.names ?? []).some((name) => name.scopeSheetId === sheetId && name.name.toUpperCase() === key);
   return (plan) =>
     plan.sheet.kind === "grid" &&
     (model.structureDirty === true || plan.sheet.dirty === true || plan.source === undefined) &&
-    (plan.sheet.autoFilter !== undefined || (plan.source !== undefined && sourceHad(plan.source.partName)));
-}
-
-/** A `_xlnm._FilterDatabase` definedName met in the source. */
-interface FilterDatabaseEntry {
-  start: number;
-  end: number;
-  textStart: number;
-  textEnd: number;
-  sourceIndex: number;
-}
-
-/** SPEC-128 "xlsx wire mapping": the `_xlnm._FilterDatabase` names
- * reconciled by string splice — a reconciled sheet with an autofilter keeps
- * its first source name (localSheetId renumbered to its index, the text left
- * as written while it still names the range, else rewritten) or gains one;
- * every other name of a reconciled sheet, and every name of a deleted sheet,
- * goes. New names go first inside `<definedNames>` — created before the
- * first of `calcPr` and its later siblings when the part has none, or opened
- * up when it closes itself. */
-function filterDatabaseSplices(
-  xml: string,
-  prefix: string,
-  entries: readonly FilterDatabaseEntry[],
-  plans: readonly SheetPlan[],
-  sourceIndexToModel: ReadonlyMap<number, number>,
-  container: { start: number; end: number; selfClosing: boolean; contentStart: number } | null,
-  insertAt: number,
-  reconciled: (plan: SheetPlan) => boolean,
-  splices: Splice[],
-): void {
-  const named = new Set<number>();
-  for (const entry of entries) {
-    const modelIndex = sourceIndexToModel.get(entry.sourceIndex);
-    const sheet = modelIndex === undefined ? undefined : plans[modelIndex]!.sheet;
-    if (modelIndex === undefined || sheet?.autoFilter === undefined || named.has(modelIndex)) {
-      splices.push({ start: entry.start, end: entry.end, text: "" });
-      continue;
-    }
-    named.add(modelIndex);
-    const tagText = startTagAt(xml, entry.start);
-    const tag = withLocalSheetId(tagText, modelIndex);
-    const raw = xml.slice(entry.textStart, entry.textEnd);
-    const body = filterDatabaseNames(decodeXmlText(raw), sheet.name, sheet.autoFilter.range) ? raw : escapeText(filterDatabaseText(sheet.name, sheet.autoFilter.range));
-    if (tag !== tagText || body !== raw) {
-      const close = entry.textEnd === entry.end ? `</${/^<([\w.:-]+)/.exec(tagText)![1]}>` : xml.slice(entry.textEnd, entry.end);
-      const open = tagText.endsWith("/>") ? `${tag.replace(/\s*\/>$/, ">")}` : tag;
-      splices.push({ start: entry.start, end: entry.end, text: `${open}${body}${close}` });
-    }
-  }
-  const added = plans
-    .filter((plan) => plan.sheet.autoFilter !== undefined && !named.has(plan.index) && reconciled(plan))
-    .map((plan) => filterDatabaseXml(plan.sheet, plan.index, prefix));
-  if (added.length === 0) {
-    return;
-  }
-  const names = added.join("");
-  if (container === null) {
-    splices.push({ start: insertAt, end: insertAt, text: `<${prefix}definedNames>${names}</${prefix}definedNames>` });
-  } else if (container.selfClosing) {
-    const tag = xml.slice(container.start, container.end);
-    const name = /^<([\w.:-]+)/.exec(tag)![1];
-    splices.push({ start: container.start, end: container.end, text: `${tag.replace(/\s*\/>$/, ">")}${names}</${name}>` });
-  } else {
-    splices.push({ start: container.contentStart, end: container.contentStart, text: names });
-  }
+    (plan.sheet.autoFilter !== undefined || (plan.source !== undefined ? sourceHad(plan.source.partName) : named(plan.sheet.id)));
 }
 
 /** CT_Workbook's children after `calcPr`: an absent `calcPr` is created
  * before the first of these. */
 const AFTER_CALC_PR = ["oleSize", "customWorkbookViews", "pivotCaches", "smartTagPr", "smartTagTypes", "webPublishing", "fileRecoveryPr", "webPublishObjects", "extLst"];
 
+/** The rebuilt workbook part: `<sheets>`, every workbookView's `activeTab`
+ * (no `firstSheet`), SPEC-133's `<definedNames>` from `names` when given
+ * (xlsx/definedNames.ts definedNamesSplices: `localSheetId` recomputed from
+ * the scope sheet's current index, a name matched to its source element
+ * keeping its bytes) and `calcPr@fullCalcOnLoad`. */
 function workbookXmlFor(
   workbook: SourceWorkbook,
   plans: readonly SheetPlan[],
   remap: SheetRemap,
   activeIndex: number,
   fullCalc: boolean,
-  reconciled: ((plan: SheetPlan) => boolean) | undefined,
+  names: readonly DefinedName[] | undefined,
 ): string {
   const xml = workbook.xml;
   const root = rootTag(xml);
   const relPrefix = relationshipPrefix(root.tag);
   const splices: Splice[] = [];
-  const sourceIndexToModel = new Map<number, number>();
-  workbook.sheets.forEach((source, sourceIndex) => {
-    const plan = plans.find((each) => each.source === source);
-    if (plan) {
-      sourceIndexToModel.set(sourceIndex, plan.index);
-    }
-  });
-  const copiesBySourceIndex = new Map<number, SheetPlan[]>();
-  for (const plan of plans) {
-    if (plan.sheet.copiedFrom !== undefined) {
-      const sourceIndex = workbook.sheets.findIndex((source) => source.name.toUpperCase() === plan.sheet.copiedFrom!.toUpperCase());
-      if (sourceIndex >= 0) {
-        copiesBySourceIndex.set(sourceIndex, [...(copiesBySourceIndex.get(sourceIndex) ?? []), plan]);
-      }
-    }
-  }
 
   let depth = 0;
   let sheetsRange: { start: number; end: number } | null = null;
   let sheetsStart = -1;
   let calcPr: { start: number; end: number } | null = null;
   let insertCalcPrAt = -1;
-  let definedName: { start: number; tagEnd: number; attrs: Parameters<typeof scanAttr>[0] } | null = null;
   let rootClose = -1;
-  // SPEC-128: the _xlnm._FilterDatabase names this save reconciles (see
-  // filterDatabaseSplices), the <definedNames> holding them, and where one
-  // would be created.
-  const filterEntries: FilterDatabaseEntry[] = [];
-  let definedNames: { start: number; end: number; selfClosing: boolean; contentStart: number } | null = null;
-  let insertDefinedNamesAt = -1;
-  const reconciledName = (attrs: Parameters<typeof scanAttr>[0], element: { start: number; end: number; textStart: number; textEnd: number }): boolean => {
-    if (reconciled === undefined || scanAttr(attrs, "name")?.toLowerCase() !== FILTER_DATABASE_NAME.toLowerCase()) {
-      return false;
-    }
-    const local = scanAttr(attrs, "localSheetId")?.trim();
-    if (local === undefined || !/^\d+$/.test(local)) {
-      return false;
-    }
-    const modelIndex = sourceIndexToModel.get(Number(local));
-    if (modelIndex !== undefined && !reconciled(plans[modelIndex]!)) {
-      return false;
-    }
-    filterEntries.push({ ...element, sourceIndex: Number(local) });
-    return true;
-  };
   scanXml(xml, (event) => {
     if (event.type === "open") {
       depth += 1;
@@ -938,26 +991,12 @@ function workbookXmlFor(
           calcPr = { start: event.start, end: event.end };
         } else if (AFTER_CALC_PR.includes(event.local) && insertCalcPrAt < 0) {
           insertCalcPrAt = event.start;
-        } else if (event.local === "definedNames" && definedNames === null) {
-          definedNames = { start: event.start, end: event.end, selfClosing: event.selfClosing, contentStart: event.end };
-        }
-        if ((event.local === "calcPr" || AFTER_CALC_PR.includes(event.local)) && insertDefinedNamesAt < 0) {
-          insertDefinedNamesAt = event.start;
         }
       } else if (depth === 3 && event.local === "workbookView") {
         const tag = xml.slice(event.start, event.end);
         const next = setAttribute(setAttribute(tag, "activeTab", String(activeIndex)), "firstSheet", null);
         if (next !== tag) {
           splices.push({ start: event.start, end: event.end, text: next });
-        }
-      } else if (depth === 3 && event.local === "definedName") {
-        if (event.selfClosing) {
-          const element = { start: event.start, end: event.end, textStart: event.end, textEnd: event.end };
-          if (!reconciledName(event.attrs, element)) {
-            definedNameSplices(xml, element, event.attrs, sourceIndexToModel, copiesBySourceIndex, remap, splices);
-          }
-        } else {
-          definedName = { start: event.start, tagEnd: event.end, attrs: event.attrs };
         }
       }
       if (event.selfClosing) {
@@ -966,13 +1005,6 @@ function workbookXmlFor(
     } else if (event.type === "close") {
       if (depth === 2 && event.local === "sheets" && sheetsStart >= 0) {
         sheetsRange = { start: sheetsStart, end: event.end };
-      } else if (depth === 3 && event.local === "definedName" && definedName) {
-        const current: { start: number; tagEnd: number; attrs: Parameters<typeof scanAttr>[0] } = definedName;
-        const element = { start: current.start, end: event.end, textStart: current.tagEnd, textEnd: event.start };
-        if (!reconciledName(current.attrs, element)) {
-          definedNameSplices(xml, element, current.attrs, sourceIndexToModel, copiesBySourceIndex, remap, splices);
-        }
-        definedName = null;
       } else if (depth === 1) {
         rootClose = event.start;
       }
@@ -980,12 +1012,18 @@ function workbookXmlFor(
     }
   });
 
-  if (reconciled !== undefined) {
+  if (names !== undefined) {
     // Before the calcPr splices: a definedNames created where an absent
     // calcPr is also created goes first.
-    const container: { start: number; end: number; selfClosing: boolean; contentStart: number } | null = definedNames;
-    const at = insertDefinedNamesAt >= 0 ? insertDefinedNamesAt : rootClose;
-    filterDatabaseSplices(xml, root.prefix, filterEntries, plans, sourceIndexToModel, container, at, reconciled, splices);
+    const index = new Map(plans.map((plan) => [plan.sheet.id, plan.index] as const));
+    const sourceIndex = new Map(plans.flatMap((plan) => (plan.source ? [[plan.sheet.id, workbook.sheets.indexOf(plan.source)] as const] : [])));
+    splices.push(
+      ...definedNamesSplices(xml, scanDefinedNames(xml), names, {
+        indexOf: (sheetId) => index.get(sheetId),
+        sourceIndexOf: (sheetId) => sourceIndex.get(sheetId),
+        remap,
+      }),
+    );
   }
 
   if (sheetsRange) {
@@ -1037,61 +1075,6 @@ function relationshipPrefix(rootStartTag: string): string | null {
   return null;
 }
 
-/** One definedName: its text through the pass; a sheet-scoped name
- * renumbered to its sheet's new index, removed with a deleted sheet, and
- * duplicated (after itself) for each copy of its sheet. */
-function definedNameSplices(
-  xml: string,
-  element: { start: number; end: number; textStart: number; textEnd: number },
-  attrs: Parameters<typeof scanAttr>[0],
-  sourceIndexToModel: ReadonlyMap<number, number>,
-  copiesBySourceIndex: ReadonlyMap<number, readonly SheetPlan[]>,
-  remap: SheetRemap,
-  splices: Splice[],
-): void {
-  const local = scanAttr(attrs, "localSheetId");
-  const sourceIndex = local === undefined ? undefined : Number(local);
-  const raw = xml.slice(element.textStart, element.textEnd);
-  const text = (formula: SheetRemap): string => {
-    const wire = decodeEntities(raw);
-    const next = remapXlsxFormula(wire, formula);
-    return next === wire ? raw : escapeText(next);
-  };
-  const tagText = xml.slice(element.start, element.textStart);
-  const closeText = xml.slice(element.textEnd, element.end);
-  if (sourceIndex !== undefined && Number.isInteger(sourceIndex)) {
-    const modelIndex = sourceIndexToModel.get(sourceIndex);
-    if (modelIndex === undefined) {
-      splices.push({ start: element.start, end: element.end, text: copiesFor(sourceIndex) });
-      return;
-    }
-    const tag = withLocalSheetId(tagText, modelIndex);
-    const body = text(remap);
-    const own = tag === tagText && body === raw ? xml.slice(element.start, element.end) : `${tag}${body}${closeText}`;
-    const copies = copiesFor(sourceIndex);
-    if (own !== xml.slice(element.start, element.end) || copies !== "") {
-      splices.push({ start: element.start, end: element.end, text: own + copies });
-    }
-    return;
-  }
-  const body = text(remap);
-  if (body !== raw) {
-    splices.push({ start: element.textStart, end: element.textEnd, text: body });
-  }
-
-  function copiesFor(index: number): string {
-    return (copiesBySourceIndex.get(index) ?? [])
-      .map((plan) => `${withLocalSheetId(tagText, plan.index)}${text(copyRemap(remap, plan.sheet))}${closeText}`)
-      .join("");
-  }
-}
-
-/** A definedName start tag with `localSheetId` set to `index` (unchanged
- * when there is none). */
-function withLocalSheetId(tag: string, index: number | undefined): string {
-  return index === undefined ? tag : setAttribute(tag, "localSheetId", String(index));
-}
-
 function decodeEntities(raw: string): string {
   return raw.replace(/&(amp|lt|gt|quot|apos);/g, (_whole, name: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" })[name] ?? "");
 }
@@ -1133,6 +1116,7 @@ function contentTypesFor(
   calcChainRels: readonly { target: string; external: boolean; id: string; type: string; start: number; end: number }[],
   addedParts: readonly AddedPart[],
   drawingPlan: DrawingPlan | undefined,
+  tableParts: readonly string[],
 ): string {
   const types = readContentTypes(xml);
   const remove = new Set<string>();
@@ -1160,6 +1144,7 @@ function contentTypesFor(
     add.push({ partName: part.name, contentType: part.contentType });
   }
   add.push(...(drawingPlan?.overrides ?? []));
+  add.push(...tableParts.map((partName) => ({ partName, contentType: TABLE_CONTENT_TYPE })));
   // A part a duplicate added takes its origin's Override (the extension's
   // Default — application/xml for every .xml — would misdeclare it).
   const overridden = new Set(types.overrides.map((entry) => entry.partName));
