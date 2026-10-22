@@ -7,7 +7,6 @@
 //
 // | Where | Element@attribute | Kind |
 // | envelope prefix | `table:label-range@table:label-cell-range-address`, `@table:data-cell-range-address` | list, emptied → element removed |
-// | suffix, inside tables | `table:named-range@table:cell-range-address` (emptied → removed), `@table:base-cell-address`; `table:named-expression@table:expression`, `@table:base-cell-address` | list; anchor; formula |
 // | suffix, not a database range the model owns | `table:database-range@table:target-range-address` (emptied → removed); `table:filter@table:condition-source-range-address` | list |
 // | suffix | `table:data-pilot-table@table:target-range-address`; `table:source-cell-range@table:cell-range-address` | list |
 // | suffix | `table:consolidation@table:source-cell-range-addresses`, `@table:target-cell-address` | list; anchor |
@@ -29,11 +28,6 @@
 //   where the table says so and keeps its original text everywhere else.
 // - An anchor is one cell: when its cell is gone it becomes the cell the band
 //   now starts at — `mapper.index` per axis.
-// - A formula: every bracketed `[…]` outside a string literal is an address
-//   of one entry, adjusted on its own; one whose area is gone becomes
-//   `[<its first sheet as written>.#REF!]`. Brackets that hold no address (an
-//   external `['file:…'#$S.A1]`, `[.#REF!]`) and everything outside the
-//   brackets keep their bytes.
 // - Hosts. Inside a table, the table's sheet: for content.xml's source
 //   tables the sheet resolveRetainedSheetName gives the table's name, for a
 //   sheet's own sourceXml and its cells' preservedXml that sheet, its id
@@ -86,6 +80,16 @@
 //   preservedXml) and every drawing whose content is a modelled chart — so
 //   nothing is adjusted twice. Out-of-catalogue charts (`chart:surface`) are
 //   still rewritten here. SPEC-125's move path runs this same rewrite.
+// - Retired by SPEC-133 (the `names` adjusters of structure.ts and move.ts
+//   move the model's defined names, which the writer reconciles with the
+//   retained `table:named-expressions` of the suffix and of each table —
+//   ods/namedExpressions.ts — writing the model's whenever they differ):
+//   `table:named-range@table:cell-range-address` and
+//   `@table:base-cell-address`, `table:named-expression@table:expression`
+//   and `@table:base-cell-address` — left verbatim, an emptied named range
+//   never removed, so nothing is adjusted twice. With them went the only
+//   formula-valued location: every row left is a list or an anchor. The
+//   `table:database-range` row stays (SPEC-128's claim above).
 // - `table:tracked-changes` is history: nothing inside it is touched.
 // - Elements and attributes are matched by their qualified names as written
 //   (a fragment's prefixes are unbound), as sheetNamePass.ts does.
@@ -116,7 +120,7 @@ import { parseOdsRangeAddress, splitOdsRangeAddressList } from "./rangeAddress";
 
 // --- the location table -----------------------------------------------------------------
 
-type Kind = "list" | "anchor" | "formula";
+type Kind = "list" | "anchor";
 
 interface Location {
   attribute: string;
@@ -128,13 +132,10 @@ interface Location {
 const list = (attribute: string, emptied?: "element" | "attribute"): Location =>
   emptied === undefined ? { attribute, kind: "list" } : { attribute, kind: "list", emptied };
 const anchor = (attribute: string): Location => ({ attribute, kind: "anchor" });
-const formula = (attribute: string): Location => ({ attribute, kind: "formula" });
 
 
 const CONTENT_LOCATIONS: ReadonlyMap<string, readonly Location[]> = new Map([
   ["table:label-range", [list("table:label-cell-range-address", "element"), list("table:data-cell-range-address", "element")]],
-  ["table:named-range", [list("table:cell-range-address", "element"), anchor("table:base-cell-address")]],
-  ["table:named-expression", [formula("table:expression"), anchor("table:base-cell-address")]],
   ["table:database-range", [list("table:target-range-address", "element")]],
   ["table:filter", [list("table:condition-source-range-address")]],
   ["table:data-pilot-table", [list("table:target-range-address")]],
@@ -326,31 +327,6 @@ function rewriteParts(address: string, rawOf: RawOf, ref: ReferenceNode, moved: 
     out += rawOf(first.end, second.start) + part(ref.end, moved.end, second) + rawOf(second.end, address.length);
   }
   return out;
-}
-
-/** The `]` closing a bracket whose content starts at `i` (quoted names
- * skipped), or -1. */
-function closingBracket(text: string, i: number): number {
-  let j = i;
-  while (j < text.length) {
-    const code = text.charCodeAt(j);
-    if (code === 0x5d) {
-      return j;
-    }
-    if (code === 0x5b) {
-      return -1;
-    }
-    if (code === 0x27) {
-      const quoted = scanQuoted(text, j);
-      if (!quoted) {
-        return -1;
-      }
-      j = quoted.end;
-      continue;
-    }
-    j += 1;
-  }
-  return -1;
 }
 
 /** A list's pieces rejoined without the dropped entries (null): each kept
@@ -741,7 +717,7 @@ class OdsRetainedRewrite {
       if (!span) {
         continue;
       }
-      const next = location.kind === "formula" ? this.formula(span.raw, own) : this.list(span.raw, own, location.kind);
+      const next = this.list(span.raw, own, location.kind);
       if (next === undefined) {
         continue;
       }
@@ -794,45 +770,8 @@ class OdsRetainedRewrite {
     return changed ? joinList(pieces, out) : undefined;
   }
 
-  /** A formula's raw text with every bracketed address outside a string
-   * adjusted; undefined when none moved. */
-  private formula(raw: string, host: Host): string | undefined {
-    if (!raw.includes("[")) {
-      return undefined;
-    }
-    const value = decodeRaw(raw);
-    const text = value.text;
-    let out = "";
-    let from = 0;
-    let changed = false;
-    let inString = false;
-    for (let i = 0; i < text.length; i += 1) {
-      const code = text.charCodeAt(i);
-      if (code === 0x22) {
-        inString = !inString;
-        continue;
-      }
-      if (inString || code !== 0x5b) {
-        continue;
-      }
-      const close = closingBracket(text, i + 1);
-      if (close < 0) {
-        continue;
-      }
-      const base = i + 1;
-      const next = this.address(text.slice(base, close), (a, b) => raw.slice(value.at(base + a), value.at(base + b)), host, "formula");
-      if (typeof next === "string") {
-        out += raw.slice(from, value.at(base)) + next;
-        from = value.at(close);
-        changed = true;
-      }
-      i = close;
-    }
-    return changed ? out + raw.slice(from) : undefined;
-  }
-
   /** One address's raw replacement: undefined when it stays as written;
-   * null when its area is gone (a formula's becomes `<sheet>.#REF!`). */
+   * null when its area is gone. */
   private address(text: string, rawOf: RawOf, host: Host, kind: Kind): string | null | undefined {
     const ref = parseOdsRangeAddress(text);
     if (!ref || ref.sheetEnd !== undefined) {
@@ -847,7 +786,7 @@ class OdsRetainedRewrite {
       return undefined;
     }
     if (moved === null) {
-      return kind === "formula" ? `${rawOf(0, cellSpan(text, 0).start)}#REF!` : null;
+      return null;
     }
     return rewriteParts(text, rawOf, ref, moved);
   }

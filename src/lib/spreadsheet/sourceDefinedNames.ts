@@ -15,9 +15,11 @@
 //   spreadsheet's (the content envelope's suffix). Relative parts are
 //   relative to `table:base-cell-address`.
 //
-// SPEC-124's retained-reference pass keeps that text's rows and columns
-// current through structural edits and moves; its sheet names stay the
-// source file's, so the text goes through SPEC-121's sourceSheetRemap. Names
+// The text's sheet names stay the source file's, so it goes through
+// SPEC-121's sourceSheetRemap. SPEC-133 retired SPEC-124's retained rows for
+// name text: the model's names follow structural edits and moves, so an entry
+// the model holds (same name and scope) answers with the model's formula,
+// rebased to the entry's origin; the text answers only for the rest. Names
 // match case-insensitively. A name the source does not define (a workbook
 // made here, a name the source never had) resolves to nothing.
 import type { CellRef } from "./address";
@@ -25,6 +27,7 @@ import { fromOdsFormula, fromXlsxFormula } from "./formula/dialect";
 import { FormulaSyntaxError } from "./formula/parse";
 import { remapSheetReferences } from "./formula/sheetRefs";
 import type { Sheet, SpreadsheetModel } from "./model";
+import { rebaseRelative } from "./names";
 import { odsRangeAddressToCanonical, parseOdsRangeAddress } from "./ods/rangeAddress";
 import { resolveRetainedSheetName, sourcePartsOf, sourceSheetRemap } from "./sourceNames";
 import { partTextOf, readSourceWorkbook, workbookPathOf, type PartLookup } from "./xlsx/package";
@@ -148,16 +151,26 @@ export function sourceDefinedName(
   const named = (entry: NameEntry): boolean => entry.name.toUpperCase() === key;
   const parts = sourcePartsOf(model);
   let found: NameEntry | undefined;
+  let own: NameEntry | undefined;
   if (model.format === "xlsx") {
     const entries = cached(XLSX_NAMES, model.opaque, () => xlsxEntries(parts)).filter(named);
-    found =
-      entries.find((entry) => entry.scope !== undefined && resolveRetainedSheetName(model, parts, entry.scope, scopeSheet.id)?.id === scopeSheet.id) ??
-      entries.find((entry) => entry.scope === undefined);
+    own = entries.find((entry) => entry.scope !== undefined && resolveRetainedSheetName(model, parts, entry.scope, scopeSheet.id)?.id === scopeSheet.id);
+    found = own ?? entries.find((entry) => entry.scope === undefined);
   } else if (model.format === "ods") {
     const envelope = model.odsContentEnvelope;
-    found =
-      cached(ODS_TABLE_NAMES, scopeSheet, () => odsTableEntries(scopeSheet.sourceXml)).find(named) ??
-      (envelope ? cached(ODS_NAMES, envelope, () => odsEntries(envelope.suffix, 0)).find(named) : undefined);
+    own = cached(ODS_TABLE_NAMES, scopeSheet, () => odsTableEntries(scopeSheet.sourceXml)).find(named);
+    found = own ?? (envelope ? cached(ODS_NAMES, envelope, () => odsEntries(envelope.suffix, 0)).find(named) : undefined);
   }
-  return found && { formula: remapSheetReferences(found.formula, sourceSheetRemap(model, parts)), origin: found.origin };
+  if (!found) {
+    return undefined;
+  }
+  // SPEC-133: the model owns names — its copy follows every edit (SPEC-124's
+  // retained rows for name text are retired), so a name the model holds in
+  // the entry's scope answers with the model's formula, at the entry's origin.
+  const scopeSheetId = own ? scopeSheet.id : undefined;
+  const modelled = (model.names ?? []).find((each) => !each.formulaUnparsed && each.scopeSheetId === scopeSheetId && each.name.toUpperCase() === key);
+  if (modelled) {
+    return { formula: rebaseRelative(modelled.formula, found.origin.row, found.origin.col), origin: found.origin };
+  }
+  return { formula: remapSheetReferences(found.formula, sourceSheetRemap(model, parts)), origin: found.origin };
 }
