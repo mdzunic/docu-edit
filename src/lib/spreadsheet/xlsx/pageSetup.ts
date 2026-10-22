@@ -89,7 +89,7 @@ interface Located {
   local: string;
   start: number;
   end: number;
-  attrs: XmlScanAttribute[];
+  attrs: readonly XmlScanAttribute[];
 }
 
 interface PageLayout {

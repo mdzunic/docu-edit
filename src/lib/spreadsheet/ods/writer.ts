@@ -141,6 +141,7 @@ import {
   OdsStyleRegistry,
 } from "./styles";
 import { serializeTable, type OdsTableContext } from "./tableXml";
+import { OdsPageSetupWriter, withOdsPrintRanges } from "./pageSetup";
 
 export interface WriteOdsOptions {
   /** meta.xml's `dc:date` from scratch (defaults to core `now()`). */
@@ -199,7 +200,7 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
+  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.pageSetupDirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
   return zip(mimetypeFirst(buildSubstitution(model, parts, options)));
@@ -360,8 +361,18 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const charts = planOdsCharts(model, []);
   const chartObjectDir = (drawing: SheetDrawing): string | undefined => charts.minted.get(drawing);
   const localNames = (sheet: Sheet, trailing: string): string => odsTrailingWithNames(trailing, model, sheet, new Map());
+  const scratchStyles = fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale);
+  const pageSetups = new OdsPageSetupWriter("", scratchStyles, (prefix) => registry.freshName(prefix));
   const tables = model.sheets
-    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }))
+    .map((sheet) =>
+      withNewTablePageSetup(
+        serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }),
+        sheet,
+        model,
+        registry,
+        pageSetups,
+      ),
+    )
     .join("");
   const namedExpressions = odsNamedExpressionsXml(model, odsScopeNames(model, undefined));
   const databaseRanges = odsWithTableDatabaseRanges(odsDatabaseRangesXml(model.sheets), model.sheets).text;
@@ -388,7 +399,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
     { name: "meta.xml", data: encode(buildMetaXml({ title: model.title }, modified)) },
     {
       name: "styles.xml",
-      data: encode(withNamedStyles(fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale), named.xml + conditionalFormats.stylesXml)),
+      data: encode(pageSetups.stylesXmlWith(withNamedStyles(scratchStyles, named.xml + conditionalFormats.stylesXml))),
     },
     { name: "content.xml", data: encode(content) },
     { name: "settings.xml", data: encode(fromScratchSettingsXml(active?.name ?? "")) },
@@ -396,6 +407,19 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
 }
 
 // --- substitution ---------------------------------------------------------------------------
+
+/** SPEC-136: a table written from the model alone (a new sheet's, a
+ * from-scratch package's) with its print ranges and, when its setup is not
+ * the "Default" master page's, a minted master page. */
+function withNewTablePageSetup(table: string, sheet: Sheet, model: SpreadsheetModel, registry: OdsStyleRegistry, pageSetups: OdsPageSetupWriter): string {
+  let text = withOdsPrintRanges(model, sheet, table);
+  const minted = sheet.pageSetup === undefined ? undefined : pageSetups.masterPageFor(sheet, undefined);
+  if (minted !== undefined) {
+    const tabColor = tabColorHex(sheet, model);
+    text = setTableAttribute(text, "table:style-name", registry.tableStyle({ masterPage: minted, display: sheet.visibility === "visible", ...(tabColor === undefined ? {} : { tabColor }) }));
+  }
+  return text;
+}
 
 /** A table style's master page, read from the envelope's automatic styles. */
 function masterPageOf(prefix: string, styleName: string | undefined): string {
@@ -522,10 +546,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     localNames: (sheet, trailing) => odsTrailingWithNames(trailing, model, sheet, namespaces),
   };
   let rebuilt = "";
+  // SPEC-136: a table whose setup its master page no longer reads as gets minted ones (ods/pageSetup.ts).
+  const pageSetups = new OdsPageSetupWriter(envelope.prefix, stylesXml, (prefix) => registry.freshName(prefix));
 
   const tables = model.sheets.map((sheet) => {
     if (sheet.sourceXml === undefined) {
-      const table = serializeTable(sheet, context);
+      const table = withNewTablePageSetup(serializeTable(sheet, context), sheet, model, registry, pageSetups);
       rebuilt += table;
       return table;
     }
@@ -538,8 +564,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const declared = book.tableStyle(styleName);
     const hidden = sheet.visibility !== "visible";
     const color = tabColorHex(sheet, model);
-    if (declared.hidden !== hidden || declared.tabColor !== color) {
-      const name = registry.tableStyle({ masterPage: masterPageOf(envelope.prefix, styleName), display: !hidden, tabColor: color });
+    const minted = sheet.dirty || sheet.pageSetupDirty ? pageSetups.masterPageFor(sheet, styleName) : undefined;
+    if (model.namesDirty) {
+      text = withOdsPrintRanges(model, sheet, text);
+    }
+    if (declared.hidden !== hidden || declared.tabColor !== color || minted !== undefined) {
+      const name = registry.tableStyle({ masterPage: minted ?? masterPageOf(envelope.prefix, styleName), display: !hidden, tabColor: color });
       text = setTableAttribute(text, "table:style-name", name);
       if (declared.tabColor !== color) {
         recoloured.add(sheet.name);
@@ -617,8 +647,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     let data = bytes;
     if (name === "content.xml") {
       data = encode(content);
-    } else if (name === "styles.xml" && named.xml + conditionalFormats.stylesXml !== "") {
-      data = encode(withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml));
+    } else if (name === "styles.xml") {
+      const withNamed = named.xml + conditionalFormats.stylesXml === "" ? stylesXml! : withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml);
+      const next = pageSetups.stylesXmlWith(withNamed);
+      if (next !== stylesXml) {
+        data = encode(next);
+      }
     } else if (name === "settings.xml") {
       data = encode(settingsXmlFor(decodeUtf8(bytes), model, remap, recoloured, active?.name));
     } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0 || manifestAdds.length > 0 || charts.manifestEntries.length > 0)) {

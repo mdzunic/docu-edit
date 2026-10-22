@@ -124,7 +124,8 @@ describe("SPEC-124 round trip — spec124-structure.ods", () => {
     expect(content).toContain(`table:expression="of:=[$Sheet1.$C$2]*2"`);
     expect(content).toContain(`table:target-range-address="Sheet1.A1:Sheet1.D11"`);
     expect(content).toContain(`calcext:target-range-address="Sheet1.C2:Sheet1.C11"`);
-    expect(content).toContain(`table:print-ranges="Sheet1.A1:Sheet1.D11"`);
+    // SPEC-136: the print range is the model's _xlnm.Print_Area, moved by the names adjuster and written through canonicalToOdsRangeAddress.
+    expect(content).toContain(`table:print-ranges="$Sheet1.$A$1:.$D$11"`);
     expect(content).toContain(`table:base-cell-address="Sheet1.D2"`);
     expect(content).toContain(`table:end-cell-address="Sheet1.H8"`);
     // SPEC-132: the chart is modelled — the charts adjuster moved its references and the

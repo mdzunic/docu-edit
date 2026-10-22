@@ -166,12 +166,16 @@ describe("SPEC-133 round trip — spec133-names-tables.xlsx downloaded as .ods",
     const { model, bytes, reopened } = await converted();
     expect(values(reopened)).toEqual(values(model));
     expect(reopened.sheets.every((sheet) => sheet.tables === undefined)).toBe(true);
-    // Every name but the reserved _xlnm.* ones and the _xlfn. placeholder, each in its scope, as the model holds it.
+    // Every name but the reserved _xlnm.* ones and the _xlfn. placeholder, each in its scope, as the model holds it —
+    // except SPEC-136's print area, which crosses as the table's table:print-ranges.
+    // (In name order: the reader appends a table's print area after the names it reads.)
     const writable = (each: SpreadsheetModel): unknown[] =>
-      (namesByScope(each) as { name: string; formula: string; scope: string | null }[]).map(({ name, formula, scope }) => ({ name, formula, scope }));
-    expect(writable(reopened)).toEqual(writable(model).filter((name) => !/^_xl(?:nm|fn)\./i.test((name as { name: string }).name)));
-    expect(reopened.names.map((name) => name.name)).toEqual(expect.arrayContaining(["TaxRate", "Above", "Rates", "Helper", "Local"]));
-    expect(reopened.names.some((name) => name.name.startsWith("_xl"))).toBe(false);
+      (namesByScope(each) as { name: string; formula: string; scope: string | null }[])
+        .map(({ name, formula, scope }) => ({ name, formula, scope }))
+        .toSorted((a, b) => `${a.scope}|${a.name}`.localeCompare(`${b.scope}|${b.name}`));
+    expect(writable(reopened)).toEqual(writable(model).filter((name) => !/^_xl(?:nm|fn)\./i.test((name as { name: string }).name) || /^_xlnm\.Print_Area$/i.test((name as { name: string }).name)));
+    expect(reopened.names.map((name) => name.name)).toEqual(expect.arrayContaining(["TaxRate", "Above", "Rates", "Helper", "Local", "_xlnm.Print_Area"]));
+    expect(reopened.names.filter((name) => name.name.startsWith("_xl")).map((name) => name.name)).toEqual(["_xlnm.Print_Area"]);
     expect(await differingParts(await writeOds(reopened), bytes)).toEqual([]);
   });
 

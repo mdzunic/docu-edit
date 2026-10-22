@@ -152,6 +152,7 @@ import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved
 import { isModelledOdsLink, OdsAnnotationCollector, odsWireLink, type OdsWireLink } from "./annotations";
 import { buildGridMetrics } from "../geometry";
 import type { MediaPart } from "../../core/media";
+import { readOdsPageSetups } from "./pageSetup";
 
 /** LibreOffice's extension namespace (`calcext:value-type="error"`). */
 const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xmlns:calcext:1.0";
@@ -1146,8 +1147,11 @@ export async function parseOds(
   if (content.media.length > 0) {
     parsed.media = content.media;
   }
-  if (content.names.length > 0) {
-    parsed.names = content.names;
+  // SPEC-136: each table's page setup; its print ranges and header rows/columns as reserved names.
+  const pageNames = readOdsPageSetups(content.sheets, content.prefix, stylesBytes ? partText(stylesBytes) : undefined);
+  const names = [...content.names, ...pageNames];
+  if (names.length > 0) {
+    parsed.names = names;
   }
   refreshUncachedOdsCharts(parsed, content.uncachedCharts);
   return parsed;
