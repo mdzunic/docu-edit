@@ -17,7 +17,12 @@
 // `ignoredError@sqref`, hyperlinks and x14 sparklines. SPEC-133 retires the
 // workbook's `definedName` text, and `table@ref`/`autoFilter@ref` in a table
 // part a model table holds (the names and tables adjusters move the model):
-// both keep every byte.
+// both keep every byte. SPEC-135 retires `hyperlink@ref`, `comment@ref`,
+// `threadedComment@ref` and the VML note numbers on a sheet whose
+// annotations the reader models (its notes and hyperlinks adjusters move
+// them); the cases that still move them are a sheet the reader could not
+// model — hyperlinks naming no relationship (or no target at all), threads
+// whose person the workbook does not know — which is where they stay.
 import { describe, expect, it } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { relsPathFor } from "../../core/xml";
@@ -363,7 +368,7 @@ describe("the sheet part", () => {
     expect(gone.opaque).toBe(goneBefore);
   });
 
-  it("hyperlink@ref", () => {
+  it("hyperlink@ref, on a sheet whose <hyperlinks> the reader could not model (an r:id naming no relationship)", () => {
     const model = book([
       {
         name: "Sheet1",
@@ -618,7 +623,7 @@ describe("drawings, comments and VML", () => {
     });
   }
 
-  it("comment@ref, threadedComment@ref and the VML x:Row, x:Column and x:Anchor (numbers 1, 3, 5 and 7)", () => {
+  it("comment@ref, threadedComment@ref and the VML x:Row, x:Column and x:Anchor (numbers 1, 3, 5 and 7), on a sheet whose annotations the reader could not model (the threads' person is unknown)", () => {
     const rows = notesBook();
     const rowsBefore = rows.opaque;
     expect(adjust(rows, "insertRows", 1, 2)).toEqual(new Set(["s1"]));
@@ -649,6 +654,32 @@ describe("drawings, comments and VML", () => {
       ["\n    4, 15, 8, 10, 6, 15, 12, 4", "\n    5, 15, 8, 10, 7, 15, 12, 4"],
       ["3", "4"],
     ]);
+  });
+});
+
+describe("SPEC-135: annotations the reader models", () => {
+  it("leaves hyperlink@ref, comment@ref, threadedComment@ref and the VML numbers verbatim — the notes and hyperlinks adjusters move the model", () => {
+    const links = `<hyperlinks><hyperlink ref="A5" location="Sheet1!A9" display="site"/><hyperlink ref="B2:C3" location="Sheet1!A9" display="inside"/></hyperlinks>`;
+    for (const edit of [["insertRows", 1, 2], ["insertCols", 0, 1], ["deleteRows", 2, 1]] as const) {
+      const model = book([{ name: "Sheet1", xml: worksheet(`${links}<legacyDrawing r:id="rId2"/>`), rels: NOTE_RELS }], {
+        [COMMENTS]: commentsXml(comment("B3", "first") + comment("D10", "second")),
+        [THREADED_PART]: threadedXml(threaded("B3", "T-1") + threaded("B3", "T-2", "T-1") + threaded("D10", "T-3")),
+        [VML]: vmlXml(noteShape(1025, "2, 15, 1, 10, 4, 15, 5, 4", 2, 1) + noteShape(1026, "4, 15, 8, 10, 6, 15, 12, 4", 9, 3)),
+      });
+      model.persons = [{ personId: "{P-1}", displayName: "Pat" }];
+      const before = model.opaque;
+      expect(adjust(model, edit[0], edit[1], edit[2]), edit[0]).toEqual(new Set());
+      expect(model.opaque, edit[0]).toBe(before);
+    }
+  });
+
+  it("still moves a modelled sheet's other rows beside them", () => {
+    const links = `<hyperlinks><hyperlink ref="A5" location="Sheet1!A9"/></hyperlinks>`;
+    const model = book([{ name: "Sheet1", xml: worksheet(`${links}${ignoredErrors("A5")}`) }]);
+    const before = model.opaque;
+    expect(adjust(model, "insertRows", 3, 1)).toEqual(new Set(["s1"]));
+    expect(spans(before, model, SHEET1)).toEqual([["A5", "A6"]]);
+    expect(textOf(model.opaque, SHEET1)).toContain(links);
   });
 });
 
@@ -687,7 +718,7 @@ describe("removal", () => {
     }
   });
 
-  it("hyperlink: removed with its cell, <hyperlinks> with its last", () => {
+  it("hyperlink: removed with its cell, <hyperlinks> with its last (unmodelled: an r:id naming no relationship)", () => {
     const first = `<hyperlink ref="A3" r:id="rId1"/>`;
     const second = `<hyperlink ref="A9" location="'Sheet 2'!A1" display="x"/>`;
     const model = book([{ name: "Sheet1", xml: worksheet(`<hyperlinks>${first}${second}</hyperlinks>`) }]);
@@ -744,7 +775,7 @@ describe("removal", () => {
     expect(textOf(model.opaque, SHEET1)).toContain(cf + validations);
   });
 
-  it("a comment whose cell is deleted goes, with its VML shape (matched by x:Row/x:Column); a threaded comment with its replies", () => {
+  it("a comment whose cell is deleted goes, with its VML shape (matched by x:Row/x:Column); a threaded comment with its replies (unmodelled: the threads' person is unknown)", () => {
     const shape = noteShape(1025, "2, 15, 1, 10, 4, 15, 5, 4", 2, 1);
     const note = comment("B3", "first");
     const thread = threaded("B3", "T-1");

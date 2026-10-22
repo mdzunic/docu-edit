@@ -8,7 +8,6 @@
 //
 // | Part | Element / attribute | Kind |
 // | sheet | `customSheetView`'s `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
-// | sheet | `hyperlink@ref` | range |
 // | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
 // | sheet `extLst` | `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
@@ -22,8 +21,6 @@
 //   adjusted twice. SPEC-125's move path comes through here too.
 // | pivot caches | `worksheetSource@ref` on `@sheet` (one naming `name` or `r:id` is left alone) | range |
 // | pivot tables | `location@ref` | range |
-// | comments, threaded comments | `comment@ref`, `threadedComment@ref` | range |
-// | VML | `x:ClientData` `x:Row`, `x:Column`, `x:Anchor` numbers 1, 3, 5 and 7 (LeftCol, TopRow, RightCol, BottomRow) | index |
 //
 // - Retired by SPEC-128 (its `autofilter` adjuster moves the model, the
 //   writer serialises it): the worksheet's root-level `autoFilter@ref` and
@@ -65,6 +62,20 @@
 //   part's `xdr:from`/`xdr:to` `xdr:row` and `xdr:col` — left verbatim, so
 //   nothing is adjusted twice. The charts a drawing relates are still
 //   reached through it.
+// - Retired by SPEC-135 (its `notes` and `hyperlinks` adjusters,
+//   structure.ts's and move.ts's, move Sheet.notes/threads/hyperlinks; the
+//   writer rebuilds an annotation-edited sheet's comments, VML and threaded
+//   parts and its `<hyperlinks>` from the model — xlsx/annotations.ts):
+//   `hyperlink@ref`, `comment@ref`, `threadedComment@ref` and the VML
+//   `x:ClientData` `x:Row`, `x:Column` and `x:Anchor` numbers — left
+//   verbatim, so nothing is adjusted twice. A sheet whose notes and threads
+//   (xlsx/annotations.ts xlsxNotesModelled) or whose `<hyperlinks>`
+//   (xlsxHyperlinksModelled) the reader could not model keeps those rows
+//   here, as before: `comment@ref`/`threadedComment@ref` (range; an entry
+//   mapped to null removes the comment, which takes its VML note shape —
+//   the one whose `x:Row`/`x:Column` name the comment's ORIGINAL cell),
+//   the VML `x:Row`, `x:Column` and `x:Anchor` numbers 1, 3, 5 and 7
+//   (index), and `hyperlink@ref` (range, removable).
 // - Hosts. Every model sheet with a `partName` (grid and foreign) hosts its
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
@@ -114,6 +125,7 @@ import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, decodeXmlText, escapeElementText, findAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { isModelledChart } from "../charts";
+import { xlsxHyperlinksModelled, xlsxNotesModelled } from "./annotations";
 import { chartPartResolver } from "./drawingXml";
 import {
   encodeUtf8,
@@ -529,7 +541,9 @@ const X14_FORMULA_SCOPES: ReadonlySet<string> = new Set(["sparklineGroup"]);
 /** Whether a worksheet's text may hold an element of the table. */
 const WORKSHEET_ELEMENTS = /autoFilter|sortState|hyperlink|rowBreaks|colBreaks|protectedRange|ignoredError|dataRef|inputCells|cellWatch|sparkline/;
 
-function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
+/** `linksModelled`: SPEC-135's `hyperlinks` adjuster owns the sheet's
+ * `hyperlink@ref`s (the reader modelled them), left alone here. */
+function worksheetEdits(xml: string, host: Sheet, pass: Pass, linksModelled = false): PartEdits {
   const edits = new PartEdits(xml, pass.mapper);
   walk(
     xml,
@@ -545,7 +559,7 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
         return;
       }
       const removable = REMOVABLE_SHEET_ELEMENTS.get(frame.local);
-      if (removable) {
+      if (removable && !(linksModelled && frame.local === "hyperlink")) {
         if (parent?.local === removable.container) {
           countItem(frame);
         }
@@ -920,7 +934,8 @@ class Rewrite implements Pass {
       const offset = split.head.length + EMPTY_SHEET_DATA.length;
       let splices: Splice[] | undefined;
       try {
-        splices = worksheetEdits(split.head + EMPTY_SHEET_DATA + split.tail, host, this).splices();
+        const text = split.head + EMPTY_SHEET_DATA + split.tail;
+        splices = worksheetEdits(text, host, this, xlsxHyperlinksModelled(this.parts, name, text)).splices();
       } catch (error) {
         if (!(error instanceof XmlScanError)) {
           throw error;
@@ -939,7 +954,7 @@ class Rewrite implements Pass {
         return changed;
       }
     }
-    return this.rewrite(name, (xml) => (WORKSHEET_ELEMENTS.test(xml) ? worksheetEdits(xml, host, this) : undefined));
+    return this.rewrite(name, (xml) => (WORKSHEET_ELEMENTS.test(xml) ? worksheetEdits(xml, host, this, xlsxHyperlinksModelled(this.parts, name, xml)) : undefined));
   }
 
   /** `model.opaque` with the rewritten parts, copy-on-write. */
@@ -981,6 +996,8 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
       continue;
     }
     let own = run.rewriteWorksheet(part, sheet);
+    // SPEC-135: modelled notes and threads are the `notes` adjuster's.
+    const notesModelled = xlsxNotesModelled(run.parts, part, model.persons);
     const removedCells = new Set<string>();
     const vml: string[] = [];
     for (const rel of run.relationships(part)) {
@@ -993,11 +1010,11 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
         own = run.rewrite(target, (xml) => tableEdits(xml, sheet, modelledTables.has(target), run)) || own;
       } else if (kind === "pivotTable") {
         own = run.rewrite(target, (xml) => pivotTableEdits(xml, sheet, run)) || own;
-      } else if (kind === "comments") {
+      } else if (kind === "comments" && !notesModelled) {
         own = run.rewrite(target, (xml) => noteEdits(xml, sheet, run, "comment", removedCells)) || own;
-      } else if (kind === "threadedComment") {
+      } else if (kind === "threadedComment" && !notesModelled) {
         own = run.rewrite(target, (xml) => noteEdits(xml, sheet, run, "threadedComment")) || own;
-      } else if (kind === "vmlDrawing") {
+      } else if (kind === "vmlDrawing" && !notesModelled) {
         vml.push(target); // after the comments, whose removals it follows
       } else if (kind === "drawing") {
         for (const chartRel of run.relationships(target)) {

@@ -7,6 +7,8 @@
 // through it too, with `active` (the hit, kept inside a searched selection's
 // ranges) and `focus: false` (focus stays in the find bar). A jump made
 // while an earlier one is still between its ticks wins: the earlier stops.
+// A followed place link's jump (SPEC-135, useCellLinks) is a one-shot one
+// (jumpToRanges).
 import { nextTick, type Ref, type ShallowRef } from "vue";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -64,4 +66,10 @@ export function createSheetJump(deps: SheetJumpDeps): SheetJump {
       deps.cell.focusCell();
     }
   };
+}
+
+/** Selects `ranges` on `sheetId`, revealed and focused (nothing for an
+ * unknown sheet or no range) — a one-shot createSheetJump. */
+export async function jumpToRanges(deps: SheetJumpDeps, sheetId: string, ranges: readonly GridRange[]): Promise<void> {
+  await createSheetJump(deps)(sheetId, [...ranges]);
 }

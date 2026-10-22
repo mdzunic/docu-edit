@@ -254,7 +254,7 @@ function parseIndex(text: string | undefined): number | undefined {
 /** Collects the text of a string item — `<si>` or `<is>` — from the events
  * inside it: plain `<t>` text, or `<r>` runs with their `<rPr>` fonts;
  * phonetic runs are skipped. */
-class StringItemReader {
+export class StringItemReader {
   private plain = "";
   private runs: TextRun[] = [];
   private runText: string | null = null;

@@ -7,6 +7,7 @@ import { DEFAULT_THEME } from "./core/theme";
 import type { DocumentTheme, ModelColor, ModelFont, ThemeColorRef } from "./core/theme";
 import type { CustomProperty, CustomPropertyType, DocumentProperties } from "./core/documentProperties";
 import type { OpaquePart } from "./core/packageParts";
+import type { CommentMessage } from "./core/comments";
 import type {
   ArrowheadKind,
   ArrowheadSize,
@@ -827,20 +828,11 @@ export interface CommentAnchor {
   offset: number;
 }
 
-/** One message in a comment thread (SPEC-038): the thread's opening comment
- * (`CommentThread.messages[0]`) or a reply. Plain text only — rich text
- * inside comments is out of scope — so `text` is rendered as plain text
- * everywhere (never interpreted as HTML/markup, AC "no markup injection").
- * Deliberately not named `id` — same equality.ts reason as BookmarkAnchor. */
-export interface CommentMessage {
-  messageId: string;
-  /** The commenter's display name, from the settable identity
-   * (lib/commentIdentity.ts) at the time the message was written. */
-  author: string;
-  text: string;
-  /** ISO 8601 timestamp. */
-  createdAt: string;
-}
+/** One message in a comment thread (SPEC-038) — defined in
+ * core/comments.ts since SPEC-101's phase one (performed by SPEC-135, whose
+ * cell threads share it) and re-exported here so every existing import path
+ * keeps working unchanged. */
+export type { CommentMessage } from "./core/comments";
 
 /** A comment thread anchored to a range of document text (SPEC-038): the
  * in-memory, format-agnostic shape of OOXML's

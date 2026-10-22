@@ -38,6 +38,17 @@
 // so the two never share an id. SPEC-133 ends the Insert menu, after a
 // separator, with Table… (`sheet-menu-insert-table`, the Create Table dialog;
 // no shortcut — Ctrl/Cmd+T is the browser's), disabled off a grid sheet.
+// SPEC-135 ends the Insert menu with Link… (`sheet-menu-insert-link`,
+// Ctrl/Cmd+K — the link dialog), disabled off a grid sheet and, with its
+// reason, where links cannot be kept (CSV/TSV, a sheet whose source's links
+// stay as read), then after a
+// separator Note (`sheet-menu-insert-note`, Shift+F2 — the note editor on the
+// active cell) and Comment (`sheet-menu-insert-comment`, Ctrl+Alt+M /
+// Cmd+Option+M — the comment composer), each disabled where it cannot be kept
+// (Comment, in an .ods workbook, with "OpenDocument spreadsheets support notes
+// only"); and ends the View menu, after a separator, with Comments
+// (`sheet-menu-comments`, checked while the comments pane is open) and Show
+// all notes (`sheet-menu-show-all-notes`, session-only).
 // SPEC-133 adds the Formulas menu after Format: Name Manager…
 // (`sheet-menu-name-manager`, Ctrl/Cmd+F3), which opens the Name Manager.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
@@ -81,6 +92,9 @@ const pasteSpecialShortcut = shortcutLabel("sheet.pasteSpecial", isMacPlatform()
 const filterShortcut = shortcutLabel("sheet.toggleFilter", isMacPlatform(), SHEET_SHORTCUTS);
 const reapplyShortcut = shortcutLabel("sheet.reapplyFilter", isMacPlatform(), SHEET_SHORTCUTS);
 const nameManagerShortcut = shortcutLabel("sheet.nameManager", isMacPlatform(), SHEET_SHORTCUTS);
+const linkShortcut = shortcutLabel("sheet.insertLink", isMacPlatform(), SHEET_SHORTCUTS);
+const noteShortcut = shortcutLabel("sheet.note", isMacPlatform(), SHEET_SHORTCUTS);
+const commentShortcut = shortcutLabel("sheet.newComment", isMacPlatform(), SHEET_SHORTCUTS);
 // SPEC-128: the Data menu's sorts.
 const SORTS = [
   { label: "Sort A to Z", command: SHEET_MENU_COMMANDS.sortAscending, testid: "sheet-menu-sort-asc" },
@@ -273,6 +287,20 @@ function arrangeDisabled(end = "front") {
           @select="emit('command', SHEET_MENU_COMMANDS.unfreeze)"
         />
       </MenuSubmenu>
+      <hr class="menu-separator">
+      <MenuCheckItem
+        label="Comments"
+        testid="sheet-menu-comments"
+        :checked="s.commentsOpen"
+        @select="emit('command', SHEET_MENU_COMMANDS.comments)"
+      />
+      <MenuCheckItem
+        label="Show all notes"
+        testid="sheet-menu-show-all-notes"
+        :checked="s.showAllNotes"
+        :disabled="!s.canAnnotate"
+        @select="emit('command', SHEET_MENU_COMMANDS.showAllNotes)"
+      />
     </template>
 
     <template #insert>
@@ -303,6 +331,33 @@ function arrangeDisabled(end = "front") {
         testid="sheet-menu-insert-table"
         :disabled="!s.hasGrid"
         @select="emit('command', SHEET_MENU_COMMANDS.insertTable)"
+      />
+      <MenuItem
+        label="Link…"
+        icon="link"
+        testid="sheet-menu-insert-link"
+        :shortcut="linkShortcut"
+        :disabled="!s.hasGrid || !s.canLink"
+        :reason="s.linkDisabledReason"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertLink)"
+      />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Note"
+        testid="sheet-menu-insert-note"
+        :shortcut="noteShortcut"
+        :disabled="!s.canAnnotate"
+        :reason="s.noteDisabledReason"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertNote)"
+      />
+      <MenuItem
+        label="Comment"
+        icon="comment"
+        testid="sheet-menu-insert-comment"
+        :shortcut="commentShortcut"
+        :disabled="!s.canComment"
+        :reason="s.commentDisabledReason"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertComment)"
       />
     </template>
 

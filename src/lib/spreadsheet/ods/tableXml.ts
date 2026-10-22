@@ -71,6 +71,8 @@ import {
   MAX_COLS,
   MAX_ROWS,
   type Cell,
+  type CellHyperlink,
+  type CellNote,
   type CellStyle,
   type CellValue,
   type ColumnSpan,
@@ -91,6 +93,7 @@ import { cellStyle, columnSpanAt } from "../styles";
 import { sheetValidations, type DataValidation } from "../validation";
 import { withoutValidationName } from "./contentValidations";
 import { leadingWithShapes, odsSheetDrawingsXml, type OdsDrawingWriteContext, type OdsSheetDrawingsXml } from "./drawingXml";
+import { linkedParagraphsXml, odsNoteXml, paragraphsMatchLink } from "./annotations";
 import { tableStartTag } from "./package";
 import type { OdsRowHeight, OdsStyleEnv, OdsStyleRegistry } from "./styles";
 
@@ -1216,6 +1219,15 @@ class TableWriter {
   private readonly drawings: OdsSheetDrawingsXml;
   private readonly drawingRows: number[];
   private nextDrawingRow = 0;
+  // SPEC-135: the notes by row and column (each its cell's first child), the
+  // rows holding one, and the hyperlinks by top with those the current row
+  // meets (ods/annotations.ts).
+  private readonly notes = new Map<number, Map<number, CellNote>>();
+  private readonly noteRows: number[];
+  private nextNoteRow = 0;
+  private readonly links: CellHyperlink[];
+  private nextLink = 0;
+  private activeLinks: CellHyperlink[] = [];
   // SPEC-133: the sheet's tables, and each look's generated style by own style id.
   private readonly tables: readonly SheetTable[];
   private readonly lookStyles = new Map<CellStyle, Map<number, string | null>>();
@@ -1248,6 +1260,18 @@ class TableWriter {
     }
     this.drawings = odsSheetDrawingsXml(sheet.drawings ?? [], drawingCtx);
     this.drawingRows = [...this.drawings.cells.keys()].toSorted((a, b) => a - b);
+    for (const note of sheet.notes ?? []) {
+      if (note.ref.row < MAX_ROWS && note.ref.col < MAX_COLS) {
+        let byCol = this.notes.get(note.ref.row);
+        if (!byCol) {
+          byCol = new Map();
+          this.notes.set(note.ref.row, byCol);
+        }
+        byCol.set(note.ref.col, note);
+      }
+    }
+    this.noteRows = [...this.notes.keys()].toSorted((a, b) => a - b);
+    this.links = (sheet.hyperlinks ?? []).toSorted((a, b) => a.range.top - b.range.top);
     this.tables = sheet.tables ?? [];
     this.workbookHasTables = ctx.model.sheets?.some((each) => (each.tables?.length ?? 0) > 0) ?? false;
     this.measure();
@@ -1284,6 +1308,13 @@ class TableWriter {
     }
     // SPEC-131: a drawing's anchor cell is written even when nothing is stored there.
     for (const [row, byCol] of this.drawings.cells) {
+      rows = Math.max(rows, row + 1);
+      for (const col of byCol.keys()) {
+        cols = Math.max(cols, col + 1);
+      }
+    }
+    // SPEC-135: so is a note's.
+    for (const [row, byCol] of this.notes) {
       rows = Math.max(rows, row + 1);
       for (const col of byCol.keys()) {
         cols = Math.max(cols, col + 1);
@@ -1429,6 +1460,7 @@ class TableWriter {
       }
       this.active = this.active.filter((merge) => merge.bottom >= r);
       this.meetValidated(r);
+      this.meetLinks(r);
       while (this.nextStored < stored.length && stored[this.nextStored]!.index < r) {
         this.nextStored += 1;
       }
@@ -1437,13 +1469,17 @@ class TableWriter {
         this.nextDrawingRow += 1;
       }
       const drawn = this.drawingRows[this.nextDrawingRow] === r;
+      while (this.nextNoteRow < this.noteRows.length && this.noteRows[this.nextNoteRow]! < r) {
+        this.nextNoteRow += 1;
+      }
+      const noted = this.noteRows[this.nextNoteRow] === r;
       const inTable = this.tables.some((table) => table.ref.top <= r && table.ref.bottom >= r);
-      if (row || drawn || inTable || this.active.some((merge) => merge.top === r)) {
-        out.push(this.rowElement(row, r), 1, drawn);
+      if (row || drawn || noted || inTable || this.active.some((merge) => merge.top === r)) {
+        out.push(this.rowElement(row, r), 1, drawn || noted);
         r += 1;
         continue;
       }
-      let end = Math.min(to, stored[this.nextStored]?.index ?? to, this.drawingRows[this.nextDrawingRow] ?? to);
+      let end = Math.min(to, stored[this.nextStored]?.index ?? to, this.drawingRows[this.nextDrawingRow] ?? to, this.noteRows[this.nextNoteRow] ?? to);
       if (this.nextMerge < this.merges.length) {
         end = Math.min(end, this.merges[this.nextMerge]!.top);
       }
@@ -1459,6 +1495,25 @@ class TableWriter {
       out.push(this.rowElement(undefined, r), Math.max(end - r, 1));
       r = Math.max(end, r + 1);
     }
+  }
+
+  /** SPEC-135: the hyperlinks row `r` meets (rows ascend). */
+  private meetLinks(r: number): void {
+    if (this.links.length === 0) {
+      return;
+    }
+    while (this.nextLink < this.links.length && this.links[this.nextLink]!.range.top <= r) {
+      this.activeLinks.push(this.links[this.nextLink]!);
+      this.nextLink += 1;
+    }
+    this.activeLinks = this.activeLinks.filter((link) => link.range.bottom >= r);
+  }
+
+  /** The current row's hyperlink at `col` — the first covering it in
+   * model order (links are sorted by their start, and never overlap when
+   * set through annotations.ts). */
+  private linkAt(col: number): CellHyperlink | undefined {
+    return this.activeLinks.find((link) => link.range.left <= col && link.range.right >= col);
   }
 
   /** The validated rectangles row `r` meets (rows ascend). */
@@ -1559,6 +1614,10 @@ class TableWriter {
     const drawn = this.drawings.cells.get(r);
     const drawnCols = drawn ? [...drawn.keys()].toSorted((a, b) => a - b) : [];
     let d = 0;
+    // SPEC-135: the notes on this row, by column.
+    const noted = this.notes.get(r);
+    const notedCols = noted ? [...noted.keys()].toSorted((a, b) => a - b) : [];
+    let n = 0;
     // SPEC-133: the tables this row crosses — each of their cells is written.
     const rowTables = this.tables.filter((table) => table.ref.top <= r && table.ref.bottom >= r);
     while (col < this.colExtent) {
@@ -1578,13 +1637,17 @@ class TableWriter {
         d += 1;
       }
       const drawings = drawnCols[d] === col ? drawn!.get(col) : undefined;
+      while (n < notedCols.length && notedCols[n]! < col) {
+        n += 1;
+      }
+      const note = notedCols[n] === col ? noted!.get(col) : undefined;
       const table = rowTables.find((each) => each.ref.left <= col && each.ref.right >= col);
-      if (cell || anchor || drawings !== undefined || table) {
-        out.push(this.cellElement(cell, covered, anchor, row, r, col, validation, drawings, table), 1, drawings !== undefined);
+      if (cell || anchor || drawings !== undefined || note || table) {
+        out.push(this.cellElement(cell, covered, anchor, row, r, col, validation, drawings, table, note), 1, drawings !== undefined || note !== undefined);
         col += 1;
         continue;
       }
-      let end = Math.min(this.colExtent, cells[next]?.col ?? this.colExtent, drawnCols[d] ?? this.colExtent);
+      let end = Math.min(this.colExtent, cells[next]?.col ?? this.colExtent, drawnCols[d] ?? this.colExtent, notedCols[n] ?? this.colExtent);
       if (merge) {
         end = Math.min(end, merge.range.right + 1);
       } else if (merges[m]) {
@@ -1628,6 +1691,7 @@ class TableWriter {
     validation?: string,
     drawings?: string,
     table?: SheetTable,
+    note?: CellNote,
   ): Repeatable {
     let head = covered ? "<table:covered-table-cell" : "<table:table-cell";
     const close = covered ? "</table:covered-table-cell>" : "</table:table-cell>";
@@ -1643,8 +1707,11 @@ class TableWriter {
     if (anchor) {
       attrs += ` table:number-columns-spanned="${anchor.right - anchor.left + 1}" table:number-rows-spanned="${anchor.bottom - anchor.top + 1}"`;
     }
+    // SPEC-135: a note is the cell's first child (ods/annotations.ts).
+    const noteXml = note ? odsNoteXml(note, (text) => paragraphsXml([{ text }])) : "";
     if (!cell) {
-      return { head, tail: drawings === undefined ? `${attrs}/>` : `${attrs}>${drawings}${close}` };
+      const content = noteXml + (drawings ?? "");
+      return { head, tail: content === "" ? `${attrs}/>` : `${attrs}>${content}${close}` };
     }
     if (cell.arrayRange && cell.formula !== undefined) {
       const range = cell.arrayRange;
@@ -1694,10 +1761,19 @@ class TableWriter {
       // A name captured before SPEC-130 modelled it: the model's wins.
       attrs += withoutValidationName(pass(cell.preservedAttrs));
     }
-    let content = cell.preservedXml === undefined ? "" : pass(cell.preservedXml);
-    // SPEC-131: after any office:annotation, before the text.
+    let content = noteXml + (cell.preservedXml === undefined ? "" : pass(cell.preservedXml));
+    // SPEC-131: after the note and any preserved element, before the text.
     content += drawings ?? "";
-    content += cell.preservedText !== undefined ? pass(cell.preservedText) : paragraphsXml(text);
+    // SPEC-135: the text wrapped in the cell's link — verbatim paragraphs
+    // only while their first text:a says what the model's link says.
+    const link = this.linkAt(col);
+    const preservedText = cell.preservedText === undefined ? undefined : pass(cell.preservedText);
+    if (preservedText !== undefined && paragraphsMatchLink(preservedText, link)) {
+      content += preservedText;
+    } else {
+      const paragraphs = paragraphsXml(text);
+      content += link ? linkedParagraphsXml(paragraphs, link) : paragraphs;
+    }
     return { head, tail: content === "" ? `${attrs}/>` : `${attrs}>${content}${close}` };
   }
 
@@ -1899,7 +1975,15 @@ function validatedRanges(sheet: Sheet, nameOf: OdsTableContext["validationName"]
  * preservedXml (any `office:annotation`) and before its text — the cell
  * materialised when nothing else is stored there, its row too, and neither
  * ever repeat-compressed with a neighbour. The extent covers every anchor
- * cell. */
+ * cell.
+ * SPEC-135: each note of `Sheet.notes` is its cell's FIRST child
+ * (ods/annotations.ts odsNoteXml — the source element verbatim while
+ * unchanged, without its stale caption position once moved, else
+ * generated), its cell and row materialised and never repeat-compressed as
+ * a drawing's are, the extent covering it; a cell a `Sheet.hyperlinks`
+ * range covers has its paragraphs' content wrapped in the link's `text:a`
+ * (linkedParagraphsXml), its `preservedText` kept only while that
+ * text's first `text:a` still matches the model's link (paragraphsMatchLink). */
 export function serializeTable(sheet: Sheet, ctx: OdsTableContext): string {
   return new TableWriter(sheet, ctx).write();
 }

@@ -2,7 +2,7 @@
 // later spreadsheet pane registers here rather than mounting a panel of its
 // own (SPEC-135's comments, SPEC-138's version history, SPEC-139's pivot
 // field list) — this spec opens the union with its one pane,
-// `conditionalFormats`.
+// `conditionalFormats`; SPEC-135 adds `comments` (SheetCommentsPanel).
 //
 // Unlike the text editor's useSidePanel (src/views/document/useSidePanel.ts),
 // this composable is NOT wired to an EditorContext or a closed pane list: the
@@ -18,9 +18,9 @@ import { clampPanelWidth, DEFAULT_PANEL_WIDTH, MIN_PANEL_WIDTH } from "../../lib
 
 /** Every pane the sheet's side panel can host; later specs widen this
  * union. */
-export type SheetPaneId = "conditionalFormats";
+export type SheetPaneId = "conditionalFormats" | "comments";
 
-const SHEET_PANE_IDS: readonly SheetPaneId[] = ["conditionalFormats"];
+const SHEET_PANE_IDS: readonly SheetPaneId[] = ["conditionalFormats", "comments"];
 
 function isSheetPaneId(value: unknown): value is SheetPaneId {
   return typeof value === "string" && (SHEET_PANE_IDS as readonly string[]).includes(value);
@@ -29,6 +29,7 @@ function isSheetPaneId(value: unknown): value is SheetPaneId {
 /** Each pane's tab title and AppIcon glyph. */
 export const SHEET_PANES: Record<SheetPaneId, { title: string; icon: string }> = {
   conditionalFormats: { title: "Conditional Formatting", icon: "conditional-format" },
+  comments: { title: "Comments", icon: "comments" },
 };
 
 export type SheetSidePanelSide = "left" | "right";

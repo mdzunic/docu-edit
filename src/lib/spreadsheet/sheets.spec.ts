@@ -2112,12 +2112,10 @@ describe("unconvertibleContent", () => {
   const LABELS = [
     "macros",
     "drawings",
-    "comments",
     "some conditional formatting",
     "named ranges",
     "tables",
     "colour and icon filters",
-    "hyperlinks",
     "pivot tables",
     "page setup",
     "untranslatable formulas",
@@ -2158,15 +2156,17 @@ describe("unconvertibleContent", () => {
 
   it("lists spec121-links.xlsx's structures in table order", async () => {
     // SPEC-129: its conditional format (an expression rule) crosses; SPEC-130: so do its data validations;
-    // SPEC-132: so does its chart, a clustered column (the "charts" row is gone).
+    // SPEC-132: so does its chart, a clustered column (the "charts" row is gone);
+    // SPEC-135: so do its notes and hyperlinks (the "comments" and "hyperlinks" rows are gone).
     const labels = unconvertibleContent(await openLinksXlsx(), "ods");
-    expect(labels).toEqual(["comments", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["named ranges", "tables"]);
   });
 
   it("lists spec121-links.ods's structures in table order", async () => {
-    // SPEC-130: its content validations cross; SPEC-132: so does its bar chart.
+    // SPEC-130: its content validations cross; SPEC-132: so does its bar chart;
+    // SPEC-135: so do its annotations and links.
     const labels = unconvertibleContent(await openLinksOds(), "xlsx");
-    expect(labels).toEqual(["comments", "named ranges", "tables", "hyperlinks"]);
+    expect(labels).toEqual(["named ranges", "tables"]);
   });
 
   it("SPEC-130: data validation crosses through the model — rules, and their retained wire text, are never named", () => {

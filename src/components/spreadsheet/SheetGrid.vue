@@ -58,6 +58,15 @@
 // (useSheetFind's marks for the sheet on show) has the paper mark every
 // matching cell data-find-match="true" and the current one
 // data-find-current="true"; null — the find bar closed — marks nothing.
+// SPEC-135: the paper draws each cell's note and thread indicators
+// (useCellNotes' marksAt); the note layer (SheetNoteLayer — the shown notes' boxes, the note editor, the
+// hover popover and the active cell's annotation text for its
+// aria-describedby) sits above the validation layer, placed from each cell's
+// rect in unscaled px; the pointer resting on a cell or a popover goes to the
+// notes through useSheetGrid's notePointer. SPEC-135's links: a linked cell
+// carries data-link and its text's span the pointer cursor (useCellLinks'
+// isLinked); a Ctrl/Cmd+press over that text follows the link instead of
+// adding a range; LinkChip pins under the active linked cell.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
@@ -72,6 +81,9 @@ import SheetCellLayer from "./SheetCellLayer.vue";
 import SheetCopyMarquee from "./SheetCopyMarquee.vue";
 import SheetDrawingLayer from "./SheetDrawingLayer.vue";
 import SheetFillHandle from "./SheetFillHandle.vue";
+import SheetNoteLayer from "./SheetNoteLayer.vue";
+import LinkChip from "../LinkChip.vue";
+import { linksOf } from "../../views/spreadsheet/useCellLinks";
 import ValidationDropdown from "./ValidationDropdown.vue";
 import ValidationInputMessage from "./ValidationInputMessage.vue";
 
@@ -124,6 +136,28 @@ function onFilterButton(col = 0, anchor = { left: 0, top: 0 }) {
   sortFilter.value?.pressFilterButton(col, anchor);
 }
 
+/** SPEC-135: links (null: not wired) — the paper's data-link, a
+ * Ctrl/Cmd+press over a linked cell's text following its link ahead of the
+ * pointer's own handling (SPEC-117's add-a-range), and the active cell's
+ * chip pinned under it in viewport px (LinkChip is fixed; teleported, so its
+ * presses never reach the grid), hidden while the cell is out of view. */
+const links = computed(() => linksOf(props.context));
+function onPointerDown(event = new PointerEvent("pointerdown")) {
+  if (!links.value?.pressFollows(event)) {
+    grid.pointer.onPointerDown(event);
+  }
+}
+const linkChip = computed(() => {
+  const chip = links.value?.chip.value;
+  const rect = grid.overlays.activeRect.value;
+  const box = chip && rect ? scroller.value?.getBoundingClientRect() : undefined;
+  if (!chip || !rect || !box || rect.top + rect.height > vp.viewRows.value) {
+    return null;
+  }
+  const z = vp.z.value;
+  return { ...chip, left: box.left + (RH + rect.left) * z, top: box.top + (CH + rect.top + rect.height) * z + 2 };
+});
+
 /** SPEC-131: the drawing layer (null: no drawings wired) and its events. */
 const drawingLayer = computed(() => grid.drawingGestures.layer.value);
 const drawings = computed(() => asSheetGridContext(props.context).drawings ?? null);
@@ -136,6 +170,9 @@ function drawingMenu(id = "", x = 0, y = 0) {
 function drawingFocus(id = "") {
   drawings.value?.select(id, false);
 }
+
+/** SPEC-135: notes (null: not wired). */
+const notes = computed(() => asSheetGridContext(props.context).notes ?? null);
 
 /** SPEC-130: the dropdown's events, to data validation. */
 const validationChrome = computed(() => grid.validationChrome.value);
@@ -201,10 +238,12 @@ function unscroll(event = new Event("scroll")) {
     @keydown="grid.onKeydown"
     @dblclick="grid.onDblClick"
     @wheel="grid.onWheel"
-    @pointerdown="grid.pointer.onPointerDown"
+    @pointerdown="onPointerDown"
     @pointermove="grid.pointer.onPointerMove"
     @pointerup="grid.pointer.onPointerUp"
     @pointercancel="grid.pointer.onPointerUp"
+    @pointerover="grid.notePointer.over"
+    @pointerleave="grid.notePointer.leave"
   >
     <div
       class="grid-area"
@@ -227,6 +266,8 @@ function unscroll(event = new Event("scroll")) {
             :filter-button="filterButton"
             :described-by="grid.describedBy.value ?? undefined"
             :find-marks="findMarks ?? undefined"
+            :annotation-marks="notes?.marksAt"
+            :link-at="links?.isLinked"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
             @filter-button="onFilterButton"
           />
@@ -359,6 +400,13 @@ function unscroll(event = new Event("scroll")) {
               @dismiss="closeList(false)"
             />
           </div>
+          <SheetNoteLayer
+            v-if="notes"
+            :controller="notes"
+            :anchor="grid.noteAnchor"
+            :bounds="{ width: vp.viewCols.value, height: vp.viewRows.value }"
+            :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
+          />
           <div
             class="sheet-col-headers"
             role="row"
@@ -510,6 +558,20 @@ function unscroll(event = new Event("scroll")) {
         :style="grid.canvasStyle.value"
       />
     </div>
+    <Teleport to="body">
+      <LinkChip
+        v-if="links && linkChip"
+        :left="linkChip.left"
+        :top="linkChip.top"
+        :label="linkChip.label"
+        :external="linkChip.external"
+        @open="links.openFromChip()"
+        @edit="links.editFromChip()"
+        @copy="links.copyFromChip()"
+        @remove="links.removeFromChip()"
+        @dismiss="links.dismissChip()"
+      />
+    </Teleport>
   </div>
 </template>
 

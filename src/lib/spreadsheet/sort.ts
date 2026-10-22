@@ -33,6 +33,7 @@
 //   (SPEC-135's annotations). Range-based structures never register.
 // - Refusals change nothing and carry SORT_REFUSAL_MESSAGES' text.
 import { colToLetters, findRow, getCell, usedRange, type GridRange } from "./address";
+import { permuteAnnotations } from "./annotations";
 import { isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { cellKey, type CellKey } from "./formula/dependencies";
 import { shiftFormula } from "./formula/references";
@@ -79,8 +80,12 @@ export interface RowPermutationAdjuster {
   permute(model: SpreadsheetModel, sheetId: string, range: GridRange, permutation: readonly { from: number; to: number }[]): void; // absolute row indices
 }
 
-/** Empty in SPEC-128; SPEC-135 registers its annotations. */
-export const ROW_PERMUTATION_ADJUSTERS: RowPermutationAdjuster[] = [];
+/** Empty in SPEC-128; SPEC-135 registers its annotations (annotations.ts,
+ * called through an arrow — the modules import each other): notes, threads
+ * and links travel with their records. */
+export const ROW_PERMUTATION_ADJUSTERS: RowPermutationAdjuster[] = [
+  { id: "annotations", permute: (model, sheetId, range, permutation) => permuteAnnotations(model, sheetId, range, permutation) },
+];
 
 export const SORT_REFUSAL_MESSAGES: Readonly<Record<Exclude<SortRefusal, "duplicateKey">, string>> = {
   merges: "Sorting isn't possible here — the range contains merged cells that span rows. Unmerge them first.",

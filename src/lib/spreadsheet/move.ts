@@ -39,6 +39,7 @@
 // its row in move.spec.ts's registry contract; drawings (131) and page
 // breaks (136) deliberately do not.
 import { subtractRanges, type CellRef, type GridRange } from "./address";
+import { moveHyperlinksForMove, moveNotesForMove } from "./annotations";
 import { mapFormatFormulas, withoutFormatSource } from "./cfFormulas";
 import { moveChartsForMove } from "./charts";
 import { forEachPosition, PASTE_MERGE_MESSAGE, PASTE_PAST_EDGE_MESSAGE, TOO_MANY_TO_CHANGE_MESSAGE } from "./clipboard";
@@ -786,6 +787,9 @@ export const MOVE_ADJUSTERS: MoveAdjuster[] = [
   // SPEC-133 (nameTableAdjusters.ts); called through arrows, as the modules import each other.
   { id: "names", move: (model, move) => moveNamesForMove(model, move) },
   { id: "tables", move: (model, move) => moveTablesForMove(model, move) },
+  // SPEC-135 (annotations.ts): a cell's note, thread and link travel with it.
+  { id: "notes", move: (model, move) => moveNotesForMove(model, move) },
+  { id: "hyperlinks", move: (model, move) => moveHyperlinksForMove(model, move) },
 ];
 
 /** One move (see the module header). */

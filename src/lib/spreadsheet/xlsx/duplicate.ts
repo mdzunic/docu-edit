@@ -15,8 +15,10 @@
 //   references to it in the copy renamed; a copied VML part gets `o:idmap
 //   data` = max over all VML parts + 1 and its `_x0000_s<id>` shape ids
 //   rebased by 1024 per block; threaded-comment ids and the matching legacy
-//   `xr:uid`s are re-minted deterministically (a v4-shaped UUID from FNV-1a
-//   of the copy's sheet id + the original id), so writes are reproducible; a
+//   `xr:uid`s — and the `tc={id}` author of each thread's placeholder
+//   comment (SPEC-135), so the copy's placeholders name its own threads —
+//   are re-minted deterministically (a v4-shaped UUID from FNV-1a of the
+//   copy's sheet id + the original id), so writes are reproducible; a
 //   copied pivot table's `name` is uniqued.
 // - The Content-Types Overrides, the workbook relationship and the sheetId
 //   are the writer's, added on save (xlsx/writer.ts).
@@ -322,9 +324,17 @@ function remintThreadedComments(xml: string, copySheetId: string, ids: Map<strin
   return applySplices(xml, splices);
 }
 
-/** A copied legacy comments part with each `xr:uid` re-mapped. */
+/** A copied legacy comments part with each `xr:uid`, and each placeholder
+ * author's `tc={id}` (SPEC-135), re-mapped. */
 function remapCommentUids(xml: string, ids: ReadonlyMap<string, string>): string {
   const splices: Splice[] = [];
+  for (const match of xml.matchAll(/(<(?:[\w.-]+:)?author>\s*tc=)([^<\s]+)(\s*<\/(?:[\w.-]+:)?author>)/g)) {
+    const minted = ids.get(match[2]!);
+    if (minted !== undefined) {
+      const start = match.index + match[1]!.length;
+      splices.push({ start, end: start + match[2]!.length, text: minted });
+    }
+  }
   for (const element of startTags(xml, "comment")) {
     const uid = attributeValue(element.tag, "xr:uid");
     const minted = uid === undefined ? undefined : ids.get(uid);

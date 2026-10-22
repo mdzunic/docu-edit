@@ -49,6 +49,12 @@
 // bar is open — Excel for Mac's arrangement) and F5. useSheetGoTo takes both
 // while a workbook view is mounted and no dialog is open, so F5 never
 // reloads the page there.
+//
+// SPEC-135 adds the notes and comments pair: Shift+F2 (`sheet.note`) and
+// Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, by physical key `KeyM`),
+// and the link dialog's Ctrl/Cmd+K (`sheet.insertLink`, useCellLinks) — the
+// key the text side's command palette takes, which the workbook view never
+// mounts.
 import { isMacPlatform } from "../../lib/core/platform";
 import type { ShortcutDefinition } from "../../lib/shortcuts";
 import type { NumberShortcutId } from "../../lib/spreadsheet/numberCodes";
@@ -75,7 +81,10 @@ export type SheetShortcutId =
   | "sheet.toggleFilter"
   | "sheet.reapplyFilter"
   | "sheet.nameManager"
-  | "sheet.goTo";
+  | "sheet.goTo"
+  | "sheet.note"
+  | "sheet.newComment"
+  | "sheet.insertLink";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
@@ -83,6 +92,8 @@ const PASTE_CATEGORY = "Paste and fill";
 const FORMULA_CATEGORY = "Formulas";
 const FILTER_CATEGORY = "Sort and filter";
 const NAVIGATION_CATEGORY = "Navigation";
+const ANNOTATION_CATEGORY = "Notes and comments";
+const LINK_CATEGORY = "Links";
 
 /** The sheet's table for one platform, one binding per command. Bold, italic
  * and underline override the same browser defaults the text editor's do
@@ -135,6 +146,15 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     { id: "sheet.nameManager", label: "Name Manager", category: FORMULA_CATEGORY, bindings: [{ key: "F3", mod: true }] },
     // SPEC-134: Go To — Control+G everywhere, and F5.
     { id: "sheet.goTo", label: "Go to", category: NAVIGATION_CATEGORY, bindings: [{ key: "g", ctrl: true }, { key: "F5" }] },
+    // SPEC-135: Excel's Shift+F2 (a new note, or the note's editor) and
+    // Ctrl+Alt+M / Cmd+Option+M (New comment, by physical key — best effort
+    // on macOS, whose Option+Cmd+M minimises the windows; the cell context
+    // menu's New comment is the guaranteed path). useCellNotes and
+    // useSheetComments run them.
+    { id: "sheet.note", label: "New or edit note", category: ANNOTATION_CATEGORY, bindings: [{ key: "F2", shift: true }] },
+    { id: "sheet.newComment", label: "New comment", category: ANNOTATION_CATEGORY, bindings: [{ key: "M", code: "KeyM", mod: true, alt: true }] },
+    // SPEC-135: Insert ▸ Link… (the link dialog), Excel's Ctrl/Cmd+K.
+    { id: "sheet.insertLink", label: "Insert link", category: LINK_CATEGORY, bindings: [{ key: "k", mod: true }] },
   ];
   return definitions;
 }

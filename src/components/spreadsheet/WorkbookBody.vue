@@ -30,7 +30,10 @@
 // table surfaces (SheetTableSurfaces, the grid context's `tables`) — the
 // design bar and the ODS notice sit BELOW the sheet, between it and the tabs,
 // so they never move a cell under the pointer. SPEC-134: the grid's find
-// marks, from the grid context's `find`.
+// marks, from the grid context's `find`. SPEC-135: the link dialog
+// (SheetLinkDialog, from `editing`'s links), which the cell menu's Link…
+// opens too; the cell menu's notes and comments items (`editing`'s notes
+// and comments).
 // Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
@@ -57,6 +60,7 @@ import SheetGrid from "./SheetGrid.vue";
 import SheetHeaderContextMenu from "./SheetHeaderContextMenu.vue";
 import SheetInsertDeleteDialog from "./SheetInsertDeleteDialog.vue";
 import SheetInsertSurfaces from "./SheetInsertSurfaces.vue";
+import SheetLinkDialog from "./SheetLinkDialog.vue";
 import SheetMergeWarningDialog from "./SheetMergeWarningDialog.vue";
 import SheetMoveOverwriteDialog from "./SheetMoveOverwriteDialog.vue";
 import SheetSidePanel from "./SheetSidePanel.vue";
@@ -115,6 +119,32 @@ const validation = computed(() => asWorkbookEditing(props.editing).validation ??
 
 /** SPEC-131: the drawing layer (null: not wired). */
 const drawings = computed(() => grid.value.drawings ?? null);
+/** SPEC-135: links — the link dialog, opened by the cell menu's Link… too (null: not wired). */
+const links = computed(() => asWorkbookEditing(props.editing).links ?? null);
+/** SPEC-135: notes and comments — the cell menu's items (null: not wired). */
+const notes = computed(() => asWorkbookEditing(props.editing).notes ?? null);
+const comments = computed(() => asWorkbookEditing(props.editing).comments ?? null);
+const annotationMenu = computed(() => ({
+  canAnnotate: notes.value?.canAnnotate.value === true,
+  hasNote: notes.value?.activeNote.value !== undefined,
+  noteVisible: notes.value?.activeNote.value?.visible === true,
+  noteDisabledReason: notes.value?.noteDisabledReason.value ?? "",
+  canComment: comments.value?.canComment.value === true,
+  commentDisabledReason: comments.value?.newCommentDisabledReason.value ?? "",
+  canLink: links.value?.canLink.value !== false,
+  linkDisabledReason: links.value?.linkDisabledReason.value ?? "",
+}));
+function annotate(action = "note") {
+  if (action === "comment") {
+    comments.value?.newComment();
+  } else if (action === "delete-note") {
+    notes.value?.deleteActive();
+  } else if (action === "toggle-note") {
+    notes.value?.toggleActiveVisible();
+  } else {
+    notes.value?.openEditor();
+  }
+}
 /** SPEC-132: the sheet charts — the toolbar, dialogs, gallery and chart sheets (null: not wired). */
 const charts = computed(() => asWorkbookEditing(props.editing).charts ?? null);
 function drawingAction(action = "front") {
@@ -252,9 +282,12 @@ const tabs = computed(() => {
         :open="grid.formatting.contextMenu.value !== null"
         :x="grid.formatting.contextMenu.value?.x ?? 0"
         :y="grid.formatting.contextMenu.value?.y ?? 0"
+        :annotations="annotationMenu"
         @run="grid.formatting.run"
         @structure="insertOrDelete"
         @clipboard="clipboard"
+        @link="links?.openDialog()"
+        @annotate="annotate"
         @close="grid.formatting.closeContextMenu()"
       />
       <FormatCellsDialog
@@ -317,6 +350,10 @@ const tabs = computed(() => {
     <NameEditorDialog
       v-if="names?.editor.value"
       :names="names"
+    />
+    <SheetLinkDialog
+      v-if="links?.dialog.value"
+      :links="links"
     />
     <ValidationAlert
       v-if="validation?.alert.value"
