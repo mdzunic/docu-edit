@@ -86,6 +86,12 @@ export interface SheetPageView {
 const PX_PER_PT = 96 / 72;
 const CM_PER_PT = 2.54 / 72;
 
+/** The sheet is paper, not app chrome: white in every app theme, black ink,
+ * and its own text (notes, page numbers) in the bundled sans the PDF embeds.
+ * Inline like the slide renderer's model colours, never a UI token. */
+export const SHEET_PAPER_STYLE: Style = { background: "#ffffff", color: "#000000" };
+const SHEET_TEXT_STYLE: Style = { fontFamily: '"Liberation Sans", Arial, sans-serif', color: "#000000" };
+
 /** Typed pass-throughs for the .vue script (espree bars the casts there). */
 export function asSheetPages(value: unknown): SheetPage[] {
   return (value ?? []) as SheetPage[];
@@ -121,7 +127,7 @@ export function sheetPageViews(
     const frameCm = SLIDE_FRAME_WIDTH_PT * CM_PER_PT;
     return {
       index: page.index,
-      style: { width: px(page.widthCm), height: px(page.heightCm) },
+      style: { ...SHEET_PAPER_STYLE, width: px(page.widthCm), height: px(page.heightCm) },
       slots: page.slots.map((slot, n) => ({
         key: `${page.index}-${n}-${slot.slideIndex}`,
         slideIndex: slot.slideIndex,
@@ -160,13 +166,18 @@ export function sheetPageViews(
       ),
       notes: page.notes
         ? {
-            style: { ...box(page.notes.box), fontSize: ptPx(NOTES_FONT_SIZE_PT), lineHeight: String(NOTES_LINE_HEIGHT) },
+            style: {
+              ...box(page.notes.box),
+              ...SHEET_TEXT_STYLE,
+              fontSize: ptPx(NOTES_FONT_SIZE_PT),
+              lineHeight: String(NOTES_LINE_HEIGHT),
+            },
             paragraphs: page.notes.paragraphs,
           }
         : null,
       pageNumber:
         page.pageNumber && page.pageNumberBox
-          ? { text: page.pageNumber, style: { ...box(page.pageNumberBox), fontSize: ptPx(PAGE_NUMBER_SIZE_PT) } }
+          ? { text: page.pageNumber, style: { ...box(page.pageNumberBox), ...SHEET_TEXT_STYLE, fontSize: ptPx(PAGE_NUMBER_SIZE_PT) } }
           : null,
     };
   });

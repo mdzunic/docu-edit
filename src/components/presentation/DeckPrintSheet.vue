@@ -12,7 +12,7 @@
 // declarations per the espree constraint.
 import { computed } from "vue";
 import SlideStage from "./SlideStage.vue";
-import { asDeck, asSheetPages, sheetPageViews } from "./deckPrintSheet";
+import { SHEET_PAPER_STYLE, asDeck, asSheetPages, sheetPageViews } from "./deckPrintSheet";
 import { now } from "../../lib/clock";
 
 const props = defineProps({
@@ -36,6 +36,7 @@ const pages = computed(() =>
       data-testid="deck-print-sheet"
       aria-hidden="true"
       inert
+      :style="SHEET_PAPER_STYLE"
     >
       <div
         v-for="page in pages"
@@ -105,14 +106,14 @@ const pages = computed(() =>
 
 <style scoped>
 /* Off-screen, but laid out and painted for real: the exporter measures and
-   reads it, and printing shows it (App.vue moves it back on screen). */
+   reads it, and printing shows it (App.vue moves it back on screen). Its
+   paper and ink colours are inline (deckPrintSheet.ts): document content,
+   not app chrome. */
 .deck-print-sheet {
   position: fixed;
   left: -20000px;
   top: 0;
   pointer-events: none;
-  background: #ffffff;
-  color: #000000;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
 }
@@ -120,7 +121,6 @@ const pages = computed(() =>
 .deck-print-page {
   position: relative;
   overflow: hidden;
-  background: #ffffff;
   break-after: page;
 }
 
@@ -151,8 +151,6 @@ const pages = computed(() =>
 .deck-print-notes {
   position: absolute;
   overflow: hidden;
-  font-family: "Liberation Sans", Arial, sans-serif;
-  color: #000000;
 }
 
 .deck-print-notes-paragraph {
@@ -167,7 +165,5 @@ const pages = computed(() =>
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: "Liberation Sans", Arial, sans-serif;
-  color: #000000;
 }
 </style>
