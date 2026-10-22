@@ -20,7 +20,7 @@
 //   computed when followed, never stored).
 // - The hyperlink look (AC-35): the theme `hlink` colour and a single
 //   underline, applied by the dialog's insert to the cells of the linked
-//   range whose font colour is automatic (by cell up to
+//   range whose font colour is automatic (isAutomaticColor; by cell up to
 //   HYPERLINK_STYLE_CELL_LIMIT cells, beyond it the whole range when the
 //   active cell's colour is automatic).
 // - linkTextEntry: the dialog's text, when it differs from what the cell
@@ -31,6 +31,7 @@
 //   reference (its element's data-ref: a merge's anchor, the cell whose text
 //   overflows there); anywhere else in the cell gives null.
 import { getCell, parseA1, parseRange, type CellRef, type GridRange } from "../../lib/spreadsheet/address";
+import { isThemeColor, type ModelColor } from "../../lib/core/theme";
 import { isDangerousUrl, sanitizeHref, urlScheme } from "../../lib/core/urls";
 import { canonicalPlaceLocation, externalHref, hyperlinkAt, hyperlinkFormulaCall, hyperlinkFormulaTarget } from "../../lib/spreadsheet/annotations";
 import { cellDisplay } from "../../lib/spreadsheet/cellRender";
@@ -224,9 +225,16 @@ export function linkRange(active: GridRange, existing: CellHyperlink | null): Gr
   return existing && single ? existing.range : active;
 }
 
+/** Whether a font colour reads as automatic: none, or the theme's Text 1
+ * (`dk1`) untransformed — what a Normal style carries for it (Excel's
+ * `theme="1"`, createBlankWorkbook's). */
+export function isAutomaticColor(color: ModelColor | undefined): boolean {
+  return color === undefined || (isThemeColor(color) && color.theme === "dk1" && [color.lumMod, color.lumOff, color.shade, color.tint].every((each) => each === undefined));
+}
+
 /** Whether a position's effective font colour is automatic. */
 function automaticColor(model: SpreadsheetModel, sheet: Sheet, row: number, col: number): boolean {
-  return cellStyle(model, effectiveStyleId(sheet, row, col)).font?.color === undefined;
+  return isAutomaticColor(cellStyle(model, effectiveStyleId(sheet, row, col)).font?.color);
 }
 
 /** The hyperlink look's entries for `range` (see the module header). */
