@@ -819,6 +819,9 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
   if (parsed.media !== undefined && parsed.media.length > 0) {
     model.media = parsed.media;
   }
+  if (parsed.persons !== undefined && parsed.persons.length > 0) {
+    model.persons = parsed.persons;
+  }
   model.preview = buildPreview(model, READ_PREVIEW_LOCALE);
   return model;
 }
