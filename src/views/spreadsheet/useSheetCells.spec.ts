@@ -9,16 +9,18 @@
 // 64 px columns and 20 px rows at 100%). SPEC-119: with Show formulas on, a
 // formula cell shows "=" + formula left-aligned whatever its style says, an
 // array member its anchor's "{=…}", and a constant its General text with no
-// number format.
+// number format. SPEC-133: a table cell paints its table look beneath its own
+// style and beneath a conditional format.
 import { afterEach, describe, expect, it } from "vitest";
 import { defineComponent, h, ref, type ComputedRef } from "vue";
 import { mount } from "@vue/test-utils";
 import SheetCellLayer from "../../components/spreadsheet/SheetCellLayer.vue";
+import { DEFAULT_THEME, resolveColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
-import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { Cell, CellStyle, Row, Sheet, SheetTable, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { singleCell } from "../../lib/spreadsheet/selection";
 import { cellAttributes } from "./sheetLayerProps";
-import { useSheetCells, type BandItem, type CellItem } from "./useSheetCells";
+import { useSheetCells, type BandItem, type CellItem, type SheetCellsDeps } from "./useSheetCells";
 import { useSheetMetrics } from "./useSheetMetrics";
 import { useSheetViewport, type SheetViewport } from "./useSheetViewport";
 
@@ -71,7 +73,7 @@ function bookOf(sheet: Sheet, styles: CellStyle[] = [{}]): SpreadsheetModel {
 
 /** The composable over `sheet` at `zoom`, mounted so the viewport's
  * lifecycle hooks have an instance. */
-function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; showFormulas?: boolean } = {}) {
+function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; showFormulas?: boolean; conditional?: SheetCellsDeps["conditional"] } = {}) {
   const model = bookOf(sheet, options.styles);
   let bands!: ComputedRef<BandItem[]>;
   let viewport!: SheetViewport;
@@ -94,6 +96,7 @@ function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; sho
           selection: () => singleCell({ row: 0, col: 0 }),
           viewport,
           showFormulas: () => options.showFormulas === true,
+          ...(options.conditional ? { conditional: options.conditional } : {}),
         }).bands;
         return () => h(SheetCellLayer, { bands: bands.value, frozenWidth: viewport.frozenW.value });
       },
@@ -352,5 +355,93 @@ describe("useSheetCells — Show formulas (SPEC-119)", () => {
     expect(text(bands.value, "B1").text).toBe("1234.50");
     expect(text(bands.value, "C1").text).toMatch(/^#+$/); // a date never shrinks: too narrow, it is #
     expect(text(bands.value, "A3").text).toBe("4");
+  });
+});
+
+/** The lines of the border elements whose segment starts at (x, y). */
+function lineAt(bands: BandItem[], orientation: string, x: number, y: number): string[] {
+  return bands
+    .flatMap((band) => [...band.bordersFrozen, ...band.bordersScrolled])
+    .filter((item) => item.key.startsWith(`${orientation}:${x}:${y}:`))
+    .map((item) => item.style["border-top"] ?? item.style["border-left"] ?? "");
+}
+
+describe("useSheetCells — table styles (SPEC-133)", () => {
+  /** A blank workbook's Normal style (its font colour dk1), and Normal plus
+   * a yellow fill of the cell's own. */
+  const NORMAL: CellStyle = { font: { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } } };
+  const STYLES: CellStyle[] = [NORMAL, { ...NORMAL, fill: { kind: "solid", color: "#ffff00" } }];
+  const TABLE: SheetTable = {
+    id: "t1",
+    name: "Sales",
+    ref: { top: 0, left: 0, bottom: 3, right: 2 },
+    headerRow: true,
+    totalsRow: false,
+    columns: [{ name: "Item" }, { name: "Qty" }, { name: "Price" }],
+    style: { name: "TableStyleMedium2", showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+  };
+  const ACCENT1 = DEFAULT_THEME.colors.accent1;
+  const STRIPE = resolveColor({ theme: "accent1", lumMod: 0.2, lumOff: 0.8 }, DEFAULT_THEME);
+  const LINE = `1px solid ${resolveColor({ theme: "accent1", lumMod: 0.6, lumOff: 0.4 }, DEFAULT_THEME)}`;
+
+  /** A1:C4 the table — a header row (B1 with its own yellow fill) and three
+   * data rows — and E1 a plain cell of the same style as A1. */
+  function tableSheet(): Sheet {
+    return {
+      ...sheetOf([]),
+      tables: [TABLE],
+      rows: [
+        { index: 0, cells: [{ col: 0, value: "Item" }, { col: 1, value: "Qty", styleId: 1 }, { col: 2, value: "Price" }, { col: 4, value: "Note" }] },
+        { index: 1, cells: [{ col: 0, value: "a" }] },
+        { index: 2, cells: [{ col: 0, value: "b" }] },
+        { index: 3, cells: [{ col: 0, value: "c" }] },
+      ],
+    };
+  }
+
+  const cell = (bands: BandItem[], address: string): CellItem => drawn(bands, address).elements[0]!.cell;
+
+  it("paints a header cell with the look's fill and bold white text, over the colour it inherits from Normal", () => {
+    const { bands } = setup(tableSheet(), { styles: STYLES });
+    const a1 = cell(bands.value, "A1");
+    expect(a1.boxStyle["background-color"]).toBe(ACCENT1);
+    expect(a1.textStyle["font-weight"]).toBe("bold");
+    expect(a1.textStyle.color).toBe("#ffffff");
+    // E1 has A1's style and kind but no table: its css is its own.
+    const e1 = cell(bands.value, "E1");
+    expect(e1.boxStyle["background-color"]).toBeUndefined();
+    expect(e1.textStyle["font-weight"]).toBeUndefined();
+    expect(e1.textStyle.color).toBe("#000000");
+  });
+
+  it("lets a cell's explicitly set fill win, the look still giving it the rest", () => {
+    const { bands } = setup(tableSheet(), { styles: STYLES });
+    const b1 = cell(bands.value, "B1");
+    expect(b1.boxStyle["background-color"]).toBe("#ffff00");
+    expect(b1.textStyle["font-weight"]).toBe("bold");
+    expect(b1.textStyle.color).toBe("#ffffff");
+  });
+
+  it("bands the visible data rows and draws the style's lines", () => {
+    const { bands } = setup(tableSheet(), { styles: STYLES });
+    expect(["A2", "A3", "A4"].map((address) => cell(bands.value, address).boxStyle["background-color"])).toEqual([STRIPE, undefined, STRIPE]);
+    // Medium 2: inner horizontals and the outline thin T40.
+    expect(lineAt(bands.value, "horizontal", 0, 40)).toEqual([LINE]);
+    expect(lineAt(bands.value, "vertical", 0, 40)).toEqual([LINE]);
+    expect(lineAt(bands.value, "vertical", 192, 40)).toEqual([LINE]);
+    expect(lineAt(bands.value, "vertical", 64, 40)).toEqual([]);
+
+    // Row 3 hidden: row 4 is the second visible data row, unbanded.
+    const hidden = setup(hideRow(tableSheet(), 2), { styles: STYLES });
+    expect(cell(hidden.bands.value, "A4").boxStyle["background-color"]).toBeUndefined();
+  });
+
+  it("lays a conditional format over the look", () => {
+    const { bands } = setup(tableSheet(), {
+      styles: STYLES,
+      conditional: (row, col) => (row === 1 && col === 0 ? { dxf: { fill: { kind: "solid", color: "#ff0000" } } } : undefined),
+    });
+    expect(cell(bands.value, "A2").boxStyle["background-color"]).toBe("#ff0000");
+    expect(cell(bands.value, "B2").boxStyle["background-color"]).toBe(STRIPE);
   });
 });
