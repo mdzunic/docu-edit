@@ -104,6 +104,11 @@ function setup(options: { editing?: boolean } = {}) {
   return { ...result, wb, model, activeIndex, selection, select, toast, openWindow, copyText, focusCell, openEdit, editing, revealTick, summary, stop: () => scope.stop() };
 }
 
+/** Only C2 is linked. */
+const linkedAtB2C = (row: number, col: number): boolean => row === 1 && col === 2;
+/** Ctrl/Cmd+K on `target`. */
+const pressModK = (target: Element): boolean => target.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+
 const flush = async () => {
   await nextTick();
   await nextTick();
@@ -151,7 +156,7 @@ describe("cellLinks — the dialog's rules", () => {
   });
 
   it("a merge's paint-only copy is never linked", () => {
-    const at = (row: number, col: number) => row === 1 && col === 2;
+    const at = linkedAtB2C;
     expect(isLinkedCell({ row: 1, col: 2, paintOnly: false }, at)).toBe(true);
     expect(isLinkedCell({ row: 1, col: 2, paintOnly: true }, at)).toBe(false);
     expect(isLinkedCell({ row: 1, col: 3, paintOnly: false }, at)).toBe(false);
@@ -180,7 +185,7 @@ describe("useCellLinks — the dialog", () => {
     const editor = document.createElement("div");
     grid.append(editor);
     document.body.append(grid);
-    const press = (target: Element) => target.dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", ctrlKey: true, metaKey: true, bubbles: true, cancelable: true }));
+    const press = pressModK;
     press(document.body);
     expect(t.links.dialog.value).toBeNull();
     t.editing.value = true;
