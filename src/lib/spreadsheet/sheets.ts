@@ -109,7 +109,7 @@ import {
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
-import { crossAnnotations, newGuid, remapPlaceSheets } from "./annotations";
+import { crossAnnotations, remapPlaceSheets } from "./annotations";
 import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
 import { objectsReferenced } from "./ods/package";
 import { SPREADSHEET_READER_VERSION } from "./open";
@@ -123,7 +123,7 @@ import {
   withX14Placement as placeValidation,
   type DataValidation,
 } from "./validation";
-import { copyXlsxSheetParts, hasOnlySafeRelationships, removeOwnedParts, renameTablesInFormula } from "./xlsx/duplicate";
+import { copyXlsxSheetParts, hasOnlySafeRelationships, mintedId, removeOwnedParts, renameTablesInFormula } from "./xlsx/duplicate";
 import { LazyParts, relationshipKind, relationshipsOf, targetPart } from "./xlsx/package";
 
 export { UNCONVERTIBLE_CONTENT, type UnconvertibleRow } from "./unconvertible";
@@ -505,7 +505,7 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   if (copy.threads?.length) {
     // SPEC-135: a thread id is unique in the workbook — the copy's threads
     // get fresh ones, and its comment parts are rebuilt from the model.
-    copy.threads = copiedThreads(copy.threads);
+    copy.threads = copiedThreads(copy.threads, copy.id);
     copy.annotationsDirty = true;
   }
   let partRenames: ReadonlyMap<string, string> | undefined;
@@ -714,12 +714,15 @@ function copiedValidations(rules: readonly DataValidation[], format: Spreadsheet
   });
 }
 
-/** SPEC-135: a copy's threads, every thread and message under a fresh GUID
- * and without its source. */
-function copiedThreads(threads: readonly CellThread[]): CellThread[] {
+/** SPEC-135: a copy's threads, without their source, every thread and
+ * message id re-minted as xlsx/duplicate.ts re-mints the copied threaded
+ * part's (mintedId of the copy's sheet id and the original id), so the model
+ * and the copy's parts — its placeholders' `tc={id}` authors included —
+ * name the same threads. */
+function copiedThreads(threads: readonly CellThread[], copySheetId: string): CellThread[] {
   return threads.map((thread) => {
-    const messages = thread.messages.map(({ source: _source, ...message }) => ({ ...message, messageId: newGuid() }));
-    return { ...thread, threadId: messages[0]?.messageId ?? newGuid(), messages };
+    const messages = thread.messages.map(({ source: _source, ...message }) => ({ ...message, messageId: mintedId(copySheetId, message.messageId) }));
+    return { ...thread, threadId: messages[0]?.messageId ?? mintedId(copySheetId, thread.threadId), messages };
   });
 }
 

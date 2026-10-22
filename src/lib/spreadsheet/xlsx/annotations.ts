@@ -623,6 +623,16 @@ function readNotes(found: SheetParts, persons: readonly ThreadPerson[] | undefin
       }
     }
   }
+  // A placeholder whose thread the threaded part does not hold (another
+  // tool dropped the part or the thread) is no note, and regenerating the
+  // placeholders would delete it: it breaks the subset, so every part stays
+  // verbatim.
+  const threadIds = new Set(out.threads.map((thread) => thread.threadId.toUpperCase()));
+  for (const threadId of out.placeholders.keys()) {
+    if (!threadIds.has(threadId.toUpperCase())) {
+      return UNMODELLED;
+    }
+  }
   out.notes.sort((a, b) => compareRefs(a.ref, b.ref));
   out.threads.sort((a, b) => compareRefs(a.ref, b.ref));
   return out;

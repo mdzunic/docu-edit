@@ -169,6 +169,8 @@ describe("the out-of-subset rule: annotations never half-parse", () => {
     ["an unresolvable author", F.comments.partName, (xml) => xml.replace(`<comment ref="B4" authorId="0"`, `<comment ref="B4" authorId="9"`)],
     ["unparseable VML", F.vml.partName, (xml) => xml.replace("</x:ClientData>", "</x:ClientDatum>")],
     ["a thread author no person names", F.threadedComments.partName, (xml) => xml.replace(`personId="${F.persons[0]!.personId}"`, `personId="{00000000-0000-4000-8000-000000000000}"`)],
+    // A placeholder whose thread is gone (the resolved E2 thread's messages dropped).
+    ["a placeholder without its thread", F.threadedComments.partName, (xml) => xml.replace(/<threadedComment ref="E2"[\s\S]*?<\/threadedComment>/g, "")],
   ];
   for (const [label, part, edit] of cases) {
     it(`${label}: the sheet has no notes or threads, and a save after a cell edit and a link edit keeps every comment part byte-verbatim`, async () => {
@@ -506,6 +508,14 @@ describe("duplicated, deleted and crossed sheets", () => {
     const written = await unzip(bytes);
     const threadedParts = [...written.keys()].filter((name) => name.startsWith("xl/threadedComments/"));
     expect(threadedParts).toHaveLength(2);
+    // Each sheet's placeholder names its own sheet's thread (tc={threadId}).
+    const threadIds = new Set(threadedParts.flatMap((name) => [...textOf(written, name).matchAll(/<threadedComment [^>]*?\bid="([^"]+)"/g)].map((match) => match[1])));
+    const placeholderIds = [...written.keys()]
+      .filter((name) => /^xl\/comments\d*\.xml$/.test(name))
+      .flatMap((name) => [...textOf(written, name).matchAll(/<author>tc=([^<]+)<\/author>/g)].map((match) => match[1]));
+    expect(placeholderIds).toHaveLength(2);
+    expect(new Set(placeholderIds).size).toBe(2);
+    expect(placeholderIds.every((id) => threadIds.has(id))).toBe(true);
   });
 
   it("a deleted sheet's comment parts go with it; the workbook's persons part stays", async () => {
