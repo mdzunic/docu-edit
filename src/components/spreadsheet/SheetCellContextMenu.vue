@@ -7,7 +7,12 @@
 // Copy, Paste and Paste special… first (`clipboard`: useSheetClipboard's
 // menu — Cut and Copy fire the native events through execCommand, Paste
 // reads the async clipboard); SPEC-135 adds "Link…" (`link`: the link
-// dialog on the active cell); later specs append theirs. UiMenuSurface owns
+// dialog on the active cell) and the notes and comments items (`annotations`
+// — the active cell's state; `annotate` emits "note", "delete-note",
+// "toggle-note" or "comment"): New note / Edit note, and on a noted cell
+// Delete note and Show note / Hide note; New comment — disabled with its
+// reason in an .ods workbook, which holds notes only); later specs append
+// theirs. UiMenuSurface owns
 // outside-click and Escape dismissal. Runtime prop declarations per the
 // espree constraint (see AppShell.vue).
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
@@ -16,9 +21,12 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   x: { type: Number, default: 0 },
   y: { type: Number, default: 0 },
+  /** SPEC-135: { canAnnotate, hasNote, noteVisible, canComment,
+   * commentDisabledReason } for the active cell. */
+  annotations: { type: Object, default: () => ({}) },
 });
 
-const emit = defineEmits(["run", "structure", "clipboard", "link", "close"]);
+const emit = defineEmits(["run", "structure", "clipboard", "link", "annotate", "close"]);
 
 const CLIPBOARD = [
   { action: "cut", label: "Cut", testid: "sheet-cell-menu-cut" },
@@ -45,6 +53,20 @@ function structure(mode = "insert") {
 function link() {
   emit("close");
   emit("link");
+}
+
+/** SPEC-135: a field of `annotations`. */
+function flag(name = "") {
+  return Reflect.get(props.annotations, name) === true;
+}
+function commentReason() {
+  const reason = Reflect.get(props.annotations, "commentDisabledReason");
+  return typeof reason === "string" ? reason : "";
+}
+
+function annotate(action = "note") {
+  emit("close");
+  emit("annotate", action);
 }
 </script>
 
@@ -123,6 +145,49 @@ function link() {
     >
       Link…
     </button>
+    <button
+      v-if="flag('canAnnotate')"
+      type="button"
+      role="menuitem"
+      data-testid="sheet-cell-menu-note"
+      @mousedown.prevent
+      @click="annotate('note')"
+    >
+      {{ flag("hasNote") ? "Edit note" : "New note" }}
+    </button>
+    <template v-if="flag('canAnnotate') && flag('hasNote')">
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="sheet-cell-menu-delete-note"
+        @mousedown.prevent
+        @click="annotate('delete-note')"
+      >
+        Delete note
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        data-testid="sheet-cell-menu-toggle-note"
+        @mousedown.prevent
+        @click="annotate('toggle-note')"
+      >
+        {{ flag("noteVisible") ? "Hide note" : "Show note" }}
+      </button>
+    </template>
+    <button
+      v-if="flag('canComment') || commentReason()"
+      type="button"
+      role="menuitem"
+      data-testid="sheet-cell-menu-comment"
+      :disabled="!flag('canComment')"
+      :aria-disabled="flag('canComment') ? undefined : 'true'"
+      :title="flag('canComment') ? undefined : commentReason()"
+      @mousedown.prevent
+      @click="annotate('comment')"
+    >
+      New comment
+    </button>
   </UiMenuSurface>
 </template>
 
@@ -149,6 +214,15 @@ button {
 button:hover,
 button:focus-visible {
   background: var(--state-hover);
+}
+
+button:disabled {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+button:disabled:hover {
+  background: transparent;
 }
 
 .menu-separator {

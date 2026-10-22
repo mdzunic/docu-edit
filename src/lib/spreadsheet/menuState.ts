@@ -13,8 +13,12 @@
 // Insert menu (Image…, Shapes — disabled where the workbook cannot hold
 // drawings: a CSV or TSV file, a foreign sheet) and the Arrange menu (the four
 // z-order moves and Alt Text…, disabled without a selected drawing; Bring to
-// Front/Forward at the front, Send Backward/to Back at the back). Later
-// spreadsheet specs append fields as they append menus and items.
+// Front/Forward at the front, Send Backward/to Back at the back). SPEC-135
+// adds Insert ▸ Note and Insert ▸ Comment (notes on an .xlsx/.ods grid sheet;
+// comments on an .xlsx one, an .ods workbook's item disabled with its
+// reason) and View ▸ Comments (checked while the comments pane is open) and
+// View ▸ Show all notes (session-only). Later spreadsheet specs append fields
+// as they append menus and items.
 
 /** What the bar needs in order to render: what is checked, what applies. */
 export interface SpreadsheetMenuState {
@@ -53,6 +57,17 @@ export interface SpreadsheetMenuState {
   drawingSelected: boolean;
   drawingAtFront: boolean;
   drawingAtBack: boolean;
+  /** SPEC-135: notes apply (Insert ▸ Note, View ▸ Show all notes) — an
+   * .xlsx or .ods grid sheet. */
+  canAnnotate: boolean;
+  /** SPEC-135: Insert ▸ Comment applies (an .xlsx grid sheet), and why it
+   * does not where a reason applies ("" for none). */
+  canComment: boolean;
+  commentDisabledReason: string;
+  /** SPEC-135: View ▸ Comments (the side panel's comments pane is open) and
+   * View ▸ Show all notes (session-only). */
+  commentsOpen: boolean;
+  showAllNotes: boolean;
 }
 
 /** SPEC-128: why Clear filters and Reapply filter are disabled. */
@@ -116,6 +131,12 @@ export const SHEET_MENU_COMMANDS = {
   insertTable: "insert.table",
   /** SPEC-135: Insert ▸ Link… (the link dialog, Ctrl/Cmd+K). */
   insertLink: "insert.link",
+  /** SPEC-135: Insert ▸ Note (Shift+F2) and Insert ▸ Comment (Ctrl+Alt+M);
+   * View ▸ Comments (the comments pane) and View ▸ Show all notes. */
+  insertNote: "insert.note",
+  insertComment: "insert.comment",
+  comments: "view.comments",
+  showAllNotes: "view.show-all-notes",
   arrangeFront: "arrange.front",
   arrangeForward: "arrange.forward",
   arrangeBackward: "arrange.backward",
@@ -178,5 +199,10 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     drawingSelected: state.drawingSelected === true,
     drawingAtFront: state.drawingAtFront === true,
     drawingAtBack: state.drawingAtBack === true,
+    canAnnotate: state.canAnnotate !== false,
+    canComment: state.canComment !== false,
+    commentDisabledReason: typeof state.commentDisabledReason === "string" ? state.commentDisabledReason : "",
+    commentsOpen: state.commentsOpen === true,
+    showAllNotes: state.showAllNotes === true,
   };
 }

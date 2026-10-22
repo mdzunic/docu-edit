@@ -178,22 +178,22 @@ export function useCellNotes(deps: CellNotesDeps) {
   }
 
   /** The pointer over a cell of the sheet on show (null: over no cell). */
-  function hoverCell(ref: CellRef | null): void {
+  function hoverCell(cell: CellRef | null): void {
     const sheet = gridSheet();
-    if (hovered.value && ref && sheet && hovered.value.sheetId === sheet.id && sameRef(hovered.value.ref, ref)) {
+    if (hovered.value && cell && sheet && hovered.value.sheetId === sheet.id && sameRef(hovered.value.ref, cell)) {
       clearShow();
       clearHide();
       return;
     }
-    if (pending && ref && sameRef(pending.ref, ref)) {
+    if (pending && cell && sameRef(pending.ref, cell)) {
       return;
     }
     clearShow();
     scheduleHide();
-    if (!ref || !sheet || busy() || editor.value || marksAt(ref.row, ref.col) === null) {
+    if (!cell || !sheet || busy() || editor.value || marksAt(cell.row, cell.col) === null) {
       return;
     }
-    pending = { sheetId: sheet.id, ref: { row: ref.row, col: ref.col } };
+    pending = { sheetId: sheet.id, ref: { row: cell.row, col: cell.col } };
     showTimer = setTimeout(() => {
       showTimer = null;
       const at = pending;
@@ -252,11 +252,11 @@ export function useCellNotes(deps: CellNotesDeps) {
       return false;
     }
     commitEditor(false);
-    const ref = at ?? active();
-    const note = noteAt(sheet, ref);
+    const target = at ?? active();
+    const note = noteAt(sheet, target);
     dismissPopover();
     draft.value = note?.text ?? "";
-    editor.value = { sheetId: sheet.id, ref: { row: ref.row, col: ref.col }, noteId: note?.noteId ?? null, ...(note ? noteBoxSize(note) : NOTE_DEFAULT_BOX) };
+    editor.value = { sheetId: sheet.id, ref: { row: target.row, col: target.col }, noteId: note?.noteId ?? null, ...(note ? noteBoxSize(note) : NOTE_DEFAULT_BOX) };
     return true;
   }
 

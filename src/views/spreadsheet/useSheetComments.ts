@@ -304,7 +304,7 @@ export function useSheetComments(deps: SheetCommentsDeps) {
   // --- navigation ----------------------------------------------------------------------------------
 
   /** Selects `ref` on `sheetId`, switching sheets as needed, and reveals it. */
-  async function selectCellOn(sheetId: string, ref: CellRef): Promise<void> {
+  async function selectCellOn(sheetId: string, cell: CellRef): Promise<void> {
     const index = model()?.sheets.findIndex((sheet) => sheet.id === sheetId) ?? -1;
     if (index < 0) {
       return;
@@ -312,7 +312,7 @@ export function useSheetComments(deps: SheetCommentsDeps) {
     if (index !== deps.book.activeIndex.value) {
       deps.cell?.selectSheet(index);
     }
-    deps.viewState?.update(sheetId, { selection: singleCell(ref) });
+    deps.viewState?.update(sheetId, { selection: singleCell(cell) });
     await nextTick();
     if (deps.cell) {
       deps.cell.revealTick.value += 1;
@@ -320,9 +320,9 @@ export function useSheetComments(deps: SheetCommentsDeps) {
   }
 
   /** A thread (or an .ods note) activated in the panel: its sheet and cell selected. */
-  function activate(sheetId: string, id: string, ref: CellRef): void {
+  function activate(sheetId: string, id: string, cell: CellRef): void {
     focusedId.value = id;
-    void selectCellOn(sheetId, ref);
+    void selectCellOn(sheetId, cell);
   }
 
   /** The panel opened on one thread (the popover's `sheet-thread-open`). */
