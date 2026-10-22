@@ -11,7 +11,7 @@
 // has no layout, so the scroller's client size is stubbed, and no 2D
 // context, so getContext answers null (the painter then paints nothing).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { defineComponent, h, nextTick, ref } from "vue";
+import { computed, defineComponent, h, nextTick, ref } from "vue";
 import { mount, type VueWrapper } from "@vue/test-utils";
 import type { CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SheetViewFields } from "../../views/spreadsheet/useSheetViewState";
@@ -63,12 +63,12 @@ function bookOf(sheet: Sheet): SpreadsheetModel {
 /** SheetGrid over `sheet` with the view-level state it is handed. */
 function mountGrid(sheet: Sheet, zoomPercent = 100) {
   const model = bookOf(sheet);
-  const active = ref<SheetViewFields>({ zoomPercent });
+  const fields = ref<SheetViewFields>({ zoomPercent });
   const viewState = {
-    active,
-    activeSheet: ref(sheet),
+    active: computed(() => fields.value),
+    activeSheet: computed((): Sheet | null => sheet),
     updateActive(patch: SheetViewFields) {
-      active.value = { ...active.value, ...patch };
+      fields.value = { ...fields.value, ...patch };
     },
   };
   const wrapper = mount(
@@ -112,7 +112,7 @@ describe("SheetGrid — slot keys (AC-47)", () => {
     const view = mountGrid(denseSheet(400, 30));
     await view.scrollTo(400); // row 21 at the top
     const before = new Map(view.cells().map((element) => [element.dataset.ref!, element]));
-    const columnA = [...before.keys()].flatMap((ref) => (/^A\d+$/.test(ref) ? [Number(ref.slice(1))] : []));
+    const columnA = [...before.keys()].flatMap((address) => (/^A\d+$/.test(address) ? [Number(address.slice(1))] : []));
     const firstRow = Math.min(...columnA);
     const lastRow = Math.max(...columnA);
     const leaving = before.get(`A${firstRow}`)!;
