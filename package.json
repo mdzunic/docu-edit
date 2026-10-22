@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "NODE_OPTIONS=--max-old-space-size=4096 vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "vue-tsc --noEmit",
+    "typecheck": "NODE_OPTIONS=--max-old-space-size=4096 vue-tsc --noEmit",
     "lint": "oxlint src && eslint \"src/**/*.vue\""
   },
   "dependencies": {
