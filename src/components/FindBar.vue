@@ -4,7 +4,11 @@
 // Ctrl/Cmd+H reveals replace); the editor owns the matches, the highlight
 // overlay, navigation state and every model edit, so this component is a
 // controlled view — every value comes in as a prop and every intent leaves as
-// an event. Runtime prop declarations, not defineProps<{...}>() generics —
+// an event. Shared by the products (SPEC-098, SPEC-134), never forked: the
+// scope span's text and title, the query's placeholder and whether "Whole
+// words" shows are props, and a product's own options go in the named
+// `options` slot, rendered in the options row after the regex toggle.
+// Runtime prop declarations, not defineProps<{...}>() generics —
 // see AppShell.vue's note on the same espree constraint.
 import { nextTick, useTemplateRef, watch } from "vue";
 
@@ -28,6 +32,15 @@ const props = defineProps({
   /** A transient hint — "Wrapped to top", "No results" — shown beside the
    * count. */
   hint: { type: String, default: "" },
+  /** SPEC-098: what the search covers, in the `find-scope` span, and its
+   * title naming what it leaves out. The defaults are the text editor's. */
+  scopeLabel: { type: String, default: "Body text only" },
+  scopeTitle: { type: String, default: "Search covers body text only. Headers, footers and footnotes are excluded." },
+  /** SPEC-134: the query field's placeholder ("Find in sheet" on a workbook). */
+  placeholder: { type: String, default: "Find in document" },
+  /** SPEC-134: whether the "Whole words" toggle shows — a sheet has none
+   * (it matches cells, and offers "Match entire cell" in the options slot). */
+  showWholeWords: { type: Boolean, default: true },
 });
 
 const emit = defineEmits([
@@ -171,7 +184,7 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
         data-testid="find-query"
         type="text"
         aria-label="Find"
-        placeholder="Find in document"
+        :placeholder="placeholder"
         :value="query"
         @input="onQueryInput"
         @keydown="onQueryKeydown"
@@ -233,6 +246,7 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
         Match case
       </button>
       <button
+        v-if="showWholeWords"
         type="button"
         class="find-option"
         data-testid="find-whole-words"
@@ -252,11 +266,12 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
       >
         Regex
       </button>
+      <slot name="options" />
       <span
         class="find-scope"
         data-testid="find-scope"
-        title="Search covers body text only. Headers, footers and footnotes are excluded."
-      >Body text only</span>
+        :title="scopeTitle"
+      >{{ scopeLabel }}</span>
     </div>
 
     <div
@@ -372,6 +387,7 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
 
 .find-options {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
 }
