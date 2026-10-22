@@ -58,6 +58,8 @@ import type { Recalc } from "./useRecalc";
 import type { SheetClipboard } from "./useSheetClipboard";
 import type { SheetMetrics } from "./useSheetMetrics";
 import { useSheetCells } from "./useSheetCells";
+import { linksOf } from "./useCellLinks";
+import { sortFilterOf } from "./useSortFilter";
 import { useSheetOverlays } from "./useSheetOverlays";
 import { useSheetPointer } from "./useSheetPointer";
 import type { SheetSelectionController } from "./useSheetSelection";
@@ -124,6 +126,7 @@ export function useSheetGrid(
   showFormulas: () => boolean = () => false,
 ) {
   const metrics = () => context().sheetMetrics.metrics.value;
+  const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
   const merges = () => context().sheetMetrics.merges.value;
   const selection = () => context().selection.selection.value;
 
@@ -145,9 +148,10 @@ export function useSheetGrid(
     locale: () => context().locale,
     showFormulas,
     conditional: (row, col) => context().conditionalFormats?.resultAt(row, col),
+    decorations: () => ({ gridLines: showGridLines.value, filterButton: sortFilterOf(context())?.filterButtonAt, annotationMarks: context().notes?.marksAt, linkAt: linksOf(context())?.isLinked }),
   });
   const editing = (): CellEditing | undefined => context().cellEditing;
-  const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport, highlights: () => editing()?.point.highlights.value ?? [] });
+  const overlays = useSheetOverlays({ sheet, metrics, merges, selection, viewport, highlights: () => editing()?.point.highlights.value ?? [], window: () => (cells.overview.value ? null : cells.window.value) });
   /** Focus goes to the in-cell editor (the grid itself without one). */
   function focusEditor(): void {
     const host = scroller.value?.querySelector<HTMLElement>('[data-testid="cell-editor"]');
@@ -279,7 +283,6 @@ export function useSheetGrid(
     },
   );
 
-  const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
   /** A stale cell's title on this sheet (SPEC-120), for the paper. */
   const staleTitle = (row: number, col: number): string | undefined => context().recalc?.staleTitleAt(sheet().id, row, col);
   /** The id of the active cell's element (a merge's anchor), for
@@ -340,9 +343,7 @@ export function useSheetGrid(
     }
   }
 
-  function onWheel(event: WheelEvent): void {
-    context().zoom.onWheel(event);
-  }
+  const onWheel = (event: WheelEvent): void => void context().zoom.onWheel(event);
 
   /** Style objects for the scaled content box and the scroll spacer. */
   const contentStyle = computed(() => ({
@@ -364,6 +365,9 @@ export function useSheetGrid(
   return {
     viewport,
     bands: cells.bands,
+    /** SPEC-137: overview rendering (the canvas) and its paint's bands. */
+    overview: cells.overview,
+    overviewBands: cells.overviewBands,
     overlays,
     /** The grid element's pointer handlers: SPEC-131's drawing gestures first. */
     pointer: { ...pointer, ...drawingGestures.wrap(pointer) },

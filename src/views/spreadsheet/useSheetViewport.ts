@@ -22,8 +22,9 @@
 //   proportionally, so a used range at row 1,000,000 is reachable everywhere.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { usedRange, type CellRef } from "../../lib/spreadsheet/address";
-import type { GridMetrics } from "../../lib/spreadsheet/geometry";
+import { defaultColumnPx, defaultRowPx, type GridMetrics } from "../../lib/spreadsheet/geometry";
 import { MAX_COLS, MAX_ROWS, type Sheet } from "../../lib/spreadsheet/model";
+import type { AxisWindow } from "./sheetRenderPlan";
 
 export const GRID_OVERSCAN_ROWS = 8;
 export const GRID_OVERSCAN_COLS = 4;
@@ -109,6 +110,9 @@ export interface AxisItem {
   index: number;
   start: number;
   size: number;
+  /** SPEC-137: the item's slot — a frozen item's index, a scrolled one's
+   * index mod the window's capacity. */
+  slot: number;
 }
 
 export interface SheetViewportDeps {
@@ -170,55 +174,61 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
       if (begin >= view) {
         break;
       }
-      out.push({ index: i, start: begin, size: sizeOf(i) });
+      out.push({ index: i, start: begin, size: sizeOf(i), slot: i });
     }
     return out;
   }
 
-  function scrolledItems(
-    first: number,
-    last: number,
-    shift: number,
-    startOf: (i: number) => number,
-    sizeOf: (i: number) => number,
-  ): AxisItem[] {
-    const out: AxisItem[] = [];
+  /** One axis's window at `overscan` (see the module header). */
+  function axisWindow(a: {
+    count: number;
+    frozenSize: number;
+    view: number;
+    offset: number;
+    extent: number;
+    overscan: number;
+    defaultSize: number;
+    startOf: (i: number) => number;
+    sizeOf: (i: number) => number;
+    at: (pos: number) => number;
+  }): AxisWindow {
+    const top = a.at(a.frozenSize + a.offset);
+    const bottom = a.at(a.offset + a.view);
+    const from = Math.max(a.count, top - a.overscan);
+    const needed = Math.min(a.extent - 1, bottom + a.overscan) - from + 1;
+    const capacity = Math.max(1, needed, Math.ceil(Math.max(0, a.view - a.frozenSize) / a.defaultSize) + 1 + 2 * a.overscan);
+    const last = Math.max(from - 1, Math.min(a.extent - 1, from + capacity - 1));
+    const first = Math.max(a.count, Math.min(from, last - capacity + 1));
+    const scrolled: AxisItem[] = [];
     for (let i = first; i <= last; i += 1) {
-      out.push({ index: i, start: startOf(i) - shift, size: sizeOf(i) });
+      scrolled.push({ index: i, start: a.startOf(i) - (a.offset + a.frozenSize), size: a.sizeOf(i), slot: i % capacity });
     }
-    return out;
+    return {
+      frozen: frozenItems(a.count, a.view, a.startOf, a.sizeOf),
+      scrolled,
+      firstVisible: Math.max(a.count, top),
+      lastVisible: Math.max(a.count, Math.min(a.extent - 1, bottom)),
+      capacity,
+    };
   }
 
-  const rows = computed(() => {
+  /** The rows window at `overscan` rows either side. */
+  function rowWindow(overscan: number): AxisWindow {
     const m = deps.metrics();
-    const fr = frozenRows.value;
-    const top = m.rowAt(frozenH.value + sy.value);
-    const bottom = m.rowAt(sy.value + viewRows.value);
-    const first = Math.max(fr, top - GRID_OVERSCAN_ROWS);
-    const last = Math.max(first - 1, Math.min(extentRows.value - 1, bottom + GRID_OVERSCAN_ROWS));
-    return {
-      frozen: frozenItems(fr, viewRows.value, m.rowTop, m.rowHeight),
-      scrolled: scrolledItems(first, last, sy.value + frozenH.value, m.rowTop, m.rowHeight),
-      /** The first and last rows actually in view (no overscan). */
-      firstVisible: Math.max(fr, top),
-      lastVisible: Math.max(fr, Math.min(extentRows.value - 1, bottom)),
-    };
-  });
+    const view = viewRows.value;
+    return axisWindow({ count: frozenRows.value, frozenSize: frozenH.value, view, offset: sy.value, extent: extentRows.value, overscan, defaultSize: defaultRowPx(deps.sheet()), startOf: m.rowTop, sizeOf: m.rowHeight, at: m.rowAt });
+  }
 
-  const cols = computed(() => {
+  /** The columns window at `overscan` columns either side. */
+  function colWindow(overscan: number): AxisWindow {
     const m = deps.metrics();
-    const fc = frozenCols.value;
-    const left = m.colAt(frozenW.value + sx.value);
-    const right = m.colAt(sx.value + viewCols.value);
-    const first = Math.max(fc, left - GRID_OVERSCAN_COLS);
-    const last = Math.max(first - 1, Math.min(extentCols.value - 1, right + GRID_OVERSCAN_COLS));
-    return {
-      frozen: frozenItems(fc, viewCols.value, m.colLeft, m.colWidth),
-      scrolled: scrolledItems(first, last, sx.value + frozenW.value, m.colLeft, m.colWidth),
-      firstVisible: Math.max(fc, left),
-      lastVisible: Math.max(fc, Math.min(extentCols.value - 1, right)),
-    };
-  });
+    const view = viewCols.value;
+    return axisWindow({ count: frozenCols.value, frozenSize: frozenW.value, view, offset: sx.value, extent: extentCols.value, overscan, defaultSize: defaultColumnPx(deps.sheet()), startOf: m.colLeft, sizeOf: m.colWidth, at: m.colAt });
+  }
+
+  /** The windows at the full overscan (the render plan may shrink it). */
+  const rows = computed(() => rowWindow(GRID_OVERSCAN_ROWS));
+  const cols = computed(() => colWindow(GRID_OVERSCAN_COLS));
 
   /** The cell at the scrolled area's top-left corner. */
   const topLeftCell = computed(
@@ -354,6 +364,8 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     sy,
     rows,
     cols,
+    rowWindow,
+    colWindow,
     page,
     topLeftCell,
     onScroll,

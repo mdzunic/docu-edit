@@ -22,9 +22,12 @@ import { mergeAt, type MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Sheet } from "../../lib/spreadsheet/model";
 import type { SheetSelection } from "../../lib/spreadsheet/selection";
 import type { RefHighlight } from "./usePointMode";
+import type { AxisWindow } from "./sheetRenderPlan";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
 
 export interface HeaderItem {
+  /** SPEC-137: keyed by slot, like the paper's rows and columns. */
+  key: number;
   index: number;
   label: string;
   start: number; // relative to its region (frozen: the paper origin; scrolled: the scrolled area)
@@ -54,6 +57,9 @@ export interface SheetOverlaysDeps {
   viewport: SheetViewport;
   /** The references of a formula being entered (SPEC-122); absent = none. */
   highlights?: () => RefHighlight[];
+  /** SPEC-137: the render plan's window — null in overview, where the canvas
+   * paints the headers; absent = the viewport's full-overscan window. */
+  window?: () => { rows: AxisWindow; cols: AxisWindow } | null;
 }
 
 /** A reference's outline: its rectangle, colour index and dash. */
@@ -108,6 +114,7 @@ export function useSheetOverlays(deps: SheetOverlaysDeps) {
     return items
       .filter((item) => item.size > 0)
       .map((item) => ({
+        key: item.slot,
         index: item.index,
         label: axis === "column" ? colToLetters(item.index) : String(item.index + 1),
         start: item.start,
@@ -116,13 +123,19 @@ export function useSheetOverlays(deps: SheetOverlaysDeps) {
       }));
   }
 
+  const empty: AxisWindow = { frozen: [], scrolled: [], firstVisible: 0, lastVisible: 0, capacity: 1 };
+  /** The headers' window: the plan's (none in overview). */
+  const shown = computed(() => {
+    const window = deps.window ? deps.window() : { rows: vp.rows.value, cols: vp.cols.value };
+    return window ?? { rows: empty, cols: empty };
+  });
   const columnHeaders = computed(() => ({
-    frozen: headers("column", vp.cols.value.frozen),
-    scrolled: headers("column", vp.cols.value.scrolled),
+    frozen: headers("column", shown.value.cols.frozen),
+    scrolled: headers("column", shown.value.cols.scrolled),
   }));
   const rowHeaders = computed(() => ({
-    frozen: headers("row", vp.rows.value.frozen),
-    scrolled: headers("row", vp.rows.value.scrolled),
+    frozen: headers("row", shown.value.rows.frozen),
+    scrolled: headers("row", shown.value.rows.scrolled),
   }));
 
   /** Hidden-run markers on the column and row header boundaries. */
@@ -149,6 +162,9 @@ export function useSheetOverlays(deps: SheetOverlaysDeps) {
         out.push({ key: `${axis}:${run.start}`, title: hiddenRunTitle(axis, run.start, run.end), at });
       }
     };
+    if (deps.window && !deps.window()) {
+      return { columns, rows };
+    }
     const cols = vp.cols.value;
     const firstCol = cols.frozen[0]?.index ?? cols.scrolled[0]?.index ?? 0;
     const lastCol = cols.scrolled.at(-1)?.index ?? cols.frozen.at(-1)?.index ?? 0;

@@ -7,10 +7,14 @@
 // lib/spreadsheet/cellRender.ts; this composable walks the window and
 // assembles plain render items SheetCellLayer binds.
 //
-// - Cell elements: every position in the window while it holds at most
-//   GRID_MAX_MOUNTED_CELLS positions; beyond that (zoomed far out) only
-//   stored cells, merge anchors and the active cell. Empty cells are
-//   transparent, so only a fill hides the gridlines under it.
+// - SPEC-137: cell elements are every position in the window sheetRenderPlan
+//   picks — at most GRID_MAX_RENDERED_CELLS of them, the grid's subtree
+//   within GRID_MAX_DOM_NODES elements, overscan shrinking first — keyed by
+//   slot (`${row mod R}:${col mod C}`, R × C the window's capacity), so a
+//   scroll step patches the same elements; beyond that the overview canvas
+//   paints the sheet (`overviewBands`: stored cells, merges, borders and
+//   gridlines of the viewport) and only the active cell keeps an element.
+//   Empty cells are transparent, so only a fill hides the gridlines under it.
 // - A merge intersecting the window renders once, as one element sized to
 //   the range and hosted by the first rendered row it covers (paneMerges),
 //   so a hidden or scrolled-off anchor row still shows it; its member cells
@@ -36,41 +40,43 @@
 //   cell elements and the border pass alike. A look is an identity-stable
 //   object, so a looked cell's CSS caches under its style id AND its look.
 import { computed, type ComputedRef } from "vue";
-import { findRow, formatA1, getCell, type GridRange } from "../../lib/spreadsheet/address";
+import { formatA1, type GridRange } from "../../lib/spreadsheet/address";
 import {
   cellBoxCss,
   cellCss,
   cellDisplay,
   cellText,
   diagonalLines,
-  edgeElementCss,
   leftAligned,
-  offscreenSpillCandidate,
   overflowAlignment,
   overflowExtent,
-  resolveEdges,
   runCss,
   showFormulasDisplay,
   valueKind,
   type CssDeclarations,
-  type EdgeSegment,
 } from "../../lib/spreadsheet/cellRender";
 import { conditionalStyle, type CfCellResult } from "../../lib/spreadsheet/conditionalFormats";
 import type { GridMetrics } from "../../lib/spreadsheet/geometry";
-import { mergeAt, paneMerges, type MergeIndex } from "../../lib/spreadsheet/merges";
+import type { MergeIndex } from "../../lib/spreadsheet/merges";
 import type { Cell, CellStyle, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selection";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
-import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
+import { cellStyle, columnSpanAt, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
 import { lookKey, styleOverLook, tableCellLook } from "../../lib/spreadsheet/tableStyles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
-import type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
-import type { AxisItem, SheetViewport } from "./useSheetViewport";
+import { createBandBuilder, type GridWindow } from "./sheetBands";
+import type { BandItem, CellItem } from "./sheetCellItems";
+import { planRender, type PaperDecorations } from "./sheetRenderPlan";
+import { GRID_OVERSCAN_COLS, GRID_OVERSCAN_ROWS, type SheetViewport } from "./useSheetViewport";
 
 export type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
 
-export const GRID_MAX_MOUNTED_CELLS = 10_000;
+/** SPEC-137: the most cell elements the paper ever holds. */
+export const GRID_MAX_RENDERED_CELLS = 5_000;
+/** SPEC-137: the most elements the whole spreadsheet-grid subtree holds. */
+export const GRID_MAX_DOM_NODES = 12_000;
+
 
 /** SPEC-129: the room a conditional-format icon takes at a cell's left edge
  * — 16 px and a 2 px gap — the text aligning in what remains. */
@@ -93,14 +99,11 @@ export interface SheetCellsDeps {
   showFormulas?: () => boolean;
   /** SPEC-129: a position's conditional-format result; absent = none. */
   conditional?: (row: number, col: number) => CfCellResult | undefined;
+  /** SPEC-137: what the paper draws beside each cell, for the node count. */
+  decorations?: () => Omit<PaperDecorations, "frozenWidth">;
 }
 
-/** The border element for one resolved edge, region-relative. */
-function borderItem(segment: EdgeSegment, shiftX: number, shiftY: number, index: number): BorderItem {
-  return { key: `${segment.orientation}:${segment.x}:${segment.y}:${index}`, style: edgeElementCss(segment, shiftX, shiftY) };
-}
-
-export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandItem[]> } {
+export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandItem[]>; overview: ComputedRef<boolean>; window: ComputedRef<GridWindow>; overviewBands: () => BandItem[] } {
   const theme = computed((): DocumentTheme => deps.model().theme ?? DEFAULT_THEME);
   /** The workbook's format context in the current locale (SPEC-118). */
   const formatContext = computed(() =>
@@ -163,8 +166,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     return cell?.styleId ?? row?.styleId ?? columnSpanAt(deps.sheet().columns, col)?.styleId ?? 0;
   }
 
-  /** One mounted cell (or merge anchor). */
+  /** One mounted cell (or merge anchor), its element keyed `key`. */
   function cellItem(
+    key: string,
     row: Row | undefined,
     cell: Cell | undefined,
     at: { row: number; col: number },
@@ -227,7 +231,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     const boxStyle = cellBoxCss(css.box, place, merge !== undefined);
     const runs = cell?.runs && typeof value === "string" && horizontal !== "fill" && !shown?.formula ? cell.runs.map((run) => ({ text: run.text, style: run.font ? runCss(run.font, theme.value) : {} })) : null;
     return {
-      key: merge ? `m${merge.top}:${merge.left}` : `${at.row}:${at.col}`,
+      key,
       ref: formatA1(at),
       row: at.row,
       col: at.col,
@@ -250,142 +254,23 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     };
   }
 
-  /** A merge's element hosted by `host` — or, `paintOnly`, its paint in a
-   * further pane. */
-  function mergeItem(range: GridRange, host: RowItem, colShift: number, paintOnly: boolean): CellItem {
-    const sheet = deps.sheet();
-    const m = deps.metrics();
-    const place = {
-      left: m.colLeft(range.left) - colShift,
-      top: m.rowTop(range.top) - m.rowTop(host.index),
-      width: m.colLeft(range.right + 1) - m.colLeft(range.left),
-      height: m.rowTop(range.bottom + 1) - m.rowTop(range.top),
-    };
-    const anchor = { row: range.top, col: range.left };
-    return { ...cellItem(findRow(sheet, range.top), getCell(sheet, range.top, range.left), anchor, place, range), paintOnly };
-  }
+  const builder = createBandBuilder({ ...deps, cellItem, overLook, tableLookAt, theme: () => theme.value });
+  const buildBands = builder.buildBands;
 
-  /** The unmerged cells of one row in one column window (the merge pass in
-   * `bands` draws the merges). */
-  function rowCells(row: RowItem, cols: AxisItem[], dense: boolean, colShift: number, scrolled: boolean): CellItem[] {
-    if (cols.length === 0) {
-      return [];
-    }
-    const sheet = deps.sheet();
-    const m = deps.metrics();
-    const merges = deps.merges();
-    const stored = findRow(sheet, row.index);
-    const cells = stored?.cells ?? [];
-    const firstCol = cols[0]!.index;
-    const lastCol = cols.at(-1)!.index;
-    const active = deps.selection().active;
-    const out: CellItem[] = [];
-    const mount = (col: number, cell: Cell | undefined): void => {
-      if (m.colWidth(col) === 0 || mergeAt(merges, row.index, col) !== undefined) {
-        return;
-      }
-      out.push(cellItem(stored, cell, { row: row.index, col }, { left: m.colLeft(col) - colShift, top: 0, width: m.colWidth(col), height: row.height }, undefined));
-    };
-    // Off-window strings that may spill into view (never across the freeze
-    // line, so only the scrolled region looks).
-    if (scrolled) {
-      const spill = offscreenSpillCandidate(sheet, row.index, firstCol, lastCol);
-      for (const candidate of [spill.left, spill.right]) {
-        if (candidate && candidate.col >= deps.viewport.frozenCols.value) {
-          mount(candidate.col, candidate);
-        }
-      }
-    }
-    let i = 0;
-    while (i < cells.length && cells[i]!.col < firstCol) {
-      i += 1;
-    }
-    if (dense) {
-      for (const item of cols) {
-        while (i < cells.length && cells[i]!.col < item.index) {
-          i += 1;
-        }
-        mount(item.index, cells[i]?.col === item.index ? cells[i] : undefined);
-      }
-    } else {
-      for (; i < cells.length && cells[i]!.col <= lastCol; i += 1) {
-        mount(cells[i]!.col, cells[i]);
-      }
-      if (active.row === row.index && active.col >= firstCol && active.col <= lastCol && !cells.some((c) => c.col === active.col)) {
-        mount(active.col, undefined);
-      }
-    }
-    return out;
-  }
-
-  const bands = computed((): BandItem[] => {
+  const plan = computed(() => {
     const vp = deps.viewport;
-    const m = deps.metrics();
-    const sheet = deps.sheet();
-    const rows = vp.rows.value;
-    const cols = vp.cols.value;
-    const positions = (rows.frozen.length + rows.scrolled.length) * (cols.frozen.length + cols.scrolled.length);
-    const dense = positions <= GRID_MAX_MOUNTED_CELLS;
-    const out: BandItem[] = [];
-    const specs = [
-      { kind: "frozen" as const, items: rows.frozen, top: 0, height: vp.frozenH.value, rowShift: 0 },
-      { kind: "main" as const, items: rows.scrolled, top: vp.frozenH.value, height: Math.max(0, vp.viewRows.value - vp.frozenH.value), rowShift: vp.sy.value + vp.frozenH.value },
-    ];
-    const scrolledShift = vp.sx.value + vp.frozenW.value;
-    /** The merges given their one element so far, by anchor — the panes are
-     * visited top-left first, so an anchor that shows hosts its element. */
-    const placed = new Set<string>();
-    for (const spec of specs) {
-      if (spec.items.length === 0 || spec.height <= 0) {
-        continue;
-      }
-      const rowItems: RowItem[] = spec.items
-        .filter((item) => item.size > 0)
-        .map((item) => ({ index: item.index, top: item.start, height: item.size, frozen: [], scrolled: [] }));
-      if (rowItems.length === 0) {
-        continue;
-      }
-      const firstRow = rowItems[0]!.index;
-      for (const row of rowItems) {
-        row.frozen = rowCells(row, cols.frozen, dense, 0, false);
-        row.scrolled = rowCells(row, cols.scrolled, dense, scrolledShift, true);
-      }
-      const lastRow = spec.items.at(-1)!.index;
-      const edgeWindow = (items: AxisItem[]): GridRange | null =>
-        items.length > 0 ? { top: firstRow, left: items[0]!.index, bottom: lastRow, right: items.at(-1)!.index } : null;
-      for (const region of [{ key: "frozen" as const, cols: cols.frozen, shift: 0 }, { key: "scrolled" as const, cols: cols.scrolled, shift: scrolledShift }]) {
-        const window = edgeWindow(region.cols);
-        for (const { range, host } of window ? paneMerges(deps.merges(), window, rowItems, m.colLeft) : []) {
-          const anchor = `${range.top}:${range.left}`;
-          host[region.key].push(mergeItem(range, host, region.shift, placed.has(anchor)));
-          placed.add(anchor);
-        }
-      }
-      const styleAt = (r: number, c: number): CellStyle => {
-        const base = overLook(effectiveStyleId(sheet, r, c), tableLookAt(r, c));
-        const cf = deps.conditional?.(r, c);
-        return cf ? conditionalStyle(base, cf) : base;
-      };
-      const borders = (items: AxisItem[], shiftX: number): BorderItem[] => {
-        const window = edgeWindow(items);
-        return window
-          ? resolveEdges(window, sheet, styleAt, m, deps.merges(), theme.value).map((segment, i) => borderItem(segment, shiftX, spec.rowShift, i))
-          : [];
-      };
-      out.push({
-        kind: spec.kind,
-        top: spec.top,
-        height: spec.height,
-        rows: rowItems,
-        gridRows: rowItems.map((row) => row.top + row.height - 1),
-        gridColsFrozen: cols.frozen.filter((c) => c.size > 0).map((c) => c.start + c.size - 1),
-        gridColsScrolled: cols.scrolled.filter((c) => c.size > 0).map((c) => c.start + c.size - 1),
-        bordersFrozen: borders(cols.frozen, 0),
-        bordersScrolled: borders(cols.scrolled, scrolledShift),
-      });
-    }
-    return out;
+    const windowAt = (factor: number): GridWindow => ({ rows: vp.rowWindow(Math.round(GRID_OVERSCAN_ROWS * factor)), cols: vp.colWindow(Math.round(GRID_OVERSCAN_COLS * factor)) });
+    const deco = { gridLines: true, ...deps.decorations?.(), frozenWidth: vp.frozenW.value };
+    const overview = () => ({ window: windowAt(0), bands: buildBands(builder.activeWindow(), "active") });
+    return planRender(windowAt, (win) => buildBands(win, "dense"), overview, { cells: GRID_MAX_RENDERED_CELLS, nodes: GRID_MAX_DOM_NODES }, deco);
   });
 
-  return { bands };
+  return {
+    bands: computed(() => plan.value.bands),
+    overview: computed(() => plan.value.overview),
+    window: computed(() => plan.value.window),
+    /** The overview canvas's paint: the viewport's stored cells, merges,
+     * borders and gridlines (read inside its frame effect). */
+    overviewBands: () => buildBands({ rows: deps.viewport.rowWindow(0), cols: deps.viewport.colWindow(0) }, "stored"),
+  };
 }
