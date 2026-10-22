@@ -74,7 +74,7 @@ import type { CellHyperlink, CellNote, CellThread, Sheet, SpreadsheetModel, Text
 import { applySplices, attributeValue, escapeAttributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { worksheetTail } from "./drawingXml";
 import { elementTree, nodeAttr, type XmlNode } from "./elementTree";
-import { nextFreePartName, nextRelationshipId, partTextOf, readRels, relationshipKind, relationshipsOf, relativeTarget, spliceRels, targetPart, workbookPathOf, type PartLookup, type RelEntry } from "./package";
+import { LazyParts, nextFreePartName, nextRelationshipId, partTextOf, readRels, relationshipKind, relationshipsOf, relativeTarget, spliceRels, targetPart, workbookPathOf, type PartLookup, type RelEntry } from "./package";
 import { decodeXmlEscapes, encodeXlsxAttribute, encodeXlsxText, xlsxTextElement } from "./sharedStrings";
 import { StringItemReader } from "./sheetXml";
 import { isSpreadsheetMl, xlsxFontProperties } from "./styles";
@@ -260,6 +260,8 @@ interface VmlPart {
   layoutEnd: number | undefined;
   rootTagEnd: number;
   rootClose: number;
+  /** An empty `<xml/>`: nothing to keep, so a write starts it afresh. */
+  selfClosing: boolean;
 }
 
 const SHAPE_NUMBER = /_x0000_s(\d+)/;
@@ -287,7 +289,16 @@ function parseVmlPart(xml: string): VmlPart | undefined {
   if (!root) {
     return undefined;
   }
-  const part: VmlPart = { xml, idmap: undefined, shapes: [], shapetypeEnd: undefined, layoutEnd: undefined, rootTagEnd: root.tagEnd, rootClose: root.end - `</${root.name}>`.length };
+  const part: VmlPart = {
+    xml,
+    idmap: undefined,
+    shapes: [],
+    shapetypeEnd: undefined,
+    layoutEnd: undefined,
+    rootTagEnd: root.tagEnd,
+    rootClose: root.selfClosing ? root.end : root.end - `</${root.name}>`.length,
+    selfClosing: root.selfClosing,
+  };
   for (const child of root.children) {
     if (child.ns === VML_OFFICE_NS && child.local === "shapelayout") {
       part.layoutEnd = child.end;
@@ -350,8 +361,10 @@ interface SourceMessage {
 interface ThreadedPart {
   xml: string;
   prefix: string;
+  rootTag: { start: number; end: number };
   rootTagEnd: number;
   rootClose: number;
+  selfClosing: boolean;
   messages: SourceMessage[];
 }
 
@@ -362,10 +375,15 @@ function parseThreadedPart(xml: string): ThreadedPart | undefined {
   if (!root) {
     return undefined;
   }
-  const part: ThreadedPart = { xml, prefix: prefixOf(root.name), rootTagEnd: root.tagEnd, rootClose: root.end - `</${root.name}>`.length, messages: [] };
-  if (root.selfClosing) {
-    part.rootClose = root.end;
-  }
+  const part: ThreadedPart = {
+    xml,
+    prefix: prefixOf(root.name),
+    rootTag: { start: root.start, end: root.tagEnd },
+    rootTagEnd: root.tagEnd,
+    rootClose: root.selfClosing ? root.end : root.end - `</${root.name}>`.length,
+    selfClosing: root.selfClosing,
+    messages: [],
+  };
   for (const child of root.children) {
     if (child.local !== "threadedComment") {
       continue;
@@ -729,13 +747,17 @@ export function readXlsxSheetAnnotations(
  * them, and the writer every one of those parts, verbatim). SPEC-124's
  * retained-references pass still moves an unmodelled sheet's parts
  * (xlsx/retainedReferences.ts); a modelled one's are the "notes" adjuster's.
- * The VML part is the sheet's `vmlDrawing` relationship's (the worksheet
- * text is not read). */
-export function xlsxNotesModelled(parts: PartLookup, sheetPart: string, persons: readonly ThreadPerson[] | undefined): boolean {
+ * The VML part is the one the worksheet's `<legacyDrawing r:id>` names, as
+ * the reader takes it: with a single `vmlDrawing` relationship that is the
+ * one (the worksheet text is not read unless given); beside a header/footer
+ * VML (`legacyDrawingHF`) the worksheet text (`worksheetXml`, else the
+ * part's own) decides. */
+export function xlsxNotesModelled(parts: PartLookup, sheetPart: string, persons: readonly ThreadPerson[] | undefined, worksheetXml?: string): boolean {
   const rels = relationshipsOf(parts, sheetPart);
   const vml = rels.filter((rel) => relationshipKind(rel.type) === "vmlDrawing");
-  const found = sheetParts(parts, sheetPart, rels, undefined);
-  if (vml.length === 1) {
+  const xml = worksheetXml ?? (vml.length > 1 ? partTextOf(parts, sheetPart) : undefined);
+  const found = sheetParts(parts, sheetPart, rels, xml);
+  if (xml === undefined && vml.length === 1) {
     const part = relatedPart(parts, sheetPart, vml[0]);
     if (part) {
       found.vml = part;
@@ -751,6 +773,27 @@ export function xlsxNotesModelled(parts: PartLookup, sheetPart: string, persons:
  * left them, and the writer the element, verbatim). */
 export function xlsxHyperlinksModelled(parts: PartLookup, sheetPart: string, worksheetXml: string): boolean {
   return readLinks(worksheetXml, relationshipsOf(parts, sheetPart)).links !== undefined;
+}
+
+/** What of a sheet's annotations can be edited (AC-11): `notes` (notes and
+ * threads) false where its comments, VML or threaded part broke the subset,
+ * `hyperlinks` false where its `<hyperlinks>` did. The reader left those
+ * unmodelled and the writer keeps them byte-verbatim, so a note, comment or
+ * link added there could never reach the file — the view refuses it up
+ * front instead of showing it and losing it on save. `opaque` holds the
+ * sheet's retained part (`partName`); a sheet without one has nothing
+ * unmodelled. */
+export function xlsxAnnotationEditing(
+  model: Pick<SpreadsheetModel, "opaque" | "persons">,
+  sheet: Pick<Sheet, "partName">,
+): { notes: boolean; hyperlinks: boolean } {
+  const part = sheet.partName;
+  const parts = new LazyParts(model.opaque);
+  const xml = part === undefined ? undefined : partTextOf(parts, part);
+  if (part === undefined || xml === undefined) {
+    return { notes: true, hyperlinks: true };
+  }
+  return { notes: xlsxNotesModelled(parts, part, model.persons, xml), hyperlinks: xlsxHyperlinksModelled(parts, part, xml) };
 }
 
 // --- writing: helpers ----------------------------------------------------------------------------
@@ -976,6 +1019,14 @@ function mint(taken: Set<string>, like: string): string {
   return name;
 }
 
+/** A self-closing start tag as the open tag and close tag of an element
+ * that can take children (`<a x="1"/>` → `<a x="1">`, `</a>`); undefined
+ * for a tag that is already open. */
+function openedRoot(tag: string): { open: string; close: string } | undefined {
+  const name = tag.endsWith("/>") ? /^<([^\s/>]+)/.exec(tag)?.[1] : undefined;
+  return name === undefined ? undefined : { open: tag.replace(/\s*\/>$/, ">"), close: `</${name}>` };
+}
+
 /** The comments part: the source's authors (new ones appended) and every
  * note's comment and every thread's placeholder in (row, col) order. */
 function commentsPartXml(source: CommentsPart | undefined, notes: readonly CellNote[], threads: readonly CellThread[]): string {
@@ -1028,6 +1079,13 @@ function commentsPartXml(source: CommentsPart | undefined, notes: readonly CellN
       `${XML_DECLARATION}<comments xmlns="${MAIN_NS}" xmlns:mc="${MC_NS}" mc:Ignorable="xr" xmlns:xr="${REVISION_NS}">` +
       `<authors>${authors.map(authorXml).join("")}</authors>${list}</comments>`
     );
+  }
+  const emptyRoot = openedRoot(rootTag);
+  if (emptyRoot !== undefined) {
+    // A self-closing `<comments/>` has no children to keep: it is opened
+    // around the authors and the list.
+    const children = `<${p}authors>${authors.map(authorXml).join("")}</${p}authors>${list}`;
+    return source.xml.slice(0, source.rootTag.start) + emptyRoot.open + children + emptyRoot.close + source.xml.slice(source.rootTag.end);
   }
   const splices: Splice[] = [];
   const originalTag = source.xml.slice(source.rootTag.start, source.rootTag.end);
@@ -1118,7 +1176,8 @@ function vmlPartXml(read: ReadNotes, notes: readonly CellNote[], threads: readon
     next += 1;
     return next - idmap * 1024;
   };
-  if (vml === undefined) {
+  if (vml === undefined || vml.selfClosing) {
+    // No part, or an empty `<xml/>` (no shape to keep): a new drawing.
     return vmlDrawingXml(
       idmap,
       fresh.map((generate) => generate(nextN())),
@@ -1192,6 +1251,11 @@ function threadedPartXml(source: ThreadedPart | undefined, threads: readonly Cel
   }
   const first = source.messages[0];
   const last = source.messages.at(-1);
+  const emptyRoot = source.selfClosing ? openedRoot(source.xml.slice(source.rootTag.start, source.rootTag.end)) : undefined;
+  if (emptyRoot !== undefined) {
+    // A self-closing `<ThreadedComments/>` is opened around the messages.
+    return source.xml.slice(0, source.rootTag.start) + emptyRoot.open + body + emptyRoot.close + source.xml.slice(source.rootTag.end);
+  }
   if (first === undefined || last === undefined) {
     return source.xml.slice(0, source.rootClose) + body + source.xml.slice(source.rootClose);
   }

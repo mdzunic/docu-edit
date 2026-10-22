@@ -29,7 +29,10 @@
 // synced, `record(label, { sheetId })`, the annotations.ts command,
 // `commit()` — labelled NOTE_UNDO_LABELS'. The author of a new note is the
 // settable comment identity (loadCommentAuthor). Notes are not offered on a
-// CSV or TSV workbook (nothing could keep them) nor off a grid sheet.
+// CSV or TSV workbook (nothing could keep them) nor off a grid sheet, and
+// are refused, with `noteDisabledReason`, on an .xlsx sheet whose source's
+// notes the reader could not model (`blocked` — AC-11: they stay verbatim,
+// so a new one could not be saved).
 // Annotation texts are plain strings everywhere; the components render them
 // with text interpolation only.
 import { computed, onScopeDispose, ref, shallowRef, watch, type Ref, type ShallowRef } from "vue";
@@ -81,6 +84,9 @@ export interface CellNotesDeps {
   focusGrid?: () => void;
   /** The author of a new note — default: the settable comment identity. */
   author?: () => string;
+  /** Why the sheet on show's notes cannot be changed ("" when they can) —
+   * useAnnotationEditing's notesReason: its source broke the subset. */
+  blocked?: () => string;
 }
 
 const sameRef = (a: CellRef, b: CellRef): boolean => a.row === b.row && a.col === b.col;
@@ -93,11 +99,17 @@ export function useCellNotes(deps: CellNotesDeps) {
     return sheet?.kind === "grid" ? sheet : null;
   };
 
+  /** Why notes cannot be added on the sheet on show although it could hold
+   * them — its source's notes are kept as read ("" when they can). */
+  const noteDisabledReason = computed(() => {
+    const m = model();
+    return m !== null && !isCsvFormat(m.format) && gridSheet() !== null ? (deps.blocked?.() ?? "") : "";
+  });
   /** Whether notes can be added here: a grid sheet of a workbook that can
-   * keep them (not CSV or TSV). */
+   * keep them (not CSV or TSV) whose source's notes were modelled. */
   const canAnnotate = computed(() => {
     const m = model();
-    return m !== null && !isCsvFormat(m.format) && gridSheet() !== null;
+    return m !== null && !isCsvFormat(m.format) && gridSheet() !== null && noteDisabledReason.value === "";
   });
 
   // --- indicators and the active cell's description ----------------------------------------------
@@ -341,6 +353,7 @@ export function useCellNotes(deps: CellNotesDeps) {
 
   return {
     canAnnotate,
+    noteDisabledReason,
     marksAt,
     activeNote,
     activeDescription,

@@ -30,16 +30,21 @@
 //   an unknown name) toasts LINK_DESTINATION_MISSING_MESSAGE, a hidden
 //   sheet HIDDEN_SHEET_MESSAGE. A plain click only selects.
 // - `isLinked(row, col)`: the sheet on show's cell carries data-link.
+// - `canLink` / `linkDisabledReason`: Insert ▸ Link…, the cell menu's Link…
+//   and Ctrl/Cmd+K apply on a grid sheet of a workbook that can keep links —
+//   not a CSV or TSV one (CSV_NO_LINKS_TITLE), nor an .xlsx sheet whose
+//   source's `<hyperlinks>` the reader could not model (`blocked` — AC-11:
+//   they stay verbatim, so a new link could not be saved).
 import { computed, nextTick, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { isMacPlatform } from "../../lib/core/platform";
 import { findShortcut } from "../../lib/shortcuts";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
-import { externalHref, hyperlinkLabel, LINK_DESTINATION_MISSING_MESSAGE, LINK_NOT_OPENABLE_MESSAGE, LINK_UNDO_LABELS, openHyperlinkTarget, removeHyperlink, setHyperlink } from "../../lib/spreadsheet/annotations";
+import { CSV_NO_LINKS_TITLE, externalHref, hyperlinkLabel, LINK_DESTINATION_MISSING_MESSAGE, LINK_NOT_OPENABLE_MESSAGE, LINK_UNDO_LABELS, openHyperlinkTarget, removeHyperlink, setHyperlink } from "../../lib/spreadsheet/annotations";
 import { refitRows, type CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import { setCellEntry } from "../../lib/spreadsheet/cells";
 import { applyStylePatches } from "../../lib/spreadsheet/formatting";
-import type { HyperlinkTarget, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import { isCsvFormat, type HyperlinkTarget, type Sheet, type SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import {
@@ -87,6 +92,9 @@ export interface CellLinksDeps {
   openWindow?: (href: string) => void;
   /** Writes the chip's Copy link — default: the async clipboard. */
   copyText?: (text: string) => void;
+  /** Why the sheet on show's links cannot be changed ("" when they can) —
+   * useAnnotationEditing's linksReason: its source broke the subset. */
+  blocked?: () => string;
 }
 
 /** The open dialog: its fields, its choices and what it edits. */
@@ -132,13 +140,25 @@ export function useCellLinks(deps: CellLinksDeps) {
   });
   const isLinked = (row: number, col: number): boolean => linkedAt.value(row, col);
 
+  /** Why a link cannot be inserted on the sheet on show ("" when it can, or
+   * off a grid sheet, where the items are simply off). */
+  const linkDisabledReason = computed(() => {
+    const m = model();
+    if (!m || !gridSheet()) {
+      return "";
+    }
+    return isCsvFormat(m.format) ? CSV_NO_LINKS_TITLE : (deps.blocked?.() ?? "");
+  });
+  /** Whether a link can be inserted or edited here (see the module header). */
+  const canLink = computed(() => model() !== null && gridSheet() !== null && linkDisabledReason.value === "");
+
   // --- the dialog --------------------------------------------------------------------------------
 
   /** Opens the dialog on the active cell (see the module header). */
   function openDialog(): void {
     const m = model();
     const sheet = gridSheet();
-    if (!m || !sheet || busy()) {
+    if (!m || !sheet || busy() || !canLink.value) {
       return;
     }
     const sel = deps.selection.selection.value;
@@ -381,7 +401,7 @@ export function useCellLinks(deps: CellLinksDeps) {
     }
   });
 
-  return { dialog, error, canSave, openDialog, setField, save, remove, cancel: close, isLinked, follow, pressFollows, chip, openFromChip, editFromChip, copyFromChip, removeFromChip, dismissChip };
+  return { dialog, error, canSave, canLink, linkDisabledReason, openDialog, setField, save, remove, cancel: close, isLinked, follow, pressFollows, chip, openFromChip, editFromChip, copyFromChip, removeFromChip, dismissChip };
 }
 
 export type CellLinks = ReturnType<typeof useCellLinks>;

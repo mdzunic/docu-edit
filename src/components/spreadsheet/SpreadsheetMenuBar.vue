@@ -39,7 +39,9 @@
 // separator, with Table… (`sheet-menu-insert-table`, the Create Table dialog;
 // no shortcut — Ctrl/Cmd+T is the browser's), disabled off a grid sheet.
 // SPEC-135 ends the Insert menu with Link… (`sheet-menu-insert-link`,
-// Ctrl/Cmd+K — the link dialog), disabled off a grid sheet, then after a
+// Ctrl/Cmd+K — the link dialog), disabled off a grid sheet and, with its
+// reason, where links cannot be kept (CSV/TSV, a sheet whose source's links
+// stay as read), then after a
 // separator Note (`sheet-menu-insert-note`, Shift+F2 — the note editor on the
 // active cell) and Comment (`sheet-menu-insert-comment`, Ctrl+Alt+M /
 // Cmd+Option+M — the comment composer), each disabled where it cannot be kept
@@ -335,7 +337,8 @@ function arrangeDisabled(end = "front") {
         icon="link"
         testid="sheet-menu-insert-link"
         :shortcut="linkShortcut"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || !s.canLink"
+        :reason="s.linkDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.insertLink)"
       />
       <hr class="menu-separator">
@@ -344,6 +347,7 @@ function arrangeDisabled(end = "front") {
         testid="sheet-menu-insert-note"
         :shortcut="noteShortcut"
         :disabled="!s.canAnnotate"
+        :reason="s.noteDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.insertNote)"
       />
       <MenuItem

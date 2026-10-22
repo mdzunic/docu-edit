@@ -25,7 +25,7 @@ import type { Sheet, SpreadsheetModel } from "../model";
 import { readSpreadsheetBytes } from "../open";
 import { deleteSheet, duplicateSheet, stripRetention } from "../sheets";
 import { applyStructuralEdit } from "../structure";
-import { readXlsxPersons, readXlsxSheetAnnotations, spliceWorksheetAnnotations } from "./annotations";
+import { readXlsxPersons, readXlsxSheetAnnotations, spliceWorksheetAnnotations, xlsxAnnotationEditing, xlsxNotesModelled } from "./annotations";
 import { placeholderAuthor, placeholderCommentXml, placeholderText, THREAD_PLACEHOLDER_PREAMBLE } from "./threadPlaceholder";
 import { defaultNoteAnchor, vmlDrawingXml, vmlNoteShapeFor } from "./vmlNoteGolden";
 import { writeXlsx } from "./writer";
@@ -199,6 +199,60 @@ describe("the out-of-subset rule: annotations never half-parse", () => {
     const before = textOf(await unzip(bytes), F.sheets.Summary.partName);
     const hyperlinks = /<hyperlinks>[\s\S]*<\/hyperlinks>/.exec(before)![0];
     expect(textOf(await unzip(await writeXlsx(model)), F.sheets.Summary.partName)).toContain(hyperlinks);
+  });
+});
+
+describe("what an out-of-subset sheet lets the view edit (AC-11)", () => {
+  it("xlsxAnnotationEditing: notes off where the comment parts broke the subset, links off where <hyperlinks> did, both on otherwise", async () => {
+    const { model } = await fixture();
+    expect(xlsxAnnotationEditing(model, summaryOf(model))).toEqual({ notes: true, hyperlinks: true });
+    expect(xlsxAnnotationEditing(model, model.sheets[1]!)).toEqual({ notes: true, hyperlinks: true });
+    expect(xlsxAnnotationEditing(model, { partName: undefined })).toEqual({ notes: true, hyperlinks: true });
+    const twoOnOneCell = await open(await withPart(F.comments.partName, (xml) => xml.replace(`<comment ref="B4"`, `<comment ref="B2"`)));
+    expect(xlsxAnnotationEditing(twoOnOneCell, summaryOf(twoOnOneCell))).toEqual({ notes: false, hyperlinks: true });
+    const unnamedLink = await open(await withPart(SUMMARY_RELS, (xml) => xml.replace(/<Relationship Id="rId4"[^>]*\/>/, "")));
+    expect(xlsxAnnotationEditing(unnamedLink, summaryOf(unnamedLink))).toEqual({ notes: true, hyperlinks: false });
+  });
+
+  it("xlsxNotesModelled follows <legacyDrawing r:id> beside a header/footer VML, as the reader does", async () => {
+    const parts = await unzip(await buildSpec135AnnotationsXlsxBytes());
+    const sheet = F.sheets.Summary.partName;
+    parts.set(SUMMARY_RELS, encoder.encode(textOf(parts, SUMMARY_RELS).replace("</Relationships>", `<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawingHF1.vml"/></Relationships>`)));
+    parts.set("xl/drawings/vmlDrawingHF1.vml", encoder.encode(`<xml xmlns:v="urn:schemas-microsoft-com:vml"/>`));
+    parts.set(sheet, encoder.encode(textOf(parts, sheet).replace(`<legacyDrawing r:id="${F.vml.rId}"/>`, `<legacyDrawing r:id="${F.vml.rId}"/><legacyDrawingHF r:id="rId99"/>`)));
+    expect(xlsxNotesModelled(parts, sheet, F.persons)).toBe(true);
+    parts.set(F.vml.partName, encoder.encode(textOf(parts, F.vml.partName).replace("</x:ClientData>", "</x:ClientDatum>")));
+    expect(xlsxNotesModelled(parts, sheet, F.persons)).toBe(false);
+  });
+});
+
+describe("self-closing source roots (AC-49)", () => {
+  it("an empty <comments/>, <ThreadedComments/> and VML <xml/> are opened around what a save adds: every part well-formed, reopening field for field", async () => {
+    const parts = await unzip(await buildSpec135AnnotationsXlsxBytes());
+    const empty = (name: string, root: string): void => {
+      const xml = textOf(parts, name);
+      const open = new RegExp(`<${root}\\b[^>]*>`).exec(xml)![0];
+      parts.set(name, encoder.encode(xml.slice(0, xml.indexOf(open)) + open.replace(/>$/, "/>")));
+    };
+    empty(F.comments.partName, "comments");
+    empty(F.threadedComments.partName, "ThreadedComments");
+    empty(F.vml.partName, "xml");
+    const model = await open(await zip([...parts].map(([name, data]) => ({ name, data }))));
+    const summary = summaryOf(model);
+    expect(summary.notes).toBeUndefined();
+    expect(summary.threads).toBeUndefined();
+    addNote(model, summary.id, { row: 3, col: 3 }, "A new note", "You");
+    addThread(model, summary.id, { row: 5, col: 5 }, "A new thread", "You");
+    const bytes = await writeXlsx(model);
+    const written = await unzip(bytes);
+    for (const name of [F.comments.partName, F.threadedComments.partName, F.vml.partName]) {
+      const text = textOf(written, name);
+      expect(() => parseXml(text), name).not.toThrow();
+    }
+    expect(textOf(written, F.comments.partName)).toMatch(/<comments [^>]*><authors><author>You<\/author><author>tc=\{[^}]+\}<\/author><\/authors><commentList>/);
+    expect(textOf(written, F.threadedComments.partName)).toMatch(/<ThreadedComments [^>]*><threadedComment ref="F6"[\s\S]*<\/ThreadedComments>$/);
+    expect(await packageIntegrity(bytes)).toEqual([]);
+    expect(fields(summaryOf(await open(bytes)))).toEqual(fields(summaryOf(model)));
   });
 });
 

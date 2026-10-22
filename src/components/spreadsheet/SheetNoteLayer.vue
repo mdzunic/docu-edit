@@ -62,9 +62,11 @@ const popover = computed(() => {
 });
 
 const textarea = useTemplateRef("textarea");
-// The editor takes focus as it opens, its caret at the end.
+// The editor takes focus as it opens, its caret at the end — once its box
+// shows (a cell scrolled out of view is brought back first, so the box can
+// appear a frame after the editor opens).
 watch(
-  () => notes.value.editor.value,
+  () => (editorRect.value ? notes.value.editor.value : null),
   async (open) => {
     if (!open) {
       return;

@@ -267,6 +267,16 @@ export function useSheetGrid(
     return ids.length > 0 ? { ref: activeDescendant.value.slice("sheet-cell-".length), id: ids.join(" ") } : null;
   });
   const { noteAnchor, notePointer } = noteGridHooks({ notes: () => context().notes, rectOf: overlays.rectOf, metrics, merges });
+  // The note editor shows beside its cell: opening it on a cell out of view
+  // (Shift+F2 after scrolling away) brings that cell into view first.
+  watch(
+    () => context().notes?.editor.value ?? null,
+    (open) => {
+      if (open && open.sheetId === sheet().id) {
+        viewport.ensureVisible({ top: open.ref.row, left: open.ref.col, bottom: open.ref.row, right: open.ref.col });
+      }
+    },
+  );
 
   const showGridLines = computed(() => context().viewState.active.value.showGridLines !== false);
   /** A stale cell's title on this sheet (SPEC-120), for the paper. */

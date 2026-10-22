@@ -64,6 +64,12 @@ export interface SpreadsheetMenuState {
    * does not where a reason applies ("" for none). */
   canComment: boolean;
   commentDisabledReason: string;
+  /** SPEC-135: why Insert ▸ Note is disabled where a sheet could otherwise
+   * hold notes ("" for none); Insert ▸ Link… applies (a grid sheet of a
+   * workbook that keeps links), and why not where a reason applies. */
+  noteDisabledReason: string;
+  canLink: boolean;
+  linkDisabledReason: string;
   /** SPEC-135: View ▸ Comments (the side panel's comments pane is open) and
    * View ▸ Show all notes (session-only). */
   commentsOpen: boolean;
@@ -202,6 +208,9 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     canAnnotate: state.canAnnotate !== false,
     canComment: state.canComment !== false,
     commentDisabledReason: typeof state.commentDisabledReason === "string" ? state.commentDisabledReason : "",
+    noteDisabledReason: typeof state.noteDisabledReason === "string" ? state.noteDisabledReason : "",
+    canLink: state.canLink !== false,
+    linkDisabledReason: typeof state.linkDisabledReason === "string" ? state.linkDisabledReason : "",
     commentsOpen: state.commentsOpen === true,
     showAllNotes: state.showAllNotes === true,
   };

@@ -16,7 +16,11 @@
 // (a moved note's box keeps its size but not its custom position). New
 // GUIDs are `{${crypto.randomUUID().toUpperCase()}}`; a new author joins
 // `model.persons` (replaced, never mutated) as `{ displayName: name,
-// userId: name, providerId: "None" }`.
+// userId: name, providerId: "None" }`. Every text a command takes in (note
+// and message text, authors, link targets and tooltips) passes core's
+// sanitizeXmlText first: a pasted control character (Word's U+000B) would
+// otherwise make the comments, threaded-comments or content.xml part the
+// writer builds from it ill-formed.
 //
 // Following a link (openHyperlinkTarget, a pure decision — the view acts):
 // `http:`, `https:` and `mailto:` open externally; any other scheme, a
@@ -51,6 +55,7 @@
 // markAnnotationsEdited.
 import { replyParagraphText } from "../core/comments";
 import { urlScheme } from "../core/urls";
+import { sanitizeXmlText } from "../core/xmlText";
 import { formatA1, type CellRef, type GridRange } from "./address";
 import { adjustFormula } from "./formula/adjust";
 import type { FormulaNode } from "./formula/ast";
@@ -72,6 +77,14 @@ export const LINK_NOT_OPENABLE_MESSAGE = "This link can't be opened from the bro
 export const LINK_DESTINATION_MISSING_MESSAGE = "This link's destination doesn't exist";
 /** The title "New comment" carries, disabled, in an .ods workbook. */
 export const ODS_NOTES_ONLY_TITLE = "OpenDocument spreadsheets support notes only";
+/** The titles the note and comment commands, and the link commands, carry
+ * disabled on an .xlsx sheet whose annotation parts (or `<hyperlinks>`) the
+ * reader could not model: those stay byte-verbatim, so nothing added there
+ * could be saved (AC-11). */
+export const NOTES_KEPT_AS_READ_TITLE = "This sheet's notes and comments are kept exactly as the file has them, so they can't be changed here";
+export const LINKS_KEPT_AS_READ_TITLE = "This sheet's links are kept exactly as the file has them, so they can't be changed here";
+/** The title Link… carries, disabled, in a CSV or TSV workbook (which keeps values only). */
+export const CSV_NO_LINKS_TITLE = "CSV and TSV files can't keep links";
 /** The schemes a sheet opens in a new browsing context. */
 export const OPENABLE_SCHEMES: ReadonlySet<string> = new Set(["http", "https", "mailto"]);
 
@@ -215,14 +228,20 @@ export function addNote(model: SpreadsheetModel, sheetId: string, ref: CellRef, 
     return null;
   }
   const notes = sheetNotes(sheet);
-  const note: CellNote = { noteId: freeId("n", ref, new Set(notes.map((each) => each.noteId))), ref: { row: ref.row, col: ref.col }, author, text };
+  const note: CellNote = {
+    noteId: freeId("n", ref, new Set(notes.map((each) => each.noteId))),
+    ref: { row: ref.row, col: ref.col },
+    author: sanitizeXmlText(author),
+    text: sanitizeXmlText(text),
+  };
   markAnnotationsEdited(model, withField(sheet, "notes", sortedByRef([...notes, note])));
   return note;
 }
 
 /** Replaces a note's text (plain from now on: no runs, no source); emptied
  * text deletes it. Returns the note, or null when it went. */
-export function editNote(model: SpreadsheetModel, sheetId: string, noteId: string, text: string): CellNote | null {
+export function editNote(model: SpreadsheetModel, sheetId: string, noteId: string, typed: string): CellNote | null {
+  const text = sanitizeXmlText(typed);
   const sheet = sheetById(model, sheetId);
   const note = sheetNotes(sheet).find((each) => each.noteId === noteId);
   if (!note) {
@@ -289,8 +308,9 @@ export function ensurePerson(model: SpreadsheetModel, author: string): ThreadPer
   return person;
 }
 
-function newMessage(model: SpreadsheetModel, text: string, author: string): ThreadMessage {
-  return { messageId: newGuid(), author, text, createdAt: nowIso(), personId: ensurePerson(model, author).personId };
+function newMessage(model: SpreadsheetModel, typed: string, typedAuthor: string): ThreadMessage {
+  const author = sanitizeXmlText(typedAuthor);
+  return { messageId: newGuid(), author, text: sanitizeXmlText(typed), createdAt: nowIso(), personId: ensurePerson(model, author).personId };
 }
 
 function replaceThread(model: SpreadsheetModel, sheet: Sheet, thread: CellThread, next: CellThread | null): void {
@@ -333,7 +353,8 @@ export function replyToThread(model: SpreadsheetModel, sheetId: string, threadId
 /** Replaces a message's text: it loses its source and its `<mentions>`
  * (the sanctioned delta — @-mention authoring is out of scope). Emptied
  * text deletes the message. */
-export function editThreadMessage(model: SpreadsheetModel, sheetId: string, threadId: string, messageId: string, text: string): CellThread | null {
+export function editThreadMessage(model: SpreadsheetModel, sheetId: string, threadId: string, messageId: string, typed: string): CellThread | null {
+  const text = sanitizeXmlText(typed);
   const sheet = sheetById(model, sheetId);
   const thread = findThread(sheet, threadId);
   const message = thread?.messages.find((each) => each.messageId === messageId);
@@ -394,10 +415,13 @@ export function setHyperlink(model: SpreadsheetModel, sheetId: string, range: Gr
   const link: CellHyperlink = {
     linkId: same?.linkId ?? freeId("h", rangeStart(range), new Set(rest.map((each) => each.linkId))),
     range: { top: range.top, left: range.left, bottom: range.bottom, right: range.right },
-    target: target.kind === "url" ? { kind: "url", href: target.href, ...(target.subaddress ? { subaddress: target.subaddress } : {}) } : { kind: "place", location: target.location },
+    target:
+      target.kind === "url"
+        ? { kind: "url", href: sanitizeXmlText(target.href), ...(target.subaddress ? { subaddress: sanitizeXmlText(target.subaddress) } : {}) }
+        : { kind: "place", location: sanitizeXmlText(target.location) },
   };
   if (tooltip !== undefined && tooltip !== "") {
-    link.tooltip = tooltip;
+    link.tooltip = sanitizeXmlText(tooltip);
   }
   markAnnotationsEdited(model, withField(sheet, "hyperlinks", sortedLinks([...rest, link])));
   return link;

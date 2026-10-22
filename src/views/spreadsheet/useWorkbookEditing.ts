@@ -37,6 +37,7 @@ import { useRouter } from "vue-router";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { useAnnotationEditing } from "./useAnnotationEditing";
 import { useCellEditing, type CellEditing, type CellEditingDeps } from "./useCellEditing";
 import { useCellLinks } from "./useCellLinks";
 import { useCellNotes } from "./useCellNotes";
@@ -171,6 +172,9 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
   // import bar and dialog (moved here from the view to keep it a hub).
   const assist = useFunctionAssist({ ...cell });
   const csvImport = useCsvImport({ book: deps.book, undo, router: useRouter() });
+  // SPEC-135: an .xlsx sheet whose annotations the reader left verbatim
+  // refuses new notes, comments and links (AC-11).
+  const annotationEditing = useAnnotationEditing({ book: deps.book });
   const comments = useSheetComments({
     book: deps.book,
     undo,
@@ -180,6 +184,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     sidePanel,
     syncInto: (model) => deps.viewState.syncInto(model),
     busy: () => cell.editing.value,
+    blocked: () => annotationEditing.notesReason.value,
   });
   const notes = useCellNotes({
     book: deps.book,
@@ -189,8 +194,17 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     busy: () => cell.editing.value,
     openThread: comments.openThread,
     focusGrid: () => cell.focusCell(),
+    blocked: () => annotationEditing.notesReason.value,
   });
-  const links = useCellLinks({ book: deps.book, selection: deps.selection, viewState: deps.viewState, undo, cell, locale: deps.locale });
+  const links = useCellLinks({
+    book: deps.book,
+    selection: deps.selection,
+    viewState: deps.viewState,
+    undo,
+    cell,
+    locale: deps.locale,
+    blocked: () => annotationEditing.linksReason.value,
+  });
   return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport, notes, comments, links };
 }
 

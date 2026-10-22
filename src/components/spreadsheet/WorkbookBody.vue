@@ -124,8 +124,11 @@ const annotationMenu = computed(() => ({
   canAnnotate: notes.value?.canAnnotate.value === true,
   hasNote: notes.value?.activeNote.value !== undefined,
   noteVisible: notes.value?.activeNote.value?.visible === true,
+  noteDisabledReason: notes.value?.noteDisabledReason.value ?? "",
   canComment: comments.value?.canComment.value === true,
   commentDisabledReason: comments.value?.newCommentDisabledReason.value ?? "",
+  canLink: links.value?.canLink.value !== false,
+  linkDisabledReason: links.value?.linkDisabledReason.value ?? "",
 }));
 function annotate(action = "note") {
   if (action === "comment") {

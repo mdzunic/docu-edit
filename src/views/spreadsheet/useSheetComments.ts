@@ -13,7 +13,10 @@
 //   windows), Insert ▸ Comment and the cell context menu — opens the composer
 //   (`sheet-comment-composer`) on the active cell, or the cell's thread when
 //   it has one. In an .ods workbook it is disabled with ODS_NOTES_ONLY_TITLE
-//   (`newCommentDisabledReason`); a CSV or TSV workbook offers neither.
+//   (`newCommentDisabledReason`), on an .xlsx sheet whose source's comments
+//   the reader could not model with NOTES_KEPT_AS_READ_TITLE (`blocked` —
+//   AC-11: they stay verbatim, so a new one could not be saved); a CSV or
+//   TSV workbook offers neither.
 // - reply, resolve, reopen, edit and delete — the last two on the identity's
 //   own messages only (canModifyMessage); deleting a thread's opening message
 //   deletes the thread.
@@ -95,6 +98,9 @@ export interface SheetCommentsDeps {
   syncInto?: (model: SpreadsheetModel) => void;
   /** Whether a cell is being edited: New comment waits. */
   busy?: () => boolean;
+  /** Why the sheet on show's comments cannot be changed ("" when they can) —
+   * useAnnotationEditing's notesReason: its source broke the subset. */
+  blocked?: () => string;
 }
 
 /** A message's time as the panel shows it ("" when it has none). */
@@ -122,11 +128,12 @@ export function useSheetComments(deps: SheetCommentsDeps) {
   /** An .ods workbook: notes only — the panel lists them, New comment is off. */
   const notesOnly = computed(() => model()?.format === "ods");
   /** Why New comment is unavailable ("" when it is available). */
-  const newCommentDisabledReason = computed(() => (notesOnly.value ? ODS_NOTES_ONLY_TITLE : ""));
-  /** Whether New comment applies: an .xlsx grid sheet. */
+  const newCommentDisabledReason = computed(() => (notesOnly.value ? ODS_NOTES_ONLY_TITLE : (deps.blocked?.() ?? "")));
+  /** Whether New comment applies: an .xlsx grid sheet whose source's
+   * comments were modelled. */
   const canComment = computed(() => {
     const m = model();
-    return m !== null && !isCsvFormat(m.format) && !notesOnly.value && deps.book.activeSheet.value?.kind === "grid";
+    return m !== null && !isCsvFormat(m.format) && !notesOnly.value && deps.book.activeSheet.value?.kind === "grid" && newCommentDisabledReason.value === "";
   });
 
   const isOpen = computed(() => deps.sidePanel.activePane.value === "comments");
