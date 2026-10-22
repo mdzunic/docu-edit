@@ -10,6 +10,7 @@ import type { DocumentFormat, LibraryEntry } from "../lib/documentStore";
 import {
   deleteDocument,
   duplicateDocument,
+  duplicateStoredDocument,
   libraryStorageUsage,
   listDocuments,
   listTrashedDocuments,
@@ -336,11 +337,24 @@ export function useLibrary() {
   // --- bulk actions (AC-27..29) --------------------------------------------
 
   function duplicateDocuments(ids: string[]): void {
+    // SPEC-137: a workbook duplicates whole — loaded first, released after —
+    // one at a time, so a bulk duplicate never holds several resident.
+    const workbooks = ids.filter((id) => kindOf(id) === "spreadsheet");
     for (const id of ids) {
-      duplicateDocument(id);
+      if (!workbooks.includes(id)) {
+        duplicateDocument(id);
+      }
     }
     clearSelection();
     refresh();
+    if (workbooks.length > 0) {
+      void (async () => {
+        for (const id of workbooks) {
+          await duplicateStoredDocument(id);
+        }
+        refresh();
+      })();
+    }
   }
 
   function starDocuments(ids: string[]): void {

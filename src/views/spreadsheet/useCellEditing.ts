@@ -43,6 +43,7 @@ import { createCommitPath, type EntryHooks } from "./cellCommit";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
 import { canEditCell, cellEditText, clearTargets, refusalFor, writeClear } from "./cellEntry";
+import { WORKBOOK_STORAGE_INCOMPLETE_MESSAGE } from "../../lib/spreadsheet/errors";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import { usePointMode } from "./usePointMode";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -77,6 +78,9 @@ export interface CellEditingDeps {
   /** SPEC-130: the data-validation entry gate (useDataValidation's
    * entryGateOf); absent = every entry is written unchecked. */
   entryGate?: EntryGate;
+  /** SPEC-137: true while the workbook is read-only (its storage came back
+   * incomplete) — the editor never opens. */
+  readOnly?: () => boolean;
 }
 
 const MODE_LABELS: Readonly<Record<EditMode, string>> = { ready: "Ready", enter: "Enter", edit: "Edit" };
@@ -136,6 +140,10 @@ export function useCellEditing(deps: CellEditingDeps) {
       return false;
     }
     const active = deps.selection.selection.value.active;
+    if (deps.readOnly?.()) {
+      toast(WORKBOOK_STORAGE_INCOMPLETE_MESSAGE);
+      return false;
+    }
     const refusal = refusalFor(m, deps.book.activeIndex.value, [{ top: active.row, left: active.col, bottom: active.row, right: active.col }]);
     if (refusal) {
       toast(refusal);
@@ -354,7 +362,7 @@ export function useCellEditing(deps: CellEditingDeps) {
      * `text`, caret at the end; false when refused (a toast). */
     startEditing: (text: string): boolean => open("enter", text, "end") && (draft.focusCell(), true),
     /** Whether protection lets the active cell be edited (SPEC-127's fx). */
-    canEditActiveCell: (): boolean => canEditCell(model(), deps.book.activeIndex.value, deps.book.activeSheet.value, deps.selection.selection.value.active),
+    canEditActiveCell: (): boolean => deps.readOnly?.() !== true && canEditCell(model(), deps.book.activeIndex.value, deps.book.activeSheet.value, deps.selection.selection.value.active),
     /** Keys a host's assist takes before the editor's own table. */
     setKeyFilter: (filter: ((event: KeyboardEvent) => boolean) | null): void => void (keyFilter = filter),
     /** SPEC-133: installs the typed-entry hooks (cellCommit.ts). */
