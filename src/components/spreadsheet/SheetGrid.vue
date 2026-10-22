@@ -112,6 +112,9 @@ const vp = grid.viewport;
 const RH = ROW_HEADER_WIDTH_PX;
 const CH = COLUMN_HEADER_HEIGHT_PX;
 const cellEditing = computed(() => asSheetGridContext(props.context).cellEditing);
+/** SPEC-137: useRecalc's calc state — "calculating" from a pass's start to
+ * its end, the benchmark's end-of-recalc signal. */
+const calcState = computed(() => asSheetGridContext(props.context).recalc?.calcState?.value ?? "idle");
 /** SPEC-127: the function assists' ARIA on the in-cell editor. */
 const cellAria = computed(() => asSheetGridContext(props.context).assist?.editorAria.value ?? {});
 /** SPEC-123: the armed format painter ("once" | "locked"), "" when off. */
@@ -228,6 +231,7 @@ function unscroll(event = new Event("scroll")) {
     :aria-label="props.sheet.name"
     :aria-activedescendant="grid.activeDescendant.value"
     :data-show-formulas="props.showFormulas ? 'true' : undefined"
+    :data-calc-state="calcState"
     :data-format-painter="painterMode || undefined"
     :data-drawing-armed="drawingLayer?.armed ? 'true' : undefined"
     :style="{ cursor: resizeCursor || transfer.cursor || undefined }"

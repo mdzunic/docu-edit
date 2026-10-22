@@ -78,8 +78,9 @@ export interface SheetGridContext {
   locale?: SpreadsheetLocale;
   /** The formula bar's text and View ▸ Show formulas (SPEC-119). */
   formulas: FormulaDisplay;
-  /** Recalculation's stale cells (SPEC-120); absent = none. */
-  recalc?: Pick<Recalc, "staleTitleAt">;
+  /** Recalculation's stale cells (SPEC-120) and, SPEC-137, its calc state
+   * (the grid's data-calc-state); absent = none, "idle". */
+  recalc?: Pick<Recalc, "staleTitleAt"> & Partial<Pick<Recalc, "calcState">>;
   /** Cell entry (SPEC-122); absent = the grid is read-only. */
   cellEditing?: CellEditing;
   /** SPEC-129: each mounted cell's conditional-format result; absent = none. */
