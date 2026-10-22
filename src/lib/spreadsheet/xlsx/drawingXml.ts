@@ -994,13 +994,15 @@ export function worksheetDrawingRelId(xml: string): string | undefined {
 }
 
 /** A sheet's drawing part (`<drawing r:id>` through its relationships) and
- * the relationship, when it has one that resolves to a part. */
-export function sheetDrawingPart(parts: PartLookup, sheetPartName: string): { partName: string; rel: RelEntry } | undefined {
+ * the relationship, when it has one that resolves to a part. `worksheetXml`,
+ * when given, is read instead of decoding the sheet part (SPEC-137: the
+ * scan's text with the cells cut out — worksheetTail reads only past them). */
+export function sheetDrawingPart(parts: PartLookup, sheetPartName: string, worksheetXml?: string): { partName: string; rel: RelEntry } | undefined {
   const rels = relationshipsOf(parts, sheetPartName);
   if (!rels.some((rel) => relationshipKind(rel.type) === "drawing")) {
     return undefined; // the cheap check first: no drawing relationship, no scan
   }
-  const xml = partTextOf(parts, sheetPartName);
+  const xml = worksheetXml ?? partTextOf(parts, sheetPartName);
   let rId: string | undefined;
   try {
     rId = xml === undefined ? undefined : worksheetDrawingRelId(xml);
@@ -1020,8 +1022,14 @@ export function sheetDrawingPart(parts: PartLookup, sheetPartName: string): { pa
  * its drawing part's name. Pictures add their images to `media`, one part
  * per package path, shared across every sheet read with the same map. A
  * part that is not well-formed reads as no drawings (it stays in `opaque`). */
-export function readXlsxSheetDrawings(parts: PartLookup, sheetPartName: string, sheet: Sheet, media: Map<string, MediaPart>): { drawings: SheetDrawing[]; drawingPart?: string } {
-  const found = sheetDrawingPart(parts, sheetPartName);
+export function readXlsxSheetDrawings(
+  parts: PartLookup,
+  sheetPartName: string,
+  sheet: Sheet,
+  media: Map<string, MediaPart>,
+  worksheetXml?: string,
+): { drawings: SheetDrawing[]; drawingPart?: string } {
+  const found = sheetDrawingPart(parts, sheetPartName, worksheetXml);
   if (!found) {
     return { drawings: [] };
   }
