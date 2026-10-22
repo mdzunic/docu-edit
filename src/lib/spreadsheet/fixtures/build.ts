@@ -168,6 +168,22 @@
 //   cache, styles.xml, meta.xml and ObjectReplacements/Object 1; a
 //   page-anchored 3-D `chart:surface` (Object 2) over the same block;
 //   "Summary" the xlsx's Summary block. SPEC132_CHARTS_ODS records the facts.
+// - spec133-names-tables.xlsx (SPEC-133) — Excel 365-shaped names and
+//   tables: "Data" the table "Sales" over A1:E6 (a totals row with a label,
+//   a sum and a count; the calculated column Amount written
+//   `Sales[[#This Row],[Price]]*Sales[[#This Row],[Qty]]` with
+//   `dataDxfId="0"`; a `#Units` column; `xr:uid`/`xr3:uid`s; its own
+//   autoFilter) and formulas beside it naming the table, TaxRate and the
+//   relative name Above; "Lists" the header-less table "Table1" and a
+//   worksheet autoFilter; "Hidden" hidden; definedNames in Excel's order —
+//   `_xlfn.IFS`, `_xlnm._FilterDatabase`, `_xlnm.Print_Area`, Above, the
+//   hidden Helper, Local (sheet-scoped, with a comment), Rates, TaxRate.
+//   SPEC133_NAMES_TABLES_XLSX records the facts. spec133-names.ods —
+//   LibreOffice 24.8-shaped: Sheet1's own named expression and named range
+//   (non-A1 base cells) as its table's last child, the spreadsheet's named
+//   ranges (a relative one, one usable as print range and filter) and named
+//   expression after the last table, an anonymous and a named database
+//   range. SPEC133_NAMES_ODS records the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -9290,4 +9306,714 @@ export async function buildSpec132ChartsOdsBytes(): Promise<Uint8Array> {
 }
 // ============================================================================
 // end of SPEC-132
+// ============================================================================
+
+// ============================================================================
+// SPEC-133 — spec133-names-tables.xlsx / spec133-names.ods: defined names and
+// tables
+// ============================================================================
+// The workbooks SPEC-133's name and table readers, writers, resolver and e2e
+// flow run on, each in its producer's own shapes:
+// - spec133-names-tables.xlsx — Excel 365-shaped (Aptos, the 2023 theme).
+//   "Data" (active) holds the table "Sales" (xl/tables/table1.xml, id 1) over
+//   A1:E6: the header row Product/Price/Qty/Amount/#Units (shared strings),
+//   four data rows and a totals row (`totalsRowCount="1"`) — "Total" under
+//   Product (`totalsRowLabel`), SUBTOTAL(109,Sales[Amount]) under Amount
+//   (`totalsRowFunction="sum"`) and SUBTOTAL(103,Sales['#Units]) under
+//   #Units (`"count"`; a column name starting with `#`, escaped `'#` in a
+//   reference). Amount is a calculated column: Excel's wire form
+//   `Sales[[#This Row],[Price]]*Sales[[#This Row],[Qty]]` in its
+//   `calculatedColumnFormula` and in each data cell, `dataDxfId="0"` naming
+//   styles.xml's one dxf (built-in #,##0, which the data cells carry as
+//   cellXfs 1). The part has Excel's `mc:Ignorable="xr xr3"`, an `xr:uid`,
+//   an `xr3:uid` per column, an autoFilter over header + data with its own
+//   `xr:uid`, and TableStyleMedium2 with banded rows. Beside the table, on
+//   G: SUM(Sales[Amount]), Sales[[#Totals],[Amount]], Sales['#Units]
+//   (implicit intersection: row 4's #Units), TaxRate*G2 and Above (the cell
+//   above, G5); column F stays empty so the table can grow right. Every
+//   cached value is what Excel computes. "Lists" holds a header-less table,
+//   "Table1" (table2.xml, id 2, `headerRowCount="0"`, A2:B4, columns Code
+//   and Label, TableStyleLight9, no autoFilter — a header-less table has
+//   none), and a worksheet autoFilter over D1:E4. "Hidden" is
+//   `state="hidden"`. workbook.xml's definedNames in Excel's case-insensitive
+//   name order, attributes in the schema's order: the hidden `_xlfn.IFS`
+//   placeholder (#NAME?), Lists' hidden `_xlnm._FilterDatabase`, Data's
+//   `_xlnm.Print_Area`, Data's relative `Above` (Data!A1048576: relative to
+//   A1, the cell one row up, wrapping), the hidden `Helper`, Lists' `Local`
+//   with a `comment`, `Rates` and the constant `TaxRate` (0.2).
+//   docProps/app.xml has the Worksheets and Named Ranges heading pairs
+//   (hidden names left out, Print_Area as "Data!Print_Area");
+//   calcChain.xml lists Data's formula cells.
+// - spec133-names.ods — LibreOffice 24.8-shaped. "Sheet1" (active; an
+//   autofilter's anonymous database range over A1:C5) ends with its own
+//   `table:named-expressions` — the named expression LocalExpr (base C2,
+//   `of:=[.B2]*2`: the host's left neighbour, doubled) and the named range
+//   LocalRange (base B3, $B$3:$B$5) — which C2:C5's formulas use beside the
+//   workbook's Prices and Rate. After the last table come the spreadsheet's
+//   `table:named-expressions` in Calc's order (by upper-cased name): Next (a
+//   relative named range, base B2 → B3: the cell below the host), Prices,
+//   the named expression Rate (`of:=0.15`) and Report (with
+//   `table:range-usable-as`); then `table:database-ranges`:
+//   `__Anonymous_Sheet_DB__0` with `table:display-filter-buttons="true"`,
+//   then the named "Inventory" over Sheet2's list.
+// SPEC133_NAMES_TABLES_XLSX and SPEC133_NAMES_ODS record the facts: cells
+// A1, `range`s 0-based inclusive GridRanges, canonical formulas per SPEC-133
+// "Canonical and wire forms" (`[#This Row]` ↔ `@`, every other structured
+// reference verbatim), names' relative parts relative to A1.
+
+const SPEC133_TABLE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+
+/** Amount's calculated column as Excel writes it — in the column's
+ * `calculatedColumnFormula` and in each of its data cells… */
+const SPEC133_CALCULATED_WIRE = "Sales[[#This Row],[Price]]*Sales[[#This Row],[Qty]]";
+/** …and canonically. */
+const SPEC133_CALCULATED_FORMULA = "Sales[@Price]*Sales[@Qty]";
+
+const SPEC133_SALES_AUTOFILTER_UID = "{5A6B7C8D-0133-4E9F-80AB-1C2D3E4F5A65}";
+const SPEC133_LISTS_AUTOFILTER_UID = "{E3F40516-0133-4728-9934-AFB0C1D2E3FE}";
+
+/** A spec133-names-tables.xlsx definedName: `localSheetId` (a position in
+ * `<sheets>`) and `scope` (that sheet's name) for a sheet-scoped one; `text`
+ * as written — already canonical, its relative parts relative to A1. */
+interface Spec133DefinedName {
+  name: string;
+  comment?: string;
+  localSheetId?: number;
+  scope?: string;
+  hidden?: true;
+  text: string;
+}
+
+/** A spec133-names-tables.xlsx `tableColumn`; `calculatedColumnFormula` is
+ * the wire text, `calculatedFormula` its canonical form. */
+interface Spec133TableColumn {
+  id: number;
+  uid: string;
+  name: string;
+  totalsRowFunction?: "sum" | "count";
+  totalsRowLabel?: string;
+  dataDxfId?: number;
+  calculatedColumnFormula?: string;
+  calculatedFormula?: string;
+}
+
+/** What spec133-names-tables.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC133_NAMES_TABLES_XLSX = {
+  file: "spec133-names-tables.xlsx",
+  title: "Names and tables",
+  sheetNames: ["Data", "Lists", "Hidden"],
+  sheets: {
+    Data: {
+      index: 0,
+      sheetId: 1,
+      rId: "rId1",
+      partName: "xl/worksheets/sheet1.xml",
+      rels: "xl/worksheets/_rels/sheet1.xml.rels",
+      visibility: "visible",
+      uid: "{1C2D3E4F-0133-4A5B-8C6D-7E8F9A0B1C21}",
+      dimension: "A1:G6",
+      spans: "1:7",
+    },
+    Lists: {
+      index: 1,
+      sheetId: 2,
+      rId: "rId2",
+      partName: "xl/worksheets/sheet2.xml",
+      rels: "xl/worksheets/_rels/sheet2.xml.rels",
+      visibility: "visible",
+      uid: "{2D3E4F5A-0133-4B6C-9D7E-8F9A0B1C2D32}",
+      dimension: "A1:E4",
+      spans: "1:5",
+    },
+    Hidden: {
+      index: 2,
+      sheetId: 3,
+      rId: "rId3",
+      partName: "xl/worksheets/sheet3.xml",
+      visibility: "hidden",
+      uid: "{3E4F5A6B-0133-4C7D-AE8F-9A0B1C2D3E43}",
+      dimension: "A1:B1",
+      spans: "1:2",
+    },
+  },
+  /** Data — the only sheetView with tabSelected="1"; no workbookView@activeTab. */
+  activeSheetIndex: 0,
+  /** Data's selection. */
+  activeCell: "G2",
+  /** cellXfs 1: built-in numFmt 3 (#,##0), on Amount's data cells only. */
+  xf: { amount: 1 },
+  amountCells: ["D2", "D3", "D4", "D5"],
+  /** styles.xml's one dxf — Amount's `dataDxfId`: the same number format. */
+  dxf: { id: 0, numFmtId: 3, formatCode: "#,##0" },
+  /** Every stored cell per sheet, A1 → value (a formula cell's is its cached value). */
+  values: {
+    Data: {
+      A1: "Product",
+      B1: "Price",
+      C1: "Qty",
+      D1: "Amount",
+      E1: "#Units",
+      A2: "Apples",
+      B2: 2,
+      C2: 10,
+      D2: 20,
+      E2: 12,
+      G2: 140,
+      A3: "Pears",
+      B3: 3,
+      C3: 20,
+      D3: 60,
+      E3: 7,
+      G3: 140,
+      A4: "Plums",
+      B4: 4,
+      C4: 6,
+      D4: 24,
+      E4: 9,
+      G4: 9,
+      A5: "Figs",
+      B5: 9,
+      C5: 4,
+      D5: 36,
+      E5: 15,
+      G5: 28,
+      A6: "Total",
+      D6: 140,
+      E6: 4,
+      G6: 28,
+    },
+    Lists: {
+      D1: "Region",
+      E1: "Share",
+      A2: "A",
+      B2: 20,
+      D2: "North",
+      E2: 50,
+      A3: "B",
+      B3: 10,
+      D3: "South",
+      E3: 30,
+      A4: "C",
+      B4: 5,
+      D4: "East",
+      E4: 20,
+    },
+    Hidden: { A1: "Secret", B1: 42 },
+  },
+  /** Data's formula cells: the `<f>` text, the canonical formula and the
+   * cached value — what Excel computes. G4 is Excel's implicit intersection
+   * of #Units with row 4 (E4); G6's Above is G5. */
+  formulas: {
+    D2: { wire: SPEC133_CALCULATED_WIRE, formula: SPEC133_CALCULATED_FORMULA, value: 20 },
+    D3: { wire: SPEC133_CALCULATED_WIRE, formula: SPEC133_CALCULATED_FORMULA, value: 60 },
+    D4: { wire: SPEC133_CALCULATED_WIRE, formula: SPEC133_CALCULATED_FORMULA, value: 24 },
+    D5: { wire: SPEC133_CALCULATED_WIRE, formula: SPEC133_CALCULATED_FORMULA, value: 36 },
+    D6: { wire: "SUBTOTAL(109,Sales[Amount])", formula: "SUBTOTAL(109,Sales[Amount])", value: 140 },
+    E6: { wire: "SUBTOTAL(103,Sales['#Units])", formula: "SUBTOTAL(103,Sales['#Units])", value: 4 },
+    G2: { wire: "SUM(Sales[Amount])", formula: "SUM(Sales[Amount])", value: 140 },
+    G3: { wire: "Sales[[#Totals],[Amount]]", formula: "Sales[[#Totals],[Amount]]", value: 140 },
+    G4: { wire: "Sales['#Units]", formula: "Sales['#Units]", value: 9 },
+    G5: { wire: "TaxRate*G2", formula: "TaxRate*G2", value: 28 },
+    G6: { wire: "Above", formula: "Above", value: 28 },
+  },
+  tables: {
+    Sales: {
+      sheet: "Data",
+      partName: "xl/tables/table1.xml",
+      /** Data's relationship to the part (xl/worksheets/_rels/sheet1.xml.rels). */
+      rId: "rId1",
+      id: 1,
+      name: "Sales",
+      displayName: "Sales",
+      uid: "{4F5A6B7C-0133-4D8E-BF9A-0B1C2D3E4F54}",
+      ref: "A1:E6",
+      range: { top: 0, left: 0, bottom: 5, right: 4 },
+      headerRow: true,
+      totalsRow: true,
+      /** `ref` minus the header and totals rows. */
+      dataBody: "A2:E5",
+      /** Header + data, verbatim — what the reader keeps as `sourceXml`. */
+      autoFilter: { ref: "A1:E5", uid: SPEC133_SALES_AUTOFILTER_UID, xml: `<autoFilter ref="A1:E5" xr:uid="${SPEC133_SALES_AUTOFILTER_UID}"/>` },
+      columns: [
+        { id: 1, uid: "{6B7C8D9E-0133-4FA0-91BC-2D3E4F5A6B76}", name: "Product", totalsRowLabel: "Total" },
+        { id: 2, uid: "{7C8D9EAF-0133-40B1-A2CD-3E4F5A6B7C87}", name: "Price" },
+        { id: 3, uid: "{8D9EAFB0-0133-41C2-B3DE-4F5A6B7C8D98}", name: "Qty" },
+        {
+          id: 4,
+          uid: "{9EAFB0C1-0133-42D3-84EF-5A6B7C8D9EA9}",
+          name: "Amount",
+          totalsRowFunction: "sum",
+          dataDxfId: 0,
+          calculatedColumnFormula: SPEC133_CALCULATED_WIRE,
+          calculatedFormula: SPEC133_CALCULATED_FORMULA,
+        },
+        { id: 5, uid: "{AFB0C1D2-0133-43E4-95F0-6B7C8D9EAFBA}", name: "#Units", totalsRowFunction: "count" },
+      ] as readonly Spec133TableColumn[],
+      style: { name: "TableStyleMedium2", showFirstColumn: false, showLastColumn: false, showRowStripes: true, showColumnStripes: false },
+    },
+    /** The header-less table on Lists — "Table1", so the next new table is Table2. */
+    Table1: {
+      sheet: "Lists",
+      partName: "xl/tables/table2.xml",
+      /** Lists' relationship to the part (xl/worksheets/_rels/sheet2.xml.rels). */
+      rId: "rId1",
+      id: 2,
+      name: "Table1",
+      displayName: "Table1",
+      uid: "{B0C1D2E3-0133-44F5-A601-7C8D9EAFB0CB}",
+      ref: "A2:B4",
+      range: { top: 1, left: 0, bottom: 3, right: 1 },
+      headerRow: false,
+      totalsRow: false,
+      dataBody: "A2:B4",
+      columns: [
+        { id: 1, uid: "{C1D2E3F4-0133-4506-B712-8D9EAFB0C1DC}", name: "Code" },
+        { id: 2, uid: "{D2E3F405-0133-4617-8823-9EAFB0C1D2ED}", name: "Label" },
+      ] as readonly Spec133TableColumn[],
+      style: { name: "TableStyleLight9", showFirstColumn: false, showLastColumn: false, showRowStripes: true, showColumnStripes: false },
+    },
+  },
+  /** Lists' worksheet `<autoFilter>`, verbatim (between sheetData and
+   * pageMargins) — the range its `_xlnm._FilterDatabase` names. */
+  listsAutoFilter: { ref: "D1:E4", uid: SPEC133_LISTS_AUTOFILTER_UID, xml: `<autoFilter ref="D1:E4" xr:uid="${SPEC133_LISTS_AUTOFILTER_UID}"/>` },
+  /** xl/workbook.xml's definedNames, in file order (Excel's: by name,
+   * case-insensitively). */
+  definedNames: [
+    { name: "_xlfn.IFS", hidden: true, text: "#NAME?" },
+    { name: "_xlnm._FilterDatabase", localSheetId: 1, scope: "Lists", hidden: true, text: "Lists!$D$1:$E$4" },
+    { name: "_xlnm.Print_Area", localSheetId: 0, scope: "Data", text: "Data!$A$1:$E$6" },
+    { name: "Above", localSheetId: 0, scope: "Data", text: "Data!A1048576" },
+    { name: "Helper", hidden: true, text: "Data!$Z$1" },
+    { name: "Local", comment: "Codes on Lists", localSheetId: 1, scope: "Lists", text: "Lists!$A$2:$A$4" },
+    { name: "Rates", text: "Lists!$B$2:$B$4" },
+    { name: "TaxRate", text: "0.2" },
+  ] as readonly Spec133DefinedName[],
+  /** The names neither hidden nor reserved (`_xlnm.`, `_xlfn.`), in file
+   * order — what the Name Manager lists (each with its scope). */
+  visibleNames: ["Above", "Local", "Rates", "TaxRate"],
+  /** Above (Data!A1048576) relative to A1 is the cell one row up, wrapping:
+   * from G6 it is G5. */
+  relativeName: { name: "Above", host: "G6", refersTo: "G5" },
+  /** xl/calcChain.xml's cells, all on Data (`i` = its sheetId, written on the first). */
+  calcChain: ["D2", "D3", "D4", "D5", "D6", "E6", "G2", "G3", "G4", "G5", "G6"],
+  /** docProps/app.xml: HeadingPairs and TitlesOfParts. */
+  headingPairs: [
+    ["Worksheets", 3],
+    ["Named Ranges", 5],
+  ] as [string, number][],
+  titlesOfParts: ["Data", "Lists", "Hidden", "Data!Print_Area", "Data!Above", "Lists!Local", "Rates", "TaxRate"],
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/worksheets/sheet3.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    "xl/worksheets/_rels/sheet2.xml.rels",
+    "xl/tables/table1.xml",
+    "xl/tables/table2.xml",
+    "xl/calcChain.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** Excel's styles part for the names-and-tables workbook: Normal, cellXfs 1
+ * on built-in numFmt 3 for Amount's data cells, and dxf 0 — the same
+ * format, as Excel records a table column's data format (`dataDxfId`). */
+const SPEC133_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="1" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="${SPEC133_NAMES_TABLES_XLSX.dxf.numFmtId}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>` +
+  `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="1"><dxf><numFmt numFmtId="${SPEC133_NAMES_TABLES_XLSX.dxf.numFmtId}" formatCode="${SPEC133_NAMES_TABLES_XLSX.dxf.formatCode}"/></dxf></dxfs>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+/** A names-and-tables worksheet in Excel 365's CT_Worksheet order:
+ * dimension, sheetViews, sheetFormatPr, sheetData, autoFilter, pageMargins,
+ * tableParts. */
+function spec133WorksheetXml(
+  sheet: { readonly uid: string; readonly dimension: string },
+  selected: boolean,
+  sheetData: string,
+  options: { autoFilter?: string; tableRId?: string } = {},
+): string {
+  const active = SPEC133_NAMES_TABLES_XLSX.activeCell;
+  return (
+    XML_DECLARATION +
+    worksheetOpen(sheet.uid.slice(1, -1)) +
+    `<dimension ref="${sheet.dimension}"/>` +
+    (selected
+      ? `<sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="${active}" sqref="${active}"/></sheetView></sheetViews>`
+      : `<sheetViews><sheetView workbookViewId="0"/></sheetViews>`) +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/>` +
+    `<sheetData>${sheetData}</sheetData>` +
+    (options.autoFilter ?? "") +
+    SPEC117_PAGE_MARGINS +
+    (options.tableRId === undefined ? "" : `<tableParts count="1"><tablePart r:id="${options.tableRId}"/></tableParts>`) +
+    `</worksheet>`
+  );
+}
+
+/** A sheet's `<sheetData>` from the facts, row by row in column order: a
+ * formula cell its `<f>` and cached value, a string its shared index (`str`
+ * interns in first-use order), Amount's data cells on the #,##0 xf. */
+function spec133SheetData(sheet: keyof typeof SPEC133_NAMES_TABLES_XLSX.values, str: (text: string) => number): string {
+  const F = SPEC133_NAMES_TABLES_XLSX;
+  const values: Readonly<Record<string, string | number>> = F.values[sheet];
+  const formulas: Readonly<Record<string, { readonly wire: string }>> = sheet === "Data" ? F.formulas : {};
+  const amountCells: readonly string[] = F.amountCells;
+  const cells = Object.entries(values)
+    .map(([ref, value]) => {
+      const [, letters, digits] = /^([A-Z]+)(\d+)$/.exec(ref)!;
+      return { ref, value, row: Number(digits), letters: letters! };
+    })
+    .toSorted((a, b) => a.row - b.row || a.letters.length - b.letters.length || (a.letters < b.letters ? -1 : a.letters > b.letters ? 1 : 0));
+  const rows = new Map<number, string>();
+  for (const { ref, value, row } of cells) {
+    const style = sheet === "Data" && amountCells.includes(ref) ? F.xf.amount : undefined;
+    const formula = formulas[ref];
+    const xml = formula
+      ? `<c r="${ref}"${style === undefined ? "" : ` s="${style}"`}><f>${xmlText(formula.wire)}</f><v>${value}</v></c>`
+      : typeof value === "number"
+        ? numberCell(ref, value, style)
+        : sharedCell(ref, str(value), style);
+    rows.set(row, (rows.get(row) ?? "") + xml);
+  }
+  return [...rows].map(([row, xml]) => excelRow(row, F.sheets[sheet].spans, xml)).join("");
+}
+
+/** A SpreadsheetML boolean attribute value. */
+const spec133Flag = (on: boolean): string => (on ? "1" : "0");
+
+/** A table part as Excel 365 writes it (see spec121TableXml): the root's
+ * `xr:uid`; `headerRowCount="0"` for a header-less table; `totalsRowCount`
+ * for one with a totals row, else `totalsRowShown="0"`; the autoFilter;
+ * each column's `xr3:uid`, totals attributes, `dataDxfId` and
+ * `calculatedColumnFormula` in the schema's order; `tableStyleInfo`. */
+function spec133TableXml(table: {
+  readonly id: number;
+  readonly uid: string;
+  readonly name: string;
+  readonly displayName: string;
+  readonly ref: string;
+  readonly headerRow: boolean;
+  readonly totalsRow: boolean;
+  readonly autoFilter?: { readonly xml: string };
+  readonly columns: readonly Spec133TableColumn[];
+  readonly style: { readonly name: string; readonly showFirstColumn: boolean; readonly showLastColumn: boolean; readonly showRowStripes: boolean; readonly showColumnStripes: boolean };
+}): string {
+  const columns = table.columns.map((column) => {
+    const attrs =
+      `id="${column.id}" xr3:uid="${column.uid}" name="${xmlEscape(column.name)}"` +
+      (column.totalsRowFunction === undefined ? "" : ` totalsRowFunction="${column.totalsRowFunction}"`) +
+      (column.totalsRowLabel === undefined ? "" : ` totalsRowLabel="${xmlEscape(column.totalsRowLabel)}"`) +
+      (column.dataDxfId === undefined ? "" : ` dataDxfId="${column.dataDxfId}"`);
+    return column.calculatedColumnFormula === undefined
+      ? `<tableColumn ${attrs}/>`
+      : `<tableColumn ${attrs}><calculatedColumnFormula>${xmlText(column.calculatedColumnFormula)}</calculatedColumnFormula></tableColumn>`;
+  });
+  const S = table.style;
+  return (
+    XML_DECLARATION +
+    `<table xmlns="${MAIN_NS}" xmlns:mc="${MC_NS}" mc:Ignorable="xr xr3" ` +
+    `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3" ` +
+    `id="${table.id}" xr:uid="${table.uid}" name="${table.name}" displayName="${table.displayName}" ref="${table.ref}"` +
+    (table.headerRow ? "" : ` headerRowCount="0"`) +
+    (table.totalsRow ? ` totalsRowCount="1"` : ` totalsRowShown="0"`) +
+    `>${table.autoFilter?.xml ?? ""}<tableColumns count="${table.columns.length}">${columns.join("")}</tableColumns>` +
+    `<tableStyleInfo name="${S.name}" showFirstColumn="${spec133Flag(S.showFirstColumn)}" showLastColumn="${spec133Flag(S.showLastColumn)}" ` +
+    `showRowStripes="${spec133Flag(S.showRowStripes)}" showColumnStripes="${spec133Flag(S.showColumnStripes)}"/></table>`
+  );
+}
+
+/** docProps/app.xml with the Worksheets and Named Ranges heading pairs (see spec121AppXml). */
+function spec133AppXml(): string {
+  const F = SPEC133_NAMES_TABLES_XLSX;
+  const pairs = F.headingPairs.map(([heading, count]) => `<vt:variant><vt:lpstr>${heading}</vt:lpstr></vt:variant><vt:variant><vt:i4>${count}</vt:i4></vt:variant>`);
+  return (
+    XML_DECLARATION +
+    `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
+    `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">` +
+    `<Application>Microsoft Excel</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop>` +
+    `<HeadingPairs><vt:vector size="${pairs.length * 2}" baseType="variant">${pairs.join("")}</vt:vector></HeadingPairs>` +
+    `<TitlesOfParts><vt:vector size="${F.titlesOfParts.length}" baseType="lpstr">${F.titlesOfParts.map((title) => `<vt:lpstr>${title}</vt:lpstr>`).join("")}` +
+    `</vt:vector></TitlesOfParts><Company></Company><LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc>` +
+    `<HyperlinksChanged>false</HyperlinksChanged><AppVersion>16.0300</AppVersion></Properties>`
+  );
+}
+
+export async function buildSpec133NamesTablesXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC133_NAMES_TABLES_XLSX;
+  const S = F.sheets;
+  const T = F.tables;
+  const strings: string[] = [];
+  const str = (text: string): number => {
+    if (!strings.includes(text)) {
+      strings.push(text);
+    }
+    return strings.indexOf(text);
+  };
+  // Sheet by sheet, row by row: the shared strings in Excel's first-use order.
+  const data = spec133WorksheetXml(S.Data, true, spec133SheetData("Data", str), { tableRId: T.Sales.rId });
+  const lists = spec133WorksheetXml(S.Lists, false, spec133SheetData("Lists", str), { autoFilter: F.listsAutoFilter.xml, tableRId: T.Table1.rId });
+  const hidden = spec133WorksheetXml(S.Hidden, false, spec133SheetData("Hidden", str));
+  const worksheets = [data, lists, hidden];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${strings.length}">` +
+    strings.map((text) => `<si><t>${xmlText(text)}</t></si>`).join("") +
+    `</sst>`;
+  // CT_DefinedName's attribute order: name, comment, …, localSheetId, hidden.
+  const definedNames =
+    `<definedNames>` +
+    F.definedNames
+      .map(
+        (name) =>
+          `<definedName name="${name.name}"` +
+          (name.comment === undefined ? "" : ` comment="${xmlEscape(name.comment)}"`) +
+          (name.localSheetId === undefined ? "" : ` localSheetId="${name.localSheetId}"`) +
+          (name.hidden ? ` hidden="1"` : "") +
+          `>${xmlText(name.text)}</definedName>`,
+      )
+      .join("") +
+    `</definedNames>`;
+  const calcChain =
+    XML_DECLARATION +
+    `<calcChain xmlns="${MAIN_NS}">` +
+    F.calcChain.map((ref, index) => (index === 0 ? `<c r="${ref}" i="${S.Data.sheetId}" l="1"/>` : `<c r="${ref}"/>`)).join("") +
+    `</calcChain>`;
+  const tableRels = (table: { readonly rId: string; readonly partName: string }): string =>
+    XML_DECLARATION +
+    `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="${table.rId}" Type="${REL_TYPE}/table" Target="../${table.partName.slice("xl/".length)}"/></Relationships>`;
+
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: [
+      { name: "Data", xml: data },
+      { name: "Lists", xml: lists },
+      { name: "Hidden", state: "hidden", xml: hidden },
+    ],
+    sharedStrings,
+    calcChain,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC133_STYLES,
+    app: spec133AppXml(),
+    additions: {
+      parts: [
+        part(S.Data.rels, tableRels(T.Sales)),
+        part(S.Lists.rels, tableRels(T.Table1)),
+        part(T.Sales.partName, spec133TableXml(T.Sales)),
+        part(T.Table1.partName, spec133TableXml(T.Table1)),
+      ],
+      relationships: [],
+      overrides: [T.Sales, T.Table1].map((table) => `<Override PartName="/${table.partName}" ContentType="${SPEC133_TABLE_CONTENT_TYPE}"/>`),
+      workbookAfterSheets: definedNames,
+    },
+  });
+}
+
+// --- spec133-names.ods ----------------------------------------------------------
+
+/** A spec133-names.ods name: a `table:named-range` (cellRangeAddress) or
+ * `table:named-expression` (expression); `scope` the table whose own
+ * `table:named-expressions` holds it (absent: the spreadsheet's); `formula`
+ * its canonical text rebased from the base cell to A1 (wrapping) — what
+ * `DefinedName.formula` holds; `meaning` the same in words. */
+interface Spec133OdsName {
+  kind: "named-range" | "named-expression";
+  name: string;
+  scope?: string;
+  baseCellAddress: string;
+  cellRangeAddress?: string;
+  expression?: string;
+  rangeUsableAs?: string;
+  formula: string;
+  meaning: string;
+}
+
+/** Sheet1's own names, in Calc's order (by upper-cased name). */
+const SPEC133_ODS_LOCAL_NAMES: readonly Spec133OdsName[] = [
+  {
+    kind: "named-expression",
+    name: "LocalExpr",
+    scope: "Sheet1",
+    baseCellAddress: "$Sheet1.$C$2",
+    expression: "of:=[.B2]*2",
+    formula: "XFD1*2",
+    meaning: "the host's left neighbour doubled (from the base C2, B2; from A1 that wraps to XFD1; in C3, B3*2)",
+  },
+  {
+    kind: "named-range",
+    name: "LocalRange",
+    scope: "Sheet1",
+    baseCellAddress: "$Sheet1.$B$3",
+    cellRangeAddress: "$Sheet1.$B$3:.$B$5",
+    formula: "Sheet1!$B$3:$B$5",
+    meaning: "Sheet1!B3:B5 from any host (absolute: the non-A1 base moves nothing)",
+  },
+];
+
+/** The spreadsheet's names after the last table, in Calc's order (by upper-cased name). */
+const SPEC133_ODS_GLOBAL_NAMES: readonly Spec133OdsName[] = [
+  {
+    kind: "named-range",
+    name: "Next",
+    baseCellAddress: "$Sheet2.$B$2",
+    cellRangeAddress: "$Sheet2.B3",
+    formula: "Sheet2!A2",
+    meaning: "the cell one row below the host's, on Sheet2 (from the base B2, B3; from A1, A2)",
+  },
+  {
+    kind: "named-range",
+    name: "Prices",
+    baseCellAddress: "$Sheet1.$A$1",
+    cellRangeAddress: "$Sheet1.$A$2:.$A$4",
+    formula: "Sheet1!$A$2:$A$4",
+    meaning: "Sheet1!A2:A4",
+  },
+  { kind: "named-expression", name: "Rate", baseCellAddress: "$Sheet1.$A$1", expression: "of:=0.15", formula: "0.15", meaning: "the constant 0.15" },
+  {
+    kind: "named-range",
+    name: "Report",
+    baseCellAddress: "$Sheet1.$A$1",
+    cellRangeAddress: "$Sheet1.$A$1:.$C$5",
+    rangeUsableAs: "print-range filter",
+    formula: "Sheet1!$A$1:$C$5",
+    meaning: "Sheet1!A1:C5, usable as a print range and a filter (`table:range-usable-as`, kept as sourceAttrs)",
+  },
+];
+
+/** A `table:named-expressions` block as Calc writes it. */
+function spec133OdsNamedExpressions(names: readonly Spec133OdsName[]): string {
+  const element = (entry: Spec133OdsName): string =>
+    entry.kind === "named-range"
+      ? `<table:named-range table:name="${entry.name}" table:base-cell-address="${entry.baseCellAddress}" table:cell-range-address="${entry.cellRangeAddress}"` +
+        (entry.rangeUsableAs === undefined ? "" : ` table:range-usable-as="${entry.rangeUsableAs}"`) +
+        `/>`
+      : `<table:named-expression table:name="${entry.name}" table:base-cell-address="${entry.baseCellAddress}" table:expression="${xmlEscape(entry.expression ?? "")}"/>`;
+  return `<table:named-expressions>${names.map(element).join("")}</table:named-expressions>`;
+}
+
+const SPEC133_ODS_DATABASE_RANGES = [
+  {
+    name: "__Anonymous_Sheet_DB__0",
+    table: "Sheet1",
+    targetRangeAddress: "Sheet1.A1:Sheet1.C5",
+    range: { top: 0, left: 0, bottom: 4, right: 2 },
+    displayFilterButtons: true,
+    xml: `<table:database-range table:name="__Anonymous_Sheet_DB__0" table:target-range-address="Sheet1.A1:Sheet1.C5" table:display-filter-buttons="true"/>`,
+  },
+  {
+    name: "Inventory",
+    table: "Sheet2",
+    targetRangeAddress: "Sheet2.A1:Sheet2.B4",
+    range: { top: 0, left: 0, bottom: 3, right: 1 },
+    containsHeader: true,
+    xml: `<table:database-range table:name="Inventory" table:target-range-address="Sheet2.A1:Sheet2.B4" table:contains-header="true"/>`,
+  },
+] as const;
+
+/** What spec133-names.ods holds, for the unit, round-trip and e2e specs. */
+export const SPEC133_NAMES_ODS = {
+  file: "spec133-names.ods",
+  title: "Names",
+  tableNames: ["Sheet1", "Sheet2"],
+  activeTable: "Sheet1",
+  activeSheetIndex: 0,
+  /** Row 1's header cells are bold (ce5, LO_AUTOMATIC_STYLES). */
+  styles: { header: "ce5" },
+  /** Every stored cell per table, A1 → value (a formula cell's is its cached value). */
+  values: {
+    Sheet1: { A1: "Price", B1: "Qty", C1: "Calc", A2: 10, B2: 3, C2: 6, A3: 20, B3: 4, C3: 8, A4: 30, B4: 5, C4: 15, B5: 6, C5: 9 },
+    Sheet2: { A1: "Item", B1: "Stock", A2: "Bolts", B2: 12, A3: "Nuts", B3: 30, A4: "Screws", B4: 7, A6: "Sum of prices", B6: 60 },
+  },
+  /** Formula cells: `table:formula`, canonical formula, cached value (what Calc computes). */
+  formulas: {
+    Sheet1: {
+      C2: { wire: "of:=LocalExpr", formula: "LocalExpr", value: 6 },
+      C3: { wire: "of:=LocalExpr", formula: "LocalExpr", value: 8 },
+      C4: { wire: "of:=SUM(LocalRange)", formula: "SUM(LocalRange)", value: 15 },
+      C5: { wire: "of:=SUM(Prices)*Rate", formula: "SUM(Prices)*Rate", value: 9 },
+    },
+    Sheet2: { B6: { wire: "of:=SUM(Prices)", formula: "SUM(Prices)", value: 60 } },
+  },
+  /** Rows written per table before Calc's trailing empty run to row 1048576. */
+  rowsWritten: { Sheet1: 5, Sheet2: 6 },
+  /** Sheet1's own names — its `table:table`'s last child. */
+  localNames: SPEC133_ODS_LOCAL_NAMES,
+  localNamedExpressionsXml: spec133OdsNamedExpressions(SPEC133_ODS_LOCAL_NAMES),
+  /** The workbook's names — the suffix's `table:named-expressions`, right after the last table. */
+  globalNames: SPEC133_ODS_GLOBAL_NAMES,
+  namedExpressionsXml: spec133OdsNamedExpressions(SPEC133_ODS_GLOBAL_NAMES),
+  /** The suffix's `table:database-ranges`, after the names: sheet-anonymous first, then named. */
+  databaseRanges: SPEC133_ODS_DATABASE_RANGES,
+  databaseRangesXml: `<table:database-ranges>${SPEC133_ODS_DATABASE_RANGES.map((range) => range.xml).join("")}</table:database-ranges>`,
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: ["mimetype", "meta.xml", "settings.xml", "content.xml", "Thumbnails/thumbnail.png", "styles.xml", "manifest.rdf", "META-INF/manifest.xml"],
+} as const;
+
+/** A table's rows from the facts (columns A–C), each closed by Calc's empty run to XFD. */
+function spec133OdsRows(name: keyof typeof SPEC133_NAMES_ODS.values): string {
+  const O = SPEC133_NAMES_ODS;
+  const values: Readonly<Record<string, string | number>> = O.values[name];
+  const formulas: Readonly<Record<string, { readonly wire: string }>> = O.formulas[name];
+  const rows: string[] = [];
+  for (let r = 1; r <= O.rowsWritten[name]; r += 1) {
+    let cells = "";
+    let at = 0;
+    ["A", "B", "C"].forEach((letter, col) => {
+      const value = values[`${letter}${r}`];
+      if (value === undefined) {
+        return;
+      }
+      if (col > at) {
+        cells += col - at === 1 ? `<table:table-cell/>` : loEmpty(col - at);
+      }
+      const formula = formulas[`${letter}${r}`];
+      cells += formula ? loFormula(formula.wire, Number(value)) : typeof value === "number" ? loFloat(value) : loString(value, r === 1 ? O.styles.header : undefined);
+      at = col + 1;
+    });
+    rows.push(loRow(cells + loEmpty(16384 - at)));
+  }
+  return rows.join("");
+}
+
+export async function buildSpec133NamesOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC133_NAMES_ODS;
+  const table = (name: keyof typeof O.values, local = ""): string =>
+    `<table:table table:name="${name}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    spec133OdsRows(name) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.rowsWritten[name]) +
+    local +
+    `</table:table>`;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${LO_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}` +
+    table("Sheet1", O.localNamedExpressionsXml) +
+    table("Sheet2") +
+    O.namedExpressionsXml +
+    O.databaseRangesXml +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.values.Sheet1).length + Object.keys(O.values.Sheet2).length;
+  return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
+}
+// ============================================================================
+// end of SPEC-133
 // ============================================================================
