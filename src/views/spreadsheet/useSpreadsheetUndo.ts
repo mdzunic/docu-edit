@@ -8,14 +8,15 @@
 // copy whose object/array fields are structuredCloned — except
 // SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, SPEC-124's `columns`,
 // `merges` and `frozen`, SPEC-128's `autoFilter` and `sortState`,
-// SPEC-129's `conditionalFormats`, SPEC-130's `validations` and SPEC-131's
-// `drawings`, which every
+// SPEC-129's `conditionalFormats`, SPEC-130's `validations`, SPEC-131's
+// `drawings` and SPEC-133's `tables`, which every
 // command replaces and never mutates), kept by reference because
 // copy-on-write makes that safe — so an undo
 // restores them by identity — plus every WORKBOOK_SNAPSHOT_FIELDS value by
 // reference (each a primitive or copy-on-write: `styles` and SPEC-129's
 // `dxfs` grow by replacement, `opaque` and `odsContentEnvelope` are replaced
-// when they change, SPEC-131's `media` is replaced when an image goes in). Taking one costs O(sheets + small metadata), never O(cells) or
+// when they change, SPEC-131's `media` is replaced when an image goes in,
+// SPEC-133's `names` is copy-on-write). Taking one costs O(sheets + small metadata), never O(cells) or
 // O(package). A later spec that adds a sheet field able to grow with the
 // cell count makes it copy-on-write and appends it to
 // SHEET_BY_REFERENCE_FIELDS; one that adds workbook-level state appends to
@@ -28,6 +29,8 @@
 //    only contributes all its stored cells. When the sheet list, a name or
 //    the order changed, invalidateDependencyGraph runs first; otherwise
 //    updateGraphCells follows the keys.
+//    SPEC-133: every formula cell mentioning a name or table the step
+//    changed (nameDependents.ts) joins the keys, its graph node rebuilt.
 //    When a step hid or showed a row (recalc.ts's rowVisibilityChanged —
 //    the user's `hidden` or SPEC-128's `filterHidden`, so every filter
 //    command counts), every formula cell calling SUBTOTAL or AGGREGATE joins
@@ -50,9 +53,10 @@
 // is in an input or a dialog.
 import { onScopeDispose, ref, type Ref, type ShallowRef } from "vue";
 import { findShortcut, isOutsideDocumentInput } from "../../lib/shortcuts";
-import { cellKey, invalidateDependencyGraph, updateGraphCells, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
+import { cellKey, invalidateDependencyGraph, refreshGraphCells, updateGraphCells, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
 import { changedCellsBetween, rowVisibilityChanged, visibilitySensitiveCells } from "../../lib/spreadsheet/formula/recalc";
-import type { Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { DefinedName, Row, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import { nameTableDependents } from "../../lib/spreadsheet/nameDependents";
 
 export const MAX_UNDO_STEPS = 100;
 
@@ -69,6 +73,7 @@ export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = [
   "conditionalFormats",
   "validations",
   "drawings",
+  "tables",
 ];
 
 export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
@@ -79,6 +84,8 @@ export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [
   "odsContentEnvelope",
   "dxfs",
   "media",
+  "names",
+  "namesDirty",
 ];
 
 export interface SpreadsheetUndoDeps {
@@ -206,7 +213,13 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
   }
 
   /** The edit pipeline (see the module header). */
-  function pipeline(model: SpreadsheetModel, before: readonly Sheet[], reference: Snapshot, alsoRecalc: readonly CellKey[]): void {
+  function pipeline(
+    model: SpreadsheetModel,
+    before: readonly Sheet[],
+    reference: Snapshot,
+    alsoRecalc: readonly CellKey[],
+    namesBefore: readonly DefinedName[],
+  ): void {
     const beforeById = new Map(before.map((sheet) => [sheet.id, sheet] as const));
     const afterById = new Map(model.sheets.map((sheet) => [sheet.id, sheet] as const));
     const keys: CellKey[] = [];
@@ -227,11 +240,15 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     }
     const listChanged =
       before.length !== model.sheets.length || before.some((sheet, index) => sheet.id !== model.sheets[index]!.id || sheet.name !== model.sheets[index]!.name);
+    // SPEC-133: the cells whose formulas mention a changed name or table.
+    const named = nameTableDependents(model, namesBefore, before);
     if (listChanged) {
       invalidateDependencyGraph(model);
     } else {
       updateGraphCells(model, keys);
+      refreshGraphCells(model, named);
     }
+    keys.push(...named);
     markDirty(model, reference);
     const sensitive = visibility ? visibilitySensitiveCells(model) : [];
     deps.recalc([...new Set([...keys, ...alsoRecalc, ...sensitive])], () => {
@@ -278,7 +295,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     for (const listener of stepListeners) {
       listener("commit", recorded.step.label);
     }
-    pipeline(model, recorded.step.snapshot.sheets, recorded.step.snapshot, alsoRecalc);
+    pipeline(model, recorded.step.snapshot.sheets, recorded.step.snapshot, alsoRecalc, recorded.step.snapshot.workbook.names as DefinedName[]);
   }
 
   /** Swaps the live state for a stored step's, pushing the live one onto
@@ -298,7 +315,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     for (const listener of stepListeners) {
       listener(kind, step.label);
     }
-    pipeline(model, before, step.snapshot, step.alsoRecalc);
+    pipeline(model, before, step.snapshot, step.alsoRecalc, live.workbook.names as DefinedName[]);
     const scopeId = step.scope === "workbook" ? undefined : step.scope.sheetId;
     const target = model.sheets.find((sheet) => sheet.id === scopeId) ?? model.sheets[model.activeSheetIndex];
     if (target) {

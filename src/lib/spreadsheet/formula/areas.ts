@@ -82,18 +82,25 @@ export function sheetIndexByName(model: SpreadsheetModel, name: string): number 
 // --- references --------------------------------------------------------------------
 
 /** A part moved by the host's offset from the origin (absolute parts stay);
- * null when it leaves the grid. */
-function movePart(part: RefPart, dRow: number, dCol: number): { row?: number; col?: number } | null {
+ * null when it leaves the grid — or, `wrap` (SPEC-133, a defined name's
+ * evaluation), wrapped modulo the grid. */
+function movePart(part: RefPart, dRow: number, dCol: number, wrap = false): { row?: number; col?: number } | null {
   const moved: { row?: number; col?: number } = {};
   if (part.row !== undefined) {
-    const row = part.rowAbs ? part.row : part.row + dRow;
+    let row = part.rowAbs ? part.row : part.row + dRow;
+    if (wrap) {
+      row = ((row % MAX_ROWS) + MAX_ROWS) % MAX_ROWS;
+    }
     if (row < 0 || row >= MAX_ROWS) {
       return null;
     }
     moved.row = row;
   }
   if (part.col !== undefined) {
-    const col = part.colAbs ? part.col : part.col + dCol;
+    let col = part.colAbs ? part.col : part.col + dCol;
+    if (wrap) {
+      col = ((col % MAX_COLS) + MAX_COLS) % MAX_COLS;
+    }
     if (col < 0 || col >= MAX_COLS) {
       return null;
     }
@@ -135,12 +142,13 @@ function referencedSheets(model: SpreadsheetModel, hostSheetId: string, ref: Ref
  * reference), or #REF! (an unknown sheet, a part shifted off the grid). */
 export function resolveReference(
   ref: ReferenceNode,
-  ctx: { model: SpreadsheetModel; host: { sheetId: string; row: number; col: number }; origin: CellRef },
+  ctx: { model: SpreadsheetModel; host: { sheetId: string; row: number; col: number }; origin: CellRef; wrapReferences?: true },
 ): RangeValue | CellError {
   const dRow = ctx.host.row - ctx.origin.row;
   const dCol = ctx.host.col - ctx.origin.col;
-  const start = movePart(ref.start, dRow, dCol);
-  const end = ref.end ? movePart(ref.end, dRow, dCol) : start;
+  const wrap = ctx.wrapReferences === true;
+  const start = movePart(ref.start, dRow, dCol, wrap);
+  const end = ref.end ? movePart(ref.end, dRow, dCol, wrap) : start;
   if (!start || !end) {
     return REF_ERROR;
   }

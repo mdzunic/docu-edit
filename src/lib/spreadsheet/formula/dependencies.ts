@@ -28,6 +28,7 @@ import { MAX_COLS, MAX_ROWS, type Cell, type SpreadsheetModel } from "../model";
 import { resolveReference, sheetById, sheetIndexOf } from "./areas";
 import { formulaFacts, type UncomputableReason } from "./evaluate";
 import { FormulaSyntaxError, parseFormulaAt } from "./parse";
+import { referenceAreas } from "./referenceHooks";
 import { isError, type Area } from "./values";
 
 /** A cell's key, `${sheetId}!${row},${col}` — built only by cellKey. */
@@ -238,6 +239,8 @@ class Graph implements DependencyGraph {
         node.statics.push(...resolved.areas);
       }
     }
+    // SPEC-133: what its names and table references read, as of now.
+    node.statics.push(...referenceAreas(this.model, facts, host));
     this.linkAreas(node, node.statics);
     const range = cell.arrayRange;
     const reason: UncomputableReason | undefined =
@@ -498,6 +501,30 @@ export function updateGraphCells(model: SpreadsheetModel, keys: readonly CellKey
       graph.removeNode(key);
     } else {
       graph.addNode(sheetId, row, col, cell!);
+    }
+  }
+}
+
+/** Rebuilds the given formula cells' nodes even though their formulas did
+ * not change (SPEC-133: a name or table they mention did, so what they read
+ * moved). Cells without a formula are dropped. */
+export function refreshGraphCells(model: SpreadsheetModel, keys: readonly CellKey[]): void {
+  const graph = graphs.get(model);
+  if (!graph) {
+    return;
+  }
+  for (const key of keys) {
+    const { sheetId, row, col } = parseCellKey(key);
+    const sheet = sheetById(model, sheetId);
+    const cell = sheet ? getCell(sheet, row, col) : undefined;
+    if (cell?.arrayRange || graph.isArrayAnchor(key)) {
+      invalidateDependencyGraph(model);
+      return;
+    }
+    if (cell?.formula === undefined) {
+      graph.removeNode(key);
+    } else {
+      graph.addNode(sheetId, row, col, cell);
     }
   }
 }
