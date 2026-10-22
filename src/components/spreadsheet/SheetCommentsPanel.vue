@@ -447,7 +447,7 @@ watch(
   color: var(--text-accent);
   background: var(--surface-sunken);
   border: var(--border-width) solid var(--border-default);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 
 .sheet-comment-author {
