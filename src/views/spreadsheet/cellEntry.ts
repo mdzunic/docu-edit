@@ -171,10 +171,14 @@ function oneStep(ctx: CellWriteContext, label: string, ranges: GridRange[], muta
 }
 
 /** A commit: one step `Typing "…" in B3` (an unchanged entry records nothing —
- * commit() pops a step that changed nothing). */
-export function writeEntry(ctx: CellWriteContext, at: CellRef, entry: CellEntry, text: string): void {
+ * commit() pops a step that changed nothing). `within` runs inside the step,
+ * after the write (SPEC-133: a header cell renaming its table column). */
+export function writeEntry(ctx: CellWriteContext, at: CellRef, entry: CellEntry, text: string, within?: () => void): void {
   const range = { top: at.row, left: at.col, bottom: at.row, right: at.col };
-  oneStep(ctx, typingLabel(text, at), [range], () => setCellEntry(ctx.model, ctx.sheetIndex, at, entry));
+  oneStep(ctx, typingLabel(text, at), [range], () => {
+    setCellEntry(ctx.model, ctx.sheetIndex, at, entry);
+    within?.();
+  });
 }
 
 /** Ctrl/Cmd+Enter: one step "Fill" over the selection. */

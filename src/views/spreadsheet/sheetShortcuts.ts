@@ -67,7 +67,8 @@ export type SheetShortcutId =
   | "sheet.fillRight"
   | "sheet.insertFunction"
   | "sheet.toggleFilter"
-  | "sheet.reapplyFilter";
+  | "sheet.reapplyFilter"
+  | "sheet.nameManager";
 
 const CATEGORY = "Sheet formatting";
 const STRUCTURE_CATEGORY = "Rows and columns";
@@ -121,6 +122,9 @@ export function sheetShortcutDefinitions(isMac: boolean): ShortcutDefinition[] {
     // SPEC-128: Data ▸ Filter and Data ▸ Reapply filter, by physical key.
     { id: "sheet.toggleFilter", label: "Filter", category: FILTER_CATEGORY, bindings: [{ key: "L", code: "KeyL", mod: true, shift: true }] },
     { id: "sheet.reapplyFilter", label: "Reapply filter", category: FILTER_CATEGORY, bindings: [{ key: "L", code: "KeyL", mod: true, alt: true }] },
+    // SPEC-133: Formulas ▸ Name Manager…, Excel's Ctrl+F3 — best effort on
+    // macOS, whose Cmd+F3 shows the desktop; the menu item is the guaranteed path.
+    { id: "sheet.nameManager", label: "Name Manager", category: FORMULA_CATEGORY, bindings: [{ key: "F3", mod: true }] },
   ];
   return definitions;
 }

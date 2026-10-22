@@ -14,7 +14,7 @@ describe("SpreadsheetMenuBar (SPEC-121)", () => {
       props: { state: { canUndo: true, undoLabel: "Rename sheet", canRedo: false } },
     });
     // SPEC-131 puts Insert after View, then Arrange.
-    expect(wrapper.findAll("[data-menu-title]").map((title) => title.text())).toEqual(["File", "Edit", "View", "Insert", "Arrange", "Format", "Data"]);
+    expect(wrapper.findAll("[data-menu-title]").map((title) => title.text())).toEqual(["File", "Edit", "View", "Insert", "Arrange", "Format", "Formulas", "Data"]);
     const undo = wrapper.get('[data-testid="sheet-menu-undo"]');
     expect(undo.text()).toContain("Undo Rename sheet");
     expect(undo.get(".menu-shortcut").text()).toBe(shortcutLabel("edit.undo"));
@@ -156,8 +156,13 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
   it("Insert offers Image… and Shapes, routing insert.image and insert.shape, disabled where drawings cannot go in", async () => {
     const wrapper = mount(SpreadsheetMenuBar, { props: { state: { canInsertDrawings: true } } });
     const menu = wrapper.get('[data-testid="menu-insert"]');
-    expect(menu.findAll('[role="menuitem"]').map((item) => item.attributes("data-testid"))).toEqual(["sheet-menu-insert-image", "sheet-menu-insert-shape", "sheet-menu-insert-chart"]);
-    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart"]);
+    expect(menu.findAll('[role="menuitem"]').map((item) => item.attributes("data-testid"))).toEqual([
+      "sheet-menu-insert-image",
+      "sheet-menu-insert-shape",
+      "sheet-menu-insert-chart",
+      "sheet-menu-insert-table",
+    ]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart", "Table…"]);
     await wrapper.get('[data-testid="sheet-menu-insert-image"]').trigger("click");
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertImage]);
     await wrapper.get('[data-testid="sheet-menu-insert-shape"]').trigger("click");
@@ -170,6 +175,18 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
     for (const testid of ["sheet-menu-insert-image", "sheet-menu-insert-shape", "sheet-menu-insert-chart"]) {
       expect(csv.get(`[data-testid="${testid}"]`).attributes("disabled")).toBeDefined();
     }
+  });
+
+  it("SPEC-133: Insert ▸ Table… routes insert.table, has no shortcut and is disabled off a grid sheet", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { canInsertDrawings: false } } });
+    const item = wrapper.get('[data-testid="sheet-menu-insert-table"]');
+    expect(item.attributes("disabled")).toBeUndefined();
+    expect(item.find(".menu-shortcut").exists()).toBe(false);
+    await item.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertTable]);
+    expect(SHEET_MENU_COMMANDS.insertTable).toBe("insert.table");
+    const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
+    expect(foreign.get('[data-testid="sheet-menu-insert-table"]').attributes("disabled")).toBeDefined();
   });
 
   it("Arrange offers the four z-order moves and Alt Text…, disabled without a selected drawing and at the z-order's ends", async () => {

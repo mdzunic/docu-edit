@@ -35,7 +35,11 @@
 // Alt Text… (`sheet-menu-arrange-alt-text`) on the selected drawing, disabled
 // without one (and a move that cannot move it disabled). The drawing context
 // menu offers the same under `sheet-drawing-*` ids; these popups stay mounted,
-// so the two never share an id.
+// so the two never share an id. SPEC-133 ends the Insert menu, after a
+// separator, with Table… (`sheet-menu-insert-table`, the Create Table dialog;
+// no shortcut — Ctrl/Cmd+T is the browser's), disabled off a grid sheet.
+// SPEC-133 adds the Formulas menu after Format: Name Manager…
+// (`sheet-menu-name-manager`, Ctrl/Cmd+F3), which opens the Name Manager.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -76,6 +80,7 @@ const formatCellsShortcut = shortcutLabel("sheet.formatCells", isMacPlatform(), 
 const pasteSpecialShortcut = shortcutLabel("sheet.pasteSpecial", isMacPlatform(), SHEET_SHORTCUTS);
 const filterShortcut = shortcutLabel("sheet.toggleFilter", isMacPlatform(), SHEET_SHORTCUTS);
 const reapplyShortcut = shortcutLabel("sheet.reapplyFilter", isMacPlatform(), SHEET_SHORTCUTS);
+const nameManagerShortcut = shortcutLabel("sheet.nameManager", isMacPlatform(), SHEET_SHORTCUTS);
 // SPEC-128: the Data menu's sorts.
 const SORTS = [
   { label: "Sort A to Z", command: SHEET_MENU_COMMANDS.sortAscending, testid: "sheet-menu-sort-asc" },
@@ -116,6 +121,7 @@ const MENUS = [
   { id: "insert", label: "Insert" },
   { id: "arrange", label: "Arrange" },
   { id: "format", label: "Format" },
+  { id: "formulas", label: "Formulas" },
   { id: "data", label: "Data" },
 ];
 
@@ -291,6 +297,13 @@ function arrangeDisabled(end = "front") {
         :disabled="!s.canInsertDrawings"
         @select="emit('command', SHEET_MENU_COMMANDS.insertChart)"
       />
+      <hr class="menu-separator">
+      <MenuItem
+        label="Table…"
+        testid="sheet-menu-insert-table"
+        :disabled="!s.hasGrid"
+        @select="emit('command', SHEET_MENU_COMMANDS.insertTable)"
+      />
     </template>
 
     <template #arrange>
@@ -379,6 +392,15 @@ function arrangeDisabled(end = "front") {
         :testid="size.testid"
         :disabled="!s.hasGrid"
         @select="emit('command', size.command)"
+      />
+    </template>
+
+    <template #formulas>
+      <MenuItem
+        label="Name Manager…"
+        testid="sheet-menu-name-manager"
+        :shortcut="nameManagerShortcut"
+        @select="emit('command', SHEET_MENU_COMMANDS.nameManager)"
       />
     </template>
 

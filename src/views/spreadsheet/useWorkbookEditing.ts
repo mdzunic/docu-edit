@@ -22,14 +22,20 @@
 // and dialogs over the same undo stack, and the refresh each recalculation
 // pass triggers; WorkbookBody renders its surfaces, the menu opens its
 // gallery).
+// SPEC-133 moved in, from the view, SPEC-127's function assists
+// (useFunctionAssist — `assist`) and SPEC-126's CSV import (useCsvImport —
+// `csvImport`), so the view has room for the names and tables wiring.
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
+import { useRouter } from "vue-router";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { useCellEditing, type CellEditing, type CellEditingDeps } from "./useCellEditing";
 import { useConditionalFormatManager } from "./useConditionalFormatManager";
 import { useConditionalFormats } from "./useConditionalFormats";
+import { useCsvImport } from "./useCsvImport";
 import { entryGateOf, useDataValidation } from "./useDataValidation";
+import { useFunctionAssist } from "./useFunctionAssist";
 import type { Recalc } from "./useRecalc";
 import { useSheetCharts } from "./useSheetCharts";
 import { useSheetCommands } from "./useSheetCommands";
@@ -48,6 +54,8 @@ export interface WorkbookEditingDeps {
     activeSheet: Readonly<Ref<Sheet | null>>;
     selectSheet(index: number): void;
     sheetsChanged(): void;
+    /** SPEC-126: shows a re-read model in place of the one on show. */
+    replace(model: SpreadsheetModel): void;
   };
   viewState: Pick<SheetViewState, "syncInto">;
   recalc: Pick<Recalc, "edit" | "settle" | "onResult">;
@@ -148,7 +156,11 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     syncInto: (model) => deps.viewState.syncInto(model),
     busy: () => cell.editing.value,
   });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts };
+  // SPEC-127's function assists over the cell entry, and SPEC-126's CSV
+  // import bar and dialog (moved here from the view to keep it a hub).
+  const assist = useFunctionAssist({ ...cell });
+  const csvImport = useCsvImport({ book: deps.book, undo, router: useRouter() });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

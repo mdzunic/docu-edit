@@ -25,12 +25,15 @@
 // surfaces, from the grid context's `drawings` — the Insert menu's image
 // picker and shape gallery popover (SheetInsertSurfaces), the drawing context
 // menu (SheetDrawingContextMenu) and the alt-text dialog
-// (DrawingAltTextDialog). Runtime prop declarations per the espree constraint
+// (DrawingAltTextDialog). SPEC-133: the Name Box's names (the formula bar) and
+// the Name Manager and its editor, from the grid context's `names`.
+// Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
 import { asFunctionAssist } from "../../views/spreadsheet/useFunctionAssist";
+import { namesOf } from "../../views/spreadsheet/useNames";
 import { sortFilterOf } from "../../views/spreadsheet/useSortFilter";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import DrawingAltTextDialog from "./DrawingAltTextDialog.vue";
@@ -60,6 +63,8 @@ import SheetUnhideDialog from "./SheetUnhideDialog.vue";
 import SortFilterSurfaces from "./SortFilterSurfaces.vue";
 import ValidationDialog from "./ValidationDialog.vue";
 import ValidationAlert from "./ValidationAlert.vue";
+import NameEditorDialog from "./NameEditorDialog.vue";
+import NameManagerDialog from "./NameManagerDialog.vue";
 
 const props = defineProps({
   /** useWorkbookLoad's return. */
@@ -84,6 +89,8 @@ function insertOrDelete(mode = "insert") {
 const grid = computed(() => asSheetGridContext(props.grid));
 /** SPEC-128's sort and filter (null: not wired). */
 const sortFilter = computed(() => sortFilterOf(props.grid));
+/** SPEC-133: the Name Box, the Name Manager and its editor (null: not wired). */
+const names = computed(() => namesOf(props.grid));
 
 /** The cell menu's Cut, Copy, Paste and Paste special… (SPEC-125). */
 function clipboard(action = "copy") {
@@ -129,6 +136,7 @@ const tabs = computed(() => {
       :editable="book.activeSheet.value?.kind === 'grid'"
       :can-insert-function="assist?.canInsert.value ?? false"
       :aria="assist?.editorAria.value ?? {}"
+      :names="names ?? undefined"
       @insert-function="assist?.openDialog()"
     />
     <template v-if="assist">
@@ -285,6 +293,14 @@ const tabs = computed(() => {
     <ValidationDialog
       v-if="validationDialog.open.value"
       :dialog="validationDialog"
+    />
+    <NameManagerDialog
+      v-if="names?.managerOpen.value && !names.picking.value"
+      :names="names"
+    />
+    <NameEditorDialog
+      v-if="names?.editor.value"
+      :names="names"
     />
     <ValidationAlert
       v-if="validation?.alert.value"
