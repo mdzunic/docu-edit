@@ -210,6 +210,7 @@ export function useDeckExport(deps: UseDeckExportDeps) {
         if (abortRequested) return false;
         sheetPages.value = plan.slice(index, index + EXPORT_WINDOW_PAGES);
         await nextTick();
+        if (abortRequested) return false; // e.g. the dialog closed, taking the sheet
         const element = sheetPageElement(page.index);
         if (!element) throw new Error("the export sheet did not render");
         await settleSheet(element);
