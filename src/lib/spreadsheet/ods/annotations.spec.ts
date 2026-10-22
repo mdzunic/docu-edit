@@ -99,6 +99,12 @@ function cellXmlAt(table: string, a1: string): string | undefined {
   return undefined;
 }
 
+/** Note text as plain paragraphs, one per line. */
+const paragraphs = (text: string): string => text.split("\n").map((line) => `<text:p>${line}</text:p>`).join("");
+
+/** A thread message. */
+const message = (messageId: string, author: string, text: string, createdAt: string): CellThread["messages"][number] => ({ messageId, personId: `{P-${author}}`, author, text, createdAt });
+
 /** A note or link without its id and source — the fields a round trip reproduces. */
 const noteFields = ({ noteId: _id, source: _source, ...note }: CellNote): unknown => note;
 const linkFields = ({ linkId: _id, source: _source, ...link }: CellHyperlink): unknown => link;
@@ -277,7 +283,6 @@ describe("writing notes and links into .ods", () => {
   });
 
   it("a generated note carries office:display, a wire name, its size in cm and its date", () => {
-    const paragraphs = (text: string): string => text.split("\n").map((line) => `<text:p>${line}</text:p>`).join("");
     const note: CellNote = { noteId: "Annotation 1", ref: { row: 0, col: 0 }, author: "Ann", createdAt: "2026-03-01T09:00:00", text: "a\nb", visible: true, box: { widthPx: 153.6, heightPx: 48 } };
     expect(odsNoteXml(note, paragraphs)).toBe(
       `<office:annotation xmlns:dc="http://purl.org/dc/elements/1.1/" office:display="true" office:name="Annotation 1" svg:width="4.064cm" svg:height="1.27cm">` +
@@ -374,7 +379,6 @@ describe("an .xlsx model downloaded as .ods", () => {
     setCellEntry(model, 0, at("B1"), { value: 1200 });
     setCellEntry(model, 0, at("A2"), { value: "Report" });
     setCellEntry(model, 0, at("B2"), { value: "Q3" });
-    const message = (messageId: string, author: string, text: string, createdAt: string): CellThread["messages"][number] => ({ messageId, personId: `{P-${author}}`, author, text, createdAt });
     const sheet = model.sheets[0]!;
     model.sheets = [
       {

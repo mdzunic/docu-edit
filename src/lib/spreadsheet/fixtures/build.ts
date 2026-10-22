@@ -10142,15 +10142,20 @@ export const SPEC135_ANNOTATIONS_ODS = {
   parts: ["mimetype", "meta.xml", "settings.xml", "content.xml", "Thumbnails/thumbnail.png", "styles.xml", "manifest.rdf", "META-INF/manifest.xml"],
 } as const;
 
+/** A Calc float cell carrying an annotation, first, before its paragraph. */
+const spec135OdsNoted = (value: number, note: string): string =>
+  `<table:table-cell office:value-type="float" office:value="${value}" calcext:value-type="float">${note}<text:p>${value}</text:p></table:table-cell>`;
+/** A Calc string cell holding a verbatim (linked) paragraph. */
+const spec135OdsLinked = (paragraph: string): string => `<table:table-cell office:value-type="string" calcext:value-type="string">${paragraph}</table:table-cell>`;
+
 /** spec135-annotations.ods's "Summary" table. */
 function spec135OdsSummaryTable(): string {
   const O = SPEC135_ANNOTATIONS_ODS;
   const V = O.values.Summary;
   const N = O.notes;
   const L = O.links;
-  const noted = (value: number, note: string): string =>
-    `<table:table-cell office:value-type="float" office:value="${value}" calcext:value-type="float">${note}<text:p>${value}</text:p></table:table-cell>`;
-  const linked = (paragraph: string): string => `<table:table-cell office:value-type="string" calcext:value-type="string">${paragraph}</table:table-cell>`;
+  const noted = spec135OdsNoted;
+  const linked = spec135OdsLinked;
   return (
     `<table:table table:name="${O.tableNames[0]}" table:style-name="ta1">` +
     `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +

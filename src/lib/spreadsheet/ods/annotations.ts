@@ -377,6 +377,9 @@ export class OdsAnnotationCollector {
 /** The caption position attributes of a Calc annotation (any prefix). */
 const CAPTION_POSITION = /\s+[\w.-]+:(?:x|y|caption-point-x|caption-point-y)\s*=\s*(?:"[^"]*"|'[^']*')/g;
 
+/** A length in px as the cm a generated note's size is written in (4 decimals). */
+const pxToCm = (px: number): string => `${Number(((px * 2.54) / 96).toFixed(4))}cm`;
+
 /** A note's `office:annotation` (see the module header); `paragraphs`
  * writes text as the cell writer writes a cell's paragraphs. */
 export function odsNoteXml(note: CellNote, paragraphs: (text: string) => string): string {
@@ -397,8 +400,7 @@ export function odsNoteXml(note: CellNote, paragraphs: (text: string) => string)
     start += ` office:name="${escapeAttributeText(note.noteId)}"`;
   }
   if (note.box) {
-    const cm = (px: number): string => `${Number(((px * 2.54) / 96).toFixed(4))}cm`;
-    start += ` svg:width="${cm(note.box.widthPx)}" svg:height="${cm(note.box.heightPx)}"`;
+    start += ` svg:width="${pxToCm(note.box.widthPx)}" svg:height="${pxToCm(note.box.heightPx)}"`;
   }
   let body = note.author === "" ? "" : `<dc:creator>${escapeElementText(note.author)}</dc:creator>`;
   if (note.createdAt !== undefined && note.createdAt !== "") {
