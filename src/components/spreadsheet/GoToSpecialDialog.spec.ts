@@ -14,11 +14,11 @@ const KINDS = ["blanks", "constants", "formulas", "errors", "last-cell", "visibl
 const TYPES = ["numbers", "text", "logicals", "errors"];
 
 /** A useSheetGoTo stand-in for the special dialog. */
-function controller(open = true) {
+function controller(shown = true) {
   const specialKind = ref("blanks");
   const specialTypes = ref({ numbers: true, text: true, logicals: true, errors: true });
   return {
-    specialOpen: ref(open),
+    specialOpen: ref(shown),
     specialKind,
     specialTypes,
     specialMessage: ref(""),

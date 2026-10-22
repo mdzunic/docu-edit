@@ -12,7 +12,7 @@ const mounted: VueWrapper[] = [];
 afterEach(() => mounted.splice(0).forEach((wrapper) => wrapper.unmount()));
 
 /** A useSheetGoTo stand-in: its refs, and spies for what the dialog calls. */
-function controller(open = true) {
+function controller(shown = true) {
   const reference = ref("Sales!A1");
   const error = ref("");
   const chosen = ref<string | null>(null);
@@ -22,7 +22,7 @@ function controller(open = true) {
     { key: "recent:0", kind: "recent", text: "Sales!A1" },
   ]);
   return {
-    dialogOpen: ref(open),
+    dialogOpen: ref(shown),
     reference,
     error,
     chosen,
