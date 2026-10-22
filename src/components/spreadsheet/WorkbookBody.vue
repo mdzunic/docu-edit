@@ -440,9 +440,9 @@ const tabs = computed(() => {
 }
 .workbook-storage-incomplete {
   margin: 0;
-  padding: 6px 12px;
-  background: var(--warning-surface, #fff4e5);
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-subtle, #e0e0e0);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+  color: var(--warning);
+  border-bottom: var(--border-width) solid var(--border-subtle);
 }
 </style>
