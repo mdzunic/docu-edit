@@ -37,6 +37,8 @@ export interface CellItem {
 }
 
 export interface RowItem {
+  /** SPEC-137: the row's slot key (its index mod the window's capacity). */
+  key: string;
   index: number;
   top: number;
   height: number;
@@ -49,14 +51,21 @@ export interface BorderItem {
   style: CssDeclarations;
 }
 
+/** A gridline: its slot key and where it sits (SPEC-137 — keyed by slot, so
+ * a scroll step moves the same element). */
+export interface GridLineItem {
+  key: string;
+  at: number;
+}
+
 export interface BandItem {
   kind: "frozen" | "main";
   top: number;
   height: number;
   rows: RowItem[];
-  gridRows: number[]; // y of each horizontal gridline, band-relative
-  gridColsFrozen: number[]; // x of each vertical gridline, region-relative
-  gridColsScrolled: number[];
+  gridRows: GridLineItem[]; // y of each horizontal gridline, band-relative
+  gridColsFrozen: GridLineItem[]; // x of each vertical gridline, region-relative
+  gridColsScrolled: GridLineItem[];
   bordersFrozen: BorderItem[];
   bordersScrolled: BorderItem[];
 }

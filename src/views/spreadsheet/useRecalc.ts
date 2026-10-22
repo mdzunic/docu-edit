@@ -112,6 +112,10 @@ export function useRecalc(deps: RecalcDeps) {
   /** The circular-reference status text ("" when there is no cycle). */
   const circular = ref("");
   const calculating = ref(false);
+  /** SPEC-137: a pass is running, or the open-time pass is scheduled. */
+  const running = ref(false);
+  const openPending = ref(false);
+  const calcState = computed((): "idle" | "calculating" => (running.value || openPending.value ? "calculating" : "idle"));
   /** Stale cells and why — view state only. */
   const stale = shallowRef<ReadonlyMap<CellKey, UncomputableReason>>(new Map());
   let pass: RecalcPass | null = null;
@@ -145,6 +149,7 @@ export function useRecalc(deps: RecalcDeps) {
   function finish(current: RecalcPass, model: SpreadsheetModel): void {
     pass = null;
     passModel = null;
+    running.value = false;
     stopDriving();
     if (current.result.stale.length > 0) {
       const next = new Map(stale.value);
@@ -178,6 +183,7 @@ export function useRecalc(deps: RecalcDeps) {
       current.cancel();
       pass = null;
       passModel = null;
+      running.value = false;
       stopDriving();
       const callback = passDone;
       passDone = null;
@@ -226,6 +232,7 @@ export function useRecalc(deps: RecalcDeps) {
     const current = startRecalc(model, passKeys, { ...options, settings: { locale: deps.locale() } });
     pass = current;
     passModel = model;
+    running.value = true;
     passDone =
       carried && done
         ? (ids) => {
@@ -281,16 +288,22 @@ export function useRecalc(deps: RecalcDeps) {
 
   /** The open-time policy (see the module header). */
   function open(model: SpreadsheetModel): void {
+    openPending.value = true;
     if (needsFullCalcOnOpen(model)) {
       slot = scheduleEagerWork(() => {
         slot = null;
+        openPending.value = false;
         if (deps.book.workbook.value === model) {
           run([], { reason: "open", full: true });
         }
       }, RECALC_SLICE_MS);
     } else {
       runWhenIdle(() => {
-        if (deps.book.workbook.value === model && pass === null) {
+        if (deps.book.workbook.value !== model) {
+          return;
+        }
+        openPending.value = false;
+        if (pass === null) {
           run([], { reason: "open" });
         }
       }, OPEN_PASS_IDLE_TIMEOUT_MS);
@@ -310,6 +323,8 @@ export function useRecalc(deps: RecalcDeps) {
       pass = null;
       passModel = null;
       passDone = null;
+      running.value = false;
+      openPending.value = false;
       stopDriving();
       stale.value = new Map();
       circular.value = "";
@@ -326,6 +341,8 @@ export function useRecalc(deps: RecalcDeps) {
   onScopeDispose(() => {
     pass?.cancel();
     pass = null;
+    running.value = false;
+    openPending.value = false;
     stopDriving();
     if (typeof window !== "undefined") {
       window.removeEventListener("keydown", onKeydown);
@@ -349,6 +366,8 @@ export function useRecalc(deps: RecalcDeps) {
   return {
     circular,
     calculating,
+    /** SPEC-137: the grid's data-calc-state ("idle" | "calculating"). */
+    calcState,
     stale,
     onResult,
     /** SpreadsheetStatusBar's recalculation props, bound as one object. */

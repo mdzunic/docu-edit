@@ -66,7 +66,12 @@
 // notes through useSheetGrid's notePointer. SPEC-135's links: a linked cell
 // carries data-link and its text's span the pointer cursor (useCellLinks'
 // isLinked); a Ctrl/Cmd+press over that text follows the link instead of
-// adding a range; LinkChip pins under the active linked cell.
+// adding a range; LinkChip pins under the active linked cell. SPEC-137: the
+// grid carries data-calc-state (useRecalc's); the paper's cells are keyed by
+// slot and bounded (GRID_MAX_RENDERED_CELLS, the subtree within
+// GRID_MAX_DOM_NODES); where the viewport alone would pass that ceiling the
+// overview canvas (SheetOverviewCanvas) paints the sheet and its headers —
+// the DOM headers step aside and only the active cell keeps an element.
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { MAX_COLS, MAX_ROWS } from "../../lib/spreadsheet/model";
@@ -82,6 +87,7 @@ import SheetCopyMarquee from "./SheetCopyMarquee.vue";
 import SheetDrawingLayer from "./SheetDrawingLayer.vue";
 import SheetFillHandle from "./SheetFillHandle.vue";
 import SheetNoteLayer from "./SheetNoteLayer.vue";
+import SheetOverviewCanvas from "./SheetOverviewCanvas.vue";
 import LinkChip from "../LinkChip.vue";
 import { linksOf } from "../../views/spreadsheet/useCellLinks";
 import ValidationDropdown from "./ValidationDropdown.vue";
@@ -112,8 +118,27 @@ const vp = grid.viewport;
 const RH = ROW_HEADER_WIDTH_PX;
 const CH = COLUMN_HEADER_HEIGHT_PX;
 const cellEditing = computed(() => asSheetGridContext(props.context).cellEditing);
+/** SPEC-137: useRecalc's calc state — "calculating" from a pass's start to
+ * its end, the benchmark's end-of-recalc signal. */
+const calcState = computed(() => asSheetGridContext(props.context).recalc?.calcState?.value ?? "idle");
 /** SPEC-127: the function assists' ARIA on the in-cell editor. */
 const cellAria = computed(() => asSheetGridContext(props.context).assist?.editorAria.value ?? {});
+/** SPEC-137: overview rendering, and what its canvas paints. */
+const overview = computed(() => grid.overview.value);
+function overviewFrame() {
+  return {
+    bands: grid.overviewBands(),
+    zoom: vp.z.value,
+    width: vp.viewW.value,
+    height: vp.viewH.value,
+    frozenW: vp.frozenW.value,
+    viewCols: vp.viewCols.value,
+    viewRows: vp.viewRows.value,
+    gridLines: grid.showGridLines.value,
+    rows: vp.rowWindow(0),
+    cols: vp.colWindow(0),
+  };
+}
 /** SPEC-123: the armed format painter ("once" | "locked"), "" when off. */
 const painterMode = computed(() => asSheetGridContext(props.context).painter?.mode.value ?? "");
 /** SPEC-124: header resizing — the cursor, and while dragging the guide line
@@ -228,6 +253,7 @@ function unscroll(event = new Event("scroll")) {
     :aria-label="props.sheet.name"
     :aria-activedescendant="grid.activeDescendant.value"
     :data-show-formulas="props.showFormulas ? 'true' : undefined"
+    :data-calc-state="calcState"
     :data-format-painter="painterMode || undefined"
     :data-drawing-armed="drawingLayer?.armed ? 'true' : undefined"
     :style="{ cursor: resizeCursor || transfer.cursor || undefined }"
@@ -270,6 +296,11 @@ function unscroll(event = new Event("scroll")) {
             :link-at="links?.isLinked"
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
             @filter-button="onFilterButton"
+          />
+          <SheetOverviewCanvas
+            v-if="overview"
+            :frame="overviewFrame"
+            :style="{ width: px(vp.viewW.value), height: px(vp.viewH.value) }"
           />
           <div
             v-if="drawingLayer"
@@ -408,6 +439,7 @@ function unscroll(event = new Event("scroll")) {
             :style="{ left: px(RH), top: px(CH), width: px(vp.viewCols.value), height: px(vp.viewRows.value) }"
           />
           <div
+            v-if="!overview"
             class="sheet-col-headers"
             role="row"
             aria-rowindex="1"
@@ -426,7 +458,7 @@ function unscroll(event = new Event("scroll")) {
             >
               <div
                 v-for="col in grid.overlays.columnHeaders.value.frozen"
-                :key="col.index"
+                :key="col.key"
                 class="col-header"
                 :class="{ 'is-selected': col.selected }"
                 role="columnheader"
@@ -444,7 +476,7 @@ function unscroll(event = new Event("scroll")) {
             >
               <div
                 v-for="col in grid.overlays.columnHeaders.value.scrolled"
-                :key="col.index"
+                :key="col.key"
                 class="col-header"
                 :class="{ 'is-selected': col.selected }"
                 role="columnheader"
@@ -467,6 +499,7 @@ function unscroll(event = new Event("scroll")) {
             />
           </div>
           <div
+            v-if="!overview"
             class="sheet-row-headers"
             :style="{ top: px(CH), width: px(RH), height: px(vp.viewRows.value) }"
           >
@@ -476,7 +509,7 @@ function unscroll(event = new Event("scroll")) {
             >
               <div
                 v-for="row in grid.overlays.rowHeaders.value.frozen"
-                :key="row.index"
+                :key="row.key"
                 class="row-header"
                 :class="{ 'is-selected': row.selected }"
                 role="rowheader"
@@ -495,7 +528,7 @@ function unscroll(event = new Event("scroll")) {
             >
               <div
                 v-for="row in grid.overlays.rowHeaders.value.scrolled"
-                :key="row.index"
+                :key="row.key"
                 class="row-header"
                 :class="{ 'is-selected': row.selected }"
                 role="rowheader"

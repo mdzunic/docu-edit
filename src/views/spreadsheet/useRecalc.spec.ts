@@ -223,3 +223,74 @@ describe("long passes", () => {
     expect(passes.calls.at(-1)).toEqual(["sheet-Sheet1!0,0"]);
   });
 });
+
+describe("the calc state (SPEC-137)", () => {
+  it("is calculating from a pass's start — before the status delay — and idle once it completes", () => {
+    vi.useFakeTimers();
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    expect(recalc.calcState.value).toBe("idle");
+    const { pass, release } = longPass();
+    passes.next = pass;
+    recalc.recalculate();
+    expect(recalc.calcState.value).toBe("calculating");
+    expect(recalc.calculating.value).toBe(false);
+    drainEager(3);
+    expect(recalc.calcState.value).toBe("calculating");
+    release();
+    drainEager();
+    expect(recalc.calcState.value).toBe("idle");
+  });
+
+  it("reads calculating during the first slice of a pass that finishes in it, and idle after", () => {
+    const model = calcWorkbook({ Sheet1: { A1: 1, B1: { formula: "A1*2", value: 99 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    const seen: string[] = [];
+    const quick: RecalcPass = {
+      result: { valueChanged: [], changedSheetIds: [], circular: [], stale: [], evaluated: 0 },
+      step: () => {
+        seen.push(recalc.calcState.value);
+        return true;
+      },
+      cancel: () => [],
+    };
+    passes.next = quick;
+    recalc.recalculate();
+    expect(seen).toEqual(["calculating"]);
+    expect(recalc.calcState.value).toBe("idle");
+    expect(scheduler.eager).toEqual([]);
+  });
+
+  it("stays calculating while a cancelled pass's successor runs, until the successor completes", () => {
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    const first = longPass();
+    passes.next = first.pass;
+    recalc.recalculate();
+    const second = longPass();
+    passes.next = second.pass;
+    recalc.recalculate();
+    expect(first.pass.cancelled).toBe(true);
+    first.release();
+    drainEager(5);
+    expect(recalc.calcState.value).toBe("calculating");
+    second.release();
+    drainEager();
+    expect(recalc.calcState.value).toBe("idle");
+  });
+
+  it("covers the deferred open pass: calculating from open until it has run", () => {
+    const full = mount(calcWorkbook({ Sheet1: { A1: 2, B1: "=A1*21" } }));
+    expect(full.recalc.calcState.value).toBe("calculating");
+    drainEager();
+    expect(full.recalc.calcState.value).toBe("idle");
+    const idle = mount(calcWorkbook({ Sheet1: { A1: { formula: "TODAY()", value: 45000 } } }));
+    expect(idle.recalc.calcState.value).toBe("calculating");
+    drainIdle();
+    drainEager();
+    expect(idle.recalc.calcState.value).toBe("idle");
+  });
+});
