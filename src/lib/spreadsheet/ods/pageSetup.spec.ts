@@ -18,6 +18,11 @@ function stylesXml(layout: string, master: string): string {
   );
 }
 
+/** A workbook's names holding one print area (none for null). */
+function names(formula: string | null): { names: { name: string; scopeSheetId: string; formula: string }[] } {
+  return { names: formula === null ? [] : [{ name: "_xlnm.Print_Area", scopeSheetId: "s1", formula }] };
+}
+
 async function fixtureParts(): Promise<{ styles: string; content: string }> {
   const parts = await unzip(await buildSpec136PrintOdsBytes());
   const decoder = new TextDecoder();
@@ -97,7 +102,6 @@ describe("writing", () => {
 
   it("withOdsPrintRanges writes the model's print area through canonicalToOdsRangeAddress, keeping the attribute while it names the same ranges", () => {
     const table = `<table:table table:name="Data" table:print-ranges="Data.A1:Data.D20"></table:table>`;
-    const names = (formula: string | null) => ({ names: formula === null ? [] : [{ name: "_xlnm.Print_Area", scopeSheetId: "s1", formula }] });
     expect(withOdsPrintRanges(names("Data!$A$1:$D$20"), { id: "s1" }, table)).toBe(table);
     expect(withOdsPrintRanges(names("Data!$A$1:$D$22"), { id: "s1" }, table)).toBe(`<table:table table:name="Data" table:print-ranges="$Data.$A$1:.$D$22"></table:table>`);
     expect(withOdsPrintRanges(names(null), { id: "s1" }, table)).toBe(`<table:table table:name="Data"></table:table>`);

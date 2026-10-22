@@ -281,6 +281,11 @@ describe("extractPageContent selectors (SPEC-104)", () => {
   });
 });
 
+/** A run of 10 px characters' box, [start, end) from x = 0. */
+function charRect(start: number, end: number): DOMRect {
+  return { left: start * 10, right: end * 10, top: 0, bottom: 16, width: (end - start) * 10, height: 16, x: start * 10, y: 0, toJSON: () => ({}) } as DOMRect;
+}
+
 describe("extractPageContent cellSelector and clipSelector (SPEC-136)", () => {
   it("defaults to the text product's table cells; a cellSelector reads another element's fill and borders", () => {
     expect(DEFAULT_CELL_SELECTOR).toBe("td.doc-table-cell");
@@ -298,9 +303,7 @@ describe("extractPageContent cellSelector and clipSelector (SPEC-136)", () => {
     const clip = page.querySelector(".clip")!;
     placeAt(clip, 0, 0, 30, 20);
     const text = page.querySelector("span")!.firstChild as Text;
-    // Each character is 10 px wide from x = 0: D, E and F lie past the 30 px box.
-    const rectOf = (start: number, end: number): DOMRect =>
-      ({ left: start * 10, right: end * 10, top: 0, bottom: 16, width: (end - start) * 10, height: 16, x: start * 10, y: 0, toJSON: () => ({}) }) as DOMRect;
+    // Each character is 10 px wide from x = 0 (charRect): D, E and F lie past the 30 px box.
     const ranges = { start: 0, end: 0 };
     const proto = Range.prototype as unknown as Record<string, unknown>;
     const saved = { setStart: proto.setStart, setEnd: proto.setEnd, getClientRects: proto.getClientRects, getBoundingClientRect: proto.getBoundingClientRect };
@@ -310,8 +313,8 @@ describe("extractPageContent cellSelector and clipSelector (SPEC-136)", () => {
     proto.setEnd = function (this: Range, _node: Node, offset: number) {
       ranges.end = offset;
     };
-    proto.getClientRects = () => [rectOf(ranges.start, ranges.end)];
-    proto.getBoundingClientRect = () => rectOf(ranges.start, ranges.end);
+    proto.getClientRects = () => [charRect(ranges.start, ranges.end)];
+    proto.getBoundingClientRect = () => charRect(ranges.start, ranges.end);
     try {
       expect(text.data).toBe("ABCDEF");
       expect(extractPageContent(page, 300, 225).items.map((item) => item.text)).toEqual(["ABCDEF"]);
