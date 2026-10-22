@@ -121,8 +121,11 @@ rejecting SPEC-007 as ambiguous:
    `specs/124-rows-columns-and-merged-cells.md`; its cut-and-move twin
    (`MOVE_ADJUSTERS`) in `specs/125-copy-paste-fill-and-move.md`; the
    row-permutation hook sorting runs (`ROW_PERMUTATION_ADJUSTERS`) in
-   `specs/128-sort-and-filter.md`; and the spreadsheet side panel
-   (`useSheetSidePanel`) in `specs/129-conditional-formatting.md`. Two
+   `specs/128-sort-and-filter.md`; the spreadsheet side panel
+   (`useSheetSidePanel`) in `specs/129-conditional-formatting.md`; and
+   defined names (validity, resolution, the reserved `_xlnm.*` names), Excel
+   tables, the meaning and spelling of structured references and how a
+   table style renders in `specs/133-named-ranges-and-tables.md`. Two
    shared helpers are owned by the first spec that needed them: ODS range
    addresses (`spreadsheet/ods/rangeAddress.ts`) by SPEC-121, row and column
    autofit (`spreadsheet/autofit.ts`) by SPEC-122. Nothing redefines these.
