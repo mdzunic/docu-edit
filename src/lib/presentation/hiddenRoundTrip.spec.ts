@@ -43,6 +43,12 @@ function hiddenFlags(model: PresentationModel): boolean[] {
   return model.slides.map((slide) => slide.hidden === true);
 }
 
+/** What a slide shows, beside its flags — the `slides` facts a hide must not
+ * disturb. */
+function slideContent(model: PresentationModel) {
+  return model.slides.map((slide) => ({ frames: slide.frames, notes: slide.notes, background: slide.background }));
+}
+
 /** The slide-bearing part of a package: each pptx slide part, or odp's
  * content.xml (every page lives in it). */
 function slideParts(format: PresentationFormat, parts: Map<string, Uint8Array>): string[] {
@@ -97,9 +103,7 @@ describe.each(FORMATS)("$format hidden slides (SPEC-104)", ({ format, build }) =
     expect(hiddenFlags(reopened)).toEqual([true, false, false]);
     expect("hidden" in reopened.slides[1]).toBe(false);
     // Nothing else about the slides moved.
-    const strip = (m: PresentationModel) =>
-      m.slides.map((slide) => ({ frames: slide.frames, notes: slide.notes, background: slide.background }));
-    expect(equalStructural(strip(reopened), strip(model))).toBe(true);
+    expect(equalStructural(slideContent(reopened), slideContent(model))).toBe(true);
     expect(reopened.slides[0].notes).toEqual(SPEC104_NOTES);
 
     const resaved = await unzip((await write(reopened)).bytes);
