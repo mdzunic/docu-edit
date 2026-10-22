@@ -41,7 +41,7 @@ async function open(page: Page): Promise<void> {
 /** The count once the debounced, chunked walk has settled ("Searching…" gone). */
 async function expectCount(page: Page, text: string): Promise<void> {
   await expect(page.getByTestId("find-count")).toHaveText(text);
-  await expect(page.getByTestId("find-status")).not.toHaveText("Searching…");
+  await expect(page.getByTestId("find-status").filter({ hasText: "Searching…" })).toHaveCount(0);
 }
 
 test("find, replace, Go To, Go To Special and the Name Box over the fixture (SPEC-134)", async ({ page }) => {
