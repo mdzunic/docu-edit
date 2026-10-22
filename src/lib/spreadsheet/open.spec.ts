@@ -398,8 +398,10 @@ function patchPart(parts: Map<string, Uint8Array>, name: string, edits: [string,
   parts.set(name, encodeText(text));
 }
 
-/** An ODS annotation (a note) as LibreOffice writes one inside a cell. */
-const annotation = (text: string): string => `<office:annotation><dc:creator>Fixture Author</dc:creator><text:p>${text}</text:p></office:annotation>`;
+/** A cell child the model does not hold, which SPEC-122 keeps verbatim in
+ * preservedXml: a list. (SPEC-135 models a cell's office:annotation as a
+ * note, lifted out of preservedXml — ods/annotations.ts.) */
+const preservedChild = (text: string): string => `<text:list><text:list-item><text:p>${text}</text:p></text:list-item></text:list>`;
 
 const SPEC122_CELL_FIELDS = ["sstIndex", "preservedAttrs", "preservedXml", "preservedText"] as const;
 
@@ -533,25 +535,26 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
       [`<table:table table:name="Inventory" table:style-name="ta1">`, `<table:table table:name="Inventory" table:style-name="ta1" table:protected="true">`],
       [
         `<text:p>Widget</text:p>`,
-        `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`,
+        // SPEC-135 models a text:a with only href, type and title: the target frame keeps this one preserved text.
+        `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple" office:target-frame-name="_blank" xlink:show="new">Widget</text:a></text:p>`,
       ],
       [
         `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float">`,
         // SPEC-130 models table:content-validation-name: xml:id is the unmodelled attribute.
         `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float" xml:id="cell-B2">`,
       ],
-      [`<text:p>Gadget</text:p>`, `${annotation("Edited away")}<text:p>Gadget</text:p>`],
-      [`<text:p>Done</text:p>`, `${annotation("Kept")}<text:p>Done</text:p>`],
+      [`<text:p>Gadget</text:p>`, `${preservedChild("Edited away")}<text:p>Gadget</text:p>`],
+      [`<text:p>Done</text:p>`, `${preservedChild("Kept")}<text:p>Done</text:p>`],
     ]);
     const read = await readSpreadsheetBytes(new Uint8Array(0), "ods", "SPEC-122 shapes", parts);
     const inventory = read.sheets[1]!;
     expect(read.structureProtected).toBe(true);
     expect(inventory.protection).toEqual({ sheet: true });
-    const link = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`;
+    const link = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple" office:target-frame-name="_blank" xlink:show="new">Widget</text:a></text:p>`;
     expect(getCell(inventory, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
     expect(getCell(inventory, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' xml:id="cell-B2"' });
-    expect(getCell(inventory, 2, 0)).toMatchObject({ value: "Gadget", preservedXml: annotation("Edited away") });
-    expect(getCell(inventory, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
+    expect(getCell(inventory, 2, 0)).toMatchObject({ value: "Gadget", preservedXml: preservedChild("Edited away") });
+    expect(getCell(inventory, 22, 0)).toMatchObject({ value: "Done", preservedXml: preservedChild("Kept") });
 
     // Stored by SPEC-120's reader; then A3 was edited on the (dirty) Inventory.
     const stored = spec120Record(read, [1], (model) => setStoredValue(model, 1, [2, 0], "Gizmo"));
@@ -563,7 +566,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(sheet.protection).toEqual({ sheet: true });
     expect(getCell(sheet, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
     expect(getCell(sheet, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' xml:id="cell-B2"' });
-    expect(getCell(sheet, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
+    expect(getCell(sheet, 22, 0)).toMatchObject({ value: "Done", preservedXml: preservedChild("Kept") });
     // The edited cell keeps its edit and regains nothing.
     expect(getCell(sheet, 2, 0)!.value).toBe("Gizmo");
     expect(getCell(sheet, 2, 0)!.preservedXml).toBeUndefined();
