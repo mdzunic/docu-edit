@@ -45,7 +45,7 @@ const editing = useWorkbookEditing({ book, viewState, recalc, selection, sheetMe
 const { formatting, structure, headerResize, merges, painter, clipboard, fillHandle, rangeMove, sortFilter, names, tables, menu } = useSheetTools({ book, viewState, selection, sheetMetrics, zoom, formulas, recalc, editing, locale: () => sheetLocale.locale.value });
 const find = useSheetFind({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
 const goTo = useSheetGoTo({ book, viewState, selection, editing, names });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist: editing.assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings, names, tables, find }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.cell, conditionalFormats: editing.conditionalFormats, assist: editing.assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings, notes: editing.notes, links: editing.links, names, tables, find }));
 </script>
 
 <template>

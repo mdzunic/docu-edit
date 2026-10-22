@@ -813,7 +813,10 @@ describe("SPEC-122 serializeTable: cells", () => {
   });
 
   it("writes preserved attributes after the value attributes, preserved children first, preserved text instead of the paragraphs — through passRetained", () => {
+    // SPEC-135: the preserved text is kept while its first text:a says what
+    // the model's link says (the reader models that link: ods/annotations.ts).
     const sheet = sheetOf({
+      hyperlinks: [{ linkId: "h-A1", range: { top: 0, left: 0, bottom: 0, right: 0 }, target: { kind: "url", href: "https://example.com/" } }],
       rows: [
         {
           index: 0,

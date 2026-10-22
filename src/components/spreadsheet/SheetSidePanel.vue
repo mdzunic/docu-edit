@@ -5,13 +5,15 @@
 // default slot — this spec's `conditionalFormats` pane, the rules manager
 // over useWorkbookEditing's `cfManager`. Later spreadsheet panes register
 // here (SPEC-135, SPEC-138, SPEC-139) rather than mounting panels of their
-// own. Runtime prop declarations per the espree constraint (see
-// AppShell.vue).
+// own. SPEC-135 adds the `comments` pane: SheetCommentsPanel over
+// useWorkbookEditing's `comments`. Runtime prop declarations per the espree
+// constraint (see AppShell.vue).
 import { computed } from "vue";
 import { clampSheetPanelWidth } from "../../views/spreadsheet/useSheetSidePanel";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import SidePanel from "../SidePanel.vue";
 import ConditionalFormatsPane from "./ConditionalFormatsPane.vue";
+import SheetCommentsPanel from "./SheetCommentsPanel.vue";
 
 const props = defineProps({
   /** useWorkbookEditing's return. */
@@ -22,7 +24,7 @@ const editing = computed(() => asWorkbookEditing(props.editing));
 const panel = computed(() => editing.value.sidePanel);
 
 function activate(id = "") {
-  if (id === "conditionalFormats") {
+  if (id === "conditionalFormats" || id === "comments") {
     panel.value.open(id);
   }
 }
@@ -63,6 +65,10 @@ function nudgeWidth(delta = 0) {
     <ConditionalFormatsPane
       v-if="panel.activePane.value === 'conditionalFormats'"
       :manager="editing.cfManager"
+    />
+    <SheetCommentsPanel
+      v-else-if="panel.activePane.value === 'comments'"
+      :controller="editing.comments"
     />
   </SidePanel>
 </template>

@@ -25,12 +25,22 @@
 // SPEC-133 moved in, from the view, SPEC-127's function assists
 // (useFunctionAssist — `assist`) and SPEC-126's CSV import (useCsvImport —
 // `csvImport`), so the view has room for the names and tables wiring.
+// SPEC-135: notes on cells (useCellNotes — the indicators, popovers, note
+// boxes and editor the grid context carries to SheetGrid; the menu and the
+// cell context menu run its commands) and the comments pane
+// (useSheetComments — the side panel's "comments" pane, the app bar's
+// toggle), each step on the same undo stack; and links on cells
+// (useCellLinks — the link dialog WorkbookBody renders, the chip and the
+// data-link the grid context carries to SheetGrid, Ctrl/Cmd+K and following).
 import { computed, triggerRef, type Ref, type ShallowRef } from "vue";
 import { useRouter } from "vue-router";
 import { storeSpreadsheetEdit } from "../../lib/documentStore";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { useAnnotationEditing } from "./useAnnotationEditing";
 import { useCellEditing, type CellEditing, type CellEditingDeps } from "./useCellEditing";
+import { useCellLinks } from "./useCellLinks";
+import { useCellNotes } from "./useCellNotes";
 import { useConditionalFormatManager } from "./useConditionalFormatManager";
 import { useConditionalFormats } from "./useConditionalFormats";
 import { useCsvImport } from "./useCsvImport";
@@ -38,6 +48,7 @@ import { entryGateOf, useDataValidation } from "./useDataValidation";
 import { useFunctionAssist } from "./useFunctionAssist";
 import type { Recalc } from "./useRecalc";
 import { useSheetCharts } from "./useSheetCharts";
+import { useSheetComments } from "./useSheetComments";
 import { useSheetCommands } from "./useSheetCommands";
 import { useSheetDrawings } from "./useSheetDrawings";
 import type { SheetMetrics } from "./useSheetMetrics";
@@ -57,7 +68,8 @@ export interface WorkbookEditingDeps {
     /** SPEC-126: shows a re-read model in place of the one on show. */
     replace(model: SpreadsheetModel): void;
   };
-  viewState: Pick<SheetViewState, "syncInto">;
+  /** `update`: SPEC-135's comments select a thread's cell on its sheet. */
+  viewState: Pick<SheetViewState, "syncInto" | "update">;
   recalc: Pick<Recalc, "edit" | "settle" | "onResult">;
   /** Cell entry's view inputs (SPEC-122). */
   selection: CellEditingDeps["selection"];
@@ -160,7 +172,40 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
   // import bar and dialog (moved here from the view to keep it a hub).
   const assist = useFunctionAssist({ ...cell });
   const csvImport = useCsvImport({ book: deps.book, undo, router: useRouter() });
-  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport };
+  // SPEC-135: an .xlsx sheet whose annotations the reader left verbatim
+  // refuses new notes, comments and links (AC-11).
+  const annotationEditing = useAnnotationEditing({ book: deps.book });
+  const comments = useSheetComments({
+    book: deps.book,
+    undo,
+    selection: deps.selection,
+    viewState: deps.viewState,
+    cell,
+    sidePanel,
+    syncInto: (model) => deps.viewState.syncInto(model),
+    busy: () => cell.editing.value,
+    blocked: () => annotationEditing.notesReason.value,
+  });
+  const notes = useCellNotes({
+    book: deps.book,
+    undo,
+    selection: deps.selection,
+    syncInto: (model) => deps.viewState.syncInto(model),
+    busy: () => cell.editing.value,
+    openThread: comments.openThread,
+    focusGrid: () => cell.focusCell(),
+    blocked: () => annotationEditing.notesReason.value,
+  });
+  const links = useCellLinks({
+    book: deps.book,
+    selection: deps.selection,
+    viewState: deps.viewState,
+    undo,
+    cell,
+    locale: deps.locale,
+    blocked: () => annotationEditing.linksReason.value,
+  });
+  return { undo, commands, download, appBar, cell, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport, notes, comments, links };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

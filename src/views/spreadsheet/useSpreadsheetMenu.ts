@@ -21,7 +21,11 @@
 // Insert ▸ Image… and Shapes and the Arrange menu are the drawing layer's
 // (useWorkbookEditing's drawings), and the bar's state says whether a drawing
 // can go in and which is selected. SPEC-133: Insert ▸ Table… opens
-// useSheetTables' Create Table dialog. Later specs append commands here.
+// useSheetTables' Create Table dialog. SPEC-135: Insert ▸ Link… opens the
+// link dialog (useWorkbookEditing's links); Insert ▸ Note and View ▸ Show all
+// notes are the notes' (useWorkbookEditing's notes), Insert ▸ Comment and
+// View ▸ Comments the comments pane's (its comments), and the bar's state
+// says which apply and what is checked. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -48,7 +52,7 @@ export interface SpreadsheetMenuDeps {
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
-  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts">>;
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts" | "links" | "notes" | "comments">>;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
@@ -132,6 +136,14 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       drawingSelected: deps.editing?.drawings?.order.value.selected === true,
       drawingAtFront: deps.editing?.drawings?.order.value.atFront === true,
       drawingAtBack: deps.editing?.drawings?.order.value.atBack === true,
+      canAnnotate: deps.editing?.notes?.canAnnotate.value === true,
+      canComment: deps.editing?.comments?.canComment.value === true,
+      commentDisabledReason: deps.editing?.comments?.newCommentDisabledReason.value ?? "",
+      noteDisabledReason: deps.editing?.notes?.noteDisabledReason.value ?? "",
+      canLink: deps.editing?.links?.canLink.value ?? true,
+      linkDisabledReason: deps.editing?.links?.linkDisabledReason.value ?? "",
+      commentsOpen: deps.editing?.comments?.isOpen.value === true,
+      showAllNotes: deps.editing?.notes?.showAll.value === true,
     }),
   );
 
@@ -249,6 +261,21 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.insertTable:
         deps.tables?.openCreate();
+        break;
+      case SHEET_MENU_COMMANDS.insertLink:
+        deps.editing?.links?.openDialog();
+        break;
+      case SHEET_MENU_COMMANDS.insertNote:
+        deps.editing?.notes?.openEditor();
+        break;
+      case SHEET_MENU_COMMANDS.insertComment:
+        deps.editing?.comments?.newComment();
+        break;
+      case SHEET_MENU_COMMANDS.comments:
+        deps.editing?.comments?.toggle();
+        break;
+      case SHEET_MENU_COMMANDS.showAllNotes:
+        deps.editing?.notes?.toggleShowAll();
         break;
       default:
         break;

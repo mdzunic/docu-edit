@@ -72,6 +72,20 @@
 // `[Content_Types].xml` lacks. From scratch, every grid sheet's image and
 // shape drawings are written in the canonical form with the same parts.
 //
+// SPEC-135 (xlsx/annotations.ts is the normative source for the wire forms):
+// `annotationsDirty` joins the rebuild triggers. On the substitution path (a
+// save) every `dirty` or `annotationsDirty` grid sheet's notes, threads and
+// hyperlinks are written by writeXlsxSheetAnnotations over the sheet `.rels`
+// the drawing and table writes left: the comments, VML and threaded parts
+// rebuilt, spliced, minted or dropped (their relationships with them — the
+// reachability rule then drops a part and its Override), the minted ones'
+// Overrides and the `vml` Default added, and `<hyperlinks>`/`<legacyDrawing>`
+// spliced into the worksheet part after the drawing and table splices — a
+// sheet that is only `annotationsDirty` changes nothing else; the persons
+// part gains the persons it lacks (or is minted with its workbook
+// relationship). From scratch, every grid sheet's annotations are written
+// with the same parts.
+//
 // `calcPr@fullCalcOnLoad="1"` is written (SPEC-122 "calcChain and calcPr")
 // when the caller asks (`options.fullCalcOnLoad`) or a recalculation left a
 // stale cell (`model.forceFullCalcOnLoad`, SPEC-120 — set, never cleared),
@@ -99,6 +113,17 @@ import { copyRemap, sourceSheetRemap } from "../sourceNames";
 import { applySplices, attributeValue, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { FILTER_DATABASE_NAME, filterDatabaseNames, filterDatabaseText, sheetPartHasAutoFilter } from "./autoFilter";
 import { sheetChartsChanged, sheetHasCreatedChart, XlsxChartWriter } from "./chartParts";
+import {
+  annotationsRebuilt,
+  maxVmlIdmap,
+  PERSON_CONTENT_TYPE,
+  PERSON_RELATIONSHIP_TYPE,
+  VML_CONTENT_TYPE,
+  writeXlsxPersons,
+  writeXlsxSheetAnnotations,
+  type AnnotationWriteContext,
+  type PersonsWrite,
+} from "./annotations";
 import { DRAWING_CONTENT_TYPE, DRAWING_RELATIONSHIP_TYPE, newRelsXml, spliceWorksheetDrawing, writeDrawingPart, writeSheetDrawings } from "./drawingXml";
 import { definedNamesSplices, definedNamesXml, scanDefinedNames } from "./definedNames";
 import { ownedClosure } from "./duplicate";
@@ -154,7 +179,11 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))) {
+  if (
+    !model.structureDirty &&
+    !model.namesDirty &&
+    !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheet.annotationsDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))
+  ) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
   return zip(buildSubstitution(model, parts, options, "write"));
@@ -236,16 +265,19 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
   const tables = fromScratchTables(model, sheetParts, layer);
+  const notes = fromScratchAnnotations(model, sheetParts, layer, tables);
   const contentTypes =
     `${XML_DECLARATION}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
     `<Default Extension="xml" ContentType="application/xml"/>` +
+    (notes.vml ? `<Default Extension="vml" ContentType="${VML_CONTENT_TYPE}"/>` : "") +
     [...layer.defaults].map(([extension, type]) => `<Default Extension="${escapeAttributeValue(extension)}" ContentType="${escapeAttributeValue(type)}"/>`).join("") +
     `<Override PartName="/xl/workbook.xml" ContentType="${mainType}"/>` +
     sheetParts.map((part) => `<Override PartName="/${part}" ContentType="${isChartSheetPart(part) ? CHARTSHEET_CONTENT_TYPE : WORKSHEET_CONTENT_TYPE}"/>`).join("") +
     layer.drawingParts.map((part) => `<Override PartName="/${part}" ContentType="${DRAWING_CONTENT_TYPE}"/>`).join("") +
     layer.overrides.map((entry) => `<Override PartName="/${entry.partName}" ContentType="${entry.contentType}"/>`).join("") +
     tables.overrides.map((part) => `<Override PartName="/${part}" ContentType="${TABLE_CONTENT_TYPE}"/>`).join("") +
+    notes.overrides.map((entry) => `<Override PartName="/${entry.partName}" ContentType="${entry.contentType}"/>`).join("") +
     `<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>` +
     `<Override PartName="/xl/styles.xml" ContentType="${STYLES_CONTENT_TYPE}"/>` +
     (sharedStrings === undefined ? "" : `<Override PartName="/xl/sharedStrings.xml" ContentType="${SHARED_STRINGS_CONTENT_TYPE}"/>`) +
@@ -270,6 +302,7 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     relationshipXml(`rId${n + 1}`, `${RELATIONSHIP_TYPE}/theme`, "theme/theme1.xml") +
     relationshipXml(`rId${n + 2}`, `${RELATIONSHIP_TYPE}/styles`, "styles.xml") +
     (sharedStrings === undefined ? "" : relationshipXml(`rId${n + 3}`, `${RELATIONSHIP_TYPE}/sharedStrings`, "sharedStrings.xml")) +
+    (notes.persons === undefined ? "" : relationshipXml(`rId${n + 4}`, PERSON_RELATIONSHIP_TYPE, relativeTarget("xl/workbook.xml", notes.persons.partName))) +
     `</Relationships>`;
   return [
     { name: "[Content_Types].xml", data: encode(contentTypes) },
@@ -284,7 +317,56 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
     ...layer.worksheets.map((xml, index) => ({ name: sheetParts[index]!, data: encode(xml) })),
     ...layer.entries,
     ...tables.entries,
+    ...notes.entries,
   ];
+}
+
+/** SPEC-135 from scratch: every grid sheet's notes, threads and hyperlinks
+ * (xlsx/annotations.ts writeXlsxSheetAnnotations over an empty package) —
+ * the minted parts with their Overrides, the sheet `.rels` (joining a
+ * drawing's or table's when the sheet has one), the worksheet splices, and
+ * the persons part the threads name. */
+function fromScratchAnnotations(
+  model: SpreadsheetModel,
+  sheetParts: readonly string[],
+  layer: { worksheets: string[]; entries: ZipEntryInput[] },
+  tables: { entries: ZipEntryInput[] },
+): { entries: ZipEntryInput[]; overrides: { partName: string; contentType: string }[]; vml: boolean; persons?: PersonsWrite } {
+  const out: { entries: ZipEntryInput[]; overrides: { partName: string; contentType: string }[]; vml: boolean; persons?: PersonsWrite } = { entries: [], overrides: [], vml: false };
+  const empty = new Map<string, Uint8Array>();
+  const taken = new Set([...sheetParts, ...layer.entries.map((entry) => entry.name), ...tables.entries.map((entry) => entry.name)]);
+  let idmap = 0;
+  const ctx: AnnotationWriteContext = { parts: empty, taken, nextIdmap: () => (idmap += 1), persons: model.persons };
+  model.sheets.forEach((sheet, index) => {
+    const sheetPart = sheetParts[index]!;
+    if (sheet.kind !== "grid" || isChartSheetPart(sheetPart)) {
+      return;
+    }
+    const relsPath = relsPathFor(sheetPart);
+    const holder = [layer.entries, tables.entries].find((entries) => entries.some((entry) => entry.name === relsPath));
+    const relsEntry = holder?.find((entry) => entry.name === relsPath);
+    const write = writeXlsxSheetAnnotations(sheet, sheetPart, relsEntry === undefined ? undefined : decodeUtf8(relsEntry.data), undefined, ctx);
+    if (write === undefined) {
+      return;
+    }
+    layer.worksheets[index] = write.worksheet(layer.worksheets[index]!);
+    for (const [name, text] of write.texts) {
+      if (holder !== undefined && name === relsPath) {
+        holder[holder.findIndex((entry) => entry.name === relsPath)] = { name, data: encode(text) };
+      } else {
+        out.entries.push({ name, data: encode(text) });
+      }
+    }
+    out.overrides.push(...write.added.flatMap((part) => (part.contentType === undefined ? [] : [{ partName: part.partName, contentType: part.contentType }])));
+    out.vml ||= write.vml;
+  });
+  const persons = writeXlsxPersons(model, empty, taken);
+  if (persons !== undefined) {
+    out.persons = persons;
+    out.entries.push({ name: persons.partName, data: encode(persons.xml) });
+    out.overrides.push({ partName: persons.partName, contentType: PERSON_CONTENT_TYPE });
+  }
+  return out;
 }
 
 /** SPEC-132: a chart sheet written from scratch as a chartsheet — one whose
@@ -561,6 +643,12 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   for (const [owner, targets] of tablePlan?.edges ?? []) {
     afterEdges.set(owner, targets);
   }
+  // SPEC-135: the annotation parts and relationships (a save only), over the
+  // sheet `.rels` the drawing and table writes left.
+  const annotationPlan = mode === "write" ? planAnnotationWrites(model, parts, plans, drawingPlan, tablePlan) : undefined;
+  for (const [owner, targets] of annotationPlan?.edges ?? []) {
+    afterEdges.set(owner, targets);
+  }
   const afterReach = reachableFrom([""], afterEdges);
   const skipped = new Set<string>();
   for (const part of sourceReach) {
@@ -607,7 +695,15 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const rId = drawingPlan?.worksheetDrawing.get(partName);
     const drawn = rId === undefined ? bytes : encode(spliceWorksheetDrawing(decodeUtf8(bytes), rId));
     const ids = tablePlan?.tableParts.get(partName);
-    return ids === undefined ? drawn : encode(spliceWorksheetTableParts(decodeUtf8(drawn), ids));
+    const tabled = ids === undefined ? drawn : encode(spliceWorksheetTableParts(decodeUtf8(drawn), ids));
+    // SPEC-135: then `<hyperlinks>` and `<legacyDrawing>`.
+    const annotate = annotationPlan?.worksheets.get(partName);
+    if (annotate === undefined) {
+      return tabled;
+    }
+    const xml = decodeUtf8(tabled);
+    const next = annotate(xml);
+    return next === xml ? tabled : encode(next);
   };
   for (const plan of plans) {
     const active = plan.index === activeIndex;
@@ -658,6 +754,14 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   if (write && styles.changed) {
     table(stylesPath, "styles", "xl/styles.xml", STYLES_CONTENT_TYPE, styles.xml());
   }
+  // SPEC-135: a minted persons part joins the workbook (a retained one is
+  // among the annotation plan's texts).
+  const persons = annotationPlan?.persons;
+  if (persons?.minted) {
+    const id = nextRelationshipId(relIds);
+    relIds.add(id);
+    added.push({ name: persons.partName, data: encode(persons.xml), rel: relationshipXml(id, PERSON_RELATIONSHIP_TYPE, relativeTarget(workbook.path, persons.partName)), contentType: PERSON_CONTENT_TYPE });
+  }
 
   const out: ZipEntryInput[] = [];
   const contentTypesName = "[Content_Types].xml";
@@ -676,11 +780,17 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       tableAdded.push({ name, data });
     }
   }
+  // SPEC-135: the annotation plan's texts win over the drawing and table
+  // writes' (it read the sheet `.rels` they left); its new parts follow.
+  const annotationText = (name: string): Uint8Array | undefined => annotationPlan?.texts.get(name);
+  const knownNames = new Set([...parts.keys(), ...(drawingPlan?.added ?? []).map((entry) => entry.name), ...tableAdded.map((entry) => entry.name)]);
+  const annotationAdded = [...(annotationPlan?.texts ?? [])].filter(([name]) => !knownNames.has(name)).map(([name, data]) => ({ name, data }));
   const appended = (): ZipEntryInput[] => [
     ...generated.map((plan) => ({ name: plan.partName, data: sheetBytes.get(plan.partName)! })),
     ...added.map((part) => ({ name: part.name, data: part.data })),
-    ...(drawingPlan?.added ?? []).map((entry) => ({ name: entry.name, data: tableReplaced.get(entry.name) ?? entry.data })),
-    ...tableAdded,
+    ...(drawingPlan?.added ?? []).map((entry) => ({ name: entry.name, data: annotationText(entry.name) ?? tableReplaced.get(entry.name) ?? entry.data })),
+    ...tableAdded.map((entry) => ({ name: entry.name, data: annotationText(entry.name) ?? entry.data })),
+    ...annotationAdded,
   ];
   // SPEC-131 "Media parts": a model media part is written from the model.
   const modelMedia = (name: string, bytes: Uint8Array): Uint8Array | undefined => {
@@ -697,7 +807,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     }
     let data = bytes;
     if (name === contentTypesName) {
-      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added, drawingPlan, tablePlan?.added ?? []));
+      data = encode(contentTypesFor(decodeUtf8(bytes), parts, skipped, plans, workbook, calcChainRels, added, drawingPlan, tablePlan?.added ?? [], annotationPlan));
     } else if (name === workbook.path) {
       data = encode(workbookXmlFor(workbook, plans, remap, activeIndex, fullCalc, workbookNames(model, plans, write ? filterDatabaseScope(model, parts) : undefined)));
     } else if (name === workbook.relsPath) {
@@ -707,6 +817,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     } else {
       data =
         sheetBytes.get(name) ??
+        annotationText(name) ??
         tableReplaced.get(name) ??
         drawingPlan?.replaced.get(name) ??
         replaced.get(name) ??
@@ -1117,6 +1228,7 @@ function contentTypesFor(
   addedParts: readonly AddedPart[],
   drawingPlan: DrawingPlan | undefined,
   tableParts: readonly string[],
+  annotationPlan: AnnotationPlan | undefined,
 ): string {
   const types = readContentTypes(xml);
   const remove = new Set<string>();
@@ -1145,6 +1257,7 @@ function contentTypesFor(
   }
   add.push(...(drawingPlan?.overrides ?? []));
   add.push(...tableParts.map((partName) => ({ partName, contentType: TABLE_CONTENT_TYPE })));
+  add.push(...(annotationPlan?.overrides ?? []));
   // A part a duplicate added takes its origin's Override (the extension's
   // Default — application/xml for every .xml — would misdeclare it).
   const overridden = new Set(types.overrides.map((entry) => entry.partName));
@@ -1158,7 +1271,87 @@ function contentTypesFor(
     }
   }
   const out = remove.size === 0 && add.length === 0 ? xml : spliceContentTypes(xml, remove, add);
-  return drawingPlan === undefined ? out : spliceDefaults(out, drawingPlan.defaults);
+  const defaults = new Map(drawingPlan?.defaults ?? []);
+  if (annotationPlan?.vml === true && !types.defaults.has("vml")) {
+    defaults.set("vml", VML_CONTENT_TYPE);
+  }
+  return spliceDefaults(out, defaults);
+}
+
+/** SPEC-135: what a save's annotation writes change in the package. */
+interface AnnotationPlan {
+  /** Parts written: comments, VML, threaded parts, sheet `.rels`, a retained persons part. */
+  texts: Map<string, Uint8Array>;
+  /** Each written sheet part's relationship targets after the save. */
+  edges: Map<string, string[]>;
+  /** Each written sheet's `<hyperlinks>`/`<legacyDrawing>` splice. */
+  worksheets: Map<string, (xml: string) => string>;
+  /** Minted parts' Overrides. */
+  overrides: { partName: string; contentType: string }[];
+  /** A VML part was minted (the `vml` Default may be needed). */
+  vml: boolean;
+  persons?: PersonsWrite;
+}
+
+/** Every `dirty` or `annotationsDirty` grid sheet's annotations written
+ * (xlsx/annotations.ts writeXlsxSheetAnnotations) over the sheet `.rels`
+ * the drawing and table writes left, then the persons. A part rewritten to
+ * its source bytes is not one. */
+function planAnnotationWrites(
+  model: SpreadsheetModel,
+  parts: Map<string, Uint8Array>,
+  plans: readonly SheetPlan[],
+  drawingPlan: DrawingPlan | undefined,
+  tablePlan: TableWritePlan | undefined,
+): AnnotationPlan {
+  const plan: AnnotationPlan = { texts: new Map(), edges: new Map(), worksheets: new Map(), overrides: [], vml: false };
+  const taken = new Set([
+    ...parts.keys(),
+    ...plans.map((each) => each.partName),
+    ...(drawingPlan?.added ?? []).map((entry) => entry.name),
+    ...(tablePlan?.texts.keys() ?? []),
+    ...(tablePlan?.rels.keys() ?? []),
+  ]);
+  let idmap = maxVmlIdmap(parts);
+  const ctx: AnnotationWriteContext = { parts, taken, nextIdmap: () => (idmap += 1), persons: model.persons };
+  const relsText = (sheetPart: string): string | undefined => {
+    const relsPath = relsPathFor(sheetPart);
+    const tabled = tablePlan?.rels.get(relsPath);
+    if (tabled !== undefined) {
+      return tabled;
+    }
+    const bytes = drawingPlan?.replaced.get(relsPath) ?? drawingPlan?.added.find((entry) => entry.name === relsPath)?.data ?? parts.get(relsPath);
+    return bytes === undefined ? undefined : decodeUtf8(bytes);
+  };
+  for (const sheetPlan of plans) {
+    if (!annotationsRebuilt(sheetPlan.sheet)) {
+      continue;
+    }
+    const retained = !sheetPlan.generated ? parts.get(sheetPlan.partName) : undefined;
+    const write = writeXlsxSheetAnnotations(sheetPlan.sheet, sheetPlan.partName, relsText(sheetPlan.partName), retained === undefined ? undefined : decodeUtf8(retained), ctx);
+    if (write === undefined) {
+      continue;
+    }
+    for (const [name, text] of write.texts) {
+      const data = encode(text);
+      const source = parts.get(name);
+      if (source === undefined || !equalBytes(source, data)) {
+        plan.texts.set(name, data);
+      }
+    }
+    plan.edges.set(sheetPlan.partName, write.edges);
+    plan.worksheets.set(sheetPlan.partName, write.worksheet);
+    plan.overrides.push(...write.added.flatMap((part) => (part.contentType === undefined ? [] : [{ partName: part.partName, contentType: part.contentType }])));
+    plan.vml ||= write.vml;
+  }
+  const persons = writeXlsxPersons(model, parts, taken);
+  if (persons !== undefined) {
+    plan.persons = persons;
+    if (!persons.minted) {
+      plan.texts.set(persons.partName, encode(persons.xml));
+    }
+  }
+  return plan;
 }
 
 /** `[Content_Types].xml` with a `<Default>` per extension in `defaults`,

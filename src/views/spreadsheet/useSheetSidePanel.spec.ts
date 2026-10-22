@@ -61,6 +61,16 @@ describe("useSheetSidePanel (SPEC-129)", () => {
     expect(restored.activePane.value).toBe("conditionalFormats");
   });
 
+  it("SPEC-135: the comments pane opens beside conditional formatting, its tab titled Comments, and is restored", () => {
+    const panel = useSheetSidePanel();
+    panel.open("conditionalFormats");
+    panel.toggle("comments");
+    expect(panel.activePane.value).toBe("comments");
+    expect(panel.tabs.value.map((tab) => tab.id)).toEqual(["conditionalFormats", "comments"]);
+    expect(SHEET_PANES.comments).toEqual({ title: "Comments", icon: "comments" });
+    expect(useSheetSidePanel().activePane.value).toBe("comments");
+  });
+
   it("tolerates corrupt storage, falling back to the default", () => {
     localStorage.setItem("docu-edit:sheet-side-panel", "not json");
     const panel = useSheetSidePanel();

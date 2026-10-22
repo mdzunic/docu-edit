@@ -10228,3 +10228,719 @@ export async function buildSpec134FindXlsxBytes(): Promise<Uint8Array> {
     },
   });
 }
+
+// --- SPEC-135 spec135-annotations.ods ---------------------------------------
+// LibreOffice Calc 24.8-shaped notes and cell links (SPEC-135 "Fixtures"),
+// the twin of spec135-annotations.xlsx's layout. Tables "Summary" (active)
+// and "Data". Summary: A1 "Metric", B1 "Value"; A2 "Revenue", B2 1200
+// carrying a HIDDEN note (an `office:annotation` with no `office:display`,
+// its caption geometry, `dc:creator`, `dc:date` and one `text:p`); A4
+// "Costs", B4 800 carrying a SHOWN note (`office:display="true"`, two
+// paragraphs); A7 "Example site" — a `text:a` to https://example.com/ with
+// an `office:title`; B7 "See data" — a `text:a` to the internal `#Data.A1`;
+// C9 one paragraph holding TWO links ("One and Two"). Data: A1 "Header",
+// A10 "Target". Each annotation names Calc's caption styles (gr1, P1) and
+// sits first in its cell, before the cell's own paragraph, as Calc writes
+// it; links are `text:a` with `xlink:href` then `xlink:type` (Calc's URL
+// field order). Empty rows are repeated runs and every table ends with
+// Calc's trailing runs to XFD and row 1,048,576.
+
+/** content.xml's automatic styles: Calc's column, row and table styles and
+ * the annotations' caption (graphic) and paragraph styles. */
+const SPEC135_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#000000" draw:fill="solid" ` +
+  `draw:fill-color="#ffffc0" draw:auto-grow-height="true" draw:auto-grow-width="false" fo:padding-top="0.0398in" fo:padding-bottom="0.0398in" ` +
+  `fo:padding-left="0.0398in" fo:padding-right="0.0398in" draw:shadow="visible" draw:shadow-offset-x="0.0236in" draw:shadow-offset-y="0.0236in" ` +
+  `draw:shadow-color="#000000"/><style:paragraph-properties style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-left="0in" fo:margin-right="0in" fo:margin-top="0in" ` +
+  `fo:margin-bottom="0in" fo:text-indent="0in" fo:border="none"/><style:text-properties style:font-name="Liberation Sans" fo:font-size="9pt"/></style:style>` +
+  `</office:automatic-styles>`;
+
+/** One Calc annotation: `office:display` (shown only), the caption's style
+ * names and geometry, then creator, date and one `text:p` per paragraph. */
+function spec135OdsAnnotation(note: {
+  readonly visible: boolean;
+  readonly author: string;
+  readonly createdAt: string;
+  readonly paragraphs: readonly string[];
+  readonly geometry: string;
+}): string {
+  return (
+    `<office:annotation${note.visible ? ` office:display="true"` : ""} draw:style-name="gr1" draw:text-style-name="P1" ${note.geometry}>` +
+    `<dc:creator>${xmlEscape(note.author)}</dc:creator><dc:date>${note.createdAt}</dc:date>` +
+    note.paragraphs.map((paragraph) => `<text:p text:style-name="P1">${xmlEscape(paragraph)}</text:p>`).join("") +
+    `</office:annotation>`
+  );
+}
+
+const SPEC135_ODS_NOTE_B2 = {
+  a1: "B2",
+  author: "Alex Kim",
+  createdAt: "2026-03-01T09:00:00",
+  paragraphs: ["Q3 figure, unaudited."],
+  text: "Q3 figure, unaudited.",
+  visible: false,
+  /** svg:width × svg:height 1.6in × 0.5in at 96 px to the inch. */
+  box: { widthPx: 153.6, heightPx: 48 },
+  geometry: `svg:width="1.6in" svg:height="0.5in" svg:x="1.95in" svg:y="0.0417in" draw:caption-point-x="-0.0799in" draw:caption-point-y="0.2in"`,
+} as const;
+
+const SPEC135_ODS_NOTE_B4 = {
+  a1: "B4",
+  author: "Alex Kim",
+  createdAt: "2026-03-02T14:30:00",
+  paragraphs: ["Always shown", "Second line"],
+  text: "Always shown\nSecond line",
+  visible: true,
+  /** svg:width × svg:height 2.5in × 1in. */
+  box: { widthPx: 240, heightPx: 96 },
+  geometry: `svg:width="2.5in" svg:height="1in" svg:x="1.95in" svg:y="0.3976in" draw:caption-point-x="-0.0799in" draw:caption-point-y="0.2in"`,
+} as const;
+
+/** A7's, B7's and C9's paragraphs, verbatim. */
+const SPEC135_ODS_LINK_A7 = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple" office:title="Open the example site">Example site</text:a></text:p>`;
+const SPEC135_ODS_LINK_B7 = `<text:p><text:a xlink:href="#Data.A1" xlink:type="simple">See data</text:a></text:p>`;
+const SPEC135_ODS_LINKS_C9 =
+  `<text:p><text:a xlink:href="https://one.example/" xlink:type="simple">One</text:a> and ` +
+  `<text:a xlink:href="https://two.example/" xlink:type="simple">Two</text:a></text:p>`;
+
+/** What spec135-annotations.ods holds, for the unit, round-trip and e2e specs. */
+export const SPEC135_ANNOTATIONS_ODS = {
+  file: "spec135-annotations.ods",
+  title: "Annotations",
+  tableNames: ["Summary", "Data"],
+  activeTable: "Summary",
+  activeSheetIndex: 0,
+  /** Every stored cell per table, A1 → the reader's value. */
+  values: {
+    Summary: { A1: "Metric", B1: "Value", A2: "Revenue", B2: 1200, A4: "Costs", B4: 800, A7: "Example site", B7: "See data", C9: "One and Two" },
+    Data: { A1: "Header", A10: "Target" },
+  },
+  /** Summary's notes: B2 hidden (no `office:display`), B4 shown; each
+   * annotation's verbatim element is `xml`. */
+  notes: {
+    B2: { ...SPEC135_ODS_NOTE_B2, xml: spec135OdsAnnotation(SPEC135_ODS_NOTE_B2) },
+    B4: { ...SPEC135_ODS_NOTE_B4, xml: spec135OdsAnnotation(SPEC135_ODS_NOTE_B4) },
+  },
+  /** Summary's links: the cell, its verbatim paragraph and the modelled
+   * target (place locations canonical, SPEC-119). */
+  links: {
+    A7: {
+      a1: "A7",
+      href: "https://example.com/",
+      title: "Open the example site",
+      target: { kind: "url", href: "https://example.com/" },
+      tooltip: "Open the example site",
+      paragraph: SPEC135_ODS_LINK_A7,
+    },
+    B7: { a1: "B7", href: "#Data.A1", target: { kind: "place", location: "Data!A1" }, paragraph: SPEC135_ODS_LINK_B7 },
+    /** ONE paragraph, TWO links — the model keeps the first (SPEC-135's sanctioned delta once the table is rewritten). */
+    C9: {
+      a1: "C9",
+      href: "https://one.example/",
+      target: { kind: "url", href: "https://one.example/" },
+      second: { href: "https://two.example/", text: "Two" },
+      paragraph: SPEC135_ODS_LINKS_C9,
+    },
+  },
+  /** Rows written per table before Calc's trailing empty run to row 1048576. */
+  rowsWritten: { Summary: 9, Data: 10 },
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: ["mimetype", "meta.xml", "settings.xml", "content.xml", "Thumbnails/thumbnail.png", "styles.xml", "manifest.rdf", "META-INF/manifest.xml"],
+} as const;
+
+/** A Calc float cell carrying an annotation, first, before its paragraph. */
+const spec135OdsNoted = (value: number, note: string): string =>
+  `<table:table-cell office:value-type="float" office:value="${value}" calcext:value-type="float">${note}<text:p>${value}</text:p></table:table-cell>`;
+/** A Calc string cell holding a verbatim (linked) paragraph. */
+const spec135OdsLinked = (paragraph: string): string => `<table:table-cell office:value-type="string" calcext:value-type="string">${paragraph}</table:table-cell>`;
+
+/** spec135-annotations.ods's "Summary" table. */
+function spec135OdsSummaryTable(): string {
+  const O = SPEC135_ANNOTATIONS_ODS;
+  const V = O.values.Summary;
+  const N = O.notes;
+  const L = O.links;
+  const noted = spec135OdsNoted;
+  const linked = spec135OdsLinked;
+  return (
+    `<table:table table:name="${O.tableNames[0]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString(V.A1) + loString(V.B1) + loEmpty(16382)) +
+    loRow(loString(V.A2) + noted(V.B2, N.B2.xml) + loEmpty(16382)) +
+    loRow(loEmpty(16384)) +
+    loRow(loString(V.A4) + noted(V.B4, N.B4.xml) + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 2) +
+    loRow(linked(L.A7.paragraph) + linked(L.B7.paragraph) + loEmpty(16382)) +
+    loRow(loEmpty(16384)) +
+    loRow(loEmpty(2) + linked(L.C9.paragraph) + loEmpty(16381)) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.rowsWritten.Summary) +
+    `</table:table>`
+  );
+}
+
+/** spec135-annotations.ods's "Data" table: the internal link's destination. */
+function spec135OdsDataTable(): string {
+  const O = SPEC135_ANNOTATIONS_ODS;
+  const V = O.values.Data;
+  return (
+    `<table:table table:name="${O.tableNames[1]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString(V.A1) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 8) +
+    loRow(loString(V.A10) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.rowsWritten.Data) +
+    `</table:table>`
+  );
+}
+
+export async function buildSpec135AnnotationsOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC135_ANNOTATIONS_ODS;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC135_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${spec135OdsSummaryTable()}${spec135OdsDataTable()}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.values.Summary).length + Object.keys(O.values.Data).length;
+  return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
+}
+// --- end SPEC-135 spec135-annotations.ods ---------------------------------------
+
+// ============================================================================
+// SPEC-135 — notes, comments and hyperlinks on cells
+// ============================================================================
+// --- SPEC-135 spec135-annotations.xlsx --------------------------------------
+// Excel 365-shaped: "Summary" (first, active) and "Data". Summary carries a
+// rich-text note on B2 whose first run is the bold author name (hidden), a
+// shown note on B4 with a custom box, an unresolved thread with two replies
+// on D2 and a resolved one on E2 — each mirrored, as Excel 365 writes every
+// thread, as a placeholder legacy comment (author `tc={threadId}`) with a
+// hidden VML note shape — a VML part that also holds a form-control checkbox
+// (its own `_x0000_t201` shapetype, `x:ClientData ObjectType="Checkbox"`,
+// the worksheet's `<controls>` and its ctrlProps part), the workbook's
+// persons part, and hyperlinks: a range link, an external one with a
+// tooltip, an internal `location` one with Excel's `display`, a `mailto:`
+// one and a `javascript:` one (kept, never opened). Linked cells wear the
+// Hyperlink cell style, as Excel gives them. SPEC135_ANNOTATIONS_XLSX
+// records the facts the unit and e2e specs use.
+
+const SPEC135_PERSON_SAM = "{6D1E2F30-4152-4637-8A9B-0C1D2E3F4051}";
+const SPEC135_PERSON_ALEX = "{6D1E2F30-4152-4637-8A9B-0C1D2E3F4052}";
+const SPEC135_THREAD_D2 = "{7A8B9C0D-1E2F-4A3B-8C4D-5E6F7A8B9C01}";
+const SPEC135_THREAD_E2 = "{7A8B9C0D-1E2F-4A3B-8C4D-5E6F7A8B9C11}";
+const SPEC135_PERSON_REL = "http://schemas.microsoft.com/office/2017/10/relationships/person";
+const SPEC135_THREADED_COMMENT_REL = "http://schemas.microsoft.com/office/2017/10/relationships/threadedComment";
+/** The preamble Excel 365 writes ahead of a thread's placeholder text
+ * (SPEC-135 "The thread placeholder"). */
+const SPEC135_PLACEHOLDER_PREAMBLE =
+  "[Threaded comment]\n\nYour version of Excel allows you to read this threaded comment; however, any edits to it will get removed if the file " +
+  "is opened in a newer version of Excel. Learn more: https://go.microsoft.com/fwlink/?linkid=870924\n\n";
+
+/** What spec135-annotations.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC135_ANNOTATIONS_XLSX = {
+  file: "spec135-annotations.xlsx",
+  title: "Annotations",
+  sheetNames: ["Summary", "Data"],
+  activeSheetIndex: 0,
+  sheets: {
+    Summary: {
+      partName: "xl/worksheets/sheet1.xml",
+      rels: "xl/worksheets/_rels/sheet1.xml.rels",
+      uid: "{35A1C0DE-1350-4A1B-9C2D-3E4F5A6B7C81}",
+      dimension: "A1:E8",
+    },
+    Data: { partName: "xl/worksheets/sheet2.xml", uid: "{35A1C0DE-1350-4A1B-9C2D-3E4F5A6B7C82}", dimension: "A1:A10" },
+  },
+  /** Every stored cell, per sheet. */
+  values: {
+    Summary: {
+      A1: "Metric",
+      B1: "Value",
+      A2: "Revenue",
+      B2: 1200,
+      D2: "Check",
+      E2: "Rounded",
+      A4: "Costs",
+      B4: 800,
+      A6: "Report",
+      B6: "Q3",
+      A7: "Example site",
+      B7: "See data",
+      C7: "Details",
+      A8: "Email the team",
+      B8: "Run script",
+    },
+    Data: { A1: "Header", A10: "Target" },
+  },
+  /** The cells on the Hyperlink cell style's xf. */
+  hyperlinkStyle: { xf: 1, cells: ["A6", "B6", "A7", "B7", "A8", "B8"] },
+  /** xl/persons/person.xml, in file order — related from the WORKBOOK. */
+  persons: [
+    { personId: SPEC135_PERSON_SAM, displayName: "Sam Lee", userId: "sam.lee@example.com", providerId: "AD" },
+    { personId: SPEC135_PERSON_ALEX, displayName: "Alex Kim", userId: "alex.kim@example.com", providerId: "AD" },
+  ],
+  /** Summary's legacy notes (comments part + VML note shapes). */
+  notes: {
+    B2: {
+      author: "Alex Kim",
+      text: "Alex Kim:\nQ3 figure, unaudited.",
+      /** The comment's runs: the bold author name, then the body. */
+      runs: [
+        { text: "Alex Kim:", bold: true },
+        { text: "\nQ3 figure, unaudited.", bold: false },
+      ],
+      visible: false,
+      uid: "{8B9C0D1E-2F3A-4B4C-9D5E-6F7A8B9C0D21}",
+      shapeId: "_x0000_s1025",
+      anchor: "2, 15, 0, 10, 4, 15, 4, 4",
+    },
+    B4: {
+      author: "Alex Kim",
+      text: "Always shown",
+      visible: true,
+      uid: "{8B9C0D1E-2F3A-4B4C-9D5E-6F7A8B9C0D22}",
+      shapeId: "_x0000_s1026",
+      anchor: "2, 15, 2, 10, 5, 8, 7, 7",
+      /** The shape's custom size, width:150pt;height:75pt. */
+      sizePt: { width: 150, height: 75 },
+      box: { widthPx: 200, heightPx: 100 },
+    },
+  },
+  /** Summary's Excel 365 threads, in the threaded part's order. */
+  threads: {
+    D2: {
+      threadId: SPEC135_THREAD_D2,
+      resolved: false,
+      messages: [
+        { id: SPEC135_THREAD_D2, personId: SPEC135_PERSON_SAM, author: "Sam Lee", text: "Where does this number come from?", dT: "2026-03-02T10:15:00.00" },
+        { id: "{7A8B9C0D-1E2F-4A3B-8C4D-5E6F7A8B9C02}", personId: SPEC135_PERSON_ALEX, author: "Alex Kim", text: "From the Q3 ledger.", dT: "2026-03-02T11:40:00.00" },
+        { id: "{7A8B9C0D-1E2F-4A3B-8C4D-5E6F7A8B9C03}", personId: SPEC135_PERSON_SAM, author: "Sam Lee", text: "Thanks, that helps.", dT: "2026-03-03T08:05:00.00" },
+      ],
+      /** The placeholder's hidden VML note shape. */
+      shapeId: "_x0000_s1027",
+      anchor: "4, 15, 0, 10, 6, 15, 4, 4",
+    },
+    E2: {
+      threadId: SPEC135_THREAD_E2,
+      resolved: true,
+      messages: [
+        { id: SPEC135_THREAD_E2, personId: SPEC135_PERSON_ALEX, author: "Alex Kim", text: "Rounded to the nearest hundred.", dT: "2026-03-04T14:20:00.00" },
+        { id: "{7A8B9C0D-1E2F-4A3B-8C4D-5E6F7A8B9C12}", personId: SPEC135_PERSON_SAM, author: "Sam Lee", text: "Agreed.", dT: "2026-03-04T15:00:00.00" },
+      ],
+      shapeId: "_x0000_s1028",
+      anchor: "5, 15, 0, 10, 7, 15, 4, 4",
+    },
+  },
+  /** The placeholder preamble and author form, as the file writes them. */
+  placeholder: { preamble: SPEC135_PLACEHOLDER_PREAMBLE, authorPrefix: "tc=" },
+  /** xl/comments1.xml's `<authors>`, in order (append-only on write). */
+  authors: ["Alex Kim", `tc=${SPEC135_THREAD_D2}`, `tc=${SPEC135_THREAD_E2}`],
+  /** Summary's `<hyperlinks>`, in file order; `target` the relationship's
+   * (TargetMode="External"). */
+  hyperlinks: [
+    { ref: "A6:B6", rId: "rId1", target: "https://example.com/report", uid: "{9C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E31}" },
+    { ref: "A7", rId: "rId2", target: "https://example.com/", tooltip: "Open the example site", uid: "{9C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E32}" },
+    { ref: "B7", location: "Data!A1", display: "See data", uid: "{9C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E33}" },
+    { ref: "A8", rId: "rId3", target: "mailto:team@example.com", uid: "{9C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E34}" },
+    { ref: "B8", rId: "rId4", target: "javascript:alert(1)", uid: "{9C0D1E2F-3A4B-4C5D-8E6F-7A8B9C0D1E35}" },
+  ],
+  /** The empty cell the e2e adds a note to (Shift+F2), the unlinked one it
+   * links (Ctrl/Cmd+K), and the place it links it to. */
+  emptyCell: "D4",
+  unlinkedCell: "C7",
+  placeTarget: { sheet: "Data", ref: "A10" },
+  /** The form-control checkbox: its VML shape (named by its `id`, its shape
+   * id in `o:spid`), anchored F10:G11, and its ctrlProps part. */
+  checkbox: {
+    name: "Check Box 1",
+    vmlId: "Check_x0020_Box_x0020_1",
+    shapeId: "_x0000_s1029",
+    controlShapeId: 1029,
+    anchor: "5, 0, 9, 0, 6, 40, 10, 10",
+    ctrlProp: "xl/ctrlProps/ctrlProp1.xml",
+    rId: "rId6",
+  },
+  /** Summary's other relationships (xl/worksheets/_rels/sheet1.xml.rels). */
+  vml: { partName: "xl/drawings/vmlDrawing1.vml", rId: "rId5", idmap: 1 },
+  comments: { partName: "xl/comments1.xml", rId: "rId7" },
+  threadedComments: { partName: "xl/threadedComments/threadedComment1.xml", rId: "rId8" },
+  person: { partName: "xl/persons/person.xml", rId: "rId6", type: SPEC135_PERSON_REL },
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    "xl/drawings/vmlDrawing1.vml",
+    "xl/comments1.xml",
+    "xl/threadedComments/threadedComment1.xml",
+    "xl/ctrlProps/ctrlProp1.xml",
+    "xl/persons/person.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** spec135-annotations.xlsx's shared strings, in Excel's first-use order. */
+const SPEC135_STRINGS = [
+  "Metric",
+  "Value",
+  "Revenue",
+  "Check",
+  "Rounded",
+  "Costs",
+  "Report",
+  "Q3",
+  "Example site",
+  "See data",
+  "Details",
+  "Email the team",
+  "Run script",
+  "Header",
+  "Target",
+] as const;
+
+/** Excel 365's styles part with the Hyperlink cell style (builtinId 8):
+ * its font (underlined, theme colour 10) and the cellXfs xf 1 on it. */
+const SPEC135_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="2" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font>` +
+  `<font><u/><sz val="11"/><color theme="10"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyNumberFormat="0" applyFill="0" applyBorder="0" applyAlignment="0" applyProtection="0"/></cellStyleXfs>` +
+  `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="1"/></cellXfs>` +
+  `<cellStyles count="2"><cellStyle name="Hyperlink" xfId="1" builtinId="8"/><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+  `<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+/** The worksheet root Excel 365 writes for a sheet holding form controls:
+ * `xdr` and `x14` declared beside the usual namespaces. */
+function spec135WorksheetOpen(uid: string): string {
+  return (
+    `<worksheet xmlns="${MAIN_NS}" xmlns:r="${REL_NS}" xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" ` +
+    `xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ` +
+    `mc:Ignorable="x14ac xr xr2 xr3" xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" ` +
+    `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision" ` +
+    `xmlns:xr2="http://schemas.microsoft.com/office/spreadsheetml/2015/revision2" ` +
+    `xmlns:xr3="http://schemas.microsoft.com/office/spreadsheetml/2016/revision3" xr:uid="${uid}">`
+  );
+}
+
+/** A sheet's `<sheetData>` from the facts, row by row in column order. */
+function spec135SheetData(sheet: keyof typeof SPEC135_ANNOTATIONS_XLSX.values, spans: string): string {
+  const F = SPEC135_ANNOTATIONS_XLSX;
+  const values: Readonly<Record<string, string | number>> = F.values[sheet];
+  const styled: readonly string[] = sheet === "Summary" ? F.hyperlinkStyle.cells : [];
+  const cells = Object.entries(values)
+    .map(([ref, value]) => {
+      const [, letters, digits] = /^([A-Z]+)(\d+)$/.exec(ref)!;
+      return { ref, value, row: Number(digits), letters: letters! };
+    })
+    .toSorted((a, b) => a.row - b.row || (a.letters < b.letters ? -1 : a.letters > b.letters ? 1 : 0));
+  const rows = new Map<number, string>();
+  for (const { ref, value, row } of cells) {
+    const style = styled.includes(ref) ? F.hyperlinkStyle.xf : undefined;
+    const xml =
+      typeof value === "number" ? numberCell(ref, value, style) : sharedCell(ref, SPEC135_STRINGS.indexOf(value as (typeof SPEC135_STRINGS)[number]), style);
+    rows.set(row, (rows.get(row) ?? "") + xml);
+  }
+  return [...rows].map(([row, xml]) => excelRow(row, spans, xml)).join("");
+}
+
+/** A threaded comment's placeholder text, as Excel 365 writes it. */
+function spec135PlaceholderText(thread: (typeof SPEC135_ANNOTATIONS_XLSX.threads)[keyof typeof SPEC135_ANNOTATIONS_XLSX.threads]): string {
+  const [opening, ...replies] = thread.messages;
+  return SPEC135_PLACEHOLDER_PREAMBLE + `Comment:\n    ${opening.text}` + replies.map((reply) => `\nReply:\n    ${reply.text}`).join("");
+}
+
+/** A note run's `<rPr>`: Excel's note font (Tahoma 9, indexed colour 81). */
+function spec135RunFont(bold: boolean): string {
+  return `<rPr>${bold ? "<b/>" : ""}<sz val="9"/><color indexed="81"/><rFont val="Tahoma"/><family val="2"/></rPr>`;
+}
+
+/** xl/comments1.xml: the authors, then the comments in cell order — B2's
+ * rich note (the bold author run, then the body in Excel's note font), the
+ * two thread placeholders and B4's plain note. */
+function spec135CommentsXml(): string {
+  const F = SPEC135_ANNOTATIONS_XLSX;
+  const author = (name: string): number => (F.authors as readonly string[]).indexOf(name);
+  const B2 = F.notes.B2;
+  const B4 = F.notes.B4;
+  const placeholder = (ref: "D2" | "E2"): string =>
+    `<comment ref="${ref}" authorId="${author(`tc=${F.threads[ref].threadId}`)}" shapeId="0" xr:uid="${F.threads[ref].threadId}">` +
+    `<text><t>${xmlText(spec135PlaceholderText(F.threads[ref]))}</t></text></comment>`;
+  return (
+    XML_DECLARATION +
+    `<comments xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="xr" ` +
+    `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+    `<authors>${F.authors.map((name) => `<author>${xmlText(name)}</author>`).join("")}</authors><commentList>` +
+    `<comment ref="B2" authorId="${author(B2.author)}" shapeId="0" xr:uid="${B2.uid}"><text>` +
+    B2.runs.map((run) => `<r>${spec135RunFont(run.bold)}<t${run.text.startsWith("\n") ? ` xml:space="preserve"` : ""}>${xmlText(run.text)}</t></r>`).join("") +
+    `</text></comment>` +
+    placeholder("D2") +
+    placeholder("E2") +
+    `<comment ref="B4" authorId="${author(B4.author)}" shapeId="0" xr:uid="${B4.uid}"><text><t>${xmlText(B4.text)}</t></text></comment>` +
+    `</commentList></comments>`
+  );
+}
+
+/** One VML note shape as Excel writes it (CRLF-joined lines). */
+function spec135NoteShape(options: { id: string; z: number; marginLeft: string; marginTop: string; widthPt: number; heightPt: number; visible: boolean; anchor: string; row: number; col: number }): string[] {
+  return [
+    `<v:shape id="${options.id}" type="#_x0000_t202" style='position:absolute;`,
+    `  margin-left:${options.marginLeft};margin-top:${options.marginTop};width:${options.widthPt}pt;height:${options.heightPt}pt;z-index:${options.z};`,
+    `  visibility:${options.visible ? "visible" : "hidden"}' fillcolor="#ffffe1" o:insetmode="auto">`,
+    `  <v:fill color2="#ffffe1"/>`,
+    `  <v:shadow color="black" obscured="t"/>`,
+    `  <v:path o:connecttype="none"/>`,
+    `  <v:textbox style='mso-direction-alt:auto'>`,
+    `   <div style='text-align:left'></div>`,
+    `  </v:textbox>`,
+    `  <x:ClientData ObjectType="Note">`,
+    `   <x:MoveWithCells/>`,
+    `   <x:SizeWithCells/>`,
+    `   <x:Anchor>`,
+    `    ${options.anchor}</x:Anchor>`,
+    `   <x:AutoFill>False</x:AutoFill>`,
+    `   <x:Row>${options.row}</x:Row>`,
+    `   <x:Column>${options.col}</x:Column>`,
+    ...(options.visible ? [`   <x:Visible/>`] : []),
+    `  </x:ClientData>`,
+    ` </v:shape>`,
+  ];
+}
+
+/** xl/drawings/vmlDrawing1.vml — Excel's legacy drawing: the shape layout,
+ * the note shapetype, the four note shapes (B2 hidden, B4 shown with its
+ * custom box, D2's and E2's hidden placeholder shapes), then the checkbox's
+ * own shapetype and shape. No declaration, CRLF line breaks, each element
+ * opening on the line its predecessor closes (as Excel writes VML). */
+function spec135VmlXml(): string {
+  const F = SPEC135_ANNOTATIONS_XLSX;
+  const note = (id: string, z: number, marginLeft: string, anchor: string, row: number, col: number): string[] =>
+    spec135NoteShape({ id, z, marginLeft, marginTop: "7.5pt", widthPt: 108, heightPt: 59.25, visible: false, anchor, row, col });
+  const segments: string[][] = [
+    [
+      `<xml xmlns:v="urn:schemas-microsoft-com:vml"`,
+      ` xmlns:o="urn:schemas-microsoft-com:office:office"`,
+      ` xmlns:x="urn:schemas-microsoft-com:office:excel">`,
+      ` <o:shapelayout v:ext="edit">`,
+      `  <o:idmap v:ext="edit" data="${F.vml.idmap}"/>`,
+      ` </o:shapelayout>`,
+    ],
+    [
+      `<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202"`,
+      `  path="m,l,21600r21600,l21600,xe">`,
+      `  <v:stroke joinstyle="miter"/>`,
+      `  <v:path gradientshapeok="t" o:connecttype="rect"/>`,
+      ` </v:shapetype>`,
+    ],
+    note(F.notes.B2.shapeId, 1, "107.25pt", F.notes.B2.anchor, 1, 1),
+    spec135NoteShape({
+      id: F.notes.B4.shapeId,
+      z: 2,
+      marginLeft: "107.25pt",
+      marginTop: "36.75pt",
+      widthPt: F.notes.B4.sizePt.width,
+      heightPt: F.notes.B4.sizePt.height,
+      visible: true,
+      anchor: F.notes.B4.anchor,
+      row: 3,
+      col: 1,
+    }),
+    note(F.threads.D2.shapeId, 3, "203.25pt", F.threads.D2.anchor, 1, 3),
+    note(F.threads.E2.shapeId, 4, "251.25pt", F.threads.E2.anchor, 1, 4),
+    [
+      `<v:shapetype id="_x0000_t201" coordsize="21600,21600" o:spt="201"`,
+      `  path="m,l,21600r21600,l21600,xe">`,
+      `  <v:stroke joinstyle="miter"/>`,
+      `  <v:path shadowok="f" o:extrusionok="f" strokeok="f" fillok="f" o:connecttype="rect"/>`,
+      `  <o:lock v:ext="edit" shapetype="t"/>`,
+      ` </v:shapetype>`,
+    ],
+    [
+      `<v:shape id="${F.checkbox.vmlId}" o:spid="${F.checkbox.shapeId}" type="#_x0000_t201"`,
+      `  style='position:absolute;margin-left:240pt;margin-top:130.5pt;width:78pt;height:22.5pt;`,
+      `  z-index:5;mso-wrap-style:tight' filled="f" fillcolor="window [65]" stroked="f"`,
+      `  strokecolor="windowText [64]" o:insetmode="auto">`,
+      `  <v:path shadowok="t" strokeok="t" fillok="t"/>`,
+      `  <o:lock v:ext="edit" rotation="t"/>`,
+      `  <v:textbox style='mso-direction-alt:auto' o:singleclick="f">`,
+      `   <div style='text-align:left'><font face="Segoe UI" size="160" color="auto">${F.checkbox.name}</font></div>`,
+      `  </v:textbox>`,
+      `  <x:ClientData ObjectType="Checkbox">`,
+      `   <x:SizeWithCells/>`,
+      `   <x:Anchor>`,
+      `    ${F.checkbox.anchor}</x:Anchor>`,
+      `   <x:AutoFill>False</x:AutoFill>`,
+      `   <x:AutoLine>False</x:AutoLine>`,
+      `   <x:TextVAlign>Center</x:TextVAlign>`,
+      `   <x:Checked>1</x:Checked>`,
+      `   <x:NoThreeD/>`,
+      `  </x:ClientData>`,
+      ` </v:shape>`,
+    ],
+    [`</xml>`],
+  ];
+  const lines: string[] = [];
+  for (const segment of segments) {
+    if (lines.length > 0) {
+      lines[lines.length - 1] += segment[0]!;
+      lines.push(...segment.slice(1));
+    } else {
+      lines.push(...segment);
+    }
+  }
+  return lines.join("\r\n");
+}
+
+/** xl/threadedComments/threadedComment1.xml: each thread's root, then its
+ * replies (`parentId`), the resolved root `done="1"`. */
+function spec135ThreadedCommentsXml(): string {
+  const F = SPEC135_ANNOTATIONS_XLSX;
+  const thread = (ref: "D2" | "E2"): string => {
+    const T = F.threads[ref];
+    return T.messages
+      .map(
+        (message, index) =>
+          `<threadedComment ref="${ref}" dT="${message.dT}" personId="${message.personId}" id="${message.id}"` +
+          (index === 0 ? (T.resolved ? ` done="1"` : "") : ` parentId="${T.threadId}"`) +
+          `><text>${xmlText(message.text)}</text></threadedComment>`,
+      )
+      .join("");
+  };
+  return (
+    XML_DECLARATION +
+    `<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments" xmlns:x="${MAIN_NS}">` +
+    thread("D2") +
+    thread("E2") +
+    `</ThreadedComments>`
+  );
+}
+
+/** xl/persons/person.xml — the thread authors. */
+function spec135PersonsXml(): string {
+  return (
+    XML_DECLARATION +
+    `<personList xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments" xmlns:x="${MAIN_NS}">` +
+    SPEC135_ANNOTATIONS_XLSX.persons
+      .map((person) => `<person displayName="${xmlEscape(person.displayName)}" id="${person.personId}" userId="${xmlEscape(person.userId)}" providerId="${person.providerId}"/>`)
+      .join("") +
+    `</personList>`
+  );
+}
+
+export async function buildSpec135AnnotationsXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC135_ANNOTATIONS_XLSX;
+  const S = F.sheets;
+  const C = F.checkbox;
+  const hyperlinks =
+    `<hyperlinks>` +
+    F.hyperlinks
+      .map(
+        (link) =>
+          `<hyperlink ref="${link.ref}"` +
+          ("rId" in link ? ` r:id="${link.rId}"` : "") +
+          ("location" in link ? ` location="${link.location}"` : "") +
+          ("display" in link ? ` display="${xmlEscape(link.display)}"` : "") +
+          ("tooltip" in link ? ` tooltip="${xmlEscape(link.tooltip)}"` : "") +
+          ` xr:uid="${link.uid}"/>`,
+      )
+      .join("") +
+    `</hyperlinks>`;
+  // Excel 2010+ writes a form control twice: its VML shape and, in an
+  // x14-gated `<controls>`, the control's ctrlProps relationship and anchor.
+  const controls =
+    `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="x14"><controls>` +
+    `<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice Requires="x14">` +
+    `<control shapeId="${C.controlShapeId}" r:id="${C.rId}" name="${C.name}"><controlPr defaultSize="0" autoFill="0" autoLine="0" autoPict="0">` +
+    `<anchor moveWithCells="1"><from><xdr:col>5</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>9</xdr:row><xdr:rowOff>0</xdr:rowOff></from>` +
+    `<to><xdr:col>6</xdr:col><xdr:colOff>381000</xdr:colOff><xdr:row>10</xdr:row><xdr:rowOff>127000</xdr:rowOff></to></anchor></controlPr></control>` +
+    `</mc:Choice></mc:AlternateContent></controls></mc:Choice></mc:AlternateContent>`;
+  const summary =
+    XML_DECLARATION +
+    spec135WorksheetOpen(S.Summary.uid) +
+    `<dimension ref="${S.Summary.dimension}"/><sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/><sheetData>${spec135SheetData("Summary", "1:5")}</sheetData>` +
+    hyperlinks +
+    SPEC117_PAGE_MARGINS +
+    `<legacyDrawing r:id="${F.vml.rId}"/>` +
+    controls +
+    `</worksheet>`;
+  const data =
+    XML_DECLARATION +
+    worksheetOpen(S.Data.uid.slice(1, -1)) +
+    `<dimension ref="${S.Data.dimension}"/><sheetViews><sheetView workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/><sheetData>${spec135SheetData("Data", "1:1")}</sheetData>` +
+    SPEC117_PAGE_MARGINS +
+    `</worksheet>`;
+  const worksheets = [summary, data];
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${SPEC135_STRINGS.length}">` +
+    SPEC135_STRINGS.map((text) => `<si><t>${xmlText(text)}</t></si>`).join("") +
+    `</sst>`;
+  const rel = (id: string, type: string, target: string, external = false): string =>
+    `<Relationship Id="${id}" Type="${type}" Target="${xmlEscape(target)}"${external ? ` TargetMode="External"` : ""}/>`;
+  const sheetRels =
+    XML_DECLARATION +
+    `<Relationships xmlns="${PKG_REL_NS}">` +
+    rel(F.threadedComments.rId, SPEC135_THREADED_COMMENT_REL, "../threadedComments/threadedComment1.xml") +
+    rel(F.comments.rId, `${REL_TYPE}/comments`, "../comments1.xml") +
+    rel(C.rId, `${REL_TYPE}/ctrlProp`, "../ctrlProps/ctrlProp1.xml") +
+    rel(F.vml.rId, `${REL_TYPE}/vmlDrawing`, "../drawings/vmlDrawing1.vml") +
+    F.hyperlinks
+      .filter((link) => "rId" in link)
+      .map((link) => ("rId" in link ? rel(link.rId, `${REL_TYPE}/hyperlink`, link.target, true) : ""))
+      .toReversed()
+      .join("") +
+    `</Relationships>`;
+  const ctrlProp =
+    XML_DECLARATION + `<formControlPr xmlns="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" objectType="CheckBox" checked="Checked" lockText="1" noThreeD="1"/>`;
+
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: [
+      { name: "Summary", xml: summary },
+      { name: "Data", xml: data },
+    ],
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC135_STYLES,
+    defaults: [`<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>`],
+    additions: {
+      parts: [
+        part(S.Summary.rels, sheetRels),
+        part(F.vml.partName, spec135VmlXml()),
+        part(F.comments.partName, spec135CommentsXml()),
+        part(F.threadedComments.partName, spec135ThreadedCommentsXml()),
+        part(C.ctrlProp, ctrlProp),
+        part(F.person.partName, spec135PersonsXml()),
+      ],
+      relationships: [rel(F.person.rId, F.person.type, "persons/person.xml")],
+      overrides: [
+        `<Override PartName="/${F.comments.partName}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`,
+        `<Override PartName="/${F.threadedComments.partName}" ContentType="application/vnd.ms-excel.threadedcomments+xml"/>`,
+        `<Override PartName="/${C.ctrlProp}" ContentType="application/vnd.ms-excel.controlproperties+xml"/>`,
+        `<Override PartName="/${F.person.partName}" ContentType="application/vnd.ms-excel.person+xml"/>`,
+      ],
+    },
+  });
+}
+// --- end SPEC-135 spec135-annotations.xlsx ----------------------------------

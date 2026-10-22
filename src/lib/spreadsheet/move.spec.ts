@@ -572,6 +572,10 @@ function withStructure(id: string): SpreadsheetModel {
           ],
         },
       ]);
+    case "notes":
+      return model([{ ...base, notes: [{ noteId: "n-A1", ref: { row: 0, col: 0 }, author: "Ada", text: "Check" }] }]);
+    case "hyperlinks":
+      return model([{ ...base, hyperlinks: [{ linkId: "h-A1", range: range(0, 0, 1, 1), target: { kind: "url", href: "https://example.com" } }] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -598,6 +602,10 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
     }
     case "names":
       return m.names[0]?.formula;
+    case "notes":
+      return s.notes?.[0]?.ref;
+    case "hyperlinks":
+      return s.hyperlinks?.[0]?.range;
     case "tables":
       return s.tables?.[0]?.ref;
     default:
@@ -608,8 +616,8 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
 describe("MOVE_ADJUSTERS — the registry contract", () => {
   const MOVE: RangeMove = { fromSheetId: "s1", from: range(0, 0, 1, 1), toSheetId: "s1", toTop: 10, toLeft: 3 };
 
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-132's charts and SPEC-133's names and tables", () => {
-    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats", "validations", "charts", "names", "tables"]);
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-132's charts, SPEC-133's names and tables and SPEC-135's notes and hyperlinks", () => {
+    expect(MOVE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual(["cells", "formulas", "merges", "retained", "autofilter", "conditionalFormats", "validations", "charts", "names", "tables", "notes", "hyperlinks"]);
   });
 
   for (const adjuster of MOVE_ADJUSTERS) {
@@ -644,6 +652,8 @@ describe("MOVE_ADJUSTERS — the registry contract", () => {
             charts: "Sheet1!$D$11:$D$12",
             names: "Sheet1!$D$11:$E$12",
             tables: range(10, 3, 11, 4),
+            notes: { row: 10, col: 3 },
+            hyperlinks: range(10, 3, 11, 4),
           }[adjuster.id],
         );
       });

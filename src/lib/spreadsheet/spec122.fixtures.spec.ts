@@ -271,11 +271,20 @@ describe("spec122-shapes.ods (LibreOffice-shaped)", () => {
     expect(model.odsContentEnvelope!.prefix).toContain(`<table:content-validation table:name="${O.data.validation.name}"`);
   });
 
-  it("captures the annotation and the link paragraph — and nothing else; the validation name is modelled (SPEC-130)", async () => {
+  it("captures nothing it models: the annotation is a note and the link paragraph a link (SPEC-135); the validation name is modelled (SPEC-130)", async () => {
     const model = await read();
     const data = sheetNamed(model, "Data");
-    expect(cellsWith(data, "preservedXml")).toEqual({ [O.data.annotation.a1]: O.data.annotation.xml });
-    expect(cellsWith(data, "preservedText")).toEqual({ [O.data.link.a1]: O.data.link.paragraph });
+    // SPEC-135: the annotation is lifted out of preservedXml into a note, and
+    // the plain text:a is modelled inline content (a link), not preserved text.
+    expect(cellsWith(data, "preservedXml")).toEqual({});
+    expect(cellsWith(data, "preservedText")).toEqual({});
+    expect((data.notes ?? []).map((note) => [formatA1(note.ref), note.author, note.text, note.source?.odsAnnotation])).toEqual([
+      [O.data.annotation.a1, O.data.annotation.creator, O.data.annotation.text, O.data.annotation.xml],
+    ]);
+    expect((data.hyperlinks ?? []).map((link) => [formatA1({ row: link.range.top, col: link.range.left }), link.target])).toEqual([
+      [O.data.link.a1, { kind: "url", href: O.data.link.href }],
+    ]);
+    expect(getCell(data, parseA1(O.data.link.a1)!.row, 0)?.value).toBe(O.data.link.text);
     // SPEC-130: B16's table:content-validation-name is no longer a preserved
     // attribute — it is the Data sheet's rule.
     expect(cellsWith(data, "preservedAttrs")).toEqual({});

@@ -103,6 +103,13 @@
 //   → `names` (ods/namedExpressions.ts, the normative source: workbook
 //   names first, then each table's, rebased to A1). A
 //   `table:database-range` never becomes a table.
+// - SPEC-135: a cell's first `office:annotation` child → a note in
+//   `Sheet.notes` (lifted out of its preservedXml: a cell holding only a
+//   note is not stored), and the first `text:a` in its paragraphs → a link
+//   in `Sheet.hyperlinks` over that cell (such a `text:a` is modelled
+//   inline content, so it no longer makes the paragraphs `preservedText`)
+//   — every repetition of a repeated run, each counted against the budget
+//   (ods/annotations.ts, the normative source).
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -142,6 +149,7 @@ import { readOdsAutoFilters } from "./databaseRanges";
 import { readOdsNames } from "./namedExpressions";
 import { isDrawingElement, OdsMediaReader, readOdsDrawings, type OdsDrawingSource } from "./drawingXml";
 import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved } from "./tableXml";
+import { isModelledOdsLink, OdsAnnotationCollector, odsWireLink, type OdsWireLink } from "./annotations";
 import { buildGridMetrics } from "../geometry";
 import type { MediaPart } from "../../core/media";
 
@@ -166,6 +174,10 @@ interface PendingTable {
   /** SPEC-131: the drawing elements met — `table:shapes` children and
    * cells' draw:* children — in document order. */
   drawings: OdsDrawingSource[];
+  /** SPEC-135: the cells' notes and first links (ods/annotations.ts). */
+  annotations: OdsAnnotationCollector;
+  /** The open row's `table:number-rows-repeated`. */
+  rowRepeat: number;
 }
 
 /** A stretch of a cell's text sharing one span font. */
@@ -206,6 +218,12 @@ interface PendingCell {
   childIsDrawing: boolean;
   /** A paragraph holds inline content the model does not. */
   inline: boolean;
+  /** SPEC-135: the open direct child is an `office:annotation`; the cell's
+   * first one, verbatim (a note, never preservedXml); its paragraphs'
+   * first `text:a` (a link). */
+  childIsAnnotation: boolean;
+  annotation: string | undefined;
+  link: OdsWireLink | null;
 }
 
 /** The cell attributes the model holds or the writer regenerates (SPEC-122
@@ -426,6 +444,11 @@ function modelledInline(
   if (local === "s" || local === "tab" || local === "line-break") {
     return true;
   }
+  // SPEC-135: a link the model holds (the cell's first; a later one's
+  // target is not modelled — ods/annotations.ts).
+  if (isModelledOdsLink(ns, local, attrs)) {
+    return true;
+  }
   if (local !== "span") {
     return false;
   }
@@ -570,6 +593,14 @@ export function readOdsContent(
     if (validation !== undefined) {
       table!.validations.cell(validation, reader.colIndex, repeatCount(done.attrs, "number-columns-repeated"));
     }
+    if (done.annotation !== undefined || done.link !== null) {
+      // SPEC-135: every repetition carries the note and the link, each counted.
+      const cols = repeatCount(done.attrs, "number-columns-repeated");
+      if (!budget.take(OdsAnnotationCollector.positions(reader.rowIndex, table!.rowRepeat, reader.colIndex, cols))) {
+        return false;
+      }
+      table!.annotations.cell(reader.rowIndex, table!.rowRepeat, reader.colIndex, cols, done.annotation, done.link);
+    }
     return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula, cellPreserved(done, xml));
   };
 
@@ -602,6 +633,8 @@ export function readOdsContent(
       // SPEC-131: under the finished table's geometry (in-cell offsets are sheet-absolute).
       sheet.drawings = readOdsDrawings(done.drawings, buildGridMetrics(sheet), { declarations, styles: styleBook(), media, uncachedCharts });
     }
+    // SPEC-135: the cells' notes and links.
+    Object.assign(sheet, done.annotations.result());
     sheets.push(sheet);
     validationRegions.push(done.validations.result());
     previousTableEnd = end;
@@ -630,6 +663,9 @@ export function readOdsContent(
         if (depth === inside.level + 1 && inside.childStart >= 0) {
           if (inside.childIsDrawing) {
             table!.drawings.push({ xml: xml.slice(inside.childStart, event.end), cell: { row: table!.reader.rowIndex, col: table!.reader.colIndex } });
+          } else if (inside.childIsAnnotation && inside.annotation === undefined) {
+            // SPEC-135: the cell's note (ods/annotations.ts), never its preservedXml.
+            inside.annotation = xml.slice(inside.childStart, event.end);
           } else {
             captureChild(inside, xml, inside.childIsParagraph, inside.childStart, event.end);
           }
@@ -654,9 +690,12 @@ export function readOdsContent(
         }
         // SPEC-131: a drawing is the sheet's (Sheet.drawings), anchored to this cell.
         const drawing = isDrawingElement(event.ns, event.local);
+        const annotation = event.ns === OFFICE_NAMESPACE && event.local === "annotation";
         if (event.selfClosing) {
           if (drawing) {
             table!.drawings.push({ xml: xml.slice(event.start, event.end), cell: { row: table!.reader.rowIndex, col: table!.reader.colIndex } });
+          } else if (annotation && inside.annotation === undefined) {
+            inside.annotation = xml.slice(event.start, event.end);
           } else {
             captureChild(inside, xml, paragraph, event.start, event.end);
           }
@@ -664,6 +703,7 @@ export function readOdsContent(
           inside.childStart = event.start;
           inside.childIsParagraph = paragraph;
           inside.childIsDrawing = drawing;
+          inside.childIsAnnotation = annotation;
         }
       } else if (inside.childIsParagraph && inside.childStart >= 0 && !inside.inline && !modelledInline(event.ns, event.local, event.attrs, styleBook)) {
         inside.inline = true;
@@ -696,6 +736,9 @@ export function readOdsContent(
           appendText(inside, "\t");
         } else if (event.local === "line-break") {
           appendText(inside, "\n");
+        } else if (event.local === "a" && inside.link === null) {
+          // SPEC-135: the cell's first link (ods/annotations.ts).
+          inside.link = odsWireLink(event.attrs);
         } else if (event.local === "span" && !event.selfClosing) {
           const outer = inside.spans.at(-1)?.font;
           const styleName = scanAttr(event.attrs, "style-name", TEXT_NAMESPACE);
@@ -825,6 +868,8 @@ export function readOdsContent(
             protected: scanAttr(event.attrs, "protected", TABLE_NAMESPACE) === "true",
             validations: new ValidationRegions(),
             drawings: [],
+            annotations: new OdsAnnotationCollector(() => declarations),
+            rowRepeat: 1,
           };
           if (tableStyle.tabColor !== undefined) {
             pending.tabColor = tableStyle.tabColor;
@@ -841,6 +886,7 @@ export function readOdsContent(
           table.reader.column(event.attrs);
         } else if (event.local === "table-row" && table !== null && !inRow) {
           table.reader.startRow(event.attrs);
+          table.rowRepeat = repeatCount(event.attrs, "number-rows-repeated");
           table.validations.startRow(table.reader.rowIndex, repeatCount(event.attrs, "number-rows-repeated"));
           if (event.selfClosing) {
             table.validations.endRow();
@@ -873,6 +919,9 @@ export function readOdsContent(
             childIsParagraph: false,
             childIsDrawing: false,
             inline: false,
+            childIsAnnotation: false,
+            annotation: undefined,
+            link: null,
           };
           if (event.selfClosing) {
             if (!finishCell(pending)) {

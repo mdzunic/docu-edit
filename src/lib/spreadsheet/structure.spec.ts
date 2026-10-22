@@ -1055,6 +1055,10 @@ function withStructure(id: string): SpreadsheetModel {
       return { ...model([base]), names: [{ name: "Margin", formula: "Sheet1!$A$6" }] };
     case "tables":
       return model([{ ...base, tables: [contractTable(range(5, 0, 7, 1))] }]);
+    case "notes":
+      return model([{ ...base, notes: [{ noteId: "n-A6", ref: { row: 5, col: 0 }, author: "Ada", text: "Check" }] }]);
+    case "hyperlinks":
+      return model([{ ...base, hyperlinks: [{ linkId: "h-A6", range: range(5, 0, 7, 1), target: { kind: "url", href: "https://example.com" } }] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
@@ -1105,13 +1109,17 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       return m.names[0]?.formula;
     case "tables":
       return s.tables?.[0]?.ref;
+    case "notes":
+      return s.notes?.[0]?.ref;
+    case "hyperlinks":
+      return s.hyperlinks?.[0]?.range;
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-131's drawings, SPEC-132's charts and SPEC-133's names and tables", () => {
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-131's drawings, SPEC-132's charts, SPEC-133's names and tables and SPEC-135's notes and hyperlinks", () => {
     expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual([
       "rows",
       "formulas",
@@ -1127,6 +1135,8 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
       "charts",
       "names",
       "tables",
+      "notes",
+      "hyperlinks",
     ]);
   });
 
@@ -1170,6 +1180,8 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             charts: "Sheet1!$A$7",
             names: "Sheet1!$A$7",
             tables: range(6, 0, 8, 1),
+            notes: { row: 6, col: 0 },
+            hyperlinks: range(6, 0, 8, 1),
           }[adjuster.id],
         );
       });

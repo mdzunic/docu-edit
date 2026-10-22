@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import SpreadsheetMenuBar from "./SpreadsheetMenuBar.vue";
 import { asSpreadsheetMenuState, FILTER_OFF_REASON, SHEET_MENU_COMMANDS } from "../../lib/spreadsheet/menuState";
+import { isMacPlatform } from "../../lib/core/platform";
 import { shortcutLabel } from "../../lib/shortcuts";
 import { SHEET_SHORTCUTS } from "../../views/spreadsheet/sheetShortcuts";
 
@@ -161,8 +162,11 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
       "sheet-menu-insert-shape",
       "sheet-menu-insert-chart",
       "sheet-menu-insert-table",
+      "sheet-menu-insert-link",
+      "sheet-menu-insert-note",
+      "sheet-menu-insert-comment",
     ]);
-    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart", "Table…"]);
+    expect(menu.findAll(".menu-item-label").map((label) => label.text())).toEqual(["Image…", "Shapes", "Chart", "Table…", "Link…", "Note", "Comment"]);
     await wrapper.get('[data-testid="sheet-menu-insert-image"]').trigger("click");
     expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertImage]);
     await wrapper.get('[data-testid="sheet-menu-insert-shape"]').trigger("click");
@@ -187,6 +191,55 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
     expect(SHEET_MENU_COMMANDS.insertTable).toBe("insert.table");
     const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
     expect(foreign.get('[data-testid="sheet-menu-insert-table"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("SPEC-135: Insert ▸ Link… routes insert.link with Ctrl/Cmd+K and is disabled off a grid sheet", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: true } } });
+    const item = wrapper.get('[data-testid="sheet-menu-insert-link"]');
+    expect(item.attributes("disabled")).toBeUndefined();
+    expect(item.get(".menu-shortcut").text()).toBe(shortcutLabel("sheet.insertLink", isMacPlatform(), SHEET_SHORTCUTS));
+    await item.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertLink]);
+    expect(SHEET_MENU_COMMANDS.insertLink).toBe("insert.link");
+    const foreign = mount(SpreadsheetMenuBar, { props: { state: { hasGrid: false } } });
+    expect(foreign.get('[data-testid="sheet-menu-insert-link"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("SPEC-135: Insert ▸ Note (Shift+F2) and Insert ▸ Comment (Ctrl+Alt+M) route insert.note and insert.comment; Comment is disabled with its reason in an .ods workbook", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: {} } });
+    const note = wrapper.get('[data-testid="sheet-menu-insert-note"]');
+    const comment = wrapper.get('[data-testid="sheet-menu-insert-comment"]');
+    expect(note.get(".menu-shortcut").text()).toBe(shortcutLabel("sheet.note", isMacPlatform(), SHEET_SHORTCUTS));
+    expect(comment.get(".menu-shortcut").text()).toBe(shortcutLabel("sheet.newComment", isMacPlatform(), SHEET_SHORTCUTS));
+    await note.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertNote]);
+    await comment.trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.insertComment]);
+    expect(SHEET_MENU_COMMANDS).toMatchObject({ insertNote: "insert.note", insertComment: "insert.comment" });
+    const ods = mount(SpreadsheetMenuBar, { props: { state: { canComment: false, commentDisabledReason: "OpenDocument spreadsheets support notes only" } } });
+    const odsComment = ods.get('[data-testid="sheet-menu-insert-comment"]');
+    expect(odsComment.attributes("disabled")).toBeDefined();
+    expect(odsComment.attributes("title")).toBe("OpenDocument spreadsheets support notes only");
+    expect(ods.get('[data-testid="sheet-menu-insert-note"]').attributes("disabled")).toBeUndefined();
+    const csv = mount(SpreadsheetMenuBar, { props: { state: { canAnnotate: false, canComment: false } } });
+    expect(csv.get('[data-testid="sheet-menu-insert-note"]').attributes("disabled")).toBeDefined();
+    expect(csv.get('[data-testid="sheet-menu-show-all-notes"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("SPEC-135: View ends with Comments and Show all notes, checkboxes routing view.comments and view.show-all-notes", async () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: {} } });
+    const view = wrapper.get('[data-testid="menu-view"]');
+    const items = view.findAll('[role="menuitemcheckbox"]').map((item) => item.attributes("data-testid"));
+    expect(items.slice(-2)).toEqual(["sheet-menu-comments", "sheet-menu-show-all-notes"]);
+    expect(wrapper.get('[data-testid="sheet-menu-comments"]').attributes("aria-checked")).toBe("false");
+    await wrapper.get('[data-testid="sheet-menu-comments"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.comments]);
+    await wrapper.get('[data-testid="sheet-menu-show-all-notes"]').trigger("click");
+    expect(wrapper.emitted("command")?.at(-1)).toEqual([SHEET_MENU_COMMANDS.showAllNotes]);
+    const on = mount(SpreadsheetMenuBar, { props: { state: { commentsOpen: true, showAllNotes: true } } });
+    expect(on.get('[data-testid="sheet-menu-comments"]').attributes("aria-checked")).toBe("true");
+    expect(on.get('[data-testid="sheet-menu-show-all-notes"]').attributes("aria-checked")).toBe("true");
+    expect(asSpreadsheetMenuState(undefined)).toMatchObject({ canAnnotate: true, canComment: true, commentDisabledReason: "", commentsOpen: false, showAllNotes: false });
   });
 
   it("Arrange offers the four z-order moves and Alt Text…, disabled without a selected drawing and at the z-order's ends", async () => {

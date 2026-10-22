@@ -32,12 +32,15 @@
 // of the catalogue, read-only, or an Excel chartex chart (a `foreign` "Chart"
 // drawing) — is named on its own, `Chart "Chart 5" on Data`, as is a chart
 // sheet left a foreign placeholder (`Chart sheet "Chart1"`). A row yields
-// item-level labels by returning them from its marker.
+// item-level labels by returning them from its marker. SPEC-135 deleted the
+// "comments" and "hyperlinks" rows: notes, threads and links cross through
+// the model (stripRetention's crossAnnotations — a thread becomes a note on
+// the way to .ods, its replies as replyParagraphText paragraphs).
 import { isModelledChart } from "./charts";
 import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
 import type { SheetDrawing, SpreadsheetModel } from "./model";
-import { partTextOf, readSourceWorkbook, relationshipKind, relationshipsOf, type PartLookup } from "./xlsx/package";
+import { partTextOf, readSourceWorkbook, type PartLookup } from "./xlsx/package";
 
 /** What a marker looks at: the source model and its retained parts. */
 export interface ConversionSource {
@@ -73,14 +76,6 @@ function worksheetTexts(source: ConversionSource): string[] {
 
 function anyWorksheetHas(fragment: string): Marker {
   return (source) => worksheetTexts(source).some((text) => text.includes(fragment));
-}
-
-/** Whether a worksheet of the model has a relationship of `kind`. */
-function worksheetRelationship(kind: string): Marker {
-  return ({ model, parts }) =>
-    model.sheets.some(
-      (sheet) => sheet.partName !== undefined && relationshipsOf(parts, sheet.partName).some((rel) => relationshipKind(rel.type) === kind),
-    );
 }
 
 function anyPart(pattern: RegExp): Marker {
@@ -188,12 +183,10 @@ export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
     ods: anyPart(/^(?:Basic|Scripts)\//),
   },
   { label: "drawings", xlsx: droppedDrawings, ods: droppedDrawings },
-  { label: "comments", xlsx: worksheetRelationship("comments"), ods: anyTableHas("<office:annotation") },
   { label: "some conditional formatting", xlsx: someConditionalFormatting(true), ods: someConditionalFormatting(false) },
   { label: "named ranges", xlsx: xlsxNamedRanges, ods: (source) => envelopeHas("<table:named-expressions")(source) || anyTableHas("<table:named-expressions")(source) },
   { label: "tables", xlsx: anyPart(/^xl\/tables\/[^/]+\.xml$/), ods: odsTables },
   { label: "colour and icon filters", xlsx: verbatimFilters, ods: verbatimFilters },
-  { label: "hyperlinks", xlsx: anyWorksheetHas("<hyperlinks"), ods: anyTableHas("<text:a") },
   { label: "pivot tables", xlsx: anyPart(/^xl\/pivotTables\//), ods: envelopeHas("<table:data-pilot-tables") },
   { label: "page setup", xlsx: (source) => anyWorksheetHas("<pageSetup")(source) || anyWorksheetHas("<headerFooter")(source), ods: odsPageSetup },
   { label: "untranslatable formulas", xlsx: untranslatableFormulas, ods: untranslatableFormulas },

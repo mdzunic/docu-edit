@@ -98,6 +98,7 @@ import {
   DEFAULT_SPREADSHEET_TITLE,
   isCsvFormat,
   type Cell,
+  type CellThread,
   type DefinedName,
   type DrawingAnchor,
   type Row,
@@ -108,6 +109,7 @@ import {
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
+import { crossAnnotations, remapPlaceSheets } from "./annotations";
 import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
 import { objectsReferenced } from "./ods/package";
 import { SPREADSHEET_READER_VERSION } from "./open";
@@ -121,7 +123,7 @@ import {
   withX14Placement as placeValidation,
   type DataValidation,
 } from "./validation";
-import { copyXlsxSheetParts, hasOnlySafeRelationships, removeOwnedParts, renameTablesInFormula } from "./xlsx/duplicate";
+import { copyXlsxSheetParts, hasOnlySafeRelationships, mintedId, removeOwnedParts, renameTablesInFormula } from "./xlsx/duplicate";
 import { LazyParts, relationshipKind, relationshipsOf, targetPart } from "./xlsx/package";
 
 export { UNCONVERTIBLE_CONTENT, type UnconvertibleRow } from "./unconvertible";
@@ -464,6 +466,8 @@ export function renameSheet(model: SpreadsheetModel, index: number, name: string
 function remapNamesAndTables(model: SpreadsheetModel, remap: SheetRemap): void {
   mapNameFormulas(model, (defined) => remapSheetReferences(defined.formula, remap));
   mapTableFormulas(model, (text) => remapSheetReferences(text, remap));
+  // SPEC-135: every hyperlink's place location, beside Cell.formula.
+  remapPlaceSheets(model, remap);
 }
 
 /** Why the sheet at `index` cannot be duplicated, or null. */
@@ -498,6 +502,12 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   }
   copy.conditionalFormats = copiedFormats(sheetFormats(copy), model.format);
   copy.validations = copiedValidations(sheetValidations(copy), model.format, name);
+  if (copy.threads?.length) {
+    // SPEC-135: a thread id is unique in the workbook — the copy's threads
+    // get fresh ones, and its comment parts are rebuilt from the model.
+    copy.threads = copiedThreads(copy.threads, copy.id);
+    copy.annotationsDirty = true;
+  }
   let partRenames: ReadonlyMap<string, string> | undefined;
   if (partName !== undefined || sourceXml !== undefined) {
     copy.copiedFrom = source.copiedFrom ?? sourceNameOf(model, source);
@@ -704,6 +714,18 @@ function copiedValidations(rules: readonly DataValidation[], format: Spreadsheet
   });
 }
 
+/** SPEC-135: a copy's threads, without their source, every thread and
+ * message id re-minted as xlsx/duplicate.ts re-mints the copied threaded
+ * part's (mintedId of the copy's sheet id and the original id), so the model
+ * and the copy's parts — its placeholders' `tc={id}` authors included —
+ * name the same threads. */
+function copiedThreads(threads: readonly CellThread[], copySheetId: string): CellThread[] {
+  return threads.map((thread) => {
+    const messages = thread.messages.map(({ source: _source, ...message }) => ({ ...message, messageId: mintedId(copySheetId, message.messageId) }));
+    return { ...thread, threadId: messages[0]?.messageId ?? mintedId(copySheetId, thread.threadId), messages };
+  });
+}
+
 /** A copy's autofilter (see the module header). */
 function copiedAutoFilter(filter: AutoFilter, format: SpreadsheetFormat): AutoFilter {
   const { odsName: _name, sourceXml, ...rest } = filter;
@@ -862,17 +884,33 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     packageVariant: _variant,
     csv: _csv,
     odsOrphanValidations: _orphans,
+    persons: _persons,
     ...rest
   } = model;
   const kept = model.sheets.filter((sheet) => sheet.kind !== "foreign");
   const media = new CrossedMedia(model);
   const sheets: Sheet[] = kept.map((sheet) => {
-    const { partName: _part, sourceXml: _source, copiedFrom: _copied, dirty: _dirty, drawings, drawingPart: _drawingPart, drawingsDirty: _drawingsDirty, ...fields } = sheet;
+    const {
+      partName: _part,
+      sourceXml: _source,
+      copiedFrom: _copied,
+      dirty: _dirty,
+      drawings,
+      drawingPart: _drawingPart,
+      drawingsDirty: _drawingsDirty,
+      notes: _notes,
+      threads: _threads,
+      hyperlinks: _hyperlinks,
+      annotationsDirty: _annotationsDirty,
+      ...fields
+    } = sheet;
     const crossed: Sheet = {
       ...fields,
       rows: crossRows(sheet.rows, model.format),
       conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name),
       validations: crossValidations(sheetValidations(sheet), model.format, sheet.name),
+      // SPEC-135: notes, threads and links cross field for field, without their sources.
+      ...crossAnnotations(sheet, model.format),
     };
     if (fields.tables) {
       // SPEC-133: the table parts stay behind with the package.
@@ -906,9 +944,12 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
     activeSheetIndex = sheets.findIndex((sheet) => sheet.visibility === "visible");
   }
   const { media: _media, ...crossedRest } = rest;
+  // SPEC-135: the thread authors cross to an .xlsx, without their source.
+  const persons = model.format === "xlsx" ? (model.persons ?? []).map(({ source: _personSource, ...person }) => person) : [];
   return {
     ...crossedRest,
     ...(media.parts.length > 0 ? { media: media.parts } : {}),
+    ...(persons.length > 0 ? { persons } : {}),
     opaque: [],
     sheets,
     activeSheetIndex,

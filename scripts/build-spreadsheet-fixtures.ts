@@ -293,5 +293,28 @@ import { buildSpec134FindXlsxBytes } from "../src/lib/spreadsheet/fixtures/build
 writeFileSync(join(fixturesDir, "spec134-find.xlsx"), await buildSpec134FindXlsxBytes());
 // --- end SPEC-134 ---------------------------------------------------------------
 
+// --- SPEC-135 spec135-annotations.ods --------------------------------------------
+// - spec135-annotations.ods — LibreOffice-shaped notes (a hidden one with no
+//                             office:display, a shown one with two
+//                             paragraphs) and cell links (external with an
+//                             office:title, internal #Data.A1, one paragraph
+//                             holding two links)
+import { buildSpec135AnnotationsOdsBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec135-annotations.ods"), await buildSpec135AnnotationsOdsBytes());
+// --- end SPEC-135 spec135-annotations.ods ----------------------------------------
+
+// --- SPEC-135 spec135-annotations.xlsx -------------------------------------------
+// - spec135-annotations.xlsx — Excel 365-shaped notes (a rich-text one led by
+//                              the bold author, a shown one with a custom
+//                              box), two threads with their placeholders and
+//                              persons, a VML part also holding a form-control
+//                              checkbox, and range/external/internal/mailto:/
+//                              javascript: hyperlinks with a tooltip
+import { buildSpec135AnnotationsXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec135-annotations.xlsx"), await buildSpec135AnnotationsXlsxBytes());
+// --- end SPEC-135 spec135-annotations.xlsx ---------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

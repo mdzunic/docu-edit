@@ -274,10 +274,11 @@ describe("reading ods drawings", () => {
     expect(named(sheet, "Pic").sourceXml).toBe(PIC);
   });
 
-  it("keeps drawings out of preservedXml — an annotation stays — and stores no cell holding only a drawing", async () => {
+  it("keeps drawings out of preservedXml — an annotation is the cell's note (SPEC-135) — and stores no cell holding only a drawing", async () => {
     const model = await open();
     const sheet = model.sheets[0]!;
-    expect(getCell(sheet, 1, 3)).toEqual({ col: 3, value: "x", preservedXml: ANNOTATION });
+    expect(getCell(sheet, 1, 3)).toEqual({ col: 3, value: "x" });
+    expect(sheet.notes?.map((note) => [note.ref, note.text, note.source?.odsAnnotation])).toEqual([[{ row: 1, col: 3 }, "note", ANNOTATION]]);
     expect(getCell(sheet, 0, 2)).toBeUndefined();
     expect(getCell(sheet, 1, 0)).toBeUndefined();
     expect(model.media).toEqual([{ mediaId: "Pictures/a.png", contentType: "image/png", data: expect.any(String) }]);

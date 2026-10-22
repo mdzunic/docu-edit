@@ -32,7 +32,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { bytesToBase64, decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
-import { getCell } from "./address";
+import { getCell, parseA1 } from "./address";
 import {
   buildMiniBookOdsBytes,
   buildMiniBookXlsxBytes,
@@ -71,6 +71,7 @@ import {
   type ReaderUpgrade,
 } from "./open";
 import { duplicateSheet } from "./sheets";
+import { buildSpec135AnnotationsOdsBytes, buildSpec135AnnotationsXlsxBytes, SPEC135_ANNOTATIONS_ODS } from "./fixtures/build";
 
 /** The shipped upgrade list, restored after each test that swaps it. */
 const SHIPPED_UPGRADES = [...READER_UPGRADES];
@@ -162,9 +163,9 @@ afterEach(() => {
 });
 
 describe("reader versions", () => {
-  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11, SPEC-131 to 12 and SPEC-132 to 13, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(14);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11, SPEC-131 to 12, SPEC-132 to 13, SPEC-133 to 14 and SPEC-135 to 15, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)", () => {
+    expect(SPREADSHEET_READER_VERSION).toBe(15);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -398,8 +399,10 @@ function patchPart(parts: Map<string, Uint8Array>, name: string, edits: [string,
   parts.set(name, encodeText(text));
 }
 
-/** An ODS annotation (a note) as LibreOffice writes one inside a cell. */
-const annotation = (text: string): string => `<office:annotation><dc:creator>Fixture Author</dc:creator><text:p>${text}</text:p></office:annotation>`;
+/** A cell child the model does not hold, which SPEC-122 keeps verbatim in
+ * preservedXml: a list. (SPEC-135 models a cell's office:annotation as a
+ * note, lifted out of preservedXml — ods/annotations.ts.) */
+const preservedChild = (text: string): string => `<text:list><text:list-item><text:p>${text}</text:p></text:list-item></text:list>`;
 
 const SPEC122_CELL_FIELDS = ["sstIndex", "preservedAttrs", "preservedXml", "preservedText"] as const;
 
@@ -533,25 +536,26 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
       [`<table:table table:name="Inventory" table:style-name="ta1">`, `<table:table table:name="Inventory" table:style-name="ta1" table:protected="true">`],
       [
         `<text:p>Widget</text:p>`,
-        `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`,
+        // SPEC-135 models a text:a with only href, type and title: the target frame keeps this one preserved text.
+        `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple" office:target-frame-name="_blank" xlink:show="new">Widget</text:a></text:p>`,
       ],
       [
         `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float">`,
         // SPEC-130 models table:content-validation-name: xml:id is the unmodelled attribute.
         `<table:table-cell office:value-type="float" office:value="4" calcext:value-type="float" xml:id="cell-B2">`,
       ],
-      [`<text:p>Gadget</text:p>`, `${annotation("Edited away")}<text:p>Gadget</text:p>`],
-      [`<text:p>Done</text:p>`, `${annotation("Kept")}<text:p>Done</text:p>`],
+      [`<text:p>Gadget</text:p>`, `${preservedChild("Edited away")}<text:p>Gadget</text:p>`],
+      [`<text:p>Done</text:p>`, `${preservedChild("Kept")}<text:p>Done</text:p>`],
     ]);
     const read = await readSpreadsheetBytes(new Uint8Array(0), "ods", "SPEC-122 shapes", parts);
     const inventory = read.sheets[1]!;
     expect(read.structureProtected).toBe(true);
     expect(inventory.protection).toEqual({ sheet: true });
-    const link = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple">Widget</text:a></text:p>`;
+    const link = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple" office:target-frame-name="_blank" xlink:show="new">Widget</text:a></text:p>`;
     expect(getCell(inventory, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
     expect(getCell(inventory, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' xml:id="cell-B2"' });
-    expect(getCell(inventory, 2, 0)).toMatchObject({ value: "Gadget", preservedXml: annotation("Edited away") });
-    expect(getCell(inventory, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
+    expect(getCell(inventory, 2, 0)).toMatchObject({ value: "Gadget", preservedXml: preservedChild("Edited away") });
+    expect(getCell(inventory, 22, 0)).toMatchObject({ value: "Done", preservedXml: preservedChild("Kept") });
 
     // Stored by SPEC-120's reader; then A3 was edited on the (dirty) Inventory.
     const stored = spec120Record(read, [1], (model) => setStoredValue(model, 1, [2, 0], "Gizmo"));
@@ -563,7 +567,7 @@ describe("SPEC-122's reader step: a dirty sheet regains its preserved content an
     expect(sheet.protection).toEqual({ sheet: true });
     expect(getCell(sheet, 1, 0)).toMatchObject({ value: "Widget", preservedText: link });
     expect(getCell(sheet, 1, 1)).toMatchObject({ value: 4, preservedAttrs: ' xml:id="cell-B2"' });
-    expect(getCell(sheet, 22, 0)).toMatchObject({ value: "Done", preservedXml: annotation("Kept") });
+    expect(getCell(sheet, 22, 0)).toMatchObject({ value: "Done", preservedXml: preservedChild("Kept") });
     // The edited cell keeps its edit and regains nothing.
     expect(getCell(sheet, 2, 0)!.value).toBe("Gizmo");
     expect(getCell(sheet, 2, 0)!.preservedXml).toBeUndefined();
@@ -1204,5 +1208,80 @@ describe("SPEC-133's reader step: defined names and tables", () => {
     const odsSheet: Sheet = { ...ods.sheets[1]!, dirty: true };
     await step.upgradeDirtySheet(ods, odsSheet, decodedPartBytes(ods.opaque), ods);
     expect(odsSheet.tables).toBeUndefined();
+  });
+});
+
+// --- SPEC-135 ----------------------------------------------------------------------------------
+
+/** `read` as SPEC-133's reader (version 14) stored it — no notes, threads,
+ * hyperlinks or persons (none existed), stable sheet ids. An ods cell held
+ * its annotation in SPEC-122's preservedXml (`odsAnnotations`, by A1). */
+function storedAtVersion14(read: SpreadsheetModel, odsAnnotations: Record<string, string> = {}): SpreadsheetModel {
+  const { persons: _persons, ...rest } = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+  const stored = { ...rest, readerVersion: 14 } as SpreadsheetModel;
+  stored.sheets = stored.sheets.map(({ notes: _notes, threads: _threads, hyperlinks: _links, annotationsDirty: _dirty, ...sheet }, index) => ({ ...sheet, id: `stored-sheet-${index}` }) as Sheet);
+  const summary = stored.sheets[0]!;
+  for (const [a1, xml] of Object.entries(odsAnnotations)) {
+    const at = parseA1(a1)!;
+    summary.rows = summary.rows.map((row) =>
+      row.index !== at.row ? row : { ...row, cells: row.cells.map((cell) => (cell.col === at.col ? { ...cell, preservedXml: xml } : cell)) },
+    );
+  }
+  return stored;
+}
+
+/** A sheet's annotation arrays as the step's tests compare them. */
+const annotationsOf = (sheet: Sheet) => ({ notes: sheet.notes, threads: sheet.threads, hyperlinks: sheet.hyperlinks });
+
+describe("SPEC-135's reader step: notes, threads and hyperlinks", () => {
+  it("moved the reader to version 15 with its step from 14", () => {
+    expect(READER_UPGRADES.at(-1)!.from).toBe(14);
+    expect(SPREADSHEET_READER_VERSION).toBe(15);
+  });
+
+  it("xlsx: a clean version-14 record re-reads whole and gains every note, thread, link and person", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec135AnnotationsXlsxBytes(), "xlsx", "SPEC-135");
+    const stored = storedAtVersion14(read);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    expect(upgraded.persons).toEqual(read.persons);
+    expect(upgraded.sheets.map(annotationsOf)).toEqual(read.sheets.map(annotationsOf));
+    expect(upgraded.sheets.some((sheet) => sheet.annotationsDirty || sheet.dirty)).toBe(false);
+  });
+
+  it("xlsx: an edited version-14 record — the dirty sheet reads notes and threads from its rels' parts in opaque and links from its retained worksheet XML; persons are read once; nothing is marked annotationsDirty", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec135AnnotationsXlsxBytes(), "xlsx", "SPEC-135");
+    const stored = storedAtVersion14(read);
+    stored.sheets[0] = { ...stored.sheets[0]!, dirty: true, rows: [...stored.sheets[0]!.rows, { index: 40, cells: [{ col: 0, value: "edited" }] }] };
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const summary = upgraded.sheets[0]!;
+    expect(summary.id).toBe("stored-sheet-0");
+    expect(summary.dirty).toBe(true);
+    expect(getCell(summary, 40, 0)!.value).toBe("edited");
+    expect(annotationsOf(summary)).toEqual(annotationsOf(read.sheets[0]!));
+    expect(summary.notes!.length).toBeGreaterThan(0);
+    expect(summary.threads!.length).toBeGreaterThan(0);
+    expect(summary.hyperlinks!.length).toBeGreaterThan(0);
+    expect(summary.annotationsDirty).toBeUndefined();
+    expect(upgraded.persons).toEqual(read.persons);
+  });
+
+  it("ods: an edited version-14 record — annotations move out of preservedXml into notes, and a retained link is attached only where the cell still holds the source's value", async () => {
+    const O = SPEC135_ANNOTATIONS_ODS;
+    const read = await readSpreadsheetBytes(await buildSpec135AnnotationsOdsBytes(), "ods", "SPEC-135");
+    const stored = storedAtVersion14(read, { B2: O.notes.B2.xml, B4: O.notes.B4.xml });
+    const summary = stored.sheets[0]!;
+    // A7's value changed since read: its address no longer vouches for the link.
+    summary.rows = summary.rows.map((row) => (row.index !== 6 ? row : { ...row, cells: row.cells.map((cell) => (cell.col === 0 ? { col: 0, value: "Changed" } : cell)) }));
+    stored.sheets[0] = { ...summary, dirty: true };
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const sheet = upgraded.sheets[0]!;
+    expect(sheet.notes).toEqual(read.sheets[0]!.notes);
+    expect(getCell(sheet, 1, 1)!.preservedXml).toBeUndefined();
+    expect(getCell(sheet, 3, 1)!.preservedXml).toBeUndefined();
+    const readLinks = read.sheets[0]!.hyperlinks!;
+    expect(readLinks.some((link) => link.range.top === 6 && link.range.left === 0)).toBe(true);
+    expect(sheet.hyperlinks).toEqual(readLinks.filter((link) => !(link.range.top === 6 && link.range.left === 0)));
+    expect(sheet.dirty).toBe(true);
   });
 });
