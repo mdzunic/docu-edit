@@ -302,9 +302,12 @@ async function assertChainTotal(page: Page, newS1: number): Promise<void> {
   const cell = page.locator('[data-testid="sheet-cell"][data-ref="T10000"]');
   await expect(cell).toBeAttached({ timeout: 10_000 });
   const expected = SPEC137_LARGE_XLSX.t10000Value - SPEC137_LARGE_XLSX.s1Value + newS1;
+  // The cell shows General's text fitted to its column (SPEC-118): a
+  // seven-digit total drops its decimals, so the shown number is within one
+  // of the exact one — while the edit moved it by thousands.
   await expect
-    .poll(async () => numberFromCellText((await cell.textContent()) ?? ""), { timeout: 10_000 })
-    .toBeCloseTo(expected, 1);
+    .poll(async () => Math.abs(numberFromCellText((await cell.textContent()) ?? "") - expected), { timeout: 10_000 })
+    .toBeLessThan(1);
 }
 
 async function measureSave(page: Page): Promise<{ sheetSaveMs: number; sheetMainThreadBlockDuringSaveMs: number }> {
