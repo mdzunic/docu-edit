@@ -62,7 +62,7 @@ function fields(sheet: Sheet): unknown {
 /** The names of the parts whose bytes differ (or exist on one side only). */
 function changedParts(a: Map<string, Uint8Array>, b: Map<string, Uint8Array>): string[] {
   const names = new Set([...a.keys(), ...b.keys()]);
-  return [...names].filter((name) => !a.has(name) || !b.has(name) || !equalBytes(a.get(name)!, b.get(name)!)).sort();
+  return [...names].filter((name) => !a.has(name) || !b.has(name) || !equalBytes(a.get(name)!, b.get(name)!)).toSorted();
 }
 
 /** The `v:shape` elements of a VML text, in order. */
@@ -525,6 +525,11 @@ describe("goldens", () => {
 
 // --- the human-captured Excel 365 workbook ------------------------------------------------------
 
+/** A comment element's `<text>` element, as written. */
+function textElement(element: string): string {
+  return /<(?:\w+:)?text>[\s\S]*<\/(?:\w+:)?text>/.exec(element)![0];
+}
+
 /** Every legacy comment of a package: its author and its `<text>` element as written. */
 function legacyComments(parts: Map<string, Uint8Array>): { part: string; ref: string; author: string; text: string; element: string }[] {
   return [...parts.keys()]
@@ -587,7 +592,6 @@ describe(`the Excel 365 workbook (${EXCEL365})`, () => {
       expect(thread, comment.author).toBeDefined();
       expect(placeholderAuthor(thread!.threadId)).toBe(comment.author);
       expect(placeholderText(thread!)).toBe(comment.text);
-      const textElement = (element: string): string => /<(?:\w+:)?text>[\s\S]*<\/(?:\w+:)?text>/.exec(element)![0];
       const prefix = /^<(\w+:)?comment/.exec(comment.element)![1] ?? "";
       expect(textElement(placeholderCommentXml(thread!, comment.ref, 0, prefix))).toBe(textElement(comment.element));
     }
