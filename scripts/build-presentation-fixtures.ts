@@ -28,6 +28,8 @@ import {
   buildPptxTextDepthFixtureBytes,
   buildSpec099OdpFixtureBytes,
   buildSpec099PptxFixtureBytes,
+  buildOdpHiddenFixtureBytes,
+  buildPptxHiddenFixtureBytes,
 } from "../src/lib/presentation/fixtures/build";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "..", "e2e", "fixtures");
@@ -92,6 +94,12 @@ const sectionsPptx = await buildSpec099PptxFixtureBytes();
 writeFileSync(join(fixturesDir, "spec099-sections.pptx"), sectionsPptx);
 const sectionsOdp = await buildSpec099OdpFixtureBytes();
 writeFileSync(join(fixturesDir, "spec099-sections.odp"), sectionsOdp);
+// SPEC-104 hidden-slide fixtures (three slides, the middle one hidden; slide 1
+// carries notes and a theme-coloured shape).
+const hiddenPptx = await buildPptxHiddenFixtureBytes();
+writeFileSync(join(fixturesDir, "spec104-hidden.pptx"), hiddenPptx);
+const hiddenOdp = await buildOdpHiddenFixtureBytes();
+writeFileSync(join(fixturesDir, "spec104-hidden.odp"), hiddenOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
@@ -103,7 +111,8 @@ console.log(
     `spec096-objects.pptx (${objectsPptx.byteLength}B), spec096-objects.odp (${objectsOdp.byteLength}B), ` +
     `spec095-media.pptx (${mediaPptx.byteLength}B), spec095-media.odp (${mediaOdp.byteLength}B), ` +
     `spec097-text-depth.pptx (${textDepthPptx.byteLength}B), spec097-text-depth.odp (${textDepthOdp.byteLength}B), ` +
-    `spec099-sections.pptx (${sectionsPptx.byteLength}B), spec099-sections.odp (${sectionsOdp.byteLength}B)`,
+    `spec099-sections.pptx (${sectionsPptx.byteLength}B), spec099-sections.odp (${sectionsOdp.byteLength}B), ` +
+    `spec104-hidden.pptx (${hiddenPptx.byteLength}B), spec104-hidden.odp (${hiddenOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

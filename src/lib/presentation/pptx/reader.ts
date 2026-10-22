@@ -88,6 +88,7 @@ import { retainSourceWireIds } from "../animations";
 import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
 import { PPTX_MAIN_CONTENT_TYPE } from "../detect";
 import { readSections } from "./sections";
+import { rootAttrsHidden } from "./showAttr";
 
 export class PptxOpenError extends Error {}
 
@@ -2068,6 +2069,11 @@ function buildSlide(
   Object.assign(preserved, fieldPreserved);
   if (Object.keys(preserved).length > 0) {
     slide.preserved = preserved;
+  }
+  // SPEC-104: `p:sld/@show="0"` mirrors into `hidden`; the attribute string
+  // itself stays in `preserved["@root"]` untouched.
+  if (rootAttrsHidden(preserved["@root"])) {
+    slide.hidden = true;
   }
   if (fields.length > 0) {
     slide.fields = fields;

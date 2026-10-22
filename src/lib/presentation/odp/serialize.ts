@@ -58,6 +58,7 @@ import {
 import { themeGraphicParent, themeTextParent } from "./theme";
 import { preservedAnimReferences, writeOdpAnim, xmlIdsDefinedIn } from "./anim";
 import { odpDisplayProps, type OdpPageFieldPlan } from "./fields";
+import { ODP_HIDDEN_VISIBILITY_PROP } from "./visibilityGolden";
 
 const ROLE_TO_CLASS: Record<PlaceholderRole, string> = {
   title: "title",
@@ -468,14 +469,27 @@ export function serializePage(
   // drawing-page style (copying the original style's fill/background, minus any
   // replaced transition or stale display flags) and repoints `draw:style-name`
   // at it (SPEC-085 AC-11 / SPEC-093 AC-79).
+  // SPEC-104: a hidden page carries `presentation:visibility="hidden"` the
+  // same way — appended to the minted style's props, any inherited visibility
+  // stripped from the copied base — and a page whose visibility changed mints
+  // a style even when nothing else did.
   const smilProps = slide.transition ? odpTransitionProps(slide.transition) : "";
   const displayProps = fieldPlan ? odpDisplayProps(fieldPlan) : "";
-  if (smilProps || displayProps) {
-    const originalStyle = drawAttr(attrs, "draw:style-name");
-    const baseProps = originalStyle ? drawingPageBaseProps(styleSource, originalStyle) : "";
-    const props = [smilProps, displayProps].filter((p) => p.length > 0).join(" ");
-    const styleName = registry.drawingPageStyle(props, baseProps);
-    attrs = setDrawStyleName(attrs, styleName);
+  const visibilityProps = slide.hidden ? ODP_HIDDEN_VISIBILITY_PROP : "";
+  const originalStyle = drawAttr(attrs, "draw:style-name");
+  const originalHidden = originalStyle ? drawingPageVisibility(styleSource, originalStyle) === "hidden" : false;
+  if (smilProps || displayProps || (slide.hidden === true) !== originalHidden) {
+    // A visibility-only change keeps the original style's transition (an
+    // out-of-subset one is preserved only through this style).
+    const replacesTransition = smilProps.length > 0 || displayProps.length > 0;
+    const baseProps = originalStyle ? drawingPageBaseProps(styleSource, originalStyle, replacesTransition) : "";
+    const props = [smilProps, displayProps, visibilityProps].filter((p) => p.length > 0).join(" ");
+    if (props.length === 0 && baseProps.length === 0) {
+      // Shown again with nothing else to state: the page needs no style.
+      attrs = attrs.replace(/\s*draw:style-name="[^"]*"/, "");
+    } else {
+      attrs = setDrawStyleName(attrs, registry.drawingPageStyle(props, baseProps));
+    }
   }
   // When the page carries modelled animations, its animatable frames get a
   // deterministic wire id (`de-f{n}` in z-order among text/shape/image frames)
@@ -566,37 +580,56 @@ function setPresentationPageLayoutName(attrs: string, layoutName: string): strin
   return `${attrs} presentation:presentation-page-layout-name="${escaped}"`;
 }
 
-/** The fill/background properties of the drawing-page style named `styleName`
- * in `source`, with any transition (smil/presentation-transition/duration)
- * attributes stripped — what the minted style copies so a transition edit
- * leaves the background untouched. "" when the style is not found. */
-function drawingPageBaseProps(source: string, styleName: string): string {
+/** The attribute string of the `style:drawing-page-properties` of the
+ * drawing-page style named `styleName` in `source`, or undefined when the
+ * style (or its properties element) is not found. */
+function drawingPagePropsOf(source: string, styleName: string): string | undefined {
   const escaped = styleName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const styleRe = new RegExp(
     `<style:style\\b[^>]*style:name="${escaped}"[^>]*>([\\s\\S]*?)</style:style>`,
   );
   const styleMatch = styleRe.exec(source);
-  const inner = styleMatch
-    ? styleMatch[1]
-    : new RegExp(`<style:style\\b[^>]*style:name="${escaped}"[^>]*/>`).test(source)
-      ? ""
-      : "";
+  const inner = styleMatch ? styleMatch[1] : "";
   const propsMatch = /<style:drawing-page-properties\b([^>]*?)\/?>/.exec(inner);
-  if (!propsMatch) {
+  return propsMatch ? propsMatch[1] : undefined;
+}
+
+/** The `presentation:visibility` the drawing-page style named `styleName` in
+ * `source` declares (SPEC-104), or undefined. */
+function drawingPageVisibility(source: string, styleName: string): string | undefined {
+  const props = drawingPagePropsOf(source, styleName);
+  return props === undefined ? undefined : /presentation:visibility="([^"]*)"/.exec(props)?.[1];
+}
+
+/** The fill/background properties of the drawing-page style named `styleName`
+ * in `source`, with any transition (smil/presentation-transition/duration)
+ * attributes stripped — what the minted style copies so a transition edit
+ * leaves the background untouched — and any visibility stripped (SPEC-104:
+ * the minted style states its own). `replacesTransition` false — a
+ * visibility-only change — keeps everything else, the transition and display
+ * flags included: it must not drop a transition this editor does not model.
+ * "" when the style is not found. */
+function drawingPageBaseProps(source: string, styleName: string, replacesTransition = true): string {
+  const props = drawingPagePropsOf(source, styleName);
+  if (props === undefined) {
     return "";
   }
   const kept: string[] = [];
-  for (const attr of propsMatch[1].matchAll(/([\w-]+:[\w-]+)="([^"]*)"/g)) {
+  for (const attr of props.matchAll(/([\w-]+:[\w-]+)="([^"]*)"/g)) {
     const name = attr[1];
+    if (name === "presentation:visibility") {
+      continue; // the minted style states the page's own visibility
+    }
     if (
-      name.startsWith("smil:") ||
+      replacesTransition &&
+      (name.startsWith("smil:") ||
       name === "presentation:transition-type" ||
       name === "presentation:transition-speed" ||
       name === "presentation:duration" ||
       name === "presentation:display-footer" ||
       name === "presentation:display-page-number" ||
       name === "presentation:display-date-time" ||
-      name === "presentation:display-header"
+      name === "presentation:display-header")
     ) {
       continue; // drop the transition / stale display flags being replaced
     }

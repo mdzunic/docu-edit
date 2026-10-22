@@ -60,6 +60,7 @@ import {
   type LinkFields,
   type RelLookup,
 } from "./textDepthWire";
+import { spliceShowAttr } from "./showAttr";
 
 const XML_DECL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -123,7 +124,9 @@ export function serializeSlideXml(
   slideParts: readonly string[] = [],
 ): string {
   const lookup: RelLookup = { rels, slidePartPath, slideParts };
-  const rootAttrs = slide.preserved?.["@root"] ?? STANDARD_ROOT_ATTRS;
+  // SPEC-104: `show="0"` is spliced into the preserved root attributes in
+  // place, so every other attribute keeps its bytes and position.
+  const rootAttrs = spliceShowAttr(slide.preserved?.["@root"] ?? STANDARD_ROOT_ATTRS, slide.hidden === true);
   // SPEC-094: refs write through the deck clrMap, a parseable p:clrMapOvr's
   // override map, or — when the override cannot be parsed — as literals.
   const tc: SlideColorWrite = deckTheme

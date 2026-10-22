@@ -10,7 +10,9 @@ import { equalBytes } from "../core/equality";
 import { unzip } from "../core/zip";
 import {
   buildOdpFixtureBytes,
+  buildOdpHiddenFixtureBytes,
   buildPptxFixtureBytes,
+  buildPptxHiddenFixtureBytes,
   FIXTURE_DECK_AUTHOR,
   FIXTURE_DECK_TITLE,
   FIXTURE_FRAME_KINDS,
@@ -727,6 +729,34 @@ describe("SPEC-096 group command over the mini-deck (pptx)", () => {
     const b = await unzip(again.bytes);
     for (const name of [...a.keys()].filter((n) => n.startsWith("ppt/slides/slide"))) {
       expect(equalBytes(a.get(name)!, b.get(name)!), name).toBe(true);
+    }
+  });
+});
+
+// --- SPEC-104: the hidden-slide fixtures keep the same promises -------------
+describe("hidden-slide fixtures round trip (SPEC-104)", () => {
+  it("pptx: every part re-emitted byte-identical, in order", async () => {
+    const sourceBytes = await buildPptxHiddenFixtureBytes();
+    const { bytes } = await writePptx(await readPresentationBytes(sourceBytes, "pptx", "Deck"));
+    const source = await unzip(sourceBytes);
+    const written = await unzip(bytes);
+    expect([...written.keys()]).toEqual([...source.keys()]);
+    for (const [name, data] of source) {
+      expect(equalBytes(written.get(name)!, data), `part ${name} must round-trip byte-identical`).toBe(true);
+    }
+  });
+
+  it("odp: every part byte-identical, and the envelope + page sources recombine into content.xml", async () => {
+    const sourceBytes = await buildOdpHiddenFixtureBytes();
+    const model = await readPresentationBytes(sourceBytes, "odp", "Deck");
+    const source = await unzip(sourceBytes);
+    const content = new TextDecoder().decode(source.get("content.xml")!);
+    const envelope = model.odpContentEnvelope!;
+    expect(envelope.prefix + model.slides.map((slide) => slide.sourceXml).join("") + envelope.suffix).toBe(content);
+    const written = await unzip((await writeOdp(model)).bytes);
+    expect([...written.keys()]).toEqual([...source.keys()]);
+    for (const [name, data] of source) {
+      expect(equalBytes(written.get(name)!, data), `part ${name} must round-trip byte-identical`).toBe(true);
     }
   });
 });

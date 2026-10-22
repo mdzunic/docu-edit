@@ -556,6 +556,13 @@ export interface Slide {
   id: string; // minted at read, never serialised
   frames: SlideFrame[]; // z-order, back to front
   background?: SlideFill; // effective (inheritance resolved)
+  /** The slide is skipped by the slideshow and by print/export unless the
+   *  export opts in (SPEC-104, the normative source): pptx `p:sld/@show="0"`
+   *  (mirrored from `preserved["@root"]`, spliced back in place), odp
+   *  `presentation:visibility="hidden"` on the page's drawing-page style.
+   *  Absent means shown — only `true` is ever stored. The editor itself never
+   *  skips a hidden slide. */
+  hidden?: true;
   /** Speaker notes as plain paragraphs (SPEC-083): pptx from the notes-slide
    *  part's body placeholder, odp from the page's `presentation:notes` frame,
    *  both with formatting flattened and trailing empty paragraphs stripped.

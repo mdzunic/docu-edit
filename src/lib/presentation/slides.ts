@@ -22,6 +22,7 @@ import {
 import { clearSourceWireIds, retargetAnimations } from "./animations";
 import { newSlideFramesForLayout } from "./layouts";
 import { normaliseSections } from "./sections";
+import { markSlideEdited } from "./text";
 
 /** cm rounded to 3 decimals — a hair finer than the eye and far coarser than
  * the EMU/ODF length precision the writers round to, so a placeholder's
@@ -151,6 +152,26 @@ export function duplicateSlide(model: PresentationModel, index: number): number 
   model.structureDirty = true;
   normaliseSections(model);
   return index + 1;
+}
+
+/** Hides or shows slide `index` (SPEC-104): sets `hidden` (only `true` is
+ * ever stored — showing deletes the key) and marks the slide edited, so the
+ * pptx writer rebuilds its part with `show="0"` spliced into the preserved
+ * root attributes and the odp writer re-mints its drawing-page style. Not a
+ * structural change: the slide keeps its part and its place. Returns
+ * `index`, which stays selected. */
+export function setSlideHidden(model: PresentationModel, index: number, hidden: boolean): number {
+  const slide = model.slides[index];
+  if (!slide || (slide.hidden === true) === hidden) {
+    return index;
+  }
+  if (hidden) {
+    slide.hidden = true;
+  } else {
+    delete slide.hidden;
+  }
+  markSlideEdited(slide, model.format);
+  return index;
 }
 
 /** Removes slide `index` (allowed down to zero slides). Returns the index of
