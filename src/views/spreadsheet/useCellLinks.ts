@@ -26,7 +26,7 @@
 //   window.open(href, "_blank", "noopener,noreferrer"); refused toasts
 //   LINK_NOT_OPENABLE_MESSAGE; a place goes through the Name Box's reading
 //   (interpretNameBox, the link's sheet the host) to activate its sheet,
-//   select its range and reveal it — anything else (missing sheet, `#REF!`,
+//   select its range and reveal it (sheetJump.ts) — anything else (missing sheet, `#REF!`,
 //   an unknown name) toasts LINK_DESTINATION_MISSING_MESSAGE, a hidden
 //   sheet HIDDEN_SHEET_MESSAGE. A plain click only selects.
 // - `isLinked(row, col)`: the sheet on show's cell carries data-link.
@@ -35,16 +35,16 @@
 //   not a CSV or TSV one (CSV_NO_LINKS_TITLE), nor an .xlsx sheet whose
 //   source's `<hyperlinks>` the reader could not model (`blocked` — AC-11:
 //   they stay verbatim, so a new link could not be saved).
-import { computed, nextTick, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from "vue";
+import { computed, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from "vue";
 import { useToasts } from "../../composables/useToasts";
 import { isMacPlatform } from "../../lib/core/platform";
 import { findShortcut } from "../../lib/shortcuts";
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
-import { CSV_NO_LINKS_TITLE, externalHref, hyperlinkLabel, LINK_DESTINATION_MISSING_MESSAGE, LINK_NOT_OPENABLE_MESSAGE, LINK_UNDO_LABELS, openHyperlinkTarget, removeHyperlink, setHyperlink } from "../../lib/spreadsheet/annotations";
+import { externalHref, hyperlinkLabel, LINK_DESTINATION_MISSING_MESSAGE, LINK_NOT_OPENABLE_MESSAGE, LINK_UNDO_LABELS, openHyperlinkTarget, removeHyperlink, setHyperlink } from "../../lib/spreadsheet/annotations";
 import { refitRows, type CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import { setCellEntry } from "../../lib/spreadsheet/cells";
 import { applyStylePatches } from "../../lib/spreadsheet/formatting";
-import { isCsvFormat, type HyperlinkTarget, type Sheet, type SpreadsheetModel } from "../../lib/spreadsheet/model";
+import type { HyperlinkTarget, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { createCanvasCellMeasurer } from "./cellMeasurer";
 import {
@@ -56,6 +56,7 @@ import {
   linkedLookup,
   linkNameOptions,
   linkRange,
+  linkRefusal,
   linkSheetOptions,
   linkTargetAt,
   linkTextEntry,
@@ -64,6 +65,7 @@ import {
   type LinkOption,
 } from "./cellLinks";
 import { inGrid } from "./headerMenu";
+import { jumpToRanges } from "./sheetJump";
 import { HIDDEN_SHEET_MESSAGE, interpretNameBox } from "./nameBox";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 import type { CellEditing } from "./useCellEditing";
@@ -140,15 +142,8 @@ export function useCellLinks(deps: CellLinksDeps) {
   });
   const isLinked = (row: number, col: number): boolean => linkedAt.value(row, col);
 
-  /** Why a link cannot be inserted on the sheet on show ("" when it can, or
-   * off a grid sheet, where the items are simply off). */
-  const linkDisabledReason = computed(() => {
-    const m = model();
-    if (!m || !gridSheet()) {
-      return "";
-    }
-    return isCsvFormat(m.format) ? CSV_NO_LINKS_TITLE : (deps.blocked?.() ?? "");
-  });
+  /** Why a link cannot be inserted on the sheet on show ("" when it can). */
+  const linkDisabledReason = computed(() => linkRefusal(model()?.format, gridSheet() !== null, deps.blocked?.() ?? ""));
   /** Whether a link can be inserted or edited here (see the module header). */
   const canLink = computed(() => model() !== null && gridSheet() !== null && linkDisabledReason.value === "");
 
@@ -266,25 +261,6 @@ export function useCellLinks(deps: CellLinksDeps) {
 
   // --- following ---------------------------------------------------------------------------------
 
-  /** Selects `ranges` on `sheetId`, revealed and focused (the Name Box's jump). */
-  async function jump(sheetId: string, ranges: GridRange[]): Promise<void> {
-    const index = model()?.sheets.findIndex((sheet) => sheet.id === sheetId) ?? -1;
-    const first = ranges[0];
-    if (index < 0 || !first) {
-      return;
-    }
-    if (index !== deps.book.activeIndex.value) {
-      deps.book.selectSheet(index);
-    }
-    const active = { row: first.top, col: first.left };
-    deps.viewState.update(sheetId, { selection: { active, ranges: [single(active)], activeRangeIndex: 0 } });
-    await nextTick();
-    deps.cell.revealTick.value += 1;
-    await nextTick();
-    deps.viewState.update(sheetId, { selection: { active, ranges: ranges.map((range) => ({ ...range })), activeRangeIndex: 0 } });
-    deps.cell.focusCell();
-  }
-
   /** Follows `target`, read on `host`'s sheet (see the module header). */
   async function follow(target: HyperlinkTarget, host: { sheetId: string; row: number; col: number }): Promise<void> {
     const m = model();
@@ -296,7 +272,7 @@ export function useCellLinks(deps: CellLinksDeps) {
     } else if (m && target.kind === "place") {
       const outcome = interpretNameBox(m, target.location, host);
       if (outcome.kind === "jump") {
-        await jump(outcome.sheetId, outcome.ranges);
+        await jumpToRanges(deps, outcome.sheetId, outcome.ranges);
       } else {
         toast(outcome.kind === "refuse" && outcome.message === HIDDEN_SHEET_MESSAGE ? HIDDEN_SHEET_MESSAGE : LINK_DESTINATION_MISSING_MESSAGE);
       }

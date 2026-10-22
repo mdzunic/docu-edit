@@ -30,15 +30,18 @@
 //   SheetCellLayer wraps a linked cell's text in — gives that cell's
 //   reference (its element's data-ref: a merge's anchor, the cell whose text
 //   overflows there); anywhere else in the cell gives null.
+// - linkRefusal: why Link… is refused where a link could not be saved — a
+//   CSV or TSV workbook (AC-34), an .xlsx sheet whose links stay as read
+//   (AC-11).
 import { getCell, parseA1, parseRange, type CellRef, type GridRange } from "../../lib/spreadsheet/address";
 import { sameModelColor, type ModelColor } from "../../lib/core/theme";
 import { isDangerousUrl, sanitizeHref, urlScheme } from "../../lib/core/urls";
-import { canonicalPlaceLocation, externalHref, hyperlinkAt, hyperlinkFormulaCall, hyperlinkFormulaTarget } from "../../lib/spreadsheet/annotations";
+import { canonicalPlaceLocation, CSV_NO_LINKS_TITLE, externalHref, hyperlinkAt, hyperlinkFormulaCall, hyperlinkFormulaTarget } from "../../lib/spreadsheet/annotations";
 import { cellDisplay } from "../../lib/spreadsheet/cellRender";
 import type { CellEntry } from "../../lib/spreadsheet/cells";
 import type { StylePatch, StylePatchEntry } from "../../lib/spreadsheet/formatting";
 import { quoteSheetName } from "../../lib/spreadsheet/formula/print";
-import type { CellHyperlink, HyperlinkTarget, Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
+import { isCsvFormat, type CellHyperlink, type HyperlinkTarget, type Sheet, type SpreadsheetFormat, type SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { visibleNames } from "../../lib/spreadsheet/names";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { plainText, type FormatContext } from "../../lib/spreadsheet/numberFormat/render";
@@ -295,6 +298,18 @@ export function hyperlinkStyleEntries(model: SpreadsheetModel, sheet: Sheet, ran
 }
 
 /** The cell whose linked text a press landed on (see the module header). */
+/** Why Link… is refused on the sheet on show ("" when it applies — and off
+ * a grid sheet, where the items are simply off): a CSV or TSV workbook
+ * keeps values only (CSV_NO_LINKS_TITLE); `blocked` is the sheet's own
+ * reason (useAnnotationEditing's linksReason — an .xlsx sheet whose links
+ * stay as read). */
+export function linkRefusal(format: SpreadsheetFormat | undefined, onGrid: boolean, blocked: string): string {
+  if (format === undefined || !onGrid) {
+    return "";
+  }
+  return isCsvFormat(format) ? CSV_NO_LINKS_TITLE : blocked;
+}
+
 export function linkTextRef(target: EventTarget | null): CellRef | null {
   const text = target instanceof Element ? target.closest(".sheet-cell-link") : null;
   const ref = text?.closest('[data-testid="sheet-cell"]')?.getAttribute("data-ref");

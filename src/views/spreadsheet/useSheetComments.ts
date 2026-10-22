@@ -5,9 +5,10 @@
 // - View ▸ Comments and the app bar's `sheet-comments-toggle` toggle the pane
 //   (`toggle`); `openThread` opens it on one thread (the popover's
 //   `sheet-thread-open`); activating a thread selects its sheet and cell.
-// - `groups`: the workbook's threads by sheet in tab order, each sheet's by
-//   (row, col), under the filter (`all` | `unresolved`); in an .ods workbook,
-//   which holds notes only, the workbook's notes instead (`notesOnly`).
+// - `groups` (commentViews.ts' commentGroupViews): the workbook's threads
+//   by sheet in tab order, each sheet's by (row, col), under the filter
+//   (`all` | `unresolved`); in an .ods workbook, which holds notes only, the
+//   workbook's notes instead (`notesOnly`).
 // - New comment — Ctrl+Alt+M / Cmd+Option+M (`sheet.newComment`, from the
 //   grid only; best effort on macOS, whose Option+Cmd+M minimises the
 //   windows), Insert ▸ Comment and the cell context menu — opens the composer
@@ -27,10 +28,9 @@
 // "Resolve comment", "Reopen comment", "Delete comment"). Texts stay plain
 // strings; the panel renders them with text interpolation only.
 import { computed, nextTick, onScopeDispose, ref, shallowRef, type Ref, type ShallowRef } from "vue";
-import { canModifyMessage, commentInitials } from "../../lib/core/comments";
+import { canModifyMessage } from "../../lib/core/comments";
 import { loadCommentAuthor, saveCommentAuthor } from "../../lib/core/commentIdentity";
 import { isMacPlatform } from "../../lib/core/platform";
-import { formatTimestamp } from "../../lib/format";
 import { findShortcut } from "../../lib/shortcuts";
 import { formatA1, type CellRef } from "../../lib/spreadsheet/address";
 import {
@@ -41,12 +41,12 @@ import {
   ODS_NOTES_ONLY_TITLE,
   replyToThread,
   setThreadResolved,
-  sheetNotes,
   sheetThreads,
   threadAt,
 } from "../../lib/spreadsheet/annotations";
 import { isCsvFormat, type Sheet, type SpreadsheetModel, type ThreadMessage } from "../../lib/spreadsheet/model";
 import { singleCell } from "../../lib/spreadsheet/selection";
+import { commentGroupViews, type CommentFilter, type CommentGroupView } from "./commentViews";
 import { inGrid } from "./headerMenu";
 import { SHEET_SHORTCUTS } from "./sheetShortcuts";
 import type { CellEditing } from "./useCellEditing";
@@ -55,30 +55,7 @@ import type { SheetSidePanel } from "./useSheetSidePanel";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SpreadsheetUndo } from "./useSpreadsheetUndo";
 
-export type CommentFilter = "all" | "unresolved";
-
-/** One message row as the panel shows it. */
-export interface CommentMessageView {
-  messageId: string;
-  author: string;
-  initials: string;
-  time: string;
-  text: string;
-  /** The identity wrote it: it may be edited and deleted. */
-  own: boolean;
-}
-
-/** One thread or (in an .ods workbook) one note in the panel. */
-export type CommentItemView =
-  | { kind: "thread"; threadId: string; ref: CellRef; address: string; resolved: boolean; messages: CommentMessageView[] }
-  | { kind: "note"; noteId: string; ref: CellRef; address: string; author: string; initials: string; time: string; text: string };
-
-/** A sheet's threads (or notes) under its name. */
-export interface CommentGroupView {
-  sheetId: string;
-  sheetName: string;
-  items: CommentItemView[];
-}
+export { messageTime, type CommentFilter, type CommentGroupView, type CommentItemView, type CommentMessageView } from "./commentViews";
 
 export interface SheetCommentsDeps {
   book: {
@@ -101,12 +78,6 @@ export interface SheetCommentsDeps {
   /** Why the sheet on show's comments cannot be changed ("" when they can) —
    * useAnnotationEditing's notesReason: its source broke the subset. */
   blocked?: () => string;
-}
-
-/** A message's time as the panel shows it ("" when it has none). */
-export function messageTime(createdAt: string | undefined): string {
-  const at = createdAt ? Date.parse(createdAt) : Number.NaN;
-  return Number.isNaN(at) ? "" : formatTimestamp(new Date(at));
 }
 
 export function useSheetComments(deps: SheetCommentsDeps) {
@@ -144,44 +115,9 @@ export function useSheetComments(deps: SheetCommentsDeps) {
   /** The thread (or note) the panel points at — activated or opened on. */
   const focusedId = ref<string | null>(null);
 
-  const messageView = (message: ThreadMessage): CommentMessageView => ({
-    messageId: message.messageId,
-    author: message.author,
-    initials: commentInitials(message.author),
-    time: messageTime(message.createdAt),
-    text: message.text,
-    own: canModifyMessage(message, author.value),
-  });
-
   const groups = computed((): CommentGroupView[] => {
     const m = model();
-    if (!m) {
-      return [];
-    }
-    return m.sheets.flatMap((sheet): CommentGroupView[] => {
-      const items: CommentItemView[] = notesOnly.value
-        ? sheetNotes(sheet).map((note) => ({
-            kind: "note",
-            noteId: note.noteId,
-            ref: note.ref,
-            address: formatA1(note.ref),
-            author: note.author,
-            initials: commentInitials(note.author),
-            time: messageTime(note.createdAt),
-            text: note.text,
-          }))
-        : sheetThreads(sheet)
-            .filter((thread) => filter.value === "all" || !thread.resolved)
-            .map((thread) => ({
-              kind: "thread",
-              threadId: thread.threadId,
-              ref: thread.ref,
-              address: formatA1(thread.ref),
-              resolved: thread.resolved,
-              messages: thread.messages.map(messageView),
-            }));
-      return items.length > 0 ? [{ sheetId: sheet.id, sheetName: sheet.name, items }] : [];
-    });
+    return m ? commentGroupViews(m, { notesOnly: notesOnly.value, filter: filter.value, author: author.value }) : [];
   });
 
   // --- the composer, replies, the message editor ---------------------------------------------------
