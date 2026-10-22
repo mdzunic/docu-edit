@@ -10017,3 +10017,179 @@ export async function buildSpec133NamesOdsBytes(): Promise<Uint8Array> {
 // ============================================================================
 // end of SPEC-133
 // ============================================================================
+
+// --- SPEC-135 spec135-annotations.ods ---------------------------------------
+// LibreOffice Calc 24.8-shaped notes and cell links (SPEC-135 "Fixtures"),
+// the twin of spec135-annotations.xlsx's layout. Tables "Summary" (active)
+// and "Data". Summary: A1 "Metric", B1 "Value"; A2 "Revenue", B2 1200
+// carrying a HIDDEN note (an `office:annotation` with no `office:display`,
+// its caption geometry, `dc:creator`, `dc:date` and one `text:p`); A4
+// "Costs", B4 800 carrying a SHOWN note (`office:display="true"`, two
+// paragraphs); A7 "Example site" — a `text:a` to https://example.com/ with
+// an `office:title`; B7 "See data" — a `text:a` to the internal `#Data.A1`;
+// C9 one paragraph holding TWO links ("One and Two"). Data: A1 "Header",
+// A10 "Target". Each annotation names Calc's caption styles (gr1, P1) and
+// sits first in its cell, before the cell's own paragraph, as Calc writes
+// it; links are `text:a` with `xlink:href` then `xlink:type` (Calc's URL
+// field order). Empty rows are repeated runs and every table ends with
+// Calc's trailing runs to XFD and row 1,048,576.
+
+/** content.xml's automatic styles: Calc's column, row and table styles and
+ * the annotations' caption (graphic) and paragraph styles. */
+const SPEC135_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.178in" fo:break-before="auto" style:use-optimal-row-height="true"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:stroke="solid" svg:stroke-color="#000000" draw:fill="solid" ` +
+  `draw:fill-color="#ffffc0" draw:auto-grow-height="true" draw:auto-grow-width="false" fo:padding-top="0.0398in" fo:padding-bottom="0.0398in" ` +
+  `fo:padding-left="0.0398in" fo:padding-right="0.0398in" draw:shadow="visible" draw:shadow-offset-x="0.0236in" draw:shadow-offset-y="0.0236in" ` +
+  `draw:shadow-color="#000000"/><style:paragraph-properties style:writing-mode="lr-tb"/></style:style>` +
+  `<style:style style:name="P1" style:family="paragraph"><style:paragraph-properties fo:margin-left="0in" fo:margin-right="0in" fo:margin-top="0in" ` +
+  `fo:margin-bottom="0in" fo:text-indent="0in" fo:border="none"/><style:text-properties style:font-name="Liberation Sans" fo:font-size="9pt"/></style:style>` +
+  `</office:automatic-styles>`;
+
+/** One Calc annotation: `office:display` (shown only), the caption's style
+ * names and geometry, then creator, date and one `text:p` per paragraph. */
+function spec135OdsAnnotation(note: {
+  readonly visible: boolean;
+  readonly author: string;
+  readonly createdAt: string;
+  readonly paragraphs: readonly string[];
+  readonly geometry: string;
+}): string {
+  return (
+    `<office:annotation${note.visible ? ` office:display="true"` : ""} draw:style-name="gr1" draw:text-style-name="P1" ${note.geometry}>` +
+    `<dc:creator>${xmlEscape(note.author)}</dc:creator><dc:date>${note.createdAt}</dc:date>` +
+    note.paragraphs.map((paragraph) => `<text:p text:style-name="P1">${xmlEscape(paragraph)}</text:p>`).join("") +
+    `</office:annotation>`
+  );
+}
+
+const SPEC135_ODS_NOTE_B2 = {
+  a1: "B2",
+  author: "Alex Kim",
+  createdAt: "2026-03-01T09:00:00",
+  paragraphs: ["Q3 figure, unaudited."],
+  text: "Q3 figure, unaudited.",
+  visible: false,
+  /** svg:width × svg:height 1.6in × 0.5in at 96 px to the inch. */
+  box: { widthPx: 153.6, heightPx: 48 },
+  geometry: `svg:width="1.6in" svg:height="0.5in" svg:x="1.95in" svg:y="0.0417in" draw:caption-point-x="-0.0799in" draw:caption-point-y="0.2in"`,
+} as const;
+
+const SPEC135_ODS_NOTE_B4 = {
+  a1: "B4",
+  author: "Alex Kim",
+  createdAt: "2026-03-02T14:30:00",
+  paragraphs: ["Always shown", "Second line"],
+  text: "Always shown\nSecond line",
+  visible: true,
+  /** svg:width × svg:height 2.5in × 1in. */
+  box: { widthPx: 240, heightPx: 96 },
+  geometry: `svg:width="2.5in" svg:height="1in" svg:x="1.95in" svg:y="0.3976in" draw:caption-point-x="-0.0799in" draw:caption-point-y="0.2in"`,
+} as const;
+
+/** A7's, B7's and C9's paragraphs, verbatim. */
+const SPEC135_ODS_LINK_A7 = `<text:p><text:a xlink:href="https://example.com/" xlink:type="simple" office:title="Open the example site">Example site</text:a></text:p>`;
+const SPEC135_ODS_LINK_B7 = `<text:p><text:a xlink:href="#Data.A1" xlink:type="simple">See data</text:a></text:p>`;
+const SPEC135_ODS_LINKS_C9 =
+  `<text:p><text:a xlink:href="https://one.example/" xlink:type="simple">One</text:a> and ` +
+  `<text:a xlink:href="https://two.example/" xlink:type="simple">Two</text:a></text:p>`;
+
+/** What spec135-annotations.ods holds, for the unit, round-trip and e2e specs. */
+export const SPEC135_ANNOTATIONS_ODS = {
+  file: "spec135-annotations.ods",
+  title: "Annotations",
+  tableNames: ["Summary", "Data"],
+  activeTable: "Summary",
+  activeSheetIndex: 0,
+  /** Every stored cell per table, A1 → the reader's value. */
+  values: {
+    Summary: { A1: "Metric", B1: "Value", A2: "Revenue", B2: 1200, A4: "Costs", B4: 800, A7: "Example site", B7: "See data", C9: "One and Two" },
+    Data: { A1: "Header", A10: "Target" },
+  },
+  /** Summary's notes: B2 hidden (no `office:display`), B4 shown; each
+   * annotation's verbatim element is `xml`. */
+  notes: {
+    B2: { ...SPEC135_ODS_NOTE_B2, xml: spec135OdsAnnotation(SPEC135_ODS_NOTE_B2) },
+    B4: { ...SPEC135_ODS_NOTE_B4, xml: spec135OdsAnnotation(SPEC135_ODS_NOTE_B4) },
+  },
+  /** Summary's links: the cell, its verbatim paragraph and the modelled
+   * target (place locations canonical, SPEC-119). */
+  links: {
+    A7: {
+      a1: "A7",
+      href: "https://example.com/",
+      title: "Open the example site",
+      target: { kind: "url", href: "https://example.com/" },
+      tooltip: "Open the example site",
+      paragraph: SPEC135_ODS_LINK_A7,
+    },
+    B7: { a1: "B7", href: "#Data.A1", target: { kind: "place", location: "Data!A1" }, paragraph: SPEC135_ODS_LINK_B7 },
+    /** ONE paragraph, TWO links — the model keeps the first (SPEC-135's sanctioned delta once the table is rewritten). */
+    C9: {
+      a1: "C9",
+      href: "https://one.example/",
+      target: { kind: "url", href: "https://one.example/" },
+      second: { href: "https://two.example/", text: "Two" },
+      paragraph: SPEC135_ODS_LINKS_C9,
+    },
+  },
+  /** Rows written per table before Calc's trailing empty run to row 1048576. */
+  rowsWritten: { Summary: 9, Data: 10 },
+  /** Every entry, in package order (mimetype first, STOREd). */
+  parts: ["mimetype", "meta.xml", "settings.xml", "content.xml", "Thumbnails/thumbnail.png", "styles.xml", "manifest.rdf", "META-INF/manifest.xml"],
+} as const;
+
+/** spec135-annotations.ods's "Summary" table. */
+function spec135OdsSummaryTable(): string {
+  const O = SPEC135_ANNOTATIONS_ODS;
+  const V = O.values.Summary;
+  const N = O.notes;
+  const L = O.links;
+  const noted = (value: number, note: string): string =>
+    `<table:table-cell office:value-type="float" office:value="${value}" calcext:value-type="float">${note}<text:p>${value}</text:p></table:table-cell>`;
+  const linked = (paragraph: string): string => `<table:table-cell office:value-type="string" calcext:value-type="string">${paragraph}</table:table-cell>`;
+  return (
+    `<table:table table:name="${O.tableNames[0]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString(V.A1) + loString(V.B1) + loEmpty(16382)) +
+    loRow(loString(V.A2) + noted(V.B2, N.B2.xml) + loEmpty(16382)) +
+    loRow(loEmpty(16384)) +
+    loRow(loString(V.A4) + noted(V.B4, N.B4.xml) + loEmpty(16382)) +
+    loRow(loEmpty(16384), "ro1", 2) +
+    loRow(linked(L.A7.paragraph) + linked(L.B7.paragraph) + loEmpty(16382)) +
+    loRow(loEmpty(16384)) +
+    loRow(loEmpty(2) + linked(L.C9.paragraph) + loEmpty(16381)) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.rowsWritten.Summary) +
+    `</table:table>`
+  );
+}
+
+/** spec135-annotations.ods's "Data" table: the internal link's destination. */
+function spec135OdsDataTable(): string {
+  const O = SPEC135_ANNOTATIONS_ODS;
+  const V = O.values.Data;
+  return (
+    `<table:table table:name="${O.tableNames[1]}" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    loRow(loString(V.A1) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 8) +
+    loRow(loString(V.A10) + loEmpty(16383)) +
+    loRow(loEmpty(16384), "ro1", 1_048_576 - O.rowsWritten.Data) +
+    `</table:table>`
+  );
+}
+
+export async function buildSpec135AnnotationsOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC135_ANNOTATIONS_ODS;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC135_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${spec135OdsSummaryTable()}${spec135OdsDataTable()}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  const cellCount = Object.keys(O.values.Summary).length + Object.keys(O.values.Data).length;
+  return loPackage(content, loMeta(O.title, O.tableNames.length, cellCount), loSettings(O.tableNames, O.activeTable));
+}
+// --- end SPEC-135 spec135-annotations.ods ---------------------------------------

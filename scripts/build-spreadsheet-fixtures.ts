@@ -283,5 +283,16 @@ writeFileSync(join(fixturesDir, "spec133-names-tables.xlsx"), await buildSpec133
 writeFileSync(join(fixturesDir, "spec133-names.ods"), await buildSpec133NamesOdsBytes());
 // --- end SPEC-133 ---------------------------------------------------------------
 
+// --- SPEC-135 spec135-annotations.ods --------------------------------------------
+// - spec135-annotations.ods — LibreOffice-shaped notes (a hidden one with no
+//                             office:display, a shown one with two
+//                             paragraphs) and cell links (external with an
+//                             office:title, internal #Data.A1, one paragraph
+//                             holding two links)
+import { buildSpec135AnnotationsOdsBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec135-annotations.ods"), await buildSpec135AnnotationsOdsBytes());
+// --- end SPEC-135 spec135-annotations.ods ----------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);
