@@ -28,7 +28,7 @@ import {
   IMPRESS_ODP_HIDDEN_STYLE,
 } from "./odp/visibilityGolden";
 import { slideOutline } from "./slideModel";
-import { createBlankPresentation, setSlideHidden } from "./slides";
+import { createBlankPresentation, setSlideHidden, stripRetention } from "./slides";
 
 const FORMATS: { format: PresentationFormat; build: () => Promise<Uint8Array> }[] = [
   { format: "pptx", build: buildPptxHiddenFixtureBytes },
@@ -217,5 +217,16 @@ describe("odp presentation:visibility golden (SPEC-104)", () => {
     setSlideHidden(model, 2, true);
     const content = new TextDecoder().decode((await unzip((await writeOdp(model)).bytes)).get("content.xml")!);
     expect(content).toContain(`<style:drawing-page-properties ${exotic} presentation:visibility="hidden"/>`);
+  });
+});
+
+describe("hidden slides across formats (SPEC-104)", () => {
+  it("\"Download a copy as…\" carries hidden both ways: pptx → odp → pptx", async () => {
+    const pptx = await readPresentationBytes(await buildPptxHiddenFixtureBytes(), "pptx", "Deck");
+    const odpBytes = (await writeOdp(stripRetention({ ...pptx, format: "odp" }))).bytes;
+    const odp = await readPresentationBytes(odpBytes, "odp", "Deck");
+    expect(hiddenFlags(odp)).toEqual(EXPECTED_HIDDEN_FLAGS);
+    const back = (await writePptx(stripRetention({ ...odp, format: "pptx" }))).bytes;
+    expect(hiddenFlags(await readPresentationBytes(back, "pptx", "Deck"))).toEqual(EXPECTED_HIDDEN_FLAGS);
   });
 });
