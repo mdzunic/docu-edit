@@ -55,6 +55,19 @@
 //   drawing part SPEC-121's closure copy names for the copy (xlsx: the
 //   copy's `drawingPart`); in an .ods each drawing's source XML takes the
 //   same id suffixes and object retargets as the copy's table text.
+// - SPEC-133: rename and delete apply their SheetRemap through
+//   remapSheetReferences to every name's formula (`namesDirty`) and every
+//   table's calculated and totals formulas (the table `dirty`); delete also
+//   drops the sheet's local names and its tables, their references becoming
+//   #REF! everywhere. Duplicate copies the origin's tables on the model —
+//   fresh ids and workbook-unique xlsxIds (max + 1), `uniqueTableName`
+//   names (`<name>_<n>`), no partName, `dirty` — with the copy's cell,
+//   calculated and totals formulas renamed to them (renameTableInFormula,
+//   instead of the xlsx closure copy's renames: the model holds the tables)
+//   and the copy `dirty`, so its `<tableParts>` is rebuilt; and clones the
+//   origin's local names with the copy's scope, their formulas renamed as
+//   the copy's cells' are. A cross-format copy keeps names and tables, each
+//   table without its partName (the package is gone) and `dirty`.
 // - `alsoRecalc` lists the formula cells whose RESULT may change though
 //   their text did not: 3-D references whose span gained, lost or reordered
 //   a sheet, and references to a name that did not exist before.
@@ -63,13 +76,16 @@ import { relsPathFor } from "../core/xml";
 import { nextMediaId } from "./drawings";
 import { DEFAULT_THEME, resolveColor, sameModelColor, type ModelColor } from "../core/theme";
 import { mapFormatsFormulas, withoutFormatSource } from "./cfFormulas";
+import { mapNameFormulas, mapTableFormulas, removeTableReferencesEverywhere } from "./nameTableAdjusters";
+import { uniqueTableName } from "./names";
+import { allTables, renameTableInFormula } from "./tables";
 import { CHART_SHEET_DUPLICATE_TITLE, chartContentOf, isModelledChart, remapChartReferences, syncChartNotifyRanges } from "./charts";
 import { mintCfId, renumberPriorities, sheetFormats, withX14Placement, type CfRule, type ConditionalFormat } from "./conditionalFormats";
 import type { AutoFilter } from "./filter";
 import { cellKey, type CellKey } from "./formula/dependencies";
 import { formulaForTarget } from "./formula/dialect";
 import { renameSheetInFormula } from "./formula/references";
-import { remapSheetReferences } from "./formula/sheetRefs";
+import { remapSheetReferences, type SheetRemap } from "./formula/sheetRefs";
 import { parseSheetPrefix, sheetPrefixOf, tokenize } from "./formula/tokens";
 import { DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT } from "./geometry";
 import {
@@ -81,6 +97,7 @@ import {
   type Sheet,
   type SheetChartRefs,
   type SheetDrawing,
+  type SheetTable,
   type SpreadsheetFormat,
   type SpreadsheetModel,
 } from "./model";
@@ -430,8 +447,16 @@ export function renameSheet(model: SpreadsheetModel, index: number, name: string
     return at === index ? { ...remapped, name } : remapped;
   });
   remapChartReferences(model, remap);
+  remapNamesAndTables(model, remap);
   model.structureDirty = true;
   return { activeIndex: model.activeSheetIndex, alsoRecalc: cellsToRecalc(model, before, [name]) };
+}
+
+/** SPEC-133: a rename's or delete's remap over every name's formula and
+ * every table's calculated and totals formulas. */
+function remapNamesAndTables(model: SpreadsheetModel, remap: SheetRemap): void {
+  mapNameFormulas(model, (defined) => remapSheetReferences(defined.formula, remap));
+  mapTableFormulas(model, (text) => remapSheetReferences(text, remap));
 }
 
 /** Why the sheet at `index` cannot be duplicated, or null. */
@@ -477,7 +502,10 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
       copy.partName = parts.partName;
       copy = withCopiedDrawingPart(copy, new LazyParts(model.opaque));
       copy = withCopiedChartParts(copy, (part) => parts.partRenames.get(part));
-      copy = rewriteFormulas(copy, (formula) => renameTablesInFormula(formula, parts.tableRenames));
+      if (!copy.tables?.length) {
+        // SPEC-133: tables the model holds are renamed on the model below.
+        copy = rewriteFormulas(copy, (formula) => renameTablesInFormula(formula, parts.tableRenames));
+      }
     } else if (sourceXml !== undefined) {
       const copied = copyOdsSheetSource(model, sourceXml, (copy.drawings ?? []).map((drawing) => drawing.sourceXml ?? ""));
       model.opaque = copied.opaque;
@@ -498,6 +526,18 @@ export function duplicateSheet(model: SpreadsheetModel, index: number): SheetCom
   copy = rewriteFormulas(copy, (formula) => renameSheetInFormula(formula, source.name, name));
   copy = rewriteRuleFormulas(model.format, copy, (formula) => renameSheetInFormula(formula, source.name, name));
   copy = withRenamedChartRefs(copy, (formula) => renameSheetInFormula(formula, source.name, name));
+  const renameTables = copiedTables(model, copy);
+  if (copy.tables?.length) {
+    copy = rewriteFormulas(copy, renameTables.rename);
+    copy.tables = renameTables.tables;
+    copy.dirty = true;
+  }
+  const local = model.names.filter((defined) => defined.scopeSheetId === source.id);
+  if (local.length > 0) {
+    const rewrite = (formula: string): string => renameTables.rename(renameSheetInFormula(formula, source.name, name));
+    model.names = [...model.names, ...local.map((defined) => (defined.formulaUnparsed ? { ...defined, scopeSheetId: copy.id } : { ...defined, scopeSheetId: copy.id, formula: rewrite(defined.formula) }))];
+    model.namesDirty = true;
+  }
   const sheets = model.sheets.slice();
   sheets.splice(index + 1, 0, copy);
   model.sheets = sheets;
@@ -594,6 +634,36 @@ function renamedChartRefs(refs: SheetChartRefs, rename: (formula: string) => str
   return plotArea === undefined ? { series, plotVisibleOnly: refs.plotVisibleOnly } : { series, plotArea, plotVisibleOnly: refs.plotVisibleOnly };
 }
 
+/** SPEC-133: a copy's tables (see the module header) and the rewrite of a
+ * formula's references to the origin's tables into the copies'. */
+function copiedTables(model: SpreadsheetModel, copy: Sheet): { tables: SheetTable[]; rename: (formula: string) => string } {
+  const origin = copy.tables ?? [];
+  if (origin.length === 0) {
+    return { tables: [], rename: (formula) => formula };
+  }
+  let xlsxId = Math.max(0, ...allTables(model).map(({ table }) => table.xlsxId ?? 0));
+  const taken: string[] = [];
+  const renames: [string, string][] = [];
+  const tables = origin.map((table): SheetTable => {
+    const name = uniqueTableName(model, table.name, taken);
+    taken.push(name);
+    renames.push([table.name, name]);
+    xlsxId += 1;
+    const { partName: _part, ...rest } = table;
+    return { ...rest, id: crypto.randomUUID(), name, xlsxId, dirty: true };
+  });
+  const rename = (formula: string): string => renames.reduce((text, [from, to]) => renameTableInFormula(text, from, to), formula);
+  const renamed = tables.map((table) => ({
+    ...table,
+    columns: table.columns.map((column) => ({
+      ...column,
+      ...(column.calculatedFormula === undefined ? {} : { calculatedFormula: rename(column.calculatedFormula) }),
+      ...(column.totalsFormula === undefined ? {} : { totalsFormula: rename(column.totalsFormula) }),
+    })),
+  }));
+  return { tables: renamed, rename };
+}
+
 /** A copy's conditional formats (see the module header). */
 function copiedFormats(formats: readonly ConditionalFormat[], format: SpreadsheetFormat): ConditionalFormat[] {
   return formats.map((each) => {
@@ -672,6 +742,16 @@ export function deleteSheet(model: SpreadsheetModel, index: number): SheetComman
   }
   model.sheets = sheets;
   remapChartReferences(model, remap);
+  const names = model.names.filter((defined) => defined.scopeSheetId !== sheet.id);
+  if (names.length !== model.names.length) {
+    model.names = names;
+    model.namesDirty = true;
+  }
+  remapNamesAndTables(model, remap);
+  removeTableReferencesEverywhere(
+    model,
+    (sheet.tables ?? []).map((table) => table.name),
+  );
   model.structureDirty = true;
   model.activeSheetIndex = activeIndex;
   return { activeIndex, alsoRecalc: cellsToRecalc(model, before, []) };
@@ -773,6 +853,10 @@ export function stripRetention(model: SpreadsheetModel): SpreadsheetModel {
       conditionalFormats: crossFormats(sheetFormats(sheet), model.format, sheet.name),
       validations: crossValidations(sheetValidations(sheet), model.format, sheet.name),
     };
+    if (fields.tables) {
+      // SPEC-133: the table parts stay behind with the package.
+      crossed.tables = fields.tables.map(({ partName: _part, ...table }) => ({ ...table, dirty: true as const }));
+    }
     const crossedDrawings = crossDrawings(drawings ?? [], media);
     if (sheet.kind === "chart" && model.format !== "xlsx") {
       // SPEC-132: a chart sheet becomes a grid sheet holding its chart at the top-left.

@@ -1051,9 +1051,26 @@ function withStructure(id: string): SpreadsheetModel {
           ],
         },
       ]);
+    case "names":
+      return { ...model([base]), names: [{ name: "Margin", formula: "Sheet1!$A$6" }] };
+    case "tables":
+      return model([{ ...base, tables: [contractTable(range(5, 0, 7, 1))] }]);
     default:
       throw new Error(`no contract fixture for the "${id}" adjuster`);
   }
+}
+
+/** SPEC-133: a two-column table with a header row at `ref`. */
+function contractTable(ref: GridRange): NonNullable<Sheet["tables"]>[number] {
+  return {
+    id: "t1",
+    name: "Sales",
+    ref,
+    headerRow: true,
+    totalsRow: false,
+    columns: [{ name: "A" }, { name: "B" }],
+    style: { showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+  };
 }
 
 /** Where the structure of each kind is, to see it move. */
@@ -1084,13 +1101,17 @@ function structureOf(id: string, m: SpreadsheetModel): unknown {
       const content = s.drawings?.[0]?.content;
       return content?.kind === "chart" ? content.refs?.series[0]?.values : undefined;
     }
+    case "names":
+      return m.names[0]?.formula;
+    case "tables":
+      return s.tables?.[0]?.ref;
     default:
       return undefined;
   }
 }
 
 describe("REFERENCE_ADJUSTERS — the registry contract", () => {
-  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-131's drawings and SPEC-132's charts", () => {
+  it("registers this spec's adjusters in order, then SPEC-128's autofilter, SPEC-129's conditionalFormats, SPEC-130's validations, SPEC-131's drawings, SPEC-132's charts and SPEC-133's names and tables", () => {
     expect(REFERENCE_ADJUSTERS.map((adjuster) => adjuster.id)).toEqual([
       "rows",
       "formulas",
@@ -1104,6 +1125,8 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
       "validations",
       "drawings",
       "charts",
+      "names",
+      "tables",
     ]);
   });
 
@@ -1145,6 +1168,8 @@ describe("REFERENCE_ADJUSTERS — the registry contract", () => {
             validations: range(6, 0, 6, 0),
             drawings: 6,
             charts: "Sheet1!$A$7",
+            names: "Sheet1!$A$7",
+            tables: range(6, 0, 8, 1),
           }[adjuster.id],
         );
       });

@@ -87,6 +87,16 @@
 // generated number style are written in the user's locale (`locale`,
 // en-US when absent). ODS has no "recalculate on load" flag: a stale cell's
 // last known value is written as it is.
+//
+// SPEC-133 (ods/namedExpressions.ts, the normative source): the defined
+// names are the model's — the workbook's `table:named-expressions` after the
+// tables (from scratch) or reconciled in the suffix, each sheet's as the last
+// child of its table (rebuilt, new, or clean — a clean table's text is
+// otherwise verbatim); `namesDirty` alone takes the substitution path. Each
+// Excel table becomes a `table:database-range` named after it, and a sheet
+// holding tables is always rebuilt by serializeTable, which bakes each table
+// cell's look into a generated style and writes structured references as A1
+// ranges.
 import { now as clockNow } from "../../core/clock";
 import { buildMetaXml } from "../../core/odfMeta";
 import { ensureMediaEncoded, type MediaPart } from "../../core/media";
@@ -116,6 +126,7 @@ import {
 } from "./package";
 import { hasOdsChartWork, planOdsCharts } from "./chartParts";
 import { odsDatabaseRangesXml, odsSuffixWithAutoFilters } from "./databaseRanges";
+import { odsNamedExpressionsXml, odsScopeNames, odsSuffixWithNames, odsTableTextWithNames, odsTrailingWithNames, odsWithTableDatabaseRanges } from "./namedExpressions";
 import { drawingMediaIds, OdsMediaPaths } from "./drawingXml";
 import { OdsConditionalFormatWriter } from "./conditionalFormats";
 import { OdsValidationWriter } from "./contentValidations";
@@ -188,7 +199,7 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
     return zip(buildFromScratch(model, options));
   }
   const parts = decodedPartBytes(model.opaque);
-  if (!model.structureDirty && !model.sheets.some((sheet) => sheet.dirty) && !hasOdsChartWork(model)) {
+  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
   return zip(mimetypeFirst(buildSubstitution(model, parts, options)));
@@ -200,6 +211,12 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
 export function substitutedOdsParts(model: SpreadsheetModel, options: WriteOdsOptions = {}): Map<string, Uint8Array> {
   const entries = buildSubstitution(model, decodedPartBytes(model.opaque), options);
   return new Map(entries.map((entry) => [entry.name, entry.data] as const));
+}
+
+/** SPEC-133: a sheet holding Excel tables is always rebuilt (their look is
+ * baked into its cells). */
+function hasTables(sheet: Sheet): boolean {
+  return (sheet.tables?.length ?? 0) > 0;
 }
 
 /** ODF's rule: `mimetype` first and STOREd. */
@@ -342,16 +359,18 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   // SPEC-132: every chart gets a new embedded object (ods/chartParts.ts).
   const charts = planOdsCharts(model, []);
   const chartObjectDir = (drawing: SheetDrawing): string | undefined => charts.minted.get(drawing);
+  const localNames = (sheet: Sheet, trailing: string): string => odsTrailingWithNames(trailing, model, sheet, new Map());
   const tables = model.sheets
-    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir }))
+    .map((sheet) => serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }))
     .join("");
-  const databaseRanges = odsDatabaseRangesXml(model.sheets);
+  const namedExpressions = odsNamedExpressionsXml(model, odsScopeNames(model, undefined));
+  const databaseRanges = odsWithTableDatabaseRanges(odsDatabaseRangesXml(model.sheets), model.sheets).text;
   const styles = registry.xml();
   const content =
     `${ODF_DECLARATION}<office:document-content xmlns:office="${OFFICE_NS}" xmlns:style="${STYLE_NS}" xmlns:text="${TEXT_NS}" ` +
     `xmlns:table="${TABLE_NS}" xmlns:fo="${FO_NS}" xmlns:of="${OF_NS}" xmlns:tableooo="${TABLEOOO_NS}"${optionalDeclarations(styles + tables)} office:version="1.2">` +
     `<office:automatic-styles>${styles}</office:automatic-styles>` +
-    `<office:body><office:spreadsheet>${calculationSettings(model)}${validations.blockXml()}${tables}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
+    `<office:body><office:spreadsheet>${calculationSettings(model)}${validations.blockXml()}${tables}${namedExpressions}${databaseRanges}</office:spreadsheet></office:body></office:document-content>`;
   const active = model.sheets[model.activeSheetIndex] ?? model.sheets[0];
   // SPEC-131: every picture a drawing shows, listed in the manifest.
   const pictures: ZipEntryInput[] = [
@@ -500,6 +519,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     conditionalFormats,
     mappedCellStyle: (name) => book.cellStyleMaps(name) !== undefined,
     validationName: (sheet, rule) => validations.nameOf(sheet, rule),
+    localNames: (sheet, trailing) => odsTrailingWithNames(trailing, model, sheet, namespaces),
   };
   let rebuilt = "";
 
@@ -525,8 +545,11 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
         recoloured.add(sheet.name);
       }
     }
-    if (!sheet.dirty && !validations.rebuilds(sheet)) {
-      return text;
+    if (!sheet.dirty && !validations.rebuilds(sheet) && !hasTables(sheet)) {
+      // SPEC-133: a clean table still carries the model's names.
+      const named = odsTableTextWithNames(text, model, sheet, namespaces);
+      rebuilt += named.generated;
+      return named.text;
     }
     const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
     rebuilt += table;
@@ -538,13 +561,16 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     retained: (retained) => passOdsText(removeRangesOnDeletedSheets(retained, remap), remap, namespaces),
     sheetPass: (sheet, retained) => passOdsText(retained, copyRemap(remap, sheet), namespaces),
   });
+  // SPEC-133: the workbook's names (never passed), then the tables' database ranges.
+  const names = odsSuffixWithNames(databases.suffix, model, namespaces);
+  const tableRanges = odsWithTableDatabaseRanges(names.suffix, model.sheets);
   const generated = registry.xml();
   const passPrefix = (retained: string): string => passOdsText(retained, remap, namespaces);
   const prefix = withNamespaces(
     withGeneratedStyles(validations.splicePrefix(passPrefix(envelope.prefix), passPrefix), generated),
-    generated + rebuilt + databases.generated + validations.generatedXml,
+    generated + rebuilt + databases.generated + names.generated + tableRanges.generated + validations.generatedXml,
   );
-  const suffix = databases.suffix;
+  const suffix = tableRanges.text;
   const content = prefix + tables.join("") + suffix;
 
   // Objects and pictures only a deleted source table showed.

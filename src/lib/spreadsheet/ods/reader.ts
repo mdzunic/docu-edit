@@ -99,6 +99,10 @@
 //   trusts its caches; only a chart whose object carries a reference with
 //   no data for it is refreshed, for display (refreshUncachedOdsCharts),
 //   once every table is read.
+// - SPEC-133: the spreadsheet's and each table's `table:named-expressions`
+//   → `names` (ods/namedExpressions.ts, the normative source: workbook
+//   names first, then each table's, rebased to A1). A
+//   `table:database-range` never becomes a table.
 import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
@@ -108,7 +112,7 @@ import { unzip, ZipError } from "../../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import type { GridRange } from "../address";
 import { refreshSheetChart } from "../charts";
-import { toCellError, type CalcSettings, type CellFont, type CellStyle, type CellValue, type Sheet, type SheetChartContent, type SpreadsheetModel, type TextRun } from "../model";
+import { toCellError, type CalcSettings, type CellFont, type DefinedName, type CellStyle, type CellValue, type Sheet, type SheetChartContent, type SpreadsheetModel, type TextRun } from "../model";
 import {
   addressText,
   CellBudget,
@@ -135,6 +139,7 @@ import {
   type OdsStyleSheet,
 } from "./styles";
 import { readOdsAutoFilters } from "./databaseRanges";
+import { readOdsNames } from "./namedExpressions";
 import { isDrawingElement, OdsMediaReader, readOdsDrawings, type OdsDrawingSource } from "./drawingXml";
 import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved } from "./tableXml";
 import { buildGridMetrics } from "../geometry";
@@ -481,6 +486,8 @@ interface OdsContent {
   /** SPEC-132: the chart contents whose objects carry a reference with no
    * data for it (refreshed for display once the workbook is assembled). */
   uncachedCharts: Set<SheetChartContent>;
+  /** SPEC-133: the workbook's and the tables' defined names. */
+  names: DefinedName[];
 }
 
 /** SPEC-120 "Calculation settings" from `table:calculation-settings` and its
@@ -945,6 +952,7 @@ export function readOdsContent(
     orphanValidations: validations.orphans,
     media: media.media(),
     uncachedCharts,
+    names: readOdsNames({ suffix }, sheets, namespaces),
   };
 }
 
@@ -970,7 +978,7 @@ export function refreshUncachedOdsCharts(parsed: ParsedSpreadsheet, uncached: Re
     opaque: parsed.opaque,
     styles: parsed.styles,
     defaultStyleId: 0,
-    names: [],
+    names: parsed.names ?? [],
     dxfs: parsed.dxfs,
   };
   if (parsed.odsNullDate !== undefined) {
@@ -1088,6 +1096,9 @@ export async function parseOds(
   }
   if (content.media.length > 0) {
     parsed.media = content.media;
+  }
+  if (content.names.length > 0) {
+    parsed.names = content.names;
   }
   refreshUncachedOdsCharts(parsed, content.uncachedCharts);
   return parsed;

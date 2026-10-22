@@ -189,7 +189,8 @@ import {
   type TextRun,
 } from "../model";
 import { impliedDateCode, type ImpliedFormatStyles } from "../impliedFormats";
-import { readXlsxFormula, toXlsxFormula, type FormulaFields } from "../formula/dialect";
+import { readXlsxFormula as readDialectFormula, toXlsxFormula, type FormulaFields } from "../formula/dialect";
+import { structuredFromXlsx, structuredToXlsx } from "../tables";
 import { FormulaSyntaxError, parseFormulaAt } from "../formula/parse";
 import { shiftFormula } from "../formula/references";
 import { addressText, normaliseCells, normaliseRows, outOfGridError, parseError, type CellBudget } from "../parsed";
@@ -214,6 +215,14 @@ import { isSpreadsheetMl, XlsxFontReader, type XlsxStyleWriter } from "./styles"
 import { modelColorToXlsxAttrs, scannedAttributes, xlsxColorFrom } from "./themeColor";
 
 /** A shared string: its text, plus its runs when it was rich. */
+
+/** SPEC-133: a cell's `<f>` read through SPEC-119's dialect, its
+ * structured references' `[#This Row]` then made canonical `@`. */
+function readXlsxFormula(wire: string, host: { row: number; col: number }): FormulaFields {
+  const read = readDialectFormula(wire, host);
+  return read.formulaUnparsed ? read : { formula: structuredFromXlsx(read.formula) };
+}
+
 export interface SharedString {
   text: string;
   runs?: TextRun[];
@@ -1906,7 +1915,7 @@ function cellXml(cell: Cell, row: Row, sheet: Sheet, ctx: XlsxSheetContext, p: s
   if (cell.dataTableXml !== undefined) {
     children += cell.dataTableXml;
   } else if (cell.formula !== undefined) {
-    const text = escapeElementText(cell.formulaUnparsed ? cell.formula : toXlsxFormula(cell.formula));
+    const text = escapeElementText(cell.formulaUnparsed ? cell.formula : toXlsxFormula(structuredToXlsx(cell.formula)));
     children += cell.arrayRange ? `<${p}f t="array" ref="${formatRange(cell.arrayRange)}">${text}</${p}f>` : `<${p}f>${text}</${p}f>`;
   }
   if (value !== null) {

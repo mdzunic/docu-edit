@@ -15,8 +15,9 @@
 // not a worksheet, a destination past the grid's edge, more than
 // MAX_COPY_CELLS positions, a merge or an array range crossing the source's
 // or the destination's edge (one entirely inside the source moves with it),
-// a locked cell of a protected sheet in either — then runs every adjuster in
-// registry order and marks both sheets dirty. Source and destination may
+// a locked cell of a protected sheet in either, part of a table (SPEC-133) —
+// then runs every adjuster in registry order and marks both sheets dirty.
+// Source and destination may
 // overlap (moving a block down one row): the move reads the source before it
 // writes. Each adjuster replaces what it changes copy-on-write and keeps the
 // identity of everything else.
@@ -30,8 +31,10 @@
 // | 6 | conditionalFormats | SPEC-129 "Moves": formats travel with their cells — a format wholly inside the source moves, the part of one partly inside becomes a new format at the destination, the destination's previous rules go, every rule formula re-pointed (see "6. conditionalFormats") |
 // | 7 | validations | SPEC-130 "Moves": data-validation rules travel with their cells by the same rule — a rule wholly inside the source moves, the part of one partly inside becomes a new rule at the destination, the destination's previous rules go, every rule formula re-pointed (see "7. validations") |
 // | 8 | charts | SPEC-132 "Reference adjustment": repointFormula over every modelled chart's refs on every sheet (`refsDirty` where one changed), then a refresh of each refreshable chart whose refs changed or read either sheet; the chart drawing stays put (charts.ts moveChartsForMove) |
+// | 9 | names | SPEC-133: repointFormula over every DefinedName's formula, host = its scope sheet, else the source sheet — a name follows its cells; its relative parts are offsets and stay (nameTableAdjusters.ts) |
+// | 10 | tables | SPEC-133 "Tables and moves": a table wholly inside the source moves onto the destination sheet, one wholly inside the destination is overwritten (deleted, its references #REF!), every table's calculated/totals formulas re-pointed (nameTableAdjusters.ts); the refusal pass refuses a partial table (PARTIAL_TABLE_MOVE_MESSAGE) |
 // Later specs that register a SPEC-124 ReferenceAdjuster for something that
-// travels with cells or points at them — defined names and tables (133), notes and hyperlinks
+// travels with cells or points at them — notes and hyperlinks
 // (135), pivots (139) — register a MoveAdjuster with the same id here, with
 // its row in move.spec.ts's registry contract; drawings (131) and page
 // breaks (136) deliberately do not.
@@ -43,6 +46,7 @@ import { firstLockedCell, isEmptyRow, PROTECTED_CELL_MESSAGE } from "./cells";
 import { MAX_COPY_CELLS } from "./clipboardPayload";
 import { formatOrigin, mintCfId, reanchorRule, renumberPriorities, sheetFormats, type CfRule, type ConditionalFormat } from "./conditionalFormats";
 import { applyAutoFilter, type AutoFilter } from "./filter";
+import { moveNamesForMove, moveTablesForMove, PARTIAL_TABLE_MOVE_MESSAGE, partialTableMove } from "./nameTableAdjusters";
 import { rewriteReferences, type RefPart, type ReferenceNode } from "./formula/references";
 import { rangesIntersect } from "./merges";
 import { MAX_COLS, MAX_ROWS, type Cell, type Row, type Sheet, type SpreadsheetModel } from "./model";
@@ -130,6 +134,9 @@ export function moveRefusal(model: SpreadsheetModel, move: RangeMove): string | 
   }
   if (arrayCrosses(from, move.from) || arrayCrosses(to, dest, same ? move.from : undefined)) {
     return PARTIAL_ARRAY_MESSAGE;
+  }
+  if (partialTableMove(model, move)) {
+    return PARTIAL_TABLE_MOVE_MESSAGE;
   }
   const fromIndex = model.sheets.indexOf(from);
   const toIndex = model.sheets.indexOf(to);
@@ -776,6 +783,9 @@ export const MOVE_ADJUSTERS: MoveAdjuster[] = [
   conditionalFormatsAdjuster,
   validationsAdjuster,
   { id: "charts", move: moveChartsForMove },
+  // SPEC-133 (nameTableAdjusters.ts); called through arrows, as the modules import each other.
+  { id: "names", move: (model, move) => moveNamesForMove(model, move) },
+  { id: "tables", move: (model, move) => moveTablesForMove(model, move) },
 ];
 
 /** One move (see the module header). */

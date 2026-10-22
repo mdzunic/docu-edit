@@ -153,8 +153,8 @@ afterEach(() => {
 
 describe("reader versions", () => {
   it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11, SPEC-131 to 12 and SPEC-132 to 13, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(13);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(SPREADSHEET_READER_VERSION).toBe(14);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -199,6 +199,7 @@ describe("reader versions", () => {
         "format",
         "id",
         "kind",
+        "names",
         "opaque",
         "preview",
         "readerVersion",

@@ -440,11 +440,11 @@ function numbering(count: number): string[] {
 /** `visual` with its categories, values and referenced names read from the
  * cells under `refs` — the same object when nothing differs; an unchanged
  * series keeps its identity. */
-function visualFromCells(model: SpreadsheetModel, hostSheetId: string, refs: SheetChartRefs, visual: ChartVisual): ChartVisual {
+function visualFromCells(model: SpreadsheetModel, hostSheetId: string, refs: SheetChartRefs, visual: ChartVisual, resolveName?: ChartNameResolver): ChartVisual {
   const ctx = chartFormatContext(model);
   const shown = (cells: ChartCell[]): ChartCell[] => (refs.plotVisibleOnly ? cells.filter((cell) => !cell.hidden) : cells);
   const read = (text: string, withText: boolean): ChartCell[] | null => {
-    const areas = resolveChartRange(model, text, undefined, hostSheetId);
+    const areas = resolveChartRange(model, text, resolveName, hostSheetId);
     return areas ? readAreas(model, areas, withText ? ctx : undefined) : null;
   };
   let seriesChanged = false;
@@ -504,11 +504,11 @@ function visualFromCells(model: SpreadsheetModel, hostSheetId: string, refs: She
  * series whose reference does not resolve keeps its cached values. The SAME
  * object when nothing changes, and for an unmodelled, read-only or
  * reference-less chart. Never sets a flag. */
-export function refreshedChartContent(model: SpreadsheetModel, sheetId: string, content: SheetChartContent): SheetChartContent {
+export function refreshedChartContent(model: SpreadsheetModel, sheetId: string, content: SheetChartContent, resolveName?: ChartNameResolver): SheetChartContent {
   if (!isRefreshable(content)) {
     return content;
   }
-  const visual = visualFromCells(model, sheetId, content.refs, content.visual);
+  const visual = visualFromCells(model, sheetId, content.refs, content.visual, resolveName);
   return visual === content.visual ? content : { ...content, visual };
 }
 
@@ -526,12 +526,12 @@ function withDrawingAt(sheet: Sheet, index: number, drawing: SheetDrawing): Shee
  * for a part with a reference but no cache), which changes only the visual.
  * Marks nothing else: the chart part is written by the chart write paths,
  * whatever the sheet's own dirty flags. */
-export function refreshSheetChart(model: SpreadsheetModel, sheetId: string, drawingId: string, options?: { forDisplay?: boolean }): boolean {
+export function refreshSheetChart(model: SpreadsheetModel, sheetId: string, drawingId: string, options?: { forDisplay?: boolean; resolveName?: ChartNameResolver }): boolean {
   const found = findChart(model, sheetId, drawingId);
   if (!found) {
     return false;
   }
-  const next = refreshedChartContent(model, sheetId, found.content);
+  const next = refreshedChartContent(model, sheetId, found.content, options?.resolveName);
   if (next === found.content) {
     return false;
   }
@@ -546,6 +546,8 @@ export function refreshSheetChart(model: SpreadsheetModel, sheetId: string, draw
 interface AreaCacheEntry {
   key: string;
   areas: ResolvedChartArea[];
+  /** SPEC-133: the names resolved through (copy-on-write), when a hook was given. */
+  names?: unknown;
 }
 
 /** Each refs object's resolved areas (unclipped), keyed by the host and the
@@ -559,21 +561,22 @@ function sheetSignature(model: SpreadsheetModel): string {
 }
 
 /** Every area a chart's references read (names, categories, values), cached. */
-function chartAreas(model: SpreadsheetModel, hostSheetId: string, refs: SheetChartRefs, signature: string): ResolvedChartArea[] {
+function chartAreas(model: SpreadsheetModel, hostSheetId: string, refs: SheetChartRefs, signature: string, resolveName?: ChartNameResolver): ResolvedChartArea[] {
   const key = `${hostSheetId}\u0002${signature}`;
+  const names = resolveName ? model.names : undefined;
   const hit = areaCache.get(refs);
-  if (hit?.key === key) {
+  if (hit?.key === key && hit.names === names) {
     return hit.areas;
   }
   const areas: ResolvedChartArea[] = [];
   for (const series of refs.series) {
     for (const text of [series.name, series.categories, series.values]) {
       if (text !== undefined) {
-        areas.push(...(resolveAreas(model, text, undefined, hostSheetId, false, 0) ?? []));
+        areas.push(...(resolveAreas(model, text, resolveName, hostSheetId, false, 0) ?? []));
       }
     }
   }
-  areaCache.set(refs, { key, areas });
+  areaCache.set(refs, { key, areas, names });
   return areas;
 }
 
@@ -610,7 +613,7 @@ function touches(changed: ChangedCells, range: GridRange): boolean {
  * intersect a changed cell — an interval test over each chart's resolved
  * areas, cached per chart (by its `refs` object) and invalidated when the
  * refs change. */
-export function chartsAffectedBy(model: SpreadsheetModel, changed: readonly CellKey[]): { sheetId: string; drawingId: string }[] {
+export function chartsAffectedBy(model: SpreadsheetModel, changed: readonly CellKey[], resolveName?: ChartNameResolver): { sheetId: string; drawingId: string }[] {
   if (changed.length === 0) {
     return [];
   }
@@ -632,7 +635,7 @@ export function chartsAffectedBy(model: SpreadsheetModel, changed: readonly Cell
   const signature = sheetSignature(model);
   const hits: { sheetId: string; drawingId: string }[] = [];
   for (const { sheet, drawing, refs } of refreshableCharts(model)) {
-    const hit = chartAreas(model, sheet.id, refs, signature).some((area) => {
+    const hit = chartAreas(model, sheet.id, refs, signature, resolveName).some((area) => {
       const cells = bySheet.get(area.sheetId);
       return cells !== undefined && touches(cells, area.range);
     });

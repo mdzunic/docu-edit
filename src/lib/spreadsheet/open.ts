@@ -152,6 +152,22 @@
 //     source-time text, so SPEC-121's sourceSheetRemap (a copy's own remap
 //     included) is applied to the references it reads. A placeholder whose
 //     part cannot be read becomes a foreign "Chart" drawing.
+// 14 — SPEC-133: defined names (`model.names` — xlsx `workbook.xml`
+//     `definedNames`; ods `table:named-expressions` of the spreadsheet and of
+//     each table) and Excel tables (`Sheet.tables` — the worksheet's
+//     `<tableParts>` and their `xl/tables/tableN.xml` parts; an ods database
+//     range never becomes a table). Every re-read gains them. The step, run
+//     for each dirty sheet, reads its tables from its retained source part
+//     and the table parts in `opaque` (SPEC-124's retained rewrite kept their
+//     refs current through every structural edit and move before this
+//     version; their formulas get SPEC-121's sourceSheetRemap). Its
+//     `upgradeWorkbook`, run once for an edited record, reads the names from
+//     the retained workbook part or content envelope (and each table's
+//     retained `sourceXml`): xlsx `localSheetId` resolves through the SOURCE
+//     sheet order to the model sheet holding that source part (ods: the
+//     sheet whose retained `table:name` matches), every formula gets
+//     sourceSheetRemap (renamed sheets renamed, deleted ones #REF!), and a
+//     name scoped to a sheet no longer present is dropped.
 //
 // Opening (SPEC-132 "Open trusts caches"): no chart is refreshed at open,
 // except one whose part carries a reference but no cache for it, refreshed
@@ -181,7 +197,7 @@ import type { CfRule, CfValue, Dxf } from "./conditionalFormats";
 import type { DataValidation } from "./validation";
 import { cellStyle, defaultStyles, internDxf, internStyle, styleKey } from "./styles";
 
-export const SPREADSHEET_READER_VERSION = 13;
+export const SPREADSHEET_READER_VERSION = 14;
 
 /** The locale a preview built here formats in: the reader knows no
  * preference — the store rebuilds the card in the user's locale (SPEC-118). */
@@ -196,6 +212,12 @@ export interface ReaderUpgrade {
    *  retained package — for a step that maps source-time names (absent: the
    *  model's own). */
   upgradeDirtySheet(model: SpreadsheetModel, sheet: Sheet, sourceParts: Map<string, Uint8Array>, record?: SpreadsheetModel): void | Promise<void>;
+  /** SPEC-133: brings what lives at WORKBOOK level up to date — run once,
+   *  after every sheet's, when an edited record (any sheet dirty, or the
+   *  structure changed) is upgraded. `model` holds the record's sheet list
+   *  (ids, names, `partName`/`sourceXml`, `copiedFrom`), its retained
+   *  `opaque` and content envelope. Steps without it are unaffected. */
+  upgradeWorkbook?(model: SpreadsheetModel, sourceParts: Map<string, Uint8Array>): void | Promise<void>;
 }
 
 export const READER_UPGRADES: ReaderUpgrade[] = [
@@ -391,6 +413,18 @@ export const READER_UPGRADES: ReaderUpgrade[] = [
     from: 12,
     async upgradeDirtySheet(model, sheet, sourceParts, record) {
       await upgradeChartPlaceholders(model, sheet, sourceParts, record ?? model);
+    },
+  },
+  {
+    // SPEC-133 (13 → 14): defined names and tables (see the version history).
+    from: 13,
+    async upgradeDirtySheet(model, sheet, sourceParts, record) {
+      const { upgradeSheetTables } = await import("./namesTablesOpen");
+      upgradeSheetTables(model, sheet, sourceParts, record ?? model);
+    },
+    async upgradeWorkbook(model, sourceParts) {
+      const { upgradeWorkbookNames } = await import("./namesTablesOpen");
+      upgradeWorkbookNames(model, sourceParts);
     },
   },
 ];
@@ -744,7 +778,7 @@ export function assembleSpreadsheet(title: string, format: SpreadsheetFormat, pa
     opaque: parsed.opaque,
     styles: parsed.styles.length > 0 ? parsed.styles : defaultStyles(),
     defaultStyleId: 0,
-    names: [],
+    names: parsed.names ?? [],
     dxfs: parsed.dxfs,
   };
   if (parsed.theme !== undefined) {
@@ -920,6 +954,16 @@ async function upgradeEdited(model: SpreadsheetModel, sourceParts: Map<string, U
     sheets.push(await upgradedSheet(stored, index));
   }
   fresh.sheets = sheets;
+  // SPEC-133: workbook-level steps run once, over the record's sheet list.
+  fresh.names = model.names ?? [];
+  if (model.namesDirty) {
+    fresh.namesDirty = true;
+  } else {
+    delete fresh.namesDirty;
+  }
+  for (const step of pending) {
+    await step.upgradeWorkbook?.(fresh, sourceParts);
+  }
   // SPEC-131: the stored images (an inserted one has no retained part) win
   // over the re-read's, which add the ones a re-read sheet shows.
   const media = new Map([...(fresh.media ?? []), ...(model.media ?? [])].map((part) => [part.mediaId, part] as const));

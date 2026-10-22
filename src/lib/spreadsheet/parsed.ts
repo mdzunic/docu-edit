@@ -8,7 +8,7 @@ import { bytesToBase64Async, type OpaquePart } from "../core/packageParts";
 import type { DocumentTheme } from "../core/theme";
 import { colToLetters } from "./address";
 import { SpreadsheetOpenError } from "./errors";
-import { MAX_WORKBOOK_CELLS, type CalcSettings, type CellStyle, type PackageVariant, type Sheet } from "./model";
+import { MAX_WORKBOOK_CELLS, type CalcSettings, type CellStyle, type DefinedName, type PackageVariant, type Sheet } from "./model";
 import type { Dxf } from "./conditionalFormats";
 import type { NamedCellStyle } from "./styles";
 
@@ -40,6 +40,8 @@ export interface ParsedSpreadsheet {
   /** SPEC-131: the images the sheets' drawings embed, one part per package
    *  path (absent: none) — their bytes deferred with registerPendingMedia. */
   media?: MediaPart[];
+  /** SPEC-133: the defined names (absent: none). */
+  names?: DefinedName[];
 }
 
 /** Counts stored cells across every sheet of one read against

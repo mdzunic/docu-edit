@@ -255,6 +255,7 @@ const SHEET_IDS: SheetShortcutId[] = [
   "sheet.insertFunction",
   "sheet.toggleFilter",
   "sheet.reapplyFilter",
+  "sheet.nameManager",
 ];
 
 /** The keydown a binding describes on one platform, for sweeping a whole
@@ -294,7 +295,7 @@ function claimedPresses(binding: ShortcutBinding, isMac: boolean): string[] {
 }
 
 describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
-  it("declares the sheet's twenty commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function under Formulas, SPEC-128's filter toggle and reapply under Sort and filter — one binding each but paste special's two", () => {
+  it("declares the sheet's twenty-one commands — SPEC-123's twelve under Sheet formatting, SPEC-124's insert/delete under Rows and columns, SPEC-125's paste special and fills under Paste and fill, SPEC-127's Insert function and SPEC-133's Name Manager under Formulas, SPEC-128's filter toggle and reapply under Sort and filter — one binding each but paste special's two", () => {
     expect(SHEET_SHORTCUTS).toEqual(sheetShortcutDefinitions(isMacPlatform()));
     const pasteAndFill = ["sheet.pasteSpecial", "sheet.fillDown", "sheet.fillRight"];
     const sortAndFilter = ["sheet.toggleFilter", "sheet.reapplyFilter"];
@@ -304,7 +305,7 @@ describe('SHEET_SHORTCUTS (SPEC-123 "Shortcuts")', () => {
       for (const definition of definitions) {
         const structural = definition.id === "sheet.insertCells" || definition.id === "sheet.deleteCells";
         const category =
-          definition.id === "sheet.insertFunction"
+          (definition.id === "sheet.insertFunction" || definition.id === "sheet.nameManager")
             ? "Formulas"
             : pasteAndFill.includes(definition.id)
               ? "Paste and fill"

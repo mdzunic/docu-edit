@@ -210,7 +210,7 @@ export function parseStructuredText(text: string): StructuredSpec | null {
 
 // --- printing ----------------------------------------------------------------------------
 
-const BRACKETED = /[,:.[\]#'"{}$^&*+=\-><\/\t\r\n]/;
+const BRACKETED = /[,:.[\]#'"{}$^&*+=\-></\t\r\n]/;
 
 /** Whether a column name prints in the inner-bracket form `T[[a.b]]`. */
 export function columnNeedsBrackets(name: string): boolean {
@@ -556,15 +556,18 @@ function areaText(model: Pick<SpreadsheetModel, "sheets">, area: Area, hostSheet
 
 /** Every structured reference (and bare table name) of a canonical formula
  * hosted at `host` replaced by its A1 equivalent — what an ODS file holds
- * (see the module header); an unresolvable one becomes its error. */
+ * (see the module header); an unresolvable one becomes its error. With
+ * `onlyTable`, references to other tables are left as they are (Convert to
+ * range). */
 export function expandStructuredReferences(
   model: Pick<SpreadsheetModel, "sheets" | "names">,
   text: string,
   host: { sheetId: string; row: number; col: number },
+  onlyTable?: string,
 ): string {
   return rewriteTokens(text, (token) => {
     if (token.kind === "name") {
-      if (sheetPrefixOf(token.text) !== "" || model.names.some((name) => same(name.name, token.text))) {
+      if (sheetPrefixOf(token.text) !== "" || model.names.some((name) => same(name.name, token.text)) || (onlyTable !== undefined && !same(token.text, onlyTable))) {
         return undefined;
       }
       const found = findTable(model, token.text);
@@ -574,6 +577,13 @@ export function expandStructuredReferences(
       return undefined;
     }
     const open = token.text.indexOf("[");
+    if (onlyTable !== undefined) {
+      const hostSheet = open > 0 ? undefined : model.sheets.find((sheet) => sheet.id === host.sheetId);
+      const named = open > 0 ? token.text.slice(0, open) : hostSheet && tableAt(hostSheet, host.row, host.col)?.name;
+      if (!same(named, onlyTable)) {
+        return undefined;
+      }
+    }
     const resolved = resolveStructuredReference(model, open > 0 ? { table: token.text.slice(0, open), text: token.text } : { text: token.text }, host);
     if ("error" in resolved) {
       return resolved.error;
