@@ -129,9 +129,10 @@ export function createFindWalk(deps: FindWalkDeps) {
   }
 
   /** A navigation request: answered now if the walk can, else when it can
-   * (a walk not yet started, or about to restart, starts now). */
+   * (a walk not started yet, or stale — a query or option change waiting, or
+   * what it walked over changed — starts afresh now). */
   function ask(mode: "after" | "before", from: FindHit): void {
-    if (!search || debounce !== null) {
+    if (!search || queued !== undefined || !sameKey(walkedKey, deps.key())) {
       begin(mode, from);
       return;
     }
