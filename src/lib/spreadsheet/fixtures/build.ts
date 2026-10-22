@@ -10944,3 +10944,264 @@ export async function buildSpec135AnnotationsXlsxBytes(): Promise<Uint8Array> {
   });
 }
 // --- end SPEC-135 spec135-annotations.xlsx ----------------------------------
+
+// --- SPEC-136 spec136-print.xlsx / spec136-print.ods ------------------------------
+// Excel- and LibreOffice-shaped twins of one printable budget. "Budget": A1:H70
+// (row 1 the title row, rows 2–70 items), column D hidden, A30:B31 merged —
+// straddling the natural break of 30 rows a page at 100% — A4 landscape, fit
+// 1 page wide × automatic tall, left/right margins 0.5 in, gridlines and
+// headings printed, centred horizontally, a three-section header, a footer
+// with a different first page (xlsx), a manual row break above row 36
+// (ignored while fit to page), the print area A1:H70 and row 1 the print
+// titles. "Notes": three rows and no setup. The xlsx pageSetup carries an
+// r:id to a dummy printerSettings part; the ods tables share master page
+// "Default" (style:scale-to-X="1", header regions with text:sheet-name,
+// text:page-number and text:page-count), the print range on the table and
+// row 1 inside table:table-header-rows.
+
+const SPEC136_ROWS = 70;
+const SPEC136_HEADINGS = ["Account", "Q1", "Q2", "Hidden", "Q3", "Q4", "Total", "Note"] as const;
+
+/** What spec136-print.xlsx holds, for the unit, round-trip and e2e specs. */
+export const SPEC136_PRINT_XLSX = {
+  file: "spec136-print.xlsx",
+  title: "spec136-print",
+  sheets: ["Budget", "Notes"] as const,
+  header: `&L&"Arial,Bold"&12Budget&C&P of &N&R&D`,
+  oddFooter: "&CPage &P",
+  firstFooter: "&CBudget summary",
+  printArea: "Budget!$A$1:$H$70",
+  printTitles: "Budget!$1:$1",
+  rowBreak: 35,
+  merge: { top: 29, left: 0, bottom: 30, right: 1 },
+  mergedText: "Merged total",
+  hiddenColumn: 3,
+  rows: SPEC136_ROWS,
+  printerSettings: "xl/printerSettings/printerSettings1.bin",
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/worksheets/_rels/sheet1.xml.rels",
+    "xl/printerSettings/printerSettings1.bin",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** The text of Budget's cell (0-based), "" for none (both twins). */
+export function spec136CellText(row: number, col: number): string | number {
+  if (row === 0) {
+    return SPEC136_HEADINGS[col]!;
+  }
+  const M = SPEC136_PRINT_XLSX.merge;
+  if (row >= M.top && row <= M.bottom && col >= M.left && col <= M.right) {
+    return row === M.top && col === M.left ? SPEC136_PRINT_XLSX.mergedText : "";
+  }
+  switch (col) {
+    case 0:
+      return `Item ${row}`;
+    case 7:
+      return row % 10 === 0 ? `Check ${row}` : "";
+    case 6:
+      return row * 10;
+    default:
+      return row + col;
+  }
+}
+
+const SPEC136_PRINTER_SETTINGS = new Uint8Array([0x44, 0x45, 0x56, 0x4d, 0x4f, 0x44, 0x45, 0x00, 0x04, 0x06, 0xdc, 0x00]);
+
+function spec136BudgetXml(str: (text: string) => number): string {
+  const X = SPEC136_PRINT_XLSX;
+  let rows = "";
+  for (let r = 0; r < X.rows; r += 1) {
+    let cells = "";
+    for (let c = 0; c < 8; c += 1) {
+      const value = spec136CellText(r, c);
+      const ref = `${String.fromCharCode(65 + c)}${r + 1}`;
+      if (value === "") {
+        continue;
+      }
+      cells += typeof value === "number" ? numberCell(ref, value) : sharedCell(ref, str(value));
+    }
+    rows += `<row r="${r + 1}" spans="1:8" x14ac:dyDescent="0.25">${cells}</row>`;
+  }
+  return (
+    XML_DECLARATION +
+    worksheetOpen("6B1C7D2E-3F40-4A51-8B62-9C7D8E9F0A11").replace("<worksheet ", "<worksheet ") +
+    `<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension ref="A1:H${X.rows}"/>` +
+    `<sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>` +
+    `<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/><cols><col min="4" max="4" width="9.140625" hidden="1" customWidth="1"/></cols>` +
+    `<sheetData>${rows}</sheetData><mergeCells count="1"><mergeCell ref="A30:B31"/></mergeCells>` +
+    `<printOptions horizontalCentered="1" headings="1" gridLines="1"/>` +
+    `<pageMargins left="0.5" right="0.5" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>` +
+    `<pageSetup paperSize="9" orientation="landscape" fitToHeight="0" horizontalDpi="600" verticalDpi="600" r:id="rId1"/>` +
+    `<headerFooter differentFirst="1"><oddHeader>${xmlText(X.header)}</oddHeader><oddFooter>${xmlText(X.oddFooter)}</oddFooter>` +
+    `<firstFooter>${xmlText(X.firstFooter)}</firstFooter></headerFooter>` +
+    `<rowBreaks count="1" manualBreakCount="1"><brk id="${X.rowBreak}" max="16383" man="1"/></rowBreaks></worksheet>`
+  );
+}
+
+function spec136NotesXml(str: (text: string) => number): string {
+  const rows = [
+    ["Prepared by", "Fixture Author"],
+    ["Status", "Draft"],
+    ["Pages", "Budget"],
+  ]
+    .map(([a, b], index) => excelRow(index + 1, "1:2", sharedCell(`A${index + 1}`, str(a!)) + sharedCell(`B${index + 1}`, str(b!))))
+    .join("");
+  return (
+    XML_DECLARATION +
+    worksheetOpen("6B1C7D2E-3F40-4A51-8B62-9C7D8E9F0A12") +
+    `<dimension ref="A1:B3"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>` +
+    `<sheetData>${rows}</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>`
+  );
+}
+
+export async function buildSpec136PrintXlsxBytes(): Promise<Uint8Array> {
+  const X = SPEC136_PRINT_XLSX;
+  const strings: string[] = [];
+  const str = (text: string): number => {
+    if (!strings.includes(text)) {
+      strings.push(text);
+    }
+    return strings.indexOf(text);
+  };
+  const budget = spec136BudgetXml(str);
+  const notes = spec136NotesXml(str);
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${sharedStringReferences(budget) + sharedStringReferences(notes)}" uniqueCount="${strings.length}">` +
+    strings.map((text) => `<si><t>${xmlText(text)}</t></si>`).join("") +
+    `</sst>`;
+  const sheetRels =
+    XML_DECLARATION +
+    `<Relationships xmlns="${PKG_REL_NS}"><Relationship Id="rId1" Type="${REL_TYPE}/printerSettings" Target="../printerSettings/printerSettings1.bin"/></Relationships>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: X.title,
+    sheets: [
+      { name: "Budget", xml: budget },
+      { name: "Notes", xml: notes },
+    ],
+    sharedStrings,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    defaults: [`<Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.printerSettings"/>`],
+    additions: {
+      parts: [part("xl/worksheets/_rels/sheet1.xml.rels", sheetRels), { name: X.printerSettings, data: SPEC136_PRINTER_SETTINGS }],
+      relationships: [],
+      overrides: [],
+      workbookAfterSheets:
+        `<definedNames><definedName name="_xlnm.Print_Area" localSheetId="0">${xmlText(X.printArea)}</definedName>` +
+        `<definedName name="_xlnm.Print_Titles" localSheetId="0">${xmlText(X.printTitles)}</definedName></definedNames>`,
+    },
+  });
+}
+
+/** What spec136-print.ods holds, for the unit, round-trip and e2e specs. */
+export const SPEC136_PRINT_ODS = {
+  file: "spec136-print.ods",
+  title: "spec136-print",
+  sheets: ["Budget", "Notes"] as const,
+  header: { left: "&A", center: "&P of &N", right: "&BBudget&B" },
+  footer: { center: "Page &P" },
+  printRanges: "Budget.A1:Budget.H70",
+  rowBreak: 35,
+  rows: SPEC136_ROWS,
+} as const;
+
+const SPEC136_ODS_AUTOMATIC_STYLES =
+  `<office:automatic-styles>` +
+  `<style:style style:name="co1" style:family="table-column"><style:table-column-properties fo:break-before="auto" style:column-width="0.889in"/></style:style>` +
+  `<style:style style:name="ro1" style:family="table-row"><style:table-row-properties style:row-height="0.2083in" fo:break-before="auto" style:use-optimal-row-height="false"/></style:style>` +
+  `<style:style style:name="ro2" style:family="table-row"><style:table-row-properties style:row-height="0.2083in" fo:break-before="page" style:use-optimal-row-height="false"/></style:style>` +
+  `<style:style style:name="ta1" style:family="table" style:master-page-name="Default"><style:table-properties table:display="true" style:writing-mode="lr-tb"/></style:style>` +
+  `</office:automatic-styles>`;
+
+const SPEC136_ODS_STYLES =
+  ODF_XML_DECLARATION +
+  `<office:document-styles ${LO_CONTENT_NAMESPACES}>${LO_FONT_FACES}<office:styles>` +
+  `<style:default-style style:family="table-cell"><style:paragraph-properties style:tab-stop-distance="0.5in"/>` +
+  `<style:text-properties style:font-name="Liberation Sans" fo:font-size="10pt" fo:language="en" fo:country="US"/></style:default-style>` +
+  `<style:style style:name="Default" style:family="table-cell"/></office:styles>` +
+  `<office:automatic-styles><style:style style:name="MT1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>` +
+  `<style:page-layout style:name="Mpm1"><style:page-layout-properties fo:page-width="29.7cm" fo:page-height="21cm" style:num-format="1" ` +
+  `style:print-orientation="landscape" fo:margin-top="0.762cm" fo:margin-bottom="0.762cm" fo:margin-left="1.27cm" fo:margin-right="1.27cm" ` +
+  `style:print-page-order="ttb" style:first-page-number="continue" style:scale-to-X="1" style:table-centering="horizontal" ` +
+  `style:print="grid headers charts drawings objects zero-values" style:writing-mode="lr-tb"/>` +
+  `<style:header-style><style:header-footer-properties fo:min-height="0.893cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:margin-bottom="0.25cm"/></style:header-style>` +
+  `<style:footer-style><style:header-footer-properties fo:min-height="0.893cm" fo:margin-left="0cm" fo:margin-right="0cm" fo:margin-top="0.25cm"/></style:footer-style>` +
+  `</style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="Mpm1">` +
+  `<style:header><style:region-left><text:p><text:sheet-name>???</text:sheet-name></text:p></style:region-left>` +
+  `<style:region-center><text:p><text:page-number>1</text:page-number> of <text:page-count>2</text:page-count></text:p></style:region-center>` +
+  `<style:region-right><text:p><text:span text:style-name="MT1">Budget</text:span></text:p></style:region-right></style:header>` +
+  `<style:header-left style:display="false"/>` +
+  `<style:footer><text:p>Page <text:page-number>1</text:page-number></text:p></style:footer><style:footer-left style:display="false"/>` +
+  `</style:master-page></office:master-styles></office:document-styles>`;
+
+function spec136OdsBudgetTable(): string {
+  const O = SPEC136_PRINT_ODS;
+  const M = SPEC136_PRINT_XLSX.merge;
+  let rows = "";
+  for (let r = 0; r < O.rows; r += 1) {
+    let cells = "";
+    for (let c = 0; c < 8; c += 1) {
+      const value = spec136CellText(r, c);
+      if (r >= M.top && r <= M.bottom && c >= M.left && c <= M.right && !(r === M.top && c === M.left)) {
+        cells += `<table:covered-table-cell/>`;
+      } else if (r === M.top && c === M.left) {
+        cells += `<table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2" office:value-type="string" calcext:value-type="string"><text:p>${value}</text:p></table:table-cell>`;
+      } else if (value === "") {
+        cells += `<table:table-cell/>`;
+      } else {
+        cells += typeof value === "number" ? loFloat(value) : loString(value);
+      }
+    }
+    const row = loRow(cells + loEmpty(16376), r === O.rowBreak ? "ro2" : "ro1");
+    rows += r === 0 ? `<table:table-header-rows>${row}</table:table-header-rows>` : row;
+  }
+  return (
+    `<table:table table:name="Budget" table:style-name="ta1" table:print-ranges="${O.printRanges}">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="3" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:visibility="collapse" table:default-cell-style-name="Default"/>` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16380" table:default-cell-style-name="Default"/>` +
+    rows +
+    loRow(loEmpty(16384), "ro1", 1048576 - O.rows) +
+    `</table:table>`
+  );
+}
+
+function spec136OdsNotesTable(): string {
+  const rows = [
+    ["Prepared by", "Fixture Author"],
+    ["Status", "Draft"],
+    ["Pages", "Budget"],
+  ]
+    .map(([a, b]) => loRow(loString(a!) + loString(b!) + loEmpty(16382)))
+    .join("");
+  return (
+    `<table:table table:name="Notes" table:style-name="ta1">` +
+    `<table:table-column table:style-name="co1" table:number-columns-repeated="16384" table:default-cell-style-name="Default"/>` +
+    rows +
+    loRow(loEmpty(16384), "ro1", 1048573) +
+    `</table:table>`
+  );
+}
+
+export async function buildSpec136PrintOdsBytes(): Promise<Uint8Array> {
+  const O = SPEC136_PRINT_ODS;
+  const content =
+    ODF_XML_DECLARATION +
+    `<office:document-content ${LO_CONTENT_NAMESPACES}><office:scripts/>${LO_FONT_FACES}${SPEC136_ODS_AUTOMATIC_STYLES}` +
+    `<office:body><office:spreadsheet>${LO_CALCULATION_SETTINGS}${spec136OdsBudgetTable()}${spec136OdsNotesTable()}<table:named-expressions/>` +
+    `</office:spreadsheet></office:body></office:document-content>`;
+  return loPackage(content, loMeta(O.title, 2, 500), loSettings(O.sheets, "Budget"), SPEC136_ODS_STYLES);
+}
+// --- end SPEC-136 ---------------------------------------------------------------

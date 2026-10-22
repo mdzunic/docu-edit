@@ -363,14 +363,22 @@ export function hasManualBreaks(sheet: Pick<Sheet, "pageSetup">): boolean {
 
 /** Insert ▸ Page break (Excel's rule by active cell): in row 1, a column
  * break left of the active column; in column A, a row break above the
- * active row; elsewhere both. Nothing at A1. */
-export function insertPageBreak(model: SpreadsheetModel, sheet: Sheet | string, at: CellRef): boolean {
+ * active row; elsewhere both. Nothing at A1. Manual breaks are ignored
+ * while the sheet fits to pages, so — as Excel does — inserting one there
+ * switches it to "Adjust to" the percent the fit printed at (`fitScale`,
+ * print.ts's choice; 100 when not given). */
+export function insertPageBreak(model: SpreadsheetModel, sheet: Sheet | string, at: CellRef, fitScale?: number): boolean {
   const target = currentSheet(model, sheet);
   if (target === undefined || !canInsertPageBreak(at)) {
     return false;
   }
   const setup = target.pageSetup ?? {};
   const patch: PageSetupPatch = {};
+  if (setup.fitTo !== undefined || setup.odsScaleToPages !== undefined) {
+    patch.fitTo = undefined;
+    patch.odsScaleToPages = undefined;
+    patch.scale = fitScale ?? 100;
+  }
   if (at.row > 0) {
     patch.rowBreaks = [...(setup.rowBreaks ?? []), at.row];
   }
