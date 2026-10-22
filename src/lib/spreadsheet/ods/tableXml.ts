@@ -2116,11 +2116,9 @@ export function serializeTable(sheet: Sheet, ctx: OdsTableContext): string {
 /** The async, yielding twin of `serializeTable` (SPEC-137 "Saving stays
  * responsive"): byte-identical output, but yields to the main thread
  * (`clock`, default `createSliceClock()`) every `SERIALISE_SLICE_MS` of
- * work. `serializeTable` itself stays synchronous and unchanged — the
- * substitution save path (`ods/writer.ts`'s `buildSubstitution`, which the
- * reader-upgrade path's `substitutedOdsParts` also calls and must stay
- * synchronous for) keeps using it; `writeOds`'s from-scratch path uses this
- * twin, which large-sheet saves actually need. */
+ * work. `serializeTable` stays synchronous for callers that serialise
+ * one small table; every save path in `ods/writer.ts` (from scratch and the
+ * substitution of an edited workbook's dirty tables) uses this twin. */
 export async function serializeTableAsync(sheet: Sheet, ctx: OdsTableContext, clock: SliceClock = createSliceClock()): Promise<string> {
   return new TableWriter(sheet, ctx).writeAsync(clock);
 }

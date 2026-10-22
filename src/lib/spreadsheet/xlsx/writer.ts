@@ -149,7 +149,7 @@ import {
 } from "./package";
 import { SharedStringsWriter } from "./sharedStrings";
 import { mentionsAnyName, passFor, remappedNames } from "./sheetNamePass";
-import { emptyWorksheetXml, serializeWorksheet, serializeWorksheetAsync, type XlsxSheetContext } from "./sheetXml";
+import { emptyWorksheetXml, serializeWorksheetAsync, type XlsxSheetContext } from "./sheetXml";
 import { createSliceClock } from "../serialiseSlices";
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
@@ -190,7 +190,7 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
   ) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
-  return zip(buildSubstitution(model, parts, options, "write"));
+  return zip(await buildSubstitution(model, parts, options, "write"));
 }
 
 /** SPEC-133: a sheet holding a table to regenerate or to write as a new
@@ -206,8 +206,8 @@ function sheetTablesChanged(sheet: Sheet): boolean {
  * upgrade keeps the stored dirty sheets, so nothing is serialised from the
  * model), the shared strings, styles and calculation flag left as the
  * source has them. */
-export function substitutedXlsxParts(model: SpreadsheetModel): Map<string, Uint8Array> {
-  const entries = buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, "layout");
+export async function substitutedXlsxParts(model: SpreadsheetModel): Promise<Map<string, Uint8Array>> {
+  const entries = await buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, "layout");
   return new Map(entries.map((entry) => [entry.name, entry.data] as const));
 }
 
@@ -608,7 +608,7 @@ interface AddedPart {
   contentType: string;
 }
 
-function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, mode: SubstitutionMode): ZipEntryInput[] {
+async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, mode: SubstitutionMode): Promise<ZipEntryInput[]> {
   const workbook = readSourceWorkbook(parts);
   if (!workbook) {
     throw new Error("The workbook's retained package has no workbook part");
@@ -716,10 +716,14 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const next = annotate(xml);
     return next === xml ? tabled : encode(next);
   };
+  // SPEC-137: a rebuilt sheet is serialised in SERIALISE_SLICE_MS slices —
+  // one clock for the whole save, sheets in order (they share the string and
+  // style writers).
+  const clock = createSliceClock();
   for (const plan of plans) {
     const active = plan.index === activeIndex;
     if (plan.generated) {
-      const xml = write && plan.sheet.kind === "grid" ? serializeWorksheet(plan.sheet, undefined, context(plan)) : emptyWorksheetXml(plan.sheet, active, model);
+      const xml = write && plan.sheet.kind === "grid" ? await serializeWorksheetAsync(plan.sheet, undefined, context(plan), clock) : emptyWorksheetXml(plan.sheet, active, model);
       sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(xml)));
       continue;
     }
@@ -733,7 +737,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       withDrawing(
         plan.partName,
         write && plan.sheet.dirty && plan.sheet.kind === "grid"
-          ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
+          ? encode(await serializeWorksheetAsync(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap), clock))
           : sheetPartFor(bytes, plan, active, sheetRemap, model),
       ),
     );

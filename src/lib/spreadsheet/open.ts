@@ -1155,8 +1155,8 @@ async function upgradeEdited(
 ): Promise<SpreadsheetModel> {
   const layout =
     model.format === "xlsx"
-      ? (await import("./xlsx/writer")).substitutedXlsxParts(model)
-      : (await import("./ods/writer")).substitutedOdsParts(model);
+      ? await (await import("./xlsx/writer")).substitutedXlsxParts(model)
+      : await (await import("./ods/writer")).substitutedOdsParts(model);
   const fresh = await read(layout, model.format, model.title);
   fresh.id = model.id;
   fresh.opaque = model.opaque;

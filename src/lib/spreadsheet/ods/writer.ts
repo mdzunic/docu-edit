@@ -140,7 +140,7 @@ import {
   odsStyleBookFromSource,
   OdsStyleRegistry,
 } from "./styles";
-import { serializeTable, serializeTableAsync, type OdsTableContext } from "./tableXml";
+import { serializeTableAsync, type OdsTableContext } from "./tableXml";
 import { createSliceClock } from "../serialiseSlices";
 
 export interface WriteOdsOptions {
@@ -206,14 +206,14 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
   if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
-  return zip(mimetypeFirst(buildSubstitution(model, parts, options)));
+  return zip(mimetypeFirst(await buildSubstitution(model, parts, options)));
 }
 
 /** The substitution path's parts for any model with a retained package —
  * what a reader upgrade re-reads an edited workbook's clean sheets from
  * (open.ts). */
-export function substitutedOdsParts(model: SpreadsheetModel, options: WriteOdsOptions = {}): Map<string, Uint8Array> {
-  const entries = buildSubstitution(model, decodedPartBytes(model.opaque), options);
+export async function substitutedOdsParts(model: SpreadsheetModel, options: WriteOdsOptions = {}): Promise<Map<string, Uint8Array>> {
+  const entries = await buildSubstitution(model, decodedPartBytes(model.opaque), options);
   return new Map(entries.map((entry) => [entry.name, entry.data] as const));
 }
 
@@ -489,7 +489,7 @@ function withNamedStyles(xml: string, styles: string): string {
   return withNamespaces(next, styles);
 }
 
-function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteOdsOptions): ZipEntryInput[] {
+async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteOdsOptions): Promise<ZipEntryInput[]> {
   const envelope = model.odsContentEnvelope;
   const contentBytes = parts.get("content.xml");
   if (!envelope || !contentBytes) {
@@ -535,9 +535,18 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   };
   let rebuilt = "";
 
-  const tables = model.sheets.map((sheet) => {
+  // SPEC-137: a rebuilt table is serialised in SERIALISE_SLICE_MS slices —
+  // one clock for the whole save, tables in order (they share the style
+  // registry).
+  const clock = createSliceClock();
+  const envelopePrefix = envelope.prefix;
+  const tables: string[] = [];
+  for (const sheet of model.sheets) {
+    tables.push(await tableText(sheet));
+  }
+  async function tableText(sheet: Sheet): Promise<string> {
     if (sheet.sourceXml === undefined) {
-      const table = serializeTable(sheet, context);
+      const table = await serializeTableAsync(sheet, context, clock);
       rebuilt += table;
       return table;
     }
@@ -551,7 +560,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const hidden = sheet.visibility !== "visible";
     const color = tabColorHex(sheet, model);
     if (declared.hidden !== hidden || declared.tabColor !== color) {
-      const name = registry.tableStyle({ masterPage: masterPageOf(envelope.prefix, styleName), display: !hidden, tabColor: color });
+      const name = registry.tableStyle({ masterPage: masterPageOf(envelopePrefix, styleName), display: !hidden, tabColor: color });
       text = setTableAttribute(text, "table:style-name", name);
       if (declared.tabColor !== color) {
         recoloured.add(sheet.name);
@@ -563,10 +572,10 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       rebuilt += withNames.generated;
       return withNames.text;
     }
-    const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
+    const table = await serializeTableAsync(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) }, clock);
     rebuilt += table;
     return table;
-  });
+  }
   // SPEC-128: the autofilters' database ranges regenerated; every other byte of the suffix passed.
   const databases = odsSuffixWithAutoFilters(envelope.suffix, model.sheets, {
     sourceNames: remap.orderBefore,

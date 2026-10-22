@@ -2235,12 +2235,10 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
  * built by the yielding `sheetDataXmlAsync`; everything else here is
  * O(columns) or O(merges/validations), never large enough on its own to
  * threaten the main-thread-block budget. Byte-identical to
- * `serializeWorksheet` for the same inputs. `serializeWorksheet` itself
- * stays synchronous and unchanged — the substitution save path
- * (`xlsx/writer.ts`'s `buildSubstitution`, which the reader-upgrade path's
- * `substitutedXlsxParts` also calls and must stay synchronous for) keeps
- * using it; `writeXlsx`'s from-scratch path uses this twin, which
- * large-sheet saves actually need. */
+ * `serializeWorksheet` for the same inputs. `serializeWorksheet` stays
+ * synchronous for callers that serialise one small sheet; every save path in
+ * `xlsx/writer.ts` (from scratch and the substitution of an edited
+ * workbook's dirty sheets) uses this twin. */
 export async function serializeWorksheetAsync(sheet: Sheet, base: string | undefined, ctx: XlsxSheetContext, clock: SliceClock = createSliceClock()): Promise<string> {
   const xml = collapseSheetData(base ?? emptyWorksheetXml(sheet, ctx.active, ctx));
   const layout = scanLayout(xml);
