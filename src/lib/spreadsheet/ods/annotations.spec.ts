@@ -22,7 +22,7 @@ import { spreadsheetDownload } from "../download";
 import { buildSpec135AnnotationsOdsBytes, SPEC135_ANNOTATIONS_ODS } from "../fixtures/build";
 import type { CellHyperlink, CellNote, CellThread, Sheet, SpreadsheetModel } from "../model";
 import { readSpreadsheetBytes } from "../open";
-import { createBlankWorkbook } from "../sheets";
+import { createBlankWorkbook, renameSheet } from "../sheets";
 import { applyStructuralEdit } from "../structure";
 import {
   liftOdsSheetNotes,
@@ -268,6 +268,16 @@ describe("writing notes and links into .ods", () => {
     const again = sheetNamed(await reopen(written), "Summary");
     expect(getCell(again, 8, 2)!.value).toBe(O.values.Summary.C9);
     expect(again.hyperlinks!.filter((link) => link.range.top === 8).map((link) => link.target)).toEqual([O.links.C9.target]);
+  });
+
+  it("a renamed destination sheet: the place location follows (the sheet holding it rewritten) and is written from the model", async () => {
+    const model = await open();
+    renameSheet(model, 1, "Facts");
+    const summary = sheetNamed(model, "Summary");
+    expect(summary.hyperlinks![1]!.target).toEqual({ kind: "place", location: "Facts!A1" });
+    expect(summary.dirty).toBe(true);
+    const cell = cellXmlAt(tableXml(await contentXml(await writeOds(model)), "Summary"), "B7")!;
+    expect(cell).toContain(`<text:p><text:a xlink:type="simple" xlink:href="#$Facts.A1">See data</text:a></text:p>`);
   });
 
   it("a new note on an unstored cell splits the repeated empty run and is generated per the wire mapping", async () => {
