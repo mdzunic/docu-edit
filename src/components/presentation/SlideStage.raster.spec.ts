@@ -19,6 +19,13 @@ vi.mock("../../lib/core/shapeCanvas", async (importOriginal) => {
   };
 });
 
+// jsdom plays no media; let the stage believe the clip is playable so the
+// idle poster and its play badge render as they do in a browser.
+vi.mock("./mediaRender", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./mediaRender")>();
+  return { ...actual, createCanPlayProbe: () => () => true };
+});
+
 const { default: SlideStage } = await import("./SlideStage.vue");
 
 const slide = {
@@ -66,5 +73,31 @@ describe("SlideStage rasterScale / flatRotation (SPEC-104)", () => {
       },
     });
     expect(prompt.get('[data-testid="slide-placeholder-prompt"]').classes()).toContain("print-exclude");
+  });
+
+  it("a media frame exports as its poster image, its play badge excluded (SPEC-095's MediaFrame)", () => {
+    const media = {
+      id: "m",
+      kind: "media",
+      media: "video",
+      mediaId: "clip.mp4",
+      posterMediaId: "poster.png",
+      contentType: "video/mp4",
+      xCm: 1,
+      yCm: 1,
+      widthCm: 16,
+      heightCm: 9,
+    };
+    const wrapper = mount(SlideStage, {
+      props: {
+        slide: { id: "v", frames: [media] },
+        widthCm: 33.867,
+        heightCm: 19.05,
+        interactive: false,
+        media: [{ mediaId: "poster.png", contentType: "image/png", data: "AA==" }],
+      },
+    });
+    expect(wrapper.find("img.media-poster").exists()).toBe(true);
+    expect(wrapper.get('[data-testid="media-play"]').classes()).toContain("print-exclude");
   });
 });
