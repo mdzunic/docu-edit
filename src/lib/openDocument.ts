@@ -360,7 +360,9 @@ async function openFile(file: File, options: OpenFileOptions, allowPresentations
       throw new UnsupportedFileError(SPREADSHEET_NOT_TEXT_MESSAGE);
     }
     // SPEC-137: parsed off the main thread, the rows arriving in chunks
-    // whose count is the open's progress.
+    // whose count is the open's progress — 0% from the moment the package
+    // reads as a workbook.
+    options.onSpreadsheetProgress?.(0);
     const { readSpreadsheetOffThread } = await import("./workers/spreadsheetParseClient");
     return {
       kind: "spreadsheet",
