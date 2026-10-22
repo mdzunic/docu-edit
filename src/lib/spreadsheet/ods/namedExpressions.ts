@@ -227,7 +227,7 @@ export function isOdsWritableName(name: DefinedName): boolean {
 
 /** The names of a scope (undefined: the workbook's) an .ods holds, in model order. */
 export function odsScopeNames(model: Pick<SpreadsheetModel, "names">, scopeSheetId: string | undefined): DefinedName[] {
-  return model.names.filter((name) => name.scopeSheetId === scopeSheetId && isOdsWritableName(name));
+  return (model.names ?? []).filter((name) => name.scopeSheetId === scopeSheetId && isOdsWritableName(name));
 }
 
 /** A reference-only canonical formula's cell-range address — one
@@ -296,7 +296,10 @@ function sameNames(read: readonly DefinedName[], model: readonly DefinedName[]):
 }
 
 /** `text` with a scope's element reconciled with the model (see the module
- * header): kept, replaced, removed, or inserted at `insertAt`. */
+ * header): kept, replaced, removed, or inserted at `insertAt`. A model with
+ * no names to speak of — a record a pre-SPEC-133 reader stored, written
+ * through the substitution layout while its reader upgrade re-reads it —
+ * leaves the element as written (as xlsx/writer.ts's workbookNames does). */
 function reconcile(
   text: string,
   span: OdsElementSpan | undefined,
@@ -305,6 +308,9 @@ function reconcile(
   namespaces: ReadonlyMap<string, string>,
   insertAt: number,
 ): { text: string; generated: string } {
+  if (model.names === undefined) {
+    return { text, generated: "" };
+  }
   const names = odsScopeNames(model, scopeSheetId);
   if (span ? sameNames(readNamesIn(text, span, scopeSheetId, namespaces), names) : names.length === 0) {
     return { text, generated: "" };

@@ -9,7 +9,8 @@
 // Reader versions. A spec that teaches the readers to extract something new
 // bumps SPREADSHEET_READER_VERSION and appends its ReaderUpgrade. On load, a
 // record behind the current version is upgraded: if nothing was edited (no
-// `structureDirty`, no dirty sheet — SPEC-121) it is simply re-read from
+// `structureDirty`, no dirty sheet — SPEC-121; no `drawingsDirty` sheet —
+// SPEC-131; no `namesDirty` — SPEC-133) it is simply re-read from
 // `opaque`, keeping `id`, `title`, the library's starred/trash state (which
 // live on the store record, not the model) and each sheet's `id` (matched by
 // position); otherwise (SPEC-121 "Reader upgrades after edits") the model's
@@ -167,7 +168,11 @@
 //     sheet order to the model sheet holding that source part (ods: the
 //     sheet whose retained `table:name` matches), every formula gets
 //     sourceSheetRemap (renamed sheets renamed, deleted ones #REF!), and a
-//     name scoped to a sheet no longer present is dropped.
+//     name scoped to a sheet no longer present is dropped. A clean record's
+//     re-read moves each sheet-scoped name onto its sheet's stored id. A
+//     record whose only edit is to its names (`namesDirty` — a later upgrade
+//     of a record made since) is an edited one: its names are kept, never
+//     re-read.
 //
 // Opening (SPEC-132 "Open trusts caches"): no chart is refreshed at open,
 // except one whose part carries a reference but no cache for it, refreshed
@@ -871,7 +876,7 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   }
   const sourceParts = decodedPartBytes(model.opaque);
   const pending = READER_UPGRADES.filter((step) => step.from >= model.readerVersion).toSorted((a, b) => a.from - b.from);
-  if (model.structureDirty || model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
+  if (model.structureDirty || model.namesDirty || model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty)) {
     return upgradeEdited(model, sourceParts, pending);
   }
   const fresh = await readSpreadsheetBytes(new Uint8Array(0), model.format, model.title, sourceParts);
@@ -879,9 +884,19 @@ export async function upgradeSpreadsheetModel(model: SpreadsheetModel): Promise<
   if (model.forceFullCalcOnLoad) {
     fresh.forceFullCalcOnLoad = true;
   }
+  const storedIds = new Map<string, string>();
   fresh.sheets = fresh.sheets.map((sheet, index) => {
     const stored = model.sheets[index];
-    return stored ? { ...sheet, id: stored.id } : sheet;
+    if (!stored) {
+      return sheet;
+    }
+    storedIds.set(sheet.id, stored.id);
+    return { ...sheet, id: stored.id };
+  });
+  // SPEC-133: a sheet-scoped name follows its sheet onto the stored id.
+  fresh.names = fresh.names.map((name) => {
+    const id = name.scopeSheetId === undefined ? undefined : storedIds.get(name.scopeSheetId);
+    return id === undefined ? name : { ...name, scopeSheetId: id };
   });
   fresh.preview = buildPreview(fresh, READ_PREVIEW_LOCALE);
   return fresh;

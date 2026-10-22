@@ -174,6 +174,17 @@ describe("SPEC-133 ods names: writing", () => {
     expect(xml).toContain(BASE_NAMES);
   });
 
+  it("leaves every names element as written for a model with no names to speak of — a record a pre-SPEC-133 reader stored, written through the substitution layout while its reader upgrade re-reads it", async () => {
+    const source = await open(await odsBytes(content(table("Data", LOCAL_NAMES) + table("Other"), BASE_NAMES)));
+    const { names: _names, ...rest } = source;
+    const stored = { ...rest, sheets: source.sheets.map((each, i) => (i === 0 ? { ...each, dirty: true as const } : each)) } as SpreadsheetModel;
+    expect(stored.names).toBeUndefined();
+    const xml = await contentOf(await writeOds(stored));
+    expect(xml).toContain(`${LOCAL_NAMES}</table:table>`);
+    expect(tableText(xml, "Other")).toBe(table("Other"));
+    expect(xml).toContain(BASE_NAMES);
+  });
+
   it("writes new names from scratch: the workbook's after the tables, a sheet's last in its table", async () => {
     const book = blank();
     const first = book.sheets[0]!;
