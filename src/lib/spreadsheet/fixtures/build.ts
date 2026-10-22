@@ -184,6 +184,10 @@
 //   ranges (a relative one, one usable as print range and filter) and named
 //   expression after the last table, an anonymous and a named database
 //   range. SPEC133_NAMES_ODS records the facts.
+// - spec134-find.xlsx (SPEC-134) — Excel 365-shaped find and Go To workbook:
+//   "Sales" (active) regions, currency amounts (numFmt 164), IF flags with
+//   cached results, a #DIV/0! and a SUM total; "Locked" protected; "Archive"
+//   hidden; the name Totals. SPEC134_FIND_XLSX records the facts.
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -10017,3 +10021,210 @@ export async function buildSpec133NamesOdsBytes(): Promise<Uint8Array> {
 // ============================================================================
 // end of SPEC-133
 // ============================================================================
+
+// --- spec134-find.xlsx (SPEC-134 "Fixture") ----------------------------------------------
+// Excel 365-shaped: shared strings (in Excel's first-use order, shared across
+// sheets), `xr:uid`s, `x14ac:dyDescent`, cached formula values, a currency
+// numFmt 164 on Sales!B2:B6. "Sales" (active) holds the regions, amounts and
+// the IF flags the find e2e searches, an error and a total; "Locked" is
+// protected (`<sheetProtection sheet="1" …/>`, no password, every cell on the
+// locked default style); "Archive" is hidden. The workbook-scope name
+// Totals → Sales!$B$10. SPEC134_FIND_XLSX records the facts.
+
+/** What spec134-find.xlsx holds. Cells are A1 notation; a formula cell's
+ * value is its cached result. */
+export const SPEC134_FIND_XLSX = {
+  file: "spec134-find.xlsx",
+  title: "Find and Go To",
+  sheetNames: ["Sales", "Locked", "Archive"],
+  sheets: {
+    Sales: { uid: "{3A4B5C6D-0134-4E7F-8A9B-0C1D2E3F4A51}", dimension: "A1:C10", spans: "1:3", visibility: "visible" },
+    Locked: { uid: "{4B5C6D7E-0134-4F80-9BAC-1D2E3F4A5B62}", dimension: "A1:A2", spans: "1:1", visibility: "visible" },
+    Archive: { uid: "{5C6D7E8F-0134-4091-ACBD-2E3F4A5B6C73}", dimension: "A1", spans: "1:1", visibility: "hidden" },
+  },
+  /** The currency format on Sales!B2:B6 (cellXfs 1). */
+  numFmt: { id: 164, formatCode: '"$"#,##0.00' },
+  xf: { currency: 1 },
+  currencyCells: ["B2", "B3", "B4", "B5", "B6"],
+  /** Every stored cell per sheet, A1 → value (a formula cell's is its cached value). */
+  values: {
+    Sales: {
+      A1: "Region",
+      B1: "Amount",
+      C1: "Flag",
+      A2: "North",
+      B2: 1200,
+      C2: 1,
+      A3: "South",
+      B3: 800,
+      C3: 0,
+      A4: "Northwest",
+      B4: 450,
+      C4: 0,
+      B5: 300,
+      C5: "#DIV/0!",
+      A6: "north",
+      B6: 50,
+      C6: 0,
+      B10: 2800,
+    },
+    Locked: { A1: "North office", A2: "South office" },
+    Archive: { A1: "North" },
+  },
+  /** Sales' formula cells: the `<f>` text (canonical, as Excel writes it)
+   * and the cached result — what Excel computes over the recorded cells. */
+  formulas: {
+    C2: { formula: 'IF(A2="North",1,0)', value: 1 },
+    C3: { formula: 'IF(A3="North",1,0)', value: 0 },
+    C4: { formula: 'IF(A4="North",1,0)', value: 0 },
+    C5: { formula: "B5/0", value: "#DIV/0!" },
+    C6: { formula: 'IF(A6="North",1,0)', value: 0 },
+    B10: { formula: "SUM(B2:B6)", value: 2800 },
+  } as Readonly<Record<string, { readonly formula: string; readonly value: number | string }>>,
+  /** xl/workbook.xml's one defined name. */
+  definedNames: [{ name: "Totals", text: "Sales!$B$10" }],
+  /** xl/calcChain.xml's cells, all on Sales (`i` = its sheetId, written on the first). */
+  calcChain: ["C2", "C3", "C4", "C5", "C6", "B10"],
+  titlesOfParts: ["Sales", "Locked", "Archive", "Totals"],
+  /** Every part, in package order. */
+  parts: [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "xl/workbook.xml",
+    "xl/_rels/workbook.xml.rels",
+    "xl/worksheets/sheet1.xml",
+    "xl/worksheets/sheet2.xml",
+    "xl/worksheets/sheet3.xml",
+    "xl/theme/theme1.xml",
+    "xl/styles.xml",
+    "xl/sharedStrings.xml",
+    "xl/calcChain.xml",
+    "docProps/core.xml",
+    "docProps/app.xml",
+  ],
+} as const;
+
+/** Excel's styles part for spec134-find.xlsx: Normal, and cellXfs 1 on the
+ * custom currency numFmt 164. */
+const SPEC134_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<numFmts count="1"><numFmt numFmtId="${SPEC134_FIND_XLSX.numFmt.id}" formatCode="${excelAttr(SPEC134_FIND_XLSX.numFmt.formatCode)}"/></numFmts>` +
+  `<fonts count="1" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  `<xf numFmtId="${SPEC134_FIND_XLSX.numFmt.id}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>` +
+  `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+/** Excel's `<sheetProtection>` for a sheet protected without a password. */
+const SPEC134_SHEET_PROTECTION = `<sheetProtection sheet="1" objects="1" scenarios="1"/>`;
+
+/** A spec134-find.xlsx worksheet in Excel 365's CT_Worksheet order:
+ * dimension, sheetViews, sheetFormatPr, sheetData, sheetProtection,
+ * pageMargins. */
+function spec134WorksheetXml(sheet: keyof typeof SPEC134_FIND_XLSX.sheets, sheetData: string): string {
+  const S = SPEC134_FIND_XLSX.sheets[sheet];
+  return (
+    XML_DECLARATION +
+    worksheetOpen(S.uid.slice(1, -1)) +
+    `<dimension ref="${S.dimension}"/>` +
+    (sheet === "Sales"
+      ? `<sheetViews><sheetView tabSelected="1" workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews>`
+      : `<sheetViews><sheetView workbookViewId="0"/></sheetViews>`) +
+    `<sheetFormatPr defaultRowHeight="14.5" x14ac:dyDescent="0.35"/>` +
+    `<sheetData>${sheetData}</sheetData>` +
+    (sheet === "Locked" ? SPEC134_SHEET_PROTECTION : "") +
+    SPEC117_PAGE_MARGINS +
+    `</worksheet>`
+  );
+}
+
+/** A sheet's `<sheetData>` from the facts, row by row in column order: a
+ * formula cell its `<f>` and cached value (`t="e"` for an error), a string
+ * its shared index (`str` interns in first-use order), the currency cells on
+ * cellXfs 1. */
+function spec134SheetData(sheet: keyof typeof SPEC134_FIND_XLSX.values, str: (text: string) => number): string {
+  const F = SPEC134_FIND_XLSX;
+  const values: Readonly<Record<string, string | number>> = F.values[sheet];
+  const currency: readonly string[] = sheet === "Sales" ? F.currencyCells : [];
+  const rows = new Map<number, string>();
+  const cells = Object.entries(values).map(([ref, value]) => {
+    const [, letters, digits] = /^([A-Z]+)(\d+)$/.exec(ref)!;
+    return { ref, value, row: Number(digits), letters: letters! };
+  });
+  for (const { ref, value, row } of cells.toSorted((a, b) => a.row - b.row || (a.letters < b.letters ? -1 : a.letters > b.letters ? 1 : 0))) {
+    const style = currency.includes(ref) ? F.xf.currency : undefined;
+    const formula = sheet === "Sales" ? F.formulas[ref] : undefined;
+    const xml = formula
+      ? `<c r="${ref}"${typeof value === "string" ? ` t="e"` : ""}><f>${xmlText(formula.formula)}</f><v>${value}</v></c>`
+      : typeof value === "number"
+        ? numberCell(ref, value, style)
+        : sharedCell(ref, str(value), style);
+    rows.set(row, (rows.get(row) ?? "") + xml);
+  }
+  return [...rows].map(([row, xml]) => excelRow(row, F.sheets[sheet].spans, xml)).join("");
+}
+
+/** docProps/app.xml with the Worksheets and Named Ranges heading pairs. */
+function spec134AppXml(): string {
+  const F = SPEC134_FIND_XLSX;
+  return (
+    XML_DECLARATION +
+    `<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
+    `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">` +
+    `<Application>Microsoft Excel</Application><DocSecurity>0</DocSecurity><ScaleCrop>false</ScaleCrop>` +
+    `<HeadingPairs><vt:vector size="4" baseType="variant"><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant><vt:variant><vt:i4>3</vt:i4></vt:variant>` +
+    `<vt:variant><vt:lpstr>Named Ranges</vt:lpstr></vt:variant><vt:variant><vt:i4>1</vt:i4></vt:variant></vt:vector></HeadingPairs>` +
+    `<TitlesOfParts><vt:vector size="${F.titlesOfParts.length}" baseType="lpstr">${F.titlesOfParts.map((title) => `<vt:lpstr>${title}</vt:lpstr>`).join("")}` +
+    `</vt:vector></TitlesOfParts><Company></Company><LinksUpToDate>false</LinksUpToDate><SharedDoc>false</SharedDoc>` +
+    `<HyperlinksChanged>false</HyperlinksChanged><AppVersion>16.0300</AppVersion></Properties>`
+  );
+}
+
+export async function buildSpec134FindXlsxBytes(): Promise<Uint8Array> {
+  const F = SPEC134_FIND_XLSX;
+  const strings: string[] = [];
+  const str = (text: string): number => {
+    if (!strings.includes(text)) {
+      strings.push(text);
+    }
+    return strings.indexOf(text);
+  };
+  // Sheet by sheet, row by row: the shared strings in Excel's first-use order.
+  const worksheets = (["Sales", "Locked", "Archive"] as const).map((name) => spec134WorksheetXml(name, spec134SheetData(name, str)));
+  const sharedStrings =
+    XML_DECLARATION +
+    `<sst xmlns="${MAIN_NS}" count="${worksheets.reduce((sum, xml) => sum + sharedStringReferences(xml), 0)}" uniqueCount="${strings.length}">` +
+    strings.map((text) => `<si><t>${xmlText(text)}</t></si>`).join("") +
+    `</sst>`;
+  const calcChain =
+    XML_DECLARATION +
+    `<calcChain xmlns="${MAIN_NS}">` +
+    F.calcChain.map((ref, index) => (index === 0 ? `<c r="${ref}" i="1" l="1"/>` : `<c r="${ref}"/>`)).join("") +
+    `</calcChain>`;
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title: F.title,
+    sheets: [
+      { name: "Sales", xml: worksheets[0]! },
+      { name: "Locked", xml: worksheets[1]! },
+      { name: "Archive", state: "hidden", xml: worksheets[2]! },
+    ],
+    sharedStrings,
+    calcChain,
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC134_STYLES,
+    app: spec134AppXml(),
+    additions: {
+      parts: [],
+      relationships: [],
+      overrides: [],
+      workbookAfterSheets: `<definedNames>${F.definedNames.map((name) => `<definedName name="${name.name}">${xmlText(name.text)}</definedName>`).join("")}</definedNames>`,
+    },
+  });
+}

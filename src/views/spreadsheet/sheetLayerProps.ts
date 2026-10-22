@@ -2,6 +2,7 @@
 // see AppShell.vue on the espree constraint): each helper coerces a
 // runtime-typed prop into the shape the composable that built it declares,
 // or derives what the template binds from it.
+import { MAX_COLS } from "../../lib/spreadsheet/model";
 import type { BandItem, CellItem } from "./sheetCellItems";
 import type { FilterButtonView } from "./useSortFilter";
 
@@ -78,20 +79,43 @@ export function asDescribedCell(value: unknown): DescribedCell | null {
     : null;
 }
 
+/** SPEC-134: the find bar's marks on the sheet on show (useSheetFind's) —
+ * every matching cell, and the current match, by findMarkKey. */
+export interface FindMarks {
+  sheetId: string;
+  matches: ReadonlySet<number>;
+  current: number | null;
+}
+
+/** A position as a find mark's key. */
+export function findMarkKey(row: number, col: number): number {
+  return row * MAX_COLS + col;
+}
+
+/** SheetGrid's and SheetCellLayer's `findMarks`, or null. */
+export function asFindMarks(value: unknown): FindMarks | null {
+  return value !== null && typeof value === "object" && Reflect.get(value, "matches") instanceof Set ? (value as FindMarks) : null;
+}
+
 /** A cell element's identity and ARIA: its id (aria-activedescendant's
  * target), the gridcell role, `sheet-cell` and `data-ref`, its 1-based
  * indices past the header row and column, a merge's spans and the selected
  * state — and, for a cell whose value couldn't be recalculated (SPEC-120
  * "Stale cells"), data-stale="true" and a title saying why; SPEC-130: the
  * active cell's aria-describedby while its input message shows
- * (`describedBy`). A merge's paint in a further frozen pane carries none of
+ * (`describedBy`); SPEC-134: a cell the find bar matches carries
+ * data-find-match="true", the current match data-find-current="true" too
+ * (`findMarks`). A merge's paint in a further frozen pane carries none of
  * it — only aria-hidden — since the merge's one element is in another pane. */
-export function cellAttributes(cell: CellItem, staleTitle?: StaleTitle, describedBy?: DescribedCell | null): Record<string, string | number | undefined> {
+export function cellAttributes(cell: CellItem, staleTitle?: StaleTitle, describedBy?: DescribedCell | null, findMarks?: FindMarks | null): Record<string, string | number | undefined> {
   if (cell.paintOnly) {
     return { "aria-hidden": "true" };
   }
   const title = staleTitle?.(cell.row, cell.col);
+  const key = findMarks ? findMarkKey(cell.row, cell.col) : -1;
   return {
+    "data-find-match": findMarks?.matches.has(key) ? "true" : undefined,
+    "data-find-current": findMarks && findMarks.current === key ? "true" : undefined,
     "data-stale": title === undefined ? undefined : "true",
     "data-cf": cell.cf ? "true" : undefined,
     title,

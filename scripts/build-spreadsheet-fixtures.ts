@@ -283,5 +283,15 @@ writeFileSync(join(fixturesDir, "spec133-names-tables.xlsx"), await buildSpec133
 writeFileSync(join(fixturesDir, "spec133-names.ods"), await buildSpec133NamesOdsBytes());
 // --- end SPEC-133 ---------------------------------------------------------------
 
+// --- SPEC-134 -------------------------------------------------------------------
+// - spec134-find.xlsx — Excel-shaped: "Sales" (regions, currency amounts, IF
+//                       flags with cached results, a #DIV/0!, a SUM total),
+//                       "Locked" (sheetProtection, every cell locked), the
+//                       hidden "Archive", the name Totals → Sales!$B$10
+import { buildSpec134FindXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec134-find.xlsx"), await buildSpec134FindXlsxBytes());
+// --- end SPEC-134 ---------------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

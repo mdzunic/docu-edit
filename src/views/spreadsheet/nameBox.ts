@@ -2,17 +2,20 @@
 // Name Box's interpretation of a typed entry ("The Name Box"), its dropdown's
 // options, and the Name Manager's rows.
 //
-// - interpretNameBox, in order: an A1 cell, range, whole row or column,
-//   optionally sheet-qualified (`Sheet2!B3:C4`) → jump (SPEC-117's
-//   navigation); a visible name (not hidden, not reserved — the active
-//   sheet's scope first, then the workbook's; `Sheet2!X` that sheet's) or a
-//   table name → jump to its range (a table's data body; a name is
-//   evaluated at the active cell, so a relative name and a name of a name
-//   work, and one that is no reference — `TaxRate = 0.2` — is refused with
-//   NOT_A_RANGE_MESSAGE); otherwise a new workbook-scope name, validated
-//   (validateName; a problem is refused with its NAME_PROBLEM_MESSAGES text).
-//   A jump lands on the first area's sheet (its areas only); a hidden sheet
-//   is refused with HIDDEN_SHEET_MESSAGE, a non-grid one as not a range.
+// - interpretNameBox, in order (SPEC-134 replaced the first two steps with
+//   Go To's resolver, so the Name Box and the Go To dialog accept exactly the
+//   same text): (1) lib/spreadsheet/find.ts's resolveGoToTarget succeeds — a
+//   reference, a visible name (evaluated at the active cell) or a table → a
+//   jump; (2) it fails for a reason other than "not a reference or a name" —
+//   a name that is no reference (NOT_A_RANGE_MESSAGE), a hidden sheet
+//   (HIDDEN_SHEET_MESSAGE) — → that refusal; (3) otherwise a new
+//   workbook-scope name, validated (validateName; a problem is refused with
+//   its NAME_PROBLEM_MESSAGES text). Valid names never parse as references,
+//   so (1) and (3) never compete.
+// - nameJump / tableJump: where a dropdown pick selects — a name's
+//   evaluation at the active cell (the first area's sheet, its areas only),
+//   a table's data body; a hidden sheet is refused with HIDDEN_SHEET_MESSAGE,
+//   a non-grid one as not a range.
 // - nameBoxOptions: the visible names of the workbook's and the active
 //   sheet's scope (a sheet-scoped name hides a workbook one of the same
 //   text) and every table, merged and sorted alphabetically,
@@ -25,8 +28,9 @@
 //   refers-to ("=" + the formula, relative parts shown relative to the active
 //   cell, as Excel shows them) and its scope ("Workbook" or the sheet's name).
 import type { GridRange } from "../../lib/spreadsheet/address";
+import { GO_TO_HIDDEN_SHEET_MESSAGE, GO_TO_INVALID_MESSAGE, GO_TO_NOT_A_RANGE_MESSAGE, resolveGoToTarget } from "../../lib/spreadsheet/find";
 import { storedValueContext } from "../../lib/spreadsheet/formula/evaluate";
-import { FormulaSyntaxError, parseFormula } from "../../lib/spreadsheet/formula/parse";
+import { parseFormula } from "../../lib/spreadsheet/formula/parse";
 import { printFormula } from "../../lib/spreadsheet/formula/print";
 import { evaluateDefinedName } from "../../lib/spreadsheet/formula/referenceHooks";
 import { isArray, isEmpty, isRange, type EvalValue } from "../../lib/spreadsheet/formula/values";
@@ -34,10 +38,10 @@ import { generalText } from "../../lib/spreadsheet/general";
 import type { DefinedName, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { NAME_PROBLEM_MESSAGES, rebaseRelative, validateName, visibleNames } from "../../lib/spreadsheet/names";
 import { allTables, dataBody, findTable } from "../../lib/spreadsheet/tables";
-import { referenceRange } from "./usePointMode";
 
-export const NOT_A_RANGE_MESSAGE = "That name doesn't refer to a range";
-export const HIDDEN_SHEET_MESSAGE = "That sheet is hidden";
+/** SPEC-133's strings, which Go To shares (find.ts holds them). */
+export const NOT_A_RANGE_MESSAGE = GO_TO_NOT_A_RANGE_MESSAGE;
+export const HIDDEN_SHEET_MESSAGE = GO_TO_HIDDEN_SHEET_MESSAGE;
 export const FORMULA_PROBLEM_MESSAGE = "There's a problem with this formula";
 export const ARRAY_VALUE_TEXT = "{…}";
 export const WORKBOOK_SCOPE_LABEL = "Workbook";
@@ -73,16 +77,6 @@ const byName = (a: { name: string }, b: { name: string }): number => a.name.loca
 /** A name's identity in the lists (unique: names are unique per scope). */
 export function nameKey(name: Pick<DefinedName, "name" | "scopeSheetId">): string {
   return `name:${name.scopeSheetId ?? ""}:${upper(name.name)}`;
-}
-
-/** The visible name `text` means on `sheetId` (`qualifier`: a `Sheet2!`). */
-export function findVisibleName(model: SpreadsheetModel, text: string, sheetId: string, qualifier?: string): DefinedName | undefined {
-  const scopeId = qualifier === undefined ? sheetId : model.sheets.find((sheet) => upper(sheet.name) === upper(qualifier))?.id;
-  if (scopeId === undefined) {
-    return undefined;
-  }
-  const matches = visibleNames(model).filter((name) => upper(name.name) === upper(text));
-  return matches.find((name) => name.scopeSheetId === scopeId) ?? matches.find((name) => name.scopeSheetId === undefined);
 }
 
 /** A jump to `ranges` on `sheetId`, refused when the sheet cannot show. */
@@ -122,30 +116,12 @@ export function tableJump(model: SpreadsheetModel, name: string): NameBoxOutcome
 /** A typed Name Box entry's meaning (see the module header). */
 export function interpretNameBox(model: SpreadsheetModel, text: string, host: NameHost): NameBoxOutcome {
   const entry = text.trim();
-  let node: ReturnType<typeof parseFormula> | null = null;
-  try {
-    node = entry === "" ? null : parseFormula(entry);
-  } catch (error) {
-    if (!(error instanceof FormulaSyntaxError)) {
-      throw error;
-    }
+  const target = resolveGoToTarget(model, entry, host.sheetId, host);
+  if (!("error" in target)) {
+    return { kind: "jump", sheetId: target.sheetId, ranges: target.ranges };
   }
-  if (node?.kind === "ref" && node.ref.sheetEnd === undefined) {
-    const qualifier = node.ref.sheet;
-    const sheet = qualifier === undefined ? model.sheets.find((each) => each.id === host.sheetId) : model.sheets.find((each) => upper(each.name) === upper(qualifier));
-    if (sheet) {
-      return jumpTo(model, sheet.id, [referenceRange(node.ref)]);
-    }
-  }
-  if (node?.kind === "name") {
-    const name = findVisibleName(model, node.name, host.sheetId, node.sheet);
-    if (name) {
-      return nameJump(model, name, host);
-    }
-    const table = node.sheet === undefined ? tableJump(model, node.name) : null;
-    if (table) {
-      return table;
-    }
+  if (target.error !== GO_TO_INVALID_MESSAGE) {
+    return { kind: "refuse", message: target.error };
   }
   const problem = validateName(model, entry);
   return problem ? { kind: "refuse", message: NAME_PROBLEM_MESSAGES[problem] } : { kind: "define", name: entry };

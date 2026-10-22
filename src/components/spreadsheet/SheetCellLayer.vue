@@ -30,11 +30,13 @@
 // sits at the left edge, the text aligned in the width that remains; a
 // winning bar or icon with showValue false hides the text. SPEC-130: the
 // active cell is described by the data-validation input message while it
-// shows (`describedBy`, cellAttributes). Runtime prop declarations per the
-// espree constraint (see AppShell.vue).
+// shows (`describedBy`, cellAttributes). SPEC-134: a cell the find bar
+// matches carries data-find-match="true" and a tint, the current match
+// data-find-current="true" and a stronger one (`findMarks`). Runtime prop
+// declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/fonts/substitution";
-import { asBandItems, asDescribedCell, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { asBandItems, asDescribedCell, asFindMarks, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import AppIcon from "../AppIcon.vue";
 import CfIcon from "./CfIcon.vue";
 
@@ -51,6 +53,8 @@ const props = defineProps({
   filterButton: { type: Function, default: undefined },
   /** SPEC-130: { ref, id } — the cell the input message describes; null = none. */
   describedBy: { type: Object, default: undefined },
+  /** SPEC-134: the find bar's marks (FindMarks); absent = none. */
+  findMarks: { type: Object, default: undefined },
 });
 
 const emit = defineEmits(["filter-button"]);
@@ -58,6 +62,7 @@ const emit = defineEmits(["filter-button"]);
 const items = computed(() => asBandItems(props.bands));
 const staleTitleOf = computed(() => asStaleTitle(props.staleTitle));
 const describedCell = computed(() => asDescribedCell(props.describedBy));
+const findMarks = computed(() => asFindMarks(props.findMarks));
 
 /** The text box's style, its family wrapped in the substitution stack. */
 function textStyle(style = {}) {
@@ -139,7 +144,7 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
             :key="cell.key"
             class="sheet-cell"
             :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
-            v-bind="cellAttributes(cell, staleTitleOf, describedCell)"
+            v-bind="cellAttributes(cell, staleTitleOf, describedCell, findMarks)"
             :style="cell.boxStyle"
           >
             <div
@@ -337,6 +342,19 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
   font-family: Calibri, Carlito, sans-serif;
   font-size: 11pt;
   line-height: 1.2;
+}
+
+/* SPEC-134: the find bar's marks — a tint over the cell's own fill (the
+   paper's literal colours, as everywhere on it), stronger and outlined on
+   the current match. */
+.sheet-cell[data-find-match="true"] {
+  box-shadow: inset 0 0 0 100vmax rgba(255, 213, 0, 0.32);
+}
+
+.sheet-cell[data-find-current="true"] {
+  box-shadow:
+    inset 0 0 0 2px #c77700,
+    inset 0 0 0 100vmax rgba(255, 170, 0, 0.42);
 }
 
 .sheet-cell.is-raised {
