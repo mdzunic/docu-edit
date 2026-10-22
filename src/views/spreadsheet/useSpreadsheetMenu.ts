@@ -20,15 +20,18 @@
 // the validation dialog (useWorkbookEditing's validationDialog). SPEC-131:
 // Insert ▸ Image… and Shapes and the Arrange menu are the drawing layer's
 // (useWorkbookEditing's drawings), and the bar's state says whether a drawing
-// can go in and which is selected. Later specs append commands here.
+// can go in and which is selected. SPEC-133: Insert ▸ Table… opens
+// useSheetTables' Create Table dialog. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
 import type { Formatting } from "./useFormatting";
 import type { FormulaDisplay } from "./useFormulaDisplay";
 import type { FillHandle } from "./useFillHandle";
+import type { Names } from "./useNames";
 import type { Recalc } from "./useRecalc";
 import type { SheetClipboard } from "./useSheetClipboard";
+import type { SheetTables } from "./useSheetTables";
 import type { DrawingAction } from "./useSheetDrawings";
 import type { SortFilter } from "./useSortFilter";
 import type { SheetViewState } from "./useSheetViewState";
@@ -55,6 +58,10 @@ export interface SpreadsheetMenuDeps {
   fillHandle?: Pick<FillHandle, "fillDown" | "fillRight">;
   /** SPEC-128: the Data menu's sorts and filter commands. */
   sortFilter?: Pick<SortFilter, "sortAscending" | "sortDescending" | "openSortDialog" | "toggleFilter" | "clearFilters" | "reapplyFilter" | "filterOn">;
+  /** SPEC-133: Insert ▸ Table…. */
+  tables?: Pick<SheetTables, "openCreate">;
+  /** SPEC-133: Formulas ▸ Name Manager…. */
+  names?: Pick<Names, "openManager">;
 }
 
 /** SPEC-128's Data menu commands → useSortFilter's. */
@@ -236,6 +243,12 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.insertChart:
         deps.editing?.charts?.openGallery();
+        break;
+      case SHEET_MENU_COMMANDS.nameManager:
+        deps.names?.openManager();
+        break;
+      case SHEET_MENU_COMMANDS.insertTable:
+        deps.tables?.openCreate();
         break;
       default:
         break;

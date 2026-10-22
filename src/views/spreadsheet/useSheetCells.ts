@@ -30,6 +30,11 @@
 //   flexible run of its character between the text either side, and a value
 //   that does not fit is "####", which never spills. SPEC-119: with Show
 //   formulas on, lib's showFormulasDisplay decides the text instead.
+// - SPEC-133: a position inside a table paints its table look (lib's
+//   tableCellLook) beneath its own style (styleOverLook — Normal's values
+//   counting as unset) and beneath SPEC-129's conditional formats, for the
+//   cell elements and the border pass alike. A look is an identity-stable
+//   object, so a looked cell's CSS caches under its style id AND its look.
 import { computed, type ComputedRef } from "vue";
 import { findRow, formatA1, getCell, type GridRange } from "../../lib/spreadsheet/address";
 import {
@@ -58,6 +63,7 @@ import { isCellSelected, type SheetSelection } from "../../lib/spreadsheet/selec
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES, type SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { workbookFormatContext, type FormattedValue } from "../../lib/spreadsheet/numberFormat/render";
 import { cellStyle, columnSpanAt, effectiveStyleId, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
+import { lookKey, styleOverLook, tableCellLook } from "../../lib/spreadsheet/tableStyles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
 import type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
 import type { AxisItem, SheetViewport } from "./useSheetViewport";
@@ -117,11 +123,25 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     return cellStyle(deps.model(), id);
   }
 
-  function cssFor(id: number, kind: ReturnType<typeof valueKind>, alignHint: FormattedValue["alignHint"], left = false): ReturnType<typeof cellCss> {
-    const key = `${id}|${kind}|${alignHint ?? ""}|${left ? "left" : ""}`;
+  /** SPEC-133: the look of the table covering a position, or undefined. */
+  function tableLookAt(row: number, col: number): CellStyle | undefined {
+    const sheet = deps.sheet();
+    const table = sheet.tables?.find(({ ref }) => row >= ref.top && row <= ref.bottom && col >= ref.left && col <= ref.right);
+    return table ? tableCellLook(sheet, table, row, col, theme.value) : undefined;
+  }
+
+  /** Style `id` over a table look — its own properties win, Normal's
+   * (style 0) counting as unset. */
+  function overLook(id: number, look: CellStyle | undefined): CellStyle {
+    return look ? styleOverLook(look, styleOf(id), styleOf(0)) : styleOf(id);
+  }
+
+  function cssFor(id: number, kind: ReturnType<typeof valueKind>, alignHint: FormattedValue["alignHint"], left = false, look?: CellStyle): ReturnType<typeof cellCss> {
+    const key = `${id}|${kind}|${alignHint ?? ""}|${left ? "left" : ""}|${look ? lookKey(look) : ""}`;
     let css = cssCache.value.get(key);
     if (!css) {
-      css = cellCss(left ? leftAligned(styleOf(id)) : styleOf(id), theme.value, kind, alignHint);
+      const style = overLook(id, look);
+      css = cellCss(left ? leftAligned(style) : style, theme.value, kind, alignHint);
       cssCache.value.set(key, css);
     }
     return css;
@@ -156,10 +176,13 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     const value = cell?.value ?? null;
     // Showing formulas: a formula as left-aligned text, a value's General text.
     const shown = deps.showFormulas?.() ? showFormulasDisplay(sheet, at.row, at.col, value, deps.model().format) : null;
-    // A conditional format layers its dxf (and a scale's fill) over the
-    // style before anything reads it — its number format included.
+    // A table look lies beneath the style and a conditional format's dxf
+    // (and a scale's fill) over both, before anything reads it — its number
+    // format included.
+    const look = tableLookAt(at.row, at.col);
     const cf = deps.conditional?.(at.row, at.col);
-    const base = shown?.formula ? leftAligned(styleOf(styleId)) : styleOf(styleId);
+    const own = overLook(styleId, look);
+    const base = shown?.formula ? leftAligned(own) : own;
     const style = cf ? conditionalStyle(base, cf) : base;
     const kind = shown?.formula ? "string" : valueKind(value);
     const mdw = mdwFor(styleId);
@@ -170,7 +193,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       ...(style.alignment?.shrinkToFit ? {} : { widthPx: place.width }),
       digitWidthPx: mdw,
     });
-    const css = cf ? cellCss(style, theme.value, kind, formatted.alignHint) : cssFor(styleId, kind, formatted.alignHint, shown?.formula);
+    const css = cf ? cellCss(style, theme.value, kind, formatted.alignHint) : cssFor(styleId, kind, formatted.alignHint, shown?.formula, look);
     const textStyle: CssDeclarations = {};
     const contentStyle: CssDeclarations = {};
     for (const [key, val] of Object.entries(css.text)) {
@@ -339,8 +362,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
         }
       }
       const styleAt = (r: number, c: number): CellStyle => {
+        const base = overLook(effectiveStyleId(sheet, r, c), tableLookAt(r, c));
         const cf = deps.conditional?.(r, c);
-        return cf ? conditionalStyle(styleOf(effectiveStyleId(sheet, r, c)), cf) : styleOf(effectiveStyleId(sheet, r, c));
+        return cf ? conditionalStyle(base, cf) : base;
       };
       const borders = (items: AxisItem[], shiftX: number): BorderItem[] => {
         const window = edgeWindow(items);

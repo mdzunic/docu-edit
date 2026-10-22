@@ -23,9 +23,14 @@
 // a clean one is re-read. SPEC-130 moves it to 11: a version-10 record's
 // dirty sheet gains its data validations from its retained source alone (an
 // ods sheet's rules placed by the names its cells carried, which then leave
-// the cells); a clean one is re-read.
+// the cells); a clean one is re-read. SPEC-133 moves it to 14: a version-13
+// record's dirty sheet gains its tables from its retained part and the table
+// parts in opaque (upgradeDirtySheet), and the record its defined names from
+// the retained workbook part or content envelope (the first upgradeWorkbook)
+// — localSheetId through the source sheet order, renamed sheets renamed,
+// deleted ones' names dropped; a clean record is re-read whole.
 import { afterEach, describe, expect, it } from "vitest";
-import { decodedPartBytes } from "../core/packageParts";
+import { bytesToBase64, decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
 import { getCell } from "./address";
 import {
@@ -49,10 +54,14 @@ import {
   buildSpec130ValidationXlsxBytes,
   buildSpec131DrawingsOdsBytes,
   buildSpec131DrawingsXlsxBytes,
+  buildSpec133NamesOdsBytes,
+  buildSpec133NamesTablesXlsxBytes,
   SPEC123_XF,
+  SPEC133_NAMES_ODS,
+  SPEC133_NAMES_TABLES_XLSX,
 } from "./fixtures/build";
 import { modelledDxf } from "./conditionalFormats";
-import type { Cell, Sheet, SpreadsheetModel } from "./model";
+import type { Cell, DefinedName, Sheet, SpreadsheetModel } from "./model";
 import {
   assembleSpreadsheet,
   READER_UPGRADES,
@@ -61,6 +70,7 @@ import {
   upgradeSpreadsheetModel,
   type ReaderUpgrade,
 } from "./open";
+import { duplicateSheet } from "./sheets";
 
 /** The shipped upgrade list, restored after each test that swaps it. */
 const SHIPPED_UPGRADES = [...READER_UPGRADES];
@@ -153,8 +163,8 @@ afterEach(() => {
 
 describe("reader versions", () => {
   it("SPEC-117 moved the reader to version 2, SPEC-118 to 3, SPEC-119 to 4, SPEC-120 to 5, SPEC-122 to 6, SPEC-123 to 7, SPEC-124 to 8, SPEC-128 to 9, SPEC-129 to 10, SPEC-130 to 11, SPEC-131 to 12 and SPEC-132 to 13, with one contiguous step each (from 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)", () => {
-    expect(SPREADSHEET_READER_VERSION).toBe(13);
-    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(SPREADSHEET_READER_VERSION).toBe(14);
+    expect(READER_UPGRADES.map((step) => step.from)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   });
 
   it("SPEC-117's, SPEC-118's, SPEC-119's and SPEC-120's steps refuse a dirty sheet loudly — none can exist before SPEC-121", async () => {
@@ -199,6 +209,7 @@ describe("reader versions", () => {
         "format",
         "id",
         "kind",
+        "names",
         "opaque",
         "preview",
         "readerVersion",
@@ -980,5 +991,218 @@ describe("SPEC-131's reader step: the drawing layer", () => {
     const again = await upgradeSpreadsheetModel(edited);
     expect(again.sheets[0]!.drawings).toEqual(kept);
     expect(again.sheets[0]!.drawingsDirty).toBe(true);
+  });
+});
+
+// --- SPEC-133 ----------------------------------------------------------------------------------
+
+/** `read` as SPEC-132's reader (version 13) stored it — no names and no
+ * tables (neither field existed), stable sheet ids. */
+function storedAtVersion13(read: SpreadsheetModel): SpreadsheetModel {
+  const { names: _names, namesDirty: _dirty, ...rest } = JSON.parse(JSON.stringify(read)) as SpreadsheetModel;
+  const stored = { ...rest, readerVersion: 13 } as SpreadsheetModel;
+  stored.sheets = stored.sheets.map(({ tables: _tables, ...sheet }, index) => ({ ...sheet, id: `stored-sheet-${index}` }) as Sheet);
+  return stored;
+}
+
+/** `stored`'s sheet at `index`, dirty with a value typed into A41. */
+function editedAt(stored: SpreadsheetModel, index: number): Sheet {
+  const sheet = stored.sheets[index]!;
+  return { ...sheet, dirty: true, rows: [...sheet.rows, { index: 40, cells: [{ col: 0, value: "edited" }] }] };
+}
+
+/** A sheet's tables as the step's tests compare them: no minted ids. */
+const tablesForCompare = (sheet: Sheet) => (sheet.tables ?? []).map(({ id: _id, ...table }) => table);
+
+/** `read`'s names, each scope the stored sheet at its sheet's position. */
+function namesOnStoredSheets(read: SpreadsheetModel): DefinedName[] {
+  return read.names.map((name) =>
+    name.scopeSheetId === undefined ? name : { ...name, scopeSheetId: `stored-sheet-${read.sheets.findIndex((sheet) => sheet.id === name.scopeSheetId)}` },
+  );
+}
+
+/** The sheet-scoped names but `_xlnm._FilterDatabase`: name, scope sheet's name, formula. */
+function sheetScopedNames(model: SpreadsheetModel): [string, string, string][] {
+  return model.names
+    .filter((name) => name.scopeSheetId !== undefined && !name.name.startsWith("_xlnm._F"))
+    .map((name) => [name.name, model.sheets.find((sheet) => sheet.id === name.scopeSheetId)!.name, name.formula]);
+}
+
+/** `model`'s retained part `name` with `edits` applied — what SPEC-124's
+ * retained rewrite left it as before version 14. */
+function patchRetained(model: SpreadsheetModel, name: string, edits: [string, string][]): void {
+  const parts = decodedPartBytes(model.opaque);
+  patchPart(parts, name, edits);
+  model.opaque = model.opaque.map((part) => (part.name === name ? { name, data: bytesToBase64(parts.get(name)!) } : part));
+}
+
+describe("SPEC-133's reader step: defined names and tables", () => {
+  const X = SPEC133_NAMES_TABLES_XLSX;
+  const O = SPEC133_NAMES_ODS;
+
+  it("moved the reader to version 14 with its step from 13 — the first with a workbook-level upgradeWorkbook", () => {
+    const step = READER_UPGRADES.find((each) => each.from === 13);
+    expect(step?.upgradeWorkbook).toBeTypeOf("function");
+    expect(READER_UPGRADES.filter((each) => each.upgradeWorkbook !== undefined)).toEqual([step]);
+  });
+
+  it("xlsx: a clean version-13 record re-reads whole and gains every name and table", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    const stored = storedAtVersion13(read);
+    expect(stored.names).toBeUndefined();
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    expect(upgraded.names.map((name) => name.name)).toEqual(X.definedNames.map((name) => name.name));
+    expect(upgraded.names).toEqual(namesOnStoredSheets(read));
+    expect(upgraded.sheets.map(tablesForCompare)).toEqual(read.sheets.map(tablesForCompare));
+  });
+
+  it("xlsx: an edited version-13 record — the dirty sheet reads its tables from its retained part and the table parts in opaque, the clean one is re-read, and upgradeWorkbook reads the names from the retained workbook part", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    const stored = storedAtVersion13(read);
+    stored.sheets[0] = editedAt(stored, 0);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    const [data, lists, hidden] = upgraded.sheets;
+    expect(data!.id).toBe("stored-sheet-0");
+    expect(data!.dirty).toBe(true);
+    expect(getCell(data!, 40, 0)!.value).toBe("edited");
+    expect(tablesForCompare(data!)).toEqual(tablesForCompare(read.sheets[0]!));
+    expect(data!.tables!.map((table) => [table.name, table.partName, table.xlsxId])).toEqual([["Sales", X.tables.Sales.partName, X.tables.Sales.id]]);
+    expect(lists!.id).toBe("stored-sheet-1");
+    expect(tablesForCompare(lists!)).toEqual(tablesForCompare(read.sheets[1]!));
+    expect(hidden!.tables).toBeUndefined();
+    expect(upgraded.names).toEqual(namesOnStoredSheets(read));
+    expect(upgraded.namesDirty).toBeUndefined();
+  });
+
+  it("xlsx: the step reads what SPEC-124's retained rewrite kept current, sheet names in it through sourceSheetRemap", async () => {
+    // Under version 13 two rows went in above Sales (the rewrite moved the
+    // retained table part), and Lists was renamed Codes (retained text still
+    // says Lists).
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    const stored = storedAtVersion13(read);
+    patchRetained(stored, X.tables.Sales.partName, [
+      [`ref="A1:E6"`, `ref="A3:E8"`],
+      [`<autoFilter ref="A1:E5"`, `<autoFilter ref="A3:E7"`],
+      ["*Sales[[#This Row],[Qty]]</calculatedColumnFormula>", "*Lists!$B$2</calculatedColumnFormula>"],
+    ]);
+    stored.structureDirty = true;
+    stored.sheets = [editedAt(stored, 0), { ...stored.sheets[1]!, name: "Codes" }, stored.sheets[2]!];
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const sales = upgraded.sheets[0]!.tables![0]!;
+    expect(sales.ref).toEqual({ top: 2, left: 0, bottom: 7, right: 4 });
+    expect(sales.autoFilter?.sourceXml).toContain(`ref="A3:E7"`);
+    expect(sales.columns[3]!.calculatedFormula).toBe("Sales[@Price]*Codes!$B$2");
+    expect(upgraded.names.map((name) => [name.name, name.formula])).toContainEqual(["Rates", "Codes!$B$2:$B$4"]);
+    expect(upgraded.names.map((name) => [name.name, name.formula])).toContainEqual(["Local", "Codes!$A$2:$A$4"]);
+    expect(upgraded.sheets[1]!.tables!.map((table) => table.name)).toEqual(["Table1"]);
+  });
+
+  it("xlsx: localSheetId resolves through the SOURCE sheet order onto the sheet holding that part; a deleted sheet's names are dropped and references to it become #REF!", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    // Lists moved first: localSheetId="1" still means Lists.
+    const moved = storedAtVersion13(read);
+    moved.structureDirty = true;
+    moved.sheets = [moved.sheets[1]!, editedAt(moved, 0), moved.sheets[2]!];
+    expect((await upgradeSpreadsheetModel(moved)).names).toEqual(namesOnStoredSheets(read));
+
+    // Lists deleted: its _xlnm._FilterDatabase and Local leave; Rates names a sheet that is gone.
+    const deleted = storedAtVersion13(read);
+    deleted.structureDirty = true;
+    deleted.sheets = [editedAt(deleted, 0), deleted.sheets[2]!];
+    const upgraded = await upgradeSpreadsheetModel(deleted);
+    expect(upgraded.names.map((name) => [name.name, name.scopeSheetId, name.formula])).toEqual([
+      ["_xlfn.IFS", undefined, "#NAME?"],
+      ["_xlnm.Print_Area", "stored-sheet-0", "Data!$A$1:$E$6"],
+      ["Above", "stored-sheet-0", "Data!A1048576"],
+      ["Helper", undefined, "Data!$Z$1"],
+      ["Rates", undefined, "#REF!"],
+      ["TaxRate", undefined, "0.2"],
+    ]);
+  });
+
+  it("ods: an edited version-13 record reads the workbook's names from the retained content envelope and each sheet's own from its retained table text, a renamed sheet renamed; no database range becomes a table", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec133NamesOdsBytes(), "ods", "SPEC-133");
+    const stored = storedAtVersion13(read);
+    stored.structureDirty = true;
+    stored.sheets = [editedAt(stored, 0), { ...stored.sheets[1]!, name: "Stock" }];
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    expect(getCell(upgraded.sheets[0]!, 40, 0)!.value).toBe("edited");
+    expect(upgraded.names.map((name) => name.name)).toEqual([...O.globalNames, ...O.localNames].map((name) => name.name));
+    // Next (Sheet2!A2) follows the rename; Sheet1's own names keep its stored id.
+    expect(upgraded.names).toEqual(namesOnStoredSheets(read).map((name) => (name.name === "Next" ? { ...name, formula: "Stock!A2" } : name)));
+    expect(upgraded.sheets.map((sheet) => sheet.tables)).toEqual([undefined, undefined]);
+  });
+
+  it("xlsx: a copy SPEC-121 made gets each name its origin's source sheet scopes, through the copy's own remap, right after the origin's — or in its place when the origin is gone", async () => {
+    // The names SPEC-121's writer duplicated at write time, never in the retained workbook part.
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    duplicateSheet(read, 0);
+    const stored = storedAtVersion13(read);
+    stored.sheets[1] = { ...stored.sheets[1]!, dirty: true };
+    expect([stored.sheets[1]!.name, stored.sheets[1]!.copiedFrom]).toEqual(["Data (2)", "Data"]);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    expect(sheetScopedNames(upgraded)).toEqual([
+      ["_xlnm.Print_Area", "Data", "Data!$A$1:$E$6"],
+      ["_xlnm.Print_Area", "Data (2)", "'Data (2)'!$A$1:$E$6"],
+      ["Above", "Data", "Data!A1048576"],
+      ["Above", "Data (2)", "'Data (2)'!A1048576"],
+      ["Local", "Lists", "Lists!$A$2:$A$4"],
+    ]);
+    // The copy's table is its copied part's, already renamed by SPEC-121.
+    expect(upgraded.sheets[1]!.tables!.map((table) => [table.name, table.columns[3]!.calculatedFormula])).toEqual([["Sales_2", "Sales_2[@Price]*Sales_2[@Qty]"]]);
+
+    const gone = storedAtVersion13(read);
+    gone.sheets = [{ ...gone.sheets[1]!, dirty: true }, ...gone.sheets.slice(2)];
+    expect(sheetScopedNames(await upgradeSpreadsheetModel(gone))).toEqual([
+      ["_xlnm.Print_Area", "Data (2)", "'Data (2)'!$A$1:$E$6"],
+      ["Above", "Data (2)", "'Data (2)'!A1048576"],
+      ["Local", "Lists", "Lists!$A$2:$A$4"],
+    ]);
+  });
+
+  it("ods: a copy SPEC-121 made reads its own names from its retained table text — its origin's — through the copy's own remap", async () => {
+    const read = await readSpreadsheetBytes(await buildSpec133NamesOdsBytes(), "ods", "SPEC-133");
+    duplicateSheet(read, 0);
+    const stored = storedAtVersion13(read);
+    expect([stored.sheets[1]!.name, stored.sheets[1]!.copiedFrom]).toEqual(["Sheet1 (2)", "Sheet1"]);
+    const upgraded = await upgradeSpreadsheetModel(stored);
+    const copy = upgraded.sheets[1]!;
+    expect(upgraded.names.filter((name) => name.scopeSheetId === copy.id).map((name) => [name.name, name.formula])).toEqual([
+      ["LocalExpr", "XFD1*2"],
+      ["LocalRange", "'Sheet1 (2)'!$B$3:$B$5"],
+    ]);
+    expect(upgraded.names.filter((name) => name.scopeSheetId === upgraded.sheets[0]!.id).map((name) => name.formula)).toEqual(["XFD1*2", "Sheet1!$B$3:$B$5"]);
+  });
+
+  it("a record whose only edit is to its names (namesDirty) is an edited one, never re-read wholesale: its names are kept", async () => {
+    // A version-13 record cannot hold namesDirty, but a later upgrade of a record made since can.
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    const names: DefinedName[] = [...read.names.filter((name) => name.name !== "Rates"), { name: "Margin", formula: "Data!$B$2:$B$5" }];
+    const edited: SpreadsheetModel = { ...read, readerVersion: 13, names, namesDirty: true };
+    const upgraded = await upgradeSpreadsheetModel(edited);
+    expect(upgraded.names).toEqual(names);
+    expect(upgraded.namesDirty).toBe(true);
+    expect(upgraded.sheets.map((sheet) => sheet.id)).toEqual(read.sheets.map((sheet) => sheet.id));
+    expect(upgraded.sheets.map(tablesForCompare)).toEqual(read.sheets.map(tablesForCompare));
+  });
+
+  it("the step keeps what a record already holds — its names, a dirty sheet's tables — and reads no table into an ods sheet", async () => {
+    const step = READER_UPGRADES.find((each) => each.from === 13)!;
+    const read = await readSpreadsheetBytes(await buildSpec133NamesTablesXlsxBytes(), "xlsx", "SPEC-133");
+    const held: DefinedName[] = [{ name: "Kept", formula: "Data!$A$1" }];
+    const model = { ...read, names: held };
+    await step.upgradeWorkbook!(model, decodedPartBytes(read.opaque));
+    expect(model.names).toBe(held);
+    const sheet: Sheet = { ...read.sheets[0]!, tables: [], dirty: true };
+    await step.upgradeDirtySheet(read, sheet, decodedPartBytes(read.opaque), read);
+    expect(sheet.tables).toEqual([]);
+
+    const ods = await readSpreadsheetBytes(await buildSpec133NamesOdsBytes(), "ods", "SPEC-133");
+    const odsSheet: Sheet = { ...ods.sheets[1]!, dirty: true };
+    await step.upgradeDirtySheet(ods, odsSheet, decodedPartBytes(ods.opaque), ods);
+    expect(odsSheet.tables).toBeUndefined();
   });
 });

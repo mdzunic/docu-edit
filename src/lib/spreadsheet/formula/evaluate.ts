@@ -118,9 +118,17 @@ export interface EvalContext {
    * ones): "hidden" for Row.hidden, "filtered" for Row.filterHidden alone
    * (SPEC-128), else "visible". */
   rowVisibility(sheetId: string, row: number): RowVisibility;
-  /** SPEC-133 adds `resolveName(name, sheetQualifier, host)` and
-   *  `resolveStructured(node, host)` and owns their signatures. While a hook
-   *  is absent, a name or structured node makes the cell uncomputable. */
+  /** SPEC-133 (formula/referenceHooks.ts): a defined name's value at the
+   *  host — its formula evaluated with relative parts offset from A1 to the
+   *  host — or #NAME?. While absent, a name makes the cell uncomputable. */
+  resolveName?(name: string, sheetQualifier: string | undefined, host: EvalContext["host"]): EvalValue;
+  /** SPEC-133 (tables.ts): a structured reference's range, or its error.
+   *  While absent, a structured reference makes the cell uncomputable. */
+  resolveStructured?(node: { kind: "structured"; table?: string; text: string }, host: EvalContext["host"]): EvalValue;
+  /** SPEC-133: set while evaluating a defined name's formula — a relative
+   *  part shifted past the grid's edge wraps modulo the grid (Excel's
+   *  relative names) instead of becoming #REF!. */
+  wrapReferences?: true;
 }
 
 export type UncomputableReason =
@@ -206,6 +214,10 @@ export interface FormulaFacts {
   reason?: UncomputableReason;
   /** Every reference node, in source order. */
   refs: readonly ReferenceNode[];
+  /** SPEC-133: every name and structured-reference node, in source order —
+   *  computable through the context's hooks. */
+  names: readonly NodeOf<"name">[];
+  structured: readonly NodeOf<"structured">[];
 }
 
 const factsCache = new WeakMap<FormulaNode, FormulaFacts>();
@@ -220,16 +232,18 @@ export function formulaFacts(root: FormulaNode): FormulaFacts {
   let dynamic = false;
   let reason: UncomputableReason | undefined;
   const refs: ReferenceNode[] = [];
+  const names: NodeOf<"name">[] = [];
+  const structured: NodeOf<"structured">[] = [];
   const visit = (node: FormulaNode): void => {
     switch (node.kind) {
       case "ref":
         refs.push(node.ref);
         return;
       case "name":
-        reason ??= { kind: "name", name: node.name };
+        names.push(node);
         return;
       case "structured":
-        reason ??= { kind: "structured" };
+        structured.push(node);
         return;
       case "external":
         reason ??= { kind: "external" };
@@ -262,7 +276,7 @@ export function formulaFacts(root: FormulaNode): FormulaFacts {
     }
   };
   visit(root);
-  facts = reason ? { volatile, dynamic, reason, refs } : { volatile, dynamic, refs };
+  facts = reason ? { volatile, dynamic, reason, refs, names, structured } : { volatile, dynamic, refs, names, structured };
   factsCache.set(root, facts);
   return facts;
 }
@@ -706,9 +720,17 @@ function evalNode(node: FormulaNode, ctx: EvalContext): EvalValue {
     case "paren":
       return evalNode(node.inner, ctx);
     case "name":
-      return NAME_ERROR;
+      if (!ctx.resolveName) {
+        throw new UncomputableError({ kind: "name", name: node.name });
+      }
+      return ctx.resolveName(node.name, node.sheet, ctx.host);
+    case "structured":
+      if (!ctx.resolveStructured) {
+        throw new UncomputableError({ kind: "structured" });
+      }
+      return ctx.resolveStructured(node, ctx.host);
     default:
-      return REF_ERROR; // structured and external references (uncomputable)
+      return REF_ERROR; // external references (uncomputable)
   }
 }
 

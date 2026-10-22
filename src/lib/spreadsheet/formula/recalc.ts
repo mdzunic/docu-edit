@@ -70,6 +70,7 @@ import {
   type EvalSettings,
   type UncomputableReason,
 } from "./evaluate";
+import { withReferenceHooks } from "./referenceHooks";
 import { fromCellValue, isError, toCellValue, type Area, type ScalarValue } from "./values";
 import { callsVisibilitySensitive } from "./visibility";
 
@@ -299,7 +300,7 @@ class Pass implements RecalcPass {
     this.reason = options.reason ?? "edit";
     this.full = options.full === true;
     this.settings = evalSettingsFor(model, options.settings);
-    this.base = {
+    this.base = withReferenceHooks({
       model,
       settings: this.settings,
       now: options.now ?? clockNow,
@@ -309,7 +310,7 @@ class Pass implements RecalcPass {
         this.recorded.at(-1)?.push(area);
       },
       rowVisibility: (sheetId, row) => rowVisibilityIn(this.model, sheetId, row),
-    };
+    });
   }
 
   step(budgetMs: number): boolean {

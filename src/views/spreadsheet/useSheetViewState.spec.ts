@@ -37,6 +37,7 @@ function sheetOf(id: string): Sheet {
 
 function bookOf(): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "book",

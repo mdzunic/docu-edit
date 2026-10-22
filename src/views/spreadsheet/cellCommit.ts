@@ -19,6 +19,12 @@
 //   "cancel" closes the editor leaving the cell as it was. Nothing commits
 //   while the alert asks.
 // - An unchanged text records nothing and validates nothing.
+// - SPEC-133's entry hooks (`entryHooks`, useSheetTables') run for a typed
+//   entry's commit only — never a Fill, a dropdown pick, a paste, the fill
+//   handle or an undo: `prepare` before the gate and the write (a formula
+//   qualified with its table's name), `within` inside the entry's own step
+//   (a header cell renaming its column), `after` once that step is committed
+//   (expansion and a calculated column, each a step of its own).
 import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
 import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import type { CellEntry } from "../../lib/spreadsheet/cells";
@@ -57,6 +63,23 @@ export interface CommitPathDeps {
   /** Back into Edit mode (the alert's "retry"; the text is then selected). */
   edit: () => void;
   entryGate?: EntryGate;
+  /** SPEC-133: the typed-entry hooks installed now (see the header). */
+  entryHooks?: () => EntryHooks | null;
+}
+
+/** A typed entry about to be (or just) written. */
+export interface TypedEntry {
+  model: SpreadsheetModel;
+  sheetId: string;
+  at: CellRef;
+  entry: CellEntry;
+}
+
+/** What a typed entry's commit runs around its write (see the header). */
+export interface EntryHooks {
+  prepare?(typed: TypedEntry): CellEntry;
+  within?(typed: TypedEntry): void;
+  after?(typed: TypedEntry): void;
 }
 
 interface Prepared {
@@ -132,6 +155,21 @@ export function createCommitPath(deps: CommitPathDeps) {
     draft.focusCell();
   }
 
+  /** A typed entry through the hooks' `prepare`, and its write: its own
+   * step (`within` inside it), then `after` (see the header). */
+  function typed(ready: Prepared, text: string): { ready: Prepared; write: () => void } {
+    const hooks = deps.entryHooks?.() ?? null;
+    const sheetId = ready.ctx.model.sheets[ready.ctx.sheetIndex]?.id ?? "";
+    const at: TypedEntry = { model: ready.ctx.model, sheetId, at: ready.at, entry: ready.entry };
+    const entry = hooks?.prepare?.(at) ?? ready.entry;
+    const done: TypedEntry = { ...at, entry };
+    const write = (): void => {
+      writeEntry(ready.ctx, ready.at, entry, text, hooks?.within ? () => hooks.within?.(done) : undefined);
+      hooks?.after?.(done);
+    };
+    return { ready: { ...ready, entry }, write };
+  }
+
   /** Writes the draft into the edited cell and moves on; false when it
    * cannot be written, or the gate's alert holds it (kept open). */
   function commit(move: Move | null): boolean {
@@ -139,12 +177,11 @@ export function createCommitPath(deps: CommitPathDeps) {
       return false;
     }
     if (deps.target() && draft.text.value !== deps.original()) {
-      const ready = prepared(false);
-      if (!ready) {
+      const prepped = prepared(false);
+      if (!prepped) {
         return false;
       }
-      const text = draft.text.value;
-      const write = (): void => writeEntry(ready.ctx, ready.at, ready.entry, text);
+      const { ready, write } = typed(prepped, draft.text.value);
       if (held(ready, [ready.at], write, () => deps.done(move))) {
         return false;
       }

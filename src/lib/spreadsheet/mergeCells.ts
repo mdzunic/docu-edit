@@ -18,8 +18,9 @@
 //    upper-left cell through SPEC-123's applyStylePatch; "across" merges each
 //    row of a multi-column range separately; a single cell is a no-op.
 // 5. A merge partly over an array formula's range is refused with
-//    PARTIAL_ARRAY_MESSAGE; a locked cell of a protected sheet, with
-//    SPEC-122's protected message.
+//    PARTIAL_ARRAY_MESSAGE; a merge touching a table (SPEC-133) with
+//    TABLE_MERGE_MESSAGE; a locked cell of a protected sheet, with SPEC-122's
+//    protected message.
 // The ranges are taken in turn, as though merged one after another: a range
 // meeting an earlier one's merge extends to cover it like any other. So no
 // two merges ever overlap — Excel repairs a file whose merges do.
@@ -34,6 +35,9 @@ import { firstRowAtOrAfter } from "./restyle";
 import { holdsContent, NOT_A_GRID_MESSAGE, PARTIAL_ARRAY_MESSAGE } from "./structure";
 
 export type MergeMode = "centre" | "across" | "cells";
+
+/** SPEC-133: a merge touching a table is refused. */
+export const TABLE_MERGE_MESSAGE = "You can't merge cells in a table";
 
 const contains = (outer: GridRange, inner: GridRange): boolean =>
   outer.top <= inner.top && outer.left <= inner.left && outer.bottom >= inner.bottom && outer.right >= inner.right;
@@ -175,7 +179,7 @@ export function placeMerges(model: SpreadsheetModel, index: number, plan: MergeP
 }
 
 /** Why `plan` is refused on the sheet at `index`, or null (step 5): a merge
- * partly over an array formula's range, or — on a protected sheet — a locked
+ * partly over an array formula's range, one touching a table, or — on a protected sheet — a locked
  * cell among those it merges or unmerges. */
 export function mergeRefusal(model: SpreadsheetModel, index: number, plan: MergePlan): string | null {
   const sheet = model.sheets[index]!;
@@ -186,6 +190,9 @@ export function mergeRefusal(model: SpreadsheetModel, index: number, plan: Merge
         return PARTIAL_ARRAY_MESSAGE;
       }
     }
+  }
+  if (sheet.tables?.some((table) => plan.targets.some((t) => rangesIntersect(t, table.ref)))) {
+    return TABLE_MERGE_MESSAGE;
   }
   if (!sheet.protection) {
     return null;

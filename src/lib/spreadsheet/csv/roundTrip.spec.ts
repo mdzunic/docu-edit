@@ -300,6 +300,16 @@ describe("reader versions", () => {
     expect(upgraded.csv).toBe(stale.csv);
   });
 
+  it("re-stamps an edited one a pre-SPEC-133 reader stored (no names) with SPEC-133's names empty, as a read leaves them", async () => {
+    const model = open(buildSpec126Semicolon1252CsvBytes(), "csv");
+    type(model, { row: 1, col: 2 }, "99");
+    const { names: _names, ...stored } = model;
+    const upgraded = await upgradeSpreadsheetModel({ ...stored, readerVersion: 13 } as SpreadsheetModel);
+    expect(upgraded.readerVersion).toBe(SPREADSHEET_READER_VERSION);
+    expect(upgraded.names).toEqual([]);
+    expect(upgraded.sheets).toBe(model.sheets);
+  });
+
   it("returns a current csv workbook as the same object", async () => {
     const model = open(buildSpec126SepCsvBytes(), "csv");
     expect(await upgradeSpreadsheetModel(model)).toBe(model);

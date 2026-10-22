@@ -100,6 +100,7 @@ describe("FormulaBar edit text (SPEC-118)", () => {
     merges: [],
   };
   const model: SpreadsheetModel = {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "w",

@@ -249,6 +249,7 @@ export function readCsvBytes(bytes: Uint8Array, format: "csv" | "tsv", title: st
     opaque: [{ name: CSV_SOURCE_PART, data: bytesToBase64(bytes) }],
     styles: defaultStyles(),
     defaultStyleId: 0,
+    names: [],
     dxfs: [],
   };
   /** Each distinct inferred format's style id, interned once. */

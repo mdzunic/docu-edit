@@ -12,8 +12,7 @@
 // | sheet | `rowBreaks/brk@id` (rows), `colBreaks/brk@id` (columns) | index |
 // | sheet | `protectedRange@sqref`, `ignoredError@sqref`, `dataRef@ref`, `inputCells@r`, `cellWatch@r` | sqref |
 // | sheet `extLst` | `x14:sparkline/xm:sqref`, `xm:f` (and its group's date-axis `xm:f`) | sqref; formula |
-// | workbook | `definedName` text (but the model's `_xlnm._FilterDatabase`s) | formula |
-// | tables | `table@ref`, `autoFilter@ref`, `sortState@ref`, `sortCondition@ref` | range |
+// | tables | `sortState@ref`, `sortCondition@ref`; on a part no model table holds also `table@ref`, `autoFilter@ref` | range |
 // | charts NOT modelled (not style/colors parts): out-of-catalogue `xl/charts/chart{n}.xml`, chartex `xl/charts/chartEx{n}.xml`, any part no modelled chart drawing relates | every `c:f` (any `f` element: `cx:f`, `c15:f` too) | formula |
 //
 // - Narrowed by SPEC-132: a chart part a modelled chart drawing relates
@@ -33,8 +32,18 @@
 //   localSheetId a sheet with an autofilter, or whose source part held one
 //   (autoFilter.ts's sheetPartHasAutoFilter; writer.ts reconciles it with
 //   the model) — so nothing is adjusted twice. Any other (an Advanced
-//   Filter's, or one with no localSheetId) is still adjusted here. A table part's
+//   Filter's, or one with no localSheetId) was still adjusted here until
+//   SPEC-133 retired every name's text (below). A table part's
 //   autoFilter and sortState (SPEC-133's) and a customSheetView's stay here.
+// - Retired by SPEC-133 (its `names` and `tables` adjusters, structure.ts's
+//   and move.ts's, move the model's defined names and tables; the writer
+//   rebuilds `<definedNames>` from `model.names` — xlsx/definedNames.ts — and
+//   regenerates a table part whose model no longer agrees with it —
+//   xlsx/tableXml.ts): every `definedName`'s text in the workbook part, and
+//   `table@ref` and the table's own `autoFilter@ref` in a table part a model
+//   table holds (`partName`) — left verbatim, so nothing is adjusted twice.
+//   A table part the reader could not model keeps both rows here; every
+//   table part's `sortState`/`sortCondition` stays.
 // - Retired by SPEC-129 (its `conditionalFormats` adjusters, structure.ts's
 //   and move.ts's, move the model; the writer re-serialises a dirty sheet's
 //   conditional formats from it): `conditionalFormatting@sqref` and every
@@ -60,10 +69,7 @@
 //   part and what the part's relationships reach — tables, drawings and the
 //   charts they relate, comments, threaded comments, VML, pivot tables; the
 //   returned set holds the sheets whose own parts changed. A chart no
-//   sheet's drawing relates has host "", as has a definedName without
-//   `localSheetId`; one with it is hosted by the model sheet holding the part
-//   the SOURCE workbook's `<sheet>` at that index names. Pivot caches and the
-//   workbook part belong to no sheet.
+//   sheet's drawing relates has host "". Pivot caches belong to no sheet.
 // - Sheet names. `range` and `index` get the host's model name — or, for
 //   `dataRef@sheet` and `worksheetSource@sheet` (source-time names), the
 //   name of the model sheet resolveRetainedSheetName finds (nothing found,
@@ -108,10 +114,8 @@ import type { RetainedReferenceMapper } from "../retainedReferences";
 import { resolveRetainedSheetName } from "../sourceNames";
 import { applySplices, decodeXmlText, escapeElementText, findAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { isModelledChart } from "../charts";
-import { FILTER_DATABASE_NAME, sheetPartHasAutoFilter } from "./autoFilter";
 import { chartPartResolver } from "./drawingXml";
 import {
-  decodeUtf8,
   encodeUtf8,
   LazyParts,
   readSourceWorkbook,
@@ -589,13 +593,16 @@ function worksheetEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
 }
 
 const TABLE_RANGE_ELEMENTS: ReadonlySet<string> = new Set(["table", "autoFilter", "sortState", "sortCondition"]);
+/** What a table part the model holds leaves to the `tables` adjusters. */
+const MODELLED_TABLE_ELEMENTS: ReadonlySet<string> = new Set(["table", "autoFilter"]);
 
-function tableEdits(xml: string, host: Sheet, pass: Pass): PartEdits {
+/** A table part's ranges; `modelled`: a model table holds the part. */
+function tableEdits(xml: string, host: Sheet, modelled: boolean, pass: Pass): PartEdits {
   const edits = new PartEdits(xml, pass.mapper);
   walk(
     xml,
     (frame) => {
-      if (TABLE_RANGE_ELEMENTS.has(frame.local)) {
+      if (TABLE_RANGE_ELEMENTS.has(frame.local) && !(modelled && MODELLED_TABLE_ELEMENTS.has(frame.local))) {
         edits.rangeAttribute(frame, "ref", host.name, false);
       }
     },
@@ -644,29 +651,6 @@ function chartEdits(xml: string, hostSheetId: string, pass: Pass): PartEdits {
     if (frame.local === "f") {
       edits.formulaText(frame, contentEnd, hostSheetId);
     }
-  });
-  return edits;
-}
-
-/** `hosts[i]`: the id of the model sheet the source workbook's i-th sheet
- * is ("" for none); `owned(id)`: whether that sheet's `_xlnm._FilterDatabase`
- * is the model's (see the module header). */
-function definedNameEdits(xml: string, hosts: readonly string[], owned: (sheetId: string) => boolean, pass: Pass): PartEdits | undefined {
-  if (!xml.includes("definedName")) {
-    return undefined;
-  }
-  const edits = new PartEdits(xml, pass.mapper);
-  walk(xml, ignore, (frame, contentEnd) => {
-    if (frame.local !== "definedName") {
-      return;
-    }
-    const local = scanAttr(frame.attrs, "localSheetId")?.trim();
-    const host = local !== undefined && /^\d+$/.test(local) ? (hosts[Number(local)] ?? "") : "";
-    // SPEC-128: the model's _xlnm._FilterDatabase follows its autofilter (writer.ts).
-    if (host !== "" && scanAttr(frame.attrs, "name")?.toLowerCase() === FILTER_DATABASE_NAME.toLowerCase() && owned(host)) {
-      return;
-    }
-    edits.formulaText(frame, contentEnd, host);
   });
   return edits;
 }
@@ -989,6 +973,8 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
   const modelled = new Set(
     model.sheets.flatMap((sheet) => (sheet.drawings ?? []).flatMap((drawing) => (drawing.content.kind === "chart" && isModelledChart(drawing.content) ? (resolve(sheet, drawing) ?? []) : []))),
   );
+  // SPEC-133: a table part a model table holds is the `tables` adjusters'.
+  const modelledTables = new Set(model.sheets.flatMap((sheet) => (sheet.tables ?? []).flatMap((table) => table.partName ?? [])));
   for (const sheet of model.sheets) {
     const part = sheet.partName;
     if (part === undefined || !run.has(part)) {
@@ -1004,7 +990,7 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
         continue;
       }
       if (kind === "table") {
-        own = run.rewrite(target, (xml) => tableEdits(xml, sheet, run)) || own;
+        own = run.rewrite(target, (xml) => tableEdits(xml, sheet, modelledTables.has(target), run)) || own;
       } else if (kind === "pivotTable") {
         own = run.rewrite(target, (xml) => pivotTableEdits(xml, sheet, run)) || own;
       } else if (kind === "comments") {
@@ -1036,15 +1022,6 @@ export function rewriteXlsxRetainedReferences(model: SpreadsheetModel, mapper: R
   const caches = new Set<string>();
   const workbook = run.sourceWorkbook();
   if (workbook) {
-    const hosts = workbook.sheets.map((source) =>
-      source.partName === "" ? "" : (model.sheets.find((sheet) => sheet.partName === source.partName)?.id ?? ""),
-    );
-    const owned = (sheetId: string): boolean => {
-      const sheet = model.sheets.find((each) => each.id === sheetId);
-      const bytes = sheet?.partName === undefined ? undefined : run.parts.get(sheet.partName);
-      return sheet?.autoFilter !== undefined || (bytes !== undefined && sheetPartHasAutoFilter(decodeUtf8(bytes)));
-    };
-    run.rewrite(workbook.path, (xml) => definedNameEdits(xml, hosts, owned, run));
     for (const rel of workbook.rels) {
       const target = relationshipKind(rel.type) === "pivotCacheDefinition" ? targetPart(workbook.path, rel) : undefined;
       if (target !== undefined) {

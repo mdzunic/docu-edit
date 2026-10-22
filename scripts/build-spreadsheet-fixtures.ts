@@ -266,5 +266,22 @@ writeFileSync(join(fixturesDir, "spec132-charts.xlsx"), await buildSpec132Charts
 writeFileSync(join(fixturesDir, "spec132-charts.ods"), await buildSpec132ChartsOdsBytes());
 // --- end SPEC-132 ---------------------------------------------------------------
 
+// --- SPEC-133 -------------------------------------------------------------------
+// - spec133-names-tables.xlsx — Excel-shaped defined names (workbook- and
+//                               sheet-scoped, relative, constant, hidden,
+//                               _xlnm.Print_Area, _xlnm._FilterDatabase, an
+//                               _xlfn. placeholder) and tables (a totals row,
+//                               a calculated column, a '#-escaped column, a
+//                               header-less "Table1"), structured references
+//                               with cached values
+// - spec133-names.ods         — LibreOffice-shaped table-local and global
+//                               named ranges/expressions with non-A1 base
+//                               cells, an anonymous and a named database range
+import { buildSpec133NamesOdsBytes, buildSpec133NamesTablesXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec133-names-tables.xlsx"), await buildSpec133NamesTablesXlsxBytes());
+writeFileSync(join(fixturesDir, "spec133-names.ods"), await buildSpec133NamesOdsBytes());
+// --- end SPEC-133 ---------------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

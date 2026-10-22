@@ -89,7 +89,10 @@ import type { CalcSettings, Sheet } from "../model";
 import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALES } from "../numberFormat/locale";
 import { workbookFormatContext } from "../numberFormat/render";
 import { CellBudget, encodeOpaque, parseError, partText, resolveActiveSheet, type ParsedSpreadsheet } from "../parsed";
+import { readXlsxDefinedNames } from "./definedNames";
 import { readXlsxChartSheet, readXlsxSheetDrawings } from "./drawingXml";
+import { partTextOf, workbookPathOf } from "./package";
+import { readXlsxSheetTables } from "./tableXml";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
 import { isSpreadsheetMl, readXlsxStyles } from "./styles";
 
@@ -355,6 +358,11 @@ export async function parseXlsx(
       if (layer.drawings.length > 0) {
         sheet.drawings = layer.drawings;
       }
+      // SPEC-133: the worksheet's <tableParts> → its xl/tables/tableN.xml parts.
+      const tables = readXlsxSheetTables(parts, entry.partName, partText(bytes), () => crypto.randomUUID());
+      if (tables.length > 0) {
+        sheet.tables = tables;
+      }
     } else if (entry.chartsheet && bytes) {
       const chart = readXlsxChartSheet(parts, entry.partName, sheet);
       if (chart) {
@@ -375,6 +383,16 @@ export async function parseXlsx(
     properties: coreProperties(parts),
     dxfs: dxfs.dxfs,
   };
+  // SPEC-133: workbook.xml's definedNames, localSheetId → the sheet read
+  // from that position of <sheets> (hidden and chart sheets counted).
+  const workbookPath = workbookPathOf(parts);
+  const workbookXml = workbookPath === undefined ? undefined : partTextOf(parts, workbookPath);
+  if (workbookXml !== undefined) {
+    const names = readXlsxDefinedNames(workbookXml, sheets.map((sheet) => sheet.id));
+    if (names.length > 0) {
+      parsed.names = names;
+    }
+  }
   if (theme !== undefined) {
     parsed.theme = theme;
   }

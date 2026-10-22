@@ -14,13 +14,16 @@
 // `dataValidation@sqref`, its `formula1`/`formula2` and the extLst's
 // `x14:dataValidation` keep every byte (and their containers' `count`), so
 // the generic mechanisms the tests used them as the vehicle for now ride on
-// `ignoredError@sqref`, hyperlinks and x14 sparklines.
+// `ignoredError@sqref`, hyperlinks and x14 sparklines. SPEC-133 retires the
+// workbook's `definedName` text, and `table@ref`/`autoFilter@ref` in a table
+// part a model table holds (the names and tables adjusters move the model):
+// both keep every byte.
 import { describe, expect, it } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { relsPathFor } from "../../core/xml";
 import { formatRange } from "../address";
 import { changedSpans } from "../fixtures/spanDiff";
-import type { Sheet, SpreadsheetModel } from "../model";
+import type { Sheet, SheetTable, SpreadsheetModel } from "../model";
 import type { RetainedReferenceMapper } from "../retainedReferences";
 import { structuralMapper, type StructuralEdit } from "../structure";
 import { rewriteXlsxRetainedReferences } from "./retainedReferences";
@@ -92,6 +95,7 @@ function book(specs: readonly SheetSpec[], parts: Readonly<Record<string, string
   });
   Object.assign(files, parts);
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "retained",
@@ -458,53 +462,19 @@ describe("the workbook and the parts a sheet relates", () => {
     `<definedName name="There" localSheetId="0">$A$5</definedName><definedName name="Total">SUM(Sheet1!$B$2:$B$30)</definedName>` +
     `<definedName name="Other">Sheet2!$A$1:$A$9</definedName><definedName name="Bare">$A$5</definedName></definedNames>`;
 
-  it("definedName text, a localSheetId naming its host in the SOURCE workbook's sheet order; SPEC-128: never the model's _xlnm._FilterDatabase", () => {
-    // Sheet1 has no autofilter, in its part or the model: its _xlnm._FilterDatabase
-    // (an Advanced Filter's) is an ordinary name and moves like the rest.
-    const model = book([{ name: "Sheet1" }, { name: "Sheet2" }], {}, NAMES);
-    model.sheets = [model.sheets[1]!, model.sheets[0]!]; // moved: the model's order is no longer the source's
-    const before = model.opaque;
-    expect(adjust(model, "insertRows", 0, 2, "s1")).toEqual(new Set());
-    expect(spans(before, model, "xl/workbook.xml")).toEqual([
-      ["Sheet1!$A$1:$D$30", "Sheet1!$A$3:$D$32"],
-      ["Sheet1!$A$1:$D$30", "Sheet1!$A$3:$D$32"],
-      ["$A$5", "$A$7"],
-      ["SUM(Sheet1!$B$2:$B$30)", "SUM(Sheet1!$B$4:$B$32)"],
-    ]);
-    // With an autofilter in Sheet1's part (or the model) the name is the
-    // model's: it stays, and the writer reconciles it with the autofilter.
+  it("SPEC-133 retired definedName text: every name — an owned or an Advanced Filter's _xlnm._FilterDatabase, scoped or not — is left verbatim (the names adjusters move the model, the writer rebuilds <definedNames>)", () => {
+    const plain = book([{ name: "Sheet1" }, { name: "Sheet2" }], {}, NAMES);
+    plain.sheets = [plain.sheets[1]!, plain.sheets[0]!]; // moved: the model's order is no longer the source's
     const filtered = book([{ name: "Sheet1", xml: worksheet(`<autoFilter ref="A1:D30"/>`) }, { name: "Sheet2" }], {}, NAMES);
-    const modelled = book([{ name: "Sheet1" }, { name: "Sheet2" }], {}, NAMES);
-    modelled.sheets[0] = { ...modelled.sheets[0]!, autoFilter: { range: { top: 0, left: 0, bottom: 29, right: 3 }, columns: [] } };
-    for (const owned of [filtered, modelled]) {
-      const ownedBefore = owned.opaque;
-      adjust(owned, "insertRows", 0, 2, "s1");
-      expect(textOf(owned.opaque, "xl/workbook.xml")).toContain(
-        `<definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">Sheet1!$A$1:$D$30</definedName>`,
-      );
-      expect(spans(ownedBefore, owned, "xl/workbook.xml")).toEqual([
-        ["Sheet1!$A$1:$D$30", "Sheet1!$A$3:$D$32"],
-        ["$A$5", "$A$7"],
-        ["SUM(Sheet1!$B$2:$B$30)", "SUM(Sheet1!$B$4:$B$32)"],
-      ]);
-    }
-    // One without a localSheetId names no sheet to own it: it moves.
     const global = book([{ name: "Sheet1", xml: worksheet(`<autoFilter ref="A1:D30"/>`) }], {}, `<definedNames><definedName name="_xlnm._FilterDatabase" hidden="1">Sheet1!$A$1:$D$30</definedName></definedNames>`);
-    const globalBefore = global.opaque;
-    adjust(global, "insertRows", 0, 2, "s1");
-    expect(spans(globalBefore, global, "xl/workbook.xml")).toEqual([["Sheet1!$A$1:$D$30", "Sheet1!$A$3:$D$32"]]);
-
-    const other = book([{ name: "Sheet1" }, { name: "Sheet2" }], {}, NAMES);
-    other.sheets = [other.sheets[1]!, other.sheets[0]!];
-    const otherBefore = other.opaque;
-    adjust(other, "insertRows", 0, 2, "s2");
-    expect(spans(otherBefore, other, "xl/workbook.xml")).toEqual([
-      ["$A$5", "$A$7"],
-      ["Sheet2!$A$1:$A$9", "Sheet2!$A$3:$A$11"],
-    ]);
+    for (const [model, sheetId] of [[plain, "s1"], [plain, "s2"], [filtered, "s1"], [global, "s1"]] as const) {
+      const before = model.opaque;
+      expect(adjust(model, "insertRows", 0, 2, sheetId)).toEqual(new Set());
+      expect(untouched(before, model, "xl/workbook.xml")).toBe(true);
+    }
   });
 
-  it("a table part's table@ref, autoFilter@ref, sortState@ref and sortCondition@ref; an area gone leaves them", () => {
+  it("a table part no model table holds: table@ref, autoFilter@ref, sortState@ref and sortCondition@ref; an area gone leaves them", () => {
     const table =
       `${DECL}<table xmlns="${MAIN}" id="1" name="Table1" displayName="Table1" ref="A1:C10" totalsRowShown="0"><autoFilter ref="A1:C10">` +
       `<sortState ref="A2:C10"><sortCondition ref="B2:B10"/></sortState></autoFilter><tableColumns count="3"><tableColumn id="1" name="a"/>` +
@@ -525,6 +495,30 @@ describe("the workbook and the parts a sheet relates", () => {
     const goneBefore = gone.opaque;
     expect(adjust(gone, "deleteCols", 0, 3)).toEqual(new Set());
     expect(gone.opaque).toBe(goneBefore);
+
+    // SPEC-133: a part a model table holds leaves table@ref and its
+    // autoFilter@ref to the tables adjusters (the writer regenerates the
+    // part from the model); its sortState and sortCondition still move.
+    const held = book([spec], { "xl/tables/table1.xml": table });
+    const sales: SheetTable = {
+      id: "t1",
+      name: "Table1",
+      ref: { top: 0, left: 0, bottom: 9, right: 2 },
+      headerRow: true,
+      totalsRow: false,
+      columns: [{ name: "a", xlsxId: 1 }, { name: "b", xlsxId: 2 }, { name: "c", xlsxId: 3 }],
+      style: { name: "TableStyleMedium2", showRowStripes: true, showColumnStripes: false, showFirstColumn: false, showLastColumn: false },
+      autoFilter: {},
+      partName: "xl/tables/table1.xml",
+      xlsxId: 1,
+    };
+    held.sheets[0] = { ...held.sheets[0]!, tables: [sales] };
+    const heldBefore = held.opaque;
+    expect(adjust(held, "insertRows", 4, 2)).toEqual(new Set(["s1"]));
+    expect(spans(heldBefore, held, "xl/tables/table1.xml")).toEqual([
+      ["A2:C10", "A2:C12"],
+      ["B2:B10", "B2:B12"],
+    ]);
   });
 
   it("every c:f of a chart, hosted by the sheet whose drawing relates it; a chart no drawing relates has no host", () => {
@@ -808,13 +802,13 @@ describe("sheet names in retained text", () => {
     const before = model.opaque;
     expect(rewriteXlsxRetainedReferences(model, mapper)).toEqual(new Set());
     expect(model.opaque).toBe(before);
+    // SPEC-133: the workbook's definedName text is never asked about.
     expect(calls).toEqual([
       "index Data row 4",
       "range Data A1:A10",
       "formula s1 Sheet1!$A1:$E1",
       "range Data F1",
       "formula s2 Sheet1!$B$2:$B$30",
-      'formula "" Sheet1!$A$1',
       "range Data A1:C30",
     ]);
   });
@@ -841,7 +835,7 @@ describe("sheet names in retained text", () => {
     ]);
     expect(spans(before, model, "xl/charts/chart1.xml")).toEqual([["Sheet1!$B$2:$B$30", "Sheet1!$B$3:$B$31"]]);
     expect(spans(before, model, "xl/pivotCache/pivotCacheDefinition1.xml")).toEqual([["A1:C30", "A2:C31"]]);
-    expect(spans(before, model, "xl/workbook.xml")).toEqual([["sheet1!$A$1", "sheet1!$A$2"]]);
+    expect(untouched(before, model, "xl/workbook.xml")).toBe(true); // SPEC-133: names are the model's
 
     const quoted = book(
       [{ name: "Sheet1" }, { name: "Sheet2", xml: worksheet(`<drawing r:id="rId1"/>`), rels: [["rId1", "drawing", "../drawings/drawing1.xml"]] }, { name: "Totals", sourceName: "My Data" }],

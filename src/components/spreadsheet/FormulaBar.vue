@@ -12,12 +12,15 @@
 // editor (useDraftSurface): typing in either updates both, a click opens
 // Edit mode at the clicked character, Enter/Tab/Escape behave as in the
 // cell, and a formula's references are coloured as there. Without them it
-// is read-only (aria-readonly). The Name Box stays read-only (a Go To field
-// is SPEC-134's). Runtime prop declarations per the espree constraint (see
+// is read-only (aria-readonly). SPEC-133: with the view's names (`names`,
+// useNames) the Name Box (NameBox.vue) is editable — references navigate,
+// names select, new names are defined — with its dropdown; without them it
+// stays read-only. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
 import { computed, useTemplateRef } from "vue";
 import { asCellEditing } from "../../views/spreadsheet/useCellEditing";
 import { useDraftSurface } from "../../views/spreadsheet/useDraftSurface";
+import NameBox from "./NameBox.vue";
 
 const props = defineProps({
   /** The Name Box text: "B3", or "3R × 2C" during a drag. */
@@ -34,6 +37,8 @@ const props = defineProps({
   canInsertFunction: { type: Boolean, default: false },
   /** SPEC-127: the function assists' ARIA (useFunctionAssist's editorAria). */
   aria: { type: Object, default: () => ({}) },
+  /** SPEC-133: useNames' return — the Name Box becomes editable; absent = read-only. */
+  names: { type: Object, default: null },
 });
 
 const emit = defineEmits(["insert-function"]);
@@ -51,14 +56,10 @@ const surface = useDraftSurface(host, () => editor.value, "bar", () => props.con
     class="formula-bar"
     data-testid="formula-bar"
   >
-    <input
-      class="name-box"
-      data-testid="name-box"
-      type="text"
-      readonly
-      aria-label="Name Box"
-      :value="props.address"
-    >
+    <NameBox
+      :address="props.address"
+      :names="props.names"
+    />
     <button
       type="button"
       class="formula-bar-fx"
@@ -111,22 +112,6 @@ const surface = useDraftSurface(host, () => editor.value, "bar", () => props.con
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: var(--text-sm);
-}
-
-.name-box {
-  flex: none;
-  width: 7rem;
-  padding: var(--space-1) var(--space-2);
-  border: var(--border-width) solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  color: inherit;
-  font: inherit;
-}
-
-.name-box:focus-visible {
-  outline: var(--space-1) solid var(--focus-ring);
-  outline-offset: 1px;
 }
 
 .formula-bar-fx {

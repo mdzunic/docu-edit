@@ -64,16 +64,20 @@ import type { GridRange } from "../address";
 import { buildGridMetrics, ODS_DEFAULT_COL_WIDTH_PX, ODS_DEFAULT_ROW_HEIGHT_PT } from "../geometry";
 import { acceptMerges } from "../merges";
 import { toOdsFormula, type FormulaFields } from "../formula/dialect";
+import { expandStructuredReferences } from "../tables";
+import { styleOverLook, tableCellLook } from "../tableStyles";
 import {
   isCellError,
   MAX_COLS,
   MAX_ROWS,
   type Cell,
+  type CellStyle,
   type CellValue,
   type ColumnSpan,
   type Row,
   type Sheet,
   type SheetDrawing,
+  type SheetTable,
   type SpreadsheetModel,
   type TextRun,
 } from "../model";
@@ -747,7 +751,9 @@ export interface OdsTableContext {
    * `table:name` / `table:style-name` splices already applied; undefined for
    * a new sheet, whose start tag is generated. */
   source?: string;
-  model: Pick<SpreadsheetModel, "styles" | "theme" | "dateSystem" | "odsNullDate" | "format" | "indexedColors">;
+  /** SPEC-133: with `sheets` (and `names`), structured references in
+   *  `table:formula` are written as their A1 ranges. */
+  model: Pick<SpreadsheetModel, "styles" | "theme" | "dateSystem" | "odsNullDate" | "format" | "indexedColors"> & Partial<Pick<SpreadsheetModel, "sheets" | "names">>;
   registry: OdsStyleRegistry;
   /** The user's number locale: the informative `text:p` and a
    * locale-dependent built-in's generated number style are written in it. */
@@ -792,6 +798,10 @@ export interface OdsTableContext {
    * written as a new object (ods/chartParts.ts) — its canonical frame names
    * it; absent, a created chart is not written. */
   chartObjectDir?: (drawing: SheetDrawing) => string | undefined;
+  /** SPEC-133: the table's trailing children with the sheet's own names
+   *  (ods/namedExpressions.ts odsTrailingWithNames); absent, they are
+   *  re-emitted as they are. */
+  localNames?: (sheet: Sheet, trailing: string) => string;
 }
 
 /** SPEC-130: a validated rectangle as the writer meets it — the rule's
@@ -1206,6 +1216,10 @@ class TableWriter {
   private readonly drawings: OdsSheetDrawingsXml;
   private readonly drawingRows: number[];
   private nextDrawingRow = 0;
+  // SPEC-133: the sheet's tables, and each look's generated style by own style id.
+  private readonly tables: readonly SheetTable[];
+  private readonly lookStyles = new Map<CellStyle, Map<number, string | null>>();
+  private readonly workbookHasTables: boolean;
 
   constructor(sheet: Sheet, ctx: OdsTableContext) {
     this.sheet = sheet;
@@ -1234,6 +1248,8 @@ class TableWriter {
     }
     this.drawings = odsSheetDrawingsXml(sheet.drawings ?? [], drawingCtx);
     this.drawingRows = [...this.drawings.cells.keys()].toSorted((a, b) => a - b);
+    this.tables = sheet.tables ?? [];
+    this.workbookHasTables = ctx.model.sheets?.some((each) => (each.tables?.length ?? 0) > 0) ?? false;
     this.measure();
   }
 
@@ -1260,6 +1276,11 @@ class TableWriter {
     for (const { range } of this.validated) {
       rows = Math.max(rows, range.bottom + 1);
       cols = Math.max(cols, range.right + 1);
+    }
+    // SPEC-133: every cell of a table is written (its look baked in).
+    for (const table of this.tables) {
+      rows = Math.max(rows, table.ref.bottom + 1);
+      cols = Math.max(cols, table.ref.right + 1);
     }
     // SPEC-131: a drawing's anchor cell is written even when nothing is stored there.
     for (const [row, byCol] of this.drawings.cells) {
@@ -1303,6 +1324,31 @@ class TableWriter {
       this.styleNames.set(id, name);
     }
     return name;
+  }
+
+  /** SPEC-133: the generated style a position inside a table is written
+   * with — its own style (`ownId`) over the table's look (tableStyles.ts
+   * styleOverLook, Normal's values counting as inherited) — or undefined
+   * outside every table and where the look changes nothing. `model.styles`
+   * is never touched: the style is generated per write. */
+  private tableStyleName(table: SheetTable | undefined, r: number, col: number, ownId: number): string | undefined {
+    const look = table ? tableCellLook(this.sheet, table, r, col, this.env.theme) : undefined;
+    if (!look) {
+      return undefined;
+    }
+    let byOwn = this.lookStyles.get(look);
+    if (!byOwn) {
+      byOwn = new Map();
+      this.lookStyles.set(look, byOwn);
+    }
+    let name = byOwn.get(ownId);
+    if (name === undefined) {
+      const own = cellStyle(this.ctx.model, ownId);
+      const merged = styleOverLook(look, own, this.ctx.model.styles[0]);
+      name = merged === own ? null : this.ctx.registry.cellStyle(merged, this.env);
+      byOwn.set(ownId, name);
+    }
+    return name ?? undefined;
   }
 
   /** The style default-width columns are written with: the source's last
@@ -1391,7 +1437,8 @@ class TableWriter {
         this.nextDrawingRow += 1;
       }
       const drawn = this.drawingRows[this.nextDrawingRow] === r;
-      if (row || drawn || this.active.some((merge) => merge.top === r)) {
+      const inTable = this.tables.some((table) => table.ref.top <= r && table.ref.bottom >= r);
+      if (row || drawn || inTable || this.active.some((merge) => merge.top === r)) {
         out.push(this.rowElement(row, r), 1, drawn);
         r += 1;
         continue;
@@ -1404,6 +1451,11 @@ class TableWriter {
         end = Math.min(end, merge.bottom + 1);
       }
       end = Math.min(end, this.nextValidatedBreak(r));
+      for (const table of this.tables) {
+        if (table.ref.top > r) {
+          end = Math.min(end, table.ref.top);
+        }
+      }
       out.push(this.rowElement(undefined, r), Math.max(end - r, 1));
       r = Math.max(end, r + 1);
     }
@@ -1507,6 +1559,8 @@ class TableWriter {
     const drawn = this.drawings.cells.get(r);
     const drawnCols = drawn ? [...drawn.keys()].toSorted((a, b) => a - b) : [];
     let d = 0;
+    // SPEC-133: the tables this row crosses — each of their cells is written.
+    const rowTables = this.tables.filter((table) => table.ref.top <= r && table.ref.bottom >= r);
     while (col < this.colExtent) {
       while (m < merges.length && merges[m]!.range.right < col) {
         m += 1;
@@ -1524,8 +1578,9 @@ class TableWriter {
         d += 1;
       }
       const drawings = drawnCols[d] === col ? drawn!.get(col) : undefined;
-      if (cell || anchor || drawings !== undefined) {
-        out.push(this.cellElement(cell, covered, anchor, row, col, validation, drawings), 1, drawings !== undefined);
+      const table = rowTables.find((each) => each.ref.left <= col && each.ref.right >= col);
+      if (cell || anchor || drawings !== undefined || table) {
+        out.push(this.cellElement(cell, covered, anchor, row, r, col, validation, drawings, table), 1, drawings !== undefined);
         col += 1;
         continue;
       }
@@ -1537,6 +1592,11 @@ class TableWriter {
       }
       if (segment) {
         end = Math.min(end, validation === undefined ? segment.left : segment.right + 1);
+      }
+      for (const each of rowTables) {
+        if (each.ref.left > col) {
+          end = Math.min(end, each.ref.left);
+        }
       }
       const head = (covered ? "<table:covered-table-cell" : "<table:table-cell") + validationAttribute(validation);
       out.push({ head, tail: "/>" }, Math.max(end - col, 1));
@@ -1558,12 +1618,25 @@ class TableWriter {
 
   /** One cell element (see serializeTable, "Cells"). The style name is part
    * of the head, so a repeat count follows it, as LibreOffice writes. */
-  private cellElement(cell: Cell | undefined, covered: boolean, anchor: GridRange | undefined, row: Row | undefined, col: number, validation?: string, drawings?: string): Repeatable {
+  private cellElement(
+    cell: Cell | undefined,
+    covered: boolean,
+    anchor: GridRange | undefined,
+    row: Row | undefined,
+    r: number,
+    col: number,
+    validation?: string,
+    drawings?: string,
+    table?: SheetTable,
+  ): Repeatable {
     let head = covered ? "<table:covered-table-cell" : "<table:table-cell";
     const close = covered ? "</table:covered-table-cell>" : "</table:table-cell>";
     let attrs = "";
     const positionDefault = row?.styleId ?? columnSpanAt(this.sheet.columns, col)?.styleId ?? 0;
-    if (cell?.styleId !== undefined && cell.styleId !== positionDefault) {
+    const tableStyle = this.tableStyleName(table, r, col, cell?.styleId ?? positionDefault);
+    if (tableStyle !== undefined) {
+      head += ` table:style-name="${attributeText(tableStyle)}"`;
+    } else if (cell?.styleId !== undefined && cell.styleId !== positionDefault) {
       head += ` table:style-name="${attributeText(this.styleName(cell.styleId))}"`;
     }
     head += validationAttribute(validation);
@@ -1578,7 +1651,7 @@ class TableWriter {
       attrs += ` table:number-matrix-columns-spanned="${range.right - range.left + 1}" table:number-matrix-rows-spanned="${range.bottom - range.top + 1}"`;
     }
     if (cell.formula !== undefined) {
-      attrs += ` table:formula="${attributeText(this.formulaText(cell))}"`;
+      attrs += ` table:formula="${attributeText(this.formulaText(cell, r, col))}"`;
     }
     const style = cellStyle(this.ctx.model, cell.styleId ?? positionDefault);
     const value = cell.value;
@@ -1642,11 +1715,18 @@ class TableWriter {
   }
 
   /** `table:formula`: the stored wire value verbatim for an unparsed formula,
-   * else the canonical formula through toOdsFormula. */
-  private formulaText(cell: Cell): string {
-    const formula = cell.formula!;
+   * else the canonical formula through toOdsFormula — SPEC-133: its
+   * structured references first replaced by their A1 ranges
+   * (expandStructuredReferences, hosted at the cell). */
+  private formulaText(cell: Cell, r: number, col: number): string {
+    let formula = cell.formula!;
     if (cell.formulaUnparsed) {
       return formula;
+    }
+    const { sheets, names } = this.ctx.model;
+    // A bare table name (`SUM(Sales)`) is a structured reference too.
+    if (sheets !== undefined && (formula.includes("[") || this.workbookHasTables)) {
+      formula = expandStructuredReferences({ sheets, names: names ?? [] }, formula, { sheetId: this.sheet.id, row: r, col });
     }
     try {
       return toOdsFormula(formula);
@@ -1693,6 +1773,10 @@ class TableWriter {
     let trailing = this.skeleton?.trailing ?? "";
     if (ctx.conditionalFormats) {
       ({ leading, trailing } = ctx.conditionalFormats.splice(sheet, leading, trailing, ctx.passRetained));
+    }
+    // SPEC-133: the sheet's own names, after the rows (ods/namedExpressions.ts).
+    if (ctx.localNames) {
+      trailing = ctx.localNames(sheet, trailing);
     }
     // SPEC-131: the fixed drawings, from the model, where the source's table:shapes was.
     leading = leadingWithShapes(leading, this.drawings.shapes, this.skeleton ? tablePrefix(this.skeleton.close) : "table:");

@@ -111,11 +111,16 @@ export const SHEET_MENU_COMMANDS = {
   insertShape: "insert.shape",
   /** SPEC-132: Insert ▸ Chart (the chart gallery popover). */
   insertChart: "insert.chart",
+  /** SPEC-133: Insert ▸ Table… (the Create Table dialog; no shortcut —
+   * Ctrl/Cmd+T is the browser's). */
+  insertTable: "insert.table",
   arrangeFront: "arrange.front",
   arrangeForward: "arrange.forward",
   arrangeBackward: "arrange.backward",
   arrangeBack: "arrange.back",
   altText: "arrange.alt-text",
+  /** SPEC-133: Formulas ▸ Name Manager… (Ctrl/Cmd+F3). */
+  nameManager: "formulas.name-manager",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */

@@ -879,7 +879,7 @@ function readDrawingPartXml(xml: string, ctx: ReadContext, metrics: GridMetrics)
 /** The root of a worksheet part and its children after `sheetData` (all of
  * them when the scan cannot start there): local name, offsets and
  * CT_Worksheet rank — read without scanning the cells. */
-interface WorksheetTail {
+export interface WorksheetTail {
   prefix: string;
   rootTag: string;
   children: { local: string; main: boolean; rank: number; start: number; end: number; attrs: readonly XmlScanAttribute[] }[];
@@ -960,7 +960,7 @@ function scanWorksheetTail(xml: string, text: string, offset: number): Worksheet
 
 /** A worksheet part's tail (see WorksheetTail): the root start tag plus the
  * text after `</sheetData>`, scanned as one small document. */
-function worksheetTail(xml: string): WorksheetTail {
+export function worksheetTail(xml: string): WorksheetTail {
   let rootTag = "";
   let prefix = "";
   scanXml(xml, (event) => {

@@ -69,6 +69,7 @@ import { MAX_COLS, MAX_ROWS, dropValueBound, isCellError, rowSourceAttrsHoldProp
 import { BUILTIN_NUMBER_FORMATS } from "./numberFormat/builtin";
 import type { ParsedInput } from "./numberFormat/input";
 import { cellStyle, columnSpanAt, effectiveStyleId, internStyle, styleKey } from "./styles";
+import { removeTables } from "./tableRemoval";
 
 /** The refusals checked before a cell or formatting command runs (SPEC-122
  * "Protection"; SPEC-123's formatting commands refuse with the same text). */
@@ -637,6 +638,12 @@ export function clearContents(model: SpreadsheetModel, sheetIndex: number, range
   }
   clearMembers(sheet, arrays, edits, () => false);
   applyEdits(model, sheetIndex, edits);
+  // SPEC-133: clearing every cell of a table in one command deletes it.
+  removeTables(
+    model,
+    sheet.id,
+    (sheet.tables ?? []).filter((table) => covers(ranges, table.ref)),
+  );
 }
 
 // --- protection and arrays -------------------------------------------------------------

@@ -2,16 +2,18 @@
 // every row of the ods table moved by a structural edit through
 // structuralMapper, asserted on the adjusted text and with the span-diff
 // helper (only attribute values change, plus the elements and attributes the
-// rules remove); entry dropping and element removal, the formula brackets
-// (entities and strings around them kept, `#REF!`, external and 3-D
-// references left alone), hosts (a renamed sheet, a duplicated sheet's own
+// rules remove); entry dropping and element removal, entities kept and 3-D
+// entries left alone, hosts (a renamed sheet, a duplicated sheet's own
 // text, an embedded chart's sheet), tracked changes, content.xml = prefix +
 // tables + suffix after every edit, copy-on-write identity and the returned
 // sheet ids. SPEC-128: a database range that is a sheet's autofilter is left
 // alone (the model's adjuster moves it), every other one still moves.
 // SPEC-129: the conditional formats' rows are retired — `calcext:` conditional
 // formats keep every byte, emptied or not (the model's adjusters move them),
-// beside rows that still move.
+// beside rows that still move. SPEC-133: so are the named ranges' and named
+// expressions' — in the suffix and inside tables they keep every byte, emptied
+// or not (the names adjusters move the model's names, which the writer
+// reconciles with them), beside a database range that still moves.
 import { describe, expect, it, vi } from "vitest";
 import { base64ToBytes, bytesToBase64, type OpaquePart } from "../../core/packageParts";
 import { scanXml } from "../../core/xmlScanner";
@@ -118,6 +120,7 @@ function odsBook(spec: BookSpec): SpreadsheetModel {
     sheets.push({ ...grid(copy.name, copy.sourceXml, copy.cells ?? origin.rows), copiedFrom: copy.copiedFrom });
   }
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "book",
@@ -263,34 +266,37 @@ describe("the ods location table", () => {
     expectConsistent(deleted);
   });
 
-  it("suffix and inside tables: named ranges' ranges and base cells, a named expression's references", () => {
+  it("SPEC-133: in the suffix and inside tables, named ranges and named expressions are retired — left verbatim, emptied or not — beside a database range that still moves", () => {
+    // The names adjusters move the model's names and the writer reconciles the
+    // retained elements with them (ods/namedExpressions.ts): moving them here
+    // too would move them twice.
     const names =
       `<table:named-expressions>` +
       `<table:named-range table:name="Block" table:base-cell-address="$Data.$A$5" table:cell-range-address="$Data.$A$5:.$C$7"/>` +
-      `<table:named-range table:name="Elsewhere" table:base-cell-address="$Other.$A$1" table:cell-range-address="$Other.$A$1:.$B$2"/>` +
-      `<table:named-range table:name="Unknown" table:base-cell-address="$Gone.$A$5" table:cell-range-address="$Gone.$A$5:.$C$7"/>` +
+      `<table:named-range table:name="Gone" table:base-cell-address="$Data.$A$2" table:cell-range-address="$Data.$A$2:.$C$3"/>` +
       `<table:named-expression table:name="Rate" table:base-cell-address="$Data.$B$2" table:expression="of:=[$Data.$B$4]*2+[.B4]"/>` +
       `</table:named-expressions>`;
     const local = `<table:named-expressions><table:named-range table:name="Local" table:base-cell-address="$Data.$A$3" table:cell-range-address=".$A$3:.$A$6"/></table:named-expressions>`;
-    const model = odsBook({ suffix: names, tables: [{ name: "Data", trailing: local }, { name: "Other" }] });
-    const before = { prefix: prefixOf(model), suffix: suffixOf(model), data: sourceOf(model, "Data"), other: sheetNamed(model, "Other") };
+    const alone = odsBook({ suffix: names, tables: [{ name: "Data", trailing: local }, { name: "Other" }] });
+    const { sheets, opaque, odsContentEnvelope } = alone;
+    expect(edit(alone, "Data", "insertRows", 1, 2)).toEqual(new Set());
+    // Gone's rows deleted: an emptied named range is not removed either.
+    expect(edit(alone, "Data", "deleteRows", 1, 2)).toEqual(new Set());
+    expect(alone.sheets).toBe(sheets);
+    expect(alone.opaque).toBe(opaque);
+    expect(alone.odsContentEnvelope).toBe(odsContentEnvelope);
 
-    const changed = edit(model, "Data", "insertRows", 1, 2);
+    const databases = `<table:database-ranges><table:database-range table:name="db1" table:target-range-address="Data.A5:Data.C7"/></table:database-ranges>`;
+    const model = odsBook({ suffix: names + databases, tables: [{ name: "Data", trailing: local }, { name: "Other" }] });
+    const before = { prefix: prefixOf(model), suffix: suffixOf(model), data: model.sheets[0]!, other: sheetNamed(model, "Other") };
 
-    // A sheet no model sheet holds (Gone) is left alone; Rate's [.B4] is on its base cell's sheet.
-    expect(spans(before.suffix, suffixOf(model))).toEqual([
-      ["$Data.$A$5", "$Data.$A$7"],
-      ["$Data.$A$5:.$C$7", "$Data.$A$7:.$C$9"],
-      ["$Data.$B$2", "$Data.$B$4"],
-      ["of:=[$Data.$B$4]*2+[.B4]", "of:=[$Data.$B$6]*2+[.B6]"],
-    ]);
-    // The sheet-local range's sheet-less entry is on its table's sheet.
-    expect(spans(before.data, sourceOf(model, "Data"))).toEqual([
-      ["$Data.$A$3", "$Data.$A$5"],
-      [".$A$3:.$A$6", ".$A$5:.$A$8"],
-    ]);
+    // Workbook-level text only: no sheet's own text changed.
+    expect(edit(model, "Data", "insertRows", 1, 2)).toEqual(new Set());
+    expect(spans(before.suffix, suffixOf(model))).toEqual([["Data.A5:Data.C7", "Data.A7:Data.C9"]]);
+    expect(suffixOf(model)).toContain(names);
+    expect(model.sheets[0]).toBe(before.data);
+    expect(sourceOf(model, "Data")).toContain(local);
     expect(prefixOf(model)).toBe(before.prefix);
-    expect(changed).toEqual(ids(sheetNamed(model, "Data")));
     expect(sheetNamed(model, "Other")).toBe(before.other);
     expectConsistent(model);
   });
@@ -429,7 +435,7 @@ describe("the ods location table", () => {
     expectConsistent(emptied);
   });
 
-  it("SPEC-129: inside tables, conditional formats' targets, conditions' values and base cells and formatting entries' values are retired — left verbatim — while a named range beside them moves", () => {
+  it("SPEC-129: inside tables, conditional formats' targets, conditions' values and base cells and formatting entries' values are retired — left verbatim — while a scenario beside them moves", () => {
     // The conditionalFormats adjusters move the model's formats and the
     // writer re-serialises them: moving them here too would move them twice.
     const formats =
@@ -449,24 +455,23 @@ describe("the ods location table", () => {
     expect(alone.opaque).toBe(opaque);
     expect(alone.odsContentEnvelope).toBe(odsContentEnvelope);
 
-    const local = `<table:named-expressions><table:named-range table:name="Local" table:base-cell-address="$Data.$B$2" table:cell-range-address="$Data.$B$2:.$B$9"/></table:named-expressions>`;
-    const model = odsBook({ tables: [{ name: "Data", trailing: local + formats }, { name: "Other" }] });
+    // SPEC-133 retired the named ranges too: a scenario is the table text that moves beside them.
+    const scenario = `<table:scenario table:scenario-ranges="$Data.$B$2:.$B$9" table:is-active="true"/>`;
+    const model = odsBook({ tables: [{ name: "Data", leading: scenario, trailing: formats }, { name: "Other" }] });
     const before = sourceOf(model, "Data");
 
     expect(edit(model, "Data", "insertRows", 1, 2)).toEqual(ids(sheetNamed(model, "Data")));
-    expect(spans(before, sourceOf(model, "Data"))).toEqual([
-      ["$Data.$B$2", "$Data.$B$4"],
-      ["$Data.$B$2:.$B$9", "$Data.$B$4:.$B$11"],
-    ]);
+    expect(spans(before, sourceOf(model, "Data"))).toEqual([["$Data.$B$2:.$B$9", "$Data.$B$4:.$B$11"]]);
     expect(sourceOf(model, "Data")).toContain(formats);
     expectConsistent(model);
   });
 
-  it("SPEC-129: inside tables, an emptied conditional format and an emptied calcext:conditional-formats are retired — never removed, left verbatim — while an emptied named range beside them still is", () => {
+  it("SPEC-129: inside tables, an emptied conditional format and an emptied calcext:conditional-formats are retired — never removed, left verbatim — while an emptied print range beside them still is", () => {
     const gone = `<calcext:conditional-format calcext:target-range-address="Data.B3:Data.B4"><calcext:condition calcext:value="[.B3]&gt;1" calcext:base-cell-address="Data.B3"/></calcext:conditional-format>`;
     const kept = `<calcext:conditional-format calcext:target-range-address="Data.C3:Data.D9"><calcext:condition calcext:value="[.C3]&gt;1" calcext:base-cell-address="Data.C3"/></calcext:conditional-format>`;
-    const goneRange = `<table:named-range table:name="Gone" table:base-cell-address="$Data.$B$3" table:cell-range-address="$Data.$B$3:.$B$4"/>`;
-    const local = `<table:named-expressions>${goneRange}<table:named-range table:name="Kept" table:base-cell-address="$Data.$C$3" table:cell-range-address="$Data.$C$3:.$D$9"/></table:named-expressions>`;
+    // SPEC-133 retired the named ranges: the table's print range is the emptied list beside them, a scenario the moved one.
+    const printed = ` table:print-ranges="$Data.$B$3:.$B$4"`;
+    const scenario = `<table:scenario table:scenario-ranges="$Data.$C$3:.$D$9" table:is-active="true"/>`;
 
     for (const formats of [`<calcext:conditional-formats>${gone}${kept}</calcext:conditional-formats>`, `<calcext:conditional-formats>${gone}</calcext:conditional-formats>`]) {
       const alone = odsBook({ tables: [{ name: "Data", trailing: formats }] });
@@ -475,11 +480,12 @@ describe("the ods location table", () => {
       expect(alone.sheets).toBe(sheets);
       expect(alone.opaque).toBe(opaque);
 
-      // Beside them the same edit removes the emptied named range and moves the other.
-      const model = odsBook({ tables: [{ name: "Data", trailing: local + formats }] });
+      // Beside them the same edit removes the emptied print range and moves the scenario.
+      const model = odsBook({ tables: [{ name: "Data", attrs: printed, leading: scenario, trailing: formats }] });
       const before = sourceOf(model, "Data");
       edit(model, "Data", "deleteRows", 2, 2);
-      expect(spans(before, sourceOf(model, "Data"), [goneRange])).toEqual([["$Data.$C$3:.$D$9", "$Data.$C$3:.$D$7"]]);
+      expect(spans(before, sourceOf(model, "Data"), [printed])).toEqual([["$Data.$C$3:.$D$9", "$Data.$C$3:.$D$7"]]);
+      expect(sourceOf(model, "Data")).not.toContain("print-ranges");
       expect(sourceOf(model, "Data")).toContain(formats);
       expectConsistent(model);
     }
@@ -584,30 +590,30 @@ describe("the ods location table", () => {
 // --- rules across the table -----------------------------------------------------------------
 
 describe("ods retained references", () => {
-  it("leaves 3-D, external and #REF! references alone and turns a gone area into [<sheet as written>.#REF!]", () => {
+  it("leaves a 3-D entry alone; SPEC-133 retired the one formula-valued row — a named expression keeps every byte, its gone references included", () => {
     const names =
       `<table:named-expressions>` +
-      `<table:named-range table:name="Span" table:base-cell-address="$Data.$A$1" table:cell-range-address="$Data.$A$5:$Other.$B$5"/>` +
       `<table:named-expression table:name="Ext" table:base-cell-address="$Data.$A$1" table:expression="of:=['file:///tmp/x.ods'#$Data.A5]+[$Data.A5]+[.#REF!]+[$Data.A5:$Other.A5]"/>` +
       `<table:named-expression table:name="Lost" table:base-cell-address="$Data.$B$2" table:expression="of:=[$Data.A3]+SUM([.A3:.A4])*2"/>` +
       `</table:named-expressions>`;
-    const build = (): SpreadsheetModel => odsBook({ suffix: names, tables: [{ name: "Data" }, { name: "Other" }] });
+    const databases =
+      `<table:database-ranges><table:database-range table:name="Span" table:target-range-address="$Data.$A$5:$Other.$B$5"/>` +
+      `<table:database-range table:name="Flat" table:target-range-address="$Data.$A$5:.$B$5"/></table:database-ranges>`;
+    const build = (): SpreadsheetModel => odsBook({ suffix: names + databases, tables: [{ name: "Data" }, { name: "Other" }] });
     const before = suffixOf(build());
 
+    // Only the flat range moves: the 3-D one and both expressions keep their bytes.
     const inserted = build();
     edit(inserted, "Data", "insertRows", 1, 2);
-    expect(spans(before, suffixOf(inserted))).toEqual([
-      ["of:=['file:///tmp/x.ods'#$Data.A5]+[$Data.A5]+[.#REF!]+[$Data.A5:$Other.A5]", "of:=['file:///tmp/x.ods'#$Data.A5]+[$Data.A7]+[.#REF!]+[$Data.A5:$Other.A5]"],
-      ["$Data.$B$2", "$Data.$B$4"],
-      ["of:=[$Data.A3]+SUM([.A3:.A4])*2", "of:=[$Data.A5]+SUM([.A5:.A6])*2"],
-    ]);
+    expect(spans(before, suffixOf(inserted))).toEqual([["$Data.$A$5:.$B$5", "$Data.$A$7:.$B$7"]]);
+    expect(suffixOf(inserted)).toContain(names);
+    expectConsistent(inserted);
 
+    // Lost's rows deleted: its expression is not turned into #REF! here (the model's name is).
     const deleted = build();
     edit(deleted, "Data", "deleteRows", 2, 2);
-    expect(spans(before, suffixOf(deleted))).toEqual([
-      ["of:=['file:///tmp/x.ods'#$Data.A5]+[$Data.A5]+[.#REF!]+[$Data.A5:$Other.A5]", "of:=['file:///tmp/x.ods'#$Data.A5]+[$Data.A3]+[.#REF!]+[$Data.A5:$Other.A5]"],
-      ["of:=[$Data.A3]+SUM([.A3:.A4])*2", "of:=[$Data.#REF!]+SUM([.#REF!])*2"],
-    ]);
+    expect(spans(before, suffixOf(deleted))).toEqual([["$Data.$A$5:.$B$5", "$Data.$A$3:.$B$3"]]);
+    expect(suffixOf(deleted)).toContain(names);
     expectConsistent(deleted);
   });
 
@@ -637,38 +643,30 @@ describe("ods retained references", () => {
   });
 
   it("resolves source-time names: a renamed sheet's references move and keep the name as written", () => {
-    const names = `<table:named-expressions><table:named-range table:name="Block" table:base-cell-address="$Data.$A$5" table:cell-range-address="$Data.$A$5:.$C$7"/></table:named-expressions>`;
-    const local = `<table:named-expressions><table:named-range table:name="Local" table:base-cell-address="$Data.$A$3" table:cell-range-address="$Data.$A$3:.$A$6"/></table:named-expressions>`;
-    const model = odsBook({ suffix: names, tables: [{ name: "Data", modelName: "Ledger", trailing: local }] });
+    const databases = `<table:database-ranges><table:database-range table:name="Block" table:target-range-address="$Data.$A$5:.$C$7"/></table:database-ranges>`;
+    const scenario = `<table:scenario table:scenario-ranges="$Data.$A$3:.$A$6" table:is-active="true"/>`;
+    const model = odsBook({ suffix: databases, tables: [{ name: "Data", modelName: "Ledger", leading: scenario }] });
     const before = { suffix: suffixOf(model), source: sourceOf(model, "Ledger") };
 
     expect(edit(model, "Ledger", "insertRows", 1, 2)).toEqual(ids(sheetNamed(model, "Ledger")));
-    expect(spans(before.suffix, suffixOf(model))).toEqual([
-      ["$Data.$A$5", "$Data.$A$7"],
-      ["$Data.$A$5:.$C$7", "$Data.$A$7:.$C$9"],
-    ]);
-    expect(spans(before.source, sourceOf(model, "Ledger"))).toEqual([
-      ["$Data.$A$3", "$Data.$A$5"],
-      ["$Data.$A$3:.$A$6", "$Data.$A$5:.$A$8"],
-    ]);
+    expect(spans(before.suffix, suffixOf(model))).toEqual([["$Data.$A$5:.$C$7", "$Data.$A$7:.$C$9"]]);
+    expect(spans(before.source, sourceOf(model, "Ledger"))).toEqual([["$Data.$A$3:.$A$6", "$Data.$A$5:.$A$8"]]);
     expect(sourceOf(model, "Ledger")).toContain(`table:name="Data"`);
     expectConsistent(model);
   });
 
   it("keeps entities in sheet names byte-for-byte", () => {
-    const names =
-      `<table:named-expressions>` +
-      `<table:named-range table:name="qa" table:base-cell-address="$Q&amp;A.$A$2" table:cell-range-address="$Q&amp;A.$A$2:.$A$3"/>` +
-      `<table:named-range table:name="tom" table:base-cell-address="$&apos;Tom&apos;&apos;s&apos;.$A$2" table:cell-range-address="$&apos;Tom&apos;&apos;s&apos;.A2 $&apos;Tom&apos;&apos;s&apos;.C2"/>` +
-      `</table:named-expressions>`;
-    const model = odsBook({ suffix: names, tables: [{ name: "Q&amp;A" }, { name: "Tom&apos;s" }] });
+    const suffix =
+      `<table:database-ranges><table:database-range table:name="qa" table:target-range-address="$Q&amp;A.$A$2:.$A$3"/></table:database-ranges>` +
+      `<table:consolidation table:function="sum" table:source-cell-range-addresses="$&apos;Tom&apos;&apos;s&apos;.A2 $&apos;Tom&apos;&apos;s&apos;.C2" table:target-cell-address="$Q&amp;A.$A$2"/>`;
+    const model = odsBook({ suffix, tables: [{ name: "Q&amp;A" }, { name: "Tom&apos;s" }] });
     const before = suffixOf(model);
 
     edit(model, "Q&A", "insertRows", 0, 1);
     const afterQa = suffixOf(model);
     expect(spans(before, afterQa)).toEqual([
-      ["$Q&amp;A.$A$2", "$Q&amp;A.$A$3"],
       ["$Q&amp;A.$A$2:.$A$3", "$Q&amp;A.$A$3:.$A$4"],
+      ["$Q&amp;A.$A$2", "$Q&amp;A.$A$3"],
     ]);
 
     edit(model, "Tom's", "insertCols", 1, 1);
@@ -679,26 +677,24 @@ describe("ods retained references", () => {
   });
 
   it("moves a whole column only along columns, a whole row only along rows, and keeps a reversed range's orientation", () => {
-    const names =
-      `<table:named-expressions>` +
-      `<table:named-range table:name="cols" table:base-cell-address="$Data.$B$1" table:cell-range-address="$Data.$B:.$C"/>` +
-      `<table:named-range table:name="rows" table:base-cell-address="$Data.$A$3" table:cell-range-address="$Data.$3:.$5"/>` +
-      `<table:named-range table:name="rev" table:base-cell-address="$Data.$A$1" table:cell-range-address="$Data.$C$9:.$A$2"/>` +
-      `</table:named-expressions>`;
-    const model = odsBook({ suffix: names, tables: [{ name: "Data" }] });
+    const databases =
+      `<table:database-ranges>` +
+      `<table:database-range table:name="cols" table:target-range-address="$Data.$B:.$C"/>` +
+      `<table:database-range table:name="rows" table:target-range-address="$Data.$3:.$5"/>` +
+      `<table:database-range table:name="rev" table:target-range-address="$Data.$C$9:.$A$2"/>` +
+      `</table:database-ranges>`;
+    const model = odsBook({ suffix: databases, tables: [{ name: "Data" }] });
     const before = suffixOf(model);
 
     edit(model, "Data", "insertRows", 1, 2);
     const afterRows = suffixOf(model);
     expect(spans(before, afterRows)).toEqual([
-      ["$Data.$A$3", "$Data.$A$5"],
       ["$Data.$3:.$5", "$Data.$5:.$7"],
       ["$Data.$C$9:.$A$2", "$Data.$C$11:.$A$4"],
     ]);
 
     edit(model, "Data", "insertCols", 1, 1);
     expect(spans(afterRows, suffixOf(model))).toEqual([
-      ["$Data.$B$1", "$Data.$C$1"],
       ["$Data.$B:.$C", "$Data.$C:.$D"],
       ["$Data.$C$11:.$A$4", "$Data.$D$11:.$A$4"],
     ]);
@@ -758,7 +754,7 @@ describe("ods retained references", () => {
   });
 
   it("keeps every object's identity when nothing moves", () => {
-    const names = `<table:named-expressions><table:named-range table:name="Block" table:base-cell-address="$Data.$A$5" table:cell-range-address="$Data.$A$5:.$C$7"/></table:named-expressions>`;
+    const names = `<table:database-ranges><table:database-range table:name="Block" table:target-range-address="$Data.$A$5:.$C$7"/></table:database-ranges>`;
     const anchored = frame("Data.D6", "Data.A1:Data.B5");
     const model = odsBook({
       suffix: names,
@@ -777,36 +773,31 @@ describe("ods retained references", () => {
   });
 
   it("writes content.xml back with its byte-order mark", () => {
-    const names = `<table:named-expressions><table:named-range table:name="Block" table:base-cell-address="$Data.$A$5" table:cell-range-address="$Data.$A$5:.$C$7"/></table:named-expressions>`;
+    const names = `<table:database-ranges><table:database-range table:name="Block" table:target-range-address="$Data.$A$5:.$C$7"/></table:database-ranges>`;
     const model = odsBook({ suffix: names, tables: [{ name: "Data" }], bom: true });
     edit(model, "Data", "insertRows", 0, 1);
     const bytes = base64ToBytes(partOf(model, "content.xml").data);
     expect([...bytes.subarray(0, 3)]).toEqual([0xef, 0xbb, 0xbf]);
-    expect(suffixOf(model)).toContain(`table:cell-range-address="$Data.$A$6:.$C$8"`);
+    expect(suffixOf(model)).toContain(`table:target-range-address="$Data.$A$6:.$C$8"`);
     expectConsistent(model);
   });
 
   it("adjusts a deleted sheet's table still in content.xml: its references to other sheets move, its sheet-less ones have no host", () => {
-    const local =
-      `<table:named-expressions><table:named-range table:name="Own" table:base-cell-address=".$A$3" table:cell-range-address=".$A$3:.$A$6"/>` +
-      `<table:named-range table:name="Theirs" table:base-cell-address="$Data.$A$3" table:cell-range-address="$Data.$A$3:.$A$4"/></table:named-expressions>`;
-    const model = odsBook({ tables: [{ name: "Data" }, { name: "Old", trailing: local, deleted: true }] });
+    const scenario = `<table:scenario table:scenario-ranges=".$A$3:.$A$6 $Data.$A$3:.$A$4" table:is-active="true"/>`;
+    const model = odsBook({ tables: [{ name: "Data" }, { name: "Old", leading: scenario, deleted: true }] });
     const content = textOf(model, "content.xml");
     const envelope = model.odsContentEnvelope;
 
     expect(edit(model, "Data", "insertRows", 1, 2)).toEqual(new Set());
-    expect(spans(content, textOf(model, "content.xml"))).toEqual([
-      ["$Data.$A$3", "$Data.$A$5"],
-      ["$Data.$A$3:.$A$4", "$Data.$A$5:.$A$6"],
-    ]);
+    expect(spans(content, textOf(model, "content.xml"))).toEqual([[".$A$3:.$A$6 $Data.$A$3:.$A$4", ".$A$3:.$A$6 $Data.$A$5:.$A$6"]]);
     expect(model.odsContentEnvelope).toBe(envelope);
     expectConsistent(model);
   });
 
   it("leaves content.xml and the envelope alone when they do not agree", () => {
-    const names = `<table:named-expressions><table:named-range table:name="Block" table:base-cell-address="$Data.$A$5" table:cell-range-address="$Data.$A$5:.$C$7"/></table:named-expressions>`;
-    const local = `<table:named-expressions><table:named-range table:name="Local" table:base-cell-address="$Data.$A$3" table:cell-range-address="$Data.$A$3:.$A$6"/></table:named-expressions>`;
-    const model = odsBook({ suffix: names, tables: [{ name: "Data", trailing: local }] });
+    const names = `<table:database-ranges><table:database-range table:name="Block" table:target-range-address="$Data.$A$5:.$C$7"/></table:database-ranges>`;
+    const scenario = `<table:scenario table:scenario-ranges="$Data.$A$3:.$A$6" table:is-active="true"/>`;
+    const model = odsBook({ suffix: names, tables: [{ name: "Data", leading: scenario }] });
     model.odsContentEnvelope = { prefix: prefixOf(model), suffix: `${suffixOf(model)} ` };
     const { opaque, odsContentEnvelope } = model;
 
@@ -814,11 +805,11 @@ describe("ods retained references", () => {
     expect(edit(model, "Data", "insertRows", 1, 2)).toEqual(ids(model.sheets[0]!));
     expect(model.opaque).toBe(opaque);
     expect(model.odsContentEnvelope).toBe(odsContentEnvelope);
-    expect(sourceOf(model, "Data")).toContain(`table:cell-range-address="$Data.$A$5:.$A$8"`);
+    expect(sourceOf(model, "Data")).toContain(`table:scenario-ranges="$Data.$A$5:.$A$8"`);
   });
 
   it("never scans text that names no location attribute", () => {
-    const names = `<table:named-expressions><table:named-range table:name="Block" table:base-cell-address="$Data.$A$5" table:cell-range-address="$Data.$A$5:.$C$7"/></table:named-expressions>`;
+    const names = `<table:database-ranges><table:database-range table:name="Block" table:target-range-address="$Data.$A$5:.$C$7"/></table:database-ranges>`;
     const plain = `<office:annotation><dc:creator>Ann</dc:creator><text:p>note</text:p></office:annotation>`;
     const model = odsBook({
       suffix: names,
@@ -830,16 +821,16 @@ describe("ods retained references", () => {
     edit(model, "Data", "insertRows", 1, 2);
     // Only the envelope (it holds Block); no table, sourceXml, preservedXml or object.
     expect(scans).toHaveBeenCalledTimes(1);
-    expect(suffixOf(model)).toContain(`table:cell-range-address="$Data.$A$7:.$C$9"`);
+    expect(suffixOf(model)).toContain(`table:target-range-address="$Data.$A$7:.$C$9"`);
   });
 
   it("is what rewriteRetainedReferences runs for an ods workbook, marking the sheets whose text changed dirty", () => {
-    const local = `<table:named-expressions><table:named-range table:name="Local" table:base-cell-address="$Data.$A$3" table:cell-range-address=".$A$3:.$A$6"/></table:named-expressions>`;
-    const model = odsBook({ tables: [{ name: "Data", trailing: local }, { name: "Other" }] });
+    const scenario = `<table:scenario table:scenario-ranges=".$A$3:.$A$6" table:is-active="true"/>`;
+    const model = odsBook({ tables: [{ name: "Data", leading: scenario }, { name: "Other" }] });
     const other = model.sheets[1]!;
     rewriteRetainedReferences(model, structuralMapper(model, { kind: "deleteRows", sheetId: model.sheets[0]!.id, at: 0, count: 1 }));
     expect(model.sheets[0]!.dirty).toBe(true);
-    expect(model.sheets[0]!.sourceXml).toContain(`table:cell-range-address=".$A$2:.$A$5"`);
+    expect(model.sheets[0]!.sourceXml).toContain(`table:scenario-ranges=".$A$2:.$A$5"`);
     expect(model.sheets[1]).toBe(other);
     expectConsistent(model);
   });

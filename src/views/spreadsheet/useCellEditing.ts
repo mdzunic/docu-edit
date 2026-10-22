@@ -39,7 +39,7 @@ import type { CellTextMeasurer } from "../../lib/spreadsheet/autofit";
 import { MAX_TEXT_LENGTH } from "../../lib/spreadsheet/formula/values";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
-import { createCommitPath } from "./cellCommit";
+import { createCommitPath, type EntryHooks } from "./cellCommit";
 import { createDraft, type SurfaceKind } from "./cellDraft";
 import { createCellMoves, editKey, readyKey, type EditMode, type EditorKeyActions, type Move } from "./cellEditorKeys";
 import { canEditCell, cellEditText, clearTargets, refusalFor, writeClear } from "./cellEntry";
@@ -95,6 +95,8 @@ export function useCellEditing(deps: CellEditingDeps) {
   let original = "";
   let composing = false;
   let keyFilter: ((event: KeyboardEvent) => boolean) | null = null;
+  /** SPEC-133: the typed-entry hooks (useSheetTables installs them). */
+  let entryHooks: EntryHooks | null = null;
 
   const editing = computed(() => mode.value !== "ready");
   const model = (): SpreadsheetModel | null => deps.book.workbook.value;
@@ -238,6 +240,7 @@ export function useCellEditing(deps: CellEditingDeps) {
       point.end();
     },
     entryGate: deps.entryGate,
+    entryHooks: () => entryHooks,
   });
   const { commit, fill } = path;
 
@@ -354,6 +357,8 @@ export function useCellEditing(deps: CellEditingDeps) {
     canEditActiveCell: (): boolean => canEditCell(model(), deps.book.activeIndex.value, deps.book.activeSheet.value, deps.selection.selection.value.active),
     /** Keys a host's assist takes before the editor's own table. */
     setKeyFilter: (filter: ((event: KeyboardEvent) => boolean) | null): void => void (keyFilter = filter),
+    /** SPEC-133: installs the typed-entry hooks (cellCommit.ts). */
+    setEntryHooks: (hooks: EntryHooks | null): void => void (entryHooks = hooks),
     openEdit,
     commit: (): boolean => commit(null),
     cancel: finish,

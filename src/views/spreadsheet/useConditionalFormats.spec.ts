@@ -41,6 +41,7 @@ function setup() {
     opaque: [],
     styles: [{}],
     defaultStyleId: 0,
+    names: [],
     dxfs: [{ fill: { kind: "solid", color: "#C6EFCE" } }],
   };
   const workbook = shallowRef<SpreadsheetModel | null>(model);

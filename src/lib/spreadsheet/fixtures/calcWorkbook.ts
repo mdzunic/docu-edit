@@ -98,6 +98,7 @@ export function calcWorkbook(sheets: Record<string, Record<string, CellSpec>>, o
     opaque: [],
     styles: [{}],
     defaultStyleId: 0,
+    names: [],
     dxfs: [],
   };
   if (options.calc) {

@@ -22,6 +22,9 @@ const props = defineProps({
   /** The popup's role ("menu" for item lists, "dialog" for swatch grids). */
   role: { type: String, default: "menu" },
   disabled: { type: Boolean, default: false },
+  /** Where the popup opens: "below" the trigger (a toolbar near the top) or
+   * "above" it (SPEC-133's table design bar, beneath the grid). */
+  placement: { type: String, default: "below" },
 });
 
 const open = ref(false);
@@ -31,6 +34,7 @@ const { menuStyle } = useFloatingMenu({
   open: () => open.value,
   anchor: () => trigger.value,
   menu: () => surface.value?.$el ?? null,
+  placement: props.placement === "above" ? "above" : "below",
 });
 
 function toggle() {

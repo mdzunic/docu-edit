@@ -64,6 +64,7 @@ function book(values: Record<string, CellValue>, validations: DataValidation[] =
     opaque: [],
     styles: [{}, { numberFormat: "0.00" }],
     defaultStyleId: 0,
+    names: [],
     dxfs: [],
   };
 }

@@ -37,7 +37,9 @@
 // | 10 | validations | SPEC-130: Sheet.validations — the edited sheet's ranges via adjustRange (a fully deleted one dropped; an emptied rule removed) and formula1/formula2 re-anchored with adjustAnchoredFormula; every other sheet's rule formulas via adjustFormula — see "10. validations" |
 // | 11 | drawings | SPEC-131: the edited sheet's Sheet.drawings per drawings.ts's anchor-follow table (moveAndSize drawings move, grow, shrink and go with their cells; move drawings shift with their `from`; fixed drawings never move); an xlsx sheet holding drawings gets `drawingsDirty` |
 // | 12 | charts | SPEC-132: adjustFormula over every modelled chart's refs on every sheet (host = the chart's sheet) — `refsDirty` where one changed — then a refresh of each refreshable chart whose refs changed or read the edited sheet (`cachesDirty` when its visual changed; read-only charts only adjust); ods chart frames' notify-on-update-of-ranges synced (charts.ts adjustChartsForEdit) |
-// Later specs append theirs, in landing order — names and tables (133), notes and hyperlinks (135),
+// | 13 | names | SPEC-133: every DefinedName's formula via adjustFormula, host = its scope sheet, else the edited sheet — a name's relative parts are offsets and stay (nameTableAdjusters.ts) |
+// | 14 | tables | SPEC-133 "Tables follow cells": the edited sheet's Sheet.tables shift, grow (new columns `Column{n}`, headers written), lose a deleted header/totals row, shrink or go; every table's calculated/totals formulas via adjustFormula; references to a deleted table or column #REF! everywhere (nameTableAdjusters.ts) |
+// Later specs append theirs, in landing order — notes and hyperlinks (135),
 // pageBreaks (136), pivots (139) — each with the registry contract test in
 // structure.spec.ts, retiring its rows from retainedReferences' tables in the
 // same change.
@@ -57,6 +59,7 @@ import { formatOrigin, renumberPriorities, sheetFormats, type ConditionalFormat 
 import { adjustChartsForEdit } from "./charts";
 import type { AutoFilter, FilterColumn } from "./filter";
 import { adjustDrawingsForEdit } from "./drawings";
+import { adjustNamesForEdit, adjustTablesForEdit } from "./nameTableAdjusters";
 import { adjustAnchoredFormula, adjustFormula, adjustFormulaReferences } from "./formula/adjust";
 import { MAX_COLS, MAX_ROWS, type Cell, type ColumnSpan, type Row, type Sheet, type SpreadsheetModel } from "./model";
 import { adjustOdsFilterCriteriaRanges } from "./ods/retainedReferences";
@@ -1093,6 +1096,9 @@ export const REFERENCE_ADJUSTERS: ReferenceAdjuster[] = [
   validationsAdjuster,
   drawingsAdjuster,
   chartsAdjuster,
+  // SPEC-133 (nameTableAdjusters.ts); called through arrows, as the modules import each other.
+  { id: "names", adjust: (model, edit) => adjustNamesForEdit(model, edit) },
+  { id: "tables", adjust: (model, edit) => adjustTablesForEdit(model, edit) },
 ];
 
 /** One structural edit (see the module header). */

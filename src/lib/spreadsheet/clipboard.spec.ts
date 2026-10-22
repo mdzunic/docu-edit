@@ -50,6 +50,7 @@ function sheet(id: string, name: string, fields: Partial<Sheet> = {}): Sheet {
 
 function model(sheets: Sheet[], fields: Partial<SpreadsheetModel> = {}): SpreadsheetModel {
   return {
+    names: [],
     dxfs: [],
     kind: "spreadsheet",
     id: "book",

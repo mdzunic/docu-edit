@@ -73,6 +73,7 @@
      outlines the cells it names, in the Nth colour by first appearance
      (modulo 8). The outlines sit on the sheet's white paper in every theme,
      so the dark values are mid-tones readable on both it and dark chrome. */
+  --sheet-paper:           #ffffff;   /* SPEC-133: a table style preview's paper — white in every theme, like the sheet */
   --sheet-ref-1:           #1f5fbf;
   --sheet-ref-2:           #c0392b;
   --sheet-ref-3:           #7b3fb5;
