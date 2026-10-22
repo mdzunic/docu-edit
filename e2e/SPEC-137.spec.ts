@@ -55,11 +55,14 @@ async function waitForFirstPaintedCell(page: Page, timeout = 30_000): Promise<vo
   );
 }
 
+/** Sets the zoom through the status bar's percentage field, which commits
+ * on blur (as SPEC-063's e2e does) — a click opens its preset menu. */
 async function setZoom(page: Page, percent: number): Promise<void> {
   const field = page.getByTestId("zoom-percent");
   await field.click();
   await field.fill(String(percent));
-  await field.press("Enter");
+  await field.blur();
+  await expect(field).toHaveValue(`${percent}%`);
 }
 
 interface StorageCheck {
