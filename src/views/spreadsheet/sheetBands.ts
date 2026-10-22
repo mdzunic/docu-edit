@@ -55,6 +55,12 @@ function borderItem(segment: EdgeSegment, shiftX: number, shiftY: number): Borde
   return { key: `${segment.orientation}:${segment.x}:${segment.y}:${segment.length}`, style: edgeElementCss(segment, shiftX, shiftY) };
 }
 
+/** A one-item axis window (the active cell's row or column). */
+function singleAxis(index: number, frozen: boolean, start: number, size: number): AxisWindow {
+  const item = { index, start, size, slot: 0 };
+  return { frozen: frozen ? [item] : [], scrolled: frozen ? [] : [item], firstVisible: index, lastVisible: index, capacity: 1 };
+}
+
 export function createBandBuilder(c: BandBuilderDeps) {
   /** A merge's element hosted by `host` — or, `paintOnly`, its paint in a
    * further pane. */
@@ -173,7 +179,7 @@ export function createBandBuilder(c: BandBuilderDeps) {
         const window = lines ? edgeWindow(items) : null;
         return window ? resolveEdges(window, sheet, styleAt, m, c.merges(), c.theme()).map((segment) => borderItem(segment, shiftX, spec.rowShift)) : [];
       };
-      const gridCols = (items: AxisItem[]) => (lines ? items.filter((c) => c.size > 0).map((c) => ({ key: `v${c.slot}`, at: c.start + c.size - 1 })) : []);
+      const gridCols = (items: AxisItem[]) => (lines ? items.filter((item) => item.size > 0).map((item) => ({ key: `v${item.slot}`, at: item.start + item.size - 1 })) : []);
       out.push({
         kind: spec.kind,
         top: spec.top,
@@ -194,15 +200,11 @@ export function createBandBuilder(c: BandBuilderDeps) {
     const vp = c.viewport;
     const m = c.metrics();
     const { row, col } = c.selection().active;
-    const axis = (index: number, frozen: boolean, start: number, size: number): AxisWindow => {
-      const item = { index, start, size, slot: 0 };
-      return { frozen: frozen ? [item] : [], scrolled: frozen ? [] : [item], firstVisible: index, lastVisible: index, capacity: 1 };
-    };
     const rowFrozen = row < vp.frozenRows.value;
     const colFrozen = col < vp.frozenCols.value;
     return {
-      rows: axis(row, rowFrozen, m.rowTop(row) - (rowFrozen ? 0 : vp.sy.value + vp.frozenH.value), m.rowHeight(row)),
-      cols: axis(col, colFrozen, m.colLeft(col) - (colFrozen ? 0 : vp.sx.value + vp.frozenW.value), m.colWidth(col)),
+      rows: singleAxis(row, rowFrozen, m.rowTop(row) - (rowFrozen ? 0 : vp.sy.value + vp.frozenH.value), m.rowHeight(row)),
+      cols: singleAxis(col, colFrozen, m.colLeft(col) - (colFrozen ? 0 : vp.sx.value + vp.frozenW.value), m.colWidth(col)),
     };
   }
 

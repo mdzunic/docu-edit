@@ -235,6 +235,11 @@ function brightnessOf(filter: string): number {
   return match ? Math.min(1, Number(match[1])) : 1;
 }
 
+/** The next animation frame (a 16 ms timer where there is none). */
+function later(run: () => void): number {
+  return typeof requestAnimationFrame === "function" ? requestAnimationFrame(run) : Number(setTimeout(run, 16));
+}
+
 /** Narrows SheetOverviewCanvas's runtime-typed `frame` prop. */
 export function asOverviewFrame(value: unknown): () => OverviewFrame {
   return value as () => OverviewFrame;
@@ -244,7 +249,6 @@ export function asOverviewFrame(value: unknown): () => OverviewFrame {
  * frame whenever what it read changes; returns the disposer. */
 export function mountOverviewPainter(canvas: HTMLCanvasElement, frame: () => OverviewFrame): () => void {
   let pending: number | null = null;
-  const later = (run: () => void): number => (typeof requestAnimationFrame === "function" ? requestAnimationFrame(run) : Number(setTimeout(run, 16)));
   const draw = (): void => {
     const input = frame();
     const dpr = typeof window !== "undefined" && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;

@@ -76,6 +76,7 @@ function bookOf(sheet: Sheet, styles: CellStyle[] = [{}]): SpreadsheetModel {
 function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; showFormulas?: boolean; conditional?: SheetCellsDeps["conditional"] } = {}) {
   const model = bookOf(sheet, options.styles);
   let bands!: ComputedRef<BandItem[]>;
+  let cells!: ReturnType<typeof useSheetCells>;
   let viewport!: SheetViewport;
   const wrapper = mount(
     defineComponent({
@@ -88,7 +89,7 @@ function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; sho
           zoom: () => options.zoom ?? 1,
           initialTopLeft: () => undefined,
         });
-        bands = useSheetCells({
+        cells = useSheetCells({
           model: () => model,
           sheet: () => sheet,
           metrics: () => sheetMetrics.metrics.value,
@@ -97,13 +98,14 @@ function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; sho
           viewport,
           showFormulas: () => options.showFormulas === true,
           ...(options.conditional ? { conditional: options.conditional } : {}),
-        }).bands;
+        });
+        bands = cells.bands;
         return () => h(SheetCellLayer, { bands: bands.value, frozenWidth: viewport.frozenW.value });
       },
     }),
   );
   cleanups.push(() => wrapper.unmount());
-  return { bands, viewport, wrapper };
+  return { bands, cells, viewport, wrapper };
 }
 
 interface Placed {
@@ -152,13 +154,19 @@ describe("useSheetCells — merges", () => {
     }
   });
 
-  it("mounts that merge zoomed far out too, where only stored cells, merges and the active cell mount", () => {
-    // A value in column 301 widens the extent, so 10% zoom shows over
-    // 10,000 positions: the merge and the active cell A1 mount, nothing else.
+  it("paints that merge zoomed far out too, where only the active cell keeps an element (SPEC-137's overview)", () => {
+    // A value in column 301 widens the extent, so 10% zoom shows far more
+    // than GRID_MAX_RENDERED_CELLS positions: the overview canvas paints the
+    // sheet — the merge once, hosted as the paper hosts it — and the active
+    // cell A1 is the paper's one element. (SPEC-117's stored-cells-only
+    // fallback, which mounted the merge here, is what SPEC-137 replaced.)
     const sheet = hideRow(sheetOf([[3, 1, "Merged"], [0, 300, 1]], { merges: [merge(3, 1, 5, 3)] }), 3);
-    const { bands } = setup(sheet, { zoom: 0.1 });
-    expect(placed(bands.value).map((item) => item.cell.ref).toSorted()).toEqual(["A1", "B4"]);
-    expect(drawn(bands.value, "B4").elements.map((item) => item.row)).toEqual([4]);
+    const { bands, cells } = setup(sheet, { zoom: 0.1 });
+    expect(cells.overview.value).toBe(true);
+    expect(placed(bands.value).map((item) => item.cell.ref)).toEqual(["A1"]);
+    const painted = cells.overviewBands();
+    expect(drawn(painted, "B4").elements.map((item) => item.row)).toEqual([4]);
+    expect(placed(painted).map((item) => item.cell.ref)).toEqual(["B4"]);
   });
 
   it("hosts a merge whose anchor row is scrolled off by the first row the window renders", () => {

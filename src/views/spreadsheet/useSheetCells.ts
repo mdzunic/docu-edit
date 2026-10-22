@@ -200,8 +200,8 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     const css = cf ? cellCss(style, theme.value, kind, formatted.alignHint) : cssFor(styleId, kind, formatted.alignHint, shown?.formula, look);
     const textStyle: CssDeclarations = {};
     const contentStyle: CssDeclarations = {};
-    for (const [key, val] of Object.entries(css.text)) {
-      (CONTENT_KEYS.has(key) ? contentStyle : textStyle)[key] = val;
+    for (const [prop, val] of Object.entries(css.text)) {
+      (CONTENT_KEYS.has(prop) ? contentStyle : textStyle)[prop] = val;
     }
     if (formatted.color !== undefined) {
       textStyle.color = formatted.color;
