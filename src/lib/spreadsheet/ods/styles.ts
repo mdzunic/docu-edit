@@ -863,6 +863,47 @@ const MODELLED_TEXT_PROPERTY =
 /** A parent chain longer than this is malformed (or a cycle). */
 const MAX_STYLE_DEPTH = 64;
 
+/** A style name no part can define (XML text cannot hold U+0000): what a
+ * name no part defines reads as, asked of the book without a real name. */
+const UNDEFINED_STYLE_NAME = "\u0000";
+
+/** A table-cell style as cellStyleId adds it. */
+export interface OdsCellStyleEntry {
+  style: CellStyle;
+  /** It names a data style (General or not): impliedStyleId keeps it. */
+  formatted: boolean;
+}
+
+/** SPEC-137: every answer scanning a table can ask of the style book, as
+ * plain data. The book holds DOM elements (the data styles) and resolves on
+ * demand, so it stays on the main thread; the shell phase projects it over
+ * every style any part defines, and phase 3's book (ods/scanBook.ts)
+ * answers from the projection exactly as the book would — a name no part
+ * defines reading as the `undefined…` entries. Lists keep document order. */
+export interface OdsStyleProjection {
+  /** Every defined table-cell style → what cellStyleId adds for it. */
+  cellStyles: [string, OdsCellStyleEntry][];
+  /** What cellStyleId adds for an undefined name, but its sourceStyleName. */
+  undefinedCellStyle: OdsCellStyleEntry;
+  /** "Default" (styles[0]) names a data style. */
+  defaultFormatted: boolean;
+  /** Every defined text style → textStyleModelled and textFont (absent: none). */
+  textStyles: [string, { modelled: boolean; font?: CellFont }][];
+  tableStyles: [string, OdsTableStyle][];
+  undefinedTableStyle: OdsTableStyle;
+  /** columnWidthPx, null for undefined. */
+  columnWidths: [string, number | null][];
+  undefinedColumnWidth: number | null;
+  rowHeights: [string, OdsRowHeight][];
+  undefinedRowHeight: OdsRowHeight;
+  /** mappedCellStyles, each with its cellStyleMaps. */
+  mapped: [string, OdsStyleMap[]][];
+  /** Every common table-cell style → conditionalStyle's dxf for it. */
+  conditional: [string, Dxf][];
+  /** Each common table-cell style's `style:display-name` → its `style:name`. */
+  displayNames: [string, string][];
+}
+
 /** Every style an .ods workbook's cells, rows, columns and tables name:
  * styles.xml's default and common styles plus content.xml's automatic ones,
  * flattened on first use and cached. `styles` is the model's cell style
@@ -891,7 +932,9 @@ export class OdsStyleBook {
     this.fontFaces = new Map([...sheet.fontFaces, ...content.fontFaces]);
     this.dataStyles = new Map([...sheet.dataStyles, ...content.dataStyles]);
     const base = cellStyleFrom(this.flatten("table-cell", "Default", { commonOnly: true }), this.fontFaces);
-    this.applyDataStyle(base, 0, this.dataStyleOf("Default", true));
+    if (this.applyDataStyle(base, this.dataStyleOf("Default", true))) {
+      this.formatted.add(0);
+    }
     if (sheet.common.has(styleKey("table-cell", "Default"))) {
       base.sourceStyleName = "Default";
     }
@@ -907,17 +950,67 @@ export class OdsStyleBook {
     let id = this.cellIds.get(name);
     if (id === undefined) {
       id = this.styles.length;
-      const style = cellStyleFrom(this.flatten("table-cell", name), this.fontFaces);
-      this.applyDataStyle(style, id, this.dataStyleOf(name, false));
-      const named = this.namedStyleOf(name);
-      if (named !== undefined) {
-        style.namedStyle = named;
+      const { style, formatted } = this.cellStyleEntry(name);
+      if (formatted) {
+        this.formatted.add(id);
       }
-      style.sourceStyleName = name;
       this.styles.push(style);
       this.cellIds.set(name, id);
     }
     return id;
+  }
+
+  /** What cellStyleId adds for the table-cell style `name` — its flattened
+   * entry, and whether it names a data style — without adding it. */
+  cellStyleEntry(name: string): OdsCellStyleEntry {
+    const style = cellStyleFrom(this.flatten("table-cell", name), this.fontFaces);
+    const formatted = this.applyDataStyle(style, this.dataStyleOf(name, false));
+    const named = this.namedStyleOf(name);
+    if (named !== undefined) {
+      style.namedStyle = named;
+    }
+    style.sourceStyleName = name;
+    return { style, formatted };
+  }
+
+  /** SPEC-137: every answer a table's scan can ask of this book, as plain
+   * data (see OdsStyleProjection) — computed afresh, adding nothing to
+   * `styles`. */
+  scanProjection(): OdsStyleProjection {
+    const namesOf = (family: string): string[] => {
+      const names = new Set<string>();
+      for (const styles of [this.automatic, this.sheet.common]) {
+        for (const [key, definition] of styles) {
+          if (definition.family === family) {
+            names.add(key.slice(key.indexOf("\u0000") + 1));
+          }
+        }
+      }
+      return [...names];
+    };
+    const common: [string, StyleDefinition][] = [...this.sheet.common].flatMap(([key, definition]) =>
+      definition.family === "table-cell" ? [[key.slice(key.indexOf("\u0000") + 1), definition] as [string, StyleDefinition]] : [],
+    );
+    const undefinedEntry = this.cellStyleEntry(UNDEFINED_STYLE_NAME);
+    const { sourceStyleName: _never, ...undefinedStyle } = undefinedEntry.style;
+    return {
+      cellStyles: namesOf("table-cell").map((name) => [name, this.cellStyleEntry(name)]),
+      undefinedCellStyle: { style: undefinedStyle, formatted: undefinedEntry.formatted },
+      defaultFormatted: this.formatted.has(0),
+      textStyles: namesOf("text").map((name) => {
+        const font = this.textFont(name);
+        return [name, { modelled: this.textStyleModelled(name), ...(font === undefined ? {} : { font }) }];
+      }),
+      tableStyles: namesOf("table").map((name) => [name, this.tableStyle(name)]),
+      undefinedTableStyle: this.tableStyle(undefined),
+      columnWidths: namesOf("table-column").map((name) => [name, this.columnWidthPx(name) ?? null]),
+      undefinedColumnWidth: this.columnWidthPx(undefined) ?? null,
+      rowHeights: namesOf("table-row").map((name) => [name, this.rowHeight(name)]),
+      undefinedRowHeight: this.rowHeight(undefined),
+      mapped: this.mappedCellStyles().map((name) => [name, [...(this.cellStyleMaps(name) ?? [])]]),
+      conditional: common.map(([name]) => [name, this.conditionalStyle(name)!.dxf]),
+      displayNames: common.flatMap(([name, definition]) => (definition.displayName === undefined ? [] : [[definition.displayName, name] as [string, string]])),
+    };
   }
 
   /** SPEC-123: the workbook's named styles — every common table-cell style,
@@ -1001,16 +1094,17 @@ export class OdsStyleBook {
     return stopAt === undefined ? this.sheet.defaults.get("table-cell")?.dataStyle : undefined;
   }
 
-  /** Gives a cell style the number format its data style maps to. */
-  private applyDataStyle(style: CellStyle, id: number, dataStyleName: string | undefined): void {
+  /** Gives a cell style the number format its data style maps to; whether
+   * it names a data style a part defines (General or not). */
+  private applyDataStyle(style: CellStyle, dataStyleName: string | undefined): boolean {
     if (dataStyleName === undefined || !this.dataStyles.has(dataStyleName)) {
-      return;
+      return false;
     }
-    this.formatted.add(id);
     const code = this.dataStyleCode(dataStyleName);
     if (code !== undefined) {
       style.numberFormat = code;
     }
+    return true;
   }
 
   /** The format code a data style maps to; undefined for General or a name

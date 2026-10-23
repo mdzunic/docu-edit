@@ -1288,16 +1288,19 @@ describe("SPEC-135's reader step: notes, threads and hyperlinks", () => {
   });
 });
 
-// SPEC-137 "The read phases": readSpreadsheetBytes reads an .xlsx package
-// through the phases; the model equals the old single pass —
-// assembleSpreadsheet over parseXlsx, then the display refresh of uncached
-// charts — for every .xlsx-family fixture. Ids are compared by their order
-// of first appearance in a key-sorted walk (the two paths mint them in a
-// different order).
+// SPEC-137 "The read phases": readSpreadsheetBytes reads a package through
+// the phases; the model equals the old single pass — assembleSpreadsheet
+// over parseXlsx or parseOds, then the display refresh of uncached charts —
+// for every .xlsx-family and .ods/.ots fixture. Ids are compared by their
+// order of first appearance in a key-sorted walk (the two paths mint them in
+// a different order).
 describe("SPEC-137: the phase split equals the old single pass", () => {
   const fixturesDir = join(__dirname, "../../../e2e/fixtures");
   const fixtures = readdirSync(fixturesDir)
     .filter((name) => /\.(xlsx|xlsm|xltx|xltm)$/i.test(name) && !name.startsWith("spec137-"))
+    .toSorted();
+  const odsFixtures = readdirSync(fixturesDir)
+    .filter((name) => /\.(ods|ots)$/i.test(name))
     .toSorted();
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1343,6 +1346,24 @@ describe("SPEC-137: the phase split equals the old single pass", () => {
         refreshUncachedCharts(single);
       }
       const phased = await readSpreadsheetBytes(bytes, "xlsx", name);
+      expect(canonicalIds(phased)).toEqual(canonicalIds(single));
+    });
+  }
+
+  it("covers .ods/.ots", () => {
+    expect(odsFixtures.length).toBeGreaterThanOrEqual(19);
+  });
+
+  for (const name of odsFixtures) {
+    it(name, async () => {
+      const bytes = new Uint8Array(readFileSync(join(fixturesDir, name)));
+      const { parseOds } = await import("./ods/reader");
+      const { refreshUncachedCharts } = await import("./chartsOpen");
+      const single = assembleSpreadsheet(name, "ods", await parseOds(bytes));
+      if (single.sheets.some((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && drawing.content.refs !== undefined))) {
+        refreshUncachedCharts(single);
+      }
+      const phased = await readSpreadsheetBytes(bytes, "ods", name);
       expect(canonicalIds(phased)).toEqual(canonicalIds(single));
     });
   }

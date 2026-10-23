@@ -3,14 +3,11 @@
 // boundary, and the one piece of main-thread state a shell phase leaves for
 // assembly. open.ts runs the phases (inline, or with phases 1 and 3 in
 // workers/spreadsheetParse.worker.ts through parseSession.ts); xlsx/phases.ts
-// implements them for the .xlsx family. The ods fields below are the shape
-// an .ods phase split fills (one scan of content.xml cut into its envelope
-// and each table's offsets); until it lands, an .ods workbook is read in one
-// pass by parseOds.
+// implements them for the .xlsx family and ods/phases.ts for .ods/.ots.
 //
 // 1. prepareWorkbookSources — DOMParser-free: the O(cells) source texts
 //    (xlsx: the shared strings; ods: content.xml cut into its envelope and
-//    each table's offsets).
+//    each table's offsets, with what the scan met outside the tables).
 // 2. readWorkbookShell — main thread, may use parseXml: every small part,
 //    the workbook's shell (sheets with no rows yet, ids minted here, styles,
 //    the retained `opaque`), one SheetScanJob per sheet to scan, and the
@@ -26,6 +23,7 @@
 //    into the finished model, then the format's completion (setShellCompletion).
 import type { Dxf } from "./conditionalFormats";
 import type { CellStyle, Row, Sheet, SpreadsheetFormat, SpreadsheetModel } from "./model";
+import type { OdsScanContext, OdsScanDeferred, OdsSourcesOutline } from "./ods/phases";
 import type { SharedStringTable } from "./xlsx/sharedStrings";
 import type { XlsxScanContext, XlsxScanDeferred } from "./xlsx/phases";
 
@@ -39,6 +37,10 @@ export interface WorkbookSources {
   odsEnvelope?: { prefix: string; suffix: string };
   /** ods: the UTF-16 offsets of each table's `sourceXml` in content.xml. */
   odsTables?: { start: number; end: number }[];
+  /** ods: what the same scan met outside the tables — each table's start
+   * tag, the namespaces, the style sections, the dates, the calculation
+   * settings (ods/phases.ts). */
+  odsOutline?: OdsSourcesOutline;
 }
 
 /** One sheet to scan: the model sheet it fills, the source part it reads
@@ -53,7 +55,7 @@ export interface SheetScanJob {
  * tables, the sheet names for messages …), discriminated by `format`. A
  * later spec that must resolve something per cell against a workbook-level
  * table adds it here; it never parses a part with DOMParser in phase 3. */
-export type ScanContext = XlsxScanContext;
+export type ScanContext = XlsxScanContext | OdsScanContext;
 
 /** Rows with index in [chunk·512, chunk·512 + 512) of one sheet. */
 export interface RowChunk {
@@ -72,7 +74,7 @@ export interface SheetScanResult {
    * assembleWorkbook appends them to the model's, result by result. */
   appended?: { styles?: CellStyle[]; dxfs?: Dxf[] };
   /** What only the main thread can finish (see the header), plain data. */
-  deferred?: XlsxScanDeferred;
+  deferred?: XlsxScanDeferred | OdsScanDeferred;
 }
 
 /** The cells every job of one read may still store (MAX_WORKBOOK_CELLS at

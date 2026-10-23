@@ -1,15 +1,14 @@
 // SPEC-137 AC-21: parseSession.ts's message handler, driven directly the way
 // the parse worker drives it — every request and every reply through
-// structuredClone, as postMessage carries them — over every xlsx-family
-// workbook fixture in e2e/fixtures (the ods reader has no phases yet; the
-// parse client reads an .ods inline): prepare → the shell phase on the "main thread" → scan →
-// every chunk pulled → dispose → assembleWorkbook, whose model equals
-// readSpreadsheetBytes'. Then the error replies (a malformed worksheet; the
-// cell-ceiling refusal, counted across every sheet of the session), the
-// chunks (SHEET_ROWS_CHUNK-row bands of row index, in order, each sent once)
-// and the session's lifetime (dispose frees it). The protocol's logic apart
-// from the real phases — the client, its fallback and retry — is
-// workers/spreadsheetParseClient.spec.ts's.
+// structuredClone, as postMessage carries them — over every workbook fixture
+// in e2e/fixtures, the xlsx family and .ods/.ots: prepare → the shell phase
+// on the "main thread" → scan → every chunk pulled → dispose →
+// assembleWorkbook, whose model equals readSpreadsheetBytes'. Then the error
+// replies (a malformed worksheet or table; the cell-ceiling refusal, counted
+// across every sheet of the session), the chunks (SHEET_ROWS_CHUNK-row bands
+// of row index, in order, each sent once) and the session's lifetime
+// (dispose frees it). The protocol's logic apart from the real phases — the
+// client, its fallback and retry — is workers/spreadsheetParseClient.spec.ts's.
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,10 +36,13 @@ vi.mock("./model", async (importOriginal) => {
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
 
-/** Every committed xlsx-family workbook fixture (the generated spec137-*
- * benchmark files are not committed, and too large for a unit test). */
+const ODS_FAMILY = /\.(ods|ots)$/i;
+
+/** Every committed workbook fixture, xlsx family and .ods/.ots (the
+ * generated spec137-* benchmark files are not committed, and too large for a
+ * unit test). */
 const FIXTURES = readdirSync(E2E_FIXTURES)
-  .filter((name) => /\.(xlsx|xlsm|xltx|xltm)$/i.test(name) && !name.startsWith("spec137-"))
+  .filter((name) => (/\.(xlsx|xlsm|xltx|xltm)$/i.test(name) || ODS_FAMILY.test(name)) && !name.startsWith("spec137-"))
   .toSorted();
 
 let minted = 0;
@@ -70,7 +72,7 @@ interface Fixture {
 }
 
 function fixture(name: string): Fixture {
-  return { bytes: new Uint8Array(readFileSync(join(E2E_FIXTURES, name))), format: "xlsx" };
+  return { bytes: new Uint8Array(readFileSync(join(E2E_FIXTURES, name))), format: ODS_FAMILY.test(name) ? "ods" : "xlsx" };
 }
 
 /** The package as the open funnel hands it on — unzipped afresh per read,
@@ -135,11 +137,15 @@ async function readThroughSession(sessions: ParseSessions, parts: Map<string, Ui
   return { model: assembleWorkbook(shell, scanned.results, chunks), results: scanned.results, chunks, session };
 }
 
-describe("a workbook read through the parse session equals readSpreadsheetBytes' (every xlsx-family fixture)", () => {
+describe("a workbook read through the parse session equals readSpreadsheetBytes' (every fixture, xlsx family and .ods)", () => {
   it("has fixtures to read, templates and macro-enabled ones among them", () => {
     expect(FIXTURES.length).toBeGreaterThan(20);
     expect(FIXTURES.some((name) => name.endsWith(".xltx"))).toBe(true);
     expect(FIXTURES.some((name) => name.endsWith(".xlsm"))).toBe(true);
+  });
+
+  it("has every .ods fixture among them", () => {
+    expect(FIXTURES.filter((name) => ODS_FAMILY.test(name)).length).toBeGreaterThanOrEqual(19);
   });
 
   it.each(FIXTURES)("%s", async (name) => {
@@ -157,7 +163,7 @@ describe("the session's chunks", () => {
   // spec132-charts.xlsx: a chart sheet among them, which has no rows to send.
   // (Bands past the first, and empty bands between, are the parse client
   // spec's toy workbook's.)
-  it.each(["mini-book.xlsx", "spec124-structure.xlsx", "spec132-charts.xlsx"])("are SHEET_ROWS_CHUNK-row bands of row index, sheet by sheet in order (%s)", async (name) => {
+  it.each(["mini-book.xlsx", "spec124-structure.xlsx", "spec132-charts.xlsx", "mini-book.ods", "spec116-wide.ods"])("are SHEET_ROWS_CHUNK-row bands of row index, sheet by sheet in order (%s)", async (name) => {
     const { bytes, format } = fixture(name);
     const inline = await readSpreadsheetBytes(bytes, format, name);
     const { chunks } = await readThroughSession(createParseSessions(), await inflated(bytes, format), format, name);
@@ -255,10 +261,58 @@ describe("error replies", () => {
     expect(rebuilt.message).toBe((thrown as Error).message);
   });
 
+  /** mini-book.ods with its content.xml edited — inside a table, which only
+   * the worker's phases read (phase 1 checks the whole part; phase 3 reads
+   * the table's values). */
+  async function corruptOds(edit: (text: string) => string): Promise<Map<string, Uint8Array>> {
+    const parts = await inflated(fixture("mini-book.ods").bytes, "ods");
+    const text = new TextDecoder().decode(parts.get("content.xml"));
+    const edited = edit(text);
+    expect(edited).not.toBe(text);
+    parts.set("content.xml", new TextEncoder().encode(edited));
+    return parts;
+  }
+
+  it.each<{ what: string; edit: (text: string) => string; at: "prepared" | "scanned" }>([
+    // An end tag that matches nothing, inside the first table: phase 1's
+    // scan of content.xml refuses it, at the single pass's offset.
+    { what: "a malformed table", edit: (text) => text.replace("</table:table-row>", "</table:table-rows>"), at: "prepared" },
+    // A number that is none: phase 3's scan of the table refuses it, naming the cell.
+    { what: "a float cell with no number", edit: (text) => text.replace(/(office:value-type="float"[^>]*?\soffice:value=")[^"]*"/, '$1twelve"'), at: "scanned" },
+  ])("carry $what's .ods parse error — the class and message the single pass and an inline read throw", async ({ edit, at }) => {
+    const { parseOds } = await import("./ods/reader");
+    const single = await parseOds(new Uint8Array(0), await corruptOds(edit)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(single).toBeInstanceOf(SpreadsheetOpenError);
+    const thrown = await readSpreadsheetBytes(new Uint8Array(0), "ods", "mini-book", await corruptOds(edit)).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(thrown).toBeInstanceOf(SpreadsheetOpenError);
+    expect((thrown as Error).message).toBe((single as Error).message);
+    const sessions = createParseSessions();
+    const parts = await corruptOds(edit);
+    const prepared = post(sessions, { op: "prepare", format: "ods", sources: sourceCopies(parts, "ods") });
+    let reply = prepared;
+    if (at === "scanned") {
+      const { sources, session } = expectReply(prepared, "prepared");
+      const { jobs, context } = await readWorkbookShell(parts, sources, "mini-book");
+      reply = post(sessions, { op: "scan", session, jobs, context });
+    } else {
+      expect((thrown as Error).message).toMatch(/not well-formed XML — Closing tag .*\(at offset \d+\) \(content\.xml\)$/);
+    }
+    expect(reply).toEqual({ op: "error", name: "SpreadsheetOpenError", message: (thrown as Error).message });
+    const rebuilt = errorFromReply(expectReply(reply, "error"));
+    expect(rebuilt).toBeInstanceOf(SpreadsheetOpenError);
+    expect(rebuilt.message).toBe((thrown as Error).message);
+  });
+
   // mini-book.xlsx: Summary 32 cells, Data 1,500, Hidden 3 — so a ceiling
   // one below the total admits every sheet on its own and refuses the
-  // workbook.
-  it.each(["mini-book.xlsx", "spec121-links.xlsx"])("carry the WORKBOOK_TOO_LARGE_MESSAGE refusal, counted across every sheet of the session (%s)", async (name) => {
+  // workbook (mini-book.ods holds the same sheets).
+  it.each(["mini-book.xlsx", "spec121-links.xlsx", "mini-book.ods"])("carry the WORKBOOK_TOO_LARGE_MESSAGE refusal, counted across every sheet of the session (%s)", async (name) => {
     const { bytes, format } = fixture(name);
     const { results } = await readThroughSession(createParseSessions(), await inflated(bytes, format), format, name);
     const perSheet = results.map((result) => result.cells);
