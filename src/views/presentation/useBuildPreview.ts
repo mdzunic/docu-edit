@@ -16,13 +16,13 @@
 // slide's interactive sequences has played (`playTrigger` — a click on a
 // trigger frame plays its next group, the main sequence untouched), keeps an
 // until-click repeat looping until the next input, and settles emphasis and
-// path effects to where they leave their target.
+// path effects to where they leave their target (the settled-state maths is
+// framework-free, in ./buildStyles.ts).
 import { ref, watch } from "vue";
 import type { Slide } from "../../lib/presentation/model";
 import type { PlaybackStep } from "./usePlayback";
 import {
   interactiveTriggerAt,
-  isBuildTargetHiddenAfter,
   settledMotion,
   slideBuildCount,
   slideBuildSteps,
@@ -34,31 +34,22 @@ import {
   DEFAULT_STYLE_CONTEXT,
   fromStyle,
   keyframed,
-  settledTargetStyle,
   toStyle,
   transitionFor,
   type FrameStyle,
   type StyleContext,
 } from "../../components/presentation/animationStyles";
 import { clientToCm } from "./stageMath";
+import {
+  settledBuildStyles,
+  stepsAt,
+  type BuildState,
+  type InteractivePlay,
+  type ParagraphStyleMap,
+  type StyleMap,
+} from "./buildStyles";
 
-type StyleMap = Record<string, FrameStyle>;
-type ParagraphStyleMap = Record<string, Record<number, FrameStyle>>;
-
-/** One interactive group played: its trigger, its index in that trigger's
- * sequence, and how many main-sequence groups were shown when it played. */
-interface InteractivePlay {
-  trigger: string;
-  group: number;
-  at: number;
-}
-
-/** How far a slide has built: main-sequence groups shown, and the interactive
- * groups played, in the order they played. */
-interface BuildState {
-  groupsPlayed: number;
-  interactive: InteractivePlay[];
-}
+export { fullyBuiltStyles, settledBuildStyles, settledFrameStyles } from "./buildStyles";
 
 /** The deck size a show resolves motion paths against. */
 export interface DeckSize {
@@ -70,76 +61,6 @@ export interface DeckSize {
 // two frames for the from→to commit (`afterCommitFrame`) plus margin, so the
 // settle never cuts a still-running transition short.
 const SETTLE_SLACK_MS = 100;
-
-/** Every step of the slide (main and interactive) and the ones `state` has
- * played, in the order they played — each interactive group after the main
- * groups shown when it played — so the last to play wins. */
-function stepsAt(slide: Slide, state: BuildState): { all: BuildStep[]; played: BuildStep[] } {
-  const main = slideBuildSteps(slide);
-  const interactive = slideInteractiveBuilds(slide);
-  const groupsOf = new Map(interactive.map((s) => [s.triggerFrameId, s.groups]));
-  const played: BuildStep[] = [];
-  for (let shown = 0; shown <= state.groupsPlayed; shown++) {
-    for (const play of state.interactive) {
-      if (Math.min(play.at, state.groupsPlayed) === shown) {
-        played.push(...(groupsOf.get(play.trigger)?.[play.group] ?? []));
-      }
-    }
-    if (shown < state.groupsPlayed && shown < main.length) {
-      played.push(...main[shown]);
-    }
-  }
-  return { all: [...main.flat(), ...interactive.flatMap((s) => s.groups.flat())], played };
-}
-
-/** The per-frame and per-paragraph styles of `slide` settled at `state` — the
- * static visibility, with every played spin and path at its end, no
- * animation in flight (AC-20). */
-export function settledBuildStyles(
-  slide: Slide,
-  state: BuildState,
-  ctx: StyleContext = DEFAULT_STYLE_CONTEXT,
-): { frameStyles: StyleMap; paragraphStyles: ParagraphStyleMap } {
-  const { all, played } = stepsAt(slide, state);
-  const styleOf = (key: string): FrameStyle =>
-    settledTargetStyle(isBuildTargetHiddenAfter(all, played, key), settledMotion(played, key), ctx);
-  const frameStyles: StyleMap = {};
-  for (const frame of slide.frames) {
-    frameStyles[frame.id] = styleOf(frame.id);
-  }
-  const paragraphStyles: ParagraphStyleMap = {};
-  for (const step of all) {
-    if (step.paragraphIndex === undefined) {
-      continue;
-    }
-    const style = styleOf(step.key);
-    const byIndex = (paragraphStyles[step.frameId] ??= {});
-    for (let i = step.paragraphIndex; i <= (step.paragraphEnd ?? step.paragraphIndex); i++) {
-      byIndex[i] = style;
-    }
-  }
-  return { frameStyles, paragraphStyles };
-}
-
-/** The per-frame styles of `slide` settled with `groupsPlayed` groups shown —
- * the static visibility with no animation in flight (AC-20). */
-export function settledFrameStyles(slide: Slide, groupsPlayed: number): StyleMap {
-  return settledBuildStyles(slide, { groupsPlayed, interactive: [] }).frameStyles;
-}
-
-/** The styles of `slide` fully built (every main group shown) — what a
- * transition's outgoing stage shows, paragraphs and settled motion included,
- * resolved against the deck's size. */
-export function fullyBuiltStyles(
-  slide: Slide | null | undefined,
-  deck: { slideWidthCm: number; slideHeightCm: number } | null | undefined,
-): { frameStyles: StyleMap; paragraphStyles: ParagraphStyleMap } {
-  if (!slide) {
-    return { frameStyles: {}, paragraphStyles: {} };
-  }
-  const ctx = deck ? { slideWidthCm: deck.slideWidthCm, slideHeightCm: deck.slideHeightCm } : DEFAULT_STYLE_CONTEXT;
-  return settledBuildStyles(slide, { groupsPlayed: slideBuildCount(slide), interactive: [] }, ctx);
-}
 
 /** `deckSize` resolves motion paths (slide fractions) to surface px; absent,
  * a 16:9 deck. */
