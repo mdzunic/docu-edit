@@ -268,8 +268,8 @@ function behavioursFor(step: BuildStep, spid: number): string {
 const UNTIL_NEXT_CLICK = `<p:endCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:endCondLst>`;
 
 /** One step's effect `p:par`. `id` (the step's model order) is written only
- * on a slide with an interactive sequence; `grpId` only on a paragraph step
- * (it links the step to its `p:bldP`). */
+ * on a slide with an interactive sequence; `grpId` only on a shape with a
+ * paragraph build (it links a build's steps to their `p:bldP`). */
 function effectPar(step: BuildStep, spid: number, nodeType: string, grpId?: number, id?: number): string {
   const a = step.animation;
   const preset =
@@ -350,22 +350,33 @@ export function writePptxTiming(
       }
     }
   }
-  // A paragraph build's steps link to their `p:bldP` by grpId: 0 for the first
-  // such row on a shape, 1 for the next, … in model order.
+  // A paragraph build's steps link to their `p:bldP` by grpId. On a shape
+  // that has one, every row on it takes its own grpId (0, 1, … in model
+  // order), so a whole-shape effect beside the build never claims the
+  // build's `p:bldP`; a shape without one writes none (SPEC-086's bytes).
+  const paragraphBuilt = (animation: SlideAnimation): boolean =>
+    expandAnimation(animation, frameFor(animation.frameId))[0].paragraphIndex !== undefined;
+  const builtSpids = new Set(
+    animations.filter(paragraphBuilt).flatMap((a) => {
+      const spid = spidFor(a.frameId);
+      return spid === undefined ? [] : [spid];
+    }),
+  );
   const grpIds = new Map<SlideAnimation, number>();
   const bldPs: string[] = [];
   const perSpid = new Map<number, number>();
   for (const animation of animations) {
     const spid = spidFor(animation.frameId);
-    const steps = expandAnimation(animation, frameFor(animation.frameId));
-    if (spid === undefined || steps[0].paragraphIndex === undefined) {
+    if (spid === undefined || !builtSpids.has(spid)) {
       continue;
     }
     const grpId = perSpid.get(spid) ?? 0;
     perSpid.set(spid, grpId + 1);
     grpIds.set(animation, grpId);
-    const level = animation.buildBy === "byFirstLevelParagraph" ? ` bldLvl="1"` : "";
-    bldPs.push(`<p:bldP spid="${spid}" grpId="${grpId}" build="p"${level}/>`);
+    if (paragraphBuilt(animation)) {
+      const level = animation.buildBy === "byFirstLevelParagraph" ? ` bldLvl="1"` : "";
+      bldPs.push(`<p:bldP spid="${spid}" grpId="${grpId}" build="p"${level}/>`);
+    }
   }
   const groupXml = (groups: BuildStep[][], interactiveSeq: boolean): string =>
     groups
@@ -376,8 +387,7 @@ export function writePptxTiming(
             if (spid === undefined) {
               return "";
             }
-            const grpId = step.paragraphIndex === undefined ? undefined : grpIds.get(step.animation);
-            return effectPar(step, spid, nodeTypeAt(group, i, interactiveSeq), grpId, ids.get(step));
+            return effectPar(step, spid, nodeTypeAt(group, i, interactiveSeq), grpIds.get(step.animation), ids.get(step));
           })
           .join("");
         return clickGroupPar(effects, interactiveSeq && gi === 0 ? "0" : "indefinite");
