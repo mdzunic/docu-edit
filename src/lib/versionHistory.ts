@@ -42,63 +42,49 @@ import {
 } from "./documentModel";
 import { ensureMediaEncoded, type MediaPart } from "./core/media";
 import { windowOf } from "./core/arrayWindow";
+import {
+  decideBaseline,
+  emptyVersionsIndex,
+  gatherChainInfo,
+  measureBytes,
+  oldestPrunable,
+  oldestRetainedDescendant,
+  sha256Hex,
+  versionBlobKey,
+  versionPayloadKey,
+  versionsIndexKey,
+  HISTORY_BUDGET_BYTES,
+  type SnapshotTrigger,
+  type VersionBlobRecord,
+  type VersionIndexEntry,
+  type VersionsIndexRecord,
+} from "./core/versionChain";
 import { documentStats } from "./wordCount";
 import { deleteVersionsRecord, getVersionsRecord, putVersionsRecord } from "./idb";
-import { MAX_FILE_SIZE_BYTES } from "./openDocument";
 
-// --- constants ---------------------------------------------------------------
+// --- constants and record shapes ---------------------------------------------
+//
+// SPEC-103 moved the chain arithmetic every product's history shares into
+// core/versionChain.ts; re-exported here so this module's callers keep one
+// import.
 
-/** The per-document history budget — the same ceiling SPEC-009 puts on a
- * single file the app will open (see the spec's "The 50 MB budget"). */
-export const HISTORY_BUDGET_BYTES = MAX_FILE_SIZE_BYTES;
-
-/** Baseline trigger 2: the reconstruction bound (at most 51 records read and
- * applied for any retained version). */
-export const CHAIN_DELTA_CAP = 50;
-
-/** Baseline trigger 4: a delta at or above this fraction of its chain's
- * baseline size stores as a fresh baseline instead. */
-export const WHOLESALE_REWRITE_RATIO = 0.5;
-
-/** Pruning never removes the newest this-many versions. */
-export const RETAINED_RECENT_COUNT = 10;
-
-/** The exact notice text AC-38 requires. */
-export const HISTORY_PAUSED_MESSAGE =
-  "Version history paused — 50 MB used. Delete a version, or remove a name, to resume";
-
-// --- record shapes -----------------------------------------------------------
-
-export type VersionChainKind = "baseline" | "delta";
-
-export type SnapshotTrigger = "cadence" | "commit" | "pre-restore" | "post-restore";
-
-export interface VersionIndexEntry {
-  id: string;
-  timestamp: number;
-  author: string;
-  words: number;
-  name?: string;
-  kind: VersionChainKind;
-  parentId: string | null;
-  /** Encoded (JSON, UTF-8) byte size of this version's payload record —
-   * measured, not estimated (AC-44), and what the budget/pruning arithmetic
-   * and the four baseline triggers are computed from. */
-  size: number;
-}
-
-export interface VersionsIndexRecord {
-  id: string;
-  store: "index";
-  docId: string;
-  /** Chronological, oldest first — AC-10's "newest first" is a display
-   * concern, applied where the list renders. */
-  versions: VersionIndexEntry[];
-  /** True once a snapshot attempt found nothing prunable and the budget was
-   * still exceeded (AC-37/38); cleared the next time usage drops back under
-   * budget, whether from a new prune or a manual delete/unname. */
-  paused: boolean;
-}
+export {
+  CHAIN_DELTA_CAP,
+  HISTORY_BUDGET_BYTES,
+  HISTORY_PAUSED_MESSAGE,
+  RETAINED_RECENT_COUNT,
+  WHOLESALE_REWRITE_RATIO,
+  decideBaseline,
+  gatherChainInfo,
+} from "./core/versionChain";
+export type {
+  ChainInfo,
+  SnapshotTrigger,
+  VersionBlobRecord,
+  VersionChainKind,
+  VersionIndexEntry,
+  VersionsIndexRecord,
+} from "./core/versionChain";
 
 interface MediaRef {
   mediaId: string;
@@ -202,48 +188,12 @@ export interface VersionPayloadRecord {
   payload: BaselinePayload | DeltaPayload;
 }
 
-export interface VersionBlobRecord {
-  id: string;
-  store: "blob";
-  docId: string;
-  hash: string;
-  contentType?: string;
-  /** Base64, the same convention as MediaPart/OpaquePart. */
-  data: string;
-  size: number;
-  refCount: number;
-}
-
 export type VersionStoreRecord = VersionsIndexRecord | VersionPayloadRecord | VersionBlobRecord;
 
-function indexKey(docId: string): string {
-  return `versions:${docId}`;
-}
-
-function payloadKey(docId: string, versionId: string): string {
-  return `version:${docId}:${versionId}`;
-}
-
-function blobKey(docId: string, hash: string): string {
-  return `blob:${docId}:${hash}`;
-}
-
-// --- measurement ---------------------------------------------------------
-
-const encoder = new TextEncoder();
-
-function measureBytes(value: unknown): number {
-  return encoder.encode(JSON.stringify(value)).length;
-}
-
 // --- content hashing (media/opaque/sourceXml dedup) -----------------------
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(text));
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
+//
+// The digest itself (sha256Hex) is product-neutral and lives in core; the
+// per-part wrappers and their identity caches stay here, text-side.
 
 // Hashing base64 image/opaque bytes is the expensive part of taking a
 // snapshot; these caches (keyed by object identity, which stays stable for
@@ -482,7 +432,7 @@ async function diffFields(prev: DocumentModel, next: DocumentModel): Promise<Fie
 }
 
 async function readBlobData(docId: string, hash: string): Promise<string> {
-  const record = await getVersionsRecord(blobKey(docId, hash));
+  const record = await getVersionsRecord(versionBlobKey(docId, hash));
   if (!record || record.store !== "blob") {
     throw new Error(`Missing history blob ${hash} for document ${docId}`);
   }
@@ -577,22 +527,20 @@ function embeddedHashes(payload: BaselinePayload | DeltaPayload): string[] {
 
 // --- store IO -----------------------------------------------------------------
 
-function emptyIndex(docId: string): VersionsIndexRecord {
-  return { id: indexKey(docId), store: "index", docId, versions: [], paused: false };
-}
-
 export async function loadIndex(docId: string): Promise<VersionsIndexRecord> {
   try {
-    const record = await getVersionsRecord(indexKey(docId));
-    return record && record.store === "index" ? record : emptyIndex(docId);
+    const record = await getVersionsRecord(versionsIndexKey(docId));
+    return record && record.store === "index" ? record : emptyVersionsIndex(docId);
   } catch {
-    return emptyIndex(docId);
+    return emptyVersionsIndex(docId);
   }
 }
 
 async function loadPayload(docId: string, versionId: string): Promise<BaselinePayload | DeltaPayload | null> {
-  const record = await getVersionsRecord(payloadKey(docId, versionId));
-  return record && record.store === "payload" ? record.payload : null;
+  const record = await getVersionsRecord(versionPayloadKey(docId, versionId));
+  const payload = record && record.store === "payload" ? record.payload : null;
+  // The store also holds decks' payloads (SPEC-103), told apart by kind.
+  return payload && (payload.kind === "baseline" || payload.kind === "delta") ? payload : null;
 }
 
 /** Reconstructs a version's full model by loading its chain's baseline and
@@ -639,7 +587,7 @@ async function ensureBlobRefs(docId: string, model: DocumentModel, hashes: strin
   }
   const bytes = await collectBlobBytes(model);
   for (const hash of hashes) {
-    const key = blobKey(docId, hash);
+    const key = versionBlobKey(docId, hash);
     const existing = await getVersionsRecord(key);
     if (existing && existing.store === "blob") {
       await putVersionsRecord({ ...existing, refCount: existing.refCount + 1 });
@@ -664,7 +612,7 @@ async function ensureBlobRefs(docId: string, model: DocumentModel, hashes: strin
 
 async function releaseBlobRefs(docId: string, hashes: string[], keepHashes: Set<string>): Promise<void> {
   for (const hash of hashes) {
-    const key = blobKey(docId, hash);
+    const key = versionBlobKey(docId, hash);
     const existing = await getVersionsRecord(key);
     if (!existing || existing.store !== "blob") {
       continue;
@@ -697,58 +645,10 @@ async function currentModelHashes(model: DocumentModel): Promise<Set<string>> {
   return hashes;
 }
 
-// --- baseline/delta decision (AC-23, checked in this order) ------------------
-
-export interface ChainInfo {
-  baselineId: string;
-  baselineBytes: number;
-  deltaCount: number;
-  accumulatedDeltaBytes: number;
-}
-
-/** Walks the index (no payloads) from `tailId` back to its chain's baseline,
- * summing the deltas already in the chain. Returns null when the chain is
- * malformed/unreadable — treated as baseline trigger 1. */
-export function gatherChainInfo(entries: VersionIndexEntry[], tailId: string): ChainInfo | null {
-  const byId = new Map(entries.map((e) => [e.id, e]));
-  let cur = byId.get(tailId);
-  if (!cur) {
-    return null;
-  }
-  let deltaCount = 0;
-  let accumulatedDeltaBytes = 0;
-  while (cur.kind === "delta") {
-    deltaCount += 1;
-    accumulatedDeltaBytes += cur.size;
-    if (!cur.parentId) {
-      return null;
-    }
-    const parent = byId.get(cur.parentId);
-    if (!parent) {
-      return null;
-    }
-    cur = parent;
-  }
-  return { baselineId: cur.id, baselineBytes: cur.size, deltaCount, accumulatedDeltaBytes };
-}
-
-/** The four baseline triggers, checked in order (AC-23); returns false only
- * when none holds, i.e. the snapshot should be a delta (AC-24). */
-export function decideBaseline(chainInfo: ChainInfo | null, deltaBytes: number): boolean {
-  if (!chainInfo) {
-    return true; // 1: no chain to extend
-  }
-  if (chainInfo.deltaCount >= CHAIN_DELTA_CAP) {
-    return true; // 2: chain cap
-  }
-  if (chainInfo.accumulatedDeltaBytes + deltaBytes >= chainInfo.baselineBytes) {
-    return true; // 3: chain outweighs a copy
-  }
-  if (deltaBytes >= chainInfo.baselineBytes * WHOLESALE_REWRITE_RATIO) {
-    return true; // 4: wholesale rewrite
-  }
-  return false;
-}
+// --- baseline/delta decision ------------------------------------------------
+//
+// gatherChainInfo and decideBaseline (AC-23's four triggers, in order) live in
+// core/versionChain.ts and are re-exported above.
 
 // --- recording a version -------------------------------------------------
 
@@ -812,7 +712,7 @@ export async function recordVersion(options: RecordVersionOptions): Promise<Reco
 
   try {
     await ensureBlobRefs(docId, model, embeddedHashes(payload));
-    await putVersionsRecord({ id: payloadKey(docId, versionId), store: "payload", docId, versionId, payload });
+    await putVersionsRecord({ id: versionPayloadKey(docId, versionId), store: "payload", docId, versionId, payload });
     index = { ...index, versions: [...index.versions, entry], paused: false };
     await putVersionsRecord(index);
   } catch {
@@ -826,38 +726,9 @@ export async function recordVersion(options: RecordVersionOptions): Promise<Reco
 }
 
 // --- pruning and chain integrity (AC-32..AC-37) -------------------------
-
-function isRetained(entries: VersionIndexEntry[], entry: VersionIndexEntry): boolean {
-  if (entry.name) {
-    return true;
-  }
-  const newest = entries.slice(-RETAINED_RECENT_COUNT);
-  return newest.includes(entry);
-}
-
-function oldestPrunable(entries: VersionIndexEntry[]): VersionIndexEntry | null {
-  for (const entry of entries) {
-    if (!isRetained(entries, entry)) {
-      return entry;
-    }
-  }
-  return null;
-}
-
-/** The oldest RETAINED version whose reconstruction chain passes through
- * `fromId`, found by walking forward one link at a time — cheap because a
- * chain never fans out (each id is at most one other version's parent). */
-function oldestRetainedDescendant(entries: VersionIndexEntry[], fromId: string): VersionIndexEntry | null {
-  const childOf = new Map(entries.map((e) => [e.parentId, e]));
-  let cur = childOf.get(fromId);
-  while (cur) {
-    if (isRetained(entries, cur)) {
-      return cur;
-    }
-    cur = childOf.get(cur.id);
-  }
-  return null;
-}
+//
+// Which version to prune (oldestPrunable) and which retained version must be
+// re-encoded first (oldestRetainedDescendant) are core's selection rules.
 
 /** Re-encodes `entry` in place as a standalone baseline, so nothing after it
  * in the chain depends on anything older (pruning step 2). Reuses the
@@ -872,7 +743,7 @@ async function reencodeAsBaseline(docId: string, entryId: string, index: Version
   const oldHashes = embeddedHashes(oldPayload);
   const newHashes = embeddedHashes(newPayload);
   await ensureBlobRefs(docId, model, newHashes);
-  await putVersionsRecord({ id: payloadKey(docId, entryId), store: "payload", docId, versionId: entryId, payload: newPayload });
+  await putVersionsRecord({ id: versionPayloadKey(docId, entryId), store: "payload", docId, versionId: entryId, payload: newPayload });
   const currentHashes = await currentModelHashes(model);
   await releaseBlobRefs(docId, oldHashes, currentHashes);
   const size = measureBytes(newPayload);
@@ -884,7 +755,7 @@ async function reencodeAsBaseline(docId: string, entryId: string, index: Version
 
 async function deletePrunedVersion(docId: string, entryId: string, index: VersionsIndexRecord, currentModel: DocumentModel): Promise<VersionsIndexRecord> {
   const payload = await loadPayload(docId, entryId);
-  await deleteVersionsRecord(payloadKey(docId, entryId));
+  await deleteVersionsRecord(versionPayloadKey(docId, entryId));
   const versions = index.versions.filter((e) => e.id !== entryId);
   const next: VersionsIndexRecord = { ...index, versions };
   await putVersionsRecord(next);
@@ -914,7 +785,7 @@ async function computeUsedBytes(docId: string, index: VersionsIndexRecord, curre
     if (currentHashes.has(hash)) {
       continue; // AC-30: not counted — also part of the live document.
     }
-    const blob = await getVersionsRecord(blobKey(docId, hash));
+    const blob = await getVersionsRecord(versionBlobKey(docId, hash));
     if (blob && blob.store === "blob" && blob.refCount > 0) {
       total += blob.size;
     }

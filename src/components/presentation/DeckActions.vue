@@ -36,10 +36,12 @@ import UiButton from "../ui/UiButton.vue";
 import UiIconButton from "../ui/UiIconButton.vue";
 import PresentationDownloadButton from "./PresentationDownloadButton.vue";
 
-defineProps({
+const props = defineProps({
   /** SPEC-010's readout, for the deck. The word processor has shown this all
    * along and the slides side showed nothing, which left the product's own
-   * "stored in this browser" promise uncheckable on half of it. */
+   * "stored in this browser" promise uncheckable on half of it. Since
+   * SPEC-103 it is the deck's autosave state ("saved" | "saving" | "error" |
+   * "recovered"), and "error" adds the download link beside it. */
   saveState: { type: String, default: "saved" },
   saveStateText: { type: String, default: "" },
   canPresent: { type: Boolean, default: false },
@@ -191,9 +193,19 @@ function present(mode = "show") {
     <SaveStateBadge
       v-if="saveStateText"
       class="deck-save-state"
+      testid="deck-save-state"
       :save-state="saveState"
       :text="saveStateText"
     />
+    <!-- SPEC-103: the escape hatch when storage refuses the deck — the
+         word processor's save-state-download, for slides. -->
+    <a
+      v-if="props.saveState === 'error'"
+      class="deck-save-state-download"
+      data-testid="deck-save-state-download"
+      href="#"
+      @click.prevent="emit('download')"
+    >Download a copy</a>
     <UiIconButton
       class="close-button"
       icon="close"
@@ -268,6 +280,12 @@ function present(mode = "show") {
 /* Quieter than the buttons around it: a state to glance at, not an action. */
 .deck-save-state {
   color: var(--text-secondary);
+}
+
+.deck-save-state-download {
+  font-size: var(--text-md);
+  color: var(--text-on-brand);
+  white-space: nowrap;
 }
 
 /* The icon button's default greys are tuned for light surfaces; on the brand

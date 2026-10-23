@@ -157,6 +157,9 @@ export interface Preferences {
    * every slide, SPEC-099) in place of the filmstrip + stage. Per-device,
    * default off. */
   presentationSorterOpen: boolean;
+  /** Whether the presentation editor's version history panel is open
+   * (SPEC-103). Per-device, default closed. */
+  presentationHistoryOpen: boolean;
   /** The presenter view's speaker-notes text scale (SPEC-100), one of
    * PRESENTER_NOTES_SCALES. Per-device, default 1.25. */
   presentationPresenterNotesScale: number;
@@ -253,6 +256,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationThemeOpen: false, // SPEC-094 Design panel
   presentationTextOpen: false, // SPEC-097 Text panel
   presentationSorterOpen: false, // SPEC-099 slide sorter
+  presentationHistoryOpen: false, // SPEC-103 version history panel
   presentationPresenterNotesScale: 1.25, // SPEC-100 presenter view notes
   presentationTableOpen: false,
   snapToGuides: true,
@@ -351,6 +355,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationThemeOpen: isBoolean,
   presentationTextOpen: isBoolean,
   presentationSorterOpen: isBoolean,
+  presentationHistoryOpen: isBoolean,
   // A number, so oneOf (value-typed) — never inSet, which is string-only.
   presentationPresenterNotesScale: oneOf<"presentationPresenterNotesScale">(PRESENTER_NOTES_SCALES),
   presentationTableOpen: isBoolean,

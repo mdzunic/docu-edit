@@ -20,6 +20,7 @@ import {
   insertShapeFrame,
   groupFrames,
   insertMediaFrame,
+  setMediaPoster,
   insertTableFrame,
   insertTextBoxFrame,
   markFrameEdited,
@@ -771,5 +772,31 @@ describe("inserting an image on an opened deck", () => {
       expect(after.has(name), `missing ${name}`).toBe(true);
       expect(equalBytes(after.get(name)!, data), `changed ${name}`).toBe(true);
     }
+  });
+});
+
+describe("media inserts hand the store a fresh media array (SPEC-103)", () => {
+  // The store persists `model.media` only when its reference changes, so an
+  // in-place push would keep the reference identical exactly when the bytes
+  // changed — and a draft would silently skip the inserted image.
+  it("insertImageFrame assigns a new array rather than pushing in place", () => {
+    const model = createBlankPresentation();
+    const before = model.media ?? [];
+    model.media = before;
+    insertImageFrame(model, 0, pngMedia(), { xCm: 1, yCm: 1, widthCm: 2, heightCm: 3 });
+    expect(model.media).not.toBe(before);
+    expect(before).toHaveLength(0);
+    expect(model.media).toHaveLength(1);
+  });
+
+  it("insertMediaFrame and setMediaPoster do the same", () => {
+    const model = createBlankPresentation();
+    const id = insertMediaFrame(model, 0, mp4(), "video")!;
+    const afterClip = model.media!;
+    expect(afterClip).toHaveLength(1);
+    setMediaPoster(model, 0, id, pngMedia());
+    expect(model.media).not.toBe(afterClip);
+    expect(afterClip).toHaveLength(1);
+    expect(model.media).toHaveLength(2);
   });
 });

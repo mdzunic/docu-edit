@@ -142,6 +142,17 @@ describe("preferences store (SPEC-066)", () => {
       expect(loadPreferences().presentationSorterOpen).toBe(false);
     });
 
+    it("defaults the SPEC-103 version history panel closed, round-trips it and rejects a non-boolean", () => {
+      expect(PREFERENCE_DEFAULTS.presentationHistoryOpen).toBe(false);
+      expect(loadPreferences().presentationHistoryOpen).toBe(false);
+      savePreference("presentationHistoryOpen", true);
+      expect(loadPreferences().presentationHistoryOpen).toBe(true);
+      expect(stored().presentationHistoryOpen).toBe(true);
+      // @ts-expect-error deliberately invalid for the runtime guard
+      savePreference("presentationHistoryOpen", "open");
+      expect(loadPreferences().presentationHistoryOpen).toBe(false);
+    });
+
     it("defaults the SPEC-100 presenter notes scale to 1.25, round-trips each step and rejects anything else", () => {
       expect(PREFERENCE_DEFAULTS.presentationPresenterNotesScale).toBe(1.25);
       expect(PRESENTER_NOTES_SCALES).toEqual([1, 1.25, 1.5, 2, 2.5]);

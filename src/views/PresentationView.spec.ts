@@ -339,3 +339,87 @@ describe("PresentationView print & export (SPEC-104)", () => {
     wrapper.unmount();
   });
 });
+
+// SPEC-103 — the deck's autosave and history, wired: the header readout, the
+// History toggle beside Notes, and recovery over a newer draft.
+
+/** A draft newer than the committed deck, served through the idb seam. */
+function serveDraft(id: string, model: PresentationModel, slideIndex: number) {
+  vi.doMock("../lib/idb", () => ({
+    loadAllRecords: vi.fn().mockResolvedValue([]),
+    putRecord: vi.fn().mockResolvedValue(undefined),
+    deleteRecord: vi.fn().mockResolvedValue(undefined),
+    getRecord: vi.fn(async (key: string) =>
+      key === `draft:${id}`
+        ? { id: key, docId: id, savedAt: Date.now() + 60_000, model, caret: null, scroll: 0, slideIndex }
+        : undefined,
+    ),
+    getVersionsRecord: vi.fn().mockResolvedValue(undefined),
+    putVersionsRecord: vi.fn().mockResolvedValue(undefined),
+    deleteVersionsRecord: vi.fn().mockResolvedValue(undefined),
+    loadAllTemplateRecords: vi.fn().mockResolvedValue([]),
+    putTemplateRecord: vi.fn().mockResolvedValue(undefined),
+    deleteTemplateRecord: vi.fn().mockResolvedValue(undefined),
+  }));
+}
+
+async function settled(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+describe("PresentationView saving (SPEC-103)", () => {
+  it("shows the deck's save state in the header (deck-save-state)", async () => {
+    const { wrapper } = await mountWith(await freshDeck());
+    const badge = wrapper.get('[data-testid="deck-save-state"]');
+    expect(badge.text()).toBe("All changes saved");
+    expect(badge.attributes("data-save-state")).toBe("saved");
+    await wrapper.get('[data-testid="presentation-add-slide"]').trigger("click");
+    expect(wrapper.get('[data-testid="deck-save-state"]').text()).toBe("Saving…");
+  });
+
+  it("opens the version history panel from the History toggle beside Notes", async () => {
+    const { wrapper } = await mountWith(await freshDeck());
+    const toggles = wrapper.get('[data-testid="slides-ribbon-panels"]').findAll("button").map((b) => b.attributes("data-testid"));
+    expect(toggles.indexOf("slides-history-toggle")).toBe(toggles.indexOf("slides-notes-toggle") + 1);
+    expect(wrapper.find('[data-testid="slides-history-panel"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="slides-history-toggle"]').trigger("click");
+    expect(wrapper.get('[data-testid="slides-history-toggle"]').attributes("aria-pressed")).toBe("true");
+    expect(wrapper.get('[data-testid="slides-history-panel"]').get('[data-testid="history-empty"]').text()).toBe("No versions yet");
+    await wrapper.get('[data-testid="slides-history-toggle"]').trigger("click");
+  });
+
+  it("reopens over a newer draft with the recovery bar over the recovered slides; Discard restores the committed deck", async () => {
+    const committed = await freshDeck();
+    const drafted = structuredClone(committed);
+    drafted.slides = drafted.slides.slice(0, 2);
+    serveDraft(committed.id, drafted, 1);
+    const { wrapper } = await mountWith(committed);
+    await settled();
+    const bar = wrapper.get('[data-testid="recovery-bar"]');
+    expect(bar.text()).toContain("Recovered unsaved changes from");
+    expect(wrapper.findAll('[data-testid="filmstrip-slide"]')).toHaveLength(2);
+    expect(wrapper.get('[data-testid="deck-save-state"]').text()).toBe("Not saved yet");
+
+    await wrapper.get('[data-testid="recovery-discard"]').trigger("click");
+    await settled();
+    expect(wrapper.find('[data-testid="recovery-bar"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="filmstrip-slide"]')).toHaveLength(4);
+  });
+
+  it("Keep clears the bar and keeps the recovered slides", async () => {
+    const committed = await freshDeck();
+    const drafted = structuredClone(committed);
+    drafted.slides = drafted.slides.slice(0, 3);
+    serveDraft(committed.id, drafted, 0);
+    const { wrapper, store } = await mountWith(committed);
+    await settled();
+    await wrapper.get('[data-testid="recovery-keep"]').trigger("click");
+    await settled();
+    expect(wrapper.find('[data-testid="recovery-bar"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="filmstrip-slide"]')).toHaveLength(3);
+    expect(store.getPresentation(committed.id)?.slides).toHaveLength(3);
+  });
+});

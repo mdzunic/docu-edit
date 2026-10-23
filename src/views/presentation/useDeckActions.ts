@@ -12,6 +12,7 @@ import { downloadPresentation } from "../../lib/presentation/download";
 import { exportPresentationHtml, htmlFileName, mediaExportSummary } from "../../lib/presentation/htmlExport";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { presentationFormatLabel } from "../../lib/format";
+import { STORAGE_FULL_REASON } from "../../lib/core/saveState";
 import type { PresentationModel, PresentationFormat } from "../../lib/presentation/model";
 
 const HTML_MIME_TYPE = "text/html;charset=utf-8";
@@ -28,6 +29,12 @@ export interface UseDeckActionsDeps {
   router: Router;
   route: RouteLocationNormalizedLoaded;
   reportError: (message: string) => void;
+  /** A download is SPEC-010's explicit save (SPEC-103): useDeckSaving's
+   * commit point — commit the deck, then SPEC-040's commit-point snapshot. */
+  onCommitPoint?: () => void;
+  /** useDeckSaving.flushForClose — Close commits before it leaves (SPEC-060's
+   * close, for decks); false keeps the deck open. */
+  flushForClose?: () => Promise<boolean>;
 }
 
 export function useDeckActions(deps: UseDeckActionsDeps) {
@@ -36,7 +43,7 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
 
   function download(): void {
     if (deps.model.value) {
-      void downloadPresentation(deps.model.value);
+      void downloadPresentation(deps.model.value).then(() => deps.onCommitPoint?.());
     }
   }
 
@@ -44,6 +51,7 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
     const model = deps.model.value;
     if (!model) return;
     const { droppedObjects } = await downloadPresentation(model, otherFormat.value);
+    deps.onCommitPoint?.();
     if (droppedObjects > 0) {
       deps.reportError(`${droppedObjects} object${droppedObjects === 1 ? "" : "s"} couldn't be converted`);
     }
@@ -90,8 +98,23 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
 
   function close(): void {
     // Mirrors the editor's close (useFileActions): the library scrolls to and
-    // highlights the row that was just closed (SPEC-060).
-    deps.router.push({ path: "/", state: { closedDocId: deps.presentationId.value } });
+    // highlights the row that was just closed (SPEC-060) — once the deck's
+    // last edits are committed; a failed commit keeps it open and says so.
+    const leave = () => void deps.router.push({ path: "/", state: { closedDocId: deps.presentationId.value } });
+    if (!deps.flushForClose) {
+      leave();
+      return;
+    }
+    void deps.flushForClose().then((flushed) => {
+      if (flushed) {
+        leave();
+      } else {
+        deps.reportError(
+          `Couldn't close "${deps.model.value?.title ?? "this presentation"}" — ${STORAGE_FULL_REASON}. ` +
+            "Your presentation is still open; retry, or download a copy.",
+        );
+      }
+    });
   }
 
   // --- playback entry (SPEC-084) --------------------------------------------

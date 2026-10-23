@@ -5,6 +5,8 @@
 // (SPEC-091) and charts (SPEC-092) all take the same record/commit trio plus
 // the stage selection, and their two cross-hookups (the table panel's editing
 // cell anchor, the chart double-click) belong with them, not in the view.
+// Speaker notes (SPEC-083), the first below-stage panel, joined them when
+// SPEC-103's saving wiring needed the view's lines.
 import { watch, type ComputedRef, type Ref } from "vue";
 import type { PresentationModel, Slide } from "../../lib/presentation/model";
 import { useTransitions } from "./useTransitions";
@@ -12,6 +14,7 @@ import { useAnimations } from "./useAnimations";
 import { useTables } from "./useTables";
 import { useSlideCharts } from "./useSlideCharts";
 import { useSlideMedia } from "./useSlideMedia";
+import { useNotes } from "./useNotes";
 import type { usePresentationEditing } from "./usePresentationEditing";
 
 export interface EditingPanelsDeps {
@@ -26,10 +29,12 @@ export interface EditingPanelsDeps {
   stageEdit: ReturnType<typeof usePresentationEditing>;
 }
 
-/** Wires the transition/animation/table/chart panel controllers and their
- * stage hookups; the view mounts the returned controllers unchanged. */
+/** Wires the notes/transition/animation/table/chart panel controllers and
+ * their stage hookups; the view mounts the returned controllers unchanged. */
 export function useEditingPanels(deps: EditingPanelsDeps) {
   const { model, currentSlide, currentIndex, record, commit, bumpMedia, reportError, stageEdit } = deps;
+
+  const notes = useNotes({ model, currentSlide, currentIndex, record, commit });
 
   const transitions = useTransitions({ model, currentSlide, currentIndex, record, commit });
 
@@ -78,5 +83,5 @@ export function useEditingPanels(deps: EditingPanelsDeps) {
   });
   stageEdit.setChartEditHandler(charts.openDataSheet); // double-click a chart → data sheet
 
-  return { transitions, animations, tables, charts, media };
+  return { notes, transitions, animations, tables, charts, media };
 }

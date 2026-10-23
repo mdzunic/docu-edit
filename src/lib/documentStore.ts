@@ -16,6 +16,7 @@ import type { OpenedFile } from "./openDocument";
 import { loadPreferences, MARGIN_PRESETS, setPreferencesStorageFailureHandler } from "./preferences";
 import { PAPER_SIZES } from "./core/pageSetup";
 import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
+import type { OpaquePart } from "./core/packageParts";
 import { normaliseShapeFill } from "./core/shapes";
 import { deleteRecord, getRecord, loadAllRecords, putRecord, writeBatch, type WriteBatchOp } from "./idb";
 import {
@@ -86,6 +87,9 @@ export interface StoredDocumentRecord {
   caret?: CaretPosition | null;
   /** Canvas scrollTop in pixels at the last commit. */
   scroll?: number;
+  /** A deck's selected slide at the last commit (SPEC-103) — what "Discard"
+   * re-selects. Absent on text documents and on decks committed before it. */
+  slideIndex?: number;
   /** Starred by the user (SPEC-067). Absent means not starred. */
   starred?: boolean;
   /** When the document was moved to the trash (SPEC-067), as an epoch
@@ -103,16 +107,29 @@ export interface StoredDocumentRecord {
 /** The autosave journal (SPEC-010): written on the 2 s / 30 s cadence,
  * stored beside the committed record under a prefixed key. A draft newer
  * than its committed record on open means the previous session did not end
- * with a clean close — the crash signal the recovery bar keys on. */
+ * with a clean close — the crash signal the recovery bar keys on. Both
+ * editing products keep one (SPEC-103 lifted the deck's guard). */
 export interface DraftRecord {
   /** The IndexedDB key: DRAFT_KEY_PREFIX + docId. */
   id: string;
   docId: string;
   /** Epoch milliseconds when the draft was written. */
   savedAt: number;
-  model: DocumentModel;
+  model: StoredModel;
   caret: CaretPosition | null;
   scroll: number;
+  /** The deck's selected slide when the draft was written (SPEC-103). */
+  slideIndex?: number;
+}
+
+/** The editor state a draft or a commit records beside the model (SPEC-010,
+ * widened by SPEC-103 for decks). A deck has no caret and its scroll is a
+ * fit-to-workspace scale, not a position — so a deck's state is
+ * `{ caret: null, scroll: 0, slideIndex }`. */
+export interface DraftState {
+  caret: CaretPosition | null;
+  scroll: number;
+  slideIndex?: number;
 }
 
 /** A document's images, persisted as their own record (SPEC-047 AC-15): a
@@ -133,6 +150,20 @@ export interface MediaRecord {
   media: MediaPart[];
 }
 
+/** A deck's retained source package (`PresentationModel.opaque`), persisted
+ * as its own record exactly as `media` is (SPEC-103): every source part,
+ * verbatim and base64 — a 7 MB package is ≈ 9.4 MB here — which left in the
+ * shell would be structured-cloned on every 2 s autosave tick. Nothing
+ * mutates `opaque` at read or edit, so its reference never changes for a
+ * deck's whole open: written once per session (see persistOpaque), skipped
+ * thereafter. Text documents keep their `opaque` inline. */
+export interface OpaqueRecord {
+  /** The IndexedDB key: OPAQUE_KEY_PREFIX + docId. */
+  id: string;
+  docId: string;
+  opaque: OpaquePart[];
+}
+
 /** Everything the documents object store can hold. A workbook (SPEC-137) is
  * a slim shell, one SheetRowsChunkRecord per 512-row band of each sheet and
  * one WorkbookSourceRecord; a SPEC-116-era workbook still awaiting migration
@@ -141,6 +172,7 @@ export type PersistedRecord =
   | StoredDocumentRecord
   | DraftRecord
   | MediaRecord
+  | OpaqueRecord
   | SheetRowsRecord
   | SheetRowsChunkRecord
   | WorkbookSourceRecord;
@@ -154,6 +186,12 @@ export const MEDIA_KEY_PREFIX = "media:";
  * shared the committed media record, a draft that deleted an image would
  * already have destroyed the committed copy of it. */
 export const DRAFT_MEDIA_KEY_PREFIX = "draftmedia:";
+/** A deck's committed package record (SPEC-103, see OpaqueRecord). */
+export const OPAQUE_KEY_PREFIX = "opaque:";
+/** A DRAFT's package copy, under its own key for DRAFT_MEDIA_KEY_PREFIX's
+ * reason: an autosave tick must never overwrite the package the committed
+ * state rejoins from. */
+export const DRAFT_OPAQUE_KEY_PREFIX = "draftopaque:";
 
 function draftKey(docId: string): string {
   return DRAFT_KEY_PREFIX + docId;
@@ -167,6 +205,14 @@ function draftMediaKey(docId: string): string {
   return DRAFT_MEDIA_KEY_PREFIX + docId;
 }
 
+function opaqueKey(docId: string): string {
+  return OPAQUE_KEY_PREFIX + docId;
+}
+
+function draftOpaqueKey(docId: string): string {
+  return DRAFT_OPAQUE_KEY_PREFIX + docId;
+}
+
 export function isDraftRecord(record: PersistedRecord): record is DraftRecord {
   return record.id.startsWith(DRAFT_KEY_PREFIX);
 }
@@ -177,6 +223,14 @@ export function isMediaRecord(record: PersistedRecord): record is MediaRecord {
 
 export function isDraftMediaRecord(record: PersistedRecord): record is MediaRecord {
   return record.id.startsWith(DRAFT_MEDIA_KEY_PREFIX);
+}
+
+export function isOpaqueRecord(record: PersistedRecord): record is OpaqueRecord {
+  return record.id.startsWith(OPAQUE_KEY_PREFIX);
+}
+
+export function isDraftOpaqueRecord(record: PersistedRecord): record is OpaqueRecord {
+  return record.id.startsWith(DRAFT_OPAQUE_KEY_PREFIX);
 }
 
 /** A workbook rows record: a chunk (SPEC-137) or a SPEC-116 per-sheet one. */
@@ -343,11 +397,91 @@ function persistDraftMedia(docId: string, media: MediaPart[] | undefined): Promi
   });
 }
 
+// A deck's package latch (SPEC-103) — persistMedia's rule for `opaque`: the
+// array reference last written for each doc, seeded on load only when an
+// OpaqueRecord exists (initLibrary's legacy-inline rule).
+const lastPersistedOpaque = new Map<string, OpaquePart[] | undefined>();
+
+/** Writes a deck's package as its own record — only when `opaque`'s array
+ * reference differs from what was last written for it; null when skipped
+ * (decided synchronously, like persistMedia). The latch is set optimistically
+ * and cleared again if the write fails, so the next persist retries it. */
+function persistOpaque(docId: string, opaque: OpaquePart[] | undefined): Promise<void> | null {
+  if (lastPersistedOpaque.get(docId) === opaque) {
+    return null;
+  }
+  lastPersistedOpaque.set(docId, opaque);
+  const record: OpaqueRecord = { id: opaqueKey(docId), docId, opaque: opaque ?? [] };
+  return putRecordYielding(record).catch((error: unknown) => {
+    // persistMedia's failed-write rule: never leave a write that did not
+    // land latched as "already persisted".
+    if (lastPersistedOpaque.get(docId) === opaque) {
+      lastPersistedOpaque.delete(docId);
+    }
+    throw error;
+  });
+}
+
+// The draft's own copy of the package latch — see persistDraftOpaque.
+const lastDraftPersistedOpaque = new Map<string, OpaquePart[] | undefined>();
+
+/** The draft-flavoured persistOpaque, persistDraftMedia's rule exactly: while
+ * the draft's package IS the committed one (every tick of an ordinary session
+ * — nothing edits `opaque`), nothing draft-specific is stored and any stale
+ * draft copy is dropped; otherwise it writes once under
+ * DRAFT_OPAQUE_KEY_PREFIX and skips while the reference holds. */
+function persistDraftOpaque(docId: string, opaque: OpaquePart[] | undefined): Promise<void> | null {
+  if (lastPersistedOpaque.get(docId) === opaque) {
+    if (lastDraftPersistedOpaque.has(docId)) {
+      lastDraftPersistedOpaque.delete(docId);
+      deleteRecord(draftOpaqueKey(docId)).catch(() => {});
+    }
+    return null;
+  }
+  if (lastDraftPersistedOpaque.get(docId) === opaque) {
+    return null;
+  }
+  lastDraftPersistedOpaque.set(docId, opaque);
+  const record: OpaqueRecord = { id: draftOpaqueKey(docId), docId, opaque: opaque ?? [] };
+  return putRecordYielding(record).catch((error: unknown) => {
+    if (lastDraftPersistedOpaque.get(docId) === opaque) {
+      lastDraftPersistedOpaque.delete(docId);
+    }
+    throw error;
+  });
+}
+
+/** The package write a model's persist owes: a deck's `opaque` through its
+ * latch; nothing for every other kind (a text document keeps its `opaque`
+ * inline). */
+function persistModelOpaque(docId: string, model: StoredModel): Promise<void> | null {
+  return isPresentationModel(model) ? persistOpaque(docId, model.opaque) : null;
+}
+
 /** A model with `media` stripped to `[]` for the shell record `persist`/
  * `saveDraft`/`commitDocument` hand to `putRecord` — the array itself
  * always goes through `persistMedia` instead. */
 function stripMedia<M extends StoredModel>(model: M): M {
   return { ...model, media: [] };
+}
+
+/** A deck's model with `opaque` stripped to `[]` for the shell, as
+ * stripMedia does for `media` (the package goes through persistOpaque). A
+ * deck with no package (a from-scratch deck) and every other kind pass
+ * through unchanged. */
+function stripOpaque<M extends StoredModel>(model: M): M {
+  return isPresentationModel(model) && model.opaque !== undefined ? { ...model, opaque: [] } : model;
+}
+
+/** Rejoins a deck's package (read back via `opaqueKey`/`draftOpaqueKey`) into
+ * a shell that had it stripped — the inverse of stripOpaque. Undefined (no
+ * OpaqueRecord) leaves the shell's own `opaque`: a legacy-inline record's
+ * package, or a from-scratch deck's absence of one. */
+function rejoinOpaque(model: StoredModel, opaque: OpaquePart[] | undefined): StoredModel {
+  if (opaque !== undefined && isPresentationModel(model)) {
+    model.opaque = opaque;
+  }
+  return model;
 }
 
 /** Rejoins a doc's media (read back via `mediaKey`) into a model whose
@@ -364,10 +498,23 @@ function rejoinMedia(model: StoredModel, media: MediaPart[] | undefined): Stored
   return model;
 }
 
-/** The shell record's model: media stripped (stripMedia). A workbook's
- * shell goes through writeWorkbook instead (SPEC-137). */
+/** The shell record's model: media stripped (stripMedia), and a deck's
+ * package too (stripOpaque). A workbook's shell goes through writeWorkbook
+ * instead (SPEC-137). */
 function shellModel<M extends StoredModel>(model: M): M {
-  return stripMedia(model);
+  return stripOpaque(stripMedia(model));
+}
+
+/** A committed shell write that waits for this persist's own package write
+ * (SPEC-103): once it lands the shell goes out stripped; if it failed, the
+ * shell keeps the package inline instead — the legacy layout initLibrary
+ * migrates on a later persist — so storage never holds a stripped deck whose
+ * package is nowhere, which would reload and save as a from-scratch rebuild
+ * and destroy SPEC-008's preservation. With no package write owed it is
+ * exactly the plain shell write. */
+async function putShell(record: StoredDocumentRecord, opaqueWrite: Promise<void> | null): Promise<void> {
+  const split = opaqueWrite === null || (await opaqueWrite.then(() => true, () => false));
+  await putRecordYielding({ ...record, model: split ? shellModel(record.model) : stripMedia(record.model) });
 }
 
 /** A workbook's card preview in the user's number locale (SPEC-118: the
@@ -790,10 +937,10 @@ function persist(record: StoredDocumentRecord): Promise<void> {
     // SPEC-137: the shell, changed chunks and sources go in one batch.
     return Promise.all([media, persistWorkbook(record.id)]).then(() => undefined);
   }
-  const shell = putRecordYielding({ ...record, model: shellModel(record.model) }).catch(() =>
-    markStorageUnavailable(),
-  );
-  return Promise.all([media, shell]).then(() => undefined);
+  const opaqueWrite = persistModelOpaque(record.id, record.model);
+  const opaque = opaqueWrite?.catch(() => markStorageUnavailable());
+  const shell = putShell(record, opaqueWrite).catch(() => markStorageUnavailable());
+  return Promise.all([media, opaque, shell]).then(() => undefined);
 }
 
 // --- hydration -------------------------------------------------------------
@@ -808,11 +955,16 @@ export function initLibrary(): Promise<void> {
   initPromise ??= loadAllRecords()
     .then((stored) => {
       const mediaByDocId = new Map<string, MediaPart[]>();
+      const opaqueByDocId = new Map<string, OpaquePart[]>();
       for (const record of stored) {
         // Strictly committed media only — a draft's media copy
         // (isDraftMediaRecord) must never rejoin the committed shell.
         if (!isDraftMediaRecord(record) && isMediaRecord(record)) {
           mediaByDocId.set(record.docId, record.media);
+        }
+        // The same for a deck's package (SPEC-103).
+        if (!isDraftOpaqueRecord(record) && isOpaqueRecord(record)) {
+          opaqueByDocId.set(record.docId, record.opaque);
         }
       }
       const legacyWorkbooks: string[] = [];
@@ -826,6 +978,8 @@ export function initLibrary(): Promise<void> {
           isDraftRecord(record) ||
           isMediaRecord(record) ||
           isDraftMediaRecord(record) ||
+          isOpaqueRecord(record) ||
+          isDraftOpaqueRecord(record) ||
           isSheetRowsRecord(record) ||
           isWorkbookSourceRecord(record)
         ) {
@@ -834,6 +988,8 @@ export function initLibrary(): Promise<void> {
         if (!records.has(record.id)) {
           const media = mediaByDocId.get(record.id);
           rejoinMedia(record.model, media);
+          const opaque = opaqueByDocId.get(record.id);
+          rejoinOpaque(record.model, opaque);
           if (isSpreadsheetModel(record.model)) {
             // Its shell only — not resident. A shell without a manifest is
             // SPEC-116's layout, migrated by the idle pass or its first load.
@@ -851,6 +1007,15 @@ export function initLibrary(): Promise<void> {
           // Left unseeded, that first persist migrates the document instead.
           if (media !== undefined) {
             lastPersistedMedia.set(record.id, record.model.media);
+          }
+          // The media rule above, for a deck's package (SPEC-103): a deck
+          // stored before the split carries `opaque` inline and has no
+          // OpaqueRecord. Seeding from it would make the next persist skip
+          // the package write while stripping the shell — a reload would then
+          // find no package and save as a from-scratch rebuild. Unseeded, the
+          // next persist migrates it.
+          if (opaque !== undefined && isPresentationModel(record.model)) {
+            lastPersistedOpaque.set(record.id, record.model.opaque);
           }
           records.set(record.id, record);
         }
@@ -1223,6 +1388,8 @@ export function deleteDocument(id: string): void {
   }
   lastPersistedMedia.delete(id);
   lastDraftPersistedMedia.delete(id);
+  lastPersistedOpaque.delete(id);
+  lastDraftPersistedOpaque.delete(id);
   if (model && isSpreadsheetModel(model)) {
     // SPEC-137: the shell, every rows record (chunks and any SPEC-116
     // per-sheet record — one range) and the source record, in one batch.
@@ -1231,11 +1398,13 @@ export function deleteDocument(id: string): void {
   } else {
     deleteRecord(id).catch(() => markStorageUnavailable());
   }
-  // Draft/media cleanup is best-effort and not a SPEC-003 write-through
-  // failure.
+  // Draft/media/package cleanup is best-effort and not a SPEC-003
+  // write-through failure.
   deleteRecord(draftKey(id)).catch(() => {});
   deleteRecord(mediaKey(id)).catch(() => {});
   deleteRecord(draftMediaKey(id)).catch(() => {});
+  deleteRecord(opaqueKey(id)).catch(() => {});
+  deleteRecord(draftOpaqueKey(id)).catch(() => {});
 }
 
 async function deleteWorkbookRecords(id: string): Promise<void> {
@@ -1253,20 +1422,13 @@ async function deleteWorkbookRecords(id: string): Promise<void> {
 // ("Not saved — browser storage is full" in the app bar) and recovers the
 // moment a write succeeds again.
 
-/** Writes the autosave draft for a document from its current in-memory
- * model. Rejects on any storage failure. */
-export async function saveDraft(
-  id: string,
-  caret: CaretPosition | null,
-  scroll: number,
-): Promise<void> {
+/** Writes the autosave draft for a document — a text document or a deck
+ * (SPEC-103) — from its current in-memory model, with the editor state
+ * beside it. Rejects on any storage failure. */
+export async function saveDraft(id: string, state: DraftState): Promise<void> {
   const record = records.get(id);
   if (!record) {
     throw new Error(`No document with id ${id}`);
-  }
-  if (isPresentationModel(record.model)) {
-    // Drafts are a text-editor feature; nothing edits presentations yet.
-    throw new Error(`Document ${id} is a presentation`);
   }
   if (isMediaModel(record.model)) {
     // A media document has no draft state at all (SPEC-107): its bytes are
@@ -1278,16 +1440,20 @@ export async function saveDraft(
     // a text-editor draft over its id would destroy it.
     throw new Error(`Document ${id} is a spreadsheet`);
   }
+  // A deck's package and media are skipped while their references hold, so
+  // every tick after the first writes the shell alone (SPEC-103).
   const mediaWrite = persistDraftMedia(id, record.model.media);
+  const opaqueWrite = isPresentationModel(record.model) ? persistDraftOpaque(id, record.model.opaque) : null;
   const draft: DraftRecord = {
     id: draftKey(id),
     docId: id,
     savedAt: Date.now(),
-    model: stripMedia(record.model),
-    caret,
-    scroll,
+    model: shellModel(record.model),
+    caret: state.caret,
+    scroll: state.scroll,
+    ...(state.slideIndex !== undefined ? { slideIndex: state.slideIndex } : {}),
   };
-  await Promise.all([mediaWrite ?? Promise.resolve(), putRecordYielding(draft)]);
+  await Promise.all([mediaWrite ?? Promise.resolve(), opaqueWrite ?? Promise.resolve(), putRecordYielding(draft)]);
 }
 
 /** Reads a document's autosave draft; undefined when there is none or the
@@ -1308,10 +1474,30 @@ export async function loadDraft(id: string): Promise<DraftRecord | undefined> {
       const mediaRecord = await getRecord(mediaKey(stored.docId));
       rejoinMedia(stored.model, mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined);
     }
+    if (isPresentationModel(stored.model)) {
+      rejoinOpaque(stored.model, await draftPackage(stored.docId));
+    }
     return stored;
   } catch {
     return undefined;
   }
+}
+
+/** The package a deck draft rejoins (SPEC-103), by persistDraftOpaque's
+ * rule: its own copy when it diverged from the committed one, else the
+ * committed OpaqueRecord, else — a legacy-inline committed record, whose
+ * package was never split out — the committed model's own `opaque`. */
+async function draftPackage(docId: string): Promise<OpaquePart[] | undefined> {
+  const draftOpaque = await getRecord(draftOpaqueKey(docId));
+  if (draftOpaque && isDraftOpaqueRecord(draftOpaque)) {
+    return draftOpaque.opaque;
+  }
+  const committed = await getRecord(opaqueKey(docId));
+  if (committed && isOpaqueRecord(committed)) {
+    return committed.opaque;
+  }
+  const memory = records.get(docId)?.model;
+  return memory && isPresentationModel(memory) ? memory.opaque : undefined;
 }
 
 /** Removes a document's autosave draft. Best-effort: a draft that survives
@@ -1320,7 +1506,9 @@ export async function loadDraft(id: string): Promise<DraftRecord | undefined> {
 export async function deleteDraft(id: string): Promise<void> {
   try {
     lastDraftPersistedMedia.delete(id);
+    lastDraftPersistedOpaque.delete(id);
     deleteRecord(draftMediaKey(id)).catch(() => {});
+    deleteRecord(draftOpaqueKey(id)).catch(() => {});
     await deleteRecord(draftKey(id));
   } catch {
     // Ignored — see above.
@@ -1328,20 +1516,20 @@ export async function deleteDraft(id: string): Promise<void> {
 }
 
 /** Promotes the current in-memory state to the committed record — the last
- * clean state "Discard" restores — recording caret and scroll alongside the
- * model, and clears the draft. Rejects when the committed write fails. */
-export async function commitDocument(
-  id: string,
-  caret: CaretPosition | null,
-  scroll: number,
-): Promise<void> {
+ * clean state "Discard" restores — recording the editor state (caret and
+ * scroll; a deck's slide) alongside the model, and clears the draft. Rejects
+ * when the committed write fails. */
+export async function commitDocument(id: string, state: DraftState): Promise<void> {
   const record = records.get(id);
   if (!record) {
     return;
   }
   record.lastModified = Date.now();
-  record.caret = caret;
-  record.scroll = scroll;
+  record.caret = state.caret;
+  record.scroll = state.scroll;
+  if (state.slideIndex !== undefined) {
+    record.slideIndex = state.slideIndex;
+  }
   const mediaWrite = persistMedia(id, record.model.media);
   if (isSpreadsheetModel(record.model)) {
     const [written] = await Promise.all([persistWorkbook(id), mediaWrite ?? Promise.resolve()]);
@@ -1349,7 +1537,8 @@ export async function commitDocument(
       throw new Error(`Workbook ${id} could not be written`);
     }
   } else {
-    await Promise.all([mediaWrite ?? Promise.resolve(), putRecordYielding({ ...record, model: shellModel(record.model) })]);
+    const opaqueWrite = persistModelOpaque(id, record.model);
+    await Promise.all([mediaWrite ?? Promise.resolve(), opaqueWrite ?? Promise.resolve(), putShell(record, opaqueWrite)]);
   }
   await deleteDraft(id);
 }
@@ -1369,6 +1558,7 @@ export async function refreshDocumentFromStorage(
       stored &&
       !isDraftRecord(stored) &&
       !isMediaRecord(stored) &&
+      !isOpaqueRecord(stored) &&
       !isSheetRowsRecord(stored) &&
       !isWorkbookSourceRecord(stored) &&
       (!current || stored.lastModified > current.lastModified)
@@ -1376,6 +1566,10 @@ export async function refreshDocumentFromStorage(
       const mediaRecord = await getRecord(mediaKey(id));
       const media = mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined;
       rejoinMedia(stored.model, media);
+      // A deck's package (SPEC-103): the same found-or-legacy rule.
+      const opaqueRecord = isPresentationModel(stored.model) ? await getRecord(opaqueKey(id)) : undefined;
+      const opaque = opaqueRecord && isOpaqueRecord(opaqueRecord) ? opaqueRecord.opaque : undefined;
+      rejoinOpaque(stored.model, opaque);
       if (isSpreadsheetModel(stored.model)) {
         // SPEC-137: adopted as its shell, not resident — loadSpreadsheet
         // rejoins its rows and sources (and upgrades it) on demand.
@@ -1391,6 +1585,11 @@ export async function refreshDocumentFromStorage(
       } else {
         lastPersistedMedia.delete(id);
       }
+      if (opaque !== undefined && isPresentationModel(stored.model)) {
+        lastPersistedOpaque.set(id, stored.model.opaque);
+      } else {
+        lastPersistedOpaque.delete(id);
+      }
       records.set(id, stored);
     }
   } catch {
@@ -1399,13 +1598,25 @@ export async function refreshDocumentFromStorage(
   return records.get(id);
 }
 
-/** Swaps a document's in-memory model — applying recovered draft content, or
- * restoring the committed model on "Discard". Deliberately does NOT bump
- * lastModified or persist: neither direction of recovery is a commit. */
-export function replaceDocumentModel(
-  id: string,
-  model: DocumentModel,
-): DocumentModel {
+/** Swaps a text document's in-memory model — applying recovered draft
+ * content, or restoring the committed model on "Discard". Deliberately does
+ * NOT bump lastModified or persist: neither direction of recovery is a
+ * commit. */
+export function replaceDocumentModel(id: string, model: DocumentModel): DocumentModel {
+  return replaceModel(id, model);
+}
+
+/** The deck counterpart of replaceDocumentModel (SPEC-103): recovery, its
+ * "Discard", and a version restore swap the deck's model through here. */
+export function replacePresentationModel(id: string, model: PresentationModel): PresentationModel {
+  return replaceModel(id, model);
+}
+
+/** The one swap both products share. Never crosses kinds: replacing a media
+ * file's or a workbook's model with editor state would destroy the stored
+ * bytes, and a deck and a text document must never overwrite each other —
+ * the loud-throw rule getOrCreateDocument keeps. */
+function replaceModel<M extends DocumentModel | PresentationModel>(id: string, model: M): M {
   model.id = id;
   const record = records.get(id);
   if (record && isMediaModel(record.model)) {
@@ -1416,6 +1627,9 @@ export function replaceDocumentModel(
   if (record && isSpreadsheetModel(record.model)) {
     // SPEC-116: the same rule for a workbook.
     throw new Error(`Document ${id} is a spreadsheet`);
+  }
+  if (record && isPresentationModel(record.model) !== isPresentationModel(model)) {
+    throw new Error(`Document ${id} is ${isPresentationModel(record.model) ? "a presentation" : "a text document"}`);
   }
   if (!record) {
     const created: StoredDocumentRecord = {

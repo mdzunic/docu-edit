@@ -5,12 +5,11 @@
 // slide" action and the filmstrip's command/reorder dispatch — everything the
 // filmstrip, the sorter's card menu and the stage need to move around the
 // deck. It composes the composables that already owned those pieces
-// (useSlideCommands, useDeckFacts, useFilmstripCommands) rather than
-// replacing them.
+// (useSlideCommands — which owns the filmstrip dispatch since SPEC-103 — and
+// useDeckFacts) rather than replacing them.
 import type { Ref, ShallowRef } from "vue";
 import type { PresentationModel } from "../../lib/presentation/model";
 import { useDeckFacts } from "./useDeckFacts";
-import { useFilmstripCommands } from "./useFilmstripCommands";
 import { useSlideCommands } from "./useSlideCommands";
 
 export interface DeckNavigationDeps {
@@ -26,26 +25,27 @@ export interface DeckNavigationDeps {
 
 export function useDeckNavigation(deps: DeckNavigationDeps) {
   const { presentation, currentIndex } = deps;
-  const slideCommands = useSlideCommands({ model: presentation, currentIndex, record: deps.record, commit: deps.commit });
   const facts = useDeckFacts({ presentation, currentIndex });
+  const slideCommands = useSlideCommands({
+    model: presentation,
+    currentIndex,
+    record: deps.record,
+    commit: deps.commit,
+    selectSlide: facts.selectSlide,
+    openLayoutForNew: () => deps.openLayoutForNew(),
+    openLayoutForChange: () => deps.openLayoutForChange(),
+  });
 
   /** "Add slide": a new slide after the current one. */
   function addSlideAction(): void {
     slideCommands.add(currentIndex.value);
   }
 
-  const filmstrip = useFilmstripCommands({
-    commands: slideCommands,
-    selectSlide: facts.selectSlide,
-    openLayoutForNew: () => deps.openLayoutForNew(),
-    openLayoutForChange: () => deps.openLayoutForChange(),
-  });
-
   return {
     ...facts,
     slideCommands,
     addSlideAction,
-    onFilmstripCommand: filmstrip.onCommand,
-    onFilmstripReorder: filmstrip.onReorder,
+    onFilmstripCommand: slideCommands.onFilmstripCommand,
+    onFilmstripReorder: slideCommands.onFilmstripReorder,
   };
 }

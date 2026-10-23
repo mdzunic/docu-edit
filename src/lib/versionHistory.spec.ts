@@ -191,6 +191,14 @@ describe("recordVersion", () => {
   });
 });
 
+describe("HISTORY_BUDGET_BYTES (SPEC-103)", () => {
+  it("stays equal to the open path's MAX_FILE_SIZE_BYTES now that core restates it as a literal", async () => {
+    const { lib } = await loadVersionHistory();
+    const { MAX_FILE_SIZE_BYTES } = await import("./openDocument");
+    expect(lib.HISTORY_BUDGET_BYTES).toBe(MAX_FILE_SIZE_BYTES);
+  });
+});
+
 describe("decideBaseline", () => {
   it("triggers on no chain (rule 1)", async () => {
     const { lib } = await loadVersionHistory();

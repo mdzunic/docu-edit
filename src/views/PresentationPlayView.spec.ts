@@ -274,3 +274,40 @@ describe("PresentationPlayView hidden slides (SPEC-104)", () => {
     expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("3 / 3");
   });
 });
+
+// SPEC-103 AC-25 — playing a deck is not editing it: the play view never
+// writes a draft, a commit or a version, whatever it is driven through.
+describe("PresentationPlayView writes nothing (SPEC-103)", () => {
+  it("never writes a draft, a commit or a version", async () => {
+    const putRecord = vi.fn().mockResolvedValue(undefined);
+    const putVersionsRecord = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("../lib/idb", () => ({
+      loadAllRecords: vi.fn().mockResolvedValue([]),
+      putRecord,
+      getRecord: vi.fn().mockResolvedValue(undefined),
+      deleteRecord: vi.fn().mockResolvedValue(undefined),
+      getVersionsRecord: vi.fn().mockResolvedValue(undefined),
+      putVersionsRecord,
+      deleteVersionsRecord: vi.fn().mockResolvedValue(undefined),
+      loadAllTemplateRecords: vi.fn().mockResolvedValue([]),
+      putTemplateRecord: vi.fn().mockResolvedValue(undefined),
+      deleteTemplateRecord: vi.fn().mockResolvedValue(undefined),
+    }));
+    const deck = await freshDeck();
+    const { wrapper } = await mountAt(`/slides/${deck.id}/present/1`, deck);
+    key("ArrowRight");
+    key("ArrowRight");
+    key("ArrowLeft");
+    await flushPromises();
+    key("Escape");
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const written = putRecord.mock.calls.map(([record]) => record as { id: string });
+    expect(written.filter((record) => record.id.startsWith("draft"))).toEqual([]);
+    // The import's own idle write (storePresentation) is the only committed
+    // write; a commit would carry the editor state beside the model.
+    expect(written.filter((record) => "caret" in record || "slideIndex" in record)).toEqual([]);
+    expect(putVersionsRecord).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+});

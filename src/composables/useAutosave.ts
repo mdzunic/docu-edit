@@ -1,25 +1,32 @@
 // The autosave state machine (SPEC-010): owns the app bar's save state, the
 // dirty flag, the save cadence, recovery (Keep/Discard) and the tab-close
-// behaviour. DocumentView owns everything DOM-shaped — the caret, the scroll
-// container, the editable surface — and hands it in via callbacks.
-import { computed, onBeforeUnmount, ref } from "vue";
+// behaviour. The view owns everything DOM-shaped — the caret, the scroll
+// container, the editable surface — and hands it in via callbacks. It serves
+// both editing products (SPEC-103): DocumentView and the deck's useDeckSaving.
+import { computed, ref } from "vue";
 import {
   createAutosaveScheduler,
   type AutosaveScheduler,
 } from "../lib/core/autosaveScheduler";
 import { usePreferences } from "./usePreferences";
+import { useTabClose } from "./useTabClose";
 import {
   commitDocument,
   deleteDraft,
+  isMediaModel,
+  isPresentationModel,
+  isSpreadsheetModel,
   loadDraft,
   refreshDocumentFromStorage,
   replaceDocumentModel,
+  replacePresentationModel,
   saveDraft,
+  type DraftState,
+  type StoredModel,
 } from "../lib/documentStore";
 import { saveStateText as textForSaveState, STORAGE_FULL_REASON, SAVE_STATE_SAVING, SAVE_STATE_SAVED, SAVE_STATE_ERROR, type SaveState } from "../lib/core/saveState";
 import { recoveryNotice } from "../lib/format";
 import { now } from "../lib/clock";
-import type { DocumentModel } from "../lib/documentModel";
 import type { CaretPosition } from "../lib/textEditing";
 
 // The state vocabulary is product-neutral (the deck reports through it too),
@@ -28,9 +35,12 @@ import type { CaretPosition } from "../lib/textEditing";
 export { STORAGE_FULL_REASON, SAVE_STATE_SAVING, SAVE_STATE_SAVED, SAVE_STATE_ERROR };
 
 export interface RestoredState {
-  model: DocumentModel;
+  /** A text document's model, or a deck's (SPEC-103). */
+  model: StoredModel;
   caret: CaretPosition | null;
   scroll: number;
+  /** A deck's selected slide (SPEC-103); absent for text. */
+  slideIndex?: number;
   /** True when the model is recovered draft content (the bar is showing). */
   recovered: boolean;
 }
@@ -38,6 +48,8 @@ export interface RestoredState {
 export interface UseAutosaveOptions {
   getCaret: () => CaretPosition | null;
   getScroll: () => number;
+  /** A deck's selected slide, recorded with each draft and commit (SPEC-103). */
+  getSlideIndex?: () => number;
   /** Whether this tab currently owns the document (edit lock held and a
    * document open). While false the composable never writes. */
   isActive: () => boolean;
@@ -50,9 +62,22 @@ export interface UseAutosaveOptions {
 }
 
 interface CommittedStash {
-  model: DocumentModel;
+  model: StoredModel;
   caret: CaretPosition | null;
   scroll: number;
+  slideIndex?: number;
+}
+
+/** Swaps the stored model through its own product's path (SPEC-103): a deck
+ * through replacePresentationModel. Media and workbooks never hold a session. */
+function replaceStoredModel(id: string, model: StoredModel): StoredModel {
+  if (isPresentationModel(model)) {
+    return replacePresentationModel(id, model);
+  }
+  if (isMediaModel(model) || isSpreadsheetModel(model)) {
+    throw new Error(`Document ${id} has no editing session`);
+  }
+  return replaceDocumentModel(id, model);
 }
 
 export function useAutosave(options: UseAutosaveOptions) {
@@ -83,6 +108,12 @@ export function useAutosave(options: UseAutosaveOptions) {
   let editCount = 0;
   let scheduler: AutosaveScheduler | null = null;
 
+  /** The editor state every draft and commit records beside the model. */
+  const draftState = (): DraftState => {
+    const slide = options.getSlideIndex ? { slideIndex: options.getSlideIndex() } : {};
+    return { caret: options.getCaret(), scroll: options.getScroll(), ...slide };
+  };
+
   function makeScheduler(): AutosaveScheduler {
     return createAutosaveScheduler({
       flush: () => {
@@ -99,7 +130,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     }
     const editsAtStart = editCount;
     try {
-      await saveDraft(id, options.getCaret(), options.getScroll());
+      await saveDraft(id, draftState());
       if (docId !== id) {
         return;
       }
@@ -158,11 +189,9 @@ export function useAutosave(options: UseAutosaveOptions) {
     if (docId !== id || !record) {
       return;
     }
-    if ("kind" in record.model) {
-      // Autosave is a text-editor session, and the text model is the one
-      // stored model without a `kind`: a presentation, media or workbook id
-      // can only reach here through a misrouted view, and starting a session
-      // would clobber the stored model with text-editor state (SPEC-107/116).
+    if (isMediaModel(record.model) || isSpreadsheetModel(record.model)) {
+      // A media or workbook id can only reach here through a misrouted view,
+      // and a session would clobber the stored model (SPEC-107/116).
       return;
     }
     const draft = await loadDraft(id);
@@ -177,13 +206,15 @@ export function useAutosave(options: UseAutosaveOptions) {
         model: record.model,
         caret: record.caret ?? null,
         scroll: record.scroll ?? 0,
+        slideIndex: record.slideIndex,
       };
       recovery.value = { savedAt: draft.savedAt };
-      const model = replaceDocumentModel(id, draft.model);
+      const model = replaceStoredModel(id, draft.model);
       options.applyRestored({
         model,
         caret: draft.caret,
         scroll: draft.scroll,
+        slideIndex: draft.slideIndex,
         recovered: true,
       });
     } else {
@@ -191,6 +222,7 @@ export function useAutosave(options: UseAutosaveOptions) {
         model: record.model,
         caret: record.caret ?? null,
         scroll: record.scroll ?? 0,
+        slideIndex: record.slideIndex,
         recovered: false,
       });
     }
@@ -210,9 +242,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     // The committed write is gated on the Autosave preference (AC-47); the
     // draft already written by the scheduler remains the recoverable copy.
     if (commit && recovery.value === null && preferences.autosave) {
-      void commitDocument(id, options.getCaret(), options.getScroll()).catch(
-        () => {},
-      );
+      void commitDocument(id, draftState()).catch(() => {});
     }
     docId = null;
     dirty = false;
@@ -231,7 +261,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     }
     const editsAtStart = editCount;
     try {
-      await commitDocument(id, options.getCaret(), options.getScroll());
+      await commitDocument(id, draftState());
       if (docId !== id) {
         return;
       }
@@ -271,7 +301,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     scheduler?.dispose();
     scheduler = makeScheduler();
     try {
-      await commitDocument(id, options.getCaret(), options.getScroll());
+      await commitDocument(id, draftState());
       if (docId !== id) {
         return true;
       }
@@ -299,7 +329,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     recovery.value = null;
     committedStash = null;
     try {
-      await commitDocument(id, options.getCaret(), options.getScroll());
+      await commitDocument(id, draftState());
       if (docId !== id) {
         return;
       }
@@ -324,7 +354,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     const stash = committedStash;
     recovery.value = null;
     committedStash = null;
-    const model = replaceDocumentModel(id, stash.model);
+    const model = replaceStoredModel(id, stash.model);
     dirty = false;
     // Invalidate any in-flight draft save so its completion cannot mark the
     // restored state clean against the wrong content.
@@ -335,53 +365,22 @@ export function useAutosave(options: UseAutosaveOptions) {
       model,
       caret: stash.caret,
       scroll: stash.scroll,
+      slideIndex: stash.slideIndex,
       recovered: false,
     });
   }
 
-  // Tab close. beforeunload decides the leave prompt; pagehide (which also
-  // fires when the prompt was skipped or confirmed) does the final write:
-  // committing on a clean close, or a last-gasp draft when dirty so the next
-  // open can offer recovery.
-  function handleBeforeUnload(event: BeforeUnloadEvent): void {
-    if (!docId || !options.isActive()) {
-      return;
-    }
-    if (hasUnsavedChanges()) {
-      scheduler?.flushNow();
-      event.preventDefault();
-      // Chromium still requires returnValue for the prompt to show.
-      event.returnValue = "";
-    } else if (recovery.value === null && preferences.autosave) {
-      // Clean close: start the commit here, where more of the page
-      // lifetime remains than in pagehide. Gated on the Autosave preference
-      // (AC-47) — a pending draft still flushed above keeps data recoverable.
-      void commitDocument(docId, options.getCaret(), options.getScroll())
-        .then(() => options.onCleanClose?.())
-        .catch(() => {});
-    }
-  }
-
-  function handlePageHide(): void {
-    if (!docId || !options.isActive()) {
-      return;
-    }
-    if (hasUnsavedChanges()) {
-      void saveDraft(docId, options.getCaret(), options.getScroll()).catch(
-        () => {},
-      );
-    } else if (recovery.value === null && preferences.autosave) {
-      void commitDocument(docId, options.getCaret(), options.getScroll())
-        .then(() => options.onCleanClose?.())
-        .catch(() => {});
-    }
-  }
-
-  window.addEventListener("beforeunload", handleBeforeUnload);
-  window.addEventListener("pagehide", handlePageHide);
-  onBeforeUnmount(() => {
-    window.removeEventListener("beforeunload", handleBeforeUnload);
-    window.removeEventListener("pagehide", handlePageHide);
+  // Tab close — the leave prompt, the clean-close commit and the last-gasp
+  // draft — lives in useTabClose, reading this session's state.
+  useTabClose({
+    sessionId: () => docId,
+    isActive: options.isActive,
+    hasUnsavedChanges,
+    flushNow: () => scheduler?.flushNow(),
+    mayCommit: () => recovery.value === null && preferences.autosave,
+    commit: (id) => commitDocument(id, draftState()),
+    saveDraft: (id) => saveDraft(id, draftState()),
+    onCleanClose: () => options.onCleanClose?.(),
   });
 
   return {

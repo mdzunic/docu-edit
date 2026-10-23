@@ -95,3 +95,23 @@ describe("DeckActions Present menu", () => {
     expect(wrapper.get('[data-testid="presentation-present-menu"]').attributes("disabled")).toBeDefined();
   });
 });
+
+describe("DeckActions save state (SPEC-103)", () => {
+  it("shows the deck's save state as deck-save-state with data-save-state", () => {
+    const wrapper = mount(DeckActions, { props: { saveState: "saving", saveStateText: "Saving…" } });
+    wrappers.push(wrapper);
+    const badge = wrapper.get('[data-testid="deck-save-state"]');
+    expect(badge.attributes("data-save-state")).toBe("saving");
+    expect(badge.text()).toBe("Saving…");
+    expect(wrapper.find('[data-testid="deck-save-state-download"]').exists()).toBe(false);
+  });
+
+  it("offers a download link in the error state, which runs the deck's download", async () => {
+    const wrapper = mount(DeckActions, { props: { saveState: "error", saveStateText: "Not saved — browser storage is full" } });
+    wrappers.push(wrapper);
+    const link = wrapper.get('[data-testid="deck-save-state-download"]');
+    expect(link.text()).toBe("Download a copy");
+    await link.trigger("click");
+    expect(wrapper.emitted("download")).toEqual([[]]);
+  });
+});
