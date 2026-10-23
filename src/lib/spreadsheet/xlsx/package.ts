@@ -39,6 +39,48 @@ export function partTextOf(parts: PartLookup, name: string): string | undefined 
   return bytes ? utf8.decode(bytes) : undefined;
 }
 
+/** Base64 characters decoded at each end of a large part by
+ * worksheetTextWithoutCells (a multiple of 4: whole quartets). */
+const WORKSHEET_END_CHARS = 65_536;
+
+/** The tail worksheetTextWithoutCells searches at most (base64 characters)
+ * before it decodes the part whole. */
+const WORKSHEET_TAIL_MAX_CHARS = 4 * 1024 * 1024;
+
+/** SPEC-137: a retained worksheet part's text with its `<sheetData>`
+ * content cut out — what the readers of the parts around the cells (the
+ * hyperlinks, the legacy drawing a note needs …) take, as the read phases
+ * hand them the worksheet cut (xlsx/phases.ts). Decoded from the part's
+ * base64 a slice at a time from each end, so a large sheet's cells — all but
+ * a few KB of its part — are never decoded: a 25 MB sheet's whole decode was
+ * a ~50 ms task right after its open. A part where the cut does not show
+ * that way (no sheetData start tag in its head; a tail past
+ * WORKSHEET_TAIL_MAX_CHARS) is decoded whole. */
+export function worksheetTextWithoutCells(base64: string): string {
+  if (base64.length <= 4 * WORKSHEET_END_CHARS) {
+    return decodeUtf8(base64ToBytes(base64));
+  }
+  // A slice may end, or start, inside a character: the decoder marks it,
+  // and both cuts below are at ASCII markup away from those ends.
+  const head = utf8.decode(base64ToBytes(base64.slice(0, WORKSHEET_END_CHARS)));
+  const open = /<([\w.-]+:)?sheetData\b[^>]*>/.exec(head);
+  if (open !== null && !open[0].endsWith("/>")) {
+    const close = `</${open[1] ?? ""}sheetData`;
+    for (let size = WORKSHEET_END_CHARS; size <= WORKSHEET_TAIL_MAX_CHARS; size *= 4) {
+      const start = Math.max(WORKSHEET_END_CHARS, base64.length - size - ((base64.length - size) % 4));
+      const tail = utf8.decode(base64ToBytes(base64.slice(start)));
+      const at = tail.lastIndexOf(close);
+      if (at >= 0) {
+        return head.slice(0, open.index + open[0].length) + tail.slice(at);
+      }
+      if (start === WORKSHEET_END_CHARS) {
+        break;
+      }
+    }
+  }
+  return decodeUtf8(base64ToBytes(base64));
+}
+
 /** The model's opaque parts as a PartLookup that decodes each part's
  * base64 at most once, when first asked for. */
 export class LazyParts implements PartLookup {

@@ -74,7 +74,7 @@ import type { CellHyperlink, CellNote, CellThread, Sheet, SpreadsheetModel, Text
 import { applySplices, attributeValue, escapeAttributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { worksheetTail } from "./drawingXml";
 import { elementTree, nodeAttr, type XmlNode } from "./elementTree";
-import { LazyParts, nextFreePartName, nextRelationshipId, partTextOf, readRels, relationshipKind, relationshipsOf, relativeTarget, spliceRels, targetPart, workbookPathOf, type PartLookup, type RelEntry } from "./package";
+import { LazyParts, nextFreePartName, nextRelationshipId, partTextOf, readRels, relationshipKind, relationshipsOf, relativeTarget, spliceRels, targetPart, workbookPathOf, worksheetTextWithoutCells, type PartLookup, type RelEntry } from "./package";
 import { decodeXmlEscapes, encodeXlsxAttribute, encodeXlsxText, xlsxTextElement } from "./sharedStrings";
 import { StringItemReader } from "./sheetXml";
 import { isSpreadsheetMl, xlsxFontProperties } from "./styles";
@@ -799,7 +799,10 @@ export function xlsxAnnotationEditing(
 ): { notes: boolean; hyperlinks: boolean } {
   const part = sheet.partName;
   const parts = new LazyParts(model.opaque);
-  const xml = part === undefined ? undefined : partTextOf(parts, part);
+  // The worksheet around its cells is all either check reads (SPEC-137:
+  // never the cells of a large sheet, decoded whole).
+  const base64 = part === undefined ? undefined : model.opaque.find((entry) => entry.name === part)?.data;
+  const xml = base64 === undefined ? undefined : worksheetTextWithoutCells(base64);
   if (part === undefined || xml === undefined) {
     return { notes: true, hyperlinks: true };
   }
