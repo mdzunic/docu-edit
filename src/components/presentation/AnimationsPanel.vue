@@ -608,6 +608,12 @@ function onDelay(event = new Event("change")) {
   overflow-y: auto;
 }
 
+/* The panel scrolls as a whole: its sections keep their own height rather
+   than squeezing the list as the SPEC-105 controls grow it. */
+.animations-panel > * {
+  flex-shrink: 0;
+}
+
 .effect-list {
   list-style: none;
   margin: 0;

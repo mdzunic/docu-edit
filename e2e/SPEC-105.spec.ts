@@ -105,7 +105,8 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await page.getByTestId("animation-trigger-frame").selectOption({ label: "Rounded rectangle" });
 
   // A "Line" motion path on the shape.
-  await workspace.getByText("Press me").click();
+  // (The shape paints its fill on a canvas over its text: click the frame.)
+  await workspace.getByTestId("slide-frame").filter({ hasText: "Press me" }).click();
   await page.getByTestId("animation-add").click();
   await expect(page.getByTestId("animation-row")).toHaveCount(3);
   await page.getByTestId("animation-effect").selectOption("motionPath");
@@ -117,7 +118,7 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
   await expectBulletsShown(stage, 0);
   const title = stage.locator(".frame").filter({ hasText: "Bullets" });
-  await stage.getByText("Press me").click();
+  await stage.locator(".frame").filter({ hasText: "Press me" }).click();
   // The spin ran and settled a full turn round; no build group advanced.
   await expect(title).toHaveCSS("rotate", "360deg");
   await expect(play).toHaveAttribute("data-building", "false");
