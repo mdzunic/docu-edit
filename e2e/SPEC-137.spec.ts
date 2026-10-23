@@ -196,3 +196,27 @@ test("an .ods workbook opens through the parse worker (AC-14)", async ({ page })
   await expect(cell(page, "A2")).toHaveText("Widget");
   expect(await page.evaluate(() => (window as unknown as { __parseWorkers: number }).__parseWorkers)).toBe(1);
 });
+
+// An empty cell draws no text box (the grid's node budget), so a format
+// given to it — Bold here, SPEC-123's format painter alike — rides on the
+// cell element itself: it still reads from the DOM, and adds no element.
+test("a format on an empty cell reads from its own element, which draws no text box", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").waitFor({ state: "attached" });
+  const navigated = page.waitForURL(/\/sheets\/.+/, { timeout: 30_000 });
+  await page.getByTestId("open-document-input").setInputFiles(path.join(REPO_ROOT, "e2e", "fixtures", "spec123-styles.xlsx"));
+  await navigated;
+  await waitForFirstPaintedCell(page);
+
+  // D9 lies outside the sheet's A1:H6: no stored cell, the default style.
+  await page.getByTestId("name-box").fill("D9");
+  await page.keyboard.press("Enter");
+  const empty = cell(page, "D9");
+  await expect(empty).toHaveText("");
+  await expect(empty).toHaveCSS("font-weight", "400");
+
+  await page.getByTestId("sheet-bold").click();
+  await expect(page.getByTestId("sheet-bold")).toHaveAttribute("aria-pressed", "true");
+  await expect(empty).toHaveCSS("font-weight", "700");
+  await expect(empty.locator(".sheet-cell-text")).toHaveCount(0);
+});
