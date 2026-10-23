@@ -7,7 +7,10 @@ import {
   deleteSlide,
   duplicateSlide,
   moveSlide,
+  r3,
   stripRetention,
+  titleBodyFrames,
+  titleSlideFrames,
   unconvertibleFrameCount,
 } from "./slides";
 import { DEFAULT_PRESENTATION_TITLE, type PresentationModel, type TextFrame } from "./model";
@@ -44,6 +47,37 @@ describe("createBlankPresentation", () => {
 
   it("mints a distinct id each time", () => {
     expect(blank().id).not.toBe(blank().id);
+  });
+});
+
+// SPEC-106: the placeholder pairs are exported so generated decks take the
+// editor's geometry — extracted with no behaviour change, so each helper's
+// frames are exactly what the command it came from builds (ids aside).
+describe("placeholder frame exports (SPEC-106)", () => {
+  const withoutIds = (frames: TextFrame[]) => frames.map(({ id: _id, ...rest }) => rest);
+
+  it("titleSlideFrames is createBlankPresentation's title + subtitle pair", () => {
+    const model = blank();
+    const frames = titleSlideFrames(model.slideWidthCm, model.slideHeightCm);
+    expect(withoutIds(frames)).toEqual(withoutIds(model.slides[0].frames as TextFrame[]));
+    expect(new Set(frames.map((frame) => frame.id)).size).toBe(2);
+  });
+
+  it("titleBodyFrames is addSlide's title + body pair, at any surface size", () => {
+    const model = blank();
+    model.slideWidthCm = 25.4;
+    addSlide(model, 0);
+    expect(withoutIds(titleBodyFrames(25.4, 19.05))).toEqual(withoutIds(model.slides[1].frames as TextFrame[]));
+    const [title, body] = titleBodyFrames(25.4, 19.05);
+    expect([title.role, body.role, body.phIdx]).toEqual(["title", "body", 1]);
+    expect(body.xCm).toBe(r3(0.08 * 25.4));
+    expect(body.heightCm).toBe(r3(0.6 * 19.05));
+  });
+
+  it("r3 rounds centimetres to three decimals", () => {
+    expect(r3(2.70936)).toBe(2.709);
+    expect(r3(0.0005)).toBe(0.001);
+    expect(r3(12)).toBe(12);
   });
 });
 
