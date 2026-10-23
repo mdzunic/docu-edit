@@ -53,9 +53,11 @@ describe("createBlankPresentation", () => {
 // SPEC-106: the placeholder pairs are exported so generated decks take the
 // editor's geometry — extracted with no behaviour change, so each helper's
 // frames are exactly what the command it came from builds (ids aside).
-describe("placeholder frame exports (SPEC-106)", () => {
-  const withoutIds = (frames: TextFrame[]) => frames.map(({ id: _id, ...rest }) => rest);
+function withoutIds(frames: TextFrame[]): Omit<TextFrame, "id">[] {
+  return frames.map(({ id: _id, ...rest }) => rest);
+}
 
+describe("placeholder frame exports (SPEC-106)", () => {
   it("titleSlideFrames is createBlankPresentation's title + subtitle pair", () => {
     const model = blank();
     const frames = titleSlideFrames(model.slideWidthCm, model.slideHeightCm);
