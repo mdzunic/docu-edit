@@ -144,22 +144,26 @@ describe("SheetGrid — slot keys (AC-47)", () => {
 // jump) the grid draws the viewport alone until the scroll settles, then the
 // overscan comes back around the same viewport elements. A far step turns
 // the slot ring, so the elements stay in place.
+/** The 1-based row a cell element shows. */
+function rowOf(element: HTMLElement): number {
+  return Number(/\d+$/.exec(element.dataset.ref!)![0]);
+}
+
 describe("SheetGrid — settling from a far step draws the viewport alone", () => {
   it("drops the overscan on a far step, patches the same elements while far steps keep coming, and restores it once the scroll settles", async () => {
     const view = mountGrid(denseSheet(3000, 30));
     const full = view.cells();
-    const row = (element: HTMLElement): number => Number(/\d+$/.exec(element.dataset.ref!)![0]);
 
     await view.scrollTo(2000); // a far step: the viewport alone, in elements the full window had
     const fling = view.cells();
     expect(fling.length).toBeLessThan(full.length);
     expect(fling.every((element) => full.includes(element))).toBe(true);
-    const top = Math.min(...fling.map(row));
+    const top = Math.min(...fling.map(rowOf));
 
     await view.scrollTo(4000); // the fling goes on: the same elements, patched
     const next = view.cells();
     expect(new Set(next)).toEqual(new Set(fling));
-    expect(Math.min(...next.map(row))).toBe(top + 100);
+    expect(Math.min(...next.map(rowOf))).toBe(top + 100);
 
     await view.settled();
     const settled = view.cells();
