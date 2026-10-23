@@ -272,24 +272,29 @@ describe("SPEC-105 tolerant reading (Impress-flavoured)", () => {
   });
 });
 
+/** A fade-in effect par on `target` with node type `node`. */
+function fadeParOn(target: string, node = "with-previous"): string {
+  return (
+    `<anim:par presentation:node-type="${node}" presentation:preset-class="entrance" presentation:preset-id="ooo-entrance-fade-in" smil:begin="0s">` +
+    `<anim:transitionFilter smil:type="fade" smil:direction="forward" smil:dur="0.5s" smil:targetElement="${target}"/></anim:par>`
+  );
+}
+
 describe("SPEC-105 out of subset (odp → preserved)", () => {
   const read = (xml: string): SlideAnimation[] | undefined => readOdpAnim(parseDepth(xml), resolveDepth, depthFrameFor);
-  const fadeOn = (target: string, node = "with-previous") =>
-    `<anim:par presentation:node-type="${node}" presentation:preset-class="entrance" presentation:preset-id="ooo-entrance-fade-in" smil:begin="0s">` +
-    `<anim:transitionFilter smil:type="fade" smil:direction="forward" smil:dur="0.5s" smil:targetElement="${target}"/></anim:par>`;
 
   it("a partial paragraph cover, or paragraphs out of order", () => {
-    expect(read(impressTree(fadeOn("de-f3-p0", "on-click") + fadeOn("de-f3-p1") + fadeOn("de-f3-p2")))).toBeUndefined();
-    expect(read(impressTree(fadeOn("de-f3-p1", "on-click") + fadeOn("de-f3-p0") + fadeOn("de-f3-p2") + fadeOn("de-f3-p3")))).toBeUndefined();
+    expect(read(impressTree(fadeParOn("de-f3-p0", "on-click") + fadeParOn("de-f3-p1") + fadeParOn("de-f3-p2")))).toBeUndefined();
+    expect(read(impressTree(fadeParOn("de-f3-p1", "on-click") + fadeParOn("de-f3-p0") + fadeParOn("de-f3-p2") + fadeParOn("de-f3-p3")))).toBeUndefined();
     // The control: every paragraph, in order.
-    expect(read(impressTree(fadeOn("de-f3-p0", "on-click") + fadeOn("de-f3-p1") + fadeOn("de-f3-p2") + fadeOn("de-f3-p3")))).toHaveLength(1);
+    expect(read(impressTree(fadeParOn("de-f3-p0", "on-click") + fadeParOn("de-f3-p1") + fadeParOn("de-f3-p2") + fadeParOn("de-f3-p3")))).toHaveLength(1);
   });
 
   it("an unresolvable trigger, a paragraph trigger, or a trigger that is the target", () => {
     const interactive = (trigger: string) =>
       impressTree(
-        fadeOn("de-f2", "on-click"),
-        `<anim:seq presentation:node-type="interactive-sequence" smil:begin="${trigger}.click"><anim:par smil:begin="0s"><anim:par smil:begin="0s">${fadeOn("de-f3", "on-click")}</anim:par></anim:par></anim:seq>`,
+        fadeParOn("de-f2", "on-click"),
+        `<anim:seq presentation:node-type="interactive-sequence" smil:begin="${trigger}.click"><anim:par smil:begin="0s"><anim:par smil:begin="0s">${fadeParOn("de-f3", "on-click")}</anim:par></anim:par></anim:seq>`,
       );
     expect(read(interactive("de-f5"))).toHaveLength(2); // the control
     expect(read(interactive("id99"))).toBeUndefined();
@@ -298,9 +303,9 @@ describe("SPEC-105 out of subset (odp → preserved)", () => {
   });
 
   it("a second sequence that is not an interactive one", () => {
-    const extra = `<anim:seq presentation:node-type="main-sequence"><anim:par smil:begin="next"><anim:par smil:begin="0s">${fadeOn("de-f3", "on-click")}</anim:par></anim:par></anim:seq>`;
-    expect(read(impressTree(fadeOn("de-f2", "on-click"), extra))).toBeUndefined();
-    expect(read(impressTree(fadeOn("de-f2", "on-click"), extra.replace(` presentation:node-type="main-sequence"`, "")))).toBeUndefined();
+    const extra = `<anim:seq presentation:node-type="main-sequence"><anim:par smil:begin="next"><anim:par smil:begin="0s">${fadeParOn("de-f3", "on-click")}</anim:par></anim:par></anim:seq>`;
+    expect(read(impressTree(fadeParOn("de-f2", "on-click"), extra))).toBeUndefined();
+    expect(read(impressTree(fadeParOn("de-f2", "on-click"), extra.replace(` presentation:node-type="main-sequence"`, "")))).toBeUndefined();
   });
 
   it("a malformed path, or one its preset does not reproduce", () => {
@@ -317,7 +322,7 @@ describe("SPEC-105 out of subset (odp → preserved)", () => {
   });
 
   it("an unmapped emphasis (flash bulb), or a mapped one over other behaviours", () => {
-    expect(read(impressTree(fadeOn("de-f2", "on-click").replace("ooo-entrance-fade-in", "ooo-emphasis-flash-bulb")))).toBeUndefined();
+    expect(read(impressTree(fadeParOn("de-f2", "on-click").replace("ooo-entrance-fade-in", "ooo-emphasis-flash-bulb")))).toBeUndefined();
     const spin = writeOdpAnim([{ frameId: "f2", effect: "spin", trigger: "click" }], goldenTargetFor, depthFrameFor);
     expect(read(spin.replace('smil:type="rotate"', 'smil:type="scale"'))).toBeUndefined();
     const color = writeOdpAnim([{ frameId: "f6", effect: "colorChange", trigger: "click" }], goldenTargetFor, depthFrameFor);
