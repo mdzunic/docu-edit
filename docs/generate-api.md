@@ -14,7 +14,8 @@ import { DocumentBuilder } from "../lib/generate";
 ```
 
 Runnable, self-contained examples live in `examples/` — see [Examples](#examples)
-below.
+below. Decks (`.pptx`/`.odp`) have their own builder in the same module — see
+[Presentations](#presentations).
 
 ## Quick start
 
@@ -400,15 +401,45 @@ storeDocument(model);
 // router.push(`/doc/${model.id}`)
 ```
 
+## Presentations
+
+The same module generates decks (SPEC-106): `PresentationBuilder` builds a
+`.pptx`/`.odp` slide by slide —
+`addTitleSlide`/`addBulletSlide`/`addImageSlide`/`addBlankSlide`, the
+per-slide `addBullets`/`addTextBox`/`addImage`/`setNotes`/`setBackground`, and
+`toDeck`/`toBytes`/`toBlob`/`toBuffer`/`fileName`/`toHtml` — from the same
+lengths and run specs as `DocumentBuilder`, delegating every byte to the
+presentation writers. A JSON deck-description format
+(`deckFromDescription`, `schema/deck-description.json`), a slide-Markdown
+grammar in both directions (`parseSlideMarkdown`/`writeSlideMarkdown`), HTML
+export (`exportDeckHtml`) and byte readers (`readPptx`/`readOdp`) complete it.
+
+```ts
+import { PresentationBuilder } from "./src/lib/generate";
+
+const deck = new PresentationBuilder({ title: "Q3 review" })
+  .addTitleSlide("Q3 review", "Prepared 30 September")
+  .addBulletSlide("Highlights", ["Revenue up 12%", ["Europe up 20%"]]);
+const bytes = await deck.toBytes(); // .pptx
+```
+
+The full reference — every method, the deck description and the Markdown
+grammar — is [generate-deck-api.md](generate-deck-api.md), a sibling file
+because this one would otherwise pass 800 lines. The two builders never
+import each other: `src/lib/generate/index.ts` re-exports both, and a
+text-only script can keep importing `./builder` alone.
+
 ## Examples
 
-Three complete, runnable programs live in `examples/`:
+Five complete, runnable programs live in `examples/`:
 
 | File | Demonstrates |
 | --- | --- |
 | `examples/invoice.js` | a table, mixed run formatting |
 | `examples/report.js` | multiple headings, page breaks, a table of contents |
 | `examples/letter.js` | an inline image (letterhead) |
+| `examples/deck.js` | a data-driven quarterly review deck (SPEC-106) |
+| `examples/slides-from-markdown.js` | slide Markdown in, a deck out (SPEC-106) |
 
 Each is executable directly:
 
@@ -416,12 +447,14 @@ Each is executable directly:
 node examples/invoice.js
 node examples/report.js
 node examples/letter.js
+node examples/deck.js
+node examples/slides-from-markdown.js
 ```
 
-Every example writes its output to `examples/output/<name>.docx`. Each
+Every example writes its output to `examples/output/`. Each
 `examples/<name>.js` is a small bootstrap that runs the actual example logic
-(`examples/_impl/<name>.ts`) via `vite-node` — already a real project
-dependency (vitest's own execution engine) — because the generation API is
-TypeScript like the rest of `src/lib/`, and plain Node cannot import a `.ts`
-file without an experimental flag this command line intentionally never
-passes. See `examples/lib/runTs.js` for the ten-line bridge.
+(`examples/_impl/<name>.ts`) through Vite's own module runner (`runnerImport`
+from the `vite` package — already a real project dependency), because the
+generation API is TypeScript like the rest of `src/lib/`, and plain Node
+cannot import a `.ts` file without flags this command line intentionally
+never passes. See `examples/lib/runTs.js` for the short bridge.
