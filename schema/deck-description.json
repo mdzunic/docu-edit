@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://docu-edit.example/schema/deck-description.json",
+  "title": "docu-edit deck description",
+  "description": "Generates a .pptx/.odp deck from data (SPEC-106). Maps 1:1 to the PresentationBuilder fluent API — see docs/generate-deck-api.md. An object with no slides describes an empty deck.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string" },
+    "format": { "type": "string", "enum": ["pptx", "odp"] },
+    "size": { "$ref": "#/definitions/size" },
+    "slides": { "type": "array", "items": { "$ref": "#/definitions/slide" } }
+  },
+
+  "definitions": {
+    "length": {
+      "description": "A measurement, converted to an integer Emu on entry. Exactly one key.",
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "cm": { "type": "number", "minimum": 0 },
+        "pt": { "type": "number", "minimum": 0 },
+        "in": { "type": "number", "minimum": 0 },
+        "emu": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+
+    "size": {
+      "description": "\"16:9\" (33.867 × 19.05 cm, the default), \"4:3\" (25.4 × 19.05 cm), or an explicit size between 2.54 and 142.24 cm a side.",
+      "oneOf": [
+        { "type": "string", "enum": ["16:9", "4:3"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["width", "height"],
+          "properties": {
+            "width": { "$ref": "#/definitions/length" },
+            "height": { "$ref": "#/definitions/length" }
+          }
+        }
+      ]
+    },
+
+    "runObject": {
+      "description": "SPEC-045's run object. fontSizePt maps to the slide run's size; strikethrough and highlight have no slide-run field and are dropped and reported.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string" },
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "underline": { "type": "boolean" },
+        "strikethrough": { "type": "boolean" },
+        "fontFamily": { "type": "string" },
+        "fontSizePt": { "type": "number", "exclusiveMinimum": 0 },
+        "color": { "$ref": "#/definitions/hexColor" },
+        "highlight": { "$ref": "#/definitions/hexColor" }
+      }
+    },
+    "run": {
+      "description": "A run of text: a plain string (unformatted), or an object naming its text and formatting.",
+      "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/runObject" }]
+    },
+    "runs": { "type": "array", "items": { "$ref": "#/definitions/run" } },
+    "hexColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+
+    "textContent": {
+      "description": "A text field: a plain string or an array of runs.",
+      "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/runs" }]
+    },
+
+    "bulletRow": {
+      "description": "A string, a { text | runs, level } row (level 0–8), or a nested array whose rows sit one level deeper (clamped at 8).",
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": { "type": "string" },
+            "runs": { "$ref": "#/definitions/runs" },
+            "level": { "type": "integer", "minimum": 0, "maximum": 8 }
+          },
+          "not": { "required": ["text", "runs"] }
+        },
+        { "type": "array", "items": { "$ref": "#/definitions/bulletRow" } }
+      ]
+    },
+
+    "notes": {
+      "description": "Speaker notes, one string per paragraph; trailing empty paragraphs are stripped.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+
+    "imageData": {
+      "description": "Base64 image bytes.",
+      "type": "string"
+    },
+    "imageContentType": { "type": "string", "enum": ["image/png", "image/jpeg", "image/gif"] },
+
+    "slideImage": {
+      "description": "An image fitted into the body area at its own aspect (or the given size, shrunk to fit), centred. altText is accepted but not kept (the slide model has no alt-text field) and is reported.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "contentType"],
+      "properties": {
+        "data": { "$ref": "#/definitions/imageData" },
+        "contentType": { "$ref": "#/definitions/imageContentType" },
+        "width": { "$ref": "#/definitions/length" },
+        "height": { "$ref": "#/definitions/length" },
+        "altText": { "type": "string" }
+      }
+    },
+    "placedImage": {
+      "description": "An image at an explicit rect (height from the image's aspect when omitted), clamped into the slide.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "contentType", "x", "y", "width"],
+      "properties": {
+        "data": { "$ref": "#/definitions/imageData" },
+        "contentType": { "$ref": "#/definitions/imageContentType" },
+        "x": { "$ref": "#/definitions/length" },
+        "y": { "$ref": "#/definitions/length" },
+        "width": { "$ref": "#/definitions/length" },
+        "height": { "$ref": "#/definitions/length" },
+        "altText": { "type": "string" }
+      }
+    },
+    "textBox": {
+      "description": "A free text box holding one paragraph (text or runs) at an explicit rect.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "text": { "type": "string" },
+        "runs": { "$ref": "#/definitions/runs" },
+        "x": { "$ref": "#/definitions/length" },
+        "y": { "$ref": "#/definitions/length" },
+        "width": { "$ref": "#/definitions/length" },
+        "height": { "$ref": "#/definitions/length" }
+      },
+      "not": { "required": ["text", "runs"] }
+    },
+
+    "titleSlide": {
+      "description": "addTitleSlide(title, subtitle?).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layout", "title"],
+      "properties": {
+        "layout": { "const": "title" },
+        "title": { "$ref": "#/definitions/textContent" },
+        "subtitle": { "$ref": "#/definitions/textContent" },
+        "notes": { "$ref": "#/definitions/notes" }
+      }
+    },
+    "bulletsSlide": {
+      "description": "addBulletSlide(title, bullets, { style }).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layout", "title", "bullets"],
+      "properties": {
+        "layout": { "const": "bullets" },
+        "title": { "$ref": "#/definitions/textContent" },
+        "bullets": { "type": "array", "items": { "$ref": "#/definitions/bulletRow" } },
+        "style": { "type": "string", "enum": ["bullet", "number"] },
+        "notes": { "$ref": "#/definitions/notes" }
+      }
+    },
+    "imageSlide": {
+      "description": "addImageSlide(title, image).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layout", "title", "image"],
+      "properties": {
+        "layout": { "const": "image" },
+        "title": { "$ref": "#/definitions/textContent" },
+        "image": { "$ref": "#/definitions/slideImage" },
+        "notes": { "$ref": "#/definitions/notes" }
+      }
+    },
+    "blankSlide": {
+      "description": "addBlankSlide() followed by addTextBox / addImage / setBackground per entry.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layout"],
+      "properties": {
+        "layout": { "const": "blank" },
+        "textBoxes": { "type": "array", "items": { "$ref": "#/definitions/textBox" } },
+        "images": { "type": "array", "items": { "$ref": "#/definitions/placedImage" } },
+        "background": { "$ref": "#/definitions/hexColor" },
+        "notes": { "$ref": "#/definitions/notes" }
+      }
+    },
+
+    "slide": {
+      "description": "One slide: a layout plus that layout's fields — any other key is an error.",
+      "oneOf": [
+        { "$ref": "#/definitions/titleSlide" },
+        { "$ref": "#/definitions/bulletsSlide" },
+        { "$ref": "#/definitions/imageSlide" },
+        { "$ref": "#/definitions/blankSlide" }
+      ]
+    }
+  }
+}
