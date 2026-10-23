@@ -16,11 +16,9 @@
 //   and "Calculating…" shows only once a pass has run longer than
 //   CALCULATING_STATUS_DELAY_MS. A pass started while another runs cancels it
 //   and inherits the cells it had not evaluated. SPEC-137: a later slice's
-//   task holds its step alone — the view's re-read of the values it wrote,
-//   and the pass's completion (its result, its edit callback's re-render and
-//   write-through), follow in a task of their own, so no task carries a
-//   slice and a re-render of the grid together (the recalc row of SPEC-137's
-//   budgets); settle() and a newer pass run that pending work first.
+//   task holds its step alone — the view's re-read of what it wrote, and the
+//   pass's completion (result, edit callback, re-render), follow in a task of
+//   their own; settle() and a newer pass run that pending work first.
 // - SPEC-121's edit pipeline drives `edit(changed, done)`: an "edit" pass
 //   whose `done` receives the pass's changedSheetIds when it completes, and
 //   `settle()`, which completes a running pass at once so the next command,
@@ -40,10 +38,8 @@ import { computed, onScopeDispose, ref, shallowRef, watch, type ShallowRef } fro
 import { useToasts } from "../../composables/useToasts";
 import { runWhenIdle, scheduleEagerWork, type IdleHandle } from "../../lib/core/idleScheduler";
 import { isOutsideDocumentInput } from "../../lib/shortcuts";
-import { formatA1 } from "../../lib/spreadsheet/address";
-import { cellKey, findCycles, graphFor, parseCellKey, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
+import { cellKey, findCycles, graphFor, type CellKey } from "../../lib/spreadsheet/formula/dependencies";
 import type { UncomputableReason } from "../../lib/spreadsheet/formula/evaluate";
-import { quoteSheetName } from "../../lib/spreadsheet/formula/print";
 import {
   CALCULATING_STATUS_DELAY_MS,
   needsFullCalcOnOpen,
@@ -56,60 +52,15 @@ import {
 } from "../../lib/spreadsheet/formula/recalc";
 import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
+import { circularText, isRecalculateShortcut, MANUAL_MODE_MESSAGE, staleTitle } from "./recalcTexts";
 
-export const MANUAL_MODE_MESSAGE = "This workbook was set to calculate manually. It recalculates automatically here.";
-export const CALCULATING_TEXT = "Calculating…";
-export const STALE_TITLE_PREFIX = "This value couldn't be recalculated here — ";
+export { CALCULATING_TEXT, circularText, isRecalculateShortcut, MANUAL_MODE_MESSAGE, STALE_TITLE_PREFIX, staleTitle } from "./recalcTexts";
+
 /** How long the idle-time open pass may wait under sustained load. */
 export const OPEN_PASS_IDLE_TIMEOUT_MS = 1000;
 
-/** A stale cell's title (SPEC-120 "Stale cells"). */
-export function staleTitle(reason: UncomputableReason): string {
-  const suffix = ((): string => {
-    switch (reason.kind) {
-      case "function":
-        return `${reason.name} isn't supported yet`;
-      case "name":
-        return "named ranges aren't supported yet";
-      case "structured":
-        return "table references aren't supported yet";
-      case "external":
-        return "it links to another workbook";
-      case "dynamicArray":
-        return "dynamic array formulas aren't supported yet";
-      case "unparsed":
-        return "its formula couldn't be read";
-      case "iterative":
-        return "iterative calculation isn't supported";
-      case "regex":
-        return "regular-expression criteria aren't supported";
-      case "unsupportedCase":
-        return `this use of ${reason.name} isn't supported yet`;
-      default:
-        return "data tables aren't supported";
-    }
-  })();
-  return STALE_TITLE_PREFIX + suffix;
-}
-
-/** "Circular reference: Loop!A1" for a cycle's first cell. */
-export function circularText(model: SpreadsheetModel, key: CellKey): string {
-  const { sheetId, row, col } = parseCellKey(key);
-  const sheet = model.sheets.find((candidate) => candidate.id === sheetId);
-  return `Circular reference: ${quoteSheetName(sheet?.name ?? "")}!${formatA1({ row, col })}`;
-}
-
-/** F9 alone: a full recalculation. */
-export function isRecalculateShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey">): boolean {
-  return event.key === "F9" && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
-}
-
-/** What one slice's step did: finished the pass, and/or rewrote the model's
- * sheets (the view re-reads them). */
-interface SliceOutcome {
-  done: boolean;
-  rewrote: boolean;
-}
+/** What one slice's step did: finished the pass, rewrote the model's sheets. */
+type SliceOutcome = { done: boolean; rewrote: boolean };
 
 export interface RecalcDeps {
   /** useWorkbookLoad's: the model on show and the hook that has the view
@@ -140,8 +91,7 @@ export function useRecalc(deps: RecalcDeps) {
   let passReason: RecalcReason = "edit";
   const resultListeners: ((changed: CellKey[], reason?: RecalcReason) => void)[] = [];
   let slot: IdleHandle | null = null;
-  /** SPEC-137: a scheduled slice's view work, waiting in `slot` for its own
-   * task (see the module header). */
+  /** SPEC-137: a scheduled slice's view work, waiting in `slot`. */
   let viewWork: SliceOutcome | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -186,9 +136,7 @@ export function useRecalc(deps: RecalcDeps) {
     done?.(current.result.changedSheetIds);
   }
 
-  /** The engine's step for one slice: whether the pass is done and whether
-   * the step rewrote the model's sheets; null when the engine failed, which
-   * stops the pass. */
+  /** The engine's step for one slice; null when it failed (the pass stops). */
   function step(current: RecalcPass, model: SpreadsheetModel): SliceOutcome | null {
     const sheets = model.sheets;
     try {
@@ -210,8 +158,7 @@ export function useRecalc(deps: RecalcDeps) {
     }
   }
 
-  /** A slice's view work: the view re-reads the sheets the step rewrote,
-   * and a pass that is done completes. */
+  /** A slice's view work: re-read the rewritten sheets; a done pass completes. */
   function show(current: RecalcPass, model: SpreadsheetModel, outcome: SliceOutcome): void {
     if (outcome.rewrote && deps.book.workbook.value === model) {
       deps.book.sheetsChanged();
@@ -221,8 +168,7 @@ export function useRecalc(deps: RecalcDeps) {
     }
   }
 
-  /** One slice with its view work in the same task; true when the pass is
-   * done. */
+  /** One slice, its view work in the same task; true when the pass is done. */
   function slice(current: RecalcPass, model: SpreadsheetModel): boolean {
     const outcome = step(current, model);
     if (outcome) {
@@ -231,48 +177,37 @@ export function useRecalc(deps: RecalcDeps) {
     return outcome?.done ?? true;
   }
 
-  /** Runs the view work a scheduled slice left for a task of its own now. */
+  /** Runs the view work a scheduled slice left for its own task now. */
   function showPending(): void {
-    const current = pass;
-    const model = passModel;
     const outcome = viewWork;
-    if (!current || !model || !outcome) {
-      return;
+    if (pass && passModel && outcome) {
+      slot?.cancel();
+      slot = null;
+      viewWork = null;
+      show(pass, passModel, outcome);
     }
-    slot?.cancel();
-    slot = null;
-    viewWork = null;
-    show(current, model, outcome);
   }
 
-  /** The scheduled slices: each step in a task of its own, its view work
-   * (if any) in the next, then the next step. */
+  /** The scheduled slices: a step per task, its view work in the next. */
   function drive(current: RecalcPass, model: SpreadsheetModel): void {
     slot = scheduleEagerWork(() => {
       slot = null;
-      if (pass !== current) {
-        return;
-      }
-      const outcome = step(current, model);
-      if (!outcome) {
-        return;
-      }
-      if (!outcome.rewrote && !outcome.done) {
+      const outcome = pass === current ? step(current, model) : null;
+      if (outcome && !outcome.rewrote && !outcome.done) {
         drive(current, model);
-        return;
+      } else if (outcome) {
+        viewWork = outcome;
+        slot = scheduleEagerWork(() => {
+          slot = null;
+          viewWork = null;
+          if (pass === current) {
+            show(current, model, outcome);
+            if (!outcome.done) {
+              drive(current, model);
+            }
+          }
+        }, RECALC_SLICE_MS);
       }
-      viewWork = outcome;
-      slot = scheduleEagerWork(() => {
-        slot = null;
-        viewWork = null;
-        if (pass !== current) {
-          return;
-        }
-        show(current, model, outcome);
-        if (!outcome.done) {
-          drive(current, model);
-        }
-      }, RECALC_SLICE_MS);
     }, RECALC_SLICE_MS);
   }
 
