@@ -1,8 +1,8 @@
 // Main-thread client for the workbook parse worker (SPEC-137 "The parse
-// protocol", "Where the work runs"). The xlsx family (.xlsx/.xlsm/.xltx/
-// .xltm) has the read phases; an .ods is still read in one pass, inline,
-// until its reader is split the same way. One open is one worker and one
-// session of parseSession.ts's protocol:
+// protocol", "Where the work runs"). Both package formats have the read
+// phases — the xlsx family (.xlsx/.xlsm/.xltx/.xltm) and .ods/.ots — and
+// read alike; a delimited-text file is no package and is never sent here.
+// One open is one worker and one session of parseSession.ts's protocol:
 //
 //   prepare   copies of the source parts (sourcePartNames — xlsx: the shared
 //             strings and the worksheets; ods: content.xml); the worker
@@ -34,7 +34,7 @@
 // upgradeSpreadsheetModel takes its reader as a parameter (the store passes
 // this one).
 import { yieldToMainThread } from "../core/idleScheduler";
-import type { SpreadsheetFormat, SpreadsheetModel } from "../spreadsheet/model";
+import { isCsvFormat, type SpreadsheetFormat, type SpreadsheetModel } from "../spreadsheet/model";
 import { assembleWorkbook, readPhased, readSpreadsheetBytes, readWorkbookShell, sourcePartNames, type RowChunk } from "../spreadsheet/open";
 import { errorFromReply, type SheetParseRequest, type SheetParseResponse } from "../spreadsheet/parseSession";
 import { createWorkerRpcClient, isWorkerSupported, type WorkerRpcClient } from "./workerRpc";
@@ -68,11 +68,9 @@ export async function readSpreadsheetOffThread(
   title: string,
   options: OffThreadReadOptions = {},
 ): Promise<SpreadsheetModel> {
-  if (format !== "xlsx") {
-    // Only the xlsx family has the read phases. An .ods is read in
-    // readSpreadsheetBytes' single pass, inline; a delimited-text file is no
-    // package (csv/parse.ts reads it — the open funnel never sends one here,
-    // and readSpreadsheetBytes says so).
+  if (isCsvFormat(format)) {
+    // A delimited-text file is no package (csv/parse.ts reads it — the open
+    // funnel never sends one here, and readSpreadsheetBytes says so).
     const model = await readSpreadsheetBytes(new Uint8Array(0), format, title, parts);
     options.onProgress?.(1);
     return model;
