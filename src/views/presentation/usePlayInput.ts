@@ -33,6 +33,10 @@ export interface PlayKeyDeps {
 export interface PlayInputDeps extends PlayKeyDeps {
   /** The element `f` and the prompt take full screen (the stage). */
   fullscreenTarget: () => HTMLElement | null;
+  /** SPEC-105: offered every stage pointer-down first; returns true when it
+   * consumed it (a click on a trigger frame playing its interactive
+   * sequence), and the press then neither advances nor swipes. */
+  pointerTrigger?: (event: PointerEvent) => boolean;
 }
 
 function isTextInput(target: EventTarget | null): boolean {
@@ -146,7 +150,13 @@ export function usePlayInput(deps: PlayInputDeps) {
   let pointerStartX = 0;
   let pointerStartY = 0;
   let swiped = false;
+  let triggered = false;
   function onPointerDown(event: PointerEvent): void {
+    triggered = deps.pointerTrigger?.(event) === true;
+    if (triggered) {
+      pointerActive = false;
+      return;
+    }
     pointerActive = true;
     swiped = false;
     pointerStartX = event.clientX;
@@ -169,8 +179,9 @@ export function usePlayInput(deps: PlayInputDeps) {
     }
   }
   function onStageClick(event: MouseEvent): void {
-    if (swiped) {
+    if (swiped || triggered) {
       swiped = false;
+      triggered = false;
       return;
     }
     // SPEC-097 AC-49/50: a click on a rendered link follows it and NEVER also

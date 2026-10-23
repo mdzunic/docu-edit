@@ -140,6 +140,7 @@ const currentPane = useTemplateRef("currentPane");
           :theme="v.presentation.value.theme"
           :fields="v.currentFields.value"
           :frame-styles="v.buildPreview.frameStyles.value"
+          :paragraph-styles="v.buildPreview.paragraphStyles.value"
           :blank="v.solo.value ? v.blank.value : 'none'"
           empty-text="End of slide show"
           @click="v.solo.value && v.perform('advance')"

@@ -46,7 +46,7 @@ const reducedMotion =
   typeof window !== "undefined" && typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
     : false;
-const buildPreview = useBuildPreview();
+const buildPreview = useBuildPreview(() => ({ widthCm: props.widthCm, heightCm: props.heightCm }));
 const previewing = computed(() => c.previewState.value !== null);
 
 // The autoplay driver (timers, sequencing) lives in the composable so this
@@ -104,6 +104,7 @@ onBeforeUnmount(() => buildPreview.stop());
         :scale="scale"
         :interactive="false"
         :frame-styles="buildPreview.frameStyles.value"
+        :paragraph-styles="buildPreview.paragraphStyles.value"
         :theme="theme"
       />
     </div>

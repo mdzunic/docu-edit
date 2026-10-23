@@ -20,6 +20,8 @@ const props = defineProps({
   theme: { type: Object, default: null },
   fields: { type: Array, default: () => [] },
   frameStyles: { type: Object, default: () => ({}) },
+  /** SPEC-105: the current pane's per-paragraph build styles. */
+  paragraphStyles: { type: Object, default: () => ({}) },
   emptyText: { type: String, default: "" },
   emptyTestid: { type: String, default: undefined },
   /** "none" | "black" | "white" — SPEC-100's blank screen, when this pane is
@@ -73,6 +75,7 @@ onBeforeUnmount(() => {
       :scale="scale"
       :interactive="false"
       :frame-styles="frameStyles"
+      :paragraph-styles="paragraphStyles"
       :fields="fields"
       :theme="theme"
     />

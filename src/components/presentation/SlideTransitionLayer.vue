@@ -33,6 +33,8 @@ const props = defineProps({
    * so the transition shows what the plain stage will. Preview passes none. */
   outgoingFrameStyles: { type: Object, default: () => ({}) },
   incomingFrameStyles: { type: Object, default: () => ({}) },
+  /** SPEC-105: the incoming slide's per-paragraph build styles. */
+  incomingParagraphStyles: { type: Object, default: () => ({}) },
   /** Playback's per-showing media URLs per stage (see SlideStage). */
   outgoingMediaUrlOverride: { type: Function, default: null },
   incomingMediaUrlOverride: { type: Function, default: null },
@@ -156,6 +158,7 @@ function onIncomingTransitionEnd() {
         :scale="scale"
         :interactive="false"
         :frame-styles="incomingFrameStyles"
+        :paragraph-styles="incomingParagraphStyles"
         :media-url-override="incomingMediaUrlOverride"
         :theme="theme"
       />
