@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 // SPEC-105 — animation depth. Open the animation-depth fixture, give the
 // bullet body "Fade in, by paragraph" (the timeline shows four bars in four
 // groups), Present and build the four bullets one advance at a time; back in
-// the editor add a "Spin" on the title triggered "On click of" the rectangle
-// and a "Line" motion path on the rectangle; Present again and click the
-// rectangle — the title spins and the slide does not advance; then exit,
+// the editor add a "Spin" on the title triggered "On click of" the shape (a
+// rounded rectangle) and a "Line" motion path on the shape; Present again and
+// click the shape — the title spins and the slide does not advance; then exit,
 // download, reopen, and find the build, the spin and the path listed in order
 // with their fields intact.
 const here = dirname(fileURLToPath(import.meta.url));
@@ -93,7 +93,7 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await expect(page.getByTestId("presentation-view")).toBeVisible();
   await openPanel(page);
 
-  // An emphasis "Spin" on the title, triggered "On click of" the rectangle.
+  // An emphasis "Spin" on the title, triggered "On click of" the shape.
   await workspace.getByText("Bullets").click();
   await page.getByTestId("animation-add").click();
   await expect(page.getByTestId("animation-row")).toHaveCount(2);
@@ -102,9 +102,9 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await expect(page.getByTestId("animation-trigger-frame")).toBeDisabled();
   await page.getByTestId("animation-trigger").selectOption("onClickOf");
   await expect(page.getByTestId("animation-trigger-frame")).toBeEnabled();
-  await page.getByTestId("animation-trigger-frame").selectOption({ label: "Rectangle" });
+  await page.getByTestId("animation-trigger-frame").selectOption({ label: "Rounded rectangle" });
 
-  // A "Line" motion path on the rectangle.
+  // A "Line" motion path on the shape.
   await workspace.getByText("Press me").click();
   await page.getByTestId("animation-add").click();
   await expect(page.getByTestId("animation-row")).toHaveCount(3);
@@ -112,7 +112,7 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await page.getByTestId("animation-path-preset").selectOption("line");
   await expect(page.getByTestId("animation-path-distance")).toHaveValue("25");
 
-  // Present: clicking the rectangle spins the title without advancing.
+  // Present: clicking the shape spins the title without advancing.
   await page.getByTestId("slides-present").click();
   await expect(page).toHaveURL(new RegExp(`/slides/${deckId}/present/1$`));
   await expectBulletsShown(stage, 0);
@@ -151,7 +151,7 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await rows.nth(1).click();
   await expect(page.getByTestId("animation-effect")).toHaveValue("spin");
   await expect(page.getByTestId("animation-trigger")).toHaveValue("onClickOf");
-  await expect(page.getByTestId("animation-trigger-frame").locator("option:checked")).toHaveText("Rectangle");
+  await expect(page.getByTestId("animation-trigger-frame").locator("option:checked")).toHaveText("Rounded rectangle");
 
   await rows.nth(2).click();
   await expect(page.getByTestId("animation-effect")).toHaveValue("motionPath");

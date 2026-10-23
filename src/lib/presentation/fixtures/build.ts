@@ -2268,7 +2268,8 @@ export async function buildOdpHiddenFixtureBytes(): Promise<Uint8Array> {
 // ============================================================================
 // Four 16:9 slides built through the from-scratch writers (the SPEC-097
 // precedent), every slide a title (frame 0), a bulleted body (frame 1) and a
-// "Press me" rectangle (frame 2):
+// "Press me" rounded rectangle (frame 2 — a shape on read-back, where a plain
+// rect with text reads as a text box):
 //   1. a by-paragraph bullet slide with four bullets and no timing — the
 //      e2e's authoring target;
 //   2. an emphasis + motion-path slide: a repeated spin, an auto-reversed
@@ -2293,7 +2294,7 @@ export interface DepthFixtureAnimation extends Omit<SlideAnimation, "frameId" | 
 export const SPEC105_TITLES = ["Bullets", "Emphasis and paths", "Triggers", "Out of subset"];
 /** Slide 1's four bullets — what the e2e builds one by one. */
 export const SPEC105_BULLETS = ["First point", "Second point", "Third point", "Fourth point"];
-/** The rectangle's text (the trigger on slide 3). */
+/** The rounded rectangle's text (the trigger on slide 3). */
 export const SPEC105_TRIGGER_TEXT = "Press me";
 
 /** What each slide parses to, per slide in deck order (slide 4 models none:
@@ -2384,7 +2385,7 @@ function spec105Model(format: "pptx" | "odp"): PresentationModel {
     slide.frames.push({
       id: crypto.randomUUID(),
       kind: "shape",
-      geometry: "rect",
+      geometry: "roundRect",
       xCm: 24,
       yCm: 6,
       widthCm: 7,
