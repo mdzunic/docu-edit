@@ -2327,28 +2327,25 @@ const SPEC105_FIXTURE_INSTANT = new Date("2026-10-23T09:00:00Z");
 /** Slide 4's out-of-subset pptx timing: a fade by paragraph over body
  * paragraphs 0 and 2 only (a partial cover), with its p:bldP — targets named
  * by the body's source id "3", which the rebuild re-points. */
-const SPEC105_PPTX_EXOTIC_TIMING = (() => {
-  const step = (paragraph: number): string => {
-    const tgt = `<p:tgtEl><p:spTgt spid="3"><p:txEl><p:pRg st="${paragraph}" end="${paragraph}"/></p:txEl></p:spTgt></p:tgtEl>`;
-    return (
-      `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>` +
-      `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
-      `<p:par><p:cTn presetID="10" presetClass="entr" presetSubtype="0" fill="hold" grpId="0" nodeType="clickEffect">` +
-      `<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
-      `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn dur="500"/>${tgt}</p:cBhvr></p:animEffect>` +
-      `<p:set><p:cBhvr><p:cTn dur="1" fill="hold"/>${tgt}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr>` +
-      `<p:to><p:strVal val="visible"/></p:to></p:set>` +
-      `</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>`
-    );
-  };
+function spec105FadeStep(paragraph: number): string {
+  const tgt = `<p:tgtEl><p:spTgt spid="3"><p:txEl><p:pRg st="${paragraph}" end="${paragraph}"/></p:txEl></p:spTgt></p:tgtEl>`;
   return (
-    `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>` +
-    `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${step(0)}${step(2)}</p:childTnLst></p:cTn>` +
-    `<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst>` +
-    `<p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst>` +
-    `</p:seq></p:childTnLst></p:cTn></p:par></p:tnLst><p:bldLst><p:bldP spid="3" grpId="0" build="p"/></p:bldLst></p:timing>`
+    `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>` +
+    `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
+    `<p:par><p:cTn presetID="10" presetClass="entr" presetSubtype="0" fill="hold" grpId="0" nodeType="clickEffect">` +
+    `<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
+    `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn dur="500"/>${tgt}</p:cBhvr></p:animEffect>` +
+    `<p:set><p:cBhvr><p:cTn dur="1" fill="hold"/>${tgt}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr>` +
+    `<p:to><p:strVal val="visible"/></p:to></p:set>` +
+    `</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>`
   );
-})();
+}
+const SPEC105_PPTX_EXOTIC_TIMING =
+  `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>` +
+  `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${spec105FadeStep(0)}${spec105FadeStep(2)}</p:childTnLst></p:cTn>` +
+  `<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst>` +
+  `<p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst>` +
+  `</p:seq></p:childTnLst></p:cTn></p:par></p:tnLst><p:bldLst><p:bldP spid="3" grpId="0" build="p"/></p:bldLst></p:timing>`;
 
 /** Slide 4's out-of-subset odp anim: Impress's flash bulb on the title and a
  * quadratic (`q`) motion path on the rectangle — targets named by their source

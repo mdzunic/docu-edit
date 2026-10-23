@@ -197,6 +197,11 @@ describe("slideBuildSteps / slideInteractiveBuilds", () => {
   });
 });
 
+/** Where `rows`, all played on target "a", leave it. */
+function playedMotion(rows: SlideAnimation[]): ReturnType<typeof settledMotion> {
+  return settledMotion(rows.map((r) => ({ animation: r, frameId: "a", key: "a" })), "a");
+}
+
 describe("SPEC-105 visibility and durations", () => {
   it("isFrameHiddenAt no longer treats a played emphasis or path effect as an exit", () => {
     const groups: SlideAnimation[][] = [
@@ -250,9 +255,9 @@ describe("SPEC-105 visibility and durations", () => {
   it("settledMotion: where played spins and paths leave a target", () => {
     const spin: SlideAnimation = { frameId: "a", effect: "spin", trigger: "click", spinDegrees: 90, repeatCount: 2 };
     const path: SlideAnimation = { frameId: "a", effect: "motionPath", trigger: "click", path: { preset: "line", direction: "down" } };
-    const play = (rows: SlideAnimation[]) => settledMotion(rows.map((r) => ({ animation: r, frameId: "a", key: "a" })), "a");
-    expect(play([spin, path])).toEqual({ rotateDeg: 180, offset: { x: 0, y: 0.25 } });
-    expect(play([{ ...spin, autoReverse: true }])).toEqual({ rotateDeg: 0, offset: { x: 0, y: 0 } });
-    expect(play([{ ...path, rewindOnComplete: true }])).toEqual({ rotateDeg: 0, offset: { x: 0, y: 0 } });
+
+    expect(playedMotion([spin, path])).toEqual({ rotateDeg: 180, offset: { x: 0, y: 0.25 } });
+    expect(playedMotion([{ ...spin, autoReverse: true }])).toEqual({ rotateDeg: 0, offset: { x: 0, y: 0 } });
+    expect(playedMotion([{ ...path, rewindOnComplete: true }])).toEqual({ rotateDeg: 0, offset: { x: 0, y: 0 } });
   });
 });
