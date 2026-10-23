@@ -19,7 +19,7 @@ import { GRID_MAX_DOM_NODES, GRID_MAX_RENDERED_CELLS } from "../../views/spreads
 import { useSheetMetrics } from "../../views/spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "../../views/spreadsheet/useSheetSelection";
 import { useSheetZoom } from "../../views/spreadsheet/useSheetZoom";
-import { FLING_SETTLE_MS } from "../../views/spreadsheet/useSheetViewport";
+import { SETTLE_MS } from "../../views/spreadsheet/useSheetViewport";
 import SheetGrid from "./SheetGrid.vue";
 
 const size = { width: 1280, height: 720 };
@@ -100,6 +100,11 @@ function mountGrid(sheet: Sheet, zoomPercent = 100) {
       grid().dispatchEvent(new Event("scroll"));
       await settle();
     },
+    /** Past the grid's settling (after mount, or a fling): the overscan drawn. */
+    async settled() {
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_MS + 50));
+      await settle();
+    },
   };
 }
 
@@ -133,10 +138,10 @@ describe("SheetGrid — slot keys (AC-47)", () => {
   });
 });
 
-// The scroll budget's fling (2,000 px steps): a far step turns the slot
-// ring, so the elements stay in place; two far steps in a row draw the
-// viewport alone until the scroll settles; then the overscan comes back
-// around the same viewport elements.
+// SPEC-137's scroll budget: through a fling (2,000 px steps) the grid draws
+// the viewport alone, and once the scroll settles the overscan comes back
+// around the same viewport elements. A far step turns the slot ring, so the
+// elements stay in place.
 describe("SheetGrid — a fling draws the viewport alone", () => {
   it("drops the overscan while far steps keep coming, patching the same elements, and restores it once the scroll settles", async () => {
     const view = mountGrid(denseSheet(3000, 30));
@@ -155,8 +160,7 @@ describe("SheetGrid — a fling draws the viewport alone", () => {
     expect(new Set(next)).toEqual(new Set(fling));
     expect(Math.min(...next.map((element) => Number(/\d+$/.exec(element.dataset.ref!)![0])))).toBe(top + 100);
 
-    await new Promise((resolve) => setTimeout(resolve, FLING_SETTLE_MS + 50));
-    await settle();
+    await view.settled();
     const settled = view.cells();
     expect(settled).toHaveLength(full.length);
     // The viewport's elements stayed; only the overscan's mounted.

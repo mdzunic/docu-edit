@@ -11,8 +11,8 @@
 //   picks — at most GRID_MAX_RENDERED_CELLS of them, the grid's subtree
 //   within GRID_MAX_DOM_NODES elements, overscan shrinking first — keyed by
 //   slot (`${row mod R}:${col mod C}`, R × C the window's capacity), so a
-//   scroll step patches the same elements (a fling draws the viewport alone,
-//   in the same slots: useSheetViewport's `flinging`); beyond that the
+//   scroll step patches the same elements (in a fling it draws the viewport
+//   alone, in the same slots: useSheetViewport's `settling`); beyond that the
 //   overview canvas paints the sheet (`overviewBands`: stored cells, merges,
 //   borders and gridlines of the viewport) and only the active cell keeps an
 //   element.
@@ -261,8 +261,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
 
   const plan = computed(() => {
     const vp = deps.viewport;
-    // A fling draws the viewport alone, its slots still the level's (useSheetViewport's header).
-    const drawn = vp.flinging.value ? 0 : 1;
+    // Settling (in a fling), the grid draws the viewport alone, its slots
+    // still the level's (useSheetViewport's header).
+    const drawn = vp.settling.value ? 0 : 1;
     const windowAt = (factor: number): GridWindow => {
       const rows = Math.round(GRID_OVERSCAN_ROWS * factor);
       const cols = Math.round(GRID_OVERSCAN_COLS * factor);
