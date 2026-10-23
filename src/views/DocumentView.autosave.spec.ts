@@ -57,6 +57,15 @@ async function microtasks() {
   }
 }
 
+/** Waits for the app bar's save state to read `text`. A draft write yields a
+ * real macrotask before its putRecord call (documentStore's
+ * putRecordYielding, SPEC-047 AC-15/AC-16), which microtasks() cannot wait
+ * out under fake timers — whether it had landed by then was a race the
+ * event loop decided, lost under load. vi.waitFor polls on real timers. */
+async function saveStateReads(w: VueWrapper, text: string): Promise<void> {
+  await vi.waitFor(() => expect(w.get('[data-testid="save-state"]').text()).toBe(text));
+}
+
 async function mountAt(path: string) {
   const gen = generation;
   const { default: DocumentView } = await import("./DocumentView.vue");
@@ -105,7 +114,7 @@ describe("DocumentView autosave", () => {
     ).toBe(false);
 
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    await microtasks();
+    await saveStateReads(w, "All changes saved");
     const draft = putRecord.mock.calls
       .map(([record]) => record)
       .find((record) => record.id === "draft:autosave-doc");
@@ -135,7 +144,7 @@ describe("DocumentView autosave", () => {
 
     type(root, 0, 0, "words");
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    await microtasks();
+    await saveStateReads(w, "Not saved — browser storage is full");
     expect(w.get('[data-testid="save-state"]').text()).toBe(
       "Not saved — browser storage is full",
     );
@@ -146,7 +155,7 @@ describe("DocumentView autosave", () => {
     // Storage recovers: the retry succeeds and the failure state clears.
     putRecord.mockResolvedValue(undefined);
     await vi.advanceTimersByTimeAsync(AUTOSAVE_RETRY_MS);
-    await microtasks();
+    await saveStateReads(w, "All changes saved");
     expect(w.get('[data-testid="save-state"]').text()).toBe("All changes saved");
     expect(w.find('[data-testid="save-state-download"]').exists()).toBe(false);
   });
@@ -167,7 +176,7 @@ describe("DocumentView autosave", () => {
 
     // Saved again: no prompt, and the clean close commits the record.
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
-    await microtasks();
+    await saveStateReads(w, "All changes saved");
     event = new Event("beforeunload", { cancelable: true });
     expect(window.dispatchEvent(event)).toBe(true);
     // commitDocument's write now yields a real macrotask (idleScheduler's
