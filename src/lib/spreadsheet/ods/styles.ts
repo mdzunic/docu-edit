@@ -991,11 +991,11 @@ export class OdsStyleBook {
     const common: [string, StyleDefinition][] = [...this.sheet.common].flatMap(([key, definition]) =>
       definition.family === "table-cell" ? [[key.slice(key.indexOf("\u0000") + 1), definition] as [string, StyleDefinition]] : [],
     );
-    const { sourceStyleName: _never, ...undefinedStyle } = this.cellStyleEntry(UNDEFINED_STYLE_NAME).style;
-    const undefinedFormatted = this.cellStyleEntry(UNDEFINED_STYLE_NAME).formatted;
+    const undefinedEntry = this.cellStyleEntry(UNDEFINED_STYLE_NAME);
+    const { sourceStyleName: _never, ...undefinedStyle } = undefinedEntry.style;
     return {
       cellStyles: namesOf("table-cell").map((name) => [name, this.cellStyleEntry(name)]),
-      undefinedCellStyle: { style: undefinedStyle, formatted: undefinedFormatted },
+      undefinedCellStyle: { style: undefinedStyle, formatted: undefinedEntry.formatted },
       defaultFormatted: this.formatted.has(0),
       textStyles: namesOf("text").map((name) => {
         const font = this.textFont(name);
