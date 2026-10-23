@@ -461,30 +461,30 @@ describe("output (AC-9, AC-10)", () => {
 // and slideMarkdown.ts reaches the text side through exactly one export and
 // one type. Followed transitively over RUNTIME imports (`import type` is
 // erased); the two products' own boundary specs cover the reverse direction.
+function runtimeImports(file: string): string[] {
+  const source = readFileSync(file, "utf8");
+  const specifiers: string[] = [];
+  for (const match of source.matchAll(/(?:^|\n)\s*(import|export)\s+([^;]*?)\s+from\s*"([^"]+)"/g)) {
+    const clause = match[2];
+    if (/^type\s/.test(clause)) {
+      continue;
+    }
+    // `import { type A, b }` loads the module; `import { type A }` does not.
+    const names = /^\{([^}]*)\}$/.exec(clause.trim());
+    if (names && names[1].split(",").every((name) => name.trim() === "" || /^type\s/.test(name.trim()))) {
+      continue;
+    }
+    specifiers.push(match[3]);
+  }
+  for (const match of source.matchAll(/import\(\s*"([^"]+)"\s*\)/g)) {
+    specifiers.push(match[1]);
+  }
+  return specifiers.filter((s) => s.startsWith(".")).map((s) => resolve(dirname(file), `${s}.ts`));
+}
+
 describe("the deck path's product boundary (AC-21)", () => {
   const generateDir = dirname(fileURLToPath(import.meta.url));
   const libDir = resolve(generateDir, "..");
-
-  function runtimeImports(file: string): string[] {
-    const source = readFileSync(file, "utf8");
-    const specifiers: string[] = [];
-    for (const match of source.matchAll(/(?:^|\n)\s*(import|export)\s+([^;]*?)\s+from\s*"([^"]+)"/g)) {
-      const clause = match[2];
-      if (/^type\s/.test(clause)) {
-        continue;
-      }
-      // `import { type A, b }` loads the module; `import { type A }` does not.
-      const names = /^\{([^}]*)\}$/.exec(clause.trim());
-      if (names && names[1].split(",").every((name) => name.trim() === "" || /^type\s/.test(name.trim()))) {
-        continue;
-      }
-      specifiers.push(match[3]);
-    }
-    for (const match of source.matchAll(/import\(\s*"([^"]+)"\s*\)/g)) {
-      specifiers.push(match[1]);
-    }
-    return specifiers.filter((s) => s.startsWith(".")).map((s) => resolve(dirname(file), `${s}.ts`));
-  }
 
   function reachable(entry: string): Set<string> {
     const seen = new Set<string>();

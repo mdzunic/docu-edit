@@ -248,7 +248,7 @@ describe("the slide grammar (AC-14)", () => {
     expect(deck.format).toBe("pptx");
     expect(deck.slideWidthCm).toBe(33.867);
     expect(deck.title).toBe("Untitled presentation");
-    expect(dropped.map((record) => [record.kind, record.location])).toEqual(Array(5).fill(["frontMatterKey", "front matter"]));
+    expect(dropped.map((record) => [record.kind, record.location])).toEqual(Array.from({ length: 5 }, () => ["frontMatterKey", "front matter"]));
     expect(dropped.map((record) => record.reason)).toEqual([
       '"author" is not a slide front-matter key (title, format, size): not kept',
       '"tags" is not a slide front-matter key (title, format, size): not kept',
