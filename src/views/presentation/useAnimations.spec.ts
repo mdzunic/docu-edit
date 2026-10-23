@@ -138,6 +138,13 @@ function depthHarness(animations: Slide["animations"]) {
   });
 }
 
+function at(clientX: number): PointerEvent {
+  return { clientX, pointerId: 1, target: null } as unknown as PointerEvent;
+}
+function key(k: string): KeyboardEvent {
+  return { key: k, preventDefault: () => {} } as unknown as KeyboardEvent;
+}
+
 describe("useAnimations — SPEC-105", () => {
   it("every new control records exactly one undo entry in SPEC-080's voice, dirties and commits", () => {
     const h = depthHarness([
@@ -274,7 +281,6 @@ describe("useAnimations — SPEC-105", () => {
     expect(h.c.selectedIndex.value).toBe(1);
     // Drag the delay edge 0.5s right: live preview, nothing recorded yet.
     h.record.mockClear();
-    const at = (clientX: number) => ({ clientX, pointerId: 1, target: null }) as unknown as PointerEvent;
     h.c.startEdgeDrag(bars[4], "delay", at(100));
     h.c.moveEdgeDrag(at(130));
     expect(h.c.timeline.value!.groups.at(-1)!.bars[0].left).toBe(30);
@@ -284,7 +290,6 @@ describe("useAnimations — SPEC-105", () => {
     expect(h.record).toHaveBeenCalledWith("Change animation delay");
     expect(h.model.value!.slides[0].animations![1].delayMs).toBe(500);
     // Arrows: one entry per key press, clamped.
-    const key = (k: string) => ({ key: k, preventDefault: () => {} }) as unknown as KeyboardEvent;
     const bar = h.c.timeline.value!.groups.at(-1)!.bars[0];
     h.c.edgeKeydown(bar, "duration", key("ArrowRight"));
     expect(h.model.value!.slides[0].animations![1].durationMs).toBe(600);

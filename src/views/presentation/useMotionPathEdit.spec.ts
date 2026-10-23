@@ -39,13 +39,17 @@ function pointer(clientX: number, clientY: number, target: unknown = null): Poin
   return { clientX, clientY, pointerId: 7, target, preventDefault: () => {} } as unknown as PointerEvent;
 }
 
+const px = (cm: number): number => cmToPx(cm);
+function key(k: string): KeyboardEvent {
+  return { key: k, preventDefault: () => {} } as unknown as KeyboardEvent;
+}
+
 describe("useMotionPathEdit", () => {
   it("draws nothing until armed, then the resolved path, endpoint and ghost in surface px", () => {
     const { edit } = harness({ preset: "line" });
     expect(edit.overlay.value).toBeNull();
     edit.toggle();
     const o = edit.overlay.value!;
-    const px = (cm: number) => cmToPx(cm);
     expect([o.widthPx, o.heightPx]).toEqual([px(20), px(10)]);
     // 25% of the 20cm width = 5cm to the right of the frame centre (5cm, 5cm).
     expect(o.handle.x).toBeCloseTo(px(10));
@@ -89,7 +93,6 @@ describe("useMotionPathEdit", () => {
   it("arrow keys nudge the endpoint one percent — one entry per press", () => {
     const { edit, model, record } = harness({ preset: "line" });
     edit.toggle();
-    const key = (k: string) => ({ key: k, preventDefault: () => {} }) as unknown as KeyboardEvent;
     edit.onEndpointKeydown(key("ArrowRight"));
     edit.onEndpointKeydown(key("ArrowRight"));
     expect(record).toHaveBeenCalledTimes(2);
