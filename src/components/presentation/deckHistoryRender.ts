@@ -15,8 +15,8 @@ import { filmstripThumbScale, stageFields, type StageField } from "./slideRender
  * clones, never the package — so the way all the way back is the version the
  * restore saved first. */
 export const RESTORE_UNDO_NOTE =
-  "Restoring replaces the whole deck. Ctrl+Z afterwards undoes only the slides — " +
-  "to get everything back, restore the “Before restore” version it saved first.";
+  "Restoring replaces the whole deck. Ctrl+Z afterwards brings back only the slides and their settings — " +
+  "to undo a restore completely, restore the “Before restore” version it saved first.";
 
 /** How wide the preview's read-only stage draws, in px. */
 export const PREVIEW_STAGE_WIDTH_PX = 320;

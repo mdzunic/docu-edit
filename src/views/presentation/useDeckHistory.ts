@@ -75,9 +75,11 @@ export function useDeckHistory(deps: DeckHistoryDeps) {
     changedSinceLastVersion = false;
     namedOnly.value = false;
     exitPreview();
-    index.value = emptyVersionsIndex(id);
+    const empty = emptyVersionsIndex(id);
+    index.value = empty;
     void loadDeckIndex(id).then((loaded) => {
-      if (docId === id) {
+      // A snapshot or a panel action that landed first holds the newer index.
+      if (docId === id && index.value === empty) {
         index.value = loaded;
       }
     });
