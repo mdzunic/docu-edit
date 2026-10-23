@@ -318,14 +318,6 @@ export class StyleRegistry {
    * original drawing-page style, so setting a transition never disturbs the
    * background (SPEC-085). `baseProps` is the filtered original property string
    * ("" for a page that had none). Returns the minted style name. */
-  /** A page background's drawing-page fill properties (SPEC-106), colours
-   * resolved against the deck theme like a frame fill's. */
-  backgroundProps(fill: SlideFill): string {
-    return fill.type === "solid"
-      ? `draw:fill="solid" draw:fill-color="${escapeXmlAttribute(resolveColor(fill.color, this.theme))}"`
-      : `draw:fill="none"`;
-  }
-
   drawingPageStyle(smilProps: string, baseProps: string): string {
     const props = [baseProps, smilProps].filter((p) => p.length > 0).join(" ");
     const cached = this.drawingPageCache.get(props);
@@ -338,6 +330,14 @@ export class StyleRegistry {
       `<style:style style:name="${name}" style:family="drawing-page"><style:drawing-page-properties ${props}/></style:style>`,
     );
     return name;
+  }
+
+  /** A page background's drawing-page fill properties (SPEC-106), colours
+   * resolved against the deck theme like a frame fill's. */
+  backgroundProps(fill: SlideFill): string {
+    return fill.type === "solid"
+      ? `draw:fill="solid" draw:fill-color="${escapeXmlAttribute(resolveColor(fill.color, this.theme))}"`
+      : `draw:fill="none"`;
   }
 
   /** A `table-column` automatic style carrying a column width (SPEC-091). */
