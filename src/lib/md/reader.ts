@@ -236,6 +236,16 @@ function parseInline(text: string, resolveCodeFormatting: () => RunFormatting): 
   return runs;
 }
 
+/** The inline grammar above over one line of text, as `Run[]` — a thin,
+ * additive wrapper for SPEC-106's slide Markdown (generate/slideMarkdown.ts),
+ * which reuses this vocabulary rather than re-implementing it. A code span
+ * resolves against the built-in `CodeChar` style exactly as `parseMd`'s own
+ * spans do; no `parseInline` caller changes. */
+export function parseInlineRuns(text: string): Run[] {
+  const stub = { defaultStyles: createDefaultStyles(), styles: mdBuiltInStyles() } as DocumentModel;
+  return parseInline(text, () => resolveNamedStyle(stub, CODE_CHAR_STYLE_ID).runFormatting);
+}
+
 /** Joins a block's physical source lines into one logical line, honouring
  * "Two-space or backslash line end -> LineBreak" (a literal `\n` embedded in
  * run text, per Run's own doc comment — this model has no separate
