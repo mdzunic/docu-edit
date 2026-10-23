@@ -43,6 +43,10 @@ remote control, service workers, an index/overview grid, exporting a
 subset of slides, `.zip` multi-file export (single file only), RTL
 mirroring, exposing the export through SPEC-045's generation API
 (future follow-up — the serialiser's purity makes it trivial later).
+Blank-screen keys: SPEC-100's `blackout`/`whiteout` members of
+`PlaybackKeyAction` (B and period, W and comma) are deliberately ignored —
+the exported file stays single-window, so `keyTableJson()` embeds only the
+advance/back/first/last tables and those keys do nothing in it.
 
 ## Reference
 

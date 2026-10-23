@@ -189,3 +189,78 @@ describe("usePlayback hidden slides (SPEC-104)", () => {
     expect(p.current.value.slideIndex).toBe(3);
   });
 });
+
+// SPEC-100 — setStep: the only way a follower's machine is written (from the
+// owner's broadcast state). It lands exactly on the step, clamping the slide
+// index as goTo clamps it and the build index into the slide's build count;
+// it never walks over hidden slides, and an unchanged step keeps `current`.
+describe("usePlayback setStep (SPEC-100)", () => {
+  it("lands exactly on the step and sets or clears the end screen", () => {
+    const counts = [0, 3, 0];
+    const p = usePlayback({ slideCount: ref(3), buildCountAt: (i) => counts[i] });
+    p.setStep({ slideIndex: 1, buildIndex: 2 });
+    expect(p.current.value).toEqual({ slideIndex: 1, buildIndex: 2 });
+    expect(p.atEnd.value).toBe(false);
+    p.setStep({ slideIndex: 2, buildIndex: 0 }, true);
+    expect(p.atEnd.value).toBe(true);
+    expect(p.current.value.slideIndex).toBe(2);
+    p.setStep({ slideIndex: 0, buildIndex: 0 });
+    expect(p.atEnd.value).toBe(false);
+  });
+
+  it("clamps the slide index exactly as goTo does", () => {
+    for (const target of [-4, 0, 2, 4, 99, 2.7, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const viaGoTo = machine(5);
+      const viaSetStep = machine(5);
+      viaGoTo.goTo(target);
+      viaSetStep.setStep({ slideIndex: target, buildIndex: 0 });
+      expect(viaSetStep.current.value.slideIndex, String(target)).toBe(viaGoTo.current.value.slideIndex);
+    }
+    const empty = machine(0);
+    empty.setStep({ slideIndex: 3, buildIndex: 0 });
+    expect(empty.current.value).toEqual({ slideIndex: 0, buildIndex: 0 });
+  });
+
+  it("clamps the build index into 0..the slide's build count", () => {
+    const p = usePlayback({ slideCount: ref(2), buildCountAt: (i) => [2, 0][i] });
+    p.setStep({ slideIndex: 0, buildIndex: 9 });
+    expect(p.current.value.buildIndex).toBe(2);
+    p.setStep({ slideIndex: 0, buildIndex: -1 });
+    expect(p.current.value.buildIndex).toBe(0);
+    p.setStep({ slideIndex: 1, buildIndex: 1 });
+    expect(p.current.value.buildIndex).toBe(0); // a slide with no builds
+    p.setStep({ slideIndex: 0, buildIndex: Number.NaN });
+    expect(p.current.value.buildIndex).toBe(0);
+  });
+
+  it("lands on a hidden slide rather than stepping over it (the owner already resolved it)", () => {
+    const p = hiddenMachine(4, [2]);
+    p.setStep({ slideIndex: 2, buildIndex: 0 });
+    expect(p.current.value.slideIndex).toBe(2);
+  });
+
+  it("keeps the same current object when the step does not change (no watcher fires)", () => {
+    const p = machine(3, 1);
+    const before = p.current.value;
+    p.setStep({ slideIndex: 1, buildIndex: 0 });
+    expect(p.current.value).toBe(before);
+  });
+
+  it("leaves advance/back/goTo exactly as they were — the machine walks on from a written step", () => {
+    const counts = [1, 2, 0];
+    const p = usePlayback({ slideCount: ref(3), buildCountAt: (i) => counts[i] });
+    p.setStep({ slideIndex: 1, buildIndex: 1 });
+    p.advance();
+    expect(p.current.value).toEqual({ slideIndex: 1, buildIndex: 2 });
+    p.advance();
+    expect(p.current.value).toEqual({ slideIndex: 2, buildIndex: 0 });
+    p.back();
+    expect(p.current.value).toEqual({ slideIndex: 1, buildIndex: 2 });
+    p.setStep({ slideIndex: 2, buildIndex: 0 }, true);
+    p.back();
+    expect(p.atEnd.value).toBe(false);
+    expect(p.current.value).toEqual({ slideIndex: 2, buildIndex: 0 });
+    p.goTo(0);
+    expect(p.current.value).toEqual({ slideIndex: 0, buildIndex: 0 });
+  });
+});

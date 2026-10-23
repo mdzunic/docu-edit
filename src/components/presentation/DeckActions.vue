@@ -23,8 +23,14 @@
 // Close is now the same icon button the word processor's cluster ends with,
 // rather than a wider text button saying the same thing.
 //
+// SPEC-100: Present gains a ▾ menu beside it — PresentationDownloadButton's
+// split-button pattern, keyboard-operable (Enter/Space or ArrowDown opens it
+// on its first item, arrows/Home/End move, Escape closes back to the caret) —
+// offering the show and "Presenter view"; `present` carries which.
+//
 // Runtime prop/emit declarations, not the generic forms (espree lints .vue
 // scripts).
+import { nextTick, ref, useTemplateRef } from "vue";
 import SaveStateBadge from "../SaveStateBadge.vue";
 import UiButton from "../ui/UiButton.vue";
 import UiIconButton from "../ui/UiIconButton.vue";
@@ -49,19 +55,131 @@ const emit = defineEmits([
   "export-images",
   "close",
 ]);
+
+const menuOpen = ref(false);
+const presentMenu = useTemplateRef("presentMenu");
+const presentCaret = useTemplateRef("presentCaret");
+
+function menuItems() {
+  return Array.from(presentMenu.value?.querySelectorAll('[role="menuitem"]') ?? []);
+}
+
+function focusItem(index = 0) {
+  const items = menuItems();
+  const item = items[(index + items.length) % Math.max(1, items.length)];
+  if (item instanceof HTMLElement) item.focus();
+}
+
+function openMenu() {
+  menuOpen.value = true;
+  void nextTick(() => focusItem(0));
+}
+
+function closeMenu(refocus = false) {
+  menuOpen.value = false;
+  if (refocus) presentCaret.value?.$el?.focus();
+}
+
+function toggleMenu() {
+  if (menuOpen.value) closeMenu();
+  else openMenu();
+}
+
+function onCaretKeydown(event = new KeyboardEvent("keydown")) {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    openMenu();
+  }
+}
+
+function onMenuKeydown(event = new KeyboardEvent("keydown")) {
+  const items = menuItems();
+  const at = items.indexOf(document.activeElement ?? document.body);
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    focusItem(event.key === "ArrowDown" ? at + 1 : at - 1);
+  } else if (event.key === "Home" || event.key === "End") {
+    focusItem(event.key === "Home" ? 0 : items.length - 1);
+  } else if (event.key === "Escape") {
+    closeMenu(true);
+  } else if (event.key === "Tab") {
+    closeMenu();
+    return;
+  } else {
+    return;
+  }
+  // Handled here: the editor's window-level shortcuts must not see it too.
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function present(mode = "show") {
+  closeMenu();
+  emit("present", mode);
+}
 </script>
 
 <template>
   <div class="deck-actions">
-    <UiButton
-      variant="primary"
-      data-testid="slides-present"
-      :disabled="!canPresent"
-      :title="canPresent ? 'Start slideshow' : 'Add a slide to present'"
-      @click="emit('present')"
-    >
-      Present
-    </UiButton>
+    <div class="present-split">
+      <UiButton
+        variant="primary"
+        data-testid="slides-present"
+        :disabled="!canPresent"
+        :title="canPresent ? 'Start slideshow' : 'Add a slide to present'"
+        @click="present('show')"
+      >
+        Present
+      </UiButton>
+      <UiButton
+        ref="presentCaret"
+        variant="primary"
+        class="present-caret"
+        data-testid="presentation-present-menu"
+        aria-haspopup="menu"
+        :aria-expanded="menuOpen"
+        aria-label="More ways to present"
+        :disabled="!canPresent"
+        @click="toggleMenu"
+        @keydown="onCaretKeydown"
+      >
+        ▾
+      </UiButton>
+      <div
+        v-if="menuOpen"
+        ref="presentMenu"
+        class="present-menu"
+        role="menu"
+        aria-label="Present"
+        data-testid="presentation-present-menu-popup"
+        @keydown="onMenuKeydown"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          class="present-menu-item"
+          data-testid="presentation-present-show"
+          @click="present('show')"
+        >
+          From current slide
+        </button>
+        <!-- The work order names this item presentation-presenter; the spec
+             presentation-present-presenter — both resolve to it. -->
+        <button
+          type="button"
+          role="menuitem"
+          class="present-menu-item"
+          data-testid="presentation-present-presenter"
+          @click="present('presenter')"
+        >
+          <span data-testid="presentation-presenter">Presenter view</span>
+        </button>
+      </div>
+      <div
+        v-if="menuOpen"
+        class="menu-backdrop"
+        @click="closeMenu()"
+      />
+    </div>
     <PresentationDownloadButton
       :other-format-label="otherFormatLabel"
       @download="emit('download')"
@@ -92,6 +210,59 @@ const emit = defineEmits([
   flex: none;
   gap: var(--space-3);
   align-items: center;
+}
+
+/* SPEC-100: the Present split button — PresentationDownloadButton's menu. */
+.present-split {
+  position: relative;
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.present-caret {
+  padding-inline: var(--space-2);
+}
+
+.present-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 40;
+  min-width: 14rem;
+  padding: var(--space-1);
+  background: var(--surface-raised);
+  border: var(--border-width) solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.present-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.present-menu-item:hover {
+  background: var(--surface-sunken);
+}
+
+.present-menu-item:focus-visible {
+  background: var(--surface-sunken);
+  outline: var(--border-width) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--border-width));
+}
+
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
 }
 
 /* Quieter than the buttons around it: a state to glance at, not an action. */

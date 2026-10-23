@@ -50,7 +50,10 @@ What lives here, by area:
   `platform.ts`, `colors.ts`, `commentIdentity.ts`, `menuBar.ts`,
   `fileReader.ts` (File → ArrayBuffer), `arrayWindow.ts`
   (reference-equality array windowing for diff engines), `motion.ts`
-  (`prefersReducedMotion`/`motionBaseMs` — the `--motion-base` token reads).
+  (`prefersReducedMotion`/`motionBaseMs` — the `--motion-base` token reads),
+  `windowChannel.ts` (SPEC-100's payload-agnostic same-origin channel between
+  two windows: BroadcastChannel, else a `localStorage` `storage`-event
+  fallback, else none — messages, where `editLock.ts` is exclusion).
 
 Known candidates deliberately not (yet) extracted: `textMetrics.ts`'s wrap
 engine (typed against `Paragraph`/`RunFormatting`), the pagination engine,

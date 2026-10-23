@@ -7,25 +7,28 @@
 // navigation; SPEC-085/086 layer transitions/builds onto the same pipeline and
 // SPEC-088 reimplements it for the HTML export. Runtime declarations, not
 // defineProps<{...}>() generics — espree lints .vue scripts, so typed logic
-// (the step machine, the key map) lives in the imported .ts modules.
+// (the step machine, the key map) lives in the imported .ts modules. SPEC-100:
+// with ?follow= this is the presenter view's audience window (usePresenterSession).
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SlideStage from "../components/presentation/SlideStage.vue";
-import { slideLinkElement, slideLinkTargetOf, stageFields } from "../components/presentation/slideRender";
+import { stageFields } from "../components/presentation/slideRender";
 import { now } from "../lib/clock";
 import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { emptyTwoStageView, transitionAnimates } from "../components/presentation/transitionStyles";
 import UiButton from "../components/ui/UiButton.vue";
-import { documentKindOf, getPresentation, initLibrary, storePresentation } from "../lib/documentStore";
+import { documentKindOf, getPresentation, initLibrary, refreshDocumentFromStorage, storePresentation } from "../lib/documentStore";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
 import { cmToPx } from "../lib/core/units";
 import { slideOutline } from "../lib/presentation/slideModel";
 import { slideBuildCount } from "../lib/presentation/buildPlayback";
-import { playbackActionForKey } from "../lib/presentation/playbackKeys";
 import { usePlayback } from "./presentation/usePlayback";
-import { settledFrameStyles, useBuildPreview } from "./presentation/useBuildPreview";
+import { settledFrameStyles, useBuildPreview, watchBuildSteps } from "./presentation/useBuildPreview";
 import { useShowingMedia } from "./presentation/useShowingMedia";
+import { usePlayInput } from "./presentation/usePlayInput";
+import { usePresenterSession } from "./presentation/usePresenterSession";
+import { useReducedMotion } from "./presentation/useReducedMotion";
 
 const route = useRoute();
 const router = useRouter();
@@ -41,18 +44,8 @@ const presentation = shallowRef(initialModel());
 const loaded = ref(false);
 const slideCount = computed(() => presentation.value?.slides.length ?? 0);
 
-// --- reduced motion (read from the media query, exposed reactively) ---------
-const reducedMotion = ref(false);
-const motionQuery =
-  typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia("(prefers-reduced-motion: reduce)")
-    : null;
-if (motionQuery) {
-  reducedMotion.value = motionQuery.matches;
-}
-function onMotionChange(event = new MediaQueryListEvent("change")) {
-  reducedMotion.value = event.matches;
-}
+// --- reduced motion (read from this window's media query, reactively) ------
+const reducedMotion = useReducedMotion();
 
 // --- the step machine -------------------------------------------------------
 function routeStartIndex() {
@@ -78,22 +71,35 @@ const currentFields = computed(() => {
 
 // --- build playback (SPEC-086): frames hidden until their build plays --------
 const buildPreview = useBuildPreview();
-watch(
-  () => playback.current.value,
-  (cur, prev) => {
-    const slide = currentSlide.value;
-    if (!slide) return;
-    buildPreview.stop();
-    if (!prev || cur.slideIndex !== prev.slideIndex || cur.buildIndex <= prev.buildIndex) {
-      // A new slide, or a backward/jump landing: settle to the target instantly
-      // (back lands fully-built — AC-22).
-      buildPreview.settle(slide, cur.buildIndex);
-      return;
-    }
-    // A forward build step on the same slide: animate the group that just began.
-    buildPreview.playGroup(slide, cur.buildIndex - 1, reducedMotion.value);
+watchBuildSteps(buildPreview, () => playback.current.value, () => currentSlide.value, () => reducedMotion.value);
+
+// --- presenter session (SPEC-100): ?follow= makes this a follower -----------
+const presenter = usePresenterSession({
+  window: "audience",
+  deckId: presentationId,
+  session: String(route.query.follow ?? ""),
+  playback,
+  slideCount,
+  buildCountAt,
+  isHidden,
+  navigation: { advance: advanceStep, back: backStep, goTo: jumpTo, exit },
+  onRemoteStep: (fromIndex, forward) => {
+    clearTransition();
+    if (forward) playIncomingTransition(presentation.value?.slides[fromIndex] ?? null);
   },
-);
+  onRemoteAck: () => {
+    clearTransition();
+    buildPreview.complete();
+  },
+  // A follower never upgrades or stores: it re-reads the store once, after
+  // the owner's first state (the owner may have just stored an upgrade).
+  onFirstState: () => void refreshDocumentFromStorage(presentationId.value).then(loadPresentation),
+  onPromote: () => {
+    if (!presentation.value) return void loadPresentation(); // a legacy deck waited on the owner
+    syncUrl(); // drops ?follow=
+    scheduleAutoAdvance();
+  },
+});
 // --- per-showing GIF URLs: a GIF restarts each time its slide is shown -------
 const showingMedia = useShowingMedia();
 watch(
@@ -104,6 +110,7 @@ watch(
 const deckTitle = computed(() => presentation.value?.title ?? "Slide show");
 const counterLabel = computed(() => `${playback.current.value.slideIndex + 1} / ${slideCount.value}`);
 const announce = computed(() => {
+  if (presenter.blank.value !== "none") return "Screen blanked";
   if (!presentation.value || playback.atEnd.value) return "";
   const outline = currentSlide.value ? slideOutline(currentSlide.value) : { title: "" };
   const title = outline.title && outline.title.length > 0 ? outline.title : "untitled";
@@ -123,7 +130,7 @@ function clearAutoAdvance() {
 function scheduleAutoAdvance() {
   clearAutoAdvance();
   const ms = currentSlide.value?.transition?.advanceAfterMs;
-  if (typeof ms === "number" && ms > 0 && !playback.atEnd.value) {
+  if (typeof ms === "number" && ms > 0 && !playback.atEnd.value && !presenter.following.value) {
     autoAdvanceTimer = window.setTimeout(() => {
       autoAdvanceTimer = 0;
       advanceStep();
@@ -140,6 +147,7 @@ async function loadPresentation() {
   }
   let model = getPresentation(presentationId.value) ?? null;
   if (model && isLegacyPresentationModel(model)) {
+    if (presenter.following.value) return; // the owner upgrades; see onFirstState
     try {
       const upgraded = await upgradePresentationModel(model);
       storePresentation(upgraded);
@@ -153,8 +161,8 @@ async function loadPresentation() {
   if (model) {
     // Clamp the deep-link n into range and land exactly on it: a deep link to
     // a hidden slide still shows it (SPEC-104), which goTo would step over.
-    playback.atEnd.value = false;
-    playback.current.value = { slideIndex: Math.min(Math.max(Math.trunc(routeStartIndex()), 0), Math.max(0, slideCount.value - 1)), buildIndex: 0 };
+    playback.setStep({ slideIndex: routeStartIndex(), buildIndex: 0 });
+    presenter.reapply(); // a follower re-lands on the owner's last state
     syncUrl(); // reflect the clamp even when the index did not change (AC-5)
     if (currentSlide.value) {
       buildPreview.settle(currentSlide.value, playback.current.value.buildIndex); // hide unbuilt frames (AC-20)
@@ -162,7 +170,7 @@ async function loadPresentation() {
     scheduleAutoAdvance(); // the starting slide may itself auto-advance (AC-17)
     void nextTick(() => {
       recomputeScale();
-      enterFullscreen();
+      input.enterFullscreen();
     });
   }
 }
@@ -172,8 +180,9 @@ let exiting = false;
 function syncUrl() {
   if (exiting || !presentation.value) return;
   const target = `/slides/${presentationId.value}/present/${playback.current.value.slideIndex + 1}`;
-  if (route.path !== target) {
-    void router.replace(target);
+  const follow = presenter.following.value ? presenter.session : undefined;
+  if (route.path !== target || route.query.follow !== follow) {
+    void router.replace(follow ? { path: target, query: route.query } : target); // promoted: ?follow= drops
   }
 }
 watch(() => playback.current.value.slideIndex, syncUrl);
@@ -195,32 +204,13 @@ function recomputeScale() {
   stageScale.value = Math.min(availW / surfaceW, availH / surfaceH);
 }
 
-// --- fullscreen (requested from the Present gesture; denial tolerated) -------
-let fullscreenRequested = false;
-function enterFullscreen() {
-  const el = stageContainer.value;
-  if (!el || fullscreenRequested || typeof el.requestFullscreen !== "function") return;
-  fullscreenRequested = true;
-  try {
-    void Promise.resolve(el.requestFullscreen()).catch(() => {});
-  } catch {
-    // Unavailable — playback just fills the viewport (AC-9).
-  }
-}
-function releaseFullscreen() {
-  if (typeof document !== "undefined" && document.fullscreenElement && typeof document.exitFullscreen === "function") {
-    try {
-      void Promise.resolve(document.exitFullscreen()).catch(() => {});
-    } catch {
-      // ignore
-    }
-  }
-}
+// --- fullscreen (requested from the Present gesture; denial tolerated — the
+// request and release live in usePlayInput beside SPEC-100's prompt) ---------
 function onFullscreenChange() {
   // The user leaving OS fullscreen (Esc) must exit playback, not strand a black
   // page (AC-10). Our own exit()'s exitFullscreen also lands here — the exiting
-  // guard stops the recursion.
-  if (typeof document !== "undefined" && !document.fullscreenElement && fullscreenRequested && !exiting) {
+  // guard stops the recursion. A follower stays put: its prompt returns.
+  if (typeof document !== "undefined" && !document.fullscreenElement && input.fullscreenRequested() && !exiting && !presenter.following.value) {
     exit();
   }
 }
@@ -232,7 +222,7 @@ function exit() {
   clearAutoAdvance();
   clearTransition();
   buildPreview.stop();
-  releaseFullscreen();
+  input.releaseFullscreen();
   const index = playback.atEnd.value ? Math.max(0, slideCount.value - 1) : playback.current.value.slideIndex;
   void router.replace({ path: `/slides/${presentationId.value}`, query: { return: String(index + 1) } });
 }
@@ -289,6 +279,11 @@ function advanceStep() {
   if (playback.current.value.slideIndex === fromIndex) {
     return; // a build advanced on the same slide (SPEC-086) — the build watcher animates it
   }
+  playIncomingTransition(fromSlide);
+}
+/** Plays the incoming slide's transition from `fromSlide` — after an advance
+ * here, or (SPEC-100) a follower's one-step advance arriving from the owner. */
+function playIncomingTransition(fromSlide = currentSlide.value) {
   const toSlide = currentSlide.value;
   if (toSlide && toSlide.transition && transitionAnimates(toSlide.transition, reducedMotion.value, !!fromSlide)) {
     transitionView.value = { outgoing: fromSlide, incoming: toSlide, transition: toSlide.transition };
@@ -303,139 +298,18 @@ function jumpTo(index = 0) {
   playback.goTo(index);
 }
 
-// --- keyboard (window-level while mounted) ----------------------------------
-let digitBuffer = "";
-function isTextInput(target = new EventTarget()) {
-  return (
-    target instanceof HTMLElement &&
-    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-  );
-}
-function onKeydown(event = new KeyboardEvent("keydown")) {
-  if (exiting) return;
-  // Ignore combos we don't own (Cmd/Ctrl+Z etc. do nothing — inert; AC-45) and
-  // anything typed into an input.
-  if (event.metaKey || event.ctrlKey || event.altKey) return;
-  if (event.target && isTextInput(event.target)) return;
-  // Enter on a focused slide link activates it (its click follows the link,
-  // SPEC-097); it must not also advance.
-  if (event.key === "Enter" && digitBuffer.length === 0 && slideLinkElement(event.target)) return;
-
-  if (event.key === "Escape") {
-    event.preventDefault();
-    exit();
-    return;
-  }
-  if (playback.atEnd.value) {
-    // The end screen: any key exits (AC-31/32).
-    event.preventDefault();
-    exit();
-    return;
-  }
-  if (event.key >= "0" && event.key <= "9") {
-    digitBuffer += event.key;
-    event.preventDefault();
-    return;
-  }
-  if (event.key === "Enter" && digitBuffer.length > 0) {
-    event.preventDefault();
-    const target = Number(digitBuffer);
-    digitBuffer = "";
-    jumpTo(target - 1);
-    return;
-  }
-  const action = playbackActionForKey(event.key);
-  if (!action) return;
-  event.preventDefault();
-  digitBuffer = "";
-  if (action === "advance") advanceStep();
-  else if (action === "back") backStep();
-  else if (action === "first") jumpTo(0);
-  else if (action === "last") jumpTo(slideCount.value - 1);
-}
-
-// --- pointer / touch: click advances, horizontal swipe navigates ------------
-const SWIPE_THRESHOLD_PX = 48;
-let pointerActive = false;
-let pointerStartX = 0;
-let pointerStartY = 0;
-let swiped = false;
-function onPointerDown(event = new PointerEvent("pointerdown")) {
-  pointerActive = true;
-  swiped = false;
-  pointerStartX = event.clientX;
-  pointerStartY = event.clientY;
-}
-function onPointerUp(event = new PointerEvent("pointerup")) {
-  if (!pointerActive) return;
-  pointerActive = false;
-  const dx = event.clientX - pointerStartX;
-  const dy = event.clientY - pointerStartY;
-  if (Math.abs(dx) >= SWIPE_THRESHOLD_PX && Math.abs(dx) > Math.abs(dy)) {
-    swiped = true; // suppress the click that follows
-    if (playback.atEnd.value) {
-      exit();
-    } else if (dx < 0) {
-      advanceStep(); // swipe left → next (SPEC-068 convention)
-    } else {
-      backStep();
-    }
-  }
-}
-function onStageClick(event = new MouseEvent("click")) {
-  if (swiped) {
-    swiped = false;
-    return;
-  }
-  // SPEC-097 AC-49/50: a click on a rendered link follows it and NEVER also
-  // advances (or completes) a build — return before advanceStep.
-  const link = slideLinkElement(event.target);
-  if (link) {
-    followLink(slideLinkTargetOf(link));
-    return;
-  }
-  advanceStep();
-}
-
-/** Follows a slide link: an in-deck target jumps (SPEC-084's jumpTo, 0-based)
- * and an external one opens in a new tab with no opener/referrer. */
-function followLink(target = slideLinkTargetOf(document.createElement("a"))) {
-  if (!target) return;
-  if (target.slide !== undefined) {
-    jumpTo(target.slide - 1);
-  } else if (target.href) {
-    window.open(target.href, "_blank", "noopener,noreferrer");
-  }
-}
-
-// --- idle-fade HUD (counter + touch prev/next), 2s after pointer idle -------
-const controlsVisible = ref(false);
-let idleTimer = 0;
-function revealControls() {
-  controlsVisible.value = true;
-  if (idleTimer) clearTimeout(idleTimer);
-  idleTimer = window.setTimeout(() => {
-    controlsVisible.value = false;
-  }, 2000);
-}
-function onPointerMove() {
-  revealControls();
-}
+// --- input (SPEC-084's keyboard, pointer and idle HUD; SPEC-100 routes it) --
+const input = usePlayInput({ atEnd: playback.atEnd, isExiting: () => exiting, perform: presenter.perform, fullscreenTarget: () => stageContainer.value });
 
 // --- lifecycle --------------------------------------------------------------
 onMounted(() => {
-  window.addEventListener("keydown", onKeydown);
   window.addEventListener("resize", recomputeScale);
   document.addEventListener("fullscreenchange", onFullscreenChange);
-  motionQuery?.addEventListener("change", onMotionChange);
   void nextTick(recomputeScale);
 });
 onBeforeUnmount(() => {
-  window.removeEventListener("keydown", onKeydown);
   window.removeEventListener("resize", recomputeScale);
   document.removeEventListener("fullscreenchange", onFullscreenChange);
-  motionQuery?.removeEventListener("change", onMotionChange);
-  if (idleTimer) clearTimeout(idleTimer);
   clearAutoAdvance();
   buildPreview.stop();
   showingMedia.releaseAll();
@@ -467,10 +341,10 @@ onBeforeUnmount(() => {
     :aria-label="deckTitle"
     data-testid="presentation-play"
     :data-building="buildPreview.playing.value ? 'true' : 'false'"
-    @click="onStageClick"
-    @pointerdown="onPointerDown"
-    @pointerup="onPointerUp"
-    @pointermove="onPointerMove"
+    @click="input.onStageClick"
+    @pointerdown="input.onPointerDown"
+    @pointerup="input.onPointerUp"
+    @pointermove="input.onPointerMove"
   >
     <SlideTransitionLayer
       v-if="presentation && transitionView && !playback.atEnd.value"
@@ -514,15 +388,42 @@ onBeforeUnmount(() => {
     </div>
 
     <div
+      v-if="presenter.blank.value !== 'none'"
+      class="play-blank"
+      :class="`is-${presenter.blank.value}`"
+      data-testid="play-blank"
+      :data-blank="presenter.blank.value"
+      aria-hidden="true"
+    />
+    <div
+      v-if="presenter.isAudience && !input.fullscreenActive.value"
+      class="play-fullscreen"
+    >
+      <button
+        type="button"
+        class="hud-pill"
+        data-testid="play-fullscreen-prompt"
+        @click.stop="input.requestFullscreen"
+      >
+        Full screen (F)
+      </button>
+      <span
+        v-if="route.query.placed !== '1'"
+        class="hud-pill"
+        data-testid="play-screen-hint"
+      >Drag this window to your projector, then press F for full screen</span>
+    </div>
+
+    <div
       class="play-hud"
-      :class="{ 'is-visible': controlsVisible && !playback.atEnd.value }"
+      :class="{ 'is-visible': input.controlsVisible.value && !playback.atEnd.value }"
     >
       <button
         type="button"
         class="hud-affordance"
         data-testid="play-prev"
         aria-label="Previous slide"
-        @click.stop="backStep"
+        @click.stop="presenter.perform('back')"
       >
         ‹
       </button>
@@ -537,7 +438,7 @@ onBeforeUnmount(() => {
         class="hud-affordance"
         data-testid="play-next"
         aria-label="Next slide"
-        @click.stop="advanceStep"
+        @click.stop="presenter.perform('advance')"
       >
         ›
       </button>
@@ -620,6 +521,28 @@ onBeforeUnmount(() => {
   pointer-events: auto;
 }
 
+/* SPEC-100 blank screen: solid over the stage, the HUD still above it. */
+.play-blank {
+  position: absolute;
+  inset: 0;
+  background: #000;
+}
+
+.play-blank.is-white {
+  background: #fff;
+}
+
+.play-fullscreen {
+  position: absolute;
+  inset-block-start: var(--space-4);
+  inset-inline: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.hud-pill,
 .hud-counter {
   color: #fff;
   background: color-mix(in srgb, #000 55%, transparent);
@@ -627,6 +550,15 @@ onBeforeUnmount(() => {
   padding: var(--space-1) var(--space-3);
   font-size: var(--text-md);
   font-variant-numeric: tabular-nums;
+}
+
+.hud-pill {
+  border: none;
+  font: inherit;
+}
+
+button.hud-pill {
+  cursor: pointer;
 }
 
 .hud-affordance {
