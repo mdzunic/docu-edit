@@ -3,7 +3,8 @@
 // composables). Two groups: the download pair (own format + "Download a copy
 // as…" the other, SPEC-080) and playback entry (SPEC-084) — the Present button,
 // its Cmd/Ctrl+Shift+Return shortcut, and the return-selection handoff the play
-// view writes back via a `?return` query. Framework state (the model, the
+// view writes back via a `?return` query. SPEC-100 adds the presenter view to
+// the same entry: its Present menu item and Cmd/Ctrl+Alt+Shift+Return. Framework state (the model, the
 // current index) comes in as refs; nothing here renders.
 import { computed, ref, type Ref } from "vue";
 import type { Router, RouteLocationNormalizedLoaded } from "vue-router";
@@ -14,6 +15,10 @@ import { presentationFormatLabel } from "../../lib/format";
 import type { PresentationModel, PresentationFormat } from "../../lib/presentation/model";
 
 const HTML_MIME_TYPE = "text/html;charset=utf-8";
+
+/** How Present starts (SPEC-100): the full-screen show in this tab, or the
+ * presenter view here driving an audience window. */
+export type PresentMode = "show" | "presenter";
 
 export interface UseDeckActionsDeps {
   model: Ref<PresentationModel | null>;
@@ -92,17 +97,20 @@ export function useDeckActions(deps: UseDeckActionsDeps) {
   // --- playback entry (SPEC-084) --------------------------------------------
   const canPresent = computed(() => deps.slideTotal.value > 0);
 
-  /** Start playback at the current slide (1-based `n` in the route). */
-  function present(): void {
+  /** Start playback at the current slide (1-based `n` in the route): the
+   * show (SPEC-084), or presenter view (SPEC-100). */
+  function present(mode: PresentMode = "show"): void {
     if (!canPresent.value) return;
-    void deps.router.push(`/slides/${deps.presentationId.value}/present/${deps.currentIndex.value + 1}`);
+    const route = mode === "presenter" ? "presenter" : "present";
+    void deps.router.push(`/slides/${deps.presentationId.value}/${route}/${deps.currentIndex.value + 1}`);
   }
 
-  /** Cmd/Ctrl+Shift+Return starts playback (AC-1). */
+  /** Cmd/Ctrl+Shift+Return starts playback (AC-1); adding Alt starts
+   * presenter view instead (SPEC-100). */
   function onPresentShortcut(event: KeyboardEvent): void {
     if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key === "Enter") {
       event.preventDefault();
-      present();
+      present(event.altKey ? "presenter" : "show");
     }
   }
 

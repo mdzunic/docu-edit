@@ -13,7 +13,7 @@ import {
   mediaExportSummary,
   HTML_EXPORT_MEDIA_BUDGET_BYTES,
 } from "./htmlExport";
-import { advanceKeys, backKeys, firstKeys, lastKeys } from "./playbackKeys";
+import { advanceKeys, backKeys, blackoutKeys, firstKeys, lastKeys, playbackActionForKey, whiteoutKeys } from "./playbackKeys";
 import type { PresentationModel, Slide, SlideFrame } from "./model";
 
 function textFrame(id: string, text: string, extra: Partial<Extract<SlideFrame, { kind: "text" }>> = {}): SlideFrame {
@@ -254,6 +254,18 @@ describe("exportPresentationHtml — key table equality (AC-20/21)", () => {
     const expected = JSON.stringify({ advance: advanceKeys, back: backKeys, first: firstKeys, last: lastKeys });
     expect(keyTableJson()).toBe(expected);
     expect(html).toContain("var KEYS=" + expected);
+  });
+
+  it("ignores SPEC-100's blank-screen keys — the export stays single-window", () => {
+    const html = exportPresentationHtml(baseModel([slide("s1", [])]), { includeNotes: false });
+    const table: Record<string, string[]> = JSON.parse(keyTableJson());
+    expect(Object.keys(table)).toEqual(["advance", "back", "first", "last"]);
+    for (const key of [...blackoutKeys, ...whiteoutKeys]) {
+      expect(Object.values(table).flat()).not.toContain(key);
+      expect(playbackActionForKey(key)).toMatch(/^(blackout|whiteout)$/);
+    }
+    expect(html).not.toContain("blackout");
+    expect(html).not.toContain("whiteout");
   });
 });
 

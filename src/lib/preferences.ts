@@ -156,6 +156,9 @@ export interface Preferences {
    * every slide, SPEC-099) in place of the filmstrip + stage. Per-device,
    * default off. */
   presentationSorterOpen: boolean;
+  /** The presenter view's speaker-notes text scale (SPEC-100), one of
+   * PRESENTER_NOTES_SCALES. Per-device, default 1.25. */
+  presentationPresenterNotesScale: number;
   /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
   snapToGuides: boolean;
   /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
@@ -206,6 +209,10 @@ export const AUTOSAVE_DELAY_CHOICES: number[] = [1000, AUTOSAVE_DEBOUNCE_MS, 300
   (value, index, all) => all.indexOf(value) === index,
 );
 
+/** The presenter view's notes text scales (SPEC-100), smallest first — what
+ * its smaller/larger controls (and -/+) step through. */
+export const PRESENTER_NOTES_SCALES: readonly number[] = [1, 1.25, 1.5, 2, 2.5];
+
 /** The declared default for every field (AC-6, AC-11). These match the
  * product's existing hard-coded defaults exactly, so wiring a consumer to
  * read its preference changes no behaviour until the user changes the
@@ -241,6 +248,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationThemeOpen: false, // SPEC-094 Design panel
   presentationTextOpen: false, // SPEC-097 Text panel
   presentationSorterOpen: false, // SPEC-099 slide sorter
+  presentationPresenterNotesScale: 1.25, // SPEC-100 presenter view notes
   presentationTableOpen: false,
   snapToGuides: true,
   snapToGrid: false,
@@ -337,6 +345,8 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationThemeOpen: isBoolean,
   presentationTextOpen: isBoolean,
   presentationSorterOpen: isBoolean,
+  // A number, so oneOf (value-typed) — never inSet, which is string-only.
+  presentationPresenterNotesScale: oneOf<"presentationPresenterNotesScale">(PRESENTER_NOTES_SCALES),
   presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,
   snapToGrid: isBoolean,

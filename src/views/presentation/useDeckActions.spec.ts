@@ -71,6 +71,35 @@ describe("useDeckActions playback entry", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("present(\"presenter\") opens presenter view at the current slide; the default stays the show (SPEC-100)", () => {
+    const { actions, push } = harness({ current: 2 });
+    actions.present("presenter");
+    expect(push).toHaveBeenCalledWith("/slides/deck-1/presenter/3");
+    actions.present("show");
+    expect(push).toHaveBeenLastCalledWith("/slides/deck-1/present/3");
+    actions.present();
+    expect(push).toHaveBeenLastCalledWith("/slides/deck-1/present/3");
+    push.mockClear();
+    harness({ slides: 0 }).actions.present("presenter");
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("Cmd/Ctrl+Alt+Shift+Return starts presenter view; Cmd/Ctrl+Shift+Return still starts the show (SPEC-100)", () => {
+    const { actions, push } = harness({ current: 1 });
+    const presenter = new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, altKey: true, shiftKey: true });
+    const prevent = vi.spyOn(presenter, "preventDefault");
+    actions.onPresentShortcut(presenter);
+    expect(push).toHaveBeenLastCalledWith("/slides/deck-1/presenter/2");
+    expect(prevent).toHaveBeenCalled();
+    actions.onPresentShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, altKey: true, shiftKey: true }));
+    expect(push).toHaveBeenLastCalledWith("/slides/deck-1/presenter/2");
+    actions.onPresentShortcut(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, shiftKey: true }));
+    expect(push).toHaveBeenLastCalledWith("/slides/deck-1/present/2");
+    push.mockClear();
+    actions.onPresentShortcut(new KeyboardEvent("keydown", { key: "Enter", altKey: true, shiftKey: true })); // no Cmd/Ctrl
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("returnIndex reads and clamps the ?return handoff (AC-35)", () => {
     expect(harness({ query: {} }).actions.returnIndex()).toBe(0); // no handoff → first
     expect(harness({ query: { return: "3" } }).actions.returnIndex()).toBe(2); // 1-based → 0-based

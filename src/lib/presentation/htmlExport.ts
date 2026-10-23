@@ -533,7 +533,11 @@ function renderNotes(slides: Slide[]): string {
 
 /** The navigation key tables embedded into the viewer, byte-for-byte the
  * `playbackKeys.ts` arrays — the export's single source, asserted equal by the
- * unit test so the two surfaces cannot drift (SPEC-088 Reference). */
+ * unit test so the two surfaces cannot drift (SPEC-088 Reference). SPEC-100's
+ * blank-screen members (`blackoutKeys`/`whiteoutKeys`, PlaybackKeyAction
+ * "blackout"/"whiteout") are deliberately NOT embedded: the exported file
+ * stays single-window, with no presenter to blank the screen for, so B, W,
+ * period and comma do nothing in it. */
 export function keyTableJson(): string {
   return JSON.stringify({ advance: advanceKeys, back: backKeys, first: firstKeys, last: lastKeys });
 }

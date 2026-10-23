@@ -52,6 +52,15 @@ export const routes: RouteRecordRaw[] = [
     beforeEnter: guardKind("presentation"),
   },
   {
+    // SPEC-100: presenter view (1-based `n`) — this tab drives the show and
+    // opens /present/:n?follow=… as the audience window. Kind-guarded like the
+    // other two slide routes, so a text id lands on /doc/:id.
+    path: "/slides/:id/presenter/:n",
+    name: "slides-presenter",
+    component: () => import("./views/PresenterView.vue"),
+    beforeEnter: guardKind("presentation"),
+  },
+  {
     // SPEC-107: the media viewer, kind-guarded like every editor route.
     path: "/media/:id",
     name: "media",
