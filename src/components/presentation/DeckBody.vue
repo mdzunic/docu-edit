@@ -38,6 +38,8 @@ const props = defineProps({
   /** SPEC-099: the shared slide selection (useSlideSelection) the filmstrip
    * shares with the slide sorter. */
   selection: { type: Object, default: null },
+  /** SPEC-103: the version history controller, for the stage column. */
+  history: { type: Object, default: null },
 });
 
 defineEmits(["select", "add", "command", "reorder"]);
@@ -79,6 +81,7 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
       :media-panel="mediaPanel"
       :current-index="currentIndex"
       :fields="currentFields"
+      :history="history"
       @add="$emit('add')"
     />
   </div>

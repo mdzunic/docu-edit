@@ -11,13 +11,15 @@ const props = defineProps({
   saveState: { type: String, default: "saved" },
   /** The words themselves, so each product keeps its own phrasing. */
   text: { type: String, required: true },
+  /** The deck header names its own readout `deck-save-state` (SPEC-103). */
+  testid: { type: String, default: "save-state" },
 });
 </script>
 
 <template>
   <span
     class="save-state"
-    data-testid="save-state"
+    :data-testid="props.testid"
     :data-save-state="props.saveState"
   >{{ props.text }}</span>
 </template>

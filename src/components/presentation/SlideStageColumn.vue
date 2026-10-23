@@ -9,6 +9,7 @@
 import { computed } from "vue";
 import SlideStageArea from "./SlideStageArea.vue";
 import SlidePanelStack from "./SlidePanelStack.vue";
+import DeckHistoryPanel from "./DeckHistoryPanel.vue";
 import PositionSizeDialog from "./PositionSizeDialog.vue";
 import UiButton from "../ui/UiButton.vue";
 
@@ -27,6 +28,9 @@ const props = defineProps({
   mediaPanel: { type: Object, required: true },
   currentIndex: { type: Number, default: 0 },
   fields: { type: Array, default: () => [] },
+  /** SPEC-103: useDeckSaving's history controller — its panel mounts here,
+   * under the stage, while its toggle is on. */
+  history: { type: Object, default: null },
 });
 
 defineEmits(["add"]);
@@ -66,6 +70,11 @@ const arrange = computed(() => s.arrange);
       :media="mediaPanel"
       :slide-number="currentIndex + 1"
       :has-slide="!!currentSlide"
+    />
+    <DeckHistoryPanel
+      v-if="history && history.open.value"
+      :controller="history"
+      :slide-number="currentIndex + 1"
     />
     <!-- Releasing a rotated verbatim group is lossy — confirm (SPEC-096) -->
     <div

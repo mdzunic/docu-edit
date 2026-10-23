@@ -1,16 +1,16 @@
-// The slide-stage re-render/persist plumbing, lifted out of PresentationView so
-// the view stays a wiring hub within its size budget. The presentation model is
+// The slide-stage re-render plumbing, lifted out of PresentationView so the
+// view stays a wiring hub within its size budget. The presentation model is
 // plain (non-reactive) data behind a shallowRef, so an in-place mutation (a
 // structural command, a frame move, a style change) is invisible to the
 // renderer until the slide and its frames get fresh object identities. These
 // three helpers own that trick: `bumpCurrentSlide` re-identifies the current
-// slide, `refresh` re-renders without persisting (mid-gesture), and `commit`
-// re-renders AND persists write-through. Every editing composable in the view
-// (undo, slide/frame commands, notes, transitions, animations) shares them.
+// slide, `refresh` re-renders mid-gesture, and `commit` re-renders a finished
+// edit and reports it through `onCommit` — since SPEC-103 the deck's autosave
+// (drafts on SPEC-010's cadence, commits at its commit points) rather than a
+// write-through per gesture. Every editing composable in the view (undo,
+// slide/frame commands, notes, transitions, animations) shares them.
 import { nextTick, triggerRef, type Ref, type ShallowRef } from "vue";
 import type { PresentationModel, SlideFrame } from "../../lib/presentation/model";
-import { touchDocument } from "../../lib/documentStore";
-import { useDeckSaveStatus } from "./useDeckSaveStatus";
 
 /** A fresh object identity for a frame AND its group descendants — a group
  * command (rotate, resize, ungroup-undo) mutates the children in place, and a
@@ -26,20 +26,22 @@ export interface SlideRenderDeps {
   /** Recompute the fit-to-workspace scale after a commit (a deleted slide can
    * change the surface). */
   recomputeScale: () => void;
+  /** Called at the end of every `commit()` — the deck's edit signal
+   * (useDeckSaving's noteEdit: autosave's dirty flag and the version-history
+   * cadence). `refresh()` never calls it, so a mid-drag preview arms nothing
+   * (SPEC-103). */
+  onCommit?: () => void;
 }
 
 export function useSlideRender(deps: SlideRenderDeps) {
-  // The deck's save readout (SPEC-010) belongs to whatever does the writing,
-  // and that is `commit` below — so the header reads its state from here
-  // rather than the view wiring a second composable to the same writes.
-  const saveStatus = useDeckSaveStatus();
-
   // SPEC-095: `model.media` is one IndexedDB record whose write latch skips only
   // while the array reference is unchanged, so re-slicing it on every commit
   // rewrites a 20 MB clip whole on every nudge/keystroke. This flag gates the
   // re-slice: a media-mutating command sets it via `bumpMedia()` before its
   // `commit()`, and only then is the media reference (and its store record)
-  // refreshed. Cleared each commit.
+  // refreshed. Cleared each commit. SPEC-103 adopts the same gate for the
+  // deck's drafts: with `opaque` split out too, every draft tick after a
+  // session's first writes the shell alone.
   let mediaDirty = false;
 
   /** Marks `model.media` as changed so the next `commit()` re-slices it (and the
@@ -59,8 +61,8 @@ export function useSlideRender(deps: SlideRenderDeps) {
     model.slides[deps.currentIndex.value] = { ...slide, frames: slide.frames.map(reidentifyFrame) };
   }
 
-  /** Re-render the stage without persisting — the live preview during a drag or
-   * resize gesture; `commit` persists once on release. */
+  /** Re-render the stage without reporting an edit — the live preview during
+   * a drag or resize gesture; `commit` reports it once on release. */
   function refresh(): void {
     const model = deps.model.value;
     if (!model) return;
@@ -69,8 +71,9 @@ export function useSlideRender(deps: SlideRenderDeps) {
     triggerRef(deps.model);
   }
 
-  /** Re-render the shallowRef and persist write-through after a mutation. The
-   * selection is clamped in case a delete dropped it past the tail. */
+  /** Re-render the shallowRef after a finished mutation and report the edit
+   * (`onCommit`). The selection is clamped in case a delete dropped it past
+   * the tail. */
   function commit(): void {
     const model = deps.model.value;
     if (!model) return;
@@ -90,9 +93,9 @@ export function useSlideRender(deps: SlideRenderDeps) {
       model.media = model.media.slice();
     }
     mediaDirty = false;
-    saveStatus.trackWrite(touchDocument(model.id));
     triggerRef(deps.model);
     void nextTick(deps.recomputeScale);
+    deps.onCommit?.();
   }
 
   return {
@@ -100,7 +103,5 @@ export function useSlideRender(deps: SlideRenderDeps) {
     refresh,
     bumpCurrentSlide,
     bumpMedia,
-    saveState: saveStatus.saveState,
-    saveStateText: saveStatus.saveStateText,
   };
 }

@@ -8,7 +8,6 @@ import { createBlankPresentation, addSlide } from "../../lib/presentation/slides
 import type { PresentationFormat, PresentationModel } from "../../lib/presentation/model";
 import { usePresentationUndo } from "./usePresentationUndo";
 import { useSlideCommands } from "./useSlideCommands";
-import { useFilmstripCommands } from "./useFilmstripCommands";
 
 function harness(format: PresentationFormat = "pptx") {
   const deck = createBlankPresentation();
@@ -82,13 +81,7 @@ describe("useSlideCommands.toggleHidden (SPEC-104)", () => {
 
   it("the filmstrip's hide intent routes to it", () => {
     const { model, commands } = harness();
-    const filmstrip = useFilmstripCommands({
-      commands,
-      selectSlide: () => undefined,
-      openLayoutForNew: () => undefined,
-      openLayoutForChange: () => undefined,
-    });
-    filmstrip.onCommand({ action: "hide", index: 0 });
+    commands.onFilmstripCommand({ action: "hide", index: 0 });
     expect(model.value?.slides[0].hidden).toBe(true);
   });
 });

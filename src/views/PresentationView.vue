@@ -13,11 +13,10 @@ import AppShell from "../components/AppShell.vue";
 import PresentationNotFound from "../components/presentation/PresentationNotFound.vue";
 import DeckBody from "../components/presentation/DeckBody.vue";
 import SlideSorter from "../components/presentation/SlideSorter.vue";
-import ReuseSlidesDialog from "../components/presentation/ReuseSlidesDialog.vue";
 import PresentationRibbon from "../components/presentation/PresentationRibbon.vue";
 import DeckAppBar from "../components/presentation/DeckAppBar.vue";
 import PresentationDialogs from "../components/presentation/PresentationDialogs.vue";
-import HeaderFooterDialog from "../components/presentation/HeaderFooterDialog.vue";
+import RecoveryBar from "../components/RecoveryBar.vue";
 import ThemesPanel from "../components/presentation/ThemesPanel.vue";
 import TextPanel from "../components/presentation/TextPanel.vue";
 import { useTheme } from "../composables/useTheme";
@@ -26,7 +25,6 @@ import { useDeckLoad } from "./presentation/useDeckLoad";
 import { usePresentationUndo } from "./presentation/usePresentationUndo";
 import { useDeckNavigation } from "./presentation/useDeckNavigation";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
-import { useNotes } from "./presentation/useNotes";
 import { useEditingPanels } from "./presentation/useEditingPanels";
 import { useDeckTheme } from "./presentation/useDeckTheme";
 import { useSlideLayouts } from "./presentation/useSlideLayouts";
@@ -40,6 +38,7 @@ import { useDeckSetup } from "./presentation/useDeckSetup";
 import { useHeaderFooter } from "./presentation/useHeaderFooter";
 import { useSlideTextDepth } from "./presentation/useSlideTextDepth";
 import { useDeckExport } from "./presentation/useDeckExport";
+import { useDeckSaving } from "./presentation/useDeckSaving";
 
 const route = useRoute();
 const router = useRouter();
@@ -66,11 +65,12 @@ const { addToast } = useToasts();
 
 // --- structural commands + undo (SPEC-080) ---------------------------------
 
-// The re-render/persist trio lives in a composable (SPEC-086 extraction) so the
-// view stays within its size budget; it owns the shallowRef re-identification.
+// The re-render trio lives in a composable (SPEC-086 extraction) so the view
+// stays within its size budget; it owns the shallowRef re-identification.
 // SlideStageArea owns the fit scaling now (SPEC-089) and recomputes reactively
 // from the current slide + deck size, so the render trio needs no scale hook.
-const { commit, refresh, bumpMedia, saveState, saveStateText } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => {} });
+// Every finished edit reports to the deck's autosave and history (SPEC-103).
+const { commit, refresh, bumpMedia } = useSlideRender({ model: presentation, currentIndex, recomputeScale: () => {}, onCommit: () => saving.noteEdit() });
 
 const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
 // Deck navigation — slide commands, derived facts, Add slide and the filmstrip
@@ -87,7 +87,11 @@ const deckActions = useDeckActions({
   router,
   route,
   reportError: (message) => addToast(message),
+  onCommitPoint: () => saving.commitPoint(), flushForClose: () => saving.flushForClose(),
 });
+
+// --- autosave, crash recovery and version history (SPEC-103) ---------------
+const saving = useDeckSaving({ model: presentation, presentationId, currentIndex, record: slideUndo.record, commit, reportError: (message) => addToast(message) });
 
 deckLoad.start();
 
@@ -106,17 +110,8 @@ const stageEdit = usePresentationEditing({
   reportError: (message) => addToast(message),
 });
 
-// --- speaker notes (SPEC-083) ----------------------------------------------
-const notes = useNotes({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-});
-
-// --- transition/animation/table/chart panels (SPEC-085/086/091/092) --------
-const { transitions, animations, tables, charts, media } = useEditingPanels({
+// --- notes/transition/animation/table/chart panels (SPEC-083/085/086/091/092)
+const { notes, transitions, animations, tables, charts, media } = useEditingPanels({
   model: presentation,
   currentSlide,
   currentIndex,
@@ -186,7 +181,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
     >
       <PresentationRibbon
         :undo="slideUndo"
-        :panels="{ notes, transitions, animations, layouts, tables, media, headerFooter, themePanel, sorter }"
+        :panels="{ notes, transitions, animations, layouts, tables, media, headerFooter, themePanel, sorter, history: saving.history }"
         :menu="menu"
         :stage-edit="stageEdit"
         :text-depth="textDepth"
@@ -203,8 +198,8 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
       <DeckAppBar
         :slide-count-label="slideCountLabel"
         :format-name="formatName"
-        :save-state="saveState"
-        :save-state-text="saveStateText"
+        :save-state="saving.saveState.value"
+        :save-state-text="saving.saveStateText.value"
         :deck-actions="deckActions"
         :deck-export="deckExport"
       />
@@ -219,6 +214,12 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
       class="presentation"
       data-testid="presentation-view"
     >
+      <RecoveryBar
+        v-if="saving.recovery.value"
+        :label="saving.recoveryLabel.value"
+        @keep="saving.keepRecovered()"
+        @discard="saving.discardRecovered()"
+      />
       <DeckBody
         v-if="!sorter.open.value"
         :slides="presentation.slides"
@@ -238,6 +239,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
         :fields-by-slide="deckFields"
         :theme="themePanel.displayTheme.value"
         :selection="sorter.selection"
+        :history="saving.history"
         @select="selectSlide"
         @add="addSlideAction"
         @command="onFilmstripCommand"
@@ -265,15 +267,8 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
       :layouts="layouts"
       :deck-setup="deckSetup"
       :deck-export="deckExport"
-      :slide-number="currentIndex + 1"
-    />
-    <ReuseSlidesDialog
-      v-if="sorter.reuse.open.value"
-      :controller="sorter.reuse"
-    />
-    <HeaderFooterDialog
-      v-if="headerFooter.open.value"
-      :controller="headerFooter"
+      :reuse="sorter.reuse"
+      :header-footer="headerFooter"
       :slide-number="currentIndex + 1"
     />
   </AppShell>

@@ -261,7 +261,7 @@ describe("the over-budget degrade", () => {
     expect(result.written).toBe(false);
     expect(result.index).toMatchObject({ paused: true, pausedReason: "too-large", versions: [] });
     // The index latch is the only write: no blob, no payload.
-    const kinds = store.putVersionsRecord.mock.calls.map(([r]) => (r as { store: string }).store);
+    const kinds = store.putVersionsRecord.mock.calls.map(([r]) => (r as unknown as { store: string }).store);
     expect(kinds).toEqual(["index"]);
     expect(lib.DECK_HISTORY_TOO_LARGE_MESSAGE).toBe(
       "Version history off — this deck's package is larger than the 50 MB history budget",

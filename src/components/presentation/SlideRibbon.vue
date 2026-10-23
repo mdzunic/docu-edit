@@ -22,9 +22,10 @@
 //
 //   · "Home" and "Insert" are tabs. They switch which slotted strip shows,
 //     one at a time — a single-select tablist.
-//   · Notes, Design, Text, Transitions, Animate, Layout, Table, Media and
-//     Header & footer open side panels, any number of which can be open at
-//     once (Text is SPEC-097's lists/spacing/autofit panel). Notes
+//   · Notes, History, Design, Text, Transitions, Animate, Layout, Table,
+//     Media and Header & footer open side panels, any number of which can be
+//     open at once (Text is SPEC-097's lists/spacing/autofit panel; History
+//     SPEC-103's version history, beside Notes). Notes
 //     joined them from the deck's action cluster, where it was the one entry
 //     that opened a panel rather than running a command.
 //
@@ -76,6 +77,8 @@ const props = defineProps({
   textOpen: { type: Boolean, default: false },
   /** SPEC-099: the slide sorter is showing in place of filmstrip + stage. */
   sorterOpen: { type: Boolean, default: false },
+  /** SPEC-103: the version history panel. */
+  historyOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -91,6 +94,7 @@ const emit = defineEmits([
   "header-footer-toggle",
   "text-toggle",
   "sorter-toggle",
+  "history-toggle",
 ]);
 
 /** Which slotted strip is showing. Both stay mounted (v-show, not v-if): the
@@ -112,6 +116,7 @@ const STRIPS = [
 // `as const` to narrow it back; espree rejects it).
 const PANELS = [
   { id: "notes", label: "Notes", testid: "slides-notes-toggle", open: () => props.notesOpen, toggle: () => emit("notes-toggle") },
+  { id: "history", label: "History", testid: "slides-history-toggle", open: () => props.historyOpen, toggle: () => emit("history-toggle") },
   { id: "layout", label: "Layout", testid: "slides-layout-toggle", open: () => props.layoutOpen, toggle: () => emit("layout-toggle") },
   { id: "design", label: "Design", testid: "slides-theme-toggle", open: () => props.themeOpen, toggle: () => emit("theme-toggle") },
   { id: "text", label: "Text", testid: "slides-text-toggle", open: () => props.textOpen, toggle: () => emit("text-toggle") },

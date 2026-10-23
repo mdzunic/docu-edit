@@ -97,3 +97,31 @@ describe("useSlideRender refresh (SPEC-096)", () => {
     expect(nested1.children[0]).toEqual(nestedChild0);
   });
 });
+
+describe("useSlideRender edit signal (SPEC-103)", () => {
+  it("commit() reports the edit through onCommit, once, after re-rendering", () => {
+    const model = shallowRef<PresentationModel | null>(createBlankPresentation());
+    const seen: number[] = [];
+    const render = useSlideRender({
+      model,
+      currentIndex: shallowRef(0),
+      recomputeScale: () => {},
+      // The slides array has already been re-identified when the edit is
+      // reported, so a draft written from it sees the edit.
+      onCommit: () => seen.push(model.value!.slides.length),
+    });
+    const before = model.value!.slides;
+    render.commit();
+    expect(seen).toEqual([1]);
+    expect(model.value!.slides).not.toBe(before);
+  });
+
+  it("refresh() — a mid-gesture preview — never reports an edit", () => {
+    const model = shallowRef<PresentationModel | null>(createBlankPresentation());
+    let commits = 0;
+    const render = useSlideRender({ model, currentIndex: shallowRef(0), recomputeScale: () => {}, onCommit: () => (commits += 1) });
+    render.refresh();
+    render.refresh();
+    expect(commits).toBe(0);
+  });
+});

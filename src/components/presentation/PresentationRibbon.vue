@@ -15,7 +15,7 @@ const props = defineProps({
   undo: { type: Object, required: true },
   /** The panel controllers whose open state each toggle shows and flips:
    * notes, transitions, animations, layouts, tables, media, headerFooter,
-   * themePanel, sorter. */
+   * themePanel, sorter, and SPEC-103's history (useDeckSaving's). */
   panels: { type: Object, required: true },
   /** The usePresentationMenu controller (menu-bar state + command runner). */
   menu: { type: Object, required: true },
@@ -48,6 +48,7 @@ const p = props.panels;
     :theme-open="p.themePanel.open.value"
     :text-open="textDepth.panelOpen.value"
     :sorter-open="p.sorter.open.value"
+    :history-open="p.history?.open.value ?? false"
     @undo="undo.undo()"
     @redo="undo.redo()"
     @notes-toggle="p.notes.toggle()"
@@ -60,6 +61,7 @@ const p = props.panels;
     @media-toggle="p.media.toggle()"
     @header-footer-toggle="p.headerFooter.show()"
     @sorter-toggle="p.sorter.toggle()"
+    @history-toggle="p.history?.toggle()"
   >
     <template #menu>
       <PresentationMenuBar
