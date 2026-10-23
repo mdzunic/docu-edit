@@ -146,19 +146,33 @@ export function useAssemblyPreview(deps: AssemblyPreviewDeps): AssemblyPreviewCo
     canvas.value = el instanceof HTMLCanvasElement ? el : null;
   }
 
+  let observed: HTMLElement | null = null;
+
+  // A function ref runs on every render of its component, so this attaches
+  // only when the element really changes — a fresh observer per render would
+  // report the same size every frame, and each report would re-render.
   function attachContainer(el: unknown): void {
+    const next = el instanceof HTMLElement ? el : null;
+    if (next === observed) {
+      return;
+    }
     observer?.disconnect();
     observer = null;
-    if (!(el instanceof HTMLElement) || typeof ResizeObserver !== "function") {
+    observed = next;
+    if (!next || typeof ResizeObserver !== "function") {
       return;
     }
     observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      if (rect) {
-        box.value = { widthPx: Math.floor(rect.width), heightPx: Math.floor(rect.height) };
+      if (!rect) {
+        return;
+      }
+      const size = { widthPx: Math.floor(rect.width), heightPx: Math.floor(rect.height) };
+      if (size.widthPx !== box.value.widthPx || size.heightPx !== box.value.heightPx) {
+        box.value = size;
       }
     });
-    observer.observe(el);
+    observer.observe(next);
   }
 
   /** The sheet point under a pointer event, in centimetres. */

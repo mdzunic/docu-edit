@@ -127,20 +127,24 @@ function rectLabel(item = { index: 0, xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 })
   color: var(--text-primary);
 }
 
+/* The stage is measured (fit-to-window) and the canvas sized from it, so the
+   canvas sits out of the stage's flow: its size can never feed back into
+   the size it was computed from. */
 .preview-stage {
-  flex: 1 1 auto;
+  position: relative;
+  flex: 1 1 0;
   min-height: 12rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
 }
 
 /* A checkerboard behind the sheet shows where it is transparent. */
 .preview-canvas {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  box-sizing: border-box;
   border: var(--border-width) solid var(--border-default);
   background-color: var(--surface-base);
   background-image:
