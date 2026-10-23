@@ -538,7 +538,9 @@ export async function loadIndex(docId: string): Promise<VersionsIndexRecord> {
 
 async function loadPayload(docId: string, versionId: string): Promise<BaselinePayload | DeltaPayload | null> {
   const record = await getVersionsRecord(versionPayloadKey(docId, versionId));
-  return record && record.store === "payload" ? record.payload : null;
+  const payload = record && record.store === "payload" ? record.payload : null;
+  // The store also holds decks' payloads (SPEC-103), told apart by kind.
+  return payload && (payload.kind === "baseline" || payload.kind === "delta") ? payload : null;
 }
 
 /** Reconstructs a version's full model by loading its chain's baseline and

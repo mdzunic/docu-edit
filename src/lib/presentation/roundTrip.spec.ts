@@ -5,7 +5,7 @@
 // STOREd. The ZIP container is rebuilt on save, so the round-trip contract
 // is part-level bytes, not container bytes (the same reason the docx/odf
 // round-trip suites compare parts).
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { equalBytes } from "../core/equality";
 import { unzip } from "../core/zip";
 import {
@@ -759,4 +759,91 @@ describe("hidden-slide fixtures round trip (SPEC-104)", () => {
       expect(equalBytes(written.get(name)!, data), `part ${name} must round-trip byte-identical`).toBe(true);
     }
   });
+});
+
+// --- SPEC-103: restoring a deck version keeps every promise above ------------
+//
+// Restore fidelity, the presentation-side relation SPEC-103 states: per-part
+// equalBytes over two downloads, plus field-level toEqual on slides,
+// slideWidthCm, slideHeightCm and properties. The version store is the real
+// lib/presentationVersions.ts over an in-memory `versions` store (jsdom has no
+// IndexedDB); every write is pinned to one instant so two downloads compare.
+describe("deck version restore fidelity (SPEC-103)", () => {
+  const AT = new Date("2026-10-01T09:30:00Z");
+
+  async function deckHistory() {
+    const records = new Map<string, unknown>();
+    vi.resetModules();
+    vi.doMock("../idb", () => ({
+      getVersionsRecord: async (id: string) => structuredClone(records.get(id)),
+      putVersionsRecord: async (record: { id: string }) => void records.set(record.id, structuredClone(record)),
+      deleteVersionsRecord: async (id: string) => void records.delete(id),
+    }));
+    try {
+      return await import("../presentationVersions");
+    } finally {
+      vi.doUnmock("../idb");
+    }
+  }
+
+  async function partsOf(model: PresentationModel): Promise<Map<string, Uint8Array>> {
+    const { bytes } = model.format === "odp" ? await writeOdp(model, { modified: AT, now: AT }) : await writePptx(model, { modified: AT, now: AT });
+    return unzip(bytes);
+  }
+
+  function expectSameParts(actual: Map<string, Uint8Array>, expected: Map<string, Uint8Array>): void {
+    expect([...actual.keys()]).toEqual([...expected.keys()]);
+    for (const [name, data] of expected) {
+      expect(equalBytes(actual.get(name)!, data), `part ${name}`).toBe(true);
+    }
+  }
+
+  function expectSameDeck(actual: PresentationModel, expected: PresentationModel): void {
+    expect(actual.slides).toEqual(expected.slides);
+    expect(actual.slideWidthCm).toBe(expected.slideWidthCm);
+    expect(actual.slideHeightCm).toBe(expected.slideHeightCm);
+    expect(actual.properties).toEqual(expected.properties);
+  }
+
+  for (const format of ["pptx", "odp"] as const) {
+    const build = format === "odp" ? buildOdpFixtureBytes : buildPptxFixtureBytes;
+
+    it(`${format}: open → snapshot → edit → restore → download matches the snapshot-time download, part for part`, async () => {
+      const history = await deckHistory();
+      const model = await readPresentationBytes(await build(), format, "Deck");
+      // An edited deck, so the snapshot exercises the rebuild paths too.
+      duplicateSlide(model, 1);
+      const title = model.slides[0].frames.find((frame) => frame.kind === "text") as TextFrame;
+      applyRunFormat(title, wholeFrameRange(title), { bold: true });
+      markSlideEdited(model.slides[0], format);
+      const atSnapshot = await partsOf(model);
+      const expected = structuredClone(model);
+      const snapshot = await history.recordDeckVersion({ docId: model.id, model, author: "Ada", trigger: "commit", cachedPrev: null });
+      expect(snapshot.written).toBe(true);
+
+      // Edit on: delete a slide, reorder, retitle the deck.
+      deleteSlide(model, 2);
+      moveSlide(model, 2, 0);
+      model.title = "Changed since";
+      const edited = await partsOf(model);
+      expect([...atSnapshot].some(([name, data]) => !edited.has(name) || !equalBytes(edited.get(name)!, data))).toBe(true);
+
+      const restored = await history.reconstructDeckVersion(model.id, snapshot.newEntry!.id, model);
+      expect(restored).not.toBeNull();
+      expectSameDeck(restored!, expected);
+      expectSameParts(await partsOf(restored!), atSnapshot);
+    });
+
+    it(`${format}: a no-edit deck snapshotted and restored still downloads byte-identical per part`, async () => {
+      const history = await deckHistory();
+      const sourceBytes = await build();
+      const model = await readPresentationBytes(sourceBytes, format, "Deck");
+      const snapshot = await history.recordDeckVersion({ docId: model.id, model, author: "Ada", trigger: "commit", cachedPrev: null });
+      // Read back from the blobs alone — no live deck lends it a part.
+      const restored = await history.reconstructDeckVersion(model.id, snapshot.newEntry!.id);
+      expect(restored).not.toBeNull();
+      expectSameDeck(restored!, model);
+      expectSameParts(await partsOf(restored!), await unzip(sourceBytes));
+    });
+  }
 });

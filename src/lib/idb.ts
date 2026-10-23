@@ -9,6 +9,7 @@
 import { openIdbDatabase, type WriteBatchOp } from "./core/idb";
 import type { PersistedRecord } from "./documentStore";
 import type { VersionStoreRecord } from "./versionHistory";
+import type { DeckVersionStoreRecord } from "./presentationVersions";
 import type { StoredTemplateRecord } from "./templateStore";
 
 const DB_NAME = "docu-edit";
@@ -111,14 +112,16 @@ export async function writeBatch(ops: readonly WriteBatchOp[]): Promise<void> {
 // A separate object store, and separate helpers, so a version-history write
 // or read is always its own IndexedDB transaction on its own store — a
 // quota failure here can never abort a `documents` store transaction (AC-40).
+// Both products' histories share it (SPEC-103: a deck's payloads are told
+// apart by their kind), under the same three key prefixes.
 
 /** Reads one version-history record (index, payload or blob) by key. */
-export async function getVersionsRecord(id: string): Promise<VersionStoreRecord | undefined> {
-  return database.get<VersionStoreRecord>(VERSIONS_STORE_NAME, id);
+export async function getVersionsRecord(id: string): Promise<VersionStoreRecord | DeckVersionStoreRecord | undefined> {
+  return database.get<VersionStoreRecord | DeckVersionStoreRecord>(VERSIONS_STORE_NAME, id);
 }
 
 /** Writes (inserts or replaces) one version-history record. */
-export async function putVersionsRecord(record: VersionStoreRecord): Promise<void> {
+export async function putVersionsRecord(record: VersionStoreRecord | DeckVersionStoreRecord): Promise<void> {
   await database.put(VERSIONS_STORE_NAME, record);
 }
 
