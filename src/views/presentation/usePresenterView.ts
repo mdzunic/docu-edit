@@ -167,9 +167,6 @@ export function usePresenterView(deps: PresenterViewDeps) {
   const buildTotal = computed(() => (currentSlide.value ? slideBuildCount(currentSlide.value) : 0));
   const buildLabel = computed(() => `Build ${playback.current.value.buildIndex} of ${buildTotal.value}`);
   const notes = computed(() => currentSlide.value?.notes ?? []);
-  const grid = computed(() =>
-    (presentation.value?.slides ?? []).map((slide, index, all) => ({ slide, label: filmstripLabel(slide, index, all.length) })),
-  );
 
   // --- the live region (slide changes and session lifecycle) -------------------
   const liveMessage = ref("");
@@ -324,7 +321,6 @@ export function usePresenterView(deps: PresenterViewDeps) {
     blank: session.blank,
     perform: session.perform,
     transport: session.transport,
-    currentSlide,
     shownSlide,
     currentFields,
     nextSlide,
@@ -334,7 +330,6 @@ export function usePresenterView(deps: PresenterViewDeps) {
     buildTotal,
     buildLabel,
     notes,
-    grid,
     liveMessage,
     audienceStatus: audience.status,
     solo,

@@ -61,6 +61,13 @@ type ScreenDetailsWindow = Window & { getScreenDetails?: () => Promise<{ screens
 const SCREENS_ASKED_KEY = "docu-edit:presenter-screens-asked";
 let screensAskedInMemory = false;
 
+/** A permission query by a name TypeScript's DOM types may not know yet
+ * ("window-placement" is the Window Management permission's name in Chromes
+ * before 111). */
+function queryPermission(name: string): Promise<PermissionStatus> {
+  return navigator.permissions.query({ name: name as PermissionName });
+}
+
 /** The permission state and, when granted, the first non-primary screen.
  * Never throws: an absent API, an unknown permission name, a single screen
  * or any error all read as "no placement". */
@@ -68,7 +75,7 @@ export async function defaultScreenAccess(): Promise<ScreenAccess> {
   const win = window as ScreenDetailsWindow;
   if (typeof win.getScreenDetails !== "function") return { state: "unsupported", placement: null };
   try {
-    const status = await navigator.permissions.query({ name: "window-management" as PermissionName });
+    const status = await queryPermission("window-management").catch(() => queryPermission("window-placement"));
     if (status.state !== "granted") return { state: status.state, placement: null };
     const details = await win.getScreenDetails();
     const screen = details.screens.find((candidate) => candidate.isPrimary === false);
