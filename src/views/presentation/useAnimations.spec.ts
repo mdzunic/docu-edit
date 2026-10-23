@@ -306,3 +306,21 @@ describe("useAnimations — SPEC-105", () => {
     expect(h.c.pathEdit.overlay.value).not.toBeNull();
   });
 });
+
+describe("useAnimations — SPEC-105 preserve path", () => {
+  it("animation-replace-confirm still gates the first modelled edit on an out-of-subset slide", async () => {
+    const { buildPptxDepthFixtureBytes } = await import("../../lib/presentation/fixtures/build");
+    const { readPresentationBytes } = await import("../../lib/presentation/open");
+    const deck = await readPresentationBytes(await buildPptxDepthFixtureBytes(), "pptx", "Deck");
+    const exotic = deck.slides[3];
+    expect(exotic.animations).toBeUndefined();
+    const h = harness(exotic);
+    h.selectedFrameId.value = exotic.frames[0].id;
+    h.c.add();
+    expect(h.c.pendingReplaceFrameId.value).toBe(exotic.frames[0].id);
+    expect(h.model.value!.slides[0].preserved?.["p:timing"]).toContain("<p:pRg");
+    h.c.confirmReplace();
+    expect(h.model.value!.slides[0].animations).toHaveLength(1);
+    expect(h.model.value!.slides[0].preserved?.["p:timing"]).toBeUndefined();
+  });
+});

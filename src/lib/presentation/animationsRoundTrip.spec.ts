@@ -8,15 +8,19 @@ import { unzip } from "../core/zip";
 import { zip } from "../core/zipWriter";
 import {
   buildOdpAnimationsFixtureBytes,
+  buildOdpDepthFixtureBytes,
   buildOdpFixtureBytes,
   buildPptxAnimationsFixtureBytes,
+  buildPptxDepthFixtureBytes,
   buildPptxFixtureBytes,
   PPTX_CANONICAL_TIMING,
 } from "./fixtures/build";
+import { equalStructural } from "../equality";
+import { equalBytes } from "../core/equality";
 import { readPresentationBytes } from "./open";
 import { markSlideEdited } from "./text";
 import { hasPreservedTiming } from "./animations";
-import type { SlideAnimation } from "./model";
+import type { PresentationModel, Slide, SlideAnimation } from "./model";
 
 /** All seven effects on the slide's first frame, with a non-default trigger /
  * direction / duration / delay mix (three click groups). */
@@ -178,5 +182,122 @@ describe("AC-4: a by-paragraph text build is preserved, never flattened to whole
     const { writeOdp } = await import("./odp/writer");
     const written = dec((await unzip((await writeOdp(model)).bytes)).get("content.xml")!);
     expect(page2Source(written)).toBe(page2Source(narrowed));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-105 round trips (AC-49/50 and the no-edit preserve path)
+// ---------------------------------------------------------------------------
+
+/** Slide animations with every frame reference as its z-order index — frame
+ * ids are fresh UUIDs per read, and neither key is in IGNORED_KEYS. */
+function byIndex(slide: Slide): unknown[] {
+  const index = (id: string): number => slide.frames.findIndex((f) => f.id === id);
+  return (slide.animations ?? []).map(({ frameId, triggerFrameId, ...rest }) =>
+    triggerFrameId === undefined ? { ...rest, frameId: index(frameId) } : { ...rest, frameId: index(frameId), triggerFrameId: index(triggerFrameId) },
+  );
+}
+
+/** Every new effect on the depth fixture's bullet slide (title 0, body 1,
+ * rounded rectangle 2): a by-paragraph build, a repeat + auto-reverse +
+ * rewind row, onClickOf rows between main rows, a motion path. */
+function depthSample(slide: Slide): SlideAnimation[] {
+  const [title, body, box] = slide.frames.map((f) => f.id);
+  return [
+    { frameId: body, effect: "fadeIn", trigger: "click", buildBy: "byParagraph" },
+    { frameId: title, effect: "pulse", trigger: "withPrevious", repeatCount: 3, autoReverse: true, rewindOnComplete: true },
+    { frameId: title, effect: "spin", trigger: "onClickOf", triggerFrameId: box, spinDegrees: -90 },
+    { frameId: box, effect: "growShrink", trigger: "afterPrevious", scalePercent: 180, delayMs: 200 },
+    { frameId: box, effect: "colorChange", trigger: "click", durationMs: 800, emphasisColor: "#3366cc", repeatUntilClick: true },
+    { frameId: box, effect: "motionPath", trigger: "withPrevious", path: { preset: "arc", direction: "up", distanceFraction: 0.4 } },
+    { frameId: body, effect: "fadeOut", trigger: "onClickOf", triggerFrameId: box, buildBy: "byParagraph", buildTrigger: "withPrevious" },
+    { frameId: box, effect: "motionPath", trigger: "click", path: { preset: "loop" } },
+  ];
+}
+
+describe("SPEC-105 AC-49/50: every new effect round-trips in both formats", () => {
+  for (const [format, build] of [
+    ["pptx", buildPptxDepthFixtureBytes],
+    ["odp", buildOdpDepthFixtureBytes],
+  ] as const) {
+    async function writer(): Promise<(model: PresentationModel) => Promise<{ bytes: Uint8Array }>> {
+      return format === "pptx" ? (await import("./pptx/writer")).writePptx : (await import("./odp/writer")).writeOdp;
+    }
+    const slidePart = format === "pptx" ? "ppt/slides/slide1.xml" : "content.xml";
+
+    it(`${format}: save → reopen reproduces slide.animations exactly`, async () => {
+      const source = await build();
+      const model = await readPresentationBytes(source, format, "Deck");
+      const slide = model.slides[0];
+      slide.animations = depthSample(slide);
+      markSlideEdited(slide, format);
+      const saved = (await (await writer())(model)).bytes;
+      const back = (await readPresentationBytes(saved, format, "Deck")).slides[0];
+      expect(equalStructural(byIndex(back), byIndex(slide))).toBe(true);
+      expect(byIndex(back)).toEqual(byIndex(slide));
+      expect(back.animations).toEqual(depthSample(back));
+      expect(hasPreservedTiming(back)).toBe(false);
+    });
+
+    it(`${format}: every part the edit did not touch is byte-equal; the reopened model writes stable bytes`, async () => {
+      const source = await build();
+      const model = await readPresentationBytes(source, format, "Deck");
+      model.slides[0].animations = depthSample(model.slides[0]);
+      markSlideEdited(model.slides[0], format);
+      const write = await writer();
+      const before = await unzip(source);
+      const after = await unzip((await write(model)).bytes);
+      expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
+      for (const [name, bytes] of before) {
+        if (name !== slidePart) {
+          expect(equalBytes(after.get(name)!, bytes), name).toBe(true);
+        }
+      }
+      // Reopened and rebuilt, the slide part comes out the same twice.
+      const reopened = await readPresentationBytes((await write(model)).bytes, format, "Deck");
+      markSlideEdited(reopened.slides[0], format);
+      const first = (await unzip((await write(reopened)).bytes)).get(slidePart)!;
+      markSlideEdited(reopened.slides[0], format);
+      const second = (await unzip((await write(reopened)).bytes)).get(slidePart)!;
+      expect(equalBytes(first, second)).toBe(true);
+      expect(dec(first)).toContain(format === "pptx" ? `nodeType="interactiveSeq"` : `presentation:node-type="interactive-sequence"`);
+    });
+
+    it(`${format}: a no-edit download is byte-identical part-for-part, the out-of-subset slide included`, async () => {
+      const source = await build();
+      const model = await readPresentationBytes(source, format, "Deck");
+      expect(model.slides[3].animations).toBeUndefined();
+      expect(hasPreservedTiming(model.slides[3])).toBe(true);
+      const before = await unzip(source);
+      const after = await unzip((await (await writer())(model)).bytes);
+      expect([...after.keys()].toSorted()).toEqual([...before.keys()].toSorted());
+      for (const [name, bytes] of before) {
+        expect(equalBytes(after.get(name)!, bytes), name).toBe(true);
+      }
+    });
+
+    it(`${format}: editing another slide keeps the out-of-subset slide's timing verbatim`, async () => {
+      const model = await readPresentationBytes(await build(), format, "Deck");
+      const preserved = { ...model.slides[3].preserved };
+      markSlideEdited(model.slides[0], format);
+      markSlideEdited(model.slides[3], format);
+      const back = await readPresentationBytes((await (await writer())(model)).bytes, format, "Deck");
+      expect(back.slides[3].animations).toBeUndefined();
+      const key = format === "pptx" ? "p:timing" : "anim";
+      expect(back.slides[3].preserved?.[key]).toBe(preserved[key]);
+    });
+  }
+
+  it("odp: a built frame's paragraphs carry their de-f{n}-p{k} text:id, other pages none", async () => {
+    const model = await readPresentationBytes(await buildOdpDepthFixtureBytes(), "odp", "Deck");
+    model.slides[0].animations = depthSample(model.slides[0]);
+    markSlideEdited(model.slides[0], "odp");
+    const { writeOdp } = await import("./odp/writer");
+    const content = dec((await unzip((await writeOdp(model)).bytes)).get("content.xml")!);
+    const page1 = content.slice(content.indexOf("<draw:page"), content.indexOf("</draw:page>"));
+    for (let k = 0; k < 4; k++) {
+      expect(page1).toContain(`text:id="de-f2-p${k}" xml:id="de-f2-p${k}"`);
+    }
+    expect(page1).not.toContain("de-f1-p");
   });
 });
