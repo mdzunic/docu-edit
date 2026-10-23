@@ -8,8 +8,9 @@
 // two frames, and settle when the group ends. Cancelling in-flight timers and
 // settling to the target is how "input mid-build completes the group instantly"
 // (AC-24) works.
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import type { Slide } from "../../lib/presentation/model";
+import type { PlaybackStep } from "./usePlayback";
 import { groupTimeline, isFrameHiddenAt, slideBuildCount, slideBuildGroups } from "../../lib/presentation/buildPlayback";
 import { fromStyle, settledStyle, toStyle, transitionFor } from "../../components/presentation/animationStyles";
 
@@ -166,4 +167,27 @@ export function useBuildPreview() {
   }
 
   return { frameStyles, playing, settle, playGroup, complete, autoplay, stop };
+}
+
+/** The show's step → build wiring (SPEC-086), shared by the play view and the
+ * presenter's current-slide pane (SPEC-100) so the two render the very same
+ * build state for the same step: a new slide, or a backward/jump landing,
+ * settles to the target instantly (back lands fully built — AC-22); a forward
+ * build step on the same slide animates the group that just began. */
+export function watchBuildSteps(
+  preview: ReturnType<typeof useBuildPreview>,
+  step: () => PlaybackStep,
+  slide: () => Slide | null,
+  reducedMotion: () => boolean,
+): void {
+  watch(step, (cur, prev) => {
+    const current = slide();
+    if (!current) return;
+    preview.stop();
+    if (!prev || cur.slideIndex !== prev.slideIndex || cur.buildIndex <= prev.buildIndex) {
+      preview.settle(current, cur.buildIndex);
+      return;
+    }
+    preview.playGroup(current, cur.buildIndex - 1, reducedMotion());
+  });
 }

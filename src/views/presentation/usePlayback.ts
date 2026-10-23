@@ -47,6 +47,9 @@ export interface UsePlayback {
   advance: () => void;
   back: () => void;
   goTo: (slideIndex: number) => void;
+  /** SPEC-100: writes the position directly — the ONLY way a follower's
+   * machine is written (from the owner's broadcast state). */
+  setStep: (step: PlaybackStep, atEnd?: boolean) => void;
 }
 
 export function usePlayback(deps: UsePlaybackDeps): UsePlayback {
@@ -131,5 +134,21 @@ export function usePlayback(deps: UsePlaybackDeps): UsePlayback {
     current.value = { slideIndex: target, buildIndex: 0 };
   }
 
-  return { current, atEnd, reducedMotion, advance, back, goTo };
+  /** Lands exactly on `step` (SPEC-100): the slide index clamps exactly as
+   * goTo clamps it, and the build index into 0..that slide's build count. It
+   * is a plain write, not a walk — a hidden slide is NOT stepped over, because
+   * the owner whose state this mirrors already resolved hidden slides (and a
+   * deep link to one shows it). An unchanged position keeps the same `current`
+   * object, so its watchers see no step. */
+  function setStep(step: PlaybackStep, end = false): void {
+    atEnd.value = end;
+    const slideIndex = clampIndex(step.slideIndex);
+    const rawBuild = Number.isFinite(step.buildIndex) ? Math.trunc(step.buildIndex) : 0;
+    const buildIndex = Math.min(Math.max(rawBuild, 0), buildCount(slideIndex));
+    if (current.value.slideIndex !== slideIndex || current.value.buildIndex !== buildIndex) {
+      current.value = { slideIndex, buildIndex };
+    }
+  }
+
+  return { current, atEnd, reducedMotion, advance, back, goTo, setStep };
 }
