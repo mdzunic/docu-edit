@@ -117,20 +117,23 @@ function splitFrontMatter(lines: string[]): { body: string[]; frontMatter?: stri
 }
 
 /** A YAML scalar's value: double-quoted (JSON-compatible escapes),
- * single-quoted (`''` escapes a quote) or plain (a ` #` comment stripped). */
+ * single-quoted (`''` escapes a quote) or plain — a trailing ` #` comment
+ * dropped in every case. */
 function yamlScalar(raw: string): string {
   const value = raw.trim();
-  if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+  const double = /^"((?:[^"\\]|\\.)*)"(?:[ \t]+#.*)?$/.exec(value);
+  if (double) {
     try {
-      return String(JSON.parse(value));
+      return String(JSON.parse(`"${double[1]}"`));
     } catch {
-      return value.slice(1, -1);
+      return double[1];
     }
   }
-  if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) {
-    return value.slice(1, -1).replace(/''/g, "'");
+  const single = /^'((?:[^']|'')*)'(?:[ \t]+#.*)?$/.exec(value);
+  if (single) {
+    return single[1].replace(/''/g, "'");
   }
-  return value.replace(/[ \t]+#.*$/, "");
+  return value.replace(/(^|[ \t]+)#.*$/, "");
 }
 
 /** Front matter sets `title`, `format` and `size` and nothing else: any
@@ -142,7 +145,14 @@ function applyFrontMatter(ctx: DeckContext, lines: string[]): void {
   };
   const entries: { key: string; value: string; nested: boolean }[] = [];
   for (const line of lines) {
-    if (line.trim() === "" || line.trimStart().startsWith("#")) {
+    if (line.trim() === "") {
+      continue;
+    }
+    if (line.trimStart().startsWith("#")) {
+      // A YAML comment — reported all the same: a deck whose first `---`
+      // pair was meant as a slide separator would otherwise lose a heading
+      // here without a word.
+      report(`front-matter comment "${line.trim()}": not kept`);
       continue;
     }
     const match = FRONT_MATTER_KEY_RE.exec(line);
@@ -486,6 +496,25 @@ function readSlide(lines: string[], slideIndex: number, dropped: DeckDropRecord[
   return source;
 }
 
+/** A percent-encoded `data:` payload's bytes: each `%XX` is one byte, any
+ * other character its UTF-8 encoding. */
+function percentDecodedBytes(payload: string): Uint8Array {
+  const bytes: number[] = [];
+  const encoder = new TextEncoder();
+  for (let i = 0; i < payload.length; i++) {
+    const hex = payload[i] === "%" ? payload.slice(i + 1, i + 3) : "";
+    if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+      bytes.push(Number.parseInt(hex, 16));
+      i += 2;
+    } else {
+      const char = String.fromCodePoint(payload.codePointAt(i)!);
+      bytes.push(...encoder.encode(char));
+      i += char.length - 1;
+    }
+  }
+  return Uint8Array.from(bytes);
+}
+
 /** A standalone image: a `data:` URI of a supported type is decoded; a
  * remote `src` is never fetched (SPEC-088's self-containment rule). */
 function readImage(alt: string, src: string, source: SlideSource, drop: (kind: DeckDropKind, reason: string) => void): void {
@@ -497,9 +526,7 @@ function readImage(alt: string, src: string, source: SlideSource, drop: (kind: D
   const [, contentType, params, payload] = uri;
   let data: string | Uint8Array;
   try {
-    data = params.split(";").includes("base64")
-      ? payload.replace(/\s+/g, "")
-      : new TextEncoder().encode(decodeURIComponent(payload));
+    data = params.split(";").includes("base64") ? payload.replace(/\s+/g, "") : percentDecodedBytes(payload);
     source.images.push(decodeImage({ data, contentType: contentType || "application/octet-stream" }, "image"));
   } catch (error) {
     const detail = error instanceof DocumentGenerationError ? error.message.replace(/^image(\.\w+)?: /, "") : "unreadable payload";
@@ -520,9 +547,10 @@ function buildSlide(ctx: DeckContext, source: SlideSource, slideIndex: number): 
   bodyFrame.paragraphs = source.body;
   if (source.title !== undefined) {
     const titleParagraphs = source.title.length > 0 ? [{ runs: source.title }] : [];
-    if (slideIndex === 0 && (source.subtitle.length > 0 || source.body.length === 0)) {
+    if (slideIndex === 0 && (source.subtitle.length > 0 || (source.body.length === 0 && source.images.length === 0))) {
       // The first slide is a title slide (addTitleSlide's pair) — with a body
-      // placeholder too when it also carries list rows.
+      // placeholder too when it also carries list rows. One that holds only
+      // rows or pictures is laid out as any later slide is.
       const [title, subtitle] = titleSlideFrames(w, h);
       title.paragraphs = titleParagraphs;
       subtitle.paragraphs = source.subtitle;
@@ -580,8 +608,18 @@ function escapeInline(text: string): string {
   return text.replace(/[\\`*_~[\]]/g, (match) => `\\${match}`);
 }
 
-function escapeLinkTarget(href: string): string {
-  return href.replace(/[()]/g, (match) => `\\${match}`);
+/** A link target as `parseInlineRuns` reads it back: its `(...)` scan
+ * honours nested parens, so a balanced target is written as is, and an
+ * unbalanced one has its parens percent-encoded (the same URL). */
+function linkTarget(href: string): string {
+  let depth = 0;
+  for (const ch of href) {
+    depth += ch === "(" ? 1 : ch === ")" ? -1 : 0;
+    if (depth < 0) {
+      break;
+    }
+  }
+  return depth === 0 ? href : href.replace(/\(/g, "%28").replace(/\)/g, "%29");
 }
 
 /** md/writer.ts's line-start escape, plus the two starts only the slide
@@ -603,7 +641,7 @@ function renderRun(run: SlideRun): string {
     text = `**${text}**`;
   }
   if (run.linkHref) {
-    text = `[${text}](${escapeLinkTarget(run.linkHref)})`;
+    text = `[${text}](${linkTarget(run.linkHref)})`;
   }
   return text;
 }
