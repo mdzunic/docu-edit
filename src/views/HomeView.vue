@@ -60,7 +60,7 @@ const compact = computed(() => tier.value === "compact");
 const fullTier = computed(() => tier.value === "full");
 
 const openError = ref("");
-const openProgress = useSpreadsheetOpenProgress();
+const openProgress = useSpreadsheetOpenProgress(); // SPEC-137: a workbook's, from the choice until navigation
 const dialogs = useTemplateRef("dialogs");
 
 // main.ts awaits initLibrary() before mounting, so the store is hydrated here in
@@ -275,7 +275,6 @@ async function handleFileChosen(file = null) {
     return;
   }
   try {
-    // SPEC-137: a workbook's progress shows from the choice until navigation.
     const opened = await openAnyDocumentFile(file, openProgress.begin(file));
     openError.value = "";
     storeOpenedFile(opened, addToast);

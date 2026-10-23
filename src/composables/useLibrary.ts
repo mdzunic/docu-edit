@@ -340,13 +340,10 @@ export function useLibrary() {
   // --- bulk actions (AC-27..29) --------------------------------------------
 
   function duplicateDocuments(ids: string[]): void {
-    // SPEC-137: a workbook duplicates whole — loaded first, released after —
-    // one at a time, so a bulk duplicate never holds several resident.
+    // SPEC-137: workbooks duplicate whole (loaded, then released) one at a time.
     const workbooks = ids.filter((id) => kindOf(id) === "spreadsheet");
-    for (const id of ids) {
-      if (!workbooks.includes(id)) {
-        duplicateDocument(id);
-      }
+    for (const id of ids.filter((other) => !workbooks.includes(other))) {
+      duplicateDocument(id);
     }
     clearSelection();
     refresh();
