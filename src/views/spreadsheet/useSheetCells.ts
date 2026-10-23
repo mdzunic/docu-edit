@@ -69,7 +69,7 @@ import { lookKey, styleOverLook, tableCellLook } from "../../lib/spreadsheet/tab
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
 import { createBandBuilder, type GridWindow } from "./sheetBands";
 import type { BandItem, CellItem } from "./sheetCellItems";
-import { planRender, type PaperDecorations } from "./sheetRenderPlan";
+import { cellElementStyle, planRender, type PaperDecorations } from "./sheetRenderPlan";
 import { GRID_OVERSCAN_COLS, GRID_OVERSCAN_ROWS, type SheetViewport } from "./useSheetViewport";
 
 export type { BandItem, BorderItem, CellItem, RowItem } from "./sheetCellItems";
@@ -230,8 +230,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     }
     textStyle.left = `${textLeft}px`;
     textStyle.width = `${textWidth}px`;
-    const boxStyle = cellBoxCss(css.box, place, merge !== undefined);
     const runs = cell?.runs && typeof value === "string" && horizontal !== "fill" && !shown?.formula ? cell.runs.map((run) => ({ text: run.text, style: run.font ? runCss(run.font, theme.value) : {} })) : null;
+    // A cell with no text box carries its font on its element (sheetRenderPlan).
+    const boxStyle = cellElementStyle({ text, runs, fill, cf }, cellBoxCss(css.box, place, merge !== undefined), textStyle);
     return {
       key,
       ref: formatA1(at),

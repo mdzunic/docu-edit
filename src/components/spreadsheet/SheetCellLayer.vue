@@ -44,7 +44,8 @@
 // follows the link over; its colour and underline are the cell's own style,
 // never restyled here. SPEC-137: rows, cells and gridlines are keyed by
 // viewport slot (useSheetCells), so a scroll step patches the same elements;
-// an empty cell draws no text box, and without frozen columns no frozen
+// an empty cell draws no text box (its element carries the font instead:
+// cellElementStyle), and without frozen columns no frozen
 // region — sheetRenderPlan's paperElementCount mirrors this template, element
 // for element, for the grid's node budget. Runtime prop declarations per the
 // espree constraint (see AppShell.vue).

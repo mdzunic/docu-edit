@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defineComponent, h, ref, type ComputedRef } from "vue";
 import { mount } from "@vue/test-utils";
 import SheetCellLayer from "../../components/spreadsheet/SheetCellLayer.vue";
+import { fontStack } from "../../lib/core/fontSubstitution";
 import { DEFAULT_THEME, resolveColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import type { Cell, CellStyle, Row, Sheet, SheetTable, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -451,5 +452,38 @@ describe("useSheetCells — table styles (SPEC-133)", () => {
     });
     expect(cell(bands.value, "A2").boxStyle["background-color"]).toBe("#ff0000");
     expect(cell(bands.value, "B2").boxStyle["background-color"]).toBe(STRIPE);
+  });
+});
+
+describe("useSheetCells — empty cells (SPEC-137)", () => {
+  // An empty cell draws no text box (sheetRenderPlan's drawsText), so its
+  // element carries its text style's font: a format on an empty cell —
+  // SPEC-123's bold, a painted format — still reads from the DOM, and costs
+  // no element.
+  const STYLES: CellStyle[] = [{}, { font: { family: "Arial", sizePt: 14, bold: true, italic: true, color: "#ff0000" } }];
+
+  /** A1 "Bold" and B1 empty, both of style 1; C1 empty and unstyled. */
+  function styledSheet(): Sheet {
+    return { ...sheetOf([]), rows: [{ index: 0, cells: [{ col: 0, value: "Bold", styleId: 1 }, { col: 1, value: null, styleId: 1 }] }] };
+  }
+
+  it("carries an empty cell's font on its element, where a filled cell's text box carries it", () => {
+    const { bands, wrapper } = setup(styledSheet(), { styles: STYLES });
+    const empty = wrapper.get('[data-testid="sheet-cell"][data-ref="B1"]');
+    expect(empty.element.children).toHaveLength(0);
+    const style = (empty.element as HTMLElement).style;
+    expect([style.fontWeight, style.fontStyle, style.fontSize, style.color]).toEqual(["bold", "italic", "14pt", "rgb(255, 0, 0)"]);
+    expect(drawn(bands.value, "B1").elements[0]!.cell.boxStyle["font-family"]).toBe(fontStack("Arial"));
+
+    const filled = wrapper.get('[data-testid="sheet-cell"][data-ref="A1"]');
+    expect((filled.element as HTMLElement).style.fontWeight).toBe("");
+    expect((filled.get(".sheet-cell-text").element as HTMLElement).style.fontWeight).toBe("bold");
+  });
+
+  it("gives an unstyled empty cell only the automatic colour, never a weight or a style", () => {
+    const { bands } = setup(styledSheet(), { styles: STYLES });
+    const c1 = drawn(bands.value, "C1").elements[0]!.cell;
+    expect(c1.boxStyle.color).toBe("#000000");
+    expect([c1.boxStyle["font-weight"], c1.boxStyle["font-style"], c1.boxStyle["font-family"]]).toEqual([undefined, undefined, undefined]);
   });
 });

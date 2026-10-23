@@ -16,6 +16,12 @@
 //   (an upper bound where a child component's internals vary — an icon's
 //   paths), so the bound is counted, not hoped for; SheetGrid.spec.ts holds
 //   the DOM to it.
+// - A cell that draws no text box (drawsText) carries its text style's font
+//   on its own element (cellElementStyle), so a format on an empty cell —
+//   SPEC-123's bold, a painted format — still reads from the DOM at no
+//   element's cost.
+import { fontStack } from "../../lib/core/fontSubstitution";
+import type { CssDeclarations } from "../../lib/spreadsheet/cellRender";
 import type { BandItem, CellItem } from "./sheetCellItems";
 import type { AnnotationMarksAt, FilterButtonAt } from "./sheetLayerProps";
 import type { AxisItem } from "./useSheetViewport";
@@ -67,6 +73,26 @@ export function shownItems(axis: AxisWindow): number {
 /** Whether a cell element draws its text box (an empty cell draws none). */
 export function drawsText(cell: Pick<CellItem, "text" | "runs" | "fill" | "cf">): boolean {
   return !cell.cf?.hideValue && (cell.text !== "" || cell.runs !== null || cell.fill !== null);
+}
+
+/** The font declarations of a cell's text style. */
+const FONT_KEYS = ["font-family", "font-size", "font-weight", "font-style", "text-decoration", "color"] as const;
+
+/** A cell element's style: its box, plus — when it draws no text box — the
+ * text style's font, the family wrapped in SPEC-048's stack as
+ * SheetCellLayer wraps the text box's (see the module header). */
+export function cellElementStyle(cell: Pick<CellItem, "text" | "runs" | "fill" | "cf">, box: CssDeclarations, text: CssDeclarations): CssDeclarations {
+  if (drawsText(cell)) {
+    return box;
+  }
+  const style = { ...box };
+  for (const key of FONT_KEYS) {
+    const value = text[key];
+    if (value !== undefined) {
+      style[key] = key === "font-family" ? fontStack(value) : value;
+    }
+  }
+  return style;
 }
 
 /** The elements one cell element renders (SheetCellLayer's template). */
