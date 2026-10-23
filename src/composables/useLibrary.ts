@@ -37,6 +37,7 @@ import {
   type LibraryViewMode,
 } from "../lib/libraryPrefs";
 import { downloadStoredDocument } from "../lib/libraryDownload";
+import { isImageFormat } from "../lib/libraryMenu";
 
 /** The default sort direction for each key: newest/largest first for time and
  * size, A–Z for title (AC-11, AC-12). */
@@ -130,6 +131,8 @@ export function useLibrary() {
 
   /** True when the library has no documents at all (first-run, AC-51). */
   const libraryEmpty = computed(() => entries.value.length === 0);
+  // SPEC-109: "New › Combined image" is inert without an image to combine.
+  const hasImages = computed(() => entries.value.some((entry) => isImageFormat(entry.format)));
 
   const trashCount = computed(() => trashed.value.length);
 
@@ -419,6 +422,7 @@ export function useLibrary() {
     filterActive,
     noResults,
     libraryEmpty,
+    hasImages,
     trashCount,
     usage,
     largestDocuments,

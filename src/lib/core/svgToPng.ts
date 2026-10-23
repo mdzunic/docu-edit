@@ -49,18 +49,20 @@ export async function convertSvgToPng(
 
   const blob = new Blob([svgBytes], { type: "image/svg+xml" });
   const url = URL.createObjectURL(blob);
+  let canvas: HTMLCanvasElement | null = null;
   try {
     const image = await loadImage(url);
-    const canvas = document.createElement("canvas");
-    canvas.width = widthPx;
-    canvas.height = heightPx;
-    const ctx = canvas.getContext("2d");
+    const target = document.createElement("canvas");
+    canvas = target;
+    target.width = widthPx;
+    target.height = heightPx;
+    const ctx = target.getContext("2d");
     if (!ctx) {
       throw new SvgConversionError("This browser cannot convert SVG images");
     }
     ctx.drawImage(image, 0, 0, widthPx, heightPx);
     const pngBlob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((result) => {
+      target.toBlob((result) => {
         if (result) {
           resolve(result);
         } else {
@@ -72,5 +74,10 @@ export async function convertSvgToPng(
     return { data: new Uint8Array(buffer), widthPx, heightPx };
   } finally {
     URL.revokeObjectURL(url);
+    if (canvas) {
+      // Release the backing store now rather than at the next GC (SPEC-109).
+      canvas.width = 0;
+      canvas.height = 0;
+    }
   }
 }

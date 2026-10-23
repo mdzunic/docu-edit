@@ -28,6 +28,9 @@ What lives here, by area:
 - **Media** — `media.ts` (MediaPart, acceptance rules, fit math, the
   content-type ↔ file-extension mapping both package formats share),
   `imageDimensions.ts`, `svgToPng.ts`.
+- **Assembly** — `sheetLayout.ts` (SPEC-108's sheet: paper, margins, fit,
+  align, dpi) and `assemblyLayout.ts` (SPEC-109's five layouts: where each
+  tray item lands on that sheet, in centimetres, from its pixel size alone).
 - **Text** — `grapheme.ts`, `marks.ts`, `autocorrect.ts`,
   `specialCharacters.ts`, `language.ts`, `fonts.ts` (the standard catalogue).
 - **Layout measurement** — `pageMetrics.ts` (LineBox/BlockMetrics and the
