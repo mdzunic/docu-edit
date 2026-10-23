@@ -734,6 +734,9 @@ function toStyle(a){var d=a.dir||"left";switch(a.effect){
 function transitionFor(a){var props=(a.effect==="fadeIn"||a.effect==="fadeOut")?["opacity"]:a.effect==="wipeIn"?["clip-path"]:a.effect==="zoomIn"?["opacity","transform"]:["transform","opacity"];
  return props.map(function(p){return p+" "+a.ms+"ms ease";}).join(", ");}
 function isEntrance(e){return e==="appear"||e==="fadeIn"||e==="flyIn"||e==="wipeIn"||e==="zoomIn";}
+// SPEC-105: only entrances and exits change visibility; an emphasis or path
+// effect (exported as its row, played as a no-op here) never hides its frame.
+function changesVisibility(e){return isEntrance(e)||e==="fadeOut"||e==="flyOut";}
 function playbackDuration(a){return a.effect==="appear"?0:a.ms;}
 
 // ---- per-section state
@@ -748,7 +751,7 @@ function applyStyle(el,s){el.style.transition=s.transition!==undefined?s.transit
  el.style.clipPath=s.clipPath!==undefined?s.clipPath:"";}
 function isHiddenAt(list,fid,groupsPlayed){var hidden=false,i;
  for(i=0;i<list.length;i++){if(list[i].fid===fid&&isEntrance(list[i].effect)){hidden=true;break;}}
- for(i=0;i<list.length;i++){var a=list[i];if(a.build<groupsPlayed&&a.fid===fid){hidden=!isEntrance(a.effect);}}
+ for(i=0;i<list.length;i++){var a=list[i];if(a.build<groupsPlayed&&a.fid===fid&&changesVisibility(a.effect)){hidden=!isEntrance(a.effect);}}
  return hidden;}
 function settle(sec,groupsPlayed){var list=anims(sec);
  var frames=[].slice.call(sec.querySelectorAll("[data-fid]"));
