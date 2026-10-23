@@ -2,6 +2,7 @@
 // see AppShell.vue on the espree constraint): each helper coerces a
 // runtime-typed prop into the shape the composable that built it declares,
 // or derives what the template binds from it.
+import type { ObjectDirective } from "vue";
 import { MAX_COLS } from "../../lib/spreadsheet/model";
 import type { BandItem, CellItem } from "./sheetCellItems";
 import type { FilterButtonView } from "./useSortFilter";
@@ -159,3 +160,34 @@ export function cellAttributes(cell: CellItem, staleTitle?: StaleTitle, describe
     "aria-describedby": describedBy && describedBy.ref === cell.ref ? describedBy.id : undefined,
   };
 }
+
+/** SPEC-137: sets an element's attributes from `next` (cellAttributes), given
+ * those it last set from `previous` — removing any now absent or undefined,
+ * writing only those that changed. SheetCellLayer applies a cell's attributes
+ * this way rather than as a v-bind object: beside its `:style`, a v-bind
+ * object has Vue merge the element's props into a new style object on every
+ * render, so the patch rewrote every declaration of every cell. */
+export function applyAttributes(element: Element, next: Record<string, string | number | undefined>, previous: Record<string, string | number | undefined> = {}): void {
+  for (const name in previous) {
+    if (previous[name] !== undefined && next[name] === undefined) {
+      element.removeAttribute(name);
+    }
+  }
+  for (const name in next) {
+    const value = next[name];
+    if (value !== undefined && value !== previous[name]) {
+      element.setAttribute(name, String(value));
+    }
+  }
+}
+
+/** The directive SheetCellLayer binds a cell's cellAttributes through
+ * (applyAttributes): set before the element is inserted, then diffed. */
+export const cellAttributesDirective: ObjectDirective<Element, Record<string, string | number | undefined>> = {
+  beforeMount(element, binding) {
+    applyAttributes(element, binding.value);
+  },
+  beforeUpdate(element, binding) {
+    applyAttributes(element, binding.value, binding.oldValue ?? {});
+  },
+};

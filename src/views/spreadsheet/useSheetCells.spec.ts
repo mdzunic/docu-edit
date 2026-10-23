@@ -20,7 +20,8 @@ import { DEFAULT_THEME, resolveColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import type { Cell, CellStyle, Row, Sheet, SheetTable, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { singleCell } from "../../lib/spreadsheet/selection";
-import { cellAttributes } from "./sheetLayerProps";
+import { internItemStyles } from "./sheetCellItems";
+import { applyAttributes, cellAttributes } from "./sheetLayerProps";
 import { useSheetCells, type BandItem, type CellItem, type SheetCellsDeps } from "./useSheetCells";
 import { useSheetMetrics } from "./useSheetMetrics";
 import { useSheetViewport, type SheetViewport } from "./useSheetViewport";
@@ -317,6 +318,59 @@ describe("cellAttributes", () => {
     const sheet = sheetOf([[1, 0, "Tall"]], { merges: [{ top: 1, left: 0, bottom: 3, right: 0 }], frozen: { rows: 2, cols: 0 } });
     const { bands } = setup(sheet);
     expect(cellAttributes(drawn(bands.value, "A2").copies[0]!.cell)).toEqual({ "aria-hidden": "true" });
+  });
+});
+
+describe("SPEC-137: an unchanged cell's re-render patches no style and no attribute", () => {
+  it("internItemStyles hands a re-plan's cells the last plan's style objects wherever their declarations are equal", () => {
+    const before = setup(sheetOf([[0, 0, 1], [0, 1, "two"], [1, 0, 3]])).bands.value;
+    const last = internItemStyles(before, new Map());
+    const after = setup(sheetOf([[0, 0, 1], [0, 1, "two"], [1, 0, 3]]), { styles: [{}] }).bands.value;
+    const styled = setup(sheetOf([[0, 0, 1]]), { styles: [{ font: { bold: true } }] }).bands.value;
+    internItemStyles(after, last);
+    const a1 = (bands: BandItem[]) => drawn(bands, "A1").elements[0]!.cell;
+    const b1 = (bands: BandItem[]) => drawn(bands, "B1").elements[0]!.cell;
+    expect(a1(after)).not.toBe(a1(before));
+    expect(a1(after).boxStyle).toBe(a1(before).boxStyle);
+    expect(a1(after).textStyle).toBe(a1(before).textStyle);
+    expect(a1(after).contentStyle).toBe(a1(before).contentStyle);
+    expect(b1(after).textStyle).toBe(b1(before).textStyle);
+    // A cell whose text style differs (bold) keeps its own object; its
+    // equal box still takes the last plan's.
+    internItemStyles(styled, last);
+    expect(a1(styled).textStyle).not.toBe(a1(before).textStyle);
+    expect(a1(styled).textStyle).not.toEqual(a1(before).textStyle);
+    expect(a1(styled).boxStyle).toBe(a1(before).boxStyle);
+  });
+
+  it("applyAttributes writes only what changed and removes what is gone", () => {
+    const element = document.createElement("div");
+    const writes: string[] = [];
+    const setAttribute = element.setAttribute.bind(element);
+    element.setAttribute = (name: string, value: string) => {
+      writes.push(name);
+      setAttribute(name, value);
+    };
+    const first = { id: "sheet-cell-A1", role: "gridcell", "aria-rowindex": 2, "aria-selected": "true", title: "stale", "data-stale": "true" };
+    applyAttributes(element, first);
+    expect(writes.toSorted()).toEqual(Object.keys(first).toSorted());
+    writes.length = 0;
+    const second = { id: "sheet-cell-A1", role: "gridcell", "aria-rowindex": 2, "aria-selected": "false", title: undefined, "aria-describedby": "message" };
+    applyAttributes(element, second, first);
+    expect(writes.toSorted()).toEqual(["aria-describedby", "aria-selected"]);
+    expect(element.getAttribute("aria-selected")).toBe("false");
+    expect(element.getAttribute("aria-rowindex")).toBe("2");
+    expect(element.hasAttribute("title")).toBe(false);
+    expect(element.hasAttribute("data-stale")).toBe(false);
+    expect(element.getAttribute("aria-describedby")).toBe("message");
+  });
+
+  it("the layer's cell elements carry cellAttributes as attributes", () => {
+    const sheet = sheetOf([[4, 2, "Merged title"]], { merges: [{ top: 4, left: 2, bottom: 4, right: 4 }] });
+    const { wrapper } = setup(sheet);
+    const element = wrapper.get('[data-ref="C5"]');
+    expect(element.attributes()).toMatchObject({ id: "sheet-cell-C5", role: "gridcell", "data-testid": "sheet-cell", "aria-rowindex": "6", "aria-colindex": "4", "aria-colspan": "3", "aria-selected": "false" });
+    expect(element.attributes("aria-rowspan")).toBeUndefined();
   });
 });
 

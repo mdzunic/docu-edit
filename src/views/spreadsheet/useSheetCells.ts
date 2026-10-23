@@ -41,6 +41,9 @@
 //   counting as unset) and beneath SPEC-129's conditional formats, for the
 //   cell elements and the border pass alike. A look is an identity-stable
 //   object, so a looked cell's CSS caches under its style id AND its look.
+// - SPEC-137: a cell whose box, text or content declarations equal the last
+//   plan's under its key keeps the last plan's objects (internItemStyles),
+//   so re-rendering an unchanged cell patches no style.
 import { computed, type ComputedRef } from "vue";
 import { formatA1, type GridRange } from "../../lib/spreadsheet/address";
 import {
@@ -67,8 +70,8 @@ import { workbookFormatContext, type FormattedValue } from "../../lib/spreadshee
 import { cellStyle, columnSpanAt, fontMaxDigitWidth } from "../../lib/spreadsheet/styles";
 import { lookKey, styleOverLook, tableCellLook } from "../../lib/spreadsheet/tableStyles";
 import { DEFAULT_THEME, type DocumentTheme } from "../../lib/core/theme";
-import { createBandBuilder, type GridWindow } from "./sheetBands";
-import type { BandItem, CellItem } from "./sheetCellItems";
+import { createBandBuilder, type BuildMode, type GridWindow } from "./sheetBands";
+import { internItemStyles, type BandItem, type CellItem } from "./sheetCellItems";
 import { cellElementStyle, planRender, type PaperDecorations } from "./sheetRenderPlan";
 import { GRID_OVERSCAN_COLS, GRID_OVERSCAN_ROWS, type SheetViewport } from "./useSheetViewport";
 
@@ -124,13 +127,20 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     return new Map<number, number>();
   });
 
+  /** SPEC-137: what every cell of one build reads — the sheet, the model,
+   * the selection and Show formulas — read once per build (buildBands)
+   * rather than once per cell, each read a reactive one. */
+  let frame: { sheet: Sheet; model: SpreadsheetModel; selection: SheetSelection; showFormulas: boolean } | null = null;
+  const sheetNow = (): Sheet => frame?.sheet ?? deps.sheet();
+  const modelNow = (): SpreadsheetModel => frame?.model ?? deps.model();
+
   function styleOf(id: number): CellStyle {
-    return cellStyle(deps.model(), id);
+    return cellStyle(modelNow(), id);
   }
 
   /** SPEC-133: the look of the table covering a position, or undefined. */
   function tableLookAt(row: number, col: number): CellStyle | undefined {
-    const sheet = deps.sheet();
+    const sheet = sheetNow();
     const table = sheet.tables?.find(({ ref }) => row >= ref.top && row <= ref.bottom && col >= ref.left && col <= ref.right);
     return table ? tableCellLook(sheet, table, row, col, theme.value) : undefined;
   }
@@ -165,7 +175,7 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
   /** The style a position shows (effectiveStyleId, with its row and the
    * row's cell already found). */
   function styleIdAt(row: Row | undefined, cell: Cell | undefined, col: number): number {
-    return cell?.styleId ?? row?.styleId ?? columnSpanAt(deps.sheet().columns, col)?.styleId ?? 0;
+    return cell?.styleId ?? row?.styleId ?? columnSpanAt(sheetNow().columns, col)?.styleId ?? 0;
   }
 
   /** One mounted cell (or merge anchor), its element keyed `key`. */
@@ -177,11 +187,11 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     place: { left: number; top: number; width: number; height: number },
     merge: GridRange | undefined,
   ): CellItem {
-    const sheet = deps.sheet();
+    const sheet = sheetNow();
     const styleId = styleIdAt(row, cell, at.col);
     const value = cell?.value ?? null;
     // Showing formulas: a formula as left-aligned text, a value's General text.
-    const shown = deps.showFormulas?.() ? showFormulasDisplay(sheet, at.row, at.col, value, deps.model().format) : null;
+    const shown = (frame ? frame.showFormulas : deps.showFormulas?.()) ? showFormulasDisplay(sheet, at.row, at.col, value, modelNow().format) : null;
     // A table look lies beneath the style and a conditional format's dxf
     // (and a scale's fill) over both, before anything reads it — its number
     // format included.
@@ -251,14 +261,23 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
       merged: merge !== undefined,
       paintOnly: false,
       raised,
-      selected: isCellSelected(deps.selection(), at.row, at.col),
+      selected: isCellSelected(frame?.selection ?? deps.selection(), at.row, at.col),
       diagonal: diagonalLines(style, theme.value),
       ...(cf ? { cf } : {}),
     };
   }
 
   const builder = createBandBuilder({ ...deps, cellItem, overLook, tableLookAt, theme: () => theme.value });
-  const buildBands = builder.buildBands;
+  function buildBands(win: GridWindow, mode: BuildMode): BandItem[] {
+    frame = { sheet: deps.sheet(), model: deps.model(), selection: deps.selection(), showFormulas: deps.showFormulas?.() === true };
+    try {
+      return builder.buildBands(win, mode);
+    } finally {
+      frame = null;
+    }
+  }
+  /** SPEC-137: the last plan's cell items by key (internItemStyles). */
+  let lastItems: ReadonlyMap<string, CellItem> = new Map();
 
   const plan = computed(() => {
     const vp = deps.viewport;
@@ -272,7 +291,9 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
     };
     const deco = { gridLines: true, ...deps.decorations?.(), frozenWidth: vp.frozenW.value };
     const overview = () => ({ window: windowAt(0), bands: buildBands(builder.activeWindow(), "active") });
-    return planRender(windowAt, (win) => buildBands(win, "dense"), overview, { cells: GRID_MAX_RENDERED_CELLS, nodes: GRID_MAX_DOM_NODES }, deco);
+    const planned = planRender(windowAt, (win) => buildBands(win, "dense"), overview, { cells: GRID_MAX_RENDERED_CELLS, nodes: GRID_MAX_DOM_NODES }, deco);
+    lastItems = internItemStyles(planned.bands, lastItems);
+    return planned;
   });
 
   return {

@@ -52,7 +52,7 @@
 import { computed } from "vue";
 import { fontStack } from "../../lib/core/fontSubstitution";
 import { drawsText } from "../../views/spreadsheet/sheetRenderPlan";
-import { annotationMarksOf, asBandItems, asDescribedCell, asFindMarks, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { annotationMarksOf, asBandItems, asDescribedCell, asFindMarks, asStaleTitle, cellAttributes, cellAttributesDirective, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import { isLinkedCell } from "../../views/spreadsheet/cellLinks";
 import AppIcon from "../AppIcon.vue";
 import CfIcon from "./CfIcon.vue";
@@ -80,15 +80,31 @@ const props = defineProps({
 
 const emit = defineEmits(["filter-button"]);
 
+/** A cell's identity and ARIA (cellAttributes), applied as attributes — not
+ * a v-bind object, whose merge with `:style` rebuilt every cell's style
+ * object on each render (SPEC-137, applyAttributes). */
+const vCellAttributes = cellAttributesDirective;
+
 const items = computed(() => asBandItems(props.bands));
 const staleTitleOf = computed(() => asStaleTitle(props.staleTitle));
 const describedCell = computed(() => asDescribedCell(props.describedBy));
 const findMarks = computed(() => asFindMarks(props.findMarks));
 
-/** The text box's style, its family wrapped in the substitution stack. */
+/** The text box's style, its family wrapped in the substitution stack — one
+ * object per style object, so a binding whose style is unchanged keeps its
+ * identity and the patch skips it (SPEC-137, internItemStyles). */
+const stacked = new WeakMap();
 function textStyle(style = {}) {
   const family = Reflect.get(style, "font-family");
-  return typeof family === "string" && family.length > 0 ? { ...style, "font-family": fontStack(family) } : style;
+  if (typeof family !== "string" || family.length === 0) {
+    return style;
+  }
+  let wrapped = stacked.get(style);
+  if (!wrapped) {
+    wrapped = { ...style, "font-family": fontStack(family) };
+    stacked.set(style, wrapped);
+  }
+  return wrapped;
 }
 
 function px(value = 0) {
@@ -164,9 +180,9 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
           <div
             v-for="cell in region.cells"
             :key="cell.key"
+            v-cell-attributes="cellAttributes(cell, staleTitleOf, describedCell, findMarks)"
             class="sheet-cell"
             :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
-            v-bind="cellAttributes(cell, staleTitleOf, describedCell, findMarks)"
             :data-link="isLinkedCell(cell, props.linkAt) ? 'true' : undefined"
             :style="cell.boxStyle"
           >

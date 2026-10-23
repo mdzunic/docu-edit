@@ -426,6 +426,10 @@ export function useRecalc(deps: RecalcDeps) {
 
   /** A stale cell's title on a sheet, if it is stale. */
   function staleTitleAt(sheetId: string, row: number, col: number): string | undefined {
+    // Asked for every rendered cell: with nothing stale, build no key.
+    if (stale.value.size === 0) {
+      return undefined;
+    }
     const reason = stale.value.get(cellKey(sheetId, row, col));
     return reason ? staleTitle(reason) : undefined;
   }
