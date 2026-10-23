@@ -25,6 +25,7 @@ import {
   effectiveRepeatCount,
   effectiveScalePercent,
   effectiveSpinDegrees,
+  isTriggerableKind,
 } from "../../lib/presentation/animations";
 import type { AnimationPatch } from "../../lib/presentation/slideAnimations";
 import { buildableParagraphs, canBuildByParagraph } from "../../lib/presentation/buildPlayback";
@@ -91,10 +92,11 @@ export function useAnimationOptions(deps: AnimationOptionsDeps) {
     return !!a && (a.effect !== "appear" || !!a.rewindOnComplete);
   });
   const selectedRewind = computed(() => !!at(selectedIndex.value)?.rewindOnComplete);
-  /** The slide's other animatable frames an "On click of" row may wait for. */
+  /** The slide's other animatable frames an "On click of" row may wait for —
+   * those a saved file can name as a click target (`isTriggerableKind`). */
   const triggerFrameOptions = computed(() => {
     const own = at(selectedIndex.value)?.frameId;
-    const frames = (deps.currentSlide.value?.frames ?? []).filter((f) => f.id !== own && isAnimatableKind(f.kind));
+    const frames = (deps.currentSlide.value?.frames ?? []).filter((f) => f.id !== own && isTriggerableKind(f.kind));
     const names = frames.map(frameAccessibleName);
     return frames.map((f, i) => ({
       value: f.id,

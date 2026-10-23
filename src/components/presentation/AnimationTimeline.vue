@@ -6,8 +6,9 @@
 // sized by its playback duration so with-previous overlaps are visible.
 // Presentation only: the geometry is components/presentation/animationTimeline.ts
 // (via the controller's `timeline`), and every edit — selecting a bar, a
-// left-edge (delay) or right-edge (duration) drag recorded once on pointer-up,
-// a Left/Right arrow step of 100ms — goes through the useAnimations controller.
+// left-edge (delay) or right-edge (duration) drag recorded once on pointer-up
+// (a cancelled pointer discards it), a Left/Right arrow step of 100ms — goes
+// through the useAnimations controller.
 // Runtime prop declarations, not defineProps<{...}>() generics (espree).
 const props = defineProps({
   /** The useAnimations() controller object (timeline + edge commands). */
@@ -95,7 +96,7 @@ function barLabel(bar = { animationIndex: 0, paragraphIndex: undefined, startMs:
                 @pointerdown.stop.prevent="c.startEdgeDrag(bar, 'delay', $event)"
                 @pointermove="c.moveEdgeDrag($event)"
                 @pointerup="c.endEdgeDrag()"
-                @pointercancel="c.endEdgeDrag()"
+                @pointercancel="c.cancelEdgeDrag()"
                 @keydown="c.edgeKeydown(bar, 'delay', $event)"
               />
               <button
@@ -118,7 +119,7 @@ function barLabel(bar = { animationIndex: 0, paragraphIndex: undefined, startMs:
                 @pointerdown.stop.prevent="c.startEdgeDrag(bar, 'duration', $event)"
                 @pointermove="c.moveEdgeDrag($event)"
                 @pointerup="c.endEdgeDrag()"
-                @pointercancel="c.endEdgeDrag()"
+                @pointercancel="c.cancelEdgeDrag()"
                 @keydown="c.edgeKeydown(bar, 'duration', $event)"
               />
             </div>

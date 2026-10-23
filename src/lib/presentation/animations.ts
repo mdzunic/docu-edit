@@ -162,6 +162,15 @@ export function effectiveEmphasisColor(a: SlideAnimation): string {
   return a.emphasisColor !== undefined && isEmphasisColor(a.emphasisColor) ? a.emphasisColor : DEFAULT_EMPHASIS_COLOR;
 }
 
+/** The frame kinds an `onClickOf` row may wait for (SPEC-105): those both
+ * serialisers always give a wire id a trigger can name — pptx a minted
+ * `p:cNvPr id`, odp a minted `de-f{n}`. A group, a foreign object, a chart
+ * or clip re-emitted verbatim has none to name, so a trigger on one is never
+ * offered by the panel and keeps a file's timing out of subset. */
+export function isTriggerableKind(kind: string): boolean {
+  return kind === "text" || kind === "shape" || kind === "image" || kind === "table";
+}
+
 /** The animations of the slide's main (advance-driven) sequence, in play
  * order — every row except the `onClickOf` ones (SPEC-105). */
 export function mainSequence(animations: SlideAnimation[]): SlideAnimation[] {

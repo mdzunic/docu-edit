@@ -51,6 +51,7 @@ import {
   effectiveRepeatCount,
   effectiveScalePercent,
   effectiveSpinDegrees,
+  isTriggerableKind,
   MAX_REPEAT_COUNT,
   MAX_SCALE_PERCENT,
   MAX_SPIN_DEGREES,
@@ -513,7 +514,8 @@ function parseTiming(
       main = cTn;
     } else if (cTn && nodeType === "interactiveSeq") {
       const triggerFrameId = interactiveTrigger(cTn, resolveSpid);
-      if (!triggerFrameId) {
+      const triggerKind = triggerFrameId ? frameFor?.(triggerFrameId)?.kind : undefined;
+      if (!triggerFrameId || (triggerKind !== undefined && !isTriggerableKind(triggerKind))) {
         return undefined;
       }
       interactive.push({ cTn, triggerFrameId });

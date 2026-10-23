@@ -50,6 +50,10 @@ describe("timeline geometry", () => {
     expect(draggedDurationMs(4900, 300)).toBe(5000);
     // A repeated bar's edge moves each pass by its share.
     expect(draggedDurationMs(500, 600, 3)).toBe(700);
+    // Steps move from where the value was: an off-grid delay keeps its offset.
+    expect(draggedDelayMs(250, 100)).toBe(350);
+    expect(draggedDelayMs(250, 0)).toBe(250);
+    expect(draggedDurationMs(450, -100)).toBe(350);
   });
 });
 

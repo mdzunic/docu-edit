@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseXml } from "../../core/xml";
-import type { SlideAnimation } from "../model";
+import type { SlideAnimation, SlideFrame } from "../model";
 import { paragraphWireId, preservedAnimReferences, readOdpAnim, writeOdpAnim, xmlIdsDefinedIn, type OdpTarget } from "./anim";
 import { ANIM_DEPTH_GOLDEN, ANIM_GOLDEN, DEPTH_ANIMATIONS, depthFrameFor, GOLDEN_ANIMATIONS, goldenTargetFor } from "./animGolden";
 
@@ -300,6 +300,10 @@ describe("SPEC-105 out of subset (odp → preserved)", () => {
     expect(read(interactive("id99"))).toBeUndefined();
     expect(read(interactive("de-f4-p0"))).toBeUndefined();
     expect(read(interactive("de-f3"))).toBeUndefined();
+    // A trigger on a frame the writer gives no wire id (a group) is out too.
+    const groupAt5 = (id: string): SlideFrame | undefined =>
+      id === "f5" ? { id, kind: "group", xCm: 0, yCm: 0, widthCm: 1, heightCm: 1, children: [] } : depthFrameFor(id);
+    expect(readOdpAnim(parseDepth(interactive("de-f5")), resolveDepth, groupAt5)).toBeUndefined();
   });
 
   it("a second sequence that is not an interactive one", () => {

@@ -100,12 +100,18 @@ export function useAnimationTimeline(deps: AnimationTimelineDeps) {
     const { bar, edge, startX } = edgeDrag;
     timelineDraft.value = { animationIndex: bar.animationIndex, edge, valueMs: edgeValue(bar, edge, msFromDx(event.clientX - startX)) };
   }
-  /** Pointer-up ends the drag: one undo entry for the whole gesture. */
+  /** Pointer-up ends the drag: one undo entry for the whole gesture (none
+   * when the edge ends where it started). */
   function endEdgeDrag(): void {
     const draftValue = timelineDraft.value;
     edgeDrag = null;
     timelineDraft.value = null;
     if (draftValue) writeEdge(draftValue.animationIndex, draftValue.edge, draftValue.valueMs);
+  }
+  /** A cancelled pointer (the browser took it) discards the drag. */
+  function cancelEdgeDrag(): void {
+    edgeDrag = null;
+    timelineDraft.value = null;
   }
   /** Left/Right on an edge: ∓100ms, one undo entry per key press. */
   function edgeKeydown(bar: TimelineBar, edge: TimelineEdge, event: KeyboardEvent): void {
@@ -115,5 +121,16 @@ export function useAnimationTimeline(deps: AnimationTimelineDeps) {
     writeEdge(bar.animationIndex, edge, edgeValue(bar, edge, edge === "duration" ? delta * bar.passes : delta));
   }
 
-  return { timelineOpen, toggleTimeline, timeline, timelineDraft, selectBar, startEdgeDrag, moveEdgeDrag, endEdgeDrag, edgeKeydown };
+  return {
+    timelineOpen,
+    toggleTimeline,
+    timeline,
+    timelineDraft,
+    selectBar,
+    startEdgeDrag,
+    moveEdgeDrag,
+    endEdgeDrag,
+    cancelEdgeDrag,
+    edgeKeydown,
+  };
 }

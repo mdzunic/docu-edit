@@ -256,7 +256,8 @@ describe("SPEC-105 visibility and durations", () => {
     const spin: SlideAnimation = { frameId: "a", effect: "spin", trigger: "click", spinDegrees: 90, repeatCount: 2 };
     const path: SlideAnimation = { frameId: "a", effect: "motionPath", trigger: "click", path: { preset: "line", direction: "down" } };
 
-    expect(playedMotion([spin, path])).toEqual({ rotateDeg: 180, offset: { x: 0, y: 0.25 } });
+    // Repeated passes restart from the start: a twice-repeated 90° spin ends 90° on.
+    expect(playedMotion([spin, path])).toEqual({ rotateDeg: 90, offset: { x: 0, y: 0.25 } });
     expect(playedMotion([{ ...spin, autoReverse: true }])).toEqual({ rotateDeg: 0, offset: { x: 0, y: 0 } });
     expect(playedMotion([{ ...path, rewindOnComplete: true }])).toEqual({ rotateDeg: 0, offset: { x: 0, y: 0 } });
   });

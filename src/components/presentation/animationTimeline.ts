@@ -51,22 +51,21 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** The delay a left-edge drag of `dx` px (or an arrow step of ±100ms as
- * `deltaMs`) leaves, clamped to SPEC-086's 0–10000. */
+/** The delay a left-edge drag (its `msFromDx` travel) or an arrow step of
+ * ±100ms leaves: moved by whole 100ms steps from where it was (an
+ * off-grid delay from a file keeps its offset), clamped to SPEC-086's
+ * 0–10000. */
 export function draggedDelayMs(delayMs: number, deltaMs: number): number {
-  return clamp(Math.round((delayMs + deltaMs) / TIMELINE_STEP_MS) * TIMELINE_STEP_MS, MIN_ANIMATION_DELAY_MS, MAX_ANIMATION_DELAY_MS);
+  const steps = Math.round(deltaMs / TIMELINE_STEP_MS) * TIMELINE_STEP_MS;
+  return clamp(delayMs + steps, MIN_ANIMATION_DELAY_MS, MAX_ANIMATION_DELAY_MS);
 }
 
 /** The duration a right-edge drag leaves, clamped to SPEC-086's 100–5000.
  * The bar spans every pass (`passes` — repeats × auto-reverse), so the edge
- * moves the single pass by its share. */
+ * moves the single pass by its share, in whole 100ms steps. */
 export function draggedDurationMs(durationMs: number, deltaMs: number, passes = 1): number {
-  const perPass = deltaMs / Math.max(1, passes);
-  return clamp(
-    Math.round((durationMs + perPass) / TIMELINE_STEP_MS) * TIMELINE_STEP_MS,
-    MIN_ANIMATION_DURATION_MS,
-    MAX_ANIMATION_DURATION_MS,
-  );
+  const perPass = Math.round(deltaMs / Math.max(1, passes) / TIMELINE_STEP_MS) * TIMELINE_STEP_MS;
+  return clamp(durationMs + perPass, MIN_ANIMATION_DURATION_MS, MAX_ANIMATION_DURATION_MS);
 }
 
 /** How many single-duration spans a row's bar covers. */

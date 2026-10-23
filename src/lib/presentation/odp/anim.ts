@@ -44,6 +44,7 @@ import {
   effectiveRepeatCount,
   effectiveScalePercent,
   effectiveSpinDegrees,
+  isTriggerableKind,
   MAX_ANIMATION_DELAY_MS,
   MAX_REPEAT_COUNT,
   MAX_SCALE_PERCENT,
@@ -389,7 +390,12 @@ function parseAnim(
     }
     const begin = /^\s*([A-Za-z_][\w.-]*)\.click\s*$/.exec(smilAttr(seq, "begin") ?? "");
     const trigger = begin ? resolveTarget(begin[1]) : undefined;
-    if (presentationAttr(seq, "node-type") !== "interactive-sequence" || typeof trigger !== "string") {
+    const triggerKind = typeof trigger === "string" ? frameFor?.(trigger)?.kind : undefined;
+    if (
+      presentationAttr(seq, "node-type") !== "interactive-sequence" ||
+      typeof trigger !== "string" ||
+      (triggerKind !== undefined && !isTriggerableKind(triggerKind))
+    ) {
       return undefined;
     }
     interactive.push({ seq, triggerFrameId: trigger });

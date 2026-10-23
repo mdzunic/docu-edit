@@ -224,9 +224,11 @@ export function isBuildTargetHiddenAt(groups: BuildStep[][], key: string, groups
 
 /** Where played emphasis/path steps leave target `key` once they have ended
  * (SPEC-105's settled end state): the net rotation of its spins and the net
- * offset (slide fractions) of its motion paths. An auto-reversed pass ends
- * where it began, a rewind restores the start, and pulse / grow-shrink /
- * colour change always return. */
+ * offset (slide fractions) of its motion paths. Repeated passes do not
+ * accumulate — each restarts from where the effect began (SMIL's default),
+ * so a spin or path ends one pass on; an auto-reversed pass ends where it
+ * began, a rewind restores the start, and pulse / grow-shrink / colour change
+ * always return. */
 export function settledMotion(played: readonly BuildStep[], key: string): { rotateDeg: number; offset: PathPoint } {
   let rotateDeg = 0;
   const offset = { x: 0, y: 0 };
@@ -236,7 +238,7 @@ export function settledMotion(played: readonly BuildStep[], key: string): { rota
       continue;
     }
     if (a.effect === "spin") {
-      rotateDeg += effectiveSpinDegrees(a) * effectiveRepeatCount(a);
+      rotateDeg += effectiveSpinDegrees(a);
     } else if (a.effect === "motionPath" && a.path) {
       const end = motionPathEnd(a.path as MotionPath);
       offset.x += end.x;

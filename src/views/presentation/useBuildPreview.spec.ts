@@ -3,7 +3,7 @@
 // scheduled animation offsets resolve deterministically.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Slide, SlideAnimation } from "../../lib/presentation/model";
-import { useBuildPreview } from "./useBuildPreview";
+import { fullyBuiltStyles, useBuildPreview } from "./useBuildPreview";
 
 function slide(animations: SlideAnimation[]): Slide {
   return {
@@ -237,7 +237,7 @@ describe("useBuildPreview — SPEC-105", () => {
     p.playGroup(s, 0, true);
     seen.push(p.frameStyles.value);
     vi.runAllTimers();
-    expect(seen[0].title).toEqual({ rotate: "270deg" });
+    expect(seen[0].title).toEqual({ rotate: "90deg" }); // passes restart: one spin on
     expect(seen[0].btn).toEqual({ translate: "0px 120px" });
     expect(seen[0].body).toEqual({});
     expect(p.playing.value).toBe(false);
@@ -260,5 +260,55 @@ describe("useBuildPreview — SPEC-105", () => {
     const s = depthSlide([{ frameId: "title", effect: "pulse", trigger: "click" }]);
     p.settle(s, 1);
     expect(hidden(p.frameStyles.value, "title")).toBe(false);
+  });
+});
+
+describe("useBuildPreview — SPEC-105 review regressions", () => {
+  it("settles main and interactive groups in the order they played (the last wins)", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([
+      { frameId: "title", effect: "fadeIn", trigger: "click" },
+      { frameId: "title", effect: "fadeOut", trigger: "onClickOf", triggerFrameId: "btn" },
+    ]);
+    p.settle(s, 0);
+    // The title starts hidden (an entrance waits for it).
+    expect(hidden(p.frameStyles.value, "title")).toBe(true);
+    p.playTrigger(s, "btn", true); // the exit plays first…
+    p.playGroup(s, 0, true); // …then the advance fades it in: visible.
+    expect(hidden(p.frameStyles.value, "title")).toBe(false);
+    // The other order: in, then out on the click.
+    const q = useBuildPreview();
+    q.settle(s, 0);
+    q.playGroup(s, 0, true);
+    q.playTrigger(s, "btn", true);
+    expect(hidden(q.frameStyles.value, "title")).toBe(true);
+    // A step back unplays an interactive group played after that point.
+    q.settle(s, 0);
+    expect(hidden(q.frameStyles.value, "title")).toBe(true);
+    q.settle(s, 1);
+    expect(hidden(q.frameStyles.value, "title")).toBe(false);
+  });
+
+  it("an emphasis on a hidden target plays without revealing it", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([
+      { frameId: "title", effect: "pulse", trigger: "click" },
+      { frameId: "title", effect: "fadeIn", trigger: "click" },
+    ]);
+    p.settle(s, 0);
+    p.playGroup(s, 0, false);
+    vi.advanceTimersByTime(0);
+    expect(p.frameStyles.value.title).toMatchObject({ visibility: "hidden", opacity: "0", animationName: "none" });
+    vi.advanceTimersByTime(50);
+    expect(p.frameStyles.value.title).toMatchObject({ visibility: "hidden", animationName: "de-anim-scale" });
+    vi.advanceTimersByTime(700);
+    expect(hidden(p.frameStyles.value, "title")).toBe(true);
+  });
+
+  it("fullyBuiltStyles gives a transition's outgoing slide its paragraph styles", () => {
+    const s = depthSlide([{ frameId: "body", effect: "fadeOut", trigger: "click", buildBy: "byParagraph" }]);
+    const built = fullyBuiltStyles(s, { slideWidthCm: 25.4, slideHeightCm: 12.7 });
+    expect([0, 1, 2].map((i) => built.paragraphStyles.body[i]?.visibility)).toEqual(["hidden", "hidden", "hidden"]);
+    expect(fullyBuiltStyles(null, null)).toEqual({ frameStyles: {}, paragraphStyles: {} });
   });
 });

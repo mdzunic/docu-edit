@@ -24,7 +24,7 @@ import { cmToPx } from "../lib/core/units";
 import { slideOutline } from "../lib/presentation/slideModel";
 import { slideBuildCount } from "../lib/presentation/buildPlayback";
 import { usePlayback } from "./presentation/usePlayback";
-import { settledFrameStyles, useBuildPreview, watchBuildSteps } from "./presentation/useBuildPreview";
+import { fullyBuiltStyles, useBuildPreview, watchBuildSteps } from "./presentation/useBuildPreview";
 import { useShowingMedia } from "./presentation/useShowingMedia";
 import { usePlayInput } from "./presentation/usePlayInput";
 import { usePresenterSession } from "./presentation/usePresenterSession";
@@ -240,10 +240,7 @@ const transitionView = shallowRef(emptyTwoStageView());
 // slide once every group has played), so exited frames stay gone; the incoming
 // stage shares the live build state, which the step watcher has already settled
 // to 0 groups — unbuilt frames stay hidden through the transition (SPEC-086).
-const transitionOutgoingStyles = computed(() => {
-  const outgoing = transitionView.value?.outgoing;
-  return outgoing ? settledFrameStyles(outgoing, slideBuildCount(outgoing)) : {};
-});
+const transitionOutgoing = computed(() => fullyBuiltStyles(transitionView.value?.outgoing, presentation.value));
 function clearTransition() {
   transitionView.value = null;
 }
@@ -359,7 +356,8 @@ onBeforeUnmount(() => {
       :scale="stageScale"
       :reduced-motion="reducedMotion"
       :theme="presentation.theme"
-      :outgoing-frame-styles="transitionOutgoingStyles"
+      :outgoing-frame-styles="transitionOutgoing.frameStyles"
+      :outgoing-paragraph-styles="transitionOutgoing.paragraphStyles"
       :incoming-frame-styles="buildPreview.frameStyles.value"
       :incoming-paragraph-styles="buildPreview.paragraphStyles.value"
       :outgoing-media-url-override="showingMedia.previousUrl()"

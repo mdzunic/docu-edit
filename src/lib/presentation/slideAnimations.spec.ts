@@ -186,6 +186,18 @@ describe("SPEC-105 widened AnimationPatch", () => {
     expect(s.animations![0].path).toEqual({ preset: "loop" });
   });
 
+  it("keeps a colour change's duration in 2ms steps (each half is written in whole ms)", () => {
+    const s = withRow({ effect: "colorChange" });
+    updateAnimation(s, 0, { durationMs: 555 }, "pptx");
+    expect(s.animations![0].durationMs).toBe(556);
+    const odd = withRow({ durationMs: 701 });
+    updateAnimation(odd, 0, { effect: "colorChange" }, "pptx");
+    expect(odd.animations![0].durationMs).toBe(702);
+    const other = withRow({ effect: "spin" });
+    updateAnimation(other, 0, { durationMs: 555 }, "pptx");
+    expect(other.animations![0].durationMs).toBe(555);
+  });
+
   it("dirties an odp slide by dropping its verbatim page", () => {
     const s = withRow();
     s.sourceXml = "<draw:page/>";

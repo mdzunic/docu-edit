@@ -528,6 +528,14 @@ describe("SPEC-105 out of subset (→ preserved)", () => {
     expect(read(noMain)).toBeUndefined();
   });
 
+  it("a trigger on a frame a saved file cannot name (a group) — it would be lost on the next save", () => {
+    const xml = writePptxTiming([{ frameId: "f2", effect: "spin", trigger: "onClickOf", triggerFrameId: "f5" }], goldenSpidFor, depthFrameFor);
+    const groupAt5 = (id: string): SlideFrame | undefined =>
+      id === "f5" ? { id, kind: "group", xCm: 0, yCm: 0, widthCm: 1, heightCm: 1, children: [], xml: "<p:grpSp/>" } : depthFrameFor(id);
+    expect(read(xml)).toHaveLength(1); // the control
+    expect(read(xml, groupAt5)).toBeUndefined();
+  });
+
   it("a second sequence that is not an interactive one", () => {
     const xml = writePptxTiming(
       [

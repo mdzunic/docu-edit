@@ -116,7 +116,6 @@ function keyframeStyle(a: SlideAnimation, ctx: StyleContext): FrameStyle {
   const dur = effectiveAnimationDurationMs(a);
   const base = ctx.base ?? { rotateDeg: 0, offset: { x: 0, y: 0 } };
   const style: FrameStyle = {
-    visibility: "visible",
     animationDuration: `${dur}ms`,
     animationTimingFunction: "ease-in-out",
     animationIterationCount: animationIterationCount(a),
@@ -151,19 +150,22 @@ function keyframeStyle(a: SlideAnimation, ctx: StyleContext): FrameStyle {
   return style;
 }
 
-/** Whether an effect animates through keyframes (emphasis and path). */
-function keyframed(a: SlideAnimation): boolean {
+/** Whether an effect animates through keyframes (emphasis and path) — its
+ * styles change no visibility. */
+export function keyframed(a: SlideAnimation): boolean {
   const cls = effectClass(a.effect);
   return cls === "emphasis" || cls === "path";
 }
 
 /** The pre-animation ("from") style for an effect. Emphasis and path effects
- * start where their target rests, their keyframes not yet running. */
+ * start where their target rests, their keyframes not yet running — and
+ * name no visibility: they leave a hidden target hidden (the engine layers
+ * them over the target's current style). */
 export function fromStyle(a: SlideAnimation, ctx: StyleContext = DEFAULT_STYLE_CONTEXT): FrameStyle {
   const direction = effectiveAnimationDirection(a) ?? "left";
   if (keyframed(a)) {
     const base = ctx.base;
-    const style: FrameStyle = { visibility: "visible", animationName: "none" };
+    const style: FrameStyle = { animationName: "none" };
     if (base && base.rotateDeg !== 0) style.rotate = `${base.rotateDeg}deg`;
     if (base && (base.offset.x !== 0 || base.offset.y !== 0)) style.translate = translateValue(base.offset, ctx);
     return style;

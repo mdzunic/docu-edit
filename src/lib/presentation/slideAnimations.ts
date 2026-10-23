@@ -25,6 +25,7 @@ import {
   defaultAnimationDirection,
   dropPreservedTiming,
   isEmphasisColor,
+  MAX_ANIMATION_DURATION_MS,
   MAX_PATH_DISTANCE,
   MAX_REPEAT_COUNT,
   MAX_SCALE_PERCENT,
@@ -248,6 +249,12 @@ export function updateAnimation(
     if (path) {
       animation.path = path;
     }
+  }
+  // A colour change writes each half (to the colour, auto-reversed back) in
+  // whole milliseconds, so its duration is kept in 2ms steps — an odd one
+  // would come back 1ms longer from either format.
+  if (animation.effect === "colorChange" && animation.durationMs !== undefined && animation.durationMs % 2 !== 0) {
+    animation.durationMs = Math.min(MAX_ANIMATION_DURATION_MS, animation.durationMs + 1);
   }
   markSlideEdited(slide, format);
 }

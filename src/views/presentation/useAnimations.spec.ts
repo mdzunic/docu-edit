@@ -299,6 +299,39 @@ describe("useAnimations — SPEC-105", () => {
     expect(h.model.value!.slides[0].animations![1].delayMs).toBe(400);
   });
 
+  it("an edge press without travel, or a cancelled pointer, writes nothing", () => {
+    const h = depthHarness([{ frameId: "box", effect: "spin", trigger: "click", delayMs: 250 }]);
+    const bar = h.c.timeline.value!.groups[0].bars[0];
+    h.record.mockClear();
+    h.c.startEdgeDrag(bar, "delay", at(100));
+    h.c.moveEdgeDrag(at(101));
+    h.c.endEdgeDrag();
+    expect(h.record).not.toHaveBeenCalled();
+    h.c.startEdgeDrag(bar, "delay", at(100));
+    h.c.moveEdgeDrag(at(160));
+    h.c.cancelEdgeDrag();
+    expect(h.c.timelineDraft.value).toBeNull();
+    expect(h.record).not.toHaveBeenCalled();
+    expect(h.model.value!.slides[0].animations![0].delayMs).toBe(250);
+    // An arrow moves the off-grid delay by exactly one step.
+    h.c.edgeKeydown(bar, "delay", key("ArrowRight"));
+    expect(h.model.value!.slides[0].animations![0].delayMs).toBe(350);
+  });
+
+  it("offers only frames a saved file can name as a trigger (no clip, group or foreign object)", () => {
+    const h = harness({
+      id: "s",
+      frames: [
+        frame("t"),
+        frame("g", "group"),
+        { id: "clip", kind: "media", media: "video", xCm: 0, yCm: 0, widthCm: 4, heightCm: 3 },
+        frame("pic", "image"),
+      ],
+      animations: [{ frameId: "t", effect: "spin", trigger: "click" }],
+    });
+    expect(h.c.triggerFrameOptions.value.map((o) => o.value)).toEqual(["pic"]);
+  });
+
   it("creates the motion-path editor itself", () => {
     const h = depthHarness([{ frameId: "box", effect: "motionPath", trigger: "click", path: { preset: "line" } }]);
     expect(h.c.pathEdit.overlay.value).toBeNull();
