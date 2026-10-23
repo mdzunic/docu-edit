@@ -227,6 +227,21 @@ test("'New combined image' opens an empty tray, and 'Add from library…' offers
   await page.getByTestId("item-remove").nth(1).click();
   await expect(page.getByTestId("assembly-item")).toHaveCount(1);
 
+  // Reorder by drag: a second image, dragged above the first.
+  await page.getByTestId("close-document").click();
+  await expect(page.getByTestId("library")).toBeVisible();
+  await dropFile(page, "spec107-photo.jpg", "image/jpeg");
+  await page.goto("/assemble");
+  await page.getByTestId("assembly-add").click();
+  await page.getByTestId("assembly-picker").getByTestId("picker-item").filter({ hasText: "spec107-photo" }).getByTestId("picker-check").check();
+  await page.getByTestId("assembly-picker-add").click();
+  const rows = page.getByTestId("assembly-tray").getByTestId("assembly-item");
+  await expect(rows.getByTestId("item-title")).toHaveText(["spec107-shot", "spec107-photo"]);
+  await rows.nth(1).dragTo(rows.nth(0));
+  await expect(rows.getByTestId("item-title")).toHaveText(["spec107-photo", "spec107-shot"]);
+  await expect(page.getByTestId("assembly-tray-status")).toHaveText("“spec107-photo” moved to position 1 of 2.");
+  await page.getByTestId("item-remove").nth(0).click();
+
   // JPEG: quality appears, and the transparent sheet is refused up front.
   await page.getByTestId("assembly-format").selectOption("jpeg");
   await expect(page.getByTestId("assembly-quality")).toHaveValue("90");
