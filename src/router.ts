@@ -75,6 +75,12 @@ export const routes: RouteRecordRaw[] = [
     beforeEnter: guardKind("spreadsheet"),
   },
   {
+    // SPEC-109: the assembly workspace. It takes no id, so no kind guard.
+    path: "/assemble",
+    name: "assemble",
+    component: () => import("./views/AssembleView.vue"),
+  },
+  {
     path: "/open",
     name: "open-from-url",
     component: () => import("./views/OpenFromUrlView.vue"),

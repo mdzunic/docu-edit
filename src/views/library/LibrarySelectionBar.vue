@@ -5,6 +5,8 @@
 // (SPEC-108) emits the one selected id for HomeView's dialog. That action
 // shows only while every selected entry is an image, and converts exactly
 // one: with more selected it stays visible but disabled, saying why.
+// "Combine…" (SPEC-109) emits the selected image ids for HomeView to open
+// the assembly workspace with; it is enabled from two image entries up.
 import { computed } from "vue";
 import UiButton from "../../components/ui/UiButton.vue";
 import { isImageFormat } from "../../lib/libraryMenu";
@@ -13,13 +15,15 @@ const props = defineProps({
   lib: { type: Object, required: true },
 });
 
-const emit = defineEmits(["trash", "convert-pdf"]);
+const emit = defineEmits(["trash", "convert-pdf", "combine"]);
 
 const allImages = computed(() => {
   const ids = props.lib.selectedIds.value;
   return ids.length > 0 && ids.every((id = "") => isImageFormat(props.lib.formatOf(id)));
 });
 const convertOne = computed(() => allImages.value && props.lib.selectedIds.value.length === 1);
+const imageIds = computed(() => props.lib.selectedIds.value.filter((id = "") => isImageFormat(props.lib.formatOf(id))));
+const canCombine = computed(() => imageIds.value.length >= 2);
 </script>
 
 <template>
@@ -65,6 +69,15 @@ const convertOne = computed(() => allImages.value && props.lib.selectedIds.value
       @click="emit('convert-pdf', props.lib.selectedIds.value[0])"
     >
       Convert to PDF…
+    </UiButton>
+    <UiButton
+      size="sm"
+      data-testid="bulk-combine"
+      :disabled="!canCombine"
+      :title="canCombine ? undefined : 'Select two or more images to combine them'"
+      @click="emit('combine', imageIds)"
+    >
+      Combine…
     </UiButton>
     <UiButton
       size="sm"

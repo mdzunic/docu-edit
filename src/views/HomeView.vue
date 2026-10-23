@@ -40,6 +40,7 @@ import { BLANK_DOCUMENT_KINDS, createBlankDocument } from "../lib/newDocument";
 import { useTier } from "../composables/useResponsiveTier";
 import { useReturningHighlight } from "./library/useReturningHighlight";
 import ConvertToPdfDialog from "./library/ConvertToPdfDialog.vue";
+import { startAssembly } from "./assembly/useAssemblyPersistence";
 
 const router = useRouter();
 const { addToast } = useToasts();
@@ -325,6 +326,13 @@ const highlightId = useReturningHighlight();
 
 // SPEC-108: "Convert to PDF…" on an image (row menu or selection bar).
 const convertFor = ref("");
+
+// SPEC-109: "Combine…" (the selected images) and "New › Combined image" (an
+// empty tray) start the assembly workspace's plan, then open it.
+function openAssembly(ids = [""]) {
+  startAssembly(ids);
+  router.push({ name: "assemble" });
+}
 </script>
 
 <template>
@@ -394,9 +402,11 @@ const convertFor = ref("");
         <template #actions>
           <LibraryHeaderActions
             :compact="false"
+            :can-combine="lib.hasImages.value"
             @new-document="create('text')"
             @new-presentation="create('presentation')"
             @new-spreadsheet="create('spreadsheet')"
+            @new-combined-image="openAssembly([])"
             @new-from-template="openTemplateGallery"
             @open-document="pickFile"
           />
@@ -417,9 +427,11 @@ const convertFor = ref("");
           >
             <LibraryHeaderActions
               :compact="compact"
+              :can-combine="lib.hasImages.value"
               @new-document="create('text')"
               @new-presentation="create('presentation')"
               @new-spreadsheet="create('spreadsheet')"
+              @new-combined-image="openAssembly([])"
               @new-from-template="openTemplateGallery"
               @open-document="pickFile"
             />
@@ -432,6 +444,7 @@ const convertFor = ref("");
           :lib="lib"
           @trash="bulkTrash"
           @convert-pdf="convertFor = $event"
+          @combine="openAssembly"
         />
 
         <!-- Storage usage (AC-47..50); the rail hosts it at the full tier. -->

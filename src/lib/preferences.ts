@@ -17,6 +17,7 @@ import type { Margins } from "./core/pageSetup";
 import { PAPER_SIZE_NAMES } from "./core/pageSetup";
 import { AUTOSAVE_DEBOUNCE_MS } from "./core/autosaveScheduler";
 import { DEFAULT_SHEET_DPI, SHEET_DPI_CHOICES, SHEET_PAPER_NAMES } from "./core/sheetLayout";
+import { parsePersistedAssembly, type PersistedAssembly } from "./assemblyPersist";
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from "./core/language";
 import { STANDARD_FONT_FAMILIES } from "./core/fonts";
 import { MAX_FONT_SIZE_PT, MIN_FONT_SIZE_PT } from "./fonts";
@@ -178,6 +179,10 @@ export interface Preferences {
   assemblyMargins: Margins | null;
   /** The assembly sheet's resolution, one of SHEET_DPI_CHOICES (SPEC-108). */
   assemblyDpi: number;
+  /** The /assemble workspace's plan (SPEC-109): tray item ids, layout,
+   * overlay transforms, sheet setup and output settings — never pixels.
+   * Null until a workspace is started, and after "Start over". */
+  assemblyPlan: PersistedAssembly | null;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -257,6 +262,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   assemblyPaper: null,
   assemblyMargins: null,
   assemblyDpi: DEFAULT_SHEET_DPI,
+  assemblyPlan: null,
 };
 
 /** The snap-to-grid spacing bounds (SPEC-072): fine enough to be useful, never
@@ -359,6 +365,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   assemblyPaper: (raw) => inSet(raw, SHEET_PAPER_NAMES.filter((name) => name !== "Custom")),
   assemblyMargins: marginsValue,
   assemblyDpi: (raw) => (typeof raw === "number" && SHEET_DPI_CHOICES.includes(raw) ? raw : undefined),
+  assemblyPlan: parsePersistedAssembly,
 };
 
 /** The assembly sheet's starting paper and margins (SPEC-108): the user's

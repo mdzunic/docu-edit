@@ -128,6 +128,8 @@ export function useSheetSetup(deps: SheetSetupDeps): SheetSetupController {
         {
           ...preferences,
           assemblyMargins: preferences.assemblyMargins ? { ...preferences.assemblyMargins } : null,
+          // SPEC-109's workspace plan: no part of the sheet's starting setup.
+          assemblyPlan: null,
         },
         deps.output,
       );
