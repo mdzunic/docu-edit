@@ -8,6 +8,7 @@ import { DEFAULT_SPREADSHEET_LOCALE, SPREADSHEET_LOCALE_TAGS } from "./spreadshe
 import {
   PREFERENCES_STORAGE_KEY,
   PREFERENCE_DEFAULTS,
+  PRESENTER_NOTES_SCALES,
   assemblySheetDefaults,
   loadPreferences,
   onPreferencesChange,
@@ -139,6 +140,24 @@ describe("preferences store (SPEC-066)", () => {
       // @ts-expect-error deliberately invalid for the runtime guard
       savePreference("presentationSorterOpen", 1);
       expect(loadPreferences().presentationSorterOpen).toBe(false);
+    });
+
+    it("defaults the SPEC-100 presenter notes scale to 1.25, round-trips each step and rejects anything else", () => {
+      expect(PREFERENCE_DEFAULTS.presentationPresenterNotesScale).toBe(1.25);
+      expect(PRESENTER_NOTES_SCALES).toEqual([1, 1.25, 1.5, 2, 2.5]);
+      expect(loadPreferences().presentationPresenterNotesScale).toBe(1.25);
+      for (const scale of PRESENTER_NOTES_SCALES) {
+        savePreference("presentationPresenterNotesScale", scale);
+        expect(loadPreferences().presentationPresenterNotesScale).toBe(scale);
+        expect(stored().presentationPresenterNotesScale).toBe(scale);
+      }
+      // A number off the steps, a numeric string (what inSet would have taken)
+      // and a non-finite value all repair to the default, field by field.
+      for (const bad of [1.3, 3, 0, Number.NaN, "1.5", null]) {
+        localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ presentationPresenterNotesScale: bad, theme: "dark" }));
+        expect(loadPreferences().presentationPresenterNotesScale, String(bad)).toBe(1.25);
+        expect(loadPreferences().theme).toBe("dark");
+      }
     });
 
     it("round-trips the snap preferences and rejects an out-of-range grid spacing", () => {
