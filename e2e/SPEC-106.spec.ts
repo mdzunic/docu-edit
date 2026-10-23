@@ -96,10 +96,9 @@ test("browser: a deck built through PresentationBuilder and stored with storePre
   await expect(page.getByTestId("stage-workspace").getByText("Quarterly review")).toBeVisible();
   await expect(page.getByTestId("filmstrip-slide")).toHaveCount(3);
 
-  // The notes panel shows the generated note.
-  if ((await page.getByTestId("slides-notes-panel").count()) === 0) {
-    await page.getByTestId("slides-notes-toggle").click();
-  }
+  // The notes panel (collapsed by default, SPEC-083) shows the generated note.
+  await expect(page.getByTestId("slides-notes-panel")).toHaveCount(0);
+  await page.getByTestId("slides-notes-toggle").click();
   await expect(page.getByTestId("slides-notes-editor")).toHaveValue("Lead with Europe.");
   await page.screenshot({ path: "test-results/SPEC-106-generated-deck.png", fullPage: true });
 
@@ -120,6 +119,7 @@ test("browser: a deck built through PresentationBuilder and stored with storePre
   await page.getByTestId("filmstrip-slide").nth(1).click();
   await expect(page.getByTestId("stage-workspace").getByText("Highlights")).toBeVisible();
   await expect(page.getByTestId("stage-workspace").getByText("Europe up 20%")).toBeVisible();
+  // The panel's open state persists per device, so the reopened deck shows it.
   await page.getByTestId("filmstrip-slide").nth(0).click();
   await expect(page.getByTestId("slides-notes-editor")).toHaveValue("Lead with Europe.");
   expect(consoleErrors).toEqual([]);
