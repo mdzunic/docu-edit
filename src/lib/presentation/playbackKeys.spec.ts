@@ -6,10 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   advanceKeys,
   backKeys,
+  blackoutKeys,
   firstKeys,
   lastKeys,
   normaliseKey,
   playbackActionForKey,
+  whiteoutKeys,
 } from "./playbackKeys";
 
 describe("playbackKeys map", () => {
@@ -54,5 +56,36 @@ describe("playbackKeys map", () => {
     // usePresentationEditing imports these very entries for its slide nav.
     expect(advanceKeys).toContain("PageDown");
     expect(backKeys).toContain("PageUp");
+  });
+
+  // SPEC-100: the blank-screen rows SPEC-084 deferred.
+  it("b and . black the screen out; w and , white it out (case-insensitive)", () => {
+    expect(blackoutKeys).toEqual(["b", "."]);
+    expect(whiteoutKeys).toEqual(["w", ","]);
+    for (const key of ["b", "B", "."]) expect(playbackActionForKey(key)).toBe("blackout");
+    for (const key of ["w", "W", ","]) expect(playbackActionForKey(key)).toBe("whiteout");
+  });
+
+  it("the blank rows change no existing binding — every key keeps its action", () => {
+    const existing: Array<[string, string]> = [
+      ...["ArrowRight", "ArrowDown", " ", "Spacebar", "PageDown", "Enter", "n", "N"].map((k): [string, string] => [k, "advance"]),
+      ...["ArrowLeft", "ArrowUp", "PageUp", "p", "P", "Backspace"].map((k): [string, string] => [k, "back"]),
+      ["Home", "first"],
+      ["End", "last"],
+    ];
+    for (const [key, action] of existing) {
+      expect(playbackActionForKey(key), key).toBe(action);
+    }
+    expect(advanceKeys).toEqual(["ArrowRight", "ArrowDown", " ", "Spacebar", "PageDown", "Enter", "n"]);
+    expect(backKeys).toEqual(["ArrowLeft", "ArrowUp", "PageUp", "p", "Backspace"]);
+    expect(firstKeys).toEqual(["Home"]);
+    expect(lastKeys).toEqual(["End"]);
+    // No blank key overlaps a navigation key.
+    for (const key of [...blackoutKeys, ...whiteoutKeys]) {
+      expect([...advanceKeys, ...backKeys, ...firstKeys, ...lastKeys]).not.toContain(key);
+    }
+    // Keys outside the map still own nothing.
+    expect(playbackActionForKey("g")).toBeNull();
+    expect(playbackActionForKey("f")).toBeNull();
   });
 });
