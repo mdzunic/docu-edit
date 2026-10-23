@@ -83,9 +83,8 @@ test("browser: a deck built through PresentationBuilder and stored with storePre
     { generateModule, storeModule, png: PNG },
   );
 
-  // The kind guard reads documentKindOf(id) off the stored record: the deck
-  // id under the text editor's route is handed to /slides/:id.
-  await page.goto(`/doc/${id}`);
+  // /slides/:id's guard reads documentKindOf(id) off the stored record.
+  await page.goto(`/slides/${id}`);
   await expect(page).toHaveURL(new RegExp(`/slides/${id}$`));
   await expect(page.getByTestId("presentation-view")).toBeVisible();
   expect(await page.evaluate(async ({ storeModule, id }) => (await import(/* @vite-ignore */ storeModule)).documentKindOf(id), { storeModule, id })).toBe(
@@ -101,6 +100,11 @@ test("browser: a deck built through PresentationBuilder and stored with storePre
   await page.getByTestId("slides-notes-toggle").click();
   await expect(page.getByTestId("slides-notes-editor")).toHaveValue("Lead with Europe.");
   await page.screenshot({ path: "test-results/SPEC-106-generated-deck.png", fullPage: true });
+
+  // The same stored kind routes the id away from the text editor's route.
+  await page.goto(`/doc/${id}`);
+  await expect(page).toHaveURL(new RegExp(`/slides/${id}$`));
+  await expect(page.getByTestId("filmstrip-slide")).toHaveCount(3);
 
   // A download reopens with the same three slides.
   const downloadPromise = page.waitForEvent("download");
