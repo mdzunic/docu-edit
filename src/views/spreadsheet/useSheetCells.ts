@@ -11,9 +11,11 @@
 //   picks — at most GRID_MAX_RENDERED_CELLS of them, the grid's subtree
 //   within GRID_MAX_DOM_NODES elements, overscan shrinking first — keyed by
 //   slot (`${row mod R}:${col mod C}`, R × C the window's capacity), so a
-//   scroll step patches the same elements; beyond that the overview canvas
-//   paints the sheet (`overviewBands`: stored cells, merges, borders and
-//   gridlines of the viewport) and only the active cell keeps an element.
+//   scroll step patches the same elements (a fling draws the viewport alone,
+//   in the same slots: useSheetViewport's `flinging`); beyond that the
+//   overview canvas paints the sheet (`overviewBands`: stored cells, merges,
+//   borders and gridlines of the viewport) and only the active cell keeps an
+//   element.
 //   Empty cells are transparent, so only a fill hides the gridlines under it.
 // - A merge intersecting the window renders once, as one element sized to
 //   the range and hosted by the first rendered row it covers (paneMerges),
@@ -259,7 +261,13 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
 
   const plan = computed(() => {
     const vp = deps.viewport;
-    const windowAt = (factor: number): GridWindow => ({ rows: vp.rowWindow(Math.round(GRID_OVERSCAN_ROWS * factor)), cols: vp.colWindow(Math.round(GRID_OVERSCAN_COLS * factor)) });
+    // A fling draws the viewport alone, its slots still the level's (useSheetViewport's header).
+    const drawn = vp.flinging.value ? 0 : 1;
+    const windowAt = (factor: number): GridWindow => {
+      const rows = Math.round(GRID_OVERSCAN_ROWS * factor);
+      const cols = Math.round(GRID_OVERSCAN_COLS * factor);
+      return { rows: vp.rowWindow(rows * drawn, rows), cols: vp.colWindow(cols * drawn, cols) };
+    };
     const deco = { gridLines: true, ...deps.decorations?.(), frozenWidth: vp.frozenW.value };
     const overview = () => ({ window: windowAt(0), bands: buildBands(builder.activeWindow(), "active") });
     return planRender(windowAt, (win) => buildBands(win, "dense"), overview, { cells: GRID_MAX_RENDERED_CELLS, nodes: GRID_MAX_DOM_NODES }, deco);

@@ -20,6 +20,20 @@
 // - Above MAX_SCROLL_EXTENT_PX (under every target browser's maximum element
 //   size) the spacer stops growing and scroll offsets map onto the sheet
 //   proportionally, so a used range at row 1,000,000 is reachable everywhere.
+// - SPEC-137: a scrolled item's slot is its index less the axis's ring
+//   origin, mod the window's capacity. A "far" scroll step — one that moves
+//   the content further than the overscan reaches on either axis — turns
+//   the ring by the rows (columns) it moved, so the item at the scrolled
+//   area's edge keeps its slot and every element stays in place, patched.
+// - SPEC-137: a fling renders the viewport alone. Two far steps within
+//   FLING_SETTLE_MS of each other set `flinging`, which lasts until no
+//   scroll event has arrived for FLING_SETTLE_MS: each such step lands past
+//   everything the overscan had drawn, so drawing it only doubles every
+//   frame's patch (~1,300 cell elements instead of ~600 at 1280 × 720). A
+//   window may be asked for its slots at a wider overscan than it renders;
+//   with the ring turning, the viewport's elements keep their slots from
+//   frame to frame, and when the overscan comes back only its own elements
+//   mount. A single jump (a name-box move, Ctrl+End) draws the full window.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { usedRange, type CellRef } from "../../lib/spreadsheet/address";
 import { defaultColumnPx, defaultRowPx, type GridMetrics } from "../../lib/spreadsheet/geometry";
@@ -41,6 +55,8 @@ const MIN_EXTENT_COLS = 26;
 
 /** What an unmeasured grid (jsdom, a hidden tab) assumes it shows — a
  * desktop window, so the rendered window is never empty. */
+/** How long after the last scroll event a fling counts as settled. */
+export const FLING_SETTLE_MS = 150;
 const FALLBACK_WIDTH_PX = 1280;
 const FALLBACK_HEIGHT_PX = 720;
 
@@ -179,7 +195,8 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     return out;
   }
 
-  /** One axis's window at `overscan` (see the module header). */
+  /** One axis's window at `overscan`, its slots taken modulo the capacity
+   * at `slotOverscan` (≥ overscan; see the module header). */
   function axisWindow(a: {
     count: number;
     frozenSize: number;
@@ -187,6 +204,9 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     offset: number;
     extent: number;
     overscan: number;
+    slotOverscan: number;
+    /** The slot ring's origin (see the module header). */
+    ring: number;
     defaultSize: number;
     startOf: (i: number) => number;
     sizeOf: (i: number) => number;
@@ -194,36 +214,84 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
   }): AxisWindow {
     const top = a.at(a.frozenSize + a.offset);
     const bottom = a.at(a.offset + a.view);
-    const from = Math.max(a.count, top - a.overscan);
-    const needed = Math.min(a.extent - 1, bottom + a.overscan) - from + 1;
-    const capacity = Math.max(1, needed, Math.ceil(Math.max(0, a.view - a.frozenSize) / a.defaultSize) + 1 + 2 * a.overscan);
+    const capacityAt = (overscan: number): { from: number; capacity: number } => {
+      const from = Math.max(a.count, top - overscan);
+      const needed = Math.min(a.extent - 1, bottom + overscan) - from + 1;
+      return { from, capacity: Math.max(1, needed, Math.ceil(Math.max(0, a.view - a.frozenSize) / a.defaultSize) + 1 + 2 * overscan) };
+    };
+    const { from, capacity } = capacityAt(a.overscan);
+    const slots = a.slotOverscan > a.overscan ? Math.max(capacity, capacityAt(a.slotOverscan).capacity) : capacity;
     const last = Math.max(from - 1, Math.min(a.extent - 1, from + capacity - 1));
     const first = Math.max(a.count, Math.min(from, last - capacity + 1));
     const scrolled: AxisItem[] = [];
     for (let i = first; i <= last; i += 1) {
-      scrolled.push({ index: i, start: a.startOf(i) - (a.offset + a.frozenSize), size: a.sizeOf(i), slot: i % capacity });
+      const slot = (i - a.ring) % slots;
+      scrolled.push({ index: i, start: a.startOf(i) - (a.offset + a.frozenSize), size: a.sizeOf(i), slot: slot < 0 ? slot + slots : slot });
     }
     return {
       frozen: frozenItems(a.count, a.view, a.startOf, a.sizeOf),
       scrolled,
       firstVisible: Math.max(a.count, top),
       lastVisible: Math.max(a.count, Math.min(a.extent - 1, bottom)),
-      capacity,
+      capacity: slots,
     };
   }
 
-  /** The rows window at `overscan` rows either side. */
-  function rowWindow(overscan: number): AxisWindow {
+  /** The rows window at `overscan` rows either side, its slots those of
+   * `slotOverscan`'s (default: its own). */
+  function rowWindow(overscan: number, slotOverscan = overscan): AxisWindow {
     const m = deps.metrics();
     const view = viewRows.value;
-    return axisWindow({ count: frozenRows.value, frozenSize: frozenH.value, view, offset: sy.value, extent: extentRows.value, overscan, defaultSize: defaultRowPx(deps.sheet()), startOf: m.rowTop, sizeOf: m.rowHeight, at: m.rowAt });
+    return axisWindow({ count: frozenRows.value, frozenSize: frozenH.value, view, offset: sy.value, extent: extentRows.value, overscan, slotOverscan, ring: rowRing, defaultSize: defaultRowPx(deps.sheet()), startOf: m.rowTop, sizeOf: m.rowHeight, at: m.rowAt });
   }
 
-  /** The columns window at `overscan` columns either side. */
-  function colWindow(overscan: number): AxisWindow {
+  /** The columns window at `overscan` columns either side, its slots those
+   * of `slotOverscan`'s (default: its own). */
+  function colWindow(overscan: number, slotOverscan = overscan): AxisWindow {
     const m = deps.metrics();
     const view = viewCols.value;
-    return axisWindow({ count: frozenCols.value, frozenSize: frozenW.value, view, offset: sx.value, extent: extentCols.value, overscan, defaultSize: defaultColumnPx(deps.sheet()), startOf: m.colLeft, sizeOf: m.colWidth, at: m.colAt });
+    return axisWindow({ count: frozenCols.value, frozenSize: frozenW.value, view, offset: sx.value, extent: extentCols.value, overscan, slotOverscan, ring: colRing, defaultSize: defaultColumnPx(deps.sheet()), startOf: m.colLeft, sizeOf: m.colWidth, at: m.colAt });
+  }
+
+  /** SPEC-137: each axis's slot ring origin — plain state, changed only
+   * with the scroll position, which recomputes every window (see the module
+   * header). */
+  let rowRing = 0;
+  let colRing = 0;
+  /** SPEC-137: a scroll is under way that outruns the overscan (see the
+   * module header). */
+  const flinging = ref(false);
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When the last far step came (performance.now()), -Infinity: none yet. */
+  let lastFarStep = Number.NEGATIVE_INFINITY;
+
+  /** The first scrolled row and column the scroll position shows. */
+  function scrolledEdge(): { row: number; col: number } {
+    const m = deps.metrics();
+    return { row: m.rowAt(frozenH.value + sy.value), col: m.colAt(frozenW.value + sx.value) };
+  }
+
+  /** Notes a scroll step of `dx` × `dy` screen px and answers whether it
+   * was a far one (see the module header): a second far step within
+   * FLING_SETTLE_MS of the last starts a fling, and every step of a fling
+   * keeps it going until the scroll settles. */
+  function noteScrollStep(dx: number, dy: number): boolean {
+    const far = Math.abs(dy) > GRID_OVERSCAN_ROWS * defaultRowPx(deps.sheet()) * z.value || Math.abs(dx) > GRID_OVERSCAN_COLS * defaultColumnPx(deps.sheet()) * z.value;
+    if (far) {
+      const now = performance.now();
+      if (now - lastFarStep <= FLING_SETTLE_MS) {
+        flinging.value = true;
+      }
+      lastFarStep = now;
+    }
+    if (flinging.value) {
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        settleTimer = undefined;
+        flinging.value = false;
+      }, FLING_SETTLE_MS);
+    }
+    return far;
   }
 
   /** The windows at the full overscan (the render plan may shrink it). */
@@ -302,8 +370,15 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     if (!element) {
       return;
     }
+    const far = noteScrollStep(element.scrollLeft - scrollLeft.value, element.scrollTop - scrollTop.value);
+    const edge = far ? scrolledEdge() : undefined;
     scrollTop.value = element.scrollTop;
     scrollLeft.value = element.scrollLeft;
+    if (edge) {
+      const next = scrolledEdge();
+      rowRing += next.row - edge.row;
+      colRing += next.col - edge.col;
+    }
     zoomAnchor = { x: sx.value, y: sy.value };
     const rowsView = viewRows.value * z.value;
     const colsView = viewCols.value * z.value;
@@ -342,7 +417,10 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
       observer.observe(scroller.value);
     }
   });
-  onBeforeUnmount(() => observer?.disconnect());
+  onBeforeUnmount(() => {
+    observer?.disconnect();
+    clearTimeout(settleTimer);
+  });
 
   return {
     extentRows,
@@ -366,6 +444,7 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     cols,
     rowWindow,
     colWindow,
+    flinging,
     page,
     topLeftCell,
     onScroll,

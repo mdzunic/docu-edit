@@ -19,6 +19,7 @@ import { GRID_MAX_DOM_NODES, GRID_MAX_RENDERED_CELLS } from "../../views/spreads
 import { useSheetMetrics } from "../../views/spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "../../views/spreadsheet/useSheetSelection";
 import { useSheetZoom } from "../../views/spreadsheet/useSheetZoom";
+import { FLING_SETTLE_MS } from "../../views/spreadsheet/useSheetViewport";
 import SheetGrid from "./SheetGrid.vue";
 
 const size = { width: 1280, height: 720 };
@@ -129,6 +130,37 @@ describe("SheetGrid — slot keys (AC-47)", () => {
     expect(leaving.id).toBe(`sheet-cell-A${lastRow + 1}`);
     expect(leaving.getAttribute("aria-rowindex")).toBe(String(lastRow + 2));
     expect(after.some((element) => element.dataset.ref === `A${firstRow}`)).toBe(false);
+  });
+});
+
+// The scroll budget's fling (2,000 px steps): a far step turns the slot
+// ring, so the elements stay in place; two far steps in a row draw the
+// viewport alone until the scroll settles; then the overscan comes back
+// around the same viewport elements.
+describe("SheetGrid — a fling draws the viewport alone", () => {
+  it("drops the overscan while far steps keep coming, patching the same elements, and restores it once the scroll settles", async () => {
+    const view = mountGrid(denseSheet(3000, 30));
+    const full = view.cells();
+    await view.scrollTo(2000); // one far step: a jump draws the full window, in the same elements
+    expect(new Set(view.cells())).toEqual(new Set(full));
+
+    await view.scrollTo(4000); // a second far step: a fling
+    const fling = view.cells();
+    expect(fling.length).toBeLessThan(full.length);
+    expect(fling.every((element) => full.includes(element))).toBe(true);
+    const top = Math.min(...fling.map((element) => Number(/\d+$/.exec(element.dataset.ref!)![0])));
+
+    await view.scrollTo(6000); // the fling goes on: the same elements, patched
+    const next = view.cells();
+    expect(new Set(next)).toEqual(new Set(fling));
+    expect(Math.min(...next.map((element) => Number(/\d+$/.exec(element.dataset.ref!)![0])))).toBe(top + 100);
+
+    await new Promise((resolve) => setTimeout(resolve, FLING_SETTLE_MS + 50));
+    await settle();
+    const settled = view.cells();
+    expect(settled).toHaveLength(full.length);
+    // The viewport's elements stayed; only the overscan's mounted.
+    expect(next.every((element) => element.isConnected && settled.includes(element))).toBe(true);
   });
 });
 
