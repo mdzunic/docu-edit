@@ -95,15 +95,19 @@ const PARAGRAPH_BUILD_TIMING =
   `<p:bldLst><p:bldP spid="3" grpId="0" build="p"/></p:bldLst></p:timing>`;
 
 /** The pptx animation fixture with slide 2's canonical timing swapped for the
- * paragraph build, and its body given the second paragraph the build targets. */
-async function paragraphBuildDeck(): Promise<{ bytes: Uint8Array; slide2: string }> {
+ * paragraph build, and its body given the second paragraph the build targets.
+ * `uncovered` adds a third paragraph the build's ranges leave out — a partial
+ * cover, out of SPEC-105's subset, so the build stays preserved (a build
+ * covering every paragraph is modelled as one by-paragraph row). */
+async function paragraphBuildDeck(uncovered = false): Promise<{ bytes: Uint8Array; slide2: string }> {
   const parts = await unzip(await buildPptxAnimationsFixtureBytes());
   const source = dec(parts.get("ppt/slides/slide2.xml")!);
   const bodyLine = "<a:t>Body line</a:t></a:r></a:p>";
   expect(source).toContain(PPTX_CANONICAL_TIMING);
   expect(source).toContain(bodyLine);
+  const extra = uncovered ? `<a:p><a:r><a:t>Third line</a:t></a:r></a:p>` : "";
   const slide2 = source
-    .replace(bodyLine, `${bodyLine}<a:p><a:r><a:t>Second line</a:t></a:r></a:p>`)
+    .replace(bodyLine, `${bodyLine}<a:p><a:r><a:t>Second line</a:t></a:r></a:p>${extra}`)
     .replace(PPTX_CANONICAL_TIMING, PARAGRAPH_BUILD_TIMING);
   parts.set("ppt/slides/slide2.xml", enc(slide2));
   return { bytes: await zip([...parts].map(([name, data]) => ({ name, data }))), slide2 };
@@ -116,10 +120,20 @@ function page2Source(content: string): string {
 
 describe("AC-4: a by-paragraph text build is preserved, never flattened to whole-frame effects", () => {
   it("pptx: reads as preserved timing, not N whole-frame animations", async () => {
-    const { bytes } = await paragraphBuildDeck();
+    // A partial cover (SPEC-105 models only a build covering every paragraph).
+    const { bytes } = await paragraphBuildDeck(true);
     const slide = (await readPresentationBytes(bytes, "pptx", "Deck")).slides[1];
     expect(slide.animations).toBeUndefined();
     expect(hasPreservedTiming(slide)).toBe(true);
+  });
+
+  it("pptx: a build covering every paragraph models as ONE by-paragraph row, never N whole-frame rows (SPEC-105)", async () => {
+    const { bytes } = await paragraphBuildDeck();
+    const slide = (await readPresentationBytes(bytes, "pptx", "Deck")).slides[1];
+    expect(slide.animations).toEqual([
+      { frameId: slide.frames[1].id, effect: "fadeIn", trigger: "click", buildBy: "byParagraph" },
+    ]);
+    expect(hasPreservedTiming(slide)).toBe(false);
   });
 
   it("pptx: an untouched slide keeps its part, timing included, byte-for-byte", async () => {
@@ -133,7 +147,7 @@ describe("AC-4: a by-paragraph text build is preserved, never flattened to whole
   });
 
   it("pptx: an edited slide re-emits the preserved timing byte-for-byte", async () => {
-    const { bytes } = await paragraphBuildDeck();
+    const { bytes } = await paragraphBuildDeck(true);
     const model = await readPresentationBytes(bytes, "pptx", "Deck");
     markSlideEdited(model.slides[1], "pptx");
     const { writePptx } = await import("./pptx/writer");

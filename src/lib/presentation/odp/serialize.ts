@@ -56,7 +56,8 @@ import {
   type ThemeColorRef,
 } from "../../core/theme";
 import { themeGraphicParent, themeTextParent } from "./theme";
-import { preservedAnimReferences, writeOdpAnim, xmlIdsDefinedIn } from "./anim";
+import { paragraphWireId, preservedAnimReferences, writeOdpAnim, xmlIdsDefinedIn } from "./anim";
+import { expandAnimation, frameLookup } from "../buildPlayback";
 import { odpDisplayProps, type OdpPageFieldPlan } from "./fields";
 import { ODP_HIDDEN_VISIBILITY_PROP } from "./visibilityGolden";
 
@@ -515,6 +516,21 @@ export function serializePage(
   // id instead (`sourceWireId` — the first claimant of each; its targeted
   // paragraphs likewise, in `paragraphXml`): ODF ids are document-wide and the
   // source's already unique, so the anim string stays verbatim.
+  // A frame a by-paragraph build expands over (SPEC-105) gets a wire id on
+  // each paragraph too — `de-f{n}-p{k}` on its `text:p`s, which the build's
+  // behaviours target; every other paragraph's bytes are unchanged.
+  const frameFor = frameLookup(slide.frames);
+  const paraIds = new Map<SlideParagraph, string>();
+  for (const animation of slide.animations ?? []) {
+    const frame = frameFor(animation.frameId);
+    const wireId = wireIdFor.get(animation.frameId);
+    if (wireId === undefined || (frame?.kind !== "text" && frame?.kind !== "shape")) {
+      continue;
+    }
+    if (expandAnimation(animation, frame)[0].paragraphIndex !== undefined) {
+      (frame.paragraphs ?? []).forEach((para, k) => paraIds.set(para, paragraphWireId(wireId, k)));
+    }
+  }
   const sourceIds = new Set<string>();
   const frames = slide.frames
     .map((frame) => {
@@ -523,13 +539,13 @@ export function serializePage(
         wireId = frame.sourceWireId;
         sourceIds.add(wireId);
       }
-      return frameXml(frame, registry, wireId);
+      return frameXml(frame, registry, wireId, paraIds);
     })
     .join("");
   const notes = notesXml(slide.notes);
   // Modelled animations win over any preserved timing (never both).
   const anim = slide.animations !== undefined
-    ? writeOdpAnim(slide.animations, (id) => wireIdFor.get(id))
+    ? writeOdpAnim(slide.animations, (id) => wireIdFor.get(id), frameFor)
     : keptPreservedAnim(slide.preserved?.["anim"], attrs + frames);
   return `<draw:page${attrs}>${frames}${notes}${anim}</draw:page>`;
 }
@@ -691,12 +707,17 @@ function withFrameLink(frame: Slide["frames"][number], xml: string): string {
   return `<draw:a xlink:href="${escapeXmlAttribute(href)}" xlink:type="simple"${title}>${xml}</draw:a>`;
 }
 
-function frameXml(frame: Slide["frames"][number], registry: StyleRegistry, wireId?: string): string {
+function frameXml(
+  frame: Slide["frames"][number],
+  registry: StyleRegistry,
+  wireId?: string,
+  paraIds?: ReadonlyMap<SlideParagraph, string>,
+): string {
   switch (frame.kind) {
     case "text":
-      return withFrameLink(frame, textFrameXml(frame, registry, wireId));
+      return withFrameLink(frame, textFrameXml(frame, registry, wireId, paraIds));
     case "shape":
-      return withFrameLink(frame, shapeFrameXml(frame, registry, wireId));
+      return withFrameLink(frame, shapeFrameXml(frame, registry, wireId, paraIds));
     case "image":
       return withFrameLink(frame, imageFrameXml(frame, registry, wireId));
     case "table":
@@ -827,12 +848,17 @@ function geomAttrs(frame: Slide["frames"][number]): string {
   return `${geom}${transform}`;
 }
 
-function textFrameXml(frame: TextFrame, registry: StyleRegistry, wireId?: string): string {
+function textFrameXml(
+  frame: TextFrame,
+  registry: StyleRegistry,
+  wireId?: string,
+  paraIds?: ReadonlyMap<SlideParagraph, string>,
+): string {
   const cls = frame.role ? ROLE_TO_CLASS[frame.role] : undefined;
   const classAttr = cls ? ` presentation:class="${cls}"` : "";
   const styleName = registry.graphicStyle({ fill: frame.fill, stroke: frame.stroke, body: frame.body, bodyProps: frame.odpBodyProps });
   const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
-  const body = paragraphsXml(frame.paragraphs, registry, cls !== undefined && IMPLICIT_BULLET_CLASSES.has(cls));
+  const body = paragraphsXml(frame.paragraphs, registry, cls !== undefined && IMPLICIT_BULLET_CLASSES.has(cls), paraIds);
   return `<draw:frame${classAttr}${idAttrs(wireId)}${styleAttr}${geomAttrs(frame)}><draw:text-box>${body}</draw:text-box></draw:frame>`;
 }
 
@@ -886,12 +912,19 @@ function mediaFrameXml(frame: MediaFrame, registry: StyleRegistry, wireId?: stri
   );
 }
 
-function paragraphXml(para: SlideParagraph, registry: StyleRegistry): string {
+function paragraphXml(para: SlideParagraph, registry: StyleRegistry, paraIds?: ReadonlyMap<SlideParagraph, string>): string {
   const styleName = registry.paragraphStyle(para);
   const styleAttr = styleName ? ` text:style-name="${styleName}"` : "";
-  // A paragraph preserved anim targets (an Impress by-paragraph build) keeps
-  // its source `xml:id` (SPEC-086 AC-4; see serializePage).
-  const idAttr = para.sourceWireId !== undefined ? ` xml:id="${escapeXmlAttribute(para.sourceWireId)}"` : "";
+  // A paragraph a modelled build targets carries its minted wire id (SPEC-105)
+  // on `text:id` and `xml:id`; one preserved anim targets (an Impress
+  // by-paragraph build) keeps its source `xml:id` (SPEC-086 AC-4; see
+  // serializePage). Never both: modelled animations drop preserved anim.
+  const minted = paraIds?.get(para);
+  const idAttr = minted !== undefined
+    ? ` text:id="${minted}" xml:id="${minted}"`
+    : para.sourceWireId !== undefined
+      ? ` xml:id="${escapeXmlAttribute(para.sourceWireId)}"`
+      : "";
   return `<text:p${styleAttr}${idAttr}>${runsXml(para.runs, registry)}</text:p>`;
 }
 
@@ -958,7 +991,12 @@ function isPlaceholderBullet(para: SlideParagraph): boolean {
  * back unbulleted); each maximal run of list paragraphs becomes real list
  * markup — except a body placeholder's run of plain level-0 discs, which the
  * placeholder bullets by itself (SPEC-081's bytes). */
-function paragraphsXml(paragraphs: SlideParagraph[], registry: StyleRegistry, implicitBullets: boolean): string {
+function paragraphsXml(
+  paragraphs: SlideParagraph[],
+  registry: StyleRegistry,
+  implicitBullets: boolean,
+  paraIds?: ReadonlyMap<SlideParagraph, string>,
+): string {
   let out = "";
   let i = 0;
   while (i < paragraphs.length) {
@@ -969,12 +1007,12 @@ function paragraphsXml(paragraphs: SlideParagraph[], registry: StyleRegistry, im
     }
     const run = paragraphs.slice(i, j);
     if (!list) {
-      const body = run.map((para) => paragraphXml(para, registry)).join("");
+      const body = run.map((para) => paragraphXml(para, registry, paraIds)).join("");
       out += implicitBullets ? `<text:list><text:list-header>${body}</text:list-header></text:list>` : body;
     } else if (implicitBullets && run.every(isPlaceholderBullet)) {
-      out += run.map((para) => paragraphXml(para, registry)).join("");
+      out += run.map((para) => paragraphXml(para, registry, paraIds)).join("");
     } else {
-      out += listRunXml(run, registry);
+      out += listRunXml(run, registry, paraIds);
     }
     i = j;
   }
@@ -1074,7 +1112,7 @@ function planLists(run: SlideParagraph[]): ListPlan[] {
 /** A run of list paragraphs as `text:list` markup (SPEC-097): one
  * `text:list-item` per paragraph, a deeper level nested as a `text:list`
  * inside the open item (an empty item bridges a skipped level). */
-function listRunXml(run: SlideParagraph[], registry: StyleRegistry): string {
+function listRunXml(run: SlideParagraph[], registry: StyleRegistry, paraIds?: ReadonlyMap<SlideParagraph, string>): string {
   return planLists(run)
     .map((plan) => {
       const levels = new Map([...plan.levels].map(([level, entry]) => [level + 1, entry.xml] as const));
@@ -1100,7 +1138,7 @@ function listRunXml(run: SlideParagraph[], registry: StyleRegistry): string {
           itemOpen[depth] = false;
         }
         if (itemOpen[depth]) out += `</text:list-item>`;
-        out += `<text:list-item>${paragraphXml(para, registry)}`;
+        out += `<text:list-item>${paragraphXml(para, registry, paraIds)}`;
         itemOpen[depth] = true;
       }
       while (depth >= 0) {
@@ -1113,13 +1151,18 @@ function listRunXml(run: SlideParagraph[], registry: StyleRegistry): string {
     .join("");
 }
 
-function shapeFrameXml(frame: ShapeFrame, registry: StyleRegistry, wireId?: string): string {
+function shapeFrameXml(
+  frame: ShapeFrame,
+  registry: StyleRegistry,
+  wireId?: string,
+  paraIds?: ReadonlyMap<SlideParagraph, string>,
+): string {
   const styleName = registry.graphicStyle({ fill: frame.fill, stroke: frame.stroke, body: frame.body, bodyProps: frame.odpBodyProps });
   const styleAttr = styleName ? ` draw:style-name="${styleName}"` : "";
   const ids = idAttrs(wireId);
   const geom = geomAttrs(frame);
   const text = frame.paragraphs && frame.paragraphs.length > 0
-    ? `<draw:text-box>${paragraphsXml(frame.paragraphs, registry, false)}</draw:text-box>`
+    ? `<draw:text-box>${paragraphsXml(frame.paragraphs, registry, false, paraIds)}</draw:text-box>`
     : "";
   if (frame.geometry === "rect") {
     return `<draw:rect${ids}${styleAttr}${geom}>${text}</draw:rect>`;

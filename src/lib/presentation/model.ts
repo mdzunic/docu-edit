@@ -58,17 +58,61 @@ export interface SlideTransition {
 
 /** The frame animation effects this editor models (SPEC-086) — a deliberate
  * subset of entrance/exit builds with clean equivalents in PowerPoint's
- * `p:timing` and Impress's `anim:*` trees. `lib/presentation/animations.ts`
- * (the grouping/retargeting rules) and the per-format `timing.ts`/`anim.ts`
- * modules (the wire mappings) are the normative source. */
-export type AnimationEffect = "appear" | "fadeIn" | "flyIn" | "wipeIn" | "zoomIn" | "fadeOut" | "flyOut";
+ * `p:timing` and Impress's `anim:*` trees. SPEC-105 widens it by four
+ * emphasis effects (pulse/spin/growShrink/colorChange) and one path effect
+ * (motionPath). `lib/presentation/animations.ts` (the grouping/retargeting
+ * rules) and the per-format `timing.ts`/`anim.ts` modules (the wire mappings)
+ * are the normative source. */
+export type AnimationEffect =
+  | "appear"
+  | "fadeIn"
+  | "flyIn"
+  | "wipeIn"
+  | "zoomIn"
+  | "fadeOut"
+  | "flyOut"
+  | "pulse"
+  | "spin"
+  | "growShrink"
+  | "colorChange"
+  | "motionPath";
 
-/** How an animation begins relative to its predecessor in play order. */
-export type AnimationTrigger = "click" | "withPrevious" | "afterPrevious";
+/** How an animation begins relative to its predecessor in play order.
+ * `"onClickOf"` (SPEC-105) takes the row out of the main sequence: it plays
+ * when the slide's `triggerFrameId` frame is clicked during a show. */
+export type AnimationTrigger = "click" | "withPrevious" | "afterPrevious" | "onClickOf";
+
+/** An effect's family (SPEC-105): entrances reveal, exits hide, emphasis and
+ * path effects leave visibility alone. */
+export type AnimationEffectClass = "entrance" | "exit" | "emphasis" | "path";
+
+/** How a text frame's paragraphs build (SPEC-105): one step per paragraph, or
+ * one per level-0 paragraph carrying its deeper paragraphs. Absent on a row =
+ * the whole frame animates at once. */
+export type TextBuildMode = "byParagraph" | "byFirstLevelParagraph";
+
+/** How a by-paragraph row's second and later paragraphs begin — absent =
+ * `"click"` (each paragraph waits for an advance). */
+export type BuildStepTrigger = "click" | "withPrevious" | "afterPrevious";
+
+/** A motion path (SPEC-105) in SLIDE FRACTIONS — 1.0 is the full
+ * `slideWidthCm` on x and `slideHeightCm` on y — with the origin at the
+ * frame's centre, so a path is deck-size independent. `lib/presentation/
+ * motionPaths.ts` resolves a preset to its geometry. */
+export interface MotionPath {
+  preset: "line" | "arc" | "turn" | "loop" | "custom";
+  /** line/arc/turn; absent = "right". */
+  direction?: TransitionDirection;
+  /** 0.05..1 of the slide width (x) / height (y); absent = 0.25. */
+  distanceFraction?: number;
+  /** `custom` only, and then required: an SVG-style path of `M`/`L`/`C`/`Z`
+   *  with numeric arguments. Rendered and preserved, never authored. */
+  d?: string;
+}
 
 /** One frame animation, targeting a frame by its minted `SlideFrame.id`
  * (SPEC-082, never serialised — the wire mappings resolve it to each format's
- * shape id). Order in `Slide.animations` is play order. */
+ * shape id). Order in `Slide.animations` is play order. Plain JSON, no id. */
 export interface SlideAnimation {
   frameId: string;
   effect: AnimationEffect;
@@ -79,6 +123,31 @@ export interface SlideAnimation {
   trigger: AnimationTrigger;
   durationMs?: number; // default 500, range 100–5000
   delayMs?: number; // default 0, range 0–10000
+  /** SPEC-105: the frame whose click plays this row — present iff `trigger`
+   *  is "onClickOf", and never the row's own `frameId`. */
+  triggerFrameId?: string;
+  /** SPEC-105: absent = the whole frame at once. Paragraph steps are DERIVED
+   *  from the target's current paragraphs (`expandAnimation`), never stored. */
+  buildBy?: TextBuildMode;
+  /** SPEC-105: how the second and later paragraph steps begin; absent = click. */
+  buildTrigger?: BuildStepTrigger;
+  /** SPEC-105: 2–10 passes; absent = play once. Excludes `repeatUntilClick`. */
+  repeatCount?: number;
+  /** SPEC-105: repeat until the next click (counts as one pass for timing). */
+  repeatUntilClick?: true;
+  /** SPEC-105: each pass plays forward then back. */
+  autoReverse?: true;
+  /** SPEC-105: restore the frame's settled style when the effect ends (an
+   *  entrance with rewind hides its target again). */
+  rewindOnComplete?: true;
+  /** SPEC-105 spin only: ±3600; absent = 360. */
+  spinDegrees?: number;
+  /** SPEC-105 growShrink only: 10–400; absent = 150. */
+  scalePercent?: number;
+  /** SPEC-105 colorChange only: `#rrggbb`; absent = "#ff0000". */
+  emphasisColor?: string;
+  /** SPEC-105: present iff `effect` is "motionPath". */
+  path?: MotionPath;
 }
 
 /** The slide-layout kinds this editor recognises (SPEC-089), a closed union
