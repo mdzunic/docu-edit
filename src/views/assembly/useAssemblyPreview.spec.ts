@@ -82,7 +82,12 @@ describe("the preview controller", () => {
     }));
   });
 
+  // Each workspace is disposed after its test, so its pending plan write
+  // cannot land in the next one's storage.
+  const scopes: (() => void)[] = [];
+
   afterEach(() => {
+    scopes.splice(0).forEach((stop) => stop());
     vi.doUnmock("../../lib/idb");
     vi.doUnmock("../../lib/media/composeCanvas");
     vi.restoreAllMocks();
@@ -124,6 +129,7 @@ describe("the preview controller", () => {
       release: vi.fn(),
     };
     const scope = effectScope();
+    scopes.push(() => scope.stop());
     const { assembly, preview } = scope.run(() => {
       const controller = useAssembly({ steps });
       return { assembly: controller, preview: useAssemblyPreview({ assembly: controller, decode }) };

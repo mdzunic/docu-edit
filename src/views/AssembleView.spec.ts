@@ -23,7 +23,12 @@ beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
 });
 
+// Each workspace is unmounted after its test, so its pending plan write
+// cannot land in the next one's storage.
+const wrappers: VueWrapper[] = [];
+
 afterEach(() => {
+  wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
   vi.doUnmock("../lib/idb");
   vi.restoreAllMocks();
   document.body.innerHTML = "";
@@ -74,6 +79,7 @@ async function setup(stepOverrides: Record<string, unknown> = {}) {
     const router = createRouter({ history: createMemoryHistory(), routes });
     await router.push("/assemble");
     const wrapper = mount(AssembleView, { props: { steps }, global: { plugins: [router] }, attachTo: document.body });
+    wrappers.push(wrapper);
     await flushPromises();
     return wrapper;
   }

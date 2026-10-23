@@ -21,7 +21,13 @@ beforeEach(() => {
   }));
 });
 
+// Every workspace a test opens is disposed after it. A live one's debounced
+// plan write fires into whichever test is running 250 ms later, which then
+// restores that plan's sheet — a Custom 200 × 20 cm one, say.
+const scopes: (() => void)[] = [];
+
 afterEach(() => {
+  scopes.splice(0).forEach((stop) => stop());
   vi.doUnmock("../../lib/idb");
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -97,6 +103,7 @@ async function setup(stepOverrides: Record<string, unknown> = {}) {
 
   function open() {
     const scope = effectScope();
+    scopes.push(() => scope.stop());
     const assembly = scope.run(() => useAssembly({ steps }))!;
     return { assembly, stop: () => scope.stop() };
   }
