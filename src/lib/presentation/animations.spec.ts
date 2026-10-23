@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { Slide, SlideAnimation, SlideFrame, TextFrame } from "./model";
 import {
+  animationConstraintsHold,
+  ANIMATION_EFFECTS,
   buildGroups,
   carriesSourceWireId,
+  DEFAULT_EMPHASIS_COLOR,
+  DEFAULT_PATH_DISTANCE,
+  DEFAULT_SCALE_PERCENT,
+  DEFAULT_SPIN_DEGREES,
+  effectClass,
+  effectiveEmphasisColor,
+  effectiveRepeatCount,
+  effectiveScalePercent,
+  effectiveSpinDegrees,
+  EMPHASIS_EFFECTS,
+  interactiveSequences,
+  mainSequence,
+  MAX_REPEAT_COUNT,
+  MIN_REPEAT_COUNT,
+  PATH_PRESETS,
   clearSourceWireIds,
   defaultAnimationDirection,
   dropPreservedTimingTargeting,
@@ -183,5 +200,97 @@ describe("preserved-timing targets", () => {
     const modelled: Slide = { ...slide(), animations: [] };
     dropPreservedTimingTargeting(modelled, [targeted]);
     expect(modelled.preserved?.["p:timing"]).toBe("<p:timing/>");
+  });
+});
+
+describe("SPEC-105 animation helpers", () => {
+  it("classifies every effect: entrance, exit, emphasis, path", () => {
+    expect(["appear", "fadeIn", "flyIn", "wipeIn", "zoomIn"].map(effectClass)).toEqual(Array(5).fill("entrance"));
+    expect(["fadeOut", "flyOut"].map(effectClass)).toEqual(["exit", "exit"]);
+    expect(EMPHASIS_EFFECTS.map(effectClass)).toEqual(Array(4).fill("emphasis"));
+    expect(effectClass("motionPath")).toBe("path");
+    expect(ANIMATION_EFFECTS).toHaveLength(12);
+    expect(PATH_PRESETS).toEqual(["line", "arc", "turn", "loop", "custom"]);
+  });
+
+  it("isEntranceEffect is false for every emphasis and path effect", () => {
+    for (const effect of [...EMPHASIS_EFFECTS, "motionPath"]) {
+      expect(isEntranceEffect(effect), effect).toBe(false);
+    }
+  });
+
+  it("exposes the new bounds and defaults", () => {
+    expect([MIN_REPEAT_COUNT, MAX_REPEAT_COUNT]).toEqual([2, 10]);
+    expect(DEFAULT_SPIN_DEGREES).toBe(360);
+    expect(DEFAULT_SCALE_PERCENT).toBe(150);
+    expect(DEFAULT_EMPHASIS_COLOR).toBe("#ff0000");
+    expect(DEFAULT_PATH_DISTANCE).toBe(0.25);
+    expect(effectiveSpinDegrees(anim("a", { effect: "spin" }))).toBe(360);
+    expect(effectiveSpinDegrees(anim("a", { effect: "spin", spinDegrees: -9000 }))).toBe(-3600);
+    expect(effectiveScalePercent(anim("a", { effect: "growShrink", scalePercent: 900 }))).toBe(400);
+    expect(effectiveEmphasisColor(anim("a", { effect: "colorChange" }))).toBe("#ff0000");
+  });
+
+  it("effectiveRepeatCount: repeatCount ?? 1, an until-click repeat counting one pass", () => {
+    expect(effectiveRepeatCount(anim("a"))).toBe(1);
+    expect(effectiveRepeatCount(anim("a", { repeatCount: 4 }))).toBe(4);
+    expect(effectiveRepeatCount(anim("a", { repeatUntilClick: true }))).toBe(1);
+    expect(effectiveRepeatCount(anim("a", { repeatCount: 99 }))).toBe(10);
+  });
+
+  it("partitions rows into the main sequence and interactive sequences by trigger frame, in array order", () => {
+    const rows = [
+      anim("a"),
+      anim("b", { trigger: "onClickOf", triggerFrameId: "t1" }),
+      anim("c", { trigger: "afterPrevious" }),
+      anim("d", { trigger: "onClickOf", triggerFrameId: "t2" }),
+      anim("e", { trigger: "onClickOf", triggerFrameId: "t1" }),
+    ];
+    expect(mainSequence(rows).map((a) => a.frameId)).toEqual(["a", "c"]);
+    expect(interactiveSequences(rows).map((s) => [s.triggerFrameId, s.animations.map((a) => a.frameId)])).toEqual([
+      ["t1", ["b", "e"]],
+      ["t2", ["d"]],
+    ]);
+  });
+
+  it("effectiveTrigger forces click only on the first main-sequence row; an onClickOf row keeps its trigger", () => {
+    const rows = [
+      anim("a", { trigger: "onClickOf", triggerFrameId: "t" }),
+      anim("b", { trigger: "afterPrevious" }),
+      anim("c", { trigger: "withPrevious" }),
+    ];
+    expect(rows.map((_, i) => effectiveTrigger(rows, i))).toEqual(["onClickOf", "click", "withPrevious"]);
+    // An onClickOf row never opens a main-sequence group.
+    expect(buildGroups(rows).map((g) => g.map((a) => a.frameId))).toEqual([["b", "c"]]);
+  });
+
+  it("checks the model constraints", () => {
+    const frames = new Set(["a", "b"]);
+    expect(animationConstraintsHold(anim("a"), frames)).toBe(true);
+    expect(animationConstraintsHold(anim("a", { trigger: "onClickOf" }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { trigger: "onClickOf", triggerFrameId: "b" }), frames)).toBe(true);
+    expect(animationConstraintsHold(anim("a", { trigger: "onClickOf", triggerFrameId: "a" }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { trigger: "onClickOf", triggerFrameId: "zz" }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { triggerFrameId: "b" }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { repeatCount: 3, repeatUntilClick: true }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { repeatCount: 1 }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { effect: "motionPath" }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { effect: "motionPath", path: { preset: "line" } }), frames)).toBe(true);
+    expect(animationConstraintsHold(anim("a", { path: { preset: "line" } }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { effect: "motionPath", path: { preset: "custom" } }), frames)).toBe(false);
+    expect(animationConstraintsHold(anim("a", { emphasisColor: "red" }), frames)).toBe(false);
+  });
+
+  it("retargets and removes trigger frames with their rows", () => {
+    const rows = [anim("a"), anim("b", { trigger: "onClickOf", triggerFrameId: "a" })];
+    expect(retargetAnimations(rows, new Map([["a", "A"], ["b", "B"]]))).toEqual([
+      anim("A"),
+      anim("B", { trigger: "onClickOf", triggerFrameId: "A" }),
+    ]);
+    // The trigger frame did not survive the copy → the row goes with it.
+    expect(retargetAnimations(rows, new Map([["b", "B"]]))).toEqual([]);
+    // Deleting the trigger frame drops the rows it triggers.
+    expect(removeAnimationsForFrame(rows, "a")).toEqual([]);
+    expect(removeAnimationsForFrame([anim("b", { trigger: "onClickOf", triggerFrameId: "c" })], "c")).toEqual([]);
   });
 });
