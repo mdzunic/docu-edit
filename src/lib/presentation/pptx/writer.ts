@@ -715,8 +715,9 @@ function slideXml(
   path = "",
   fields: ResolvedField[] = [],
   slideParts: readonly string[] = [],
+  writeBackground = false,
 ): string {
-  return serializeSlideXml(slide, rels, path, fields, model.theme, slideParts);
+  return serializeSlideXml(slide, rels, path, fields, model.theme, slideParts, writeBackground);
 }
 
 /** The in-place rewritten theme part for an edited deck theme (SPEC-094
@@ -920,7 +921,12 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
         target: `../notesSlides/notesSlide${notesNumber}.xml`,
       });
     }
-    entries.push({ name: slidePath, data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now), slidePaths)) });
+    // No retained master/layout to inherit from: each slide writes its own
+    // modelled background (SPEC-106).
+    entries.push({
+      name: slidePath,
+      data: encode(slideXml(model, slide, rels, slidePath, resolveSlideFields(model, index, now), slidePaths, true)),
+    });
     entries.push({
       name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
       data: encode(appendRelationships(slideRelsXml(layoutTarget), extraRels)),

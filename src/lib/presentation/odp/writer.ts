@@ -788,7 +788,9 @@ function buildFromScratch(model: PresentationModel, modified: Date): ZipEntryInp
   const pages = model.slides
     .map((slide) => {
       const idx = standardIndexForSlide(slide, standardLayouts);
-      return serializePage(slide, registry, used, "Default", "", layoutStyleNames[idx], declPlan?.pagePlans.get(slide));
+      // No retained master to inherit from: each page writes its own modelled
+      // background (SPEC-106).
+      return serializePage(slide, registry, used, "Default", "", layoutStyleNames[idx], declPlan?.pagePlans.get(slide), true);
     })
     .join("");
 
