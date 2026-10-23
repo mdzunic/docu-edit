@@ -83,4 +83,15 @@ describe("serializeTableAsync", () => {
     expect(asyncOut).toBe(sync);
     expect(yieldSpy.mock.calls.length).toBeGreaterThan(0);
   });
+
+  it("matches serializeTable's output for SPEC-136's page breaks and print titles", async () => {
+    const sheet = { ...sheetOf(manyRows(300)), pageSetup: { rowBreaks: [40, 120], colBreaks: [1] } };
+    const names = [{ name: "_xlnm.Print_Titles", scopeSheetId: "s", formula: "S!$A:$A,S!$1:$2" }];
+    const ctxOf = (): OdsTableContext => ({ model: { styles: [{}], dateSystem: "1900", format: "ods", names }, registry: new OdsStyleRegistry(), locale: EN_US });
+    const sync = serializeTable(sheet, ctxOf());
+    expect(sync).toContain("<table:table-header-rows>");
+    expect(sync).toContain("<table:table-header-columns>");
+    const asyncOut = await serializeTableAsync(sheet, ctxOf(), createSliceClock(0));
+    expect(asyncOut).toBe(sync);
+  });
 });
