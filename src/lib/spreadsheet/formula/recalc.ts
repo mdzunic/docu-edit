@@ -446,7 +446,8 @@ class Pass implements RecalcPass {
     // a 10,000-cell chain's first slice past its budget): the in-degrees,
     // the cells with none seeding the heap in key order, then the pops.
     const keys = this.queue;
-    const kahn = (this.kahn ??= { indegree: new Map(), heap: new RankHeap(), order: [], counted: 0, seeded: 0 });
+    this.kahn ??= { indegree: new Map(), heap: new RankHeap(), order: [], counted: 0, seeded: 0 };
+    const kahn = this.kahn;
     const { indegree, heap, order } = kahn;
     while (kahn.counted < keys.length) {
       for (const dependent of this.successors.get(keys[kahn.counted]!)!) {
