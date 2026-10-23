@@ -564,6 +564,11 @@ describe("readSpreadsheetOffThread with a Worker: the parse protocol", () => {
 
 const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
 
+/** A part's bytes as text (undefined: none). */
+function partText(bytes: Uint8Array | undefined): string {
+  return new TextDecoder().decode(bytes);
+}
+
 async function odsParts(name = "mini-book.ods"): Promise<Map<string, Uint8Array>> {
   return unzip(new Uint8Array(readFileSync(join(E2E_FIXTURES, name))));
 }
@@ -623,11 +628,10 @@ describe("readSpreadsheetOffThread reads an .ods like the xlsx family", () => {
       expect(prepare.format).toBe("ods");
       expect(prepare.sources.map((source) => source.name)).toEqual(["content.xml"]);
       // (Compared as text: an inflated entry's array may come from another realm.)
-      const text = (bytes: Uint8Array | undefined): string => new TextDecoder().decode(bytes);
-      expect(text(prepare.sources[0]!.bytes)).toBe(text(before.get("content.xml")));
+      expect(partText(prepare.sources[0]!.bytes)).toBe(partText(before.get("content.xml")));
       expect(worker!.transferred).not.toContain(parts.get("content.xml")!.buffer);
       for (const [name, bytes] of parts) {
-        expect(text(bytes)).toBe(text(before.get(name)));
+        expect(partText(bytes)).toBe(partText(before.get(name)));
       }
       // The envelope and the tables' offsets come back for the shell phase.
       const prepared = worker!.replies[0] as Extract<SheetParseResponse, { op: "prepared" }>;

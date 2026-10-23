@@ -7,7 +7,7 @@
 // single pass"); without DOMParser, open.workerSafety.spec.ts's.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { unzip } from "../../core/zip";
 import { MAX_WORKBOOK_CELLS } from "../model";
 import { CellBudget, partText } from "../parsed";
@@ -60,6 +60,32 @@ describe("phase 1: content.xml outlined", () => {
     expect(sources.odsTables!.map(({ start, end }) => xml.slice(start, end))).toEqual(single.sheets.map((sheet) => sheet.sourceXml));
     expect(sources.odsOutline).toMatchObject({ dates: single.dates, calc: single.calc, structureProtected: true, tableDates: [single.dates, single.dates] });
     expect(sources.odsOutline!.tags.map((tag) => xml.slice(tag, tag + 13))).toEqual(["<table:table ", "<table:table "]);
+  });
+
+  it("reads a self-closing table, and whatever stands between two tables, as the single pass does — a later null date counting for the later table", async () => {
+    const parts = (await phase1("mini-book.ods")).parts;
+    const content =
+      `${CONTENT_ROOT}<office:body><office:spreadsheet>\n  <table:table table:name="A"/>\n  <!-- between -->\n  <table:null-date table:date-value="1904-01-01"/><text:p>stray</text:p> stray text ` +
+      '<table:table table:name="B"><table:table-row><table:table-cell office:value-type="date" office:date-value="1904-01-02"><text:p>x</text:p></table:table-cell></table:table-row></table:table>\n</office:spreadsheet></office:body></office:document-content>';
+    parts.set("content.xml", new TextEncoder().encode(content));
+    let minted = 0;
+    const ids = vi.spyOn(crypto, "randomUUID").mockImplementation(() => `00000000-0000-4000-8000-${String((minted += 1)).padStart(12, "0")}`);
+    try {
+      const { assembleSpreadsheet } = await import("../open");
+      const single = assembleSpreadsheet("Book", "ods", await parseOds(new Uint8Array(0), parts));
+      minted = 0;
+      const phased = await readSpreadsheetBytes(new Uint8Array(0), "ods", "Book", parts);
+      expect(phased).toEqual(single);
+      expect(phased.dateSystem).toBe("1904");
+      expect(phased.sheets.map((sheet) => [sheet.name, sheet.rows[0]?.cells[0]?.value])).toEqual([
+        ["A", undefined],
+        ["B", 1],
+      ]);
+      // B's sourceXml starts where A ends: what stands between them is B's.
+      expect(phased.sheets[1]!.sourceXml).toMatch(/^\n {2}<!-- between -->\n {2}<table:null-date [^>]*\/><text:p>stray<\/text:p> stray text <table:table table:name="B">/);
+    } finally {
+      ids.mockRestore();
+    }
   });
 
   it("refuses a content.xml with no table, and a malformed one, as the single pass does", () => {
