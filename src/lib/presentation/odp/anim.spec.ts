@@ -272,6 +272,11 @@ describe("SPEC-105 tolerant reading (Impress-flavoured)", () => {
   });
 });
 
+/** The depth frames with "f5" a group — a frame no saved file can name. */
+function groupAt5(id: string): SlideFrame | undefined {
+  return id === "f5" ? { id, kind: "group", xCm: 0, yCm: 0, widthCm: 1, heightCm: 1, children: [] } : depthFrameFor(id);
+}
+
 /** A fade-in effect par on `target` with node type `node`. */
 function fadeParOn(target: string, node = "with-previous"): string {
   return (
@@ -301,8 +306,6 @@ describe("SPEC-105 out of subset (odp → preserved)", () => {
     expect(read(interactive("de-f4-p0"))).toBeUndefined();
     expect(read(interactive("de-f3"))).toBeUndefined();
     // A trigger on a frame the writer gives no wire id (a group) is out too.
-    const groupAt5 = (id: string): SlideFrame | undefined =>
-      id === "f5" ? { id, kind: "group", xCm: 0, yCm: 0, widthCm: 1, heightCm: 1, children: [] } : depthFrameFor(id);
     expect(readOdpAnim(parseDepth(interactive("de-f5")), resolveDepth, groupAt5)).toBeUndefined();
   });
 
