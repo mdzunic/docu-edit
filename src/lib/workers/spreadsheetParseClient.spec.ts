@@ -619,6 +619,9 @@ describe("readSpreadsheetOffThread reads an .ods like the xlsx family", () => {
       const parts = await odsParts();
       const before = new Map([...parts].map(([name, bytes]) => [name, bytes.slice()]));
       minted = 0;
+      // Unzipping the fixture yields once a slice passes 8 ms (zip.ts), as it
+      // can under load: the trace counts this read's yields only.
+      trace.events = [];
       const progress: number[] = [];
       const model = await readSpreadsheetOffThread(parts, "ods", "Book", { onProgress: (fraction) => progress.push(fraction) });
       expect(InProcessWorker.instances).toHaveLength(1);
