@@ -26,8 +26,10 @@ import { markSlideEdited } from "./text";
 
 /** cm rounded to 3 decimals — a hair finer than the eye and far coarser than
  * the EMU/ODF length precision the writers round to, so a placeholder's
- * geometry survives a build → re-parse round trip unchanged. */
-function r3(value: number): number {
+ * geometry survives a build → re-parse round trip unchanged. Exported for
+ * SPEC-106's generation API, which rounds every generated length the same
+ * way. */
+export function r3(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
@@ -62,6 +64,29 @@ function placeholder(
   return frame;
 }
 
+/** The title-slide placeholder pair (SPEC-080's Reference geometry): a title
+ * at x 8% y 32% w 84% h 18% and a subtitle at x 8% y 52% w 84% h 12% of a
+ * `slideWidthCm`×`slideHeightCm` surface, both born empty. The frames
+ * `createBlankPresentation` builds — exported so SPEC-106's generated decks
+ * take the editor's geometry rather than a second table. */
+export function titleSlideFrames(slideWidthCm: number, slideHeightCm: number): TextFrame[] {
+  return [
+    placeholder("title", "title", undefined, 0.08, 0.32, 0.84, 0.18, slideWidthCm, slideHeightCm),
+    placeholder("subtitle", "subTitle", undefined, 0.08, 0.52, 0.84, 0.12, slideWidthCm, slideHeightCm),
+  ];
+}
+
+/** The title + body placeholder pair (SPEC-080's Reference geometry): a title
+ * at x 8% y 8% w 84% h 16% and a body (`phIdx` 1) at x 8% y 30% w 84% h 60%,
+ * both born empty. The frames `addSlide` builds when no layout is named —
+ * exported for SPEC-106 for the same reason as `titleSlideFrames`. */
+export function titleBodyFrames(slideWidthCm: number, slideHeightCm: number): TextFrame[] {
+  return [
+    placeholder("title", "title", undefined, 0.08, 0.08, 0.84, 0.16, slideWidthCm, slideHeightCm),
+    placeholder("body", "body", 1, 0.08, 0.3, 0.84, 0.6, slideWidthCm, slideHeightCm),
+  ];
+}
+
 /** A fresh, from-scratch blank deck (SPEC-080): 16:9 widescreen, `pptx`
  * format, one slide with a centred title and subtitle placeholder, no
  * retained package. Carrying `"pptx"` from birth is what lets the library
@@ -71,11 +96,8 @@ export function createBlankPresentation(): PresentationModel {
   const h = DEFAULT_SLIDE_HEIGHT_CM;
   const slide: Slide = {
     id: crypto.randomUUID(),
-    frames: [
-      // Title y 32% h 18%, subtitle y 52% h 12%, both x 8% w 84% (the Reference).
-      placeholder("title", "title", undefined, 0.08, 0.32, 0.84, 0.18, w, h),
-      placeholder("subtitle", "subTitle", undefined, 0.08, 0.52, 0.84, 0.12, w, h),
-    ],
+    // Title y 32% h 18%, subtitle y 52% h 12%, both x 8% w 84% (the Reference).
+    frames: titleSlideFrames(w, h),
   };
   return {
     kind: "presentation",
@@ -100,13 +122,7 @@ export function addSlide(model: PresentationModel, afterIndex: number, layoutKey
   const layout = layoutKey ? (model.layouts ?? []).find((l) => l.key === layoutKey) : undefined;
   const slide: Slide = layout
     ? { id: crypto.randomUUID(), frames: newSlideFramesForLayout(layout), layoutKey: layout.key }
-    : {
-        id: crypto.randomUUID(),
-        frames: [
-          placeholder("title", "title", undefined, 0.08, 0.08, 0.84, 0.16, w, h),
-          placeholder("body", "body", 1, 0.08, 0.3, 0.84, 0.6, w, h),
-        ],
-      };
+    : { id: crypto.randomUUID(), frames: titleBodyFrames(w, h) };
   const at = Math.min(Math.max(afterIndex + 1, 0), model.slides.length);
   model.slides.splice(at, 0, slide);
   model.structureDirty = true;

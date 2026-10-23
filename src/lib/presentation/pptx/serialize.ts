@@ -123,6 +123,7 @@ export function serializeSlideXml(
   fields: ResolvedField[] = [],
   deckTheme?: DeckTheme,
   slideParts: readonly string[] = [],
+  writeBackground = false,
 ): string {
   const lookup: RelLookup = { rels, slidePartPath, slideParts };
   // SPEC-104: `show="0"` is spliced into the preserved root attributes in
@@ -161,7 +162,14 @@ export function serializeSlideXml(
   // rewritten from its preserved `p:sp` (only the cached `a:t` refreshed) or,
   // for a newly-enabled field, built canonical.
   const fieldSps = fields.map((rf) => fieldPlaceholderXml(rf, slide, () => mint())).join("");
-  const bg = slide.preserved?.["p:bg"] ?? "";
+  // A preserved `p:bg` is the slide's own, verbatim. Otherwise the modelled
+  // `background` is the EFFECTIVE one, normally inherited from a retained
+  // layout/master and so not the slide's to write — except on the
+  // from-scratch path (`writeBackground`), whose synthesised master has no
+  // background to inherit: there it is written as the slide's own `p:bg`
+  // (SPEC-106's generated `setBackground`, SPEC-045's "fixed in the writer").
+  const bg =
+    slide.preserved?.["p:bg"] ?? (writeBackground && slide.background ? backgroundXml(slide.background, tc) : "");
   const clrMapOvr = slide.preserved?.["p:clrMapOvr"] ?? `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>`;
   // A modelled transition wins over any preserved one (they are never both
   // present — the reader drops the source XML when it maps the transition);
@@ -435,6 +443,12 @@ function fillXml(fill: SlideFill | undefined, tc: SlideColorWrite): string {
   if (!fill) return "";
   if (fill.type === "none") return `<a:noFill/>`;
   return `<a:solidFill>${colorElementXml(fill.color, tc)}</a:solidFill>`;
+}
+
+/** A slide's own `p:bg` for a modelled background — the fill plus the empty
+ * `a:effectLst` PowerPoint itself writes beside it. */
+function backgroundXml(fill: SlideFill, tc: SlideColorWrite): string {
+  return `<p:bg><p:bgPr>${fillXml(fill, tc)}<a:effectLst/></p:bgPr></p:bg>`;
 }
 
 /** A frame's `a:ln` outline, or "" for none. */

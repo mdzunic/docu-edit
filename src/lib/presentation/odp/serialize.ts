@@ -332,6 +332,14 @@ export class StyleRegistry {
     return name;
   }
 
+  /** A page background's drawing-page fill properties (SPEC-106), colours
+   * resolved against the deck theme like a frame fill's. */
+  backgroundProps(fill: SlideFill): string {
+    return fill.type === "solid"
+      ? `draw:fill="solid" draw:fill-color="${escapeXmlAttribute(resolveColor(fill.color, this.theme))}"`
+      : `draw:fill="none"`;
+  }
+
   /** A `table-column` automatic style carrying a column width (SPEC-091). */
   columnStyle(widthCm: number): string {
     return this.tableFamilyStyle("table-column", `<style:table-column-properties style:column-width="${widthCm}cm"/>`, () => `de-C${++this.colCount}`);
@@ -439,6 +447,7 @@ export function serializePage(
   styleSource = "",
   layoutName?: string,
   fieldPlan?: OdpPageFieldPlan,
+  writeBackground = false,
 ): string {
   let attrs = slide.preserved?.["@page"];
   if (attrs) {
@@ -479,12 +488,18 @@ export function serializePage(
   const visibilityProps = slide.hidden ? ODP_HIDDEN_VISIBILITY_PROP : "";
   const originalStyle = drawAttr(attrs, "draw:style-name");
   const originalHidden = originalStyle ? drawingPageVisibility(styleSource, originalStyle) === "hidden" : false;
-  if (smilProps || displayProps || (slide.hidden === true) !== originalHidden) {
+  // SPEC-106: on the from-scratch path (`writeBackground`) the master carries
+  // no background to inherit, so a page's modelled `background` rides its own
+  // drawing-page style — the odp twin of the pptx writer's `p:bg`. A page with
+  // an original style keeps whatever background that style declares.
+  const backgroundProps =
+    writeBackground && slide.background && !originalStyle ? registry.backgroundProps(slide.background) : "";
+  if (smilProps || displayProps || backgroundProps || (slide.hidden === true) !== originalHidden) {
     // A visibility-only change keeps the original style's transition (an
     // out-of-subset one is preserved only through this style).
     const replacesTransition = smilProps.length > 0 || displayProps.length > 0;
     const baseProps = originalStyle ? drawingPageBaseProps(styleSource, originalStyle, replacesTransition) : "";
-    const props = [smilProps, displayProps, visibilityProps].filter((p) => p.length > 0).join(" ");
+    const props = [backgroundProps, smilProps, displayProps, visibilityProps].filter((p) => p.length > 0).join(" ");
     if (props.length === 0 && baseProps.length === 0) {
       // Shown again with nothing else to state: the page needs no style.
       attrs = attrs.replace(/\s*draw:style-name="[^"]*"/, "");

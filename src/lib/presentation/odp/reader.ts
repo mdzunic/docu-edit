@@ -68,6 +68,7 @@ import {
   type PlaceholderRole,
   type Slide,
   type SlideFieldPlaceholder,
+  type SlideFill,
   type SlideFrame,
   type SlideLayout,
   type ShapeFrame,
@@ -137,6 +138,7 @@ class StyleResolver {
   private readonly drawingPageTransitions = new Map<string, OdpTransitionAttrs>();
   private readonly drawingPageDisplays = new Map<string, OdpDisplayFlags>();
   private readonly drawingPageVisibilities = new Map<string, string>();
+  private readonly drawingPageBackgrounds = new Map<string, SlideFill>();
   private readonly rawStyles = new Map<string, Element>();
   private readonly listStyles = new Map<string, Element>();
 
@@ -191,6 +193,10 @@ class StyleResolver {
         const visibility = presentationAttr(dpProps, "visibility");
         if (visibility !== null) {
           this.drawingPageVisibilities.set(name, visibility);
+        }
+        const fillColor = odfColorToCss(drawAttr(dpProps, "fill-color"));
+        if (drawAttr(dpProps, "fill") === "solid" && fillColor) {
+          this.drawingPageBackgrounds.set(name, { type: "solid", color: fillColor });
         }
       }
     }
@@ -248,6 +254,13 @@ class StyleResolver {
    * declares none (read as visible). */
   drawingPageVisibility(name: string | null | undefined): string | undefined {
     return name ? this.drawingPageVisibilities.get(name) : undefined;
+  }
+
+  /** The solid background a page's own drawing-page style declares
+   * (`draw:fill="solid"` + `draw:fill-color`, the page fill the from-scratch
+   * writer emits for SPEC-106), or undefined when it declares none. */
+  drawingPageBackground(name: string | null | undefined): SlideFill | undefined {
+    return name ? this.drawingPageBackgrounds.get(name) : undefined;
   }
 
   /** The `presentation:display-*` field flags a page's drawing-page style
@@ -2174,6 +2187,10 @@ function parsePage(page: Element, ctx: OdpContext, pageSource?: string): Slide {
   // itself stays in `preserved["@page"]`, so nothing is consumed.
   if (ctx.styles.drawingPageVisibility(drawAttr(page, "style-name")) === "hidden") {
     slide.hidden = true;
+  }
+  const background = ctx.styles.drawingPageBackground(drawAttr(page, "style-name"));
+  if (background) {
+    slide.background = background;
   }
   const fields = odpPageFields(page, ctx);
   if (fields.length > 0) {
