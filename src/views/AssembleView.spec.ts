@@ -186,6 +186,24 @@ describe("reordering the tray", () => {
     expect(wrapper.get('[data-testid="assembly-tray-status"]').text()).toBe("“c” moved to position 1 of 3.");
   });
 
+  it("selects a row by click or Enter for the overlay inspector", async () => {
+    const { seed, startAssembly, mountView } = await setup();
+    startAssembly([(await seed("a")).id, (await seed("b")).id]);
+    const wrapper = await mountView();
+    await wrapper.get('[data-testid="assembly-layout"]').setValue("overlay");
+    expect(wrapper.find('[data-testid="overlay-inspector-empty"]').exists()).toBe(true);
+    const rows = wrapper.findAll('[data-testid="assembly-item"]');
+    await rows[1].trigger("keydown", { key: "Enter" });
+    expect(rows[1].attributes("aria-current")).toBe("true");
+    expect(wrapper.get('[data-testid="overlay-x"]').element).toHaveProperty("value", "50");
+    await wrapper.get('[data-testid="overlay-x"]').setValue("120");
+    // Clamped to the content box, and shown as clamped.
+    expect(wrapper.get('[data-testid="overlay-x"]').element).toHaveProperty("value", "100");
+    await rows[0].trigger("click");
+    expect(rows[0].attributes("aria-current")).toBe("true");
+    expect(wrapper.get('[data-testid="overlay-x"]').element).toHaveProperty("value", "50");
+  });
+
   it("removes and duplicates rows", async () => {
     const { seed, startAssembly, mountView } = await setup();
     startAssembly([(await seed("a")).id, (await seed("b")).id]);

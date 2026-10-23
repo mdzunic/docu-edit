@@ -3,7 +3,7 @@
 // showing its thumbnail, title and pixel size. A row reorders by drag, or by
 // Alt+↑ / Alt+↓ while it has focus (focus follows the moved row, and the
 // move is spoken through the role="status" live region); its buttons remove
-// or duplicate it; a click selects it for the inspector. "Add from library…"
+// or duplicate it; a click (or Enter / Space) selects it for the inspector. "Add from library…"
 // asks the view to open the picker. All logic is the useAssemblyTray
 // controller passed in. Runtime prop declarations (espree lints .vue
 // scripts).
@@ -38,7 +38,16 @@ async function focusRow(key = "") {
 }
 
 function onRowKeydown(event = new KeyboardEvent("keydown"), key = "") {
-  if (event.target !== event.currentTarget || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) {
+  if (event.target !== event.currentTarget) {
+    return;
+  }
+  if (event.key === "Enter" || event.key === " ") {
+    // The keyboard's click: select the row for the inspector.
+    event.preventDefault();
+    t.select(key);
+    return;
+  }
+  if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) {
     return;
   }
   event.preventDefault();
