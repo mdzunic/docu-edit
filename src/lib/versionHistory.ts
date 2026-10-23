@@ -44,10 +44,16 @@ import { ensureMediaEncoded, type MediaPart } from "./core/media";
 import { windowOf } from "./core/arrayWindow";
 import {
   decideBaseline,
+  emptyVersionsIndex,
   gatherChainInfo,
+  measureBytes,
+  oldestPrunable,
+  oldestRetainedDescendant,
   sha256Hex,
+  versionBlobKey,
+  versionPayloadKey,
+  versionsIndexKey,
   HISTORY_BUDGET_BYTES,
-  RETAINED_RECENT_COUNT,
   type SnapshotTrigger,
   type VersionBlobRecord,
   type VersionIndexEntry,
@@ -183,26 +189,6 @@ export interface VersionPayloadRecord {
 }
 
 export type VersionStoreRecord = VersionsIndexRecord | VersionPayloadRecord | VersionBlobRecord;
-
-function indexKey(docId: string): string {
-  return `versions:${docId}`;
-}
-
-function payloadKey(docId: string, versionId: string): string {
-  return `version:${docId}:${versionId}`;
-}
-
-function blobKey(docId: string, hash: string): string {
-  return `blob:${docId}:${hash}`;
-}
-
-// --- measurement ---------------------------------------------------------
-
-const encoder = new TextEncoder();
-
-function measureBytes(value: unknown): number {
-  return encoder.encode(JSON.stringify(value)).length;
-}
 
 // --- content hashing (media/opaque/sourceXml dedup) -----------------------
 //
@@ -446,7 +432,7 @@ async function diffFields(prev: DocumentModel, next: DocumentModel): Promise<Fie
 }
 
 async function readBlobData(docId: string, hash: string): Promise<string> {
-  const record = await getVersionsRecord(blobKey(docId, hash));
+  const record = await getVersionsRecord(versionBlobKey(docId, hash));
   if (!record || record.store !== "blob") {
     throw new Error(`Missing history blob ${hash} for document ${docId}`);
   }
@@ -541,21 +527,17 @@ function embeddedHashes(payload: BaselinePayload | DeltaPayload): string[] {
 
 // --- store IO -----------------------------------------------------------------
 
-function emptyIndex(docId: string): VersionsIndexRecord {
-  return { id: indexKey(docId), store: "index", docId, versions: [], paused: false };
-}
-
 export async function loadIndex(docId: string): Promise<VersionsIndexRecord> {
   try {
-    const record = await getVersionsRecord(indexKey(docId));
-    return record && record.store === "index" ? record : emptyIndex(docId);
+    const record = await getVersionsRecord(versionsIndexKey(docId));
+    return record && record.store === "index" ? record : emptyVersionsIndex(docId);
   } catch {
-    return emptyIndex(docId);
+    return emptyVersionsIndex(docId);
   }
 }
 
 async function loadPayload(docId: string, versionId: string): Promise<BaselinePayload | DeltaPayload | null> {
-  const record = await getVersionsRecord(payloadKey(docId, versionId));
+  const record = await getVersionsRecord(versionPayloadKey(docId, versionId));
   return record && record.store === "payload" ? record.payload : null;
 }
 
@@ -603,7 +585,7 @@ async function ensureBlobRefs(docId: string, model: DocumentModel, hashes: strin
   }
   const bytes = await collectBlobBytes(model);
   for (const hash of hashes) {
-    const key = blobKey(docId, hash);
+    const key = versionBlobKey(docId, hash);
     const existing = await getVersionsRecord(key);
     if (existing && existing.store === "blob") {
       await putVersionsRecord({ ...existing, refCount: existing.refCount + 1 });
@@ -628,7 +610,7 @@ async function ensureBlobRefs(docId: string, model: DocumentModel, hashes: strin
 
 async function releaseBlobRefs(docId: string, hashes: string[], keepHashes: Set<string>): Promise<void> {
   for (const hash of hashes) {
-    const key = blobKey(docId, hash);
+    const key = versionBlobKey(docId, hash);
     const existing = await getVersionsRecord(key);
     if (!existing || existing.store !== "blob") {
       continue;
@@ -728,7 +710,7 @@ export async function recordVersion(options: RecordVersionOptions): Promise<Reco
 
   try {
     await ensureBlobRefs(docId, model, embeddedHashes(payload));
-    await putVersionsRecord({ id: payloadKey(docId, versionId), store: "payload", docId, versionId, payload });
+    await putVersionsRecord({ id: versionPayloadKey(docId, versionId), store: "payload", docId, versionId, payload });
     index = { ...index, versions: [...index.versions, entry], paused: false };
     await putVersionsRecord(index);
   } catch {
@@ -742,38 +724,9 @@ export async function recordVersion(options: RecordVersionOptions): Promise<Reco
 }
 
 // --- pruning and chain integrity (AC-32..AC-37) -------------------------
-
-function isRetained(entries: VersionIndexEntry[], entry: VersionIndexEntry): boolean {
-  if (entry.name) {
-    return true;
-  }
-  const newest = entries.slice(-RETAINED_RECENT_COUNT);
-  return newest.includes(entry);
-}
-
-function oldestPrunable(entries: VersionIndexEntry[]): VersionIndexEntry | null {
-  for (const entry of entries) {
-    if (!isRetained(entries, entry)) {
-      return entry;
-    }
-  }
-  return null;
-}
-
-/** The oldest RETAINED version whose reconstruction chain passes through
- * `fromId`, found by walking forward one link at a time — cheap because a
- * chain never fans out (each id is at most one other version's parent). */
-function oldestRetainedDescendant(entries: VersionIndexEntry[], fromId: string): VersionIndexEntry | null {
-  const childOf = new Map(entries.map((e) => [e.parentId, e]));
-  let cur = childOf.get(fromId);
-  while (cur) {
-    if (isRetained(entries, cur)) {
-      return cur;
-    }
-    cur = childOf.get(cur.id);
-  }
-  return null;
-}
+//
+// Which version to prune (oldestPrunable) and which retained version must be
+// re-encoded first (oldestRetainedDescendant) are core's selection rules.
 
 /** Re-encodes `entry` in place as a standalone baseline, so nothing after it
  * in the chain depends on anything older (pruning step 2). Reuses the
@@ -788,7 +741,7 @@ async function reencodeAsBaseline(docId: string, entryId: string, index: Version
   const oldHashes = embeddedHashes(oldPayload);
   const newHashes = embeddedHashes(newPayload);
   await ensureBlobRefs(docId, model, newHashes);
-  await putVersionsRecord({ id: payloadKey(docId, entryId), store: "payload", docId, versionId: entryId, payload: newPayload });
+  await putVersionsRecord({ id: versionPayloadKey(docId, entryId), store: "payload", docId, versionId: entryId, payload: newPayload });
   const currentHashes = await currentModelHashes(model);
   await releaseBlobRefs(docId, oldHashes, currentHashes);
   const size = measureBytes(newPayload);
@@ -800,7 +753,7 @@ async function reencodeAsBaseline(docId: string, entryId: string, index: Version
 
 async function deletePrunedVersion(docId: string, entryId: string, index: VersionsIndexRecord, currentModel: DocumentModel): Promise<VersionsIndexRecord> {
   const payload = await loadPayload(docId, entryId);
-  await deleteVersionsRecord(payloadKey(docId, entryId));
+  await deleteVersionsRecord(versionPayloadKey(docId, entryId));
   const versions = index.versions.filter((e) => e.id !== entryId);
   const next: VersionsIndexRecord = { ...index, versions };
   await putVersionsRecord(next);
@@ -830,7 +783,7 @@ async function computeUsedBytes(docId: string, index: VersionsIndexRecord, curre
     if (currentHashes.has(hash)) {
       continue; // AC-30: not counted — also part of the live document.
     }
-    const blob = await getVersionsRecord(blobKey(docId, hash));
+    const blob = await getVersionsRecord(versionBlobKey(docId, hash));
     if (blob && blob.store === "blob" && blob.refCount > 0) {
       total += blob.size;
     }
