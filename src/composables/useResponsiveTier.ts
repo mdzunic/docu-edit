@@ -56,16 +56,22 @@ export function installTierObserver(root: () => Element | null): () => void {
     }
   }
 
-  measure();
-
   if (typeof ResizeObserver !== "undefined") {
+    // The observer's first callback measures the root, straight after the
+    // first layout; measuring it here would force that layout — the whole
+    // view's (SPEC-137: ~30 ms of a large workbook's open) — inside the task
+    // that mounts the shell. The seeded window width stands until then.
     const observer = new ResizeObserver(() => measure());
     const el = root();
     if (el) {
       observer.observe(el);
+    } else {
+      measure();
     }
     return () => observer.disconnect();
   }
+
+  measure();
 
   if (typeof window !== "undefined") {
     window.addEventListener("resize", measure);

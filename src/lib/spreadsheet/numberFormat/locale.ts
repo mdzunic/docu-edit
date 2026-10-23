@@ -223,9 +223,12 @@ export interface LocaleNames {
 const namesByTag = new Map<SpreadsheetLocaleTag, LocaleNames>();
 
 /** One part of a date as Intl formats it for `tag`. */
-function namePart(tag: SpreadsheetLocaleTag, options: Intl.DateTimeFormatOptions, date: Date, type: "month" | "weekday"): string {
-  const parts = new Intl.DateTimeFormat(tag, { timeZone: "UTC", ...options }).formatToParts(date);
-  return parts.find((part) => part.type === type)?.value ?? "";
+/** The `type` part of each date, from ONE formatter for the option set (a
+ * formatter costs far more to build than to use: the five tables built per
+ * formatter took ~17 ms of a large workbook's first paint built per name). */
+function nameParts(tag: SpreadsheetLocaleTag, options: Intl.DateTimeFormatOptions, dates: readonly Date[], type: "month" | "weekday"): string[] {
+  const format = new Intl.DateTimeFormat(tag, { timeZone: "UTC", ...options });
+  return dates.map((date) => format.formatToParts(date).find((part) => part.type === type)?.value ?? "");
 }
 
 /** A locale's name tables, built once per tag from Intl.DateTimeFormat over
@@ -239,11 +242,11 @@ export function localeNames(tag: SpreadsheetLocaleTag): LocaleNames {
   const months = Array.from({ length: 12 }, (_, month) => new Date(Date.UTC(2001, month, 15)));
   const days = Array.from({ length: 7 }, (_, day) => new Date(Date.UTC(2001, 0, 7 + day)));
   names = {
-    monthsLong: months.map((date) => namePart(tag, { month: "long" }, date, "month")),
-    monthsGenitive: months.map((date) => namePart(tag, { month: "long", day: "numeric" }, date, "month")),
-    monthsShort: months.map((date) => namePart(tag, { month: "short" }, date, "month")),
-    daysLong: days.map((date) => namePart(tag, { weekday: "long" }, date, "weekday")),
-    daysShort: days.map((date) => namePart(tag, { weekday: "short" }, date, "weekday")),
+    monthsLong: nameParts(tag, { month: "long" }, months, "month"),
+    monthsGenitive: nameParts(tag, { month: "long", day: "numeric" }, months, "month"),
+    monthsShort: nameParts(tag, { month: "short" }, months, "month"),
+    daysLong: nameParts(tag, { weekday: "long" }, days, "weekday"),
+    daysShort: nameParts(tag, { weekday: "short" }, days, "weekday"),
   };
   namesByTag.set(tag, names);
   return names;
