@@ -158,7 +158,7 @@ describe("media never enters document paths (AC-13)", () => {
     const { store, seedMedia } = await loadModules();
     const png = await seedMedia("Shot", "png", 2000);
     expect(() => store.getOrCreateDocument(png.id)).toThrow(/media file/);
-    await expect(store.saveDraft(png.id, null, 0)).rejects.toThrow(/media file/);
+    await expect(store.saveDraft(png.id, { caret: null, scroll: 0 })).rejects.toThrow(/media file/);
     expect(store.getDocument(png.id)).toBeUndefined();
     expect(store.getPresentation(png.id)).toBeUndefined();
     expect(store.getMedia(png.id)).toBeDefined();

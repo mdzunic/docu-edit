@@ -119,7 +119,7 @@ describe("the fourth kind", () => {
     const model = await workbook();
     store.storeSpreadsheet(model);
     expect(() => store.getOrCreateDocument(model.id)).toThrow(/spreadsheet/);
-    await expect(store.saveDraft(model.id, null, 0)).rejects.toThrow(/spreadsheet/);
+    await expect(store.saveDraft(model.id, { caret: null, scroll: 0 })).rejects.toThrow(/spreadsheet/);
     expect(() => store.replaceDocumentModel(model.id, { id: model.id, title: "x", sections: [], defaultStyles: {} } as never)).toThrow(
       /spreadsheet/,
     );

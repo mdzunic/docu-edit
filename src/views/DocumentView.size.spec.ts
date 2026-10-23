@@ -36,12 +36,13 @@
 //   2026-08-22  4584  SPEC-064 — find/comment/spell overlays → PageMarkupOverlays
 //   2026-09-04  4331  ARCH-1 — SPEC-021 keyboard map → useKeyboardMap
 //   2026-09-05  4284  Lint sweep — drawing overlays → DrawingOverlays.vue
+//   2026-10-23  4259  SPEC-103 — recovery bar → RecoveryBar.vue (shared with decks)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 4284;
+const LINE_BUDGET = 4259;
 
 describe("DocumentView size budget", () => {
   it(`DocumentView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

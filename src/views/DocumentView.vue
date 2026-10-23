@@ -45,6 +45,7 @@ import AccessibilityPane from "../components/AccessibilityPane.vue";
 import FontsPane from "../components/FontsPane.vue";
 import FontLoadingSkeleton from "../components/FontLoadingSkeleton.vue";
 import VersionHistoryPane from "../components/VersionHistoryPane.vue";
+import RecoveryBar from "../components/RecoveryBar.vue";
 import SpecialCharacterDialog from "../components/SpecialCharacterDialog.vue";
 import LinkChip from "../components/LinkChip.vue";
 import LinkDialog from "../components/LinkDialog.vue";
@@ -1025,6 +1026,8 @@ const autosave = useAutosave({
   getScroll: () => scrollTop,
   isActive: () => editable.value,
   applyRestored: (restored) => {
+    // A text session restores a text model (SPEC-103 widened RestoredState).
+    if ("kind" in restored.model) return;
     doc.value = restored.model;
     caret = restored.caret;
     scrollTop = restored.scroll;
@@ -3153,30 +3156,12 @@ function handleMenuCommand(id = "") {
     >
       {{ ceilingWarning }}
     </div>
-    <div
+    <RecoveryBar
       v-if="recovery"
-      class="notice-bar"
-      role="status"
-      data-testid="recovery-bar"
-    >
-      <span>{{ recoveryLabel }}</span>
-      <button
-        type="button"
-        class="notice-button"
-        data-testid="recovery-keep"
-        @click="keepRecovered"
-      >
-        Keep changes
-      </button>
-      <button
-        type="button"
-        class="notice-button"
-        data-testid="recovery-discard"
-        @click="discardRecovered"
-      >
-        Discard changes
-      </button>
-    </div>
+      :label="recoveryLabel"
+      @keep="keepRecovered"
+      @discard="discardRecovered"
+    />
     <div class="editor-layout">
       <div class="page-wrap">
         <FontLoadingSkeleton v-if="!fontsReady" />
@@ -4081,8 +4066,9 @@ function handleMenuCommand(id = "") {
   border-color: var(--accent);
 }
 
-/* Sticky so the conflict/recovery notice stays visible while the canvas
-   scrolls; they are mutually exclusive, so a single top slot suffices. */
+/* Sticky so the conflict/too-large notice stays visible while the canvas
+   scrolls (RecoveryBar carries the same look); they are mutually exclusive,
+   so a single top slot suffices. */
 .notice-bar {
   position: sticky;
   top: 0;
@@ -4095,17 +4081,6 @@ function handleMenuCommand(id = "") {
   border-bottom: var(--border-width) solid var(--accent-subtle);
   color: var(--text-accent);
   font-size: var(--text-md);
-}
-
-.notice-button {
-  font: inherit;
-  font-size: var(--text-md);
-  padding: var(--space-1) var(--space-4);
-  border: var(--border-width) solid var(--accent-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-base);
-  color: var(--text-accent);
-  cursor: pointer;
 }
 
 /* Since SPEC-065 the seven auxiliary panes share one docked, tabbed region
