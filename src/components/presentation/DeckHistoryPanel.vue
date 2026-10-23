@@ -48,7 +48,7 @@ function onNamedOnly(event = new Event("change")) {
 }
 
 function onName(versionId = "", event = new Event("submit")) {
-  const form = event.target;
+  const form = event.currentTarget;
   const input = form instanceof HTMLFormElement ? form.elements.namedItem("name") : null;
   if (input instanceof HTMLInputElement) void c.nameVersion(versionId, input.value);
 }
