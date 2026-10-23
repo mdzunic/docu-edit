@@ -123,8 +123,22 @@ carries `id`/`title`/`media?` with the same conventions. Kind safety:
   `documentKindOf` answers the routing guards.
 - `getOrCreateDocument` throws on a presentation id (unreachable through
   the guarded views; failing loudly beats silently overwriting a deck).
-- Drafts/autosave are text-editor features; `saveDraft` throws on a
-  presentation record and `useAutosave.beginSession` bails out early.
+- Since SPEC-103 drafts and autosave serve both editing products:
+  `saveDraft`/`commitDocument` take a `DraftState` (`{ caret, scroll,
+  slideIndex? }` — a deck's is `{ caret: null, scroll: 0, slideIndex }`),
+  `useAutosave` routes a deck through `replacePresentationModel`, and
+  `replaceModel` (behind both replace functions) never crosses kinds. A
+  deck's `opaque` package is split out of the shell under `opaque:`/
+  `draftopaque:` with media's reference latches, so a draft tick after the
+  first writes the shell alone; a deck stored before the split is
+  legacy-inline and migrates on its next persist. Media and workbooks still
+  have no draft at all.
+- A deck's edits reach the store through `useSlideRender.commit()`'s
+  `onCommit` → `useDeckSaving` (drafts on SPEC-010's cadence, commits at
+  its commit points) rather than a write-through per gesture, and its
+  version history (`lib/presentationVersions.ts`, over
+  `core/versionChain.ts`'s chain arithmetic) shares the `versions` object
+  store with the word processor's.
 
 `LibraryEntry` carries `kind`, so the library UI routes and renders
 per-kind without re-deriving anything.
