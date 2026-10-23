@@ -393,15 +393,17 @@ export function writePptxTiming(
         return clickGroupPar(effects, interactiveSeq && gi === 0 ? "0" : "indefinite");
       })
       .join("");
+  // The main sequence is always there (the reader takes extra sequences only
+  // beside exactly one); with no main rows its time node has no children.
+  const mainChildren = main.length > 0 ? `<p:childTnLst>${groupXml(main, false)}</p:childTnLst>` : "";
   const mainSeq =
-    main.length > 0
-      ? `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>` +
-        groupXml(main, false) +
-        `</p:childTnLst></p:cTn>` +
-        `<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst>` +
-        `<p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst>` +
-        `</p:seq>`
-      : "";
+    `<p:seq concurrent="1" nextAc="seek">` +
+    (mainChildren
+      ? `<p:cTn id="2" dur="indefinite" nodeType="mainSeq">${mainChildren}</p:cTn>`
+      : `<p:cTn id="2" dur="indefinite" nodeType="mainSeq"/>`) +
+    `<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst>` +
+    `<p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst>` +
+    `</p:seq>`;
   const interactiveSeqs = interactive
     .map((sequence) => {
       const trigger = spidFor(sequence.triggerFrameId);
@@ -496,7 +498,7 @@ function parseTiming(
   if (descendants(timingEl, "audio").length > 0 || descendants(timingEl, "video").length > 0) {
     return undefined;
   }
-  // More than one sequence only as (at most) one mainSeq plus interactive
+  // More than one sequence only as exactly one mainSeq plus interactive
   // sequences, each begun by a click on a shape this slide has.
   const seqs = descendants(timingEl, "seq");
   if (seqs.length === 0) {
@@ -527,10 +529,11 @@ function parseTiming(
       used: false,
     });
   }
-  const rows: { animation: SlideAnimation; order?: number }[] = [];
-  if (main) {
-    rows.push(...collapse(sequenceSteps(main, resolveSpid), undefined, bldPs, frameFor));
+  if (!main) {
+    return undefined;
   }
+  const rows: { animation: SlideAnimation; order?: number }[] = [];
+  rows.push(...collapse(sequenceSteps(main, resolveSpid), undefined, bldPs, frameFor));
   for (const sequence of interactive) {
     rows.push(...collapse(sequenceSteps(sequence.cTn, resolveSpid), sequence.triggerFrameId, bldPs, frameFor));
   }
@@ -557,11 +560,12 @@ function interactiveTrigger(cTn: Element, resolveSpid: (spid: string) => string 
   return spid ? resolveSpid(spid) : undefined;
 }
 
-/** Every effect of a sequence's click groups, in document order. */
+/** Every effect of a sequence's click groups, in document order (none for a
+ * main sequence with no children — a slide whose rows are all interactive). */
 function sequenceSteps(seqCtn: Element, resolveSpid: (spid: string) => string | undefined): WireStep[] {
   const childTnLst = child(seqCtn, "childTnLst");
   if (!childTnLst) {
-    throw ABORT;
+    return [];
   }
   const steps: WireStep[] = [];
   Array.from(childTnLst.children)

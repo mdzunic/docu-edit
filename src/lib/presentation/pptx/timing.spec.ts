@@ -514,6 +514,20 @@ describe("SPEC-105 out of subset (→ preserved)", () => {
     expect(read(xml.replace('<p:spTgt spid="5"/></p:tgtEl></p:cond></p:stCondLst>', '<p:spTgt spid="2"/></p:tgtEl></p:cond></p:stCondLst>'))).toBeUndefined();
   });
 
+  it("interactive sequences only beside exactly one mainSeq — an all-interactive slide keeps an empty one", () => {
+    const rows: SlideAnimation[] = [
+      { frameId: "f2", effect: "spin", trigger: "onClickOf", triggerFrameId: "f5" },
+      { frameId: "f3", effect: "pulse", trigger: "onClickOf", triggerFrameId: "f6" },
+    ];
+    const xml = writePptxTiming(rows, goldenSpidFor, depthFrameFor);
+    expect(xml).toContain(`<p:cTn id="2" dur="indefinite" nodeType="mainSeq"/>`);
+    expect(read(xml)).toEqual(rows);
+    // Without the main sequence the tree is out of subset.
+    const noMain = xml.replace(/<p:seq concurrent="1" nextAc="seek"><p:cTn id="2"[\s\S]*?<\/p:seq>/, "");
+    expect(noMain).not.toContain("mainSeq");
+    expect(read(noMain)).toBeUndefined();
+  });
+
   it("a second sequence that is not an interactive one", () => {
     const xml = writePptxTiming(
       [
