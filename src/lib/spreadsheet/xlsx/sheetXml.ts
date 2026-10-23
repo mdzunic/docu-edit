@@ -2063,7 +2063,10 @@ const ROWS_PER_SLICE_CHECK = 64;
  * identical row-by-row construction — the same array-of-pieces joined once
  * — but yields to the main thread (`clock`) every `ROWS_PER_SLICE_CHECK`
  * rows once `SERIALISE_SLICE_MS` has elapsed, so a 25,000-row sheet's save
- * reads as many short tasks instead of one long one. */
+ * reads as many short tasks instead of one long one. Each slice's pieces are
+ * joined into one band before it yields, so the last join is over a few
+ * dozen bands, not a million pieces (one join of a 25 MB sheet's pieces is
+ * itself a ~20 ms task). */
 async function sheetDataXmlAsync(sheet: Sheet, ctx: XlsxSheetContext, p: string, clock: SliceClock): Promise<string> {
   if (sheet.rows.length === 0) {
     return `<${p}sheetData/>`;
@@ -2077,6 +2080,7 @@ async function sheetDataXmlAsync(sheet: Sheet, ctx: XlsxSheetContext, p: string,
     }
   }
   const memo = new Map<string, string>();
+  const bands: string[] = [];
   const out: string[] = [`<${p}sheetData>`];
   let sinceCheck = 0;
   for (const row of sheet.rows) {
@@ -2106,12 +2110,15 @@ async function sheetDataXmlAsync(sheet: Sheet, ctx: XlsxSheetContext, p: string,
     if (sinceCheck >= ROWS_PER_SLICE_CHECK) {
       sinceCheck = 0;
       if (clock.due()) {
+        bands.push(out.join(""));
+        out.length = 0;
         await clock.yield();
       }
     }
   }
   out.push(`</${p}sheetData>`);
-  return out.join("");
+  bands.push(out.join(""));
+  return bands.join("");
 }
 
 /** SPEC-128: the rebuilt `<autoFilter>` and `<sortState>` — the model's

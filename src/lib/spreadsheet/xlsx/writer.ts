@@ -150,7 +150,7 @@ import {
 import { SharedStringsWriter } from "./sharedStrings";
 import { mentionsAnyName, passFor, remappedNames } from "./sheetNamePass";
 import { emptyWorksheetXml, serializeWorksheetAsync, type XlsxSheetContext } from "./sheetXml";
-import { createSliceClock } from "../serialiseSlices";
+import { createSliceClock, yieldIfDue } from "../serialiseSlices";
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
@@ -272,6 +272,7 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptio
         ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
         : await serializeWorksheetAsync(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }, clock),
     );
+    await yieldIfDue(clock);
   }
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
@@ -724,7 +725,9 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
     const active = plan.index === activeIndex;
     if (plan.generated) {
       const xml = write && plan.sheet.kind === "grid" ? await serializeWorksheetAsync(plan.sheet, undefined, context(plan), clock) : emptyWorksheetXml(plan.sheet, active, model);
+      await yieldIfDue(clock);
       sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(xml)));
+      await yieldIfDue(clock);
       continue;
     }
     const bytes = parts.get(plan.partName);
@@ -732,15 +735,20 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
       continue;
     }
     const sheetRemap = ownerRemap.get(plan.partName) ?? remap;
-    sheetBytes.set(
-      plan.partName,
-      withDrawing(
-        plan.partName,
-        write && plan.sheet.dirty && plan.sheet.kind === "grid"
-          ? encode(await serializeWorksheetAsync(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap), clock))
-          : sheetPartFor(bytes, plan, active, sheetRemap, model),
-      ),
-    );
+    if (write && plan.sheet.dirty && plan.sheet.kind === "grid") {
+      // The retained part's decode and the rebuilt part's encode are each a
+      // task of their own on a large sheet (tens of ms for 25 MB of XML), so
+      // the clock yields around them as it does between rows.
+      const base = retainedBase(bytes, plan, sheetRemap, model);
+      await yieldIfDue(clock);
+      const xml = await serializeWorksheetAsync(plan.sheet, base, context(plan, sheetRemap), clock);
+      await yieldIfDue(clock);
+      const encoded = encode(xml);
+      await yieldIfDue(clock);
+      sheetBytes.set(plan.partName, withDrawing(plan.partName, encoded));
+      continue;
+    }
+    sheetBytes.set(plan.partName, withDrawing(plan.partName, sheetPartFor(bytes, plan, active, sheetRemap, model)));
   }
 
   // The string and style tables, appended to (or added) when a sheet needed it.

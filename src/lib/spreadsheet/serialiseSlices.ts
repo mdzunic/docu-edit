@@ -39,3 +39,12 @@ export function createSliceClock(sliceMs: number = SERIALISE_SLICE_MS): SliceClo
     },
   };
 }
+
+/** Yields when `clock` is due: the step between two pieces of whole-part
+ * work (a decode, a join, an encode) that has no row loop of its own to
+ * check the clock in. */
+export async function yieldIfDue(clock: SliceClock): Promise<void> {
+  if (clock.due()) {
+    await clock.yield();
+  }
+}
