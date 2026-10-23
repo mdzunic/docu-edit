@@ -66,6 +66,12 @@ export function trayEntry(image: TrayImage, transform?: Partial<OverlayTransform
   return { ...image, key: `tray-${keySeed}`, transform: normaliseTransform(transform ?? DEFAULT_OVERLAY_TRANSFORM) };
 }
 
+/** Typed pass-through for entries read off a `.vue` prop (runtime-typed
+ * `Object`; espree bars the annotation in `.vue` scripts). */
+export function asTrayEntries(value: unknown): TrayEntry[] {
+  return Array.isArray(value) ? (value as TrayEntry[]) : [];
+}
+
 export const TRAY_FULL_MESSAGE = `A tray holds at most ${MAX_ASSEMBLY_ITEMS} images.`;
 
 export interface AssemblyTrayController {
@@ -78,6 +84,7 @@ export interface AssemblyTrayController {
   /** Why the last add or duplicate was refused or cut short ("" when not). */
   refusal: Ref<string>;
   isFull: ComputedRef<boolean>;
+  select: (key: string) => void;
   /** Adds the library images `ids`, in order, up to the limit. Returns how
    * many were added. */
   add: (ids: readonly string[]) => number;
@@ -196,6 +203,9 @@ export function useAssemblyTray(): AssemblyTrayController {
     announcement,
     refusal,
     isFull,
+    select: (key: string) => {
+      selectedKey.value = key;
+    },
     add,
     remove,
     duplicate,

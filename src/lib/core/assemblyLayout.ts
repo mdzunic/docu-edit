@@ -237,9 +237,9 @@ function stripCells(weights: number[], box: RectCm, gap: number, across: boolean
  * down uniformly (gaps keep their size) and centres across the box. */
 function masonryCells(items: ItemPx[], columns: number, box: RectCm, gap: number): { cells: RectCm[]; rows: number[] } {
   const colW = Math.max(0, (box.widthCm - (columns - 1) * gap) / columns);
-  const heights = new Array<number>(columns).fill(0);
-  const counts = new Array<number>(columns).fill(0);
-  const sums = new Array<number>(columns).fill(0);
+  const heights = Array.from({ length: columns }, () => 0);
+  const counts = Array.from({ length: columns }, () => 0);
+  const sums = Array.from({ length: columns }, () => 0);
   const slots = items.map((item) => {
     let column = 0;
     for (let c = 1; c < columns; c += 1) {
@@ -263,7 +263,7 @@ function masonryCells(items: ItemPx[], columns: number, box: RectCm, gap: number
   const width = colW * scale;
   const blockW = columns * width + (columns - 1) * gap;
   const left = box.xCm + Math.max(0, (box.widthCm - blockW) / 2);
-  const tops = new Array<number>(columns).fill(box.yCm);
+  const tops = Array.from({ length: columns }, () => box.yCm);
   const cells = slots.map((slot) => {
     const height = slot.height * scale;
     const cell = { xCm: left + slot.column * (width + gap), yCm: tops[slot.column], widthCm: width, heightCm: height };
@@ -405,7 +405,7 @@ export function naturalAssemblyPx(items: AssemblyItem[], plan: AssemblyPlan): It
     heightPx = sizes.reduce((sum, size) => sum + (size.heightPx * maxW) / size.widthPx, 0);
   } else if (plan.layout === "masonry") {
     const columns = resolveColumns(plan.columns, sizes.length, square);
-    const heights = new Array<number>(columns).fill(0);
+    const heights = Array.from({ length: columns }, () => 0);
     for (const size of sizes) {
       let column = 0;
       for (let c = 1; c < columns; c += 1) {

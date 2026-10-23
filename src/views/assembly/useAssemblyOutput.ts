@@ -73,6 +73,12 @@ export const BROWSER_ASSEMBLY_STEPS: AssemblySteps = {
   release: releaseCanvas,
 };
 
+/** Typed pass-through for steps arriving through a `.vue` prop (runtime-
+ * typed `Object`; espree bars the annotation in `.vue` scripts). */
+export function asAssemblySteps(value: unknown): Partial<AssemblySteps> | undefined {
+  return value ? (value as Partial<AssemblySteps>) : undefined;
+}
+
 /** How each tray entry is drawn: its current image's part (an edited
  * image's saved render) and the pixel size its placement is measured in. */
 export function composeInputs(entries: readonly TrayEntry[]): (ComposeInput | null)[] {

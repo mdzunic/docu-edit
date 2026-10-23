@@ -320,13 +320,13 @@ describe("chunking and cancellation", () => {
   });
 });
 
+function decoded(widthPx: number, heightPx: number): DecodedImage {
+  return { image: { widthPx } as unknown as CanvasImageSource, widthPx, heightPx, release: vi.fn() };
+}
+
 describe("sources", () => {
   const png: MediaPart = { mediaId: "png-1", contentType: "image/png", data: "AQID" };
   const svg: MediaPart = { mediaId: "svg-1", contentType: "image/svg+xml", data: "PHN2Zy8+" };
-
-  function decoded(widthPx: number, heightPx: number): DecodedImage {
-    return { image: { widthPx } as unknown as CanvasImageSource, widthPx, heightPx, release: vi.fn() };
-  }
 
   it("decodes a part once, however many items and renders read it", async () => {
     const decode = vi.fn(async () => decoded(64, 40));

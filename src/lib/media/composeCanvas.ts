@@ -76,7 +76,7 @@ export function toPixelRect(rect: RectCm, sx: number, sy: number): { x: number; 
  * order, tray order within a row. */
 export function drawingChunks(placed: readonly PlacedItem[]): PlacedItem[][] {
   const byRow = new Map<number, PlacedItem[]>();
-  for (const item of [...placed].sort((a, b) => a.row - b.row || a.index - b.index)) {
+  for (const item of placed.toSorted((a, b) => a.row - b.row || a.index - b.index)) {
     const chunk = byRow.get(item.row) ?? [];
     chunk.push(item);
     byRow.set(item.row, chunk);

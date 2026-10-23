@@ -282,9 +282,7 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
     setTransformField,
     nudge,
     dragTo,
-    select: (key: string) => {
-      tray.selectedKey.value = key;
-    },
+    select: tray.select,
     reset: () => {
       persistence.reset();
       error.value = "";
