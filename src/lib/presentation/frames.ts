@@ -211,10 +211,10 @@ export function insertImageFrame(
   }
   const mediaId = mintMediaId(model, media.contentType);
   const part: MediaPart = { mediaId, contentType: media.contentType, data: media.data };
-  if (!model.media) {
-    model.media = [];
-  }
-  model.media.push(part);
+  // A fresh array, never an in-place push: the store persists `media` only
+  // when its reference changes, so the reference must change exactly when the
+  // parts did (SPEC-103).
+  model.media = [...(model.media ?? []), part];
   const frame: ImageFrame = {
     id: crypto.randomUUID(),
     ...normaliseRect(rect),
@@ -270,10 +270,8 @@ export function insertMediaFrame(
   }
   const mediaId = mintMediaId(model, media.contentType);
   const part: MediaPart = { mediaId, contentType: media.contentType, data: media.data };
-  if (!model.media) {
-    model.media = [];
-  }
-  model.media.push(part);
+  // A fresh array, as insertImageFrame's (SPEC-103).
+  model.media = [...(model.media ?? []), part];
   const frame: MediaFrame = {
     id: crypto.randomUUID(),
     ...normaliseRect(mediaInsertRect(model, mediaKind)),
@@ -1005,10 +1003,8 @@ export function setMediaPoster(
     return false;
   }
   const mediaId = mintMediaId(model, poster.contentType);
-  if (!model.media) {
-    model.media = [];
-  }
-  model.media.push({ mediaId, contentType: poster.contentType, data: poster.data });
+  // A fresh array, as insertImageFrame's (SPEC-103).
+  model.media = [...(model.media ?? []), { mediaId, contentType: poster.contentType, data: poster.data }];
   frame.posterMediaId = mediaId;
   markFrameEdited(slide, frame, model.format);
   return true;
