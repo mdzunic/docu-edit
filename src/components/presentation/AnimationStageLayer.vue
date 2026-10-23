@@ -68,6 +68,9 @@ watch(
 // --- motion-path overlay (SPEC-105) ---------------------------------------------
 const pathOverlayEl = useTemplateRef("pathOverlayEl");
 const pathOverlay = computed(() => (previewing.value ? null : c.pathEdit.overlay.value));
+// The overlay draws in unscaled surface px; the endpoint keeps an 8px radius
+// on screen whatever the fit scale, so it stays a target worth grabbing.
+const endpointRadius = computed(() => 8 / (props.scale > 0 ? props.scale : 1));
 function onEndpointDown(event = new PointerEvent("pointerdown")) {
   c.pathEdit.onEndpointPointerDown(event, pathOverlayEl.value);
 }
@@ -135,7 +138,7 @@ onBeforeUnmount(() => buildPreview.stop());
         :aria-disabled="pathOverlay.readOnly ? 'true' : 'false'"
         :cx="pathOverlay.handle.x"
         :cy="pathOverlay.handle.y"
-        r="8"
+        :r="endpointRadius"
         @pointerdown.stop="onEndpointDown"
         @pointermove="c.pathEdit.onEndpointPointerMove($event)"
         @pointerup="c.pathEdit.onEndpointPointerUp($event)"
@@ -208,6 +211,7 @@ onBeforeUnmount(() => buildPreview.stop());
   stroke: var(--accent);
   stroke-width: 2;
   stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
 }
 
 .path-ghost {
@@ -216,12 +220,14 @@ onBeforeUnmount(() => buildPreview.stop());
   stroke-width: 1;
   stroke-dasharray: 3 3;
   opacity: 0.6;
+  vector-effect: non-scaling-stroke;
 }
 
 .path-endpoint {
   fill: var(--accent);
   stroke: var(--surface-default);
   stroke-width: 2;
+  vector-effect: non-scaling-stroke;
   cursor: grab;
   pointer-events: auto;
   touch-action: none;

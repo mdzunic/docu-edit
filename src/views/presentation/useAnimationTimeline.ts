@@ -4,7 +4,10 @@
 // slide's timeline (geometry in components/presentation/animationTimeline.ts)
 // with a live edge drag applied, a bar selecting its row, and the edge edits —
 // a left-edge (delay) or right-edge (duration) pointer drag recorded once on
-// pointer-up, or a Left/Right arrow step of 100ms, one undo entry per key.
+// pointer-up, or a Left/Right arrow step of 100ms, one undo entry per key. A
+// pressed edge takes focus, so the arrows then step the edge just dragged, and
+// an arrow it handles stops there (the editor's window keys would otherwise
+// also nudge the selected frame).
 import { computed, ref, type ComputedRef, type Ref } from "vue";
 import type { Slide, SlideAnimation } from "../../lib/presentation/model";
 import { effectiveAnimationDelayMs, effectiveAnimationDurationMs } from "../../lib/presentation/animations";
@@ -92,6 +95,10 @@ export function useAnimationTimeline(deps: AnimationTimelineDeps) {
         // A synthetic pointer has nothing to capture.
       }
     }
+    // The press's default (and with it the browser's focus) is prevented.
+    if (target instanceof HTMLElement) {
+      target.focus({ preventScroll: true });
+    }
     edgeDrag = { bar, edge, startX: event.clientX };
     timelineDraft.value = { animationIndex: bar.animationIndex, edge, valueMs: edgeValue(bar, edge, 0) };
   }
@@ -118,6 +125,7 @@ export function useAnimationTimeline(deps: AnimationTimelineDeps) {
     const delta = event.key === "ArrowLeft" ? -TIMELINE_STEP_MS : event.key === "ArrowRight" ? TIMELINE_STEP_MS : 0;
     if (delta === 0) return;
     event.preventDefault();
+    event.stopPropagation();
     writeEdge(bar.animationIndex, edge, edgeValue(bar, edge, edge === "duration" ? delta * bar.passes : delta));
   }
 

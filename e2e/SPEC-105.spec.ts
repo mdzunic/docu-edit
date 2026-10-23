@@ -160,3 +160,85 @@ test("by-paragraph build, click-a-shape spin and a motion path round-trip", asyn
   await expect(page.getByTestId("animation-path-direction")).toHaveValue("right");
   await expect(page.getByTestId("animation-path-distance")).toHaveValue("25");
 });
+
+test("the motion-path endpoint and the timeline edges drag, take focus and step by arrow", async ({ page }) => {
+  await openFixture(page);
+  await openPanel(page);
+  const workspace = page.getByTestId("stage-workspace");
+
+  // A "Line" motion path on the shape (right, 25%), its editor armed.
+  const shape = workspace.getByTestId("slide-frame").filter({ hasText: "Press me" });
+  await shape.click();
+  await page.getByTestId("animation-add").click();
+  await expect(page.getByTestId("animation-row")).toHaveCount(1);
+  await page.getByTestId("animation-effect").selectOption("motionPath");
+  await page.getByTestId("animation-path-preset").selectOption("line");
+  await expect(page.getByTestId("animation-path-direction")).toHaveValue("right");
+  await expect(page.getByTestId("animation-path-distance")).toHaveValue("25");
+  await page.getByTestId("animation-path-edit").click();
+  const endpoint = page.getByTestId("animation-path-endpoint");
+  await expect(endpoint).toBeVisible();
+
+  // Drag the endpoint straight down: the path turns down, the panel follows,
+  // and the endpoint keeps focus for the arrows.
+  const box = await endpoint.boundingBox();
+  if (!box) throw new Error("no endpoint box");
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  const stageBox = await page.getByTestId("animation-path-overlay").boundingBox();
+  if (!stageBox) throw new Error("no overlay box");
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - stageBox.width * 0.25, y + stageBox.height * 0.4, { steps: 12 });
+  await page.mouse.up();
+  await expect(page.getByTestId("animation-path-direction")).toHaveValue("down");
+  await expect(page.getByTestId("animation-path-distance")).toHaveValue("40");
+  await expect(endpoint).toHaveAttribute("aria-label", "Path end: down, 40%");
+  await expect(endpoint).toBeFocused();
+  // The arrows step the endpoint, never the (still selected) shape too.
+  const shapeStyle = await shape.getAttribute("style");
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("animation-path-distance")).toHaveValue("41");
+  await expect(endpoint).toHaveAttribute("aria-label", "Path end: down, 41%");
+  expect(await shape.getAttribute("style")).toBe(shapeStyle);
+  // One undo entry per gesture: the key press, then the whole drag.
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("animation-path-distance")).toHaveValue("40");
+  await page.keyboard.press("Control+z");
+  await expect(page.getByTestId("animation-path-direction")).toHaveValue("right");
+  await expect(page.getByTestId("animation-path-distance")).toHaveValue("25");
+  await page.getByTestId("animation-path-edit").click();
+  await expect(endpoint).toHaveCount(0);
+
+  // The timeline: dragging the bar's right edge lengthens it in 100ms steps,
+  // the edge takes focus, and Right then steps it once more.
+  const toggle = page.getByTestId("animation-timeline-toggle");
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") {
+    await toggle.click();
+  }
+  const timeline = page.getByTestId("animation-timeline");
+  const durationEdge = timeline.getByTestId("animation-timeline-duration-0");
+  await expect(durationEdge).toHaveAttribute("aria-valuenow", "500");
+  const edge = await durationEdge.boundingBox();
+  if (!edge) throw new Error("no edge box");
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+  await page.mouse.down();
+  // 60px per second: 30px is half a second.
+  await page.mouse.move(edge.x + edge.width / 2 + 30, edge.y + edge.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(durationEdge).toHaveAttribute("aria-valuenow", "1000");
+  await expect(durationEdge).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(durationEdge).toHaveAttribute("aria-valuenow", "1100");
+  expect(await shape.getAttribute("style")).toBe(shapeStyle);
+
+  // A click on the delay edge focuses it too; Right then steps the delay.
+  const delayEdge = timeline.getByTestId("animation-timeline-delay-0");
+  await expect(delayEdge).toHaveAttribute("aria-valuenow", "0");
+  await delayEdge.click();
+  await expect(delayEdge).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(delayEdge).toHaveAttribute("aria-valuenow", "100");
+  await expect(durationEdge).toHaveAttribute("aria-valuenow", "1100");
+  expect(await shape.getAttribute("style")).toBe(shapeStyle);
+});

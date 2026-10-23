@@ -141,8 +141,10 @@ function depthHarness(animations: Slide["animations"]) {
 function at(clientX: number): PointerEvent {
   return { clientX, pointerId: 1, target: null } as unknown as PointerEvent;
 }
-function key(k: string): KeyboardEvent {
-  return { key: k, preventDefault: () => {} } as unknown as KeyboardEvent;
+function key(k: string): KeyboardEvent & { stopPropagation: ReturnType<typeof vi.fn> } {
+  return { key: k, preventDefault: () => {}, stopPropagation: vi.fn() } as unknown as KeyboardEvent & {
+    stopPropagation: ReturnType<typeof vi.fn>;
+  };
 }
 
 describe("useAnimations — SPEC-105", () => {
@@ -316,6 +318,25 @@ describe("useAnimations — SPEC-105", () => {
     // An arrow moves the off-grid delay by exactly one step.
     h.c.edgeKeydown(bar, "delay", key("ArrowRight"));
     expect(h.model.value!.slides[0].animations![0].delayMs).toBe(350);
+  });
+
+  it("a pressed edge takes focus, and the arrows it handles never reach the editor's frame nudge", () => {
+    const h = depthHarness([{ frameId: "box", effect: "spin", trigger: "click" }]);
+    const bar = h.c.timeline.value!.groups[0].bars[0];
+    const edge = document.createElement("span");
+    edge.tabIndex = 0;
+    document.body.append(edge);
+    h.c.startEdgeDrag(bar, "duration", { clientX: 100, pointerId: 1, target: edge } as unknown as PointerEvent);
+    expect(document.activeElement).toBe(edge);
+    h.c.endEdgeDrag();
+    edge.remove();
+    const right = key("ArrowRight");
+    h.c.edgeKeydown(h.c.timeline.value!.groups[0].bars[0], "duration", right);
+    expect(right.stopPropagation).toHaveBeenCalled();
+    expect(h.model.value!.slides[0].animations![0].durationMs).toBe(600);
+    const down = key("ArrowDown");
+    h.c.edgeKeydown(h.c.timeline.value!.groups[0].bars[0], "duration", down);
+    expect(down.stopPropagation).not.toHaveBeenCalled();
   });
 
   it("offers only frames a saved file can name as a trigger (no clip, group or foreign object)", () => {
