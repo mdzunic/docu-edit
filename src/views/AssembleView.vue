@@ -74,7 +74,10 @@ function close() {
       >
         {{ assembly.notice.value }}
       </p>
-      <aside class="assembly-left">
+      <aside
+        class="assembly-left"
+        aria-label="Tray"
+      >
         <AssemblyTray
           :tray="assembly.tray"
           @add="pickerOpen = true"
