@@ -5,7 +5,10 @@
 // clipboard, fill handle and drag-move, SPEC-128's sort and filter, SPEC-133's
 // names and tables — each over the view's book, view state, selection and
 // editing exactly as the view called them before, in the same order — and
-// the menu bar that drives them (useSpreadsheetMenu).
+// the menu bar that drives them (useSpreadsheetMenu). SPEC-136: page setup,
+// the print preview and PDF export (usePageSetup, useSheetPrint,
+// useSheetPdfExport) — the menu's File ▸ Page setup… / Print… / Print area,
+// View ▸ Page breaks and Insert ▸ page breaks — returned as `printing`.
 import type { SpreadsheetLocale } from "../../lib/spreadsheet/numberFormat/locale";
 import { useFillHandle } from "./useFillHandle";
 import { useFormatPainter } from "./useFormatPainter";
@@ -14,6 +17,9 @@ import type { FormulaDisplay } from "./useFormulaDisplay";
 import { useHeaderResize } from "./useHeaderResize";
 import { useMerges } from "./useMerges";
 import { useNames } from "./useNames";
+import { usePageSetup } from "./usePageSetup";
+import { useSheetPdfExport } from "./useSheetPdfExport";
+import { useSheetPrint } from "./useSheetPrint";
 import { useRangeMove } from "./useRangeMove";
 import type { Recalc } from "./useRecalc";
 import { useSheetClipboard } from "./useSheetClipboard";
@@ -53,6 +59,9 @@ export function useSheetTools(deps: SheetToolsDeps) {
   const sortFilter = useSortFilter({ book, viewState, selection, sheetMetrics, editing, locale });
   const names = useNames({ book, viewState, selection, editing });
   const tables = useSheetTables({ book, viewState, selection, sheetMetrics, editing, locale });
-  const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle, sortFilter, names, tables });
-  return { formatting, structure, headerResize, merges, painter, clipboard, fillHandle, rangeMove, sortFilter, names, tables, menu };
+  const pageSetup = usePageSetup({ book, viewState, selection, editing });
+  const print = useSheetPrint({ book, selection, pageSetup, locale });
+  const printing = { pageSetup, print, pdf: useSheetPdfExport({ book, print }) };
+  const menu = useSpreadsheetMenu({ book, viewState, zoom, formulas, recalc, editing, formatting, structure, clipboard, fillHandle, sortFilter, names, tables, printing });
+  return { formatting, structure, headerResize, merges, painter, clipboard, fillHandle, rangeMove, sortFilter, names, tables, menu, printing };
 }

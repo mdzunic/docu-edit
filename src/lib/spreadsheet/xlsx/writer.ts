@@ -154,6 +154,7 @@ import { createSliceClock, yieldIfDue } from "../serialiseSlices";
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
+import { spliceXlsxPageSetup } from "./pageSetup";
 
 export { emptyWorksheetXml } from "./sheetXml";
 
@@ -186,7 +187,7 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
   if (
     !model.structureDirty &&
     !model.namesDirty &&
-    !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheet.annotationsDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))
+    !model.sheets.some((sheet) => sheet.dirty || sheet.drawingsDirty || sheet.annotationsDirty || sheet.pageSetupDirty || sheetChartsChanged(sheet) || sheetTablesChanged(sheet))
   ) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
@@ -270,7 +271,10 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptio
     worksheets.push(
       isChartSheetPart(sheetParts[index]!)
         ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
-        : await serializeWorksheetAsync(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }, clock),
+        : spliceXlsxPageSetup(
+            await serializeWorksheetAsync(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }, clock),
+            sheet.pageSetup,
+          ),
     );
     await yieldIfDue(clock);
   }
@@ -717,6 +721,20 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
     const next = annotate(xml);
     return next === xml ? tabled : encode(next);
   };
+  // SPEC-136: then a dirty or page-setup-edited sheet's page elements. A
+  // rebuilt sheet takes them on its text before it is encoded (SPEC-137: a
+  // large part is not decoded a second time); the splice, like the ones
+  // above, places by schema rank, so its order among them does not matter.
+  const splicesPageSetup = (sheet: Sheet): boolean => write && sheet.kind === "grid" && (sheet.dirty === true || sheet.pageSetupDirty === true);
+  const pagedXml = (sheet: Sheet, xml: string): string => (splicesPageSetup(sheet) ? spliceXlsxPageSetup(xml, sheet.pageSetup) : xml);
+  const withPageSetup = (sheet: Sheet, bytes: Uint8Array): Uint8Array => {
+    if (!splicesPageSetup(sheet)) {
+      return bytes;
+    }
+    const xml = decodeUtf8(bytes);
+    const next = spliceXlsxPageSetup(xml, sheet.pageSetup);
+    return next === xml ? bytes : encode(next);
+  };
   // SPEC-137: a rebuilt sheet is serialised in SERIALISE_SLICE_MS slices —
   // one clock for the whole save, sheets in order (they share the string and
   // style writers).
@@ -726,7 +744,7 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
     if (plan.generated) {
       const xml = write && plan.sheet.kind === "grid" ? await serializeWorksheetAsync(plan.sheet, undefined, context(plan), clock) : emptyWorksheetXml(plan.sheet, active, model);
       await yieldIfDue(clock);
-      sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(xml)));
+      sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(pagedXml(plan.sheet, xml))));
       await yieldIfDue(clock);
       continue;
     }
@@ -741,14 +759,14 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
       // the clock yields around them as it does between rows.
       const base = retainedBase(bytes, plan, sheetRemap, model);
       await yieldIfDue(clock);
-      const xml = await serializeWorksheetAsync(plan.sheet, base, context(plan, sheetRemap), clock);
+      const xml = pagedXml(plan.sheet, await serializeWorksheetAsync(plan.sheet, base, context(plan, sheetRemap), clock));
       await yieldIfDue(clock);
       const encoded = encode(xml);
       await yieldIfDue(clock);
       sheetBytes.set(plan.partName, withDrawing(plan.partName, encoded));
       continue;
     }
-    sheetBytes.set(plan.partName, withDrawing(plan.partName, sheetPartFor(bytes, plan, active, sheetRemap, model)));
+    sheetBytes.set(plan.partName, withPageSetup(plan.sheet, withDrawing(plan.partName, sheetPartFor(bytes, plan, active, sheetRemap, model))));
   }
 
   // The string and style tables, appended to (or added) when a sheet needed it.

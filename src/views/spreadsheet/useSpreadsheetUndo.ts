@@ -9,8 +9,8 @@
 // SHEET_BY_REFERENCE_FIELDS (`rows`, `sourceXml`, SPEC-124's `columns`,
 // `merges` and `frozen`, SPEC-128's `autoFilter` and `sortState`,
 // SPEC-129's `conditionalFormats`, SPEC-130's `validations`, SPEC-131's
-// `drawings`, SPEC-133's `tables` and SPEC-135's `notes`, `threads` and
-// `hyperlinks`, which every
+// `drawings`, SPEC-133's `tables`, SPEC-135's `notes`, `threads` and
+// `hyperlinks` and SPEC-136's `pageSetup`, which every
 // command replaces and never mutates), kept by reference because
 // copy-on-write makes that safe — so an undo
 // restores them by identity — plus every WORKBOOK_SNAPSHOT_FIELDS value by
@@ -79,6 +79,7 @@ export const SHEET_BY_REFERENCE_FIELDS: readonly (keyof Sheet)[] = [
   "notes",
   "threads",
   "hyperlinks",
+  "pageSetup",
 ];
 
 export const WORKBOOK_SNAPSHOT_FIELDS: readonly (keyof SpreadsheetModel)[] = [

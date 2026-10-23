@@ -58,6 +58,7 @@ import { readXlsxPersons, readXlsxSheetAnnotations } from "./annotations";
 import { readXlsxDefinedNames } from "./definedNames";
 import { readXlsxChartSheet, readXlsxSheetDrawings } from "./drawingXml";
 import { partTextOf, relationshipKind, relationshipsOf, workbookPathOf } from "./package";
+import { readXlsxPageSetup } from "./pageSetup";
 import { coreProperties, detectXlsx, readTheme, readWorkbook, scanned, type WorkbookInfo } from "./reader";
 import type { SharedStringTable } from "./sharedStrings";
 import { readSharedStrings, startWorksheetRead } from "./sheetXml";
@@ -373,6 +374,11 @@ export async function readXlsxShell(
       }
       // SPEC-135: notes, threads and hyperlinks.
       Object.assign(sheet, readXlsxSheetAnnotations(parts, partName, xml, { ...(persons ? { persons } : {}), ...(indexedColors ? { indexedColors } : {}) }));
+      // SPEC-136: the page elements (the deferred text keeps everything after sheetData).
+      const pageSetup = readXlsxPageSetup(xml);
+      if (pageSetup !== undefined) {
+        sheet.pageSetup = pageSetup;
+      }
     }
     if (media.size > 0) {
       model.media = [...media.values()];

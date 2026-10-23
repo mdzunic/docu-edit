@@ -142,6 +142,7 @@ import {
 } from "./styles";
 import { serializeTableAsync, type OdsTableContext } from "./tableXml";
 import { createSliceClock } from "../serialiseSlices";
+import { OdsPageSetupWriter, withOdsPrintRanges } from "./pageSetup";
 
 export interface WriteOdsOptions {
   /** meta.xml's `dc:date` from scratch (defaults to core `now()`). */
@@ -203,7 +204,7 @@ export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions
   // yielding decode rather than one synchronous atob over the whole
   // retained package.
   const parts = await decodedPartBytesAsync(model.opaque);
-  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
+  if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.pageSetupDirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
   return zip(mimetypeFirst(await buildSubstitution(model, parts, options)));
@@ -364,6 +365,8 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOption
   const charts = planOdsCharts(model, []);
   const chartObjectDir = (drawing: SheetDrawing): string | undefined => charts.minted.get(drawing);
   const localNames = (sheet: Sheet, trailing: string): string => odsTrailingWithNames(trailing, model, sheet, new Map());
+  const scratchStyles = fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale);
+  const pageSetups = new OdsPageSetupWriter("", scratchStyles, (prefix) => registry.freshName(prefix));
   // SPEC-137: one shared clock, sheets serialised sequentially (never
   // Promise.all) — each sheet's table appends to the shared `registry` in
   // sheet order, which concurrent calls would interleave incorrectly.
@@ -371,7 +374,13 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOption
   const tableTexts: string[] = [];
   for (const sheet of model.sheets) {
     tableTexts.push(
-      await serializeTableAsync(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }, clock),
+      withNewTablePageSetup(
+        await serializeTableAsync(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }, clock),
+        sheet,
+        model,
+        registry,
+        pageSetups,
+      ),
     );
   }
   const tables = tableTexts.join("");
@@ -400,7 +409,7 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOption
     { name: "meta.xml", data: encode(buildMetaXml({ title: model.title }, modified)) },
     {
       name: "styles.xml",
-      data: encode(withNamedStyles(fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale), named.xml + conditionalFormats.stylesXml)),
+      data: encode(pageSetups.stylesXmlWith(withNamedStyles(scratchStyles, named.xml + conditionalFormats.stylesXml))),
     },
     { name: "content.xml", data: encode(content) },
     { name: "settings.xml", data: encode(fromScratchSettingsXml(active?.name ?? "")) },
@@ -408,6 +417,19 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOption
 }
 
 // --- substitution ---------------------------------------------------------------------------
+
+/** SPEC-136: a table written from the model alone (a new sheet's, a
+ * from-scratch package's) with its print ranges and, when its setup is not
+ * the "Default" master page's, a minted master page. */
+function withNewTablePageSetup(table: string, sheet: Sheet, model: SpreadsheetModel, registry: OdsStyleRegistry, pageSetups: OdsPageSetupWriter): string {
+  let text = withOdsPrintRanges(model, sheet, table);
+  const minted = sheet.pageSetup === undefined ? undefined : pageSetups.masterPageFor(sheet, undefined);
+  if (minted !== undefined) {
+    const tabColor = tabColorHex(sheet, model);
+    text = setTableAttribute(text, "table:style-name", registry.tableStyle({ masterPage: minted, display: sheet.visibility === "visible", ...(tabColor === undefined ? {} : { tabColor }) }));
+  }
+  return text;
+}
 
 /** A table style's master page, read from the envelope's automatic styles. */
 function masterPageOf(prefix: string, styleName: string | undefined): string {
@@ -534,6 +556,8 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
     localNames: (sheet, trailing) => odsTrailingWithNames(trailing, model, sheet, namespaces),
   };
   let rebuilt = "";
+  // SPEC-136: a table whose setup its master page no longer reads as gets minted ones (ods/pageSetup.ts).
+  const pageSetups = new OdsPageSetupWriter(envelope.prefix, stylesXml, (prefix) => registry.freshName(prefix));
 
   // SPEC-137: a rebuilt table is serialised in SERIALISE_SLICE_MS slices —
   // one clock for the whole save, tables in order (they share the style
@@ -546,7 +570,7 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
   }
   async function tableText(sheet: Sheet): Promise<string> {
     if (sheet.sourceXml === undefined) {
-      const table = await serializeTableAsync(sheet, context, clock);
+      const table = withNewTablePageSetup(await serializeTableAsync(sheet, context, clock), sheet, model, registry, pageSetups);
       rebuilt += table;
       return table;
     }
@@ -559,8 +583,12 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
     const declared = book.tableStyle(styleName);
     const hidden = sheet.visibility !== "visible";
     const color = tabColorHex(sheet, model);
-    if (declared.hidden !== hidden || declared.tabColor !== color) {
-      const name = registry.tableStyle({ masterPage: masterPageOf(envelopePrefix, styleName), display: !hidden, tabColor: color });
+    const minted = sheet.dirty || sheet.pageSetupDirty ? pageSetups.masterPageFor(sheet, styleName) : undefined;
+    if (model.namesDirty) {
+      text = withOdsPrintRanges(model, sheet, text);
+    }
+    if (declared.hidden !== hidden || declared.tabColor !== color || minted !== undefined) {
+      const name = registry.tableStyle({ masterPage: minted ?? masterPageOf(envelopePrefix, styleName), display: !hidden, tabColor: color });
       text = setTableAttribute(text, "table:style-name", name);
       if (declared.tabColor !== color) {
         recoloured.add(sheet.name);
@@ -638,8 +666,12 @@ async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uin
     let data = bytes;
     if (name === "content.xml") {
       data = encode(content);
-    } else if (name === "styles.xml" && named.xml + conditionalFormats.stylesXml !== "") {
-      data = encode(withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml));
+    } else if (name === "styles.xml") {
+      const withNamed = named.xml + conditionalFormats.stylesXml === "" ? stylesXml! : withNamedStyles(stylesXml!, named.xml + conditionalFormats.stylesXml);
+      const next = pageSetups.stylesXmlWith(withNamed);
+      if (next !== stylesXml) {
+        data = encode(next);
+      }
     } else if (name === "settings.xml") {
       data = encode(settingsXmlFor(decodeUtf8(bytes), model, remap, recoloured, active?.name));
     } else if (name === "META-INF/manifest.xml" && (droppedObjects.length > 0 || droppedPictures.size > 0 || manifestAdds.length > 0 || charts.manifestEntries.length > 0)) {

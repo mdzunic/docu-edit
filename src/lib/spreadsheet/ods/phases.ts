@@ -75,6 +75,7 @@ import { readOdsContentValidations } from "./contentValidations";
 import { readOdsAutoFilters } from "./databaseRanges";
 import { OdsMediaReader, readOdsDrawings, type OdsDrawingSource } from "./drawingXml";
 import { odsTableNamesSpan, readOdsTableNames, readOdsWorkbookNames } from "./namedExpressions";
+import { readOdsPageSetups } from "./pageSetup";
 import { applyViewSettings, detectOds, OdsContentOutline, OdsTableScan, refreshUncachedOdsCharts, scanned, type OdsDates, type OdsTableScanEnv } from "./reader";
 import { OdsScanBook, type OdsScanBookState } from "./scanBook";
 import { readOdsSettings } from "./settings";
@@ -300,7 +301,8 @@ export async function readOdsShell(
     throw parseError("content.xml", "the spreadsheet's content part is missing");
   }
   const stylesBytes = parts.get("styles.xml");
-  const sheetStyles = stylesBytes ? scanned("styles.xml", () => readOdsStyleSheet(partText(stylesBytes))) : emptyOdsStyleSheet();
+  const stylesXml = stylesBytes ? partText(stylesBytes) : undefined;
+  const sheetStyles = stylesXml !== undefined ? scanned("styles.xml", () => readOdsStyleSheet(stylesXml)) : emptyOdsStyleSheet();
   const { odsEnvelope: envelope, odsTables: tables, odsOutline: outline } = sources;
   if (sources.format !== "ods" || !envelope || !tables || !outline) {
     throw new Error("the .ods shell phase reads phase 1's sources of content.xml");
@@ -384,6 +386,8 @@ export async function readOdsShell(
           const names = deferredOf.get(index)?.namesXml;
           return names === undefined ? [] : readOdsTableNames(names, sheet.id, namespaces);
         }),
+        // SPEC-136: each table's page setup; its print ranges and header rows/columns as reserved names.
+        ...readOdsPageSetups(model.sheets, prefix, stylesXml),
       ];
     });
     const settingsBytes = parts.get("settings.xml");

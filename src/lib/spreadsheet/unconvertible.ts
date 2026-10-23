@@ -35,12 +35,15 @@
 // item-level labels by returning them from its marker. SPEC-135 deleted the
 // "comments" and "hyperlinks" rows: notes, threads and links cross through
 // the model (stripRetention's crossAnnotations — a thread becomes a note on
-// the way to .ods, its replies as replyParagraphText paragraphs).
+// the way to .ods, its replies as replyParagraphText paragraphs). SPEC-136
+// deleted "page setup": a sheet's setup crosses field for field
+// (stripRetention keeps `pageSetup`, drops `pageSetupDirty`), its print area
+// and titles as the reserved names both formats map.
 import { isModelledChart } from "./charts";
 import { sheetFormats } from "./conditionalFormats";
 import { isChartSheet } from "./foreign";
 import type { SheetDrawing, SpreadsheetModel } from "./model";
-import { partTextOf, readSourceWorkbook, type PartLookup } from "./xlsx/package";
+import { readSourceWorkbook, type PartLookup } from "./xlsx/package";
 
 /** What a marker looks at: the source model and its retained parts. */
 export interface ConversionSource {
@@ -58,25 +61,6 @@ export interface UnconvertibleRow {
 }
 
 // --- xlsx --------------------------------------------------------------------------------
-
-const WORKSHEET_TEXTS = new WeakMap<ConversionSource, string[]>();
-
-/** The retained text of every grid sheet the model holds. */
-function worksheetTexts(source: ConversionSource): string[] {
-  let texts = WORKSHEET_TEXTS.get(source);
-  if (!texts) {
-    texts = source.model.sheets.flatMap((sheet) => {
-      const text = sheet.kind === "grid" && sheet.partName !== undefined ? partTextOf(source.parts, sheet.partName) : undefined;
-      return text === undefined ? [] : [text];
-    });
-    WORKSHEET_TEXTS.set(source, texts);
-  }
-  return texts;
-}
-
-function anyWorksheetHas(fragment: string): Marker {
-  return (source) => worksheetTexts(source).some((text) => text.includes(fragment));
-}
 
 function anyPart(pattern: RegExp): Marker {
   return ({ parts }) => [...parts.keys()].some((name) => pattern.test(name));
@@ -107,14 +91,6 @@ const odsTables: Marker = ({ model }) => {
   const claimed = new Set(model.sheets.flatMap((sheet) => (sheet.autoFilter?.odsName === undefined ? [] : [sheet.autoFilter.odsName])));
   const text = (model.odsContentEnvelope?.prefix ?? "") + (model.odsContentEnvelope?.suffix ?? "");
   return [...text.matchAll(/<table:database-range\b[^>]*?\btable:name="([^"]*)"/g)].some((match) => !claimed.has(match[1]!));
-};
-
-const odsPageSetup: Marker = ({ model, parts }) => {
-  const styles = partTextOf(parts, "styles.xml") ?? "";
-  if (/style:print-orientation="landscape"|style:scale-to(?:-pages)?="/.test(styles)) {
-    return true;
-  }
-  return model.sheets.some((sheet) => /<table:table\b[^>]*\btable:print-ranges="/.test(sheet.sourceXml ?? ""));
 };
 
 // --- both ---------------------------------------------------------------------------------------
@@ -188,7 +164,6 @@ export const UNCONVERTIBLE_CONTENT: readonly UnconvertibleRow[] = [
   { label: "tables", xlsx: anyPart(/^xl\/tables\/[^/]+\.xml$/), ods: odsTables },
   { label: "colour and icon filters", xlsx: verbatimFilters, ods: verbatimFilters },
   { label: "pivot tables", xlsx: anyPart(/^xl\/pivotTables\//), ods: envelopeHas("<table:data-pilot-tables") },
-  { label: "page setup", xlsx: (source) => anyWorksheetHas("<pageSetup")(source) || anyWorksheetHas("<headerFooter")(source), ods: odsPageSetup },
   { label: "untranslatable formulas", xlsx: untranslatableFormulas, ods: untranslatableFormulas },
   { label: "custom date origin", ods: ({ model }) => model.odsNullDate !== undefined },
 ];

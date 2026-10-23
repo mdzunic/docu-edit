@@ -101,6 +101,7 @@ import { partTextOf, workbookPathOf } from "./package";
 import { readXlsxSheetTables } from "./tableXml";
 import { readSharedStrings, readWorksheet } from "./sheetXml";
 import { isSpreadsheetMl, readXlsxStyles } from "./styles";
+import { readXlsxPageSetup } from "./pageSetup";
 
 export { decodeXmlEscapes, readSharedStrings, type SharedString } from "./sheetXml";
 
@@ -384,6 +385,11 @@ export async function parseXlsx(
       // SPEC-135: notes, threads and hyperlinks.
       const annotations = readXlsxSheetAnnotations(parts, entry.partName, partText(bytes), { ...(persons ? { persons } : {}), ...(indexedColors ? { indexedColors } : {}) });
       Object.assign(sheet, annotations);
+      // SPEC-136: the page elements.
+      const pageSetup = readXlsxPageSetup(partText(bytes));
+      if (pageSetup !== undefined) {
+        sheet.pageSetup = pageSetup;
+      }
     } else if (entry.chartsheet && bytes) {
       const chart = readXlsxChartSheet(parts, entry.partName, sheet);
       if (chart) {

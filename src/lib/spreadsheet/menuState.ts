@@ -74,6 +74,14 @@ export interface SpreadsheetMenuState {
    * View ▸ Show all notes (session-only). */
   commentsOpen: boolean;
   showAllNotes: boolean;
+  /** SPEC-136: View ▸ Page breaks (session-only, checked while shown), and
+   * whether Insert ▸ Page break / Remove page break / Reset all page breaks
+   * and File ▸ Print area ▸ Clear print area apply. */
+  pageBreaks: boolean;
+  canInsertPageBreak: boolean;
+  canRemovePageBreak: boolean;
+  canResetPageBreaks: boolean;
+  hasPrintArea: boolean;
 }
 
 /** SPEC-128: why Clear filters and Reapply filter are disabled. */
@@ -150,6 +158,17 @@ export const SHEET_MENU_COMMANDS = {
   altText: "arrange.alt-text",
   /** SPEC-133: Formulas ▸ Name Manager… (Ctrl/Cmd+F3). */
   nameManager: "formulas.name-manager",
+  /** SPEC-136: File ▸ Page setup…, Print… (Ctrl/Cmd+P), Print area ▸ Set /
+   * Clear; View ▸ Page breaks; Insert ▸ Page break, Remove page break,
+   * Reset all page breaks. */
+  pageSetup: "file.page-setup",
+  print: "file.print",
+  setPrintArea: "file.set-print-area",
+  clearPrintArea: "file.clear-print-area",
+  pageBreaks: "view.page-breaks",
+  insertPageBreak: "insert.page-break",
+  removePageBreak: "insert.remove-page-break",
+  resetPageBreaks: "insert.reset-page-breaks",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
@@ -213,5 +232,10 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     linkDisabledReason: typeof state.linkDisabledReason === "string" ? state.linkDisabledReason : "",
     commentsOpen: state.commentsOpen === true,
     showAllNotes: state.showAllNotes === true,
+    pageBreaks: state.pageBreaks === true,
+    canInsertPageBreak: state.canInsertPageBreak === true,
+    canRemovePageBreak: state.canRemovePageBreak === true,
+    canResetPageBreaks: state.canResetPageBreaks === true,
+    hasPrintArea: state.hasPrintArea === true,
   };
 }

@@ -199,6 +199,11 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     workbook,
     activeIndex,
     generation,
+    /** Bumped by sheetsChanged — every change to the model on show: a
+     * command, undo or redo, a recalculation pass, a chart refresh — which
+     * mutates it in place (SPEC-136's print preview and page-break lines
+     * follow it). */
+    revision,
     activeSheet,
     tabs,
     loading,

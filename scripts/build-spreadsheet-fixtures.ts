@@ -316,5 +316,24 @@ import { buildSpec135AnnotationsXlsxBytes } from "../src/lib/spreadsheet/fixture
 writeFileSync(join(fixturesDir, "spec135-annotations.xlsx"), await buildSpec135AnnotationsXlsxBytes());
 // --- end SPEC-135 spec135-annotations.xlsx ---------------------------------------
 
+// --- SPEC-136 -------------------------------------------------------------------
+// - spec136-print.xlsx — Excel-shaped page setup: A4 landscape, fit 1 wide ×
+//                        automatic tall (pageSetUpPr fitToPage), custom
+//                        margins, gridlines and headings, centred
+//                        horizontally, a three-section header, a different
+//                        first-page footer, a manual row break, Print_Area and
+//                        Print_Titles, an r:id to a dummy printerSettings part,
+//                        a merge straddling a natural break, a hidden column
+// - spec136-print.ods  — the LibreOffice-shaped twin: two tables sharing
+//                        master page "Default" (style:scale-to-X="1", header
+//                        regions with page-number/page-count/sheet-name),
+//                        table:print-ranges, table:table-header-rows and a row
+//                        style with fo:break-before="page"
+import { buildSpec136PrintOdsBytes, buildSpec136PrintXlsxBytes } from "../src/lib/spreadsheet/fixtures/build";
+
+writeFileSync(join(fixturesDir, "spec136-print.xlsx"), await buildSpec136PrintXlsxBytes());
+writeFileSync(join(fixturesDir, "spec136-print.ods"), await buildSpec136PrintOdsBytes());
+// --- end SPEC-136 ---------------------------------------------------------------
+
 // The idle scheduler keeps Node's event loop alive; the files are written.
 process.exit(0);

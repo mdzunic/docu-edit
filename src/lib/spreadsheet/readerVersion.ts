@@ -4,4 +4,4 @@
 // record's `readerVersion` without importing open.ts — which carries both
 // readers' read phases (SPEC-137) and so loads on demand, off the library
 // page's module graph.
-export const SPREADSHEET_READER_VERSION = 15;
+export const SPREADSHEET_READER_VERSION = 16;

@@ -1257,6 +1257,12 @@ export class OdsStyleBook {
     return this.columnWidths.get(name);
   }
 
+  /** SPEC-136: whether a row or column style breaks the page before it
+   * (`fo:break-before="page"`). */
+  breaksBefore(family: "table-row" | "table-column", name: string | undefined): boolean {
+    return this.flatten(family, name)[family]?.get("fo:break-before") === "page";
+  }
+
   /** A row style's height in pt and whether it is a custom one
    * (`style:use-optimal-row-height="false"`). */
   rowHeight(name: string | undefined): OdsRowHeight {
@@ -1685,22 +1691,26 @@ export class OdsStyleRegistry {
     );
   }
 
-  columnStyle(widthPx: number): string {
+  /** SPEC-136: `pageBreak` joins the key — `fo:break-before="page"`. */
+  columnStyle(widthPx: number, pageBreak = false): string {
     const inches = (widthPx / 96).toFixed(4);
+    const broken = pageBreak ? ` fo:break-before="page"` : "";
     return this.add(
       "co",
-      inches,
-      (name) => `<style:style style:name="${name}" style:family="table-column"><style:table-column-properties style:column-width="${inches}in"/></style:style>`,
+      `${inches}${pageBreak ? "|break" : ""}`,
+      (name) => `<style:style style:name="${name}" style:family="table-column"><style:table-column-properties${broken} style:column-width="${inches}in"/></style:style>`,
     );
   }
 
-  rowStyle(heightPt: number, optimal: boolean): string {
+  /** SPEC-136: `pageBreak` joins the key — `fo:break-before="page"`. */
+  rowStyle(heightPt: number, optimal: boolean, pageBreak = false): string {
     const height = `${Number(heightPt.toFixed(4))}pt`;
+    const broken = pageBreak ? ` fo:break-before="page"` : "";
     return this.add(
       "ro",
-      `${height}|${optimal}`,
+      `${height}|${optimal}${pageBreak ? "|break" : ""}`,
       (name) =>
-        `<style:style style:name="${name}" style:family="table-row"><style:table-row-properties style:row-height="${height}" style:use-optimal-row-height="${optimal}"/></style:style>`,
+        `<style:style style:name="${name}" style:family="table-row"><style:table-row-properties style:row-height="${height}" style:use-optimal-row-height="${optimal}"${broken}/></style:style>`,
     );
   }
 

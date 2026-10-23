@@ -90,6 +90,7 @@ import SheetNoteLayer from "./SheetNoteLayer.vue";
 import SheetOverviewCanvas from "./SheetOverviewCanvas.vue";
 import LinkChip from "../LinkChip.vue";
 import { linksOf } from "../../views/spreadsheet/useCellLinks";
+import SheetPageBreakLines from "./SheetPageBreakLines.vue";
 import ValidationDropdown from "./ValidationDropdown.vue";
 import ValidationInputMessage from "./ValidationInputMessage.vue";
 
@@ -198,6 +199,19 @@ function drawingFocus(id = "") {
 
 /** SPEC-135: notes (null: not wired). */
 const notes = computed(() => asSheetGridContext(props.context).notes ?? null);
+// SPEC-136: View ▸ Page breaks — each break's offset in the overlay layer
+// (hiddenMarkers' rule: a scrolled boundary under a frozen pane is not drawn).
+const printing = computed(() => asSheetGridContext(props.context).printing ?? null);
+function breakPosition(axis = "row", index = 0) {
+  const m = asSheetGridContext(props.context).sheetMetrics.metrics.value;
+  const col = axis === "col";
+  const edge = col ? m.colLeft(index) : m.rowTop(index);
+  if (index < (col ? vp.frozenCols.value : vp.frozenRows.value)) {
+    return edge;
+  }
+  const at = edge - (col ? vp.sx.value : vp.sy.value);
+  return at < (col ? vp.frozenW.value : vp.frozenH.value) ? null : at;
+}
 
 /** SPEC-130: the dropdown's events, to data validation. */
 const validationChrome = computed(() => grid.validationChrome.value);
@@ -387,6 +401,11 @@ function unscroll(event = new Event("scroll")) {
               class="sheet-freeze-line is-horizontal"
               data-testid="sheet-freeze-line"
               :style="{ top: px(grid.overlays.freezeLines.value.horizontal - 1) }"
+            />
+            <SheetPageBreakLines
+              v-if="printing?.pageSetup.pageBreaks.shown.value"
+              :lines="printing.pageSetup.pageBreaks.lines.value"
+              :position="breakPosition"
             />
           </div>
           <div

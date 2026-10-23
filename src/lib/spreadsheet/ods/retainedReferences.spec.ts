@@ -408,7 +408,7 @@ describe("the ods location table", () => {
     expectConsistent(deleted);
   });
 
-  it("table start tag: print ranges — moved parts upper-cased, the rest verbatim, a gone entry dropped, an emptied attribute removed", () => {
+  it("SPEC-136 retired the table start tag's print ranges: the names adjuster moves the model's Print_Area, the retained attribute stays verbatim", () => {
     const build = (): SpreadsheetModel =>
       odsBook({
         tables: [
@@ -416,23 +416,17 @@ describe("the ods location table", () => {
           { name: "Other", attrs: ` table:print-ranges="$Other.$B$3:.$C$4"` },
         ],
       });
-    const before = { data: sourceOf(build(), "Data"), other: sourceOf(build(), "Other") };
-
-    const inserted = build();
-    expect(edit(inserted, "Data", "insertRows", 1, 2)).toEqual(ids(sheetNamed(inserted, "Data")));
-    expect(spans(before.data, sourceOf(inserted, "Data"))).toEqual([["$Data.$a$1:.$d$20  $Data.$F$3:.$F$4", "$Data.$a$1:.$D$22  $Data.$F$5:.$F$6"]]);
-    expectConsistent(inserted);
-
-    const deleted = build();
-    edit(deleted, "Data", "deleteRows", 2, 2);
-    expect(spans(before.data, sourceOf(deleted, "Data"))).toEqual([["$Data.$a$1:.$d$20  $Data.$F$3:.$F$4", "$Data.$a$1:.$D$18"]]);
-    expectConsistent(deleted);
-
-    const emptied = build();
-    edit(emptied, "Other", "deleteRows", 2, 2);
-    expect(spans(before.other, sourceOf(emptied, "Other"), [` table:print-ranges="$Other.$B$3:.$C$4"`])).toEqual([]);
-    expect(sourceOf(emptied, "Other")).not.toContain("print-ranges");
-    expectConsistent(emptied);
+    for (const [table, kind, at, count] of [
+      ["Data", "insertRows", 1, 2],
+      ["Data", "deleteRows", 2, 2],
+      ["Other", "deleteRows", 2, 2],
+    ] as const) {
+      const model = build();
+      const before = sourceOf(model, table);
+      edit(model, table, kind, at, count);
+      expect(sourceOf(model, table), `${table} ${kind}`).toBe(before);
+      expectConsistent(model);
+    }
   });
 
   it("SPEC-129: inside tables, conditional formats' targets, conditions' values and base cells and formatting entries' values are retired — left verbatim — while a scenario beside them moves", () => {
@@ -466,11 +460,10 @@ describe("the ods location table", () => {
     expectConsistent(model);
   });
 
-  it("SPEC-129: inside tables, an emptied conditional format and an emptied calcext:conditional-formats are retired — never removed, left verbatim — while an emptied print range beside them still is", () => {
+  it("SPEC-129: inside tables, an emptied conditional format and an emptied calcext:conditional-formats are retired — never removed, left verbatim — while a scenario beside them moves", () => {
     const gone = `<calcext:conditional-format calcext:target-range-address="Data.B3:Data.B4"><calcext:condition calcext:value="[.B3]&gt;1" calcext:base-cell-address="Data.B3"/></calcext:conditional-format>`;
     const kept = `<calcext:conditional-format calcext:target-range-address="Data.C3:Data.D9"><calcext:condition calcext:value="[.C3]&gt;1" calcext:base-cell-address="Data.C3"/></calcext:conditional-format>`;
-    // SPEC-133 retired the named ranges: the table's print range is the emptied list beside them, a scenario the moved one.
-    const printed = ` table:print-ranges="$Data.$B$3:.$B$4"`;
+    // SPEC-133 retired the named ranges and SPEC-136 the print ranges: a scenario is the list that moves beside them.
     const scenario = `<table:scenario table:scenario-ranges="$Data.$C$3:.$D$9" table:is-active="true"/>`;
 
     for (const formats of [`<calcext:conditional-formats>${gone}${kept}</calcext:conditional-formats>`, `<calcext:conditional-formats>${gone}</calcext:conditional-formats>`]) {
@@ -480,12 +473,11 @@ describe("the ods location table", () => {
       expect(alone.sheets).toBe(sheets);
       expect(alone.opaque).toBe(opaque);
 
-      // Beside them the same edit removes the emptied print range and moves the scenario.
-      const model = odsBook({ tables: [{ name: "Data", attrs: printed, leading: scenario, trailing: formats }] });
+      // Beside them the same edit moves the scenario.
+      const model = odsBook({ tables: [{ name: "Data", leading: scenario, trailing: formats }] });
       const before = sourceOf(model, "Data");
       edit(model, "Data", "deleteRows", 2, 2);
-      expect(spans(before, sourceOf(model, "Data"), [printed])).toEqual([["$Data.$C$3:.$D$9", "$Data.$C$3:.$D$7"]]);
-      expect(sourceOf(model, "Data")).not.toContain("print-ranges");
+      expect(spans(before, sourceOf(model, "Data"))).toEqual([["$Data.$C$3:.$D$9", "$Data.$C$3:.$D$7"]]);
       expect(sourceOf(model, "Data")).toContain(formats);
       expectConsistent(model);
     }

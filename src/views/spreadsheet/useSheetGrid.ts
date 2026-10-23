@@ -32,7 +32,7 @@
 // SPEC-135: the notes (the context's `notes`) — sheetNoteLayout's
 // noteGridHooks, and the active cell's note text in its aria-describedby.
 import { computed, watch, type Ref } from "vue";
-import type { CellRef, GridRange } from "../../lib/spreadsheet/address";
+import { formatA1, type CellRef, type GridRange } from "../../lib/spreadsheet/address";
 import { mergeAt } from "../../lib/spreadsheet/merges";
 import { DEFAULT_THEME } from "../../lib/core/theme";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
@@ -63,6 +63,7 @@ import { sortFilterOf } from "./useSortFilter";
 import { useSheetOverlays } from "./useSheetOverlays";
 import { useSheetPointer } from "./useSheetPointer";
 import type { SheetSelectionController } from "./useSheetSelection";
+import type { SheetPrinting } from "./useSheetPrint";
 import { COLUMN_HEADER_HEIGHT_PX, ROW_HEADER_WIDTH_PX, useSheetViewport } from "./useSheetViewport";
 import type { SheetViewState } from "./useSheetViewState";
 import type { SheetZoom } from "./useSheetZoom";
@@ -110,6 +111,8 @@ export interface SheetGridContext {
   drawings?: SheetDrawings;
   /** SPEC-135: notes — indicators, popovers, boxes, the editor; absent = none. */
   notes?: CellNotes;
+  /** SPEC-136: page setup, the print preview and PDF export; absent = none. */
+  printing?: SheetPrinting;
 }
 
 /** Narrows SheetGrid's runtime-typed `context` prop (the .vue parser bars casts). */
@@ -294,12 +297,7 @@ export function useSheetGrid(
 
   function cellAddress(at: CellRef): string {
     const merge = mergeAt(merges(), at.row, at.col);
-    const anchor = merge ? { row: merge.top, col: merge.left } : at;
-    let letters = "";
-    for (let n = anchor.col + 1; n > 0; n = Math.floor((n - 1) / 26)) {
-      letters = String.fromCharCode(65 + ((n - 1) % 26)) + letters;
-    }
-    return `${letters}${anchor.row + 1}`;
+    return formatA1(merge ? { row: merge.top, col: merge.left } : at);
   }
 
   /** The cell a keyboard move should bring into view: the active cell when
