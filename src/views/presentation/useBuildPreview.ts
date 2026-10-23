@@ -150,13 +150,13 @@ export function useBuildPreview(deckSize?: () => DeckSize | null | undefined) {
    * as a mouse move's hit test, happened to flush style in between. */
   function afterCommitFrame(cb: () => void): void {
     const scheduled = generation;
-    const run = (): void => {
+    const fire = (): void => {
       if (scheduled === generation) cb();
     };
     if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => requestAnimationFrame(run));
+      requestAnimationFrame(() => requestAnimationFrame(fire));
     } else {
-      timers.push(window.setTimeout(run, 32));
+      timers.push(window.setTimeout(fire, 32));
     }
   }
 
@@ -167,7 +167,7 @@ export function useBuildPreview(deckSize?: () => DeckSize | null | undefined) {
       frameStyles.value = { ...frameStyles.value, [step.frameId]: style };
       return;
     }
-    const byIndex = { ...(paragraphStyles.value[step.frameId] ?? {}) };
+    const byIndex = { ...paragraphStyles.value[step.frameId] };
     for (let i = step.paragraphIndex; i <= (step.paragraphEnd ?? step.paragraphIndex); i++) {
       byIndex[i] = style;
     }
