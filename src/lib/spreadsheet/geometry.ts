@@ -12,8 +12,9 @@
 //   in the number of custom runs — and nothing is ever allocated per row of
 //   the 1,048,576-row grid. Zoom is a view transform applied outside: these
 //   numbers never see it.
+import { windowOf } from "../core/arrayWindow";
 import { findRow } from "./address";
-import { MAX_COLS, MAX_ROWS, rowIsHidden, type Sheet } from "./model";
+import { MAX_COLS, MAX_ROWS, rowIsHidden, type Row, type Sheet } from "./model";
 
 /** Padding on each side of a cell's text; + the 1 px gridline = Excel's 5 px. */
 export const CELL_PADDING_PX = 2;
@@ -249,6 +250,22 @@ export function defaultColumnPx(sheet: Pick<Sheet, "defaultColWidthPx">): number
 /** The default row height of a sheet in integer px (≥ 1). */
 export function defaultRowPx(sheet: Pick<Sheet, "defaultRowHeightPt">): number {
   return Math.max(1, ptToPx(sheet.defaultRowHeightPt ?? DEFAULT_ROW_HEIGHT_PT));
+}
+
+/** SPEC-137: whether a sheet's next rows array sizes its rows as its
+ * previous one does — every row that differs between them (by identity:
+ * copy-on-write keeps the rest) has its counterpart at the same index,
+ * hidden alike and of the same height — so the GridMetrics built from the
+ * previous one still hold (a value edit, a recalculation slice). */
+export function sameRowSizes(before: Row[], after: Row[]): boolean {
+  const { beforeMid, afterMid } = windowOf(before, after);
+  return (
+    beforeMid.length === afterMid.length &&
+    beforeMid.every((row, i) => {
+      const other = afterMid[i]!;
+      return other.index === row.index && rowIsHidden(other) === rowIsHidden(row) && other.heightPt === row.heightPt;
+    })
+  );
 }
 
 /** The sheet's GridMetrics. Built in one pass over its column spans and

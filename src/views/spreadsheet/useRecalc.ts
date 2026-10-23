@@ -15,7 +15,12 @@
 //   slice runs in the triggering task, so a pass that fits shows no flicker,
 //   and "Calculating…" shows only once a pass has run longer than
 //   CALCULATING_STATUS_DELAY_MS. A pass started while another runs cancels it
-//   and inherits the cells it had not evaluated.
+//   and inherits the cells it had not evaluated. SPEC-137: a later slice's
+//   task holds its step alone — the view's re-read of the values it wrote,
+//   and the pass's completion (its result, its edit callback's re-render and
+//   write-through), follow in a task of their own, so no task carries a
+//   slice and a re-render of the grid together (the recalc row of SPEC-137's
+//   budgets); settle() and a newer pass run that pending work first.
 // - SPEC-121's edit pipeline drives `edit(changed, done)`: an "edit" pass
 //   whose `done` receives the pass's changedSheetIds when it completes, and
 //   `settle()`, which completes a running pass at once so the next command,
@@ -99,6 +104,13 @@ export function isRecalculateShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKe
   return event.key === "F9" && !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey;
 }
 
+/** What one slice's step did: finished the pass, and/or rewrote the model's
+ * sheets (the view re-reads them). */
+interface SliceOutcome {
+  done: boolean;
+  rewrote: boolean;
+}
+
 export interface RecalcDeps {
   /** useWorkbookLoad's: the model on show and the hook that has the view
    * re-read its sheets after a pass rewrote values in place. */
@@ -128,11 +140,15 @@ export function useRecalc(deps: RecalcDeps) {
   let passReason: RecalcReason = "edit";
   const resultListeners: ((changed: CellKey[], reason?: RecalcReason) => void)[] = [];
   let slot: IdleHandle | null = null;
+  /** SPEC-137: a scheduled slice's view work, waiting in `slot` for its own
+   * task (see the module header). */
+  let viewWork: SliceOutcome | null = null;
   let statusTimer: ReturnType<typeof setTimeout> | null = null;
 
   function stopDriving(): void {
     slot?.cancel();
     slot = null;
+    viewWork = null;
     if (statusTimer !== null) {
       clearTimeout(statusTimer);
       statusTimer = null;
@@ -170,12 +186,14 @@ export function useRecalc(deps: RecalcDeps) {
     done?.(current.result.changedSheetIds);
   }
 
-  /** One slice; true when the pass is done. */
-  function slice(current: RecalcPass, model: SpreadsheetModel): boolean {
+  /** The engine's step for one slice: whether the pass is done and whether
+   * the step rewrote the model's sheets; null when the engine failed, which
+   * stops the pass. */
+  function step(current: RecalcPass, model: SpreadsheetModel): SliceOutcome | null {
     const sheets = model.sheets;
-    let done: boolean;
     try {
-      done = current.step(RECALC_SLICE_MS);
+      const done = current.step(RECALC_SLICE_MS);
+      return { done, rewrote: model.sheets !== sheets };
     } catch (error) {
       // A defect in the engine must not take the view down: stop the pass
       // and keep what is on screen.
@@ -188,23 +206,73 @@ export function useRecalc(deps: RecalcDeps) {
       const callback = passDone;
       passDone = null;
       callback?.([]);
-      return true;
+      return null;
     }
-    if (model.sheets !== sheets && deps.book.workbook.value === model) {
-      deps.book.sheetsChanged();
-    }
-    if (done) {
-      finish(current, model);
-    }
-    return done;
   }
 
+  /** A slice's view work: the view re-reads the sheets the step rewrote,
+   * and a pass that is done completes. */
+  function show(current: RecalcPass, model: SpreadsheetModel, outcome: SliceOutcome): void {
+    if (outcome.rewrote && deps.book.workbook.value === model) {
+      deps.book.sheetsChanged();
+    }
+    if (outcome.done) {
+      finish(current, model);
+    }
+  }
+
+  /** One slice with its view work in the same task; true when the pass is
+   * done. */
+  function slice(current: RecalcPass, model: SpreadsheetModel): boolean {
+    const outcome = step(current, model);
+    if (outcome) {
+      show(current, model, outcome);
+    }
+    return outcome?.done ?? true;
+  }
+
+  /** Runs the view work a scheduled slice left for a task of its own now. */
+  function showPending(): void {
+    const current = pass;
+    const model = passModel;
+    const outcome = viewWork;
+    if (!current || !model || !outcome) {
+      return;
+    }
+    slot?.cancel();
+    slot = null;
+    viewWork = null;
+    show(current, model, outcome);
+  }
+
+  /** The scheduled slices: each step in a task of its own, its view work
+   * (if any) in the next, then the next step. */
   function drive(current: RecalcPass, model: SpreadsheetModel): void {
     slot = scheduleEagerWork(() => {
       slot = null;
-      if (pass === current && !slice(current, model)) {
-        drive(current, model);
+      if (pass !== current) {
+        return;
       }
+      const outcome = step(current, model);
+      if (!outcome) {
+        return;
+      }
+      if (!outcome.rewrote && !outcome.done) {
+        drive(current, model);
+        return;
+      }
+      viewWork = outcome;
+      slot = scheduleEagerWork(() => {
+        slot = null;
+        viewWork = null;
+        if (pass !== current) {
+          return;
+        }
+        show(current, model, outcome);
+        if (!outcome.done) {
+          drive(current, model);
+        }
+      }, RECALC_SLICE_MS);
     }, RECALC_SLICE_MS);
   }
 
@@ -221,6 +289,11 @@ export function useRecalc(deps: RecalcDeps) {
     let carried: ((changedSheetIds: string[]) => void) | null = null;
     // An open pass that takes over an edit's cells reports as the edit did.
     let reason: RecalcReason = options.reason ?? "edit";
+    if (passModel === model) {
+      // A scheduled slice's pending view work runs first — a pass it
+      // finished completes, and is not cancelled.
+      showPending();
+    }
     if (pass && passModel === model) {
       inherited = pass.cancel();
       carried = passDone;
@@ -272,9 +345,11 @@ export function useRecalc(deps: RecalcDeps) {
     if (!current || !model) {
       return;
     }
+    showPending();
     stopDriving();
-    while (pass === current && !slice(current, model)) {
-      // each slice ends at a flush; keep going
+    // each slice ends at a flush; keep going until the pass is done
+    for (let done = false; !done; ) {
+      done = pass !== current || slice(current, model);
     }
   }
 

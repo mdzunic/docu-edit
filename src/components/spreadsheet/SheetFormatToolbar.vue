@@ -192,7 +192,11 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   }
 }
 
-watch(() => s.value.disabled, () => void updateRoving());
+// In a task of its own, as at mount (below): which controls show needs
+// layout, and asked from here it forced one inside the task that toggled the
+// state — SPEC-137: a cell entry's commit, whose task also runs a
+// recalculation's first slice.
+watch(() => s.value.disabled, () => setTimeout(() => void updateRoving(), 0));
 
 onMounted(() => {
   // The first pass runs in a task of its own: which controls show
