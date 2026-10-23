@@ -12,8 +12,8 @@ function fakeStore() {
   return {
     records,
     getVersionsRecord: vi.fn(async (id: string) => structuredClone(records.get(id))),
-    putVersionsRecord: vi.fn(async (record: { id: string }) => {
-      records.set(record.id, structuredClone(record));
+    putVersionsRecord: vi.fn(async (value: { id: string }) => {
+      records.set(value.id, structuredClone(value));
     }),
     deleteVersionsRecord: vi.fn(async (id: string) => {
       records.delete(id);

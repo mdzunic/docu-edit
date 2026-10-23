@@ -768,43 +768,46 @@ describe("hidden-slide fixtures round trip (SPEC-104)", () => {
 // slideWidthCm, slideHeightCm and properties. The version store is the real
 // lib/presentationVersions.ts over an in-memory `versions` store (jsdom has no
 // IndexedDB); every write is pinned to one instant so two downloads compare.
+const RESTORE_AT = new Date("2026-10-01T09:30:00Z");
+
+/** lib/presentationVersions.ts over a fresh in-memory `versions` store. */
+async function deckHistory() {
+  const records = new Map<string, unknown>();
+  vi.resetModules();
+  vi.doMock("../idb", () => ({
+    getVersionsRecord: async (id: string) => structuredClone(records.get(id)),
+    putVersionsRecord: async (value: { id: string }) => void records.set(value.id, structuredClone(value)),
+    deleteVersionsRecord: async (id: string) => void records.delete(id),
+  }));
+  try {
+    return await import("../presentationVersions");
+  } finally {
+    vi.doUnmock("../idb");
+  }
+}
+
+/** A download's parts, written at one pinned instant. */
+async function partsOf(model: PresentationModel): Promise<Map<string, Uint8Array>> {
+  const pinned = { modified: RESTORE_AT, now: RESTORE_AT };
+  const { bytes } = model.format === "odp" ? await writeOdp(model, pinned) : await writePptx(model, pinned);
+  return unzip(bytes);
+}
+
+function expectSameParts(actual: Map<string, Uint8Array>, expected: Map<string, Uint8Array>): void {
+  expect([...actual.keys()]).toEqual([...expected.keys()]);
+  for (const [name, data] of expected) {
+    expect(equalBytes(actual.get(name)!, data), `part ${name}`).toBe(true);
+  }
+}
+
+function expectSameDeck(actual: PresentationModel, expected: PresentationModel): void {
+  expect(actual.slides).toEqual(expected.slides);
+  expect(actual.slideWidthCm).toBe(expected.slideWidthCm);
+  expect(actual.slideHeightCm).toBe(expected.slideHeightCm);
+  expect(actual.properties).toEqual(expected.properties);
+}
+
 describe("deck version restore fidelity (SPEC-103)", () => {
-  const AT = new Date("2026-10-01T09:30:00Z");
-
-  async function deckHistory() {
-    const records = new Map<string, unknown>();
-    vi.resetModules();
-    vi.doMock("../idb", () => ({
-      getVersionsRecord: async (id: string) => structuredClone(records.get(id)),
-      putVersionsRecord: async (record: { id: string }) => void records.set(record.id, structuredClone(record)),
-      deleteVersionsRecord: async (id: string) => void records.delete(id),
-    }));
-    try {
-      return await import("../presentationVersions");
-    } finally {
-      vi.doUnmock("../idb");
-    }
-  }
-
-  async function partsOf(model: PresentationModel): Promise<Map<string, Uint8Array>> {
-    const { bytes } = model.format === "odp" ? await writeOdp(model, { modified: AT, now: AT }) : await writePptx(model, { modified: AT, now: AT });
-    return unzip(bytes);
-  }
-
-  function expectSameParts(actual: Map<string, Uint8Array>, expected: Map<string, Uint8Array>): void {
-    expect([...actual.keys()]).toEqual([...expected.keys()]);
-    for (const [name, data] of expected) {
-      expect(equalBytes(actual.get(name)!, data), `part ${name}`).toBe(true);
-    }
-  }
-
-  function expectSameDeck(actual: PresentationModel, expected: PresentationModel): void {
-    expect(actual.slides).toEqual(expected.slides);
-    expect(actual.slideWidthCm).toBe(expected.slideWidthCm);
-    expect(actual.slideHeightCm).toBe(expected.slideHeightCm);
-    expect(actual.properties).toEqual(expected.properties);
-  }
-
   for (const format of ["pptx", "odp"] as const) {
     const build = format === "odp" ? buildOdpFixtureBytes : buildPptxFixtureBytes;
 
