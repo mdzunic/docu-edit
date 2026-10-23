@@ -62,6 +62,20 @@ function rowsOf(count: number): Row[] {
   return Array.from({ length: count }, (_, index) => ({ index, cells: [{ col: 0, value: `v${index}` }] }));
 }
 
+/** Until the store's write-through goes quiet: no writeBatch call across a
+ * few macrotasks (a persist queued behind the release may still be landing
+ * when it resolves — a shell-only write of what storage already holds). */
+async function writesSettled(): Promise<void> {
+  let quiet = 0;
+  let seen = writeBatch.mock.calls.length;
+  while (quiet < 3) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushPromises();
+    quiet = writeBatch.mock.calls.length === seen ? quiet + 1 : 0;
+    seen = writeBatch.mock.calls.length;
+  }
+}
+
 /** A 1,100-row workbook stored and released: in storage, not in memory. */
 async function storedWorkbook() {
   const store = await import("../lib/documentStore");
@@ -110,6 +124,8 @@ describe("the workbook view over lazy residency", () => {
   it("incomplete storage: the alert shows, the formula bar is not editable, and nothing is written back", async () => {
     const { model } = await storedWorkbook();
     data.delete(`sheetrows:${model.id}:${model.sheets[0]!.id}:0001`);
+    // Count from the open: the setup's own writes land first.
+    await writesSettled();
     writeBatch.mockClear();
     const { WORKBOOK_STORAGE_INCOMPLETE_MESSAGE } = await import("../lib/spreadsheet/errors");
     const wrapper = await mountSheets(model.id);
