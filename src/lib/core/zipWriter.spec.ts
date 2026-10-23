@@ -73,18 +73,18 @@ describe("zip", () => {
 // SPEC-137: a large entry is written to the compressor in slices, so its
 // deflate is many short tasks rather than one long one — with the same bytes
 // as one whole-entry write.
-describe("deflateRaw — sliced writes", () => {
-  /** Two MB of mixed, not-too-compressible bytes from a fixed seed. */
-  function sample(): Uint8Array {
-    const data = new Uint8Array(2 * 1024 * 1024);
-    let seed = 0x1234_5678;
-    for (let i = 0; i < data.length; i++) {
-      seed = (seed * 1_103_515_245 + 12_345) >>> 0;
-      data[i] = i % 7 === 0 ? seed >>> 24 : 60 + (i % 31);
-    }
-    return data;
+/** Two MB of mixed, not-too-compressible bytes from a fixed seed. */
+function sample(): Uint8Array {
+  const data = new Uint8Array(2 * 1024 * 1024);
+  let seed = 0x1234_5678;
+  for (let i = 0; i < data.length; i++) {
+    seed = (seed * 1_103_515_245 + 12_345) >>> 0;
+    data[i] = i % 7 === 0 ? seed >>> 24 : 60 + (i % 31);
   }
+  return data;
+}
 
+describe("deflateRaw — sliced writes", () => {
   it("deflates to the same bytes whatever the slice size", async () => {
     const data = sample();
     const whole = await deflateRaw(data, data.length);
