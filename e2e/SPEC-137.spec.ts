@@ -220,3 +220,56 @@ test("a format on an empty cell reads from its own element, which draws no text 
   await expect(empty).toHaveCSS("font-weight", "700");
   await expect(empty.locator(".sheet-cell-text")).toHaveCount(0);
 });
+
+// AC-56: from the file choice until navigation, the library shows a
+// role="status" progress readout reading "Opening {title}… {n}%".
+test("opening a large workbook shows an 'Opening {title}… {n}%' progress readout (AC-56)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").waitFor({ state: "attached" });
+  const navigated = page.waitForURL(/\/sheets\/.+/, { timeout: 30_000 });
+  await page.getByTestId("open-document-input").setInputFiles(LARGE_FIXTURE_PATH);
+
+  const progress = page.getByTestId("spreadsheet-open-progress");
+  await expect(progress, "AC-56: role=status").toHaveAttribute("role", "status");
+  await expect(progress, "AC-56: 'Opening {title}… {n}%'").toHaveText(/^Opening spec137-large… \d+%$/);
+
+  await navigated;
+  await waitForFirstPaintedCell(page);
+});
+
+// AC-19: a worker that errors or terminates mid-open is disposed, and the
+// open is retried once inline — never a second worker, and never a failed
+// open.
+test("a parse worker that crashes mid-open is retried inline, not with a second worker (AC-19)", async ({ page }) => {
+  await page.addInitScript(() => {
+    const Original = window.Worker;
+    const w = window as unknown as { __workerCount: number };
+    w.__workerCount = 0;
+    window.Worker = class extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes("spreadsheetParse.worker")) {
+          w.__workerCount += 1;
+          if (w.__workerCount === 1) {
+            setTimeout(() => {
+              this.dispatchEvent(new ErrorEvent("error", { message: "synthetic crash" }));
+              this.terminate();
+            }, 5);
+          }
+        }
+      }
+    };
+  });
+  await page.goto("/");
+  await page.getByTestId("open-document-input").waitFor({ state: "attached" });
+  const navigated = page.waitForURL(/\/sheets\/.+/, { timeout: 30_000 });
+  await page.getByTestId("open-document-input").setInputFiles(LIBRARY_FIXTURE_PATH);
+  await navigated;
+  await waitForFirstPaintedCell(page);
+
+  await expect(cell(page, "A1")).toHaveText("Item 0000");
+  expect(
+    await page.evaluate(() => (window as unknown as { __workerCount: number }).__workerCount),
+    "AC-19: the crashed worker is disposed, not replaced by a second one",
+  ).toBe(1);
+});
