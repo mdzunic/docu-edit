@@ -193,6 +193,15 @@ export function resolveColumns(columns: AssemblyColumns, count: number, box: { w
   return Math.round(clampNumber(columns, 1, MAX_ASSEMBLY_ITEMS, 1));
 }
 
+/** The column count "Fit to content" lays out with: a fixed number as
+ * given; "auto" decided on a square box, the content's shape being what is
+ * being decided. naturalAssemblyPx sizes the content for this count, so a
+ * plan on that content must use the same one (planAssembly's own "auto"
+ * would decide again on the box it was sized into). */
+export function naturalColumns(columns: AssemblyColumns, count: number): number {
+  return resolveColumns(columns, count, { widthCm: 1, heightCm: 1 });
+}
+
 // The cell builders return exact (unrounded) cells: the item is fitted into
 // the exact cell and only the results are rounded, so items that share a
 // height or width share it to the last decimal.
@@ -382,9 +391,8 @@ export function planAssembly(
  * tallest item's height, side by side; vertical: every item at the widest
  * item's width, stacked; masonry: columns of the widest item's width by the
  * tallest column; overlay: the widest by the tallest. Gaps are not added —
- * they come out of the box at the sheet's scale. "auto" columns decide on a
- * square box, the content's shape being what is being decided. Null for an
- * empty tray. */
+ * they come out of the box at the sheet's scale. Columns are
+ * naturalColumns'. Null for an empty tray. */
 export function naturalAssemblyPx(items: AssemblyItem[], plan: AssemblyPlan): ItemPx | null {
   if (items.length === 0) {
     return null;
@@ -392,11 +400,10 @@ export function naturalAssemblyPx(items: AssemblyItem[], plan: AssemblyPlan): It
   const sizes = items.map((item) => ({ widthPx: Math.max(1, item.widthPx), heightPx: Math.max(1, item.heightPx) }));
   const maxW = Math.max(...sizes.map((size) => size.widthPx));
   const maxH = Math.max(...sizes.map((size) => size.heightPx));
-  const square = { widthCm: 1, heightCm: 1 };
   let widthPx = maxW;
   let heightPx = maxH;
   if (plan.layout === "grid") {
-    const columns = resolveColumns(plan.columns, sizes.length, square);
+    const columns = naturalColumns(plan.columns, sizes.length);
     widthPx = columns * maxW;
     heightPx = Math.ceil(sizes.length / columns) * maxH;
   } else if (plan.layout === "horizontal") {
@@ -404,7 +411,7 @@ export function naturalAssemblyPx(items: AssemblyItem[], plan: AssemblyPlan): It
   } else if (plan.layout === "vertical") {
     heightPx = sizes.reduce((sum, size) => sum + (size.heightPx * maxW) / size.widthPx, 0);
   } else if (plan.layout === "masonry") {
-    const columns = resolveColumns(plan.columns, sizes.length, square);
+    const columns = naturalColumns(plan.columns, sizes.length);
     const heights = Array.from({ length: columns }, () => 0);
     for (const size of sizes) {
       let column = 0;

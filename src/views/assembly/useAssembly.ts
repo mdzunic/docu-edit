@@ -15,6 +15,7 @@ import {
   MAX_ASSEMBLY_ITEMS,
   MAX_GAP_CM,
   naturalAssemblyPx,
+  naturalColumns,
   planAssembly,
   type AssemblyItem,
   type AssemblyPlan,
@@ -113,7 +114,14 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
   const naturalPx = computed(() => naturalAssemblyPx(items.value, { ...layout, fit: "contain", align: "center" }));
   const sheet = useSheetSetup({ surface: ASSEMBLY_SURFACE, output: "png", itemPx: naturalPx });
 
-  const plan = computed<AssemblyPlan>(() => ({ ...layout, fit: sheet.setup.value.fit, align: sheet.setup.value.align }));
+  const plan = computed<AssemblyPlan>(() => ({
+    ...layout,
+    // A sheet sized to the content was sized for naturalColumns' count:
+    // "auto" deciding again on that box could choose another.
+    columns: sheet.isFitToContent.value ? naturalColumns(layout.columns, items.value.length) : layout.columns,
+    fit: sheet.setup.value.fit,
+    align: sheet.setup.value.align,
+  }));
   const geometry = computed(() => sheet.geometry.value);
   const placed = computed(() =>
     geometry.value ? planAssembly(items.value, plan.value, geometry.value, sheet.setup.value.dpi) : [],

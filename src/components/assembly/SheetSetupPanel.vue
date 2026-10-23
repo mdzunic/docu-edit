@@ -15,6 +15,9 @@ import { SHEET_ALIGN_LABELS, SHEET_BACKGROUND_CHOICES, SHEET_FIT_LABELS } from "
 const props = defineProps({
   /** The useSheetSetup() controller object (refs + command functions). */
   controller: { type: Object, required: true },
+  /** Whether to show the output estimate — off where the surface states
+   * its own (SPEC-109's output bar, whose format can be JPEG). */
+  estimate: { type: Boolean, default: true },
 });
 
 const c = props.controller;
@@ -290,6 +293,7 @@ function invalid(field = "") {
       {{ c.backgroundNotice.value }}
     </p>
     <p
+      v-if="props.estimate"
       class="sheet-estimate"
       data-testid="sheet-estimate"
       aria-live="polite"

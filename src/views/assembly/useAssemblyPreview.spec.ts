@@ -18,6 +18,23 @@ import {
 } from "./useAssemblyPreview";
 import type { PlacedItem } from "../../lib/core/assemblyLayout";
 
+/** A 10 cm square placed at `xCm`. */
+function squareAt(index: number, xCm: number): PlacedItem {
+  return { index, xCm, yCm: 0, widthCm: 10, heightCm: 10 } as PlacedItem;
+}
+
+function context() {
+  return { save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, drawImage: vi.fn() };
+}
+
+function pointer(xPx: number, yPx: number, shiftKey = false) {
+  return { clientX: xPx, clientY: yPx, button: 0, pointerId: 1, shiftKey, preventDefault() {} } as unknown as PointerEvent;
+}
+
+function key(name: string, shiftKey = false) {
+  return { key: name, shiftKey, altKey: false, ctrlKey: false, metaKey: false, preventDefault: vi.fn() } as unknown as KeyboardEvent;
+}
+
 describe("the preview's arithmetic", () => {
   const A4_LANDSCAPE = { widthCm: 29.7, heightCm: 21, content: { xCm: 1, yCm: 1, widthCm: 27.7, heightCm: 19 } };
 
@@ -35,8 +52,7 @@ describe("the preview's arithmetic", () => {
   });
 
   it("picks the topmost item under a point", () => {
-    const at = (index: number, xCm: number) => ({ index, xCm, yCm: 0, widthCm: 10, heightCm: 10 }) as PlacedItem;
-    const placed = [at(0, 0), at(1, 5)];
+    const placed = [squareAt(0, 0), squareAt(1, 5)];
     expect(hitTest(placed, 7, 5)?.index).toBe(1);
     expect(hitTest(placed, 2, 5)?.index).toBe(0);
     expect(hitTest(placed, 20, 5)).toBeNull();
@@ -74,10 +90,6 @@ describe("the preview controller", () => {
 
   const decode = vi.fn(async (): Promise<DecodedImage> => ({ image: {} as CanvasImageSource, widthPx: 100, heightPx: 100, release: () => {} }));
 
-  function context() {
-    return { save() {}, restore() {}, setTransform() {}, clearRect() {}, fillRect() {}, drawImage: vi.fn() };
-  }
-
   async function setup() {
     const calls: Array<{ width: number; height: number }> = [];
     vi.doMock("../../lib/media/composeCanvas", async (importOriginal) => {
@@ -113,8 +125,8 @@ describe("the preview controller", () => {
     };
     const scope = effectScope();
     const { assembly, preview } = scope.run(() => {
-      const assembly = useAssembly({ steps });
-      return { assembly, preview: useAssemblyPreview({ assembly, decode }) };
+      const controller = useAssembly({ steps });
+      return { assembly: controller, preview: useAssemblyPreview({ assembly: controller, decode }) };
     })!;
     assembly.tray.add(ids);
     // A4 landscape, 1 cm margins all round: a 27.7 × 19 cm content box,
@@ -127,10 +139,6 @@ describe("the preview controller", () => {
     preview.attachCanvas(canvas);
     await flushPromises();
     return { assembly, preview, canvas, calls, steps };
-  }
-
-  function pointer(xPx: number, yPx: number, shiftKey = false) {
-    return { clientX: xPx, clientY: yPx, button: 0, pointerId: 1, shiftKey, preventDefault() {} } as unknown as PointerEvent;
   }
 
   it("draws through composeToCanvas — the function the export calls — at its own size", async () => {
@@ -178,8 +186,6 @@ describe("the preview controller", () => {
     const { assembly, preview } = await setup();
     assembly.setLayout("overlay");
     assembly.select(assembly.tray.entries.value[0].key);
-    const key = (name: string, shiftKey = false) =>
-      ({ key: name, shiftKey, altKey: false, ctrlKey: false, metaKey: false, preventDefault: vi.fn() }) as unknown as KeyboardEvent;
     const right = key("ArrowRight");
     preview.onKeydown(right);
     expect(right.preventDefault).toHaveBeenCalled();

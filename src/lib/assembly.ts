@@ -41,22 +41,35 @@ export function outputFits(pixels: OutputPixels, ceilingPx: number): boolean {
   );
 }
 
-/** The highest SHEET_DPI_CHOICES step at which `geometry` fits, or null
- * when not even the lowest does. */
-export function fittingDpi(geometry: SheetGeometry, ceilingPx: number): number | null {
-  const fitting = SHEET_DPI_CHOICES.filter((dpi) => outputFits(sheetPixelSize(geometry, dpi), ceilingPx));
+/** The sheet at a dpi: the same sheet for a paper size, but one that changes
+ * with the dpi for "Fit to content" (the content's pixels ARE its size). */
+export type GeometryAtDpi = (dpi: number) => SheetGeometry | null;
+
+/** The highest SHEET_DPI_CHOICES step at which the sheet fits, or null when
+ * not even the lowest does. */
+export function fittingDpi(geometryAt: GeometryAtDpi, ceilingPx: number): number | null {
+  const fitting = SHEET_DPI_CHOICES.filter((dpi) => {
+    const geometry = geometryAt(dpi);
+    return geometry !== null && outputFits(sheetPixelSize(geometry, dpi), ceilingPx);
+  });
   return fitting.length > 0 ? Math.max(...fitting) : null;
 }
 
 /** Why the output cannot be made — naming the limit it breaks and the dpi
- * that would fit — or null when it can. Checked before any decoding. */
-export function outputRefusal(geometry: SheetGeometry, dpi: number, ceilingPx: number): string | null {
+ * that would fit — or null when it can. Checked before any decoding.
+ * `geometryAt` gives the sheet at another dpi (the same sheet by default). */
+export function outputRefusal(
+  geometry: SheetGeometry,
+  dpi: number,
+  ceilingPx: number,
+  geometryAt: GeometryAtDpi = () => geometry,
+): string | null {
   const pixels = sheetPixelSize(geometry, dpi);
   if (outputFits(pixels, ceilingPx)) {
     return null;
   }
   const size = `${pixels.widthPx} × ${pixels.heightPx} px`;
-  const fits = fittingDpi(geometry, ceilingPx);
+  const fits = fittingDpi(geometryAt, ceilingPx);
   const fix =
     fits !== null
       ? `At ${fits} dpi it would fit.`

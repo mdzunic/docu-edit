@@ -12,7 +12,7 @@
 // stops at the next boundary with no file and no library record. The output
 // canvas is released (width = 0) whatever happens. Source documents are only
 // ever read: the result is always a NEW document.
-import { computed, ref, type ComputedRef, type Ref } from "vue";
+import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from "vue";
 import { listDocuments, getMedia, storeMedia, uniqueTitle } from "../../lib/documentStore";
 import { assembleMediaModel } from "../../lib/media/open";
 import type { MediaModel } from "../../lib/media/model";
@@ -32,6 +32,7 @@ import type { MediaPart } from "../../lib/core/media";
 import { yieldToMainThread } from "../../lib/core/idleScheduler";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { sheetPixelSize } from "../../lib/core/sheetLayout";
+import { sheetGeometryFor } from "../../lib/assemblySheet";
 import {
   ASSEMBLY_CONTENT_TYPES,
   fittingDpi,
@@ -135,19 +136,29 @@ export function useAssemblyOutput(deps: AssemblyOutputDeps): AssemblyOutputContr
   const area = computed(() => (pixels.value ? pixels.value.widthPx * pixels.value.heightPx : 0));
   const ceiling = computed(() => steps.canvasCeiling(area.value));
 
+  // The sheet at another dpi — for "Fit to content" a different sheet.
+  const geometryAt = (dpi: number) => sheetGeometryFor({ ...sheet.setup.value, dpi }, sheet.itemPx.value);
+
   const refusal = computed(() => {
     const geometry = sheet.geometry.value;
     if (deps.entries.value.length === 0) {
       return "Add at least one image to the tray.";
     }
+    const unreadable = deps.entries.value.filter((entry) => entry.widthPx <= 0 || entry.heightPx <= 0);
+    if (unreadable.length > 0) {
+      const names = unreadable.map((entry) => `“${entry.title}”`).join(", ");
+      return `The size of ${names} could not be read; remove ${unreadable.length === 1 ? "it" : "them"} from the tray.`;
+    }
     if (!geometry) {
       return "The sheet is not ready.";
     }
-    return outputRefusal(geometry, sheet.setup.value.dpi, ceiling.value) ?? "";
+    return outputRefusal(geometry, sheet.setup.value.dpi, ceiling.value, geometryAt) ?? "";
   });
   const fixDpi = computed(() => {
     const geometry = sheet.geometry.value;
-    return geometry && refusal.value && deps.entries.value.length > 0 ? fittingDpi(geometry, ceiling.value) : null;
+    return geometry && refusal.value && outputRefusal(geometry, sheet.setup.value.dpi, ceiling.value) !== null
+      ? fittingDpi(geometryAt, ceiling.value)
+      : null;
   });
   const estimate = computed(() =>
     pixels.value
@@ -187,7 +198,12 @@ export function useAssemblyOutput(deps: AssemblyOutputDeps): AssemblyOutputContr
     try {
       const sx = size.widthPx / geometry.widthCm;
       const sy = size.heightPx / geometry.heightCm;
-      const prepared = await prepareSources(placed, composeInputs(entries), sx, sy, steps.decode, {
+      const inputs = composeInputs(entries);
+      const missing = entries.filter((_, index) => inputs[index] === null);
+      if (missing.length > 0) {
+        throw new Error(`${missing.map((entry) => `“${entry.title}”`).join(", ")} could not be read.`);
+      }
+      const prepared = await prepareSources(placed, inputs, sx, sy, steps.decode, {
         between: steps.between,
         cancelled: stop,
       });
@@ -239,6 +255,11 @@ export function useAssemblyOutput(deps: AssemblyOutputDeps): AssemblyOutputContr
   }
 
   const title = () => output.title.trim() || DEFAULT_ASSEMBLY_TITLE;
+
+  // Leaving the workspace mid-way stops the work: no file, no record.
+  onScopeDispose(() => {
+    cancelled = busy.value || cancelled;
+  });
 
   return {
     pixels,

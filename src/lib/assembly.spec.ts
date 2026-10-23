@@ -34,6 +34,12 @@ function custom(widthCm: number, heightCm: number) {
   return resolveSheet({ ...SHEET_DEFAULTS, paper: "Custom", widthCm, heightCm, orientation: widthCm >= heightCm ? "landscape" : "portrait" });
 }
 
+/** 16200 × 100 px of content with 2 cm margins, fitted at `dpi`. */
+function framedAt(dpi: number) {
+  const margins = { topCm: 2, rightCm: 2, bottomCm: 2, leftCm: 2 };
+  return resolveSheet({ ...SHEET_DEFAULTS, paper: "Fit to content", margins, dpi }, { widthPx: 16200, heightPx: 100 });
+}
+
 describe("the output's bounds", () => {
   it("bounds either axis independently at 16384 px", () => {
     expect(MAX_OUTPUT_EDGE_PX).toBe(16384);
@@ -61,7 +67,7 @@ describe("the output's bounds", () => {
     expect(outputRefusal(sheet, 300, 268_435_456)).toBe(
       "At 300 dpi the image would be 23622 × 11811 px; either side can be at most 16384 px. At 150 dpi it would fit.",
     );
-    expect(fittingDpi(sheet, 268_435_456)).toBe(150);
+    expect(fittingDpi(() => sheet, 268_435_456)).toBe(150);
   });
 
   it("refuses an area over the measured ceiling, naming it and the dpi that would fit", () => {
@@ -71,9 +77,23 @@ describe("the output's bounds", () => {
     );
   });
 
+  it("tries each dpi on the sheet at that dpi — a sheet fitted to its content does not shrink with it", () => {
+    // 20000 × 3000 px of content, no margins: the sheet is the content's
+    // pixels at every dpi, so no lower dpi brings it under 16384 px.
+    const content = { widthPx: 20000, heightPx: 3000 };
+    const at = (dpi: number) =>
+      resolveSheet({ ...SHEET_DEFAULTS, paper: "Fit to content", margins: { topCm: 0, rightCm: 0, bottomCm: 0, leftCm: 0 }, dpi }, content);
+    expect(fittingDpi(at, 268_435_456)).toBeNull();
+    expect(outputRefusal(at(150), 150, 268_435_456, at)).toBe(
+      "At 150 dpi the image would be 20000 × 3000 px; either side can be at most 16384 px. It would not fit even at 72 dpi; choose a smaller sheet.",
+    );
+    // With 2 cm margins, the margins' pixels do shrink with the dpi.
+    expect(fittingDpi(framedAt, 268_435_456)).toBe(72);
+  });
+
   it("says so when not even 72 dpi fits", () => {
     const sheet = custom(500, 500);
-    expect(fittingDpi(sheet, GUARANTEED_CANVAS_PIXELS)).toBeNull();
+    expect(fittingDpi(() => sheet, GUARANTEED_CANVAS_PIXELS)).toBeNull();
     expect(outputRefusal(sheet, 72, GUARANTEED_CANVAS_PIXELS)).toContain("would not fit even at 72 dpi; choose a smaller sheet.");
   });
 });

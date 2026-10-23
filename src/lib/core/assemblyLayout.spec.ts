@@ -12,6 +12,7 @@ import {
   LAYOUT_KINDS,
   MAX_ASSEMBLY_ITEMS,
   naturalAssemblyPx,
+  naturalColumns,
   normaliseTransform,
   planAssembly,
   type AssemblyItem,
@@ -499,6 +500,19 @@ describe("the empty tray, bounds and purity", () => {
 
 describe("naturalAssemblyPx (Fit to content)", () => {
   const three = items(3);
+  it("decides 'auto' once, on a square box, so the plan can lay out in the count it sized for", () => {
+    expect(naturalColumns("auto", 3)).toBe(2);
+    expect(naturalColumns("auto", 5)).toBe(2);
+    expect(naturalColumns(4, 3)).toBe(4);
+    // Three 16:9 items sized 2 × 2: on that 16:9 box, "auto" alone would
+    // pick 3 columns and leave half the sheet blank.
+    const wide = Array.from({ length: 3 }, (_, i) => ({ id: `w${i}`, widthPx: 1920, heightPx: 1080 }));
+    expect(naturalAssemblyPx(wide, plan())).toEqual({ widthPx: 3840, heightPx: 2160 });
+    const box = { widthCm: 32.512, heightCm: 18.288 };
+    expect(autoColumns(3, box)).toBe(3);
+    expect(naturalColumns("auto", 3)).toBe(2);
+  });
+
   it("sizes the arrangement from the items' own pixels", () => {
     expect(naturalAssemblyPx(three, plan({ columns: 2 }))).toEqual({ widthPx: 400, heightPx: 400 });
     expect(naturalAssemblyPx(three, plan({ layout: "horizontal" }))).toEqual({ widthPx: 700, heightPx: 200 });

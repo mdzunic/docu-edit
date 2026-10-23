@@ -17,8 +17,10 @@ import {
   createSourceCache,
   drawingChunks,
   encodeCanvas,
+  MAX_SVG_RASTER_PIXELS,
   prepareSources,
   sourceKey,
+  svgRasterSize,
   toPixelRect,
   type ComposeSource,
 } from "./composeCanvas";
@@ -362,6 +364,32 @@ describe("sources", () => {
     expect(decode).toHaveBeenCalledWith(new Uint8Array([9]), "image/png");
     expect(sourceKey(svg, { widthPx: 1200, heightPx: 600 })).toBe("svg-1@1200x600");
     expect(sourceKey(png, { widthPx: 1200, heightPx: 600 })).toBe("png-1");
+  });
+
+  it("bounds an SVG's raster, aspect kept, and keeps only the latest two sizes of it", async () => {
+    // An overlay logo scaled tenfold on an A4 sheet at 150 dpi.
+    const huge = svgRasterSize({ widthPx: 12400, heightPx: 17540 });
+    expect(huge.widthPx * huge.heightPx).toBeLessThanOrEqual(MAX_SVG_RASTER_PIXELS);
+    expect(huge.widthPx / huge.heightPx).toBeCloseTo(12400 / 17540, 3);
+    expect(svgRasterSize({ widthPx: 40000, heightPx: 10 })).toEqual({ widthPx: 16384, heightPx: 4 });
+    expect(svgRasterSize({ widthPx: 1390, heightPx: 695 })).toEqual({ widthPx: 1390, heightPx: 695 });
+
+    const rasteriseSvg = vi.fn(async (_bytes: Uint8Array, size?: { widthPx: number; heightPx: number }) => ({
+      data: new Uint8Array([9]),
+      widthPx: size?.widthPx ?? 0,
+      heightPx: size?.heightPx ?? 0,
+    }));
+    const cache = createSourceCache({ decode: vi.fn(async () => decoded(1, 1)), rasteriseSvg });
+    for (const widthPx of [100, 200, 300]) {
+      await cache.decodeSource(svg, { widthPx, heightPx: widthPx });
+    }
+    expect(cache.size()).toBe(2);
+    // The newest two are served from the cache; the oldest decodes again.
+    await cache.decodeSource(svg, { widthPx: 300, heightPx: 300 });
+    await cache.decodeSource(svg, { widthPx: 200, heightPx: 200 });
+    expect(rasteriseSvg).toHaveBeenCalledTimes(3);
+    await cache.decodeSource(svg, { widthPx: 100, heightPx: 100 });
+    expect(rasteriseSvg).toHaveBeenCalledTimes(4);
   });
 
   it("prepares an SVG source at the size its item is drawn, scaled onto the item's pixels", async () => {

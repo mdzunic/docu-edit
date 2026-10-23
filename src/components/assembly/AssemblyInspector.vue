@@ -4,8 +4,9 @@
 // cell background — then, in the overlay layout, the selected image's own
 // placement (x/y as a percentage of the content box, scale, opacity, blend),
 // above SPEC-108's SheetSetupPanel, whose fit and align apply within each
-// cell. All logic is the useAssembly controller passed in; a rejected input
-// snaps back to the value in force and the reason shows below. Runtime prop
+// cell (its estimate is hidden: the output bar states this output's own).
+// All logic is the useAssembly controller passed in; a rejected input snaps
+// back to the value in force and the reason shows below. Runtime prop
 // declarations (espree lints .vue scripts).
 import { reactive, watchEffect } from "vue";
 import SheetSetupPanel from "./SheetSetupPanel.vue";
@@ -231,7 +232,10 @@ function transformValue(field = "") {
       {{ a.error.value }}
     </p>
 
-    <SheetSetupPanel :controller="a.sheet" />
+    <SheetSetupPanel
+      :controller="a.sheet"
+      :estimate="false"
+    />
   </div>
 </template>
 

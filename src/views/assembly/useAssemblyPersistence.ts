@@ -2,7 +2,8 @@
 // item ids (and titles), layout, overlay transforms, sheet setup and output
 // settings, never pixels — lives under the one `assemblyPlan` key of the
 // SPEC-066 preferences store, written a moment after each change (and on
-// leaving), and restored when the workspace opens. An item that has since
+// leaving, reloading or closing the tab), and restored when the workspace
+// opens. An item that has since
 // been trashed or deleted is dropped from the restored tray, and a one-line
 // notice names it. "Start over" clears the key until the next change.
 //
@@ -156,7 +157,18 @@ export function useAssemblyPersistence(deps: AssemblyPersistenceDeps): AssemblyP
     deep: true,
     flush: "sync",
   });
-  onScopeDispose(flush);
+  // A reload or a closed tab disposes nothing: write the pending change then.
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+  }
+  onScopeDispose(() => {
+    flush();
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+    }
+  });
 
   return { notice, flush, reset };
 }

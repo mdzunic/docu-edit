@@ -23,6 +23,7 @@ import { TRANSPARENT, type RectCm, type SheetGeometry } from "../core/sheetLayou
 import { convertSvgToPng, type ConvertedPng } from "../core/svgToPng";
 import { mediaPartBytes } from "./download";
 import { decodeImageBytes, type DecodedImage } from "./renderEdits";
+import { GUARANTEED_CANVAS_PIXELS } from "./canvasCeiling";
 
 /** The sheet as the renderer needs it: its geometry and the background
  * colour actually painted ("#rrggbb", or "transparent" for none). */
@@ -163,6 +164,31 @@ export async function composeToCanvas(
 
 export const SVG_CONTENT_TYPE = "image/svg+xml";
 
+/** The largest raster an SVG source is drawn from: an area every target
+ * browser allocates without a probe, and no side past 16384 px. An item
+ * drawn larger than that (an overlay scaled far past its box, a cover fit
+ * keeping a sliver) is upscaled from it rather than refused. */
+export const MAX_SVG_RASTER_PIXELS = GUARANTEED_CANVAS_PIXELS;
+export const MAX_SVG_RASTER_EDGE_PX = 16384;
+
+/** How many rasterised sizes of one SVG the cache keeps — the preview's and
+ * the export's; an older size is dropped (to the garbage collector, never
+ * released under a render that may still be drawing it). */
+export const SVG_SIZES_PER_SOURCE = 2;
+
+/** `size` scaled down, aspect kept, to within the SVG raster bounds. */
+export function svgRasterSize(size: PixelSize): PixelSize {
+  const width = Math.max(1, size.widthPx);
+  const height = Math.max(1, size.heightPx);
+  const scale = Math.min(
+    1,
+    MAX_SVG_RASTER_EDGE_PX / width,
+    MAX_SVG_RASTER_EDGE_PX / height,
+    Math.sqrt(MAX_SVG_RASTER_PIXELS / (width * height)),
+  );
+  return { widthPx: Math.max(1, Math.floor(width * scale)), heightPx: Math.max(1, Math.floor(height * scale)) };
+}
+
 /** The browser-bound decoding steps, injectable for tests. */
 export interface SourceSteps {
   decode: (bytes: Uint8Array, contentType: string) => Promise<DecodedImage>;
@@ -196,10 +222,25 @@ export interface SourceCache {
  * retry decodes again. Reading a part never changes it. */
 export function createSourceCache(steps: SourceSteps = BROWSER_SOURCE_STEPS): SourceCache {
   const entries = new Map<string, Promise<DecodedImage>>();
+  // Per SVG media id, its cached size keys, oldest first.
+  const svgSizes = new Map<string, string[]>();
+
+  function rememberSvgSize(mediaId: string, key: string): void {
+    const keys = (svgSizes.get(mediaId) ?? []).filter((candidate) => candidate !== key);
+    keys.push(key);
+    while (keys.length > SVG_SIZES_PER_SOURCE) {
+      entries.delete(keys.shift() ?? "");
+    }
+    svgSizes.set(mediaId, keys);
+  }
+
   return {
     decodeSource(part, placedPx) {
       const key = sourceKey(part, placedPx);
       let entry = entries.get(key);
+      if (part.contentType === SVG_CONTENT_TYPE && placedPx) {
+        rememberSvgSize(part.mediaId, key);
+      }
       if (!entry) {
         const bytes = mediaPartBytes(part);
         entry =
@@ -219,6 +260,7 @@ export function createSourceCache(steps: SourceSteps = BROWSER_SOURCE_STEPS): So
         entry.then((decoded) => decoded.release()).catch(() => {});
       }
       entries.clear();
+      svgSizes.clear();
     },
   };
 }
@@ -250,7 +292,8 @@ export interface PreparedSources {
 /** Decodes the source of every placed item (`inputs` by tray index) for a
  * canvas at `sx` × `sy` px per cm. An SVG is rasterised at the whole pixel
  * size its item is drawn at — the visible rectangle grown back to the
- * item's full extent when a cropping fit cut part of it away. */
+ * item's full extent when a cropping fit cut part of it away — within
+ * svgRasterSize's bounds. */
 export async function prepareSources(
   placed: readonly PlacedItem[],
   inputs: readonly (ComposeInput | null)[],
@@ -275,10 +318,10 @@ export async function prepareSources(
     const dest = toPixelRect(item, sx, sy);
     const placedPx =
       input.part.contentType === SVG_CONTENT_TYPE
-        ? {
-            widthPx: Math.max(1, Math.round((dest.width * input.widthPx) / item.sourcePx.width)),
-            heightPx: Math.max(1, Math.round((dest.height * input.heightPx) / item.sourcePx.height)),
-          }
+        ? svgRasterSize({
+            widthPx: Math.round((dest.width * input.widthPx) / item.sourcePx.width),
+            heightPx: Math.round((dest.height * input.heightPx) / item.sourcePx.height),
+          })
         : undefined;
     try {
       const decoded = await decode(input.part, placedPx);

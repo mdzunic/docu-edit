@@ -244,6 +244,16 @@ describe("the persisted plan", () => {
     expect(assembly.notice.value).toBe("A tray holds at most 100 images; the first 100 of 101 were added.");
   });
 
+  it("writes a pending change when the page is hidden (a reload or a closed tab)", async () => {
+    vi.useFakeTimers();
+    const { seed, open, loadPreferences } = await setup();
+    const a = await seed("a");
+    open().assembly.tray.add([a.id]);
+    expect(loadPreferences().assemblyPlan).toBeNull();
+    window.dispatchEvent(new Event("pagehide"));
+    expect(loadPreferences().assemblyPlan?.items.map((item) => item.id)).toEqual([a.id]);
+  });
+
   it("clears the stored plan on Start over", async () => {
     const { seed, open, loadPreferences } = await setup();
     const a = await seed("a");
@@ -294,6 +304,28 @@ describe("the refusal paths — before any work", () => {
     assembly.sheet.setDpi(300);
     expect(assembly.out.refusal.value).toContain("either side can be at most 16384 px. At 150 dpi it would fit.");
     expect(assembly.out.canProduce.value).toBe(false);
+  });
+
+  it("refuses an image whose size could not be read, naming it", async () => {
+    const { seed, open } = await setup();
+    const a = await seed("mystery");
+    const { assembly } = open();
+    assembly.tray.add([a.id]);
+    assembly.tray.replace([{ ...assembly.tray.entries.value[0], widthPx: 0, heightPx: 0 }]);
+    expect(assembly.out.refusal.value).toBe("The size of “mystery” could not be read; remove it from the tray.");
+    expect(assembly.out.canProduce.value).toBe(false);
+  });
+
+  it("offers no dpi that cannot help a sheet fitted to its content", async () => {
+    const { seed, open } = await setup();
+    const a = await seed("wide");
+    const { assembly } = open();
+    assembly.tray.add([a.id]);
+    assembly.tray.replace([{ ...assembly.tray.entries.value[0], widthPx: 20000, heightPx: 3000 }]);
+    assembly.sheet.setMarginPreset("Narrow");
+    expect(assembly.sheet.setPaper("Fit to content")).toBe(true);
+    expect(assembly.out.refusal.value).toContain("It would not fit even at 72 dpi");
+    expect(assembly.out.fixDpi.value).toBeNull();
   });
 
   it("refuses an empty tray", async () => {
@@ -413,6 +445,21 @@ describe("producing the output", () => {
     expect(steps.download).not.toHaveBeenCalled();
   });
 
+  it("stops when the workspace is left mid-way, writing nothing", async () => {
+    const { seed, open, store, steps } = await setup();
+    const ids = [(await seed("a")).id, (await seed("b")).id];
+    const { assembly, stop } = open();
+    assembly.tray.add(ids);
+    assembly.setLayout("vertical");
+    steps.between.mockImplementation(async () => {
+      stop();
+    });
+    const before = store.listDocuments().length;
+    expect(await assembly.out.save()).toBeNull();
+    expect(steps.encode).not.toHaveBeenCalled();
+    expect(store.listDocuments()).toHaveLength(before);
+  });
+
   it("reports an unreadable source by name and writes nothing", async () => {
     const { seed, open, store } = await setup({ decode: vi.fn().mockRejectedValue(new Error("bad")) });
     const a = await seed("broken");
@@ -422,6 +469,32 @@ describe("producing the output", () => {
     expect(await assembly.out.save()).toBeNull();
     expect(assembly.out.failure.value).toBe("Could not save the image: “broken” could not be read.");
     expect(store.listDocuments()).toHaveLength(before);
+  });
+});
+
+describe("Fit to content", () => {
+  it("lays the content out in the column count the sheet was sized for", async () => {
+    const { seed, open } = await setup();
+    const ids = [(await seed("s1")).id, (await seed("s2")).id, (await seed("s3")).id];
+    const { assembly } = open();
+    assembly.tray.add(ids);
+    // Three 1920 × 1080 screenshots, auto columns: sized 2 × 2 (3840 × 2160).
+    assembly.tray.replace(assembly.tray.entries.value.map((entry) => ({ ...entry, widthPx: 1920, heightPx: 1080 })));
+    expect(assembly.sheet.setPaper("Fit to content")).toBe(true);
+    expect(assembly.sheet.itemPx.value).toEqual({ widthPx: 3840, heightPx: 2160 });
+    expect(assembly.plan.value.columns).toBe(2);
+    const [first, second, third] = assembly.placed.value;
+    expect(second.yCm).toBe(first.yCm);
+    expect(third.yCm).toBeGreaterThan(first.yCm);
+    // Each item fills its cell along one side and nearly all of it — the
+    // 0.2 cm gaps are all that is not image.
+    const content = assembly.geometry.value!.content;
+    expect(first.cell.widthCm).toBeCloseTo((content.widthCm - 0.2) / 2, 3);
+    expect(Math.max(first.widthCm / first.cell.widthCm, first.heightCm / first.cell.heightCm)).toBeCloseTo(1, 3);
+    expect((first.widthCm * first.heightCm) / (first.cell.widthCm * first.cell.heightCm)).toBeGreaterThan(0.99);
+    // On a paper size, "auto" decides on that paper's own box.
+    assembly.sheet.setPaper("A4");
+    expect(assembly.plan.value.columns).toBe("auto");
   });
 });
 
