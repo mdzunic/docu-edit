@@ -513,4 +513,22 @@ describe(".md → deck → .md round trip (AC-18)", () => {
     expect(first.deck.format).toBe("odp");
     expect(first.deck.slides[3].frames).toEqual([]);
   });
+
+  it.each([
+    ["a paragraph that is a bare #", "## T\n\n\\#"],
+    ["a first slide that opens with a bare #", "\\#\n"],
+    ["a ! before a formatted link", "## T\n\n!*[a](https://example.com)*"],
+    ["a ! before a plain link", "## T\n\nwow!****[a](https://example.com)"],
+    ["escaped leading spaces", "## T\n\n\\ \\ a\n\n- \\ b"],
+    ["a title of only whitespace", "# ** **\n"],
+    ["notes whose first line is indented", "## T\n\nNotes:\n  indented\nflush"],
+  ])("holds for %s", (_name, source) => {
+    const first = parseSlideMarkdownWithReport(source);
+    expect(first.dropped).toEqual([]);
+    const written = writeSlideMarkdown(first.deck);
+    const second = parseSlideMarkdownWithReport(written.text);
+    expect(second.dropped).toEqual([]);
+    expect(firstStructuralDifference(first.deck, second.deck)).toBeNull();
+    expect(writeSlideMarkdown(second.deck).text).toBe(written.text);
+  });
 });

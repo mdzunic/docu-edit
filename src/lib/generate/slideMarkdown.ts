@@ -419,7 +419,10 @@ function readSlide(lines: string[], slideIndex: number, dropped: DeckDropRecord[
     if (heading) {
       const level = heading[1].length;
       if (level <= 2 && !seenBlock) {
-        source.title = slideRunsOf((heading[2] ?? "").trim(), counts);
+        // A title of only whitespace is an empty title (`slideOutline` reads
+        // it as none), so it is stored as one.
+        const runs = slideRunsOf((heading[2] ?? "").trim(), counts);
+        source.title = runs.some((run) => run.text.trim().length > 0) ? runs : [];
       } else if (level > 2) {
         drop("heading", `level-${level} heading: only # and ## (a slide's title) are in the slide grammar`);
       } else {
@@ -622,11 +625,13 @@ function linkTarget(href: string): string {
   return depth === 0 ? href : href.replace(/\(/g, "%28").replace(/\)/g, "%29");
 }
 
-/** md/writer.ts's line-start escape, plus the two starts only the slide
- * grammar reads: `Notes:` and a raw-HTML `<`. */
+/** md/writer.ts's line-start escape, plus the starts only the slide
+ * grammar reads: `Notes:`, a raw-HTML `<`, a bare `#` (an empty heading)
+ * and leading whitespace (which the reader trims). */
 function escapeLineStart(line: string): string {
   const startsLikeBlock =
-    /^(#{1,6}[ \t]|>|<|[-*+][ \t]|\d+[.)][ \t]|```|~~~|Notes:)/.test(line) || /^[-*_]{3,}$/.test(line.replace(/[ \t]/g, ""));
+    /^(#{1,6}([ \t]|$)|>|<|[-*+][ \t]|\d+[.)][ \t]|```|~~~|Notes:|[ \t])/.test(line) ||
+    /^[-*_]{3,}$/.test(line.replace(/[ \t]/g, ""));
   return startsLikeBlock ? `\\${line}` : line;
 }
 
@@ -657,7 +662,13 @@ function renderRuns(runs: SlideRun[], counts: Map<string, number>): string {
       }
     }
   }
-  return carried.map(renderRun).join("");
+  // `parseInlineRuns` never opens a link at a `[` whose raw predecessor is
+  // `!` (that is image syntax), escaped or not, so a link after a run ending
+  // in `!` is set apart by an empty `****`, which reads back as nothing.
+  return carried.reduce((text, run) => {
+    const rendered = renderRun(run);
+    return text + (text.endsWith("!") && rendered.startsWith("[") ? `****${rendered}` : rendered);
+  }, "");
 }
 
 /** Within the ±0.01 cm a write → read round trip allows. */
@@ -769,7 +780,8 @@ function writeSlide(model: PresentationModel, slide: Slide, slideIndex: number, 
             .map((paragraph) => renderRuns(paragraph.runs, out.counts))
             .filter((text) => text.length > 0)
             .join(" ")
-            .replace(/([ \t])(#+)$/, "$1\\$2");
+            .replace(/([ \t])(#+)$/, "$1\\$2")
+            .replace(/^[ \t]/, "\\$&");
     out.blocks.push(`${slideIndex === 0 ? "#" : "##"}${title.length > 0 ? ` ${title}` : ""}`);
   }
   const images: string[] = [];
@@ -832,9 +844,12 @@ function writeSlide(model: PresentationModel, slide: Slide, slideIndex: number, 
   reportRunDrops(dropped, slideIndex, out.counts, () => "Markdown has no spelling for it");
   if (slide.notes && slide.notes.length > 0) {
     // Raw lines to the end of the slide; a line that would read as a slide
-    // separator (or starts with the escape itself) takes a leading `\`.
+    // separator (or starts with the escape itself) takes a leading `\`. A
+    // first line that is empty or indented starts below `Notes:`, whose own
+    // line is read trimmed.
     const lines = slide.notes.map((line) => (line.startsWith("\\") || SEPARATOR_RE.test(line) ? `\\${line}` : line));
-    out.blocks.push((lines[0].length > 0 ? [`Notes: ${lines[0]}`, ...lines.slice(1)] : ["Notes:", ...lines]).join("\n"));
+    const inline = lines[0].length > 0 && !/^[ \t]/.test(lines[0]);
+    out.blocks.push((inline ? [`Notes: ${lines[0]}`, ...lines.slice(1)] : ["Notes:", ...lines]).join("\n"));
   }
   return out.blocks.join("\n\n");
 }
