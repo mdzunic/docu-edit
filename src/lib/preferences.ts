@@ -140,6 +140,9 @@ export interface Preferences {
   /** Whether the presentation editor's animations panel is expanded
    * (SPEC-086). Per-device, default collapsed. */
   presentationAnimationsOpen: boolean;
+  /** Whether the animations panel shows its timeline view (SPEC-105).
+   * Per-device, default hidden. */
+  presentationAnimationTimelineOpen: boolean;
   /** Whether the presentation editor's table properties panel is expanded
    * (SPEC-091). Per-device, default collapsed. */
   presentationTableOpen: boolean;
@@ -252,6 +255,7 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationNotesOpen: false,
   presentationTransitionsOpen: false,
   presentationAnimationsOpen: false,
+  presentationAnimationTimelineOpen: false, // SPEC-105 animation timeline
   presentationMediaOpen: false,
   presentationThemeOpen: false, // SPEC-094 Design panel
   presentationTextOpen: false, // SPEC-097 Text panel
@@ -351,6 +355,7 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationNotesOpen: isBoolean,
   presentationTransitionsOpen: isBoolean,
   presentationAnimationsOpen: isBoolean,
+  presentationAnimationTimelineOpen: isBoolean,
   presentationMediaOpen: isBoolean,
   presentationThemeOpen: isBoolean,
   presentationTextOpen: isBoolean,
