@@ -98,6 +98,10 @@ import { linkedParagraphsXml, odsNoteXml, paragraphsMatchLink } from "./annotati
 import { tableStartTag } from "./package";
 import type { OdsRowHeight, OdsStyleEnv, OdsStyleRegistry } from "./styles";
 
+/** What the table reader counts its cells against: the read's CellBudget,
+ * or (SPEC-137) one sheet scan's share of a budget kept across every sheet. */
+export type OdsCellBudget = Pick<CellBudget, "take">;
+
 /** What the table reader needs from the workbook's styles (OdsStyleBook). */
 export interface OdsLayoutStyles {
   /** The model style index of a table-cell style name ("Default" → 0). */
@@ -255,7 +259,7 @@ function withPreserved(cell: Cell, preserved: OdsCellPreserved): Cell {
 export class OdsTableReader {
   private readonly name: string;
   private readonly styles: OdsLayoutStyles;
-  private readonly budget: CellBudget;
+  private readonly budget: OdsCellBudget;
   private readonly columnRuns: ColumnRun[] = [];
   private nextColumn = 0;
   private sawColumn = false;
@@ -273,7 +277,7 @@ export class OdsTableReader {
   private sawRow = false;
   private lastRowStyle: string | undefined;
 
-  constructor(name: string, styles: OdsLayoutStyles, budget: CellBudget) {
+  constructor(name: string, styles: OdsLayoutStyles, budget: OdsCellBudget) {
     this.name = name;
     this.styles = styles;
     this.budget = budget;

@@ -114,12 +114,12 @@ import { detectPackage, spreadsheetFormatOf } from "../../core/packageDetect";
 import { parseOdfMeta } from "../../core/odfMeta";
 import { DRAW_NAMESPACE, OFFICE_NAMESPACE, TABLE_NAMESPACE, TEXT_NAMESPACE } from "../../core/odfXml";
 import { XmlParseError } from "../../core/xml";
-import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute } from "../../core/xmlScanner";
+import { scanAttr, scanXml, XmlScanError, type XmlScanAttribute, type XmlScanEvent } from "../../core/xmlScanner";
 import { unzip, ZipError } from "../../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../errors";
 import type { GridRange } from "../address";
 import { refreshSheetChart } from "../charts";
-import { toCellError, type CalcSettings, type CellFont, type DefinedName, type CellStyle, type CellValue, type Sheet, type SheetChartContent, type SpreadsheetModel, type TextRun } from "../model";
+import { toCellError, type CalcSettings, type CellFont, type DefinedName, type CellStyle, type CellValue, type PackageVariant, type Sheet, type SheetChartContent, type SpreadsheetModel, type TextRun } from "../model";
 import {
   addressText,
   CellBudget,
@@ -144,11 +144,12 @@ import {
   readOdsContentStyles,
   readOdsStyleSheet,
   type OdsStyleSheet,
+  type OdsTableStyle,
 } from "./styles";
 import { readOdsAutoFilters } from "./databaseRanges";
 import { readOdsNames } from "./namedExpressions";
 import { isDrawingElement, OdsMediaReader, readOdsDrawings, type OdsDrawingSource } from "./drawingXml";
-import { OdsTableReader, repeatCount, type OdsCellFormula, type OdsCellPreserved } from "./tableXml";
+import { OdsTableReader, repeatCount, type OdsCellBudget, type OdsCellFormula, type OdsCellPreserved, type OdsLayoutStyles, type OdsTableLayout } from "./tableXml";
 import { isModelledOdsLink, OdsAnnotationCollector, odsWireLink, type OdsWireLink } from "./annotations";
 import { buildGridMetrics } from "../geometry";
 import type { MediaPart } from "../../core/media";
@@ -159,25 +160,21 @@ const CALCEXT_NAMESPACE = "urn:org:documentfoundation:names:experimental:calc:xm
 /** The null date ODF assumes when a document declares none. */
 const DEFAULT_NULL_DATE = "1899-12-30";
 
-interface PendingTable {
-  name: string;
-  hidden: boolean;
-  tabColor?: string;
-  /** Where this sheet's sourceXml starts in content.xml. */
-  start: number;
-  level: number;
-  reader: OdsTableReader;
-  /** SPEC-122: `table:protected="true"`. */
-  protected: boolean;
-  /** SPEC-130: the cells naming each content validation. */
-  validations: ValidationRegions;
-  /** SPEC-131: the drawing elements met — `table:shapes` children and
-   * cells' draw:* children — in document order. */
-  drawings: OdsDrawingSource[];
-  /** SPEC-135: the cells' notes and first links (ods/annotations.ts). */
-  annotations: OdsAnnotationCollector;
-  /** The open row's `table:number-rows-repeated`. */
-  rowRepeat: number;
+/** The refusal of a package that is no OpenDocument spreadsheet. */
+export const NOT_AN_ODS_SPREADSHEET = "This file isn't an OpenDocument spreadsheet we can open";
+
+/** The dates a workbook's date values count from (see serial.ts). */
+export interface OdsDates {
+  dateSystem: "1900" | "1904";
+  odsNullDate?: string;
+}
+
+/** The style lookups scanning a table needs: OdsStyleBook in the single
+ * pass, and (SPEC-137) the projection's book of ods/scanBook.ts in phase 3. */
+export interface OdsScanStyles extends OdsLayoutStyles {
+  textFont(name: string): CellFont | undefined;
+  textStyleModelled(name: string): boolean;
+  tableStyle(name: string | undefined): OdsTableStyle;
 }
 
 /** A stretch of a cell's text sharing one span font. */
@@ -325,7 +322,7 @@ function cellFormula(
 }
 
 /** The date system a declared null date selects (see serial.ts). */
-function dateSystemOf(nullDate: string): { dateSystem: "1900" | "1904"; odsNullDate?: string } {
+function dateSystemOf(nullDate: string): OdsDates {
   const day = nullDate.trim().slice(0, 10);
   if (day === DEFAULT_NULL_DATE) {
     return { dateSystem: "1900" };
@@ -339,7 +336,7 @@ function dateSystemOf(nullDate: string): { dateSystem: "1900" | "1904"; odsNullD
 /** A cell's value from its declared type; null for an empty cell. */
 function odsCellValue(
   cell: PendingCell,
-  dates: { dateSystem: "1900" | "1904"; odsNullDate?: string },
+  dates: OdsDates,
   where: string,
 ): CellValue {
   const officeAttr = (local: string): string | undefined => scanAttr(cell.attrs, local, OFFICE_NAMESPACE);
@@ -436,7 +433,7 @@ function modelledInline(
   ns: string | undefined,
   local: string,
   attrs: readonly XmlScanAttribute[],
-  styleBook: () => OdsStyleBook,
+  styles: Pick<OdsScanStyles, "textStyleModelled">,
 ): boolean {
   if (ns !== TEXT_NAMESPACE) {
     return false;
@@ -456,7 +453,7 @@ function modelledInline(
     return false;
   }
   const styleName = scanAttr(attrs, "style-name", TEXT_NAMESPACE);
-  return styleName === undefined || styleBook().textStyleModelled(styleName);
+  return styleName === undefined || styles.textStyleModelled(styleName);
 }
 
 /** A string cell's rich-text runs — only when a span gave a font and the
@@ -496,7 +493,7 @@ interface OdsContent {
   dxfs: Dxf[];
   prefix: string;
   suffix: string;
-  dates: { dateSystem: "1900" | "1904"; odsNullDate?: string };
+  dates: OdsDates;
   /** SPEC-120: what `table:calculation-settings` says (ODF's defaults when
    * it, or an attribute, is absent). */
   calc: CalcSettings;
@@ -535,115 +532,232 @@ function odsCalcSettings(attrs: readonly XmlScanAttribute[] | undefined, iterati
   return calc;
 }
 
-/** Reads content.xml, `sheetStyles` being styles.xml's declarations and
- * `media` the package's pictures (SPEC-131: what the drawings show).
- * Returns null when the cell ceiling stopped the scan. */
-export function readOdsContent(
-  xml: string,
-  budget: CellBudget,
-  sheetStyles: OdsStyleSheet = emptyOdsStyleSheet(),
-  media: OdsMediaReader = new OdsMediaReader(new Map()),
-): OdsContent | null {
-  const sheets: Sheet[] = [];
-  const uncachedCharts = new Set<SheetChartContent>();
-  /** SPEC-130: each finished table's validation names, as rectangles. */
-  const validationRegions: Map<string, GridRange[]>[] = [];
-  let dates: OdsContent["dates"] = { dateSystem: "1900" };
-  let calcAttrs: readonly XmlScanAttribute[] | undefined;
-  let iterationStatus: string | undefined;
-  let depth = 0;
-  let spreadsheetLevel = -1;
-  let firstTableStart = -1;
-  let previousTableEnd = -1;
-  let table: PendingTable | null = null;
+/** content.xml outside its tables, as the scan meets it: the root's
+ * namespace declarations, the style sections (sliced out by offset — they
+ * precede the body), the spreadsheet's attributes, the null date, the
+ * calculation settings, and where each top-level table starts — every
+ * `table:table` child of `office:spreadsheet`. readOdsContent hands it every
+ * event met outside a table, and so does SPEC-137's phase 1
+ * (ods/phases.ts), which reads the tables' offsets and these facts in one
+ * scan without reading the tables. */
+export class OdsContentOutline {
+  /** The open elements' depth (an open tag's level is depth + 1). */
+  private depth = 0;
+  private spreadsheetLevel = -1;
+  private sliceLevel = -1;
+  private sliceStart = -1;
+  /** Where the first table's sourceXml starts (-1: no table yet). */
+  firstTableStart = -1;
+  /** Where the last finished table ends (-1: none yet). */
+  previousTableEnd = -1;
+  /** SPEC-122: `office:spreadsheet@table:structure-protected="true"`. */
+  structureProtected = false;
+  dates: OdsDates = { dateSystem: "1900" };
+  /** SPEC-120: `table:calculation-settings`' attributes, and its
+   * `table:iteration@table:status`. */
+  calcAttrs: readonly XmlScanAttribute[] | undefined;
+  iterationStatus: string | undefined;
+  /** The root's namespace declarations, as source text: what a slice of
+   * the document needs to parse on its own. */
+  declarations = "";
+  /** The root's prefix → namespace URI declarations, which a formula's
+   * dialect prefix resolves against (SPEC-119). */
+  namespaces: ReadonlyMap<string, string> = new Map();
+  /** The style sections (`office:font-face-decls`,
+   * `office:automatic-styles`), [start, end) in document order. */
+  readonly styleSlices: { start: number; end: number }[] = [];
+
+  constructor(private readonly xml: string) {}
+
+  /** One event met outside every table. A top-level table's start tag
+   * answers where its sourceXml starts and its level; anything else
+   * undefined. */
+  event(event: XmlScanEvent): { start: number; level: number } | undefined {
+    if (event.type === "text") {
+      return undefined;
+    }
+    if (this.sliceLevel > 0) {
+      // Inside a style section being sliced out whole.
+      if (event.type === "open") {
+        this.depth += event.selfClosing ? 0 : 1;
+      } else {
+        if (this.depth === this.sliceLevel) {
+          this.styleSlices.push({ start: this.sliceStart, end: event.end });
+          this.sliceLevel = -1;
+        }
+        this.depth -= 1;
+      }
+      return undefined;
+    }
+    if (event.type === "open") {
+      const level = this.depth + 1;
+      if (level === 1) {
+        this.declarations = namespaceDeclarations(event.attrs);
+        this.namespaces = new Map(event.attrs.flatMap((attr) => (attr.name.startsWith("xmlns:") ? [[attr.name.slice(6), attr.value] as const] : [])));
+      } else if (event.ns === OFFICE_NAMESPACE) {
+        if (level === 2 && (event.local === "font-face-decls" || event.local === "automatic-styles")) {
+          if (!event.selfClosing) {
+            this.sliceLevel = level;
+            this.sliceStart = event.start;
+            this.depth += 1;
+          }
+          return undefined;
+        }
+        if (event.local === "spreadsheet") {
+          this.spreadsheet(event, level);
+        }
+      } else if (event.ns === TABLE_NAMESPACE) {
+        if (event.local === "null-date" && this.spreadsheetLevel > 0) {
+          this.dates = dateSystemOf(scanAttr(event.attrs, "date-value", TABLE_NAMESPACE) ?? DEFAULT_NULL_DATE);
+        } else if (event.local === "calculation-settings" && level === this.spreadsheetLevel + 1) {
+          this.calcAttrs = event.attrs;
+        } else if (event.local === "iteration" && this.spreadsheetLevel > 0) {
+          this.iterationStatus = scanAttr(event.attrs, "status", TABLE_NAMESPACE);
+        } else if (event.local === "table" && level === this.spreadsheetLevel + 1) {
+          let start = event.start;
+          if (this.previousTableEnd >= 0) {
+            start = this.previousTableEnd;
+          } else {
+            while (start > 0 && /\s/.test(this.xml[start - 1]!)) {
+              start -= 1;
+            }
+            this.firstTableStart = start;
+          }
+          if (!event.selfClosing) {
+            this.depth += 1;
+          }
+          return { start, level };
+        }
+      }
+      if (!event.selfClosing) {
+        this.depth += 1;
+      }
+      return undefined;
+    }
+    if (event.ns === OFFICE_NAMESPACE && event.local === "spreadsheet") {
+      this.spreadsheet(event, this.depth);
+    }
+    this.depth -= 1;
+    return undefined;
+  }
+
+  /** An `office:spreadsheet` element opening at `level`, or closing. */
+  spreadsheet(event: XmlScanEvent, level: number): void {
+    if (event.type === "open") {
+      this.spreadsheetLevel = level;
+      this.structureProtected ||= scanAttr(event.attrs, "structure-protected", TABLE_NAMESPACE) === "true";
+    } else {
+      this.spreadsheetLevel = -1;
+    }
+  }
+
+  /** The top-level table the last start tag opened has ended at `end` —
+   * at its close tag, or at its own start tag when it is self-closing. */
+  tableEnded(end: number, selfClosing: boolean): void {
+    this.previousTableEnd = end;
+    if (!selfClosing) {
+      this.depth -= 1;
+    }
+  }
+
+  /** The style sections met so far, verbatim. */
+  styleSliceTexts(): string[] {
+    return this.styleSlices.map(({ start, end }) => this.xml.slice(start, end));
+  }
+
+  /** SPEC-120: what `table:calculation-settings` says. */
+  calc(): CalcSettings {
+    return odsCalcSettings(this.calcAttrs, this.iterationStatus);
+  }
+}
+
+/** What scanning one table needs. */
+export interface OdsTableScanEnv {
+  /** The text the events index (content.xml). */
+  xml: string;
+  styles: OdsScanStyles;
+  budget: OdsCellBudget;
+  /** The root's prefix → namespace URI declarations (formula prefixes). */
+  namespaces: ReadonlyMap<string, string>;
+  /** The root's namespace declarations, as source text (notes parse under them). */
+  declarations: () => string;
+  dates: OdsDates;
+  /** An `office:spreadsheet` element met inside the table outside its cells
+   * and drawings (the single pass's outline follows it, as it always has). */
+  onSpreadsheet?: (event: XmlScanEvent, level: number) => void;
+}
+
+/** One top-level table, from the event after its start tag to its close
+ * tag: its columns, rows and cells into an OdsTableReader, its validation
+ * names, its drawing elements and its notes and links. readOdsContent's
+ * per-table half — and SPEC-137's phase 3 (ods/phases.ts), which scans one
+ * table cut out of content.xml by offset with the same events. */
+export class OdsTableScan {
+  readonly name: string;
+  readonly hidden: boolean;
+  readonly tabColor: string | undefined;
+  /** SPEC-122: `table:protected="true"`. */
+  readonly protected: boolean;
+  /** Where this sheet's sourceXml starts in content.xml. */
+  readonly start: number;
+  readonly reader: OdsTableReader;
+  /** SPEC-130: the cells naming each content validation. */
+  readonly validations = new ValidationRegions();
+  /** SPEC-131: the drawing elements met — `table:shapes` children and
+   * cells' draw:* children — in document order. */
+  readonly drawings: OdsDrawingSource[] = [];
+  /** SPEC-135: the cells' notes and first links (ods/annotations.ts). */
+  readonly annotations: OdsAnnotationCollector;
+  /** The row elements finished so far (SPEC-137: a stepwise scan pauses
+   * between rows). */
+  rowsRead = 0;
+  private readonly env: OdsTableScanEnv;
+  private readonly level: number;
+  private depth: number;
+  /** The open row's `table:number-rows-repeated`. */
+  private rowRepeat = 1;
   /** Whether a `table:table-row` is open, and its level. */
-  let inRow = false;
-  let rowLevel = -1;
-  let cell: PendingCell | null = null;
+  private inRow = false;
+  private rowLevel = -1;
+  private cell: PendingCell | null = null;
   /** >0 while inside a table's drawing layer (`table:shapes`, a draw:*
    * element): a text box there may hold a table of its own, whose rows are
    * not the sheet's. */
-  let drawingDepth = 0;
+  private drawingDepth = 0;
   /** SPEC-131: the level of the open `table:shapes` (-1: none), and where
    * its open child (a drawing) starts. */
-  let shapesLevel = -1;
-  let shapeStart = -1;
-  let tooLarge = false;
-  let structureProtected = false;
-  /** content.xml's style sections, sliced verbatim, and the namespace
-   * declarations they need to parse on their own. */
-  const styleSlices: string[] = [];
-  let declarations = "";
-  /** The root's prefix → namespace URI declarations, which a formula's
-   * dialect prefix resolves against (SPEC-119). */
-  let namespaces: ReadonlyMap<string, string> = new Map();
-  let sliceLevel = -1;
-  let sliceStart = -1;
-  let book: OdsStyleBook | null = null;
-  const styleBook = (): OdsStyleBook => (book ??= new OdsStyleBook(sheetStyles, readOdsContentStyles(styleSlices, declarations)));
+  private shapesLevel = -1;
+  private shapeStart = -1;
 
-  const finishCell = (done: PendingCell): boolean => {
-    const reader = table!.reader;
-    const where = `"${table!.name}"!${addressText(reader.rowIndex, reader.colIndex)}`;
-    const formula = cellFormula(done.attrs, namespaces, { row: reader.rowIndex, col: reader.colIndex });
-    const typed = scanAttr(done.attrs, "value-type", OFFICE_NAMESPACE) !== undefined || scanAttr(done.attrs, "value-type", CALCEXT_NAMESPACE) !== undefined;
-    // A formula with no value type has no cached value (SPEC-119).
-    const value = formula && !typed ? null : odsCellValue(done, dates, where);
-    const validation = scanAttr(done.attrs, "content-validation-name", TABLE_NAMESPACE);
-    if (validation !== undefined) {
-      table!.validations.cell(validation, reader.colIndex, repeatCount(done.attrs, "number-columns-repeated"));
-    }
-    if (done.annotation !== undefined || done.link !== null) {
-      // SPEC-135: every repetition carries the note and the link, each counted.
-      const cols = repeatCount(done.attrs, "number-columns-repeated");
-      if (!budget.take(OdsAnnotationCollector.positions(reader.rowIndex, table!.rowRepeat, reader.colIndex, cols))) {
-        return false;
-      }
-      table!.annotations.cell(reader.rowIndex, table!.rowRepeat, reader.colIndex, cols, done.annotation, done.link);
-    }
-    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula, cellPreserved(done, xml));
-  };
+  /** The table whose start tag (with `attrs`, at `level`) was just met:
+   * `start` is where its sourceXml starts, `index` its place among the
+   * tables (its default name). */
+  constructor(env: OdsTableScanEnv, attrs: readonly XmlScanAttribute[], level: number, start: number, index: number) {
+    this.env = env;
+    this.level = level;
+    this.depth = level;
+    this.start = start;
+    this.name = scanAttr(attrs, "name", TABLE_NAMESPACE) ?? `Sheet${index + 1}`;
+    const tableStyle = env.styles.tableStyle(scanAttr(attrs, "style-name", TABLE_NAMESPACE));
+    this.hidden = tableStyle.hidden;
+    this.tabColor = tableStyle.tabColor;
+    this.reader = new OdsTableReader(this.name, env.styles, env.budget);
+    this.protected = scanAttr(attrs, "protected", TABLE_NAMESPACE) === "true";
+    this.annotations = new OdsAnnotationCollector(env.declarations);
+  }
 
-  const finishTable = (done: PendingTable, end: number): boolean => {
-    const layout = done.reader.finish();
-    if (layout === null) {
-      return false;
-    }
-    const sheet: Sheet = {
-      id: crypto.randomUUID(),
-      name: done.name,
-      visibility: done.hidden ? "hidden" : "visible",
-      kind: "grid",
-      rows: layout.rows,
-      sourceXml: xml.slice(done.start, end),
-      columns: layout.columns,
-      defaultColWidthPx: layout.defaultColWidthPx,
-      defaultRowHeightPt: layout.defaultRowHeightPt,
-      merges: layout.merges,
-      conditionalFormats: [],
-      validations: [],
-    };
-    if (done.tabColor !== undefined) {
-      sheet.tabColor = done.tabColor;
-    }
-    if (done.protected) {
-      sheet.protection = { sheet: true };
-    }
-    if (done.drawings.length > 0) {
-      // SPEC-131: under the finished table's geometry (in-cell offsets are sheet-absolute).
-      sheet.drawings = readOdsDrawings(done.drawings, buildGridMetrics(sheet), { declarations, styles: styleBook(), media, uncachedCharts });
-    }
-    // SPEC-135: the cells' notes and links.
-    Object.assign(sheet, done.annotations.result());
-    sheets.push(sheet);
-    validationRegions.push(done.validations.result());
-    previousTableEnd = end;
-    return true;
-  };
+  /** The table's layout once its close tag was met; null when the cell
+   * ceiling stopped the read. */
+  finish(): OdsTableLayout | null {
+    return this.reader.finish();
+  }
 
-  scanXml(xml, (event) => {
-    if (cell !== null) {
-      const inside = cell;
+  /** One event inside the table: "end" for its close tag, "stop" when the
+   * cell ceiling stops the read. */
+  event(event: XmlScanEvent): "end" | "stop" | undefined {
+    const xml = this.env.xml;
+    if (this.cell !== null) {
+      const inside = this.cell;
       if (event.type === "text") {
         if (inside.paragraph !== null && inside.skipDepth === 0) {
           appendText(inside, event.text);
@@ -651,18 +765,14 @@ export function readOdsContent(
         return undefined;
       }
       if (event.type === "close") {
-        if (depth === inside.level) {
-          cell = null;
-          depth -= 1;
-          if (!finishCell(inside)) {
-            tooLarge = true;
-            return "stop";
-          }
-          return undefined;
+        if (this.depth === inside.level) {
+          this.cell = null;
+          this.depth -= 1;
+          return this.finishCell(inside) ? undefined : "stop";
         }
-        if (depth === inside.level + 1 && inside.childStart >= 0) {
+        if (this.depth === inside.level + 1 && inside.childStart >= 0) {
           if (inside.childIsDrawing) {
-            table!.drawings.push({ xml: xml.slice(inside.childStart, event.end), cell: { row: table!.reader.rowIndex, col: table!.reader.colIndex } });
+            this.drawings.push({ xml: xml.slice(inside.childStart, event.end), cell: { row: this.reader.rowIndex, col: this.reader.colIndex } });
           } else if (inside.childIsAnnotation && inside.annotation === undefined) {
             // SPEC-135: the cell's note (ods/annotations.ts), never its preservedXml.
             inside.annotation = xml.slice(inside.childStart, event.end);
@@ -673,16 +783,16 @@ export function readOdsContent(
         }
         if (inside.skipDepth > 0) {
           inside.skipDepth -= 1;
-        } else if (inside.spans.length > 0 && depth === inside.spans.at(-1)!.level) {
+        } else if (inside.spans.length > 0 && this.depth === inside.spans.at(-1)!.level) {
           inside.spans.pop();
-        } else if (inside.paragraph !== null && depth === inside.paragraphLevel) {
+        } else if (inside.paragraph !== null && this.depth === inside.paragraphLevel) {
           inside.paragraphs.push(inside.paragraph);
           inside.paragraph = null;
         }
-        depth -= 1;
+        this.depth -= 1;
         return undefined;
       }
-      const level = depth + 1;
+      const level = this.depth + 1;
       if (level === inside.level + 1) {
         const paragraph = event.ns === TEXT_NAMESPACE && (event.local === "p" || event.local === "h");
         if (paragraph && (event.local === "h" || event.attrs.length > 0)) {
@@ -693,7 +803,7 @@ export function readOdsContent(
         const annotation = event.ns === OFFICE_NAMESPACE && event.local === "annotation";
         if (event.selfClosing) {
           if (drawing) {
-            table!.drawings.push({ xml: xml.slice(event.start, event.end), cell: { row: table!.reader.rowIndex, col: table!.reader.colIndex } });
+            this.drawings.push({ xml: xml.slice(event.start, event.end), cell: { row: this.reader.rowIndex, col: this.reader.colIndex } });
           } else if (annotation && inside.annotation === undefined) {
             inside.annotation = xml.slice(event.start, event.end);
           } else {
@@ -705,7 +815,7 @@ export function readOdsContent(
           inside.childIsDrawing = drawing;
           inside.childIsAnnotation = annotation;
         }
-      } else if (inside.childIsParagraph && inside.childStart >= 0 && !inside.inline && !modelledInline(event.ns, event.local, event.attrs, styleBook)) {
+      } else if (inside.childIsParagraph && inside.childStart >= 0 && !inside.inline && !modelledInline(event.ns, event.local, event.attrs, this.env.styles)) {
         inside.inline = true;
       }
       if (inside.skipDepth > 0) {
@@ -742,13 +852,13 @@ export function readOdsContent(
         } else if (event.local === "span" && !event.selfClosing) {
           const outer = inside.spans.at(-1)?.font;
           const styleName = scanAttr(event.attrs, "style-name", TEXT_NAMESPACE);
-          const own = styleName === undefined ? undefined : styleBook().textFont(styleName);
+          const own = styleName === undefined ? undefined : this.env.styles.textFont(styleName);
           inside.hasSpanFont ||= own !== undefined;
           inside.spans.push({ level, font: own && outer ? { ...outer, ...own } : (own ?? outer) });
         }
       }
       if (!event.selfClosing) {
-        depth += 1;
+        this.depth += 1;
       }
       return undefined;
     }
@@ -757,150 +867,79 @@ export function readOdsContent(
       return undefined;
     }
 
-    if (sliceLevel > 0) {
-      // Inside a style section being sliced out whole.
-      if (event.type === "open") {
-        depth += event.selfClosing ? 0 : 1;
-      } else {
-        if (depth === sliceLevel) {
-          styleSlices.push(xml.slice(sliceStart, event.end));
-          sliceLevel = -1;
-        }
-        depth -= 1;
-      }
-      return undefined;
-    }
-
-    if (shapesLevel > 0) {
+    if (this.shapesLevel > 0) {
       // SPEC-131: inside a table's `table:shapes` — each child is an absolute drawing.
       if (event.type === "open") {
-        if (depth + 1 === shapesLevel + 1) {
+        if (this.depth + 1 === this.shapesLevel + 1) {
           if (event.selfClosing) {
-            table!.drawings.push({ xml: xml.slice(event.start, event.end) });
+            this.drawings.push({ xml: xml.slice(event.start, event.end) });
           } else {
-            shapeStart = event.start;
+            this.shapeStart = event.start;
           }
         }
-        depth += event.selfClosing ? 0 : 1;
+        this.depth += event.selfClosing ? 0 : 1;
       } else {
-        if (depth === shapesLevel + 1 && shapeStart >= 0) {
-          table!.drawings.push({ xml: xml.slice(shapeStart, event.end) });
-          shapeStart = -1;
-        } else if (depth === shapesLevel) {
-          shapesLevel = -1;
+        if (this.depth === this.shapesLevel + 1 && this.shapeStart >= 0) {
+          this.drawings.push({ xml: xml.slice(this.shapeStart, event.end) });
+          this.shapeStart = -1;
+        } else if (this.depth === this.shapesLevel) {
+          this.shapesLevel = -1;
         }
-        depth -= 1;
+        this.depth -= 1;
       }
       return undefined;
     }
-    if (event.type === "open" && table !== null && !inRow && depth + 1 === table.level + 1 && event.ns === TABLE_NAMESPACE && event.local === "shapes") {
+    if (event.type === "open" && !this.inRow && this.depth + 1 === this.level + 1 && event.ns === TABLE_NAMESPACE && event.local === "shapes") {
       if (!event.selfClosing) {
-        shapesLevel = depth + 1;
-        depth += 1;
+        this.shapesLevel = this.depth + 1;
+        this.depth += 1;
       }
       return undefined;
     }
-    if (drawingDepth > 0) {
+    if (this.drawingDepth > 0) {
       if (event.type === "open" && !event.selfClosing) {
-        drawingDepth += 1;
-        depth += 1;
+        this.drawingDepth += 1;
+        this.depth += 1;
       } else if (event.type === "close") {
-        drawingDepth -= 1;
-        depth -= 1;
+        this.drawingDepth -= 1;
+        this.depth -= 1;
       }
       return undefined;
     }
-    if (
-      event.type === "open" &&
-      table !== null &&
-      (event.ns === DRAW_NAMESPACE || (event.ns === TABLE_NAMESPACE && event.local === "shapes"))
-    ) {
+    if (event.type === "open" && (event.ns === DRAW_NAMESPACE || (event.ns === TABLE_NAMESPACE && event.local === "shapes"))) {
       if (!event.selfClosing) {
-        drawingDepth = 1;
-        depth += 1;
+        this.drawingDepth = 1;
+        this.depth += 1;
       }
       return undefined;
     }
 
     if (event.type === "open") {
-      const level = depth + 1;
-      if (level === 1) {
-        declarations = namespaceDeclarations(event.attrs);
-        namespaces = new Map(event.attrs.flatMap((attr) => (attr.name.startsWith("xmlns:") ? [[attr.name.slice(6), attr.value] as const] : [])));
-      } else if (event.ns === OFFICE_NAMESPACE) {
-        if (level === 2 && (event.local === "font-face-decls" || event.local === "automatic-styles")) {
-          if (!event.selfClosing) {
-            sliceLevel = level;
-            sliceStart = event.start;
-            depth += 1;
-          }
-          return undefined;
-        }
+      const level = this.depth + 1;
+      if (event.ns === OFFICE_NAMESPACE) {
         if (event.local === "spreadsheet") {
-          spreadsheetLevel = level;
-          structureProtected ||= scanAttr(event.attrs, "structure-protected", TABLE_NAMESPACE) === "true";
+          this.env.onSpreadsheet?.(event, level);
         }
       } else if (event.ns === TABLE_NAMESPACE) {
-        if (event.local === "null-date" && spreadsheetLevel > 0 && table === null) {
-          dates = dateSystemOf(scanAttr(event.attrs, "date-value", TABLE_NAMESPACE) ?? DEFAULT_NULL_DATE);
-        } else if (event.local === "calculation-settings" && level === spreadsheetLevel + 1 && table === null) {
-          calcAttrs = event.attrs;
-        } else if (event.local === "iteration" && spreadsheetLevel > 0 && table === null) {
-          iterationStatus = scanAttr(event.attrs, "status", TABLE_NAMESPACE);
-        } else if (event.local === "table" && table === null && level === spreadsheetLevel + 1) {
-          let start = event.start;
-          if (previousTableEnd >= 0) {
-            start = previousTableEnd;
-          } else {
-            while (start > 0 && /\s/.test(xml[start - 1]!)) {
-              start -= 1;
-            }
-            firstTableStart = start;
-          }
-          const name = scanAttr(event.attrs, "name", TABLE_NAMESPACE) ?? `Sheet${sheets.length + 1}`;
-          const tableStyle = styleBook().tableStyle(scanAttr(event.attrs, "style-name", TABLE_NAMESPACE));
-          const pending: PendingTable = {
-            name,
-            hidden: tableStyle.hidden,
-            start,
-            level,
-            reader: new OdsTableReader(name, styleBook(), budget),
-            protected: scanAttr(event.attrs, "protected", TABLE_NAMESPACE) === "true",
-            validations: new ValidationRegions(),
-            drawings: [],
-            annotations: new OdsAnnotationCollector(() => declarations),
-            rowRepeat: 1,
-          };
-          if (tableStyle.tabColor !== undefined) {
-            pending.tabColor = tableStyle.tabColor;
-          }
+        if (event.local === "table-column" && !this.inRow) {
+          this.reader.column(event.attrs);
+        } else if (event.local === "table-row" && !this.inRow) {
+          this.reader.startRow(event.attrs);
+          this.rowRepeat = repeatCount(event.attrs, "number-rows-repeated");
+          this.validations.startRow(this.reader.rowIndex, repeatCount(event.attrs, "number-rows-repeated"));
           if (event.selfClosing) {
-            if (!finishTable(pending, event.end)) {
-              tooLarge = true;
+            this.validations.endRow();
+            this.rowsRead += 1;
+            if (!this.reader.endRow()) {
               return "stop";
             }
           } else {
-            table = pending;
-          }
-        } else if (event.local === "table-column" && table !== null && !inRow) {
-          table.reader.column(event.attrs);
-        } else if (event.local === "table-row" && table !== null && !inRow) {
-          table.reader.startRow(event.attrs);
-          table.rowRepeat = repeatCount(event.attrs, "number-rows-repeated");
-          table.validations.startRow(table.reader.rowIndex, repeatCount(event.attrs, "number-rows-repeated"));
-          if (event.selfClosing) {
-            table.validations.endRow();
-            if (!table.reader.endRow()) {
-              tooLarge = true;
-              return "stop";
-            }
-          } else {
-            inRow = true;
-            depth += 1;
-            rowLevel = level;
+            this.inRow = true;
+            this.depth += 1;
+            this.rowLevel = level;
             return undefined;
           }
-        } else if ((event.local === "table-cell" || event.local === "covered-table-cell") && inRow) {
+        } else if ((event.local === "table-cell" || event.local === "covered-table-cell") && this.inRow) {
           const pending: PendingCell = {
             level,
             covered: event.local === "covered-table-cell",
@@ -924,66 +963,183 @@ export function readOdsContent(
             link: null,
           };
           if (event.selfClosing) {
-            if (!finishCell(pending)) {
-              tooLarge = true;
+            if (!this.finishCell(pending)) {
               return "stop";
             }
           } else {
-            cell = pending;
+            this.cell = pending;
           }
         }
       }
       if (!event.selfClosing) {
-        depth += 1;
+        this.depth += 1;
       }
       return undefined;
     }
 
     // A close tag.
     if (event.ns === TABLE_NAMESPACE) {
-      if (event.local === "table-row" && inRow && depth === rowLevel) {
-        inRow = false;
-        table!.validations.endRow();
-        if (!table!.reader.endRow()) {
-          tooLarge = true;
-          depth -= 1;
+      if (event.local === "table-row" && this.inRow && this.depth === this.rowLevel) {
+        this.inRow = false;
+        this.validations.endRow();
+        this.rowsRead += 1;
+        if (!this.reader.endRow()) {
+          this.depth -= 1;
           return "stop";
         }
-      } else if (event.local === "table" && table !== null && depth === table.level) {
+      } else if (event.local === "table" && this.depth === this.level) {
+        this.depth -= 1;
+        return "end";
+      }
+    } else if (event.ns === OFFICE_NAMESPACE && event.local === "spreadsheet") {
+      this.env.onSpreadsheet?.(event, this.depth);
+    }
+    this.depth -= 1;
+    return undefined;
+  }
+
+  /** A finished cell element into the table reader: false when the cell
+   * ceiling stops the read. */
+  private finishCell(done: PendingCell): boolean {
+    const reader = this.reader;
+    const where = `"${this.name}"!${addressText(reader.rowIndex, reader.colIndex)}`;
+    const formula = cellFormula(done.attrs, this.env.namespaces, { row: reader.rowIndex, col: reader.colIndex });
+    const typed = scanAttr(done.attrs, "value-type", OFFICE_NAMESPACE) !== undefined || scanAttr(done.attrs, "value-type", CALCEXT_NAMESPACE) !== undefined;
+    // A formula with no value type has no cached value (SPEC-119).
+    const value = formula && !typed ? null : odsCellValue(done, this.env.dates, where);
+    const validation = scanAttr(done.attrs, "content-validation-name", TABLE_NAMESPACE);
+    if (validation !== undefined) {
+      this.validations.cell(validation, reader.colIndex, repeatCount(done.attrs, "number-columns-repeated"));
+    }
+    if (done.annotation !== undefined || done.link !== null) {
+      // SPEC-135: every repetition carries the note and the link, each counted.
+      const cols = repeatCount(done.attrs, "number-columns-repeated");
+      if (!this.env.budget.take(OdsAnnotationCollector.positions(reader.rowIndex, this.rowRepeat, reader.colIndex, cols))) {
+        return false;
+      }
+      this.annotations.cell(reader.rowIndex, this.rowRepeat, reader.colIndex, cols, done.annotation, done.link);
+    }
+    return reader.cell(done.attrs, done.covered, value, cellRuns(done, value), impliedCodeOf(done, value), formula, cellPreserved(done, this.env.xml));
+  }
+}
+
+/** Reads content.xml, `sheetStyles` being styles.xml's declarations and
+ * `media` the package's pictures (SPEC-131: what the drawings show).
+ * Returns null when the cell ceiling stopped the scan. */
+export function readOdsContent(
+  xml: string,
+  budget: CellBudget,
+  sheetStyles: OdsStyleSheet = emptyOdsStyleSheet(),
+  media: OdsMediaReader = new OdsMediaReader(new Map()),
+): OdsContent | null {
+  const sheets: Sheet[] = [];
+  const uncachedCharts = new Set<SheetChartContent>();
+  /** SPEC-130: each finished table's validation names, as rectangles. */
+  const validationRegions: Map<string, GridRange[]>[] = [];
+  const outline = new OdsContentOutline(xml);
+  let table: OdsTableScan | null = null;
+  let tooLarge = false;
+  let book: OdsStyleBook | null = null;
+  // Built at the first table's start tag, from the style sections met by then.
+  const styleBook = (): OdsStyleBook => (book ??= new OdsStyleBook(sheetStyles, readOdsContentStyles(outline.styleSliceTexts(), outline.declarations)));
+
+  const finishTable = (done: OdsTableScan, end: number): boolean => {
+    const layout = done.finish();
+    if (layout === null) {
+      return false;
+    }
+    const sheet: Sheet = {
+      id: crypto.randomUUID(),
+      name: done.name,
+      visibility: done.hidden ? "hidden" : "visible",
+      kind: "grid",
+      rows: layout.rows,
+      sourceXml: xml.slice(done.start, end),
+      columns: layout.columns,
+      defaultColWidthPx: layout.defaultColWidthPx,
+      defaultRowHeightPt: layout.defaultRowHeightPt,
+      merges: layout.merges,
+      conditionalFormats: [],
+      validations: [],
+    };
+    if (done.tabColor !== undefined) {
+      sheet.tabColor = done.tabColor;
+    }
+    if (done.protected) {
+      sheet.protection = { sheet: true };
+    }
+    if (done.drawings.length > 0) {
+      // SPEC-131: under the finished table's geometry (in-cell offsets are sheet-absolute).
+      sheet.drawings = readOdsDrawings(done.drawings, buildGridMetrics(sheet), { declarations: outline.declarations, styles: styleBook(), media, uncachedCharts });
+    }
+    // SPEC-135: the cells' notes and links.
+    Object.assign(sheet, done.annotations.result());
+    sheets.push(sheet);
+    validationRegions.push(done.validations.result());
+    return true;
+  };
+
+  scanXml(xml, (event) => {
+    if (table !== null) {
+      const verdict = table.event(event);
+      if (verdict === "end") {
         const done = table;
         table = null;
         if (!finishTable(done, event.end)) {
           tooLarge = true;
-          depth -= 1;
           return "stop";
         }
+        outline.tableEnded(event.end, false);
+      } else if (verdict === "stop") {
+        tooLarge = true;
+        return "stop";
       }
-    } else if (event.ns === OFFICE_NAMESPACE && event.local === "spreadsheet") {
-      spreadsheetLevel = -1;
+      return undefined;
     }
-    depth -= 1;
+    const opened = outline.event(event);
+    if (opened !== undefined && event.type === "open") {
+      const env: OdsTableScanEnv = {
+        xml,
+        styles: styleBook(),
+        budget,
+        namespaces: outline.namespaces,
+        declarations: () => outline.declarations,
+        dates: outline.dates,
+        onSpreadsheet: (spreadsheet, level) => outline.spreadsheet(spreadsheet, level),
+      };
+      const pending = new OdsTableScan(env, event.attrs, opened.level, opened.start, sheets.length);
+      if (event.selfClosing) {
+        if (!finishTable(pending, event.end)) {
+          tooLarge = true;
+          return "stop";
+        }
+        outline.tableEnded(event.end, true);
+      } else {
+        table = pending;
+      }
+    }
     return undefined;
   });
 
   if (tooLarge) {
     return null;
   }
-  if (sheets.length === 0 || firstTableStart < 0) {
+  if (sheets.length === 0 || outline.firstTableStart < 0) {
     throw parseError("content.xml", "the spreadsheet has no tables");
   }
-  const suffix = xml.slice(previousTableEnd);
+  const suffix = xml.slice(outline.previousTableEnd);
   for (const [index, autoFilter] of readOdsAutoFilters(suffix, sheets.map((sheet) => sheet.name))) {
     sheets[index]!.autoFilter = autoFilter;
   }
   // SPEC-129: each table's conditional formats, the styles they apply
   // gathered into one dxf table.
   const conditional = { dxfs: [] as Dxf[] };
-  const cfContext: OdsCfReadContext = { styles: styleBook(), namespaces };
+  const cfContext: OdsCfReadContext = { styles: styleBook(), namespaces: outline.namespaces };
   for (const sheet of sheets) {
     sheet.conditionalFormats = readOdsTableConditionalFormats(sheet.sourceXml!, cfContext, conditional);
   }
   // SPEC-130: the prefix's content validations over the names the cells carry.
-  const prefix = xml.slice(0, firstTableStart);
+  const prefix = xml.slice(0, outline.firstTableStart);
   const validations = readOdsContentValidations(prefix, validationRegions);
   sheets.forEach((sheet, index) => {
     sheet.validations = validations.sheets[index]!;
@@ -995,13 +1151,13 @@ export function readOdsContent(
     dxfs: conditional.dxfs,
     prefix,
     suffix,
-    dates,
-    calc: odsCalcSettings(calcAttrs, iterationStatus),
-    structureProtected,
+    dates: outline.dates,
+    calc: outline.calc(),
+    structureProtected: outline.structureProtected,
     orphanValidations: validations.orphans,
     media: media.media(),
     uncachedCharts,
-    names: readOdsNames({ suffix }, sheets, namespaces),
+    names: readOdsNames({ suffix }, sheets, outline.namespaces),
   };
 }
 
@@ -1050,7 +1206,7 @@ export function readActiveTableName(xml: string): string | undefined {
 
 /** Wraps a malformed part's failure (from the scanner or the platform
  * parser) as the workbook's parse error. */
-function scanned<T>(partName: string, read: () => T): T {
+export function scanned<T>(partName: string, read: () => T): T {
   try {
     return read();
   } catch (error) {
@@ -1063,10 +1219,33 @@ function scanned<T>(partName: string, read: () => T): T {
 
 /** Gives each sheet the view fields settings.xml holds for its table (the
  * view-level items for a table it does not list). */
-function applyViewSettings(sheets: readonly Sheet[], settings: OdsSettings): void {
+export function applyViewSettings(sheets: readonly Sheet[], settings: OdsSettings): void {
   for (const sheet of sheets) {
     Object.assign(sheet, settings.tables.get(sheet.name) ?? settings.defaultView);
   }
+}
+
+/** The package's parts, a zip that does not inflate refused as no
+ * OpenDocument spreadsheet. */
+export async function unzipOds(data: Uint8Array | ArrayBuffer): Promise<Map<string, Uint8Array>> {
+  try {
+    return await unzip(data);
+  } catch (error) {
+    if (error instanceof ZipError) {
+      throw new SpreadsheetOpenError(NOT_AN_ODS_SPREADSHEET);
+    }
+    throw error;
+  }
+}
+
+/** The package's variant, refused unless it is an OpenDocument spreadsheet
+ * (or its template). */
+export function detectOds(parts: Map<string, Uint8Array>): { packageVariant?: PackageVariant } {
+  const detected = spreadsheetFormatOf(detectPackage(parts));
+  if (detected === null || detected === "xlsb" || detected.format !== "ods") {
+    throw new SpreadsheetOpenError(NOT_AN_ODS_SPREADSHEET);
+  }
+  return detected.packageVariant ? { packageVariant: detected.packageVariant } : {};
 }
 
 /** Parses an `.ods` (or `.ots`) package. `preunzipped`, when the open funnel
@@ -1075,21 +1254,8 @@ export async function parseOds(
   data: Uint8Array | ArrayBuffer,
   preunzipped?: Map<string, Uint8Array>,
 ): Promise<ParsedSpreadsheet> {
-  let parts = preunzipped;
-  if (!parts) {
-    try {
-      parts = await unzip(data);
-    } catch (error) {
-      if (error instanceof ZipError) {
-        throw new SpreadsheetOpenError("This file isn't an OpenDocument spreadsheet we can open");
-      }
-      throw error;
-    }
-  }
-  const detected = spreadsheetFormatOf(detectPackage(parts));
-  if (detected === null || detected === "xlsb" || detected.format !== "ods") {
-    throw new SpreadsheetOpenError("This file isn't an OpenDocument spreadsheet we can open");
-  }
+  const parts = preunzipped ?? (await unzipOds(data));
+  const detected = detectOds(parts);
   const contentBytes = parts.get("content.xml");
   if (!contentBytes) {
     throw parseError("content.xml", "the spreadsheet's content part is missing");
