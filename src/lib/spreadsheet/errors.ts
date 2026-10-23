@@ -13,3 +13,8 @@ export const LEGACY_OR_ENCRYPTED_WORKBOOK_MESSAGE =
 export const NUMBERS_UNSUPPORTED_MESSAGE =
   "Apple Numbers files can't be opened yet — in Numbers, choose File ▸ Export To ▸ Excel, then open the .xlsx";
 export const WORKBOOK_TOO_LARGE_MESSAGE = "This workbook has more than 2,000,000 filled cells — too large to open here";
+/** SPEC-137: a stored workbook whose manifest names a row chunk or source
+ * record that browser storage does not return opens read-only with this
+ * message, and the partial model is never written back. */
+export const WORKBOOK_STORAGE_INCOMPLETE_MESSAGE =
+  "Part of this workbook couldn't be loaded from browser storage — download it or reopen the original file";

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { getDocument, getMedia, getPresentation, getSpreadsheet } from "../../lib/documentStore";
+import { getDocument, getMedia, getPresentation, getSpreadsheetShell } from "../../lib/documentStore";
 import { runWhenIdle } from "../../lib/core/idleScheduler";
 import { getDocumentLibraryStats } from "../../lib/libraryStats";
 import { formatBadgeLabel, formatFileSize, formatRelativeTime } from "../../lib/format";
@@ -63,7 +63,8 @@ onMounted(() => {
       return;
     }
     if (props.entry.kind === "spreadsheet") {
-      const workbook = getSpreadsheet(props.entry.id);
+      // SPEC-137: the shell — a card never loads a workbook's rows.
+      const workbook = getSpreadsheetShell(props.entry.id);
       if (workbook) {
         sheetTotal.value = workbook.sheets.length;
         statsReady.value = true;

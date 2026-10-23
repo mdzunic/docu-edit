@@ -47,7 +47,7 @@ function levelOf(project: ProjectLike, seen: ReadonlySet<string> = new Set()): n
 }
 
 describe("e2e timing benchmarks run one at a time", () => {
-  const benchmarks = ["perf-charts", "perf-find", "perf-large-document"];
+  const benchmarks = ["perf-charts", "perf-find", "perf-large-document", "perf-workbook"];
 
   it("gives every *.perf.spec.ts file its own project", () => {
     for (const name of benchmarks) {
@@ -57,6 +57,10 @@ describe("e2e timing benchmarks run one at a time", () => {
     // isolated and once mid-suite, which is the contention this guards.
     const chromium = projects.find((p) => p.name === "chromium") as { testIgnore?: RegExp[] } | undefined;
     expect(chromium?.testIgnore?.some((pattern) => pattern.test("SPEC-047.perf.spec.ts"))).toBe(true);
+    // SPEC-137: the workbook benchmark must be ignored by the desktop
+    // project too — testIgnore's PERF_SPEC regex matches any *.perf.spec.ts,
+    // so this should already hold without a config change of its own.
+    expect(chromium?.testIgnore?.some((pattern) => pattern.test("SPEC-137.perf.spec.ts"))).toBe(true);
   });
 
   it("puts each benchmark project at its own dependency level", () => {
@@ -97,5 +101,9 @@ describe("e2e timing benchmarks run one at a time", () => {
     expect(levelOf(named("perf-charts"))).toBeGreaterThan(0);
     expect(levelOf(named("perf-find"))).toBeGreaterThan(levelOf(named("perf-charts")));
     expect(levelOf(named("perf-large-document"))).toBeGreaterThan(levelOf(named("perf-find")));
+    // SPEC-137: perf-workbook is the chain's new tail, one level past
+    // perf-large-document (today's tail) — so it too runs alone, after
+    // every other benchmark has drained.
+    expect(levelOf(named("perf-workbook"))).toBeGreaterThan(levelOf(named("perf-large-document")));
   });
 });

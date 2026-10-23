@@ -82,25 +82,42 @@ async function crc32Chunked(bytes: Uint8Array): Promise<number> {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function deflateRaw(data: Uint8Array): Promise<Uint8Array> {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(data);
-      controller.close();
-    },
-  }).pipeThrough(new CompressionStream("deflate-raw"));
+// The deflate is the same kind of gap. CompressionStream compresses each
+// written chunk synchronously, on this thread, so an entry written whole is
+// one task as long as its deflate: SPEC-137's 25 MB worksheet part measured
+// ~200ms of it in a single task. Written in slices, with the time-budgeted
+// yield between them, it reads as many short tasks. The bytes are the same
+// either way: nothing flushes between writes, and DEFLATE's output does not
+// depend on how its input was split.
+const DEFLATE_SLICE_BYTES = 512 * 1024;
 
+/** Exported for zipWriter.spec.ts (the slices' output equals one write's). */
+export async function deflateRaw(data: Uint8Array, sliceBytes = DEFLATE_SLICE_BYTES): Promise<Uint8Array> {
+  const compressor = new CompressionStream("deflate-raw");
   const chunks: Uint8Array[] = [];
-  const reader = stream.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) {
-      break;
+  const reading = (async () => {
+    const reader = compressor.readable.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        return;
+      }
+      if (value) {
+        chunks.push(value);
+      }
     }
-    if (value) {
-      chunks.push(value);
+  })();
+  const writer = compressor.writable.getWriter();
+  let lastYield = performance.now();
+  for (let offset = 0; offset < data.length; offset += sliceBytes) {
+    if (offset > 0 && performance.now() - lastYield > SAVE_YIELD_BUDGET_MS) {
+      await yieldToMainThread();
+      lastYield = performance.now();
     }
+    await writer.write(data.subarray(offset, Math.min(data.length, offset + sliceBytes)));
   }
+  await writer.close();
+  await reading;
 
   const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
   const result = new Uint8Array(total);

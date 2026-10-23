@@ -7,7 +7,7 @@
 // and no stored or downloaded byte changes. Self-contained (button + popover
 // in one component) like LanguageStatusControl.vue, opening upward with
 // useFloatingMenu because the status bar sits at the bottom of the viewport.
-import { ref, useTemplateRef } from "vue";
+import { computed, ref, useTemplateRef } from "vue";
 import { useFloatingMenu } from "../../composables/useFloatingMenu";
 import { isSpreadsheetLocaleTag, SPREADSHEET_LOCALE_TAGS } from "../../lib/spreadsheet/numberFormat/locale";
 import { localeOptionLabel } from "../../lib/spreadsheet/numberFormat/render";
@@ -15,7 +15,10 @@ import { useSpreadsheetLocale } from "../../views/spreadsheet/useSpreadsheetLoca
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
 
 const { tag, setLocale } = useSpreadsheetLocale();
-const options = SPREADSHEET_LOCALE_TAGS.map((value) => ({ tag: value, label: localeOptionLabel(value) }));
+// Built on first open (the menu renders its options only while open): each
+// label formats a live sample in its locale, which is Intl work a workbook's
+// first paint need not wait for.
+const options = computed(() => SPREADSHEET_LOCALE_TAGS.map((value) => ({ tag: value, label: localeOptionLabel(value) })));
 
 const open = ref(false);
 const triggerEl = useTemplateRef("triggerEl");

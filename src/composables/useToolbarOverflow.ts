@@ -141,19 +141,9 @@ export function useToolbarOverflow({
   let observer: ResizeObserver | null = null;
   const timers: number[] = [];
 
-  onMounted(() => {
-    const el = strip();
-    // No layout (jsdom / unit tests): skip the observer, settle timers and
-    // font hook entirely — there is nothing to measure and the churn slows the
-    // suite. measure() itself also bails on a zero-width strip.
-    if (!el || el.clientWidth === 0) {
-      return;
-    }
+  /** The first measurement, then the re-measures the UI font needs. */
+  function start(): void {
     void measure();
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => plan());
-      observer.observe(el);
-    }
     // The UI font can settle in after first paint, changing band widths; the
     // ResizeObserver never re-fires for that (the strip clips its own
     // overflow), so re-measure a few times and once fonts are ready.
@@ -164,6 +154,42 @@ export function useToolbarOverflow({
     if (fonts?.ready) {
       void fonts.ready.then(() => measure());
     }
+  }
+
+  onMounted(() => {
+    const el = strip();
+    if (!el) {
+      return;
+    }
+    if (typeof ResizeObserver === "undefined") {
+      // No layout (jsdom / unit tests): skip the settle timers and font hook
+      // entirely — there is nothing to measure and the churn slows the suite.
+      // measure() itself also bails on a zero-width strip.
+      if (el.clientWidth !== 0) {
+        start();
+      }
+      return;
+    }
+    // The first measurement waits for the observer's first callback, which
+    // the browser delivers straight after the first layout: reading the
+    // strip's width here, in the task that mounted the view, would force
+    // that layout — the whole view's (SPEC-137: ~30 ms of a large
+    // workbook's open) — inside this task. A strip with no width then (not
+    // laid out) is left alone, as before.
+    let started = false;
+    observer = new ResizeObserver(() => {
+      if (started) {
+        plan();
+        return;
+      }
+      started = true;
+      if (el.clientWidth === 0) {
+        observer?.disconnect();
+        return;
+      }
+      start();
+    });
+    observer.observe(el);
   });
 
   onBeforeUnmount(() => {

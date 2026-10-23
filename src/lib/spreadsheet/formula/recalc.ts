@@ -269,6 +269,8 @@ class Pass implements RecalcPass {
   private queue: CellKey[] = [];
   private queued = 0;
   private successors = new Map<CellKey, CellKey[]>();
+  /** The ordering's progress between steps (orderDirty). */
+  private kahn: { indegree: Map<CellKey, number>; heap: RankHeap; order: CellKey[]; counted: number; seeded: number } | null = null;
   private order: CellKey[] = [];
   private position = 0;
   private readonly front: CellKey[] = [];
@@ -440,20 +442,32 @@ class Pass implements RecalcPass {
         return;
       }
     }
+    // Kahn's algorithm, in steps like the edges (SPEC-137: done whole, it ran
+    // a 10,000-cell chain's first slice past its budget): the in-degrees,
+    // the cells with none seeding the heap in key order, then the pops.
     const keys = this.queue;
-    const indegree = new Map<CellKey, number>(keys.map((key) => [key, 0]));
-    for (const key of keys) {
-      for (const dependent of this.successors.get(key)!) {
-        indegree.set(dependent, indegree.get(dependent)! + 1);
+    this.kahn ??= { indegree: new Map(), heap: new RankHeap(), order: [], counted: 0, seeded: 0 };
+    const kahn = this.kahn;
+    const { indegree, heap, order } = kahn;
+    while (kahn.counted < keys.length) {
+      for (const dependent of this.successors.get(keys[kahn.counted]!)!) {
+        indegree.set(dependent, (indegree.get(dependent) ?? 0) + 1);
+      }
+      kahn.counted += 1;
+      if (kahn.counted % CHECK_EVERY === 0 && overBudget()) {
+        return;
       }
     }
-    const heap = new RankHeap();
-    for (const key of keys) {
-      if (indegree.get(key) === 0) {
+    while (kahn.seeded < keys.length) {
+      const key = keys[kahn.seeded]!;
+      kahn.seeded += 1;
+      if (!indegree.get(key)) {
         heap.push(this.graph.rank(key), key);
       }
+      if (kahn.seeded % CHECK_EVERY === 0 && overBudget()) {
+        return;
+      }
     }
-    const order: CellKey[] = [];
     for (let key = heap.pop(); key !== undefined; key = heap.pop()) {
       order.push(key);
       for (const dependent of this.successors.get(key)!) {
@@ -463,11 +477,15 @@ class Pass implements RecalcPass {
           heap.push(this.graph.rank(dependent), dependent);
         }
       }
+      if (order.length % CHECK_EVERY === 0 && overBudget()) {
+        return;
+      }
     }
     if (order.length < keys.length) {
-      order.push(...this.orderLeftovers(keys.filter((key) => indegree.get(key)! > 0)));
+      order.push(...this.orderLeftovers(keys.filter((key) => (indegree.get(key) ?? 0) > 0)));
     }
     this.order = order;
+    this.kahn = null;
     this.successors = new Map();
     this.queue = [];
     this.phase = "evaluate";

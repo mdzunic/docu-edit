@@ -112,7 +112,7 @@ import {
 import { crossAnnotations, remapPlaceSheets } from "./annotations";
 import { copyOdsSheetSource, removeCopyObjects } from "./ods/duplicate";
 import { objectsReferenced } from "./ods/package";
-import { SPREADSHEET_READER_VERSION } from "./open";
+import { SPREADSHEET_READER_VERSION } from "./readerVersion";
 import { sourceNameOf } from "./sourceNames";
 import { UNCONVERTIBLE_CONTENT, type ConversionSource } from "./unconvertible";
 import {

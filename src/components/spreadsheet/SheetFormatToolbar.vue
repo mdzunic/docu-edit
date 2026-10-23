@@ -192,10 +192,18 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   }
 }
 
-watch(() => s.value.disabled, () => void updateRoving());
+// In a task of its own, as at mount (below): which controls show needs
+// layout, and asked from here it forced one inside the task that toggled the
+// state — SPEC-137: a cell entry's commit, whose task also runs a
+// recalculation's first slice.
+watch(() => s.value.disabled, () => setTimeout(() => void updateRoving(), 0));
 
 onMounted(() => {
-  void updateRoving();
+  // The first pass runs in a task of its own: which controls show
+  // (offsetParent) needs layout, and asked here it would force the whole
+  // view's first layout inside the task that mounted it (SPEC-137: ~30 ms of
+  // a large workbook's open).
+  setTimeout(() => void updateRoving(), 0);
   document.addEventListener("pointerdown", onDocPointerDown, true);
 });
 

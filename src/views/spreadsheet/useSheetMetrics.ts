@@ -3,11 +3,13 @@
 // frozen counts, each rebuilt only when what it is built from changes — the
 // metrics when the sheet's `columns` or `rows` reference (or a default size)
 // changes, the merge index when `merges` does — so a view-state change (a
-// new sheet object with the same rows) rebuilds nothing. Also the
-// NavContext every selection function takes. Metrics are unscaled px: zoom
-// is applied outside them.
+// new sheet object with the same rows) rebuilds nothing. SPEC-137: a new
+// `rows` array that sizes every row as the last one did (sameRowSizes — a
+// value edit, a recalculation slice) keeps the metrics, the same object, so
+// nothing that reads them recomputes. Also the NavContext every selection
+// function takes. Metrics are unscaled px: zoom is applied outside them.
 import { computed, shallowRef, watchEffect } from "vue";
-import { buildGridMetrics, type GridMetrics } from "../../lib/spreadsheet/geometry";
+import { buildGridMetrics, sameRowSizes, type GridMetrics } from "../../lib/spreadsheet/geometry";
 import { buildMergeIndex, type MergeIndex } from "../../lib/spreadsheet/merges";
 import { MAX_COLS, MAX_ROWS, type Sheet } from "../../lib/spreadsheet/model";
 import type { NavContext } from "../../lib/spreadsheet/selection";
@@ -39,8 +41,13 @@ export function useSheetMetrics(sheet: () => Sheet | null) {
     // reader-version upgrade replaces it: build with the defaults meanwhile.
     const inputs = [current.columns, current.rows, current.defaultColWidthPx, current.defaultRowHeightPt];
     if (inputs.some((input, i) => input !== builtFrom[i])) {
+      const previousRows = builtFrom[1];
+      const resized =
+        inputs.some((input, i) => i !== 1 && input !== builtFrom[i]) || !Array.isArray(previousRows) || !sameRowSizes(previousRows, current.rows);
       builtFrom = inputs;
-      metrics.value = buildGridMetrics({ ...EMPTY_SHEET, ...current, columns: current.columns ?? [] });
+      if (resized) {
+        metrics.value = buildGridMetrics({ ...EMPTY_SHEET, ...current, columns: current.columns ?? [] });
+      }
     }
     if (current.merges !== mergesFrom) {
       mergesFrom = current.merges;

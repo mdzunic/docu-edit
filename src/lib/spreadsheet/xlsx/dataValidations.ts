@@ -124,7 +124,7 @@ function formulaText(node: XmlNode | undefined): string | undefined {
 
 /** A rule from one `dataValidation` element (base or x14) and its parts;
  * null when its sqref names nothing. */
-function readRule(node: XmlNode, sourceXml: string, ranges: GridRange[], formula1: string | undefined, formula2: string | undefined, x14: boolean): DataValidation | null {
+function readRule(node: XmlNode, sourceXml: string, ranges: GridRange[], formula1: string | undefined, formula2: string | undefined, x14: boolean, mint: () => string): DataValidation | null {
   if (ranges.length === 0) {
     return null;
   }
@@ -132,7 +132,7 @@ function readRule(node: XmlNode, sourceXml: string, ranges: GridRange[], formula
   const operator = nodeAttr(node, "operator") ?? "between";
   const style = nodeAttr(node, "errorStyle");
   const rule: DataValidation = {
-    id: mintValidationId(),
+    id: mint(),
     ranges,
     type: TYPES.has(type) ? (type as ValidationType) : "any",
     operator: OPERATORS.has(operator) ? (operator as ValidationOperator) : "between",
@@ -160,19 +160,19 @@ function readRule(node: XmlNode, sourceXml: string, ranges: GridRange[], formula
 }
 
 /** A base `<dataValidation>`. */
-function readBaseRule(node: XmlNode, text: string): DataValidation | null {
+function readBaseRule(node: XmlNode, text: string, mint: () => string = mintValidationId): DataValidation | null {
   const formula = (local: string): string | undefined => formulaText(childNodes(node, local, inMain)[0]);
-  return readRule(node, text.slice(node.start, node.end), parseCfSqref(nodeAttr(node, "sqref") ?? ""), formula("formula1"), formula("formula2"), false);
+  return readRule(node, text.slice(node.start, node.end), parseCfSqref(nodeAttr(node, "sqref") ?? ""), formula("formula1"), formula("formula2"), false, mint);
 }
 
 /** An `<x14:dataValidation>`. */
-function readX14Rule(node: XmlNode, text: string): DataValidation | null {
+function readX14Rule(node: XmlNode, text: string, mint: () => string = mintValidationId): DataValidation | null {
   const formula = (local: string): string | undefined => {
     const holder = childNodes(node, local, inX14)[0];
     return formulaText(holder ? childNodes(holder, "f", inXm)[0] : undefined);
   };
   const sqref = childNodes(node, "sqref", inXm)[0]?.text ?? "";
-  return readRule(node, text.slice(node.start, node.end), parseCfSqref(sqref), formula("formula1"), formula("formula2"), true);
+  return readRule(node, text.slice(node.start, node.end), parseCfSqref(sqref), formula("formula1"), formula("formula2"), true, mint);
 }
 
 /** The x14 `dataValidations` lists of an `<extLst>` (parsed in `context`). */
@@ -187,8 +187,9 @@ function x14Lists(extLst: string, context: readonly string[]): XmlNode[] {
 }
 
 /** A worksheet's validations from what the reader cut out of its part (see
- * the module header). */
-export function readValidationSource(source: WorksheetDvSource): WorksheetValidations {
+ * the module header). `mint` names each rule (default mintValidationId;
+ * SPEC-137's worksheet scan passes placeholders the main thread re-mints). */
+export function readValidationSource(source: WorksheetDvSource, mint: () => string = mintValidationId): WorksheetValidations {
   const context = [source.rootTag];
   const validations: DataValidation[] = [];
   let promptsDisabled = false;
@@ -197,7 +198,7 @@ export function readValidationSource(source: WorksheetDvSource): WorksheetValida
     if (block) {
       promptsDisabled = isOn(nodeAttr(block, "disablePrompts"));
       for (const node of childNodes(block, "dataValidation", inMain)) {
-        const rule = readBaseRule(node, source.block);
+        const rule = readBaseRule(node, source.block, mint);
         if (rule) {
           validations.push(rule);
         }
@@ -208,7 +209,7 @@ export function readValidationSource(source: WorksheetDvSource): WorksheetValida
     for (const list of x14Lists(source.extLst, context)) {
       promptsDisabled ||= isOn(nodeAttr(list, "disablePrompts"));
       for (const node of childNodes(list, "dataValidation", inX14)) {
-        const rule = readX14Rule(node, source.extLst);
+        const rule = readX14Rule(node, source.extLst, mint);
         if (rule) {
           validations.push(rule);
         }

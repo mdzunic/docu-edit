@@ -4,15 +4,27 @@
 // reader-version upgrade for a record stored by an older reader, and owns
 // which sheet is showing — the file's active sheet on open, then the tab the
 // user picks. A missing id leaves `workbook` null (the not-found state).
-import { computed, shallowRef, ref, watch, type ComputedRef } from "vue";
+// SPEC-137: a stored workbook is read back from storage on open
+// (loadSpreadsheet, which also runs the reader-version upgrade) — `loading`
+// is true meanwhile, so the view shows its loading state, not the not-found
+// one — and released when the view goes (releaseSpreadsheet); a load that
+// came back incomplete sets `storageIncomplete` (read-only).
+import { computed, onScopeDispose, provide, shallowRef, ref, watch, type ComputedRef, type InjectionKey, type Ref } from "vue";
 import type { Router } from "vue-router";
 import { editorPathFor } from "../../lib/documentKinds";
-import { documentKindOf, getSpreadsheet, initLibrary, upgradeStoredSpreadsheet } from "../../lib/documentStore";
+import {
+  documentKindOf,
+  getSpreadsheet,
+  getSpreadsheetShell,
+  initLibrary,
+  isSpreadsheetStorageIncomplete,
+  loadSpreadsheet,
+  releaseSpreadsheet,
+} from "../../lib/documentStore";
 import { formatBadgeLabel, spreadsheetFormatLabel } from "../../lib/format";
 import { downloadSpreadsheet } from "../../lib/spreadsheet/download";
 import { foreignSheetMessage } from "../../lib/spreadsheet/foreign";
 import type { SheetPreview, SpreadsheetModel } from "../../lib/spreadsheet/model";
-import { SPREADSHEET_READER_VERSION } from "../../lib/spreadsheet/open";
 
 /** One sheet tab: the sheet's index in the model, its id and name. */
 export interface SheetTab {
@@ -38,6 +50,10 @@ export function asSheetPreview(value: unknown): SheetPreview {
 export function asWorkbookBook(value: unknown): ReturnType<typeof useWorkbookLoad> {
   return value as ReturnType<typeof useWorkbookLoad>;
 }
+
+/** SPEC-137: the view's "reading the workbook back from storage" flag,
+ * provided to WorkbookNotFound so it shows the loading state instead. */
+export const WORKBOOK_LOADING_KEY: InjectionKey<Readonly<Ref<boolean>>> = Symbol("workbook-loading");
 
 export interface WorkbookLoadDeps {
   workbookId: ComputedRef<string>;
@@ -66,29 +82,69 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     generation.value += 1;
   }
 
+  /** SPEC-137: the stored workbook is being read back (loadSpreadsheet). */
+  const loading = ref(false);
+  /** SPEC-137: its load came back incomplete — read-only, with
+   * WORKBOOK_STORAGE_INCOMPLETE_MESSAGE. */
+  const storageIncomplete = ref(false);
+  provide(WORKBOOK_LOADING_KEY, loading);
+  /** The workbook this view made resident, released when it goes. */
+  let held: string | null = null;
+  let disposed = false;
+
+  function hold(id: string | null): void {
+    if (held !== null && held !== id) {
+      void releaseSpreadsheet(held);
+    }
+    held = id;
+  }
+
   function load(): void {
     const id = deps.workbookId.value;
     const kind = documentKindOf(id);
     if (kind !== undefined && kind !== "spreadsheet") {
+      hold(null);
       void deps.router.replace(editorPathFor(kind, id));
       return;
     }
-    const model = getSpreadsheet(id) ?? null;
-    show(model);
-    if (model && model.readerVersion < SPREADSHEET_READER_VERSION) {
-      void upgradeStoredSpreadsheet(id).then((upgraded) => {
-        if (deps.workbookId.value === id && upgraded) {
-          show(upgraded);
-        }
-      });
+    if (kind === undefined) {
+      hold(null);
+      loading.value = false;
+      show(null);
+      return;
     }
+    hold(id);
+    // A resident workbook (just opened) shows at once; one read back from
+    // storage shows once loadSpreadsheet resolves — which also brings a
+    // record stored by an older reader up to date.
+    const resident = getSpreadsheet(id);
+    if (resident) {
+      show(resident);
+    }
+    loading.value = resident === undefined;
+    void loadSpreadsheet(id).then((model) => {
+      if (disposed || deps.workbookId.value !== id) {
+        return;
+      }
+      loading.value = false;
+      storageIncomplete.value = isSpreadsheetStorageIncomplete(id);
+      show(model ?? null);
+    });
   }
 
   // main.ts awaits initLibrary() before mounting, so the re-sync after it
   // resolves matters only when the view is mounted directly (tests).
   load();
-  void initLibrary().then(load);
+  void initLibrary().then(() => {
+    if (!disposed) {
+      load();
+    }
+  });
   watch(deps.workbookId, load);
+  onScopeDispose(() => {
+    disposed = true;
+    hold(null);
+  });
 
   const activeSheet = computed(() => {
     void revision.value;
@@ -150,7 +206,9 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     revision,
     activeSheet,
     tabs,
-    title: computed(() => workbook.value?.title ?? "No document"),
+    loading,
+    storageIncomplete,
+    title: computed(() => workbook.value?.title ?? (loading.value ? (getSpreadsheetShell(deps.workbookId.value)?.title ?? "") : "No document")),
     badge: computed(() => (workbook.value ? formatBadgeLabel(workbook.value.format, workbook.value.packageVariant) : "")),
     formatLabel: computed(() =>
       workbook.value ? spreadsheetFormatLabel(workbook.value.format, workbook.value.packageVariant) : "",

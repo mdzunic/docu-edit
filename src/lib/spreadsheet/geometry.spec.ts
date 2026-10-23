@@ -17,6 +17,7 @@ import {
   maxDigitWidthPx,
   ptToPx,
   pxToXlsxWidth,
+  sameRowSizes,
   xlsxWidthToPx,
   type GridMetrics,
 } from "./geometry";
@@ -613,5 +614,46 @@ describe("SPEC-117 Frozen panes and hidden rows and columns: hidden runs for the
     expect(hiddenRowRuns(sheet, 26, 40)).toEqual([{ start: 18, end: 25 }]);
     expect(hiddenRowRuns(sheet, 27, 40)).toEqual([]);
     expect(hiddenRowRuns(sheetWith(), 0, 100)).toEqual([]);
+  });
+});
+
+describe("SPEC-137 Geometry: a rows array that keeps every row's size keeps the metrics", () => {
+  const rows: Row[] = [
+    { index: 0, cells: [{ col: 0, value: 1 }] },
+    { index: 2, cells: [{ col: 0, value: 2 }], heightPt: 30 },
+    { index: 5, cells: [{ col: 0, value: 3 }], hidden: true },
+    { index: 9, cells: [{ col: 0, value: 4 }] },
+  ];
+  const replaced = (at: number, row: Row): Row[] => rows.map((old, i) => (i === at ? row : old));
+
+  it("holds for new rows with new values at the same indices, sized and hidden alike", () => {
+    expect(sameRowSizes(rows, rows)).toBe(true);
+    expect(sameRowSizes(rows, replaced(0, { index: 0, cells: [{ col: 0, value: 99 }] }))).toBe(true);
+    expect(sameRowSizes(rows, replaced(1, { index: 2, cells: [], heightPt: 30 }))).toBe(true);
+    expect(sameRowSizes(rows, replaced(2, { index: 5, cells: [{ col: 1, value: "x" }], hidden: true }))).toBe(true);
+    // Hidden by the filter rather than the user is hidden all the same.
+    expect(sameRowSizes(rows, replaced(2, { index: 5, cells: [], filterHidden: true }))).toBe(true);
+    expect(sameRowSizes(rows, rows.map((row) => ({ ...row, cells: [] })))).toBe(true);
+  });
+
+  it("fails for a new height, a row hidden or shown, or rows added, removed or renumbered", () => {
+    expect(sameRowSizes(rows, replaced(0, { index: 0, cells: [], heightPt: 40 }))).toBe(false);
+    expect(sameRowSizes(rows, replaced(1, { index: 2, cells: [] }))).toBe(false);
+    expect(sameRowSizes(rows, replaced(2, { index: 5, cells: [] }))).toBe(false);
+    expect(sameRowSizes(rows, replaced(3, { index: 9, cells: [], hidden: true }))).toBe(false);
+    expect(sameRowSizes(rows, [...rows, { index: 12, cells: [] }])).toBe(false);
+    expect(sameRowSizes(rows, rows.slice(1))).toBe(false);
+    expect(sameRowSizes(rows, replaced(3, { index: 10, cells: [{ col: 0, value: 4 }] }))).toBe(false);
+  });
+
+  it("agrees with the metrics: where it holds, both arrays build the same sizes", () => {
+    const after = replaced(1, { index: 2, cells: [{ col: 3, value: "new" }], heightPt: 30 });
+    expect(sameRowSizes(rows, after)).toBe(true);
+    const a = buildGridMetrics(sheetWith({ rows }));
+    const b = buildGridMetrics(sheetWith({ rows: after }));
+    for (let r = 0; r < 12; r += 1) {
+      expect(b.rowHeight(r)).toBe(a.rowHeight(r));
+      expect(b.rowTop(r)).toBe(a.rowTop(r));
+    }
   });
 });

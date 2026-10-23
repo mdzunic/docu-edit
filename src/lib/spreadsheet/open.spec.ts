@@ -29,6 +29,8 @@
 // the retained workbook part or content envelope (the first upgradeWorkbook)
 // — localSheetId through the source sheet order, renamed sheets renamed,
 // deleted ones' names dropped; a clean record is re-read whole.
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bytesToBase64, decodedPartBytes } from "../core/packageParts";
 import { unzip } from "../core/zip";
@@ -1286,6 +1288,87 @@ describe("SPEC-135's reader step: notes, threads and hyperlinks", () => {
     expect(sheet.hyperlinks).toEqual(readLinks.filter((link) => !(link.range.top === 6 && link.range.left === 0)));
     expect(sheet.dirty).toBe(true);
   });
+});
+
+// SPEC-137 "The read phases": readSpreadsheetBytes reads a package through
+// the phases; the model equals the old single pass — assembleSpreadsheet
+// over parseXlsx or parseOds, then the display refresh of uncached charts —
+// for every .xlsx-family and .ods/.ots fixture. Ids are compared by their
+// order of first appearance in a key-sorted walk (the two paths mint them in
+// a different order).
+describe("SPEC-137: the phase split equals the old single pass", () => {
+  const fixturesDir = join(__dirname, "../../../e2e/fixtures");
+  const fixtures = readdirSync(fixturesDir)
+    .filter((name) => /\.(xlsx|xlsm|xltx|xltm)$/i.test(name) && !name.startsWith("spec137-"))
+    .toSorted();
+  const odsFixtures = readdirSync(fixturesDir)
+    .filter((name) => /\.(ods|ots)$/i.test(name))
+    .toSorted();
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** `value` with every UUID replaced by its first-appearance number. */
+  function canonicalIds(value: unknown): unknown {
+    const ids = new Map<string, string>();
+    const walk = (item: unknown): unknown => {
+      if (typeof item === "string") {
+        if (!UUID.test(item)) {
+          return item;
+        }
+        if (!ids.has(item)) {
+          ids.set(item, `id#${ids.size}`);
+        }
+        return ids.get(item);
+      }
+      if (Array.isArray(item)) {
+        return item.map(walk);
+      }
+      if (item !== null && typeof item === "object") {
+        const out: Record<string, unknown> = {};
+        for (const key of Object.keys(item).toSorted()) {
+          out[key] = walk((item as Record<string, unknown>)[key]);
+        }
+        return out;
+      }
+      return item;
+    };
+    return walk(value);
+  }
+
+  it("covers the .xlsx family", () => {
+    expect(fixtures.length).toBeGreaterThan(20);
+  });
+
+  for (const name of fixtures) {
+    it(name, async () => {
+      const bytes = new Uint8Array(readFileSync(join(fixturesDir, name)));
+      const { parseXlsx } = await import("./xlsx/reader");
+      const { refreshUncachedCharts } = await import("./chartsOpen");
+      const single = assembleSpreadsheet(name, "xlsx", await parseXlsx(bytes));
+      if (single.sheets.some((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && drawing.content.refs !== undefined))) {
+        refreshUncachedCharts(single);
+      }
+      const phased = await readSpreadsheetBytes(bytes, "xlsx", name);
+      expect(canonicalIds(phased)).toEqual(canonicalIds(single));
+    });
+  }
+
+  it("covers .ods/.ots", () => {
+    expect(odsFixtures.length).toBeGreaterThanOrEqual(19);
+  });
+
+  for (const name of odsFixtures) {
+    it(name, async () => {
+      const bytes = new Uint8Array(readFileSync(join(fixturesDir, name)));
+      const { parseOds } = await import("./ods/reader");
+      const { refreshUncachedCharts } = await import("./chartsOpen");
+      const single = assembleSpreadsheet(name, "ods", await parseOds(bytes));
+      if (single.sheets.some((sheet) => (sheet.drawings ?? []).some((drawing) => drawing.content.kind === "chart" && drawing.content.refs !== undefined))) {
+        refreshUncachedCharts(single);
+      }
+      const phased = await readSpreadsheetBytes(bytes, "ods", name);
+      expect(canonicalIds(phased)).toEqual(canonicalIds(single));
+    });
+  }
 });
 
 // --- SPEC-136 ----------------------------------------------------------------------------------

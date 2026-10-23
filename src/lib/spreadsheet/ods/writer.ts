@@ -100,7 +100,7 @@
 import { now as clockNow } from "../../core/clock";
 import { buildMetaXml } from "../../core/odfMeta";
 import { ensureMediaEncoded, type MediaPart } from "../../core/media";
-import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes, decodedPartBytesAsync } from "../../core/packageParts";
 import { resolveColor, resolveFont, DEFAULT_THEME } from "../../core/theme";
 import { scanAttr, scanXml } from "../../core/xmlScanner";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
@@ -140,7 +140,8 @@ import {
   odsStyleBookFromSource,
   OdsStyleRegistry,
 } from "./styles";
-import { serializeTable, type OdsTableContext } from "./tableXml";
+import { serializeTableAsync, type OdsTableContext } from "./tableXml";
+import { createSliceClock } from "../serialiseSlices";
 import { OdsPageSetupWriter, withOdsPrintRanges } from "./pageSetup";
 
 export interface WriteOdsOptions {
@@ -197,20 +198,23 @@ const encode = (text: string): Uint8Array => encodeUtf8(text);
 /** Serialises a workbook to .ods bytes (see the module header). */
 export async function writeOds(model: SpreadsheetModel, options: WriteOdsOptions = {}): Promise<Uint8Array> {
   if (model.opaque.length === 0) {
-    return zip(buildFromScratch(model, options));
+    return zip(await buildFromScratch(model, options));
   }
-  const parts = decodedPartBytes(model.opaque);
+  // SPEC-137 AC-46: decode large retained parts through the chunked,
+  // yielding decode rather than one synchronous atob over the whole
+  // retained package.
+  const parts = await decodedPartBytesAsync(model.opaque);
   if (!model.structureDirty && !model.namesDirty && !model.sheets.some((sheet) => sheet.dirty || sheet.pageSetupDirty || hasTables(sheet)) && !hasOdsChartWork(model)) {
     return zip(mimetypeFirst([...parts].map(([name, data]) => ({ name, data }))));
   }
-  return zip(mimetypeFirst(buildSubstitution(model, parts, options)));
+  return zip(mimetypeFirst(await buildSubstitution(model, parts, options)));
 }
 
 /** The substitution path's parts for any model with a retained package —
  * what a reader upgrade re-reads an edited workbook's clean sheets from
  * (open.ts). */
-export function substitutedOdsParts(model: SpreadsheetModel, options: WriteOdsOptions = {}): Map<string, Uint8Array> {
-  const entries = buildSubstitution(model, decodedPartBytes(model.opaque), options);
+export async function substitutedOdsParts(model: SpreadsheetModel, options: WriteOdsOptions = {}): Promise<Map<string, Uint8Array>> {
+  const entries = await buildSubstitution(model, decodedPartBytes(model.opaque), options);
   return new Map(entries.map((entry) => [entry.name, entry.data] as const));
 }
 
@@ -345,7 +349,7 @@ function manifestEntryFor(manifestXml: string, path: string, mediaType: string):
   return `<${prefix}file-entry ${prefix}full-path="${escapeAttributeValue(path)}" ${prefix}media-type="${escapeAttributeValue(mediaType)}"/>`;
 }
 
-function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): ZipEntryInput[] {
+async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Promise<ZipEntryInput[]> {
   const modified = options.modified ?? clockNow();
   const locale = localeOf(options);
   const registry = new OdsStyleRegistry();
@@ -363,17 +367,23 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOptions): Zi
   const localNames = (sheet: Sheet, trailing: string): string => odsTrailingWithNames(trailing, model, sheet, new Map());
   const scratchStyles = fromScratchOdsStylesXml(model.styles[0] ?? {}, model.theme ?? DEFAULT_THEME, locale);
   const pageSetups = new OdsPageSetupWriter("", scratchStyles, (prefix) => registry.freshName(prefix));
-  const tables = model.sheets
-    .map((sheet) =>
+  // SPEC-137: one shared clock, sheets serialised sequentially (never
+  // Promise.all) — each sheet's table appends to the shared `registry` in
+  // sheet order, which concurrent calls would interleave incorrectly.
+  const clock = createSliceClock();
+  const tableTexts: string[] = [];
+  for (const sheet of model.sheets) {
+    tableTexts.push(
       withNewTablePageSetup(
-        serializeTable(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }),
+        await serializeTableAsync(sheet, { model, registry, locale, namedStyleParent: (name) => named.parent(name), conditionalFormats, validationName, mediaPath, chartObjectDir, localNames }, clock),
         sheet,
         model,
         registry,
         pageSetups,
       ),
-    )
-    .join("");
+    );
+  }
+  const tables = tableTexts.join("");
   const namedExpressions = odsNamedExpressionsXml(model, odsScopeNames(model, undefined));
   const databaseRanges = odsWithTableDatabaseRanges(odsDatabaseRangesXml(model.sheets), model.sheets).text;
   const styles = registry.xml();
@@ -501,7 +511,7 @@ function withNamedStyles(xml: string, styles: string): string {
   return withNamespaces(next, styles);
 }
 
-function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteOdsOptions): ZipEntryInput[] {
+async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteOdsOptions): Promise<ZipEntryInput[]> {
   const envelope = model.odsContentEnvelope;
   const contentBytes = parts.get("content.xml");
   if (!envelope || !contentBytes) {
@@ -549,9 +559,18 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
   // SPEC-136: a table whose setup its master page no longer reads as gets minted ones (ods/pageSetup.ts).
   const pageSetups = new OdsPageSetupWriter(envelope.prefix, stylesXml, (prefix) => registry.freshName(prefix));
 
-  const tables = model.sheets.map((sheet) => {
+  // SPEC-137: a rebuilt table is serialised in SERIALISE_SLICE_MS slices —
+  // one clock for the whole save, tables in order (they share the style
+  // registry).
+  const clock = createSliceClock();
+  const envelopePrefix = envelope.prefix;
+  const tables: string[] = [];
+  for (const sheet of model.sheets) {
+    tables.push(await tableText(sheet));
+  }
+  async function tableText(sheet: Sheet): Promise<string> {
     if (sheet.sourceXml === undefined) {
-      const table = withNewTablePageSetup(serializeTable(sheet, context), sheet, model, registry, pageSetups);
+      const table = withNewTablePageSetup(await serializeTableAsync(sheet, context, clock), sheet, model, registry, pageSetups);
       rebuilt += table;
       return table;
     }
@@ -569,7 +588,7 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       text = withOdsPrintRanges(model, sheet, text);
     }
     if (declared.hidden !== hidden || declared.tabColor !== color || minted !== undefined) {
-      const name = registry.tableStyle({ masterPage: minted ?? masterPageOf(envelope.prefix, styleName), display: !hidden, tabColor: color });
+      const name = registry.tableStyle({ masterPage: minted ?? masterPageOf(envelopePrefix, styleName), display: !hidden, tabColor: color });
       text = setTableAttribute(text, "table:style-name", name);
       if (declared.tabColor !== color) {
         recoloured.add(sheet.name);
@@ -581,10 +600,10 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       rebuilt += withNames.generated;
       return withNames.text;
     }
-    const table = serializeTable(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) });
+    const table = await serializeTableAsync(sheet, { ...context, source: text, passRetained: (retained) => passOdsText(retained, sheetRemap, namespaces) }, clock);
     rebuilt += table;
     return table;
-  });
+  }
   // SPEC-128: the autofilters' database ranges regenerated; every other byte of the suffix passed.
   const databases = odsSuffixWithAutoFilters(envelope.suffix, model.sheets, {
     sourceNames: remap.orderBefore,

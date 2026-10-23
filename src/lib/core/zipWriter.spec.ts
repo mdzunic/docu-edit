@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { crc32, zip } from "./zipWriter";
+import { crc32, deflateRaw, zip } from "./zipWriter";
 import { unzip } from "./zip";
 
 const encoder = new TextEncoder();
@@ -67,6 +67,37 @@ describe("zip", () => {
       { name: "big.xml", data: encoder.encode("repeat ".repeat(5_000)) },
     ]);
     expect(archive.byteLength).toBeLessThan(5_000);
+  });
+});
+
+// SPEC-137: a large entry is written to the compressor in slices, so its
+// deflate is many short tasks rather than one long one — with the same bytes
+// as one whole-entry write.
+/** Two MB of mixed, not-too-compressible bytes from a fixed seed. */
+function sample(): Uint8Array {
+  const data = new Uint8Array(2 * 1024 * 1024);
+  let seed = 0x1234_5678;
+  for (let i = 0; i < data.length; i++) {
+    seed = (seed * 1_103_515_245 + 12_345) >>> 0;
+    data[i] = i % 7 === 0 ? seed >>> 24 : 60 + (i % 31);
+  }
+  return data;
+}
+
+describe("deflateRaw — sliced writes", () => {
+  it("deflates to the same bytes whatever the slice size", async () => {
+    const data = sample();
+    const whole = await deflateRaw(data, data.length);
+    expect(await deflateRaw(data, 64 * 1024)).toEqual(whole);
+    expect(await deflateRaw(data, 100_003)).toEqual(whole);
+    expect(await deflateRaw(data)).toEqual(whole);
+  });
+
+  it("round-trips a multi-slice entry and an empty one through the archive", async () => {
+    const data = sample();
+    const parts = await unzip(await zip([{ name: "big.bin", data }, { name: "empty.xml", data: new Uint8Array(0) }]));
+    expect(parts.get("big.bin")).toEqual(data);
+    expect(parts.get("empty.xml")).toEqual(new Uint8Array(0));
   });
 });
 

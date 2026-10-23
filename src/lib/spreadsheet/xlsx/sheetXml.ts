@@ -168,7 +168,7 @@
 //   place or created after the `{78C0D931-…}` ext (else first), dropped
 //   when empty. extLstSplices makes both exts' changes in one set of splices.
 import type { DocumentTheme, ModelColor } from "../../core/theme";
-import { scanAttr, scanXml, type XmlScanAttribute, type XmlScanEvent } from "../../core/xmlScanner";
+import { scanAttr, scanXml, startXmlScan, type XmlScanAttribute, type XmlScanEvent } from "../../core/xmlScanner";
 import { colToLetters, formatA1, formatRange, parseA1, parseRange, parseSqref, usedRange, type CellRef, type GridRange } from "../address";
 import { baseColWidthToPx, DEFAULT_COL_WIDTH_PX, DEFAULT_ROW_HEIGHT_PT, pxToXlsxWidth, xlsxWidthToPx } from "../geometry";
 import { acceptMerges } from "../merges";
@@ -199,6 +199,7 @@ import { odsDateValueToSerial } from "../serial";
 import type { SortState } from "../sort";
 import { columnSpanAt } from "../styles";
 import { applySplices, attributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
+import { createSliceClock, type SliceClock } from "../serialiseSlices";
 import type { Dxf } from "../conditionalFormats";
 import { autoFilterXml, fitsPart, readAutoFilterXml, readSortStateXml, sortStateXml, type FitsPart } from "./autoFilter";
 import {
@@ -875,8 +876,9 @@ export type WorksheetContent = Pick<Sheet, "rows" | "columns" | "defaultColWidth
 export interface WorksheetReadOptions {
   sharedStrings: readonly SharedString[];
   dateSystem: "1900" | "1904";
-  /** The workbook-wide cell ceiling (parsed.ts). */
-  budget: CellBudget;
+  /** The workbook-wide cell ceiling (parsed.ts's CellBudget, or SPEC-137's
+   * scan budget shared by every sheet scan of one read). */
+  budget: Pick<CellBudget, "take">;
   /** The workbook default font's maximum digit width (geometry.ts). */
   mdw: number;
   /** The workbook's `<indexedColors>` override palette. */
@@ -887,6 +889,27 @@ export interface WorksheetReadOptions {
   /** SPEC-129: the workbook's differential styles, which an x14 rule's
    * inline dxf is interned into (a throwaway table when absent). */
   dxfs?: Pick<SpreadsheetModel, "dxfs">;
+  /** Names each conditional format, rule and data validation (absent: a
+   * fresh UUID each — SPEC-137's scan passes placeholders instead, which
+   * the main thread re-mints, so a worker scan needs no crypto). */
+  mint?: () => string;
+}
+
+/** A worksheet read in steps (SPEC-137: the inline open hands the main
+ * thread back between steps): one scanner pass, suspended after a row. */
+export interface WorksheetRead {
+  /** Reads at most `rows` more rows (Infinity: to the end); true once the
+   * part is read — to its end, or until the cell ceiling stopped it. */
+  step(rows: number): boolean;
+  /** The content, once step() answered true; null when the cell ceiling
+   * stopped the scan. */
+  content(): WorksheetContent | null;
+  /** The part's text with every `<sheetData>`'s content cut out — its start
+   * and end tags kept, everything else verbatim: what the readers of the
+   * elements after the cells (drawing, tables, notes, hyperlinks — each
+   * through drawingXml.ts's worksheetTail) need, a fraction of the part's
+   * size. Once step() answered true. */
+  withoutCells(): string;
 }
 
 /** The root-level elements the reader cuts out whole for the rule readers. */
@@ -900,11 +923,26 @@ const SECTIONS: ReadonlySet<string> = new Set<Section>(["sheetPr", "sheetViews",
 /** Reads one worksheet part (see the module header) in a single scanner
  * pass. Returns null when the cell ceiling stopped the scan. */
 export function readWorksheet(xml: string, sheetName: string, options: WorksheetReadOptions): WorksheetContent | null {
+  const read = startWorksheetRead(xml, sheetName, options);
+  while (!read.step(Number.POSITIVE_INFINITY)) {
+    // one step reads the whole part
+  }
+  return read.content();
+}
+
+/** readWorksheet's one scanner pass, suspended every `rows` rows (see
+ * WorksheetRead). Nothing is read until the first step. */
+export function startWorksheetRead(xml: string, sheetName: string, options: WorksheetReadOptions): WorksheetRead {
   const { sharedStrings, dateSystem, budget, mdw, indexedColors, implied } = options;
   const rows: Row[] = [];
   /** Open elements enclosing the next event (the root is level 1). */
   let depth = 0;
   let section: Section | null = null;
+  /** Rows the current step may still read. */
+  let rowsLeft = 0;
+  /** Each `<sheetData>`'s content range — the end of its start tag to the
+   * start of its end tag (withoutCells). */
+  const cellRanges: [number, number][] = [];
 
   // sheetData
   let lastRow = -1;
@@ -1069,6 +1107,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
     }
     lastRow = current.index;
     row = null;
+    rowsLeft -= 1;
   };
 
   const openRow = (event: Extract<XmlScanEvent, { type: "open" }>): void => {
@@ -1208,7 +1247,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
     }
   };
 
-  const onOpen = (event: Extract<XmlScanEvent, { type: "open" }>, level: number): "stop" | undefined => {
+  const onOpen = (event: Extract<XmlScanEvent, { type: "open" }>, level: number): "stop" | "pause" | undefined => {
     if (pending !== null) {
       openInCell(pending, event);
       return undefined;
@@ -1279,12 +1318,16 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
         }
       }
       section = !event.selfClosing && SECTIONS.has(event.local) ? (event.local as Section) : null;
+      if (section === "sheetData") {
+        cellRanges.push([event.end, event.end]);
+      }
       return undefined;
     }
     switch (section) {
       case "sheetData":
         if (level === 3 && event.local === "row") {
           openRow(event);
+          return rowsLeft <= 0 ? "pause" : undefined;
         } else if (level === 4 && row !== null && event.local === "c") {
           return openCell(event);
         }
@@ -1323,7 +1366,7 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
     }
   };
 
-  const onClose = (event: Extract<XmlScanEvent, { type: "close" }>, level: number): "stop" | undefined => {
+  const onClose = (event: Extract<XmlScanEvent, { type: "close" }>, level: number): "stop" | "pause" | undefined => {
     if (pending !== null) {
       if (pending.depth === 0) {
         // The </c>.
@@ -1349,6 +1392,9 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       return undefined;
     }
     if (level === 2) {
+      if (section === "sheetData") {
+        cellRanges[cellRanges.length - 1]![1] = event.start;
+      }
       section = null;
       if (filterElement !== null) {
         readFilterElement(filterElement.local, xml.slice(filterElement.start, event.end), filterElement.ns);
@@ -1360,13 +1406,14 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
       }
     } else if (section === "sheetData" && level === 3 && row !== null) {
       finishRow();
+      return rowsLeft <= 0 ? "pause" : undefined;
     } else if (section === "sheetViews" && level === 3) {
       inFirstView = false;
     }
     return undefined;
   };
 
-  scanXml(xml, (event) => {
+  const scan = startXmlScan(xml, (event) => {
     if (event.type === "open") {
       const level = depth + 1;
       if (!event.selfClosing) {
@@ -1391,73 +1438,111 @@ export function readWorksheet(xml: string, sheetName: string, options: Worksheet
     return undefined;
   });
 
-  if (tooLarge) {
-    return null;
-  }
-  resolveFollowers(rows, waitingFollowers, sharedMasters);
-  if (!rowsOrdered) {
-    normaliseRows(rows);
-  }
-  const defaultColWidthPx = defaultColWidth !== undefined ? xlsxWidthToPx(defaultColWidth, mdw) : baseColWidthToPx(baseColWidth, mdw);
-  const content: WorksheetContent = {
-    rows,
-    columns: columnSpans(columnCandidates, defaultColWidthPx, mdw),
-    defaultColWidthPx,
-    defaultRowHeightPt,
-    merges: acceptMerges(mergeCandidates),
+  let done = false;
+  let outcome: WorksheetContent | null = null;
+  return {
+    step(limit: number): boolean {
+      if (done) {
+        return true;
+      }
+      rowsLeft = limit;
+      if (!scan.resume()) {
+        return false;
+      }
+      done = true;
+      outcome = tooLarge ? null : finish();
+      return true;
+    },
+    content(): WorksheetContent | null {
+      if (!done) {
+        throw new Error("startWorksheetRead: the part is not read yet");
+      }
+      return outcome;
+    },
+    withoutCells(): string {
+      if (!done) {
+        throw new Error("startWorksheetRead: the part is not read yet");
+      }
+      if (cellRanges.length === 0) {
+        return xml;
+      }
+      let out = "";
+      let from = 0;
+      for (const [start, end] of cellRanges) {
+        out += xml.slice(from, start);
+        from = end;
+      }
+      return out + xml.slice(from);
+    },
   };
-  const pane = view.pane;
-  if (pane && (pane.state === "frozen" || pane.state === "frozenSplit")) {
-    const frozen = { rows: splitCount(pane.ySplit, MAX_ROWS - 1), cols: splitCount(pane.xSplit, MAX_COLS - 1) };
-    if (frozen.rows > 0 || frozen.cols > 0) {
-      content.frozen = frozen;
+
+  /** Everything after the pass (see the module header). */
+  function finish(): WorksheetContent {
+    resolveFollowers(rows, waitingFollowers, sharedMasters);
+    if (!rowsOrdered) {
+      normaliseRows(rows);
     }
-  }
-  if (view.showGridLines === false) {
-    content.showGridLines = false;
-  }
-  if (view.showZeros === false) {
-    content.showZeros = false;
-  }
-  if (view.showFormulas) {
-    content.showFormulas = true;
-  }
-  if (view.zoomPercent !== undefined) {
-    content.zoomPercent = view.zoomPercent;
-  }
-  if (tabColor !== undefined) {
-    content.tabColor = tabColor;
-  }
-  if (protection !== undefined) {
-    content.protection = protection;
-  }
-  if (autoFilter !== undefined) {
-    content.autoFilter = autoFilter;
-  }
-  if (sortState !== undefined) {
-    content.sortState = sortState;
-  }
-  if (cfSource.blocks.length > 0 || cfSource.extLst !== undefined) {
-    content.conditionalFormats = readConditionalFormatSource(cfSource, sheetName, options.dxfs ?? { dxfs: [] }, indexedColors);
-  }
-  if (dvBlock !== undefined || cfSource.extLst !== undefined) {
-    const read = readValidationSource({ rootTag: cfSource.rootTag, ...(dvBlock === undefined ? {} : { block: dvBlock }), ...(cfSource.extLst === undefined ? {} : { extLst: cfSource.extLst }) });
-    content.validations = read.validations;
-    if (read.promptsDisabled) {
-      content.validationPromptsDisabled = true;
+    const defaultColWidthPx = defaultColWidth !== undefined ? xlsxWidthToPx(defaultColWidth, mdw) : baseColWidthToPx(baseColWidth, mdw);
+    const content: WorksheetContent = {
+      rows,
+      columns: columnSpans(columnCandidates, defaultColWidthPx, mdw),
+      defaultColWidthPx,
+      defaultRowHeightPt,
+      merges: acceptMerges(mergeCandidates),
+    };
+    const pane = view.pane;
+    if (pane && (pane.state === "frozen" || pane.state === "frozenSplit")) {
+      const frozen = { rows: splitCount(pane.ySplit, MAX_ROWS - 1), cols: splitCount(pane.xSplit, MAX_COLS - 1) };
+      if (frozen.rows > 0 || frozen.cols > 0) {
+        content.frozen = frozen;
+      }
     }
+    if (view.showGridLines === false) {
+      content.showGridLines = false;
+    }
+    if (view.showZeros === false) {
+      content.showZeros = false;
+    }
+    if (view.showFormulas) {
+      content.showFormulas = true;
+    }
+    if (view.zoomPercent !== undefined) {
+      content.zoomPercent = view.zoomPercent;
+    }
+    if (tabColor !== undefined) {
+      content.tabColor = tabColor;
+    }
+    if (protection !== undefined) {
+      content.protection = protection;
+    }
+    if (autoFilter !== undefined) {
+      content.autoFilter = autoFilter;
+    }
+    if (sortState !== undefined) {
+      content.sortState = sortState;
+    }
+    if (cfSource.blocks.length > 0 || cfSource.extLst !== undefined) {
+      content.conditionalFormats = readConditionalFormatSource(cfSource, sheetName, options.dxfs ?? { dxfs: [] }, indexedColors, options.mint);
+    }
+    if (dvBlock !== undefined || cfSource.extLst !== undefined) {
+      const read = readValidationSource({ rootTag: cfSource.rootTag, ...(dvBlock === undefined ? {} : { block: dvBlock }), ...(cfSource.extLst === undefined ? {} : { extLst: cfSource.extLst }) }, options.mint);
+      content.validations = read.validations;
+      if (read.promptsDisabled) {
+        content.validationPromptsDisabled = true;
+      }
+    }
+    const activePane = pane?.activePane ?? "topLeft";
+    const selection = view.selections.find((candidate) => candidate.pane === activePane);
+    if (selection) {
+      content.selection = selectionFrom(selection);
+    }
+    const frozenTopLeft = pane && (pane.state === "frozen" || pane.state === "frozenSplit") ? pane.topLeftCell : undefined;
+    const topLeftCell = frozenTopLeft ?? view.topLeftCell;
+    if (topLeftCell) {
+      content.topLeftCell = topLeftCell;
+    }
+    return content;
   }
-  const activePane = pane?.activePane ?? "topLeft";
-  const selection = view.selections.find((candidate) => candidate.pane === activePane);
-  if (selection) {
-    content.selection = selectionFrom(selection);
-  }
-  const frozenTopLeft = pane && (pane.state === "frozen" || pane.state === "frozenSplit") ? pane.topLeftCell : undefined;
-  const topLeftCell = frozenTopLeft ?? view.topLeftCell;
-  if (topLeftCell) {
-    content.topLeftCell = topLeftCell;
-  }
-  return content;
 }
 
 // --- the worksheet writer (SPEC-122) ------------------------------------------------
@@ -1969,6 +2054,73 @@ function sheetDataXml(sheet: Sheet, ctx: XlsxSheetContext, p: string): string {
   return out.join("");
 }
 
+/** How many rows `sheetDataXmlAsync` builds between clock checks —
+ * `performance.now()` is cheap but not free, so it is read every few rows
+ * rather than every one. */
+const ROWS_PER_SLICE_CHECK = 64;
+
+/** The async twin of `sheetDataXml` (SPEC-137 "Saving stays responsive"):
+ * identical row-by-row construction — the same array-of-pieces joined once
+ * — but yields to the main thread (`clock`) every `ROWS_PER_SLICE_CHECK`
+ * rows once `SERIALISE_SLICE_MS` has elapsed, so a 25,000-row sheet's save
+ * reads as many short tasks instead of one long one. Each slice's pieces are
+ * joined into one band before it yields, so the last join is over a few
+ * dozen bands, not a million pieces (one join of a 25 MB sheet's pieces is
+ * itself a ~20 ms task). */
+async function sheetDataXmlAsync(sheet: Sheet, ctx: XlsxSheetContext, p: string, clock: SliceClock): Promise<string> {
+  if (sheet.rows.length === 0) {
+    return `<${p}sheetData/>`;
+  }
+  const arrays: GridRange[] = [];
+  for (const row of sheet.rows) {
+    for (const cell of row.cells) {
+      if (cell.arrayRange !== undefined) {
+        arrays.push(cell.arrayRange);
+      }
+    }
+  }
+  const memo = new Map<string, string>();
+  const bands: string[] = [];
+  const out: string[] = [`<${p}sheetData>`];
+  let sinceCheck = 0;
+  for (const row of sheet.rows) {
+    let attrs = ` r="${row.index + 1}"`;
+    if (row.styleId !== undefined) {
+      attrs += ` s="${ctx.styles.xfFor(row.styleId)}" customFormat="1"`;
+    }
+    if (row.heightPt !== undefined) {
+      attrs += ` ht="${numberText(row.heightPt)}"${row.customHeight ? ` customHeight="1"` : ""}`;
+    }
+    if (row.hidden || row.filterHidden) {
+      attrs += ` hidden="1"`;
+    }
+    if (row.sourceAttrs !== undefined) {
+      attrs += rowSourceAttrs(row.sourceAttrs, memo);
+    }
+    if (row.cells.length === 0) {
+      out.push(`<${p}row${attrs}/>`);
+    } else {
+      out.push(`<${p}row${attrs}>`);
+      for (const cell of row.cells) {
+        out.push(cellXml(cell, row, sheet, ctx, p, arrays));
+      }
+      out.push(`</${p}row>`);
+    }
+    sinceCheck += 1;
+    if (sinceCheck >= ROWS_PER_SLICE_CHECK) {
+      sinceCheck = 0;
+      if (clock.due()) {
+        bands.push(out.join(""));
+        out.length = 0;
+        await clock.yield();
+      }
+    }
+  }
+  out.push(`</${p}sheetData>`);
+  bands.push(out.join(""));
+  return bands.join("");
+}
+
 /** SPEC-128: the rebuilt `<autoFilter>` and `<sortState>` — the model's
  * (xlsx/autoFilter.ts: its sourceXml while that fits the part, else
  * serialised), "" when the model has none and the source's is one the reader
@@ -2070,6 +2222,68 @@ export function serializeWorksheet(sheet: Sheet, base: string | undefined, ctx: 
   }
   // CT_Worksheet allows several <cols>; the reader read every one into the
   // model's spans, which the first now carries — the rest go.
+  for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
+    splices.push({ start: child.start, end: child.end, text: "" });
+  }
+  const cf = conditionalFormatSplices(xml, layout, extLst, sheet, ctx, retained);
+  splices.push(...cf.run);
+  splices.push(
+    ...extLstSplices(extLst, layout, [
+      { uri: CF_EXT_URI, text: cf.ext },
+      { uri: DV_EXT_URI, text: validations.ext },
+    ]),
+  );
+  return applySplices(xml, splices);
+}
+
+/** The async, yielding twin of `serializeWorksheet` (SPEC-137 "Saving stays
+ * responsive"): identical splices, built the same way — only the
+ * `sheetData` block (the one part of this that scales with row count) is
+ * built by the yielding `sheetDataXmlAsync`; everything else here is
+ * O(columns) or O(merges/validations), never large enough on its own to
+ * threaten the main-thread-block budget. Byte-identical to
+ * `serializeWorksheet` for the same inputs. `serializeWorksheet` stays
+ * synchronous for callers that serialise one small sheet; every save path in
+ * `xlsx/writer.ts` (from scratch and the substitution of an edited
+ * workbook's dirty sheets) uses this twin. */
+export async function serializeWorksheetAsync(sheet: Sheet, base: string | undefined, ctx: XlsxSheetContext, clock: SliceClock = createSliceClock()): Promise<string> {
+  const xml = collapseSheetData(base ?? emptyWorksheetXml(sheet, ctx.active, ctx));
+  const layout = scanLayout(xml);
+  const p = layout.prefix;
+  const first = (local: string): RootChild | undefined => layout.children.find((child) => child.local === local);
+  const range = usedRange(sheet);
+  const fits: FitsPart = (text, local) => fitsPart(text, layout.rootTag, local);
+  const retained = base !== undefined;
+  const extLst = extLstLayout(xml, layout);
+  const validations = dataValidationsOut(xml, first("dataValidations"), extLst, layout, sheet, ctx, retained);
+  const sheetData = await sheetDataXmlAsync(sheet, ctx, p, clock);
+  const rebuilt: [string, string][] = [
+    ["dimension", `<${p}dimension ref="${range ? formatRange(range) : "A1"}"/>`],
+    ["sheetViews", sheetViewsXml(xml, first("sheetViews"), layout, sheet, ctx)],
+    ["sheetFormatPr", sheetFormatPrXml(xml, first("sheetFormatPr"), sheet, ctx, p)],
+    ["cols", colsXml(sheet, ctx, p)],
+    ["sheetData", sheetData],
+    ["autoFilter", filterElementXml(xml, first("autoFilter"), "autoFilter", sheet, p, fits)],
+    ["sortState", filterElementXml(xml, first("sortState"), "sortState", sheet, p, fits)],
+    ["mergeCells", mergeCellsXml(sheet, p)],
+    ["dataValidations", validations.block],
+  ];
+  const splices: Splice[] = [];
+  const filterMode = filterModeSplice(xml, layout, sheet);
+  if (filterMode !== undefined) {
+    splices.push(filterMode);
+  }
+  for (const [local, text] of rebuilt) {
+    const found = first(local);
+    if (found !== undefined) {
+      if (xml.slice(found.start, found.end) !== text) {
+        splices.push({ start: found.start, end: found.end, text });
+      }
+    } else if (text !== "") {
+      const at = insertAt(layout, local);
+      splices.push({ start: at, end: at, text });
+    }
+  }
   for (const child of layout.children.filter((each) => each.local === "cols").slice(1)) {
     splices.push({ start: child.start, end: child.end, text: "" });
   }

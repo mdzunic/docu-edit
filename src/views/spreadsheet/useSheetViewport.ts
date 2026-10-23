@@ -20,14 +20,20 @@
 // - Above MAX_SCROLL_EXTENT_PX (under every target browser's maximum element
 //   size) the spacer stops growing and scroll offsets map onto the sheet
 //   proportionally, so a used range at row 1,000,000 is reachable everywhere.
+// - SPEC-137: slots, the ring a far scroll step turns, and the viewport
+//   alone while the grid settles from one (`overscanDrawn`) — sheetAxis.ts's
+//   header.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { usedRange, type CellRef } from "../../lib/spreadsheet/address";
-import type { GridMetrics } from "../../lib/spreadsheet/geometry";
+import { defaultColumnPx, defaultRowPx, type GridMetrics } from "../../lib/spreadsheet/geometry";
 import { MAX_COLS, MAX_ROWS, type Sheet } from "../../lib/spreadsheet/model";
+import { axisWindow, mapAxis, revealOffset, ScrollSettler, scrollFor } from "./sheetAxis";
+import type { AxisWindow } from "./sheetRenderPlan";
+
+export { MAX_SCROLL_EXTENT_PX, SETTLE_MS, type AxisItem } from "./sheetAxis";
 
 export const GRID_OVERSCAN_ROWS = 8;
 export const GRID_OVERSCAN_COLS = 4;
-export const MAX_SCROLL_EXTENT_PX = 15_000_000;
 /** The row-number column (wide enough for "1048576") and the letter row,
  * unscaled — they scale with the zoom like everything in the content box. */
 export const ROW_HEADER_WIDTH_PX = 56;
@@ -46,69 +52,6 @@ const FALLBACK_HEIGHT_PX = 720;
 /** Narrows the runtime-typed `sheet` prop (the .vue parser bars casts). */
 export function asSheet(value: unknown): Sheet {
   return value as Sheet;
-}
-
-/** One axis's scroll mapping: unscaled content `total` px seen through
- * `view` unscaled px at zoom `z`, scrolled to `scroll` (scaled px). */
-export interface AxisMapping {
-  /** The spacer's length in scaled px. */
-  spacerPx: number;
-  /** The unscaled content offset of the scrolled area's leading edge. */
-  offset: number;
-  /** The scaled scroll range (spacer − view). */
-  range: number;
-  proportional: boolean;
-  total: number;
-  view: number;
-}
-
-export function mapAxis(total: number, view: number, scroll: number, z: number): AxisMapping {
-  const scaled = total * z;
-  const spacerPx = Math.min(scaled, MAX_SCROLL_EXTENT_PX);
-  const range = Math.max(0, spacerPx - view * z);
-  const proportional = scaled > spacerPx;
-  let offset: number;
-  if (proportional) {
-    offset = range > 0 ? (Math.min(Math.max(scroll, 0), range) / range) * Math.max(0, total - view) : 0;
-  } else {
-    offset = Math.max(0, scroll) / z;
-  }
-  return { spacerPx, offset, range, proportional, total, view };
-}
-
-/** The scaled scroll position that shows content `offset` at the leading
- * edge — mapAxis's inverse. */
-export function scrollFor(mapping: AxisMapping, offset: number, z: number): number {
-  const maxOffset = Math.max(0, mapping.total - mapping.view);
-  const clamped = Math.min(Math.max(offset, 0), maxOffset);
-  if (!mapping.proportional) {
-    return clamped * z;
-  }
-  return maxOffset > 0 ? (clamped / maxOffset) * mapping.range : 0;
-}
-
-/** The scroll offset that shows the item spanning content px begin..end
- * inside a scrolled area of `size` px past a frozen band of `frozenSize`,
- * currently scrolled to `offset` — unchanged when it is already in view. */
-export function revealOffset(begin: number, end: number, frozenSize: number, size: number, offset: number): number {
-  const from = begin - frozenSize;
-  const to = end - frozenSize;
-  if (from < offset) {
-    return from;
-  }
-  if (to > offset + size) {
-    return Math.min(from, to - size);
-  }
-  return offset;
-}
-
-/** A row or column in a window: its index, its leading edge relative to its
- * band (frozen items: the sheet origin; scrolled items: the scrolled area's
- * edge) and its size, unscaled px. */
-export interface AxisItem {
-  index: number;
-  start: number;
-  size: number;
 }
 
 export interface SheetViewportDeps {
@@ -163,62 +106,39 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
   const canvasWidth = computed(() => colsAxis.value.spacerPx);
   const canvasHeight = computed(() => rowsAxis.value.spacerPx);
 
-  function frozenItems(count: number, view: number, startOf: (i: number) => number, sizeOf: (i: number) => number): AxisItem[] {
-    const out: AxisItem[] = [];
-    for (let i = 0; i < count; i += 1) {
-      const begin = startOf(i);
-      if (begin >= view) {
-        break;
-      }
-      out.push({ index: i, start: begin, size: sizeOf(i) });
-    }
-    return out;
+  /** The rows window at `overscan` rows either side, its slots those of
+   * `slotOverscan`'s (default: its own). */
+  function rowWindow(overscan: number, slotOverscan = overscan): AxisWindow {
+    const m = deps.metrics();
+    const view = viewRows.value;
+    return axisWindow({ count: frozenRows.value, frozenSize: frozenH.value, view, offset: sy.value, extent: extentRows.value, overscan, slotOverscan, ring: rowRing, defaultSize: defaultRowPx(deps.sheet()), startOf: m.rowTop, sizeOf: m.rowHeight, at: m.rowAt });
   }
 
-  function scrolledItems(
-    first: number,
-    last: number,
-    shift: number,
-    startOf: (i: number) => number,
-    sizeOf: (i: number) => number,
-  ): AxisItem[] {
-    const out: AxisItem[] = [];
-    for (let i = first; i <= last; i += 1) {
-      out.push({ index: i, start: startOf(i) - shift, size: sizeOf(i) });
-    }
-    return out;
+  /** The columns window at `overscan` columns either side, its slots those
+   * of `slotOverscan`'s (default: its own). */
+  function colWindow(overscan: number, slotOverscan = overscan): AxisWindow {
+    const m = deps.metrics();
+    const view = viewCols.value;
+    return axisWindow({ count: frozenCols.value, frozenSize: frozenW.value, view, offset: sx.value, extent: extentCols.value, overscan, slotOverscan, ring: colRing, defaultSize: defaultColumnPx(deps.sheet()), startOf: m.colLeft, sizeOf: m.colWidth, at: m.colAt });
   }
 
-  const rows = computed(() => {
-    const m = deps.metrics();
-    const fr = frozenRows.value;
-    const top = m.rowAt(frozenH.value + sy.value);
-    const bottom = m.rowAt(sy.value + viewRows.value);
-    const first = Math.max(fr, top - GRID_OVERSCAN_ROWS);
-    const last = Math.max(first - 1, Math.min(extentRows.value - 1, bottom + GRID_OVERSCAN_ROWS));
-    return {
-      frozen: frozenItems(fr, viewRows.value, m.rowTop, m.rowHeight),
-      scrolled: scrolledItems(first, last, sy.value + frozenH.value, m.rowTop, m.rowHeight),
-      /** The first and last rows actually in view (no overscan). */
-      firstVisible: Math.max(fr, top),
-      lastVisible: Math.max(fr, Math.min(extentRows.value - 1, bottom)),
-    };
-  });
+  /** SPEC-137: each axis's slot ring origin — plain state, changed only
+   * with the scroll position, which recomputes every window — and how much
+   * of the overscan the grid draws as it settles (sheetAxis.ts's header). */
+  let rowRing = 0;
+  let colRing = 0;
+  const overscanDrawn = ref(1);
+  const settler = new ScrollSettler((fraction) => (overscanDrawn.value = fraction));
 
-  const cols = computed(() => {
+  /** The first scrolled row and column the scroll position shows. */
+  function scrolledEdge(): { row: number; col: number } {
     const m = deps.metrics();
-    const fc = frozenCols.value;
-    const left = m.colAt(frozenW.value + sx.value);
-    const right = m.colAt(sx.value + viewCols.value);
-    const first = Math.max(fc, left - GRID_OVERSCAN_COLS);
-    const last = Math.max(first - 1, Math.min(extentCols.value - 1, right + GRID_OVERSCAN_COLS));
-    return {
-      frozen: frozenItems(fc, viewCols.value, m.colLeft, m.colWidth),
-      scrolled: scrolledItems(first, last, sx.value + frozenW.value, m.colLeft, m.colWidth),
-      firstVisible: Math.max(fc, left),
-      lastVisible: Math.max(fc, Math.min(extentCols.value - 1, right)),
-    };
-  });
+    return { row: m.rowAt(frozenH.value + sy.value), col: m.colAt(frozenW.value + sx.value) };
+  }
+
+  /** The windows at the full overscan (the render plan may shrink it). */
+  const rows = computed(() => rowWindow(GRID_OVERSCAN_ROWS));
+  const cols = computed(() => colWindow(GRID_OVERSCAN_COLS));
 
   /** The cell at the scrolled area's top-left corner. */
   const topLeftCell = computed(
@@ -292,8 +212,19 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     if (!element) {
       return;
     }
+    // Far: past the overscan's reach on either axis (sheetAxis.ts's header).
+    const far =
+      Math.abs(element.scrollTop - scrollTop.value) > GRID_OVERSCAN_ROWS * defaultRowPx(deps.sheet()) * z.value ||
+      Math.abs(element.scrollLeft - scrollLeft.value) > GRID_OVERSCAN_COLS * defaultColumnPx(deps.sheet()) * z.value;
+    settler.step(far);
+    const edge = far ? scrolledEdge() : undefined;
     scrollTop.value = element.scrollTop;
     scrollLeft.value = element.scrollLeft;
+    if (edge) {
+      const next = scrolledEdge();
+      rowRing += next.row - edge.row;
+      colRing += next.col - edge.col;
+    }
     zoomAnchor = { x: sx.value, y: sy.value };
     const rowsView = viewRows.value * z.value;
     const colsView = viewCols.value * z.value;
@@ -322,17 +253,30 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
 
   let observer: ResizeObserver | null = null;
   onMounted(() => {
-    measure();
     const initial = deps.initialTopLeft();
-    if (initial && (initial.row > 0 || initial.col > 0)) {
+    const scrolled = initial !== undefined && (initial.row > 0 || initial.col > 0);
+    const observed = typeof ResizeObserver === "function" && scroller.value !== null;
+    // SPEC-137: with an observer, the first size comes from its first
+    // callback, which the browser delivers straight after the first layout;
+    // reading it here would force that layout — the whole view's, ~30 ms of
+    // a large workbook's open — inside the task that mounted it (the first
+    // render takes the fallback size either way). Scrolling to a stored
+    // top-left lays the page out regardless, so that path measures first.
+    if (!observed || scrolled) {
+      measure();
+    }
+    if (scrolled) {
       scrollToTopLeft(initial);
     }
-    if (typeof ResizeObserver === "function" && scroller.value) {
+    if (observed) {
       observer = new ResizeObserver(measure);
-      observer.observe(scroller.value);
+      observer.observe(scroller.value!);
     }
   });
-  onBeforeUnmount(() => observer?.disconnect());
+  onBeforeUnmount(() => {
+    observer?.disconnect();
+    settler.dispose();
+  });
 
   return {
     extentRows,
@@ -354,6 +298,9 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     sy,
     rows,
     cols,
+    rowWindow,
+    colWindow,
+    overscanDrawn,
     page,
     topLeftCell,
     onScroll,

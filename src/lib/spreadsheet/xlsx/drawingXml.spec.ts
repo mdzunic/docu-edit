@@ -546,7 +546,7 @@ describe("writing a touched layer", () => {
   it("substitutedXlsxParts lays the retained drawing part out as it is", async () => {
     const { bytes, model } = await pictureBook();
     applyDrawingResult(model, deleteDrawing(model, model.sheets[0]!.id, "dr1")!);
-    expect(decoder.decode(substitutedXlsxParts(model).get("xl/drawings/drawing1.xml"))).toBe(text(await unzip(bytes), "xl/drawings/drawing1.xml"));
+    expect(decoder.decode((await substitutedXlsxParts(model)).get("xl/drawings/drawing1.xml"))).toBe(text(await unzip(bytes), "xl/drawings/drawing1.xml"));
   });
 
   it("writes created drawings from scratch with their parts, and reopens them equal", async () => {

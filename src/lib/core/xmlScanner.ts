@@ -226,239 +226,319 @@ function normaliseLineEnds(raw: string): string {
   return raw.indexOf("\r") < 0 ? raw : raw.replace(/\r\n?/g, "\n");
 }
 
+/** Where a scan starts and stops, and what is in scope there (see
+ * startXmlScan). */
+export interface XmlScanOptions {
+  /** The UTF-16 offset to start at (default 0, past a leading BOM). Event
+   * offsets stay in `text`'s coordinates. */
+  from?: number;
+  /** The offset to stop at (default `text.length`). The range from `from`
+   * holds one element — the root of the scan — with only whitespace,
+   * comments and processing instructions around it: an `.ods` table cut out
+   * of content.xml by offset, read without copying the string. */
+  to?: number;
+  /** The namespace declarations in scope at `from` (prefix → URI, "" the
+   * default namespace) — the ancestors' declarations, which a range does not
+   * contain. */
+  scope?: ReadonlyMap<string, string>;
+}
+
+/** A scan that can be suspended: `resume()` runs it until the input ends,
+ * the callback returns "stop", or it returns "pause" — after the event it
+ * was handed, so the next resume() continues with the event after it. True
+ * once the scan is over (ended or stopped), false while paused. Lets a reader
+ * that runs on the main thread hand control back between rows (SPEC-137's
+ * inline open) without holding more than the scanner's own small state. */
+export interface XmlScan {
+  resume(): boolean;
+}
+
 /** Scans `text` from start to end, calling `onEvent` for every open tag,
  * close tag and text run in document order (see the module header for the
  * event rules). Throws XmlScanError on malformed input or a DTD, with the
  * offending offset. Returning "stop" from `onEvent` ends the scan. */
-export function scanXml(text: string, onEvent: (event: XmlScanEvent) => void | "stop"): void {
-  const length = text.length;
-  let pos = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+export function scanXml(text: string, onEvent: (event: XmlScanEvent) => void | "stop", options: XmlScanOptions = {}): void {
+  const scan = startXmlScan(text, onEvent, options);
+  while (!scan.resume()) {
+    // onEvent never pauses; resume() runs to the end or the stop.
+  }
+}
+
+/** The resumable form of scanXml (see XmlScan): nothing is read until the
+ * first resume(). Throws (from resume) as scanXml does. */
+export function startXmlScan(
+  text: string,
+  onEvent: (event: XmlScanEvent) => void | "stop" | "pause",
+  options: XmlScanOptions = {},
+): XmlScan {
+  const from = options.from ?? 0;
+  const length = Math.min(options.to ?? text.length, text.length);
+  // The loop's state, kept between resumes.
+  let pos = from === 0 && text.charCodeAt(0) === 0xfeff ? 1 : from;
   const stack: OpenElement[] = [];
-  let scope: Scope = EMPTY_SCOPE;
+  let scope: Scope = options.scope ?? EMPTY_SCOPE;
   let rootClosed = false;
   let sawRoot = false;
+  let finished = false;
 
-  while (pos < length) {
-    const lt = text.indexOf("<", pos);
-    const textEnd = lt < 0 ? length : lt;
-    if (textEnd > pos) {
-      if (stack.length === 0) {
-        for (let i = pos; i < textEnd; i += 1) {
-          if (!isWhitespace(text.charCodeAt(i))) {
-            throw new XmlScanError("Text outside the root element", i);
+  function run(): boolean {
+    while (pos < length) {
+      const found = text.indexOf("<", pos);
+      const lt = found >= length ? -1 : found;
+      const textEnd = lt < 0 ? length : lt;
+      if (textEnd > pos) {
+        if (stack.length === 0) {
+          for (let i = pos; i < textEnd; i += 1) {
+            if (!isWhitespace(text.charCodeAt(i))) {
+              throw new XmlScanError("Text outside the root element", i);
+            }
+          }
+          pos = textEnd;
+        } else {
+          const start = pos;
+          pos = textEnd;
+          const verdict = onEvent({ type: "text", text: decodeText(text.slice(start, textEnd), start), start, end: textEnd });
+          if (verdict === "stop") {
+            return true;
+          }
+          if (verdict === "pause") {
+            return false;
           }
         }
-      } else if (onEvent({ type: "text", text: decodeText(text.slice(pos, textEnd), pos), start: pos, end: textEnd }) === "stop") {
-        return;
-      }
-      pos = textEnd;
-      if (lt < 0) {
-        break;
-      }
-    }
-
-    const next = text.charCodeAt(pos + 1);
-    if (next === 0x3f /* ? */) {
-      const close = text.indexOf("?>", pos + 2);
-      if (close < 0) {
-        throw new XmlScanError("Unterminated processing instruction", pos);
-      }
-      pos = close + 2;
-      continue;
-    }
-    if (next === 0x21 /* ! */) {
-      if (text.startsWith("<!--", pos)) {
-        const close = text.indexOf("-->", pos + 4);
-        if (close < 0) {
-          throw new XmlScanError("Unterminated comment", pos);
+        if (lt < 0) {
+          break;
         }
-        pos = close + 3;
+      }
+
+      const next = text.charCodeAt(pos + 1);
+      if (next === 0x3f /* ? */) {
+        const close = text.indexOf("?>", pos + 2);
+        if (close < 0 || close + 2 > length) {
+          throw new XmlScanError("Unterminated processing instruction", pos);
+        }
+        pos = close + 2;
         continue;
       }
-      if (text.startsWith("<![CDATA[", pos)) {
+      if (next === 0x21 /* ! */) {
+        if (text.startsWith("<!--", pos)) {
+          const close = text.indexOf("-->", pos + 4);
+          if (close < 0 || close + 3 > length) {
+            throw new XmlScanError("Unterminated comment", pos);
+          }
+          pos = close + 3;
+          continue;
+        }
+        if (text.startsWith("<![CDATA[", pos)) {
+          if (stack.length === 0) {
+            throw new XmlScanError("CDATA outside the root element", pos);
+          }
+          const close = text.indexOf("]]>", pos + 9);
+          if (close < 0 || close + 3 > length) {
+            throw new XmlScanError("Unterminated CDATA section", pos);
+          }
+          const content = normaliseLineEnds(text.slice(pos + 9, close));
+          const start = pos;
+          pos = close + 3;
+          const verdict = onEvent({ type: "text", text: content, start, end: close + 3 });
+          if (verdict === "stop") {
+            return true;
+          }
+          if (verdict === "pause") {
+            return false;
+          }
+          continue;
+        }
+        if (text.startsWith("<!DOCTYPE", pos)) {
+          throw new XmlScanError("A document type declaration (DTD) is not accepted", pos);
+        }
+        throw new XmlScanError("Malformed markup declaration", pos);
+      }
+
+      if (next === 0x2f /* / */) {
+        let i = pos + 2;
+        const nameStart = i;
+        while (i < length && isNameChar(text.charCodeAt(i))) {
+          i += 1;
+        }
+        const name = text.slice(nameStart, i);
+        while (i < length && isWhitespace(text.charCodeAt(i))) {
+          i += 1;
+        }
+        if (name.length === 0 || i >= length || text.charCodeAt(i) !== 0x3e /* > */) {
+          throw new XmlScanError("Malformed closing tag", pos);
+        }
+        const open = stack.pop();
+        if (!open || open.name !== name) {
+          throw new XmlScanError(
+            open ? `Closing tag </${name}> does not match <${open.name}>` : `Closing tag </${name}> has no open element`,
+            pos,
+          );
+        }
+        scope = open.parentScope;
         if (stack.length === 0) {
-          throw new XmlScanError("CDATA outside the root element", pos);
+          rootClosed = true;
         }
-        const close = text.indexOf("]]>", pos + 9);
-        if (close < 0) {
-          throw new XmlScanError("Unterminated CDATA section", pos);
+        const start = pos;
+        const end = i + 1;
+        pos = end;
+        const verdict = onEvent({ type: "close", name, local: open.local, ns: open.ns, start, end });
+        if (verdict === "stop") {
+          return true;
         }
-        const content = normaliseLineEnds(text.slice(pos + 9, close));
-        if (onEvent({ type: "text", text: content, start: pos, end: close + 3 }) === "stop") {
-          return;
+        if (verdict === "pause") {
+          return false;
         }
-        pos = close + 3;
         continue;
       }
-      if (text.startsWith("<!DOCTYPE", pos)) {
-        throw new XmlScanError("A document type declaration (DTD) is not accepted", pos);
-      }
-      throw new XmlScanError("Malformed markup declaration", pos);
-    }
 
-    if (next === 0x2f /* / */) {
-      let i = pos + 2;
+      // An open tag.
+      if (rootClosed) {
+        throw new XmlScanError("Content after the root element", pos);
+      }
+      let i = pos + 1;
       const nameStart = i;
       while (i < length && isNameChar(text.charCodeAt(i))) {
         i += 1;
       }
+      if (i === nameStart) {
+        throw new XmlScanError("Expected an element name after '<'", pos);
+      }
       const name = text.slice(nameStart, i);
-      while (i < length && isWhitespace(text.charCodeAt(i))) {
+      const rawAttrs: Array<{ name: string; value: string }> = [];
+      let declaresNamespaces = false;
+      let selfClosing = false;
+      for (;;) {
+        const wsStart = i;
+        while (i < length && isWhitespace(text.charCodeAt(i))) {
+          i += 1;
+        }
+        if (i >= length) {
+          throw new XmlScanError(`Unterminated tag <${name}>`, pos);
+        }
+        const code = text.charCodeAt(i);
+        if (code === 0x3e /* > */) {
+          i += 1;
+          break;
+        }
+        if (code === 0x2f /* / */) {
+          if (i + 1 >= length || text.charCodeAt(i + 1) !== 0x3e) {
+            throw new XmlScanError(`Malformed tag <${name}>`, i);
+          }
+          i += 2;
+          selfClosing = true;
+          break;
+        }
+        if (i === wsStart) {
+          throw new XmlScanError(`Expected whitespace before an attribute in <${name}>`, i);
+        }
+        const attrStart = i;
+        while (i < length && isNameChar(text.charCodeAt(i))) {
+          i += 1;
+        }
+        if (i === attrStart) {
+          throw new XmlScanError(`Malformed attribute in <${name}>`, i);
+        }
+        const attrName = text.slice(attrStart, i);
+        while (i < length && isWhitespace(text.charCodeAt(i))) {
+          i += 1;
+        }
+        if (text.charCodeAt(i) !== 0x3d /* = */) {
+          throw new XmlScanError(`Attribute ${attrName} has no value`, i);
+        }
         i += 1;
+        while (i < length && isWhitespace(text.charCodeAt(i))) {
+          i += 1;
+        }
+        const quote = text.charCodeAt(i);
+        if (quote !== 0x22 && quote !== 0x27) {
+          throw new XmlScanError(`Attribute ${attrName} value is not quoted`, i);
+        }
+        const valueStart = i + 1;
+        const valueEnd = text.indexOf(quote === 0x22 ? '"' : "'", valueStart);
+        if (valueEnd < 0 || valueEnd >= length) {
+          throw new XmlScanError(`Unterminated value for attribute ${attrName}`, i);
+        }
+        const raw = text.slice(valueStart, valueEnd);
+        const stray = raw.indexOf("<");
+        if (stray >= 0) {
+          throw new XmlScanError(`'<' in the value of attribute ${attrName}`, valueStart + stray);
+        }
+        for (const existing of rawAttrs) {
+          if (existing.name === attrName) {
+            throw new XmlScanError(`Duplicate attribute ${attrName}`, attrStart);
+          }
+        }
+        if (attrName === "xmlns" || attrName.startsWith("xmlns:")) {
+          declaresNamespaces = true;
+        }
+        rawAttrs.push({ name: attrName, value: decodeAttributeValue(raw, valueStart) });
+        i = valueEnd + 1;
       }
-      if (name.length === 0 || text.charCodeAt(i) !== 0x3e /* > */) {
-        throw new XmlScanError("Malformed closing tag", pos);
+
+      let elementScope = scope;
+      if (declaresNamespaces) {
+        const declared = new Map(scope);
+        for (const attr of rawAttrs) {
+          if (attr.name === "xmlns") {
+            declared.set("", attr.value);
+          } else if (attr.name.startsWith("xmlns:")) {
+            declared.set(attr.name.slice(6), attr.value);
+          }
+        }
+        elementScope = declared;
       }
-      const open = stack.pop();
-      if (!open || open.name !== name) {
-        throw new XmlScanError(
-          open ? `Closing tag </${name}> does not match <${open.name}>` : `Closing tag </${name}> has no open element`,
-          pos,
-        );
+      const prefix = prefixOf(name);
+      const local = localOf(name);
+      const ns = prefix === "" ? resolvePrefix("", elementScope) : resolvePrefix(prefix, elementScope);
+      const attrs: XmlScanAttribute[] = rawAttrs.map((attr) => {
+        const attrPrefix = attr.name === "xmlns" ? "xmlns" : prefixOf(attr.name);
+        return {
+          name: attr.name,
+          local: attr.name === "xmlns" ? "xmlns" : localOf(attr.name),
+          ns: attrPrefix === "" ? undefined : resolvePrefix(attrPrefix, elementScope),
+          value: attr.value,
+        };
+      });
+
+      sawRoot = true;
+      if (selfClosing) {
+        if (stack.length === 0) {
+          rootClosed = true;
+        }
+      } else {
+        stack.push({ name, local, ns, start: pos, parentScope: scope });
+        scope = elementScope;
       }
-      scope = open.parentScope;
-      if (stack.length === 0) {
-        rootClosed = true;
+      const start = pos;
+      pos = i;
+      const verdict = onEvent({ type: "open", name, local, ns, attrs, selfClosing, start, end: i });
+      if (verdict === "stop") {
+        return true;
       }
-      const end = i + 1;
-      if (onEvent({ type: "close", name, local: open.local, ns: open.ns, start: pos, end }) === "stop") {
-        return;
+      if (verdict === "pause") {
+        return false;
       }
-      pos = end;
-      continue;
     }
 
-    // An open tag.
-    if (rootClosed) {
-      throw new XmlScanError("Content after the root element", pos);
+    const unclosed = stack.at(-1);
+    if (unclosed) {
+      throw new XmlScanError(`Element <${unclosed.name}> is never closed`, unclosed.start);
     }
-    let i = pos + 1;
-    const nameStart = i;
-    while (i < length && isNameChar(text.charCodeAt(i))) {
-      i += 1;
+    if (!sawRoot) {
+      throw new XmlScanError("No root element", length);
     }
-    if (i === nameStart) {
-      throw new XmlScanError("Expected an element name after '<'", pos);
-    }
-    const name = text.slice(nameStart, i);
-    const rawAttrs: Array<{ name: string; value: string }> = [];
-    let declaresNamespaces = false;
-    let selfClosing = false;
-    for (;;) {
-      const wsStart = i;
-      while (i < length && isWhitespace(text.charCodeAt(i))) {
-        i += 1;
-      }
-      if (i >= length) {
-        throw new XmlScanError(`Unterminated tag <${name}>`, pos);
-      }
-      const code = text.charCodeAt(i);
-      if (code === 0x3e /* > */) {
-        i += 1;
-        break;
-      }
-      if (code === 0x2f /* / */) {
-        if (text.charCodeAt(i + 1) !== 0x3e) {
-          throw new XmlScanError(`Malformed tag <${name}>`, i);
-        }
-        i += 2;
-        selfClosing = true;
-        break;
-      }
-      if (i === wsStart) {
-        throw new XmlScanError(`Expected whitespace before an attribute in <${name}>`, i);
-      }
-      const attrStart = i;
-      while (i < length && isNameChar(text.charCodeAt(i))) {
-        i += 1;
-      }
-      if (i === attrStart) {
-        throw new XmlScanError(`Malformed attribute in <${name}>`, i);
-      }
-      const attrName = text.slice(attrStart, i);
-      while (i < length && isWhitespace(text.charCodeAt(i))) {
-        i += 1;
-      }
-      if (text.charCodeAt(i) !== 0x3d /* = */) {
-        throw new XmlScanError(`Attribute ${attrName} has no value`, i);
-      }
-      i += 1;
-      while (i < length && isWhitespace(text.charCodeAt(i))) {
-        i += 1;
-      }
-      const quote = text.charCodeAt(i);
-      if (quote !== 0x22 && quote !== 0x27) {
-        throw new XmlScanError(`Attribute ${attrName} value is not quoted`, i);
-      }
-      const valueStart = i + 1;
-      const valueEnd = text.indexOf(quote === 0x22 ? '"' : "'", valueStart);
-      if (valueEnd < 0) {
-        throw new XmlScanError(`Unterminated value for attribute ${attrName}`, i);
-      }
-      const raw = text.slice(valueStart, valueEnd);
-      const stray = raw.indexOf("<");
-      if (stray >= 0) {
-        throw new XmlScanError(`'<' in the value of attribute ${attrName}`, valueStart + stray);
-      }
-      for (const existing of rawAttrs) {
-        if (existing.name === attrName) {
-          throw new XmlScanError(`Duplicate attribute ${attrName}`, attrStart);
-        }
-      }
-      if (attrName === "xmlns" || attrName.startsWith("xmlns:")) {
-        declaresNamespaces = true;
-      }
-      rawAttrs.push({ name: attrName, value: decodeAttributeValue(raw, valueStart) });
-      i = valueEnd + 1;
-    }
-
-    let elementScope = scope;
-    if (declaresNamespaces) {
-      const declared = new Map(scope);
-      for (const attr of rawAttrs) {
-        if (attr.name === "xmlns") {
-          declared.set("", attr.value);
-        } else if (attr.name.startsWith("xmlns:")) {
-          declared.set(attr.name.slice(6), attr.value);
-        }
-      }
-      elementScope = declared;
-    }
-    const prefix = prefixOf(name);
-    const local = localOf(name);
-    const ns = prefix === "" ? resolvePrefix("", elementScope) : resolvePrefix(prefix, elementScope);
-    const attrs: XmlScanAttribute[] = rawAttrs.map((attr) => {
-      const attrPrefix = attr.name === "xmlns" ? "xmlns" : prefixOf(attr.name);
-      return {
-        name: attr.name,
-        local: attr.name === "xmlns" ? "xmlns" : localOf(attr.name),
-        ns: attrPrefix === "" ? undefined : resolvePrefix(attrPrefix, elementScope),
-        value: attr.value,
-      };
-    });
-
-    sawRoot = true;
-    if (selfClosing) {
-      if (stack.length === 0) {
-        rootClosed = true;
-      }
-    } else {
-      stack.push({ name, local, ns, start: pos, parentScope: scope });
-      scope = elementScope;
-    }
-    if (onEvent({ type: "open", name, local, ns, attrs, selfClosing, start: pos, end: i }) === "stop") {
-      return;
-    }
-    pos = i;
+    return true;
   }
 
-  const unclosed = stack.at(-1);
-  if (unclosed) {
-    throw new XmlScanError(`Element <${unclosed.name}> is never closed`, unclosed.start);
-  }
-  if (!sawRoot) {
-    throw new XmlScanError("No root element", length);
-  }
+  return {
+    resume(): boolean {
+      if (finished) {
+        return true;
+      }
+      finished = run();
+      return finished;
+    },
+  };
 }
 
 /** The value of the attribute with local name `local` in namespace `ns`

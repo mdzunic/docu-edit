@@ -309,6 +309,37 @@ describe("time slicing", () => {
     expect(sliced.sheets.map((sheet) => sheet.rows)).toEqual(sync.sheets.map((sheet) => sheet.rows));
   });
 
+  it("an edit pass orders a long chain in steps too — every pass over its dirty cells yields — and ends equal to the synchronous recalculate (SPEC-137)", () => {
+    const length = 2000;
+    const chain = (): SpreadsheetModel => {
+      const cells: Record<string, CellSpec> = { A1: 1 };
+      for (let row = 2; row <= length + 1; row += 1) {
+        cells[`A${row}`] = { formula: `A${row - 1}+1`, value: row - 1 };
+      }
+      const model = calcWorkbook({ Sheet1: cells });
+      graphFor(model);
+      model.sheets[0]!.rows[0]!.cells[0]!.value = 10;
+      return model;
+    };
+    const sync = chain();
+    const expected = recalculate(sync, [keyOf("A1")], { reason: "edit" });
+    const sliced = chain();
+    const pass = startRecalc(sliced, [keyOf("A1")], { reason: "edit" });
+    let ordering = 0;
+    while (pass.result.evaluated === 0 && !pass.step(0)) {
+      ordering += 1;
+    }
+    // The dirty set, the edges, the in-degrees, the seed and the pops each
+    // check the budget every CHECK_EVERY (256) cells.
+    expect(ordering).toBeGreaterThanOrEqual(5 * Math.floor(length / 256));
+    while (!pass.step(0)) {
+      // evaluate
+    }
+    expect(pass.result).toEqual(expected);
+    expect(valueOf(sliced, `A${length + 1}`)).toBe(length + 10);
+    expect(sliced.sheets.map((sheet) => sheet.rows)).toEqual(sync.sheets.map((sheet) => sheet.rows));
+  });
+
   it("a cancelled pass hands back the cells it had not evaluated; a pass inheriting them finishes the job", () => {
     const reference = slicedBook();
     recalculate(reference, [], { full: true, reason: "manual", random: () => 0.25 });

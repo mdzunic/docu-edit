@@ -34,9 +34,13 @@
 // (SheetLinkDialog, from `editing`'s links), which the cell menu's Link…
 // opens too; the cell menu's notes and comments items (`editing`'s notes
 // and comments).
+// SPEC-137: a workbook whose storage came back incomplete shows
+// WORKBOOK_STORAGE_INCOMPLETE_MESSAGE above the grid and its formula bar is
+// not editable (the edit pipeline refuses the rest — useWorkbookEditing).
 // Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
+import { WORKBOOK_STORAGE_INCOMPLETE_MESSAGE } from "../../lib/spreadsheet/errors";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import SheetPrintSurfaces from "./SheetPrintSurfaces.vue";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
@@ -170,12 +174,20 @@ const tabs = computed(() => {
     class="workbook"
     data-testid="spreadsheet-workspace"
   >
+    <p
+      v-if="book.storageIncomplete.value"
+      class="workbook-storage-incomplete"
+      data-testid="workbook-storage-incomplete"
+      role="alert"
+    >
+      {{ WORKBOOK_STORAGE_INCOMPLETE_MESSAGE }}
+    </p>
     <FormulaBar
       :address="grid.selection.nameBoxText.value"
       :content="grid.formulas.barText.value"
       :spill-member="grid.formulas.spillMember.value"
       :editor="cellEditing"
-      :editable="book.activeSheet.value?.kind === 'grid'"
+      :editable="book.activeSheet.value?.kind === 'grid' && !book.storageIncomplete.value"
       :can-insert-function="assist?.canInsert.value ?? false"
       :aria="assist?.editorAria.value ?? {}"
       :names="names ?? undefined"
@@ -432,5 +444,12 @@ const tabs = computed(() => {
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
+}
+.workbook-storage-incomplete {
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-raised);
+  color: var(--warning);
+  border-bottom: var(--border-width) solid var(--border-subtle);
 }
 </style>

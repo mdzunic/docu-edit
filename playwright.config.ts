@@ -26,7 +26,7 @@ import { defineConfig, devices } from "@playwright/test";
 //
 // So the benchmarks are chained into their own levels instead:
 // perf-charts (level 1) → perf-find (level 2) → perf-large-document
-// (level 3). Level 1 begins only once EVERY level-0 project — the whole
+// (level 3) → perf-workbook (level 4, SPEC-137). Level 1 begins only once EVERY level-0 project — the whole
 // functional suite — has finished, so each benchmark gets the whole
 // machine, one at a time, after the suite has drained. Deliberately still
 // NOT `dependencies: ["chromium"]`: a dependency also SKIPS its dependents
@@ -132,6 +132,15 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], bypassCSP: true },
       testMatch: /SPEC-047\.perf\.spec\.ts$/,
       dependencies: ["perf-find"],
+    },
+    // SPEC-137: the workbook performance benchmark — chained after
+    // perf-large-document (today's chain tail), so it too gets the whole
+    // machine to itself once everything above it has drained.
+    {
+      name: "perf-workbook",
+      use: { ...devices["Desktop Chrome"], bypassCSP: true },
+      testMatch: /SPEC-137\.perf\.spec\.ts$/,
+      dependencies: ["perf-large-document"],
     },
   ],
   webServer: {

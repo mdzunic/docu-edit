@@ -17,6 +17,7 @@ import UiButton from "../components/ui/UiButton.vue";
 import LibraryControls from "./library/LibraryControls.vue";
 import LibraryEmptyState from "./library/LibraryEmptyState.vue";
 import LibraryDialogs from "./library/LibraryDialogs.vue";
+import { useSpreadsheetOpenProgress } from "./library/useSpreadsheetOpenProgress";
 import LibraryGrid from "./library/LibraryGrid.vue";
 import LibraryHeaderActions from "./library/LibraryHeaderActions.vue";
 import LibraryList from "./library/LibraryList.vue";
@@ -59,6 +60,7 @@ const compact = computed(() => tier.value === "compact");
 const fullTier = computed(() => tier.value === "full");
 
 const openError = ref("");
+const openProgress = useSpreadsheetOpenProgress(); // SPEC-137: a workbook's, from the choice until navigation
 const dialogs = useTemplateRef("dialogs");
 
 // main.ts awaits initLibrary() before mounting, so the store is hydrated here in
@@ -273,12 +275,14 @@ async function handleFileChosen(file = null) {
     return;
   }
   try {
-    const opened = await openAnyDocumentFile(file);
+    const opened = await openAnyDocumentFile(file, openProgress.begin(file));
     openError.value = "";
     storeOpenedFile(opened, addToast);
-    router.push(editorPathFor(opened.kind, opened.model.id));
+    await router.push(editorPathFor(opened.kind, opened.model.id));
   } catch (error) {
     openError.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    openProgress.end();
   }
 }
 
@@ -504,6 +508,7 @@ function openAssembly(ids = [""]) {
       ref="dialogs"
       :open-file-accept="openFileAccept"
       :open-error="openError"
+      :open-progress="openProgress.text.value"
       :rename-for="renameFor"
       :rename-target="renameTarget"
       :permanent-delete-for="permanentDeleteFor"

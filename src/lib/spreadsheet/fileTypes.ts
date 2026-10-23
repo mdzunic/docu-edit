@@ -51,3 +51,12 @@ export const SPREADSHEET_CONTENT_TYPES: readonly string[] = (["xlsx", "ods"] as 
   PLAIN[format].mimeType,
   ...Object.values(VARIANTS[format]).map((type) => type.mimeType),
 ]);
+
+/** SPEC-137: the extensions a workbook PACKAGE is named with (the .xlsx
+ * family and .ods/.ots) — what the library's open progress shows from the
+ * moment such a file is chosen, before the open funnel (which routes by the
+ * package's content, never by its name) has inflated it. */
+export const SPREADSHEET_PACKAGE_EXTENSIONS: readonly string[] = (["xlsx", "ods"] as const).flatMap((format) => [
+  PLAIN[format].extension,
+  ...Object.values(VARIANTS[format]).map((type) => type.extension),
+]);

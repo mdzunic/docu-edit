@@ -240,6 +240,9 @@ export interface OdsCfReadContext {
   /** content.xml's root prefix → namespace declarations (an operand's
    * dialect prefix). */
   namespaces: ReadonlyMap<string, string>;
+  /** The formats' and rules' ids (absent: mintCfId). SPEC-137's scan names
+   * them with placeholders, which the main thread re-mints. */
+  mint?: () => string;
 }
 
 /** The read context of a retained package: its styles.xml text (undefined
@@ -454,6 +457,11 @@ class CfReader {
     private readonly holder: { dxfs: Dxf[] },
   ) {}
 
+  /** A format's or rule's id (see OdsCfReadContext.mint). */
+  private mintId(): string {
+    return this.context.mint ? this.context.mint() : mintCfId();
+  }
+
   /** The formats of a `calcext:conditional-formats` element's text, its
    * names under any of `prefixes` (see calcextPrefixes). */
   calcext(xml: string, prefixes: ReadonlySet<string>): ConditionalFormat[] {
@@ -471,7 +479,7 @@ class CfReader {
       const ranges = targetRanges(child.attrs.get(`${prefix}:target-range-address`));
       const origin = formatOrigin({ ranges });
       const rules = child.children.map((entry) => this.rule(this.entry(entry, prefix, origin), xml.slice(entry.start, entry.end)));
-      formats.push({ id: mintCfId(), ranges, rules, sourceXml: xml.slice(previousEnd, child.end) });
+      formats.push({ id: this.mintId(), ranges, rules, sourceXml: xml.slice(previousEnd, child.end) });
       previousEnd = child.end;
     }
     return formats;
@@ -480,7 +488,7 @@ class CfReader {
   /** A rule with its id, the next priority and its dxf; a preserved one
    * (`xml` verbatim) when the entry did not read. */
   private rule(entry: ReadEntry | null, xml: string): CfRule {
-    const rule = { id: mintCfId(), priority: this.priority, ...(entry?.body ?? { kind: "preserved", xml, where: "ods" }) } as CfRule;
+    const rule = { id: this.mintId(), priority: this.priority, ...(entry?.body ?? { kind: "preserved", xml, where: "ods" }) } as CfRule;
     this.priority += 1;
     if (entry?.style !== undefined) {
       rule.dxfId = this.dxfId(entry.style);
@@ -727,7 +735,7 @@ class CfReader {
     for (const [style, ranges] of regions) {
       const origin = formatOrigin({ ranges });
       const rules = styles.cellStyleMaps(style)!.map((map) => this.rule(this.legacyEntry(map, origin), ""));
-      formats.push({ id: mintCfId(), ranges, rules: rules.filter((rule) => rule.kind !== "preserved") });
+      formats.push({ id: this.mintId(), ranges, rules: rules.filter((rule) => rule.kind !== "preserved") });
     }
     return formats.filter((format) => format.rules.length > 0);
   }

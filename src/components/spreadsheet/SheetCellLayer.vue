@@ -42,11 +42,17 @@
 // HYPERLINK() formula) carries data-link="true" and its text sits in a
 // `.sheet-cell-link` span with the pointer cursor — the area a Ctrl/Cmd+click
 // follows the link over; its colour and underline are the cell's own style,
-// never restyled here. Runtime prop declarations per the espree constraint
-// (see AppShell.vue).
+// never restyled here. SPEC-137: rows, cells and gridlines are keyed by
+// viewport slot (useSheetCells), so a scroll step patches the same elements;
+// an empty cell draws no text box (its element carries the font instead:
+// cellElementStyle), and without frozen columns no frozen
+// region — sheetRenderPlan's paperElementCount mirrors this template, element
+// for element, for the grid's node budget. Runtime prop declarations per the
+// espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { fontStack } from "../../lib/core/fontSubstitution";
-import { annotationMarksOf, asBandItems, asDescribedCell, asFindMarks, asStaleTitle, cellAttributes, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
+import { drawsText } from "../../views/spreadsheet/sheetRenderPlan";
+import { annotationMarksOf, asBandItems, asDescribedCell, asFindMarks, asStaleTitle, cellAttributes, cellAttributesDirective, cfBarsOf, filterButtonsOf } from "../../views/spreadsheet/sheetLayerProps";
 import { isLinkedCell } from "../../views/spreadsheet/cellLinks";
 import AppIcon from "../AppIcon.vue";
 import CfIcon from "./CfIcon.vue";
@@ -74,15 +80,31 @@ const props = defineProps({
 
 const emit = defineEmits(["filter-button"]);
 
+/** A cell's identity and ARIA (cellAttributes), applied as attributes — not
+ * a v-bind object, whose merge with `:style` rebuilt every cell's style
+ * object on each render (SPEC-137, applyAttributes). */
+const vCellAttributes = cellAttributesDirective;
+
 const items = computed(() => asBandItems(props.bands));
 const staleTitleOf = computed(() => asStaleTitle(props.staleTitle));
 const describedCell = computed(() => asDescribedCell(props.describedBy));
 const findMarks = computed(() => asFindMarks(props.findMarks));
 
-/** The text box's style, its family wrapped in the substitution stack. */
+/** The text box's style, its family wrapped in the substitution stack — one
+ * object per style object, so a binding whose style is unchanged keeps its
+ * identity and the patch skips it (SPEC-137, internItemStyles). */
+const stacked = new WeakMap();
 function textStyle(style = {}) {
   const family = Reflect.get(style, "font-family");
-  return typeof family === "string" && family.length > 0 ? { ...style, "font-family": fontStack(family) } : style;
+  if (typeof family !== "string" || family.length === 0) {
+    return style;
+  }
+  let wrapped = stacked.get(style);
+  if (!wrapped) {
+    wrapped = { ...style, "font-family": fontStack(family) };
+    stacked.set(style, wrapped);
+  }
+  return wrapped;
 }
 
 function px(value = 0) {
@@ -106,20 +128,21 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
     >
       <template v-if="props.gridLines">
         <div
+          v-if="props.frozenWidth > 0"
           class="sheet-gridlines"
           :style="{ left: '0px', width: px(props.frozenWidth) }"
         >
           <div
-            v-for="y in band.gridRows"
-            :key="`h${y}`"
+            v-for="line in band.gridRows"
+            :key="line.key"
             class="sheet-gridline is-horizontal"
-            :style="{ top: px(y) }"
+            :style="{ top: px(line.at) }"
           />
           <div
-            v-for="x in band.gridColsFrozen"
-            :key="`v${x}`"
+            v-for="line in band.gridColsFrozen"
+            :key="line.key"
             class="sheet-gridline is-vertical"
-            :style="{ left: px(x) }"
+            :style="{ left: px(line.at) }"
           />
         </div>
         <div
@@ -127,29 +150,29 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
           :style="{ left: px(props.frozenWidth), right: '0px' }"
         >
           <div
-            v-for="y in band.gridRows"
-            :key="`h${y}`"
+            v-for="line in band.gridRows"
+            :key="line.key"
             class="sheet-gridline is-horizontal"
-            :style="{ top: px(y) }"
+            :style="{ top: px(line.at) }"
           />
           <div
-            v-for="x in band.gridColsScrolled"
-            :key="`v${x}`"
+            v-for="line in band.gridColsScrolled"
+            :key="line.key"
             class="sheet-gridline is-vertical"
-            :style="{ left: px(x) }"
+            :style="{ left: px(line.at) }"
           />
         </div>
       </template>
       <div
         v-for="row in band.rows"
-        :key="row.index"
+        :key="row.key"
         class="grid-row"
         role="row"
         :aria-rowindex="row.index + 2"
         :style="{ top: px(row.top), height: px(row.height) }"
       >
         <div
-          v-for="region in [{ key: 'frozen', cells: row.frozen, left: 0, width: props.frozenWidth }, { key: 'scrolled', cells: row.scrolled, left: props.frozenWidth, width: null }]"
+          v-for="region in (props.frozenWidth > 0 ? [{ key: 'frozen', cells: row.frozen, left: 0, width: props.frozenWidth }, { key: 'scrolled', cells: row.scrolled, left: props.frozenWidth, width: null }] : [{ key: 'scrolled', cells: row.scrolled, left: 0, width: null }])"
           :key="region.key"
           class="sheet-region"
           :style="region.width === null ? { left: px(region.left), right: '0px' } : { left: px(region.left), width: px(region.width) }"
@@ -157,9 +180,9 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
           <div
             v-for="cell in region.cells"
             :key="cell.key"
+            v-cell-attributes="cellAttributes(cell, staleTitleOf, describedCell, findMarks)"
             class="sheet-cell"
             :class="[cell.kindClass, { 'is-merged': cell.merged, 'is-raised': cell.raised, 'is-paint-only': cell.paintOnly }]"
-            v-bind="cellAttributes(cell, staleTitleOf, describedCell, findMarks)"
             :data-link="isLinkedCell(cell, props.linkAt) ? 'true' : undefined"
             :style="cell.boxStyle"
           >
@@ -192,7 +215,7 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
               />
             </span>
             <div
-              v-if="!cell.cf?.hideValue"
+              v-if="drawsText(cell)"
               class="sheet-cell-text"
               :style="textStyle(cell.textStyle)"
             >
@@ -273,6 +296,7 @@ function pressFilter(col = 0, event = new MouseEvent("click")) {
         </div>
       </div>
       <div
+        v-if="props.frozenWidth > 0"
         class="sheet-borders"
         :style="{ left: '0px', width: px(props.frozenWidth) }"
       >

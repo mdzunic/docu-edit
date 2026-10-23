@@ -4,8 +4,9 @@
 // workbook's codecs loaded on demand, off the library page's module graph.
 // It lives here, in the app layer where the products compose, so the
 // library composable keeps no knowledge of what any kind is (SPEC-116 added
-// the workbook branch).
-import { documentKindOf, getDocument, getMedia, getPresentation, getSpreadsheet } from "./documentStore";
+// the workbook branch; SPEC-137 loads a workbook that is not resident for the
+// download and releases it after).
+import { documentKindOf, getDocument, getMedia, getPresentation, withLoadedSpreadsheet } from "./documentStore";
 import { downloadDocument } from "./downloadDocument";
 import { downloadMedia } from "./media/download";
 
@@ -29,11 +30,10 @@ export async function downloadStoredDocument(id: string): Promise<void> {
     return;
   }
   if (kind === "spreadsheet") {
-    const workbook = getSpreadsheet(id);
-    if (workbook) {
+    await withLoadedSpreadsheet(id, async (workbook) => {
       const { downloadSpreadsheet } = await import("./spreadsheet/download");
       await downloadSpreadsheet(workbook);
-    }
+    });
     return;
   }
   const model = getDocument(id);

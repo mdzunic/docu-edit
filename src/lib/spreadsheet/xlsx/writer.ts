@@ -98,7 +98,7 @@ import { equalBytes } from "../../core/equality";
 import { ensureMediaEncoded, extensionForContentType, pendingMediaByteLength, type MediaPart } from "../../core/media";
 import { buildCorePropertiesXml } from "../../core/opcProperties";
 import { OFFICE_THEME_XML } from "../../core/officeThemeXml";
-import { base64ToBytes, decodedPartBytes } from "../../core/packageParts";
+import { base64ToBytes, decodedPartBytes, decodedPartBytesAsync } from "../../core/packageParts";
 import { SPREADSHEETML_MAIN_CONTENT_TYPES } from "../../core/packageDetect";
 import { DEFAULT_THEME, resolveFont, sameModelColor } from "../../core/theme";
 import { relsPathFor } from "../../core/xml";
@@ -149,7 +149,8 @@ import {
 } from "./package";
 import { SharedStringsWriter } from "./sharedStrings";
 import { mentionsAnyName, passFor, remappedNames } from "./sheetNamePass";
-import { emptyWorksheetXml, serializeWorksheet, type XlsxSheetContext } from "./sheetXml";
+import { emptyWorksheetXml, serializeWorksheetAsync, type XlsxSheetContext } from "./sheetXml";
+import { createSliceClock, yieldIfDue } from "../serialiseSlices";
 import { DEFAULT_XLSX_FONT, XlsxStyleWriter } from "./styles";
 import { planTableWrites, spliceWorksheetTableParts, TABLE_CONTENT_TYPE, type TableWritePlan } from "./tableXml";
 import { modelColorToXlsxAttrs, xlsxColorFromScan } from "./themeColor";
@@ -177,9 +178,12 @@ const CALC_ID = "191029";
 /** Serialises a workbook to .xlsx bytes (see the module header). */
 export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptions = {}): Promise<Uint8Array> {
   if (model.opaque.length === 0) {
-    return zip(buildFromScratch(model, options));
+    return zip(await buildFromScratch(model, options));
   }
-  const parts = decodedPartBytes(model.opaque);
+  // SPEC-137 AC-46: a retained worksheet part's base64 can run to tens of MB
+  // on a large workbook — decoded through the chunked, yielding decode
+  // rather than one synchronous atob over the whole retained package.
+  const parts = await decodedPartBytesAsync(model.opaque);
   if (
     !model.structureDirty &&
     !model.namesDirty &&
@@ -187,7 +191,7 @@ export async function writeXlsx(model: SpreadsheetModel, options: WriteXlsxOptio
   ) {
     return zip([...parts].map(([name, data]) => ({ name, data })));
   }
-  return zip(buildSubstitution(model, parts, options, "write"));
+  return zip(await buildSubstitution(model, parts, options, "write"));
 }
 
 /** SPEC-133: a sheet holding a table to regenerate or to write as a new
@@ -203,8 +207,8 @@ function sheetTablesChanged(sheet: Sheet): boolean {
  * upgrade keeps the stored dirty sheets, so nothing is serialised from the
  * model), the shared strings, styles and calculation flag left as the
  * source has them. */
-export function substitutedXlsxParts(model: SpreadsheetModel): Map<string, Uint8Array> {
-  const entries = buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, "layout");
+export async function substitutedXlsxParts(model: SpreadsheetModel): Promise<Map<string, Uint8Array>> {
+  const entries = await buildSubstitution({ ...model, structureDirty: true }, decodedPartBytes(model.opaque), {}, "layout");
   return new Map(entries.map((entry) => [entry.name, entry.data] as const));
 }
 
@@ -246,7 +250,7 @@ export const FROM_SCRATCH_APP_XML =
   `${XML_DECLARATION}<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" ` +
   `xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>docu-edit</Application></Properties>`;
 
-function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): ZipEntryInput[] {
+async function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Promise<ZipEntryInput[]> {
   const modified = options.modified ?? clockNow();
   const fullCalc = options.fullCalcOnLoad === true || model.forceFullCalcOnLoad === true || model.calc?.fullCalcOnLoad === true;
   const mainType = SPREADSHEETML_MAIN_CONTENT_TYPES[model.packageVariant ?? "workbook"];
@@ -258,14 +262,22 @@ function buildFromScratch(model: SpreadsheetModel, options: WriteXlsxOptions): Z
   const strings = new SharedStringsWriter(undefined, model.theme);
   const styles = new XlsxStyleWriter(undefined, model);
   const mdw = workbookMdw(model);
-  const worksheets = model.sheets.map((sheet, index) =>
-    isChartSheetPart(sheetParts[index]!)
-      ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
-      : spliceXlsxPageSetup(
-          serializeWorksheet(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }),
-          sheet.pageSetup,
-        ),
-  );
+  // SPEC-137: one shared clock across every sheet, sequential (never
+  // Promise.all) — each sheet's serialisation appends to `strings`/`styles`
+  // in sheet order, which concurrent calls would interleave incorrectly.
+  const clock = createSliceClock();
+  const worksheets: string[] = [];
+  for (const [index, sheet] of model.sheets.entries()) {
+    worksheets.push(
+      isChartSheetPart(sheetParts[index]!)
+        ? chartsheetXml(sheet, index === model.activeSheetIndex, model)
+        : spliceXlsxPageSetup(
+            await serializeWorksheetAsync(sheet, undefined, { active: index === model.activeSheetIndex, theme: model.theme, mdw, strings, styles, dxfs: model.dxfs ?? [] }, clock),
+            sheet.pageSetup,
+          ),
+    );
+    await yieldIfDue(clock);
+  }
   const sharedStrings = strings.xml();
   const layer = fromScratchDrawings(model, worksheets, sheetParts);
   const tables = fromScratchTables(model, sheetParts, layer);
@@ -601,7 +613,7 @@ interface AddedPart {
   contentType: string;
 }
 
-function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, mode: SubstitutionMode): ZipEntryInput[] {
+async function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Array>, options: WriteXlsxOptions, mode: SubstitutionMode): Promise<ZipEntryInput[]> {
   const workbook = readSourceWorkbook(parts);
   if (!workbook) {
     throw new Error("The workbook's retained package has no workbook part");
@@ -709,20 +721,31 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
     const next = annotate(xml);
     return next === xml ? tabled : encode(next);
   };
-  // SPEC-136: then a dirty or page-setup-edited sheet's page elements.
+  // SPEC-136: then a dirty or page-setup-edited sheet's page elements. A
+  // rebuilt sheet takes them on its text before it is encoded (SPEC-137: a
+  // large part is not decoded a second time); the splice, like the ones
+  // above, places by schema rank, so its order among them does not matter.
+  const splicesPageSetup = (sheet: Sheet): boolean => write && sheet.kind === "grid" && (sheet.dirty === true || sheet.pageSetupDirty === true);
+  const pagedXml = (sheet: Sheet, xml: string): string => (splicesPageSetup(sheet) ? spliceXlsxPageSetup(xml, sheet.pageSetup) : xml);
   const withPageSetup = (sheet: Sheet, bytes: Uint8Array): Uint8Array => {
-    if (!write || sheet.kind !== "grid" || !(sheet.dirty || sheet.pageSetupDirty)) {
+    if (!splicesPageSetup(sheet)) {
       return bytes;
     }
     const xml = decodeUtf8(bytes);
     const next = spliceXlsxPageSetup(xml, sheet.pageSetup);
     return next === xml ? bytes : encode(next);
   };
+  // SPEC-137: a rebuilt sheet is serialised in SERIALISE_SLICE_MS slices —
+  // one clock for the whole save, sheets in order (they share the string and
+  // style writers).
+  const clock = createSliceClock();
   for (const plan of plans) {
     const active = plan.index === activeIndex;
     if (plan.generated) {
-      const xml = write && plan.sheet.kind === "grid" ? serializeWorksheet(plan.sheet, undefined, context(plan)) : emptyWorksheetXml(plan.sheet, active, model);
-      sheetBytes.set(plan.partName, withPageSetup(plan.sheet, withDrawing(plan.partName, encode(xml))));
+      const xml = write && plan.sheet.kind === "grid" ? await serializeWorksheetAsync(plan.sheet, undefined, context(plan), clock) : emptyWorksheetXml(plan.sheet, active, model);
+      await yieldIfDue(clock);
+      sheetBytes.set(plan.partName, withDrawing(plan.partName, encode(pagedXml(plan.sheet, xml))));
+      await yieldIfDue(clock);
       continue;
     }
     const bytes = parts.get(plan.partName);
@@ -730,18 +753,20 @@ function buildSubstitution(model: SpreadsheetModel, parts: Map<string, Uint8Arra
       continue;
     }
     const sheetRemap = ownerRemap.get(plan.partName) ?? remap;
-    sheetBytes.set(
-      plan.partName,
-      withPageSetup(
-        plan.sheet,
-        withDrawing(
-          plan.partName,
-          write && plan.sheet.dirty && plan.sheet.kind === "grid"
-            ? encode(serializeWorksheet(plan.sheet, retainedBase(bytes, plan, sheetRemap, model), context(plan, sheetRemap)))
-            : sheetPartFor(bytes, plan, active, sheetRemap, model),
-        ),
-      ),
-    );
+    if (write && plan.sheet.dirty && plan.sheet.kind === "grid") {
+      // The retained part's decode and the rebuilt part's encode are each a
+      // task of their own on a large sheet (tens of ms for 25 MB of XML), so
+      // the clock yields around them as it does between rows.
+      const base = retainedBase(bytes, plan, sheetRemap, model);
+      await yieldIfDue(clock);
+      const xml = pagedXml(plan.sheet, await serializeWorksheetAsync(plan.sheet, base, context(plan, sheetRemap), clock));
+      await yieldIfDue(clock);
+      const encoded = encode(xml);
+      await yieldIfDue(clock);
+      sheetBytes.set(plan.partName, withDrawing(plan.partName, encoded));
+      continue;
+    }
+    sheetBytes.set(plan.partName, withPageSetup(plan.sheet, withDrawing(plan.partName, sheetPartFor(bytes, plan, active, sheetRemap, model))));
   }
 
   // The string and style tables, appended to (or added) when a sheet needed it.

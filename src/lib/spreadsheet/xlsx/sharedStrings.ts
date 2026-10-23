@@ -33,8 +33,14 @@
 import type { DocumentTheme } from "../../core/theme";
 import { scanXml } from "../../core/xmlScanner";
 import type { Cell, TextRun } from "../model";
+import type { SharedString } from "./sheetXml";
 import { applySplices, escapeAttributeValue, escapeElementText, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { isSpreadsheetMl, xlsxFontProperties } from "./styles";
+
+/** The workbook's shared-string items by index, as the reader scans them
+ * once per open (SPEC-137: phase 1 — the parse worker keeps it for the
+ * session, every worksheet scan resolving `t="s"` cells through it). */
+export type SharedStringTable = SharedString[];
 
 const XML_DECLARATION = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`;
 const MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";

@@ -16,6 +16,7 @@ function makeIdbMock() {
     putRecord: vi.fn().mockResolvedValue(undefined),
     deleteRecord: vi.fn().mockResolvedValue(undefined),
     getRecord: vi.fn().mockResolvedValue(undefined),
+    writeBatch: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -130,7 +131,13 @@ describe("createBlankDocument (SPEC-121 AC-1)", () => {
     const id = idOf(createBlankDocument("spreadsheet"));
     await flushWrites();
 
-    const written = idb.putRecord.mock.calls.map((call) => (call[0] as { id: string }).id);
+    // SPEC-137: a workbook's shell goes out in its one writeBatch.
+    const written = [
+      ...idb.putRecord.mock.calls.map((call) => (call[0] as { id: string }).id),
+      ...idb.writeBatch.mock.calls.flatMap((call) =>
+        (call[0] as Array<{ put?: { id: string } }>).flatMap((op) => (op.put ? [op.put.id] : [])),
+      ),
+    ];
     expect(written).toContain(id);
   });
 });

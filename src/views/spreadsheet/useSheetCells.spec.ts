@@ -15,11 +15,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defineComponent, h, ref, type ComputedRef } from "vue";
 import { mount } from "@vue/test-utils";
 import SheetCellLayer from "../../components/spreadsheet/SheetCellLayer.vue";
+import { fontStack } from "../../lib/core/fontSubstitution";
 import { DEFAULT_THEME, resolveColor } from "../../lib/core/theme";
 import type { GridRange } from "../../lib/spreadsheet/address";
 import type { Cell, CellStyle, Row, Sheet, SheetTable, SpreadsheetModel } from "../../lib/spreadsheet/model";
 import { singleCell } from "../../lib/spreadsheet/selection";
-import { cellAttributes } from "./sheetLayerProps";
+import { internItemStyles } from "./sheetCellItems";
+import { applyAttributes, cellAttributes } from "./sheetLayerProps";
 import { useSheetCells, type BandItem, type CellItem, type SheetCellsDeps } from "./useSheetCells";
 import { useSheetMetrics } from "./useSheetMetrics";
 import { useSheetViewport, type SheetViewport } from "./useSheetViewport";
@@ -76,6 +78,7 @@ function bookOf(sheet: Sheet, styles: CellStyle[] = [{}]): SpreadsheetModel {
 function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; showFormulas?: boolean; conditional?: SheetCellsDeps["conditional"] } = {}) {
   const model = bookOf(sheet, options.styles);
   let bands!: ComputedRef<BandItem[]>;
+  let cells!: ReturnType<typeof useSheetCells>;
   let viewport!: SheetViewport;
   const wrapper = mount(
     defineComponent({
@@ -88,7 +91,7 @@ function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; sho
           zoom: () => options.zoom ?? 1,
           initialTopLeft: () => undefined,
         });
-        bands = useSheetCells({
+        cells = useSheetCells({
           model: () => model,
           sheet: () => sheet,
           metrics: () => sheetMetrics.metrics.value,
@@ -97,13 +100,14 @@ function setup(sheet: Sheet, options: { zoom?: number; styles?: CellStyle[]; sho
           viewport,
           showFormulas: () => options.showFormulas === true,
           ...(options.conditional ? { conditional: options.conditional } : {}),
-        }).bands;
+        });
+        bands = cells.bands;
         return () => h(SheetCellLayer, { bands: bands.value, frozenWidth: viewport.frozenW.value });
       },
     }),
   );
   cleanups.push(() => wrapper.unmount());
-  return { bands, viewport, wrapper };
+  return { bands, cells, viewport, wrapper };
 }
 
 interface Placed {
@@ -152,13 +156,19 @@ describe("useSheetCells — merges", () => {
     }
   });
 
-  it("mounts that merge zoomed far out too, where only stored cells, merges and the active cell mount", () => {
-    // A value in column 301 widens the extent, so 10% zoom shows over
-    // 10,000 positions: the merge and the active cell A1 mount, nothing else.
+  it("paints that merge zoomed far out too, where only the active cell keeps an element (SPEC-137's overview)", () => {
+    // A value in column 301 widens the extent, so 10% zoom shows far more
+    // than GRID_MAX_RENDERED_CELLS positions: the overview canvas paints the
+    // sheet — the merge once, hosted as the paper hosts it — and the active
+    // cell A1 is the paper's one element. (SPEC-117's stored-cells-only
+    // fallback, which mounted the merge here, is what SPEC-137 replaced.)
     const sheet = hideRow(sheetOf([[3, 1, "Merged"], [0, 300, 1]], { merges: [merge(3, 1, 5, 3)] }), 3);
-    const { bands } = setup(sheet, { zoom: 0.1 });
-    expect(placed(bands.value).map((item) => item.cell.ref).toSorted()).toEqual(["A1", "B4"]);
-    expect(drawn(bands.value, "B4").elements.map((item) => item.row)).toEqual([4]);
+    const { bands, cells } = setup(sheet, { zoom: 0.1 });
+    expect(cells.overview.value).toBe(true);
+    expect(placed(bands.value).map((item) => item.cell.ref)).toEqual(["A1"]);
+    const painted = cells.overviewBands();
+    expect(drawn(painted, "B4").elements.map((item) => item.row)).toEqual([4]);
+    expect(placed(painted).map((item) => item.cell.ref)).toEqual(["B4"]);
   });
 
   it("hosts a merge whose anchor row is scrolled off by the first row the window renders", () => {
@@ -311,6 +321,59 @@ describe("cellAttributes", () => {
   });
 });
 
+describe("SPEC-137: an unchanged cell's re-render patches no style and no attribute", () => {
+  it("internItemStyles hands a re-plan's cells the last plan's style objects wherever their declarations are equal", () => {
+    const before = setup(sheetOf([[0, 0, 1], [0, 1, "two"], [1, 0, 3]])).bands.value;
+    const last = internItemStyles(before, new Map());
+    const after = setup(sheetOf([[0, 0, 1], [0, 1, "two"], [1, 0, 3]]), { styles: [{}] }).bands.value;
+    const styled = setup(sheetOf([[0, 0, 1]]), { styles: [{ font: { bold: true } }] }).bands.value;
+    internItemStyles(after, last);
+    const a1 = (bands: BandItem[]) => drawn(bands, "A1").elements[0]!.cell;
+    const b1 = (bands: BandItem[]) => drawn(bands, "B1").elements[0]!.cell;
+    expect(a1(after)).not.toBe(a1(before));
+    expect(a1(after).boxStyle).toBe(a1(before).boxStyle);
+    expect(a1(after).textStyle).toBe(a1(before).textStyle);
+    expect(a1(after).contentStyle).toBe(a1(before).contentStyle);
+    expect(b1(after).textStyle).toBe(b1(before).textStyle);
+    // A cell whose text style differs (bold) keeps its own object; its
+    // equal box still takes the last plan's.
+    internItemStyles(styled, last);
+    expect(a1(styled).textStyle).not.toBe(a1(before).textStyle);
+    expect(a1(styled).textStyle).not.toEqual(a1(before).textStyle);
+    expect(a1(styled).boxStyle).toBe(a1(before).boxStyle);
+  });
+
+  it("applyAttributes writes only what changed and removes what is gone", () => {
+    const element = document.createElement("div");
+    const writes: string[] = [];
+    const setAttribute = element.setAttribute.bind(element);
+    element.setAttribute = (name: string, value: string) => {
+      writes.push(name);
+      setAttribute(name, value);
+    };
+    const first = { id: "sheet-cell-A1", role: "gridcell", "aria-rowindex": 2, "aria-selected": "true", title: "stale", "data-stale": "true" };
+    applyAttributes(element, first);
+    expect(writes.toSorted()).toEqual(Object.keys(first).toSorted());
+    writes.length = 0;
+    const second = { id: "sheet-cell-A1", role: "gridcell", "aria-rowindex": 2, "aria-selected": "false", title: undefined, "aria-describedby": "message" };
+    applyAttributes(element, second, first);
+    expect(writes.toSorted()).toEqual(["aria-describedby", "aria-selected"]);
+    expect(element.getAttribute("aria-selected")).toBe("false");
+    expect(element.getAttribute("aria-rowindex")).toBe("2");
+    expect(element.hasAttribute("title")).toBe(false);
+    expect(element.hasAttribute("data-stale")).toBe(false);
+    expect(element.getAttribute("aria-describedby")).toBe("message");
+  });
+
+  it("the layer's cell elements carry cellAttributes as attributes", () => {
+    const sheet = sheetOf([[4, 2, "Merged title"]], { merges: [{ top: 4, left: 2, bottom: 4, right: 4 }] });
+    const { wrapper } = setup(sheet);
+    const element = wrapper.get('[data-ref="C5"]');
+    expect(element.attributes()).toMatchObject({ id: "sheet-cell-C5", role: "gridcell", "data-testid": "sheet-cell", "aria-rowindex": "6", "aria-colindex": "4", "aria-colspan": "3", "aria-selected": "false" });
+    expect(element.attributes("aria-rowspan")).toBeUndefined();
+  });
+});
+
 describe("useSheetCells — Show formulas (SPEC-119)", () => {
   /** A1 a right-aligned "0.00" formula cell, B1 the same style on a
    * constant, C1 a date serial, A2:A3 an array (A3 a member), D1 text. */
@@ -443,5 +506,38 @@ describe("useSheetCells — table styles (SPEC-133)", () => {
     });
     expect(cell(bands.value, "A2").boxStyle["background-color"]).toBe("#ff0000");
     expect(cell(bands.value, "B2").boxStyle["background-color"]).toBe(STRIPE);
+  });
+});
+
+describe("useSheetCells — empty cells (SPEC-137)", () => {
+  // An empty cell draws no text box (sheetRenderPlan's drawsText), so its
+  // element carries its text style's font: a format on an empty cell —
+  // SPEC-123's bold, a painted format — still reads from the DOM, and costs
+  // no element.
+  const STYLES: CellStyle[] = [{}, { font: { family: "Arial", sizePt: 14, bold: true, italic: true, color: "#ff0000" } }];
+
+  /** A1 "Bold" and B1 empty, both of style 1; C1 empty and unstyled. */
+  function styledSheet(): Sheet {
+    return { ...sheetOf([]), rows: [{ index: 0, cells: [{ col: 0, value: "Bold", styleId: 1 }, { col: 1, value: null, styleId: 1 }] }] };
+  }
+
+  it("carries an empty cell's font on its element, where a filled cell's text box carries it", () => {
+    const { bands, wrapper } = setup(styledSheet(), { styles: STYLES });
+    const empty = wrapper.get('[data-testid="sheet-cell"][data-ref="B1"]');
+    expect(empty.element.children).toHaveLength(0);
+    const style = (empty.element as HTMLElement).style;
+    expect([style.fontWeight, style.fontStyle, style.fontSize, style.color]).toEqual(["bold", "italic", "14pt", "rgb(255, 0, 0)"]);
+    expect(drawn(bands.value, "B1").elements[0]!.cell.boxStyle["font-family"]).toBe(fontStack("Arial"));
+
+    const filled = wrapper.get('[data-testid="sheet-cell"][data-ref="A1"]');
+    expect((filled.element as HTMLElement).style.fontWeight).toBe("");
+    expect((filled.get(".sheet-cell-text").element as HTMLElement).style.fontWeight).toBe("bold");
+  });
+
+  it("gives an unstyled empty cell only the automatic colour, never a weight or a style", () => {
+    const { bands } = setup(styledSheet(), { styles: STYLES });
+    const c1 = drawn(bands.value, "C1").elements[0]!.cell;
+    expect(c1.boxStyle.color).toBe("#000000");
+    expect([c1.boxStyle["font-weight"], c1.boxStyle["font-style"], c1.boxStyle["font-family"]]).toEqual([undefined, undefined, undefined]);
   });
 });

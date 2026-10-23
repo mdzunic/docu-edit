@@ -135,7 +135,7 @@
 //   a blank workbook's base is SPEC-121's FROM_SCRATCH_STYLES_XML.
 import { DEFAULT_THEME, isThemeFont, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../../core/theme";
 import { parseXml } from "../../core/xml";
-import { scanXml } from "../../core/xmlScanner";
+import { scanAttr, scanXml, XmlScanError } from "../../core/xmlScanner";
 import { DXF_BORDER_EDGES, type Dxf, type DxfFont } from "../conditionalFormats";
 import type { CellAlignment, CellBorderEdge, CellBorders, CellFill, CellFont, CellStyle, SheetBorderStyle, SpreadsheetModel } from "../model";
 import { BUILTIN_NUMBER_FORMATS, LOCALE_DEPENDENT_BUILTINS } from "../numberFormat/builtin";
@@ -927,6 +927,67 @@ export function readXlsxStyles(xml: string | undefined, theme: DocumentTheme | u
     table.namedStyles = namedStyles;
   }
   return table;
+}
+
+/** The `<colors><indexedColors>` palette readXlsxStyles reads, read with the
+ * scanner instead of DOMParser — what SPEC-137's phase 1 resolves
+ * shared-string run colours against (it runs where DOMParser does not). The
+ * same mapping (readIndexedColors): the root a SpreadsheetML `styleSheet`,
+ * its first `colors` child, that one's first `indexedColors` child, up to 64
+ * of its `rgbColor@rgb` children, an unreadable entry the legacy colour at
+ * its position; undefined for no part, a part the scanner rejects (the whole
+ * part is scanned, as DOMParser reads it whole), another root, or no
+ * palette. A part only one of the two parsers accepts may still read
+ * differently — the shell phase compares the two (xlsx/phases.ts). */
+export function readXlsxIndexedColors(xml: string | undefined): string[] | undefined {
+  if (xml === undefined) {
+    return undefined;
+  }
+  const colors: string[] = [];
+  let depth = 0;
+  // 0: before the first <colors>; 1: inside it; 2: inside its first
+  // <indexedColors>; 3: past them.
+  let state = 0;
+  try {
+    let styleSheet = false;
+    scanXml(xml, (event) => {
+      if (event.type === "open") {
+        const level = depth + 1;
+        if (!event.selfClosing) {
+          depth = level;
+        }
+        if (level === 1) {
+          styleSheet = event.local === "styleSheet" && isSpreadsheetMl(event.ns);
+          return styleSheet ? undefined : "stop";
+        }
+        if (!isSpreadsheetMl(event.ns)) {
+          return undefined;
+        }
+        if (level === 2 && state === 0 && event.local === "colors") {
+          state = event.selfClosing ? 3 : 1;
+        } else if (level === 3 && state === 1 && event.local === "indexedColors") {
+          state = event.selfClosing ? 3 : 2;
+        } else if (level === 4 && state === 2 && event.local === "rgbColor" && colors.length < 64) {
+          colors.push(xlsxRgbToHex(scanAttr(event.attrs, "rgb") ?? "") ?? INDEXED_COLORS[colors.length]!);
+        }
+      } else if (event.type === "close") {
+        if ((depth === 3 && state === 2) || (depth === 2 && state === 1)) {
+          state = 3;
+        }
+        depth -= 1;
+      }
+      return undefined;
+    });
+    if (!styleSheet) {
+      return undefined;
+    }
+  } catch (error) {
+    if (error instanceof XmlScanError) {
+      return undefined;
+    }
+    throw error;
+  }
+  return colors.length > 0 ? colors : undefined;
 }
 
 // --- the style writer (SPEC-122) ------------------------------------------------

@@ -6,6 +6,14 @@
 // version — and kept in a WeakMap: lib state, never model data. Lookups go
 // through merges.ts's index (array and table ranges never overlap in a valid
 // file, as merges never do), so a position costs a binary search.
+// SPEC-137: a sheet's new rows array carries its previous array's index
+// forward when none of the rows that differ between the two (by identity,
+// on either side) holds an anchor — every anchor then sits in a row both
+// arrays share, the same cell at the same place — so an edit or a
+// recalculation slice re-reads the rows it touched, not the whole sheet. The
+// previous array is held weakly: a released workbook's rows stay
+// collectable.
+import { windowOf } from "../../core/arrayWindow";
 import { parseRange, type GridRange } from "../address";
 import { buildMergeIndex, mergeAt, type MergeIndex } from "../merges";
 import type { Cell, Row, Sheet } from "../model";
@@ -23,6 +31,8 @@ interface AnchorIndex {
 }
 
 const indexes = new WeakMap<readonly Row[], AnchorIndex>();
+/** Each sheet's last indexed rows array, by sheet id (see the header). */
+const latest = new Map<string, WeakRef<Row[]>>();
 
 const ATTRIBUTE = /\s([\w:.-]+)\s*=\s*(["'])(.*?)\2/g;
 
@@ -59,13 +69,33 @@ function buildIndex(sheet: Sheet): AnchorIndex {
   return { index: buildMergeIndex([...anchors.keys()]), anchors };
 }
 
+/** Whether a row holds an array's or a data table's anchor. */
+function holdsAnchor(row: Row): boolean {
+  return row.cells.some((cell) => cell.arrayRange !== undefined || cell.dataTableXml !== undefined);
+}
+
+/** The index of `sheet.rows`: cached, carried forward from the sheet's
+ * previous rows array, or built (see the header). */
+function anchorIndex(sheet: Sheet): AnchorIndex {
+  let built = indexes.get(sheet.rows);
+  if (built) {
+    return built;
+  }
+  const previous = latest.get(sheet.id)?.deref();
+  const carried = previous ? indexes.get(previous) : undefined;
+  if (previous && carried) {
+    const { beforeMid, afterMid } = windowOf(previous, sheet.rows);
+    built = beforeMid.some(holdsAnchor) || afterMid.some(holdsAnchor) ? undefined : carried;
+  }
+  built ??= buildIndex(sheet);
+  indexes.set(sheet.rows, built);
+  latest.set(sheet.id, new WeakRef(sheet.rows));
+  return built;
+}
+
 /** The array or data table whose range holds (row, col), if any. */
 export function formulaAnchorAt(sheet: Sheet, row: number, col: number): FormulaAnchor | undefined {
-  let built = indexes.get(sheet.rows);
-  if (!built) {
-    built = buildIndex(sheet);
-    indexes.set(sheet.rows, built);
-  }
+  const built = anchorIndex(sheet);
   if (built.anchors.size === 0) {
     return undefined;
   }

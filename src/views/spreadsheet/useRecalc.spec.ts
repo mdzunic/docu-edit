@@ -4,7 +4,9 @@
 // value); the manual-mode toast, once; F9 and Data ▸ Recalculate as a full
 // recalculation, F9 ignored from an input (SPEC-021's focus guard);
 // "Calculating…" only past CALCULATING_STATUS_DELAY_MS; a pass started while
-// another runs cancels it and inherits its unevaluated cells. The idle
+// another runs cancels it and inherits its unevaluated cells; SPEC-137: a
+// scheduled slice's view work (the re-read, the pass's completion) in a task
+// after its step's, run at once by settle() or a newer pass. The idle
 // scheduler is replaced so slices run when the test says; the clock is
 // pinned with setClock — nothing reads the wall clock.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,6 +93,26 @@ function longPass(left: string[] = ["sheet-Sheet1!0,0"]) {
     },
   };
   return { pass, release: () => (release = true) };
+}
+
+/** A pass whose every step rewrites the model's sheets (copy-on-write, as
+ * the engine's flush does) and that is done at step `steps`. */
+function rewritingPass(model: SpreadsheetModel, steps: number) {
+  let calls = 0;
+  let cancelled = false;
+  const pass: RecalcPass = {
+    result: { valueChanged: [], changedSheetIds: [], circular: [], stale: [], evaluated: 0 },
+    step: () => {
+      calls += 1;
+      model.sheets = [...model.sheets];
+      return calls >= steps;
+    },
+    cancel() {
+      cancelled = true;
+      return [];
+    },
+  };
+  return { pass, calls: () => calls, cancelled: () => cancelled };
 }
 
 beforeEach(() => {
@@ -221,5 +243,145 @@ describe("long passes", () => {
     recalc.recalculate();
     expect(first.pass.cancelled).toBe(true);
     expect(passes.calls.at(-1)).toEqual(["sheet-Sheet1!0,0"]);
+  });
+});
+
+describe("the calc state (SPEC-137)", () => {
+  it("is calculating from a pass's start — before the status delay — and idle once it completes", () => {
+    vi.useFakeTimers();
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    expect(recalc.calcState.value).toBe("idle");
+    const { pass, release } = longPass();
+    passes.next = pass;
+    recalc.recalculate();
+    expect(recalc.calcState.value).toBe("calculating");
+    expect(recalc.calculating.value).toBe(false);
+    drainEager(3);
+    expect(recalc.calcState.value).toBe("calculating");
+    release();
+    drainEager();
+    expect(recalc.calcState.value).toBe("idle");
+  });
+
+  it("reads calculating during the first slice of a pass that finishes in it, and idle after", () => {
+    const model = calcWorkbook({ Sheet1: { A1: 1, B1: { formula: "A1*2", value: 99 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    const seen: string[] = [];
+    const quick: RecalcPass = {
+      result: { valueChanged: [], changedSheetIds: [], circular: [], stale: [], evaluated: 0 },
+      step: () => {
+        seen.push(recalc.calcState.value);
+        return true;
+      },
+      cancel: () => [],
+    };
+    passes.next = quick;
+    recalc.recalculate();
+    expect(seen).toEqual(["calculating"]);
+    expect(recalc.calcState.value).toBe("idle");
+    expect(scheduler.eager).toEqual([]);
+  });
+
+  it("stays calculating while a cancelled pass's successor runs, until the successor completes", () => {
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    const first = longPass();
+    passes.next = first.pass;
+    recalc.recalculate();
+    const second = longPass();
+    passes.next = second.pass;
+    recalc.recalculate();
+    expect(first.pass.cancelled).toBe(true);
+    first.release();
+    drainEager(5);
+    expect(recalc.calcState.value).toBe("calculating");
+    second.release();
+    drainEager();
+    expect(recalc.calcState.value).toBe("idle");
+  });
+
+  it("runs a scheduled slice's step alone in its task — the re-read of what it wrote, and the pass's completion, follow in a task of their own", () => {
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc, sheetsChanged } = mount(model);
+    drainIdle();
+    sheetsChanged.mockClear();
+    const steps = rewritingPass(model, 3);
+    passes.next = steps.pass;
+    const done = vi.fn();
+    recalc.edit(["sheet-Sheet1!0,0"], done);
+    // The first slice keeps its view work in the triggering task (SPEC-120).
+    expect(steps.calls()).toBe(1);
+    expect(sheetsChanged).toHaveBeenCalledTimes(1);
+    drainEager(1);
+    expect(steps.calls()).toBe(2);
+    expect(sheetsChanged).toHaveBeenCalledTimes(1);
+    drainEager(1);
+    expect(sheetsChanged).toHaveBeenCalledTimes(2);
+    expect(steps.calls()).toBe(2);
+    drainEager(1);
+    expect(steps.calls()).toBe(3);
+    expect(sheetsChanged).toHaveBeenCalledTimes(2);
+    expect(recalc.calcState.value).toBe("calculating");
+    expect(done).not.toHaveBeenCalled();
+    drainEager(1);
+    expect(sheetsChanged).toHaveBeenCalledTimes(3);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(recalc.calcState.value).toBe("idle");
+    expect(scheduler.eager).toEqual([]);
+  });
+
+  it("settle() runs a scheduled slice's pending view work now — a pass it finished completes", () => {
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc, sheetsChanged } = mount(model);
+    drainIdle();
+    sheetsChanged.mockClear();
+    const steps = rewritingPass(model, 2);
+    passes.next = steps.pass;
+    const done = vi.fn();
+    recalc.edit(["sheet-Sheet1!0,0"], done);
+    drainEager(1);
+    expect(steps.calls()).toBe(2);
+    expect(done).not.toHaveBeenCalled();
+    recalc.settle();
+    expect(sheetsChanged).toHaveBeenCalledTimes(2);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(recalc.calcState.value).toBe("idle");
+    drainEager();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(steps.calls()).toBe(2);
+  });
+
+  it("a newer pass completes a pass whose completion is pending instead of cancelling it", () => {
+    const model = calcWorkbook({ Sheet1: { A1: { formula: "1+1", value: 2 } } });
+    const { recalc } = mount(model);
+    drainIdle();
+    const first = rewritingPass(model, 2);
+    passes.next = first.pass;
+    const firstDone = vi.fn();
+    recalc.edit(["sheet-Sheet1!0,0"], firstDone);
+    drainEager(1);
+    const second = longPass();
+    passes.next = second.pass;
+    recalc.edit(["sheet-Sheet1!1,1"], vi.fn());
+    expect(firstDone).toHaveBeenCalledTimes(1);
+    expect(first.cancelled()).toBe(false);
+    expect(passes.calls.at(-1)).toEqual(["sheet-Sheet1!1,1"]);
+    expect(recalc.calcState.value).toBe("calculating");
+  });
+
+  it("covers the deferred open pass: calculating from open until it has run", () => {
+    const full = mount(calcWorkbook({ Sheet1: { A1: 2, B1: "=A1*21" } }));
+    expect(full.recalc.calcState.value).toBe("calculating");
+    drainEager();
+    expect(full.recalc.calcState.value).toBe("idle");
+    const idle = mount(calcWorkbook({ Sheet1: { A1: { formula: "TODAY()", value: 45000 } } }));
+    expect(idle.recalc.calcState.value).toBe("calculating");
+    drainIdle();
+    drainEager();
+    expect(idle.recalc.calcState.value).toBe("idle");
   });
 });

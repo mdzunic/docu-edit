@@ -1,5 +1,6 @@
 // The library's shared overlay surface (SPEC-067/062/066/003): the hidden
-// file input, the open-error alert, and every dialog/palette HomeView owns —
+// file input, the open-error alert (and SPEC-137's workbook open progress
+// status beside it), and every dialog/palette HomeView owns —
 // rename, permanent-delete, empty-trash, template gallery and the command
 // palette. A dumb presentational child: it renders the right overlay for each
 // prop and re-emits each action as an intent; HomeView keeps all the wiring.
@@ -15,6 +16,8 @@ import CommandPalette from "../../components/CommandPalette.vue";
 const props = defineProps({
   openFileAccept: { type: String, default: "" },
   openError: { type: String, default: "" },
+  /** SPEC-137: a workbook's open progress ("Opening {title}… {n}%"); "" = none. */
+  openProgress: { type: String, default: "" },
   renameFor: { type: String, default: "" },
   renameTarget: { type: String, default: "" },
   permanentDeleteFor: { type: String, default: "" },
@@ -76,6 +79,14 @@ defineExpose({ pick });
     class="visually-hidden"
     @change="onFileChosen"
   >
+  <p
+    v-if="props.openProgress"
+    class="open-progress"
+    role="status"
+    data-testid="spreadsheet-open-progress"
+  >
+    {{ props.openProgress }}
+  </p>
   <p
     v-if="props.openError"
     class="open-error"
@@ -140,5 +151,13 @@ defineExpose({ pick });
   color: var(--text-danger);
   max-width: 32rem;
   text-align: center;
+}
+
+.open-progress {
+  margin: var(--space-4) auto 0;
+  color: var(--text-secondary);
+  max-width: 32rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 </style>

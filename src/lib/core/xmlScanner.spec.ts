@@ -1,9 +1,10 @@
 // SPEC-116: the forward-only XML scanner — events in document order with
 // exact source offsets, namespace resolution (default and prefixed, rebinding
 // in scope), entities, CDATA, "stop", the DTD refusal, and malformed input
-// reported with its offset.
+// reported with its offset. SPEC-137: a scan that pauses and resumes, and a
+// scan of one element cut out of a larger text by offset.
 import { describe, expect, it } from "vitest";
-import { scanAttr, scanXml, XmlScanError, type XmlScanEvent } from "./xmlScanner";
+import { scanAttr, scanXml, startXmlScan, XmlScanError, type XmlScanEvent } from "./xmlScanner";
 
 function events(text: string): XmlScanEvent[] {
   const out: XmlScanEvent[] = [];
@@ -225,5 +226,61 @@ describe("scanXml — refusals and malformed input", () => {
 
   it("refuses an empty document", () => {
     expect(scanError("   ").offset).toBe(3);
+  });
+});
+
+describe("pausing and ranges (SPEC-137)", () => {
+  const doc = `<?xml version="1.0"?><r xmlns="urn:a" xmlns:p="urn:p"><row n="1"><c>1</c></row><row n="2"><c>2</c></row><p:x/></r>`;
+
+  it("resumes after a pause exactly where it left off, with the same events as one pass", () => {
+    const all = events(doc);
+    const seen: XmlScanEvent[] = [];
+    const scan = startXmlScan(doc, (event) => {
+      seen.push(event);
+      return event.type === "close" && event.local === "row" ? "pause" : undefined;
+    });
+    let resumes = 0;
+    while (!scan.resume()) {
+      resumes += 1;
+    }
+    expect(resumes).toBe(2);
+    expect(seen).toEqual(all);
+    expect(scan.resume()).toBe(true);
+  });
+
+  it("ends at a stop even after pauses", () => {
+    const seen: string[] = [];
+    const scan = startXmlScan(doc, (event) => {
+      if (event.type !== "open") {
+        return undefined;
+      }
+      seen.push(event.local);
+      return event.local === "row" ? (seen.length > 3 ? "stop" : "pause") : undefined;
+    });
+    expect(scan.resume()).toBe(false);
+    expect(scan.resume()).toBe(true);
+    expect(seen).toEqual(["r", "row", "c", "row"]);
+  });
+
+  it("scans one element of a larger text by offset, in the text's coordinates, with the scope given", () => {
+    const start = doc.indexOf(`<row n="2">`);
+    const end = doc.indexOf("<p:x/>");
+    const out: XmlScanEvent[] = [];
+    scanXml(
+      doc,
+      (event) => {
+        out.push(event);
+      },
+      { from: start, to: end, scope: new Map([["", "urn:a"], ["p", "urn:p"]]) },
+    );
+    expect(out.map((event) => event.type)).toEqual(["open", "open", "text", "close", "close"]);
+    expect(out[0]).toMatchObject({ local: "row", ns: "urn:a", start, attrs: [{ name: "n", value: "2" }] });
+    expect(out.at(-1)).toMatchObject({ type: "close", local: "row", end });
+    expect(doc.slice(out[2]!.start, out[2]!.end)).toBe("2");
+  });
+
+  it("refuses a range that does not hold one whole element", () => {
+    const start = doc.indexOf(`<row n="2">`);
+    expect(() => scanXml(doc, () => {}, { from: start, to: start + 15, scope: new Map([["", "urn:a"]]) })).toThrow(XmlScanError);
   });
 });

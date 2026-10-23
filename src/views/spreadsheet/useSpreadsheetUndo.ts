@@ -105,6 +105,10 @@ export interface SpreadsheetUndoDeps {
   /** triggerRef + write-through (touchDocument). */
   onApplied: () => void;
   activateSheet: (sheetId: string) => void;
+  /** SPEC-137: while true every command is undone at its commit — the model
+   * goes back to the recorded state, nothing is stacked or written through
+   * (a workbook whose storage came back incomplete is read-only). */
+  readOnly?: () => boolean;
 }
 
 export interface SpreadsheetUndo {
@@ -290,6 +294,10 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
     const unchanged =
       model.sheets === recorded.sheets && WORKBOOK_SNAPSHOT_FIELDS.every((field, index) => model[field] === recorded.fields[index]);
     if (unchanged) {
+      return;
+    }
+    if (deps.readOnly?.()) {
+      install(model, recorded.step.snapshot);
       return;
     }
     recorded.step.alsoRecalc = alsoRecalc;

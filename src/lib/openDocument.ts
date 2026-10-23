@@ -202,6 +202,13 @@ export function assembleDocumentModel(
   return inferListStyleTypes(model);
 }
 
+/** How a picked file is opened: Markdown's base URL (SPEC-050), and
+ * SPEC-137's open progress for a workbook — called with 0..1 as its rows
+ * arrive, so the library can show "Opening {title}… {n}%". */
+export interface OpenFileOptions extends ParseMdOptions {
+  onSpreadsheetProgress?: (fraction: number) => void;
+}
+
 /** What the kind-agnostic open path hands back: which product owns the
  * file, plus that product's parsed model. The caller stores and routes by
  * `kind` (see documentKinds.ts). */
@@ -249,7 +256,7 @@ const text = (model: DocumentModel): OpenedFile => ({ kind: "text", model });
  * `allowPresentations` is false for the text-only entry point, which must
  * keep returning DocumentModel — a presentation, media file or workbook
  * there is an error, not a silent misparse. */
-async function openFile(file: File, options: ParseMdOptions, allowPresentations: boolean): Promise<OpenedFile> {
+async function openFile(file: File, options: OpenFileOptions, allowPresentations: boolean): Promise<OpenedFile> {
   if (file.size > MAX_FILE_SIZE_BYTES) {
     throw new FileTooLargeError(FILE_TOO_LARGE_MESSAGE);
   }
@@ -352,8 +359,15 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
     if (!allowPresentations) {
       throw new UnsupportedFileError(SPREADSHEET_NOT_TEXT_MESSAGE);
     }
-    const { readSpreadsheetBytes } = await import("./spreadsheet/open");
-    return { kind: "spreadsheet", model: await readSpreadsheetBytes(bytes, spreadsheet.format, title, parts) };
+    // SPEC-137: parsed off the main thread, the rows arriving in chunks
+    // whose count is the open's progress — 0% from the moment the package
+    // reads as a workbook.
+    options.onSpreadsheetProgress?.(0);
+    const { readSpreadsheetOffThread } = await import("./workers/spreadsheetParseClient");
+    return {
+      kind: "spreadsheet",
+      model: await readSpreadsheetOffThread(parts, spreadsheet.format, title, { onProgress: options.onSpreadsheetProgress }),
+    };
   }
   // SPEC-087: Keynote detection is content-based inside the ZIP funnel,
   // after the native presentation dispatch so `presentationFormatOf` and
@@ -408,7 +422,7 @@ async function openFile(file: File, options: ParseMdOptions, allowPresentations:
 /** Reads and parses a picked File of ANY supported kind (not yet stored or
  * navigated to — the caller does that, routing by `kind`). The generic
  * entry points (library picker, drag-and-drop, /open?url=) call this. */
-export async function openAnyDocumentFile(file: File, options: ParseMdOptions = {}): Promise<OpenedFile> {
+export async function openAnyDocumentFile(file: File, options: OpenFileOptions = {}): Promise<OpenedFile> {
   return openFile(file, options, true);
 }
 

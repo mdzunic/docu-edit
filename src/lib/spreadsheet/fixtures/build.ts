@@ -188,6 +188,19 @@
 //   "Sales" (active) regions, currency amounts (numFmt 164), IF flags with
 //   cached results, a #DIV/0! and a SUM total; "Locked" protected; "Archive"
 //   hidden; the name Totals. SPEC134_FIND_XLSX records the facts.
+// - spec137-large.xlsx (SPEC-137) — Excel-shaped: one sheet "Data",
+//   A1:T25000 (500,000 cells, 25,000 rows x 20 columns) for the workbook
+//   performance benchmark. A text from 1,000 distinct shared strings; B-H
+//   numbers (integers and two-decimal amounts); I dates (serials under a
+//   numFmt-14 xf); J booleans; K-S mixed numbers and strings (S always
+//   numeric — T's chain sums it); T1:T10000 a dependency chain (T1 "=S1",
+//   T2:T10000 one shared formula "T(n-1)+S(n)"), every formula cached, no
+//   fullCalcOnLoad, no calcChain part; T10001:T25000 plain numbers. A
+//   styles part with ~10 cellXfs over built-in number formats. spec137-
+//   library.xlsx — the same generator at 5,000 rows (100,000 cells), no
+//   chain. Both deterministic: every randomised column draws from its own
+//   seeded mulberry32 stream. SPEC137_LARGE_XLSX / SPEC137_LIBRARY_XLSX
+//   record the facts (row/column counts, the chain's S1 and T10000 totals).
 // spec116-numbers.xlsx and spec120-numbers.xlsx are NOT built here — Apple
 // Numbers exported them (see e2e/fixtures/spec116-numbers.md and
 // spec120-numbers.md); the specs read the committed files.
@@ -10944,6 +10957,233 @@ export async function buildSpec135AnnotationsXlsxBytes(): Promise<Uint8Array> {
   });
 }
 // --- end SPEC-135 spec135-annotations.xlsx ----------------------------------
+
+// ============================================================================
+// SPEC-137: the workbook performance benchmark's fixtures
+// ============================================================================
+// spec137-large.xlsx and spec137-library.xlsx are both built by
+// buildSpec137WorkbookBytes (rows, chainRows), so the two can never drift
+// apart in shape; they differ only in row count and whether the T-column
+// dependency chain is written. Every column with randomised content draws
+// from its OWN seeded mulberry32 stream (the same algorithm
+// scripts/build-spec047-fixture.mjs uses for its image noise) — one column's
+// draws never shift when another column's generation changes — and the
+// whole file is deterministic run to run: no Date.now(), no
+// crypto.randomUUID(); coreXml()'s docProps dates and zipWriter's DOS-epoch
+// entry timestamps (zip.ts's ByteWriter writes 0 for both) are already fixed
+// for every fixture this module builds, SPEC-137's included.
+
+const SPEC137_SHEET_NAME = "Data";
+const SPEC137_COLS = "ABCDEFGHIJKLMNOPQRST"; // A..T, one letter each — 20 columns
+const SPEC137_LARGE_ROWS = 25_000;
+const SPEC137_LIBRARY_ROWS = 5_000;
+const SPEC137_CHAIN_ROWS = 10_000;
+const SPEC137_STRING_COUNT = 1_000;
+const SPEC137_SHEET_UID = "7F3E1A2B-4C5D-4E6F-8A9B-0C1D2E3F4A5B";
+
+const SPEC137_SEED_NUM = 1_370_001; // B, D, F, H (integers) and C, E, G (amounts)
+const SPEC137_SEED_MIXED = 1_370_002; // K..R's string/number pick, and T's non-chain rows
+const SPEC137_SEED_S = 1_370_003; // S — always numeric, since the chain sums it
+
+/** mulberry32 (same algorithm as scripts/build-spec047-fixture.mjs): a
+ * fresh 0..1 generator from an integer seed. Every randomised SPEC-137
+ * column below gets its own stream, so spec137ChainTotals can recompute S's
+ * values alone, without replaying any other column. */
+function spec137Rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return function next() {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const spec137Round2 = (value: number): number => Math.round(value * 100) / 100;
+
+/** B, D, F, H: integers. */
+const spec137Integer = (rng: () => number): number => Math.floor(rng() * 10_000);
+
+/** C, E, G: two-decimal amounts. */
+const spec137Amount = (rng: () => number): number => spec137Round2(rng() * 10_000);
+
+/** K..R's numeric branch, and T's plain-number rows (outside the chain): a
+ * mix of integers and two-decimal amounts, so the columns read as "numbers"
+ * rather than one repeated shape. */
+const spec137MixedNumber = (rng: () => number): number => {
+  const value = rng() * 5_000;
+  return rng() < 0.5 ? Math.floor(value) : spec137Round2(value);
+};
+
+/** S: always numeric. The T chain (rows 1..SPEC137_CHAIN_ROWS) sums it, so
+ * it can never be a string there — simplest is to keep the whole column
+ * numeric, in both fixtures. */
+const spec137SValue = (rng: () => number): number => spec137Round2(rng() * 499 + 1);
+
+/** The T chain's S1 and T-at-`chainRows` cached totals, computed from S's
+ * own seeded stream alone: `chainRows` additions, no XML, no other column —
+ * cheap enough to run at module load for the facts below, rather than
+ * building all 500,000 cells just to read two numbers back out.
+ * buildSpec137WorkbookBytes below draws S's values in the same order (one
+ * call of spec137SValue per row, from the start of the same seed), so the
+ * cached formula values it writes always agree with what this returns. */
+function spec137ChainTotals(chainRows: number): { s1: number; total: number } {
+  const rng = spec137Rng(SPEC137_SEED_S);
+  let s1 = 0;
+  let total = 0;
+  for (let r = 1; r <= chainRows; r++) {
+    const value = spec137SValue(rng);
+    if (r === 1) {
+      s1 = value;
+    }
+    total = spec137Round2(total + value);
+  }
+  return { s1, total };
+}
+
+/** Column A's pool, and a secondary source for K..R's string branch: 1,000
+ * distinct shared strings (SPEC137_STRING_COUNT), referenced far more than
+ * 1,000 times across the sheet — sst's `uniqueCount` is the pool size,
+ * `count` (passed separately below) the total references. */
+const SPEC137_STRINGS: readonly string[] = Array.from({ length: SPEC137_STRING_COUNT }, (_, i) => `Item ${String(i).padStart(4, "0")}`);
+
+/** The styles every SPEC-137 fixture shares: ~10 cellXfs over built-in
+ * number formats (every id here is <=163, so none needs a `<numFmts>`
+ * declaration — the same reasoning spec118-formats.xlsx's header notes for
+ * its own built-ins) — General, an integer, a two-decimal amount, numFmt 14
+ * (I's dates) and six more spread across K..S for variety. Untouched by any
+ * later spec (same role as EXCEL_STYLES). */
+const SPEC137_STYLES =
+  XML_DECLARATION +
+  `<styleSheet xmlns="${MAIN_NS}" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" mc:Ignorable="x14ac x16r2 xr" ` +
+  `xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" xmlns:x16r2="http://schemas.microsoft.com/office/spreadsheetml/2015/02/main" ` +
+  `xmlns:xr="http://schemas.microsoft.com/office/spreadsheetml/2014/revision">` +
+  `<fonts count="1" x14ac:knownFonts="1"><font><sz val="11"/><color theme="1"/><name val="Aptos Narrow"/><family val="2"/><scheme val="minor"/></font></fonts>` +
+  `<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>` +
+  `<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>` +
+  `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
+  `<cellXfs count="10"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+  [1, 2, 14, 3, 4, 9, 37, 38, 44].map((id) => `<xf numFmtId="${id}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`).join("") +
+  `</cellXfs>` +
+  `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/>` +
+  `<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>`;
+
+const SPEC137_STYLE_INTEGER = 1;
+const SPEC137_STYLE_AMOUNT = 2;
+const SPEC137_STYLE_DATE = 3;
+const SPEC137_MIXED_STYLES = [4, 5, 6, 7, 8, 9]; // cycled across K..R and S for variety
+
+/** 2024-01-01 in the 1900 date system — I's serials spread a decade past it. */
+const SPEC137_DATE_BASE = dateToSerial(2024, 1, 1, "1900");
+
+/** Builds one SPEC-137 fixture: `rows` rows of the shared 20-column layout
+ * (see the section header), with the T-column dependency chain over rows
+ * 1..`chainRows` (0: no chain — spec137-library.xlsx). Shared by
+ * buildSpec137LargeXlsxBytes and buildSpec137LibraryXlsxBytes. */
+async function buildSpec137WorkbookBytes(rows: number, chainRows: number, title: string): Promise<Uint8Array> {
+  const rngNum = spec137Rng(SPEC137_SEED_NUM);
+  const rngMixed = spec137Rng(SPEC137_SEED_MIXED);
+  const rngS = spec137Rng(SPEC137_SEED_S);
+  let stringRefs = 0;
+  let running = 0;
+  const rowsXml: string[] = Array.from({ length: rows });
+  for (let r = 1; r <= rows; r++) {
+    const cells: string[] = Array.from({ length: SPEC137_COLS.length });
+    cells[0] = sharedCell(`A${r}`, (r - 1) % SPEC137_STRING_COUNT);
+    stringRefs++;
+    cells[1] = numberCell(`B${r}`, spec137Integer(rngNum), SPEC137_STYLE_INTEGER);
+    cells[2] = numberCell(`C${r}`, spec137Amount(rngNum), SPEC137_STYLE_AMOUNT);
+    cells[3] = numberCell(`D${r}`, spec137Integer(rngNum), SPEC137_STYLE_INTEGER);
+    cells[4] = numberCell(`E${r}`, spec137Amount(rngNum), SPEC137_STYLE_AMOUNT);
+    cells[5] = numberCell(`F${r}`, spec137Integer(rngNum), SPEC137_STYLE_INTEGER);
+    cells[6] = numberCell(`G${r}`, spec137Amount(rngNum), SPEC137_STYLE_AMOUNT);
+    cells[7] = numberCell(`H${r}`, spec137Integer(rngNum), SPEC137_STYLE_INTEGER);
+    cells[8] = numberCell(`I${r}`, SPEC137_DATE_BASE + ((r - 1) % 3650), SPEC137_STYLE_DATE);
+    cells[9] = `<c r="J${r}" t="b"><v>${r % 2 === 0 ? 1 : 0}</v></c>`;
+    for (let k = 0; k < 8; k++) {
+      const col = SPEC137_COLS[10 + k]; // K..R
+      const ref = `${col}${r}`;
+      if ((r + k) % 3 === 0) {
+        cells[10 + k] = sharedCell(ref, (r * 7 + k * 131) % SPEC137_STRING_COUNT);
+        stringRefs++;
+      } else {
+        cells[10 + k] = numberCell(ref, spec137MixedNumber(rngMixed), SPEC137_MIXED_STYLES[k % SPEC137_MIXED_STYLES.length]);
+      }
+    }
+    const sValue = spec137SValue(rngS);
+    cells[18] = numberCell(`S${r}`, sValue, SPEC137_MIXED_STYLES[(r + 4) % SPEC137_MIXED_STYLES.length]);
+    if (chainRows > 0 && r <= chainRows) {
+      running = r === 1 ? sValue : spec137Round2(running + sValue);
+      if (r === 1) {
+        cells[19] = formulaCell("T1", normalF("S1"), running);
+      } else if (r === 2) {
+        cells[19] = formulaCell("T2", `<f t="shared" ref="T2:T${chainRows}" si="0">T1+S2</f>`, running);
+      } else {
+        cells[19] = follower(`T${r}`, 0, running);
+      }
+    } else {
+      cells[19] = numberCell(`T${r}`, spec137MixedNumber(rngMixed), 0);
+    }
+    rowsXml[r - 1] = excelRow(r, `1:${SPEC137_COLS.length}`, cells.join(""));
+  }
+
+  const sheetXml = worksheetXml({
+    uid: SPEC137_SHEET_UID,
+    dimension: `A1:T${rows}`,
+    selected: true,
+    sheetData: rowsXml.join(""),
+  });
+
+  return excelPackage({
+    mainContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    title,
+    sheets: [{ name: SPEC137_SHEET_NAME, xml: sheetXml }],
+    sharedStrings: sharedStringsXml(SPEC137_STRINGS, stringRefs),
+    workbookPr: `<workbookPr defaultThemeVersion="202300"/>`,
+    styles: SPEC137_STYLES,
+  });
+}
+
+/** spec137-large.xlsx: 25,000 rows x 20 columns (500,000 cells), rows
+ * 1..10,000 of T a dependency chain over S — the workbook performance
+ * benchmark's primary fixture (e2e/SPEC-137.perf.spec.ts). */
+export async function buildSpec137LargeXlsxBytes(): Promise<Uint8Array> {
+  return buildSpec137WorkbookBytes(SPEC137_LARGE_ROWS, SPEC137_CHAIN_ROWS, "SPEC-137 large workbook fixture");
+}
+
+/** spec137-library.xlsx: the same generator at 5,000 rows (100,000 cells),
+ * no chain — twenty of these, opened once each outside the median loop, are
+ * the library-landing rows of "The budgets" (e2e/SPEC-137.perf.spec.ts), and
+ * AC-61..64's functional fixture (e2e/SPEC-137.spec.ts). */
+export async function buildSpec137LibraryXlsxBytes(): Promise<Uint8Array> {
+  return buildSpec137WorkbookBytes(SPEC137_LIBRARY_ROWS, 0, "SPEC-137 library workbook fixture");
+}
+
+const SPEC137_CHAIN = spec137ChainTotals(SPEC137_CHAIN_ROWS);
+
+/** What spec137-large.xlsx holds, for the e2e perf spec: row/column counts
+ * and the T chain's S1 and T-at-10000 cached totals. Editing S1 shifts every
+ * T value — T10000 included — by exactly (new S1 - s1Value). */
+export const SPEC137_LARGE_XLSX = {
+  sheetName: SPEC137_SHEET_NAME,
+  rows: SPEC137_LARGE_ROWS,
+  cols: SPEC137_COLS.length,
+  totalCells: SPEC137_LARGE_ROWS * SPEC137_COLS.length,
+  chainRows: SPEC137_CHAIN_ROWS,
+  s1Value: SPEC137_CHAIN.s1,
+  t10000Value: SPEC137_CHAIN.total,
+} as const;
+
+/** What spec137-library.xlsx holds, for the fixture spec and the e2e
+ * benchmark's library-landing rows: no chain (chainRows 0). */
+export const SPEC137_LIBRARY_XLSX = {
+  sheetName: SPEC137_SHEET_NAME,
+  rows: SPEC137_LIBRARY_ROWS,
+  cols: SPEC137_COLS.length,
+  totalCells: SPEC137_LIBRARY_ROWS * SPEC137_COLS.length,
+} as const;
+// --- end SPEC-137 -----------------------------------------------------------
 
 // --- SPEC-136 spec136-print.xlsx / spec136-print.ods ------------------------------
 // Excel- and LibreOffice-shaped twins of one printable budget. "Budget": A1:H70
