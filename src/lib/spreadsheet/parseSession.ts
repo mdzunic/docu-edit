@@ -7,8 +7,8 @@
 //   (xlsx: the shared strings and the worksheets; ods: content.xml) and runs
 //   phase 1, prepareWorkbookSources. The session keeps the texts and the
 //   whole WorkbookSources — the shared-string table never leaves the worker —
-//   and replies with the rest (an ods envelope and its table offsets), which
-//   the main thread's shell phase needs.
+//   and replies with the rest (an ods envelope, its tables' offsets and what
+//   lies outside them), which the main thread's shell phase needs.
 // - `scan` runs phase 3, scanSheet, for every job the shell phase made, in
 //   order, against ONE cell budget for the whole workbook: the
 //   WORKBOOK_TOO_LARGE_MESSAGE refusal counts across all sheets here exactly

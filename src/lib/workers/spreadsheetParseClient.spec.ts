@@ -9,11 +9,14 @@
 // With a Worker, the global is an in-process stand-in: each message is
 // structured-cloned (with its transfer list) and answered on a later task
 // by a real parseSession — or, for the failure cases, not answered.
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { XmlScanError } from "../core/xmlScanner";
+import { unzip } from "../core/zip";
 import { SpreadsheetOpenError, WORKBOOK_TOO_LARGE_MESSAGE } from "../spreadsheet/errors";
 import type { Row, SpreadsheetModel } from "../spreadsheet/model";
-import { readPhased } from "../spreadsheet/open";
+import { readPhased, readSpreadsheetBytes } from "../spreadsheet/open";
 import { createParseSessions, type SheetParseRequest, type SheetParseResponse } from "../spreadsheet/parseSession";
 import { setShellCompletion, type RowChunk, type ScanBudget, type SheetScanJob, type SheetScanResult, type SheetScanSteps, type WorkbookSources } from "../spreadsheet/readPhases";
 import { SPREADSHEET_READER_VERSION } from "../spreadsheet/readerVersion";
@@ -551,6 +554,112 @@ describe("readSpreadsheetOffThread with a Worker: the parse protocol", () => {
       await expect(readOffThread(toyWorkbook({ First: ["!take 1500000"], Second: ["!take 600000"] }))).rejects.toThrow(WORKBOOK_TOO_LARGE_MESSAGE);
       expect(InProcessWorker.instances).toHaveLength(1);
       expect(toyPhases.shells).toBe(1);
+    });
+  });
+});
+
+// --- .ods/.ots: the real phases, read like the xlsx family ------------------------------------------
+// The toy layer stands in for xlsx/phases.ts only; an .ods runs
+// ods/phases.ts itself, over a fixture, through the same client.
+
+const E2E_FIXTURES = join(__dirname, "../../../e2e/fixtures");
+
+async function odsParts(name = "mini-book.ods"): Promise<Map<string, Uint8Array>> {
+  return unzip(new Uint8Array(readFileSync(join(E2E_FIXTURES, name))));
+}
+
+/** mini-book.ods with one table of `rows` single-number rows for content.xml. */
+async function longOds(rows: number): Promise<Map<string, Uint8Array>> {
+  const parts = await odsParts();
+  const row = '<table:table-row><table:table-cell office:value-type="float" office:value="1"><text:p>1</text:p></table:table-cell></table:table-row>';
+  const content =
+    '<?xml version="1.0" encoding="UTF-8"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.3">' +
+    `<office:body><office:spreadsheet><table:table table:name="Long">${row.repeat(rows)}</table:table></office:spreadsheet></office:body></office:document-content>`;
+  parts.set("content.xml", encoder.encode(content));
+  return parts;
+}
+
+/** readSpreadsheetBytes' model of an .ods (ids minted from 1, the counters left as they were). */
+async function inlineOds(parts: Map<string, Uint8Array>): Promise<SpreadsheetModel> {
+  const counted = { minted, events: trace.events };
+  minted = 0;
+  trace.events = [];
+  const model = await readSpreadsheetBytes(new Uint8Array(0), "ods", "Book", parts);
+  ({ minted, events: trace.events } = counted);
+  return model;
+}
+
+describe("readSpreadsheetOffThread reads an .ods like the xlsx family", () => {
+  it("without a Worker: the same phases inline, handing the main thread back every SCAN_YIELD_ROWS rows", async () => {
+    expect(isWorkerSupported()).toBe(false);
+    const parts = await longOds(4_500);
+    // An earlier test's settled open may still have a task queued: let it run first.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    trace.events = [];
+    const progress: number[] = [];
+    const model = await readSpreadsheetOffThread(parts, "ods", "Book", { onProgress: (fraction) => progress.push(fraction) });
+    // One table of 4,500 rows: 2,000 + 2,000 + 500, a yield after each step that did not finish it.
+    expect(trace.events.filter((event) => event === "yield")).toHaveLength(2);
+    expect(progress).toEqual([1]);
+    expect(model.sheets.map((sheet) => [sheet.name, sheet.rows.length])).toEqual([["Long", 4_500]]);
+    expect(model).toEqual(await inlineOds(await longOds(4_500)));
+  });
+
+  describe("with a Worker", () => {
+    beforeEach(() => {
+      vi.stubGlobal("Worker", InProcessWorker);
+    });
+
+    it("posts a copy of content.xml only, runs the shell here, pulls every chunk with a yield between pulls, then disposes — the model readSpreadsheetBytes reads", async () => {
+      const parts = await odsParts();
+      const before = new Map([...parts].map(([name, bytes]) => [name, bytes.slice()]));
+      minted = 0;
+      const progress: number[] = [];
+      const model = await readSpreadsheetOffThread(parts, "ods", "Book", { onProgress: (fraction) => progress.push(fraction) });
+      expect(InProcessWorker.instances).toHaveLength(1);
+      const [worker] = InProcessWorker.instances;
+      expect(worker!.terminated).toBe(true);
+      const prepare = worker!.received[0] as Extract<Posted, { op: "prepare" }>;
+      expect(prepare.format).toBe("ods");
+      expect(prepare.sources.map((source) => source.name)).toEqual(["content.xml"]);
+      // (Compared as text: an inflated entry's array may come from another realm.)
+      const text = (bytes: Uint8Array | undefined): string => new TextDecoder().decode(bytes);
+      expect(text(prepare.sources[0]!.bytes)).toBe(text(before.get("content.xml")));
+      expect(worker!.transferred).not.toContain(parts.get("content.xml")!.buffer);
+      for (const [name, bytes] of parts) {
+        expect(text(bytes)).toBe(text(before.get(name)));
+      }
+      // The envelope and the tables' offsets come back for the shell phase.
+      const prepared = worker!.replies[0] as Extract<SheetParseResponse, { op: "prepared" }>;
+      expect(prepared.sources.format).toBe("ods");
+      expect(prepared.sources.odsTables!.length).toBe(model.sheets.length);
+      const { chunkCount } = worker!.replies[1] as Extract<SheetParseResponse, { op: "scanned" }>;
+      expect(chunkCount).toBeGreaterThan(0);
+      expect(worker!.received.map((request) => request.op)).toEqual(["prepare", "scan", ...Array.from({ length: chunkCount }, () => "chunk"), "dispose"]);
+      expect(trace.events.filter((event) => event === "yield")).toHaveLength(chunkCount - 1);
+      expect(progress).toEqual(Array.from({ length: chunkCount }, (_, index) => (index + 1) / chunkCount));
+      expect(model).toEqual(await inlineOds(await odsParts()));
+    });
+
+    it("rethrows a malformed content.xml as the inline read's error — the same class and message — and never retries", async () => {
+      const corrupt = async (): Promise<Map<string, Uint8Array>> => {
+        const parts = await odsParts();
+        parts.set("content.xml", encoder.encode(new TextDecoder().decode(parts.get("content.xml")).replace("</table:table-row>", "</table:table-rows>")));
+        return parts;
+      };
+      const inline = await readSpreadsheetBytes(new Uint8Array(0), "ods", "Book", await corrupt()).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(inline).toBeInstanceOf(SpreadsheetOpenError);
+      const thrown = await readSpreadsheetOffThread(await corrupt(), "ods", "Book").then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      expect(thrown).toBeInstanceOf(SpreadsheetOpenError);
+      expect((thrown as Error).message).toBe((inline as Error).message);
+      expect(InProcessWorker.instances).toHaveLength(1);
+      expect(InProcessWorker.instances[0]!.received.map((request) => request.op)).toEqual(["prepare"]);
     });
   });
 });
