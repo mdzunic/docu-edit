@@ -11,8 +11,8 @@
 //   picks — at most GRID_MAX_RENDERED_CELLS of them, the grid's subtree
 //   within GRID_MAX_DOM_NODES elements, overscan shrinking first — keyed by
 //   slot (`${row mod R}:${col mod C}`, R × C the window's capacity), so a
-//   scroll step patches the same elements (in a fling it draws the viewport
-//   alone, in the same slots: useSheetViewport's `settling`); beyond that the
+//   scroll step patches the same elements (settling from a far step it
+//   draws the viewport alone, in the same slots: sheetAxis.ts); beyond that the
 //   overview canvas paints the sheet (`overviewBands`: stored cells, merges,
 //   borders and gridlines of the viewport) and only the active cell keeps an
 //   element.
@@ -261,13 +261,13 @@ export function useSheetCells(deps: SheetCellsDeps): { bands: ComputedRef<BandIt
 
   const plan = computed(() => {
     const vp = deps.viewport;
-    // Settling (in a fling), the grid draws the viewport alone, its slots
-    // still the level's (useSheetViewport's header).
-    const drawn = vp.settling.value ? 0 : 1;
+    // Settling from a far scroll step, the grid draws part of the overscan
+    // (none at first), its slots still the level's (sheetAxis.ts's header).
+    const drawn = vp.overscanDrawn.value;
     const windowAt = (factor: number): GridWindow => {
       const rows = Math.round(GRID_OVERSCAN_ROWS * factor);
       const cols = Math.round(GRID_OVERSCAN_COLS * factor);
-      return { rows: vp.rowWindow(rows * drawn, rows), cols: vp.colWindow(cols * drawn, cols) };
+      return { rows: vp.rowWindow(Math.round(rows * drawn), rows), cols: vp.colWindow(Math.round(cols * drawn), cols) };
     };
     const deco = { gridLines: true, ...deps.decorations?.(), frozenWidth: vp.frozenW.value };
     const overview = () => ({ window: windowAt(0), bands: buildBands(builder.activeWindow(), "active") });

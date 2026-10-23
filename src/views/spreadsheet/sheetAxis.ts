@@ -13,23 +13,27 @@
 //   reaches on either axis — turns the ring by the rows (columns) it moved,
 //   so the item at the scrolled area's edge keeps its slot and every element
 //   stays in place, patched.
-// - SPEC-137: while the grid is settling — through a fling: two far steps
-//   within SETTLE_MS of each other, until no scroll event has arrived for
-//   SETTLE_MS (ScrollSettler) — it renders the viewport alone. Each far step
-//   lands past everything the overscan had drawn, so drawing it only doubles
-//   every frame's patch (~1,300 cell elements instead of ~600 at 1280 × 720).
-//   A window may be asked for its slots at a wider overscan than it renders
+// - SPEC-137: while the grid is settling — from a far step until no scroll
+//   event has arrived for SETTLE_MS (ScrollSettler) — it renders the
+//   viewport alone. A far step lands past everything the overscan had drawn,
+//   so drawing it only doubles the step's patch (~1,300 cell elements
+//   instead of ~600 at 1280 × 720: a fling's every frame, a jump's one). A
+//   window may be asked for its slots at a wider overscan than it renders
 //   (`slotOverscan`); with the ring turning, the viewport's elements keep
-//   their slots from frame to frame, and when the overscan comes back only
-//   its own elements mount. A single jump (a name-box move, Ctrl+End) draws
-//   the full window.
+//   their slots from frame to frame. Settled, the overscan comes back a
+//   step a frame (OVERSCAN_RAMP), so its own elements mount a few at a
+//   time rather than ~700 in one task.
 import type { AxisWindow } from "./sheetRenderPlan";
 
 export const MAX_SCROLL_EXTENT_PX = 15_000_000;
 
-/** How long the grid settles after a fling's last scroll event before its
- * overscan is drawn again (see the module header). */
+/** How long the grid settles after a far step's last scroll event before
+ * its overscan is drawn again (see the module header). */
 export const SETTLE_MS = 150;
+
+/** The overscan drawn on each frame once the grid has settled, as a
+ * fraction of the full overscan. */
+export const OVERSCAN_RAMP: readonly number[] = [0.25, 0.5, 1];
 
 /** One axis's scroll mapping: unscaled content `total` px seen through
  * `view` unscaled px at zoom `z`, scrolled to `scroll` (scaled px). */
@@ -155,39 +159,63 @@ export function axisWindow(a: AxisWindowInput): AxisWindow {
   };
 }
 
-/** Tells a fling from a jump (see the module header): `step` is told of
- * every scroll step and whether it was far; `onChange` hears when the grid
- * starts and stops settling. */
+/** How far apart OVERSCAN_RAMP's steps run: about a frame, each in a task
+ * of its own (a frame callback could share the settle timer's frame). */
+const RAMP_STEP_MS = 16;
+
+/** How much of the overscan the grid draws (see the module header):
+ * `step` is told of every scroll step and whether it was far; `onChange`
+ * hears the fraction — 0 from a far step, then OVERSCAN_RAMP's, about a
+ * frame apart, once SETTLE_MS have passed without a scroll event. */
 export class ScrollSettler {
-  settling = false;
+  /** The fraction of the overscan drawn now (1: all of it). */
+  drawn = 1;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  /** When the last far step came (performance.now()); -Infinity: none yet. */
-  private lastFar = Number.NEGATIVE_INFINITY;
+  /** Bumped by every step that restarts the wait, so a ramp it interrupts stops. */
+  private generation = 0;
 
-  constructor(private readonly onChange: (settling: boolean) => void) {}
+  constructor(private readonly onChange: (fraction: number) => void) {}
 
-  /** A second far step within SETTLE_MS of the last starts a fling; every
-   * step while settling puts its end SETTLE_MS further off. */
+  /** A far step drops the overscan; every step while it is not all drawn
+   * puts the ramp's start SETTLE_MS further off. */
   step(far: boolean): void {
     if (far) {
-      const now = performance.now();
-      if (now - this.lastFar <= SETTLE_MS && !this.settling) {
-        this.settling = true;
-        this.onChange(true);
-      }
-      this.lastFar = now;
+      this.set(0);
     }
-    if (this.settling) {
+    if (this.drawn < 1) {
+      this.generation += 1;
+      const generation = this.generation;
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
         this.timer = undefined;
-        this.settling = false;
-        this.onChange(false);
+        this.ramp(generation);
       }, SETTLE_MS);
     }
   }
 
   dispose(): void {
     clearTimeout(this.timer);
+    this.generation += 1;
+  }
+
+  /** The next OVERSCAN_RAMP step up from what is drawn, then the next
+   * RAMP_STEP_MS later. */
+  private ramp(generation: number): void {
+    const next = OVERSCAN_RAMP.find((fraction) => fraction > this.drawn);
+    if (generation !== this.generation || next === undefined) {
+      return;
+    }
+    this.set(next);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.ramp(generation);
+    }, RAMP_STEP_MS);
+  }
+
+  private set(fraction: number): void {
+    if (fraction !== this.drawn) {
+      this.drawn = fraction;
+      this.onChange(fraction);
+    }
   }
 }

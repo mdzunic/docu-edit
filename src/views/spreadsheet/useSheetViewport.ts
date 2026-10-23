@@ -21,7 +21,8 @@
 //   size) the spacer stops growing and scroll offsets map onto the sheet
 //   proportionally, so a used range at row 1,000,000 is reachable everywhere.
 // - SPEC-137: slots, the ring a far scroll step turns, and the viewport
-//   alone through a fling (`settling`) — sheetAxis.ts's header.
+//   alone while the grid settles from one (`overscanDrawn`) — sheetAxis.ts's
+//   header.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { usedRange, type CellRef } from "../../lib/spreadsheet/address";
 import { defaultColumnPx, defaultRowPx, type GridMetrics } from "../../lib/spreadsheet/geometry";
@@ -122,12 +123,12 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
   }
 
   /** SPEC-137: each axis's slot ring origin — plain state, changed only
-   * with the scroll position, which recomputes every window — and whether
-   * a fling has the grid settling (sheetAxis.ts's header). */
+   * with the scroll position, which recomputes every window — and how much
+   * of the overscan the grid draws as it settles (sheetAxis.ts's header). */
   let rowRing = 0;
   let colRing = 0;
-  const settling = ref(false);
-  const settler = new ScrollSettler((on) => (settling.value = on));
+  const overscanDrawn = ref(1);
+  const settler = new ScrollSettler((fraction) => (overscanDrawn.value = fraction));
 
   /** The first scrolled row and column the scroll position shows. */
   function scrolledEdge(): { row: number; col: number } {
@@ -299,7 +300,7 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     cols,
     rowWindow,
     colWindow,
-    settling,
+    overscanDrawn,
     page,
     topLeftCell,
     onScroll,
