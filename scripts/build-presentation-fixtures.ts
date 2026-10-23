@@ -28,6 +28,8 @@ import {
   buildPptxTextDepthFixtureBytes,
   buildSpec099OdpFixtureBytes,
   buildSpec099PptxFixtureBytes,
+  buildOdpDepthFixtureBytes,
+  buildPptxDepthFixtureBytes,
   buildOdpHiddenFixtureBytes,
   buildPptxHiddenFixtureBytes,
 } from "../src/lib/presentation/fixtures/build";
@@ -100,6 +102,13 @@ const hiddenPptx = await buildPptxHiddenFixtureBytes();
 writeFileSync(join(fixturesDir, "spec104-hidden.pptx"), hiddenPptx);
 const hiddenOdp = await buildOdpHiddenFixtureBytes();
 writeFileSync(join(fixturesDir, "spec104-hidden.odp"), hiddenOdp);
+// SPEC-105 animation-depth fixtures (a by-paragraph bullet slide, an emphasis
+// + motion-path slide, an interactive-trigger slide and one out-of-subset
+// slide).
+const depthPptx = await buildPptxDepthFixtureBytes();
+writeFileSync(join(fixturesDir, "spec105-animation-depth.pptx"), depthPptx);
+const depthOdp = await buildOdpDepthFixtureBytes();
+writeFileSync(join(fixturesDir, "spec105-animation-depth.odp"), depthOdp);
 console.log(
   `wrote mini-deck.pptx (${pptx.byteLength}B), mini-deck.odp (${odp.byteLength}B), ` +
     `spec086-animations.pptx (${animPptx.byteLength}B), spec086-animations.odp (${animOdp.byteLength}B), ` +
@@ -112,7 +121,8 @@ console.log(
     `spec095-media.pptx (${mediaPptx.byteLength}B), spec095-media.odp (${mediaOdp.byteLength}B), ` +
     `spec097-text-depth.pptx (${textDepthPptx.byteLength}B), spec097-text-depth.odp (${textDepthOdp.byteLength}B), ` +
     `spec099-sections.pptx (${sectionsPptx.byteLength}B), spec099-sections.odp (${sectionsOdp.byteLength}B), ` +
-    `spec104-hidden.pptx (${hiddenPptx.byteLength}B), spec104-hidden.odp (${hiddenOdp.byteLength}B)`,
+    `spec104-hidden.pptx (${hiddenPptx.byteLength}B), spec104-hidden.odp (${hiddenOdp.byteLength}B), ` +
+    `spec105-animation-depth.pptx (${depthPptx.byteLength}B), spec105-animation-depth.odp (${depthOdp.byteLength}B)`,
 );
 // The core idle scheduler's keep-alive timer would otherwise hold the
 // process open after the work is done (a known trap for Node callers).

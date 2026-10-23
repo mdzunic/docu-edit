@@ -3,7 +3,7 @@
 // scheduled animation offsets resolve deterministically.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Slide, SlideAnimation } from "../../lib/presentation/model";
-import { useBuildPreview } from "./useBuildPreview";
+import { fullyBuiltStyles, useBuildPreview } from "./useBuildPreview";
 
 function slide(animations: SlideAnimation[]): Slide {
   return {
@@ -138,5 +138,177 @@ describe("useBuildPreview", () => {
     expect(p.playing.value).toBe(false);
     // No group in flight → the input is not consumed by the build engine.
     expect(p.complete()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC-105: paragraph styles, interactive triggers, emphasis/path end states
+// ---------------------------------------------------------------------------
+
+function depthSlide(animations: SlideAnimation[]): Slide {
+  return {
+    id: "depth",
+    frames: [
+      { id: "title", kind: "text", xCm: 0, yCm: 0, widthCm: 20, heightCm: 2, paragraphs: [{ runs: [{ text: "T" }] }] },
+      {
+        id: "body",
+        kind: "text",
+        xCm: 0,
+        yCm: 3,
+        widthCm: 20,
+        heightCm: 8,
+        paragraphs: ["one", "two", "three"].map((text) => ({ runs: [{ text }] })),
+      },
+      { id: "btn", kind: "shape", geometry: "rect", xCm: 22, yCm: 3, widthCm: 4, heightCm: 2 },
+    ],
+    animations,
+  };
+}
+const BY_PARAGRAPH: SlideAnimation = { frameId: "body", effect: "fadeIn", trigger: "click", buildBy: "byParagraph" };
+const SPIN_ON_CLICK: SlideAnimation = { frameId: "title", effect: "spin", trigger: "onClickOf", triggerFrameId: "btn" };
+
+describe("useBuildPreview — SPEC-105", () => {
+  it("returns paragraphStyles: a by-paragraph build hides each paragraph until its step, the frame staying visible", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([BY_PARAGRAPH]);
+    p.settle(s, 0);
+    expect(hidden(p.frameStyles.value, "body")).toBe(false);
+    expect([0, 1, 2].map((i) => p.paragraphStyles.value.body[i]?.visibility)).toEqual(["hidden", "hidden", "hidden"]);
+    p.settle(s, 2);
+    expect([0, 1, 2].map((i) => p.paragraphStyles.value.body[i]?.visibility)).toEqual([undefined, undefined, "hidden"]);
+  });
+
+  it("plays one paragraph per group, animating only that paragraph", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([BY_PARAGRAPH]);
+    p.settle(s, 0);
+    p.playGroup(s, 0, false);
+    vi.advanceTimersByTime(0);
+    expect(p.paragraphStyles.value.body[0]).toMatchObject({ visibility: "visible", opacity: "0", transition: "none" });
+    expect(p.paragraphStyles.value.body[1]?.visibility).toBe("hidden");
+    vi.advanceTimersByTime(700);
+    expect(p.playing.value).toBe(false);
+    expect(p.paragraphStyles.value.body[0]?.visibility).toBeUndefined();
+    expect(p.paragraphStyles.value.body[1]?.visibility).toBe("hidden");
+  });
+
+  it("a trigger click plays its interactive group, leaving the main sequence where it is", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([BY_PARAGRAPH, SPIN_ON_CLICK]);
+    p.settle(s, 1);
+    expect(p.playTrigger(s, "title", false)).toBe(false); // not a trigger
+    expect(p.playTrigger(s, "btn", false)).toBe(true);
+    vi.advanceTimersByTime(0);
+    vi.advanceTimersByTime(50);
+    expect(p.frameStyles.value.title).toMatchObject({ animationName: "de-anim-spin", "--de-anim-rotate-to": "360deg" });
+    vi.advanceTimersByTime(700);
+    expect(p.playing.value).toBe(false);
+    // Settled a full turn round; the main sequence still shows one paragraph.
+    expect(p.frameStyles.value.title).toEqual({ rotate: "360deg" });
+    expect([0, 1].map((i) => p.paragraphStyles.value.body[i]?.visibility)).toEqual([undefined, "hidden"]);
+    // A main-sequence group after it keeps the interactive state.
+    p.playGroup(s, 1, true);
+    expect(p.frameStyles.value.title).toEqual({ rotate: "360deg" });
+    // A new slide starts with none of its interactive sequences played.
+    p.settle({ ...s, id: "other" }, 0);
+    expect(p.frameStyles.value.title).toEqual({});
+  });
+
+  it("mid-build input still completes an interactive group instantly", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([{ ...SPIN_ON_CLICK, durationMs: 5000 }]);
+    p.settle(s, 0);
+    p.playTrigger(s, "btn", false);
+    vi.advanceTimersByTime(100);
+    expect(p.playing.value).toBe(true);
+    expect(p.complete()).toBe(true);
+    expect(p.frameStyles.value.title).toEqual({ rotate: "360deg" });
+  });
+
+  it("reduced motion settles every emphasis, repeat and path at its end with no intermediate frame", () => {
+    const p = useBuildPreview(() => ({ widthCm: 25.4, heightCm: 12.7 }));
+    const s = depthSlide([
+      { frameId: "title", effect: "spin", trigger: "click", spinDegrees: 90, repeatCount: 3 },
+      { frameId: "btn", effect: "motionPath", trigger: "withPrevious", path: { preset: "line", direction: "down" } },
+      { frameId: "body", effect: "pulse", trigger: "withPrevious", repeatUntilClick: true },
+    ]);
+    p.settle(s, 0);
+    const seen: Record<string, Record<string, string>>[] = [];
+    p.playGroup(s, 0, true);
+    seen.push(p.frameStyles.value);
+    vi.runAllTimers();
+    expect(seen[0].title).toEqual({ rotate: "90deg" }); // passes restart: one spin on
+    expect(seen[0].btn).toEqual({ translate: "0px 120px" });
+    expect(seen[0].body).toEqual({});
+    expect(p.playing.value).toBe(false);
+  });
+
+  it("a repeat-until-click keeps looping past its group's end, until the next input", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([{ frameId: "title", effect: "pulse", trigger: "click", repeatUntilClick: true }]);
+    p.settle(s, 0);
+    p.playGroup(s, 0, false);
+    vi.advanceTimersByTime(1000);
+    expect(p.playing.value).toBe(false);
+    expect(p.frameStyles.value.title).toMatchObject({ animationName: "de-anim-scale", animationIterationCount: "infinite" });
+    p.settle(s, 1);
+    expect(p.frameStyles.value.title).toEqual({});
+  });
+
+  it("an emphasised frame is never hidden by its played emphasis", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([{ frameId: "title", effect: "pulse", trigger: "click" }]);
+    p.settle(s, 1);
+    expect(hidden(p.frameStyles.value, "title")).toBe(false);
+  });
+});
+
+describe("useBuildPreview — SPEC-105 review regressions", () => {
+  it("settles main and interactive groups in the order they played (the last wins)", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([
+      { frameId: "title", effect: "fadeIn", trigger: "click" },
+      { frameId: "title", effect: "fadeOut", trigger: "onClickOf", triggerFrameId: "btn" },
+    ]);
+    p.settle(s, 0);
+    // The title starts hidden (an entrance waits for it).
+    expect(hidden(p.frameStyles.value, "title")).toBe(true);
+    p.playTrigger(s, "btn", true); // the exit plays first…
+    p.playGroup(s, 0, true); // …then the advance fades it in: visible.
+    expect(hidden(p.frameStyles.value, "title")).toBe(false);
+    // The other order: in, then out on the click.
+    const q = useBuildPreview();
+    q.settle(s, 0);
+    q.playGroup(s, 0, true);
+    q.playTrigger(s, "btn", true);
+    expect(hidden(q.frameStyles.value, "title")).toBe(true);
+    // A step back unplays an interactive group played after that point.
+    q.settle(s, 0);
+    expect(hidden(q.frameStyles.value, "title")).toBe(true);
+    q.settle(s, 1);
+    expect(hidden(q.frameStyles.value, "title")).toBe(false);
+  });
+
+  it("an emphasis on a hidden target plays without revealing it", () => {
+    const p = useBuildPreview();
+    const s = depthSlide([
+      { frameId: "title", effect: "pulse", trigger: "click" },
+      { frameId: "title", effect: "fadeIn", trigger: "click" },
+    ]);
+    p.settle(s, 0);
+    p.playGroup(s, 0, false);
+    vi.advanceTimersByTime(0);
+    expect(p.frameStyles.value.title).toMatchObject({ visibility: "hidden", opacity: "0", animationName: "none" });
+    vi.advanceTimersByTime(50);
+    expect(p.frameStyles.value.title).toMatchObject({ visibility: "hidden", animationName: "de-anim-scale" });
+    vi.advanceTimersByTime(700);
+    expect(hidden(p.frameStyles.value, "title")).toBe(true);
+  });
+
+  it("fullyBuiltStyles gives a transition's outgoing slide its paragraph styles", () => {
+    const s = depthSlide([{ frameId: "body", effect: "fadeOut", trigger: "click", buildBy: "byParagraph" }]);
+    const built = fullyBuiltStyles(s, { slideWidthCm: 25.4, slideHeightCm: 12.7 });
+    expect([0, 1, 2].map((i) => built.paragraphStyles.body[i]?.visibility)).toEqual(["hidden", "hidden", "hidden"]);
+    expect(fullyBuiltStyles(null, null)).toEqual({ frameStyles: {}, paragraphStyles: {} });
   });
 });

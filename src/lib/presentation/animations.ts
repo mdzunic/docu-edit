@@ -11,7 +11,9 @@
 // Framework-free (imports only the model types).
 import type {
   AnimationEffect,
+  AnimationEffectClass,
   AnimationTrigger,
+  MotionPath,
   Slide,
   SlideAnimation,
   SlideFrame,
@@ -19,7 +21,7 @@ import type {
   TransitionDirection,
 } from "./model";
 
-export type { AnimationEffect, AnimationTrigger, SlideAnimation } from "./model";
+export type { AnimationEffect, AnimationEffectClass, AnimationTrigger, SlideAnimation } from "./model";
 
 export const DEFAULT_ANIMATION_DURATION_MS = 500;
 export const MIN_ANIMATION_DURATION_MS = 100;
@@ -28,7 +30,23 @@ export const DEFAULT_ANIMATION_DELAY_MS = 0;
 export const MIN_ANIMATION_DELAY_MS = 0;
 export const MAX_ANIMATION_DELAY_MS = 10000;
 
-/** The seven effects, in panel order. */
+// SPEC-105 bounds and defaults for the widened subset.
+export const MIN_REPEAT_COUNT = 2;
+export const MAX_REPEAT_COUNT = 10;
+export const DEFAULT_SPIN_DEGREES = 360;
+export const MIN_SPIN_DEGREES = -3600;
+export const MAX_SPIN_DEGREES = 3600;
+export const DEFAULT_SCALE_PERCENT = 150;
+export const MIN_SCALE_PERCENT = 10;
+export const MAX_SCALE_PERCENT = 400;
+export const DEFAULT_EMPHASIS_COLOR = "#ff0000";
+/** A motion path's default reach: a quarter of the slide dimension. */
+export const DEFAULT_PATH_DISTANCE = 0.25;
+export const MIN_PATH_DISTANCE = 0.05;
+export const MAX_PATH_DISTANCE = 1;
+
+/** Every modelled effect, in panel order (SPEC-086's seven plus SPEC-105's
+ * four emphasis effects and the motion path). */
 export const ANIMATION_EFFECTS: AnimationEffect[] = [
   "appear",
   "fadeIn",
@@ -37,18 +55,48 @@ export const ANIMATION_EFFECTS: AnimationEffect[] = [
   "zoomIn",
   "fadeOut",
   "flyOut",
+  "pulse",
+  "spin",
+  "growShrink",
+  "colorChange",
+  "motionPath",
 ];
 
-/** The three triggers, in panel order. */
-export const ANIMATION_TRIGGERS: AnimationTrigger[] = ["click", "withPrevious", "afterPrevious"];
+/** The four emphasis effects (SPEC-105), in panel order. */
+export const EMPHASIS_EFFECTS: AnimationEffect[] = ["pulse", "spin", "growShrink", "colorChange"];
+
+/** The motion-path presets (SPEC-105), in panel order. `custom` is read and
+ * preserved, never authored. */
+export const PATH_PRESETS: MotionPath["preset"][] = ["line", "arc", "turn", "loop", "custom"];
+
+/** The four triggers, in panel order. */
+export const ANIMATION_TRIGGERS: AnimationTrigger[] = ["click", "withPrevious", "afterPrevious", "onClickOf"];
 
 const ENTRANCE_EFFECTS = new Set<AnimationEffect>(["appear", "fadeIn", "flyIn", "wipeIn", "zoomIn"]);
+const EXIT_EFFECTS = new Set<AnimationEffect>(["fadeOut", "flyOut"]);
+const EMPHASIS_SET = new Set<AnimationEffect>(EMPHASIS_EFFECTS);
 const DIRECTIONAL_EFFECTS = new Set<AnimationEffect>(["flyIn", "flyOut", "wipeIn"]);
 
+/** An effect's family: entrances reveal their target, exits hide it, emphasis
+ * and path effects leave its visibility alone (SPEC-105). */
+export function effectClass(effect: string): AnimationEffectClass {
+  if (ENTRANCE_EFFECTS.has(effect as AnimationEffect)) return "entrance";
+  if (EXIT_EFFECTS.has(effect as AnimationEffect)) return "exit";
+  if (EMPHASIS_SET.has(effect as AnimationEffect)) return "emphasis";
+  return effect === "motionPath" ? "path" : "exit";
+}
+
 /** Whether an effect reveals its target (vs. an exit effect that hides it).
- * `type` is widened to `string` so untyped .vue reactive values can call it. */
+ * False for every emphasis and path effect. `type` is widened to `string` so
+ * untyped .vue reactive values can call it. */
 export function isEntranceEffect(effect: string): boolean {
   return ENTRANCE_EFFECTS.has(effect as AnimationEffect);
+}
+
+/** Whether an effect changes its target's visibility (entrance or exit). */
+export function changesVisibility(effect: string): boolean {
+  const cls = effectClass(effect);
+  return cls === "entrance" || cls === "exit";
 }
 
 /** Whether an effect's direction is user-choosable (fly/wipe). */
@@ -80,22 +128,104 @@ export function effectiveAnimationDelayMs(a: SlideAnimation): number {
   return Math.min(MAX_ANIMATION_DELAY_MS, Math.max(MIN_ANIMATION_DELAY_MS, ms));
 }
 
-/** The trigger an animation effectively begins on: the first animation of a
- * slide always behaves as `click`, even if marked otherwise (both formats'
- * sequencers require an initiating click; the panel and players normalise
- * row 1 through here). */
-export function effectiveTrigger(animations: SlideAnimation[], index: number): AnimationTrigger {
-  return index === 0 ? "click" : animations[index].trigger;
+/** How many passes an animation plays (SPEC-105): `repeatCount` (2–10), else
+ * once — `repeatUntilClick` counts as exactly one pass, so an `afterPrevious`
+ * chain behind it never stalls. */
+export function effectiveRepeatCount(a: SlideAnimation): number {
+  if (a.repeatUntilClick || a.repeatCount === undefined) {
+    return 1;
+  }
+  return Math.min(MAX_REPEAT_COUNT, Math.max(MIN_REPEAT_COUNT, Math.round(a.repeatCount)));
 }
 
-/** Partitions animations into build groups at each `click` boundary (the first
- * animation always opens a group). Order within and across groups is play
- * order. The writers use this to structure the click groups; playback advances
- * one group per input. */
+/** A spin's angle in degrees, defaulted (360) and clamped to ±3600. */
+export function effectiveSpinDegrees(a: SlideAnimation): number {
+  const deg = a.spinDegrees ?? DEFAULT_SPIN_DEGREES;
+  return Math.min(MAX_SPIN_DEGREES, Math.max(MIN_SPIN_DEGREES, deg));
+}
+
+/** A grow/shrink's peak scale in percent, defaulted (150) and clamped 10–400. */
+export function effectiveScalePercent(a: SlideAnimation): number {
+  const pct = a.scalePercent ?? DEFAULT_SCALE_PERCENT;
+  return Math.min(MAX_SCALE_PERCENT, Math.max(MIN_SCALE_PERCENT, pct));
+}
+
+const HEX_COLOR = /^#[0-9a-f]{6}$/;
+
+/** Whether a string is a model colour (`#rrggbb`, lower case). */
+export function isEmphasisColor(value: string): boolean {
+  return HEX_COLOR.test(value);
+}
+
+/** A colour change's target colour, defaulted (#ff0000). */
+export function effectiveEmphasisColor(a: SlideAnimation): string {
+  return a.emphasisColor !== undefined && isEmphasisColor(a.emphasisColor) ? a.emphasisColor : DEFAULT_EMPHASIS_COLOR;
+}
+
+/** The frame kinds an `onClickOf` row may wait for (SPEC-105): those both
+ * serialisers always give a wire id a trigger can name — pptx a minted
+ * `p:cNvPr id`, odp a minted `de-f{n}`. A group, a foreign object, a chart
+ * or clip re-emitted verbatim has none to name, so a trigger on one is never
+ * offered by the panel and keeps a file's timing out of subset. */
+export function isTriggerableKind(kind: string): boolean {
+  return kind === "text" || kind === "shape" || kind === "image" || kind === "table";
+}
+
+/** The animations of the slide's main (advance-driven) sequence, in play
+ * order — every row except the `onClickOf` ones (SPEC-105). */
+export function mainSequence(animations: SlideAnimation[]): SlideAnimation[] {
+  return animations.filter((a) => a.trigger !== "onClickOf");
+}
+
+/** One interactive sequence: the rows a click on `triggerFrameId` plays. */
+export interface InteractiveSequence {
+  triggerFrameId: string;
+  animations: SlideAnimation[];
+}
+
+/** The slide's `onClickOf` rows grouped by trigger frame, each group and the
+ * rows inside it in array order (SPEC-105). A row without a trigger frame
+ * (never stored by the commands) plays nowhere. */
+export function interactiveSequences(animations: SlideAnimation[]): InteractiveSequence[] {
+  const sequences: InteractiveSequence[] = [];
+  for (const animation of animations) {
+    if (animation.trigger !== "onClickOf" || animation.triggerFrameId === undefined) {
+      continue;
+    }
+    let sequence = sequences.find((s) => s.triggerFrameId === animation.triggerFrameId);
+    if (!sequence) {
+      sequence = { triggerFrameId: animation.triggerFrameId, animations: [] };
+      sequences.push(sequence);
+    }
+    sequence.animations.push(animation);
+  }
+  return sequences;
+}
+
+/** The trigger an animation effectively begins on: the first animation of the
+ * MAIN sequence always behaves as `click`, even if marked otherwise (both
+ * formats' sequencers require an initiating click; the panel and players
+ * normalise it through here). An `onClickOf` row keeps its trigger and never
+ * opens a main-sequence group (SPEC-105). */
+export function effectiveTrigger(animations: SlideAnimation[], index: number): AnimationTrigger {
+  const animation = animations[index];
+  if (animation.trigger === "onClickOf") {
+    return "onClickOf";
+  }
+  const firstMain = animations.findIndex((a) => a.trigger !== "onClickOf");
+  return index === firstMain ? "click" : animation.trigger;
+}
+
+/** Partitions the MAIN sequence into build groups at each `click` boundary
+ * (its first animation always opens a group). Order within and across groups
+ * is play order. `onClickOf` rows are not in any group (SPEC-105). Playback
+ * advances one group per input — at row level; paragraph builds expand
+ * further in `buildPlayback.ts`'s `slideBuildSteps`. */
 export function buildGroups(animations: SlideAnimation[]): SlideAnimation[][] {
+  const main = mainSequence(animations);
   const groups: SlideAnimation[][] = [];
-  animations.forEach((animation, index) => {
-    if (index === 0 || effectiveTrigger(animations, index) === "click") {
+  main.forEach((animation, index) => {
+    if (index === 0 || effectiveTrigger(main, index) === "click") {
       groups.push([animation]);
     } else {
       groups[groups.length - 1].push(animation);
@@ -104,9 +234,35 @@ export function buildGroups(animations: SlideAnimation[]): SlideAnimation[][] {
   return groups;
 }
 
+/** The SPEC-105 model constraints a stored row must meet, against the ids of
+ * its slide's frames: `triggerFrameId` present iff the trigger is
+ * `onClickOf`, naming another frame on the slide (never the row's own
+ * target); `repeatCount` (2–10) and `repeatUntilClick` exclusive; `path`
+ * present iff the effect is `motionPath`; and the per-field bounds. The
+ * readers model a row only when it holds; the commands never break it. */
+export function animationConstraintsHold(a: SlideAnimation, frameIds: ReadonlySet<string>): boolean {
+  if (!frameIds.has(a.frameId)) return false;
+  if ((a.trigger === "onClickOf") !== (a.triggerFrameId !== undefined)) return false;
+  if (a.triggerFrameId !== undefined && (a.triggerFrameId === a.frameId || !frameIds.has(a.triggerFrameId))) return false;
+  if (a.repeatCount !== undefined && a.repeatUntilClick) return false;
+  if (
+    a.repeatCount !== undefined &&
+    (!Number.isInteger(a.repeatCount) || a.repeatCount < MIN_REPEAT_COUNT || a.repeatCount > MAX_REPEAT_COUNT)
+  ) {
+    return false;
+  }
+  if ((a.effect === "motionPath") !== (a.path !== undefined)) return false;
+  if (a.path?.preset === "custom" ? a.path.d === undefined : a.path?.d !== undefined) return false;
+  if (a.spinDegrees !== undefined && (a.spinDegrees < MIN_SPIN_DEGREES || a.spinDegrees > MAX_SPIN_DEGREES)) return false;
+  if (a.scalePercent !== undefined && (a.scalePercent < MIN_SCALE_PERCENT || a.scalePercent > MAX_SCALE_PERCENT)) return false;
+  if (a.emphasisColor !== undefined && !isEmphasisColor(a.emphasisColor)) return false;
+  return true;
+}
+
 /** Retargets a copied slide's animations onto its copied frames: each source
- * frame id maps to the copy's fresh id; animations whose frame did not survive
- * the copy are dropped (AC-19). */
+ * frame id — the target and, for an `onClickOf` row, the trigger frame — maps
+ * to the copy's fresh id; animations whose frame did not survive the copy are
+ * dropped (AC-19). */
 export function retargetAnimations(
   animations: SlideAnimation[] | undefined,
   idMap: Map<string, string>,
@@ -117,23 +273,27 @@ export function retargetAnimations(
   const remapped: SlideAnimation[] = [];
   for (const animation of animations) {
     const nextId = idMap.get(animation.frameId);
-    if (nextId) {
-      remapped.push({ ...animation, frameId: nextId });
+    const nextTrigger = animation.triggerFrameId === undefined ? undefined : idMap.get(animation.triggerFrameId);
+    if (nextId && (animation.triggerFrameId === undefined || nextTrigger)) {
+      remapped.push(nextTrigger ? { ...animation, frameId: nextId, triggerFrameId: nextTrigger } : { ...animation, frameId: nextId });
     }
   }
   return remapped;
 }
 
-/** Drops every animation targeting `frameId` (AC-18). Returns a fresh array;
- * a no-op returns the same reference so callers can detect "nothing removed".*/
+/** Drops every animation targeting `frameId` (AC-18) — and every `onClickOf`
+ * row it triggers, which would otherwise name a frame the slide no longer has
+ * (SPEC-105). Returns a fresh array; a no-op returns the same reference so
+ * callers can detect "nothing removed".*/
 export function removeAnimationsForFrame(
   animations: SlideAnimation[] | undefined,
   frameId: string,
 ): SlideAnimation[] | undefined {
-  if (!animations || !animations.some((a) => a.frameId === frameId)) {
+  const involves = (a: SlideAnimation): boolean => a.frameId === frameId || a.triggerFrameId === frameId;
+  if (!animations || !animations.some(involves)) {
     return animations;
   }
-  return animations.filter((a) => a.frameId !== frameId);
+  return animations.filter((a) => !involves(a));
 }
 
 /** Whether a slide carries out-of-subset timing this editor kept verbatim

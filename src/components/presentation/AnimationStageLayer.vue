@@ -6,7 +6,13 @@
 // stage (AC-11) using the same build engine as the show. The editor stage
 // underneath always renders frames fully visible (AC-25) — only this overlay
 // animates. Runtime prop declarations, not defineProps<{...}>() generics.
-import { computed, onBeforeUnmount, watch } from "vue";
+//
+// SPEC-105: when the panel's "Edit path" arms the motion-path editor, this
+// layer draws its overlay — the selected row's resolved path dashed from the
+// frame's centre, a ghost of the frame at the path end, and a draggable
+// endpoint (an imported custom path's refuses the drag). The geometry and the
+// drag live in the controller's useMotionPathEdit; this only renders them.
+import { computed, onBeforeUnmount, useTemplateRef, watch } from "vue";
 import SlideStage from "./SlideStage.vue";
 import { asSlide } from "./slideRender";
 import { cmToPx } from "../../lib/core/units";
@@ -46,7 +52,7 @@ const reducedMotion =
   typeof window !== "undefined" && typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
     : false;
-const buildPreview = useBuildPreview();
+const buildPreview = useBuildPreview(() => ({ widthCm: props.widthCm, heightCm: props.heightCm }));
 const previewing = computed(() => c.previewState.value !== null);
 
 // The autoplay driver (timers, sequencing) lives in the composable so this
@@ -58,6 +64,16 @@ watch(
     if (slide) buildPreview.autoplay(asSlide(slide), reducedMotion, () => c.onPreviewDone());
   },
 );
+
+// --- motion-path overlay (SPEC-105) ---------------------------------------------
+const pathOverlayEl = useTemplateRef("pathOverlayEl");
+const pathOverlay = computed(() => (previewing.value ? null : c.pathEdit.overlay.value));
+// The overlay draws in unscaled surface px; the endpoint keeps an 8px radius
+// on screen whatever the fit scale, so it stays a target worth grabbing.
+const endpointRadius = computed(() => 8 / (props.scale > 0 ? props.scale : 1));
+function onEndpointDown(event = new PointerEvent("pointerdown")) {
+  c.pathEdit.onEndpointPointerDown(event, pathOverlayEl.value);
+}
 
 function dismissPreview() {
   buildPreview.stop();
@@ -89,6 +105,48 @@ onBeforeUnmount(() => buildPreview.stop());
       </button>
     </div>
 
+    <!-- Motion-path editor overlay (SPEC-105) -->
+    <svg
+      v-if="pathOverlay"
+      ref="pathOverlayEl"
+      class="path-overlay print-exclude"
+      data-testid="animation-path-overlay"
+      :style="viewportStyle"
+      :viewBox="`0 0 ${pathOverlay.widthPx} ${pathOverlay.heightPx}`"
+      role="group"
+      aria-label="Motion path"
+    >
+      <rect
+        class="path-ghost"
+        data-testid="animation-path-ghost"
+        :x="pathOverlay.ghost.x"
+        :y="pathOverlay.ghost.y"
+        :width="pathOverlay.ghost.width"
+        :height="pathOverlay.ghost.height"
+      />
+      <path
+        class="path-line"
+        :d="pathOverlay.d"
+      />
+      <circle
+        class="path-endpoint"
+        :class="{ 'is-read-only': pathOverlay.readOnly }"
+        data-testid="animation-path-endpoint"
+        role="slider"
+        tabindex="0"
+        :aria-label="c.pathEdit.endpointLabel.value"
+        :aria-disabled="pathOverlay.readOnly ? 'true' : 'false'"
+        :cx="pathOverlay.handle.x"
+        :cy="pathOverlay.handle.y"
+        :r="endpointRadius"
+        @pointerdown.stop="onEndpointDown"
+        @pointermove="c.pathEdit.onEndpointPointerMove($event)"
+        @pointerup="c.pathEdit.onEndpointPointerUp($event)"
+        @pointercancel="c.pathEdit.onEndpointPointerUp($event)"
+        @keydown="c.pathEdit.onEndpointKeydown($event)"
+      />
+    </svg>
+
     <!-- Non-interactive Play preview -->
     <div
       v-if="previewing"
@@ -104,6 +162,7 @@ onBeforeUnmount(() => buildPreview.stop());
         :scale="scale"
         :interactive="false"
         :frame-styles="buildPreview.frameStyles.value"
+        :paragraph-styles="buildPreview.paragraphStyles.value"
         :theme="theme"
       />
     </div>
@@ -139,6 +198,45 @@ onBeforeUnmount(() => buildPreview.stop());
   cursor: pointer;
   pointer-events: auto;
   font-variant-numeric: tabular-nums;
+}
+
+.path-overlay {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.path-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  vector-effect: non-scaling-stroke;
+}
+
+.path-ghost {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+  vector-effect: non-scaling-stroke;
+}
+
+.path-endpoint {
+  fill: var(--accent);
+  stroke: var(--surface-default);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.path-endpoint.is-read-only {
+  fill: var(--surface-default);
+  stroke: var(--accent);
+  cursor: not-allowed;
 }
 
 .preview {

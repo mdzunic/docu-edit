@@ -7,6 +7,13 @@
 // The model mutations live in the framework-free lib (slideAnimations.ts); this
 // composable sequences record → mutate → commit, mirrors the row selection onto
 // the stage selection (AC-14), and holds the transient confirm/preview UI state.
+//
+// SPEC-105 grows the controller without changing its shape or the view's
+// wiring: it creates and spreads in the build, repetition, trigger-frame,
+// effect-option and motion-path commands (useAnimationOptions — each one undo
+// entry in SPEC-080's voice through `patch`), the timeline view
+// (useAnimationTimeline) and the motion-path editor (useMotionPathEdit), so
+// PresentationView gains no wiring call.
 import { computed, ref, shallowRef, type ComputedRef, type Ref } from "vue";
 import type {
   AnimationEffect,
@@ -14,6 +21,7 @@ import type {
   PresentationModel,
   Slide,
   SlideAnimation,
+  TextBuildMode,
   TransitionDirection,
 } from "../../lib/presentation/model";
 import {
@@ -27,8 +35,11 @@ import {
   MIN_ANIMATION_DURATION_MS,
   usesAnimationDirection,
 } from "../../lib/presentation/animations";
-import { addAnimation, moveAnimation, removeAnimation, updateAnimation } from "../../lib/presentation/slideAnimations";
+import { addAnimation, moveAnimation, removeAnimation, updateAnimation, type AnimationPatch } from "../../lib/presentation/slideAnimations";
 import { frameAccessibleName } from "./useFrameManipulation";
+import { useMotionPathEdit } from "./useMotionPathEdit";
+import { isAnimatableKind, useAnimationOptions } from "./useAnimationOptions";
+import { useAnimationTimeline } from "./useAnimationTimeline";
 import { usePreferences } from "../../composables/usePreferences";
 
 export interface AnimationsDeps {
@@ -44,15 +55,6 @@ export interface AnimationsDeps {
   selectFrame: (frameId: string | null) => void;
 }
 
-/** The frame kinds an animation may target (AC out-of-scope: group/foreign
- * cannot be animated). SPEC-095 adds media — a clip can enter/exit like any
- * other frame (its own playback duration is never a build step). */
-function isAnimatableKind(kind: string): boolean {
-  return (
-    kind === "text" || kind === "image" || kind === "shape" || kind === "table" || kind === "media"
-  );
-}
-
 export interface AnimationRow {
   index: number;
   number: number;
@@ -60,6 +62,10 @@ export interface AnimationRow {
   trigger: AnimationTrigger;
   frameName: string;
   frameId: string;
+  /** SPEC-105: the row's paragraph build, when it has one. */
+  buildBy?: TextBuildMode;
+  /** SPEC-105: the name of the frame an `onClickOf` row waits for. */
+  triggerFrameName?: string;
 }
 
 export function useAnimations(deps: AnimationsDeps) {
@@ -88,14 +94,19 @@ export function useAnimations(deps: AnimationsDeps) {
   }
 
   const rows = computed<AnimationRow[]>(() =>
-    animations.value.map((a, index) => ({
-      index,
-      number: index + 1,
-      effect: a.effect,
-      trigger: effectiveTrigger(animations.value, index),
-      frameName: frameName(a.frameId),
-      frameId: a.frameId,
-    })),
+    animations.value.map((a, index) => {
+      const row: AnimationRow = {
+        index,
+        number: index + 1,
+        effect: a.effect,
+        trigger: effectiveTrigger(animations.value, index),
+        frameName: frameName(a.frameId),
+        frameId: a.frameId,
+      };
+      if (a.buildBy) row.buildBy = a.buildBy;
+      if (a.triggerFrameId) row.triggerFrameName = frameName(a.triggerFrameId);
+      return row;
+    }),
   );
 
   /** The numbered badges drawn beside each animated frame while the panel is
@@ -115,8 +126,13 @@ export function useAnimations(deps: AnimationsDeps) {
     const a = at(selectedIndex.value);
     return !!a && usesAnimationDirection(a.effect);
   });
-  // Row 1 always behaves as click (AC-3) — its trigger control is locked.
-  const triggerLocked = computed(() => selectedIndex.value === 0);
+  // The first row of the MAIN sequence always behaves as click (AC-3) — its
+  // with/after-previous choices are locked; it may still become "On click of"
+  // (SPEC-105), which takes it out of the main sequence.
+  const triggerLocked = computed(() => {
+    const a = at(selectedIndex.value);
+    return !!a && a.trigger !== "onClickOf" && animations.value.findIndex((x) => x.trigger !== "onClickOf") === selectedIndex.value;
+  });
   const durationSeconds = computed(() => {
     const a = at(selectedIndex.value);
     return a ? effectiveAnimationDurationMs(a) / 1000 : 0.5;
@@ -125,6 +141,12 @@ export function useAnimations(deps: AnimationsDeps) {
     const a = at(selectedIndex.value);
     return a ? effectiveAnimationDelayMs(a) / 1000 : 0;
   });
+
+  // --- SPEC-105 field state and commands (useAnimationOptions) ----------------
+  // The function declarations below (edit/patch) are hoisted, so the options
+  // controller can take `patch` before they appear.
+  const options = useAnimationOptions({ currentSlide: deps.currentSlide, animations, selectedIndex, patch });
+  const { triggerFrameOptions } = options;
 
   const canMoveUp = computed(() => hasSelection.value && selectedIndex.value > 0);
   const canMoveDown = computed(() => hasSelection.value && selectedIndex.value < animations.value.length - 1);
@@ -197,10 +219,23 @@ export function useAnimations(deps: AnimationsDeps) {
     );
   }
   function setTrigger(trigger: AnimationTrigger): void {
-    if (triggerLocked.value) return;
+    if (triggerLocked.value && trigger !== "onClickOf" && trigger !== "click") return;
+    if (trigger === "onClickOf") {
+      // Waits for the first other frame until the user picks one.
+      const triggerFrameId = at(selectedIndex.value)?.triggerFrameId ?? triggerFrameOptions.value[0]?.value;
+      if (!triggerFrameId) return;
+      edit("Change animation trigger", (slide, format) =>
+        updateAnimation(slide, selectedIndex.value, { trigger, triggerFrameId }, format),
+      );
+      return;
+    }
     edit("Change animation trigger", (slide, format) =>
       updateAnimation(slide, selectedIndex.value, { trigger }, format),
     );
+  }
+  /** One SPEC-105 field edit: one undo entry in SPEC-080's voice. */
+  function patch(label: string, change: AnimationPatch): void {
+    edit(label, (slide, format) => updateAnimation(slide, selectedIndex.value, change, format));
   }
   function setDurationSeconds(seconds: number): void {
     const ms = Math.min(MAX_ANIMATION_DURATION_MS, Math.max(MIN_ANIMATION_DURATION_MS, Math.round(seconds * 1000)));
@@ -232,6 +267,18 @@ export function useAnimations(deps: AnimationsDeps) {
     });
   }
 
+  // --- timeline (SPEC-105, useAnimationTimeline) ------------------------------
+  const timelineView = useAnimationTimeline({ currentSlide: deps.currentSlide, animations, selectedIndex, selectRow, patch });
+
+  // --- motion-path editor (SPEC-105) -------------------------------------------
+  const pathEdit = useMotionPathEdit({
+    model: deps.model,
+    currentSlide: deps.currentSlide,
+    selectedIndex,
+    record: deps.record,
+    commit: deps.commit,
+  });
+
   // --- Play preview (AC-11) --------------------------------------------------
   const previewState = shallowRef<Slide | null>(null);
   function play(): void {
@@ -245,6 +292,8 @@ export function useAnimations(deps: AnimationsDeps) {
   }
 
   return {
+    ...options,
+    ...timelineView,
     open,
     toggle,
     animations,
@@ -274,6 +323,8 @@ export function useAnimations(deps: AnimationsDeps) {
     setTrigger,
     setDurationSeconds,
     setDelaySeconds,
+    pathEdit,
+    frameName,
     remove,
     moveUp,
     moveDown,

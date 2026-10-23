@@ -8,41 +8,82 @@
 // two frames, and settle when the group ends. Cancelling in-flight timers and
 // settling to the target is how "input mid-build completes the group instantly"
 // (AC-24) works.
+//
+// SPEC-105: the engine drives BUILD STEPS (`slideBuildSteps`) rather than
+// rows, so a by-paragraph build reveals one paragraph per step through
+// `paragraphStyles` (frame id → paragraph index → inline style), which the
+// stage merges into each `slide-paragraph`; it tracks how far each of the
+// slide's interactive sequences has played (`playTrigger` — a click on a
+// trigger frame plays its next group, the main sequence untouched), keeps an
+// until-click repeat looping until the next input, and settles emphasis and
+// path effects to where they leave their target (the settled-state maths is
+// framework-free, in ./buildStyles.ts).
 import { ref, watch } from "vue";
 import type { Slide } from "../../lib/presentation/model";
 import type { PlaybackStep } from "./usePlayback";
-import { groupTimeline, isFrameHiddenAt, slideBuildCount, slideBuildGroups } from "../../lib/presentation/buildPlayback";
-import { fromStyle, settledStyle, toStyle, transitionFor } from "../../components/presentation/animationStyles";
+import {
+  interactiveTriggerAt,
+  settledMotion,
+  slideBuildCount,
+  slideBuildSteps,
+  slideInteractiveBuilds,
+  stepTimeline,
+  type BuildStep,
+} from "../../lib/presentation/buildPlayback";
+import {
+  DEFAULT_STYLE_CONTEXT,
+  fromStyle,
+  keyframed,
+  toStyle,
+  transitionFor,
+  type FrameStyle,
+  type StyleContext,
+} from "../../components/presentation/animationStyles";
+import { clientToCm } from "./stageMath";
+import {
+  settledBuildStyles,
+  stepsAt,
+  type BuildState,
+  type InteractivePlay,
+  type ParagraphStyleMap,
+  type StyleMap,
+} from "./buildStyles";
 
-type StyleMap = Record<string, Record<string, string>>;
+export { fullyBuiltStyles, settledBuildStyles, settledFrameStyles } from "./buildStyles";
+
+/** The deck size a show resolves motion paths against. */
+export interface DeckSize {
+  widthCm: number;
+  heightCm: number;
+}
 
 // The settle runs this long after a group's last animation is scheduled to end:
 // two frames for the from→to commit (`afterCommitFrame`) plus margin, so the
 // settle never cuts a still-running transition short.
 const SETTLE_SLACK_MS = 100;
 
-/** The per-frame styles of `slide` settled with `groupsPlayed` groups shown —
- * the static visibility with no animation in flight (AC-20). */
-export function settledFrameStyles(slide: Slide, groupsPlayed: number): StyleMap {
-  const groups = slideBuildGroups(slide);
-  const styles: StyleMap = {};
-  for (const frame of slide.frames) {
-    styles[frame.id] = settledStyle(isFrameHiddenAt(groups, frame.id, groupsPlayed));
-  }
-  return styles;
-}
-
-export function useBuildPreview() {
+/** `deckSize` resolves motion paths (slide fractions) to surface px; absent,
+ * a 16:9 deck. */
+export function useBuildPreview(deckSize?: () => DeckSize | null | undefined) {
   const frameStyles = ref<StyleMap>({});
+  const paragraphStyles = ref<ParagraphStyleMap>({});
   const playing = ref(false);
   let timers: number[] = [];
   // Bumped by clearTimers so a frame callback scheduled before a stop, a
   // completion or the next group never lands a stale "to" style after it.
   let generation = 0;
   // The settled state a currently-animating group resolves to (its slide and the
-  // group count shown once it finishes). Held so a mid-build input can snap
+  // build state shown once it finishes). Held so a mid-build input can snap
   // straight to it (AC-24).
-  let pending: { slide: Slide; groupsPlayed: number } | null = null;
+  let pending: { slide: Slide; state: BuildState } | null = null;
+  // The slide and build state currently shown — interactive sequences keep
+  // their progress while the main sequence advances on the same slide.
+  let shown: { slideId: string; state: BuildState } | null = null;
+
+  function context(): StyleContext {
+    const size = deckSize?.();
+    return size ? { slideWidthCm: size.widthCm, slideHeightCm: size.heightCm } : DEFAULT_STYLE_CONTEXT;
+  }
 
   function clearTimers(): void {
     for (const t of timers) {
@@ -60,68 +101,180 @@ export function useBuildPreview() {
    * as a mouse move's hit test, happened to flush style in between. */
   function afterCommitFrame(cb: () => void): void {
     const scheduled = generation;
-    const run = (): void => {
+    const fire = (): void => {
       if (scheduled === generation) cb();
     };
     if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => requestAnimationFrame(run));
+      requestAnimationFrame(() => requestAnimationFrame(fire));
     } else {
-      timers.push(window.setTimeout(run, 32));
+      timers.push(window.setTimeout(fire, 32));
     }
   }
 
-  function setFrame(frameId: string, style: Record<string, string>): void {
-    frameStyles.value = { ...frameStyles.value, [frameId]: style };
+  /** Sets the inline style of a step's target: its frame, or every paragraph
+   * the step covers. */
+  function setTarget(step: BuildStep, style: FrameStyle): void {
+    if (step.paragraphIndex === undefined) {
+      frameStyles.value = { ...frameStyles.value, [step.frameId]: style };
+      return;
+    }
+    const byIndex = { ...paragraphStyles.value[step.frameId] };
+    for (let i = step.paragraphIndex; i <= (step.paragraphEnd ?? step.paragraphIndex); i++) {
+      byIndex[i] = style;
+    }
+    paragraphStyles.value = { ...paragraphStyles.value, [step.frameId]: byIndex };
+  }
+
+  /** A step's target's current inline style. */
+  function liveStyle(step: BuildStep): FrameStyle {
+    return step.paragraphIndex === undefined
+      ? (frameStyles.value[step.frameId] ?? {})
+      : (paragraphStyles.value[step.frameId]?.[step.paragraphIndex] ?? {});
+  }
+
+  function settleState(slide: Slide, state: BuildState): void {
+    const settled = settledBuildStyles(slide, state, context());
+    frameStyles.value = settled.frameStyles;
+    paragraphStyles.value = settled.paragraphStyles;
+    shown = { slideId: slide.id, state };
+  }
+
+  /** The interactive groups to keep when `slide` shows `groupsPlayed` main
+   * groups: this slide's, less any played after that point (a step back
+   * unplays them), or none for a slide just arrived at. */
+  function interactiveOf(slide: Slide, groupsPlayed: number): InteractivePlay[] {
+    return shown && shown.slideId === slide.id ? shown.state.interactive.filter((p) => p.at <= groupsPlayed) : [];
   }
 
   /** Renders the slide settled with `groupsPlayed` groups shown — the static
-   * visibility with no animation in flight (AC-20). */
+   * visibility with no animation in flight (AC-20). A slide just arrived at
+   * starts with none of its interactive sequences played. */
   function settle(slide: Slide, groupsPlayed: number): void {
-    frameStyles.value = settledFrameStyles(slide, groupsPlayed);
+    settleState(slide, { groupsPlayed, interactive: interactiveOf(slide, groupsPlayed) });
   }
 
-  /** Animates build group `groupIndex` (0-based): settles instantly to the
-   * state before it (completing any prior in-flight group), then plays each
-   * animation on its scheduled offset, settling to `groupIndex + 1` at the end.
-   * Reduced motion skips straight to the settled after-state (AC-23). */
-  function playGroup(slide: Slide, groupIndex: number, reducedMotion: boolean, onDone?: () => void): void {
+  /** Animates `steps` from build state `before` to `after`: settles instantly
+   * to `before` (completing any prior in-flight group), then plays each step
+   * on its scheduled offset, settling to `after` at the end — an until-click
+   * repeat still looping. Reduced motion skips straight to `after`, every
+   * emphasis, repeat and path at its end state (AC-23). */
+  function run(slide: Slide, steps: BuildStep[], before: BuildState, after: BuildState, reducedMotion: boolean, onDone?: () => void): void {
     clearTimers();
     playing.value = false;
     pending = null;
-    const groups = slideBuildGroups(slide);
-    if (groupIndex < 0 || groupIndex >= groups.length) {
-      settle(slide, Math.max(0, groupIndex));
-      onDone?.();
-      return;
-    }
     if (reducedMotion) {
-      settle(slide, groupIndex + 1);
+      settleState(slide, after);
       onDone?.();
       return;
     }
-    settle(slide, groupIndex);
+    settleState(slide, before);
     playing.value = true;
-    pending = { slide, groupsPlayed: groupIndex + 1 };
-    const { entries, totalMs } = groupTimeline(groups[groupIndex]);
+    pending = { slide, state: after };
+    const ctx = context();
+    const { played } = stepsAt(slide, before);
+    const { entries, totalMs } = stepTimeline(steps);
     for (const entry of entries) {
-      const a = entry.animation;
+      const step = entry.step;
+      const a = step.animation;
+      const stepCtx = { ...ctx, base: settledMotion(played, step.key) };
       timers.push(
         window.setTimeout(() => {
-          setFrame(a.frameId, { ...fromStyle(a), transition: "none" });
+          // An emphasis or path effect changes no visibility: it plays over
+          // whatever the target shows now (hidden stays hidden).
+          const base = keyframed(a) ? liveStyle(step) : {};
+          setTarget(step, { ...base, ...fromStyle(a, stepCtx), transition: "none" });
           afterCommitFrame(() => {
-            setFrame(a.frameId, a.effect === "appear" ? toStyle(a) : { ...toStyle(a), transition: transitionFor(a) });
+            setTarget(step, a.effect === "appear" ? toStyle(a, stepCtx) : { ...base, ...toStyle(a, stepCtx), transition: transitionFor(a) });
           });
         }, entry.startMs),
       );
     }
     timers.push(
       window.setTimeout(() => {
-        settle(slide, groupIndex + 1);
+        settleState(slide, after);
+        // A repeat-until-click keeps looping past the group's end, until the
+        // next input settles or plays anything else.
+        for (const step of steps) {
+          if (step.animation.repeatUntilClick && keyframed(step.animation)) {
+            setTarget(step, { ...liveStyle(step), ...toStyle(step.animation, { ...ctx, base: settledMotion(played, step.key) }) });
+          }
+        }
         playing.value = false;
         pending = null;
         onDone?.();
       }, totalMs + SETTLE_SLACK_MS),
     );
+  }
+
+  /** Animates build group `groupIndex` (0-based) of the main sequence:
+   * settles instantly to the state before it (completing any prior in-flight
+   * group), then plays each step on its scheduled offset, settling to
+   * `groupIndex + 1` at the end. Reduced motion skips straight to the settled
+   * after-state (AC-23). */
+  function playGroup(slide: Slide, groupIndex: number, reducedMotion: boolean, onDone?: () => void): void {
+    const groups = slideBuildSteps(slide);
+    const interactive = interactiveOf(slide, groupIndex);
+    if (groupIndex < 0 || groupIndex >= groups.length) {
+      clearTimers();
+      playing.value = false;
+      pending = null;
+      settle(slide, Math.max(0, groupIndex));
+      onDone?.();
+      return;
+    }
+    run(
+      slide,
+      groups[groupIndex],
+      { groupsPlayed: groupIndex, interactive },
+      { groupsPlayed: groupIndex + 1, interactive },
+      reducedMotion,
+      onDone,
+    );
+  }
+
+  /** Plays the next group of the interactive sequence `triggerFrameId` starts
+   * (SPEC-105) — after its last, a further click replays it from the first —
+   * leaving the main sequence where it is. Completes any in-flight group
+   * first. Returns whether the frame triggers anything on this slide. */
+  function playTrigger(slide: Slide, triggerFrameId: string, reducedMotion: boolean): boolean {
+    const sequence = slideInteractiveBuilds(slide).find((s) => s.triggerFrameId === triggerFrameId);
+    if (!sequence || sequence.groups.length === 0) {
+      return false;
+    }
+    complete();
+    const current: BuildState = shown && shown.slideId === slide.id ? shown.state : { groupsPlayed: 0, interactive: [] };
+    const last = current.interactive.filter((p) => p.trigger === triggerFrameId).at(-1);
+    const index = last === undefined || last.group + 1 >= sequence.groups.length ? 0 : last.group + 1;
+    run(
+      slide,
+      sequence.groups[index],
+      current,
+      {
+        groupsPlayed: current.groupsPlayed,
+        interactive: [...current.interactive, { trigger: triggerFrameId, group: index, at: current.groupsPlayed }],
+      },
+      reducedMotion,
+    );
+    return true;
+  }
+
+  /** A show's pointer-down: when it lands on a visible trigger frame of the
+   * slide (hit-tested in slide cm through the stage under the pointer), plays
+   * that frame's interactive sequence and returns true — the caller then
+   * consumes the input instead of advancing. */
+  function playTriggerAt(slide: Slide | null, event: PointerEvent, reducedMotion: boolean): boolean {
+    const target = event.target;
+    const stage = target instanceof Element ? target.closest('[data-testid="slide-stage"]') : null;
+    if (!slide || !stage) {
+      return false;
+    }
+    const ctx = context();
+    const { xCm, yCm } = clientToCm(event.clientX, event.clientY, stage.getBoundingClientRect(), ctx.slideWidthCm, ctx.slideHeightCm);
+    const frameId = interactiveTriggerAt(slide, xCm, yCm);
+    if (!frameId || frameStyles.value[frameId]?.visibility === "hidden") {
+      return false;
+    }
+    return playTrigger(slide, frameId, reducedMotion);
   }
 
   /** Snap an in-flight build group to its completed state and hold there
@@ -130,11 +283,11 @@ export function useBuildPreview() {
    * a group was actually in flight — the caller consumes the input only then. */
   function complete(): boolean {
     if (!playing.value || !pending) return false;
-    const { slide, groupsPlayed } = pending;
+    const { slide, state } = pending;
     clearTimers();
     playing.value = false;
     pending = null;
-    settle(slide, groupsPlayed);
+    settleState(slide, state);
     return true;
   }
 
@@ -149,6 +302,7 @@ export function useBuildPreview() {
    * pause between, and calls `onFinished` after the last group settles. */
   function autoplay(slide: Slide, reducedMotion: boolean, onFinished: () => void): void {
     clearTimers();
+    shown = null;
     settle(slide, 0);
     const groups = slideBuildCount(slide);
     let index = 0;
@@ -166,7 +320,18 @@ export function useBuildPreview() {
     timers.push(window.setTimeout(step, 400));
   }
 
-  return { frameStyles, playing, settle, playGroup, complete, autoplay, stop };
+  return {
+    frameStyles,
+    paragraphStyles,
+    playing,
+    settle,
+    playGroup,
+    playTrigger,
+    playTriggerAt,
+    complete,
+    autoplay,
+    stop,
+  };
 }
 
 /** The show's step → build wiring (SPEC-086), shared by the play view and the

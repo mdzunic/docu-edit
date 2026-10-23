@@ -84,6 +84,7 @@ import { DEFAULT_THEME, type ModelColor, type ModelFont } from "../../core/theme
 import { classifyLayout } from "../layouts";
 import { readPptxTransition } from "../transitions";
 import { preservedTimingSpids, preservedTimingTextTargets, readPptxAutoStartSpids, readPptxTiming } from "./timing";
+import { frameLookup } from "../buildPlayback";
 import { retainSourceWireIds } from "../animations";
 import { readBodyPr, readHlinkClick, readLetterSpacing, readParagraphPPr } from "./textDepthWire";
 import { PPTX_MAIN_CONTENT_TYPE } from "../detect";
@@ -2039,7 +2040,8 @@ function buildSlide(
   // from `preserved`. Anything out of subset stays preserved verbatim (AC-4).
   if (preserved["p:timing"]) {
     const timingEl = pChild(slideRoot, "timing");
-    const animations = timingEl ? readPptxTiming(timingEl, (spid) => frameForSpid.get(spid)) : undefined;
+    const frameFor = frameLookup(frames);
+    const animations = timingEl ? readPptxTiming(timingEl, (spid) => frameForSpid.get(spid), frameFor) : undefined;
     if (animations) {
       slide.animations = animations;
       delete preserved["p:timing"];

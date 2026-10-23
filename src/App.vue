@@ -375,4 +375,111 @@ body.is-exporting-pdf .page-footer-band {
     display: revert !important;
   }
 }
+
+/* ---- Slide animation keyframes (SPEC-105) ---------------------------------
+   The emphasis and motion-path effects of a show or an editor preview run
+   through these: an inline style cannot carry @keyframes, so they live in the
+   app's one unscoped block, and components/presentation/animationStyles.ts
+   names them and feeds their values through custom properties set on the
+   animated frame or paragraph — a scale, a rotation span, a colour, or the
+   path's sampled points (PATH_SAMPLES + 1 stops) in surface px. They move the
+   target through the individual scale/rotate/translate properties, which
+   compose with a rotated frame's own transform. */
+@keyframes de-anim-scale {
+  0%,
+  100% {
+    scale: 1;
+  }
+
+  50% {
+    scale: var(--de-anim-scale);
+  }
+}
+
+@keyframes de-anim-spin {
+  from {
+    rotate: var(--de-anim-rotate-from);
+  }
+
+  to {
+    rotate: var(--de-anim-rotate-to);
+  }
+}
+
+@keyframes de-anim-color {
+  50% {
+    color: var(--de-anim-color);
+    background-color: var(--de-anim-color);
+  }
+}
+
+@keyframes de-anim-path {
+  0% {
+    translate: var(--de-path-0);
+  }
+
+  6.25% {
+    translate: var(--de-path-1);
+  }
+
+  12.5% {
+    translate: var(--de-path-2);
+  }
+
+  18.75% {
+    translate: var(--de-path-3);
+  }
+
+  25% {
+    translate: var(--de-path-4);
+  }
+
+  31.25% {
+    translate: var(--de-path-5);
+  }
+
+  37.5% {
+    translate: var(--de-path-6);
+  }
+
+  43.75% {
+    translate: var(--de-path-7);
+  }
+
+  50% {
+    translate: var(--de-path-8);
+  }
+
+  56.25% {
+    translate: var(--de-path-9);
+  }
+
+  62.5% {
+    translate: var(--de-path-10);
+  }
+
+  68.75% {
+    translate: var(--de-path-11);
+  }
+
+  75% {
+    translate: var(--de-path-12);
+  }
+
+  81.25% {
+    translate: var(--de-path-13);
+  }
+
+  87.5% {
+    translate: var(--de-path-14);
+  }
+
+  93.75% {
+    translate: var(--de-path-15);
+  }
+
+  100% {
+    translate: var(--de-path-16);
+  }
+}
 </style>

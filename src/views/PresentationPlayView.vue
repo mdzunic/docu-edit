@@ -24,7 +24,7 @@ import { cmToPx } from "../lib/core/units";
 import { slideOutline } from "../lib/presentation/slideModel";
 import { slideBuildCount } from "../lib/presentation/buildPlayback";
 import { usePlayback } from "./presentation/usePlayback";
-import { settledFrameStyles, useBuildPreview, watchBuildSteps } from "./presentation/useBuildPreview";
+import { fullyBuiltStyles, useBuildPreview, watchBuildSteps } from "./presentation/useBuildPreview";
 import { useShowingMedia } from "./presentation/useShowingMedia";
 import { usePlayInput } from "./presentation/usePlayInput";
 import { usePresenterSession } from "./presentation/usePresenterSession";
@@ -70,7 +70,7 @@ const currentFields = computed(() => {
 });
 
 // --- build playback (SPEC-086): frames hidden until their build plays --------
-const buildPreview = useBuildPreview();
+const buildPreview = useBuildPreview(() => presentation.value && { widthCm: presentation.value.slideWidthCm, heightCm: presentation.value.slideHeightCm });
 watchBuildSteps(buildPreview, () => playback.current.value, () => currentSlide.value, () => reducedMotion.value);
 
 // --- presenter session (SPEC-100): ?follow= makes this a follower -----------
@@ -240,10 +240,7 @@ const transitionView = shallowRef(emptyTwoStageView());
 // slide once every group has played), so exited frames stay gone; the incoming
 // stage shares the live build state, which the step watcher has already settled
 // to 0 groups — unbuilt frames stay hidden through the transition (SPEC-086).
-const transitionOutgoingStyles = computed(() => {
-  const outgoing = transitionView.value?.outgoing;
-  return outgoing ? settledFrameStyles(outgoing, slideBuildCount(outgoing)) : {};
-});
+const transitionOutgoing = computed(() => fullyBuiltStyles(transitionView.value?.outgoing, presentation.value));
 function clearTransition() {
   transitionView.value = null;
 }
@@ -299,7 +296,9 @@ function jumpTo(index = 0) {
 }
 
 // --- input (SPEC-084's keyboard, pointer and idle HUD; SPEC-100 routes it) --
-const input = usePlayInput({ atEnd: playback.atEnd, isExiting: () => exiting, perform: presenter.perform, fullscreenTarget: () => stageContainer.value });
+// SPEC-105: a pointer-down on a trigger frame plays its interactive sequence.
+const input = usePlayInput({ atEnd: playback.atEnd, isExiting: () => exiting, perform: presenter.perform, fullscreenTarget: () => stageContainer.value,
+  pointerTrigger: (event) => !playback.atEnd.value && buildPreview.playTriggerAt(currentSlide.value, event, reducedMotion.value) });
 
 // --- lifecycle --------------------------------------------------------------
 onMounted(() => {
@@ -357,8 +356,10 @@ onBeforeUnmount(() => {
       :scale="stageScale"
       :reduced-motion="reducedMotion"
       :theme="presentation.theme"
-      :outgoing-frame-styles="transitionOutgoingStyles"
+      :outgoing-frame-styles="transitionOutgoing.frameStyles"
+      :outgoing-paragraph-styles="transitionOutgoing.paragraphStyles"
       :incoming-frame-styles="buildPreview.frameStyles.value"
+      :incoming-paragraph-styles="buildPreview.paragraphStyles.value"
       :outgoing-media-url-override="showingMedia.previousUrl()"
       :incoming-media-url-override="showingMedia.currentUrl()"
       @done="onTransitionDone"
@@ -373,6 +374,7 @@ onBeforeUnmount(() => {
       :interactive="false"
       :playback-mode="true"
       :frame-styles="buildPreview.frameStyles.value"
+      :paragraph-styles="buildPreview.paragraphStyles.value"
       :media-url-override="showingMedia.currentUrl()"
       :fields="currentFields"
       :theme="presentation.theme"

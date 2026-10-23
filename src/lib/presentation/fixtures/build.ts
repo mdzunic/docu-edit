@@ -29,7 +29,7 @@ import { unzip } from "../../core/zip";
 import { chartPartXml } from "../../core/chartPartOoxml";
 import { odfChartContentXml } from "../../core/chartPartOdf";
 import type { ChartSeries, ChartType, ChartVisual } from "../../core/charts";
-import type { DeckHeaderFooter, PresentationModel, Slide, SlideAnimation, SlideFieldPlaceholder, SlideRun, TextFrame } from "../model";
+import type { DeckHeaderFooter, PresentationModel, Slide, SlideAnimation, SlideFieldPlaceholder, SlideFrame, SlideRun, TextFrame } from "../model";
 import { DEFAULT_THEME } from "../../core/theme";
 
 const P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -888,13 +888,15 @@ const ODP_CANONICAL_ANIM = writeOdpAnim(
   (id) => id,
 );
 
-/** An out-of-subset odp `anim:*` (an emphasis preset the table doesn't map). */
+/** An out-of-subset odp `anim:*` (an emphasis preset the table doesn't map —
+ * Impress's flash bulb; SPEC-105 models spin, so the fixture moved further
+ * out). */
 const ODP_EXOTIC_ANIM =
   `<anim:par xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0"` +
   ` xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0"` +
   ` presentation:node-type="timing-root"><anim:seq presentation:node-type="main-sequence">` +
   `<anim:par smil:begin="next"><anim:par smil:begin="0s">` +
-  `<anim:par presentation:node-type="on-click" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-spin" smil:begin="0s">` +
+  `<anim:par presentation:node-type="on-click" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-flash-bulb" smil:begin="0s">` +
   `<anim:animate smil:targetElement="de-f1"/></anim:par>` +
   `</anim:par></anim:par></anim:seq></anim:par>`;
 
@@ -2259,4 +2261,169 @@ export async function buildPptxHiddenFixtureBytes(): Promise<Uint8Array> {
 /** `spec104-hidden.odp`: slide 2's page references a hidden drawing-page style. */
 export async function buildOdpHiddenFixtureBytes(): Promise<Uint8Array> {
   return (await writeOdp(spec104Model("odp"), { now: SPEC104_FIXTURE_INSTANT, modified: SPEC104_FIXTURE_INSTANT })).bytes;
+}
+
+// ============================================================================
+// SPEC-105 animation-depth fixtures (spec105-animation-depth)
+// ============================================================================
+// Four 16:9 slides built through the from-scratch writers (the SPEC-097
+// precedent), every slide a title (frame 0), a bulleted body (frame 1) and a
+// "Press me" rounded rectangle (frame 2 — a shape on read-back, where a plain
+// rect with text reads as a text box):
+//   1. a by-paragraph bullet slide with four bullets and no timing — the
+//      e2e's authoring target;
+//   2. an emphasis + motion-path slide: a repeated spin, an auto-reversed
+//      grow, a rewinding arc path, a by-paragraph pulse after previous and an
+//      until-click colour change, all modelled;
+//   3. an interactive-trigger slide: a by-first-level-paragraph fade, a spin
+//      on the title played by clicking the rectangle, and a line path on it;
+//   4. one deliberately out-of-subset slide — a by-paragraph build covering
+//      two of its body's three paragraphs (pptx) / an Impress flash-bulb and a
+//      quadratic motion path (odp) — kept verbatim.
+// The four mini-deck slides and the SPEC-085/086 builders above are not
+// touched.
+
+/** A fixture animation with its target (and trigger) frame as a z-order
+ * index on its slide — frame ids are minted per read. */
+export interface DepthFixtureAnimation extends Omit<SlideAnimation, "frameId" | "triggerFrameId"> {
+  frame: number;
+  triggerFrame?: number;
+}
+
+/** Each slide's title, in deck order. */
+export const SPEC105_TITLES = ["Bullets", "Emphasis and paths", "Triggers", "Out of subset"];
+/** Slide 1's four bullets — what the e2e builds one by one. */
+export const SPEC105_BULLETS = ["First point", "Second point", "Third point", "Fourth point"];
+/** The rounded rectangle's text (the trigger on slide 3). */
+export const SPEC105_TRIGGER_TEXT = "Press me";
+
+/** What each slide parses to, per slide in deck order (slide 4 models none:
+ * its timing stays preserved). */
+export const EXPECTED_DEPTH_ANIMATIONS: DepthFixtureAnimation[][] = [
+  [],
+  [
+    { frame: 0, effect: "spin", trigger: "click", repeatCount: 2, spinDegrees: 720 },
+    { frame: 2, effect: "growShrink", trigger: "withPrevious", autoReverse: true, scalePercent: 200 },
+    {
+      frame: 2,
+      effect: "motionPath",
+      trigger: "click",
+      rewindOnComplete: true,
+      path: { preset: "arc", direction: "down", distanceFraction: 0.3 },
+    },
+    { frame: 1, effect: "pulse", trigger: "afterPrevious", buildBy: "byParagraph", buildTrigger: "afterPrevious" },
+    { frame: 0, effect: "colorChange", trigger: "click", repeatUntilClick: true, emphasisColor: "#00aa00" },
+  ],
+  [
+    { frame: 1, effect: "fadeIn", trigger: "click", buildBy: "byFirstLevelParagraph" },
+    { frame: 0, effect: "spin", trigger: "onClickOf", triggerFrame: 2 },
+    { frame: 2, effect: "motionPath", trigger: "click", path: { preset: "line" } },
+  ],
+  [],
+];
+
+const SPEC105_FIXTURE_INSTANT = new Date("2026-10-23T09:00:00Z");
+
+/** Slide 4's out-of-subset pptx timing: a fade by paragraph over body
+ * paragraphs 0 and 2 only (a partial cover), with its p:bldP — targets named
+ * by the body's source id "3", which the rebuild re-points. */
+function spec105FadeStep(paragraph: number): string {
+  const tgt = `<p:tgtEl><p:spTgt spid="3"><p:txEl><p:pRg st="${paragraph}" end="${paragraph}"/></p:txEl></p:spTgt></p:tgtEl>`;
+  return (
+    `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>` +
+    `<p:par><p:cTn fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
+    `<p:par><p:cTn presetID="10" presetClass="entr" presetSubtype="0" fill="hold" grpId="0" nodeType="clickEffect">` +
+    `<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
+    `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn dur="500"/>${tgt}</p:cBhvr></p:animEffect>` +
+    `<p:set><p:cBhvr><p:cTn dur="1" fill="hold"/>${tgt}<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr>` +
+    `<p:to><p:strVal val="visible"/></p:to></p:set>` +
+    `</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>`
+  );
+}
+const SPEC105_PPTX_EXOTIC_TIMING =
+  `<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>` +
+  `<p:seq concurrent="1" nextAc="seek"><p:cTn id="2" dur="indefinite" nodeType="mainSeq"><p:childTnLst>${spec105FadeStep(0)}${spec105FadeStep(2)}</p:childTnLst></p:cTn>` +
+  `<p:prevCondLst><p:cond evt="onPrev" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:prevCondLst>` +
+  `<p:nextCondLst><p:cond evt="onNext" delay="0"><p:tgtEl><p:sldTgt/></p:tgtEl></p:cond></p:nextCondLst>` +
+  `</p:seq></p:childTnLst></p:cTn></p:par></p:tnLst><p:bldLst><p:bldP spid="3" grpId="0" build="p"/></p:bldLst></p:timing>`;
+
+/** Slide 4's out-of-subset odp anim: Impress's flash bulb on the title and a
+ * quadratic (`q`) motion path on the rectangle — targets named by their source
+ * ids, which the rebuilt page re-emits. */
+const SPEC105_ODP_EXOTIC_ANIM =
+  `<anim:par xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0"` +
+  ` xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0"` +
+  ` presentation:node-type="timing-root"><anim:seq presentation:node-type="main-sequence">` +
+  `<anim:par smil:begin="next"><anim:par smil:begin="0s">` +
+  `<anim:par presentation:node-type="on-click" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-flash-bulb" smil:begin="0s">` +
+  `<anim:animate smil:attributeName="opacity" smil:values="1;0.2;1" smil:dur="0.5s" smil:targetElement="id20"/></anim:par>` +
+  `<anim:par presentation:node-type="with-previous" presentation:preset-class="motion-path" presentation:preset-id="ooo-motionpath-custom" smil:begin="0s">` +
+  `<anim:animateMotion svg:path="m 0 0 q 0.1 -0.2 0.2 0" smil:dur="1s" smil:targetElement="id22"/></anim:par>` +
+  `</anim:par></anim:par></anim:seq></anim:par>`;
+
+function spec105Model(format: "pptx" | "odp"): PresentationModel {
+  const model = createBlankPresentation();
+  model.format = format;
+  model.title = "Animation depth fixture";
+  addSlide(model, 0);
+  addSlide(model, 1);
+  addSlide(model, 2);
+  const bodies: { text: string; level?: number }[][] = [
+    SPEC105_BULLETS.map((text) => ({ text })),
+    [{ text: "Throb" }, { text: "Spin" }, { text: "Glide" }],
+    [{ text: "Point" }, { text: "Detail", level: 1 }, { text: "Next" }],
+    [{ text: "Alpha" }, { text: "Beta" }, { text: "Gamma" }],
+  ];
+  model.slides.forEach((slide, index) => {
+    const title = slide.frames[0] as TextFrame;
+    title.paragraphs = [{ runs: [{ text: SPEC105_TITLES[index] }] }];
+    const body = slide.frames[1] as TextFrame;
+    body.paragraphs = bodies[index].map(({ text, level }) => (level ? { runs: [{ text }], bullet: "disc", level } : { runs: [{ text }], bullet: "disc" }));
+    slide.frames.push({
+      id: crypto.randomUUID(),
+      kind: "shape",
+      geometry: "roundRect",
+      xCm: 24,
+      yCm: 6,
+      widthCm: 7,
+      heightCm: 3,
+      paragraphs: [{ runs: [{ text: SPEC105_TRIGGER_TEXT }] }],
+    });
+    const rows = EXPECTED_DEPTH_ANIMATIONS[index];
+    if (rows.length > 0) {
+      slide.animations = rows.map(({ frame, triggerFrame, ...rest }) => {
+        const animation: SlideAnimation = { ...rest, frameId: slide.frames[frame].id };
+        if (triggerFrame !== undefined) {
+          animation.triggerFrameId = slide.frames[triggerFrame].id;
+        }
+        return animation;
+      });
+    }
+  });
+  // Slide 4 keeps out-of-subset timing, its targets named by source ids.
+  const exotic = model.slides[3];
+  const [title, body, box] = exotic.frames as [TextFrame, TextFrame, SlideFrame];
+  if (format === "pptx") {
+    body.sourceWireId = "3";
+    body.paragraphs.forEach((para, index) => {
+      para.pptxSourceParagraph = index;
+    });
+    exotic.preserved = { "p:timing": SPEC105_PPTX_EXOTIC_TIMING };
+  } else {
+    title.sourceWireId = "id20";
+    box.sourceWireId = "id22";
+    exotic.preserved = { anim: SPEC105_ODP_EXOTIC_ANIM };
+  }
+  delete model.structureDirty;
+  return model;
+}
+
+/** `spec105-animation-depth.pptx`. */
+export async function buildPptxDepthFixtureBytes(): Promise<Uint8Array> {
+  return (await writePptx(spec105Model("pptx"), { now: SPEC105_FIXTURE_INSTANT, modified: SPEC105_FIXTURE_INSTANT })).bytes;
+}
+
+/** `spec105-animation-depth.odp`. */
+export async function buildOdpDepthFixtureBytes(): Promise<Uint8Array> {
+  return (await writeOdp(spec105Model("odp"), { now: SPEC105_FIXTURE_INSTANT, modified: SPEC105_FIXTURE_INSTANT })).bytes;
 }

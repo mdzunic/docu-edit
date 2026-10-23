@@ -101,7 +101,10 @@ export function usePresenterView(deps: PresenterViewDeps) {
   });
 
   // The current pane's builds, driven exactly as the show drives its own.
-  const buildPreview = useBuildPreview();
+  const buildPreview = useBuildPreview(() => {
+    const model = presentation.value;
+    return model ? { widthCm: model.slideWidthCm, heightCm: model.slideHeightCm } : null;
+  });
   watchBuildSteps(buildPreview, () => playback.current.value, () => currentSlide.value, () => reducedMotion.value);
 
   // --- step functions (the owner's; the audience's intents land here too) -----

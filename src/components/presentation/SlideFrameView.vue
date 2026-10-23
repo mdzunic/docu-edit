@@ -83,6 +83,10 @@ const props = defineProps({
    * layered onto the frame's position during a build preview/show. Null in the
    * editor, where frames always render fully visible (AC-25). */
   playStyle: { type: Object, default: null },
+  /** SPEC-105 playback: this frame's per-paragraph build styles (paragraph
+   * index → inline style), merged into each `slide-paragraph`. Null in the
+   * editor. */
+  paragraphStyles: { type: Object, default: null },
   /** SPEC-095: true in SPEC-084 playback (not the editor), so an autoStart media
    * frame that is currently visible plays under the autoplay policy. */
   playbackMode: { type: Boolean, default: false },
@@ -143,6 +147,10 @@ const resolver = computed(() => asResolver(props.resolveMedia));
 // interactive stage's top-level frames carry it (never a thumbnail).
 const frameIdAttr = computed(() => (props.topLevel ? frame.value.id : undefined));
 const paragraphAlign = computed(() => defaultParagraphAlign(frame.value));
+/** A paragraph's build style during playback (SPEC-105), or none. */
+function paragraphPlayStyle(index = 0) {
+  return props.paragraphStyles ? props.paragraphStyles[index] || null : null;
+}
 
 // --- links (SPEC-097 AC-47..50) ---------------------------------------------
 // Anchors are never navigated by the browser on any surface. In playback the
@@ -530,7 +538,7 @@ watch([() => props.frame, deckTheme], () => {
         v-for="(entry, index) in paragraphs"
         :key="index"
         class="paragraph"
-        :style="paragraphStyle(entry.para, paragraphAlign)"
+        :style="[paragraphStyle(entry.para, paragraphAlign), paragraphPlayStyle(index)]"
         data-testid="slide-paragraph"
       >
         <span
@@ -758,7 +766,7 @@ watch([() => props.frame, deckTheme], () => {
         v-for="(entry, index) in paragraphs"
         :key="index"
         class="paragraph"
-        :style="paragraphStyle(entry.para, paragraphAlign)"
+        :style="[paragraphStyle(entry.para, paragraphAlign), paragraphPlayStyle(index)]"
       >
         <span
           v-if="hasMarker(entry)"

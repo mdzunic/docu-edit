@@ -49,6 +49,7 @@ import type { ShapeGeometry } from "../../core/shapes";
 import { readOdpTransition, type OdpTransitionAttrs } from "../transitions";
 import { preservedAnimReferences, readOdpAnim } from "./anim";
 import { retainSourceWireIds } from "../animations";
+import { buildableParagraphs, frameLookup } from "../buildPlayback";
 import { scanXml, XmlScanError } from "../../core/xmlScanner";
 import { effectiveHangingCm, effectiveIndentCm } from "../slideLists";
 import { isLinkableKind } from "../slideLinks";
@@ -2129,7 +2130,20 @@ function parsePage(page: Element, ctx: OdpContext, pageSource?: string): Slide {
   // resolve becomes the modelled `animations`; anything out of subset stays
   // preserved verbatim (AC-4).
   if (animEls.length > 0) {
-    const animations = readOdpAnim(animEls, (wireId) => frameForWire.get(wireId));
+    // A built frame's `text:p` ids (SPEC-105) resolve to (frame, paragraph).
+    const paragraphForWire = new Map<string, { frameId: string; paragraphIndex: number }>();
+    for (const frame of frames) {
+      buildableParagraphs(frame)?.forEach((para, paragraphIndex) => {
+        if (para.sourceWireId !== undefined && !paragraphForWire.has(para.sourceWireId)) {
+          paragraphForWire.set(para.sourceWireId, { frameId: frame.id, paragraphIndex });
+        }
+      });
+    }
+    const animations = readOdpAnim(
+      animEls,
+      (wireId) => frameForWire.get(wireId) ?? paragraphForWire.get(wireId),
+      frameLookup(frames),
+    );
     if (animations) {
       slide.animations = animations;
     } else {

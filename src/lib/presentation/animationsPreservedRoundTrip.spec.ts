@@ -456,13 +456,16 @@ const SMIL_NS = "urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0";
  * id5 — `text:p` targets), and an interactive sequence triggered by clicking
  * the rect (id9 — referenced only through `smil:begin`/`smil:end`) that
  * reveals the body frame (id3). The prefixes are bound on the content.xml
- * root, as Impress writes them. */
+ * root, as Impress writes them. The emphasis is Impress's flash bulb — an
+ * unmapped preset, so the tree stays out of subset now that SPEC-105 models
+ * spins, paragraph builds and interactive sequences (the same move as
+ * fixtures/build.ts's ODP_EXOTIC_ANIM). */
 const ODP_ANIM =
   `<anim:par presentation:node-type="timing-root">` +
   `<anim:seq presentation:node-type="main-sequence"><anim:par smil:begin="next"><anim:par smil:begin="0s">` +
-  `<anim:par smil:begin="0s" smil:fill="hold" presentation:node-type="on-click" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-spin">` +
+  `<anim:par smil:begin="0s" smil:fill="hold" presentation:node-type="on-click" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-flash-bulb">` +
   `<anim:animateTransform smil:dur="2s" smil:fill="hold" smil:targetElement="id4" svg:type="rotate" smil:by="360"/></anim:par>` +
-  `<anim:par smil:begin="0s" smil:fill="hold" presentation:node-type="with-previous" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-spin">` +
+  `<anim:par smil:begin="0s" smil:fill="hold" presentation:node-type="with-previous" presentation:preset-class="emphasis" presentation:preset-id="ooo-emphasis-flash-bulb">` +
   `<anim:animateTransform smil:dur="2s" smil:fill="hold" smil:targetElement="id5" svg:type="rotate" smil:by="360"/></anim:par>` +
   `</anim:par></anim:par></anim:seq>` +
   `<anim:seq presentation:node-type="interactive-sequence" smil:begin="id9.click" smil:end="id9.click">` +

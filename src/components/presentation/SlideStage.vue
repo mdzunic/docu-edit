@@ -64,6 +64,10 @@ const props = defineProps({
    * layers on during a show/preview. Absent in the editor (frames fully
    * visible, AC-25). */
   frameStyles: { type: Object, default: () => ({}) },
+  /** SPEC-105 playback: per-paragraph inline styles (frame id → paragraph
+   * index → style) a by-paragraph build layers onto each `slide-paragraph`.
+   * Absent in the editor. */
+  paragraphStyles: { type: Object, default: () => ({}) },
   /** SPEC-084 playback: media id → this showing's URL (or undefined), so a GIF
    * restarts each time its slide is shown (useShowingMedia). Absent = every
    * image resolves to its shared `data:` URI. */
@@ -196,6 +200,7 @@ const previewStyle = computed(() => {
         :armed="armed"
         :top-level="interactive"
         :play-style="frameStyles[frame.id] || null"
+        :paragraph-styles="paragraphStyles[frame.id] || null"
         :playback-mode="playbackMode"
         :theme="theme"
         :raster-scale="rasterScale"

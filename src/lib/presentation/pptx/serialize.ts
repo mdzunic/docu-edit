@@ -49,6 +49,7 @@ import {
   VIDEO_RELATIONSHIP,
 } from "./mediaWire";
 import { rebuiltParagraphRange, retargetPreservedTiming, writePptxTiming, type PreservedTextRange } from "./timing";
+import { frameLookup } from "../buildPlayback";
 import { DEFAULT_DATE_FORMAT, fieldText, isTitleSlide } from "../headerFooter";
 import { FIELD_GUID, FORMAT_TO_PPTX_DATETIME, PH_IDX_OF_KIND, PH_NAME_OF_KIND, PH_TYPE_OF_KIND } from "./fields";
 import {
@@ -170,7 +171,7 @@ export function serializeSlideXml(
   // drops the source when it models them); a present (even empty) `animations`
   // is the modelled state, so preserved timing is never re-emitted alongside.
   const timing = slide.animations !== undefined
-    ? writePptxTiming(slide.animations, (id) => spidFor.get(id))
+    ? writePptxTiming(slide.animations, (id) => spidFor.get(id), frameLookup(slide.frames))
     : preservedTimingXml(slide, spidFor, retained);
   const extLst = slide.preserved?.["p:extLst"] ?? "";
   return (
