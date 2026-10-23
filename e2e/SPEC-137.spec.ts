@@ -165,3 +165,34 @@ test("a large workbook stays within the grid's rendering ceiling, degrades to th
   const largestDocText = await page.getByTestId("largest-doc").first().textContent();
   expect(largestDocText ?? "", "AC-64: the storage panel lists a non-zero size").toMatch(/[1-9]/);
 });
+
+// AC-14 for the ODF family: an .ods is parsed off the main thread too — the
+// open constructs the parse worker (counted by wrapping Worker before the app
+// loads) and the workbook it assembles is the one SPEC-116's e2e pins for
+// mini-book.ods: the file's active sheet first, its cells, its hidden table
+// left without a tab.
+test("an .ods workbook opens through the parse worker (AC-14)", async ({ page }) => {
+  await page.addInitScript(() => {
+    const Original = window.Worker;
+    const w = window as unknown as { __parseWorkers: number };
+    w.__parseWorkers = 0;
+    window.Worker = class extends Original {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        if (String(url).includes("spreadsheetParse.worker")) {
+          w.__parseWorkers += 1;
+        }
+      }
+    };
+  });
+  await page.goto("/");
+  await page.getByTestId("open-document-input").waitFor({ state: "attached" });
+  const navigated = page.waitForURL(/\/sheets\/.+/, { timeout: 30_000 });
+  await page.getByTestId("open-document-input").setInputFiles(path.join(REPO_ROOT, "e2e", "fixtures", "mini-book.ods"));
+  await navigated;
+  await expect(page.getByTestId("spreadsheet-format")).toHaveText("OpenDocument Spreadsheet (.ods)");
+  await expect(page.getByTestId("sheet-tab")).toHaveText(["Inventory", "Totals"]);
+  await expect(cell(page, "A1")).toHaveText("Item");
+  await expect(cell(page, "A2")).toHaveText("Widget");
+  expect(await page.evaluate(() => (window as unknown as { __parseWorkers: number }).__parseWorkers)).toBe(1);
+});
