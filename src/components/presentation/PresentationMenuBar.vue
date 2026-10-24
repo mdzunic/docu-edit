@@ -18,8 +18,13 @@ import MenuBar from "../MenuBar.vue";
 import MenuItem from "../MenuItem.vue";
 import MenuCheckItem from "../MenuCheckItem.vue";
 import MenuSubmenu from "../MenuSubmenu.vue";
+import ExperimentGate from "../ExperimentGate.vue";
 import { computed } from "vue";
 import { asPresentationMenuState } from "../../lib/presentation/menuState";
+
+// SPEC-115: Slide › "Redesign…" is the deck designer's, so it renders — and
+// its code loads — only while the deck-designer experiment is on.
+const loadRedesignItem = () => import("../../views/design/RedesignMenuItem.vue");
 
 const props = defineProps({
   /** One object rather than a dozen props — see PresentationMenuState. */
@@ -188,6 +193,12 @@ const ARRANGE = [
         label="New slide"
         testid="slides-menu-new-slide"
         @select="emit('command', 'insert.slide')"
+      />
+      <ExperimentGate
+        experiment="deck-designer"
+        :load="loadRedesignItem"
+        :disabled="!s.canRedesign"
+        @select="emit('command', 'slide.redesign')"
       />
       <hr class="menu-separator">
       <MenuSubmenu

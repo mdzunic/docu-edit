@@ -9,7 +9,11 @@
 /** Every construct the deck path can drop, closed. The first group is what a
  * deck carries and Markdown cannot (`writeSlideMarkdown`), the second what
  * Markdown spells and the slide grammar does not (`parseSlideMarkdown`);
- * `runFormatting` serves both directions and the builder's run mapping. */
+ * `runFormatting` serves both directions and the builder's run mapping. The
+ * third group is SPEC-115's deck designer (`lib/design/plan.ts`): a closed-
+ * vocabulary value it replaced (`layout`, `theme`, `slideSize`), a slide or
+ * bullet it cut (`slideCount`, `bullet`), and a redesign entry it discarded or
+ * appended (`slideOrder`). */
 export type DeckDropKind =
   | "shape"
   | "group"
@@ -29,7 +33,13 @@ export type DeckDropKind =
   | "rawHtml"
   | "heading"
   | "remoteImage"
-  | "frontMatterKey";
+  | "frontMatterKey"
+  | "layout"
+  | "theme"
+  | "slideSize"
+  | "slideCount"
+  | "bullet"
+  | "slideOrder";
 
 /** One dropped construct. `location` names the slide by 1-based number
  * ("slide 4"), or "front matter" / "deck" for what belongs to neither. */

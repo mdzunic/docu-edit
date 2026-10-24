@@ -24,7 +24,7 @@ import {
   RELATIONSHIPS_NAMESPACE,
   type Relationship,
 } from "../../core/xml";
-import { buildCorePropertiesXml, type CorePropertiesInput } from "../../core/opcProperties";
+import { buildCorePropertiesXml, buildCustomPropertiesXml, type CorePropertiesInput } from "../../core/opcProperties";
 import { zip, type ZipEntryInput } from "../../core/zipWriter";
 import type { MediaPart } from "../../core/media";
 import {
@@ -69,6 +69,7 @@ const SLIDE_MASTER_REL = "http://schemas.openxmlformats.org/officeDocument/2006/
 const THEME_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme";
 const OFFICE_DOCUMENT_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
 const CORE_PROPERTIES_REL = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
+const CUSTOM_PROPERTIES_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
 const NOTES_SLIDE_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
 
 const SLIDE_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
@@ -811,6 +812,13 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
   const layoutPaths = standardLayouts.map((_, i) => `ppt/slideLayouts/slideLayout${i + 1}.xml`);
 
   const mediaDefaults = mediaContentDefaults(referencedMedia(model));
+  // SPEC-041's custom properties (SPEC-115's provenance among them) travel
+  // in docProps/custom.xml, which the reader already parses; written only
+  // when the deck has some, so a deck without them is byte-for-byte as before.
+  const custom = buildCustomPropertiesXml(
+    model.properties?.customProperties ?? [],
+    model.properties?.unsupportedCustomProperties ?? [],
+  );
   const contentTypes =
     `${XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
@@ -826,12 +834,14 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
       .map((n) => `<Override PartName="/ppt/notesSlides/notesSlide${n}.xml" ContentType="${NOTES_SLIDE_CONTENT_TYPE}"/>`)
       .join("") +
     `<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
+    (custom ? `<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/>` : "") +
     `</Types>`;
 
   const rootRels =
     `${XML_DECL}<Relationships xmlns="${RELATIONSHIPS_NAMESPACE}">` +
     `<Relationship Id="rId1" Type="${OFFICE_DOCUMENT_REL}" Target="ppt/presentation.xml"/>` +
     `<Relationship Id="rId2" Type="${CORE_PROPERTIES_REL}" Target="docProps/core.xml"/>` +
+    (custom ? `<Relationship Id="rId3" Type="${CUSTOM_PROPERTIES_REL}" Target="docProps/custom.xml"/>` : "") +
     `</Relationships>`;
 
   // presentation.xml.rels: master (rId1), then one slide rel each, then the
@@ -889,6 +899,7 @@ function buildFromScratch(model: PresentationModel, modified: Date, now: Date): 
     { name: "[Content_Types].xml", data: encode(contentTypes) },
     { name: "_rels/.rels", data: encode(rootRels) },
     { name: "docProps/core.xml", data: encode(core) },
+    ...(custom ? [{ name: "docProps/custom.xml", data: encode(custom) }] : []),
     { name: "ppt/presentation.xml", data: encode(presentation) },
     { name: "ppt/_rels/presentation.xml.rels", data: encode(presentationRels) },
     { name: "ppt/slideMasters/slideMaster1.xml", data: encode(masterXml) },

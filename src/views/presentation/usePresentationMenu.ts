@@ -30,6 +30,8 @@ export interface PresentationMenuDeps {
   themePanel: any;
   stageEdit: any;
   preferences: any;
+  /** SPEC-115: the useDeckRedesign controller (Slide › Redesign…). */
+  redesign?: any;
   addSlide: () => void;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
@@ -56,6 +58,7 @@ export function usePresentationMenu(deps: PresentationMenuDeps): {
     hasSelection: arrange().selectedCount.value > 0,
     canGroup: arrange().selectedCount.value > 1,
     canUngroup: !!arrange().canUngroup?.value,
+    canRedesign: !!deps.redesign?.canRedesign.value,
   }));
 
   const commands = new Map<string, () => void>([
@@ -88,6 +91,8 @@ export function usePresentationMenu(deps: PresentationMenuDeps): {
     ["format.group", () => arrange().group()],
     ["format.ungroup", () => arrange().ungroup()],
     ["format.position", () => arrange().openPosition()],
+    // SPEC-115: only ever emitted by the experiment-gated menu item.
+    ["slide.redesign", () => deps.redesign?.show()],
   ]);
 
   /** Runs a command id, or the one parameterised form the bar still emits:

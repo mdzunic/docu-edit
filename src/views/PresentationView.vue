@@ -39,6 +39,7 @@ import { useHeaderFooter } from "./presentation/useHeaderFooter";
 import { useSlideTextDepth } from "./presentation/useSlideTextDepth";
 import { useDeckExport } from "./presentation/useDeckExport";
 import { useDeckSaving } from "./presentation/useDeckSaving";
+import { useDeckRedesign } from "./presentation/useDeckRedesign";
 
 const route = useRoute();
 const router = useRouter();
@@ -156,10 +157,12 @@ const headerFooter = useHeaderFooter({ model: presentation, currentSlide, curren
 // --- print & export: PDF, images, handouts, notes pages (SPEC-104) ---------
 const deckExport = useDeckExport({ model: presentation, currentIndex, slideTotal, reportError: (message) => addToast(message) });
 
+// --- Slide › Redesign… (SPEC-115): open state only; the designer loads behind its experiment's gates
+const redesign = useDeckRedesign({ model: presentation, currentIndex, record: slideUndo.record, commit });
 // --- the menu bar (SPEC-049's model, for slides): routes to every composable above, so it is built last
 const menu = usePresentationMenu({
   undo: slideUndo, deckActions, deckSetup, notes, transitions, animations, layouts, tables, media,
-  headerFooter, themePanel, stageEdit, preferences: usePreferencesDialog(), addSlide: addSlideAction,
+  headerFooter, themePanel, stageEdit, preferences: usePreferencesDialog(), redesign, addSlide: addSlideAction,
 });
 
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
@@ -270,6 +273,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
       :reuse="sorter.reuse"
       :header-footer="headerFooter"
       :slide-number="currentIndex + 1"
+      :redesign="redesign"
     />
   </AppShell>
 </template>

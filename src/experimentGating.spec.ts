@@ -203,6 +203,23 @@ describe("a disabled experiment's code is not in the initial bundle", () => {
     "views/preferences/ModelProviderPanel.vue",
     "views/preferences/ModelActivityLog.vue",
     "components/ModelConsentDialog.vue",
+    // SPEC-115's deck designer: its entry points, its dialog and session, and
+    // the whole of lib/design load only behind the deck-designer gates.
+    "views/design/NewDeckFromDescription.vue",
+    "views/design/RedesignMenuItem.vue",
+    "views/design/DeckDesignerDialog.vue",
+    "views/design/useDeckDesigner.ts",
+    "views/design/useDesignerBrief.ts",
+    "views/design/useDesignerPlan.ts",
+    "views/design/designerLibrary.ts",
+    "views/design/outlineSource.ts",
+    "lib/design/plan.ts",
+    "lib/design/reply.ts",
+    "lib/design/planToDescription.ts",
+    "lib/design/applyDesign.ts",
+    "lib/design/outlineDesigner.ts",
+    "lib/design/prompt.ts",
+    "lib/design/build.ts",
   ];
 
   it("walks a real graph: the routes, the shell and Labs are in it", () => {
