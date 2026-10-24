@@ -35,8 +35,8 @@ export function stageSearchHooks(
     startEditing: (hit) => {
       if (!hit.frameId) return;
       const range = { start: { para: hit.para, offset: hit.start }, end: { para: hit.para, offset: hit.end } };
-      // A shape's text has no session (SPEC-081 edits text frames and cells):
-      // it stays selected, its match painted by the proofing layer.
+      // A text frame's or a shape's hit opens a session on that frame; a
+      // cell's, on that cell.
       if (hit.scope === "cell") editing.startEditingCell(hit.frameId, hit.row ?? 0, hit.column ?? 0, undefined, range);
       else editing.startEditing(hit.frameId, false, undefined, range);
     },

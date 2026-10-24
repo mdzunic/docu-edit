@@ -738,7 +738,7 @@ watch([() => props.frame, deckTheme], () => {
   <div
     v-else-if="kind === 'shape'"
     class="frame shape-frame"
-    :class="{ 'is-selected': selected }"
+    :class="{ 'is-selected': selected, 'is-editing': editing }"
     :style="[position, playStyle]"
     :data-testid="testId"
     :data-frame-id="frameIdAttr"
@@ -752,11 +752,29 @@ watch([() => props.frame, deckTheme], () => {
       ref="canvasEl"
       class="shape-canvas"
     />
+    <!-- Editing session (SPEC-098: a find hit in the shape's text): the text
+         frame's contenteditable host, over the canvas in the shape's own
+         body (insets, "middle" anchor) — the editing composable centres a
+         paragraph with no alignment of its own, as the stage does. -->
+    <div
+      v-if="editing"
+      class="text-edit-body shape-text shape-text-edit"
+      :class="{ 'no-wrap': noWrap, 'is-anchored': anchoredBody }"
+      :style="editBodyStyle"
+    >
+      <div
+        ref="editHost"
+        class="ce-host"
+        contenteditable="true"
+        spellcheck="false"
+        data-testid="slide-text-edit"
+      />
+    </div>
     <!-- Shape text: the same paragraph styling as a text frame (markers,
          indents, spacing, links) in a text body anchored "middle" by default;
          a paragraph with no alignment of its own centres (SPEC-079). -->
     <div
-      v-if="paragraphs.length > 0"
+      v-else-if="paragraphs.length > 0"
       ref="textBodyEl"
       class="text-body shape-text"
       :class="{ 'no-wrap': noWrap }"
@@ -1032,7 +1050,8 @@ watch([() => props.frame, deckTheme], () => {
   cursor: move;
 }
 
-.text-frame.is-editing {
+.text-frame.is-editing,
+.shape-frame.is-editing {
   outline: 2px solid var(--accent, #3b82f6);
   outline-offset: 1px;
 }
@@ -1255,6 +1274,12 @@ watch([() => props.frame, deckTheme], () => {
 
 .shape-text .slide-link {
   pointer-events: auto;
+}
+
+/* A shape's editing body takes the caret and clicks like a text frame's. */
+.shape-text-edit {
+  pointer-events: auto;
+  cursor: text;
 }
 
 .group-frame {

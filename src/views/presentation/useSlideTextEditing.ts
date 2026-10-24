@@ -18,8 +18,13 @@
 //
 // SPEC-097: Tab/Shift+Tab demote/promote; Cmd/Ctrl+K opens the link dialog;
 // every committed text edit tells the after-edit hook (the autofit refit).
+//
+// SPEC-098: a find hit opens a session on the frame it is in — a shape's text
+// too (a `ShapeFrame` with `paragraphs` is a `ParagraphOwner` like a cell), so
+// the match is selected in the same host. Only `startEditing` reaches a shape:
+// double-click and Enter still start sessions on text frames alone.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
+import type { PresentationModel, ShapeFrame, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
 import type { ModelColor } from "../../lib/core/theme";
 import {
@@ -46,6 +51,7 @@ import {
   selectionRangeOf,
   setSelectionRange,
 } from "../../components/presentation/slideTextDom";
+import { defaultParagraphAlign } from "../../components/presentation/slideRender";
 import type { FrameSelection } from "./useFrameSelection";
 import {
   copyPlainText,
@@ -63,6 +69,12 @@ import {
 } from "./slideTextSession";
 
 export type { CaretPoint, CellAddress } from "./slideTextSession";
+
+/** A shape frame holding text — what a session edits in a shape (SPEC-098). */
+type ShapeTextFrame = ShapeFrame & ParagraphOwner;
+function isShapeText(frame: SlideFrame): frame is ShapeTextFrame {
+  return frame.kind === "shape" && Array.isArray(frame.paragraphs);
+}
 
 /** How long a pause closes a typing burst (SPEC-081: ≥ 1s). */
 export const TYPING_BURST_MS = 1000;
@@ -160,9 +172,10 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     if (!slide || frameId === null) return null;
     return slide.frames.find((f) => f.id === frameId) ?? null;
   }
-  function textFrameById(frameId: string | null): TextFrame | null {
+  /** A frame a session can open on: a text frame, or a shape holding text. */
+  function sessionFrameById(frameId: string | null): TextFrame | ShapeTextFrame | null {
     const frame = frameById(frameId);
-    return frame && frame.kind === "text" ? frame : null;
+    return frame && (frame.kind === "text" || isShapeText(frame)) ? frame : null;
   }
   function tableFrameById(frameId: string | null): TableFrame | null {
     const frame = frameById(frameId);
@@ -177,7 +190,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   const editingOwner = computed<ParagraphOwner | null>(() => {
     const frame = editingFrame.value;
     if (!frame) return null;
-    if (frame.kind === "text") return frame;
+    if (frame.kind === "text" || isShapeText(frame)) return frame;
     if (frame.kind === "table" && editingCell.value) {
       const cell = frame.rows[editingCell.value.row]?.cells[editingCell.value.col];
       return cell && !cell.covered ? cell : null;
@@ -220,7 +233,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   // --- session lifecycle ----------------------------------------------------
   function startEditing(frameId: string, selectAll = false, point?: CaretPoint, range?: TextRange): void {
-    if (!textFrameById(frameId)) return;
+    if (!sessionFrameById(frameId)) return;
     pendingRange = range ?? null;
     deps.selection.select(frameId);
     editingCell.value = null;
@@ -328,7 +341,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     const el = host.value;
     const owner = editingOwner.value;
     if (!el || !owner) return;
-    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value));
+    renderHost(el, owner);
     el.focus();
     // A find hit's range is selected (SPEC-098); a double-click drops the
     // caret at the click point (AC-1); a select-all start (Enter-to-edit
@@ -342,6 +355,13 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
       /* caret placed at the click point */
     } else placeCaretAtEnd(el, owner);
     selectionTick.value++;
+  }
+
+  /** Renders the owner into the host in the deck's theme; a shape's
+   * unaligned paragraphs centre there as they do on the stage. */
+  function renderHost(el: HTMLElement, owner: ParagraphOwner): void {
+    const frame = editingFrame.value;
+    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value), frame ? defaultParagraphAlign(frame) : "left");
   }
 
   function stopEditing(): void {
@@ -508,7 +528,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     apply(owner, range, frame);
     markSlideEdited(slide, model.format);
     if (editingOwner.value && host.value) {
-      renderEditableParagraphs(host.value, owner.paragraphs);
+      renderHost(host.value, owner);
       setSelectionRange(host.value, range.start, range.end);
     }
     bumpFrame(frame);

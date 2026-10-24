@@ -420,3 +420,15 @@ describe("SPEC-098: run language and noProof survive the contenteditable round t
     expect(marksEqual({ text: "a", noProof: true }, { text: "b" })).toBe(false);
   });
 });
+
+describe("SPEC-098: a shape's text in the editing host", () => {
+  it("lays an unaligned paragraph out at the default alignment without reading it back", () => {
+    const el = host();
+    const paragraphs: SlideParagraph[] = [{ runs: [{ text: "Press me" }] }, { runs: [{ text: "left" }], align: "left" }];
+    renderEditableParagraphs(el, paragraphs, undefined, "center");
+    const blocks = el.querySelectorAll<HTMLElement>(".ce-p");
+    expect(blocks[0].style.textAlign).toBe("center");
+    expect(blocks[1].style.textAlign).toBe("left");
+    expect(normalizeTextFrameDom(el)).toEqual(paragraphs);
+  });
+});

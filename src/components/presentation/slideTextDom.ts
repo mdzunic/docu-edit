@@ -69,11 +69,14 @@ const STRING_FIELDS = [
  * `data-pi` index), so `normalizeTextFrameDom` recovers them per-block — that
  * keeps bullet/indent glued to the paragraph's DOM element across a keystroke
  * that changes the paragraph count (Enter, Backspace-merge), rather than
- * matching by a shifting array index. */
+ * matching by a shifting array index. `defaultAlign` is how a paragraph with
+ * no alignment of its own lays out — a shape's text centres (SPEC-079) — and,
+ * like every block style, is never read back. */
 export function renderEditableParagraphs(
   host: HTMLElement,
   paragraphs: SlideParagraph[],
   theme: DocumentTheme = DEFAULT_THEME,
+  defaultAlign: NonNullable<SlideParagraph["align"]> = "left",
 ): void {
   const doc = host.ownerDocument;
   host.textContent = "";
@@ -83,7 +86,7 @@ export function renderEditableParagraphs(
     block.className = "ce-p";
     block.dataset.p = "1";
     block.dataset.pi = String(index);
-    applyBlockStyle(block, para);
+    applyBlockStyle(block, para, defaultAlign);
     if (para.align) block.dataset.align = para.align;
     if (para.bullet) block.dataset.bullet = para.bullet;
     if (para.level) block.dataset.level = String(para.level);
@@ -113,8 +116,8 @@ export function renderEditableParagraphs(
  * item drops its hanging first-line indent: the host shows no marker, so its
  * first line starts at the text edge, exactly where the stage puts the text
  * after the marker box. Style only; nothing here is read back. */
-function applyBlockStyle(block: HTMLElement, para: SlideParagraph): void {
-  const style = paragraphStyle(para);
+function applyBlockStyle(block: HTMLElement, para: SlideParagraph, defaultAlign: NonNullable<SlideParagraph["align"]>): void {
+  const style = paragraphStyle(para, defaultAlign);
   if (isListParagraph(para)) delete style.textIndent;
   for (const [key, value] of Object.entries(style)) {
     block.style.setProperty(key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`), value);

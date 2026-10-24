@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PPTX = join(here, "fixtures", "mini-deck.pptx");
+// Each slide carries a rounded-rectangle ShapeFrame holding "Press me".
+const SHAPE_TEXT_PPTX = join(here, "fixtures", "spec105-animation-depth.pptx");
 
 // SPEC-098 — deck find and replace: open the pptx fixture, Cmd/Ctrl+F, search
 // "Open" (slide 1's notes and slide 2's body), activate the slide-2 hit (slide
@@ -227,6 +229,37 @@ test("a table-cell hit carries its Table rNcN tag, opens a session in that cell,
   await page.getByTestId("find-replace").click();
   await expect(page.getByTestId("find-count")).toHaveText("0 of 0");
   await expect(stage(page).getByTestId("slide-table-cell-0-0")).toHaveText("Box");
+});
+
+test("a shape's hit opens a text session on that shape with the word selected", async ({ page }) => {
+  await openFixture(page, SHAPE_TEXT_PPTX);
+  await page.keyboard.press("ControlOrMeta+h");
+  await page.getByTestId("find-query").fill("Press me");
+  const groups = page.getByTestId("deck-search-group");
+  await expect(groups).toHaveCount(4);
+  await page.getByTestId("find-query").fill("Press");
+  await expect(groups).toHaveCount(4);
+  await groups.nth(0).getByTestId("deck-search-hit").click();
+
+  await expect(page.getByTestId("filmstrip-slide").nth(0)).toHaveAttribute("aria-selected", "true");
+  const selected = page.locator('[data-testid="slide-frame"].is-selected');
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toHaveClass(/shape-frame/);
+  const host = selected.getByTestId("slide-text-edit");
+  await expect(host).toHaveText("Press me");
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe("Press");
+  // The shape's text keeps its centring inside the session.
+  await expect(host.locator(".ce-p")).toHaveCSS("text-align", "center");
+
+  // Replace rewrites the shape's text and steps on to slide 2's shape.
+  await page.getByTestId("find-replace-input").fill("Push");
+  await page.getByTestId("find-replace").click();
+  await expect(page.getByTestId("find-count")).toHaveText("1 of 3");
+  await expect(page.getByTestId("filmstrip-slide").nth(1)).toHaveAttribute("aria-selected", "true");
+  await page.getByTestId("find-query").press("Escape");
+  await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  await page.getByTestId("filmstrip-slide").nth(0).click();
+  await expect(stage(page).locator(".shape-frame")).toHaveText("Push me");
 });
 
 test("Escape from the bar after stepping into a text frame ends that session and leaves the keyboard on the stage", async ({ page }) => {

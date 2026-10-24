@@ -392,6 +392,34 @@ describe("SPEC-098: a find hit opens a session with its range selected", () => {
     expect(model.value.slides[0].dirty).toBeUndefined();
   });
 
+  it("a shape hit opens a session on the shape's text, centred as on the stage, and reads typing back into it", () => {
+    const { editing, host, model } = setup();
+    editing.stopEditing();
+    editing.registerHost(null);
+    const slide = model.value.slides[0];
+    slide.frames.push({ id: "sh", kind: "shape", geometry: "ellipse", xCm: 0, yCm: 0, widthCm: 4, heightCm: 2, paragraphs: [{ runs: [{ text: "Press me" }] }] });
+    editing.startEditing("sh", false, undefined, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 5 } });
+    expect(editing.editingFrameId.value).toBe("sh");
+    editing.registerHost(host);
+    expect(document.getSelection()?.toString()).toBe("Press");
+    expect(host.querySelector<HTMLElement>(".ce-p")?.style.textAlign).toBe("center");
+    expect(slide.dirty).toBeUndefined();
+    host.innerHTML = "<div>Push me</div>";
+    editing.onInput();
+    editing.stopEditing();
+    const shape = model.value.slides[0].frames.find((f) => f.id === "sh");
+    expect(shape?.kind === "shape" && shape.paragraphs).toEqual([{ runs: [{ text: "Push me" }] }]);
+    expect(model.value.slides[0].dirty).toBe(true);
+  });
+
+  it("a shape with no text opens no session", () => {
+    const { editing, model } = setup();
+    editing.stopEditing();
+    model.value.slides[0].frames.push({ id: "sh", kind: "shape", geometry: "rect", xCm: 0, yCm: 0, widthCm: 4, heightCm: 2 });
+    editing.startEditing("sh");
+    expect(editing.editingFrameId.value).toBeNull();
+  });
+
   it("a session that typed still reads its DOM back on stop", () => {
     const { editing, host, model } = setup();
     host.innerHTML = "<div>typed</div>";
