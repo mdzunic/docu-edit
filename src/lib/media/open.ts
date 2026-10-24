@@ -70,11 +70,14 @@ export function pdfInfoProperties(doc: PdfDocument): DocumentProperties {
 /** Builds a MediaModel from a media file's bytes. For a PDF this parses the
  * structure (throwing PdfEncryptedError / PdfParseError for files that are
  * refused — the open path surfaces the message); for an image it reads the
- * intrinsic dimensions, tolerating files whose size cannot be read. */
+ * intrinsic dimensions, tolerating files whose size cannot be read.
+ * `parsed` is `parsePdf(bytes)` when the caller has just run it over these
+ * very bytes (SPEC-110's self-check), so a large PDF is not parsed twice. */
 export async function assembleMediaModel(
   title: string,
   format: MediaFormat,
   bytes: Uint8Array,
+  parsed?: PdfDocument,
 ): Promise<MediaModel> {
   const contentType = MEDIA_CONTENT_TYPES[format];
   const sourceMediaId = crypto.randomUUID();
@@ -94,7 +97,7 @@ export async function assembleMediaModel(
     byteLength: bytes.length,
   };
   if (format === "pdf") {
-    const doc = await parsePdf(bytes);
+    const doc = parsed ?? (await parsePdf(bytes));
     model.pdf = summarisePdf(doc);
     const properties = pdfInfoProperties(doc);
     if (Object.keys(properties).length > 0) {

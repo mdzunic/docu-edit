@@ -173,6 +173,10 @@ export interface PdfPageInput {
 /** Info entries beyond the title. Absent entries are not written. */
 export interface PdfInfoInput {
   author?: string;
+  /** SPEC-110's assembled PDFs carry a subject and name the application
+   * that created them. */
+  subject?: string;
+  creator?: string;
   creationDate?: Date;
   modDate?: Date;
 }
@@ -193,6 +197,10 @@ export interface PdfBuildInput {
 }
 
 export const PDF_MIME_TYPE = "application/pdf";
+
+/** The application every written file names as its /Producer (and SPEC-110's
+ * assembled PDFs as their /Creator too). */
+export const PDF_PRODUCER = "docu-edit";
 
 /** Mirrors docxFileName/odtFileName: the trimmed title plus the extension.
  * An untitled document still downloads under the model's default title —
@@ -792,7 +800,9 @@ export async function buildPdf(input: PdfBuildInput): Promise<Uint8Array> {
     infoId,
     `<< /Title ${pdfTextString(input.title)}` +
       (info.author !== undefined ? ` /Author ${pdfTextString(info.author)}` : "") +
-      " /Producer (docu-edit)" +
+      (info.subject !== undefined ? ` /Subject ${pdfTextString(info.subject)}` : "") +
+      (info.creator !== undefined ? ` /Creator ${pdfTextString(info.creator)}` : "") +
+      ` /Producer ${pdfTextString(PDF_PRODUCER)}` +
       (info.creationDate ? ` /CreationDate ${pdfDateString(info.creationDate)}` : "") +
       (info.modDate ? ` /ModDate ${pdfDateString(info.modDate)}` : "") +
       " >>",
