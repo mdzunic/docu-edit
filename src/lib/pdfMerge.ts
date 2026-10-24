@@ -87,9 +87,9 @@ export function rotationLabel(page: Pick<CardPage, "rotate" | "rotateBy">): stri
  * turn swaps the sides — for the paper-shaped placeholder; 1 for a page with
  * no area. */
 export function cardAspect(page: CardPage): number {
-  const turned = effectiveRotation(page) % 180 === 90;
-  const width = turned ? page.heightPt : page.widthPt;
-  const height = turned ? page.widthPt : page.heightPt;
+  const sideways = effectiveRotation(page) % 180 === 90;
+  const width = sideways ? page.heightPt : page.widthPt;
+  const height = sideways ? page.widthPt : page.heightPt;
   return width > 0 && height > 0 ? width / height : 1;
 }
 

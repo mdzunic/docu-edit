@@ -183,6 +183,16 @@ export function sourceIdOf(entry: Pick<TrayEntry, "id" | "page" | "blank">): str
   return entry.blank ? "blank" : entry.page ? `pdf:${entry.id}` : `image:${entry.id}`;
 }
 
+/** The payload an entry's page is made from: a PDF's source bytes, or an
+ * image's current part (its edited render, when it has edits). */
+function sourcePart(entry: TrayEntry): MediaPart | undefined {
+  const model = getMedia(entry.id);
+  if (!model) {
+    return undefined;
+  }
+  return entry.page ? model.media.find((part) => part.mediaId === model.sourceMediaId) : currentImagePart(model);
+}
+
 /** One output file before it is kept. */
 interface MergeOutput {
   title: string;
@@ -231,14 +241,6 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
       parsed.set(bytes, doc);
     }
     return doc;
-  }
-
-  function sourcePart(entry: TrayEntry): MediaPart | undefined {
-    const model = getMedia(entry.id);
-    if (!model) {
-      return undefined;
-    }
-    return entry.page ? model.media.find((part) => part.mediaId === model.sourceMediaId) : currentImagePart(model);
   }
 
   function partBytes(part: MediaPart): Uint8Array {
@@ -425,12 +427,12 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
       }
       const modified = new Date();
       const runs = split ? sourceRuns(plan.pages, (page) => page.source) : [plan.pages];
-      const names = runFileNames(runs.map((run) => run[0].source));
+      const names = runFileNames(runs.map((runPages) => runPages[0].source));
       const outputs: MergeOutput[] = [];
       const dropped: PdfDropRecord[] = [];
       let done = 0;
-      for (const [index, run] of runs.entries()) {
-        const runPlan: PdfAssemblyPlan = { ...plan, pages: run, title: split ? run[0].source : title, modified };
+      for (const [index, runPages] of runs.entries()) {
+        const runPlan: PdfAssemblyPlan = { ...plan, pages: runPages, title: split ? runPages[0].source : title, modified };
         const result = await steps.assemble(runPlan, {
           between: steps.between,
           cancelled: stop,
@@ -448,7 +450,7 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
         }
         outputs.push({ title: runPlan.title, fileName: split ? names[index] : pdfFileName(title, DEFAULT_MERGE_TITLE), bytes: result.bytes, doc });
         dropped.push(...result.dropped);
-        done += run.length;
+        done += runPages.length;
       }
       drops.value = dropped;
       return outputs;

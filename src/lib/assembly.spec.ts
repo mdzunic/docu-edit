@@ -24,9 +24,12 @@ import {
 import {
   ASSEMBLY_LAYOUT_DEFAULTS,
   ASSEMBLY_OUTPUT_DEFAULTS,
+  capTrayItems,
   DEFAULT_ASSEMBLY_TITLE,
   freshAssembly,
+  isPageItem,
   parsePersistedAssembly,
+  type PersistedAssemblyItem,
 } from "./assemblyPersist";
 import { resolveSheet, SHEET_DEFAULTS, type SheetSetup } from "./core/sheetLayout";
 import { GUARANTEED_CANVAS_PIXELS } from "./media/canvasCeiling";
@@ -229,6 +232,36 @@ describe("the persisted plan", () => {
     const items = Array.from({ length: 140 }, (_, i) => ({ id: `i${i}`, title: `${i}` }));
     expect(parsePersistedAssembly({ items })?.items).toHaveLength(100);
     expect(freshAssembly(items).items).toHaveLength(100);
+  });
+
+  it("persists PDF pages with their turns and blank pages, dropping a malformed page item (SPEC-111)", () => {
+    const plan = parsePersistedAssembly({
+      items: [
+        { id: "doc", title: "contract", page: 2, rotateBy: 450 },
+        { id: "doc", title: "contract", page: 0 },
+        { title: "Blank page", blank: true, rotateBy: -90 },
+        { id: "doc", title: "contract", page: -1 },
+        { id: "doc", title: "contract", page: 1.5 },
+      ],
+    });
+    expect(plan?.items).toEqual([
+      { id: "doc", title: "contract", page: 2, rotateBy: 90 },
+      { id: "doc", title: "contract", page: 0 },
+      { id: "", title: "Blank page", blank: true, rotateBy: 270 },
+    ]);
+    expect(freshAssembly(plan?.items ?? [], { format: "pdf", title: "Combined PDF" })).toMatchObject({
+      items: plan?.items,
+      output: { ...ASSEMBLY_OUTPUT_DEFAULTS, format: "pdf", title: "Combined PDF" },
+    });
+  });
+
+  it("holds up to 100 images and 2000 entries in all (SPEC-111)", () => {
+    const images: PersistedAssemblyItem[] = Array.from({ length: 140 }, (_, i) => ({ id: `i${i}`, title: `${i}` }));
+    const pages: PersistedAssemblyItem[] = Array.from({ length: 2100 }, (_, i) => ({ id: "doc", title: "big", page: i }));
+    const kept = capTrayItems([...images, ...pages], isPageItem);
+    expect(kept.filter((item) => !isPageItem(item))).toHaveLength(100);
+    expect(kept).toHaveLength(2000);
+    expect(kept[100]).toEqual({ id: "doc", title: "big", page: 0 });
   });
 
   it("requires a Custom sheet's own size", () => {
