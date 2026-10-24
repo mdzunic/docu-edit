@@ -798,7 +798,7 @@ describe("a request in flight across an origin change", () => {
   it("never deletes the key entered for the new origin, and never sends either key to the wrong host", async () => {
     configure({ mode: "cloud", baseUrl: "https://a.example.test/v1" });
     gateway.setApiKey("sk-for-a");
-    let answer: (choice: ConsentChoice) => void = () => {};
+    let answer: ((choice: ConsentChoice) => void) | undefined;
     prompt.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
     const pending = gateway.complete(request).catch((error: unknown) => error);
     await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
@@ -806,7 +806,7 @@ describe("a request in flight across an origin change", () => {
     // While the dialog is open the user moves to B and enters B's key.
     gateway.updateProviderConfig({ baseUrl: "https://b.example.test/v1" });
     gateway.setApiKey("sk-for-b");
-    answer("once");
+    answer?.("once");
     await pending;
 
     expect(calls).toHaveLength(1);
