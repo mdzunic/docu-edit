@@ -278,7 +278,9 @@ export function usePdfAssembly(deps: PdfAssemblyDeps): PdfAssemblyController {
     pageCountLabel: computed(() => pageCountLabel(pageCount.value)),
     current,
     currentPlaced,
-    previewNumber: computed(() => (output.pageNumbers && pageCount.value > 0 ? current.value + 1 : 0)),
+    previewNumber: computed(() =>
+      output.format === "pdf" && output.pageNumbers && pageCount.value > 0 ? current.value + 1 : 0,
+    ),
     goTo,
     onPageKey,
     encodings,

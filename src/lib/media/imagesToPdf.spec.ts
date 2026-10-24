@@ -28,6 +28,7 @@ import { bytesToBase64, buildJpegFixtureBytes, buildPngFixtureBytes } from "./fi
 import {
   buildImagePdf,
   coversWholeSource,
+  drawPageNumber,
   encodingLabel,
   encodingReason,
   estimateImagePdf,
@@ -644,6 +645,29 @@ describe("page numbers", () => {
       `Page numbers sit 1 cm above the bottom edge, inside the margin: make the bottom margin at least ${PAGE_NUMBER_MIN_MARGIN_CM} cm, or turn page numbers off.`,
     );
     expect(1 + (sans.capHeight / sans.unitsPerEm) * (9 / 72) * 2.54).toBeLessThan(PAGE_NUMBER_MIN_MARGIN_CM);
+  });
+
+  it("are drawn on the preview where the file has them: centred, 1 cm up, 9 pt, #555555, the bundled face", () => {
+    const calls: unknown[][] = [];
+    const ctx = {
+      save() {},
+      restore() {},
+      setTransform() {},
+      fillStyle: "",
+      font: "",
+      textAlign: "",
+      textBaseline: "",
+      fillText: (...args: unknown[]) => calls.push([ctx.fillStyle, ctx.font, ctx.textAlign, ctx.textBaseline, ...args]),
+    };
+    // A4 at 10 px per cm.
+    const canvas = { width: 210, height: 297, getContext: () => ctx } as unknown as HTMLCanvasElement;
+    drawPageNumber(canvas, A4, 3);
+    expect(calls).toHaveLength(1);
+    const [fill, font, align, baseline, text, x, y] = calls[0] as [string, string, string, string, string, number, number];
+    expect([fill, align, baseline, text]).toEqual(["#555555", "center", "alphabetic", "3"]);
+    expect(font).toBe('3.18px "Liberation Sans", sans-serif');
+    expect(x).toBeCloseTo(105, 6);
+    expect(y).toBeCloseTo(287, 6);
   });
 
   it("number the produced pages from 1, and are absent when off", async () => {
