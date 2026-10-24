@@ -30,6 +30,9 @@ export interface PresentationMenuState {
   hasSelection: boolean;
   canGroup: boolean;
   canUngroup: boolean;
+  /** SPEC-115: whether the deck has slides for "Redesign…" to arrange (the
+   * item itself renders only while the deck-designer experiment is on). */
+  canRedesign: boolean;
 }
 
 /** Coerces the untyped `state` prop into the typed shape the template reads.
@@ -54,5 +57,6 @@ export function asPresentationMenuState(value: unknown): PresentationMenuState {
     hasSelection: !!state.hasSelection,
     canGroup: !!state.canGroup,
     canUngroup: !!state.canUngroup,
+    canRedesign: !!state.canRedesign,
   };
 }

@@ -112,6 +112,24 @@ export function makeBullet(text: string, level: number): PlannedBullet {
   return level > 0 ? { text, level } : text;
 }
 
+/** Bullets as the plan step edits them: one per line, two leading spaces per
+ * indent level. */
+export function bulletsToText(bullets: PlannedBullet[]): string {
+  return bullets.map((bullet) => `${"  ".repeat(bulletLevel(bullet))}${bulletText(bullet)}`).join("\n");
+}
+
+/** The inverse of bulletsToText: blank lines skipped, a tab counting as one
+ * level, the level clamped to MAX_INDENT_LEVEL. */
+export function textToBullets(text: string): PlannedBullet[] {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      const indent = /^[ \t]*/.exec(line)?.[0].replace(/\t/g, "  ").length ?? 0;
+      return makeBullet(line.trim(), Math.min(Math.floor(indent / 2), MAX_INDENT_LEVEL));
+    });
+}
+
 /** A short quotation of `text` for a drop record's reason. */
 function quote(text: string): string {
   const chars = Array.from(text);

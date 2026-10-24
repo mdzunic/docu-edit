@@ -16,6 +16,7 @@ import type { PresentationModel, Slide, SlideFrame, SlideLayoutKind } from "../p
 import { moveSlide } from "../presentation/slides";
 import { applyTheme, deckThemeOf } from "../presentation/theme";
 import { isPlanLayoutKind, type DeckPlan, type DeckRedesign, type PlanLayoutKind } from "./plan";
+import type { RedesignSlideSummary } from "./prompt";
 
 /** The longest a slide title is quoted to the model (redesign requests). */
 export const MAX_REDESIGN_TITLE_CHARS = 200;
@@ -50,6 +51,18 @@ export function slideTitleText(slide: Slide): string {
     .map((paragraph) => paragraph.runs.map((run) => run.text).join(""))
     .join(" ")
     .trim();
+}
+
+/** The open deck's slides as a redesign request lists them: each one's
+ * 0-based index, its title-placeholder text cut at MAX_REDESIGN_TITLE_CHARS
+ * ("" when none) and its current layout kind ("other" for one outside the six
+ * or none) — never body text, notes or any other frame. */
+export function summariseSlides(model: PresentationModel): RedesignSlideSummary[] {
+  return model.slides.map((slide, index) => ({
+    index,
+    title: Array.from(slideTitleText(slide)).slice(0, MAX_REDESIGN_TITLE_CHARS).join(""),
+    layout: currentLayoutKind(model, slide) ?? "other",
+  }));
 }
 
 /** The layout key a kind resolves to on this deck, adding the synthesised

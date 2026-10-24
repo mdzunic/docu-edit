@@ -8,10 +8,20 @@
 // tray) — inert while the library holds no image (`canCombine`).
 // `compact` mirrors useResponsiveTier; the overflow item ids are what each
 // button would otherwise be.
+//
+// SPEC-115's "Presentation from a description…" follows "New presentation"
+// (after the overflow menu at the compact tier). It is the one entry that is
+// not an emitted intent: an experiment's entry point is a self-contained
+// surface that its ExperimentGate loads — button, badge and dialog together —
+// only while the deck-designer experiment is on, so with the flag off nothing
+// renders here and none of its code is fetched.
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import UiButton from "../../components/ui/UiButton.vue";
 import RowMenu from "../../components/library/RowMenu.vue";
+import ExperimentGate from "../../components/ExperimentGate.vue";
+
+const loadDeckDesigner = () => import("../design/NewDeckFromDescription.vue");
 
 const props = defineProps({
   compact: { type: Boolean, default: false },
@@ -69,6 +79,10 @@ function runOverflowAction(id = "") {
     >
       New presentation
     </UiButton>
+    <ExperimentGate
+      experiment="deck-designer"
+      :load="loadDeckDesigner"
+    />
     <UiButton
       data-testid="new-spreadsheet"
       @click="emit('new-spreadsheet')"
@@ -106,5 +120,10 @@ function runOverflowAction(id = "") {
     @toggle="menuOpen = !menuOpen"
     @close="menuOpen = false"
     @select="runOverflowAction"
+  />
+  <ExperimentGate
+    v-if="props.compact"
+    experiment="deck-designer"
+    :load="loadDeckDesigner"
   />
 </template>
