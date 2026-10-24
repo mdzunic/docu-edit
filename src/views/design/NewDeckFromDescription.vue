@@ -42,10 +42,19 @@ const open = ref(false);
 </template>
 
 <style scoped>
+/* Beside the other New buttons in a row; in the library rail's narrow
+   column the button takes the full width, as its neighbours do, and the
+   badge wraps under it rather than past the rail's edge. */
 .new-deck-designer {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+}
+
+.new-deck-designer > :first-child {
+  flex: 1 1 auto;
+  justify-content: flex-start;
 }
 
 .designer-layer {
