@@ -45,6 +45,12 @@ import { usePdfBuild, type PdfAssemblySteps, type PdfBuildController } from "./u
 
 export { asPdfAssemblySteps, BROWSER_PDF_ASSEMBLY_STEPS, type PdfAssemblySteps } from "./usePdfBuild";
 
+/** Typed pass-through for pages read off a `.vue` prop (runtime-typed
+ * `Object`; espree bars the annotation in `.vue` scripts). */
+export function asPdfPages(value: unknown): PdfAssemblyPage[] {
+  return Array.isArray(value) ? (value as PdfAssemblyPage[]) : [];
+}
+
 export interface PdfAssemblyDeps {
   entries: Ref<TrayEntry[]>;
   items: ComputedRef<AssemblyItem[]>;

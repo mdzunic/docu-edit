@@ -4,9 +4,10 @@
 // Alt+↑ / Alt+↓ while it has focus (focus follows the moved row, and the
 // move is spoken through the role="status" live region); its buttons remove
 // or duplicate it; a click (or Enter / Space) selects it for the inspector. "Add from library…"
-// asks the view to open the picker. All logic is the useAssemblyTray
-// controller passed in. Runtime prop declarations (espree lints .vue
-// scripts).
+// asks the view to open the picker. For a PDF (SPEC-110) each row says how
+// its image will be embedded — "original JPEG", or why it is re-encoded. All
+// logic is the useAssemblyTray controller passed in. Runtime prop
+// declarations (espree lints .vue scripts).
 import { computed, nextTick, ref, useTemplateRef } from "vue";
 import UiButton from "../ui/UiButton.vue";
 import LibraryThumbnail from "../library/LibraryThumbnail.vue";
@@ -16,6 +17,8 @@ import { asTrayEntries } from "../../views/assembly/useAssemblyTray";
 const props = defineProps({
   /** The useAssemblyTray() controller. */
   tray: { type: Object, required: true },
+  /** Per row, how a PDF embeds its image ("" or absent: say nothing). */
+  encodings: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(["add"]);
@@ -24,6 +27,11 @@ const t = props.tray;
 const list = useTemplateRef("list");
 // The rows, typed for the template.
 const rows = computed(() => asTrayEntries(t.entries.value));
+
+function encodingAt(index = 0) {
+  const label = props.encodings[index];
+  return typeof label === "string" ? label : "";
+}
 
 function sizeLabel(entry = { widthPx: 0, heightPx: 0 }) {
   return entry.widthPx > 0 && entry.heightPx > 0 ? `${entry.widthPx} × ${entry.heightPx} px` : "Size unknown";
@@ -170,6 +178,11 @@ function onDragEnd() {
             class="tray-size"
             data-testid="item-size"
           >{{ sizeLabel(entry) }}</span>
+          <span
+            v-if="encodingAt(index)"
+            class="tray-encoding"
+            data-testid="item-encoding"
+          >{{ encodingAt(index) }}</span>
         </div>
         <div class="tray-actions">
           <UiButton
@@ -240,6 +253,7 @@ function onDragEnd() {
 
 .tray-count,
 .tray-size,
+.tray-encoding,
 .tray-hint,
 .tray-empty {
   color: var(--text-secondary);

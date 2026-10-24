@@ -5,11 +5,16 @@
 // placement (x/y as a percentage of the content box, scale, opacity, blend),
 // above SPEC-108's SheetSetupPanel, whose fit and align apply within each
 // cell (its estimate is hidden: the output bar states this output's own).
+// For a PDF (SPEC-110) the inspector turns from one sheet to pages: the page
+// controls come first, the layout controls only where a layout applies (all
+// on one page; n-up is SPEC-109's grid, with its gap), and the one sheet
+// setup below serves every page.
 // All logic is the useAssembly controller passed in; a rejected input snaps
 // back to the value in force and the reason shows below. Runtime prop
 // declarations (espree lints .vue scripts).
-import { reactive, watchEffect } from "vue";
+import { computed, reactive, watchEffect } from "vue";
 import SheetSetupPanel from "./SheetSetupPanel.vue";
+import AssemblyPagesPanel from "./AssemblyPagesPanel.vue";
 import { BLEND_MODES, LAYOUT_KINDS } from "../../lib/core/assemblyLayout";
 import { SHEET_BACKGROUND_CHOICES } from "../../lib/assemblySheet";
 import { COLUMN_CHOICES } from "../../views/assembly/useAssembly";
@@ -66,6 +71,11 @@ function commit(event = new Event("change"), apply = (value = "") => Boolean(val
 const cellChoice = () =>
   SHEET_BACKGROUND_CHOICES.some((choice) => choice.value === a.layout.cellBackground) ? a.layout.cellBackground : "custom";
 
+// A PDF of one image per page, or n-up, lays out by its own grid.
+const layoutApplies = computed(() => !a.isPdf.value || a.output.pageMode === "single-page");
+// One per page fills the content box: there is no gap between cells.
+const gapApplies = computed(() => !a.isOverlay.value && !(a.isPdf.value && a.output.pageMode === "one-per-page"));
+
 function transformValue(field = "") {
   const entry = a.overlayItem.value;
   return entry ? String(entry.transform[field]) : "";
@@ -77,11 +87,19 @@ function transformValue(field = "") {
     class="assembly-inspector"
     data-testid="assembly-inspector"
   >
+    <AssemblyPagesPanel
+      v-if="a.isPdf.value"
+      :assembly="a"
+    />
+
     <section
       class="inspector-layout"
       aria-label="Layout"
     >
-      <div class="inspector-row">
+      <div
+        v-if="layoutApplies"
+        class="inspector-row"
+      >
         <label class="inspector-field">
           <span>Layout</span>
           <select
@@ -126,7 +144,7 @@ function transformValue(field = "") {
       </div>
       <div class="inspector-row">
         <label
-          v-if="!a.isOverlay.value"
+          v-if="gapApplies"
           class="inspector-field"
         >
           <span>Gap ({{ a.sheet.unit.value }})</span>

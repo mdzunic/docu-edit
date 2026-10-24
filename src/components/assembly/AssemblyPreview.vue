@@ -5,9 +5,12 @@
 // a test) reads in place of the pixels. Each list entry selects its image;
 // in the overlay layout the selected image moves by dragging it on the
 // canvas (Shift keeps one axis) or with the arrow keys (1 mm; Shift: 1 cm).
+// For a PDF (SPEC-110) the preview is paged: it shows the current page, the
+// page strip beneath it moves between pages, and so do PageUp/PageDown.
 // Logic is useAssemblyPreview's and useAssembly's. Runtime prop declarations
 // (espree lints .vue scripts).
 import { computed } from "vue";
+import AssemblyPageStrip from "./AssemblyPageStrip.vue";
 import { formatLength } from "../../lib/core/units";
 
 const props = defineProps({
@@ -27,11 +30,20 @@ const sheetLabel = computed(() => {
     return "Preview of the combined image";
   }
   const count = a.placed.value.length;
+  const what = a.isPdf.value
+    ? `page ${a.pdf.current.value + 1} of ${a.pdf.pageCount.value}`
+    : "the combined image";
   return (
-    `Preview of the combined image: ${formatLength(sheet.widthCm, unit.value)} × ` +
+    `Preview of ${what}: ${formatLength(sheet.widthCm, unit.value)} × ` +
     `${formatLength(sheet.heightCm, unit.value)} ${unit.value}, ${count} ${count === 1 ? "image" : "images"}`
   );
 });
+
+function onKeydown(event = new KeyboardEvent("keydown")) {
+  if (a.isPdf.value) {
+    a.pdf.onPageKey(event);
+  }
+}
 
 function entryAt(index = 0) {
   return a.tray.entries.value[index] ?? null;
@@ -51,6 +63,7 @@ function rectLabel(item = { index: 0, xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 })
   <section
     class="assembly-preview"
     aria-label="Preview"
+    @keydown="onKeydown"
   >
     <div
       :ref="p.attachContainer"
@@ -73,6 +86,16 @@ function rectLabel(item = { index: 0, xCm: 0, yCm: 0, widthCm: 0, heightCm: 0 })
         @keydown="p.onKeydown"
       />
     </div>
+    <AssemblyPageStrip
+      v-if="a.isPdf.value"
+      :assembly="a"
+    />
+    <p
+      v-if="a.isPdf.value && a.pdf.pageCount.value > 1"
+      class="preview-hint"
+    >
+      Page Up and Page Down move between pages.
+    </p>
     <p
       v-if="a.isOverlay.value"
       class="preview-hint"

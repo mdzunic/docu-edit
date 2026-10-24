@@ -115,7 +115,9 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
   const output = reactive<AssemblyOutputSettings>({ ...ASSEMBLY_OUTPUT_DEFAULTS });
   const error = ref("");
 
-  const isOverlay = computed(() => layout.layout === "overlay");
+  const isPdf = computed(() => output.format === "pdf");
+  // A PDF lays out by its own grid unless every image is on one page.
+  const isOverlay = computed(() => layout.layout === "overlay" && (!isPdf.value || output.pageMode === "single-page"));
   const items = computed<AssemblyItem[]>(() =>
     tray.entries.value.map((entry) => ({
       id: entry.id,
@@ -124,7 +126,6 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
       ...(isOverlay.value ? { transform: entry.transform } : {}),
     })),
   );
-  const isPdf = computed(() => output.format === "pdf");
   // "Fit to content" sizes the sheet to the arrangement's own pixels — for a
   // PDF, one page's arrangement.
   const naturalPx = computed(() => {

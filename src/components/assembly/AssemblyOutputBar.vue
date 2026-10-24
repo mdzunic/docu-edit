@@ -6,10 +6,13 @@
 // says so here, before anything is made, and offers the colour it paints
 // instead; a plan too large for this browser is refused here, naming the
 // limit, with the dpi that would fit one click away. While producing it
-// reports "Item n of N" and offers Cancel. All logic is the useAssembly
-// controller passed in. Runtime prop declarations (espree lints .vue
-// scripts).
-import { ref } from "vue";
+// reports "Item n of N" and offers Cancel. For a PDF (SPEC-110) the same bar
+// drives the PDF output instead: its estimate (with the lowest-resolution
+// placement, and a warning when it prints soft), its refusals, "Page n of N"
+// while building, and the document properties disclosure — Author and
+// Subject, empty unless typed. All logic is the useAssembly controller passed
+// in. Runtime prop declarations (espree lints .vue scripts).
+import { computed, ref } from "vue";
 import UiButton from "../ui/UiButton.vue";
 import { useToasts } from "../../composables/useToasts";
 import { ASSEMBLY_FORMATS } from "../../lib/assemblyPersist";
@@ -24,6 +27,10 @@ const emit = defineEmits(["saved"]);
 
 const a = props.assembly;
 const out = a.out;
+const pdf = a.pdf;
+// The output being made: the raster image's, or the PDF's.
+const active = computed(() => (a.isPdf.value ? pdf : out));
+const backgroundNotice = computed(() => active.value.backgroundNotice.value);
 const { addToast } = useToasts();
 const saved = ref("");
 
@@ -42,7 +49,7 @@ function commit(event = new Event("change"), apply = (value = "") => Boolean(val
 
 async function onSave() {
   saved.value = "";
-  const model = await out.save();
+  const model = await active.value.save();
   if (model) {
     saved.value = `Saved “${model.title}” to the library.`;
     addToast(`Saved “${model.title}” to the library`);
@@ -52,7 +59,7 @@ async function onSave() {
 
 async function onDownload() {
   saved.value = "";
-  await out.download();
+  await active.value.download();
 }
 
 function onReset() {
@@ -108,26 +115,65 @@ function onReset() {
           @input="a.setTitle(valueOf($event))"
         >
       </label>
+      <details
+        v-if="a.isPdf.value"
+        class="output-metadata"
+        data-testid="assembly-metadata"
+      >
+        <summary>Document properties</summary>
+        <div class="output-metadata-fields">
+          <label class="output-field">
+            <span>Author</span>
+            <input
+              type="text"
+              data-testid="assembly-author"
+              :value="a.output.author"
+              @input="pdf.setAuthor(valueOf($event))"
+            >
+          </label>
+          <label class="output-field">
+            <span>Subject</span>
+            <input
+              type="text"
+              data-testid="assembly-subject"
+              :value="a.output.subject"
+              @input="pdf.setSubject(valueOf($event))"
+            >
+          </label>
+        </div>
+      </details>
       <p
         class="output-estimate"
         data-testid="assembly-estimate"
         aria-live="polite"
       >
-        {{ out.estimate.value }}
+        {{ active.estimate.value }}
       </p>
     </div>
 
+    <p
+      v-if="a.isPdf.value && pdf.dpiWarning.value"
+      class="output-warning"
+      data-testid="assembly-dpi-warning"
+      role="status"
+    >
+      {{ pdf.dpiWarning.value }}
+    </p>
+
     <div
-      v-if="out.backgroundNotice.value"
+      v-if="backgroundNotice"
       class="output-notice"
     >
       <p
         data-testid="assembly-background-notice"
         role="status"
       >
-        {{ out.backgroundNotice.value }}
+        {{ backgroundNotice }}
       </p>
-      <label class="output-field output-inline">
+      <label
+        v-if="a.output.format === 'jpeg'"
+        class="output-field output-inline"
+      >
         <span>Fill colour</span>
         <input
           type="color"
@@ -139,17 +185,17 @@ function onReset() {
     </div>
 
     <div
-      v-if="out.refusal.value && a.tray.entries.value.length > 0"
+      v-if="active.refusal.value && a.tray.entries.value.length > 0"
       class="output-refusal"
     >
       <p
         data-testid="assembly-refusal"
         role="alert"
       >
-        {{ out.refusal.value }}
+        {{ active.refusal.value }}
       </p>
       <UiButton
-        v-if="out.fixDpi.value"
+        v-if="!a.isPdf.value && out.fixDpi.value"
         size="sm"
         data-testid="assembly-use-dpi"
         @click="a.sheet.setDpi(out.fixDpi.value)"
@@ -160,27 +206,27 @@ function onReset() {
 
     <div class="output-actions">
       <p
-        v-if="out.busy.value"
+        v-if="active.busy.value"
         class="output-progress"
         data-testid="assembly-progress"
         role="status"
       >
-        {{ out.progress.value }}
+        {{ active.progress.value }}
       </p>
       <UiButton
-        v-if="out.busy.value"
+        v-if="active.busy.value"
         data-testid="assembly-cancel"
-        @click="out.cancel()"
+        @click="active.cancel()"
       >
         Cancel
       </UiButton>
       <p
-        v-if="out.failure.value"
+        v-if="active.failure.value"
         class="output-failure"
         data-testid="assembly-failure"
         role="alert"
       >
-        {{ out.failure.value }}
+        {{ active.failure.value }}
       </p>
       <p
         v-else-if="saved"
@@ -193,14 +239,14 @@ function onReset() {
       <UiButton
         variant="ghost"
         data-testid="assembly-reset"
-        :disabled="out.busy.value"
+        :disabled="active.busy.value"
         @click="onReset"
       >
         Start over
       </UiButton>
       <UiButton
         data-testid="assembly-download"
-        :disabled="!out.canProduce.value"
+        :disabled="!active.canProduce.value"
         @click="onDownload"
       >
         Download
@@ -208,7 +254,7 @@ function onReset() {
       <UiButton
         variant="primary"
         data-testid="assembly-save"
-        :disabled="!out.canProduce.value"
+        :disabled="!active.canProduce.value"
         @click="onSave"
       >
         Save to library
@@ -279,6 +325,32 @@ function onReset() {
 .output-field input:focus-visible {
   outline: var(--space-1) solid var(--focus-ring);
   outline-offset: 0;
+}
+
+.output-metadata summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  min-height: var(--height-control);
+  display: flex;
+  align-items: center;
+}
+
+.output-metadata summary:focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: 0;
+}
+
+.output-metadata-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.output-warning {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
 }
 
 .output-estimate,
