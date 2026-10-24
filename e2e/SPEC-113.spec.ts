@@ -16,6 +16,9 @@ import { test, expect, type Page } from "@playwright/test";
 // 3. In cloud mode the key is masked, sent only as a bearer token to the
 //    pinned origin, and discarded — with a line saying why — when the base
 //    URL moves to another origin.
+// 4. The CSP's plain-http loopback allowance is the gateway's alone: a
+//    Markdown image or an /open?url= link that redirects onto this computer
+//    is not followed there.
 
 /** The app's own origins: the one it is served from, plus the two web-font
  * hosts its own index.html links for the design themes' faces (and its CSP
@@ -304,4 +307,52 @@ test("cloud mode: a masked key, sent only as a bearer token, discarded when the 
   await expect(page.getByTestId("ai-test-result")).toHaveText(/^Reachable — model hosted-b/);
   expect(posts(second)).toHaveLength(1);
   expect(posts(second)[0].authorization).toBeUndefined();
+});
+
+test("a document's fetch follows no redirect onto this computer — the CSP's loopback allowance is the gateway's alone", async ({
+  page,
+}) => {
+  // A service on this computer, which the CSP admits over plain http for a
+  // local model server. Nothing a document or a link names may reach it,
+  // directly or through a redirect.
+  const localService = "http://127.0.0.1:8765";
+  const reachedLocal: string[] = [];
+  const reachedRedirector: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().startsWith(localService)) {
+      reachedLocal.push(request.url());
+    }
+  });
+  await page.route(`${localService}/**`, (route) =>
+    route.fulfill({ status: 200, headers: CORS, contentType: "application/octet-stream", body: "local secrets" }),
+  );
+  await page.route("https://redirector.example/**", async (route) => {
+    reachedRedirector.push(route.request().url());
+    await route.fulfill({ status: 302, headers: { ...CORS, location: `${localService}/api/whatever` } });
+  });
+  await page.route("https://docs.example/notes.md", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: CORS,
+      contentType: "text/markdown",
+      body: "# Field notes\n\n![chart](https://redirector.example/chart.png)\n",
+    }),
+  );
+
+  // A Markdown image: the document opens and the image's redirect is not
+  // followed. The first hop going out shows the trap is live.
+  await page.goto("/open?url=" + encodeURIComponent("https://docs.example/notes.md"));
+  await page.getByTestId("open-from-url-confirm-button").click();
+  await expect(page).toHaveURL(/\/doc\/.+/);
+  await expect(page.getByTestId("document-content")).toContainText("Field notes");
+  expect(reachedRedirector).toEqual(["https://redirector.example/chart.png"]);
+  expect(reachedLocal).toEqual([]);
+
+  // A link itself: refused, saying why.
+  await page.goto("/open?url=" + encodeURIComponent("https://redirector.example/report.docx"));
+  await page.getByTestId("open-from-url-confirm-button").click();
+  await expect(page.getByTestId("open-from-url-reason")).toContainText("redirects to another address");
+
+  expect(reachedRedirector).toEqual(["https://redirector.example/chart.png", "https://redirector.example/report.docx"]);
+  expect(reachedLocal).toEqual([]);
 });
