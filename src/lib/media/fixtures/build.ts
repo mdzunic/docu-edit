@@ -45,6 +45,15 @@
 //                          whose trailer carries /Encrypt (a standard
 //                          security-handler stub); readers must refuse it
 //                          without touching the objects.
+// - spec111-forms.pdf    — buildFormsPdfBytes (SPEC-111): a filled form —
+//                          widgets with appearance streams, a signature,
+//                          document JavaScript, an open action, an attached
+//                          file, page labels, optional content — over a
+//                          two-level page tree that supplies inherited
+//                          attributes. Its builder's comment lists it all.
+// - spec111-outlines.pdf — buildOutlinesPdfBytes (SPEC-111): a tagged
+//                          two-page PDF with bookmarks, named destinations,
+//                          and internal and web links.
 import { bytesToBase64, base64ToBytes } from "../../core/packageParts";
 
 export { base64ToBytes, bytesToBase64 };
@@ -435,4 +444,188 @@ export function buildEncryptedPdfBytes(): Uint8Array {
     ],
     "/Root 1 0 R /Encrypt 4 0 R",
   );
+}
+
+// --- SPEC-111 merge fixtures ---------------------------------------------------
+
+/** A stream object's body: `dict` (without /Length, which is added) then
+ * the data, verbatim. */
+function streamBody(dict: string, data: Uint8Array): Uint8Array {
+  return concat([ascii(`<< ${dict} /Length ${data.length} >>\nstream\n`), data, ascii("\nendstream")]);
+}
+
+/** spec111-forms.pdf: everything a merge must carry, or report, about a
+ * filled form — two pages under a two-level page tree whose intermediate
+ * node supplies /Resources (by reference), /CropBox and /Rotate 90 while the
+ * root supplies /MediaBox (page 2 overrides /MediaBox and /Rotate); page 1
+ * carries /BleedBox, /TrimBox and /ArtBox, a deflated content stream drawing
+ * a DCT image (the JPEG fixture's bytes, raw), a form XObject in optional
+ * content group "Layer two", a shading, a shading pattern, an /Indexed
+ * colour space and an ExtGState; and three widgets with appearance streams —
+ * a filled text field, a checkbox under a parent field, and a signature
+ * field whose /V holds the signature bytes (<0123456789ABCDEF>). The catalog
+ * has an /AcroForm (/SigFlags 3), document JavaScript, a JavaScript
+ * /OpenAction, an attached file "data.csv", /PageLabels and /OCProperties
+ * ("Layer one" ON, "Layer two" OFF). */
+export async function buildFormsPdfBytes(): Promise<Uint8Array> {
+  const jpeg = buildJpegFixtureBytes();
+  const page1 = await deflate(
+    ascii(
+      "0.12 0.47 0.71 RG 2 w 36 36 540 720 re S\n" +
+        "BT /F1 18 Tf 72 700 Td (SPEC-111 form) Tj ET\n" +
+        "q 160 0 0 120 380 600 cm /Im1 Do Q\n" +
+        "/OC /oc1 BDC q /GS1 gs 1 0 0 rg 72 640 200 20 re f Q EMC\n" +
+        "q 380 520 m 540 520 l 540 580 l 380 580 l h W n /Sh1 sh Q\n" +
+        "q /Pattern cs /P1 scn 380 440 160 60 re f Q\n" +
+        "q /CS1 cs 1 sc 380 400 160 20 re f Q\n" +
+        "q 1 0 0 1 380 340 cm /Fm1 Do Q\n",
+    ),
+  );
+  const page2 = ascii("0.12 0.47 0.71 RG 2 w 36 36 428 428 re S\nBT /F1 18 Tf 72 400 Td (Page two) Tj ET\n");
+  const objects: Array<string | Uint8Array> = [
+    // 1 catalog
+    "<< /Type /Catalog /Pages 2 0 R /AcroForm 20 0 R /Names << /JavaScript 23 0 R /EmbeddedFiles 25 0 R >> " +
+      "/OpenAction 28 0 R /PageLabels << /Nums [0 << /S /r >>] >> " +
+      "/OCProperties << /OCGs [12 0 R 13 0 R] /D << /Order [12 0 R 13 0 R] /ON [12 0 R] /OFF [13 0 R] >> >> >>",
+    // 2 the page tree's root: /MediaBox
+    "<< /Type /Pages /Kids [3 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+    // 3 an intermediate node: /Resources (by reference), /CropBox, /Rotate
+    "<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 5 0 R] /Count 2 /Resources 6 0 R /CropBox [10 10 602 782] /Rotate 90 >>",
+    // 4 page 1
+    "<< /Type /Page /Parent 3 0 R /Contents 7 0 R /Annots [16 0 R 17 0 R 18 0 R] " +
+      "/BleedBox [5 5 607 787] /TrimBox [15 15 597 777] /ArtBox [20 20 592 772] >>",
+    // 5 page 2: its own /MediaBox and /Rotate
+    "<< /Type /Page /Parent 3 0 R /MediaBox [0 0 500 500] /Rotate 0 /Contents 8 0 R >>",
+    // 6 the shared resources
+    "<< /Font << /F1 9 0 R >> /XObject << /Im1 10 0 R /Fm1 11 0 R >> /Properties << /oc1 12 0 R /oc2 13 0 R >> " +
+      "/ColorSpace << /CS1 14 0 R >> /Shading << /Sh1 15 0 R >> /Pattern << /P1 29 0 R >> /ExtGState << /GS1 << /CA 0.5 /ca 0.5 >> >> >>",
+    // 7, 8 content
+    streamBody("/Filter /FlateDecode", page1),
+    streamBody("", page2),
+    // 9 a standard font
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    // 10 a DCT image: the JPEG fixture's own bytes
+    streamBody("/Type /XObject /Subtype /Image /Width 160 /Height 120 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode", jpeg),
+    // 11 a form XObject in "Layer two"
+    streamBody(
+      "/Type /XObject /Subtype /Form /BBox [0 0 160 40] /Resources << /Font << /F1 9 0 R >> >> /OC 13 0 R",
+      ascii("BT /F1 12 Tf 4 14 Td (Layer two) Tj ET"),
+    ),
+    // 12, 13 optional content groups
+    "<< /Type /OCG /Name (Layer one) >>",
+    "<< /Type /OCG /Name (Layer two) >>",
+    // 14 an indexed colour space
+    "[/Indexed /DeviceRGB 1 <FF00000000FF>]",
+    // 15 an axial shading over a function
+    "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [380 0 540 0] /Function 30 0 R /Extend [true true] >>",
+    // 16 a filled text field (field and widget in one dictionary)
+    "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Ada Lovelace) /DA (/Helv 12 Tf 0 g) " +
+      "/Rect [72 560 300 584] /F 4 /P 4 0 R /AP << /N 19 0 R >> >>",
+    // 17 a checkbox widget under its parent field
+    "<< /Type /Annot /Subtype /Widget /Parent 21 0 R /Rect [72 520 90 538] /F 4 /P 4 0 R /AS /Yes " +
+      "/AP << /N << /Yes 31 0 R /Off 32 0 R >> >> >>",
+    // 18 a signed signature field
+    "<< /Type /Annot /Subtype /Widget /FT /Sig /T (signature) /V 22 0 R /Rect [72 440 300 480] /F 4 /P 4 0 R /AP << /N 33 0 R >> >>",
+    // 19 the text field's appearance
+    streamBody(
+      "/Type /XObject /Subtype /Form /BBox [0 0 228 24] /Resources << /Font << /Helv 9 0 R >> >>",
+      ascii("/Tx BMC BT /Helv 12 Tf 0 g 2 7 Td (Ada Lovelace) Tj ET EMC"),
+    ),
+    // 20 the form
+    "<< /Fields [16 0 R 21 0 R 18 0 R] /SigFlags 3 /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 9 0 R >> >> >>",
+    // 21 the checkbox's parent field
+    "<< /FT /Btn /T (agree) /V /Yes /Kids [17 0 R] >>",
+    // 22 the signature value: its bytes must not travel
+    "<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 0 0 0] /Contents <0123456789ABCDEF> >>",
+    // 23, 24 document JavaScript
+    "<< /Names [(init) 24 0 R] >>",
+    "<< /S /JavaScript /JS (app.alert\\('SPEC-111'\\);) >>",
+    // 25, 26, 27 an attached file
+    "<< /Names [(data.csv) 26 0 R] >>",
+    "<< /Type /Filespec /F (data.csv) /UF (data.csv) /EF << /F 27 0 R >> >>",
+    streamBody("/Type /EmbeddedFile /Subtype /text#2Fcsv", ascii("a,b\n1,2\n")),
+    // 28 the open action
+    "<< /S /JavaScript /JS (this.print\\(\\);) >>",
+    // 29 a shading pattern
+    "<< /Type /Pattern /PatternType 2 /Shading 15 0 R >>",
+    // 30 the shading's function
+    "<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>",
+    // 31, 32 the checkbox's appearances
+    streamBody("/Type /XObject /Subtype /Form /BBox [0 0 18 18]", ascii("0 0 1 rg 3 3 12 12 re f")),
+    streamBody("/Type /XObject /Subtype /Form /BBox [0 0 18 18]", ascii("")),
+    // 33 the signature's appearance
+    streamBody(
+      "/Type /XObject /Subtype /Form /BBox [0 0 228 40] /Resources << /Font << /F1 9 0 R >> >>",
+      ascii("BT /F1 10 Tf 4 16 Td (Signed: A. Lovelace) Tj ET"),
+    ),
+    // 34 info
+    "<< /Title (SPEC-111 forms) /Producer (docu-edit) >>",
+  ];
+  return assembleClassicPdf("1.7", objects, "/Root 1 0 R /Info 34 0 R");
+}
+
+/** spec111-outlines.pdf: a tagged two-page PDF with bookmarks and links —
+ * an A5 portrait page and a landscape 595 × 420 pt page, neither rotated,
+ * sharing /Resources inherited from the page tree. The catalog has a
+ * /StructTreeRoot (with /MarkInfo), an outline ("Chapter 1" → page 1 with
+ * child "Section 1.1" → the named destination (chapter1); "Chapter 2" → page
+ * 2 through a /GoTo action) and a /Dests name tree ((chapter1) → page 1,
+ * (chapter2) → page 2). Page 1 links to page 2 by an explicit destination,
+ * to (chapter2) by a /GoTo action, and to https://example.com/spec111 by a
+ * /URI action; page 2 links back through /Dest (chapter1). */
+export async function buildOutlinesPdfBytes(): Promise<Uint8Array> {
+  const page1 = await deflate(
+    ascii(
+      "0.12 0.47 0.71 RG 2 w 36 36 348 523 re S\n" +
+        "/H1 << /MCID 0 >> BDC BT /F1 24 Tf 72 500 Td (Chapter 1) Tj ET EMC\n" +
+        "BT /F1 12 Tf 72 405 Td (Go to page 2) Tj ET\n" +
+        "BT /F1 12 Tf 72 375 Td (Go to chapter 2) Tj ET\n" +
+        "BT /F1 12 Tf 72 345 Td (example.com) Tj ET\n",
+    ),
+  );
+  const page2 = ascii(
+    "1 0.5 0.05 RG 2 w 36 36 523 348 re S\n" +
+      "/H1 << /MCID 0 >> BDC BT /F1 24 Tf 72 330 Td (Chapter 2) Tj ET EMC\n" +
+      "BT /F1 12 Tf 72 255 Td (Back to chapter 1) Tj ET\n",
+  );
+  const objects: Array<string | Uint8Array> = [
+    // 1 catalog
+    "<< /Type /Catalog /Pages 2 0 R /Outlines 13 0 R /Names << /Dests 17 0 R >> /StructTreeRoot 18 0 R " +
+      "/MarkInfo << /Marked true >> /Lang (en) /PageMode /UseOutlines >>",
+    // 2 the page tree: /Resources by reference
+    "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /Resources 5 0 R >>",
+    // 3, 4 the pages
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 420 595] /Contents 7 0 R /Annots [9 0 R 10 0 R 11 0 R] /StructParents 0 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 420] /Contents 8 0 R /Annots [12 0 R] /StructParents 1 >>",
+    // 5, 6 resources and a standard font
+    "<< /Font << /F1 6 0 R >> >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    // 7, 8 content
+    streamBody("/Filter /FlateDecode", page1),
+    streamBody("", page2),
+    // 9 page 1 → page 2, an explicit destination
+    "<< /Type /Annot /Subtype /Link /Rect [68 400 300 420] /Border [0 0 0] /P 3 0 R /Dest [4 0 R /XYZ 0 420 null] >>",
+    // 10 page 1 → (chapter2), a /GoTo action
+    "<< /Type /Annot /Subtype /Link /Rect [68 370 300 390] /Border [0 0 0] /P 3 0 R /A << /S /GoTo /D (chapter2) >> >>",
+    // 11 page 1 → the web
+    "<< /Type /Annot /Subtype /Link /Rect [68 340 300 360] /Border [0 0 0] /A << /S /URI /URI (https://example.com/spec111) >> >>",
+    // 12 page 2 → (chapter1)
+    "<< /Type /Annot /Subtype /Link /Rect [68 250 300 270] /Border [0 0 0] /P 4 0 R /Dest (chapter1) >>",
+    // 13–16 the outline
+    "<< /Type /Outlines /First 14 0 R /Last 16 0 R /Count 3 >>",
+    "<< /Title (Chapter 1) /Parent 13 0 R /Next 16 0 R /First 15 0 R /Last 15 0 R /Count 1 /Dest [3 0 R /Fit] >>",
+    "<< /Title (Section 1.1) /Parent 14 0 R /Dest (chapter1) >>",
+    "<< /Title (Chapter 2) /Parent 13 0 R /Prev 14 0 R /A << /S /GoTo /D [4 0 R /Fit] >> >>",
+    // 17 the named destinations
+    "<< /Names [(chapter1) [3 0 R /XYZ 0 595 null] (chapter2) [4 0 R /XYZ 0 420 null]] >>",
+    // 18–22 the structure tree
+    "<< /Type /StructTreeRoot /K 19 0 R /ParentTree 22 0 R /ParentTreeNextKey 2 >>",
+    "<< /Type /StructElem /S /Document /P 18 0 R /K [20 0 R 21 0 R] >>",
+    "<< /Type /StructElem /S /H1 /P 19 0 R /Pg 3 0 R /K 0 >>",
+    "<< /Type /StructElem /S /H1 /P 19 0 R /Pg 4 0 R /K 0 >>",
+    "<< /Nums [0 [20 0 R] 1 [21 0 R]] >>",
+    // 23 info
+    "<< /Title (SPEC-111 outlines) /Producer (docu-edit) >>",
+  ];
+  return assembleClassicPdf("1.7", objects, "/Root 1 0 R /Info 23 0 R");
 }

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 // The media details panel (SPEC-107): for an image — dimensions, format,
 // byte size and stored date; for a PDF — page count, per-page size (or
-// "mixed"), PDF version, /Info metadata, and the linearised/reconstructed
-// flags. Everything shown is built from the stored model (parsePdf ran at
+// "mixed"), each page's size and rotation (SPEC-111), PDF version, /Info
+// metadata, and the linearised/reconstructed flags. Everything shown is built from the stored model (parsePdf ran at
 // open), so the panel is there even when the browser's embed is not.
 // Runtime prop declarations — see AppShell.vue.
 import { computed } from "vue";
 import { formatBadgeLabel, formatFileSize, formatTimestamp } from "../../lib/format";
-import { pdfPageSizesLabel } from "../../lib/media/thumbnail";
+import { pdfPageLines, pdfPageSizesLabel } from "../../lib/media/thumbnail";
 import { asMediaModel, currentImageSize, hasEdits } from "../../lib/media/editModel";
 import { asMeasurementUnit } from "../../lib/core/units";
 import { usePreferences } from "../../composables/usePreferences";
@@ -35,6 +35,7 @@ const { preferences } = usePreferences();
 const pageSizeLabel = computed(() =>
   pdf.value ? pdfPageSizesLabel(pdf.value, asMeasurementUnit(preferences.measurementUnit)) : "",
 );
+const pageLines = computed(() => (pdf.value ? pdfPageLines(pdf.value, asMeasurementUnit(preferences.measurementUnit)) : []));
 const producer = computed(() => {
   const extras = properties.value.extraFields ?? [];
   const entry = extras.find((field = { name: "", value: "" }) => field.name === "Producer");
@@ -96,6 +97,27 @@ const storedLabel = computed(() =>
           <dt>Page size</dt>
           <dd data-testid="detail-page-size">
             {{ pageSizeLabel }}
+          </dd>
+        </div>
+        <div class="details-row">
+          <dt>Each page</dt>
+          <dd>
+            <details
+              class="details-pages"
+              data-testid="detail-page-list"
+              :open="pdf.pageCount <= 10"
+            >
+              <summary>{{ pageCountLabel }}</summary>
+              <ol class="details-page-lines">
+                <li
+                  v-for="(line, index) in pageLines"
+                  :key="index"
+                  data-testid="detail-page"
+                >
+                  {{ line }}
+                </li>
+              </ol>
+            </details>
           </dd>
         </div>
         <div class="details-row">
@@ -208,5 +230,17 @@ const storedLabel = computed(() =>
   margin: 0;
   color: var(--text-primary);
   overflow-wrap: anywhere;
+}
+
+.details-pages summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.details-page-lines {
+  margin: var(--space-1) 0 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: var(--text-sm);
 }
 </style>

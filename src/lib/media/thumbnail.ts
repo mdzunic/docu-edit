@@ -91,6 +91,21 @@ export function pdfPageSizesLabel(pdf: PdfSummary, unit?: MeasurementUnit): stri
   return uniform ? size : `mixed (first ${size})`;
 }
 
+/** The details panel's line for each page (SPEC-111, so a merged PDF can be
+ * checked page by page): "Page 3 · 595 × 842 pt · 21 × 29.7 cm · rotate 90",
+ * the unit's size only beside points in another unit, the rotation only
+ * when there is one. */
+export function pdfPageLines(pdf: PdfSummary, unit?: MeasurementUnit): string[] {
+  return pdf.pages.map((page, index) =>
+    [
+      `Page ${index + 1}`,
+      pageSizeLabel(page),
+      ...(unit && unit !== "pt" ? [pageSizeInUnitLabel(page, unit)] : []),
+      ...(page.rotate ? [`rotate ${page.rotate}`] : []),
+    ].join(" · "),
+  );
+}
+
 /** What the PDF card's paper-shaped placeholder shows wherever no first-page
  * raster is available: the REAL aspect ratio of the first page (rotation
  * applied, so a rotated page reads landscape) plus the page count. The card

@@ -3,7 +3,7 @@
 // the paper from that ratio, so a degenerate page must still yield a usable
 // one. The rendered geometry itself is e2e's (e2e/SPEC-107.spec.ts).
 import { describe, expect, it } from "vitest";
-import { pdfCardPlaceholder, pdfPageSizesLabel } from "./thumbnail";
+import { pdfCardPlaceholder, pdfPageLines, pdfPageSizesLabel } from "./thumbnail";
 import type { PdfSummary } from "./model";
 
 function summary(pages: PdfSummary["pages"]): PdfSummary {
@@ -54,5 +54,17 @@ describe("pdfPageSizesLabel (SPEC-108: the size in the user's unit too)", () => 
     expect(pdfPageSizesLabel(summary([letter]), "in")).toBe("612 × 792 pt · 8.5 × 11 in");
     expect(pdfPageSizesLabel(summary([letter, a4]), "mm")).toBe("mixed (first 612 × 792 pt · 215.9 × 279.4 mm)");
     expect(pdfPageSizesLabel(summary([a4]), "pt")).toBe("595 × 842 pt");
+  });
+});
+
+describe("pdfPageLines (SPEC-111: each page's size and rotation)", () => {
+  it("lists every page, with its size in the unit beside points and its rotation when it has one", () => {
+    const pages = summary([
+      { widthPt: 720, heightPt: 540, rotate: 0 },
+      { widthPt: 595.28, heightPt: 841.89, rotate: 90 },
+    ]);
+    expect(pdfPageLines(pages, "cm")).toEqual(["Page 1 · 720 × 540 pt · 25.4 × 19.05 cm", "Page 2 · 595 × 842 pt · 21 × 29.7 cm · rotate 90"]);
+    expect(pdfPageLines(pages)).toEqual(["Page 1 · 720 × 540 pt", "Page 2 · 595 × 842 pt · rotate 90"]);
+    expect(pdfPageLines(pages, "pt")).toEqual(["Page 1 · 720 × 540 pt", "Page 2 · 595 × 842 pt · rotate 90"]);
   });
 });

@@ -7,7 +7,9 @@
 // plan, persistence, output) and useAssemblyPreview's, and the surfaces are
 // the components/assembly/* components. It takes no id and needs no kind
 // guard; the library opens it through "Combine…" and "New › Combined
-// image", each of which starts the plan it then restores.
+// image", each of which starts the plan it then restores. While the tray is
+// a PDF plan (SPEC-111's page organiser) the centre shows the result preview
+// in the browser's own PDF viewer instead of the sheet.
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -17,18 +19,23 @@ import AssemblyPreview from "../components/assembly/AssemblyPreview.vue";
 import AssemblyInspector from "../components/assembly/AssemblyInspector.vue";
 import AssemblyOutputBar from "../components/assembly/AssemblyOutputBar.vue";
 import AssemblyPicker from "../components/assembly/AssemblyPicker.vue";
+import MergePreview from "../components/assembly/MergePreview.vue";
 import { useTheme } from "../composables/useTheme";
 import { useAssembly } from "./assembly/useAssembly";
 import { useAssemblyPreview } from "./assembly/useAssemblyPreview";
 import { asAssemblySteps } from "./assembly/useAssemblyOutput";
 import { asPdfAssemblySteps } from "./assemble/usePdfAssembly";
+import { asPdfMergeSteps } from "./assemble/usePdfMerge";
 import { MAX_ASSEMBLY_ITEMS } from "../lib/core/assemblyLayout";
+import { cmToPt } from "../lib/core/units";
 
 const props = defineProps({
   /** Test seam: the browser-bound output steps (canvas, decoding). */
   steps: { type: Object, default: undefined },
   /** Test seam: the PDF output's steps (SPEC-110). */
   pdfSteps: { type: Object, default: undefined },
+  /** Test seam: the PDF merge's steps (SPEC-111). */
+  mergeSteps: { type: Object, default: undefined },
 });
 
 const router = useRouter();
@@ -37,13 +44,23 @@ const router = useRouter();
 // by the app tokens and following the OS live (SPEC-059).
 useTheme();
 
-const assembly = useAssembly({ steps: asAssemblySteps(props.steps), pdfSteps: asPdfAssemblySteps(props.pdfSteps) });
-// For a PDF the tray says how each image will be embedded.
-const encodings = computed(() => (assembly.isPdf.value ? assembly.pdf.encodings.value : []));
+const assembly = useAssembly({
+  steps: asAssemblySteps(props.steps),
+  pdfSteps: asPdfAssemblySteps(props.pdfSteps),
+  mergeSteps: asPdfMergeSteps(props.mergeSteps),
+});
+// For a PDF the tray says how each image will be embedded (a PDF plan's
+// images each become a page of their own, so it does not).
+const encodings = computed(() => (assembly.isPdf.value && !assembly.merging.value ? assembly.pdf.encodings.value : []));
 const preview = useAssemblyPreview({ assembly, decode: asAssemblySteps(props.steps)?.decode });
+// A blank page's card reads at the sheet's size.
+const sheetPt = computed(() => {
+  const sheet = assembly.geometry.value;
+  return sheet ? { width: cmToPt(sheet.widthCm), height: cmToPt(sheet.heightCm) } : { width: 0, height: 0 };
+});
 
 const pickerOpen = ref(false);
-const room = computed(() => MAX_ASSEMBLY_ITEMS - assembly.tray.entries.value.length);
+const room = computed(() => MAX_ASSEMBLY_ITEMS - assembly.imageEntries.value.length);
 
 function addFromLibrary(ids = [""]) {
   pickerOpen.value = false;
@@ -57,7 +74,7 @@ function close() {
 </script>
 
 <template>
-  <AppShell document-title="Combine images">
+  <AppShell :document-title="assembly.merging.value ? 'Combine PDFs' : 'Combine images'">
     <template #app-bar-actions>
       <UiIconButton
         class="assembly-close"
@@ -86,11 +103,21 @@ function close() {
         <AssemblyTray
           :tray="assembly.tray"
           :encodings="encodings"
+          :pdf="assembly.isPdf.value"
+          :merging="assembly.merging.value"
+          :sheet-width-pt="sheetPt.width"
+          :sheet-height-pt="sheetPt.height"
           @add="pickerOpen = true"
         />
       </aside>
       <div class="assembly-centre">
+        <MergePreview
+          v-if="assembly.merging.value"
+          :merge="assembly.merge"
+          :title="assembly.output.title"
+        />
         <AssemblyPreview
+          v-else
           :assembly="assembly"
           :preview="preview"
         />

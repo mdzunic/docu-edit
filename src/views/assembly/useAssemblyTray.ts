@@ -7,74 +7,58 @@
 // entry with its own key (and, for overlay, its own transform) over the same
 // library image.
 //
-// Only ever READS the library: an entry carries the image's id, title and
-// pixel size; the source document is never touched.
+// SPEC-111 makes it a page organiser too: a PDF added to the tray expands
+// into one entry per PAGE (with the quarter turns the user adds to it), a
+// blank page can be inserted, and entries can be selected as a set —
+// Shift+click for a range, Cmd/Ctrl+click to add or remove one, Cmd/Ctrl+A
+// for all, or every page of one source — so a rotation, a duplicate or a
+// delete applies to the whole selection. Deleting a page removes it from
+// the PLAN only. A tray holds up to MAX_ASSEMBLY_ITEMS images and
+// MAX_MERGE_PAGES entries in all.
+//
+// Only ever READS the library: an entry carries the image's (or PDF's) id,
+// title and size; the source document is never touched.
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import { getMedia, getStoredRecord } from "../../lib/documentStore";
-import { isImageFormat } from "../../lib/libraryMenu";
-import { moveEntry, trayMoveAnnouncement } from "../../lib/assembly";
-import { DEFAULT_OVERLAY_TRANSFORM, MAX_ASSEMBLY_ITEMS, normaliseTransform, type OverlayTransform } from "../../lib/core/assemblyLayout";
-import { sourceItemPx } from "../library/useConvertToPdf";
+import { moveEntry, pageCountLabel, trayMoveAnnouncement } from "../../lib/assembly";
+import { MAX_ASSEMBLY_ITEMS, normaliseTransform, type OverlayTransform } from "../../lib/core/assemblyLayout";
+import { MAX_MERGE_PAGES } from "../../lib/core/pdfDocument";
+import { capTrayItems } from "../../lib/assemblyPersist";
+import {
+  entrySentenceLabel,
+  isPageEntry,
+  libraryImage,
+  libraryPdf,
+  PAGES_FULL_MESSAGE,
+  pageEntries,
+  TRAY_FULL_MESSAGE,
+  trayEntry,
+  type TrayEntry,
+} from "./trayEntries";
+import { useTrayPages, type TrayPagesController } from "./useTrayPages";
 
-/** A library image as the tray needs it. */
-export interface TrayImage {
-  id: string;
-  title: string;
-  format: string;
-  lastModified: number;
-  /** 0 when the image's size could not be read. */
-  widthPx: number;
-  heightPx: number;
-}
+// The entries themselves (and the page organiser's controller) live beside
+// this file; the tray's importers keep reaching them through here.
+export {
+  asTrayEntries,
+  blankEntry,
+  entryLabel,
+  isCombinableFormat,
+  isPageEntry,
+  libraryImage,
+  libraryPdf,
+  pageCardLabel,
+  pageEntries,
+  PAGES_FULL_MESSAGE,
+  TRAY_FULL_MESSAGE,
+  trayEntry,
+  type TrayEntry,
+  type TrayImage,
+  type TrayPage,
+  type TrayPdf,
+} from "./trayEntries";
+export type { PickModifiers } from "./useTrayPages";
 
-export interface TrayEntry extends TrayImage {
-  /** Unique within the tray: a duplicate shares its source's `id`. */
-  key: string;
-  /** overlay only. */
-  transform: OverlayTransform;
-}
-
-/** The library image stored under `id` — null when it is missing, trashed
- * or not an image. */
-export function libraryImage(id: string): TrayImage | null {
-  const record = getStoredRecord(id);
-  const model = getMedia(id);
-  if (!record || !model || record.trashedAt !== undefined || !isImageFormat(model.format)) {
-    return null;
-  }
-  let size = null;
-  try {
-    size = sourceItemPx(model);
-  } catch {
-    size = null;
-  }
-  return {
-    id,
-    title: model.title,
-    format: model.format,
-    lastModified: record.lastModified,
-    widthPx: size?.widthPx ?? 0,
-    heightPx: size?.heightPx ?? 0,
-  };
-}
-
-let keySeed = 0;
-
-/** A tray entry over `image`, with its own key. */
-export function trayEntry(image: TrayImage, transform?: Partial<OverlayTransform>): TrayEntry {
-  keySeed += 1;
-  return { ...image, key: `tray-${keySeed}`, transform: normaliseTransform(transform ?? DEFAULT_OVERLAY_TRANSFORM) };
-}
-
-/** Typed pass-through for entries read off a `.vue` prop (runtime-typed
- * `Object`; espree bars the annotation in `.vue` scripts). */
-export function asTrayEntries(value: unknown): TrayEntry[] {
-  return Array.isArray(value) ? (value as TrayEntry[]) : [];
-}
-
-export const TRAY_FULL_MESSAGE = `A tray holds at most ${MAX_ASSEMBLY_ITEMS} images.`;
-
-export interface AssemblyTrayController {
+export interface AssemblyTrayController extends TrayPagesController {
   entries: Ref<TrayEntry[]>;
   /** The selected entry's key ("" when none) — the inspector edits it. */
   selectedKey: Ref<string>;
@@ -85,8 +69,8 @@ export interface AssemblyTrayController {
   refusal: Ref<string>;
   isFull: ComputedRef<boolean>;
   select: (key: string) => void;
-  /** Adds the library images `ids`, in order, up to the limit. Returns how
-   * many were added. */
+  /** Adds the library images (and, SPEC-111, PDFs as their pages) `ids`, in
+   * order, up to the limits. Returns how many entries were added. */
   add: (ids: readonly string[]) => number;
   remove: (key: string) => void;
   duplicate: (key: string) => boolean;
@@ -104,23 +88,58 @@ export function useAssemblyTray(): AssemblyTrayController {
   const selectedKey = ref("");
   const announcement = ref("");
   const refusal = ref("");
+  const { pages, selection } = useTrayPages({ entries, selectedKey, announcement, refusal });
 
   const selected = computed(() => entries.value.find((entry) => entry.key === selectedKey.value) ?? null);
-  const isFull = computed(() => entries.value.length >= MAX_ASSEMBLY_ITEMS);
+  const imageCount = computed(() => entries.value.filter((entry) => !isPageEntry(entry)).length);
+  const isFull = computed(() => imageCount.value >= MAX_ASSEMBLY_ITEMS || entries.value.length >= MAX_MERGE_PAGES);
 
   function indexOf(key: string): number {
     return entries.value.findIndex((entry) => entry.key === key);
   }
 
   function add(ids: readonly string[]): number {
-    const images = ids.map(libraryImage).filter((image) => image !== null);
-    const room = Math.max(0, MAX_ASSEMBLY_ITEMS - entries.value.length);
-    const added = images.slice(0, room).map((image) => trayEntry(image));
-    const left = images.length - added.length;
-    refusal.value = left > 0 ? `${TRAY_FULL_MESSAGE} ${left} ${left === 1 ? "image was" : "images were"} not added.` : "";
+    const added: TrayEntry[] = [];
+    let images = imageCount.value;
+    let total = entries.value.length;
+    let imagesLeft = 0;
+    let pagesLeft = 0;
+    let anyPdf = false;
+    for (const id of ids) {
+      const image = libraryImage(id);
+      if (image) {
+        if (images < MAX_ASSEMBLY_ITEMS && total < MAX_MERGE_PAGES) {
+          added.push(trayEntry(image));
+          images += 1;
+          total += 1;
+        } else {
+          imagesLeft += 1;
+        }
+        continue;
+      }
+      const pdf = libraryPdf(id);
+      if (pdf) {
+        anyPdf = true;
+        const pdfPages = pageEntries(pdf);
+        const fit = pdfPages.slice(0, Math.max(0, MAX_MERGE_PAGES - total));
+        added.push(...fit);
+        total += fit.length;
+        pagesLeft += pdfPages.length - fit.length;
+      }
+    }
+    refusal.value = [
+      imagesLeft > 0 ? `${TRAY_FULL_MESSAGE} ${imagesLeft} ${imagesLeft === 1 ? "image was" : "images were"} not added.` : "",
+      pagesLeft > 0 ? `${PAGES_FULL_MESSAGE} ${pagesLeft} ${pagesLeft === 1 ? "page was" : "pages were"} not added.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     if (added.length > 0) {
       entries.value = [...entries.value, ...added];
-      announcement.value = added.length === 1 ? `Added “${added[0].title}”.` : `Added ${added.length} images.`;
+      announcement.value = anyPdf
+        ? `Added ${pageCountLabel(added.length)}.`
+        : added.length === 1
+          ? `Added “${added[0].title}”.`
+          : `Added ${added.length} images.`;
     }
     return added.length;
   }
@@ -135,6 +154,7 @@ export function useAssemblyTray(): AssemblyTrayController {
     if (selectedKey.value === key) {
       selectedKey.value = "";
     }
+    selection.forget([key]);
     refusal.value = "";
     announcement.value = `Removed “${gone.title}”.`;
   }
@@ -163,7 +183,10 @@ export function useAssemblyTray(): AssemblyTrayController {
       return false;
     }
     entries.value = moveEntry(entries.value, from, to);
-    announcement.value = trayMoveAnnouncement(entries.value[to].title, to + 1, entries.value.length);
+    const moved = entries.value[to];
+    announcement.value = isPageEntry(moved)
+      ? `${entrySentenceLabel(moved)} moved to position ${to + 1} of ${entries.value.length}.`
+      : trayMoveAnnouncement(moved.title, to + 1, entries.value.length);
     return true;
   }
 
@@ -175,7 +198,7 @@ export function useAssemblyTray(): AssemblyTrayController {
     const to = from + delta;
     if (to < 0 || to >= entries.value.length) {
       const entry = entries.value[from];
-      announcement.value = `“${entry.title}” is already ${to < 0 ? "first" : "last"}.`;
+      announcement.value = `${entrySentenceLabel(entry)} is already ${to < 0 ? "first" : "last"}.`;
       return false;
     }
     return moveTo(key, to);
@@ -191,12 +214,14 @@ export function useAssemblyTray(): AssemblyTrayController {
   }
 
   function replace(next: TrayEntry[]): void {
-    entries.value = next.slice(0, MAX_ASSEMBLY_ITEMS);
+    entries.value = capTrayItems(next, isPageEntry);
     selectedKey.value = "";
+    selection.only("");
     refusal.value = "";
   }
 
   return {
+    ...pages,
     entries,
     selectedKey,
     selected,
@@ -205,6 +230,7 @@ export function useAssemblyTray(): AssemblyTrayController {
     isFull,
     select: (key: string) => {
       selectedKey.value = key;
+      selection.only(key);
     },
     add,
     remove,

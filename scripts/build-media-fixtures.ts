@@ -23,6 +23,13 @@
 //   image builders in the same module; their header comment records how each
 //   is made (a real 64×40 PNG, a real 160×120 baseline JPEG, an SVG behind a
 //   comment and doctype, a 2-frame animated GIF89a, a VP8L WebP container).
+// - spec111-forms.pdf, spec111-outlines.pdf (SPEC-111's merge fixtures) —
+//   written byte by byte in the same module (buildFormsPdfBytes,
+//   buildOutlinesPdfBytes): a filled form with widgets, a signature, document
+//   JavaScript, an open action, an attached file, page labels, optional
+//   content and inherited page attributes; and a tagged two-page PDF with
+//   bookmarks, named destinations and internal and web links. Their header
+//   comments list every construct each one carries.
 // The unit specs read these same checked-in bytes, so unit and e2e
 // assertions cannot drift apart.
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -31,8 +38,10 @@ import { fileURLToPath } from "node:url";
 import { buildPdf, type PdfPageInput, type PdfPathSubpath } from "../src/lib/core/pdfBuild";
 import {
   buildEncryptedPdfBytes,
+  buildFormsPdfBytes,
   buildGifFixtureBytes,
   buildJpegFixtureBytes,
+  buildOutlinesPdfBytes,
   buildPngFixtureBytes,
   buildSvgFixtureBytes,
   buildWebpFixtureBytes,
@@ -91,6 +100,8 @@ const files: Array<[string, Uint8Array]> = [
   ["spec107-pages.pdf", pagesPdf],
   ["spec107-xrefstream.pdf", await buildXrefStreamPdfBytes()],
   ["spec107-encrypted.pdf", buildEncryptedPdfBytes()],
+  ["spec111-forms.pdf", await buildFormsPdfBytes()],
+  ["spec111-outlines.pdf", await buildOutlinesPdfBytes()],
 ];
 
 for (const [name, bytes] of files) {

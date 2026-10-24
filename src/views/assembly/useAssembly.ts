@@ -9,7 +9,12 @@
 //
 // The tray order is the layout order: `items` is the tray, mapped. For a PDF
 // the preview's placements are the current page's.
-import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
+//
+// SPEC-111: once the tray holds a PDF page (or a blank page) it is a PDF
+// plan — the page organiser — whose output is usePdfMerge's: every entry one
+// page, only PDF output, and the layout machinery above sees the tray's
+// images alone (a tray without pages is exactly SPEC-109/110's).
+import { computed, reactive, ref, watch, type ComputedRef, type Ref } from "vue";
 import { useSheetSetup, type SheetSetupController } from "../../composables/useSheetSetup";
 import {
   BLEND_MODES,
@@ -37,7 +42,7 @@ import {
   type AssemblyLayoutSettings,
   type AssemblyOutputSettings,
 } from "../../lib/assemblyPersist";
-import { useAssemblyTray, type AssemblyTrayController, type TrayEntry } from "./useAssemblyTray";
+import { isPageEntry, useAssemblyTray, type AssemblyTrayController, type TrayEntry } from "./useAssemblyTray";
 import { BROWSER_ASSEMBLY_STEPS, useAssemblyOutput, type AssemblyOutputController, type AssemblySteps } from "./useAssemblyOutput";
 import { useAssemblyPersistence } from "./useAssemblyPersistence";
 import { pdfNaturalPx } from "../../lib/media/imagesToPdf";
@@ -47,6 +52,7 @@ import {
   type PdfAssemblyController,
   type PdfAssemblySteps,
 } from "../assemble/usePdfAssembly";
+import { BROWSER_PDF_MERGE_STEPS, usePdfMerge, type PdfMergeController, type PdfMergeSteps } from "../assemble/usePdfMerge";
 
 /** The sheet setup's session key for this surface. */
 export const ASSEMBLY_SURFACE = "assemble";
@@ -64,6 +70,8 @@ export interface AssemblyDeps {
   steps?: Partial<AssemblySteps>;
   /** Test seam: the PDF output's steps. */
   pdfSteps?: Partial<PdfAssemblySteps>;
+  /** Test seam: the PDF merge's steps (SPEC-111). */
+  mergeSteps?: Partial<PdfMergeSteps>;
 }
 
 export interface AssemblyController {
@@ -74,6 +82,12 @@ export interface AssemblyController {
   out: AssemblyOutputController;
   /** SPEC-110: the PDF's pages and output. */
   pdf: PdfAssemblyController;
+  /** SPEC-111: the page organiser's output — active while `merging`. */
+  merge: PdfMergeController;
+  /** The tray holds a PDF page (or a blank page): it is a PDF plan. */
+  merging: ComputedRef<boolean>;
+  /** The tray's images — all of it, unless it is a PDF plan. */
+  imageEntries: ComputedRef<TrayEntry[]>;
   isPdf: ComputedRef<boolean>;
   items: ComputedRef<AssemblyItem[]>;
   plan: ComputedRef<AssemblyPlan>;
@@ -116,10 +130,14 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
   const error = ref("");
 
   const isPdf = computed(() => output.format === "pdf");
+  const merging = computed(() => tray.entries.value.some(isPageEntry));
+  const imageEntries = computed(() => tray.entries.value.filter((entry) => !isPageEntry(entry)));
   // A PDF lays out by its own grid unless every image is on one page.
-  const isOverlay = computed(() => layout.layout === "overlay" && (!isPdf.value || output.pageMode === "single-page"));
+  const isOverlay = computed(
+    () => !merging.value && layout.layout === "overlay" && (!isPdf.value || output.pageMode === "single-page"),
+  );
   const items = computed<AssemblyItem[]>(() =>
-    tray.entries.value.map((entry) => ({
+    imageEntries.value.map((entry) => ({
       id: entry.id,
       widthPx: entry.widthPx,
       heightPx: entry.heightPx,
@@ -146,7 +164,7 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
   }));
   const geometry = computed(() => sheet.geometry.value);
   const pdf = usePdfAssembly({
-    entries: tray.entries,
+    entries: imageEntries,
     items,
     plan,
     sheet,
@@ -163,9 +181,29 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
   const background = computed(() => outputBackground(sheet.setup.value.background, output.format, output.matte));
   const overlayItem = computed(() => (isOverlay.value ? tray.selected.value : null));
 
+  const merge = usePdfMerge({
+    entries: tray.entries,
+    selectedKeys: tray.selectedKeys,
+    active: merging,
+    sheet,
+    plan,
+    output,
+    steps: { ...BROWSER_PDF_MERGE_STEPS, ...deps.mergeSteps },
+  });
+  // Only a PDF can carry PDF pages: pages arriving turn the output to PDF.
+  watch(
+    merging,
+    (now) => {
+      if (now && output.format !== "pdf") {
+        output.format = "pdf";
+      }
+    },
+    { flush: "sync" },
+  );
+
   const persistence = useAssemblyPersistence({ tray, layout, output, sheet });
   const out = useAssemblyOutput({
-    entries: tray.entries,
+    entries: imageEntries,
     placed,
     sheet,
     output,
@@ -233,6 +271,9 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
     const format = ASSEMBLY_FORMATS.find((candidate) => candidate === value);
     if (!format) {
       return reject(`"${value}" is not an output format.`);
+    }
+    if (merging.value && format !== "pdf") {
+      return reject("The tray holds PDF pages, which only a PDF can carry: remove them to make an image.");
     }
     output.format = format as AssemblyFormat;
     return accept();
@@ -302,6 +343,9 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
     output,
     out,
     pdf,
+    merge,
+    merging,
+    imageEntries,
     isPdf,
     items,
     plan,

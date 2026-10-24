@@ -112,7 +112,8 @@ export function useAssemblyPreview(deps: AssemblyPreviewDeps): AssemblyPreviewCo
   const pixels = computed(() =>
     display.value ? previewPixelSize(display.value, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1) : null,
   );
-  const inputs = computed(() => composeInputs(assembly.tray.entries.value));
+  // Placements index the tray's images (a PDF plan's pages are not drawn here).
+  const inputs = computed(() => composeInputs(assembly.imageEntries.value));
 
   async function render(): Promise<void> {
     generation += 1;

@@ -10,13 +10,18 @@
 // drives the PDF output instead: its estimate (with the lowest-resolution
 // placement, and a warning when it prints soft), its refusals, "Page n of N"
 // while building, and the document properties disclosure — Author and
-// Subject, empty unless typed. All logic is the useAssembly controller passed
-// in. Runtime prop declarations (espree lints .vue scripts).
+// Subject, empty unless typed. SPEC-111: while the tray is a PDF plan the bar
+// drives the page-level output — one flow with three destinations (merge to
+// one PDF, extract the selected pages, save separate PDFs as a .zip) — with
+// its estimate, refusals and "Page n of N". All logic is the useAssembly
+// controller passed in. Runtime prop declarations (espree lints .vue
+// scripts).
 import { computed, ref } from "vue";
 import UiButton from "../ui/UiButton.vue";
 import { useToasts } from "../../composables/useToasts";
 import { ASSEMBLY_FORMATS } from "../../lib/assemblyPersist";
 import { ASSEMBLY_FORMAT_LABELS } from "../../lib/assembly";
+import { MERGE_DESTINATIONS, MERGE_DESTINATION_LABELS } from "../../lib/pdfMerge";
 
 const props = defineProps({
   /** The useAssembly() controller. */
@@ -28,11 +33,13 @@ const emit = defineEmits(["saved"]);
 const a = props.assembly;
 const out = a.out;
 const pdf = a.pdf;
-// The output being made: the raster image's, or the PDF's.
-const active = computed(() => (a.isPdf.value ? pdf : out));
-// While either is producing, the format, Start over and both actions hold:
+const merge = a.merge;
+// The output being made: the merged PDF's, the image PDF's, or the raster
+// image's.
+const active = computed(() => (a.merging.value ? merge : a.isPdf.value ? pdf : out));
+// While any is producing, the format, Start over and both actions hold:
 // a build finishes as the format it started in.
-const busy = computed(() => out.busy.value || pdf.busy.value);
+const busy = computed(() => out.busy.value || pdf.busy.value || merge.busy.value);
 const backgroundNotice = computed(() => active.value.backgroundNotice.value);
 const { addToast } = useToasts();
 const saved = ref("");
@@ -52,10 +59,12 @@ function commit(event = new Event("change"), apply = (value = "") => Boolean(val
 
 async function onSave() {
   saved.value = "";
+  const merged = a.merging.value;
   const model = await active.value.save();
   if (model) {
-    saved.value = `Saved “${model.title}” to the library.`;
-    addToast(`Saved “${model.title}” to the library`);
+    // Separate PDFs save several documents; the merge says how many.
+    saved.value = merged ? merge.savedText.value : `Saved “${model.title}” to the library.`;
+    addToast(saved.value.replace(/\.$/, ""));
     emit("saved", model.id);
   }
 }
@@ -92,6 +101,26 @@ function onReset() {
             :value="format"
           >
             {{ ASSEMBLY_FORMAT_LABELS[format] }}
+          </option>
+        </select>
+      </label>
+      <label
+        v-if="a.merging.value"
+        class="output-field"
+      >
+        <span>Output</span>
+        <select
+          data-testid="merge-destination"
+          :value="merge.destination.value"
+          :disabled="busy"
+          @change="commit($event, merge.setDestination, () => merge.destination.value)"
+        >
+          <option
+            v-for="destination in MERGE_DESTINATIONS"
+            :key="destination"
+            :value="destination"
+          >
+            {{ MERGE_DESTINATION_LABELS[destination] }}
           </option>
         </select>
       </label>
@@ -156,7 +185,7 @@ function onReset() {
     </div>
 
     <p
-      v-if="a.isPdf.value && pdf.dpiWarning.value"
+      v-if="a.isPdf.value && !a.merging.value && pdf.dpiWarning.value"
       class="output-warning"
       data-testid="assembly-dpi-warning"
       role="status"

@@ -20,6 +20,11 @@
 // but it is never a second map key. A file that genuinely needs
 // generation-keyed lookup — a reference whose generation differs from the
 // live object's — is refused with a PdfParseError rather than half-read.
+//
+// The file's second half is the WRITER (SPEC-111): assemblePdf copies pages
+// of parsed documents into one new file — see "the writer half" below.
+import { yieldToMainThread } from "./idleScheduler";
+import { PDF_PRODUCER } from "./pdfBuild";
 
 /** Hard ceilings on what a parse will touch. */
 export const MAX_PDF_OBJECTS = 500_000;
@@ -1598,4 +1603,1342 @@ export function parsePdfDate(text: string): string | null {
     out += ` ${hour}:${minute}`;
   }
   return out;
+}
+
+// --- the writer half: merging pages into a new PDF (SPEC-111) ----------------
+//
+// assemblePdf writes ONE new file holding exactly the selected pages of one or
+// more parsed sources, in the plan's order. No page is interpreted and no
+// stream is re-encoded: a copied stream keeps its /Filter, /DecodeParms and
+// raw bytes verbatim (only /Length is restated, as a direct number), which is
+// what makes the merge safe on files this product cannot render. The copy:
+//
+// 1. Reachability. From each selected page's dictionary (and its kept
+//    annotations) every reference is walked breadth-first (pdfReachable) —
+//    never through /Parent, and never into the catalog, the page tree or
+//    another page. The visited set is per source, so an object two selected
+//    pages of one file share is copied once; the same object in two files is
+//    copied twice (no content dedupe across sources: comparing decoded
+//    streams would defeat the verbatim copy).
+// 2. Renumbering. Each reached object takes the next output number, from 1,
+//    and every reference inside a copied value is rewritten through its
+//    source's map (rewritePdfRefs). A reference to a page becomes the output
+//    page it became (its first appearance), or null when it is not output.
+// 3. Inheritance. /Resources, /MediaBox, /CropBox and /Rotate are written
+//    onto the copied page itself, from PdfPageRef.inherited, so it no longer
+//    leans on a parent chain that is not copied; rotateBy is added here.
+// 4. Structure. A new /Pages, /Root and /Info (from the plan, never from a
+//    source, so two sources cannot fight over the title), the sources'
+//    /OCProperties and /Dests merged, and one outline entry per source.
+// 5. Emission. Objects in number order, then a classic xref table and
+//    trailer under a PDF 1.7 header: no object streams, no compression pass,
+//    no linearisation — larger than a producer-optimised file, and every
+//    reader opens it.
+//
+// Annotations are page-owned: each output page gets its own copy of the
+// annotation dictionaries on its /Annots (ISO 32000 lets an annotation sit on
+// one page only — a duplicated page needs its own), while everything they
+// reach (appearance streams, actions) is shared like any other object.
+//
+// What cannot be carried is REPORTED, never silently lost (PdfDropRecord —
+// SPEC-008's DropRecord shape over its own closed union, as SPEC-106's
+// DeckDropRecord is; the text product's DropKind would pull documentModel.ts
+// across a product boundary). Deterministic: the same plan writes the same
+// bytes — no clock unless `plan.modified`, no randomness, insertion-ordered
+// maps. Sources are only ever read; nothing in a PdfDocument is mutated.
+
+/** A merge plan's ceilings, refused up front with a message naming them. */
+export const MAX_MERGE_PAGES = 2000;
+export const MAX_MERGE_SOURCE_BYTES = 500 * 1024 * 1024;
+/** Copying yields to the main thread every this many pages. */
+export const MERGE_YIELD_PAGES = 8;
+
+/** What a merge could not carry (the closed union of SPEC-111). */
+export type PdfDropKind =
+  | "acroForm"
+  | "structureTree"
+  | "javascript"
+  | "openAction"
+  | "embeddedFile"
+  | "namedDestination"
+  | "outlineEntry"
+  | "annotation"
+  | "pageLabel"
+  | "encryptedSource"
+  | "unreadableSource";
+
+/** Every PdfDropKind, in the union's order (a report's grouping order). */
+export const PDF_DROP_KINDS: readonly PdfDropKind[] = [
+  "acroForm",
+  "structureTree",
+  "javascript",
+  "openAction",
+  "embeddedFile",
+  "namedDestination",
+  "outlineEntry",
+  "annotation",
+  "pageLabel",
+  "encryptedSource",
+  "unreadableSource",
+];
+
+export interface PdfDropRecord {
+  kind: PdfDropKind;
+  /** The plan's key for the source it came from. */
+  source: string;
+  /** The 1-based page of that source it sat on (an annotation) or pointed
+   * at (a bookmark, a named destination), where it had one. */
+  page?: number;
+  reason: string;
+}
+
+export interface PdfPageSelection {
+  /** A parsed source, by the key the plan uses for reporting. */
+  source: string;
+  doc: PdfDocument;
+  /** 0-based index into doc.pages. */
+  pageIndex: number;
+  /** Added to the page's own /Rotate, normalised into 0|90|180|270. */
+  rotateBy?: 0 | 90 | 180 | 270;
+}
+
+export interface PdfAssemblyPlan {
+  /** Output order. */
+  pages: PdfPageSelection[];
+  title: string;
+  author?: string;
+  subject?: string;
+  /** One top-level outline entry per source, in first-appearance order. */
+  outline: boolean;
+  /** /Info's dates. Absent, none is written — the bytes stay a function of
+   * the plan alone. */
+  modified?: Date;
+}
+
+export interface PdfAssemblyResult {
+  bytes: Uint8Array;
+  dropped: PdfDropRecord[];
+}
+
+/** Optional hooks beside the plan: progress, cancellation at every page
+ * boundary, and the yield taken every MERGE_YIELD_PAGES pages. */
+export interface PdfAssemblyHooks {
+  onProgress?: (done: number, total: number) => void;
+  /** Checked at every page boundary; true stops the copy with nothing
+   * produced (PdfAssemblyCancelled). */
+  cancelled?: () => boolean;
+  /** Awaited every MERGE_YIELD_PAGES pages; yieldToMainThread by default. */
+  between?: () => Promise<void>;
+}
+
+/** A plan refused before anything is copied: an encrypted or unreadable
+ * source (one record per file, each named), or a bound. Nothing partial is
+ * ever produced. */
+export class PdfAssemblyRefusal extends Error {
+  /** One record per refused source; empty when a bound refused the plan. */
+  readonly dropped: PdfDropRecord[];
+
+  constructor(message: string, dropped: PdfDropRecord[] = [], cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.dropped = dropped;
+  }
+}
+
+/** A copy stopped at a page boundary by its `cancelled` hook. */
+export class PdfAssemblyCancelled extends Error {
+  constructor() {
+    super("The merge was cancelled.");
+  }
+}
+
+/** Degrees as a page /Rotate: the nearest multiple of 90, in 0..270 (so
+ * -90 is 270 and 450 is 90). */
+export function normaliseRotation(degrees: number): 0 | 90 | 180 | 270 {
+  if (!Number.isFinite(degrees)) {
+    return 0;
+  }
+  const quarter = ((Math.round(degrees / 90) % 4) + 4) % 4;
+  return (quarter * 90) as 0 | 90 | 180 | 270;
+}
+
+function megabytes(bytes: number): string {
+  return `${Math.ceil(bytes / (1024 * 1024))} MB`;
+}
+
+/** Why a plan of `pageCount` pages over sources totalling `sourceBytes`
+ * breaks a merge bound — naming the limit — or null. */
+export function mergeLimitRefusal(pageCount: number, sourceBytes: number): string | null {
+  if (pageCount > MAX_MERGE_PAGES) {
+    return (
+      `A merged PDF can have at most ${MAX_MERGE_PAGES} pages; this one would have ${pageCount}. ` +
+      `Remove ${pageCount - MAX_MERGE_PAGES} and try again.`
+    );
+  }
+  if (sourceBytes > MAX_MERGE_SOURCE_BYTES) {
+    return (
+      `The PDFs in one merge can add up to at most ${megabytes(MAX_MERGE_SOURCE_BYTES)}; these add up to ` +
+      `${megabytes(sourceBytes)}. Remove a source and try again.`
+    );
+  }
+  return null;
+}
+
+/** The record refusing one source: password-protected (SPEC-107's
+ * PdfEncryptedError) or otherwise unreadable. */
+export function sourceRefusalRecord(source: string, cause: unknown): PdfDropRecord {
+  if (cause instanceof PdfEncryptedError) {
+    return { kind: "encryptedSource", source, reason: `“${source}” is password-protected, so it cannot be merged.` };
+  }
+  const detail = cause instanceof Error && cause.message ? ` (${cause.message})` : "";
+  return { kind: "unreadableSource", source, reason: `“${source}” could not be read as a PDF${detail}, so it cannot be merged.` };
+}
+
+function refusalMessage(records: readonly PdfDropRecord[]): string {
+  const advice =
+    records.length === 1
+      ? "Remove it from the plan or replace it, then try again."
+      : "Remove them from the plan or replace them, then try again.";
+  return `${records.map((record) => record.reason).join(" ")} ${advice}`;
+}
+
+export interface PdfSourceInput {
+  /** The plan's key for this source. */
+  source: string;
+  bytes: Uint8Array;
+}
+
+/** Parses every source of a plan, refusing the WHOLE plan when any of them
+ * is encrypted or unreadable: every offending file is named (one record
+ * each), no partial set of sources is returned, and none is silently
+ * dropped. `parse` is SPEC-107's reader unless a caller caches it. */
+export async function openPdfSources(
+  inputs: readonly PdfSourceInput[],
+  parse: (bytes: Uint8Array) => Promise<PdfDocument> = parsePdf,
+): Promise<PdfDocument[]> {
+  const docs: PdfDocument[] = [];
+  const refused: PdfDropRecord[] = [];
+  let firstCause: unknown;
+  for (const input of inputs) {
+    try {
+      docs.push(await parse(input.bytes));
+    } catch (cause) {
+      refused.push(sourceRefusalRecord(input.source, cause));
+      firstCause ??= cause;
+    }
+  }
+  if (refused.length > 0) {
+    throw new PdfAssemblyRefusal(refusalMessage(refused), refused, firstCause);
+  }
+  return docs;
+}
+
+// --- reachability and reference rewriting -------------------------------------
+
+/** Object numbers reachable from `roots` by following indirect references
+ * breadth-first, each once, in the order first reached — the copy set of a
+ * merge. A reference under a /Parent key is never followed (the page tree is
+ * rebuilt; an annotation's parent is copied on its own account or belongs to
+ * a structure the merge drops), nor a stream's /Length (restated directly),
+ * nor a dangling one, nor one `skip` turns away (the catalog, the page tree,
+ * pages, what is already copied) — and nothing past a skipped object. */
+export function pdfReachable(
+  doc: PdfDocument,
+  roots: readonly PdfValue[],
+  skip: (num: number) => boolean = () => false,
+): number[] {
+  const order: number[] = [];
+  const seen = new Set<number>();
+  const scan = (value: PdfValue, key: string | null): void => {
+    switch (value.t) {
+      case "ref":
+        if (key !== "Parent" && !seen.has(value.num) && doc.objects.has(value.num) && !skip(value.num)) {
+          seen.add(value.num);
+          order.push(value.num);
+        }
+        return;
+      case "array":
+        for (const item of value.v) {
+          scan(item, null);
+        }
+        return;
+      case "dict":
+        for (const [entryKey, item] of value.v) {
+          scan(item, entryKey);
+        }
+        return;
+      case "stream":
+        for (const [entryKey, item] of value.dict) {
+          if (entryKey !== "Length") {
+            scan(item, entryKey);
+          }
+        }
+        return;
+      default:
+    }
+  };
+  for (const root of roots) {
+    scan(root, null);
+  }
+  for (let head = 0; head < order.length; head += 1) {
+    scan(doc.objects.get(order[head]) ?? PDF_NULL, null);
+    if (order.length > MAX_PDF_OBJECTS) {
+      throw new PdfParseError("too many reachable objects", offsetOfObject(doc, order[head]));
+    }
+  }
+  return order;
+}
+
+/** A deep copy of `value` with every indirect reference replaced by what
+ * `map` returns for it — given the reference and the dictionary key it sits
+ * under (null in an array or at the top). `undefined` drops a dictionary
+ * entry (an array item becomes null). A stream's raw data is SHARED, never
+ * copied or re-encoded — its /Filter and /DecodeParms come across like any
+ * entry — and its /Length is restated as the raw length. `value` is never
+ * mutated. */
+export function rewritePdfRefs(
+  value: PdfValue,
+  map: (ref: { num: number; gen: number }, key: string | null) => PdfValue | undefined,
+): PdfValue {
+  const copyDict = (dict: Map<string, PdfValue>, restated?: string): Map<string, PdfValue> => {
+    const out = new Map<string, PdfValue>();
+    for (const [key, item] of dict) {
+      if (key === restated) {
+        // Holds the key's place; the caller sets its value.
+        out.set(key, PDF_NULL);
+        continue;
+      }
+      const copied = copy(item, key);
+      if (copied !== undefined) {
+        out.set(key, copied);
+      }
+    }
+    return out;
+  };
+  const copy = (item: PdfValue, key: string | null): PdfValue | undefined => {
+    switch (item.t) {
+      case "ref":
+        return map(item, key);
+      case "array":
+        return { t: "array", v: item.v.map((entry) => copy(entry, null) ?? PDF_NULL) };
+      case "dict":
+        return { t: "dict", v: copyDict(item.v) };
+      case "stream": {
+        const dict = copyDict(item.dict, "Length");
+        dict.set("Length", { t: "num", v: item.raw.length });
+        return { t: "stream", dict, raw: item.raw };
+      }
+      default:
+        return item;
+    }
+  };
+  return copy(value, null) ?? PDF_NULL;
+}
+
+// --- serialisation ---------------------------------------------------------------
+
+/** Text as bytes, one byte per char (every string the writer builds is
+ * ASCII or already one char per byte). */
+function latin1Bytes(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    out[i] = text.charCodeAt(i) & 0xff;
+  }
+  return out;
+}
+
+/** Bytes as a string, one char per byte — exact for every byte value, which
+ * the reader's windows-1252 `latin1` is not (0x80–0x9f). */
+function byteString(bytes: Uint8Array): string {
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return text;
+}
+
+/** A number in PDF syntax, which has no exponent notation. */
+function formatPdfNumber(value: number): string {
+  if (!Number.isFinite(value) || value === 0) {
+    return "0";
+  }
+  const text = String(value);
+  if (!/e/i.test(text)) {
+    return text;
+  }
+  // No real PDF value is this large; clamp rather than write an exponent.
+  if (Math.abs(value) >= 1e21) {
+    return value > 0 ? "100000000000000000000" : "-100000000000000000000";
+  }
+  const fixed = value.toFixed(10).replace(/\.?0+$/, "");
+  return fixed === "-0" ? "0" : fixed;
+}
+
+function hex2(byte: number): string {
+  return byte.toString(16).toUpperCase().padStart(2, "0");
+}
+
+/** A name in PDF syntax: anything but a regular printable character (and
+ * the `#` escape itself) is written `#xx`. */
+function formatPdfName(name: string): string {
+  let out = "/";
+  for (let i = 0; i < name.length; i += 1) {
+    const code = name.charCodeAt(i) & 0xff;
+    out += code > 0x20 && code < 0x7f && code !== 0x23 && !isDelimiter(code) ? name[i] : `#${hex2(code)}`;
+  }
+  return out;
+}
+
+/** A string in PDF syntax: literal when every byte is printable ASCII (with
+ * `\`, `(` and `)` escaped), hex otherwise — exact for any bytes. */
+function formatPdfString(bytes: Uint8Array): string {
+  let printable = true;
+  for (const byte of bytes) {
+    if (byte < 0x20 || byte > 0x7e) {
+      printable = false;
+      break;
+    }
+  }
+  if (printable) {
+    let out = "(";
+    for (const byte of bytes) {
+      const char = String.fromCharCode(byte);
+      out += byte === 0x28 || byte === 0x29 || byte === 0x5c ? `\\${char}` : char;
+    }
+    return `${out})`;
+  }
+  let out = "<";
+  for (const byte of bytes) {
+    out += hex2(byte);
+  }
+  return `${out}>`;
+}
+
+/** One value in PDF syntax (a stream writes its dictionary; the emitter
+ * writes its data). */
+function formatPdfValue(value: PdfValue): string {
+  switch (value.t) {
+    case "null":
+      return "null";
+    case "bool":
+      return value.v ? "true" : "false";
+    case "num":
+      return formatPdfNumber(value.v);
+    case "str":
+      return formatPdfString(value.v);
+    case "name":
+      return formatPdfName(value.v);
+    case "ref":
+      return `${value.num} ${value.gen} R`;
+    case "array":
+      return `[${value.v.map(formatPdfValue).join(" ")}]`;
+    case "dict":
+      return `<<${Array.from(value.v, ([key, item]) => ` ${formatPdfName(key)} ${formatPdfValue(item)}`).join("")} >>`;
+    case "stream":
+      return formatPdfValue({ t: "dict", v: value.dict });
+  }
+}
+
+/** The file: header, objects 1..n in number order, a classic xref table and
+ * the trailer. Every offset is a byte offset — all syntax is ASCII. */
+function emitPdf(objects: readonly PdfValue[], trailer: Map<string, PdfValue>): Uint8Array {
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  const push = (data: string | Uint8Array): void => {
+    const bytes = typeof data === "string" ? latin1Bytes(data) : data;
+    chunks.push(bytes);
+    length += bytes.length;
+  };
+  // The comment line of four high bytes marks the file as binary.
+  push("%PDF-1.7\n%âãÏÓ\n");
+  const offsets: number[] = [];
+  for (let num = 1; num < objects.length; num += 1) {
+    offsets.push(length);
+    const value = objects[num];
+    if (value.t === "stream") {
+      push(`${num} 0 obj\n${formatPdfValue(value)}\nstream\n`);
+      push(value.raw);
+      push("\nendstream\nendobj\n");
+    } else {
+      push(`${num} 0 obj\n${formatPdfValue(value)}\nendobj\n`);
+    }
+  }
+  const xrefAt = length;
+  const rows = [`xref\n0 ${objects.length}\n0000000000 65535 f \n`];
+  for (const offset of offsets) {
+    rows.push(`${String(offset).padStart(10, "0")} 00000 n \n`);
+  }
+  push(rows.join(""));
+  push(`trailer\n${formatPdfValue({ t: "dict", v: trailer })}\nstartxref\n${xrefAt}\n%%EOF\n`);
+  const out = new Uint8Array(length);
+  let cursor = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, cursor);
+    cursor += chunk.length;
+  }
+  return out;
+}
+
+// --- the copier --------------------------------------------------------------------
+
+const outRef = (num: number): PdfValue => ({ t: "ref", num, gen: 0 });
+const nameValue = (v: string): PdfValue => ({ t: "name", v });
+const arrayValue = (v: PdfValue[]): PdfValue => ({ t: "array", v });
+const dictValue = (entries: Array<[string, PdfValue]>): PdfValue => ({ t: "dict", v: new Map(entries) });
+
+/** A text string (ISO 32000 7.9.2.2): printable ASCII as is, anything else
+ * UTF-16BE behind its byte-order mark. */
+function textStringValue(text: string): PdfValue {
+  if (/^[\x20-\x7e]*$/.test(text)) {
+    return { t: "str", v: latin1Bytes(text) };
+  }
+  const out = new Uint8Array(2 + text.length * 2);
+  out[0] = 0xfe;
+  out[1] = 0xff;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    out[2 + i * 2] = code >> 8;
+    out[3 + i * 2] = code & 0xff;
+  }
+  return { t: "str", v: out };
+}
+
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, "0");
+}
+
+/** A date string (ISO 32000 7.9.4), in UTC. */
+function dateStringValue(date: Date): PdfValue {
+  return {
+    t: "str",
+    v: latin1Bytes(
+      `D:${pad(date.getUTCFullYear(), 4)}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}` +
+        `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}${pad(date.getUTCSeconds())}Z`,
+    ),
+  };
+}
+
+/** A named destination of a source. */
+interface NamedDest {
+  /** The destination as written: an array, or a dictionary holding /D. */
+  value: PdfValue;
+  /** The source page it points at; null when that cannot be read. */
+  pageIndex: number | null;
+  /** Its name in the output, when it is kept. */
+  outName?: string;
+}
+
+/** Everything the copier knows about one source. */
+interface MergeSource {
+  key: string;
+  doc: PdfDocument;
+  catalog: Map<string, PdfValue>;
+  /** Never copied: the catalog and the page tree's interior nodes. */
+  stop: Set<number>;
+  /** Page object number → page index. */
+  pageIndexByNum: Map<number, number>;
+  /** Page index → the output page it first became. */
+  firstOutPage: Map<number, number>;
+  /** Source object number → output number: the per-source visited set. */
+  shared: Map<number, number>;
+  /** "n:<name>" for the catalog's /Dests dictionary, "s:<bytes>" for the
+   * /Dests name tree — the two namespaces a destination name can live in. */
+  named: Map<string, NamedDest>;
+}
+
+/** A page tree's interior nodes, walked from its root with a visited set. */
+function pageTreeNodes(doc: PdfDocument, root: PdfValue | undefined, into: Set<number>): void {
+  const stack = root?.t === "ref" ? [root.num] : [];
+  const seen = new Set<number>();
+  while (stack.length > 0) {
+    const num = stack.pop() as number;
+    if (seen.has(num)) {
+      continue;
+    }
+    seen.add(num);
+    const node = doc.objects.get(num);
+    const kids = node?.t === "dict" ? resolve(doc, node.v.get("Kids") ?? PDF_NULL) : PDF_NULL;
+    if (kids.t !== "array") {
+      continue; // a leaf: a page
+    }
+    into.add(num);
+    for (const kid of kids.v) {
+      if (kid.t === "ref") {
+        stack.push(kid.num);
+      }
+    }
+  }
+}
+
+function mergeSource(key: string, doc: PdfDocument): MergeSource {
+  const rootValue = doc.trailer.get("Root");
+  const root = rootValue === undefined ? PDF_NULL : resolve(doc, rootValue);
+  const catalog = root.t === "dict" ? root.v : new Map<string, PdfValue>();
+  const stop = new Set<number>();
+  if (rootValue?.t === "ref") {
+    stop.add(rootValue.num);
+  }
+  pageTreeNodes(doc, catalog.get("Pages"), stop);
+  return {
+    key,
+    doc,
+    catalog,
+    stop,
+    pageIndexByNum: new Map(doc.pages.map((page, index) => [page.ref.num, index])),
+    firstOutPage: new Map(),
+    shared: new Map(),
+    named: new Map(),
+  };
+}
+
+/** A name tree's entries — keys one char per byte — walked with a visited
+ * set under the resolution depth cap. */
+function nameTreeEntries(doc: PdfDocument, root: PdfValue | undefined): Array<[string, PdfValue]> {
+  const out: Array<[string, PdfValue]> = [];
+  const seen = new Set<number>();
+  const visit = (value: PdfValue, depth: number): void => {
+    if (depth > MAX_RESOLVE_DEPTH || (value.t === "ref" && seen.has(value.num))) {
+      return;
+    }
+    if (value.t === "ref") {
+      seen.add(value.num);
+    }
+    const node = resolve(doc, value);
+    if (node.t !== "dict") {
+      return;
+    }
+    const names = resolve(doc, node.v.get("Names") ?? PDF_NULL);
+    if (names.t === "array") {
+      for (let i = 0; i + 1 < names.v.length && out.length < MAX_PDF_OBJECTS; i += 2) {
+        const key = resolve(doc, names.v[i]);
+        if (key.t === "str") {
+          out.push([byteString(key.v), names.v[i + 1]]);
+        }
+      }
+    }
+    const kids = resolve(doc, node.v.get("Kids") ?? PDF_NULL);
+    if (kids.t === "array") {
+      for (const kid of kids.v) {
+        visit(kid, depth + 1);
+      }
+    }
+  };
+  if (root !== undefined) {
+    visit(root, 0);
+  }
+  return out;
+}
+
+/** The source page an explicit destination points at — an array whose first
+ * element is a page reference, or a dictionary holding one as /D — or null. */
+function destPageIndex(src: MergeSource, dest: PdfValue, depth = 0): number | null {
+  const value = resolve(src.doc, dest);
+  if (value.t === "array") {
+    const first = value.v[0];
+    return first?.t === "ref" ? src.pageIndexByNum.get(first.num) ?? null : null;
+  }
+  if (value.t === "dict" && depth === 0) {
+    return destPageIndex(src, value.v.get("D") ?? PDF_NULL, 1);
+  }
+  return null;
+}
+
+/** What becomes of a destination in the output: kept (as a string `rename`
+ * when its name changes or was a PDF 1.1 name object), or dropped — saying
+ * where it pointed. */
+type DestVerdict = { keep: true; rename?: string } | { keep: false; page?: number; where: string };
+
+function judgeDest(src: MergeSource, dest: PdfValue): DestVerdict {
+  const value = resolve(src.doc, dest);
+  if (value.t === "name" || value.t === "str") {
+    const text = value.t === "name" ? value.v : byteString(value.v);
+    const label = value.t === "name" ? value.v : pdfTextOf(value);
+    const entry = src.named.get(`${value.t === "name" ? "n" : "s"}:${text}`);
+    if (!entry) {
+      return { keep: false, where: `the destination “${label}”, which does not exist` };
+    }
+    if (entry.outName === undefined) {
+      return entry.pageIndex === null
+        ? { keep: false, where: `the destination “${label}”, which could not be read` }
+        : { keep: false, page: entry.pageIndex + 1, where: `page ${entry.pageIndex + 1}, which is not in the merged PDF` };
+    }
+    return value.t === "name" || entry.outName !== text ? { keep: true, rename: entry.outName } : { keep: true };
+  }
+  const pageIndex = destPageIndex(src, value);
+  if (pageIndex === null) {
+    return { keep: false, where: "a destination that could not be read" };
+  }
+  if (!src.firstOutPage.has(pageIndex)) {
+    return { keep: false, page: pageIndex + 1, where: `page ${pageIndex + 1}, which is not in the merged PDF` };
+  }
+  return { keep: true };
+}
+
+/** The internal destination an annotation or bookmark jumps to: its /Dest,
+ * or the /D of its /GoTo action. */
+function internalDest(
+  doc: PdfDocument,
+  dict: Map<string, PdfValue>,
+): { dest: PdfValue; action?: Map<string, PdfValue> } | null {
+  const dest = dict.get("Dest");
+  if (dest !== undefined) {
+    return { dest };
+  }
+  const action = resolve(doc, dict.get("A") ?? PDF_NULL);
+  if (action.t === "dict" && isName(resolve(doc, action.v.get("S") ?? PDF_NULL), "GoTo")) {
+    return { dest: action.v.get("D") ?? PDF_NULL, action: action.v };
+  }
+  return null;
+}
+
+/** `dict` with its destination renamed to the string `name` — on a copy, an
+ * action dictionary inlined so a shared one is never edited. */
+function renameDest(dict: Map<string, PdfValue>, target: { action?: Map<string, PdfValue> }, name: string): void {
+  const renamed: PdfValue = { t: "str", v: latin1Bytes(name) };
+  if (target.action) {
+    dict.set("A", { t: "dict", v: new Map(target.action).set("D", renamed) });
+  } else {
+    dict.set("Dest", renamed);
+  }
+}
+
+/** Reads a source's named destinations and decides each one's output name:
+ * kept under its own name, or under a source-qualified one on a collision
+ * ("<source>:<name>", then numbered), when its page is in the output; else
+ * dropped with a `namedDestination` record. */
+function nameDestinations(src: MergeSource, taken: Set<string>, dropped: PdfDropRecord[]): void {
+  const { doc, catalog } = src;
+  const dests = resolve(doc, catalog.get("Dests") ?? PDF_NULL);
+  if (dests.t === "dict") {
+    for (const [name, value] of dests.v) {
+      src.named.set(`n:${name}`, { value, pageIndex: destPageIndex(src, value) });
+    }
+  }
+  const names = resolve(doc, catalog.get("Names") ?? PDF_NULL);
+  if (names.t === "dict") {
+    for (const [key, value] of nameTreeEntries(doc, names.v.get("Dests"))) {
+      src.named.set(`s:${key}`, { value, pageIndex: destPageIndex(src, value) });
+    }
+  }
+  const prefix = byteString(new TextEncoder().encode(`${src.key}:`));
+  for (const [key, entry] of src.named) {
+    const text = key.slice(2);
+    const label = key.startsWith("s:") ? pdfTextOf({ t: "str", v: latin1Bytes(text) }) : text;
+    if (entry.pageIndex === null || !src.firstOutPage.has(entry.pageIndex)) {
+      dropped.push({
+        kind: "namedDestination",
+        source: src.key,
+        ...(entry.pageIndex === null ? {} : { page: entry.pageIndex + 1 }),
+        reason:
+          entry.pageIndex === null
+            ? `The named destination “${label}” could not be read, so it was removed.`
+            : `The named destination “${label}” pointed at page ${entry.pageIndex + 1}, which is not in the merged PDF, so it was removed.`,
+      });
+      continue;
+    }
+    let outName = text;
+    for (let n = 1; taken.has(outName); n += 1) {
+      outName = n === 1 ? `${prefix}${text}` : `${prefix}${text} (${n})`;
+    }
+    taken.add(outName);
+    entry.outName = outName;
+  }
+}
+
+/** One bookmark of the output, before numbering. `src` is the source whose
+ * values `link` and `extra` hold (null: already output values). */
+interface OutlineNode {
+  title: PdfValue;
+  link: Array<[string, PdfValue]>;
+  extra: Array<[string, PdfValue]>;
+  open: boolean;
+  children: OutlineNode[];
+  src: MergeSource | null;
+}
+
+/** A source's outline tree, filtered: an entry pointing at a page that is
+ * not in the output is removed (with an `outlineEntry` record) and its
+ * surviving descendants take its place; a renamed destination follows its
+ * new name. Walked with a visited set and the resolution depth cap. */
+function readOutline(src: MergeSource, dropped: PdfDropRecord[]): OutlineNode[] {
+  const { doc } = src;
+  const root = resolve(doc, src.catalog.get("Outlines") ?? PDF_NULL);
+  if (root.t !== "dict") {
+    return [];
+  }
+  const seen = new Set<number>();
+  const readList = (first: PdfValue | undefined, depth: number): OutlineNode[] => {
+    const nodes: OutlineNode[] = [];
+    if (depth > MAX_RESOLVE_DEPTH) {
+      return nodes;
+    }
+    let cursor = first;
+    while (cursor?.t === "ref" && !seen.has(cursor.num) && seen.size < MAX_PDF_OBJECTS) {
+      seen.add(cursor.num);
+      const item = resolve(doc, cursor);
+      if (item.t !== "dict") {
+        break;
+      }
+      cursor = item.v.get("Next");
+      const children = readList(item.v.get("First"), depth + 1);
+      const title = resolve(doc, item.v.get("Title") ?? PDF_NULL);
+      const count = resolve(doc, item.v.get("Count") ?? PDF_NULL);
+      const node: OutlineNode = {
+        title: title.t === "str" ? title : { t: "str", v: new Uint8Array(0) },
+        link: [],
+        extra: [],
+        open: count.t === "num" && count.v > 0,
+        children,
+        src,
+      };
+      for (const key of ["C", "F"]) {
+        const value = item.v.get(key);
+        if (value !== undefined) {
+          node.extra.push([key, value]);
+        }
+      }
+      const target = internalDest(doc, item.v);
+      if (target) {
+        const verdict = judgeDest(src, target.dest);
+        if (!verdict.keep) {
+          dropped.push({
+            kind: "outlineEntry",
+            source: src.key,
+            ...(verdict.page === undefined ? {} : { page: verdict.page }),
+            reason: `The bookmark “${pdfTextOf(node.title)}” pointed at ${verdict.where}, so it was removed.`,
+          });
+          nodes.push(...children);
+          continue;
+        }
+        const link = new Map<string, PdfValue>(target.action ? [["A", item.v.get("A") ?? PDF_NULL]] : [["Dest", target.dest]]);
+        if (verdict.rename !== undefined) {
+          renameDest(link, target, verdict.rename);
+        }
+        node.link = Array.from(link);
+      } else if (item.v.has("A")) {
+        // Any other action (a web link, a named action) comes across as is.
+        node.link = [["A", item.v.get("A") ?? PDF_NULL]];
+      }
+      nodes.push(node);
+    }
+    return nodes;
+  };
+  return readList(root.v.get("First"), 0);
+}
+
+/** References in order, each once: a union. */
+function unionRefs(values: PdfValue[]): PdfValue[] {
+  const seen = new Set<number>();
+  return values.filter((value) => value.t === "ref" && !seen.has(value.num) && seen.add(value.num));
+}
+
+/** How many descendants of an outline node show when it is open. */
+function openCount(node: OutlineNode): number {
+  return node.children.reduce((sum, child) => sum + 1 + (child.open ? openCount(child) : 0), 0);
+}
+
+/** One record per catalog-level construct a merge does not carry. */
+function catalogDrops(src: MergeSource, pageCount: number, dropped: PdfDropRecord[]): void {
+  const { doc, catalog, key } = src;
+  const record = (kind: PdfDropKind, reason: string): void => {
+    dropped.push({ kind, source: key, reason });
+  };
+  if (catalog.has("AcroForm")) {
+    const form = resolve(doc, catalog.get("AcroForm") ?? PDF_NULL);
+    const sigFlags = form.t === "dict" ? resolve(doc, form.v.get("SigFlags") ?? PDF_NULL) : PDF_NULL;
+    record(
+      "acroForm",
+      "Its form fields are no longer fillable: what was filled in still shows, but the form itself is not carried into a merged PDF." +
+        (sigFlags.t === "num" && sigFlags.v > 0 ? " Its digital signature does not survive a merge and was not carried." : ""),
+    );
+  }
+  if (catalog.has("StructTreeRoot")) {
+    record("structureTree", "Its structure tree (the tags that make it accessible) was not carried, so the merged PDF is not a tagged PDF.");
+  }
+  const names = resolve(doc, catalog.get("Names") ?? PDF_NULL);
+  if (names.t === "dict" && names.v.has("JavaScript")) {
+    record("javascript", "Its document scripts (JavaScript) were removed.");
+  }
+  // A catalog's /AA holds JavaScript actions only (ISO 32000 table 197).
+  if (catalog.has("AA")) {
+    record("javascript", "Its document actions (scripts run on closing, saving or printing) were removed.");
+  }
+  if (catalog.has("OpenAction")) {
+    record("openAction", "What it did on opening (its open action) was removed.");
+  }
+  if (names.t === "dict" && names.v.has("EmbeddedFiles")) {
+    const files = nameTreeEntries(doc, names.v.get("EmbeddedFiles"));
+    if (files.length === 0) {
+      record("embeddedFile", "Its attached files were not carried.");
+    }
+    for (const [name] of files) {
+      record("embeddedFile", `The attached file “${pdfTextOf({ t: "str", v: latin1Bytes(name) })}” was not carried.`);
+    }
+  }
+  if (catalog.has("PageLabels")) {
+    record("pageLabel", `Its page labels were removed; the merged PDF numbers its pages 1 to ${pageCount}.`);
+  }
+}
+
+/** The value a page's inheritable attribute takes, as written: the page's
+ * own entry, else the nearest ancestor's — a reference kept a reference, so
+ * a /Resources the whole tree shares is still copied once. What the reader
+ * resolved (PdfPageRef.inherited) is the authority: where a malformed
+ * /Parent chain disagrees with it, its resolved value is written instead. */
+function inheritedValue(doc: PdfDocument, page: PdfPageRef, key: string): PdfValue | undefined {
+  const resolved = page.inherited.get(key);
+  if (resolved === undefined) {
+    return undefined;
+  }
+  let node = resolve(doc, { t: "ref", num: page.ref.num, gen: page.ref.gen });
+  for (let depth = 0; node.t === "dict" && depth <= MAX_RESOLVE_DEPTH; depth += 1) {
+    const raw = node.v.get(key);
+    if (raw !== undefined) {
+      return resolve(doc, raw) === resolved ? raw : resolved;
+    }
+    node = resolve(doc, node.v.get("Parent") ?? PDF_NULL);
+  }
+  return resolved;
+}
+
+const CATALOG_NUM = 1;
+const PAGES_NUM = 2;
+
+/** Refuses a plan before anything is copied: an encrypted source, a
+ * selection naming a page its source does not have, an empty plan, or a
+ * bound (MAX_MERGE_PAGES, MAX_MERGE_SOURCE_BYTES). */
+function refusePlan(plan: PdfAssemblyPlan, sources: Map<PdfDocument, MergeSource>): void {
+  const refused: PdfDropRecord[] = [];
+  for (const src of sources.values()) {
+    if (src.doc.trailer.has("Encrypt")) {
+      refused.push(sourceRefusalRecord(src.key, new PdfEncryptedError(0)));
+    }
+  }
+  for (const selection of plan.pages) {
+    const page = Number.isInteger(selection.pageIndex) ? selection.doc.pages[selection.pageIndex] : undefined;
+    const dict = page ? resolve(selection.doc, { t: "ref", num: page.ref.num, gen: page.ref.gen }) : PDF_NULL;
+    if (dict.t !== "dict" && !refused.some((record) => record.source === selection.source)) {
+      refused.push(
+        sourceRefusalRecord(selection.source, new Error(`it has no page ${selection.pageIndex + 1}`)),
+      );
+    }
+  }
+  if (refused.length > 0) {
+    throw new PdfAssemblyRefusal(refusalMessage(refused), refused);
+  }
+  if (plan.pages.length === 0) {
+    throw new PdfAssemblyRefusal("There are no pages to merge.");
+  }
+  let sourceBytes = 0;
+  for (const src of sources.values()) {
+    sourceBytes += src.doc.bytes.byteLength;
+  }
+  const limit = mergeLimitRefusal(plan.pages.length, sourceBytes);
+  if (limit) {
+    throw new PdfAssemblyRefusal(limit);
+  }
+}
+
+/** Writes the plan's pages into one new PDF (see the section header). Throws
+ * PdfAssemblyRefusal before copying anything when the plan is refused, and
+ * PdfAssemblyCancelled when `hooks.cancelled` stops it at a page boundary;
+ * neither leaves anything behind. Never mutates the plan or its sources. */
+export async function assemblePdf(plan: PdfAssemblyPlan, hooks: PdfAssemblyHooks = {}): Promise<PdfAssemblyResult> {
+  // Sources by identity, in first-appearance order.
+  const sources = new Map<PdfDocument, MergeSource>();
+  for (const selection of plan.pages) {
+    if (!sources.has(selection.doc)) {
+      sources.set(selection.doc, mergeSource(selection.source, selection.doc));
+    }
+  }
+  refusePlan(plan, sources);
+  const between = hooks.between ?? yieldToMainThread;
+  const dropped: PdfDropRecord[] = [];
+  const total = plan.pages.length;
+
+  // [0] is the free head of the xref; 1 is the catalog, 2 the page tree,
+  // then one number per output page — known up front, so a link can point
+  // at a page copied after it.
+  const objects: PdfValue[] = [PDF_NULL, PDF_NULL, PDF_NULL];
+  const allocate = (): number => objects.push(PDF_NULL) - 1;
+  const pageOut = plan.pages.map(() => allocate());
+  plan.pages.forEach((selection, index) => {
+    const src = sources.get(selection.doc) as MergeSource;
+    if (!src.firstOutPage.has(selection.pageIndex)) {
+      src.firstOutPage.set(selection.pageIndex, pageOut[index]);
+    }
+  });
+  const taken = new Set<string>();
+  for (const src of sources.values()) {
+    nameDestinations(src, taken, dropped);
+  }
+
+  const NO_OWNED = new Map<number, number>();
+  /** Rewrites a value of `src` into output terms. `owned` holds the
+   * page-owned copies (annotations) of the page being copied, `page` that
+   * page's source number and output number. */
+  const rewriterFor =
+    (src: MergeSource, owned: Map<number, number>, page?: { num: number; out: number }) =>
+    (value: PdfValue): PdfValue =>
+      rewritePdfRefs(value, (ref, key) => {
+        if (key === "Parent") {
+          const parent = owned.get(ref.num) ?? src.shared.get(ref.num);
+          return parent === undefined ? undefined : outRef(parent);
+        }
+        if (page && ref.num === page.num) {
+          return outRef(page.out);
+        }
+        const own = owned.get(ref.num);
+        if (own !== undefined) {
+          return outRef(own);
+        }
+        const pageIndex = src.pageIndexByNum.get(ref.num);
+        if (pageIndex !== undefined) {
+          const out = src.firstOutPage.get(pageIndex);
+          return out === undefined ? PDF_NULL : outRef(out);
+        }
+        const out = src.shared.get(ref.num);
+        return out === undefined ? PDF_NULL : outRef(out);
+      });
+  /** Copies (numbers, then rewrites) everything `roots` reach that `src`
+   * has not copied yet. */
+  const copyReachable = (src: MergeSource, roots: PdfValue[], owned = NO_OWNED, page?: { num: number; out: number }): void => {
+    const fresh = pdfReachable(
+      src.doc,
+      roots,
+      (num) => src.shared.has(num) || owned.has(num) || src.pageIndexByNum.has(num) || src.stop.has(num),
+    );
+    for (const num of fresh) {
+      src.shared.set(num, allocate());
+    }
+    const rewrite = rewriterFor(src, owned, page);
+    for (const num of fresh) {
+      objects[src.shared.get(num) as number] = rewrite(src.doc.objects.get(num) ?? PDF_NULL);
+    }
+  };
+  /** A source value in output terms, copying what it reaches. */
+  const copyValue = (src: MergeSource, value: PdfValue): PdfValue => {
+    copyReachable(src, [value]);
+    return rewriterFor(src, NO_OWNED)(value);
+  };
+
+  hooks.onProgress?.(0, total);
+  for (const [index, selection] of plan.pages.entries()) {
+    if (index > 0 && index % MERGE_YIELD_PAGES === 0) {
+      await between();
+    }
+    if (hooks.cancelled?.()) {
+      throw new PdfAssemblyCancelled();
+    }
+    const src = sources.get(selection.doc) as MergeSource;
+    const { doc } = src;
+    const page = doc.pages[selection.pageIndex];
+    const source = resolve(doc, { t: "ref", num: page.ref.num, gen: page.ref.gen }) as { t: "dict"; v: Map<string, PdfValue> };
+    const pageNumber = selection.pageIndex + 1;
+
+    // The page dictionary, materialised: inherited attributes onto the page
+    // itself, the rotation added, the parent left to the new tree.
+    const working = new Map(source.v);
+    working.delete("Parent");
+    for (const key of ["Resources", "MediaBox", "CropBox"]) {
+      const value = inheritedValue(doc, page, key);
+      if (value !== undefined) {
+        working.set(key, value);
+      }
+    }
+    if (!working.has("Resources")) {
+      working.set("Resources", dictValue([]));
+    }
+    if (!working.has("MediaBox")) {
+      // What the reader measured the page by when no box was readable.
+      working.set("MediaBox", arrayValue(DEFAULT_MEDIA_BOX.map((v) => ({ t: "num", v }))));
+    }
+    working.set("Rotate", { t: "num", v: normaliseRotation(page.rotate + (selection.rotateBy ?? 0)) });
+
+    // Its annotations: page-owned copies, an internal link remapped (or, to
+    // a page not in the output, made inert), a signature's bytes left out.
+    const owned = new Map<number, number>();
+    const ownedValues: Array<[number, PdfValue]> = [];
+    const annots: PdfValue[] = [];
+    const annotsValue = resolve(doc, source.v.get("Annots") ?? PDF_NULL);
+    for (const entry of annotsValue.t === "array" ? annotsValue.v : []) {
+      const annotValue = resolve(doc, entry);
+      if (annotValue.t !== "dict") {
+        continue; // a broken entry carries nothing
+      }
+      const annot = new Map(annotValue.v);
+      const subtype = resolve(doc, annot.get("Subtype") ?? PDF_NULL);
+      const target = internalDest(doc, annotValue.v);
+      if (target) {
+        const verdict = judgeDest(src, target.dest);
+        if (!verdict.keep) {
+          const isLink = isName(subtype, "Link");
+          dropped.push({
+            kind: "annotation",
+            source: src.key,
+            page: pageNumber,
+            reason: isLink
+              ? `A link on page ${pageNumber} pointed at ${verdict.where}, so it was removed.`
+              : `A ${subtype.t === "name" ? subtype.v : "page"} annotation on page ${pageNumber} pointed at ${verdict.where}, so its action was removed.`,
+          });
+          if (isLink) {
+            continue;
+          }
+          annot.delete("Dest");
+          annot.delete("A");
+        } else if (verdict.rename !== undefined) {
+          renameDest(annot, target, verdict.rename);
+        }
+      }
+      // A filled form keeps its look (/AP comes across); a signature's bytes
+      // do not — a merge invalidates the signature anyway.
+      if (isName(subtype, "Widget") && isName(resolve(doc, annot.get("FT") ?? PDF_NULL), "Sig")) {
+        annot.delete("V");
+      }
+      if (entry.t === "ref") {
+        if (!owned.has(entry.num)) {
+          owned.set(entry.num, allocate());
+          ownedValues.push([entry.num, { t: "dict", v: annot }]);
+        }
+        annots.push(entry);
+      } else {
+        annots.push({ t: "dict", v: annot });
+      }
+    }
+    if (annots.length > 0) {
+      working.set("Annots", arrayValue(annots));
+    } else {
+      working.delete("Annots");
+    }
+
+    const scope = { num: page.ref.num, out: pageOut[index] };
+    const pageValue: PdfValue = { t: "dict", v: working };
+    copyReachable(src, [pageValue, ...ownedValues.map(([, value]) => value)], owned, scope);
+    const rewrite = rewriterFor(src, owned, scope);
+    for (const [num, value] of ownedValues) {
+      objects[owned.get(num) as number] = rewrite(value);
+    }
+    const copied = rewrite(pageValue) as { t: "dict"; v: Map<string, PdfValue> };
+    const pageDict = new Map<string, PdfValue>([
+      ["Type", nameValue("Page")],
+      ["Parent", outRef(PAGES_NUM)],
+    ]);
+    for (const [key, value] of copied.v) {
+      if (key !== "Type" && key !== "Parent") {
+        pageDict.set(key, value);
+      }
+    }
+    objects[pageOut[index]] = { t: "dict", v: pageDict };
+    hooks.onProgress?.(index + 1, total);
+  }
+  if (hooks.cancelled?.()) {
+    throw new PdfAssemblyCancelled();
+  }
+
+  const catalog = new Map<string, PdfValue>([
+    ["Type", nameValue("Catalog")],
+    ["Pages", outRef(PAGES_NUM)],
+  ]);
+
+  // Outlines: one top-level entry per source, in first-appearance order,
+  // pointing at its first output page, its own tree (filtered) beneath.
+  if (plan.outline) {
+    const tops: OutlineNode[] = [];
+    for (const src of sources.values()) {
+      const firstPage = Math.min(...src.firstOutPage.values());
+      tops.push({
+        title: textStringValue(src.key),
+        link: [["Dest", arrayValue([outRef(firstPage), nameValue("Fit")])]],
+        extra: [],
+        open: true,
+        children: readOutline(src, dropped),
+        src: null,
+      });
+    }
+    const root = allocate();
+    const writeItems = (nodes: OutlineNode[], parent: number): { first: number; last: number } => {
+      const nums = nodes.map(() => allocate());
+      nodes.forEach((node, i) => {
+        const dict = new Map<string, PdfValue>([
+          ["Title", node.title],
+          ["Parent", outRef(parent)],
+        ]);
+        if (i > 0) {
+          dict.set("Prev", outRef(nums[i - 1]));
+        }
+        if (i + 1 < nums.length) {
+          dict.set("Next", outRef(nums[i + 1]));
+        }
+        if (node.children.length > 0) {
+          const kids = writeItems(node.children, nums[i]);
+          dict.set("First", outRef(kids.first));
+          dict.set("Last", outRef(kids.last));
+          // Positive: open, showing this many; negative: closed.
+          dict.set("Count", { t: "num", v: node.open ? openCount(node) : -openCount(node) });
+        }
+        for (const [key, value] of [...node.link, ...node.extra]) {
+          dict.set(key, node.src ? copyValue(node.src, value) : value);
+        }
+        objects[nums[i]] = { t: "dict", v: dict };
+      });
+      return { first: nums[0], last: nums[nums.length - 1] };
+    };
+    const top = writeItems(tops, root);
+    const visible = tops.reduce((sum, node) => sum + 1 + (node.open ? openCount(node) : 0), 0);
+    objects[root] = dictValue([
+      ["Type", nameValue("Outlines")],
+      ["First", outRef(top.first)],
+      ["Last", outRef(top.last)],
+      ["Count", { t: "num", v: visible }],
+    ]);
+    catalog.set("Outlines", outRef(root));
+  } else {
+    for (const src of sources.values()) {
+      const outlines = resolve(src.doc, src.catalog.get("Outlines") ?? PDF_NULL);
+      if (outlines.t === "dict" && outlines.v.has("First")) {
+        dropped.push({ kind: "outlineEntry", source: src.key, reason: "Its bookmarks were left out: this merge has no outline." });
+      }
+    }
+  }
+
+  // The kept named destinations, as one name tree (keys in byte order).
+  const destEntries: Array<[string, PdfValue]> = [];
+  for (const src of sources.values()) {
+    for (const entry of src.named.values()) {
+      if (entry.outName !== undefined) {
+        destEntries.push([entry.outName, copyValue(src, entry.value)]);
+      }
+    }
+  }
+  if (destEntries.length > 0) {
+    destEntries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    const names = destEntries.flatMap(([name, value]): PdfValue[] => [{ t: "str", v: latin1Bytes(name) }, value]);
+    catalog.set("Names", dictValue([["Dests", dictValue([["Names", arrayValue(names)]])]]));
+  }
+
+  // Optional content: /OCGs concatenated, /D's ON and OFF unioned (a source
+  // whose base state is OFF contributes every group it does not turn ON),
+  // its /Order, /RBGroups and /Locked concatenated.
+  const groups: PdfValue[] = [];
+  const config = { ON: [] as PdfValue[], OFF: [] as PdfValue[], Order: [] as PdfValue[], RBGroups: [] as PdfValue[], Locked: [] as PdfValue[] };
+  for (const src of sources.values()) {
+    const { doc } = src;
+    const props = resolve(doc, src.catalog.get("OCProperties") ?? PDF_NULL);
+    if (props.t !== "dict") {
+      continue;
+    }
+    const listOf = (holder: PdfValue, key: string): PdfValue[] => {
+      const value = holder.t === "dict" ? resolve(doc, holder.v.get(key) ?? PDF_NULL) : PDF_NULL;
+      return value.t === "array" ? value.v : [];
+    };
+    const defaults = resolve(doc, props.v.get("D") ?? PDF_NULL);
+    const sourceGroups = listOf(props, "OCGs");
+    groups.push(...sourceGroups.map((group) => copyValue(src, group)));
+    const on = listOf(defaults, "ON");
+    config.ON.push(...on.map((group) => copyValue(src, group)));
+    config.OFF.push(...listOf(defaults, "OFF").map((group) => copyValue(src, group)));
+    if (defaults.t === "dict" && isName(resolve(doc, defaults.v.get("BaseState") ?? PDF_NULL), "OFF")) {
+      const turnedOn = new Set(on.filter((group) => group.t === "ref").map((group) => (group as { num: number }).num));
+      config.OFF.push(
+        ...sourceGroups
+          .filter((group) => group.t === "ref" && !turnedOn.has(group.num))
+          .map((group) => copyValue(src, group)),
+      );
+    }
+    for (const key of ["Order", "RBGroups", "Locked"] as const) {
+      config[key].push(...listOf(defaults, key).map((value) => copyValue(src, value)));
+    }
+  }
+  if (groups.length > 0) {
+    const defaults: Array<[string, PdfValue]> = [];
+    for (const [key, values] of Object.entries(config)) {
+      const list = key === "ON" || key === "OFF" ? unionRefs(values) : values;
+      if (list.length > 0) {
+        defaults.push([key, arrayValue(list)]);
+      }
+    }
+    catalog.set("OCProperties", dictValue([["OCGs", arrayValue(unionRefs(groups))], ["D", dictValue(defaults)]]));
+  }
+
+  for (const src of sources.values()) {
+    catalogDrops(src, total, dropped);
+  }
+
+  objects[CATALOG_NUM] = { t: "dict", v: catalog };
+  objects[PAGES_NUM] = dictValue([
+    ["Type", nameValue("Pages")],
+    ["Kids", arrayValue(pageOut.map(outRef))],
+    ["Count", { t: "num", v: total }],
+  ]);
+  const info = new Map<string, PdfValue>([["Title", textStringValue(plan.title)]]);
+  const author = plan.author?.trim();
+  const subject = plan.subject?.trim();
+  if (author) {
+    info.set("Author", textStringValue(author));
+  }
+  if (subject) {
+    info.set("Subject", textStringValue(subject));
+  }
+  info.set("Creator", textStringValue(PDF_PRODUCER));
+  info.set("Producer", textStringValue(PDF_PRODUCER));
+  if (plan.modified) {
+    info.set("CreationDate", dateStringValue(plan.modified));
+    info.set("ModDate", dateStringValue(plan.modified));
+  }
+  const infoNum = allocate();
+  objects[infoNum] = { t: "dict", v: info };
+  const trailer = new Map<string, PdfValue>([
+    ["Size", { t: "num", v: objects.length }],
+    ["Root", outRef(CATALOG_NUM)],
+    ["Info", outRef(infoNum)],
+  ]);
+  return { bytes: emitPdf(objects, trailer), dropped };
+}
+
+/** The page geometry a plan promises — each page's size as its source
+ * measures it, and its /Rotate plus rotateBy. */
+export function plannedPdfPages(
+  plan: Pick<PdfAssemblyPlan, "pages">,
+): Array<{ widthPt: number; heightPt: number; rotate: 0 | 90 | 180 | 270 }> {
+  return plan.pages.map((selection) => {
+    const page = selection.doc.pages[selection.pageIndex];
+    return {
+      widthPt: page?.widthPt ?? 0,
+      heightPt: page?.heightPt ?? 0,
+      rotate: normaliseRotation((page?.rotate ?? 0) + (selection.rotateBy ?? 0)),
+    };
+  });
+}
+
+function describeGeometry(page: { widthPt: number; heightPt: number; rotate: number }): string {
+  return `${Math.round(page.widthPt)} × ${Math.round(page.heightPt)} pt, rotated ${page.rotate}°`;
+}
+
+/** The self-check every produced file is held to before it is kept: its
+ * bytes parse back, to the planned page count, each page at its planned size
+ * and rotation. Throws a user-facing Error otherwise — nothing built from
+ * such bytes may be stored or downloaded. */
+export async function checkAssembledPdf(
+  bytes: Uint8Array,
+  expected: ReturnType<typeof plannedPdfPages>,
+  parse: (bytes: Uint8Array) => Promise<PdfDocument> = parsePdf,
+): Promise<PdfDocument> {
+  let doc: PdfDocument;
+  try {
+    doc = await parse(bytes);
+  } catch (cause) {
+    const reason = cause instanceof Error && cause.message ? cause.message : String(cause);
+    throw new Error(`the merged PDF does not read back (${reason}), so nothing was kept.`, { cause });
+  }
+  if (doc.pages.length !== expected.length) {
+    throw new Error(`the merged PDF has ${doc.pages.length} pages instead of ${expected.length}, so nothing was kept.`);
+  }
+  expected.forEach((want, index) => {
+    const got = doc.pages[index];
+    if (Math.abs(got.widthPt - want.widthPt) > 0.01 || Math.abs(got.heightPt - want.heightPt) > 0.01 || got.rotate !== want.rotate) {
+      throw new Error(
+        `page ${index + 1} of the merged PDF is ${describeGeometry(got)} instead of ${describeGeometry(want)}, so nothing was kept.`,
+      );
+    }
+  });
+  return doc;
 }
