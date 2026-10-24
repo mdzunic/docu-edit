@@ -12,6 +12,8 @@
 //
 // Runtime prop declarations per the espree constraint (see AppShell.vue).
 import DeckActions from "./DeckActions.vue";
+import LanguageStatusControl from "../LanguageStatusControl.vue";
+import CustomDictionaryDialog from "../CustomDictionaryDialog.vue";
 
 const props = defineProps({
   /** e.g. "4 slides" (SPEC-079's readout — presentations.spec asserts it). */
@@ -24,6 +26,9 @@ const props = defineProps({
   deckActions: { type: Object, required: true },
   /** SPEC-104: the useDeckExport controller (the print-and-export dialog). */
   deckExport: { type: Object, default: null },
+  /** SPEC-098: the useSlideSpellCheck controller — the deck header's language
+   * control (SPEC-035's, unchanged) and its custom dictionary dialog. */
+  spell: { type: Object, default: null },
 });
 
 const c = props;
@@ -37,6 +42,27 @@ const c = props;
     <span data-testid="presentation-slide-count">{{ slideCountLabel }}</span>
     · {{ formatName }}
   </span>
+  <LanguageStatusControl
+    v-if="c.spell"
+    class="deck-language"
+    :current-language-tag="c.spell.selectionLanguage.value"
+    :current-language-label="c.spell.currentLanguageLabel.value"
+    :language-options="c.spell.languageOptions"
+    :selection-active="c.spell.selectionActive.value"
+    :selection-no-proof="c.spell.selectionNoProof.value"
+    @select="c.spell.setLanguage"
+    @manage-dictionary="c.spell.openDictionary()"
+    @toggle-no-proof="c.spell.setNoProof"
+  />
+  <CustomDictionaryDialog
+    v-if="c.spell && c.spell.dictionaryOpen.value"
+    :entries="c.spell.customDictionaryList.value"
+    :language-options="c.spell.languageOptions"
+    :default-language="c.spell.deckLanguage.value"
+    @add="c.spell.addDictionaryWord"
+    @remove="c.spell.removeFromDictionary"
+    @close="c.spell.closeDictionary()"
+  />
   <DeckActions
     :save-state="saveState"
     :save-state-text="saveStateText"
@@ -53,6 +79,14 @@ const c = props;
 </template>
 
 <style scoped>
+/* The language readout sits with the deck facts, in the same caption face. */
+.deck-language {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  font-family: var(--font-caption);
+  font-size: var(--text-sm);
+}
+
 /* The deck's facts beside the title, in the caption face the status bar uses —
    chrome to glance at, not a heading. It is the one thing on this bar that may
    shrink: a crowded bar should ellipsise "· POWERPOINT (.PPTX)" long before it

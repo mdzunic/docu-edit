@@ -10,6 +10,8 @@ import { onBeforeUnmount, onMounted, ref, useTemplateRef, watch, nextTick } from
 import SlideStage from "./SlideStage.vue";
 import AnimationStageLayer from "./AnimationStageLayer.vue";
 import SlideTransitionLayer from "./SlideTransitionLayer.vue";
+import SlideProofingLayer from "./SlideProofingLayer.vue";
+import SpellContextMenu from "../SpellContextMenu.vue";
 import UiButton from "../ui/UiButton.vue";
 import { cmToPx } from "../../lib/core/units";
 
@@ -26,6 +28,10 @@ const props = defineProps({
   transitions: { type: Object, required: true },
   /** SPEC-093: the current slide's pre-resolved deck field band. */
   fields: { type: Array, default: () => [] },
+  /** SPEC-098: `{ search, spell }` — useDeckSearch and useSlideSpellCheck —
+   * whose highlight and squiggle rects the proofing layer paints over the
+   * stage, re-measured when the fit scale changes. */
+  proofing: { type: Object, default: null },
 });
 const emit = defineEmits(["add"]);
 const s = props.stageEdit;
@@ -54,6 +60,11 @@ watch(
   () => void nextTick(recomputeScale),
 );
 
+watch(stageScale, () => {
+  props.proofing?.search.remeasure();
+  props.proofing?.spell.remeasure();
+});
+
 onMounted(() => {
   if (resizeObserver && stageContainer.value) {
     resizeObserver.observe(stageContainer.value);
@@ -68,10 +79,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- tabindex="-1": the find bar hands focus back here on close (SPEC-098). -->
   <div
     ref="stageContainer"
     class="stage-workspace"
     data-testid="stage-workspace"
+    tabindex="-1"
   >
     <SlideStage
       v-if="currentSlide"
@@ -108,6 +121,30 @@ onBeforeUnmount(() => {
       @surface-marquee="s.onSurfaceMarquee"
       @surface-draw="s.onSurfaceDraw"
       @surface-mounted="s.registerSurface"
+    >
+      <template
+        v-if="proofing"
+        #overlay
+      >
+        <SlideProofingLayer
+          :highlight-rects="proofing.search.highlightRects.value"
+          :underline-rects="proofing.spell.underlineRects.value"
+          :scale="stageScale"
+          @spell-context="proofing.spell.openContextMenuAt"
+        />
+      </template>
+    </SlideStage>
+    <SpellContextMenu
+      v-if="proofing && proofing.spell.contextMenu.value"
+      :left="proofing.spell.contextMenu.value.left"
+      :top="proofing.spell.contextMenu.value.top"
+      :word="proofing.spell.contextMenu.value.word"
+      :suggestions="proofing.spell.contextMenu.value.suggestions"
+      @suggestion="proofing.spell.applySuggestion"
+      @ignore="proofing.spell.ignore()"
+      @ignore-all="proofing.spell.ignoreAll()"
+      @add-to-dictionary="proofing.spell.addToDictionary()"
+      @dismiss="proofing.spell.closeContextMenu()"
     />
     <div
       v-else
@@ -149,6 +186,10 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.stage-workspace:focus {
+  outline: none;
+}
+
 .stage-workspace {
   position: relative;
   flex: 1 1 auto;

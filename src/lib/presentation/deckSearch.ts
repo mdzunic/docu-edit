@@ -84,27 +84,28 @@ function eachMatch(text: string, regExp: RegExp, found: (start: number, end: num
   }
 }
 
+const paragraphTexts = (paragraphs: SlideParagraph[]): string[] => paragraphs.map(paragraphText);
+
 /** Every hit on one slide: its frames in z-order (a table's cells in row
  * order), then paragraph, then offset — and its notes last. */
 export function findInSlide(model: PresentationModel, slideIndex: number, compiled: CompiledQuery): DeckHit[] {
   const slide = model.slides[slideIndex];
   const hits: DeckHit[] = [];
   if (!slide) return hits;
-  const scan = (texts: string[], at: Omit<DeckHit, "para" | "start" | "end" | "snippet" | "snippetOffset">): void => {
+  const scan = (texts: readonly string[], at: Omit<DeckHit, "para" | "start" | "end" | "snippet" | "snippetOffset">): void => {
     texts.forEach((text, para) => {
       eachMatch(text, compiled.regExp, (start, end) => hits.push({ ...at, para, start, end, ...snippetOf(text, start, end) }));
     });
   };
-  const texts = (paragraphs: SlideParagraph[]): string[] => paragraphs.map(paragraphText);
   for (const frame of slide.frames) {
     // Only the kinds whose text this editor writes back; groups, foreign
     // frames, media, images and charts are never opened.
     if (frame.kind === "text" || frame.kind === "shape") {
-      scan(texts(frame.paragraphs ?? []), { slideIndex, frameId: frame.id, scope: "frame" });
+      scan(paragraphTexts(frame.paragraphs ?? []), { slideIndex, frameId: frame.id, scope: "frame" });
     } else if (frame.kind === "table") {
       frame.rows.forEach((row, r) =>
         row.cells.forEach((cell, c) => {
-          if (!cell.covered) scan(texts(cell.paragraphs), { slideIndex, frameId: frame.id, row: r, column: c, scope: "cell" });
+          if (!cell.covered) scan(paragraphTexts(cell.paragraphs), { slideIndex, frameId: frame.id, row: r, column: c, scope: "cell" });
         }),
       );
     }

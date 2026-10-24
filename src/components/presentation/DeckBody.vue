@@ -40,6 +40,8 @@ const props = defineProps({
   selection: { type: Object, default: null },
   /** SPEC-103: the version history controller, for the stage column. */
   history: { type: Object, default: null },
+  /** SPEC-098: find highlights + spell squiggles ({ search, spell }). */
+  proofing: { type: Object, default: null },
 });
 
 defineEmits(["select", "add", "command", "reorder"]);
@@ -82,6 +84,7 @@ const currentFields = computed(() => asStageFieldsBySlide(props.fieldsBySlide)[p
       :current-index="currentIndex"
       :fields="currentFields"
       :history="history"
+      :proofing="proofing"
       @add="$emit('add')"
     />
   </div>

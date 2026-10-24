@@ -19,6 +19,8 @@ import PresentationDialogs from "../components/presentation/PresentationDialogs.
 import RecoveryBar from "../components/RecoveryBar.vue";
 import ThemesPanel from "../components/presentation/ThemesPanel.vue";
 import TextPanel from "../components/presentation/TextPanel.vue";
+import FindBar from "../components/FindBar.vue";
+import DeckSearchResults from "../components/presentation/DeckSearchResults.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { useDeckLoad } from "./presentation/useDeckLoad";
@@ -27,19 +29,18 @@ import { useDeckNavigation } from "./presentation/useDeckNavigation";
 import { usePresentationEditing } from "./presentation/usePresentationEditing";
 import { useEditingPanels } from "./presentation/useEditingPanels";
 import { useDeckTheme } from "./presentation/useDeckTheme";
-import { useSlideLayouts } from "./presentation/useSlideLayouts";
 import { useSlideRender } from "./presentation/useSlideRender";
 import { useSlideSorter } from "./presentation/useSlideSorter";
 import { usePresentationMenu } from "./presentation/usePresentationMenu";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
 import { useWindowKeys } from "./presentation/useWindowKeys";
 import { useDeckActions } from "./presentation/useDeckActions";
-import { useDeckSetup } from "./presentation/useDeckSetup";
-import { useHeaderFooter } from "./presentation/useHeaderFooter";
 import { useSlideTextDepth } from "./presentation/useSlideTextDepth";
-import { useDeckExport } from "./presentation/useDeckExport";
+import { useDeckDialogs } from "./presentation/useDeckDialogs";
 import { useDeckSaving } from "./presentation/useDeckSaving";
-import { useDeckRedesign } from "./presentation/useDeckRedesign";
+import { useDeckSearch } from "./presentation/useDeckSearch";
+import { stageSearchHooks } from "./presentation/stageSearchHooks";
+import { useSlideSpellCheck } from "./presentation/useSlideSpellCheck";
 
 const route = useRoute();
 const router = useRouter();
@@ -79,86 +80,45 @@ const slideUndo = usePresentationUndo({ model: presentation, onApply: commit });
 const { slideCommands, title, badge, formatName, slideTotal, slideCountLabel, currentSlide, liveLabel, deckMedia, deckFields, selectSlide, addSlideAction, onFilmstripCommand, onFilmstripReorder } =
   useDeckNavigation({ presentation, currentIndex, record: slideUndo.record, commit, openLayoutForNew: () => layouts.openForNew(), openLayoutForChange: () => layouts.openForChange() });
 
+// The deck context every slide composable below takes (SPEC-098 — the
+// DocumentView `editorContext` idea, for slides): each call is
+// `use*({ ...deck, ...extras })`, and a composable reads the keys it needs.
+const deck = { model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit, reportError: (message = "") => addToast(message) };
+
 // --- deck header actions: download + playback entry (SPEC-080/084) ---------
 const deckActions = useDeckActions({
-  model: presentation,
-  presentationId,
-  currentIndex,
-  slideTotal,
-  router,
-  route,
-  reportError: (message) => addToast(message),
-  onCommitPoint: () => saving.commitPoint(), flushForClose: () => saving.flushForClose(),
+  ...deck, presentationId, slideTotal, router, route, onCommitPoint: () => saving.commitPoint(), flushForClose: () => saving.flushForClose(),
 });
 
 // --- autosave, crash recovery and version history (SPEC-103) ---------------
-const saving = useDeckSaving({ model: presentation, presentationId, currentIndex, record: slideUndo.record, commit, reportError: (message) => addToast(message) });
+const saving = useDeckSaving({ ...deck, presentationId });
 
 deckLoad.start();
 
 // --- selection + text editing + toolbar (SPEC-081) -------------------------
 const stageEdit = usePresentationEditing({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  bumpMedia,
-  refresh,
-  undo: slideUndo.undo,
-  redo: slideUndo.redo,
-  navigate: (delta) => selectSlide(currentIndex.value + delta),
-  reportError: (message) => addToast(message),
+  ...deck, bumpMedia, refresh, undo: slideUndo.undo, redo: slideUndo.redo, navigate: (delta) => selectSlide(currentIndex.value + delta),
 });
 
 // --- notes/transition/animation/table/chart panels (SPEC-083/085/086/091/092)
-const { notes, transitions, animations, tables, charts, media } = useEditingPanels({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  bumpMedia,
-  reportError: (message) => addToast(message),
-  stageEdit,
-});
+const { notes, transitions, animations, tables, charts, media } = useEditingPanels({ ...deck, bumpMedia, stageEdit });
 
 // --- deck theme: the Design panel (SPEC-094) -------------------------------
-const themePanel = useDeckTheme({ model: presentation, record: slideUndo.record, commit });
+const themePanel = useDeckTheme(deck);
 
 // --- slide text depth: lists, spacing, autofit, links (SPEC-097) -----------
-const textDepth = useSlideTextDepth({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit, selection: stageEdit.selection, editing: stageEdit.editing });
-
-// --- slide layouts + Reset slide (SPEC-089) --------------------------------
-const layouts = useSlideLayouts({
-  model: presentation,
-  currentSlide,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  addSlide: slideCommands.add,
-});
+const textDepth = useSlideTextDepth({ ...deck, selection: stageEdit.selection, editing: stageEdit.editing });
 
 // --- slide sorter, sections, slide clipboard, Reuse slides (SPEC-099) -----
-const sorter = useSlideSorter({ model: presentation, currentIndex, record: slideUndo.record, commit, reportError: (message) => addToast(message) });
+const sorter = useSlideSorter(deck);
 
-// --- deck setup: slide size, first slide number, metadata (SPEC-090) -------
-const deckSetup = useDeckSetup({
-  model: presentation,
-  currentIndex,
-  record: slideUndo.record,
-  commit,
-  reportError: (message) => addToast(message),
-});
+// --- layouts, deck setup, header & footer, print & export, Redesign (SPEC-089/090/093/104/115)
+const { layouts, deckSetup, headerFooter, deckExport, redesign } = useDeckDialogs({ ...deck, slideTotal, addSlide: slideCommands.add });
 
-// --- header & footer: deck footer/date fields (SPEC-093) -------------------
-const headerFooter = useHeaderFooter({ model: presentation, currentSlide, currentIndex, record: slideUndo.record, commit });
+// --- find & replace and spell check on slides (SPEC-098) -------------------
+const search = useDeckSearch({ ...deck, ...stageSearchHooks(stageEdit, notes, presentation) });
+const spell = useSlideSpellCheck({ ...deck, ...stageEdit, notesText: notes.notesText });
 
-// --- print & export: PDF, images, handouts, notes pages (SPEC-104) ---------
-const deckExport = useDeckExport({ model: presentation, currentIndex, slideTotal, reportError: (message) => addToast(message) });
-
-// --- Slide › Redesign… (SPEC-115): open state only; the designer loads behind its experiment's gates
-const redesign = useDeckRedesign({ model: presentation, currentIndex, record: slideUndo.record, commit });
 // --- the menu bar (SPEC-049's model, for slides): routes to every composable above, so it is built last
 const menu = usePresentationMenu({
   undo: slideUndo, deckActions, deckSetup, notes, transitions, animations, layouts, tables, media,
@@ -166,7 +126,7 @@ const menu = usePresentationMenu({
 });
 
 // --- global keyboard: undo/redo, navigation, selection, edit (SPEC-080/081) -
-useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut, deckExport.onPrintShortcut]);
+useWindowKeys([search.onGlobalKeydown, sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobalKeydown, deckActions.onPresentShortcut, deckExport.onPrintShortcut]);
 </script>
 
 <template>
@@ -184,7 +144,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
     >
       <PresentationRibbon
         :undo="slideUndo"
-        :panels="{ notes, transitions, animations, layouts, tables, media, headerFooter, themePanel, sorter, history: saving.history }"
+        :panels="{ notes, transitions, animations, layouts, tables, media, headerFooter, themePanel, sorter, history: saving.history, search }"
         :menu="menu"
         :stage-edit="stageEdit"
         :text-depth="textDepth"
@@ -205,6 +165,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
         :save-state-text="saving.saveStateText.value"
         :deck-actions="deckActions"
         :deck-export="deckExport"
+        :spell="spell"
       />
     </template>
     <PresentationNotFound
@@ -223,6 +184,12 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
         @keep="saving.keepRecovered()"
         @discard="saving.discardRecovered()"
       />
+      <DeckSearchResults :controller="search">
+        <FindBar
+          v-bind="search.bar.value"
+          v-on="search.barEvents"
+        />
+      </DeckSearchResults>
       <DeckBody
         v-if="!sorter.open.value"
         :slides="presentation.slides"
@@ -243,6 +210,7 @@ useWindowKeys([sorter.onGlobalKeydown, stageEdit.onGlobalKeydown, notes.onGlobal
         :theme="themePanel.displayTheme.value"
         :selection="sorter.selection"
         :history="saving.history"
+        :proofing="{ search, spell }"
         @select="selectSlide"
         @add="addSlideAction"
         @command="onFilmstripCommand"

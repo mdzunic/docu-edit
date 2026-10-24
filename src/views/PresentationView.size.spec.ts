@@ -81,12 +81,24 @@
 //                    call, the RecoveryBar mount and the history panel/toggle
 //                    hookups; the spec mandates a drop of at least 5
 //                    (view at 284 lines)
+//   2026-10-24  262  SPEC-098 — extracted the five deck-dialog controllers
+//                    (layouts, deck setup, header & footer, print & export,
+//                    Redesign) into useDeckDialogs and gathered the deck
+//                    context every slide composable takes into one `deck`
+//                    object (`use*({ ...deck, ...extras })`); the
+//                    usePresentationLoad move the spec names had already
+//                    landed as SPEC-096's useDeckLoad, so this is its
+//                    sanctioned equivalent. Pays for the useDeckSearch /
+//                    useSlideSpellCheck wiring calls, the FindBar dock in
+//                    DeckSearchResults, the search keydown listener and the
+//                    proofing/spell/Find hookups; the spec mandates a drop
+//                    of at least 15 (view at 257 lines)
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 290;
+const LINE_BUDGET = 262;
 
 describe("PresentationView size budget", () => {
   it(`PresentationView.vue stays within its ${LINE_BUDGET}-line budget`, () => {
