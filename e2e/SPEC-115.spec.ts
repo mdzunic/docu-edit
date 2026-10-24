@@ -220,14 +220,10 @@ test("with the provider off, Outline this document builds a deck from a .docx wi
 }) => {
   const appOrigin = new URL(baseURL ?? "http://localhost:5173").origin;
   const scripted: string[] = [];
-  const gatewayCode: string[] = [];
   page.on("request", (request) => {
     const origin = new URL(request.url()).origin;
     if (origin !== appOrigin && ["fetch", "xhr", "eventsource", "websocket"].includes(request.resourceType())) {
       scripted.push(`${request.resourceType()} ${request.url()}`);
-    }
-    if (/\/lib\/ai\/modelGateway|\/composables\/useModelGateway/.test(request.url())) {
-      gatewayCode.push(request.url());
     }
   });
   await page.route(`${STUB_ORIGIN}/**`, async (route) => {
@@ -255,7 +251,11 @@ test("with the provider off, Outline this document builds a deck from a .docx wi
   await expect(page).toHaveURL(/\/slides\/.+/);
   expect(await filmstripTitles(page)).toEqual(["word-toc", "Introduction", "Background"]);
   expect(scripted).toEqual([]);
-  expect(gatewayCode).toEqual([]);
+  // And the gateway itself was never asked: its session log is empty.
+  await page.getByRole("menubar", { name: "Presentation menu" }).getByRole("menuitem", { name: "File", exact: true }).click();
+  await page.getByTestId("slides-menu-preferences").click();
+  await page.getByTestId("prefs-labs").scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("ai-activity-empty")).toBeVisible();
 });
 
 test("Redesign… reorders a 3-slide deck as one undoable step and never touches its text (AC-88)", async ({ page }) => {
