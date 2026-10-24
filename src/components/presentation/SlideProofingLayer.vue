@@ -32,21 +32,41 @@ function box(rect = { left: 0, top: 0, width: 0, height: 0 }) {
   return { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` };
 }
 
-function onContextMenu(event = new MouseEvent("contextmenu")) {
+/** The underline under a client point, if any. */
+function underlineAt(event = new MouseEvent("contextmenu")) {
   const surface = layer.value?.parentElement;
   if (!surface || underlines.value.length === 0) {
-    return;
+    return undefined;
   }
   const { x, y } = surfacePoint(surface, event.clientX, event.clientY);
-  const hit = underlines.value.find((rect) => x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height);
+  return underlines.value.find((rect) => x >= rect.left && x <= rect.left + rect.width && y >= rect.top && y <= rect.top + rect.height);
+}
+
+function onContextMenu(event = new MouseEvent("contextmenu")) {
+  const hit = underlineAt(event);
   if (hit) {
     event.preventDefault();
     emit("spell-context", hit.issue, event.clientX, event.clientY);
   }
 }
 
-onMounted(() => layer.value?.parentElement?.addEventListener("contextmenu", onContextMenu));
-onBeforeUnmount(() => layer.value?.parentElement?.removeEventListener("contextmenu", onContextMenu));
+// A right-button press on a misspelling goes no further (captured at the
+// surface): on its way up it would reach the surface's "press on empty
+// stage", which ends a text session — and the menu is for that session's word.
+function onMouseDown(event = new MouseEvent("mousedown")) {
+  if (event.button === 2 && underlineAt(event)) {
+    event.stopPropagation();
+  }
+}
+
+onMounted(() => {
+  layer.value?.parentElement?.addEventListener("contextmenu", onContextMenu);
+  layer.value?.parentElement?.addEventListener("mousedown", onMouseDown, true);
+});
+onBeforeUnmount(() => {
+  layer.value?.parentElement?.removeEventListener("contextmenu", onContextMenu);
+  layer.value?.parentElement?.removeEventListener("mousedown", onMouseDown, true);
+});
 </script>
 
 <template>

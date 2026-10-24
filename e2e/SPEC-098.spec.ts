@@ -154,3 +154,57 @@ test("Find toggle, Cmd/Ctrl+H, find-next with the wrap hint, a notes hit and Esc
   await expect(page.getByTestId("find-bar")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('[data-testid="stage-workspace"]'))).toBe(true);
 });
+
+/** The squiggle for `word` on the stage. */
+function underline(page: Page, word: string) {
+  return page.locator(`[data-testid="spell-underline"][data-word="${word}"]`);
+}
+
+async function rightClick(page: Page, word: string): Promise<void> {
+  const box = await underline(page, word).boundingBox();
+  if (!box) throw new Error(`no underline for ${word}`);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: "right" });
+}
+
+test("spell check on the stage: squiggles, the suggestions menu, a correction that keeps its case, and noProof", async ({ page }) => {
+  await openFixture(page, FIXTURE_PPTX);
+  await page.getByTestId("filmstrip-slide").nth(1).click();
+  await expect(page.getByTestId("spell-underlines")).toBeVisible();
+  await expect(underline(page, "Berlin")).toHaveCount(1);
+
+  // Right-click opens SPEC-035's menu; Ignore all clears the word.
+  await rightClick(page, "Berlin");
+  const menu = page.getByTestId("spell-context-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByTestId("spell-ignore")).toBeVisible();
+  await expect(menu.getByTestId("spell-add-to-dictionary")).toBeVisible();
+  expect(await menu.getByTestId("spell-suggestion").count()).toBeLessThanOrEqual(5);
+  await menu.getByTestId("spell-ignore-all").click();
+  await expect(underline(page, "Berlin")).toHaveCount(0);
+
+  // A misspelling typed into the title: the suggestion keeps its capital, and
+  // the correction is one undo entry.
+  const title = page.locator('[data-testid="slide-frame"]').first();
+  await title.dblclick();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" Teh");
+  await expect(underline(page, "Teh")).toHaveCount(1);
+  await rightClick(page, "Teh");
+  await menu.getByTestId("spell-suggestion").filter({ hasText: /^\s*the\s*$/ }).click();
+  await expect(page.getByTestId("slide-text-edit")).toHaveText("Roadmap The");
+  await expect(underline(page, "Teh")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  await page.getByTestId("presentation-undo").click();
+  await expect(stage(page)).toContainText("Roadmap Teh");
+  await page.getByTestId("presentation-redo").click();
+  await expect(stage(page)).toContainText("Roadmap The");
+
+  // "Do not check spelling" on a selected frame clears its squiggles.
+  const body = page.locator('[data-testid="slide-frame"]').nth(1);
+  await body.click();
+  await expect(underline(page, "MVP")).toHaveCount(1);
+  await page.getByTestId("language-status-button").click();
+  await page.getByTestId("language-no-proof").check();
+  await expect(underline(page, "MVP")).toHaveCount(0);
+});
