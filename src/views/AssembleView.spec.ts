@@ -355,6 +355,9 @@ describe("no source mutation", () => {
   });
 });
 
+const pageButtons = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="assembly-pages"] [data-testid="assembly-page"]');
+const currentPage = (wrapper: VueWrapper) => pageButtons(wrapper).findIndex((page) => page.attributes("aria-current") === "page");
+
 describe("PDF output (SPEC-110)", () => {
   async function pdfWorkspace(pdfSteps: Record<string, unknown> = {}) {
     const fixtures = await setup({}, {
@@ -375,9 +378,6 @@ describe("PDF output (SPEC-110)", () => {
     await flushPromises();
     return { ...fixtures, wrapper };
   }
-
-  const pageButtons = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="assembly-pages"] [data-testid="assembly-page"]');
-  const currentPage = (wrapper: VueWrapper) => pageButtons(wrapper).findIndex((page) => page.attributes("aria-current") === "page");
 
   it("turns the inspector from one sheet to pages, says how each image is embedded, and offers the document properties", async () => {
     const { wrapper } = await pdfWorkspace();
