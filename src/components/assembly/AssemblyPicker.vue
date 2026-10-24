@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // "Add from library…" (SPEC-109): a picker of the library's image entries —
-// never documents, decks, workbooks or PDFs — each with its title and
-// format. Ticked images are added to the tray in the order the picker
-// lists them; the tray says when its limit cuts the list short. Rows are
-// read from the library's listing; no image payload is loaded to show them.
-// Runtime prop declarations (espree lints .vue scripts).
+// and (SPEC-111) its PDFs, which the tray takes as their pages — never
+// documents, decks or workbooks, each with its title and format. Ticked
+// entries are added to the tray in the order the picker lists them; the
+// tray says when its limit cuts the list short. Rows are read from the
+// library's listing; no payload is loaded to show them. Runtime prop
+// declarations (espree lints .vue scripts).
 import { computed, ref } from "vue";
 import BaseDialog from "../BaseDialog.vue";
 import UiButton from "../ui/UiButton.vue";
@@ -12,6 +13,7 @@ import { listDocuments } from "../../lib/documentStore";
 import { isImageFormat } from "../../lib/libraryMenu";
 import { formatBadgeLabel } from "../../lib/format";
 import { MAX_ASSEMBLY_ITEMS } from "../../lib/core/assemblyLayout";
+import { isCombinableFormat } from "../../views/assembly/useAssemblyTray";
 
 const props = defineProps({
   /** How many more images the tray can take. */
@@ -20,10 +22,12 @@ const props = defineProps({
 
 const emit = defineEmits(["add", "close"]);
 
-const images = listDocuments().filter((entry) => isImageFormat(entry.format));
+const images = listDocuments().filter((entry) => isCombinableFormat(entry.format));
 const chosen = ref(new Set());
 
 const chosenIds = computed(() => images.filter((entry) => chosen.value.has(entry.id)).map((entry) => entry.id));
+// The tray's image limit counts images; a PDF's pages have their own.
+const chosenImages = computed(() => images.filter((entry) => chosen.value.has(entry.id) && isImageFormat(entry.format)).length);
 
 function toggle(id = "") {
   const next = new Set(chosen.value);
@@ -38,7 +42,7 @@ function toggle(id = "") {
 
 <template>
   <BaseDialog
-    title="Add images from the library"
+    title="Add images and PDFs from the library"
     testid="assembly-picker"
     width="min(32rem, 90vw)"
     @dismiss="emit('close')"
@@ -46,7 +50,7 @@ function toggle(id = "") {
     <ul
       v-if="images.length > 0"
       class="picker-list"
-      aria-label="Images in the library"
+      aria-label="Images and PDFs in the library"
     >
       <li
         v-for="entry in images"
@@ -72,10 +76,10 @@ function toggle(id = "") {
       class="picker-empty"
       data-testid="assembly-picker-empty"
     >
-      There are no images in the library yet.
+      There are no images or PDFs in the library yet.
     </p>
     <p
-      v-if="chosenIds.length > props.room"
+      v-if="chosenImages > props.room"
       class="picker-note"
       data-testid="assembly-picker-limit"
     >

@@ -5,20 +5,33 @@
 // move is spoken through the role="status" live region); its buttons remove
 // or duplicate it; a click (or Enter / Space) selects it for the inspector. "Add from library…"
 // asks the view to open the picker. For a PDF (SPEC-110) each row says how
-// its image will be embedded — "original JPEG", or why it is re-encoded. All
-// logic is the useAssemblyTray controller passed in. Runtime prop
-// declarations (espree lints .vue scripts).
+// its image will be embedded — "original JPEG", or why it is re-encoded.
+// SPEC-111: a PDF in the tray is its PAGES, each an AssemblyPageCard, and the
+// tray selects as a set — Shift+click a range, Cmd/Ctrl+click one more,
+// Cmd/Ctrl+A everything — for the cards' rotate, duplicate and delete to act
+// on; for a PDF it also offers a blank page. All logic is the
+// useAssemblyTray controller passed in. Runtime prop declarations (espree
+// lints .vue scripts).
 import { computed, nextTick, ref, useTemplateRef } from "vue";
 import UiButton from "../ui/UiButton.vue";
 import LibraryThumbnail from "../library/LibraryThumbnail.vue";
+import AssemblyPageCard from "./AssemblyPageCard.vue";
 import { MAX_ASSEMBLY_ITEMS } from "../../lib/core/assemblyLayout";
-import { asTrayEntries } from "../../views/assembly/useAssemblyTray";
+import { pageCountLabel } from "../../lib/assembly";
+import { asTrayEntries, isPageEntry, pageCardLabel } from "../../views/assembly/useAssemblyTray";
 
 const props = defineProps({
   /** The useAssemblyTray() controller. */
   tray: { type: Object, required: true },
   /** Per row, how a PDF embeds its image ("" or absent: say nothing). */
   encodings: { type: Array, default: () => [] },
+  /** The output is a PDF: a blank page can be added. */
+  pdf: { type: Boolean, default: false },
+  /** The tray is a PDF plan (it holds pages). */
+  merging: { type: Boolean, default: false },
+  /** The sheet's size in points, for a blank page's card. */
+  sheetWidthPt: { type: Number, default: 0 },
+  sheetHeightPt: { type: Number, default: 0 },
 });
 
 const emit = defineEmits(["add"]);
@@ -45,6 +58,19 @@ async function focusRow(key = "") {
   }
 }
 
+function onRowClick(event = new MouseEvent("click"), key = "") {
+  t.pick(key, { range: event.shiftKey, toggle: event.metaKey || event.ctrlKey });
+}
+
+// Cmd/Ctrl+A anywhere in the list selects every entry (never a text field's
+// own select-all: none lives in the list).
+function onListKeydown(event = new KeyboardEvent("keydown")) {
+  if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a") {
+    event.preventDefault();
+    t.selectAll();
+  }
+}
+
 function onRowKeydown(event = new KeyboardEvent("keydown"), key = "") {
   if (event.target !== event.currentTarget) {
     return;
@@ -52,7 +78,7 @@ function onRowKeydown(event = new KeyboardEvent("keydown"), key = "") {
   if (event.key === "Enter" || event.key === " ") {
     // The keyboard's click: select the row for the inspector.
     event.preventDefault();
-    t.select(key);
+    t.pick(key, { range: event.shiftKey, toggle: event.metaKey || event.ctrlKey });
     return;
   }
   if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) {
@@ -112,20 +138,30 @@ function onDragEnd() {
         id="assembly-tray-heading"
         class="tray-heading"
       >
-        Images
+        {{ props.merging ? "Pages" : "Images" }}
       </h2>
       <span
         class="tray-count"
         data-testid="assembly-count"
-      >{{ t.entries.value.length }} of {{ MAX_ASSEMBLY_ITEMS }}</span>
+      >{{ props.merging ? pageCountLabel(t.entries.value.length) : `${t.entries.value.length} of ${MAX_ASSEMBLY_ITEMS}` }}</span>
     </div>
-    <UiButton
-      data-testid="assembly-add"
-      :disabled="t.isFull.value"
-      @click="emit('add')"
-    >
-      Add from library…
-    </UiButton>
+    <div class="tray-buttons">
+      <UiButton
+        data-testid="assembly-add"
+        :disabled="t.isFull.value"
+        @click="emit('add')"
+      >
+        Add from library…
+      </UiButton>
+      <UiButton
+        v-if="props.pdf"
+        data-testid="assembly-blank-page"
+        :disabled="t.isPagesFull.value"
+        @click="t.addBlank()"
+      >
+        Add blank page
+      </UiButton>
+    </div>
     <p
       v-if="t.refusal.value"
       class="tray-refusal"
@@ -138,73 +174,92 @@ function onDragEnd() {
       ref="list"
       class="tray-list"
       data-testid="assembly-tray"
-      aria-label="Images, in layout order"
+      :aria-label="props.merging ? 'Pages, in output order' : 'Images, in layout order'"
       aria-describedby="assembly-tray-hint"
+      @keydown="onListKeydown"
     >
       <li
         v-for="(entry, index) in rows"
         :key="entry.key"
         class="tray-row"
-        :class="{ 'tray-row--selected': entry.key === t.selectedKey.value, 'tray-row--over': index === overIndex }"
-        data-testid="assembly-item"
+        :class="{
+          'tray-row--selected': entry.key === t.selectedKey.value || t.isSelected(entry.key),
+          'tray-row--over': index === overIndex,
+          'tray-row--page': isPageEntry(entry),
+          'page-selected': isPageEntry(entry) && t.isSelected(entry.key),
+        }"
+        :data-testid="isPageEntry(entry) ? 'assembly-page-card' : 'assembly-item'"
         :data-tray-key="entry.key"
+        :data-selected="t.isSelected(entry.key) ? 'true' : undefined"
         :aria-current="entry.key === t.selectedKey.value ? 'true' : undefined"
+        :aria-label="isPageEntry(entry) ? pageCardLabel(entry, index + 1, t.isSelected(entry.key)) : undefined"
         tabindex="0"
         draggable="true"
-        @click="t.select(entry.key)"
+        @click="onRowClick($event, entry.key)"
         @keydown="onRowKeydown($event, entry.key)"
         @dragstart="onDragStart($event, entry.key)"
         @dragover="onDragOver($event, index)"
         @drop="onDrop($event, index)"
         @dragend="onDragEnd"
       >
-        <span
-          class="tray-position"
-          aria-hidden="true"
-        >{{ index + 1 }}</span>
-        <div class="tray-thumb">
-          <LibraryThumbnail
-            :id="entry.id"
-            :last-modified="entry.lastModified"
-            :format="entry.format"
-          />
-        </div>
-        <div class="tray-text">
+        <AssemblyPageCard
+          v-if="isPageEntry(entry)"
+          :entry="entry"
+          :position="index + 1"
+          :selected="t.isSelected(entry.key)"
+          :tray="t"
+          :sheet-width-pt="props.sheetWidthPt"
+          :sheet-height-pt="props.sheetHeightPt"
+        />
+        <template v-else>
           <span
-            class="tray-title"
-            data-testid="item-title"
-          >{{ entry.title }}</span>
-          <span
-            class="tray-size"
-            data-testid="item-size"
-          >{{ sizeLabel(entry) }}</span>
-          <span
-            v-if="encodingAt(index)"
-            class="tray-encoding"
-            data-testid="item-encoding"
-          >{{ encodingAt(index) }}</span>
-        </div>
-        <div class="tray-actions">
-          <UiButton
-            size="sm"
-            variant="ghost"
-            data-testid="item-duplicate"
-            :aria-label="`Duplicate ${entry.title}`"
-            :disabled="t.isFull.value"
-            @click.stop="t.duplicate(entry.key)"
-          >
-            Duplicate
-          </UiButton>
-          <UiButton
-            size="sm"
-            variant="ghost"
-            data-testid="item-remove"
-            :aria-label="`Remove ${entry.title}`"
-            @click.stop="t.remove(entry.key)"
-          >
-            Remove
-          </UiButton>
-        </div>
+            class="tray-position"
+            aria-hidden="true"
+          >{{ index + 1 }}</span>
+          <div class="tray-thumb">
+            <LibraryThumbnail
+              :id="entry.id"
+              :last-modified="entry.lastModified"
+              :format="entry.format"
+            />
+          </div>
+          <div class="tray-text">
+            <span
+              class="tray-title"
+              data-testid="item-title"
+            >{{ entry.title }}</span>
+            <span
+              class="tray-size"
+              data-testid="item-size"
+            >{{ sizeLabel(entry) }}</span>
+            <span
+              v-if="encodingAt(index)"
+              class="tray-encoding"
+              data-testid="item-encoding"
+            >{{ encodingAt(index) }}</span>
+          </div>
+          <div class="tray-actions">
+            <UiButton
+              size="sm"
+              variant="ghost"
+              data-testid="item-duplicate"
+              :aria-label="`Duplicate ${entry.title}`"
+              :disabled="t.isFull.value"
+              @click.stop="t.duplicate(entry.key)"
+            >
+              Duplicate
+            </UiButton>
+            <UiButton
+              size="sm"
+              variant="ghost"
+              data-testid="item-remove"
+              :aria-label="`Remove ${entry.title}`"
+              @click.stop="t.remove(entry.key)"
+            >
+              Remove
+            </UiButton>
+          </div>
+        </template>
       </li>
     </ol>
     <p
@@ -219,6 +274,9 @@ function onDragEnd() {
       class="tray-hint"
     >
       Drag a row, or press Alt+↑ or Alt+↓ on it, to change the order.
+      <template v-if="props.merging">
+        Shift-click selects a range, Ctrl/Cmd-click one more, Ctrl/Cmd+A everything.
+      </template>
     </p>
     <p
       class="visually-hidden"
@@ -249,6 +307,12 @@ function onDragEnd() {
 .tray-heading {
   margin: 0;
   font-size: var(--text-md);
+}
+
+.tray-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
 
 .tray-count,
@@ -298,6 +362,15 @@ function onDragEnd() {
 .tray-row--selected {
   border-color: var(--border-default);
   background: var(--surface-selected);
+}
+
+/* A page card lays itself out. */
+.tray-row--page {
+  display: block;
+}
+
+.tray-row.page-selected {
+  border-color: var(--focus-ring);
 }
 
 .tray-row--over {

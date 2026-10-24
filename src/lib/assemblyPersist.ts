@@ -6,6 +6,11 @@
 // (SPEC-110's PDF page mode, n-up, page numbers and metadata among them).
 // Never pixels: an item's size is read back from the library on return.
 //
+// SPEC-111 adds PDF pages to the same list: an item may be one page of a
+// library PDF (its page index and the quarter turns added to it) or a blank
+// page; a tray holds up to MAX_ASSEMBLY_ITEMS images and MAX_MERGE_PAGES
+// entries in all.
+//
 // Kept apart from lib/assembly.ts and imported by lib/preferences.ts, so it
 // imports core and the framework-free media layer only — no cycle back
 // through the preferences store. The reader is tolerant in the store's own
@@ -31,6 +36,7 @@ import {
   type SheetSetup,
 } from "./core/sheetLayout";
 import { DEFAULT_N_UP, DEFAULT_PAGE_MODE, N_UP_CHOICES, PAGE_MODES, type PageMode } from "./media/imagesToPdf";
+import { MAX_MERGE_PAGES, normaliseRotation } from "./core/pdfDocument";
 
 /** The raster outputs, and SPEC-110's PDF beside them. */
 export type AssemblyFormat = "png" | "jpeg" | "pdf";
@@ -91,11 +97,44 @@ export const ASSEMBLY_LAYOUT_DEFAULTS: AssemblyLayoutSettings = {
 };
 
 export interface PersistedAssemblyItem {
-  /** The library id of the source media document. */
+  /** The library id of the source media document ("" for a blank page). */
   id: string;
   /** Its title when it was added — named by the notice if it is gone. */
   title: string;
   transform?: OverlayTransform;
+  /** SPEC-111: the 0-based page of the library PDF `id` this item is. */
+  page?: number;
+  /** SPEC-111: an empty page at the sheet's size. */
+  blank?: boolean;
+  /** SPEC-111: quarter turns added to a page, mod 360. */
+  rotateBy?: 0 | 90 | 180 | 270;
+}
+
+/** Whether an item is a page of a PDF plan (a PDF page or a blank page)
+ * rather than an image. */
+export function isPageItem(item: Pick<PersistedAssemblyItem, "page" | "blank">): boolean {
+  return item.page !== undefined || item.blank === true;
+}
+
+/** `items` within a tray's limits, in order: images past MAX_ASSEMBLY_ITEMS
+ * and anything past MAX_MERGE_PAGES left out (a list of images alone is
+ * simply its first MAX_ASSEMBLY_ITEMS). `isPage` tells pages from images. */
+export function capTrayItems<T>(items: readonly T[], isPage: (item: T) => boolean): T[] {
+  const kept: T[] = [];
+  let images = 0;
+  for (const item of items) {
+    if (kept.length >= MAX_MERGE_PAGES) {
+      break;
+    }
+    if (!isPage(item)) {
+      if (images >= MAX_ASSEMBLY_ITEMS) {
+        continue;
+      }
+      images += 1;
+    }
+    kept.push(item);
+  }
+  return kept;
 }
 
 export interface PersistedAssembly {
@@ -107,15 +146,25 @@ export interface PersistedAssembly {
   output: AssemblyOutputSettings;
 }
 
-/** A plan holding `items` and every other setting at its default — what
- * "Combine…" and "New › Combined image" start the workspace with. */
-export function freshAssembly(items: PersistedAssemblyItem[] = []): PersistedAssembly {
+/** A plan holding `items` and every other setting at its default (or as
+ * `output` says) — what "Combine…" and "New › Combined image" start the
+ * workspace with. */
+export function freshAssembly(
+  items: PersistedAssemblyItem[] = [],
+  output: Partial<AssemblyOutputSettings> = {},
+): PersistedAssembly {
   return {
-    items: items.slice(0, MAX_ASSEMBLY_ITEMS).map((item) => ({ id: item.id, title: item.title })),
+    items: capTrayItems(items, isPageItem).map((item) => ({
+      id: item.id,
+      title: item.title,
+      ...(item.page === undefined ? {} : { page: item.page }),
+      ...(item.blank ? { blank: true } : {}),
+      ...(item.rotateBy ? { rotateBy: item.rotateBy } : {}),
+    })),
     layout: { ...ASSEMBLY_LAYOUT_DEFAULTS },
     sheet: null,
     marginsLinked: true,
-    output: { ...ASSEMBLY_OUTPUT_DEFAULTS },
+    output: { ...ASSEMBLY_OUTPUT_DEFAULTS, ...output },
   };
 }
 
@@ -129,10 +178,24 @@ function finiteIn(raw: unknown, min: number, max: number): number | undefined {
 
 function itemOf(raw: unknown): PersistedAssemblyItem | null {
   const value = record(raw);
+  const rotateBy = typeof value?.rotateBy === "number" ? normaliseRotation(value.rotateBy) : 0;
+  if (value?.blank === true) {
+    return { id: "", title: typeof value.title === "string" ? value.title : "", blank: true, ...(rotateBy ? { rotateBy } : {}) };
+  }
   if (!value || typeof value.id !== "string" || value.id.length === 0) {
     return null;
   }
   const item: PersistedAssemblyItem = { id: value.id, title: typeof value.title === "string" ? value.title : "" };
+  if (value.page !== undefined) {
+    if (typeof value.page !== "number" || !Number.isInteger(value.page) || value.page < 0) {
+      return null;
+    }
+    item.page = value.page;
+    if (rotateBy) {
+      item.rotateBy = rotateBy;
+    }
+    return item;
+  }
   const transform = record(value.transform);
   if (transform) {
     item.transform = normaliseTransform(transform as Partial<OverlayTransform>);
@@ -218,7 +281,7 @@ function outputOf(raw: unknown): AssemblyOutputSettings {
 
 /** Reads a stored plan: undefined for anything that is not a plan object;
  * otherwise every field repaired to its default where it is wrong, and
- * items without an id dropped (at most MAX_ASSEMBLY_ITEMS kept). */
+ * items without an id dropped (within the tray's limits — capTrayItems). */
 export function parsePersistedAssembly(raw: unknown): PersistedAssembly | undefined {
   const value = record(raw);
   if (!value) {
@@ -226,7 +289,7 @@ export function parsePersistedAssembly(raw: unknown): PersistedAssembly | undefi
   }
   const items = Array.isArray(value.items) ? value.items.map(itemOf).filter((item) => item !== null) : [];
   return {
-    items: items.slice(0, MAX_ASSEMBLY_ITEMS),
+    items: capTrayItems(items, isPageItem),
     layout: layoutOf(value.layout),
     sheet: sheetOf(value.sheet),
     marginsLinked: typeof value.marginsLinked === "boolean" ? value.marginsLinked : true,

@@ -6,10 +6,13 @@
 // shows only while every selected entry is an image, and converts exactly
 // one: with more selected it stays visible but disabled, saying why.
 // "Combine…" (SPEC-109) emits the selected image ids for HomeView to open
-// the assembly workspace with; it is enabled from two image entries up.
+// the assembly workspace with; it is enabled from two image entries up —
+// and (SPEC-111) from one PDF, whose pages the workspace then organises,
+// the PDFs' ids travelling with the images' in selection order.
 import { computed } from "vue";
 import UiButton from "../../components/ui/UiButton.vue";
 import { isImageFormat } from "../../lib/libraryMenu";
+import { isCombinableFormat } from "../assembly/useAssemblyTray";
 
 const props = defineProps({
   lib: { type: Object, required: true },
@@ -22,8 +25,11 @@ const allImages = computed(() => {
   return ids.length > 0 && ids.every((id = "") => isImageFormat(props.lib.formatOf(id)));
 });
 const convertOne = computed(() => allImages.value && props.lib.selectedIds.value.length === 1);
-const imageIds = computed(() => props.lib.selectedIds.value.filter((id = "") => isImageFormat(props.lib.formatOf(id))));
-const canCombine = computed(() => imageIds.value.length >= 2);
+const combinableIds = computed(() => props.lib.selectedIds.value.filter((id = "") => isCombinableFormat(props.lib.formatOf(id))));
+const canCombine = computed(() => {
+  const pdfs = combinableIds.value.filter((id = "") => props.lib.formatOf(id) === "pdf").length;
+  return pdfs > 0 || combinableIds.value.length >= 2;
+});
 </script>
 
 <template>
@@ -74,8 +80,8 @@ const canCombine = computed(() => imageIds.value.length >= 2);
       size="sm"
       data-testid="bulk-combine"
       :disabled="!canCombine"
-      :title="canCombine ? undefined : 'Select two or more images to combine them'"
-      @click="emit('combine', imageIds)"
+      :title="canCombine ? undefined : 'Select two or more images, or a PDF, to combine them'"
+      @click="emit('combine', combinableIds)"
     >
       Combine…
     </UiButton>

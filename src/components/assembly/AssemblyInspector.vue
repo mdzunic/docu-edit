@@ -8,7 +8,9 @@
 // For a PDF (SPEC-110) the inspector turns from one sheet to pages: the page
 // controls come first, the layout controls only where a layout applies (all
 // on one page; n-up is SPEC-109's grid, with its gap), and the one sheet
-// setup below serves every page.
+// setup below serves every page. For a PDF plan (SPEC-111) every tray entry
+// is one page: the layout and page controls step aside, and the sheet sets
+// the size of the image and blank pages alone — a PDF page keeps its own.
 // All logic is the useAssembly controller passed in; a rejected input snaps
 // back to the value in force and the reason shows below. Runtime prop
 // declarations (espree lints .vue scripts).
@@ -88,11 +90,20 @@ function transformValue(field = "") {
     data-testid="assembly-inspector"
   >
     <AssemblyPagesPanel
-      v-if="a.isPdf.value"
+      v-if="a.isPdf.value && !a.merging.value"
       :assembly="a"
     />
 
+    <p
+      v-if="a.merging.value"
+      class="inspector-caption"
+      data-testid="merge-sheet-note"
+    >
+      Each entry in the tray is one page. A PDF page keeps its own size; the sheet below sets the size of image and blank pages.
+    </p>
+
     <section
+      v-if="!a.merging.value"
       class="inspector-layout"
       aria-label="Layout"
     >
