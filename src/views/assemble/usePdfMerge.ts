@@ -24,29 +24,15 @@
 // every PREVIEW_DEBOUNCE_MS, never automatically past PREVIEW_MAX_PAGES, and
 // always on Refresh. The drop records of the latest build feed "What
 // changed". Sources are only ever read.
-import { computed, onScopeDispose, ref, watch, type ComputedRef, type Ref } from "vue";
-import { getMedia, listDocuments, storeMedia, uniqueTitle } from "../../lib/documentStore";
+import { computed, onScopeDispose, ref, type ComputedRef, type Ref } from "vue";
+import { listDocuments, storeMedia, uniqueTitle } from "../../lib/documentStore";
 import { assembleMediaModel } from "../../lib/media/open";
 import type { MediaModel } from "../../lib/media/model";
-import { mediaPartBytes } from "../../lib/media/download";
-import { currentImagePart, savedStack } from "../../lib/media/editModel";
-import {
-  BROWSER_IMAGE_PDF_STEPS,
-  buildImagePdf,
-  ImagePdfCancelled,
-  planPdfPages,
-  type ImagePdfItem,
-  type ImagePdfSteps,
-  type PdfAssemblyPage,
-} from "../../lib/media/imagesToPdf";
+import { BROWSER_IMAGE_PDF_STEPS, ImagePdfCancelled, type ImagePdfSteps } from "../../lib/media/imagesToPdf";
 import {
   assemblePdf,
-  checkAssembledPdf,
-  mergeLimitRefusal,
-  openPdfSources,
   parsePdf,
   PdfAssemblyCancelled,
-  plannedPdfPages,
   type PdfAssemblyHooks,
   type PdfAssemblyPlan,
   type PdfAssemblyResult,
@@ -59,7 +45,6 @@ import { yieldToMainThread } from "../../lib/core/idleScheduler";
 import { triggerBlobDownload } from "../../lib/core/triggerDownload";
 import { backgroundRefusal } from "../../lib/core/sheetLayout";
 import type { AssemblyPlan } from "../../lib/core/assemblyLayout";
-import type { MediaPart } from "../../lib/core/media";
 import type { SheetSetupController } from "../../composables/useSheetSetup";
 import type { AssemblyOutputSettings } from "../../lib/assemblyPersist";
 import {
@@ -67,19 +52,17 @@ import {
   groupDrops,
   MERGE_DESTINATIONS,
   mergeEstimateLine,
-  runFileNames,
   sourceRuns,
-  uniqueSourceKeys,
   zipFileName,
   type DropGroup,
   type MergeDestination,
 } from "../../lib/pdfMerge";
+import { createMergeSources, mergeRefusal, sourceIdOf, writeMergeOutputs, type MergeOutput } from "../../lib/pdfMergeSources";
 import type { TrayEntry } from "../assembly/useAssemblyTray";
+import { useMergePreview, type PdfMergePreview } from "./useMergePreview";
 
-/** A change rebuilds the preview at most this often. */
-export const PREVIEW_DEBOUNCE_MS = 750;
-/** Past this many pages the preview is rebuilt only on request. */
-export const PREVIEW_MAX_PAGES = 200;
+export { PREVIEW_DEBOUNCE_MS, PREVIEW_MAX_PAGES, type PdfMergePreview } from "./useMergePreview";
+export { sourceIdOf } from "../../lib/pdfMergeSources";
 
 export const ZIP_MIME_TYPE = "application/zip";
 
@@ -136,19 +119,6 @@ export interface PdfMergeDeps {
   steps: PdfMergeSteps;
 }
 
-export interface PdfMergePreview {
-  /** The planned output's blob: URL ("" when none is built). */
-  url: Ref<string>;
-  busy: Ref<boolean>;
-  failure: Ref<string>;
-  /** The plan changed since the preview shown was built. */
-  stale: Ref<boolean>;
-  /** Over PREVIEW_MAX_PAGES: rebuilt only on request. */
-  manual: ComputedRef<boolean>;
-  /** merge-refresh: rebuild now (or as soon as the debounce allows). */
-  refresh: () => void;
-}
-
 export interface PdfMergeController {
   active: ComputedRef<boolean>;
   destination: Ref<MergeDestination>;
@@ -177,30 +147,6 @@ export interface PdfMergeController {
   preview: PdfMergePreview;
 }
 
-/** Which source an entry's page comes from — one key per library PDF, per
- * image, and one for every blank page. */
-export function sourceIdOf(entry: Pick<TrayEntry, "id" | "page" | "blank">): string {
-  return entry.blank ? "blank" : entry.page ? `pdf:${entry.id}` : `image:${entry.id}`;
-}
-
-/** The payload an entry's page is made from: a PDF's source bytes, or an
- * image's current part (its edited render, when it has edits). */
-function sourcePart(entry: TrayEntry): MediaPart | undefined {
-  const model = getMedia(entry.id);
-  if (!model) {
-    return undefined;
-  }
-  return entry.page ? model.media.find((part) => part.mediaId === model.sourceMediaId) : currentImagePart(model);
-}
-
-/** One output file before it is kept. */
-interface MergeOutput {
-  title: string;
-  fileName: string;
-  bytes: Uint8Array;
-  doc: PdfDocument;
-}
-
 function reasonOf(cause: unknown): string {
   return cause instanceof Error && cause.message ? cause.message : String(cause);
 }
@@ -227,167 +173,21 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
   const planned = computed(() => (destination.value === "extract" ? selectedEntries.value : deps.entries.value));
   const pageCount = computed(() => planned.value.length);
 
-  // --- reading the sources (cached for the session: bytes never change) ---
-
-  const bytesByMediaId = new Map<string, Uint8Array>();
-  const parsed = new WeakMap<Uint8Array, Promise<PdfDocument>>();
-  const imagePages = new Map<string, Promise<Uint8Array>>();
-
-  /** Parses bytes once, however many builds ask. */
-  function parseOnce(bytes: Uint8Array): Promise<PdfDocument> {
-    let doc = parsed.get(bytes);
-    if (!doc) {
-      doc = steps.parse(bytes);
-      parsed.set(bytes, doc);
-    }
-    return doc;
-  }
-
-  function partBytes(part: MediaPart): Uint8Array {
-    let bytes = bytesByMediaId.get(part.mediaId);
-    if (!bytes) {
-      bytes = mediaPartBytes(part);
-      bytesByMediaId.set(part.mediaId, bytes);
-    }
-    return bytes;
-  }
-
-  /** What an image page is built from, as one comparable string. */
-  function sheetSignature(): string {
-    const { background, dpi } = sheet.setup.value;
-    const { fit, align, cellBackground } = deps.plan.value;
-    return JSON.stringify({ geometry: sheet.geometry.value, background, dpi, fit, align, cellBackground });
-  }
-
-  /** An image (or blank) entry built into a one-page PDF on the current
-   * sheet by SPEC-110's builder — cached by what built it. */
-  function imagePage(entry: TrayEntry, stop: () => boolean): Promise<Uint8Array> {
-    const part = entry.blank ? undefined : sourcePart(entry);
-    const key = `${sourceIdOf(entry)}|${part?.mediaId ?? ""}|${sheetSignature()}`;
-    let built = imagePages.get(key);
-    if (!built) {
-      const geometry = sheet.geometry.value;
-      if (!geometry) {
-        return Promise.reject(new Error("the sheet is not ready."));
-      }
-      const { background, dpi } = sheet.setup.value;
-      let pages: PdfAssemblyPage[] = [{ itemIndices: [], placed: [] }];
-      const items: ImagePdfItem[] = [];
-      const parts = new Map<string, MediaPart>();
-      if (!entry.blank) {
-        const model = getMedia(entry.id);
-        if (!model || !part) {
-          return Promise.reject(new Error(`“${entry.title}” could not be read.`));
-        }
-        items.push({ id: entry.id, title: entry.title, widthPx: entry.widthPx, heightPx: entry.heightPx, edits: savedStack(model) });
-        parts.set(entry.id, part);
-        pages = planPdfPages(
-          [{ id: entry.id, widthPx: entry.widthPx, heightPx: entry.heightPx }],
-          { ...deps.plan.value, layout: "grid", pageMode: "one-per-page", nUp: 1 },
-          geometry,
-          dpi,
-        );
-      }
-      built = buildImagePdf(pages, parts, {
-        title: entry.title,
-        pageNumbers: false,
-        items,
-        sheet: { geometry, background, dpi },
-        steps: steps.imagePdf,
-        cancelled: stop,
-      });
-      imagePages.set(key, built);
-      // A failed or cancelled build is not remembered.
-      built.catch(() => imagePages.delete(key));
-    }
-    return built;
-  }
-
-  /** The plan for `entries`: the library PDFs parsed first — one that is
-   * encrypted or unreadable refuses the whole plan (openPdfSources), before
-   * anything is built — then each image and blank page built and parsed.
-   * Null when `stop` ended it. */
-  async function prepare(entries: readonly TrayEntry[], stop: () => boolean): Promise<PdfAssemblyPlan | null> {
-    const firstOf = new Map<string, TrayEntry>();
-    for (const entry of entries) {
-      if (!firstOf.has(sourceIdOf(entry))) {
-        firstOf.set(sourceIdOf(entry), entry);
-      }
-    }
-    const ids = Array.from(firstOf.keys());
-    const keys = new Map(uniqueSourceKeys(ids.map((id) => firstOf.get(id)?.title ?? "")).map((key, i) => [ids[i], key]));
-    const docs = new Map<string, PdfDocument>();
-    const pdfIds = ids.filter((id) => id.startsWith("pdf:"));
-    const opened = await openPdfSources(
-      pdfIds.map((id) => {
-        const part = sourcePart(firstOf.get(id) as TrayEntry);
-        return { source: keys.get(id) ?? "", bytes: part ? partBytes(part) : new Uint8Array(0) };
-      }),
-      parseOnce,
-    );
-    pdfIds.forEach((id, i) => docs.set(id, opened[i]));
-    const built = ids.filter((id) => !id.startsWith("pdf:"));
-    for (const id of built) {
-      if (stop()) {
-        return null;
-      }
-      const bytes = await imagePage(firstOf.get(id) as TrayEntry, stop);
-      const [doc] = await openPdfSources([{ source: keys.get(id) ?? "", bytes }], parseOnce);
-      docs.set(id, doc);
-    }
-    if (stop()) {
-      return null;
-    }
-    return {
-      pages: entries.map((entry) => ({
-        source: keys.get(sourceIdOf(entry)) ?? "",
-        doc: docs.get(sourceIdOf(entry)) as PdfDocument,
-        pageIndex: entry.page?.index ?? 0,
-        rotateBy: entry.rotateBy ?? 0,
-      })),
-      title: output.title.trim() || DEFAULT_MERGE_TITLE,
-      author: output.author,
-      subject: output.subject,
-      outline: true,
-    };
-  }
-
-  // --- refusals and the estimate ------------------------------------------------
-
-  const refusal = computed(() => {
-    const entries = deps.entries.value;
-    if (entries.length === 0) {
-      return "Add at least one page to the tray.";
-    }
-    if (destination.value === "extract" && selectedEntries.value.length === 0) {
-      return "Select the pages to extract: click a page, then Shift-click or Ctrl/Cmd-click to add more.";
-    }
-    const gone = new Set<string>();
-    const sizes = new Map<string, number>();
-    for (const entry of planned.value) {
-      if (entry.blank) {
-        continue;
-      }
-      const model = getMedia(entry.id);
-      if (!model || !sourcePart(entry) || (!entry.page && (entry.widthPx <= 0 || entry.heightPx <= 0))) {
-        gone.add(entry.title);
-        continue;
-      }
-      sizes.set(sourceIdOf(entry), model.byteLength);
-    }
-    if (gone.size > 0) {
-      const names = Array.from(gone, (title) => `“${title}”`).join(", ");
-      return `${names} ${gone.size === 1 ? "is" : "are"} no longer in the library or could not be read; remove ${gone.size === 1 ? "it" : "them"} from the tray.`;
-    }
-    if (planned.value.some((entry) => !entry.page) && !sheet.geometry.value) {
-      return "The sheet is not ready.";
-    }
-    let bytes = 0;
-    for (const size of sizes.values()) {
-      bytes += size;
-    }
-    return mergeLimitRefusal(planned.value.length, bytes) ?? "";
+  // The session's sources: parses and image pages are cached.
+  const sources = createMergeSources({
+    parse: steps.parse,
+    imagePdf: steps.imagePdf,
+    sheet: () => ({ geometry: sheet.geometry.value, ...sheet.setup.value, plan: deps.plan.value }),
   });
+  const metadata = () => ({ title: output.title.trim() || DEFAULT_MERGE_TITLE, author: output.author, subject: output.subject });
+
+  const refusal = computed(() =>
+    mergeRefusal(planned.value, {
+      destination: destination.value,
+      trayLength: deps.entries.value.length,
+      sheetReady: sheet.geometry.value !== null,
+    }),
+  );
 
   const estimate = computed(() =>
     mergeEstimateLine(destination.value, {
@@ -415,44 +215,32 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
     // A snapshot: edits made while producing do not reach these files.
     const split = destination.value === "split";
     const entries = [...planned.value];
-    const title = output.title.trim() || DEFAULT_MERGE_TITLE;
     const stop = () => cancelled;
     cancelled = false;
     busy.value = true;
     progress.value = `Page 0 of ${entries.length}`;
     try {
-      const plan = await prepare(entries, stop);
+      const plan = await sources.prepare(entries, metadata(), stop);
       if (!plan) {
         return null;
       }
-      const modified = new Date();
-      const runs = split ? sourceRuns(plan.pages, (page) => page.source) : [plan.pages];
-      const names = runFileNames(runs.map((runPages) => runPages[0].source));
-      const outputs: MergeOutput[] = [];
-      const dropped: PdfDropRecord[] = [];
-      let done = 0;
-      for (const [index, runPages] of runs.entries()) {
-        const runPlan: PdfAssemblyPlan = { ...plan, pages: runPages, title: split ? runPages[0].source : title, modified };
-        const result = await steps.assemble(runPlan, {
+      const outputs = await writeMergeOutputs(
+        { ...plan, modified: new Date() },
+        {
+          split,
+          fileName: pdfFileName(plan.title, DEFAULT_MERGE_TITLE),
+          assemble: steps.assemble,
+          parse: steps.parse,
           between: steps.between,
           cancelled: stop,
-          onProgress: (count) => {
-            progress.value = `Page ${done + count} of ${entries.length}`;
+          onProgress: (done) => {
+            progress.value = `Page ${done} of ${entries.length}`;
           },
-        });
-        if (cancelled) {
-          return null;
-        }
-        // The self-check: what was written must read back as what was planned.
-        const doc = await checkAssembledPdf(result.bytes, plannedPdfPages(runPlan), steps.parse);
-        if (cancelled) {
-          return null;
-        }
-        outputs.push({ title: runPlan.title, fileName: split ? names[index] : pdfFileName(title, DEFAULT_MERGE_TITLE), bytes: result.bytes, doc });
-        dropped.push(...result.dropped);
-        done += runPages.length;
+        },
+      );
+      if (outputs) {
+        drops.value = outputs.flatMap((built) => built.dropped);
       }
-      drops.value = dropped;
       return outputs;
     } catch (cause) {
       if (isCancellation(cause)) {
@@ -480,116 +268,36 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
     }
   }
 
-  // --- the result preview ---------------------------------------------------------
+  // --- the result preview -----------------------------------------------------------
 
-  const preview: PdfMergePreview = {
-    url: ref(""),
-    busy: ref(false),
-    failure: ref(""),
-    stale: ref(false),
-    manual: computed(() => planned.value.length > PREVIEW_MAX_PAGES),
-    refresh: () => {
-      clearTimer();
-      timer = setTimeout(buildPreview, Math.max(0, untilAllowed()));
+  const preview = useMergePreview({
+    // What the preview shows: the planned pages, and the sheet an image or
+    // blank page is built on ("" while the tray is not a PDF plan).
+    signature: computed(() => {
+      if (!deps.active.value || planned.value.length === 0) {
+        return "";
+      }
+      const pages = planned.value.map((entry) => [sourceIdOf(entry), entry.page?.index ?? -1, entry.rotateBy ?? 0]);
+      const built = planned.value.some((entry) => !entry.page);
+      return JSON.stringify({ pages, sheet: built ? [sheet.geometry.value, sheet.setup.value, deps.plan.value] : null });
+    }),
+    pageCount,
+    build: async (stop) => {
+      const plan = await sources.prepare([...planned.value], metadata(), stop);
+      return plan && !stop() ? steps.assemble(plan, { between: steps.between, cancelled: stop }) : null;
     },
-  };
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let lastBuiltAt: number | null = null;
-  let previewToken = 0;
-  let planVersion = 0;
-
-  function clearTimer(): void {
-    if (timer !== null) {
-      clearTimeout(timer);
-      timer = null;
-    }
-  }
-
-  /** How long until the debounce allows the next build. */
-  function untilAllowed(): number {
-    return lastBuiltAt === null ? 0 : lastBuiltAt + PREVIEW_DEBOUNCE_MS - steps.now();
-  }
-
-  function showPreview(url: string): void {
-    if (preview.url.value) {
-      steps.revokeUrl(preview.url.value);
-    }
-    preview.url.value = url;
-  }
-
-  async function buildPreview(): Promise<void> {
-    timer = null;
-    const mine = ++previewToken;
-    const version = planVersion;
-    lastBuiltAt = steps.now();
-    preview.busy.value = true;
-    preview.failure.value = "";
-    const stop = () => mine !== previewToken;
-    try {
-      const plan = await prepare([...planned.value], stop);
-      if (!plan || stop()) {
-        return;
-      }
-      const result = await steps.assemble(plan, { between: steps.between, cancelled: stop });
-      if (stop()) {
-        return;
-      }
-      showPreview(steps.previewUrl(result.bytes));
-      drops.value = result.dropped;
-      preview.stale.value = version !== planVersion;
-    } catch (cause) {
-      if (!stop() && !isCancellation(cause)) {
-        preview.failure.value = reasonOf(cause);
-      }
-    } finally {
-      if (!stop()) {
-        preview.busy.value = false;
-      }
-    }
-  }
-
-  function dropPreview(): void {
-    clearTimer();
-    previewToken += 1;
-    showPreview("");
-    preview.busy.value = false;
-    preview.failure.value = "";
-    preview.stale.value = false;
-    drops.value = [];
-  }
-
-  /** What the preview shows, as one comparable string ("" when inactive). */
-  const previewSignature = computed(() => {
-    if (!deps.active.value || planned.value.length === 0) {
-      return "";
-    }
-    const pages = planned.value.map((entry) => [sourceIdOf(entry), entry.page?.index ?? -1, entry.rotateBy ?? 0]);
-    return JSON.stringify({ pages, sheet: planned.value.some((entry) => !entry.page) ? sheetSignature() : null });
+    onDrops: (dropped) => {
+      drops.value = dropped;
+    },
+    previewUrl: steps.previewUrl,
+    revokeUrl: steps.revokeUrl,
+    now: steps.now,
+    describe: (cause) => (isCancellation(cause) ? null : reasonOf(cause)),
   });
 
-  watch(
-    previewSignature,
-    (signature) => {
-      planVersion += 1;
-      if (!signature) {
-        dropPreview();
-        return;
-      }
-      preview.stale.value = true;
-      clearTimer();
-      // Never automatically past PREVIEW_MAX_PAGES: Refresh builds it.
-      if (!preview.manual.value) {
-        timer = setTimeout(buildPreview, Math.max(PREVIEW_DEBOUNCE_MS, untilAllowed()));
-      }
-    },
-    { immediate: true },
-  );
-
-  // Leaving the workspace stops a build (no file, no record) and frees the
-  // preview's URL.
+  // Leaving the workspace stops a build: no file, no record.
   onScopeDispose(() => {
     cancelled = busy.value || cancelled;
-    dropPreview();
   });
 
   function setDestination(value: string): boolean {
