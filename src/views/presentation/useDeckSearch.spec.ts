@@ -4,7 +4,7 @@
 // the invalid-regex state, navigation into the stage hooks with the wrap
 // hints, Replace / Replace all as single undo entries, the keys and the stage
 // highlights.
-import { effectScope, nextTick, ref, shallowRef } from "vue";
+import { effectScope, nextTick, ref, shallowRef, triggerRef } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INVALID_REGEX_MESSAGE } from "../../lib/core/findQuery";
 import type { IdleHandle } from "../../lib/core/idleScheduler";
@@ -37,7 +37,12 @@ function setup(model: PresentationModel, extra: Partial<DeckSearchDeps> = {}) {
     model: deck,
     currentIndex,
     record: (label) => calls.push(`record:${label}`),
-    commit: () => calls.push("commit"),
+    // useSlideRender's commit: a fresh `slides` array, the shallowRef re-triggered.
+    commit: () => {
+      calls.push("commit");
+      model.slides = model.slides.slice();
+      triggerRef(deck);
+    },
     selectFrame: (id) => calls.push(`select:${id}`),
     startEditing: (hit: DeckHit) => calls.push(`edit:${hit.frameId}:${hit.para}:${hit.start}-${hit.end}`),
     openNotes: (hit: DeckHit) => void calls.push(`notes:${hit.para}:${hit.start}-${hit.end}`),
@@ -87,8 +92,8 @@ describe("useDeckSearch — the walk", () => {
       { slideIndex: 0, slideNumber: 1, hits: [{ index: 0, before: "", match: "Open", after: " with the Q3 highlight", frameName: "Speaker notes", scopeTag: "Notes" }] },
       { slideIndex: 1, slideNumber: 2, hits: [{ index: 1, before: "", match: "Open", after: " Berlin office", frameName: "Text box", scopeTag: "" }] },
     ]);
-    expect(search.bar.value).toMatchObject({ matchCount: 2, currentIndex: -1, scopeLabel: "Slides, shapes, tables and notes" });
-    expect(search.bar.value.scopeTitle).toContain("Not searched: master and layout text.");
+    expect([search.hitCount.value, search.currentHitIndex.value, search.scopeLabel]).toEqual([2, -1, "Slides, shapes, tables and notes"]);
+    expect(search.scopeTitle.value).toContain("Not searched: master and layout text.");
   });
 
   it("shows INVALID_REGEX_MESSAGE and runs nothing for an invalid expression; options persist across close", async () => {
@@ -99,7 +104,6 @@ describe("useDeckSearch — the walk", () => {
     await nextTick();
     vi.advanceTimersByTime(FIND_DEBOUNCE_MS);
     expect(search.error.value).toBe(INVALID_REGEX_MESSAGE);
-    expect(search.bar.value.error).toBe(INVALID_REGEX_MESSAGE);
     expect(search.hits.value).toEqual([]);
     search.closeFind();
     search.openFind();
@@ -129,6 +133,31 @@ describe("useDeckSearch — the walk", () => {
     expect(search.hitCount.value).toBe(60);
     expect(search.indexing.value).toBe(false);
     expect(search.hint.value).toBe("");
+  });
+
+  it("re-walks a big deck after an edit with the old hits — and the current one — kept until it settles", async () => {
+    const slides = Array.from({ length: 60 }, (_, i) => slide(`s${i}`, [text(`t${i}`, `needle ${i}`)]));
+    const queue: ((budget: number) => void)[] = [];
+    const schedule = (callback: (budget: number) => void): IdleHandle => {
+      queue.push(callback);
+      return { cancel: () => void queue.splice(queue.indexOf(callback), 1) };
+    };
+    const { search, deck } = setup(deckOf(slides), { schedule });
+    search.query.value = "needle";
+    await nextTick();
+    search.openFind();
+    while (queue.length > 0) queue.shift()!(0);
+    search.currentHitIndex.value = 45;
+    // An edit elsewhere (a commit re-slices `slides`) re-walks after the debounce.
+    deck.value!.slides = deck.value!.slides.slice();
+    triggerRef(deck);
+    await nextTick();
+    vi.advanceTimersByTime(FIND_DEBOUNCE_MS);
+    expect(search.indexing.value).toBe(true);
+    queue.shift()!(0);
+    expect([search.hitCount.value, search.currentHitIndex.value]).toEqual([60, 45]);
+    while (queue.length > 0) queue.shift()!(0);
+    expect([search.hitCount.value, search.currentHitIndex.value, search.indexing.value]).toEqual([60, 45, false]);
   });
 });
 
@@ -225,6 +254,52 @@ describe("useDeckSearch — navigation, replace and keys", () => {
     expect(search.hitCount.value).toBe(2);
     expect(search.currentHitIndex.value).toBe(0); // the next "cat", now first
     expect(model.slides[0].dirty).toBe(true);
+  });
+
+  it("steps over a hit inside its own replacement (\"cat\" → \"bobcat\")", async () => {
+    const model = deckOf([slide("a", [text("t", "cat cat")])]);
+    const { search } = await searched(model, "cat");
+    search.goToHit(0);
+    await settle();
+    search.replaceText.value = "bobcat";
+    search.replaceCurrent();
+    await settle();
+    expect(search.hits.value.map((hit) => hit.start)).toEqual([3, 7]);
+    expect(search.currentHitIndex.value).toBe(1); // the second original "cat", not the new one inside "bobcat"
+  });
+
+  it("Replace with nothing current finds first — no edit, no entry", async () => {
+    const model = MINI();
+    const { search, calls, currentIndex } = await searched(model);
+    calls.length = 0;
+    search.replaceText.value = "Launch";
+    search.replaceCurrent();
+    await settle();
+    expect(calls.some((call) => call.startsWith("record"))).toBe(false);
+    expect(search.currentHitIndex.value).toBe(0);
+    expect(currentIndex.value).toBe(0);
+    expect(model.slides[0].notes).toEqual(["Open with the Q3 highlight"]);
+  });
+
+  it("says \"Searching…\" while the debounce waits, never a premature \"no matches\"", async () => {
+    const { search } = setup(MINI());
+    search.openFind();
+    search.query.value = "Open";
+    await nextTick();
+    expect([search.pending.value, search.hint.value]).toEqual([true, "Searching…"]);
+    vi.advanceTimersByTime(FIND_DEBOUNCE_MS);
+    expect([search.pending.value, search.hint.value, search.hitCount.value]).toEqual([false, "", 2]);
+  });
+
+  it("does not walk again after its own Replace all — the hits are already fresh", async () => {
+    const { search } = await searched(MINI());
+    search.replaceText.value = "Launch";
+    search.replaceAll();
+    await nextTick();
+    const timing = search.walkTiming.value;
+    vi.advanceTimersByTime(FIND_DEBOUNCE_MS * 2);
+    expect(search.walkTiming.value).toBe(timing);
+    expect(search.pending.value).toBe(false);
   });
 
   it("Replace all is ONE undo entry — one record, every mutation, one commit — and reports the count", async () => {

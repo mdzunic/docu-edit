@@ -232,6 +232,12 @@ describe("replaceHit / replaceAllInDeck (AC-33..AC-39)", () => {
     expect(model.slides[1]).toEqual({ id: "s2", frames: [], sourceXml: "<draw:page/>" });
   });
 
+  it("strips trailing empty notes lines a replacement leaves (SPEC-083's shape)", () => {
+    const model = deck([slide("s", [], ["keep", "Open", ""])]);
+    replaceHit(model, findInDeck(model, q("Open"))[0], "");
+    expect(model.slides[0].notes).toEqual(["keep"]);
+  });
+
   it("drops notes a replacement empties entirely ([] is never stored)", () => {
     const model = deck([slide("s", [], ["cat"])]);
     replaceHit(model, findInDeck(model, q("cat"))[0], "");

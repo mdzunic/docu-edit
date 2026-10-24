@@ -206,6 +206,12 @@ export function useSlideSpellCheck(deps: SlideSpellCheckDeps) {
 
   watch([deps.currentSlide, deps.notesText, () => deps.model.value?.language, () => preferences.spellCheck], scheduleCheck, { immediate: true });
   watch([() => deps.editing.editingFrameId.value, () => deps.editing.editingCell.value], remeasure);
+  // Another slide: the last one's squiggles (and any open menu) go at once.
+  watch(() => deps.currentSlide.value?.id, () => {
+    issues.value = [];
+    underlineRects.value = [];
+    contextMenu.value = null;
+  });
   // Another deck in this view is a new session: Ignore / Ignore all start over.
   watch(() => deps.model.value?.id, (id, previous) => void (previous !== undefined && id !== previous && reset()));
   const unsubscribe = subscribeCustomDictionary(() => {
@@ -238,11 +244,15 @@ export function useSlideSpellCheck(deps: SlideSpellCheckDeps) {
       const paragraph = paragraphs?.[issue.para];
       return !!paragraph && paragraphText(paragraph).slice(issue.start, issue.end) === issue.word;
     };
+    if (!stillThere(rangeParagraphs(slide, issue))) {
+      scheduleCheck(); // stale (the text moved on): no entry, nothing marked
+      return;
+    }
     if (inSession) {
-      // The session's own one-entry command keeps it open and re-renders it.
-      edit.runTextCommand(SPELL_UNDO_LABELS.correct, (owner) => {
-        if (stillThere(owner.paragraphs)) replaceParagraphText(owner.paragraphs[issue.para], issue.start, issue.end, shaped);
-      }, range);
+      // The session's own one-entry command keeps it open, re-renders it and
+      // selects the corrected word.
+      const corrected = { start: range.start, end: { para: issue.para, offset: issue.start + shaped.length } };
+      edit.runTextCommand(SPELL_UNDO_LABELS.correct, (owner) => replaceParagraphText(owner.paragraphs[issue.para], issue.start, issue.end, shaped), corrected);
       return;
     }
     if (edit.editingFrameId.value) edit.stopEditing();

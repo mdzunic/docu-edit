@@ -191,6 +191,31 @@ describe("useSlideSpellCheck — the suggestions menu", () => {
     expect(frame.kind === "text" && frame.paragraphs[0].runs.map((run) => run.text).join("")).toBe("Teh slide the");
   });
 
+  it("a stale correction (the text moved on) records nothing and marks nothing", async () => {
+    const model = teh();
+    const { spell, calls, flush } = setup(model);
+    await flush();
+    spell.openContextMenuAt(0, 0, 0);
+    const frame = model.slides[0].frames[0];
+    if (frame.kind === "text") frame.paragraphs[0].runs = [{ text: "Different now" }];
+    spell.applySuggestion("the");
+    expect(calls).toEqual([]);
+    expect(model.slides[0].dirty).toBeUndefined();
+  });
+
+  it("drops the last slide's squiggles and menu the moment the slide changes", async () => {
+    const model = deckWith([
+      { id: "a", frames: [{ kind: "text", id: "t", ...box, paragraphs: [para({ text: "teh" })] }] },
+      { id: "b", frames: [{ kind: "text", id: "u", ...box, paragraphs: [para({ text: "fine" })] }] },
+    ]);
+    const { spell, currentIndex, flush } = setup(model);
+    await flush();
+    spell.openContextMenuAt(0, 0, 0);
+    currentIndex.value = 1;
+    await nextTick();
+    expect([spell.issues.value, spell.contextMenu.value]).toEqual([[], null]);
+  });
+
   it("Ignore clears one occurrence, Ignore all every one, Add to dictionary persists the word", async () => {
     const model = deckWith([{ id: "s", frames: [{ kind: "text", id: "t", ...box, paragraphs: [para({ text: "teh teh wrld" })] }] }]);
     const { spell, flush } = setup(model);

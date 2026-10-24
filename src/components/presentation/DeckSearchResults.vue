@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The deck's find dock (SPEC-098): the find bar — SPEC-017's FindBar, shared,
-// bound to the controller's `bar` props and `barEvents` (rendered here, not in
-// the view, so typing re-renders this dock alone) — and, below it, the results list
+// bound to the controller's state and actions with the deck's scope label,
+// title and placeholder (rendered here, not in the view, so typing re-renders
+// this dock alone) — and, below it, the results list
 // (`deck-search-results`) grouped by slide: one `deck-search-group` per slide
 // with a hit, its `deck-search-slide-chip` carrying the 1-based slide number,
 // then one `deck-search-hit` button per hit showing its ±40-character snippet
@@ -25,7 +26,8 @@ const props = defineProps({
 const c = computed(() => asDeckSearch(props.controller));
 const groups = computed(() => asDeckResultGroups(c.value.groups.value));
 const showResults = computed(() => c.value.query.value !== "" && c.value.error.value === "");
-const empty = computed(() => !c.value.indexing.value && c.value.hitCount.value === 0);
+// Not while a walk is pending or running — "no matches" is said once it is true.
+const empty = computed(() => !c.value.indexing.value && !c.value.pending.value && c.value.hitCount.value === 0);
 
 /** Escape anywhere in the dock closes it — the bar's own fields already did
  * (preventDefault), so this only acts on the results list — and goes no
@@ -52,8 +54,31 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
       @keydown="onKeydown"
     >
       <FindBar
-        v-bind="c.bar.value"
-        v-on="c.barEvents"
+        visible
+        :expanded="c.expanded.value"
+        :query="c.query.value"
+        :replace-text="c.replaceText.value"
+        :match-case="c.matchCase.value"
+        :whole-words="c.wholeWords.value"
+        :use-regex="c.useRegex.value"
+        :match-count="c.hitCount.value"
+        :current-index="c.currentHitIndex.value"
+        :error="c.error.value"
+        :hint="c.hint.value"
+        :scope-label="c.scopeLabel"
+        :scope-title="c.scopeTitle.value"
+        placeholder="Find in presentation"
+        @update:query="c.query.value = $event"
+        @update:replace-text="c.replaceText.value = $event"
+        @update:match-case="c.matchCase.value = $event"
+        @update:whole-words="c.wholeWords.value = $event"
+        @update:use-regex="c.useRegex.value = $event"
+        @toggle-expand="c.toggleExpand()"
+        @next="c.next()"
+        @prev="c.prev()"
+        @replace="c.replaceCurrent()"
+        @replace-all="c.replaceAll()"
+        @close="c.closeFind()"
       />
       <section
         v-if="showResults"

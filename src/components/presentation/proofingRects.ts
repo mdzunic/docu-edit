@@ -111,6 +111,27 @@ export function measureStageRange(surface: HTMLElement, range: StageTextRange): 
   }
 }
 
+/** The find highlights for one slide's hits (never notes): one rect per
+ * line box, `current` on hit `currentIndex`. Inside a focused text session
+ * the browser's own selection shows its frame's matches, so they are left
+ * out. */
+export function measureHitRects(
+  surface: HTMLElement,
+  hits: readonly (StageTextRange & { slideIndex: number; scope: string })[],
+  slideIndex: number,
+  currentIndex: number,
+  editingFrameId: string | null,
+): HighlightRect[] {
+  const active = surface.ownerDocument.activeElement;
+  const sessionFocused = active instanceof HTMLElement && active.isContentEditable && surface.contains(active);
+  const rects: HighlightRect[] = [];
+  hits.forEach((hit, index) => {
+    if (hit.slideIndex !== slideIndex || hit.scope === "notes" || (sessionFocused && hit.frameId === editingFrameId)) return;
+    for (const rect of measureStageRange(surface, hit)) rects.push({ ...rect, current: index === currentIndex });
+  });
+  return rects;
+}
+
 /** A client point in surface px (the inverse of the measurement above). */
 export function surfacePoint(surface: HTMLElement, clientX: number, clientY: number): { x: number; y: number } {
   const box = surface.getBoundingClientRect();

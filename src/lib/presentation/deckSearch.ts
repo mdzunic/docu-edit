@@ -191,12 +191,13 @@ function rewrite(slide: Slide, hit: DeckHit, replacement: string): void {
 
 /** Dirties a slide per scope: a frame/cell change rebuilds the slide; a notes
  * change rebuilds only the notes-slide part on pptx (`notesDirty`), and the
- * whole page on odp, whose writer never consults `notesDirty`. Notes emptied
- * entirely are dropped (`[]` is never stored, SPEC-083). */
+ * whole page on odp, whose writer never consults `notesDirty`. Notes keep
+ * SPEC-083's shape: trailing empty lines stripped, `[]` never stored. */
 function markTouched(model: PresentationModel, slide: Slide, frames: boolean, notes: boolean): void {
   if (frames) markSlideEdited(slide, model.format);
   if (!notes) return;
-  if (slide.notes && slide.notes.every((line) => line.length === 0)) delete slide.notes;
+  while (slide.notes && slide.notes.length > 0 && slide.notes[slide.notes.length - 1] === "") slide.notes.pop();
+  if (slide.notes?.length === 0) delete slide.notes;
   if (model.format === "odp") markSlideEdited(slide, "odp");
   else slide.notesDirty = true;
 }

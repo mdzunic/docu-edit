@@ -29,7 +29,7 @@ import { compileQuery, isQueryError, type CompiledQuery } from "../../lib/core/f
 import { findShortcut } from "../../lib/shortcuts";
 import type { PresentationModel } from "../../lib/presentation/model";
 import { DECK_SCOPE_LABEL, deckScopeTitle, findInDeck, isHitCurrent, replaceAllInDeck, replaceHit, type DeckHit } from "../../lib/presentation/deckSearch";
-import { measureStageRange, type HighlightRect } from "../../components/presentation/proofingRects";
+import { measureHitRects, type HighlightRect } from "../../components/presentation/proofingRects";
 import { createDeckWalk, type DeckWalkDeps, type WalkTiming } from "./deckSearchWalk";
 import { deckResultGroups } from "./deckSearchRows";
 import type { StageSearchHooks } from "./stageSearchHooks";
@@ -48,11 +48,10 @@ export interface DeckSearchDeps extends StageSearchHooks, DeckWalkDeps {
   commit: () => void;
 }
 
-/** Two hits starting at the same place (slide, target, paragraph, offset). */
-const samePlace = (a: DeckHit, b: DeckHit): boolean =>
-  a.slideIndex === b.slideIndex && a.scope === b.scope && a.frameId === b.frameId && a.row === b.row &&
-  a.column === b.column && a.para === b.para && a.start === b.start;
-const sameHit = (a: DeckHit, b: DeckHit): boolean => samePlace(a, b) && a.end === b.end;
+/** Two hits in the same paragraph (slide, target, paragraph). */
+const samePara = (a: DeckHit, b: DeckHit): boolean =>
+  a.slideIndex === b.slideIndex && a.scope === b.scope && a.frameId === b.frameId && a.row === b.row && a.column === b.column && a.para === b.para;
+const sameHit = (a: DeckHit, b: DeckHit): boolean => samePara(a, b) && a.start === b.start && a.end === b.end;
 
 /** Fresh identities for every touched slide and its frames so the stage and
  * the filmstrip re-render them (commit() re-slices the array). */
@@ -88,19 +87,29 @@ export function useDeckSearch(deps: DeckSearchDeps) {
   // --- the walk --------------------------------------------------------------
   const walker = createDeckWalk(deps);
   let debounce = 0;
+  /** A debounced walk is waiting (the list says nothing yet, not "no matches"). */
+  const pending = ref(false);
+  let freshPending = false; // the waiting walk is for a new query, not an edit
+  /** The hit current when the running walk began — re-found when it settles. */
+  let previous: DeckHit | null = null;
+  /** Our replace re-walked already: its own commit's model watch skips. */
+  let skipModelWalk = false;
+  const refind = (list: DeckHit[]): number => (previous ? list.findIndex((hit) => sameHit(hit, previous!)) : -1);
 
   function cancelWalk(): void {
     if (debounce) clearTimeout(debounce);
     debounce = 0;
+    pending.value = false;
     walker.cancel();
     indexing.value = false;
   }
 
-  /** Walks now (the debounce fired or the bar opened); the hit that was
-   * current stays current when the new walk still finds it. An invalid or
-   * empty query runs nothing. */
-  function walk(): void {
-    const previous = hits.value[currentHitIndex.value] ?? null;
+  /** Walks now (the debounce fired or the bar opened). A new query paints as
+   * it goes; a re-walk after an edit (`keep`) leaves the old hits — and the
+   * current one — on screen until it settles. An invalid or empty query runs
+   * nothing. */
+  function walk(keep = false): void {
+    previous = hits.value[currentHitIndex.value] ?? null;
     cancelWalk();
     const model = deps.model.value;
     const q = runnable();
@@ -109,21 +118,28 @@ export function useDeckSearch(deps: DeckSearchDeps) {
       currentHitIndex.value = -1;
       return;
     }
+    indexing.value = true;
     walker.start(model, q, (found, done, timing) => {
+      walkTiming.value = timing;
+      if (!done && keep) return;
       hits.value = found;
       indexing.value = !done;
-      walkTiming.value = timing;
-      currentHitIndex.value = done && previous ? found.findIndex((hit) => sameHit(hit, previous)) : -1;
+      currentHitIndex.value = done ? refind(found) : -1;
     });
   }
 
   /** Debounces a walk (typing, an option, an edit to the deck). */
-  function soon(): void {
+  function soon(keep = false): void {
     if (!open.value) return;
     if (debounce) clearTimeout(debounce);
+    freshPending ||= !keep;
+    pending.value = true;
     debounce = window.setTimeout(() => {
+      const fresh = freshPending;
       debounce = 0;
-      walk();
+      freshPending = false;
+      pending.value = false;
+      walk(!fresh);
     }, FIND_DEBOUNCE_MS);
   }
 
@@ -131,39 +147,35 @@ export function useDeckSearch(deps: DeckSearchDeps) {
    * every hit of the query now. */
   function flush(): void {
     if (!debounce && !indexing.value) return;
-    const previous = hits.value[currentHitIndex.value] ?? null;
+    previous = hits.value[currentHitIndex.value] ?? previous;
     cancelWalk();
+    freshPending = false;
     const model = deps.model.value;
     const q = runnable();
     hits.value = open.value && model && q ? findInDeck(model, q) : [];
-    currentHitIndex.value = previous ? hits.value.findIndex((hit) => sameHit(hit, previous)) : -1;
+    currentHitIndex.value = refind(hits.value);
+  }
+
+  /** Commits our own replace, whose hits are already fresh. */
+  function commitReplace(): void {
+    skipModelWalk = true;
+    deps.commit();
+    void nextTick(() => void (skipModelWalk = false));
   }
 
   watch([query, matchCase, wholeWords, useRegex], () => {
     message.value = "";
     currentHitIndex.value = -1;
+    previous = null;
     soon();
   });
   // Every commit re-slices `slides`, so an edit anywhere re-walks.
-  watch(() => deps.model.value?.slides, soon);
+  watch(() => deps.model.value?.slides, () => (skipModelWalk ? void (skipModelWalk = false) : soon(true)));
 
   // --- the stage highlights ----------------------------------------------------
   function measure(): void {
     const surface = deps.surface();
-    if (!open.value || !surface) {
-      highlightRects.value = [];
-      return;
-    }
-    // Inside a focused session the browser's own selection shows the match.
-    const active = surface.ownerDocument.activeElement;
-    const sessionFocused = active instanceof HTMLElement && active.isContentEditable && surface.contains(active);
-    const editing = deps.editingFrameId();
-    const rects: HighlightRect[] = [];
-    hits.value.forEach((hit, index) => {
-      if (hit.slideIndex !== deps.currentIndex.value || hit.scope === "notes" || (sessionFocused && hit.frameId === editing)) return;
-      for (const rect of measureStageRange(surface, hit)) rects.push({ ...rect, current: index === currentHitIndex.value });
-    });
-    highlightRects.value = rects;
+    highlightRects.value = open.value && surface ? measureHitRects(surface, hits.value, deps.currentIndex.value, currentHitIndex.value, deps.editingFrameId()) : [];
   }
   /** Re-measures after the next render (a slide change, a stage rescale). */
   const remeasure = (): void => void nextTick(measure);
@@ -219,6 +231,8 @@ export function useDeckSearch(deps: DeckSearchDeps) {
   // --- replace -------------------------------------------------------------------
   function replaceCurrent(): void {
     flush();
+    // Nothing current yet (a fresh query): Replace finds first, as find-next.
+    if (currentHitIndex.value < 0) return step(1);
     const model = deps.model.value;
     const q = runnable();
     const index = currentHitIndex.value;
@@ -232,13 +246,14 @@ export function useDeckSearch(deps: DeckSearchDeps) {
     deps.record(FIND_UNDO_LABELS.replace);
     replaceHit(model, hit, replaceText.value);
     reidentify(model, [hit]);
-    deps.commit();
+    commitReplace();
     cancelWalk();
     hits.value = findInDeck(model, q);
-    // Hits before the replaced one are unchanged; the replacement itself,
-    // when it matches the query again, is stepped over.
-    const at = hits.value[index];
-    const following = at && samePlace(at, hit) ? index + 1 : index;
+    // Hits before the replaced one are unchanged; any hit inside the
+    // replacement itself ("cat" → "bobcat") is stepped over.
+    let following = index;
+    const after = hit.start + replaceText.value.length;
+    while (hits.value[following] && samePara(hits.value[following], hit) && hits.value[following].start < after) following += 1;
     if (hits.value.length === 0) {
       currentHitIndex.value = -1;
       message.value = "";
@@ -260,7 +275,7 @@ export function useDeckSearch(deps: DeckSearchDeps) {
       deps.record(FIND_UNDO_LABELS.replaceAll);
       count = replaceAllInDeck(model, all, replaceText.value);
       reidentify(model, all);
-      deps.commit();
+      commitReplace();
     }
     hits.value = findInDeck(model, q);
     currentHitIndex.value = -1;
@@ -307,26 +322,8 @@ export function useDeckSearch(deps: DeckSearchDeps) {
   // --- derived state ------------------------------------------------------------------
   const hitCount = computed(() => hits.value.length);
   const scopeTitle = computed(() => deckScopeTitle(deps.model.value));
-  const hint = computed(() => message.value || (indexing.value ? SEARCHING_HINT : ""));
+  const hint = computed(() => message.value || (indexing.value || pending.value ? SEARCHING_HINT : ""));
   const groups = computed(() => deckResultGroups(deps.model.value, hits.value));
-
-  /** FindBar's props, bound with v-bind. */
-  const bar = computed(() => ({
-    visible: open.value,
-    expanded: expanded.value,
-    query: query.value,
-    replaceText: replaceText.value,
-    matchCase: matchCase.value,
-    wholeWords: wholeWords.value,
-    useRegex: useRegex.value,
-    matchCount: hitCount.value,
-    currentIndex: currentHitIndex.value,
-    error: error.value,
-    hint: hint.value,
-    scopeLabel: DECK_SCOPE_LABEL,
-    scopeTitle: scopeTitle.value,
-    placeholder: "Find in presentation",
-  }));
 
   onScopeDispose(() => {
     cancelWalk();
@@ -350,23 +347,9 @@ export function useDeckSearch(deps: DeckSearchDeps) {
     scopeLabel: DECK_SCOPE_LABEL,
     scopeTitle,
     indexing,
+    pending,
     highlightRects,
     walkTiming,
-    bar,
-    /** FindBar's events, bound with v-on. */
-    barEvents: {
-      "update:query": (text: string): void => void (query.value = text),
-      "update:replaceText": (text: string): void => void (replaceText.value = text),
-      "update:matchCase": (on: boolean): void => void (matchCase.value = on),
-      "update:wholeWords": (on: boolean): void => void (wholeWords.value = on),
-      "update:useRegex": (on: boolean): void => void (useRegex.value = on),
-      "toggle-expand": toggleExpand,
-      next,
-      prev,
-      replace: replaceCurrent,
-      "replace-all": replaceAll,
-      close: closeFind,
-    },
     openFind,
     closeFind,
     toggle,

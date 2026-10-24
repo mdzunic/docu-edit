@@ -228,3 +228,23 @@ test("a table-cell hit carries its Table rNcN tag, opens a session in that cell,
   await expect(page.getByTestId("find-count")).toHaveText("0 of 0");
   await expect(stage(page).getByTestId("slide-table-cell-0-0")).toHaveText("Box");
 });
+
+test("Escape from the bar after stepping into a text frame ends that session and leaves the keyboard on the stage", async ({ page }) => {
+  await openFixture(page, FIXTURE_PPTX);
+  await page.keyboard.press("ControlOrMeta+f");
+  await page.getByTestId("find-query").fill("Open");
+  await expect(page.getByTestId("deck-search-group")).toHaveCount(2);
+  await page.getByTestId("find-query").press("Enter");
+  await page.getByTestId("find-query").press("Enter");
+  await expect(page.getByTestId("find-count")).toHaveText("2 of 2");
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+  await expect(page.getByTestId("find-query")).toBeFocused();
+
+  await page.getByTestId("find-query").press("Escape");
+  await expect(page.getByTestId("find-bar")).toHaveCount(0);
+  await expect(page.getByTestId("slide-text-edit")).toHaveCount(0);
+  await expect(page.locator('[data-testid="slide-frame"].is-selected')).toBeFocused();
+  // The stage's keys work again: Enter opens a session on the selected frame.
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("slide-text-edit")).toBeVisible();
+});

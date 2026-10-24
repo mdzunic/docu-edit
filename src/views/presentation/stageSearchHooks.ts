@@ -54,6 +54,9 @@ export function stageSearchHooks(
     editingFrameId: () => editing.editingFrameId.value,
     surface,
     focusStage: () => {
+      // A session the bar opened ends here: its host is not where focus goes,
+      // and the stage's keys stand aside while a session is open.
+      if (editing.editingFrameId.value) editing.stopEditing();
       const selected = document.querySelector<HTMLElement>('[data-testid="slide-frame"].is-selected');
       (selected ?? document.querySelector<HTMLElement>('[data-testid="stage-workspace"]'))?.focus();
     },
