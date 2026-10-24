@@ -26,6 +26,7 @@ import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { escapeXmlAttribute, escapeXmlText } from "../../core/xml";
 import { BULLET_CHARS, type ListMarkerStyle } from "../../core/lists";
 import { sanitizeHref } from "../../core/urls";
+import { ODF_NO_LINGUISTIC_CONTENT, splitLanguageTag } from "../../core/language";
 import {
   DEFAULT_TABLE_CELL_PADDING_CM,
   type ChartFrame,
@@ -245,6 +246,11 @@ export class StyleRegistry {
     }
     if (run.sizePt !== undefined) props.push(`fo:font-size="${run.sizePt}pt"`);
     if (run.letterSpacingPt) props.push(`fo:letter-spacing="${ptToCm(run.letterSpacingPt)}cm"`);
+    // SPEC-098: only a run that carries a language or noProof writes one, so
+    // every other run's style (and its de-T key) is unchanged. ODF has no
+    // separate noProof flag: `zxx` wins over the run's own tag.
+    if (run.noProof) props.push(`fo:language="${ODF_NO_LINGUISTIC_CONTENT}"`);
+    else if (run.lang) props.push(languageAttrs(run.lang));
     // A colour ref writes its resolved literal (other readers see the right
     // colour); an UNTRANSFORMED ref also parents the automatic style on the
     // `de-theme-text-{slot}` scheme style, which the reader maps back to a ref.
@@ -975,6 +981,13 @@ function runsXml(runs: SlideRun[], registry: StyleRegistry): string {
     out += `<text:a xlink:href="${escapeXmlAttribute(href)}" xlink:type="simple"${title}>${inner}</text:a>`;
   }
   return out;
+}
+
+/** `fo:language` (+ `fo:country`) for a run's tag, split by core's helper. */
+function languageAttrs(tag: string): string {
+  const { language, country } = splitLanguageTag(tag);
+  const countryAttr = country ? ` fo:country="${escapeXmlAttribute(country)}"` : "";
+  return `fo:language="${escapeXmlAttribute(language)}"${countryAttr}`;
 }
 
 function runXml(run: SlideRun, registry: StyleRegistry): string {

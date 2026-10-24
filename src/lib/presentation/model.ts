@@ -250,6 +250,15 @@ export interface SlideRun {
   linkSlide?: number;
   /** The link's hover tooltip; meaningless without a link. */
   linkTooltip?: string;
+  /** SPEC-098: the run's language tag exactly as the source declares it (pptx
+   *  `a:rPr@lang`; odp `fo:language`+`fo:country` composed by
+   *  `composeLanguageTag`) — never re-normalised on read; `normalizeLanguageTag`
+   *  is applied only to look a dictionary up. Absent = the deck's
+   *  `PresentationModel.language`, else `DEFAULT_LANGUAGE`. */
+  lang?: string;
+  /** SPEC-098: "Do not check spelling" (pptx `a:rPr@noProof="1"`, odp
+   *  `fo:language="zxx"`). Only `true` is stored. */
+  noProof?: true;
 }
 
 /** One paragraph (visual line) of a text body. An explicit line break
@@ -793,6 +802,13 @@ export interface PresentationModel {
    *  `[]` is never stored. Invariant: absent, or `slides[0].sectionKey` names
    *  one of these entries — a leading unsectioned run is impossible. */
   sections?: DeckSection[];
+  /** SPEC-098: the deck's spell-checking default — set at read to the most
+   *  frequent non-empty `SlideRun.lang` (absent when no run declares one) and
+   *  by the language control with nothing selected. Absent = `DEFAULT_LANGUAGE`
+   *  (core/language.ts). It drives checking and the control's label only and
+   *  is deliberately NOT serialised to either format (see SPEC-098's wire
+   *  section). */
+  language?: string;
 }
 
 export const DEFAULT_PRESENTATION_TITLE = "Untitled presentation";

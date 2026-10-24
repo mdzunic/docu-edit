@@ -62,6 +62,12 @@ export interface RunFormatPatch {
   linkHref?: string | null;
   linkSlide?: number | null;
   linkTooltip?: string | null;
+  /** SPEC-098: sets the run language tag (stored verbatim); `clearLang`
+   *  drops it back to the deck default. */
+  lang?: string;
+  clearLang?: true;
+  /** SPEC-098 "Do not check spelling": `false` removes the mark. */
+  noProof?: boolean;
 }
 
 /** The paragraph-level formatting a command sets. `align:"left"`, `bullet:null`
@@ -112,7 +118,9 @@ function marksEqual(a: RunMarks, b: RunMarks): boolean {
     a.letterSpacingPt === b.letterSpacingPt &&
     a.linkHref === b.linkHref &&
     a.linkSlide === b.linkSlide &&
-    a.linkTooltip === b.linkTooltip
+    a.linkTooltip === b.linkTooltip &&
+    a.lang === b.lang &&
+    !!a.noProof === !!b.noProof
   );
 }
 
@@ -155,6 +163,8 @@ function buildRun(text: string, marks: RunMarks): SlideRun {
   if (marks.linkHref !== undefined) run.linkHref = marks.linkHref;
   if (marks.linkSlide !== undefined) run.linkSlide = marks.linkSlide;
   if (marks.linkTooltip !== undefined) run.linkTooltip = marks.linkTooltip;
+  if (marks.lang !== undefined) run.lang = marks.lang;
+  if (marks.noProof) run.noProof = true;
   return run;
 }
 
@@ -205,6 +215,12 @@ function applyPatchToMarks(marks: RunMarks, patch: RunFormatPatch): void {
   }
   if (marks.linkHref === undefined && marks.linkSlide === undefined) {
     delete marks.linkTooltip; // a tooltip is meaningless without a link
+  }
+  if (patch.clearLang) delete marks.lang;
+  if (patch.lang) marks.lang = patch.lang;
+  if (patch.noProof !== undefined) {
+    if (patch.noProof) marks.noProof = true;
+    else delete marks.noProof;
   }
 }
 
@@ -259,6 +275,25 @@ export function applyRunFormat(frame: ParagraphOwner, range: TextRange, patch: R
     changed = true;
   }
   return changed;
+}
+
+/** Replaces the half-open character range [start, end) of a paragraph's text
+ * with `replacement` (SPEC-098's find-and-replace and spelling correction),
+ * splitting runs at the edges. The replacement takes the marks of the run
+ * containing `start` (SPEC-017's rule) and neighbouring identical runs
+ * re-coalesce; paragraph-level fields are untouched. */
+export function replaceParagraphText(paragraph: SlideParagraph, start: number, end: number, replacement: string): void {
+  const text = paragraphText(paragraph);
+  const from = clamp(start, 0, text.length);
+  const to = clamp(end, from, text.length);
+  const chars = expand(paragraph);
+  const source = chars[from] ?? chars[from - 1] ?? {};
+  const inserted = Array.from({ length: replacement.length }, () => ({ ...source }));
+  paragraph.runs = coalesce(text.slice(0, from) + replacement + text.slice(to), [
+    ...chars.slice(0, from),
+    ...inserted,
+    ...chars.slice(to),
+  ]);
 }
 
 /** The SPEC-097 value ranges, clamped by every command (and by the panel). */
@@ -584,6 +619,10 @@ export interface SelectionFormatState {
   spaceBeforePt: FieldState<number>;
   spaceAfterPt: FieldState<number>;
   letterSpacingPt: FieldState<number>;
+  /** SPEC-098: the runs' own language tag (`""` where a run has none and
+   *  inherits the deck default) and their "Do not check spelling" mark. */
+  lang: FieldState<string>;
+  noProof: FieldState<boolean>;
 }
 
 function fold<T>(current: FieldState<T> | "unset", value: T): FieldState<T> | "unset" {
@@ -620,6 +659,8 @@ export function selectionFormatState(
   let spaceBeforePt: FieldState<number> | "unset" = "unset";
   let spaceAfterPt: FieldState<number> | "unset" = "unset";
   let letterSpacingPt: FieldState<number> | "unset" = "unset";
+  let lang: FieldState<string> | "unset" = "unset";
+  let noProof: FieldState<boolean> | "unset" = "unset";
 
   for (let p = norm.start.para; p <= norm.end.para; p++) {
     const para = frame.paragraphs[p];
@@ -656,6 +697,8 @@ export function selectionFormatState(
       sizePt = fold(sizePt, m.sizePt ?? DEFAULT_SIZE_PT);
       color = fold(color, m.color ? resolveColor(m.color, theme) : "");
       letterSpacingPt = fold(letterSpacingPt, m.letterSpacingPt ?? 0);
+      lang = fold(lang, m.lang ?? "");
+      noProof = fold(noProof, !!m.noProof);
     }
   }
 
@@ -676,6 +719,8 @@ export function selectionFormatState(
     spaceBeforePt: clean(spaceBeforePt),
     spaceAfterPt: clean(spaceAfterPt),
     letterSpacingPt: clean(letterSpacingPt),
+    lang: clean(lang),
+    noProof: clean(noProof),
   };
 }
 

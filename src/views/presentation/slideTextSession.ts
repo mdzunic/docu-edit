@@ -62,6 +62,30 @@ export function reidentifyEditedFrame(model: PresentationModel | null, current: 
   }
 }
 
+/** A typing burst (SPEC-081): the first keystroke records ONE undo entry under
+ * `label`, and a pause of `ms` — or `close()`, called by any non-typing
+ * command or the end of the session — ends it. */
+export function createTypingBurst(record: (label: string) => void, label: string, ms: number): { note: () => void; close: () => void } {
+  let active = false;
+  let timer = 0;
+  function close(): void {
+    active = false;
+    if (timer) {
+      clearTimeout(timer);
+      timer = 0;
+    }
+  }
+  function note(): void {
+    if (!active) {
+      record(label);
+      active = true;
+    }
+    if (timer) clearTimeout(timer);
+    timer = window.setTimeout(close, ms);
+  }
+  return { note, close };
+}
+
 /** Cut/copy put PLAIN text on the clipboard (SPEC-081 AC-14) — the styled DOM
  * is never written, so a paste elsewhere carries no slide formatting; the
  * empty-placeholder prompt lives outside the host, so it can never be copied. */

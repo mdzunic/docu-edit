@@ -292,6 +292,8 @@ export function usePresentationEditing(deps: PresentationEditingDeps) {
     onHandlePointerDown,
     onTableBorderPointerDown,
     registerSurface,
+    /** The stage surface element (SPEC-098's proofing layer measures in it). */
+    surface,
     setColor,
     setFill,
     setStroke,

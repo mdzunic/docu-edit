@@ -507,7 +507,11 @@ describe("byte stability — read → write → read → write", () => {
     const first = write(source);
     const spXml = /<p:sp>[\s\S]*<\/p:sp>/.exec(first)![0].replace("<p:sp>", `<p:sp ${NS}>`);
     const reread = parseShapeTreeChildForTest(spXml, CONTEXT) as TextFrame;
-    expect(reread.paragraphs).toEqual(source.paragraphs);
+    // SPEC-098: a run with no language is written as DEFAULT_LANGUAGE (the
+    // literal the writer always emitted) and the reader keeps a:rPr@lang, so
+    // the re-read runs declare "en-US"; everything else is unchanged.
+    const declared = source.paragraphs.map((para) => ({ ...para, runs: para.runs.map((run) => ({ ...run, lang: run.lang ?? "en-US" })) }));
+    expect(reread.paragraphs).toEqual(declared);
     expect(reread.body).toEqual(source.body);
     expect(reread.pptxBodyPr).toBe(source.pptxBodyPr);
     expect(write(reread)).toBe(first);

@@ -137,6 +137,10 @@ function runSpan(doc: Document, run: SlideRun, theme: DocumentTheme): HTMLSpanEl
   else if (run.linkSlide) span.dataset.linkSlide = String(run.linkSlide);
   if ((run.linkHref || run.linkSlide) && run.linkTooltip) span.dataset.linkTooltip = run.linkTooltip;
   if (run.linkHref || run.linkSlide) span.classList.add(EDIT_LINK_CLASS);
+  // SPEC-098: the run's language and noProof ride on the span so a session
+  // never strips them (the host is spellcheck="false"; `lang` is inert there).
+  if (run.lang) span.lang = run.lang;
+  if (run.noProof) span.dataset.noProof = "1";
   span.textContent = run.text;
   return span;
 }
@@ -342,6 +346,9 @@ function marksFrom(el: HTMLElement, base: RunMarks): RunMarks {
     else marks.linkSlide = slide;
     if (el.dataset.linkTooltip) marks.linkTooltip = el.dataset.linkTooltip;
   }
+  const lang = el.getAttribute("lang");
+  if (lang) marks.lang = lang;
+  if (el.dataset.noProof === "1") marks.noProof = true;
   return marks;
 }
 
@@ -379,6 +386,8 @@ function buildRun(text: string, marks: RunMarks): SlideRun {
   if (marks.linkHref) run.linkHref = marks.linkHref;
   else if (marks.linkSlide) run.linkSlide = marks.linkSlide;
   if ((marks.linkHref || marks.linkSlide) && marks.linkTooltip) run.linkTooltip = marks.linkTooltip;
+  if (marks.lang) run.lang = marks.lang;
+  if (marks.noProof) run.noProof = true;
   return run;
 }
 
@@ -396,7 +405,9 @@ export function marksEqual(a: SlideRun, b: SlideRun): boolean {
     (a.letterSpacingPt ?? 0) === (b.letterSpacingPt ?? 0) &&
     a.linkHref === b.linkHref &&
     a.linkSlide === b.linkSlide &&
-    a.linkTooltip === b.linkTooltip
+    a.linkTooltip === b.linkTooltip &&
+    a.lang === b.lang &&
+    !!a.noProof === !!b.noProof
   );
 }
 

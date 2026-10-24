@@ -29,6 +29,9 @@ interface DeckSnapshot {
    * deck values. */
   headerFooter?: DeckHeaderFooter;
   headerFooterDirty?: true;
+  /** SPEC-098: the deck's checking language (the language control's "Language"
+   * entry with nothing selected). */
+  language?: string;
 }
 
 interface Snapshot {
@@ -92,6 +95,9 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
     if (model.headerFooterDirty) {
       deck.headerFooterDirty = true;
     }
+    if (model.language !== undefined) {
+      deck.language = model.language;
+    }
     const snap: Snapshot = { slides: structuredClone(model.slides), deck };
     if (model.structureDirty) {
       snap.structureDirty = true;
@@ -150,6 +156,11 @@ export function usePresentationUndo(deps: PresentationUndoDeps): PresentationUnd
       model.headerFooterDirty = true;
     } else {
       delete model.headerFooterDirty;
+    }
+    if (snap.deck.language !== undefined) {
+      model.language = snap.deck.language;
+    } else {
+      delete model.language;
     }
     deps.onApply();
   }

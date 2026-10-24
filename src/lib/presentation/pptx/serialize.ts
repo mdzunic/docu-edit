@@ -7,6 +7,7 @@
 //
 // Framework-free; imports only presentation siblings and src/lib/core.
 import { GEOMETRY_TO_PRST } from "../../core/drawingMl";
+import { DEFAULT_LANGUAGE } from "../../core/language";
 import { adjustmentGuideName, adjustmentToGuideValue, resolvedShapeAdjustments } from "../../core/shapeCatalogue";
 import { computeOwnerGrid, type BorderSide } from "../../core/tables";
 import { cmToEmu } from "../../core/units";
@@ -503,6 +504,11 @@ function paragraphXml(para: SlideParagraph, tc: SlideColorWrite, lookup: RelLook
  * `a:latin` when a family is set. A link's `a:hlinkClick` (SPEC-097) follows
  * `a:latin` — its `CT_TextCharacterProperties` schema position. */
 function runXml(run: SlideRun, tc: SlideColorWrite, lookup: RelLookup | undefined): string {
+  // SPEC-098: the run's own language (byte-identical to the old hard-coded
+  // literal whenever it has none — that literal IS DEFAULT_LANGUAGE) and its
+  // noProof mark.
+  const lang = escapeXmlAttribute(run.lang ?? DEFAULT_LANGUAGE);
+  const noProof = run.noProof ? ` noProof="1"` : "";
   const sz = ` sz="${Math.round((run.sizePt ?? DEFAULT_SIZE_PT) * 100)}"`;
   const b = run.bold ? ` b="1"` : "";
   const i = run.italic ? ` i="1"` : "";
@@ -511,7 +517,7 @@ function runXml(run: SlideRun, tc: SlideColorWrite, lookup: RelLookup | undefine
   const color = `<a:solidFill>${colorElementXml(run.color ?? DEFAULT_COLOR, tc)}</a:solidFill>`;
   const latin = run.fontFamily ? latinXml(run.fontFamily, tc) : "";
   const hlink = hlinkClickXml(run, lookup);
-  return `<a:r><a:rPr lang="en-US"${sz}${b}${i}${u}${spc}>${color}${latin}${hlink}</a:rPr><a:t>${escapeXmlText(run.text)}</a:t></a:r>`;
+  return `<a:r><a:rPr lang="${lang}"${noProof}${sz}${b}${i}${u}${spc}>${color}${latin}${hlink}</a:rPr><a:t>${escapeXmlText(run.text)}</a:t></a:r>`;
 }
 
 // --- deck field placeholders (SPEC-093) ------------------------------------

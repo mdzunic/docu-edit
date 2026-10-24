@@ -331,6 +331,11 @@ function resolveRun(
   if (props.letterSpacingPt) run.letterSpacingPt = props.letterSpacingPt;
   // A link is never inherited: only the run's own rPr carries one (SPEC-097).
   Object.assign(run, readHlinkClick(rPr ? firstA(rPr, "hlinkClick") : undefined, ctx));
+  // SPEC-098: the run's own language tag, verbatim, and its noProof mark.
+  const lang = rPr?.getAttribute("lang");
+  if (lang) run.lang = lang;
+  const noProof = rPr?.getAttribute("noProof");
+  if (noProof === "1" || noProof === "true") run.noProof = true;
   return run;
 }
 

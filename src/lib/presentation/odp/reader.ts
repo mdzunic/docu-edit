@@ -41,6 +41,7 @@ import {
 } from "../../core/odfXml";
 import { bulletStyleForChar, LIST_INDENT_STEP_CM, type ListMarkerStyle } from "../../core/lists";
 import { sanitizeHref } from "../../core/urls";
+import { composeLanguageTag, ODF_NO_LINGUISTIC_CONTENT } from "../../core/language";
 import { DRAW_TYPE_TO_GEOMETRY } from "../../core/drawingMl";
 import { guideValueToAdjustment } from "../../core/shapeCatalogue";
 import { normalizeRotationDeg } from "../../core/shapes";
@@ -112,6 +113,11 @@ interface RunProps {
   /** SPEC-097: `fo:letter-spacing` in points ("normal" reads as an explicit
    *  0 so it overrides a parent's spacing). */
   letterSpacingPt?: number;
+  /** SPEC-098: `fo:language` + `fo:country` composed into one tag; `zxx`
+   *  (ODF's "no linguistic content") is noProof instead — a real language
+   *  reads as an explicit `noProof: false` so it overrides a parent's `zxx`. */
+  lang?: string;
+  noProof?: boolean;
 }
 
 interface GraphicProps {
@@ -371,6 +377,15 @@ function readTextProps(textProps: Element): RunProps {
       props.letterSpacingPt = Math.round(Math.min(10, Math.max(-10, pt)) * 10) / 10;
     }
   }
+  const language = foAttr(textProps, "language");
+  if (language) {
+    if (language.trim().toLowerCase() === ODF_NO_LINGUISTIC_CONTENT) {
+      props.noProof = true;
+    } else {
+      props.lang = composeLanguageTag(language, foAttr(textProps, "country"));
+      props.noProof = false;
+    }
+  }
   return props;
 }
 
@@ -483,6 +498,8 @@ function mergeProps(base: RunProps, over: RunProps): RunProps {
     sizePt: over.sizePt ?? base.sizePt,
     color: over.color ?? base.color,
     letterSpacingPt: over.letterSpacingPt ?? base.letterSpacingPt,
+    lang: over.lang ?? base.lang,
+    noProof: over.noProof ?? base.noProof,
   };
 }
 
@@ -513,6 +530,8 @@ function runFromProps(text: string, props: RunProps, link?: RunLink): SlideRun {
   if (props.sizePt !== undefined && props.sizePt !== DEFAULT_FONT_SIZE_PT) run.sizePt = props.sizePt;
   if (props.color) run.color = props.color;
   if (props.letterSpacingPt) run.letterSpacingPt = props.letterSpacingPt;
+  if (props.lang) run.lang = props.lang;
+  if (props.noProof) run.noProof = true;
   if (link) {
     run.linkHref = link.href;
     if (link.tooltip) run.linkTooltip = link.tooltip;
