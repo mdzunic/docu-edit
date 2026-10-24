@@ -215,6 +215,12 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   const toolbarEnabled = computed(() => targetOwner() !== null);
 
+  /** How the targeted frame lays out an unaligned paragraph. */
+  function sessionAlign(): NonNullable<TextFrame["paragraphs"][number]["align"]> {
+    const frame = targetFrame();
+    return frame ? defaultParagraphAlign(frame) : "left";
+  }
+
   // Reactive over the target owner's model (via commit's triggerRef) AND the
   // DOM selection (via selectionTick), so it survives undo/redo and caret moves.
   const toolbarState = computed<SelectionFormatState | null>(() => {
@@ -228,7 +234,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     } else {
       range = wholeFrameRange(owner);
     }
-    return selectionFormatState(owner, range, deckThemeOf(deps.model.value));
+    return selectionFormatState(owner, range, deckThemeOf(deps.model.value), sessionAlign());
   });
 
   // --- session lifecycle ----------------------------------------------------
@@ -360,8 +366,7 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
   /** Renders the owner into the host in the deck's theme; a shape's
    * unaligned paragraphs centre there as they do on the stage. */
   function renderHost(el: HTMLElement, owner: ParagraphOwner): void {
-    const frame = editingFrame.value;
-    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value), frame ? defaultParagraphAlign(frame) : "left");
+    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value), sessionAlign());
   }
 
   function stopEditing(): void {

@@ -636,11 +636,13 @@ const clean = <T>(state: FieldState<T> | "unset"): FieldState<T> => (state === "
 /** The formatting state a toolbar reflects for a selection: each run field
  * folded over every covered character, each paragraph field over every touched
  * paragraph (AC-24). A collapsed caret reads the character to its left (or the
- * run at the caret when at a paragraph start). */
+ * run at the caret when at a paragraph start). `defaultAlign` is what an
+ * unaligned paragraph shows — a shape's text centres (SPEC-079). */
 export function selectionFormatState(
   frame: ParagraphOwner,
   range: TextRange,
   theme: DocumentTheme = DEFAULT_THEME,
+  defaultAlign: NonNullable<SlideParagraph["align"]> = "left",
 ): SelectionFormatState {
   const norm = normalizeRange(frame, range);
   let bold: FieldState<boolean> | "unset" = "unset";
@@ -665,7 +667,7 @@ export function selectionFormatState(
   for (let p = norm.start.para; p <= norm.end.para; p++) {
     const para = frame.paragraphs[p];
     if (!para) continue;
-    align = fold(align, para.align ?? "left");
+    align = fold(align, para.align ?? defaultAlign);
     bullet = fold(bullet, para.bullet === "disc");
     level = fold(level, para.level ?? 0);
     bulletStyle = fold(bulletStyle, paragraphMarkerStyle(para) ?? "none");

@@ -234,11 +234,10 @@ test("a table-cell hit carries its Table rNcN tag, opens a session in that cell,
 test("a shape's hit opens a text session on that shape with the word selected", async ({ page }) => {
   await openFixture(page, SHAPE_TEXT_PPTX);
   await page.keyboard.press("ControlOrMeta+h");
-  await page.getByTestId("find-query").fill("Press me");
+  await page.getByTestId("find-query").fill("Press");
   const groups = page.getByTestId("deck-search-group");
   await expect(groups).toHaveCount(4);
-  await page.getByTestId("find-query").fill("Press");
-  await expect(groups).toHaveCount(4);
+  await expect(groups.nth(0).locator("mark")).toHaveText("Press");
   await groups.nth(0).getByTestId("deck-search-hit").click();
 
   await expect(page.getByTestId("filmstrip-slide").nth(0)).toHaveAttribute("aria-selected", "true");

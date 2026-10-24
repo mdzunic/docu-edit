@@ -106,6 +106,14 @@ describe("selectionFormatState", () => {
     const state = selectionFormatState(frame, { start: { para: 0, offset: 2 }, end: { para: 0, offset: 2 } });
     expect(state.bold).toBe(true);
   });
+
+  it("reports an unaligned paragraph at the frame's default alignment (a shape's text centres)", () => {
+    const frame = frameOf([{ runs: [{ text: "ab" }] }, { runs: [{ text: "cd" }], align: "right" }]);
+    const first = { start: { para: 0, offset: 0 }, end: { para: 0, offset: 2 } };
+    expect(selectionFormatState(frame, first).align).toBe("left");
+    expect(selectionFormatState(frame, first, undefined, "center").align).toBe("center");
+    expect(selectionFormatState(frame, { start: { para: 1, offset: 0 }, end: { para: 1, offset: 2 } }, undefined, "center").align).toBe("right");
+  });
 });
 
 describe("normalizeRange", () => {

@@ -403,6 +403,7 @@ describe("SPEC-098: a find hit opens a session with its range selected", () => {
     editing.registerHost(host);
     expect(document.getSelection()?.toString()).toBe("Press");
     expect(host.querySelector<HTMLElement>(".ce-p")?.style.textAlign).toBe("center");
+    expect(editing.toolbarState.value?.align).toBe("center");
     expect(slide.dirty).toBeUndefined();
     host.innerHTML = "<div>Push me</div>";
     editing.onInput();
