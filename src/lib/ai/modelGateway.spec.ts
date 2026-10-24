@@ -770,6 +770,16 @@ describe("consent", () => {
     expect(prompt).toHaveBeenCalledTimes(3);
   });
 
+  it("survives stray whitespace typed around the same model id", async () => {
+    configure();
+    prompt.mockResolvedValue("always");
+    await gateway.complete(request);
+    gateway.updateProviderConfig({ model: " test-model " });
+    expect(consentGrants()).toMatchObject([{ model: "test-model" }]);
+    await gateway.complete(request);
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
   it("does not carry over to another feature, which asks for its own — and declining it leaves the first", async () => {
     configure();
     prompt.mockResolvedValue("always");

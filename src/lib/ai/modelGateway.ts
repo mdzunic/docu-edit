@@ -166,7 +166,9 @@ export function updateProviderConfig(patch: Partial<ModelProviderConfig>): Provi
   const origin = originOf(next.baseUrl);
   const keyDiscarded = discardApiKeyUnlessFor(origin);
   savePreference("modelProvider", next);
-  pruneConsent(origin, next.model);
+  // Trimmed, as the gateway grants and checks it: stray whitespace typed
+  // around the same model id is not a different model.
+  pruneConsent(origin, next.model.trim());
   return { previousOrigin, origin, keyDiscarded };
 }
 
