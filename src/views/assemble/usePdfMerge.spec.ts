@@ -432,6 +432,11 @@ describe("refusals", () => {
     expect(merge.failure.value).toMatch(/^Could not save the PDF: “locked” is password-protected, so it cannot be merged\. “junk” could not be read as a PDF \(.+\), so it cannot be merged\. Remove them from the plan or replace them, then try again\.$/);
     expect(steps.assemble).not.toHaveBeenCalled();
     expect(store.listDocuments()).toHaveLength(count);
+    // What changed names each refused file.
+    expect(merge.dropGroups.value.map((group) => [group.kind, group.records.map((record) => record.source)])).toEqual([
+      ["encryptedSource", ["locked"]],
+      ["unreadableSource", ["junk"]],
+    ]);
     expect(await merge.download()).toBe(false);
     expect(steps.download).not.toHaveBeenCalled();
     // Removing the offenders, the plan goes through.

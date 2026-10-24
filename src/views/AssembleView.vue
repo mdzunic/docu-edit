@@ -74,7 +74,7 @@ function close() {
 </script>
 
 <template>
-  <AppShell document-title="Combine images">
+  <AppShell :document-title="assembly.merging.value ? 'Combine PDFs' : 'Combine images'">
     <template #app-bar-actions>
       <UiIconButton
         class="assembly-close"

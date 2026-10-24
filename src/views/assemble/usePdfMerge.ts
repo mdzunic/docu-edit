@@ -33,6 +33,7 @@ import {
   assemblePdf,
   parsePdf,
   PdfAssemblyCancelled,
+  PdfAssemblyRefusal,
   type PdfAssemblyHooks,
   type PdfAssemblyPlan,
   type PdfAssemblyResult,
@@ -246,10 +247,19 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
       if (isCancellation(cause)) {
         return null;
       }
+      noteRefusal(cause);
       throw cause;
     } finally {
       busy.value = false;
       progress.value = "";
+    }
+  }
+
+  /** A refused plan's records (each encrypted or unreadable source) are
+   * what changed: nothing at all was built. */
+  function noteRefusal(cause: unknown): void {
+    if (cause instanceof PdfAssemblyRefusal && cause.dropped.length > 0) {
+      drops.value = cause.dropped;
     }
   }
 
@@ -292,7 +302,13 @@ export function usePdfMerge(deps: PdfMergeDeps): PdfMergeController {
     previewUrl: steps.previewUrl,
     revokeUrl: steps.revokeUrl,
     now: steps.now,
-    describe: (cause) => (isCancellation(cause) ? null : reasonOf(cause)),
+    describe: (cause) => {
+      if (isCancellation(cause)) {
+        return null;
+      }
+      noteRefusal(cause);
+      return reasonOf(cause);
+    },
   });
 
   // Leaving the workspace stops a build: no file, no record.
