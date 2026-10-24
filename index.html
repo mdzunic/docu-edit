@@ -30,7 +30,14 @@
          against frame-src as well as object-src, so 'none' refused every PDF
          at /media/:id. blob: is all it takes — 'self' does not match a blob:
          URL and is not needed — and it lets a frame load nothing an <object>
-         could not already, since object-src admits blob: too. -->
+         could not already, since object-src admits blob: too.
+
+         `connect-src` names plain-http loopback (SPEC-113): a model server on
+         this machine (Ollama, LM Studio, llama.cpp) listens on
+         http://localhost:<port>, which neither 'self' nor https: matches.
+         Only those two hosts, never `http:` — the model gateway refuses every
+         other http: origin itself. A CSP host-source cannot spell an IPv6
+         literal, so http://[::1] stays blocked here; use localhost. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="
@@ -42,7 +49,7 @@
         media-src 'self' data: blob:;
         object-src 'self' blob:;
         worker-src 'self' blob:;
-        connect-src 'self' data: blob: https: ws: wss:;
+        connect-src 'self' data: blob: https: http://localhost:* http://127.0.0.1:* ws: wss:;
         base-uri 'none';
         form-action 'none';
         frame-src blob:;

@@ -1,6 +1,7 @@
 import type { RouteLocationNormalized, RouteRecordRaw } from "vue-router";
 import { documentKindOf } from "./lib/documentStore";
 import { editorPathFor, type DocumentKind } from "./lib/documentKinds";
+import { isExperimentEnabled, type ExperimentId } from "./lib/experiments";
 
 // Route table for the app. SPEC-001 adds the shell at `/` and the
 // document workspace at `/doc/:id`; later specs extend this list.
@@ -23,6 +24,17 @@ export function guardKind(expected: DocumentKind) {
     const stored = documentKindOf(id);
     return stored === undefined || stored === expected ? true : editorPathFor(stored, id);
   };
+}
+
+// SPEC-113: an experimental feature's route is absent while its Labs flag is
+// off — the guard sends it to the library before the route's component (a
+// lazy import(), like every route here) is ever loaded. A guard only reads
+// the flag; it never makes a request.
+
+/** The guard for a route that belongs to experiment `id`: "/" while the
+ * experiment is off. */
+export function guardExperiment(id: ExperimentId) {
+  return () => (isExperimentEnabled(id) ? true : "/");
 }
 
 export const routes: RouteRecordRaw[] = [

@@ -14,6 +14,7 @@ import {
   insertLinkText,
   isDangerousUrl,
   isFetchableUrl,
+  isLocalMachineUrl,
   linkAtCaret,
   linkTargetLabel,
   linkTargetOf,
@@ -132,6 +133,49 @@ describe("isFetchableUrl (what the app will request on the reader's behalf)", ()
   it("is stricter than sanitizeHref: mailto may be linked but never fetched", () => {
     expect(sanitizeHref("mailto:a@example.com")).toBe("mailto:a@example.com");
     expect(isFetchableUrl("mailto:a@example.com")).toBe(false);
+  });
+
+  // SPEC-113's CSP admits plain-http loopback for a local model server, so
+  // nothing but this rule keeps an untrusted document (or a link into
+  // /open?url=) from reaching the user's own services.
+  it.each([
+    ["http://localhost:8080/api/whatever"],
+    ["http://LOCALHOST:11434/v1/models"],
+    ["http://localhost./a.png"],
+    ["https://localhost/a.png"],
+    ["http://admin.localhost:3001/a.png"],
+    ["http://127.0.0.1:8080/a.png"],
+    ["http://127.12.0.9/a.png"],
+    ["http://2130706433/a.png"],
+    ["http://0x7f.1/a.png"],
+    ["http://0.0.0.0:8080/a.png"],
+    ["http://[::1]:8080/a.png"],
+    ["http://[0:0:0:0:0:0:0:1]/a.png"],
+    ["http://[::]/a.png"],
+    ["http://[::ffff:127.0.0.1]:8080/a.png"],
+  ])("refuses this computer: %s", (url) => {
+    expect(isLocalMachineUrl(url)).toBe(true);
+    expect(isFetchableUrl(url, "https://docu-edit.example")).toBe(false);
+  });
+
+  it.each([
+    ["http://localhost.example.com/a.png"],
+    ["http://notlocalhost/a.png"],
+    ["http://128.0.0.1/a.png"],
+    ["http://[::2]/a.png"],
+    ["https://example.com/127.0.0.1/a.png"],
+  ])("does not mistake a look-alike for this computer: %s", (url) => {
+    expect(isLocalMachineUrl(url)).toBe(false);
+    expect(isFetchableUrl(url, "https://docu-edit.example")).toBe(true);
+  });
+
+  it("still fetches from the app's own origin when that is on this computer (a dev server)", () => {
+    expect(isFetchableUrl("http://localhost:5173/fixtures/photo.png", "http://localhost:5173")).toBe(true);
+    // Only that origin: another port on the same host is another service.
+    expect(isFetchableUrl("http://localhost:8080/photo.png", "http://localhost:5173")).toBe(false);
+    expect(isFetchableUrl("https://localhost:5173/photo.png", "http://localhost:5173")).toBe(false);
+    // The page's own origin is the default.
+    expect(isFetchableUrl(`${location.origin}/photo.png`)).toBe(true);
   });
 });
 

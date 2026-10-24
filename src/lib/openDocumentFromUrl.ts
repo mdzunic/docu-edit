@@ -10,7 +10,7 @@ import {
   type OpenedFile,
 } from "./openDocument";
 import { MEDIA_FORMAT_CONTENT_TYPES, OPENABLE_EXTENSIONS, SPREADSHEET_FORMAT_CONTENT_TYPES } from "./documentKinds";
-import { isFetchableUrl } from "./links";
+import { isFetchableUrl, isLocalMachineUrl } from "./links";
 
 export class OpenFromUrlError extends Error {}
 
@@ -96,15 +96,30 @@ function deriveFileName(response: Response, url: string): string {
  * the returned `kind`. */
 export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
   if (!isFetchableUrl(url)) {
-    throw new OpenFromUrlError("That isn't a web address we can open — links must start with http:// or https://");
+    throw new OpenFromUrlError(
+      isLocalMachineUrl(url)
+        ? "That link points at this computer, which a link may not open — save the file and choose it instead"
+        : "That isn't a web address we can open — links must start with http:// or https://",
+    );
   }
 
   let response: Response;
   try {
-    response = await fetch(url);
+    // A redirect is not followed: the check above saw only this address, and
+    // the CSP admits plain-http loopback since SPEC-113, so a link that
+    // answers 302 to http://127.0.0.1 would otherwise reach this computer.
+    response = await fetch(url, { redirect: "manual" });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpenFromUrlError(reason || "The request failed — check the URL and your connection");
+  }
+
+  // A browser reports the refused redirect as an opaque response (status 0,
+  // no Location to read); a non-browser fetch returns the 3xx itself.
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    throw new OpenFromUrlError(
+      "That link redirects to another address, which is not followed here — open it in a browser tab and use the address it ends up at",
+    );
   }
 
   if (!response.ok) {

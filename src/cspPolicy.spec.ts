@@ -119,4 +119,17 @@ describe("Content-Security-Policy", () => {
     expect(connect).toEqual(expect.arrayContaining(["'self'", "https:"]));
     expect(connect).not.toContain("*");
   });
+
+  it("permits plain http to this machine's loopback for a local model server, and no other http", () => {
+    // SPEC-113: the model gateway talks to a local OpenAI-compatible server
+    // (Ollama, LM Studio, llama.cpp) at http://localhost:<port> — which
+    // neither 'self' (another port) nor https: matches. Exactly the loopback
+    // hosts the gateway itself accepts over http:, any port; never the bare
+    // http: scheme, which would open every plain-http host on the network.
+    const connect = sources("connect-src");
+    expect(connect).toEqual(expect.arrayContaining(["http://localhost:*", "http://127.0.0.1:*"]));
+    expect(connect).not.toContain("http:");
+    const plainHttp = connect.filter((source) => source.startsWith("http://"));
+    expect(plainHttp.toSorted()).toEqual(["http://127.0.0.1:*", "http://localhost:*"]);
+  });
 });

@@ -36,6 +36,46 @@ describe("openDocumentFromUrl", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // A link can carry any address into /open?url=, and SPEC-113's CSP admits
+  // plain-http loopback, so this path refuses this computer itself.
+  it.each([
+    ["http://127.0.0.1:8080/admin/export.docx"],
+    ["http://localhost:11434/notes.md"],
+    ["https://localhost/report.docx"],
+    ["http://[::1]:3000/report.docx"],
+  ])("refuses to fetch a URL on this computer: %s", async (url) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(openDocumentFromUrl(url)).rejects.toThrow(OpenFromUrlError);
+    await expect(openDocumentFromUrl(url)).rejects.toThrow(/points at this computer/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // That check sees only the address the link named, so the fetch must not
+  // follow a redirect either: a link answering 302 to http://127.0.0.1 would
+  // reach this computer through the CSP's loopback allowance. A browser
+  // hands back an opaque redirect for `redirect: "manual"`; a non-browser
+  // fetch hands back the 3xx itself. Either is refused, and says why.
+  it.each([
+    ["an opaque redirect (browser)", { ok: false, status: 0, statusText: "", type: "opaqueredirect" as const, headers: new Headers() }],
+    [
+      "a 302 to this computer (non-browser)",
+      {
+        ok: false,
+        status: 302,
+        statusText: "Found",
+        type: "basic" as const,
+        headers: new Headers({ location: "http://127.0.0.1:8080/admin/export.docx" }),
+      },
+    ],
+  ])("never follows a redirect: %s", async (_label, response) => {
+    const fetchSpy = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(openDocumentFromUrl("https://attacker.example/r")).rejects.toThrow(/redirects to another address/);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledWith("https://attacker.example/r", { redirect: "manual" });
+  });
+
   it("still fetches plain http, not only https", async () => {
     mockFetchResolvedWith({
       ok: true,

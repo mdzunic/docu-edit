@@ -87,16 +87,47 @@ export {
 // business being fetched by a document reader at all.
 const FETCHABLE_PROTOCOLS = new Set(["http:", "https:"]);
 
-/** Whether `url` parses as absolute and names a scheme we are willing to
- * fetch. Callers that resolve a relative reference against a base must
- * check the RESOLVED url, not the raw reference — "images/x.png" is not
- * absolute and would fail here on its own. */
-export function isFetchableUrl(url: string): boolean {
+// Nor will it fetch from this computer. The page's CSP admits plain-http
+// loopback since SPEC-113 (a local model server listens there, and the model
+// gateway pins its own origin), so the CSP no longer keeps a document's
+// image or a link's URL off the user's own services — this does. Every
+// spelling of "this machine" the URL parser leaves: localhost and its
+// subdomains (RFC 6761, with or without the root dot), all of 127.0.0.0/8
+// (the parser has already turned 0x7f.1 or 2130706433 into dotted form),
+// ::1 and its IPv4-mapped form, and the unspecified addresses, which
+// connect locally. Broader on purpose than the gateway's three accepted
+// loopback hosts: that list says where a request MAY go, this one where a
+// document's request may not.
+const LOCAL_MACHINE_HOSTNAME =
+  /^(?:(?:[^.]+\.)*localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1?\]|\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\])$/;
+
+/** Whether `url` parses as absolute and names this computer (see above). */
+export function isLocalMachineUrl(url: string): boolean {
   try {
-    return FETCHABLE_PROTOCOLS.has(new URL(url).protocol);
+    return LOCAL_MACHINE_HOSTNAME.test(new URL(url).hostname.replace(/\.$/, ""));
   } catch {
     return false;
   }
+}
+
+/** Whether `url` parses as absolute, names a scheme we are willing to fetch
+ * and is not on this computer — unless it is the app's own origin
+ * (`appOrigin`, the page's by default), which a dev server on localhost is
+ * and the CSP's 'self' always admitted. Callers that resolve a relative
+ * reference against a base must check the RESOLVED url, not the raw
+ * reference — "images/x.png" is not absolute and would fail here on its
+ * own. */
+export function isFetchableUrl(url: string, appOrigin: string | undefined = globalThis.location?.origin): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (!FETCHABLE_PROTOCOLS.has(parsed.protocol)) {
+    return false;
+  }
+  return parsed.origin === appOrigin || !isLocalMachineUrl(url);
 }
 
 // --- link reading -----------------------------------------------------------
