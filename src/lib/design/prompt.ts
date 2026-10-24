@@ -91,7 +91,7 @@ ${THEME_ENUMERATION}
 
 Rules:
 - "slides" lists every slide of the deck exactly once, in the order to show them; "source" is the slide's 0-based index as given.
-- "layout" is one of the layouts above, or null to keep the slide's current layout.
+- "layout" is one of the layouts above, or null to keep the slide's current layout. A current layout given as "other" is one outside the list, or none.
 - "theme" is one of the themes above, or null to keep the deck's theme.
 - ${UNTRUSTED_INPUT_RULE}`;
 
