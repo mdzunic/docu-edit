@@ -4,10 +4,13 @@
 // measured canvas ceiling on the area — with the dpi that WOULD fit, so the
 // fix is one click), the live estimate, the colour JPEG paints where the
 // sheet asked for transparency, the tray's spoken reorder announcements and
-// the restored-tray notice. The geometry is core/sheetLayout's and the
-// layout core/assemblyLayout's; nothing here imports Vue.
-import { SHEET_DPI_CHOICES, sheetPixelSize, TRANSPARENT, type SheetGeometry } from "./core/sheetLayout";
+// the restored-tray notice — and SPEC-110's PDF estimate line and its
+// soft-print warning. The geometry is core/sheetLayout's, the layout
+// core/assemblyLayout's and the PDF's media/imagesToPdf's; nothing here
+// imports Vue.
+import { effectiveBackground, SHEET_DPI_CHOICES, sheetPixelSize, TRANSPARENT, type SheetGeometry } from "./core/sheetLayout";
 import { megapixelsLabel } from "./media/canvasCeiling";
+import type { PdfAssemblyEstimate } from "./media/imagesToPdf";
 import { mediaFileExtension } from "./media/model";
 import { formatFileSize } from "./format";
 import { DEFAULT_ASSEMBLY_TITLE, type AssemblyFormat } from "./assemblyPersist";
@@ -18,11 +21,13 @@ export const MAX_OUTPUT_EDGE_PX = 16384;
 export const ASSEMBLY_CONTENT_TYPES: Record<AssemblyFormat, string> = {
   png: "image/png",
   jpeg: "image/jpeg",
+  pdf: "application/pdf",
 };
 
 export const ASSEMBLY_FORMAT_LABELS: Record<AssemblyFormat, string> = {
   png: "PNG",
   jpeg: "JPEG",
+  pdf: "PDF",
 };
 
 export interface OutputPixels {
@@ -113,8 +118,12 @@ export function outputEstimate(
 }
 
 /** The colour the output paints behind everything: the sheet's own, except
- * that JPEG has no alpha — a "transparent" sheet falls back to `matte`. */
+ * that JPEG has no alpha — a "transparent" sheet falls back to `matte` — and
+ * a PDF page has none either: it paints white (SPEC-108's rule). */
 export function outputBackground(sheetBackground: string, format: AssemblyFormat, matte: string): string {
+  if (format === "pdf") {
+    return effectiveBackground(sheetBackground, "pdf");
+  }
   return format === "jpeg" && sheetBackground === TRANSPARENT ? matte : sheetBackground;
 }
 
@@ -130,6 +139,37 @@ export function jpegBackgroundNotice(sheetBackground: string, format: AssemblyFo
 export function outputFileName(title: string, format: AssemblyFormat): string {
   const trimmed = title.trim();
   return `${trimmed.length > 0 ? trimmed : DEFAULT_ASSEMBLY_TITLE}.${mediaFileExtension(format)}`;
+}
+
+/** "1 page" / "3 pages". */
+export function pageCountLabel(count: number): string {
+  return `${count} ${count === 1 ? "page" : "pages"}`;
+}
+
+/** The PDF's estimate line (SPEC-110): "3 pages · PDF up to about 1.2 MB ·
+ * lowest resolution 96 dpi: “scan” on page 2". */
+export function pdfEstimateLine(estimate: PdfAssemblyEstimate, titles: readonly string[]): string {
+  const parts = [pageCountLabel(estimate.pageCount), `PDF up to about ${formatFileSize(estimate.bytes)}`];
+  const lowest = estimate.lowest;
+  if (lowest) {
+    parts.push(
+      `lowest resolution ${Math.round(lowest.dpi)} dpi: “${titles[lowest.index] || "Untitled"}” on page ${lowest.page + 1}`,
+    );
+  }
+  return parts.join(" · ");
+}
+
+/** The warning a soft placement earns before anything is exported ("" when
+ * every placement prints at the sheet's dpi or better). */
+export function pdfDpiWarning(estimate: PdfAssemblyEstimate, titles: readonly string[], sheetDpi: number): string {
+  const lowest = estimate.lowest;
+  if (!lowest || Math.round(lowest.dpi) >= sheetDpi) {
+    return "";
+  }
+  return (
+    `“${titles[lowest.index] || "Untitled"}” on page ${lowest.page + 1} prints at ${Math.round(lowest.dpi)} dpi, ` +
+    `below the sheet's ${sheetDpi} dpi: it will print soft.`
+  );
 }
 
 /** `list` with the entry at `from` moved to `to` (both clamped). */

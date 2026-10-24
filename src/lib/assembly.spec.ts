@@ -16,6 +16,9 @@ import {
   outputFileName,
   outputFits,
   outputRefusal,
+  pageCountLabel,
+  pdfDpiWarning,
+  pdfEstimateLine,
   trayMoveAnnouncement,
 } from "./assembly";
 import {
@@ -124,6 +127,9 @@ describe("backgrounds and names", () => {
     expect(outputBackground("transparent", "png", "#ffffff")).toBe("transparent");
     expect(outputBackground("transparent", "jpeg", "#336699")).toBe("#336699");
     expect(outputBackground("#000000", "jpeg", "#336699")).toBe("#000000");
+    // A PDF page has no transparency either: white, whatever the matte.
+    expect(outputBackground("transparent", "pdf", "#336699")).toBe("#ffffff");
+    expect(outputBackground("#000000", "pdf", "#336699")).toBe("#000000");
     expect(jpegBackgroundNotice("transparent", "png")).toBe("");
     expect(jpegBackgroundNotice("#ffffff", "jpeg")).toBe("");
     expect(jpegBackgroundNotice("transparent", "jpeg")).toContain("JPEG has no transparency");
@@ -163,9 +169,27 @@ describe("the persisted plan", () => {
       layout: { layout: "overlay" as const, columns: 2, gapCm: 0.5, cellBackground: "#ff0000" },
       sheet,
       marginsLinked: true,
-      output: { format: "jpeg" as const, quality: 75, title: "Pair", matte: "#000000" },
+      output: {
+        format: "jpeg" as const,
+        quality: 75,
+        title: "Pair",
+        matte: "#000000",
+        // SPEC-110's PDF settings travel with the rest.
+        pageMode: "n-up" as const,
+        nUp: 6,
+        pageNumbers: true,
+        author: "Ana",
+        subject: "Receipts",
+      },
     };
     expect(parsePersistedAssembly(JSON.parse(JSON.stringify(plan)))).toEqual(plan);
+  });
+
+  it("reads a plan stored before PDF output with the PDF settings at their defaults (SPEC-110)", () => {
+    const stored = { items: [], output: { format: "png", quality: 90, title: "Pair", matte: "#ffffff" } };
+    expect(parsePersistedAssembly(stored)?.output).toEqual({ ...ASSEMBLY_OUTPUT_DEFAULTS, title: "Pair" });
+    expect(ASSEMBLY_OUTPUT_DEFAULTS).toMatchObject({ pageMode: "one-per-page", nUp: 4, pageNumbers: false, author: "", subject: "" });
+    expect(parsePersistedAssembly({ output: { format: "pdf" } })?.output.format).toBe("pdf");
   });
 
   it("starts a fresh plan from items only — never pixels", () => {
@@ -185,7 +209,7 @@ describe("the persisted plan", () => {
       items: [{ id: "a", title: "kept" }, { title: "no id" }, "junk", { id: "b", transform: { xPercent: 500 } }],
       layout: { layout: "spiral", columns: 0, gapCm: -1, cellBackground: "red" },
       sheet: { ...sheet, dpi: 123 },
-      output: { format: "webp", quality: 500, title: 7, matte: "white" },
+      output: { format: "webp", quality: 500, title: 7, matte: "white", pageMode: "booklet", nUp: 5, pageNumbers: "yes", author: 1, subject: null },
     });
     expect(repaired).toEqual({
       items: [
@@ -214,5 +238,28 @@ describe("the persisted plan", () => {
       widthCm: 30,
       heightCm: 20,
     });
+  });
+});
+
+describe("the PDF output's words (SPEC-110)", () => {
+  const estimate = { pageCount: 3, bytes: 1_258_291, images: [], lowest: { index: 1, page: 1, dpi: 95.6 } };
+
+  it("states the page count, the bytes and the lowest-resolution placement", () => {
+    expect(pageCountLabel(1)).toBe("1 page");
+    expect(pageCountLabel(3)).toBe("3 pages");
+    expect(pdfEstimateLine(estimate, ["photo", "scan", "shot"])).toBe(
+      "3 pages · PDF up to about 1.2 MB · lowest resolution 96 dpi: “scan” on page 2",
+    );
+    expect(pdfEstimateLine({ ...estimate, pageCount: 0, lowest: null }, [])).toBe("0 pages · PDF up to about 1.2 MB");
+    expect(outputFileName("Receipts", "pdf")).toBe("Receipts.pdf");
+  });
+
+  it("warns, before anything is exported, when a placement prints below the sheet's dpi", () => {
+    expect(pdfDpiWarning(estimate, ["photo", "scan", "shot"], 300)).toBe(
+      "“scan” on page 2 prints at 96 dpi, below the sheet's 300 dpi: it will print soft.",
+    );
+    expect(pdfDpiWarning(estimate, ["photo", "scan", "shot"], 72)).toBe("");
+    expect(pdfDpiWarning({ ...estimate, lowest: { index: 0, page: 0, dpi: 299.7 } }, ["photo"], 300)).toBe("");
+    expect(pdfDpiWarning({ ...estimate, lowest: null }, [], 300)).toBe("");
   });
 });

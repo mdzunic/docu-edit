@@ -2,13 +2,15 @@
 // under the one `assemblyPlan` key of the SPEC-066 preferences store so the
 // workspace survives a reload — the tray's item ids (with each item's title,
 // so a notice can name an item that has since been deleted), the layout, the
-// per-item overlay transforms, the sheet setup and the output settings.
+// per-item overlay transforms, the sheet setup and the output settings
+// (SPEC-110's PDF page mode, n-up, page numbers and metadata among them).
 // Never pixels: an item's size is read back from the library on return.
 //
 // Kept apart from lib/assembly.ts and imported by lib/preferences.ts, so it
-// imports core only — no cycle back through the preferences store. The
-// reader is tolerant in the store's own way: a bad field falls back to its
-// default and one bad item is dropped, never the whole plan.
+// imports core and the framework-free media layer only — no cycle back
+// through the preferences store. The reader is tolerant in the store's own
+// way: a bad field falls back to its default and one bad item is dropped,
+// never the whole plan.
 import {
   ASSEMBLY_PLAN_DEFAULTS,
   LAYOUT_KINDS,
@@ -28,11 +30,12 @@ import {
   SHEET_PAPER_NAMES,
   type SheetSetup,
 } from "./core/sheetLayout";
+import { DEFAULT_N_UP, DEFAULT_PAGE_MODE, N_UP_CHOICES, PAGE_MODES, type PageMode } from "./media/imagesToPdf";
 
-/** The raster outputs (SPEC-110 adds PDF beside them). */
-export type AssemblyFormat = "png" | "jpeg";
+/** The raster outputs, and SPEC-110's PDF beside them. */
+export type AssemblyFormat = "png" | "jpeg" | "pdf";
 
-export const ASSEMBLY_FORMATS: readonly AssemblyFormat[] = ["png", "jpeg"];
+export const ASSEMBLY_FORMATS: readonly AssemblyFormat[] = ["png", "jpeg", "pdf"];
 
 export const DEFAULT_JPEG_QUALITY = 90;
 
@@ -49,6 +52,15 @@ export interface AssemblyOutputSettings {
   title: string;
   /** "#rrggbb": what JPEG output paints behind a transparent sheet. */
   matte: string;
+  /** PDF only (SPEC-110): how the tray is cut into pages. */
+  pageMode: PageMode;
+  /** PDF n-up only: items per page, one of N_UP_CHOICES. */
+  nUp: number;
+  /** PDF only: a page number on every page. */
+  pageNumbers: boolean;
+  /** PDF only: /Author and /Subject — empty unless the user types them. */
+  author: string;
+  subject: string;
 }
 
 export const ASSEMBLY_OUTPUT_DEFAULTS: AssemblyOutputSettings = {
@@ -56,6 +68,11 @@ export const ASSEMBLY_OUTPUT_DEFAULTS: AssemblyOutputSettings = {
   quality: DEFAULT_JPEG_QUALITY,
   title: DEFAULT_ASSEMBLY_TITLE,
   matte: DEFAULT_MATTE,
+  pageMode: DEFAULT_PAGE_MODE,
+  nUp: DEFAULT_N_UP,
+  pageNumbers: false,
+  author: "",
+  subject: "",
 };
 
 /** The layout half of an AssemblyPlan; fit and align are the sheet's. */
@@ -191,6 +208,11 @@ function outputOf(raw: unknown): AssemblyOutputSettings {
       typeof value.matte === "string" && /^#[0-9a-f]{6}$/i.test(value.matte)
         ? value.matte.toLowerCase()
         : ASSEMBLY_OUTPUT_DEFAULTS.matte,
+    pageMode: PAGE_MODES.includes(value.pageMode as PageMode) ? (value.pageMode as PageMode) : ASSEMBLY_OUTPUT_DEFAULTS.pageMode,
+    nUp: N_UP_CHOICES.includes(value.nUp as number) ? (value.nUp as number) : ASSEMBLY_OUTPUT_DEFAULTS.nUp,
+    pageNumbers: typeof value.pageNumbers === "boolean" ? value.pageNumbers : ASSEMBLY_OUTPUT_DEFAULTS.pageNumbers,
+    author: typeof value.author === "string" ? value.author : ASSEMBLY_OUTPUT_DEFAULTS.author,
+    subject: typeof value.subject === "string" ? value.subject : ASSEMBLY_OUTPUT_DEFAULTS.subject,
   };
 }
 

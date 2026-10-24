@@ -2,7 +2,8 @@
 // media/composeCanvas's composeToCanvas — the function the export calls, at
 // a smaller pixel size — so what the user sees is what is written. Re-drawn
 // whenever the plan, the sheet, the background or the window changes; a
-// newer render cancels an older one at its next boundary.
+// newer render cancels an older one at its next boundary. A PDF's preview
+// is its current page, with the page number drawn where the file has it.
 //
 // It is also where overlay items move by hand: a press on the canvas picks
 // the topmost placed item under the pointer (selecting its tray entry), and
@@ -11,6 +12,7 @@
 // 1 mm (Shift: 1 cm).
 import { computed, onScopeDispose, ref, shallowRef, watch, type ComputedRef, type Ref } from "vue";
 import { composeToCanvas, decodeSource, prepareSources } from "../../lib/media/composeCanvas";
+import { drawPageNumber } from "../../lib/media/imagesToPdf";
 import type { DecodedImage } from "../../lib/media/renderEdits";
 import type { OverlayTransform, PlacedItem } from "../../lib/core/assemblyLayout";
 import type { PixelSize } from "../../lib/core/imageEdits";
@@ -134,11 +136,15 @@ export function useAssemblyPreview(deps: AssemblyPreviewDeps): AssemblyPreviewCo
       el.height = size.heightPx;
     }
     if (await composeToCanvas(el, placed, { geometry, background: assembly.background.value }, prepared.sources, { cancelled: stale })) {
+      const number = assembly.isPdf.value ? assembly.pdf.previewNumber.value : 0;
+      if (number > 0) {
+        drawPageNumber(el, geometry, number);
+      }
       renders.value += 1;
     }
   }
 
-  watch([assembly.placed, assembly.geometry, assembly.background, pixels, canvas, inputs], () => {
+  watch([assembly.placed, assembly.geometry, assembly.background, pixels, canvas, inputs, () => assembly.pdf.previewNumber.value], () => {
     void render();
   });
 

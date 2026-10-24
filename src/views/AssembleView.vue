@@ -21,11 +21,14 @@ import { useTheme } from "../composables/useTheme";
 import { useAssembly } from "./assembly/useAssembly";
 import { useAssemblyPreview } from "./assembly/useAssemblyPreview";
 import { asAssemblySteps } from "./assembly/useAssemblyOutput";
+import { asPdfAssemblySteps } from "./assemble/usePdfAssembly";
 import { MAX_ASSEMBLY_ITEMS } from "../lib/core/assemblyLayout";
 
 const props = defineProps({
   /** Test seam: the browser-bound output steps (canvas, decoding). */
   steps: { type: Object, default: undefined },
+  /** Test seam: the PDF output's steps (SPEC-110). */
+  pdfSteps: { type: Object, default: undefined },
 });
 
 const router = useRouter();
@@ -34,7 +37,9 @@ const router = useRouter();
 // by the app tokens and following the OS live (SPEC-059).
 useTheme();
 
-const assembly = useAssembly({ steps: asAssemblySteps(props.steps) });
+const assembly = useAssembly({ steps: asAssemblySteps(props.steps), pdfSteps: asPdfAssemblySteps(props.pdfSteps) });
+// For a PDF the tray says how each image will be embedded.
+const encodings = computed(() => (assembly.isPdf.value ? assembly.pdf.encodings.value : []));
 const preview = useAssemblyPreview({ assembly, decode: asAssemblySteps(props.steps)?.decode });
 
 const pickerOpen = ref(false);
@@ -80,6 +85,7 @@ function close() {
       >
         <AssemblyTray
           :tray="assembly.tray"
+          :encodings="encodings"
           @add="pickerOpen = true"
         />
       </aside>

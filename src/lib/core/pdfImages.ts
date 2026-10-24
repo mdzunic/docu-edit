@@ -129,7 +129,18 @@ export async function cropImage(
     throw new Error("This browser cannot crop images");
   }
   context.drawImage(image, crop.xPx, crop.yPx, crop.widthPx, crop.heightPx, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/png");
+  try {
+    return canvas.toDataURL("image/png");
+  } finally {
+    releaseCanvas(canvas);
+  }
+}
+
+/** Frees a canvas's backing store now rather than at the next GC — every
+ * intermediate canvas is released once its pixels are read (SPEC-110). */
+function releaseCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
 }
 
 /** SPEC-034's sampling ceiling: enough for print. */
@@ -199,6 +210,7 @@ export async function encodeImage(
     }
     context.drawImage(image, 0, 0, width, height);
     const { data } = context.getImageData(0, 0, width, height);
+    releaseCanvas(canvas);
 
     const rgb = new Uint8Array(width * height * 3);
     const alpha = new Uint8Array(width * height);

@@ -240,6 +240,16 @@ describe("buildPdf", () => {
     expect(await build({ title: "Pages" })).toContain("<< /Title (Pages) /Producer (docu-edit) >>");
   });
 
+  it("writes a subject and the creating application when given (SPEC-110)", async () => {
+    const pdf = await build({
+      title: "Scans",
+      info: { author: "Ana", subject: "Receipts (May)", creator: "docu-edit" },
+    });
+    expect(pdf).toContain(
+      "<< /Title (Scans) /Author (Ana) /Subject (Receipts \\(May\\)) /Creator (docu-edit) /Producer (docu-edit) >>",
+    );
+  });
+
   it("writes a page's /Rotate only when it is turned (SPEC-107)", async () => {
     const pdf = await build({
       pages: [page({ items: [] }), page({ items: [], rotate: 90 }), page({ items: [], rotate: 0 })],

@@ -4,9 +4,11 @@
 // apply per cell), the planned placements (core/assemblyLayout's
 // planAssembly — the one source of "where does each item go"), overlay
 // editing (inspector fields, preview drags, arrow-key nudges), the output
-// (useAssemblyOutput) and the plan's persistence (useAssemblyPersistence).
+// (useAssemblyOutput; SPEC-110's PDF pages through usePdfAssembly) and the
+// plan's persistence (useAssemblyPersistence).
 //
-// The tray order is the layout order: `items` is the tray, mapped.
+// The tray order is the layout order: `items` is the tray, mapped. For a PDF
+// the preview's placements are the current page's.
 import { computed, reactive, ref, type ComputedRef, type Ref } from "vue";
 import { useSheetSetup, type SheetSetupController } from "../../composables/useSheetSetup";
 import {
@@ -38,6 +40,13 @@ import {
 import { useAssemblyTray, type AssemblyTrayController, type TrayEntry } from "./useAssemblyTray";
 import { BROWSER_ASSEMBLY_STEPS, useAssemblyOutput, type AssemblyOutputController, type AssemblySteps } from "./useAssemblyOutput";
 import { useAssemblyPersistence } from "./useAssemblyPersistence";
+import { pdfNaturalPx } from "../../lib/media/imagesToPdf";
+import {
+  BROWSER_PDF_ASSEMBLY_STEPS,
+  usePdfAssembly,
+  type PdfAssemblyController,
+  type PdfAssemblySteps,
+} from "../assemble/usePdfAssembly";
 
 /** The sheet setup's session key for this surface. */
 export const ASSEMBLY_SURFACE = "assemble";
@@ -53,6 +62,8 @@ export const COLUMN_CHOICES: readonly (number | "auto")[] = ["auto", 1, 2, 3, 4,
 export interface AssemblyDeps {
   /** Test seam: the browser-bound output steps. */
   steps?: Partial<AssemblySteps>;
+  /** Test seam: the PDF output's steps. */
+  pdfSteps?: Partial<PdfAssemblySteps>;
 }
 
 export interface AssemblyController {
@@ -61,6 +72,9 @@ export interface AssemblyController {
   layout: AssemblyLayoutSettings;
   output: AssemblyOutputSettings;
   out: AssemblyOutputController;
+  /** SPEC-110: the PDF's pages and output. */
+  pdf: PdfAssemblyController;
+  isPdf: ComputedRef<boolean>;
   items: ComputedRef<AssemblyItem[]>;
   plan: ComputedRef<AssemblyPlan>;
   placed: ComputedRef<PlacedItem[]>;
@@ -101,7 +115,9 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
   const output = reactive<AssemblyOutputSettings>({ ...ASSEMBLY_OUTPUT_DEFAULTS });
   const error = ref("");
 
-  const isOverlay = computed(() => layout.layout === "overlay");
+  const isPdf = computed(() => output.format === "pdf");
+  // A PDF lays out by its own grid unless every image is on one page.
+  const isOverlay = computed(() => layout.layout === "overlay" && (!isPdf.value || output.pageMode === "single-page"));
   const items = computed<AssemblyItem[]>(() =>
     tray.entries.value.map((entry) => ({
       id: entry.id,
@@ -110,8 +126,14 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
       ...(isOverlay.value ? { transform: entry.transform } : {}),
     })),
   );
-  // "Fit to content" sizes the sheet to the arrangement's own pixels.
-  const naturalPx = computed(() => naturalAssemblyPx(items.value, { ...layout, fit: "contain", align: "center" }));
+  // "Fit to content" sizes the sheet to the arrangement's own pixels — for a
+  // PDF, one page's arrangement.
+  const naturalPx = computed(() => {
+    const natural: AssemblyPlan = { ...layout, fit: "contain", align: "center" };
+    return isPdf.value
+      ? pdfNaturalPx(items.value, { ...natural, pageMode: output.pageMode, nUp: output.nUp })
+      : naturalAssemblyPx(items.value, natural);
+  });
   const sheet = useSheetSetup({ surface: ASSEMBLY_SURFACE, output: "png", itemPx: naturalPx });
 
   const plan = computed<AssemblyPlan>(() => ({
@@ -123,9 +145,21 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
     align: sheet.setup.value.align,
   }));
   const geometry = computed(() => sheet.geometry.value);
-  const placed = computed(() =>
-    geometry.value ? planAssembly(items.value, plan.value, geometry.value, sheet.setup.value.dpi) : [],
-  );
+  const pdf = usePdfAssembly({
+    entries: tray.entries,
+    items,
+    plan,
+    sheet,
+    output,
+    selectedKey: tray.selectedKey,
+    steps: { ...BROWSER_PDF_ASSEMBLY_STEPS, ...deps.pdfSteps },
+  });
+  const placed = computed(() => {
+    if (isPdf.value) {
+      return pdf.currentPlaced.value;
+    }
+    return geometry.value ? planAssembly(items.value, plan.value, geometry.value, sheet.setup.value.dpi) : [];
+  });
   const background = computed(() => outputBackground(sheet.setup.value.background, output.format, output.matte));
   const overlayItem = computed(() => (isOverlay.value ? tray.selected.value : null));
 
@@ -267,6 +301,8 @@ export function useAssembly(deps: AssemblyDeps = {}): AssemblyController {
     layout,
     output,
     out,
+    pdf,
+    isPdf,
     items,
     plan,
     placed,

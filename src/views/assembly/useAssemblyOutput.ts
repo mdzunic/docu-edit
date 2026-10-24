@@ -42,7 +42,7 @@ import {
   outputRefusal,
   type OutputPixels,
 } from "../../lib/assembly";
-import { DEFAULT_ASSEMBLY_TITLE, type AssemblyOutputSettings } from "../../lib/assemblyPersist";
+import { DEFAULT_ASSEMBLY_TITLE, type AssemblyFormat, type AssemblyOutputSettings } from "../../lib/assemblyPersist";
 import type { SheetSetupController } from "../../composables/useSheetSetup";
 import type { TrayEntry } from "./useAssemblyTray";
 
@@ -239,14 +239,16 @@ export function useAssemblyOutput(deps: AssemblyOutputDeps): AssemblyOutputContr
     }
   }
 
-  async function run<T>(action: string, then: (bytes: Uint8Array) => Promise<T> | T): Promise<T | null> {
+  async function run<T>(action: string, then: (bytes: Uint8Array, format: AssemblyFormat) => Promise<T> | T): Promise<T | null> {
     if (busy.value) {
       return null;
     }
     failure.value = "";
+    // The format the bytes are made in, whatever the select says by the end.
+    const format = output.format;
     try {
       const bytes = await produce();
-      return bytes ? await then(bytes) : null;
+      return bytes ? await then(bytes, format) : null;
     } catch (error) {
       const reason = error instanceof Error && error.message ? error.message : String(error);
       failure.value = `Could not ${action}: ${reason}`;
@@ -272,16 +274,16 @@ export function useAssemblyOutput(deps: AssemblyOutputDeps): AssemblyOutputContr
     failure,
     canProduce,
     save: () =>
-      run("save the image", async (bytes) => {
+      run("save the image", async (bytes, format) => {
         const taken = listDocuments().map((entry) => entry.title);
         // Its `image` summary is read back from the bytes just produced.
-        const model = await assembleMediaModel(uniqueTitle(title(), taken), output.format, bytes);
+        const model = await assembleMediaModel(uniqueTitle(title(), taken), format, bytes);
         storeMedia(model);
         return model;
       }),
     download: async () =>
-      (await run("download the image", (bytes) => {
-        steps.download(bytes, outputFileName(title(), output.format), ASSEMBLY_CONTENT_TYPES[output.format]);
+      (await run("download the image", (bytes, format) => {
+        steps.download(bytes, outputFileName(title(), format), ASSEMBLY_CONTENT_TYPES[format]);
         return true;
       })) ?? false,
     cancel: () => {
