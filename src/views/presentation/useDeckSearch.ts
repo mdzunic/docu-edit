@@ -184,7 +184,9 @@ export function useDeckSearch(deps: DeckSearchDeps) {
       deps.selectFrame(hit.frameId);
       deps.startEditing(hit);
     }
-    await nextTick();
+    // The session's host mounts, registers and takes focus over a chain of
+    // ticks; a macrotask lets all of them land before the bar takes it back.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus();
     remeasure();
   }

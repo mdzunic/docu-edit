@@ -21,6 +21,11 @@ async function openFixture(page: Page, file: string): Promise<void> {
   await expect(page.getByTestId("slide-frame").first()).toBeVisible();
 }
 
+/** The main stage (the filmstrip thumbnails are slide-stages too). */
+function stage(page: Page) {
+  return page.getByTestId("stage-workspace").getByTestId("slide-stage");
+}
+
 async function downloadTo(page: Page, name: string): Promise<string> {
   const downloadPromise = page.waitForEvent("download");
   await page.getByTestId("presentation-download").click();
@@ -76,24 +81,24 @@ test("find across the deck, scope note, and Replace all as one undo entry that r
   await page.getByTestId("find-replace-input").fill("Launch");
   await page.getByTestId("find-replace-all").click();
   await expect(page.getByTestId("find-status")).toHaveText("Replaced 2 occurrences");
-  await expect(page.getByTestId("slide-stage")).toContainText("Launch Berlin office");
+  await expect(stage(page)).toContainText("Launch Berlin office");
   await expect(page.getByTestId("deck-search-empty")).toBeVisible();
 
   // ONE undo restores both — the stage text and the notes hit come back.
   await page.getByTestId("presentation-undo").click();
-  await expect(page.getByTestId("slide-stage")).toContainText("Open Berlin office");
+  await expect(stage(page)).toContainText("Open Berlin office");
   await expect(groups).toHaveCount(2);
   await expect(groups.nth(0).getByTestId("deck-search-hit")).toContainText("Open with the Q3 highlight");
 
   // Redo, download, reopen: both strings changed.
   await page.getByTestId("presentation-redo").click();
-  await expect(page.getByTestId("slide-stage")).toContainText("Launch Berlin office");
+  await expect(stage(page)).toContainText("Launch Berlin office");
   await expect(groups).toHaveCount(0);
   const file = await downloadTo(page, "spec098-deck.pptx");
 
   await openFixture(page, file);
   await page.getByTestId("filmstrip-slide").nth(1).click();
-  await expect(page.getByTestId("slide-stage")).toContainText("Launch Berlin office");
+  await expect(stage(page)).toContainText("Launch Berlin office");
   await page.getByTestId("filmstrip-slide").nth(0).click();
   await page.getByTestId("slides-notes-toggle").click();
   await expect(page.getByTestId("slides-notes-editor")).toHaveValue("Launch with the Q3 highlight\nPause before the revenue chart");
