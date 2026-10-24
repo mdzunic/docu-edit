@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { ref } from "vue";
+import { ref, shallowRef } from "vue";
+import type { PresentationModel } from "../../lib/presentation/model";
+import { createBlankPresentation } from "../../lib/presentation/slides";
+import { useDeckRedesign } from "./useDeckRedesign";
 import { usePresentationMenu } from "./usePresentationMenu";
 
 // The menu is a second route to commands the button strips already carry, so
@@ -152,5 +155,33 @@ describe("usePresentationMenu state", () => {
 
     deps.stageEdit.arrange.selectedCount.value = 2;
     expect(state.value.canGroup).toBe(true);
+  });
+});
+
+// SPEC-115: Slide › Redesign… is rendered by the deck-designer experiment's
+// gate; the menu only routes its id to the view's redesign controller and
+// reports whether there is anything to arrange.
+describe("Slide › Redesign… (SPEC-115)", () => {
+  it("routes slide.redesign to the redesign controller, which a deck with no slides refuses", () => {
+    const { deps } = stubs();
+    const model = shallowRef<PresentationModel | null>(createBlankPresentation());
+    const redesign = useDeckRedesign({ model, currentIndex: ref(0), record: vi.fn(), commit: vi.fn() });
+    const menu = usePresentationMenu({ ...deps, redesign });
+    expect(menu.state.value.canRedesign).toBe(true);
+    menu.run("slide.redesign");
+    expect(redesign.open.value).toBe(true);
+    redesign.close();
+
+    model.value = { ...createBlankPresentation(), slides: [] };
+    expect(menu.state.value.canRedesign).toBe(false);
+    menu.run("slide.redesign");
+    expect(redesign.open.value).toBe(false);
+  });
+
+  it("is unavailable when the view wires no redesign controller", () => {
+    const { deps } = stubs();
+    const menu = usePresentationMenu(deps);
+    expect(menu.state.value.canRedesign).toBe(false);
+    expect(() => menu.run("slide.redesign")).not.toThrow();
   });
 });
