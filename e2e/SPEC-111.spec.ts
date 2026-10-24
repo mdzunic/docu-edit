@@ -16,6 +16,12 @@ import { fileURLToPath } from "node:url";
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
+// Tall enough that the tray shows every card at once: a drag between two
+// cards needs both on screen, or Playwright's scroll to the target between
+// mousedown and the first move starts the drag on whichever card has
+// scrolled under the pointer.
+test.use({ viewport: { width: 1280, height: 1600 } });
+
 async function dropBytes(page: Page, bytes: Buffer, fileName: string) {
   const transfer = await page.evaluateHandle(
     ({ base64, name }) => {

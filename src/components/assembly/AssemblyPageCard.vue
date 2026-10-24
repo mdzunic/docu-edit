@@ -80,14 +80,9 @@ const name = computed(() => `page ${props.position}`);
         class="page-source"
         data-testid="page-source"
       >{{ sourceLabel }}</span>
-      <span
-        class="page-meta"
-        data-testid="page-size"
-      >{{ sizeLabel }}</span>
-      <span
-        class="page-meta"
-        data-testid="page-rotation"
-      >{{ rotation }}</span>
+      <span class="page-meta">
+        <span data-testid="page-size">{{ sizeLabel }}</span> · <span data-testid="page-rotation">{{ rotation }}</span>
+      </span>
       <span class="page-meta page-no-preview">No preview</span>
       <span
         v-if="props.selected"
@@ -141,9 +136,10 @@ const name = computed(() => `page ${props.position}`);
         variant="ghost"
         data-testid="page-select-source"
         :aria-label="`Select all pages from ${props.entry.title}`"
+        :title="`Select all pages from ${props.entry.title}`"
         @click.stop="props.tray.selectSource(props.entry.key)"
       >
-        Select all from this file
+        Select file
       </UiButton>
     </div>
   </div>
