@@ -49,10 +49,11 @@ import {
   type PdfTextItem,
 } from "../core/pdfBuild";
 import { encodeImage, parseJpegHeader, type JpegHeader } from "../core/pdfImages";
-import type { FaceKey } from "../core/pdfFonts";
+import { faceCssFont, type FaceKey } from "../core/pdfFonts";
 import type { SfntFont } from "../core/sfnt";
 import type { ImageEdit, PixelSize } from "../core/imageEdits";
 import type { MediaPart } from "../core/media";
+import { parsePdf, type PdfDocument } from "../core/pdfDocument";
 import { yieldToMainThread } from "../core/idleScheduler";
 import { CM_PER_INCH, cmToPt } from "../core/units";
 import {
@@ -613,6 +614,28 @@ export function pageNumberItem(number: number, geometry: SheetGeometry, font: Sf
   };
 }
 
+/** Draws page `number` on a preview canvas at the sheet's scale: the size,
+ * place, colour and bundled face the PDF writes, so the preview shows it
+ * where the file will have it. */
+export function drawPageNumber(canvas: HTMLCanvasElement, geometry: SheetGeometry, number: number): void {
+  const ctx = canvas.getContext("2d");
+  if (!ctx || geometry.widthCm <= 0 || geometry.heightCm <= 0) {
+    return;
+  }
+  const sx = canvas.width / geometry.widthCm;
+  const sy = canvas.height / geometry.heightCm;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = PAGE_NUMBER_COLOR;
+  ctx.font = faceCssFont(PAGE_NUMBER_FACE, (PAGE_NUMBER_SIZE_PT / 72) * CM_PER_INCH * sy);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(String(number), (geometry.widthCm / 2) * sx, (geometry.heightCm - PAGE_NUMBER_OFFSET_CM) * sy);
+  ctx.restore();
+}
+
 // --- building -----------------------------------------------------------------
 
 export interface RasterSteps {
@@ -795,4 +818,25 @@ export async function buildImagePdf(
     fonts: options.pageNumbers && font ? new Map([[PAGE_NUMBER_FACE, font]]) : new Map(),
     images,
   });
+}
+
+/** The self-check: the bytes just written, parsed back — the parse a stored
+ * document's PdfSummary is built from. A build whose own output will not
+ * re-parse, or re-parses to another page count, throws, so nothing is kept. */
+export async function checkBuiltPdf(
+  bytes: Uint8Array,
+  expectedPages: number,
+  parse: (bytes: Uint8Array) => Promise<PdfDocument> = parsePdf,
+): Promise<PdfDocument> {
+  let doc: PdfDocument;
+  try {
+    doc = await parse(bytes);
+  } catch (cause) {
+    const reason = cause instanceof Error && cause.message ? cause.message : String(cause);
+    throw new Error(`the PDF it built does not read back (${reason}), so nothing was kept.`);
+  }
+  if (doc.pages.length !== expectedPages) {
+    throw new Error(`the PDF it built has ${doc.pages.length} pages instead of ${expectedPages}, so nothing was kept.`);
+  }
+  return doc;
 }

@@ -179,7 +179,7 @@ async function sources() {
   };
 }
 
-function options(items: ImagePdfItem[], overrides: Partial<ImagePdfOptions> = {}): ImagePdfOptions {
+function options(items: readonly ImagePdfItem[], overrides: Partial<ImagePdfOptions> = {}): ImagePdfOptions {
   return {
     title: "Receipts",
     pageNumbers: false,
@@ -323,7 +323,7 @@ describe("the passthrough decision", () => {
     { row: "blend screen", blend: "screen", expected: "blend" },
     { row: "no edit stack (field absent)", edits: undefined, expected: "original" },
     { row: "an empty edit stack", edits: [], expected: "original" },
-    { row: "a non-empty edit stack", edits: [{ kind: "rotate", degrees: 90 }], expected: "edited" },
+    { row: "a non-empty edit stack", edits: [{ kind: "rotate", quarterTurns: 1 }], expected: "edited" },
   ];
 
   it.each(rows)("$row → $expected", (row) => {
