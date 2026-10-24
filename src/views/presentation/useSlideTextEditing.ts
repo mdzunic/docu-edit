@@ -18,13 +18,9 @@
 //
 // SPEC-097: Tab/Shift+Tab demote/promote; Cmd/Ctrl+K opens the link dialog;
 // every committed text edit tells the after-edit hook (the autofit refit).
-//
-// SPEC-098: a find hit opens a session on the frame it is in — a shape's text
-// too (a `ShapeFrame` with `paragraphs` is a `ParagraphOwner` like a cell), so
-// the match is selected in the same host. Only `startEditing` reaches a shape:
-// double-click and Enter still start sessions on text frames alone.
+// SPEC-098: a find hit opens a session on a shape's text too (frameTextOwner).
 import { computed, ref, type ComputedRef, type Ref } from "vue";
-import type { PresentationModel, ShapeFrame, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
+import type { PresentationModel, Slide, SlideFrame, TableFrame, TextFrame } from "../../lib/presentation/model";
 import { deckThemeOf } from "../../lib/presentation/theme";
 import type { ModelColor } from "../../lib/core/theme";
 import {
@@ -51,16 +47,17 @@ import {
   selectionRangeOf,
   setSelectionRange,
 } from "../../components/presentation/slideTextDom";
-import { defaultParagraphAlign } from "../../components/presentation/slideRender";
 import type { FrameSelection } from "./useFrameSelection";
 import {
   copyPlainText,
   createTypingBurst,
+  frameTextOwner,
   insertPlainText,
   isCollapsed,
   paragraphSpan,
   placeCaretAtEnd,
   reidentifyEditedFrame,
+  unalignedAlign,
   type CaretPoint,
   type CellAddress,
   type ParagraphCommand,
@@ -69,12 +66,6 @@ import {
 } from "./slideTextSession";
 
 export type { CaretPoint, CellAddress } from "./slideTextSession";
-
-/** A shape frame holding text — what a session edits in a shape (SPEC-098). */
-type ShapeTextFrame = ShapeFrame & ParagraphOwner;
-function isShapeText(frame: SlideFrame): frame is ShapeTextFrame {
-  return frame.kind === "shape" && Array.isArray(frame.paragraphs);
-}
 
 /** How long a pause closes a typing burst (SPEC-081: ≥ 1s). */
 export const TYPING_BURST_MS = 1000;
@@ -172,11 +163,6 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     if (!slide || frameId === null) return null;
     return slide.frames.find((f) => f.id === frameId) ?? null;
   }
-  /** A frame a session can open on: a text frame, or a shape holding text. */
-  function sessionFrameById(frameId: string | null): TextFrame | ShapeTextFrame | null {
-    const frame = frameById(frameId);
-    return frame && (frame.kind === "text" || isShapeText(frame)) ? frame : null;
-  }
   function tableFrameById(frameId: string | null): TableFrame | null {
     const frame = frameById(frameId);
     return frame && frame.kind === "table" ? frame : null;
@@ -189,13 +175,11 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
    * table cell's. Null when no session (or the cell no longer exists). */
   const editingOwner = computed<ParagraphOwner | null>(() => {
     const frame = editingFrame.value;
-    if (!frame) return null;
-    if (frame.kind === "text" || isShapeText(frame)) return frame;
-    if (frame.kind === "table" && editingCell.value) {
+    if (frame?.kind === "table" && editingCell.value) {
       const cell = frame.rows[editingCell.value.row]?.cells[editingCell.value.col];
       return cell && !cell.covered ? cell : null;
     }
-    return null;
+    return frameTextOwner(frame);
   });
 
   /** The frame a command targets: the one being edited, else a selected text
@@ -215,12 +199,6 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
 
   const toolbarEnabled = computed(() => targetOwner() !== null);
 
-  /** How the targeted frame lays out an unaligned paragraph. */
-  function sessionAlign(): NonNullable<TextFrame["paragraphs"][number]["align"]> {
-    const frame = targetFrame();
-    return frame ? defaultParagraphAlign(frame) : "left";
-  }
-
   // Reactive over the target owner's model (via commit's triggerRef) AND the
   // DOM selection (via selectionTick), so it survives undo/redo and caret moves.
   const toolbarState = computed<SelectionFormatState | null>(() => {
@@ -234,12 +212,12 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     } else {
       range = wholeFrameRange(owner);
     }
-    return selectionFormatState(owner, range, deckThemeOf(deps.model.value), sessionAlign());
+    return selectionFormatState(owner, range, deckThemeOf(deps.model.value), unalignedAlign(targetFrame()));
   });
 
   // --- session lifecycle ----------------------------------------------------
   function startEditing(frameId: string, selectAll = false, point?: CaretPoint, range?: TextRange): void {
-    if (!sessionFrameById(frameId)) return;
+    if (!frameTextOwner(frameById(frameId))) return;
     pendingRange = range ?? null;
     deps.selection.select(frameId);
     editingCell.value = null;
@@ -363,10 +341,9 @@ export function useSlideTextEditing(deps: SlideTextEditingDeps): SlideTextEditin
     selectionTick.value++;
   }
 
-  /** Renders the owner into the host in the deck's theme; a shape's
-   * unaligned paragraphs centre there as they do on the stage. */
+  /** The host in the deck's theme, a shape's text centred as on the stage. */
   function renderHost(el: HTMLElement, owner: ParagraphOwner): void {
-    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value), sessionAlign());
+    renderEditableParagraphs(el, owner.paragraphs, deckThemeOf(deps.model.value), unalignedAlign(targetFrame()));
   }
 
   function stopEditing(): void {
