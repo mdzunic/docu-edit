@@ -165,18 +165,31 @@ test("with Labs off, the app and its library send nothing to any other origin (A
   expect(foreign).toEqual([]);
   expect(scripted).toEqual([]);
   expect(gatewayCode).toEqual([]);
+
+  // The trap is live: a deliberate cross-origin request is caught by it.
+  await page.evaluate(() => fetch("https://probe.example.test/x").catch(() => undefined));
+  expect(foreign).toEqual(["fetch https://probe.example.test/x"]);
 });
 
 test("an enabled experiment: badge, consent with the exact payload, Cancel, Always, the activity log (AC-58)", async ({
   page,
 }) => {
   const sent = await stubEndpoint(page, STUB_ORIGIN);
+  const gatewayCode: string[] = [];
+  page.on("request", (request) => {
+    if (/\/lib\/ai\/modelGateway/.test(request.url())) {
+      gatewayCode.push(request.url());
+    }
+  });
   await page.goto("/");
   await openLabs(page);
 
-  // Off: absent. On: the experimental surface appears, badged.
+  // Off: absent, its code not loaded. On: the experimental surface appears,
+  // badged — and only now is the gateway's code fetched.
   await expect(page.getByTestId("experiment-badge")).toHaveCount(0);
+  expect(gatewayCode).toEqual([]);
   await configureLocalEndpoint(page);
+  expect(gatewayCode.length).toBeGreaterThan(0);
   const badge = page.getByTestId("ai-provider").getByTestId("experiment-badge");
   await expect(badge).toBeVisible();
   await expect(badge).toHaveText("Experimental");
