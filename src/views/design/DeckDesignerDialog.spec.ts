@@ -204,6 +204,13 @@ describe("DeckDesignerDialog — Redesign", () => {
     expect(byTestId(wrapper, "designer-row-delete")).toHaveLength(0);
     expect(byTestId(wrapper, "designer-build")).toHaveLength(0);
 
+    // Alt+↓ moves a row; Alt+↑ puts it back.
+    const numbers = () => byTestId(wrapper, "designer-redesign-row").map((row) => row.find('[data-testid="designer-row-number"]').text());
+    await rows[0].find('[data-testid="designer-row-layout"]').trigger("keydown", { key: "ArrowDown", altKey: true });
+    expect(numbers()).toEqual(["Slide 1", "Slide 3", "Slide 2"]);
+    await byTestId(wrapper, "designer-redesign-row")[1].find('[data-testid="designer-row-layout"]').trigger("keydown", { key: "ArrowUp", altKey: true });
+    expect(numbers()).toEqual(["Slide 3", "Slide 1", "Slide 2"]);
+
     await byTestId(wrapper, "designer-apply-redesign")[0].trigger("click");
     expect(host.record).toHaveBeenCalledTimes(1);
     expect(host.commit).toHaveBeenCalledTimes(1);
