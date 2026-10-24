@@ -181,6 +181,29 @@ describe("SPEC-050 — parseMd", () => {
     }
   });
 
+  // SPEC-113's CSP admits plain-http loopback (a local model server), so the
+  // reader itself must keep a document from reaching the user's own
+  // services — an absolute src and a relative one resolved against a
+  // loopback base alike.
+  it.each([
+    ["http://127.0.0.1:8080/api/whatever", "https://example.com/doc.md"],
+    ["http://localhost:11434/v1/models", "https://example.com/doc.md"],
+    ["https://localhost/admin.png", "https://example.com/doc.md"],
+    ["images/photo.png", "http://127.0.0.1:9000/docs/doc.md"],
+  ])("never fetches an image src on this computer: %s (base %s)", async (src, baseUrl) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const parsed = await parseMd(bytes(`![alt](${src})\n`), { baseUrl });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(parsed.media).toHaveLength(0);
+      // Preserved verbatim, as any unfetchable reference is (SPEC-008).
+      expect(parsed.sections[0].opaqueBlocks?.[0].xml).toContain(src);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("preserves an unfetchable image reference rather than dropping it (SPEC-008)", async () => {
     vi.stubGlobal("fetch", vi.fn());
     try {

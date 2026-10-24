@@ -10,7 +10,7 @@ import {
   type OpenedFile,
 } from "./openDocument";
 import { MEDIA_FORMAT_CONTENT_TYPES, OPENABLE_EXTENSIONS, SPREADSHEET_FORMAT_CONTENT_TYPES } from "./documentKinds";
-import { isFetchableUrl } from "./links";
+import { isFetchableUrl, isLocalMachineUrl } from "./links";
 
 export class OpenFromUrlError extends Error {}
 
@@ -96,7 +96,11 @@ function deriveFileName(response: Response, url: string): string {
  * the returned `kind`. */
 export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
   if (!isFetchableUrl(url)) {
-    throw new OpenFromUrlError("That isn't a web address we can open — links must start with http:// or https://");
+    throw new OpenFromUrlError(
+      isLocalMachineUrl(url)
+        ? "That link points at this computer, which a link may not open — save the file and choose it instead"
+        : "That isn't a web address we can open — links must start with http:// or https://",
+    );
   }
 
   let response: Response;

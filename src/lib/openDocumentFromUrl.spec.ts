@@ -36,6 +36,21 @@ describe("openDocumentFromUrl", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // A link can carry any address into /open?url=, and SPEC-113's CSP admits
+  // plain-http loopback, so this path refuses this computer itself.
+  it.each([
+    ["http://127.0.0.1:8080/admin/export.docx"],
+    ["http://localhost:11434/notes.md"],
+    ["https://localhost/report.docx"],
+    ["http://[::1]:3000/report.docx"],
+  ])("refuses to fetch a URL on this computer: %s", async (url) => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(openDocumentFromUrl(url)).rejects.toThrow(OpenFromUrlError);
+    await expect(openDocumentFromUrl(url)).rejects.toThrow(/points at this computer/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("still fetches plain http, not only https", async () => {
     mockFetchResolvedWith({
       ok: true,
