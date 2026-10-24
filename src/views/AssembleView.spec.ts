@@ -6,8 +6,12 @@
 // one-click dpi fix, JPEG and transparency, more than MAX_ASSEMBLY_ITEMS);
 // the deleted-item notice; Start over; and no source mutation — the sources
 // are deep-frozen and a save and a download leave them exactly as they were.
+// SPEC-110's PDF output: the inspector turned from one sheet to pages, the
+// page strip and PageUp/PageDown, each tray row's encoding, the document
+// properties disclosure, and a build reporting "Page n of N".
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import type { DecodedImage } from "../lib/media/renderEdits";
 
@@ -58,7 +62,7 @@ function fakeSteps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function setup(stepOverrides: Record<string, unknown> = {}) {
+async function setup(stepOverrides: Record<string, unknown> = {}, pdfSteps: Record<string, unknown> = {}) {
   const store = await import("../lib/documentStore");
   const { assembleMediaModel } = await import("../lib/media/open");
   const fixtures = await import("../lib/media/fixtures/build");
@@ -69,8 +73,8 @@ async function setup(stepOverrides: Record<string, unknown> = {}) {
   const png = await fixtures.buildPngFixtureBytes();
   const steps = fakeSteps({ encode: vi.fn(async () => png), ...stepOverrides });
 
-  async function seed(title: string) {
-    const model = await assembleMediaModel(title, "png", png);
+  async function seed(title: string, format: "png" | "jpeg" = "png") {
+    const model = await assembleMediaModel(title, format, format === "png" ? png : fixtures.buildJpegFixtureBytes());
     store.storeMedia(model);
     return model;
   }
@@ -78,7 +82,7 @@ async function setup(stepOverrides: Record<string, unknown> = {}) {
   async function mountView(): Promise<VueWrapper> {
     const router = createRouter({ history: createMemoryHistory(), routes });
     await router.push("/assemble");
-    const wrapper = mount(AssembleView, { props: { steps }, global: { plugins: [router] }, attachTo: document.body });
+    const wrapper = mount(AssembleView, { props: { steps, pdfSteps }, global: { plugins: [router] }, attachTo: document.body });
     wrappers.push(wrapper);
     await flushPromises();
     return wrapper;
@@ -348,5 +352,115 @@ describe("no source mutation", () => {
     expect(wrapper.find('[data-testid="assembly-progress"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="assembly-saved"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="assembly-failure"]').exists()).toBe(false);
+  });
+});
+
+describe("PDF output (SPEC-110)", () => {
+  async function pdfWorkspace(pdfSteps: Record<string, unknown> = {}) {
+    const fixtures = await setup({}, {
+      rasterise: vi.fn(async (job: { widthPx: number; heightPx: number }) => ({
+        widthPx: job.widthPx,
+        heightPx: job.heightPx,
+        filter: "FlateDecode",
+        colorSpace: "DeviceRGB",
+        data: new Uint8Array([0x78, 0x9c, 1, 2]),
+      })),
+      between: vi.fn(async () => {}),
+      ...pdfSteps,
+    });
+    const { seed, startAssembly, mountView } = fixtures;
+    startAssembly([(await seed("shot")).id, (await seed("logo")).id, (await seed("photo", "jpeg")).id]);
+    const wrapper = await mountView();
+    await wrapper.get('[data-testid="assembly-format"]').setValue("pdf");
+    await flushPromises();
+    return { ...fixtures, wrapper };
+  }
+
+  const pageButtons = (wrapper: VueWrapper) => wrapper.findAll('[data-testid="assembly-pages"] [data-testid="assembly-page"]');
+  const currentPage = (wrapper: VueWrapper) => pageButtons(wrapper).findIndex((page) => page.attributes("aria-current") === "page");
+
+  it("turns the inspector from one sheet to pages, says how each image is embedded, and offers the document properties", async () => {
+    const { wrapper } = await pdfWorkspace();
+    const inspector = wrapper.get('[data-testid="assembly-inspector"]');
+    const mode = inspector.get('[data-testid="assembly-page-mode"]');
+    expect(mode.element).toHaveProperty("value", "one-per-page");
+    expect(mode.findAll("option").map((option) => option.attributes("value"))).toEqual(["one-per-page", "n-up", "single-page"]);
+    expect(inspector.get('[data-testid="assembly-page-numbers"]').element).toHaveProperty("checked", false);
+    expect(inspector.get('[data-testid="assembly-page-count"]').text()).toBe("3 pages");
+    // One per page has no layout to choose: SPEC-109's own layouts are single-page's.
+    expect(inspector.find('[data-testid="assembly-layout"]').exists()).toBe(false);
+    expect(inspector.find('[data-testid="sheet-setup"]').exists()).toBe(true);
+
+    expect(pageButtons(wrapper)).toHaveLength(3);
+    expect(currentPage(wrapper)).toBe(0);
+    expect(wrapper.findAll('[data-testid="item-encoding"]').map((label) => label.text())).toEqual([
+      "re-encoded: PNG",
+      "re-encoded: PNG",
+      "original JPEG",
+    ]);
+    const output = wrapper.get('[data-testid="assembly-output"]');
+    expect(output.get('[data-testid="assembly-estimate"]').text()).toMatch(/^3 pages · PDF up to about .+ · lowest resolution \d+ dpi: “shot” on page 1$/);
+    const metadata = output.get('[data-testid="assembly-metadata"]');
+    expect(metadata.element.tagName).toBe("DETAILS");
+    expect(metadata.get('[data-testid="assembly-author"]').element).toHaveProperty("value", "");
+    expect(metadata.get('[data-testid="assembly-subject"]').element).toHaveProperty("value", "");
+
+    await mode.setValue("n-up");
+    const nUp = inspector.get('[data-testid="assembly-n-up"]');
+    expect(nUp.findAll("option").map((option) => option.text())).toEqual(["2", "4", "6", "9", "16"]);
+    expect(nUp.element).toHaveProperty("value", "4");
+    expect(pageButtons(wrapper)).toHaveLength(1);
+    expect(inspector.get('[data-testid="assembly-page-count"]').text()).toBe("1 page");
+    await mode.setValue("single-page");
+    expect(inspector.find('[data-testid="assembly-layout"]').exists()).toBe(true);
+    // Back to a raster output: no pages, no encodings.
+    await wrapper.get('[data-testid="assembly-format"]').setValue("png");
+    expect(wrapper.find('[data-testid="assembly-pages"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="item-encoding"]')).toHaveLength(0);
+  });
+
+  it("moves between pages from the strip and with PageUp/PageDown, highlighting the current one", async () => {
+    const { wrapper } = await pdfWorkspace();
+    const canvas = wrapper.get('canvas[data-testid="assembly-preview"]');
+    expect(canvas.attributes("aria-label")).toMatch(/^Preview of page 1 of 3: /);
+    await pageButtons(wrapper)[2].trigger("click");
+    expect(currentPage(wrapper)).toBe(2);
+    expect(canvas.attributes("aria-label")).toMatch(/^Preview of page 3 of 3: /);
+    expect(wrapper.findAll('[data-testid="assembly-placed-item"]').map((item) => item.attributes("data-index"))).toEqual(["2"]);
+    await canvas.trigger("keydown", { key: "PageUp" });
+    expect(currentPage(wrapper)).toBe(1);
+    await pageButtons(wrapper)[1].trigger("keydown", { key: "PageDown" });
+    expect(currentPage(wrapper)).toBe(2);
+    expect(pageButtons(wrapper)[2].classes()).toContain("page-strip-page--current");
+  });
+
+  it("builds a page at a time, reporting 'Page n of N', and saves a PDF to the library", async () => {
+    let view: VueWrapper | null = null;
+    const seen: string[] = [];
+    const { wrapper, store } = await pdfWorkspace({
+      between: vi.fn(async () => {
+        await nextTick();
+        const progress = view?.find('[data-testid="assembly-progress"]');
+        if (progress?.exists()) {
+          expect(progress.attributes("role")).toBe("status");
+          seen.push(progress.text());
+        }
+      }),
+    });
+    view = wrapper;
+    await wrapper.get('[data-testid="assembly-author"]').setValue("Ana");
+    await wrapper.get('[data-testid="assembly-subject"]').setValue("Receipts");
+    await wrapper.get('[data-testid="assembly-save"]').trigger("click");
+    // The real writer deflates through CompressionStream: give it its turns.
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="assembly-failure"]').exists() ? wrapper.get('[data-testid="assembly-failure"]').text() : "").toBe("");
+      expect(wrapper.find('[data-testid="assembly-saved"]').exists()).toBe(true);
+    });
+    expect(seen).toEqual(["Page 1 of 3", "Page 2 of 3"]);
+    expect(wrapper.get('[data-testid="assembly-saved"]').text()).toBe("Saved “Combined image” to the library.");
+    const saved = store.listDocuments().find((entry) => entry.title === "Combined image");
+    expect(saved?.format).toBe("pdf");
+    // The disclosure's Author and Subject are the file's.
+    expect(store.getMedia(saved!.id)?.properties).toMatchObject({ title: "Combined image", author: "Ana", subject: "Receipts" });
   });
 });

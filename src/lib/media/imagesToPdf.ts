@@ -833,7 +833,7 @@ export async function checkBuiltPdf(
     doc = await parse(bytes);
   } catch (cause) {
     const reason = cause instanceof Error && cause.message ? cause.message : String(cause);
-    throw new Error(`the PDF it built does not read back (${reason}), so nothing was kept.`);
+    throw new Error(`the PDF it built does not read back (${reason}), so nothing was kept.`, { cause });
   }
   if (doc.pages.length !== expectedPages) {
     throw new Error(`the PDF it built has ${doc.pages.length} pages instead of ${expectedPages}, so nothing was kept.`);
