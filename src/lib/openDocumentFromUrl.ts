@@ -105,10 +105,21 @@ export async function openDocumentFromUrl(url: string): Promise<OpenedFile> {
 
   let response: Response;
   try {
-    response = await fetch(url);
+    // A redirect is not followed: the check above saw only this address, and
+    // the CSP admits plain-http loopback since SPEC-113, so a link that
+    // answers 302 to http://127.0.0.1 would otherwise reach this computer.
+    response = await fetch(url, { redirect: "manual" });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new OpenFromUrlError(reason || "The request failed — check the URL and your connection");
+  }
+
+  // A browser reports the refused redirect as an opaque response (status 0,
+  // no Location to read); a non-browser fetch returns the 3xx itself.
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    throw new OpenFromUrlError(
+      "That link redirects to another address, which is not followed here — open it in a browser tab and use the address it ends up at",
+    );
   }
 
   if (!response.ok) {

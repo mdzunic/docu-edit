@@ -231,8 +231,34 @@ describe("SPEC-050 — parseMd", () => {
       const parsed = await parseMd(bytes("![alt](images/photo.png)\n"), {
         baseUrl: "https://example.com/docs/doc.md",
       });
-      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/docs/images/photo.png");
+      expect(fetchSpy).toHaveBeenCalledWith("https://example.com/docs/images/photo.png", { redirect: "manual" });
       expect(parsed.media).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // The loopback check sees only the src the document wrote, so the fetch
+  // must not follow a redirect either: https://attacker.example/r answering
+  // 302 to http://127.0.0.1 would reach the user's own services through the
+  // CSP's loopback allowance. A browser hands back an opaque redirect for
+  // `redirect: "manual"`; a non-browser fetch hands back the 3xx itself.
+  it.each([
+    ["an opaque redirect (browser)", { ok: false, status: 0, type: "opaqueredirect" as const, headers: new Headers() }],
+    [
+      "a 302 to this computer (non-browser)",
+      { ok: false, status: 302, type: "basic" as const, headers: new Headers({ location: "http://127.0.0.1:8080/api/whatever" }) },
+    ],
+  ])("never follows an image src's redirect: %s", async (_label, response) => {
+    const fetchSpy = vi.fn().mockResolvedValue(response);
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const parsed = await parseMd(bytes("![alt](https://attacker.example/r)\n"));
+      expect(fetchSpy).toHaveBeenCalledOnce();
+      expect(fetchSpy).toHaveBeenCalledWith("https://attacker.example/r", { redirect: "manual" });
+      expect(parsed.media).toHaveLength(0);
+      // Preserved verbatim, as any unfetchable reference is (SPEC-008).
+      expect(parsed.sections[0].opaqueBlocks?.[0].xml).toContain("https://attacker.example/r");
     } finally {
       vi.unstubAllGlobals();
     }

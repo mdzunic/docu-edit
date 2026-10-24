@@ -321,7 +321,13 @@ async function resolveImageSrc(
     return null;
   }
   try {
-    const response = await fetch(url);
+    // Nor is a redirect followed: that check saw only the first hop, and the
+    // CSP admits plain-http loopback since SPEC-113, so an https src that
+    // answers 302 to http://127.0.0.1 would otherwise reach the user's own
+    // services. A browser hands back an opaque redirect (status 0) and a
+    // non-browser fetch the 3xx itself — neither is ok, so the reference is
+    // preserved like any other unfetchable one.
+    const response = await fetch(url, { redirect: "manual" });
     if (!response.ok) {
       return null;
     }
