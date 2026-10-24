@@ -81,7 +81,7 @@ const title = computed(() => EXPERIMENTS.find((entry) => entry.id === props.expe
   left: 0;
   z-index: 60;
   min-width: 16rem;
-  margin-top: var(--space-1);
+  /* Flush under the chip: a gap would drop :hover on the way to the link. */
   padding: var(--space-3);
   border: var(--border-width) solid var(--border-default);
   border-radius: var(--radius-sm);

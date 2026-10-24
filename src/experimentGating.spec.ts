@@ -228,6 +228,25 @@ describe("a disabled experiment's code is not in the initial bundle", () => {
     }
   });
 
+  it("every surface a gate loads carries the Experimental badge", () => {
+    // A component that hosts an ExperimentGate imports its surfaces lazily
+    // for it; each of those surfaces must render ExperimentBadge, so a user
+    // always knows which part of the product is provisional.
+    const hosts = [...closure].filter(
+      (rel) => rel.endsWith(".vue") && readFileSync(join(SRC, rel), "utf8").includes("<ExperimentGate"),
+    );
+    expect(hosts).toContain("views/preferences/LabsSection.vue");
+    const surfaces = hosts.flatMap((rel) =>
+      edges(join(SRC, rel))
+        .dynamic.map((specifier) => resolveSpecifier(join(SRC, rel), specifier))
+        .filter((file): file is string => file !== null && file.endsWith(".vue")),
+    );
+    expect(surfaces.length).toBeGreaterThan(0);
+    for (const surface of surfaces) {
+      expect(readFileSync(surface, "utf8"), relative(SRC, surface)).toMatch(/<ExperimentBadge\b/);
+    }
+  });
+
   it("reaches the provider panel only through Labs' flag-gated import(), and the consent dialog only on demand", () => {
     expect(dynamicImportersOf("views/preferences/ModelProviderPanel.vue", closure)).toEqual([
       "views/preferences/LabsSection.vue",
