@@ -206,6 +206,8 @@ export function useSlideSpellCheck(deps: SlideSpellCheckDeps) {
 
   watch([deps.currentSlide, deps.notesText, () => deps.model.value?.language, () => preferences.spellCheck], scheduleCheck, { immediate: true });
   watch([() => deps.editing.editingFrameId.value, () => deps.editing.editingCell.value], remeasure);
+  // Another deck in this view is a new session: Ignore / Ignore all start over.
+  watch(() => deps.model.value?.id, (id, previous) => void (previous !== undefined && id !== previous && reset()));
   const unsubscribe = subscribeCustomDictionary(() => {
     customDictionaryList.value = [...customDictionaryEntries()];
     scheduleCheck();

@@ -207,6 +207,21 @@ describe("useSlideSpellCheck — the suggestions menu", () => {
   });
 });
 
+describe("useSlideSpellCheck — the session", () => {
+  it("forgets Ignore all when another deck opens in the view", async () => {
+    const make = (id: string) => ({ ...deckWith([{ id: "s", frames: [{ kind: "text", id: "t", ...box, paragraphs: [para({ text: "teh" })] }] }]), id });
+    const { spell, deck, flush } = setup(make("one"));
+    await flush();
+    spell.openContextMenuAt(0, 0, 0);
+    spell.ignoreAll();
+    await flush();
+    expect(spell.issues.value).toEqual([]);
+    deck.value = make("two");
+    await flush();
+    expect(spell.issues.value.map((issue) => issue.word)).toEqual(["teh"]);
+  });
+});
+
 describe("useSlideSpellCheck — the language control", () => {
   const plain = () => deckWith([{ id: "s", frames: [{ kind: "text", id: "t", ...box, paragraphs: [para({ text: "hello" })] }] }]);
 

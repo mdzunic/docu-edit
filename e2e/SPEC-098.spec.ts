@@ -209,3 +209,22 @@ test("spell check on the stage: squiggles, the suggestions menu, a correction th
   await page.getByTestId("language-no-proof").check();
   await expect(underline(page, "MVP")).toHaveCount(0);
 });
+
+test("a table-cell hit carries its Table rNcN tag, opens a session in that cell, and Replace rewrites it", async ({ page }) => {
+  await openFixture(page, FIXTURE_PPTX);
+  await page.keyboard.press("ControlOrMeta+h");
+  await page.getByTestId("find-query").fill("Cell");
+  const group = page.getByTestId("deck-search-group");
+  await expect(group).toHaveCount(1);
+  await expect(group.getByTestId("deck-search-slide-chip")).toHaveText("4");
+  await expect(group.getByTestId("deck-search-hit-scope")).toHaveText("Table r1c1");
+  await group.getByTestId("deck-search-hit").click();
+  await expect(page.getByTestId("filmstrip-slide").nth(3)).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("slide-table-cell-edit")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.getSelection()?.toString())).toBe("Cell");
+
+  await page.getByTestId("find-replace-input").fill("Box");
+  await page.getByTestId("find-replace").click();
+  await expect(page.getByTestId("find-count")).toHaveText("0 of 0");
+  await expect(stage(page).getByTestId("slide-table-cell-0-0")).toHaveText("Box");
+});
