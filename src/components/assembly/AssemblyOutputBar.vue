@@ -30,6 +30,9 @@ const out = a.out;
 const pdf = a.pdf;
 // The output being made: the raster image's, or the PDF's.
 const active = computed(() => (a.isPdf.value ? pdf : out));
+// While either is producing, the format, Start over and both actions hold:
+// a build finishes as the format it started in.
+const busy = computed(() => out.busy.value || pdf.busy.value);
 const backgroundNotice = computed(() => active.value.backgroundNotice.value);
 const { addToast } = useToasts();
 const saved = ref("");
@@ -80,6 +83,7 @@ function onReset() {
         <select
           data-testid="assembly-format"
           :value="a.output.format"
+          :disabled="busy"
           @change="commit($event, a.setFormat, () => a.output.format)"
         >
           <option
@@ -206,7 +210,7 @@ function onReset() {
 
     <div class="output-actions">
       <p
-        v-if="active.busy.value"
+        v-if="busy"
         class="output-progress"
         data-testid="assembly-progress"
         role="status"
@@ -214,7 +218,7 @@ function onReset() {
         {{ active.progress.value }}
       </p>
       <UiButton
-        v-if="active.busy.value"
+        v-if="busy"
         data-testid="assembly-cancel"
         @click="active.cancel()"
       >
@@ -239,14 +243,14 @@ function onReset() {
       <UiButton
         variant="ghost"
         data-testid="assembly-reset"
-        :disabled="active.busy.value"
+        :disabled="busy"
         @click="onReset"
       >
         Start over
       </UiButton>
       <UiButton
         data-testid="assembly-download"
-        :disabled="!active.canProduce.value"
+        :disabled="busy || !active.canProduce.value"
         @click="onDownload"
       >
         Download
@@ -254,7 +258,7 @@ function onReset() {
       <UiButton
         variant="primary"
         data-testid="assembly-save"
-        :disabled="!active.canProduce.value"
+        :disabled="busy || !active.canProduce.value"
         @click="onSave"
       >
         Save to library

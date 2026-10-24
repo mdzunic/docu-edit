@@ -278,16 +278,21 @@ describe("before anything is built", () => {
   it("refuses an estimate over MAX_PDF_ASSEMBLY_BYTES before any work, naming the limit and what to remove", async () => {
     const { seed, open, store, steps } = await setup();
     const ids = [];
-    for (let i = 1; i <= 10; i += 1) {
-      // A 10000 × 10000 px image at 600 dpi: 3761 px square on the page.
-      ids.push(deepFreeze(await seed(`big ${i}`, "png", { widthPx: 10000, heightPx: 10000 })).id);
+    for (let i = 1; i <= 11; i += 1) {
+      ids.push(deepFreeze(await seed(`big ${i}`, "jpeg", { widthPx: 10000, heightPx: 10000 })).id);
     }
     const { assembly } = open();
     assembly.tray.add(ids);
     assembly.setFormat("pdf");
+    // Cropped, the 10000 px squares are re-encoded: each fills A4's content
+    // box with RGB samples at 600 dpi — held to the canvas area every browser
+    // allocates, about 525 dpi and 48 MB a page.
+    assembly.sheet.setFit("cover");
     assembly.sheet.setDpi(600);
+    expect(assembly.pdf.encodings.value[0]).toBe("re-encoded: cropped");
+    expect(assembly.pdf.estimate.value).toMatch(/^11 pages · PDF up to about 52\d\.\d MB · lowest resolution 525 dpi/);
     expect(assembly.pdf.refusal.value).toMatch(
-      /^This PDF would be about 539\.\d MB, more than the 500 MB a PDF assembly can produce\. Remove “big 1” from the tray, or choose a lower resolution\.$/,
+      /^This PDF would be about 52\d\.\d MB, more than the 500 MB a PDF assembly can produce\. Remove “big 1” from the tray, or choose a lower resolution\.$/,
     );
     expect(assembly.pdf.canProduce.value).toBe(false);
     const before = store.listDocuments().length;

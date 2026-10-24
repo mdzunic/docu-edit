@@ -434,7 +434,7 @@ describe("PDF output (SPEC-110)", () => {
     expect(pageButtons(wrapper)[2].classes()).toContain("page-strip-page--current");
   });
 
-  it("builds a page at a time, reporting 'Page n of N', and saves a PDF to the library", async () => {
+  it("builds a page at a time, reporting 'Page n of N' with the format held, and saves a PDF to the library", async () => {
     let view: VueWrapper | null = null;
     const seen: string[] = [];
     const { wrapper, store } = await pdfWorkspace({
@@ -444,6 +444,10 @@ describe("PDF output (SPEC-110)", () => {
         if (progress?.exists()) {
           expect(progress.attributes("role")).toBe("status");
           seen.push(progress.text());
+          // A build finishes as the format it started in: nothing switches it.
+          for (const id of ["assembly-format", "assembly-reset", "assembly-save", "assembly-download"]) {
+            expect(view?.get(`[data-testid="${id}"]`).attributes("disabled"), id).toBeDefined();
+          }
         }
       }),
     });

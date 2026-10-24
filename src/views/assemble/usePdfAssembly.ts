@@ -16,7 +16,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { getMedia } from "../../lib/documentStore";
 import type { MediaModel } from "../../lib/media/model";
-import { currentImagePart } from "../../lib/media/editModel";
+import { currentImagePart, savedStack } from "../../lib/media/editModel";
 import {
   encodingLabel,
   encodingReason,
@@ -169,7 +169,8 @@ export function usePdfAssembly(deps: PdfAssemblyDeps): PdfAssemblyController {
       title: entry.title,
       widthPx: entry.widthPx,
       heightPx: entry.heightPx,
-      edits: sources.value[index]?.model.edits,
+      // The normalised stack: what currentImagePart decides by.
+      edits: sources.value[index] ? savedStack(sources.value[index].model) : undefined,
     })),
   );
   const titles = computed(() => deps.entries.value.map((entry) => entry.title));
@@ -179,7 +180,8 @@ export function usePdfAssembly(deps: PdfAssemblyDeps): PdfAssemblyController {
     for (const placed of pages.value.flatMap((candidate) => candidate.placed)) {
       const source = sources.value[placed.index];
       const item = pdfItems.value[placed.index];
-      if (source && item) {
+      // A placement clipped wholly off the page embeds nothing to describe.
+      if (source && item && placed.widthCm > 0 && placed.heightCm > 0) {
         labels[placed.index] = encodingLabel(encodingReason(source.facts, item, placed), source.facts.contentType);
       }
     }

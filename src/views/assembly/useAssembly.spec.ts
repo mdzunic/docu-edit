@@ -452,6 +452,26 @@ describe("producing the output", () => {
     expect(steps.download).not.toHaveBeenCalled();
   });
 
+  it("finishes in the format it started in, whatever the format is switched to meanwhile (SPEC-110)", async () => {
+    const { seed, open, steps } = await setup();
+    const a = await seed("a");
+    const { assembly } = open();
+    assembly.tray.add([a.id, a.id]);
+    assembly.setLayout("vertical");
+    steps.between.mockImplementation(async () => {
+      assembly.setFormat("pdf");
+    });
+    const saved = await assembly.out.save();
+    expect(saved).toMatchObject({ format: "png", contentType: "image/png" });
+    expect(assembly.out.failure.value).toBe("");
+    assembly.setFormat("jpeg");
+    steps.between.mockImplementation(async () => {
+      assembly.setFormat("png");
+    });
+    expect(await assembly.out.download()).toBe(true);
+    expect(steps.download).toHaveBeenCalledWith(expect.any(Uint8Array), "Combined image.jpeg", "image/jpeg");
+  });
+
   it("stops when the workspace is left mid-way, writing nothing", async () => {
     const { seed, open, store, steps } = await setup();
     const ids = [(await seed("a")).id, (await seed("b")).id];

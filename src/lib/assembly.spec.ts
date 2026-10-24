@@ -242,7 +242,7 @@ describe("the persisted plan", () => {
 });
 
 describe("the PDF output's words (SPEC-110)", () => {
-  const estimate = { pageCount: 3, bytes: 1_258_291, itemBytes: [0, 0, 0], lowest: { index: 1, page: 1, dpi: 95.6 } };
+  const estimate = { pageCount: 3, bytes: 1_258_291, images: [], lowest: { index: 1, page: 1, dpi: 95.6 } };
 
   it("states the page count, the bytes and the lowest-resolution placement", () => {
     expect(pageCountLabel(1)).toBe("1 page");

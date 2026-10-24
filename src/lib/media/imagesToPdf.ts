@@ -389,7 +389,8 @@ export function encodingLabel(reason: EncodingReason, contentType: string): stri
     case "original":
       return "original JPEG";
     case "not-jpeg":
-      return `re-encoded: ${TYPE_NAMES[contentType] ?? "not a JPEG"}`;
+      // A JPEG whose frame header cannot be read (12-bit, say) is still one.
+      return contentType === "image/jpeg" ? "re-encoded: unsupported JPEG" : `re-encoded: ${TYPE_NAMES[contentType] ?? "not a JPEG"}`;
     case "not-baseline":
       return "re-encoded: progressive JPEG";
     case "components":
@@ -414,18 +415,20 @@ export function passthroughImage(header: JpegHeader, bytes: Uint8Array): PdfImag
 }
 
 /** The pixel size a re-encoded placement is drawn at: its visible rectangle
- * at the sheet's dpi, never above the source pixels it shows (an SVG has
- * none: it is drawn at the placed size), within the canvas bounds every
- * target browser allocates. */
-export function rasterSize(placed: PlacedItem, contentType: string, dpi: number): PixelSize {
+ * at the sheet's dpi, never above the source pixels it shows, within the
+ * canvas bounds every target browser allocates. An SVG has no pixels of its
+ * own: it is drawn at the placed size. Nor has a `flattened` blend, which
+ * carries everything beneath it on its page — bounding it by the blended
+ * image's pixels would soften the scan it lies over. */
+export function rasterSize(placed: PlacedItem, contentType: string, dpi: number, flattened = false): PixelSize {
   const atDpi = {
     widthPx: (Math.max(0, placed.widthCm) / CM_PER_INCH) * dpi,
     heightPx: (Math.max(0, placed.heightCm) / CM_PER_INCH) * dpi,
   };
-  const vector = contentType === SVG_CONTENT_TYPE;
+  const free = flattened || contentType === SVG_CONTENT_TYPE;
   return svgRasterSize({
-    widthPx: Math.max(1, Math.round(vector ? atDpi.widthPx : Math.min(atDpi.widthPx, placed.sourcePx.width))),
-    heightPx: Math.max(1, Math.round(vector ? atDpi.heightPx : Math.min(atDpi.heightPx, placed.sourcePx.height))),
+    widthPx: Math.max(1, Math.round(free ? atDpi.widthPx : Math.min(atDpi.widthPx, placed.sourcePx.width))),
+    heightPx: Math.max(1, Math.round(free ? atDpi.heightPx : Math.min(atDpi.heightPx, placed.sourcePx.height))),
   });
 }
 
@@ -473,16 +476,49 @@ const PDF_PAGE_BYTES = 1024;
  * deflated in the file — this is its uncompressed size, the bound). */
 export const PAGE_NUMBER_FONT_BYTES = 410_820;
 
+/** Lossless sources, whose own compressed density predicts their re-encode. */
+const LOSSLESS_TYPES: ReadonlySet<string> = new Set(["image/png", "image/gif"]);
+
+/** The margin on that prediction: a PDF's Flate samples carry no PNG row
+ * filters (and a GIF's palette is expanded to RGB), so they compress worse
+ * than the file they came from. */
+const LOSSLESS_DENSITY_MARGIN = 2;
+
+/** One embedded image in the estimate. */
+export interface PdfEstimateImage {
+  bytes: number;
+  /** The tray entries it serves — several when the same image is placed
+   * alike more than once. */
+  indices: number[];
+}
+
 export interface PdfAssemblyEstimate {
   pageCount: number;
-  /** The output's bytes: passed-through files at their own length,
-   * re-encoded rasters at their samples' size before compression. */
+  /** The output's bytes: the file around the images, plus each image
+   * embedded once — see reencodedBytes and the passthrough's own length. */
   bytes: number;
-  /** Each tray item's share: an image embedded once counts once, against the
-   * first placement that embeds it. */
-  itemBytes: number[];
+  images: PdfEstimateImage[];
   /** The lowest-resolution placement, or null when nothing is placed. */
   lowest: { index: number; page: number; dpi: number } | null;
+}
+
+/** A re-encoded image's bytes in the file: its raster's 8-bit samples (RGB,
+ * plus a mask when it can carry alpha) — for a lossless source scaled to the
+ * source's own bytes per pixel, with LOSSLESS_DENSITY_MARGIN, never above the
+ * raw samples. A JPEG's density says nothing about Flate (its pixels are
+ * stored lossily), so a re-encoded JPEG, an SVG or a flattened blend counts
+ * at its raw samples. */
+export function reencodedBytes(
+  size: PixelSize,
+  source: Pick<SourceFacts, "contentType" | "byteLength">,
+  item: ItemPx,
+  alpha: boolean,
+): number {
+  const raw = alpha ? 4 : 3;
+  const pixels = item.widthPx * item.heightPx;
+  const density =
+    LOSSLESS_TYPES.has(source.contentType) && pixels > 0 ? (LOSSLESS_DENSITY_MARGIN * source.byteLength) / pixels : raw;
+  return Math.ceil(size.widthPx * size.heightPx * Math.min(raw, density));
 }
 
 /** The estimate, from each placement's passthrough decision — a computed
@@ -494,8 +530,7 @@ export function estimateImagePdf(
   dpi: number,
   pageNumbers: boolean,
 ): PdfAssemblyEstimate {
-  const itemBytes = items.map(() => 0);
-  const keys = new Set<string>();
+  const images = new Map<string, PdfEstimateImage>();
   let bytes = PDF_BASE_BYTES + pages.length * PDF_PAGE_BYTES + (pageNumbers ? PAGE_NUMBER_FONT_BYTES : 0);
   let lowest: PdfAssemblyEstimate["lowest"] = null;
   for (const [pageIndex, page] of pages.entries()) {
@@ -507,12 +542,22 @@ export function estimateImagePdf(
       }
       const reason = encodingReason(source, item, placed);
       const key = imageKey(placed, source, reason, dpi, pageIndex);
-      if (!keys.has(key)) {
-        keys.add(key);
-        const size = rasterSize(placed, source.contentType, dpi);
-        const alpha = reason !== "blend" && (source.contentType !== "image/jpeg" || placed.opacity < 1);
-        const share = reason === "original" ? source.byteLength : size.widthPx * size.heightPx * (alpha ? 4 : 3);
-        itemBytes[placed.index] += share;
+      const known = images.get(key);
+      if (known) {
+        if (!known.indices.includes(placed.index)) {
+          known.indices.push(placed.index);
+        }
+      } else {
+        const flattened = reason === "blend";
+        const size = rasterSize(placed, source.contentType, dpi, flattened);
+        const alpha = !flattened && (source.contentType !== "image/jpeg" || placed.opacity < 1);
+        const share =
+          reason === "original"
+            ? source.byteLength
+            : flattened
+              ? size.widthPx * size.heightPx * 3
+              : reencodedBytes(size, source, item, alpha);
+        images.set(key, { bytes: share, indices: [placed.index] });
         bytes += share;
       }
       const at = placementDpi(placed, source.contentType, reason, dpi);
@@ -521,17 +566,17 @@ export function estimateImagePdf(
       }
     }
   }
-  return { pageCount: pages.length, bytes, itemBytes, lowest };
+  return { pageCount: pages.length, bytes, images: [...images.values()], lowest };
 }
 
 function megabytes(bytes: number): string {
   return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
 }
 
-/** "“a”", "“a” and “b”", "“a”, “b” and “c”", "“a”, “b”, “c” and 2 more". */
-function quotedList(titles: readonly string[]): string {
-  const named = titles.slice(0, 3).map((title) => `“${title || "Untitled"}”`);
-  const more = titles.length - named.length;
+/** "a", "a and b", "a, b and c", "a, b, c and 2 more". */
+function namedList(labels: readonly string[]): string {
+  const named = labels.slice(0, 3);
+  const more = labels.length - named.length;
   if (more > 0) {
     return `${named.join(", ")} and ${more} more`;
   }
@@ -553,23 +598,24 @@ export function pdfLimitRefusal(
     );
   }
   if (estimate.bytes > MAX_PDF_ASSEMBLY_BYTES) {
-    // The largest contributors, until what is left fits.
-    const order = estimate.itemBytes
-      .map((bytes, index) => ({ bytes, index }))
-      .filter((entry) => entry.bytes > 0)
-      .toSorted((a, b) => b.bytes - a.bytes || a.index - b.index);
+    // The largest images, until what is left fits — each named with every
+    // tray entry it serves, since removing one copy leaves the others.
+    const order = estimate.images
+      .filter((image) => image.bytes > 0)
+      .toSorted((a, b) => b.bytes - a.bytes || a.indices[0] - b.indices[0]);
     const remove: string[] = [];
     let left = estimate.bytes;
-    for (const entry of order) {
+    for (const image of order) {
       if (left <= MAX_PDF_ASSEMBLY_BYTES) {
         break;
       }
-      remove.push(titles[entry.index] ?? "");
-      left -= entry.bytes;
+      const name = `“${titles[image.indices[0]] || "Untitled"}”`;
+      remove.push(image.indices.length > 1 ? `${name} (all ${image.indices.length} copies)` : name);
+      left -= image.bytes;
     }
     return (
       `This PDF would be about ${megabytes(estimate.bytes)}, more than the ${megabytes(MAX_PDF_ASSEMBLY_BYTES)} ` +
-      `a PDF assembly can produce. Remove ${quotedList(remove)} from the tray, or choose a lower resolution.`
+      `a PDF assembly can produce. Remove ${namedList(remove)} from the tray, or choose a lower resolution.`
     );
   }
   return null;
@@ -763,7 +809,7 @@ export async function buildImagePdf(
       const key = imageKey(placed, facts, reason, dpi, pageIndex);
       const box = rectPt(placed);
       if (!images.has(key)) {
-        const size = rasterSize(placed, facts.contentType, dpi);
+        const size = rasterSize(placed, facts.contentType, dpi, reason === "blend");
         const data =
           reason === "original" && facts.header
             ? passthroughImage(facts.header, bytes)

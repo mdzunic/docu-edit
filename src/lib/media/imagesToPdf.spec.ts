@@ -49,6 +49,7 @@ import {
   planPdfPages,
   rasterisePlacement,
   rasterSize,
+  reencodedBytes,
   sourceFacts,
   textWidthPt,
   type EncodingReason,
@@ -357,6 +358,7 @@ describe("the passthrough decision", () => {
     expect(encodingLabel("original", "image/jpeg")).toBe("original JPEG");
     expect(encodingLabel("cropped", "image/jpeg")).toBe("re-encoded: cropped");
     expect(encodingLabel("not-jpeg", "image/png")).toBe("re-encoded: PNG");
+    expect(encodingLabel("not-jpeg", "image/jpeg")).toBe("re-encoded: unsupported JPEG");
     expect(encodingLabel("not-baseline", "image/jpeg")).toBe("re-encoded: progressive JPEG");
     expect(encodingLabel("components", "image/jpeg")).toBe("re-encoded: CMYK JPEG");
     expect(encodingLabel("edited", "image/png")).toBe("re-encoded: edited");
@@ -485,6 +487,12 @@ describe("buildImagePdf", () => {
     expect(jobs).toHaveLength(1);
     expect(jobs[0].layers.map((layer) => layer.index)).toEqual([0, 1]);
     expect(jobs[0].background).toBe("#ffffff");
+    // At the sheet's dpi, not the blended image's own 160 px: what lies
+    // beneath must not print at the overlay's resolution.
+    const over = pages[0].placed[1];
+    expect(jobs[0].widthPx).toBe(Math.round((over.widthCm / 2.54) * 150));
+    expect(jobs[0].widthPx).toBeGreaterThan(160);
+    expect(rasterSize(over, "image/jpeg", 150)).toMatchObject({ widthPx: 160 });
   });
 
   it("embeds the same source once however many pages place it: a 40-page letterhead carries one copy", async () => {
@@ -701,7 +709,7 @@ const scanTitles = (count: number) => Array.from({ length: count }, (_, index) =
 
 describe("the estimate and the MAX_* refusals", () => {
 
-  it("counts a passed-through file at its own length, once however often it is placed, and a raster at its samples", () => {
+  it("counts a passed-through file at its own length and a re-encode from its raster, each image once however often it is placed", () => {
     const jpeg: SourceFacts = { mediaId: "m", contentType: "image/jpeg", header: parseJpegHeader(jpegHeaderBytes(0xc0, 3)), byteLength: 4000 };
     const png: SourceFacts = { mediaId: "p", contentType: "image/png", header: null, byteLength: 900 };
     const items = [
@@ -712,8 +720,14 @@ describe("the estimate and the MAX_* refusals", () => {
     const pages = planPdfPages(items, plan("one-per-page"), A4);
     const estimate = estimateImagePdf(pages, items, [jpeg, jpeg, png], 150, false);
     expect(estimate.pageCount).toBe(3);
-    expect(estimate.itemBytes).toEqual([4000, 0, 64 * 40 * 4]);
-    expect(estimate.bytes).toBe(2048 + 3 * 1024 + 4000 + 64 * 40 * 4);
+    // The PNG's raster is its own 64 × 40 px, at twice its file's 0.70 bytes
+    // per pixel (under the 4 raw RGBA bytes).
+    const png64 = Math.ceil(64 * 40 * ((2 * 900) / (64 * 40)));
+    expect(estimate.images).toEqual([
+      { bytes: 4000, indices: [0, 1] },
+      { bytes: png64, indices: [2] },
+    ]);
+    expect(estimate.bytes).toBe(2048 + 3 * 1024 + 4000 + png64);
     // The 64 × 40 screenshot on 15.92 cm is the softest placement: page 3.
     expect(estimate.lowest?.index).toBe(2);
     expect(estimate.lowest?.page).toBe(2);
@@ -769,6 +783,30 @@ describe("the estimate and the MAX_* refusals", () => {
     );
     // 1000 MB and the file's own overhead: six of them must go.
     expect(pdfLimitRefusal(ten, tray.map((item) => item.title), 1)).toContain("Remove “i1”, “i2”, “i3” and 3 more from the tray");
+    // One image in three tray entries: removing one copy would leave two.
+    const copies = [...Array.from({ length: 3 }, () => ({ id: "scan", title: "scan", widthPx: 160, heightPx: 120 })), items[0]];
+    const shared = estimateImagePdf(
+      planPdfPages(copies, plan("one-per-page"), A4),
+      copies,
+      [big("scan", 450), big("scan", 450), big("scan", 450), big("s", 100)],
+      150,
+      false,
+    );
+    expect(shared.images.map((image) => image.indices)).toEqual([[0, 1, 2], [3]]);
+    expect(pdfLimitRefusal(shared, copies.map((item) => item.title), 1)).toContain("Remove “scan” (all 3 copies) from the tray");
+  });
+
+  it("estimates a re-encode from its raster: a lossless source at its own density (doubled), anything else at its raw samples", () => {
+    const size = { widthPx: 1000, heightPx: 500 };
+    const item = { widthPx: 2000, heightPx: 1000 };
+    // A screenshot PNG of 2 MP in 400 KB: 0.2 bytes a pixel, so 0.4 here.
+    expect(reencodedBytes(size, { contentType: "image/png", byteLength: 400_000 }, item, true)).toBe(200_000);
+    // A dense PNG never counts above its raw samples.
+    expect(reencodedBytes(size, { contentType: "image/png", byteLength: 9_000_000 }, item, true)).toBe(2_000_000);
+    expect(reencodedBytes(size, { contentType: "image/gif", byteLength: 9_000_000 }, item, false)).toBe(1_500_000);
+    // A JPEG's density says nothing about Flate; nor has an SVG pixels.
+    expect(reencodedBytes(size, { contentType: "image/jpeg", byteLength: 100_000 }, item, false)).toBe(1_500_000);
+    expect(reencodedBytes(size, { contentType: "image/svg+xml", byteLength: 300 }, item, true)).toBe(2_000_000);
   });
 });
 
