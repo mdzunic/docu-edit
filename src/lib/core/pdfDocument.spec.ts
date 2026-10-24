@@ -2,7 +2,9 @@
 // chains, hybrid /XRefStm, object streams, page-tree inheritance and
 // rotation, generations, stream filters and /Length fallbacks, the
 // reconstruction path, encryption refusal, and one test per parsing bound
-// that genuinely trips it. Fixtures are hand-written bytes, plus the
+// that genuinely trips it — plus, beside them, the two graph primitives
+// SPEC-111's writer copies with: reachability and reference rewriting
+// (assemblePdf itself is pdfAssemble.spec.ts's). Fixtures are hand-written bytes, plus the
 // checked-in e2e fixtures (spec107-pages.pdf is the app's own buildPdf
 // output), so unit and e2e assertions cannot drift.
 import { readFileSync } from "node:fs";
@@ -19,7 +21,9 @@ import {
   PdfEncryptedError,
   pdfTextOf,
   PdfParseError,
+  pdfReachable,
   resolve,
+  rewritePdfRefs,
   streamData,
   type PdfValue,
 } from "./pdfDocument";
@@ -754,5 +758,116 @@ describe("values and helpers", () => {
     // ignores offsets) takes over — the flag must still be read.
     expect((await parsePdf(linearised)).linearised).toBe(true);
     expect((await parsePdf(PAGES_PDF)).linearised).toBe(false);
+  });
+});
+
+// SPEC-111: the writer's two graph primitives, over the reader's own output.
+describe("reachability (pdfReachable)", () => {
+  it("walks every reference breadth-first, each object once, in the order first reached", async () => {
+    const doc = await parsePdf(
+      simplePdf([
+        [4, "<< /A 5 0 R /B [6 0 R 5 0 R] >>"],
+        [5, "<< /C 7 0 R >>"],
+        [6, "<< /D 4 0 R >>"],
+        [7, "(leaf)"],
+      ]),
+    );
+    expect(pdfReachable(doc, [{ t: "ref", num: 4, gen: 0 }])).toEqual([4, 5, 6, 7]);
+    // From a direct root, too: a dictionary that is not an object of the file.
+    const root: PdfValue = { t: "dict", v: new Map([["X", { t: "ref", num: 6, gen: 0 }]]) };
+    expect(pdfReachable(doc, [root])).toEqual([6, 4, 5, 7]);
+  });
+
+  it("never follows /Parent, a stream's /Length, a dangling reference, or past a skipped object", async () => {
+    const doc = await parsePdf(
+      simplePdf([
+        [4, "<< /Parent 3 0 R /Kid 5 0 R /Gone 99 0 R /Page 3 0 R >>"],
+        [5, "<< /Length 6 0 R >>\nstream\nabc\nendstream"],
+        [6, "3"],
+        [7, "<< /Behind 8 0 R >>"],
+        [8, "(hidden)"],
+      ]),
+    );
+    expect(pdfReachable(doc, [{ t: "ref", num: 4, gen: 0 }], (num) => num === 3)).toEqual([4, 5]);
+    // Unskipped, the page is reached through /Page — but not its tree, which
+    // only /Parent leads to.
+    expect(pdfReachable(doc, [{ t: "ref", num: 4, gen: 0 }])).toEqual([4, 5, 3]);
+    expect(pdfReachable(doc, [{ t: "ref", num: 7, gen: 0 }], (num) => num === 7)).toEqual([]);
+  });
+
+  it("stops what a page of a real file reaches at its resources and content", async () => {
+    const doc = await parsePdf(PAGES_PDF);
+    const page = doc.pages[1].ref;
+    const pageNums = new Set(doc.pages.map((candidate) => candidate.ref.num));
+    const reached = pdfReachable(doc, [{ t: "ref", num: page.num, gen: page.gen }], (num) => num !== page.num && pageNums.has(num));
+    // The page itself, its content stream and its resources — never the
+    // page tree (only /Parent leads there) or a sibling page.
+    expect(reached).toEqual([page.num, 10, 8]);
+  });
+});
+
+describe("reference rewriting (rewritePdfRefs)", () => {
+  it("rewrites every reference through the map, deep inside arrays and dictionaries", () => {
+    const value: PdfValue = {
+      t: "dict",
+      v: new Map<string, PdfValue>([
+        ["A", { t: "ref", num: 4, gen: 0 }],
+        ["B", { t: "array", v: [{ t: "num", v: 1 }, { t: "ref", num: 5, gen: 0 }, { t: "dict", v: new Map([["C", { t: "ref", num: 4, gen: 0 }]]) }] }],
+        ["N", { t: "name", v: "Keep" }],
+      ]),
+    };
+    const out = rewritePdfRefs(value, (ref) => ({ t: "ref", num: ref.num * 10, gen: 0 }));
+    expect(out).toEqual({
+      t: "dict",
+      v: new Map<string, PdfValue>([
+        ["A", { t: "ref", num: 40, gen: 0 }],
+        ["B", { t: "array", v: [{ t: "num", v: 1 }, { t: "ref", num: 50, gen: 0 }, { t: "dict", v: new Map([["C", { t: "ref", num: 40, gen: 0 }]]) }] }],
+        ["N", { t: "name", v: "Keep" }],
+      ]),
+    });
+    // The input is untouched.
+    expect((value as { v: Map<string, PdfValue> }).v.get("A")).toEqual({ t: "ref", num: 4, gen: 0 });
+  });
+
+  it("passes each reference's dictionary key; undefined drops the entry, or nulls an array item", () => {
+    const keys: Array<string | null> = [];
+    const value: PdfValue = {
+      t: "dict",
+      v: new Map<string, PdfValue>([
+        ["Parent", { t: "ref", num: 2, gen: 0 }],
+        ["Kids", { t: "array", v: [{ t: "ref", num: 3, gen: 0 }] }],
+        ["P", { t: "ref", num: 3, gen: 0 }],
+      ]),
+    };
+    const out = rewritePdfRefs(value, (ref, key) => {
+      keys.push(key);
+      return ref.num === 3 ? undefined : { t: "ref", num: 1, gen: 0 };
+    });
+    expect(keys).toEqual(["Parent", null, "P"]);
+    expect(out).toEqual({
+      t: "dict",
+      v: new Map<string, PdfValue>([
+        ["Parent", { t: "ref", num: 1, gen: 0 }],
+        ["Kids", { t: "array", v: [{ t: "null" }] }],
+      ]),
+    });
+  });
+
+  it("shares a stream's raw bytes verbatim, keeps its filters, and restates /Length directly", async () => {
+    const doc = await parsePdf(simplePdf([[4, "<< /Filter /FlateDecode /Length 5 0 R /DecodeParms 6 0 R >>\nstream\nxyz\nendstream"], [5, "3"], [6, "<< >>"]]));
+    const stream = doc.objects.get(4) as { t: "stream"; dict: Map<string, PdfValue>; raw: Uint8Array };
+    const seen: number[] = [];
+    const out = rewritePdfRefs(stream, (ref) => {
+      seen.push(ref.num);
+      return { t: "ref", num: 60, gen: 0 };
+    }) as typeof stream;
+    expect(out.raw).toBe(stream.raw);
+    expect(Array.from(out.dict)).toEqual([
+      ["Filter", { t: "name", v: "FlateDecode" }],
+      ["Length", { t: "num", v: 3 }],
+      ["DecodeParms", { t: "ref", num: 60, gen: 0 }],
+    ]);
+    // The indirect /Length is never asked about.
+    expect(seen).toEqual([6]);
   });
 });

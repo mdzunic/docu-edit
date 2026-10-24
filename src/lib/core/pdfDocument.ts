@@ -2102,9 +2102,12 @@ function textStringValue(text: string): PdfValue {
   return { t: "str", v: out };
 }
 
+function pad(value: number, width = 2): string {
+  return String(value).padStart(width, "0");
+}
+
 /** A date string (ISO 32000 7.9.4), in UTC. */
 function dateStringValue(date: Date): PdfValue {
-  const pad = (value: number, width = 2): string => String(value).padStart(width, "0");
   return {
     t: "str",
     v: latin1Bytes(
@@ -2365,8 +2368,11 @@ function readOutline(src: MergeSource, dropped: PdfDropRecord[]): OutlineNode[] 
   const seen = new Set<number>();
   const readList = (first: PdfValue | undefined, depth: number): OutlineNode[] => {
     const nodes: OutlineNode[] = [];
+    if (depth > MAX_RESOLVE_DEPTH) {
+      return nodes;
+    }
     let cursor = first;
-    while (cursor?.t === "ref" && !seen.has(cursor.num) && depth <= MAX_RESOLVE_DEPTH && seen.size < MAX_PDF_OBJECTS) {
+    while (cursor?.t === "ref" && !seen.has(cursor.num) && seen.size < MAX_PDF_OBJECTS) {
       seen.add(cursor.num);
       const item = resolve(doc, cursor);
       if (item.t !== "dict") {
@@ -2417,6 +2423,12 @@ function readOutline(src: MergeSource, dropped: PdfDropRecord[]): OutlineNode[] 
     return nodes;
   };
   return readList(root.v.get("First"), 0);
+}
+
+/** References in order, each once: a union. */
+function unionRefs(values: PdfValue[]): PdfValue[] {
+  const seen = new Set<number>();
+  return values.filter((value) => value.t === "ref" && !seen.has(value.num) && seen.add(value.num));
 }
 
 /** How many descendants of an outline node show when it is open. */
@@ -2837,19 +2849,14 @@ export async function assemblePdf(plan: PdfAssemblyPlan, hooks: PdfAssemblyHooks
     }
   }
   if (groups.length > 0) {
-    /** References in order, each once (a union). */
-    const union = (values: PdfValue[]): PdfValue[] => {
-      const seen = new Set<number>();
-      return values.filter((value) => value.t === "ref" && !seen.has(value.num) && seen.add(value.num));
-    };
     const defaults: Array<[string, PdfValue]> = [];
     for (const [key, values] of Object.entries(config)) {
-      const list = key === "ON" || key === "OFF" ? union(values) : values;
+      const list = key === "ON" || key === "OFF" ? unionRefs(values) : values;
       if (list.length > 0) {
         defaults.push([key, arrayValue(list)]);
       }
     }
-    catalog.set("OCProperties", dictValue([["OCGs", arrayValue(union(groups))], ["D", dictValue(defaults)]]));
+    catalog.set("OCProperties", dictValue([["OCGs", arrayValue(unionRefs(groups))], ["D", dictValue(defaults)]]));
   }
 
   for (const src of sources.values()) {
@@ -2902,6 +2909,10 @@ export function plannedPdfPages(
   });
 }
 
+function describeGeometry(page: { widthPt: number; heightPt: number; rotate: number }): string {
+  return `${Math.round(page.widthPt)} × ${Math.round(page.heightPt)} pt, rotated ${page.rotate}°`;
+}
+
 /** The self-check every produced file is held to before it is kept: its
  * bytes parse back, to the planned page count, each page at its planned size
  * and rotation. Throws a user-facing Error otherwise — nothing built from
@@ -2921,12 +2932,12 @@ export async function checkAssembledPdf(
   if (doc.pages.length !== expected.length) {
     throw new Error(`the merged PDF has ${doc.pages.length} pages instead of ${expected.length}, so nothing was kept.`);
   }
-  const describe = (page: { widthPt: number; heightPt: number; rotate: number }): string =>
-    `${Math.round(page.widthPt)} × ${Math.round(page.heightPt)} pt, rotated ${page.rotate}°`;
   expected.forEach((want, index) => {
     const got = doc.pages[index];
     if (Math.abs(got.widthPt - want.widthPt) > 0.01 || Math.abs(got.heightPt - want.heightPt) > 0.01 || got.rotate !== want.rotate) {
-      throw new Error(`page ${index + 1} of the merged PDF is ${describe(got)} instead of ${describe(want)}, so nothing was kept.`);
+      throw new Error(
+        `page ${index + 1} of the merged PDF is ${describeGeometry(got)} instead of ${describeGeometry(want)}, so nothing was kept.`,
+      );
     }
   });
   return doc;
