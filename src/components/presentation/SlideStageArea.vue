@@ -134,18 +134,6 @@ onBeforeUnmount(() => {
         />
       </template>
     </SlideStage>
-    <SpellContextMenu
-      v-if="proofing && proofing.spell.contextMenu.value"
-      :left="proofing.spell.contextMenu.value.left"
-      :top="proofing.spell.contextMenu.value.top"
-      :word="proofing.spell.contextMenu.value.word"
-      :suggestions="proofing.spell.contextMenu.value.suggestions"
-      @suggestion="proofing.spell.applySuggestion"
-      @ignore="proofing.spell.ignore()"
-      @ignore-all="proofing.spell.ignoreAll()"
-      @add-to-dictionary="proofing.spell.addToDictionary()"
-      @dismiss="proofing.spell.closeContextMenu()"
-    />
     <div
       v-else
       class="empty-stage"
@@ -159,6 +147,19 @@ onBeforeUnmount(() => {
         Add slide
       </UiButton>
     </div>
+    <!-- SPEC-098: right-click on a squiggle (position: fixed, client px). -->
+    <SpellContextMenu
+      v-if="proofing && proofing.spell.contextMenu.value"
+      :left="proofing.spell.contextMenu.value.left"
+      :top="proofing.spell.contextMenu.value.top"
+      :word="proofing.spell.contextMenu.value.word"
+      :suggestions="proofing.spell.contextMenu.value.suggestions"
+      @suggestion="proofing.spell.applySuggestion"
+      @ignore="proofing.spell.ignore()"
+      @ignore-all="proofing.spell.ignoreAll()"
+      @add-to-dictionary="proofing.spell.addToDictionary()"
+      @dismiss="proofing.spell.closeContextMenu()"
+    />
     <AnimationStageLayer
       v-if="animations.open.value && currentSlide"
       :controller="animations"
@@ -186,8 +187,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.stage-workspace:focus {
-  outline: none;
+.stage-workspace:focus-visible {
+  outline: var(--space-1) solid var(--focus-ring);
+  outline-offset: calc(-1 * var(--space-1));
 }
 
 .stage-workspace {

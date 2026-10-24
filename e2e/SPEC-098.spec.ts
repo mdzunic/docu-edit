@@ -19,6 +19,7 @@ async function openFixture(page: Page, file: string): Promise<void> {
   await expect(page).toHaveURL(/\/slides\/.+/);
   await expect(page.getByTestId("presentation-view")).toBeVisible();
   await expect(page.getByTestId("slide-frame").first()).toBeVisible();
+  await expect(page.getByTestId("presentation-empty")).toHaveCount(0);
 }
 
 /** The main stage (the filmstrip thumbnails are slide-stages too). */

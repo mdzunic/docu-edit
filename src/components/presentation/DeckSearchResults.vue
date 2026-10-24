@@ -99,7 +99,7 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
                   :aria-current="entry.index === c.currentHitIndex.value ? 'true' : undefined"
                   @click="c.goToHit(entry.index)"
                 >
-                  <span class="hit-snippet">{{ entry.before }}<mark>{{ entry.match }}</mark>{{ entry.after }}</span>
+                  <span class="hit-snippet">{{ entry.before }}<mark class="find-highlight-match">{{ entry.match }}</mark>{{ entry.after }}</span>
                   <span class="hit-meta">
                     <span class="hit-frame">{{ entry.frameName }}</span>
                     <span
@@ -234,7 +234,9 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
   overflow-wrap: anywhere;
 }
 
-.hit-snippet mark {
+/* The match in SPEC-017's search yellow — a document annotation, not a UI
+   token (tokens.spec.ts's find-highlight exemption). */
+.hit-snippet .find-highlight-match {
   background: rgb(255 214 0 / 0.55);
   color: inherit;
   font-weight: var(--weight-bold);
