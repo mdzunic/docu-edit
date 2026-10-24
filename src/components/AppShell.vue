@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watchEffect } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, useTemplateRef, watchEffect } from "vue";
 import { useRouter } from "vue-router";
 import AppIcon from "./AppIcon.vue";
 import PreferencesDialog from "./PreferencesDialog.vue";
@@ -7,6 +7,7 @@ import ShortcutsDialog from "./ShortcutsDialog.vue";
 import StorageWarningBanner from "./StorageWarningBanner.vue";
 import ToastHost from "./ToastHost.vue";
 import { usePreferencesDialog } from "../composables/usePreferencesDialog";
+import { useModelConsentHost } from "../composables/useModelConsent";
 import { useToasts } from "../composables/useToasts";
 import { storeOpenedFile } from "../lib/documentStore";
 import { editorPathFor } from "../lib/documentKinds";
@@ -199,6 +200,12 @@ const shortcutsOpen = ref(false);
 // File menu and the library entry point drive too.
 const preferencesDialog = usePreferencesDialog();
 
+// SPEC-113: the model gateway's consent dialog is hosted here too, so a
+// request made from any view is asked about in the one place. Loaded only
+// when a request is waiting — hosting it loads none of the gateway.
+const ModelConsentDialog = defineAsyncComponent(() => import("./ModelConsentDialog.vue"));
+const modelConsent = useModelConsentHost();
+
 function handleGlobalKeydown(event = new KeyboardEvent("keydown")) {
   if (event.altKey || isOutsideDocumentInput(event.target)) {
     return;
@@ -382,6 +389,11 @@ onUnmounted(() => {
     <PreferencesDialog
       v-if="preferencesDialog.isOpen.value"
       @close="preferencesDialog.close()"
+    />
+    <ModelConsentDialog
+      v-if="modelConsent.request.value"
+      :request="modelConsent.request.value"
+      @answer="modelConsent.answer"
     />
     <div
       v-if="showDropOverlay"

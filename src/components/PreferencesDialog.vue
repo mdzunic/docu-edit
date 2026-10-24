@@ -6,6 +6,7 @@ import UiButton from "./ui/UiButton.vue";
 import UiField from "./ui/UiField.vue";
 import UiSelect from "./ui/UiSelect.vue";
 import UiToggleButton from "./ui/UiToggleButton.vue";
+import LabsSection from "../views/preferences/LabsSection.vue";
 import { usePreferences } from "../composables/usePreferences";
 import {
   AUTOSAVE_DELAY_CHOICES,
@@ -634,6 +635,9 @@ function commitGridSpacing(event = new Event("change")) {
         >
       </UiField>
     </section>
+
+    <!-- Labs (SPEC-113) -->
+    <LabsSection />
 
     <!-- Advanced -->
     <section
