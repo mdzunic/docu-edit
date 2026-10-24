@@ -99,6 +99,32 @@ describe("useFloatingMenu", () => {
     expect(menuStyle.value.top).toBe("60px");
   });
 
+  it("opens an above-placement popup over its trigger when it fits there", async () => {
+    const { open, anchorEl, menuEl, menuStyle } = setup({ placement: "above" });
+    anchorEl.value = document.createElement("button");
+    stubRect(anchorEl.value, { left: 40, right: 60, top: 500, bottom: 520, width: 20 });
+    menuEl.value = document.createElement("div");
+    stubRect(menuEl.value, { left: 0, right: 160, bottom: 200, width: 160, top: 0, height: 200 });
+
+    open.value = true;
+    await nextTick();
+
+    expect(menuStyle.value.top).toBe(`${500 - 4 - 200}px`);
+  });
+
+  it("flips an above-placement popup below a trigger at the top of the viewport (SPEC-098)", async () => {
+    const { open, anchorEl, menuEl, menuStyle } = setup({ placement: "above" });
+    anchorEl.value = document.createElement("button");
+    stubRect(anchorEl.value, { left: 40, right: 60, top: 10, bottom: 30, width: 20 });
+    menuEl.value = document.createElement("div");
+    stubRect(menuEl.value, { left: 0, right: 160, bottom: 200, width: 160, top: 0, height: 200 });
+
+    open.value = true;
+    await nextTick();
+
+    expect(menuStyle.value.top).toBe("34px");
+  });
+
   it("stays unpositioned while the menu is closed", async () => {
     const { open, anchorEl, menuStyle } = setup();
     anchorEl.value = document.createElement("button");

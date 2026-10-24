@@ -754,3 +754,31 @@ describe("odp visibility golden (SPEC-104)", () => {
     expect(xml).toBe(`<draw:page draw:name="p1" draw:style-name="dp1"></draw:page>`);
   });
 });
+
+describe("StyleRegistry.textStyle — run language and noProof (SPEC-098)", () => {
+  it("emits no language for a run without one — every existing style stays byte-identical", () => {
+    const registry = new StyleRegistry();
+    expect(registry.textStyle({ text: "a", bold: true })).toBe("de-T1");
+    expect(registry.xml()).toBe(`<style:style style:name="de-T1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>`);
+    expect(registry.textStyle({ text: "plain" })).toBeUndefined();
+  });
+
+  it("splits a run's tag into fo:language + fo:country, and writes zxx for noProof", () => {
+    const registry = new StyleRegistry();
+    expect(registry.textStyle({ text: "Hallo", lang: "de-DE" })).toBe("de-T1");
+    expect(registry.textStyle({ text: "salut", lang: "fr" })).toBe("de-T2");
+    expect(registry.textStyle({ text: "lorem", noProof: true, lang: "en-US" })).toBe("de-T3");
+    // The key widens: a run differing only in language gets its own style.
+    expect(registry.textStyle({ text: "b", bold: true })).toBe("de-T4");
+    expect(registry.textStyle({ text: "b", bold: true, lang: "de-DE" })).toBe("de-T5");
+    expect(registry.xml()).toContain(`<style:style style:name="de-T1" style:family="text"><style:text-properties fo:language="de" fo:country="DE"/></style:style>`);
+    expect(registry.xml()).toContain(`<style:text-properties fo:language="fr"/>`);
+    expect(registry.xml()).toContain(`<style:style style:name="de-T3" style:family="text"><style:text-properties fo:language="zxx"/></style:style>`);
+    expect(registry.xml()).toContain(`<style:text-properties fo:font-weight="bold" fo:language="de" fo:country="DE"/>`);
+  });
+
+  it("reads fo:language/fo:country back into the run's tag and zxx as noProof", () => {
+    const frame = roundTrip(depthFrame([{ runs: [{ text: "Ahoj", lang: "cs-CZ" }, { text: " lorem", noProof: true }, { text: " plain" }] }]));
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "Ahoj", lang: "cs-CZ" }, { text: " lorem", noProof: true }, { text: " plain" }]);
+  });
+});

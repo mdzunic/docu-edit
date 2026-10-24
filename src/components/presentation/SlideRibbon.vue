@@ -23,7 +23,8 @@
 //   · "Home" and "Insert" are tabs. They switch which slotted strip shows,
 //     one at a time — a single-select tablist.
 //   · Notes, History, Design, Text, Transitions, Animate, Layout, Table,
-//     Media and Header & footer open side panels, any number of which can be
+//     Media and Header & footer open side panels (Find, SPEC-098, opens the
+//     find bar beside them), any number of which can be
 //     open at once (Text is SPEC-097's lists/spacing/autofit panel; History
 //     SPEC-103's version history, beside Notes). Notes
 //     joined them from the deck's action cluster, where it was the one entry
@@ -79,6 +80,8 @@ const props = defineProps({
   sorterOpen: { type: Boolean, default: false },
   /** SPEC-103: the version history panel. */
   historyOpen: { type: Boolean, default: false },
+  /** SPEC-098: the find bar (Cmd/Ctrl+F) is open. */
+  findOpen: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -95,6 +98,7 @@ const emit = defineEmits([
   "text-toggle",
   "sorter-toggle",
   "history-toggle",
+  "find-toggle",
 ]);
 
 /** Which slotted strip is showing. Both stay mounted (v-show, not v-if): the
@@ -125,6 +129,9 @@ const PANELS = [
   // the filmstrip + stage — a pressed toggle all the same, beside Transitions.
   { id: "sorter", label: "Sorter", testid: "slides-sorter-toggle", open: () => props.sorterOpen, toggle: () => emit("sorter-toggle") },
   { id: "animate", label: "Animate", testid: "slides-animate-toggle", open: () => props.animateOpen, toggle: () => emit("animate-toggle") },
+  // SPEC-098: the find bar — transient, not a panel (no preference persists
+  // it), but a pressed toggle beside Transitions/Animate all the same.
+  { id: "find", label: "Find", testid: "slides-find-toggle", open: () => props.findOpen, toggle: () => emit("find-toggle") },
   { id: "table", label: "Table", testid: "slides-table-toggle", open: () => props.tableOpen, toggle: () => emit("table-toggle") },
   { id: "media", label: "Media", testid: "slides-media-toggle", open: () => props.mediaOpen, toggle: () => emit("media-toggle") },
   { id: "header-footer", label: "Header & footer", testid: "slides-header-footer", open: () => props.headerFooterOpen, toggle: () => emit("header-footer-toggle") },

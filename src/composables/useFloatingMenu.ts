@@ -18,7 +18,8 @@ export interface UseFloatingMenuOptions {
   align?: "start" | "center";
   /** Placement: below the anchor (the default, for toolbar buttons near the
    * top), above it (for a status-bar control anchored at the bottom of the
-   * viewport, where "below" would open off-screen), or beside it ("right" —
+   * viewport, where "below" would open off-screen — flipped below when there
+   * is no room above), or beside it ("right" —
    * a submenu flyout, top-aligned with its trigger and flipped to the left
    * side when the right edge would run off-screen). */
   placement?: "below" | "above" | "right";
@@ -80,10 +81,11 @@ export function useFloatingMenu({
         ? anchorRect.left + anchorRect.width / 2 - menuWidth / 2
         : anchorRect.left;
     const left = Math.max(margin, Math.min(wanted, maxLeft));
-    const top =
-      placement === "above"
-        ? anchorRect.top - offsetY - (menuRect ? menuRect.height : 0)
-        : anchorRect.bottom + offsetY;
+    // "above" flips below when the popup would run off the top of the
+    // viewport — a status-bar control mounted at the top of a view
+    // (SPEC-098's deck language control in the app bar) still opens on-screen.
+    const above = anchorRect.top - offsetY - (menuRect ? menuRect.height : 0);
+    const top = placement === "above" && above >= margin ? above : anchorRect.bottom + offsetY;
     menuStyle.value = {
       position: "fixed",
       left: `${left}px`,

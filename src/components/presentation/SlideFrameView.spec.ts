@@ -4,6 +4,7 @@
 // re-express through the origin shim. A regression here once pinned the box
 // to a 0×0 corner, which rotated children about the STAGE origin and made
 // verbatim groups unreachable to a click (QA round 1).
+import { nextTick } from "vue";
 import { describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import SlideFrameView from "./SlideFrameView.vue";
@@ -111,5 +112,24 @@ describe("SlideFrameView media frame (SPEC-095)", () => {
     });
     expect(wrapper.find("[data-testid='media-unsupported']").exists()).toBe(true);
     expect(wrapper.find("[data-testid='media-poster']").exists()).toBe(true);
+  });
+});
+
+describe("SlideFrameView shape text session (SPEC-098)", () => {
+  it("an editing shape swaps its text body for the contenteditable host and hands it over", async () => {
+    const frame = { id: "sh", xCm: 0, yCm: 0, widthCm: 4, heightCm: 2, kind: "shape", geometry: "ellipse", paragraphs: [{ runs: [{ text: "Press me" }] }] };
+    const wrapper = mount(SlideFrameView, { props: { frame, resolveMedia: () => "", topLevel: true, selected: true } });
+    expect(wrapper.find('[data-testid="slide-text-edit"]').exists()).toBe(false);
+    expect(wrapper.find(".text-body.shape-text").text()).toBe("Press me");
+    await wrapper.setProps({ editing: true });
+    await nextTick();
+    const host = wrapper.get('[data-testid="slide-text-edit"]');
+    expect(host.attributes("contenteditable")).toBe("true");
+    expect(wrapper.find(".text-body.shape-text").exists()).toBe(false);
+    expect(wrapper.get(".shape-frame").classes()).toContain("is-editing");
+    expect(wrapper.emitted("edit-mounted")?.[0]).toEqual([host.element]);
+    await wrapper.setProps({ editing: false });
+    expect(wrapper.emitted("edit-unmounted")).toHaveLength(1);
+    expect(wrapper.find(".text-body.shape-text").text()).toBe("Press me");
   });
 });

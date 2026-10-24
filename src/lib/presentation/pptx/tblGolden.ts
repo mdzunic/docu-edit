@@ -7,7 +7,9 @@
 // the round-tripped deck in PowerPoint/Impress) is manual QA in the PR (AC-16e).
 import type { TableFrame } from "../model";
 
-/** The clean model TBL_GOLDEN encodes (its `id` is re-minted on read). */
+/** The clean model TBL_GOLDEN encodes (its `id` is re-minted on read). Each
+ * run carries the `lang="en-US"` its `a:rPr` declares (SPEC-098 reads the tag
+ * verbatim; the writer emits it back byte-for-byte). */
 export const GOLDEN_TABLE: Omit<TableFrame, "id"> = {
   kind: "table",
   xCm: 2,
@@ -29,7 +31,8 @@ export const GOLDEN_TABLE: Omit<TableFrame, "id"> = {
             {
               runs: [
                 {
-                  text: "Name"
+                  text: "Name",
+                  lang: "en-US"
                 }
               ]
             }
@@ -40,7 +43,8 @@ export const GOLDEN_TABLE: Omit<TableFrame, "id"> = {
             {
               runs: [
                 {
-                  text: "Value"
+                  text: "Value",
+                  lang: "en-US"
                 }
               ]
             }
@@ -56,7 +60,8 @@ export const GOLDEN_TABLE: Omit<TableFrame, "id"> = {
             {
               runs: [
                 {
-                  text: "Alpha"
+                  text: "Alpha",
+                  lang: "en-US"
                 }
               ]
             }
@@ -72,7 +77,8 @@ export const GOLDEN_TABLE: Omit<TableFrame, "id"> = {
             {
               runs: [
                 {
-                  text: "1"
+                  text: "1",
+                  lang: "en-US"
                 }
               ]
             }

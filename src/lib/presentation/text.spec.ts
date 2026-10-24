@@ -10,6 +10,7 @@ import {
   paragraphMarkerStyle,
   parseLineSpacingKey,
   promote,
+  replaceParagraphText,
   selectionFormatState,
   setIndentLevel,
   setLetterSpacing,
@@ -104,6 +105,14 @@ describe("selectionFormatState", () => {
     const frame = frameOf([{ runs: [{ text: "ab", bold: true }] }]);
     const state = selectionFormatState(frame, { start: { para: 0, offset: 2 }, end: { para: 0, offset: 2 } });
     expect(state.bold).toBe(true);
+  });
+
+  it("reports an unaligned paragraph at the frame's default alignment (a shape's text centres)", () => {
+    const frame = frameOf([{ runs: [{ text: "ab" }] }, { runs: [{ text: "cd" }], align: "right" }]);
+    const first = { start: { para: 0, offset: 0 }, end: { para: 0, offset: 2 } };
+    expect(selectionFormatState(frame, first).align).toBe("left");
+    expect(selectionFormatState(frame, first, undefined, "center").align).toBe("center");
+    expect(selectionFormatState(frame, { start: { para: 1, offset: 0 }, end: { para: 1, offset: 2 } }, undefined, "center").align).toBe("right");
   });
 });
 
@@ -347,5 +356,56 @@ describe("SelectionFormatState SPEC-097 fields", () => {
     const frame = frameOf([{ runs: [{ text: "a" }] }, { runs: [{ text: "b" }], bullet: "disc" }]);
     expect(selectionFormatState(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 1 } }).bulletStyle).toBe("none");
     expect(selectionFormatState(frame, wholeFrameRange(frame)).bulletStyle).toBe("mixed");
+  });
+});
+
+describe("replaceParagraphText (SPEC-098)", () => {
+  it("takes the marks of the run containing the start and leaves the paragraph's own fields alone", () => {
+    const para: SlideParagraph = { runs: [{ text: "say " }, { text: "hello", bold: true, lang: "de-DE" }, { text: " now" }], align: "center" };
+    replaceParagraphText(para, 4, 9, "hi");
+    expect(para).toEqual({ runs: [{ text: "say " }, { text: "hi", bold: true, lang: "de-DE" }, { text: " now" }], align: "center" });
+  });
+
+  it("spans several runs, re-coalesces identical neighbours and can delete outright", () => {
+    const para: SlideParagraph = { runs: [{ text: "ab" }, { text: "cd", italic: true }, { text: "ef" }] };
+    replaceParagraphText(para, 1, 5, "X");
+    expect(para.runs).toEqual([{ text: "aXf" }]);
+    replaceParagraphText(para, 0, 3, "");
+    expect(para.runs).toEqual([]);
+  });
+
+  it("clamps its range to the paragraph", () => {
+    const para: SlideParagraph = { runs: [{ text: "abc" }] };
+    replaceParagraphText(para, 2, 99, "Z");
+    expect(para.runs).toEqual([{ text: "abZ" }]);
+  });
+});
+
+describe("run language and noProof (SPEC-098)", () => {
+  it("sets and clears lang and noProof through RunFormatPatch", () => {
+    const frame = frameOf([{ runs: [{ text: "Guten Tag" }] }]);
+    applyRunFormat(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 5 } }, { lang: "de-DE", noProof: true });
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "Guten", lang: "de-DE", noProof: true }, { text: " Tag" }]);
+    applyRunFormat(frame, wholeFrameRange(frame), { clearLang: true, noProof: false });
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "Guten Tag" }]);
+  });
+
+  it("keeps runs that differ only in language (or noProof) apart", () => {
+    const frame = frameOf([{ runs: [{ text: "colour", lang: "en-GB" }, { text: " color", lang: "en-US" }] }]);
+    applyRunFormat(frame, wholeFrameRange(frame), { bold: true });
+    expect(frame.paragraphs[0].runs).toEqual([
+      { text: "colour", bold: true, lang: "en-GB" },
+      { text: " color", bold: true, lang: "en-US" },
+    ]);
+  });
+
+  it("reports lang and noProof in the selection state, mixed across runs", () => {
+    const frame = frameOf([{ runs: [{ text: "ab", lang: "de-DE" }, { text: "cd", noProof: true }] }]);
+    const first = selectionFormatState(frame, { start: { para: 0, offset: 0 }, end: { para: 0, offset: 2 } });
+    expect([first.lang, first.noProof]).toEqual(["de-DE", false]);
+    const all = selectionFormatState(frame, wholeFrameRange(frame));
+    expect([all.lang, all.noProof]).toEqual(["mixed", "mixed"]);
+    const plain = selectionFormatState(frame, { start: { para: 0, offset: 2 }, end: { para: 0, offset: 4 } });
+    expect([plain.lang, plain.noProof]).toEqual(["", true]);
   });
 });

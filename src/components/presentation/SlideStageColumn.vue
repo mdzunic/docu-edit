@@ -31,6 +31,8 @@ const props = defineProps({
   /** SPEC-103: useDeckSaving's history controller — its panel mounts here,
    * under the stage, while its toggle is on. */
   history: { type: Object, default: null },
+  /** SPEC-098: the stage's proofing controllers ({ search, spell }). */
+  proofing: { type: Object, default: null },
 });
 
 defineEmits(["add"]);
@@ -52,6 +54,7 @@ const arrange = computed(() => s.arrange);
       :animations="animations"
       :transitions="transitions"
       :fields="fields"
+      :proofing="proofing"
       @add="$emit('add')"
     />
     <div

@@ -404,3 +404,31 @@ describe("SPEC-097 fields survive the contenteditable round trip", () => {
     expect(plain.style.textIndent).toBe(cmPx(-0.5));
   });
 });
+
+describe("SPEC-098: run language and noProof survive the contenteditable round trip", () => {
+  it("carries lang on the span and noProof as data-no-proof, and keeps runs differing only in them apart", () => {
+    const el = host();
+    const paragraphs: SlideParagraph[] = [
+      { runs: [{ text: "Guten Tag", lang: "de-DE" }, { text: " hello" }, { text: " lorem", noProof: true }, { text: " colour", lang: "en-gb" }] },
+    ];
+    renderEditableParagraphs(el, paragraphs);
+    const spans = el.querySelectorAll("span");
+    expect(spans[0].lang).toBe("de-DE");
+    expect(spans[2].dataset.noProof).toBe("1");
+    expect(normalizeTextFrameDom(el)).toEqual(paragraphs);
+    expect(marksEqual({ text: "a", lang: "de-DE" }, { text: "b" })).toBe(false);
+    expect(marksEqual({ text: "a", noProof: true }, { text: "b" })).toBe(false);
+  });
+});
+
+describe("SPEC-098: a shape's text in the editing host", () => {
+  it("lays an unaligned paragraph out at the default alignment without reading it back", () => {
+    const el = host();
+    const paragraphs: SlideParagraph[] = [{ runs: [{ text: "Press me" }] }, { runs: [{ text: "left" }], align: "left" }];
+    renderEditableParagraphs(el, paragraphs, undefined, "center");
+    const blocks = el.querySelectorAll<HTMLElement>(".ce-p");
+    expect(blocks[0].style.textAlign).toBe("center");
+    expect(blocks[1].style.textAlign).toBe("left");
+    expect(normalizeTextFrameDom(el)).toEqual(paragraphs);
+  });
+});

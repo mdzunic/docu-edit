@@ -224,6 +224,9 @@ const previewStyle = computed(() => {
       >
         {{ field.text }}
       </div>
+      <!-- SPEC-098: the proofing layer (find highlights, spell squiggles) paints
+           here, in surface px, above the frames and under the selection chrome. -->
+      <slot name="overlay" />
       <FrameSelectionOverlay
         v-if="showOverlay && selectedFrame"
         :frame="selectedFrame"

@@ -460,3 +460,27 @@ describe("serializeSlideXml — SPEC-097 text depth", () => {
     expect(xml).not.toContain("hlinkClick");
   });
 });
+
+describe("runXml — run language and noProof (SPEC-098)", () => {
+  const xmlFor = (run: TextFrame["paragraphs"][number]["runs"][number]): string =>
+    serializeSlideXml(textSlide([titleFrame([{ runs: [run] }])]), NO_RELS, "ppt/slides/slide1.xml");
+
+  it("writes today's exact a:rPr for a run with no language", () => {
+    expect(xmlFor({ text: "plain" })).toContain(
+      `<a:r><a:rPr lang="en-US" sz="1800"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:rPr><a:t>plain</a:t></a:r>`,
+    );
+  });
+
+  it("writes the run's own tag verbatim, escaped, and noProof=\"1\" before the size", () => {
+    expect(xmlFor({ text: "Hallo", lang: "de-DE" })).toContain(`<a:rPr lang="de-DE" sz="1800">`);
+    expect(xmlFor({ text: "x", lang: "en-gb" })).toContain(`<a:rPr lang="en-gb" sz="1800">`);
+    expect(xmlFor({ text: "x", lang: `a"b` })).toContain(`<a:rPr lang="a&quot;b" sz="1800">`);
+    expect(xmlFor({ text: "lorem", noProof: true, bold: true })).toContain(`<a:rPr lang="en-US" noProof="1" sz="1800" b="1">`);
+  });
+
+  it("reads a:rPr@lang and @noProof back verbatim", () => {
+    const xml = xmlFor({ text: "Ahoj", lang: "cs-CZ", noProof: true });
+    const frame = parseShapeTreeChildForTest(/<p:sp>[\s\S]*<\/p:sp>/.exec(xml)![0]) as TextFrame;
+    expect(frame.paragraphs[0].runs).toEqual([{ text: "Ahoj", lang: "cs-CZ", noProof: true }]);
+  });
+});

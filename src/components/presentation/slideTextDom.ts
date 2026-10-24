@@ -69,11 +69,14 @@ const STRING_FIELDS = [
  * `data-pi` index), so `normalizeTextFrameDom` recovers them per-block — that
  * keeps bullet/indent glued to the paragraph's DOM element across a keystroke
  * that changes the paragraph count (Enter, Backspace-merge), rather than
- * matching by a shifting array index. */
+ * matching by a shifting array index. `defaultAlign` is how a paragraph with
+ * no alignment of its own lays out — a shape's text centres (SPEC-079) — and,
+ * like every block style, is never read back. */
 export function renderEditableParagraphs(
   host: HTMLElement,
   paragraphs: SlideParagraph[],
   theme: DocumentTheme = DEFAULT_THEME,
+  defaultAlign: NonNullable<SlideParagraph["align"]> = "left",
 ): void {
   const doc = host.ownerDocument;
   host.textContent = "";
@@ -83,7 +86,7 @@ export function renderEditableParagraphs(
     block.className = "ce-p";
     block.dataset.p = "1";
     block.dataset.pi = String(index);
-    applyBlockStyle(block, para);
+    applyBlockStyle(block, para, defaultAlign);
     if (para.align) block.dataset.align = para.align;
     if (para.bullet) block.dataset.bullet = para.bullet;
     if (para.level) block.dataset.level = String(para.level);
@@ -113,8 +116,8 @@ export function renderEditableParagraphs(
  * item drops its hanging first-line indent: the host shows no marker, so its
  * first line starts at the text edge, exactly where the stage puts the text
  * after the marker box. Style only; nothing here is read back. */
-function applyBlockStyle(block: HTMLElement, para: SlideParagraph): void {
-  const style = paragraphStyle(para);
+function applyBlockStyle(block: HTMLElement, para: SlideParagraph, defaultAlign: NonNullable<SlideParagraph["align"]>): void {
+  const style = paragraphStyle(para, defaultAlign);
   if (isListParagraph(para)) delete style.textIndent;
   for (const [key, value] of Object.entries(style)) {
     block.style.setProperty(key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`), value);
@@ -137,6 +140,10 @@ function runSpan(doc: Document, run: SlideRun, theme: DocumentTheme): HTMLSpanEl
   else if (run.linkSlide) span.dataset.linkSlide = String(run.linkSlide);
   if ((run.linkHref || run.linkSlide) && run.linkTooltip) span.dataset.linkTooltip = run.linkTooltip;
   if (run.linkHref || run.linkSlide) span.classList.add(EDIT_LINK_CLASS);
+  // SPEC-098: the run's language and noProof ride on the span so a session
+  // never strips them (the host is spellcheck="false"; `lang` is inert there).
+  if (run.lang) span.lang = run.lang;
+  if (run.noProof) span.dataset.noProof = "1";
   span.textContent = run.text;
   return span;
 }
@@ -342,6 +349,9 @@ function marksFrom(el: HTMLElement, base: RunMarks): RunMarks {
     else marks.linkSlide = slide;
     if (el.dataset.linkTooltip) marks.linkTooltip = el.dataset.linkTooltip;
   }
+  const lang = el.getAttribute("lang");
+  if (lang) marks.lang = lang;
+  if (el.dataset.noProof === "1") marks.noProof = true;
   return marks;
 }
 
@@ -379,6 +389,8 @@ function buildRun(text: string, marks: RunMarks): SlideRun {
   if (marks.linkHref) run.linkHref = marks.linkHref;
   else if (marks.linkSlide) run.linkSlide = marks.linkSlide;
   if ((marks.linkHref || marks.linkSlide) && marks.linkTooltip) run.linkTooltip = marks.linkTooltip;
+  if (marks.lang) run.lang = marks.lang;
+  if (marks.noProof) run.noProof = true;
   return run;
 }
 
@@ -396,7 +408,9 @@ export function marksEqual(a: SlideRun, b: SlideRun): boolean {
     (a.letterSpacingPt ?? 0) === (b.letterSpacingPt ?? 0) &&
     a.linkHref === b.linkHref &&
     a.linkSlide === b.linkSlide &&
-    a.linkTooltip === b.linkTooltip
+    a.linkTooltip === b.linkTooltip &&
+    a.lang === b.lang &&
+    !!a.noProof === !!b.noProof
   );
 }
 

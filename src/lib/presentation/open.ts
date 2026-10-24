@@ -13,6 +13,7 @@ import {
 } from "./model";
 import { parsePptx, PptxOpenError } from "./pptx/reader";
 import { OdpOpenError, parseOdp } from "./odp/reader";
+import { deckLanguageOf } from "./slideLanguage";
 import { writePptx } from "./pptx/writer";
 import { writeOdp } from "./odp/writer";
 
@@ -66,6 +67,12 @@ export function assemblePresentation(
   // Absent unless the package declares sections (SPEC-099); `[]` never stored.
   if (parsed.sections && parsed.sections.length > 0) {
     model.sections = parsed.sections;
+  }
+  // SPEC-098: the checking default is the deck's most frequent run language,
+  // derived here and never serialised; absent when no run declares one.
+  const language = deckLanguageOf(parsed.slides);
+  if (language) {
+    model.language = language;
   }
   return model;
 }
