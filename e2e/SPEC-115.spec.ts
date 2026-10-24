@@ -191,8 +191,9 @@ test("an invalid reply gets exactly one repair, then the error and the raw text 
 
   // The repair is a request of its own, shown before it goes: the reply
   // sent back with the validator's message.
-  await expect(page.getByTestId("ai-consent")).toBeVisible();
-  const repair = JSON.parse((await page.getByTestId("ai-consent-payload").textContent()) ?? "{}");
+  const repairPayload = page.getByTestId("ai-consent-payload");
+  await expect(repairPayload).toContainText("Your previous reply was:");
+  const repair = JSON.parse((await repairPayload.textContent()) ?? "{}");
   const repairUser = repair.messages.find((message: { role: string }) => message.role === "user").content as string;
   expect(repairUser).toContain("Your previous reply was:\n<<<\nSure! Here is your deck: slides about Rotterdam.\n>>>");
   expect(repairUser).toContain("It was rejected: reply: not valid JSON");
