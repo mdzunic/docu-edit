@@ -104,3 +104,15 @@ describe("usePresentationUndo", () => {
     expect(undo.canRedo.value).toBe(false);
   });
 });
+
+describe("usePresentationUndo — the deck language (SPEC-098)", () => {
+  it("restores the deck's checking language on undo — absent key deleted", () => {
+    const { model, undo } = setup();
+    undo.record("Language");
+    model.value!.language = "de-DE";
+    undo.undo();
+    expect(model.value!.language).toBeUndefined();
+    undo.redo();
+    expect(model.value!.language).toBe("de-DE");
+  });
+});

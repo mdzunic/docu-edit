@@ -12,7 +12,7 @@ import type { usePresentationEditing } from "./usePresentationEditing";
 export interface StageSearchHooks {
   selectFrame: (frameId: string) => void;
   startEditing: (hit: DeckHit) => void;
-  openNotes: (hit: DeckHit) => Promise<void>;
+  openNotes: (hit: DeckHit) => Promise<void> | void;
   stopEditing: () => void;
   editingFrameId: () => string | null;
   surface: () => HTMLElement | null;

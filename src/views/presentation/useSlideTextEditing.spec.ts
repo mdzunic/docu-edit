@@ -374,3 +374,31 @@ describe("SPEC-097 hooks for the text-depth composable", () => {
     expect(editing.runTextCommand("Add link", () => {})).toBe(false);
   });
 });
+
+describe("SPEC-098: a find hit opens a session with its range selected", () => {
+  it("startEditing(…, range) selects the range once the host registers", () => {
+    const { editing, host, model } = setup([{ runs: [{ text: "one" }] }, { runs: [{ text: "Open Berlin office" }] }]);
+    editing.stopEditing();
+    editing.registerHost(null);
+    editing.startEditing("f1", false, undefined, { start: { para: 1, offset: 0 }, end: { para: 1, offset: 4 } });
+    editing.registerHost(host);
+    expect(document.getSelection()?.toString()).toBe("Open");
+    expect(model.value.slides[0].dirty).toBeUndefined();
+  });
+
+  it("a session that changed nothing ends without marking the slide edited", () => {
+    const { editing, model } = setup();
+    editing.stopEditing();
+    expect(model.value.slides[0].dirty).toBeUndefined();
+  });
+
+  it("a session that typed still reads its DOM back on stop", () => {
+    const { editing, host, model } = setup();
+    host.innerHTML = "<div>typed</div>";
+    editing.onInput();
+    editing.stopEditing();
+    expect(model.value.slides[0].dirty).toBe(true);
+    const frame = model.value.slides[0].frames[0];
+    expect(frame.kind === "text" && frame.paragraphs[0].runs[0].text).toBe("typed");
+  });
+});
