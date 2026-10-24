@@ -282,8 +282,13 @@ export function useSlideSpellCheck(deps: SlideSpellCheckDeps) {
   // --- the language control -------------------------------------------------------------
   const deckLanguage = computed(() => deckLanguageTag());
   const languageOptions = SUPPORTED_LANGUAGES;
-  /** Text is selected: a session, or a selected text frame (whole frame). */
-  const selectionActive = computed(() => deps.editing.toolbarEnabled.value);
+  /** Text is selected: a non-empty range in a session, or a selected text
+   * frame (its whole text). A bare caret selects nothing — the deck's turn. */
+  const selectionActive = computed(() => {
+    if (!deps.editing.toolbarEnabled.value || !deps.editing.toolbarState.value) return false; // reactive: caret moves, edits
+    const range = deps.editing.commandTarget()?.range;
+    return !!range && (range.start.para !== range.end.para || range.start.offset !== range.end.offset);
+  });
   /** The selection's language tag: its runs' own tag, the deck's where they
    * inherit, "mixed" across several. */
   const selectionLanguage = computed(() => {

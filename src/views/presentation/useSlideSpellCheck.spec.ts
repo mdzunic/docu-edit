@@ -42,7 +42,7 @@ function deckWith(slides: Slide[], language?: string): PresentationModel {
   return { kind: "presentation", id: "d", title: "Deck", format: "pptx", slides, slideWidthCm: 33.867, slideHeightCm: 19.05, ...(language ? { language } : {}) };
 }
 
-function setup(model: PresentationModel, opts: { selectionActive?: boolean; editingFrameId?: string } = {}) {
+function setup(model: PresentationModel, opts: { selectionActive?: boolean; editingFrameId?: string; caretOnly?: boolean } = {}) {
   const deck = shallowRef<PresentationModel | null>(model);
   const currentIndex = ref(0);
   const currentSlide = computed(() => deck.value?.slides[currentIndex.value] ?? null);
@@ -55,6 +55,11 @@ function setup(model: PresentationModel, opts: { selectionActive?: boolean; edit
     toolbarEnabled: computed(() => !!opts.selectionActive),
     toolbarState: ref(opts.selectionActive ? { lang: "", noProof: false } : null),
     stopEditing: () => calls.push("stopEditing"),
+    commandTarget: () => {
+      const frame = currentSlide.value!.frames[0];
+      const end = opts.caretOnly ? 0 : 5;
+      return frame.kind === "text" ? { owner: frame, frame, range: { start: { para: 0, offset: 0 }, end: { para: 0, offset: end } } } : null;
+    },
     runTextCommand: (label: string, apply: (owner: { paragraphs: SlideParagraph[] }, range: unknown, frame: SlideFrame) => void, range?: unknown) => {
       commands.push({ label, range });
       const frame = currentSlide.value!.frames[0];
@@ -244,6 +249,16 @@ describe("useSlideSpellCheck — the language control", () => {
     const frame = model.slides[0].frames[0];
     expect(frame.kind === "text" && frame.paragraphs[0].runs).toEqual([{ text: "hello", lang: "en-GB", noProof: true }]);
     expect(model.language).toBeUndefined();
+  });
+
+  it("a bare caret in a session selects nothing: the pick goes to the deck", () => {
+    const model = plain();
+    const { spell, commands, calls } = setup(model, { selectionActive: true, caretOnly: true });
+    expect(spell.selectionActive.value).toBe(false);
+    spell.setLanguage("fr-FR");
+    expect(commands).toEqual([]);
+    expect(model.language).toBe("fr-FR");
+    expect(calls).toEqual(["record:Language", "commit"]);
   });
 
   it("opens and closes the custom dictionary dialog", () => {
