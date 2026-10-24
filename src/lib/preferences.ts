@@ -35,6 +35,8 @@ import {
   SPREADSHEET_LOCALE_TAGS,
   type SpreadsheetLocaleTag,
 } from "./spreadsheet/numberFormat/locale";
+import { EXPERIMENT_FLAG_DEFAULTS, parseExperimentFlags, type ExperimentFlags } from "./experimentFlags";
+import { PROVIDER_CONFIG_DEFAULTS, parseProviderConfig, type ModelProviderConfig } from "./ai/providerConfig";
 
 /** The one key every preference lives under (AC-9). */
 export const PREFERENCES_STORAGE_KEY = "docu-edit:preferences";
@@ -189,6 +191,14 @@ export interface Preferences {
    * overlay transforms, sheet setup and output settings — never pixels.
    * Null until a workspace is started, and after "Start over". */
   assemblyPlan: PersistedAssembly | null;
+  /** The Labs switchboard (SPEC-113): one flag per experiment in the closed
+   * ExperimentId union, every one false until the user turns it on. Read
+   * through lib/experiments.ts. */
+  experiments: ExperimentFlags;
+  /** Where model requests go (SPEC-113): mode, base URL, model and request
+   * bounds. Never the API key — a credential, kept under its own storage key
+   * (lib/ai/apiKey.ts) so it is in no preferences object. */
+  modelProvider: ModelProviderConfig;
 }
 
 // --- margin presets ---------------------------------------------------------
@@ -271,6 +281,8 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   assemblyMargins: null,
   assemblyDpi: DEFAULT_SHEET_DPI,
   assemblyPlan: null,
+  experiments: EXPERIMENT_FLAG_DEFAULTS, // SPEC-113: every experiment off
+  modelProvider: PROVIDER_CONFIG_DEFAULTS, // SPEC-113: off, no endpoint, no model
 };
 
 /** The snap-to-grid spacing bounds (SPEC-072): fine enough to be useful, never
@@ -376,6 +388,10 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   assemblyMargins: marginsValue,
   assemblyDpi: (raw) => (typeof raw === "number" && SHEET_DPI_CHOICES.includes(raw) ? raw : undefined),
   assemblyPlan: parsePersistedAssembly,
+  // An unknown experiment id is dropped, never carried; an apiKey smuggled
+  // into the stored provider object is dropped with it.
+  experiments: parseExperimentFlags,
+  modelProvider: parseProviderConfig,
 };
 
 /** The assembly sheet's starting paper and margins (SPEC-108): the user's
