@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// The deck's find dock (SPEC-098): the find bar — SPEC-017's FindBar, passed in
-// the default slot by the view — and, below it, the results list
+// The deck's find dock (SPEC-098): the find bar — SPEC-017's FindBar, shared,
+// bound to the controller's `bar` props and `barEvents` (rendered here, not in
+// the view, so typing re-renders this dock alone) — and, below it, the results list
 // (`deck-search-results`) grouped by slide: one `deck-search-group` per slide
 // with a hit, its `deck-search-slide-chip` carrying the 1-based slide number,
 // then one `deck-search-hit` button per hit showing its ±40-character snippet
@@ -13,6 +14,7 @@
 // TransitionsPanel.vue reads its own; emits nothing. Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
+import FindBar from "../FindBar.vue";
 import { asDeckSearch } from "../../views/presentation/useDeckSearch";
 import { asDeckResultGroups } from "../../views/presentation/deckSearchRows";
 
@@ -49,7 +51,10 @@ function onKeydown(event = new KeyboardEvent("keydown")) {
       class="deck-find-stack"
       @keydown="onKeydown"
     >
-      <slot />
+      <FindBar
+        v-bind="c.bar.value"
+        v-on="c.barEvents"
+      />
       <section
         v-if="showResults"
         class="deck-search-results"

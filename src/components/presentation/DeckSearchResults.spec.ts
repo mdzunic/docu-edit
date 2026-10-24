@@ -21,6 +21,8 @@ function controller(overrides: Record<string, unknown> = {}) {
       { slideIndex: 0, slideNumber: 1, hits: [{ index: 0, before: "", match: "Open", after: " with the Q3 highlight", frameName: "Speaker notes", scopeTag: "Notes" }] },
       { slideIndex: 1, slideNumber: 2, hits: [{ index: 1, before: "Hire, ", match: "Open", after: " Berlin office", frameName: "Placeholder", scopeTag: "" }] },
     ]),
+    bar: ref({ visible: true, query: "Open", matchCount: 2, currentIndex: 1, scopeLabel: "Slides, shapes, tables and notes", scopeTitle: "Search covers …" }),
+    barEvents: {},
     goToHit: vi.fn(),
     closeFind: vi.fn(),
     ...overrides,
@@ -29,8 +31,8 @@ function controller(overrides: Record<string, unknown> = {}) {
 
 describe("DeckSearchResults", () => {
   it("groups hits by slide with a numbered chip and an emphasised snippet", () => {
-    const wrapper = mount(DeckSearchResults, { props: { controller: controller() }, slots: { default: "<div data-testid='find-bar'/>" } });
-    expect(wrapper.find('[data-testid="find-bar"]').exists()).toBe(true);
+    const wrapper = mount(DeckSearchResults, { props: { controller: controller() } });
+    expect(wrapper.get('[data-testid="find-bar"]').get('[data-testid="find-scope"]').text()).toBe("Slides, shapes, tables and notes");
     const groups = wrapper.findAll('[data-testid="deck-search-group"]');
     expect(groups.map((group) => group.get('[data-testid="deck-search-slide-chip"]').text())).toEqual(["1", "2"]);
     const hits = wrapper.findAll('[data-testid="deck-search-hit"]');

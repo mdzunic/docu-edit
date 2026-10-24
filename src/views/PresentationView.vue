@@ -19,7 +19,6 @@ import PresentationDialogs from "../components/presentation/PresentationDialogs.
 import RecoveryBar from "../components/RecoveryBar.vue";
 import ThemesPanel from "../components/presentation/ThemesPanel.vue";
 import TextPanel from "../components/presentation/TextPanel.vue";
-import FindBar from "../components/FindBar.vue";
 import DeckSearchResults from "../components/presentation/DeckSearchResults.vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
@@ -118,6 +117,7 @@ const { layouts, deckSetup, headerFooter, deckExport, redesign } = useDeckDialog
 // --- find & replace and spell check on slides (SPEC-098) -------------------
 const search = useDeckSearch({ ...deck, ...stageSearchHooks(stageEdit, notes, presentation) });
 const spell = useSlideSpellCheck({ ...deck, ...stageEdit, notesText: notes.notesText });
+const proofing = { search, spell }; // the stage's highlight + squiggle layer (one stable prop)
 
 // --- the menu bar (SPEC-049's model, for slides): routes to every composable above, so it is built last
 const menu = usePresentationMenu({
@@ -184,12 +184,7 @@ useWindowKeys([search.onGlobalKeydown, sorter.onGlobalKeydown, stageEdit.onGloba
         @keep="saving.keepRecovered()"
         @discard="saving.discardRecovered()"
       />
-      <DeckSearchResults :controller="search">
-        <FindBar
-          v-bind="search.bar.value"
-          v-on="search.barEvents"
-        />
-      </DeckSearchResults>
+      <DeckSearchResults :controller="search" />
       <DeckBody
         v-if="!sorter.open.value"
         :slides="presentation.slides"
@@ -210,7 +205,7 @@ useWindowKeys([search.onGlobalKeydown, sorter.onGlobalKeydown, stageEdit.onGloba
         :theme="themePanel.displayTheme.value"
         :selection="sorter.selection"
         :history="saving.history"
-        :proofing="{ search, spell }"
+        :proofing="proofing"
         @select="selectSlide"
         @add="addSlideAction"
         @command="onFilmstripCommand"
