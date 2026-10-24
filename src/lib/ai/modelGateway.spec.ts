@@ -793,3 +793,25 @@ describe("Test connection", () => {
     await expect(gateway.testConnection()).rejects.toBeInstanceOf(ModelUnreachableError);
   });
 });
+
+describe("a request in flight across an origin change", () => {
+  it("never deletes the key entered for the new origin, and never sends either key to the wrong host", async () => {
+    configure({ mode: "cloud", baseUrl: "https://a.example.test/v1" });
+    gateway.setApiKey("sk-for-a");
+    let answer: (choice: ConsentChoice) => void = () => {};
+    prompt.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    const pending = gateway.complete(request).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(prompt).toHaveBeenCalled());
+
+    // While the dialog is open the user moves to B and enters B's key.
+    gateway.updateProviderConfig({ baseUrl: "https://b.example.test/v1" });
+    gateway.setApiKey("sk-for-b");
+    answer("once");
+    await pending;
+
+    expect(calls).toHaveLength(1);
+    expect(new URL(calls[0].url).origin).toBe("https://a.example.test");
+    expect(headersOf(calls[0]).Authorization).toBeUndefined();
+    expect(gateway.getApiKey()).toBe("sk-for-b");
+  });
+});

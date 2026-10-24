@@ -188,9 +188,11 @@ export function setApiKey(key: string): void {
 }
 
 /** The key held for the configured origin, for the masked field — "" when
- * there is none (a key held for any other origin is discarded). */
+ * there is none. A key held for any other origin is discarded here. */
 export function getApiKey(): string {
-  return loadApiKey(originOf(getProviderConfig().baseUrl)) ?? "";
+  const origin = originOf(getProviderConfig().baseUrl);
+  discardApiKeyUnlessFor(origin);
+  return loadApiKey(origin) ?? "";
 }
 
 // --- the activity log ---------------------------------------------------------

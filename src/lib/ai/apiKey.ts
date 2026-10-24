@@ -2,11 +2,12 @@
 // localStorage key — never inside the preferences object, so nothing that
 // reads, copies or resets preferences ever sees it, and never in a document.
 //
-// The key is stored bound to the origin it was entered for. Reading it for
-// any other origin discards it on the spot, so a key can never follow a URL
-// edit to a new host — whichever path changed the URL (the Labs form, a
-// preferences reset, another tab). Nothing here logs, and nothing here puts
-// the key into an error message.
+// The key is stored bound to the origin it was entered for and is only ever
+// returned for that origin, so a key can never follow a URL edit to a new
+// host. Whenever the configured origin moves — whichever path moved it (the
+// Labs form, a preferences reset, another tab) — discardApiKeyUnlessFor
+// deletes it outright. Nothing here logs, and nothing here puts the key into
+// an error message.
 //
 // Read only by the gateway (which sends it) and the provider guard (which
 // discards it) — lib/ai/boundary.spec.ts holds that.
@@ -69,24 +70,13 @@ export function saveApiKey(origin: string, key: string): void {
   }
 }
 
-/** The key entered for `origin`, or null. A key stored for any other origin
- * (or for none) is discarded, not returned. */
+/** The key entered for `origin`, or null — never a key entered for any
+ * other origin. Read-only: a request still in flight for an old origin must
+ * not delete the key the user has since entered for the new one, so the
+ * discarding is discardApiKeyUnlessFor's, run against the configured origin. */
 export function loadApiKey(origin: string | null): string | null {
   const stored = readStored();
-  if (stored === null) {
-    return null;
-  }
-  if (origin === null || stored.origin !== origin) {
-    clearApiKey();
-    return null;
-  }
-  return stored.key;
-}
-
-/** Whether any key is held at all, for any origin — what the origin-change
- * rule checks before discarding, so the user can be told a key went. */
-export function hasStoredApiKey(): boolean {
-  return readStored() !== null;
+  return stored !== null && origin !== null && stored.origin === origin ? stored.key : null;
 }
 
 /** Discards the held key unless it was entered for `origin`. Returns whether
