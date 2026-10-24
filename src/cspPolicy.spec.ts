@@ -130,6 +130,6 @@ describe("Content-Security-Policy", () => {
     expect(connect).toEqual(expect.arrayContaining(["http://localhost:*", "http://127.0.0.1:*"]));
     expect(connect).not.toContain("http:");
     const plainHttp = connect.filter((source) => source.startsWith("http://"));
-    expect(plainHttp.sort()).toEqual(["http://127.0.0.1:*", "http://localhost:*"]);
+    expect(plainHttp.toSorted()).toEqual(["http://127.0.0.1:*", "http://localhost:*"]);
   });
 });

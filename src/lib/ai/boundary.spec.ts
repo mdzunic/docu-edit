@@ -93,7 +93,7 @@ function namesIn(file: ts.SourceFile, names: Set<string>): string[] {
     ts.forEachChild(node, visit);
   };
   visit(file);
-  return [...found].sort();
+  return [...found].toSorted();
 }
 
 function referencedNames(path: string, names: Set<string>): string[] {
@@ -217,7 +217,7 @@ describe("who may reach the gateway and the key (SPEC-113)", () => {
     const keyReaders = modules.filter((path) =>
       importSpecifiers(path).some((spec) => /(^|\/)apiKey$/.test(spec) || spec === "./apiKey"),
     );
-    expect(keyReaders.sort()).toEqual(["lib/ai/modelGateway.ts", "lib/ai/providerGuard.ts"]);
+    expect(keyReaders.toSorted()).toEqual(["lib/ai/modelGateway.ts", "lib/ai/providerGuard.ts"]);
   });
 
   it("no document reader or writer, and no store, touches lib/ai", () => {

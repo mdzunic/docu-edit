@@ -97,3 +97,22 @@ describe("PreferencesDialog spreadsheet locale", () => {
     expect(loadPreferences().spreadsheetLocale).toBe("de-DE");
   });
 });
+
+// SPEC-113: a "Labs" section (prefs-labs) joins the dialog just before
+// Advanced — so "Reset all preferences" still restores "every setting above"
+// — and every other section stays exactly where it was.
+describe("PreferencesDialog Labs section", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetPreferences();
+  });
+
+  it("sits between Drawing and Advanced, leaving the other sections in order", () => {
+    const wrapper = mount(PreferencesDialog);
+    const sections = wrapper.findAll("section").map((section) => section.get("h3").text());
+    expect(sections).toEqual(["Appearance", "Editing", "Spreadsheets", "New documents", "Saving", "Drawing", "Labs", "Advanced"]);
+    const labs = wrapper.get('[data-testid="prefs-labs"]');
+    expect(labs.find('[data-testid="experiment-library-search"]').exists()).toBe(true);
+    expect(labs.find('[data-testid="experiment-deck-designer"]').exists()).toBe(true);
+  });
+});
