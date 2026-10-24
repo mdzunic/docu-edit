@@ -105,6 +105,28 @@ function hang(call: FetchCall): Promise<Response> {
 
 const request = { purpose: "Plan a deck", system: "You plan decks.", user: "Ten slides on Rotterdam." };
 
+/** Everything a request could leave behind in storage. */
+function persistedState() {
+  return {
+    preferences: localStorage.getItem(PREFERENCES_STORAGE_KEY),
+    key: localStorage.getItem(API_KEY_STORAGE_KEY),
+    grants: consentGrants(),
+  };
+}
+
+/** A body that delivers `first`, then fails the way a dropped connection
+ * does. */
+function failingBody(first: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(first));
+    },
+    pull(controller) {
+      controller.error(new TypeError("network error"));
+    },
+  });
+}
+
 function bodyOf(call: FetchCall): Record<string, unknown> {
   return JSON.parse(String(call.init.body)) as Record<string, unknown>;
 }
@@ -514,6 +536,29 @@ describe("every error type", () => {
     expect(http.message).toContain("Check the base URL");
   });
 
+  it("ModelHttpError redacts a key that straddles the 500-character cut", async () => {
+    configure({ mode: "cloud", baseUrl: "https://models.example.test/v1" });
+    gateway.setApiKey("sk-ABCDEFGHIJKLMNOP");
+    // The key starts at character 497 and the first chunk ends inside it.
+    const body = `${"x".repeat(488)}bad key: sk-ABCDEFGHIJKLMNOP and more`;
+    const cut = body.indexOf("DEFG");
+    respond = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(body.slice(0, cut)));
+            controller.enqueue(new TextEncoder().encode(body.slice(cut)));
+            controller.close();
+          },
+        }),
+        { status: 401 },
+      );
+    const error = (await gateway.complete(request).catch((e: unknown) => e)) as ModelHttpError;
+    expect(error.body).toHaveLength(500);
+    expect(error.body.endsWith("bad key: [re")).toBe(true);
+    expect(error.message).not.toContain("sk-");
+  });
+
   it("ModelHttpError never repeats the API key a server echoed back", async () => {
     configure({ mode: "cloud", baseUrl: "https://models.example.test/v1" });
     gateway.setApiKey("sk-secret-123");
@@ -549,14 +594,51 @@ describe("every error type", () => {
     expect(new ModelHttpError(500, "boom").name).toBe("ModelHttpError");
   });
 
-  it("no failure leaves partial state: no consent granted by a refused request, no key, no preference", async () => {
-    configure();
-    prompt.mockResolvedValue("once");
-    const before = localStorage.getItem(PREFERENCES_STORAGE_KEY);
-    respond = () => new Response("nope", { status: 500 });
+  it("no failure leaves partial state: preferences, key and every grant are as the user left them", async () => {
+    configure({ mode: "cloud", baseUrl: "https://models.example.test/v1" });
+    gateway.setApiKey("sk-kept");
+    prompt.mockResolvedValue("always");
+    await gateway.complete({ ...request, purpose: "Earlier feature" });
+    const before = persistedState();
+    const after = persistedState;
+
+    // Declined, unreachable, an HTTP error, an unreadable answer.
+    prompt.mockResolvedValue("cancel");
     await gateway.complete(request).catch(() => {});
-    expect(localStorage.getItem(PREFERENCES_STORAGE_KEY)).toBe(before);
-    expect(consentGrants()).toEqual([]);
+    expect(after()).toEqual(before);
+    prompt.mockResolvedValue("once");
+    for (const failing of [
+      () => Promise.reject(new TypeError("Failed to fetch")),
+      () => new Response("nope", { status: 500 }),
+      () => new Response("<html>", { status: 200 }),
+    ]) {
+      respond = failing;
+      await gateway.complete(request).catch(() => {});
+      expect(after()).toEqual(before);
+    }
+    expect(gateway.activityLog().map((entry) => entry.outcome)).toEqual(["ok", "unreachable", "http-error", "output-error"]);
+  });
+
+  it("a connection that drops mid-answer is a ModelUnreachableError, not an untyped failure", async () => {
+    configure();
+    respond = () => new Response(failingBody('{"choices": ['), { status: 200 });
+    const error = await gateway.complete(request).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ModelUnreachableError);
+    expect((error as ModelUnreachableError).reason).toBe("dropped");
+    expect((error as Error).message).toContain("dropped before the answer was complete");
+
+    respond = () =>
+      new Response(failingBody(deltaEvent("half")), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    const streamed = await gateway.stream(request, () => {}).catch((e: unknown) => e);
+    expect(streamed).toBeInstanceOf(ModelUnreachableError);
+    expect(gateway.activityLog().at(-1)?.outcome).toBe("unreachable");
+  });
+
+  it("http://[::1], which the page's security policy cannot address, says to use localhost", async () => {
+    configure({ baseUrl: "http://[::1]:11434/v1" });
+    respond = () => Promise.reject(new TypeError("Failed to fetch"));
+    const error = await gateway.complete(request).catch((e: unknown) => e);
+    expect((error as Error).message).toContain("use http://localhost with the same port");
   });
 });
 
@@ -675,7 +757,7 @@ describe("consent", () => {
     expect(consentGrants()).toMatchObject([{ origin: "http://localhost:11434", model: "test-model", feature: "Plan a deck" }]);
   });
 
-  it("is cleared when the origin, the model or the feature changes", async () => {
+  it("is cleared when the origin or the model changes", async () => {
     configure();
     prompt.mockResolvedValue("always");
     await gateway.complete(request);
@@ -686,11 +768,22 @@ describe("consent", () => {
     expect(consentGrants()).toEqual([]);
     await gateway.complete(request);
     expect(prompt).toHaveBeenCalledTimes(3);
-    // A different feature: asks, and the old feature's grant is gone.
-    prompt.mockResolvedValue("once");
-    await gateway.complete({ ...request, purpose: "Repair a plan" });
-    expect(prompt).toHaveBeenCalledTimes(4);
-    expect(consentGrants()).toEqual([]);
+  });
+
+  it("does not carry over to another feature, which asks for its own — and declining it leaves the first", async () => {
+    configure();
+    prompt.mockResolvedValue("always");
+    await gateway.complete(request);
+    prompt.mockResolvedValue("cancel");
+    await expect(gateway.complete({ ...request, purpose: "Repair a plan" })).rejects.toBeInstanceOf(
+      ModelConsentDeniedError,
+    );
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(prompt.mock.calls[1][0].purpose).toBe("Repair a plan");
+    // The first feature's standing consent is untouched by the refusal.
+    await gateway.complete(request);
+    expect(prompt).toHaveBeenCalledTimes(2);
+    expect(consentGrants().map((grant) => grant.feature)).toEqual(["Plan a deck"]);
   });
 });
 

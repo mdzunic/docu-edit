@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, useTemplateRef, watch } from "vue";
 import AppIcon from "../../components/AppIcon.vue";
 import ExperimentGate from "../../components/ExperimentGate.vue";
+import ModelConsentList from "./ModelConsentList.vue";
 import { useExperiments } from "../../composables/useExperiments";
 import { usePreferencesDialog } from "../../composables/usePreferencesDialog";
 import { EXPERIMENTS, MODEL_EXPERIMENTS } from "../../lib/experiments";
@@ -12,7 +13,9 @@ import { EXPERIMENTS, MODEL_EXPERIMENTS } from "../../lib/experiments";
 // every other preference. While an experiment that uses a model is on, the
 // model provider settings appear below the list; they are that experiment's
 // surface, gated and lazily loaded like any other, so with every model
-// experiment off the gateway's code is never fetched.
+// experiment off the gateway's code is never fetched. The standing model
+// consents stay listed — and revocable — for as long as any is stored, even
+// once their experiment is off.
 const { flags, isEnabled, setEnabled } = useExperiments();
 const preferencesDialog = usePreferencesDialog();
 const experiments = EXPERIMENTS;
@@ -105,6 +108,7 @@ watch(preferencesDialog.labsRequested, revealIfRequested);
       :experiment="modelExperiment"
       :load="loadProviderPanel"
     />
+    <ModelConsentList :always="modelExperiment !== ''" />
   </section>
 </template>
 

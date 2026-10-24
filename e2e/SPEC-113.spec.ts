@@ -104,7 +104,10 @@ async function configureLocalEndpoint(page: Page): Promise<void> {
 
 const posts = (sent: SentRequest[]) => sent.filter((request) => request.method === "POST");
 
-test("with Labs off, the app and its library send nothing to any other origin (AC-57)", async ({ page, baseURL }) => {
+test("with Labs off, the app and its library reach no origin but the app's own and its shell's web fonts (AC-57)", async ({
+  page,
+  baseURL,
+}) => {
   const appOrigin = new URL(baseURL ?? "http://localhost:5173").origin;
   const allowed = new Set([appOrigin, ...shellFontOrigins()]);
   const foreign: string[] = [];

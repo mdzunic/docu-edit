@@ -25,26 +25,46 @@ export class ModelConsentDeniedError extends ModelGatewayError {
   }
 }
 
-/** No HTTP answer: nothing listening, DNS, CORS, a dropped connection — or a
- * redirect, which the gateway refuses. */
+/** Why a ModelUnreachableError got no (complete) answer. */
+export type UnreachableReason = "network" | "redirect" | "dropped";
+
+function unreachableMessage(origin: string, loopback: boolean, reason: UnreachableReason): string {
+  if (reason === "redirect") {
+    return (
+      `${origin} answered with a redirect to another address. Redirects are refused so a request — or a key — ` +
+      "can never be moved to another host. Set the base URL to the address the endpoint really serves from."
+    );
+  }
+  if (reason === "dropped") {
+    return `The connection to ${origin} dropped before the answer was complete. Nothing from it was kept; try again.`;
+  }
+  if (!loopback) {
+    return (
+      `Could not reach ${origin}. Check the base URL and your connection; the server may also be refusing ` +
+      "requests from this page (CORS)."
+    );
+  }
+  const message =
+    `Nothing is listening on ${origin}; is your local model running? If it is, check the port, and that ` +
+    "the server accepts requests from this page (its CORS / allowed-origins setting).";
+  // The page's Content-Security-Policy can name localhost and 127.0.0.1 but
+  // cannot spell an IPv6 literal, so the browser refuses http://[::1] itself.
+  return origin.startsWith("http://[::1]")
+    ? `${message} This page cannot reach http://[::1] directly: use http://localhost with the same port.`
+    : message;
+}
+
+/** No (complete) HTTP answer: nothing listening, DNS, CORS, a connection
+ * that dropped mid-answer — or a redirect, which the gateway refuses. */
 export class ModelUnreachableError extends ModelGatewayError {
   override name = "ModelUnreachableError";
 
   constructor(
     readonly origin: string,
     readonly loopback: boolean,
-    readonly reason: "network" | "redirect" = "network",
+    readonly reason: UnreachableReason = "network",
   ) {
-    super(
-      reason === "redirect"
-        ? `${origin} answered with a redirect to another address. Redirects are refused so a request — or a key — ` +
-            "can never be moved to another host. Set the base URL to the address the endpoint really serves from."
-        : loopback
-          ? `Nothing is listening on ${origin}; is your local model running? If it is, check the port, and that ` +
-            "the server accepts requests from this page (its CORS / allowed-origins setting)."
-          : `Could not reach ${origin}. Check the base URL and your connection; the server may also be refusing ` +
-            "requests from this page (CORS).",
-    );
+    super(unreachableMessage(origin, loopback, reason));
   }
 }
 

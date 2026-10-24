@@ -362,6 +362,22 @@ interface ByteCounter {
   bytes: number;
 }
 
+/** A body read that failed for any reason but a cancellation: the
+ * connection went mid-answer. exchange() reports it as unreachable. */
+class ConnectionDropped extends Error {}
+
+/** The next chunk of a body. A cancellation (the caller's abort, the timer)
+ * passes through as itself; any other failure is a dropped connection. */
+async function readChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  try {
+    return await reader.read();
+  } catch (error) {
+    throw isAbortError(error) ? error : new ConnectionDropped();
+  }
+}
+
 /** Reads a body as text, counting its bytes; stops after `limit` characters
  * when given (an error body is only ever quoted, so the rest is not read). */
 async function readText(response: Response, counter: ByteCounter, limit = Infinity): Promise<string> {
@@ -372,7 +388,7 @@ async function readText(response: Response, counter: ByteCounter, limit = Infini
   const decoder = new TextDecoder();
   let text = "";
   for (;;) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readChunk(reader);
     if (done) {
       break;
     }
@@ -455,12 +471,20 @@ async function exchange<T>(
       throw new ModelUnreachableError(endpoint.origin, endpoint.loopback, "redirect");
     }
     if (!response.ok) {
-      const body = await readText(response, counter, ModelHttpError.BODY_EXCERPT_LENGTH);
+      // Read a key's length past the excerpt, so a key straddling the cut is
+      // whole when it is redacted — then ModelHttpError cuts to 500.
+      const body = await readText(response, counter, ModelHttpError.BODY_EXCERPT_LENGTH + (key?.length ?? 0));
       throw new ModelHttpError(response.status, redact(body, key));
     }
     return await read(response, counter, key);
   } catch (error) {
-    const failure = timedOut ? new ModelTimeoutError(config.timeoutMs) : signal?.aborted ? abortError() : error;
+    const failure = timedOut
+      ? new ModelTimeoutError(config.timeoutMs)
+      : signal?.aborted
+        ? abortError()
+        : error instanceof ConnectionDropped
+          ? new ModelUnreachableError(endpoint.origin, endpoint.loopback, "dropped")
+          : error;
     outcome = outcomeOf(failure);
     throw failure;
   } finally {
@@ -569,7 +593,7 @@ async function readEventStream(
     }
   });
   while (!state.finished && state.failure === null) {
-    const { done, value } = await reader.read();
+    const { done, value } = await readChunk(reader);
     if (done) {
       break;
     }

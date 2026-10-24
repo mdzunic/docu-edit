@@ -81,8 +81,8 @@ const sendsKey = computed(() => field("sendsKey") === true);
       aria-label="The exact request body"
     >{{ body === "" ? "(no request body)" : body }}</pre>
     <p class="always-note">
-      “Always allow” stops asking for {{ origin }}, this model and this feature until you revoke it in
-      Preferences › Labs, or change any of them.
+      “Always allow” stops asking for this feature at {{ origin }} with this model, until you revoke it in
+      Preferences › Labs or change the endpoint or the model.
     </p>
 
     <template #actions>

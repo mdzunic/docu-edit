@@ -183,6 +183,39 @@ describe("the provider form", () => {
   });
 });
 
+describe("standing consent and external changes", () => {
+  it("stays listed and revocable after its experiment is switched off", async () => {
+    const { grantConsent, consentGrants } = await import("../../lib/ai/consent");
+    grantConsent("http://localhost:11434", "m", "Test connection");
+    const wrapper = mount(LabsSection);
+    expect(find(wrapper, "ai-provider").exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="ai-consent-grant"]')).toHaveLength(1);
+    await find(wrapper, "ai-consent-revoke").trigger("click");
+    await flushPromises();
+    expect(consentGrants()).toEqual([]);
+    expect(find(wrapper, "ai-consents").exists()).toBe(false);
+  });
+
+  it("says why the key went when another tab moved the endpoint's origin", async () => {
+    const wrapper = await mountWithPanel();
+    await find(wrapper, "ai-mode").setValue("cloud");
+    await flushPromises();
+    await change(wrapper, "ai-base-url", "https://a.example.test/v1");
+    await change(wrapper, "ai-api-key", "sk-test-key");
+    // Another tab's edit, then the guard main.ts installs discarding the key.
+    const { installProviderGuard } = await import("../../lib/ai/providerGuard");
+    const stop = installProviderGuard();
+    savePreference("modelProvider", { ...loadPreferences().modelProvider, baseUrl: "https://c.example.test/v1" });
+    await flushPromises();
+    stop();
+    expect((find(wrapper, "ai-api-key").element as HTMLInputElement).value).toBe("");
+    expect(find(wrapper, "ai-api-key-cleared").text()).toContain(
+      "moved from https://a.example.test to https://c.example.test",
+    );
+    wrapper.unmount();
+  });
+});
+
 describe("Test connection", () => {
   async function configured(): Promise<VueWrapper> {
     const wrapper = await mountWithPanel();

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import ExperimentBadge from "../../components/ExperimentBadge.vue";
 import UiButton from "../../components/ui/UiButton.vue";
 import UiField from "../../components/ui/UiField.vue";
@@ -9,8 +9,7 @@ import { useExperiments } from "../../composables/useExperiments";
 import { useModelGateway } from "../../composables/useModelGateway";
 import { usePreferences } from "../../composables/usePreferences";
 import { EXPERIMENTS, MODEL_EXPERIMENTS } from "../../lib/experiments";
-import { consentGrants, onConsentChange, revokeConsent } from "../../lib/ai/consent";
-import { resolveEndpoint } from "../../lib/ai/origin";
+import { originOf, resolveEndpoint } from "../../lib/ai/origin";
 import {
   MAX_OUTPUT_TOKENS_LIMIT,
   MAX_TEMPERATURE,
@@ -22,9 +21,10 @@ import {
 // use a model, shown in Labs only while one is on (LabsSection gates and
 // lazily loads this, and loading it is what loads the gateway). Where model
 // requests go and how they are bounded; the API key, masked, in cloud mode
-// only; "Test connection"; the standing consents, each revocable; and this
-// session's activity log. Every edit goes through the gateway, which owns the
-// rules — the key dies with the origin, consent with the origin or model.
+// only; "Test connection"; and this session's activity log (the standing
+// consents are LabsSection's, listed even while this panel is not). Every
+// edit goes through the gateway, which owns the rules — the key dies with
+// the origin, consent with the origin or model.
 //
 // The .vue script is parsed by espree: no TS-only syntax (see AppShell.vue).
 const gateway = useModelGateway();
@@ -64,21 +64,26 @@ const keyError = ref("");
 const testState = ref("");
 const testMessage = ref("");
 
-const grants = ref(consentGrants());
-let stopConsent = () => {};
-onMounted(() => {
-  stopConsent = onConsentChange(() => {
-    grants.value = consentGrants();
-  });
-});
-onUnmounted(() => stopConsent());
+/** The line explaining why a key went: it dies with its origin. */
+function keyRemovedNotice(from = "", to = "") {
+  return (
+    `The API key was removed because the endpoint moved from ${from || "no valid address"} ` +
+    `to ${to || "no valid address"}. A key is only ever sent to the origin it was entered for — ` +
+    "enter the key for the new endpoint if it needs one."
+  );
+}
 
 // A config change made elsewhere (another tab, a reset) may have discarded
-// the key; the field never shows a key the gateway would not send.
+// the key: the field never shows a key the gateway would not send, and says
+// why one went.
 watch(
-  () => config.value.baseUrl,
-  () => {
+  () => originOf(config.value.baseUrl),
+  (origin, previous) => {
+    const shown = apiKey.value;
     apiKey.value = gateway.getApiKey();
+    if (shown !== "" && apiKey.value === "" && origin !== previous) {
+      keyNotice.value = keyRemovedNotice(previous ?? "", origin ?? "");
+    }
   },
 );
 
@@ -103,10 +108,7 @@ function commitBaseUrl(event = new Event("change")) {
   const change = gateway.updateProviderConfig({ baseUrl: textValue(event).trim() });
   if (change.keyDiscarded) {
     apiKey.value = "";
-    keyNotice.value =
-      `The API key was removed because the endpoint moved from ${change.previousOrigin ?? "no valid address"} ` +
-      `to ${change.origin ?? "no valid address"}. A key is only ever sent to the origin it was entered for — ` +
-      "enter the key for the new endpoint if it needs one.";
+    keyNotice.value = keyRemovedNotice(change.previousOrigin ?? "", change.origin ?? "");
   }
 }
 
@@ -346,41 +348,6 @@ async function runTest() {
       </div>
     </template>
 
-    <div
-      class="consents"
-      data-testid="ai-consents"
-    >
-      <h5 class="subheading">
-        Standing consent
-      </h5>
-      <p
-        v-if="grants.length === 0"
-        class="muted"
-      >
-        None — every request asks first.
-      </p>
-      <ul
-        v-else
-        class="consent-list"
-      >
-        <li
-          v-for="grant in grants"
-          :key="grant.origin"
-          class="consent-item"
-          data-testid="ai-consent-grant"
-        >
-          <span>{{ grant.origin }} — always allowed for “{{ grant.feature }}” with {{ grant.model || "any model" }}</span>
-          <UiButton
-            size="sm"
-            data-testid="ai-consent-revoke"
-            @click="revokeConsent(grant.origin)"
-          >
-            Revoke
-          </UiButton>
-        </li>
-      </ul>
-    </div>
-
     <ModelActivityLog />
   </div>
 </template>
@@ -407,7 +374,6 @@ async function runTest() {
 
 .provider-note,
 .destination,
-.muted,
 .test-result {
   margin: 0;
   color: var(--text-secondary);
@@ -456,30 +422,5 @@ async function runTest() {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-}
-
-.subheading {
-  margin: 0 0 var(--space-2);
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
-}
-
-.consent-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.consent-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
 }
 </style>

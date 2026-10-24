@@ -24,24 +24,31 @@ interface StoredKey {
 let sessionKey: StoredKey | null = null;
 
 function readStored(): StoredKey | null {
+  let raw: string | null;
   try {
-    const raw = localStorage.getItem(API_KEY_STORAGE_KEY);
-    if (raw === null) {
-      return null;
-    }
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed !== null && typeof parsed === "object") {
-      const { origin, key } = parsed as Record<string, unknown>;
-      if (typeof origin === "string" && typeof key === "string" && key !== "") {
-        return { origin, key };
-      }
-    }
-    // Corrupt: nothing usable, so nothing kept.
-    localStorage.removeItem(API_KEY_STORAGE_KEY);
-    return null;
+    raw = localStorage.getItem(API_KEY_STORAGE_KEY);
   } catch {
+    // Blocked storage: the key entered this session still applies.
     return sessionKey;
   }
+  if (raw === null) {
+    return null;
+  }
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Corrupt: handled below as unusable.
+  }
+  if (parsed !== null && typeof parsed === "object") {
+    const { origin, key } = parsed as Record<string, unknown>;
+    if (typeof origin === "string" && typeof key === "string" && key !== "") {
+      return { origin, key };
+    }
+  }
+  // Nothing usable, so nothing kept.
+  clearApiKey();
+  return null;
 }
 
 /** Forgets the key everywhere it is held. */
