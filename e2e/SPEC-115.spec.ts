@@ -164,7 +164,7 @@ test("a brief becomes a reviewed, edited plan and then a new deck; the source is
   // /slides/:id opens with 4 slides, the first selected, slide 3 edited.
   await expect(page).toHaveURL(/\/slides\/.+/);
   await expect(page.getByTestId("filmstrip-slide")).toHaveCount(4);
-  expect(await filmstripTitles(page)).toEqual(["Rotterdam migration", "Where we are", "Risks we accept", "Questions?"]);
+  await expect.poll(() => filmstripTitles(page)).toEqual(["Rotterdam migration", "Where we are", "Risks we accept", "Questions?"]);
   await expect(page.getByTestId("filmstrip-slide").first()).toHaveAttribute("aria-selected", "true");
   expect(posts).toHaveLength(1);
 
@@ -250,7 +250,7 @@ test("with the provider off, Outline this document builds a deck from a .docx wi
   await page.getByTestId("designer-build").click();
 
   await expect(page).toHaveURL(/\/slides\/.+/);
-  expect(await filmstripTitles(page)).toEqual(["word-toc", "Introduction", "Background"]);
+  await expect.poll(() => filmstripTitles(page)).toEqual(["word-toc", "Introduction", "Background"]);
   expect(scripted).toEqual([]);
   // And the gateway itself was never asked: its session log is empty.
   await page.getByRole("menubar", { name: "Presentation menu" }).getByRole("menuitem", { name: "File", exact: true }).click();
@@ -301,7 +301,7 @@ test("Redesign… reorders a 3-slide deck as one undoable step and never touches
   expect(posts).toHaveLength(1);
 
   await expect(page.getByTestId("filmstrip-slide")).toHaveCount(3);
-  expect(await filmstripTitles(page)).toEqual([before[2], before[0], before[1]]);
+  await expect.poll(() => filmstripTitles(page)).toEqual([before[2], before[0], before[1]]);
 
   await menu.getByRole("menuitem", { name: "Edit", exact: true }).click();
   await page.getByTestId("slides-menu-undo").click();
