@@ -1,6 +1,6 @@
 ---
 id: SPEC-000
-title: Product roadmap — word processor, presentations, media and spreadsheets
+title: Product roadmap — word processor, presentations, media, spreadsheets and the command line
 status: draft
 area: product
 ---
@@ -42,6 +42,11 @@ three only in the app layer. Everything a spreadsheet needs that a word
 processor would not — the formula language, the calculation engine, the
 number-format engine, a forward-only XML scanner for million-cell parts — is
 written here; `package.json` gains nothing.
+
+Phase 19 is not a product but a second front door to all four: the
+`docu-edit` command, which creates and converts files headlessly — in Node
+where the readers and writers already run, and through the app itself in
+headless Chromium where only a browser can lay pages out (PDF, images).
 
 Specs are ordered so each one is shippable on its own and builds on the ones
 before it. Later specs assume earlier ones are merged (`depends_on` in each
@@ -128,7 +133,17 @@ rejecting SPEC-007 as ambiguous:
    table style renders in `specs/133-named-ranges-and-tables.md`. Two
    shared helpers are owned by the first spec that needed them: ODS range
    addresses (`spreadsheet/ods/rangeAddress.ts`) by SPEC-121, row and column
-   autofit (`spreadsheet/autofit.ts`) by SPEC-122. Nothing redefines these.
+   autofit (`spreadsheet/autofit.ts`) by SPEC-122. And on the command
+   line: the command grammar, exit codes, the format registry, `writeAs` and
+   the conversion report are defined in
+   `specs/141-the-command-line-and-creating-files.md`; the headless open
+   path (`openBytes`) and input/output naming for `convert` in
+   `specs/142-convert-files-headlessly.md`; the render host, the automation
+   bridge and the page-producer registry in
+   `specs/143-headless-render-host-and-pdf.md`; image naming and pixel-size
+   rules in `specs/144-images-from-the-command-line.md`; the cross-product
+   mappings in `specs/145-convert-between-products.md`. Nothing redefines
+   these.
 
 2. **Every dependent spec ends with a `## Reference` section** that names the
    dependency spec files by path, restates the contract it relies on inline
@@ -482,6 +497,43 @@ budgets before its perf gate is enforced.
 | SPEC-139 | Pivot tables |
 | SPEC-140 | Workbook generation API |
 
+### Phase 19 — The command line: create and convert headlessly
+`docu-edit create report.docx`, `docu-edit convert example.docx --to md`,
+`docu-edit convert deck.pptx --to pdf` — every format the four products
+handle, from a shell, with no window. Written 2026-10-26.
+
+The command adds no format code: it is a thin shell over the writers, the
+generation API and the export pipelines the app already uses, so a file it
+writes is the file the app would have downloaded. Two tiers, decided per
+conversion by the registry SPEC-141 creates: **Node** (SPEC-141/142/145 —
+readers and writers run under plain Node behind `ensureNodeXmlGlobals()`;
+a measured cold start converting six fixtures took 1.5 s) and **browser**
+(SPEC-143/144 — layout and rasterisation exist only in a browser, so the
+command starts the app itself in Playwright's headless Chromium on a private
+port and asks it for the pages through the same code path the File menu
+uses).
+
+Order is load-bearing: SPEC-141 is the grammar, exit codes, report and
+registry every later spec registers into; SPEC-142 is the Node open path
+SPEC-145 builds on; SPEC-143 is the render host SPEC-144 paints with.
+SPEC-145 needs only SPEC-142 and can run beside SPEC-143/144.
+
+One human touch and one standing constraint. SPEC-141 adds a `bin` field to
+`package.json` — a protected path, so its pull request stops for a human
+merge by design (no dependency is added anywhere in the phase). The browser tier runs on the
+Playwright **dev** dependency and the Node readers on the `jsdom` dev
+dependency, so the command runs from a checkout after `npm install`;
+publishing it as a standalone package would move both into `dependencies`,
+which is a separate approval (see the backlog).
+
+| Spec | Title |
+| --- | --- |
+| SPEC-141 | The docu-edit command, and creating files from the command line |
+| SPEC-142 | Convert files headlessly — within each product, in Node |
+| SPEC-143 | The headless render host, and PDF from documents, decks and workbooks |
+| SPEC-144 | Images from the command line — pages, slides and pictures to PNG, JPEG and WebP, and pictures to PDF |
+| SPEC-145 | Convert between products — documents, decks and workbooks |
+
 ---
 
 ## Backlog — identified, not yet specced
@@ -556,3 +608,18 @@ itself; none is a work order.
 | Small-screen and touch layout for the grid; right-to-left sheets | SPEC-116/117 |
 | The command palette for the spreadsheet view | SPEC-062 is text-only |
 | Names, tables, charts, validation and conditional formatting in the generation API | SPEC-140 |
+
+**Command-line gaps (Phase 19).** Deferred by the command-line queue itself;
+none is a work order.
+
+| Gap | Deferred by |
+| --- | --- |
+| A standalone binary or published npm package (moves `jsdom` and Playwright into `dependencies` — needs approval) | SPEC-141 |
+| Combining several images into one image or one PDF, and merging/splitting PDFs, from the command line | SPEC-144 — after SPEC-110/111 |
+| Mail merge from the command line (template + CSV/JSON → one file per record) | SPEC-141 |
+| A long-running conversion server, watch mode, parallel conversion in one process | SPEC-142/143 |
+| Tables, charts, equations and shapes carried into a deck converted from a document | SPEC-145 |
+| Presentation ↔ workbook conversion directly | SPEC-145 |
+| HTML or plain text as a target for documents and workbooks | SPEC-142/145 |
+| Page counts for text documents in `docu-edit info` | SPEC-142/143 |
+| Windows as a supported host; shell completion | SPEC-141 |
