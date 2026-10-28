@@ -309,7 +309,10 @@ describe("the over-budget degrade (AC-46..AC-48)", () => {
     edit((m) => (m.title = "Edited"));
     saving.commitPoint();
     await settle(60);
-    expect(saving.history.pausedMessage.value).toBe(DECK_HISTORY_TOO_LARGE_MESSAGE);
+    // The refusal follows the package's digests, which crypto.subtle runs off
+    // the event loop: under the full suite's load they can outlast any fixed
+    // count of turns, so wait on the latch itself.
+    await vi.waitFor(() => expect(saving.history.pausedMessage.value).toBe(DECK_HISTORY_TOO_LARGE_MESSAGE));
     expect(saving.history.visibleVersions.value).toHaveLength(0);
     // Nothing but the index latch reached the versions store …
     expect([...idb.versions.keys()]).toEqual(["versions:deck-1"]);

@@ -30,6 +30,10 @@ beforeEach(() => {
 
 // Navigations fired and forgotten (exit/redirect) lazy-load other route
 // components; await them before teardown (see PresentationPlayView.spec.ts).
+// The redirect to /doc/:id lazy-loads the whole editor, whose first transform
+// on a cold worker under the full suite runs past Vitest's 10 s default hook
+// timeout — so the hook gets the room vite.config.ts gives every test (a
+// timeout is a hang detector, not a performance budget).
 const pendingNavigations: Promise<unknown>[] = [];
 const mounted: VueWrapper[] = [];
 
@@ -41,7 +45,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
-});
+}, 30_000);
 
 /** A stand-in for the audience window's WindowProxy. */
 function fakeWindow() {
