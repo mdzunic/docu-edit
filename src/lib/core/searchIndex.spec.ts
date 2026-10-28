@@ -323,8 +323,12 @@ describe("the index is plain JSON, merged and replaced per document", () => {
   });
 });
 
+/** n distinct filler words. */
+function filler(n: number): string {
+  return Array.from({ length: n }, (_, i) => `word${i}`).join(" ");
+}
+
 describe("snippet — windows around a match", () => {
-  const filler = (n: number): string => Array.from({ length: n }, (_, i) => `word${i}`).join(" ");
 
   it("at the start of a text: no leading ellipsis, the match marked", () => {
     const body = `Rotterdam figures ${filler(40)}`;

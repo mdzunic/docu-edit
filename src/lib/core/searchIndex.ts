@@ -322,9 +322,12 @@ export function indexDocument(doc: IndexedDoc): DocPostings {
   const bodyTokens = tokenise(doc.body);
   const bodyOrdinals = ordinalsOf(doc.body, bodyTokens);
   // Ordinal → offset; an ordinal a line break skipped holds -1.
-  const starts: number[] = new Array<number>(bodyOrdinals.length > 0 ? bodyOrdinals[bodyOrdinals.length - 1] + 1 : 0).fill(-1);
+  const starts: number[] = [];
   bodyTokens.forEach((token, i) => {
-    starts[bodyOrdinals[i]] = token.start;
+    while (starts.length < bodyOrdinals[i]) {
+      starts.push(-1);
+    }
+    starts.push(token.start);
   });
   return {
     id: doc.id,
@@ -608,9 +611,7 @@ function mergeSorted(lists: number[][]): number[] {
   if (lists.length === 1) {
     return lists[0];
   }
-  const all = Float64Array.from(lists.flat());
-  all.sort();
-  return Array.from(all);
+  return Array.from(Float64Array.from(lists.flat()).toSorted());
 }
 
 /** How many tokens a clause spans (a prefix word spans one). */
@@ -747,7 +748,7 @@ function bodyPositions(doc: DocPostings, positive: QueryTerm[], perClause: Claus
       }
     }
   });
-  return Array.from(Float64Array.from(offsets).sort());
+  return Array.from(Float64Array.from(offsets).toSorted());
 }
 
 // --- snippets ----------------------------------------------------------------------------
