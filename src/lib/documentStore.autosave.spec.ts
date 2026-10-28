@@ -55,6 +55,13 @@ async function flushSetupWrite(putRecord: {
   ).toBeGreaterThan(0);
 }
 
+/** `count` macrotask turns. */
+async function macrotasks(count: number): Promise<void> {
+  for (let tick = 0; tick < count; tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 beforeEach(() => {
   vi.resetModules();
 });
@@ -194,7 +201,7 @@ describe("commitDocument", () => {
     store.getOrCreateDocument("doc-7");
     await flushSetupWrite(putRecord);
     const order: string[] = [];
-    let land = (): void => {};
+    let land: (() => void) | null = null;
     putRecord.mockImplementation((record: { id: string }) =>
       record.id === "draft:doc-7"
         ? new Promise<void>((resolve) => {
@@ -209,19 +216,14 @@ describe("commitDocument", () => {
       order.push(`delete ${key}`);
       return Promise.resolve();
     });
-    const ticks = async (count: number) => {
-      for (let tick = 0; tick < count; tick += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-    };
     const draft = store.saveDraft("doc-7", { caret: null, scroll: 0 });
     for (let tick = 0; tick < 100 && !putRecord.mock.calls.some(([record]) => record.id === "draft:doc-7"); tick += 1) {
-      await ticks(1);
+      await macrotasks(1);
     }
     const commit = store.commitDocument("doc-7", { caret: null, scroll: 0 });
-    await ticks(20);
+    await macrotasks(20);
     expect(order).not.toContain("delete draft:doc-7");
-    land();
+    land?.();
     await Promise.all([draft, commit]);
     expect(order.indexOf("put draft:doc-7")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("put draft:doc-7")).toBeLessThan(order.indexOf("delete draft:doc-7"));
