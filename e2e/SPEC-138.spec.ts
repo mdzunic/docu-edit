@@ -280,8 +280,11 @@ test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews
   await expect(conflict).toHaveText("This workbook is open in another tab");
   await expect(second.getByTestId("spreadsheet-grid")).toHaveAttribute("aria-readonly", "true");
   await expect(second.getByTestId("save-state")).toHaveCount(0);
-  // Every edit command is disabled: the format strip, Add sheet, the menus.
+  // Every edit command is disabled: the format strip and its merge split
+  // button, Add sheet, the menus.
   await expect(second.getByTestId("sheet-bold")).toBeDisabled();
+  await expect(second.getByTestId("sheet-merge")).toBeDisabled();
+  await expect(second.getByTestId("sheet-merge-menu-button")).toBeDisabled();
   await expect(second.getByTestId("sheet-add")).toBeDisabled();
   await second.getByRole("menubar").getByText("Format", { exact: true }).click();
   await expect(second.getByTestId("sheet-menu-format-cells")).toBeDisabled();
@@ -298,6 +301,7 @@ test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews
   await expect(conflict).toBeHidden({ timeout: 15_000 });
   await expect(second.getByTestId("spreadsheet-grid")).not.toHaveAttribute("aria-readonly", "true");
   await expect(second.getByTestId("sheet-bold")).toBeEnabled();
+  await expect(second.getByTestId("sheet-merge")).toBeEnabled();
   await expect(cell(second, "B4")).toHaveText("888");
   await enterAt(second, "B5", "55");
   await waitForSaved(second);

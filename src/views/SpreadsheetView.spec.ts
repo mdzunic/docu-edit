@@ -1045,6 +1045,8 @@ describe("SpreadsheetView saving and history (SPEC-138)", () => {
       expect(wrapper.find('[data-testid="save-state"]').exists()).toBe(false);
       expect(wrapper.get('[data-testid="sheet-add"]').attributes("disabled")).toBeDefined();
       expect(wrapper.get('[data-testid="sheet-bold"]').attributes("disabled")).toBeDefined();
+      expect(wrapper.get('[data-testid="sheet-merge"]').attributes("disabled")).toBeDefined();
+      expect(wrapper.get('[data-testid="sheet-merge-menu-button"]').attributes("disabled")).toBeDefined();
       await wrapper.findAll('[data-testid="sheet-tab"]')[0]!.trigger("contextmenu", { clientX: 10, clientY: 10 });
       expect(wrapper.get('[data-testid="sheet-tab-menu-insert"]').attributes("disabled")).toBeDefined();
       expect(wrapper.get('[data-testid="sheet-tab-menu-rename"]').attributes("disabled")).toBeDefined();
@@ -1059,6 +1061,7 @@ describe("SpreadsheetView saving and history (SPEC-138)", () => {
       expect(wrapper.get('[data-testid="spreadsheet-grid"]').attributes("aria-readonly")).toBeUndefined();
       expect(wrapper.get('[data-testid="save-state"]').text()).toBe("All changes saved");
       expect(wrapper.get('[data-testid="sheet-bold"]').attributes("disabled")).toBeUndefined();
+      expect(wrapper.get('[data-testid="sheet-merge"]').attributes("disabled")).toBeUndefined();
       await wrapper.get('[data-testid="sheet-add"]').trigger("click");
       await flushPromises();
       expect(names(wrapper)).toEqual(["First", "Sheet1", "Second"]); // after the sheet on show, First

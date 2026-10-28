@@ -24,6 +24,7 @@ function harness(rows: Row[], range: GridRange, merges: GridRange[] = []) {
   const activeSheet = computed(() => workbook.value?.sheets[0] ?? null);
   const selection = ref<SheetSelection>({ active: { row: range.top, col: range.left }, ranges: [range], activeRangeIndex: 0 });
   const toasts: string[] = [];
+  const readOnly = ref(false);
   const scope = effectScope();
   scopes.push(scope);
   const { undo, merge } = scope.run(() => {
@@ -33,13 +34,13 @@ function harness(rows: Row[], range: GridRange, merges: GridRange[] = []) {
       viewState: { syncInto: vi.fn() },
       selection: { selection: computed(() => selection.value) },
       sheetMetrics: { merges: computed(() => buildMergeIndex(activeSheet.value?.merges ?? [])) },
-      editing: { undo: stack, cell: { editing: computed(() => false) } },
+      editing: { undo: stack, cell: { editing: computed(() => false) }, readOnly: computed(() => readOnly.value) },
       toast: (message) => toasts.push(message),
     });
     return { undo: stack, merge: merging };
   })!;
   const sheet = () => workbook.value!.sheets[0]!;
-  return { merge, undo, sheet, workbook, selection, toasts };
+  return { merge, undo, sheet, workbook, selection, toasts, readOnly };
 }
 
 const A1_C1: GridRange = { top: 0, left: 0, bottom: 0, right: 2 };
@@ -95,6 +96,29 @@ describe("SPEC-124 useMerges", () => {
     expect(proceed).toHaveBeenCalledTimes(1);
     h.merge.confirm();
     expect(proceed).toHaveBeenCalledTimes(2);
+  });
+
+  it("SPEC-138: disabled while the workbook is read-only — no merge, unmerge or pending warning applies", () => {
+    const h = harness([{ index: 0, cells: [{ col: 0, value: "Title" }, { col: 1, value: "Qty" }] }], A1_C1);
+    expect(h.merge.disabled.value).toBe(false);
+    h.merge.merge("centre");
+    expect(h.merge.warning.value).not.toBeNull();
+    h.readOnly.value = true;
+    expect(h.merge.disabled.value).toBe(true);
+    const sheet = h.sheet();
+    h.merge.confirm();
+    h.merge.merge("across");
+    h.merge.primary();
+    expect(h.merge.warning.value).toBeNull();
+    expect(h.sheet()).toBe(sheet);
+    expect(h.undo.canUndo.value).toBe(false);
+
+    const merged = harness([{ index: 0, cells: [{ col: 0, value: "Title" }] }], A1_C1, [A1_C1]);
+    merged.readOnly.value = true;
+    merged.merge.unmerge();
+    merged.merge.primary();
+    expect(merged.sheet().merges).toEqual([A1_C1]);
+    expect(merged.undo.canUndo.value).toBe(false);
   });
 
   it("toasts a refusal: a merge partly over an array", () => {
