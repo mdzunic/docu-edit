@@ -2147,11 +2147,13 @@ export function storeSpreadsheetViewState(model: SpreadsheetModel): Promise<void
   return persist(record);
 }
 
-/** Writes an edited workbook through (SPEC-121 "The edit pipeline"): the
- * live `model` becomes the record's model (a view-state write may have left
- * a copy there) and touchDocument bumps recency and persists the shell plus
- * exactly the rows records whose reference changed. A missing or
- * non-workbook id is a no-op. */
+/** Writes a re-read workbook through (SPEC-126's CSV "Apply", a re-import):
+ * the live `model` becomes the record's model (a view-state write may have
+ * left a copy there) and touchDocument bumps recency and persists the shell
+ * plus exactly the rows records whose reference changed. Since SPEC-138 the
+ * edit pipeline no longer writes through here: an edit hands the live model
+ * to replaceSpreadsheetModel and the draft cadence, and commits at SPEC-010's
+ * commit points. A missing or non-workbook id is a no-op. */
 export function storeSpreadsheetEdit(model: SpreadsheetModel): Promise<void> {
   const record = records.get(model.id);
   if (!record || !isSpreadsheetModel(record.model) || workbooks.get(model.id)?.incomplete) {
