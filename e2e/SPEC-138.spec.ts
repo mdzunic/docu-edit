@@ -1,6 +1,9 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Download, type Locator, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { equalBytes } from "../src/lib/core/equality";
+import { unzip } from "../src/lib/core/zip";
 
 // SPEC-138 — autosave, drafts and version history for workbooks, as one
 // session (AC-63): open mini-book.xlsx, type into B3 on "Data", reload — the
@@ -147,6 +150,7 @@ async function scrollGrid(page: Page, dx: number, dy: number): Promise<void> {
 }
 
 test("a reopened workbook scrolls back to its committed top-left row and column (AC-8)", async ({ page }) => {
+  test.setTimeout(120_000); // a long session; 35–45 s alone, more beside other files at four workers
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(FIXTURE);
   await expect(page).toHaveURL(/\/sheets\/.+/);
@@ -189,6 +193,7 @@ test("a reopened workbook scrolls back to its committed top-left row and column 
 });
 
 test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews and restores its versions, and locks a second tab", async ({ page }) => {
+  test.setTimeout(120_000); // a long session; 35–45 s alone, more beside other files at four workers
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(FIXTURE);
   await expect(page).toHaveURL(/\/sheets\/.+/);
@@ -305,4 +310,389 @@ test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews
   await expect(cell(second, "B4")).toHaveText("888");
   await enterAt(second, "B5", "55");
   await waitForSaved(second);
+});
+
+// --- QA (SPEC-138): the criteria the session above passes through quickly,
+// each asserted on its own workbook.
+
+/** Every key the documents store holds for a document (committed, draft,
+ * chunk and source records), with the id written as "<doc>". */
+async function documentKeys(page: Page, id: string): Promise<string[]> {
+  return page.evaluate(async (docId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("docu-edit");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+      const request = db.transaction("documents", "readonly").objectStore("documents").getAllKeys();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return keys.map(String).filter((key) => key.includes(docId)).map((key) => key.replace(docId, "<doc>"));
+  }, id);
+}
+
+/** One record of the app's IndexedDB store. */
+async function storedRecord(page: Page, store: string, key: string): Promise<unknown> {
+  return page.evaluate(
+    async ([storeName, recordKey]) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("docu-edit");
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise<unknown>((resolve, reject) => {
+        const request = db.transaction(storeName, "readonly").objectStore(storeName).get(recordKey);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      db.close();
+      return record;
+    },
+    [store, key] as const,
+  );
+}
+
+/** Every key of the versions store that belongs to a document. */
+async function versionKeys(page: Page, id: string): Promise<string[]> {
+  return page.evaluate(async (docId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("docu-edit");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+      const request = db.transaction("versions", "readonly").objectStore("versions").getAllKeys();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return keys.map(String).filter((key) => key.includes(docId));
+  }, id);
+}
+
+async function openFixture(page: Page, file: string): Promise<string> {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(join(dirname(FIXTURE), file));
+  await expect(page).toHaveURL(/\/sheets\/.+/);
+  await waitForSaved(page);
+  return page.url().match(/\/sheets\/([^/?#]+)/)?.[1] ?? "";
+}
+
+async function downloadVia(page: Page, trigger: Locator): Promise<Download> {
+  const download = page.waitForEvent("download");
+  await trigger.click();
+  return download;
+}
+
+/** Asserts two packages hold the same parts, in the same order, byte for byte. */
+async function expectSameParts(actual: Download, expected: Uint8Array): Promise<void> {
+  const got = await unzip(new Uint8Array(readFileSync((await actual.path())!)));
+  const want = await unzip(expected);
+  expect([...got.keys()]).toEqual([...want.keys()]);
+  for (const [name, bytes] of want) {
+    expect(equalBytes(got.get(name)!, bytes), name).toBe(true);
+  }
+}
+
+async function openHistory(page: Page): Promise<Locator> {
+  const toggle = page.getByTestId("sheet-history-toggle");
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") {
+    await toggle.click();
+  }
+  const panel = page.getByTestId("sheet-history-panel");
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+test("drafts go on the 2 s cadence as bulk-free shells over draft chunk records, and a commit clears them (AC-9, AC-11, AC-12, AC-15, AC-17, AC-18, AC-23, AC-36, AC-40)", async ({ page }) => {
+  const id = await openFixture(page, "mini-book.xlsx");
+  const badge = page.getByTestId("save-state");
+  // Record every text the badge shows from here on.
+  await badge.evaluate((el) => {
+    const seen: string[] = [];
+    (window as unknown as { qaBadge: string[] }).qaBadge = seen;
+    new MutationObserver(() => seen.push(el.textContent?.trim() ?? "")).observe(el, { subtree: true, childList: true, characterData: true });
+  });
+  const shown = () => page.evaluate(() => (window as unknown as { qaBadge: string[] }).qaBadge.slice());
+
+  // Switching sheets and moving the selection is not an edit.
+  await showData(page);
+  await clickCell(page, "C7");
+  await page.keyboard.press("ArrowDown");
+  await tab(page, "Summary").click();
+  await clickCell(page, "B2");
+  await page.waitForTimeout(2500);
+  expect(await shown()).toEqual([]);
+  expect((await documentKeys(page, id)).filter((key) => key.startsWith("draft"))).toEqual([]);
+
+  // An edit goes on the draft cadence: Saving…, then All changes saved.
+  await showData(page);
+  await enterAt(page, "B8", "8080");
+  await waitForSaved(page);
+  expect(await shown()).toEqual(expect.arrayContaining(["Saving…", SAVED]));
+
+  const keys = await documentKeys(page, id);
+  const draftChunks = keys.filter((key) => key.startsWith("draftsheetrows:<doc>:"));
+  expect(draftChunks).toHaveLength(1);
+  expect(keys).toContain(draftChunks[0]!.slice("draft".length)); // the committed chunk it shadows
+  expect(keys.filter((key) => key.startsWith("draftsheetsource:"))).toEqual([]);
+
+  type Shell = {
+    model: { opaque?: unknown[]; sheets: { id: string; name: string; rows: unknown[]; sourceXml?: string }[] };
+    rowKeys: Record<string, string[]>;
+    sourceKey: string;
+    sheetView: { sheetId: string; active: { row: number; col: number }; topRow: number; leftCol: number };
+  };
+  const draft = (await storedRecord(page, "documents", `draft:${id}`)) as Shell;
+  for (const sheet of draft.model.sheets) {
+    expect(sheet.rows, sheet.name).toEqual([]);
+    expect(sheet.sourceXml, sheet.name).toBeUndefined();
+  }
+  expect(draft.model.opaque ?? []).toEqual([]);
+  expect(draft.sourceKey).toBe(`sheetsource:${id}`);
+  const data = draft.model.sheets.find((sheet) => sheet.name === "Data")!;
+  expect(draft.rowKeys[data.id]![0]).toBe(`draftsheetrows:${id}:${data.id}:0000`);
+  for (const sheet of draft.model.sheets.filter((s) => s.id !== data.id)) {
+    for (const key of draft.rowKeys[sheet.id] ?? []) {
+      expect(key.startsWith("sheetrows:"), key).toBe(true);
+    }
+  }
+  expect(draft.sheetView).toEqual({ sheetId: data.id, active: { row: 8, col: 1 }, topRow: 0, leftCol: 0 });
+
+  // Download is a commit point: the drafts go, and a version lands in the
+  // versions store with its sources as content-addressed blobs.
+  await downloadVia(page, page.getByTestId("spreadsheet-download"));
+  await expect.poll(async () => (await documentKeys(page, id)).filter((key) => key.startsWith("draft"))).toEqual([]);
+  await expect.poll(async () => (await versionKeys(page, id)).filter((key) => key.startsWith(`version:${id}:`)).length).toBe(1);
+  const blobs = (await versionKeys(page, id)).filter((key) => key.startsWith("blob:"));
+  expect(blobs.length).toBeGreaterThan(0);
+  for (const key of blobs) {
+    expect(key).toMatch(new RegExp(`^blob:${id}:[0-9a-f]{64}$`));
+  }
+});
+
+test("the history pane lists, names, filters, deletes, previews and restores versions, and a restore keeps every part of the file (AC-50..AC-54, AC-56, AC-57)", async ({ page }) => {
+  test.setTimeout(120_000);
+  const source = new Uint8Array(readFileSync(FIXTURE));
+  await openFixture(page, "mini-book.xlsx");
+  const panel = await openHistory(page);
+  const versions = panel.getByTestId("history-version");
+
+  // An edit undone, then a download: the snapshot is the file as opened.
+  await showData(page);
+  await enterAt(page, "B3", "1");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(cell(page, "B3")).toHaveText("3");
+  const snapshot = await downloadVia(page, page.getByTestId("spreadsheet-download"));
+  await expectSameParts(snapshot, source);
+  const snapshotBytes = new Uint8Array(readFileSync((await snapshot.path())!));
+  await expect(versions).toHaveCount(1);
+  await expect(versions.first()).toContainText("3 sheets · 1,535 cells");
+  await expect(versions.first()).toContainText("You");
+
+  // A filled cell, then the same cell cleared: newest first, with the deltas.
+  await enterAt(page, "E2", "x1");
+  await downloadVia(page, page.getByTestId("spreadsheet-download"));
+  await expect(versions).toHaveCount(2);
+  await expect(versions.first()).toContainText("1,536 cells · +1 cell");
+  await clickCell(page, "E2");
+  await page.keyboard.press("Delete");
+  await expect(cell(page, "E2")).toHaveText("");
+  await downloadVia(page, page.getByTestId("spreadsheet-download"));
+  await expect(versions).toHaveCount(3);
+  await expect(versions.first()).toContainText("1,535 cells · −1 cell");
+
+  // Name, filter to named versions, remove the name; delete a version.
+  const plusOne = versions.nth(1);
+  await plusOne.getByTestId("history-name-input").fill("QA named");
+  await plusOne.getByTestId("history-name-submit").click();
+  await expect(plusOne.getByTestId("history-name")).toHaveText("QA named");
+  await panel.getByTestId("history-named-only").check();
+  await expect(versions).toHaveCount(1);
+  await panel.getByTestId("history-named-only").uncheck();
+  await expect(versions).toHaveCount(3);
+  await plusOne.getByRole("button", { name: "Remove name" }).click();
+  await expect(panel.getByTestId("history-name").filter({ hasText: "QA named" })).toHaveCount(0);
+  await versions.first().getByTestId("history-delete").click();
+  await expect(versions).toHaveCount(2);
+
+  // The live workbook: a sheet added, an edit on Summary, C3 selected.
+  await page.getByTestId("sheet-add").click();
+  await expect(page.getByTestId("sheet-tab")).toHaveCount(3);
+  await tab(page, "Summary").click();
+  await enterAt(page, "C12", "u1");
+  await clickCell(page, "C3");
+
+  // Preview the snapshot: its own tabs, on its own active sheet, read-only.
+  const original = versions.last();
+  await original.getByTestId("history-preview").click();
+  await expect(panel.getByTestId("history-preview-banner")).toContainText("Previewing an earlier version, read-only");
+  await expect(panel.getByTestId("history-exit-preview")).toHaveText("Back to current");
+  await expect(page.getByTestId("spreadsheet-grid")).toHaveAttribute("aria-readonly", "true");
+  await expect(page.getByTestId("sheet-tab")).toHaveText([/Summary/, /Data/]);
+  await expect(tab(page, "Data")).toHaveAttribute("aria-selected", "true");
+  await expect(cell(page, "E2")).toHaveText("");
+  await expect(page.getByTestId("sheet-merge")).toBeDisabled();
+
+  // Back to current: the live tabs, selection and undo stack are untouched.
+  await panel.getByTestId("history-exit-preview").click();
+  await expect(panel.getByTestId("history-preview-banner")).toBeHidden();
+  await expect(page.getByTestId("spreadsheet-grid")).not.toHaveAttribute("aria-readonly", "true");
+  await expect(page.getByTestId("sheet-tab")).toHaveCount(3);
+  await expect(tab(page, "Summary")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("name-box")).toHaveValue("C3");
+  await clickCell(page, "C3");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(cell(page, "C12")).toHaveText("");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(cell(page, "C12")).toHaveText("u1");
+
+  // Edit two sheets, then restore the snapshot, and undo that restore.
+  await enterAt(page, "H2", "qa-h2");
+  await showData(page);
+  await enterAt(page, "B3", "31337");
+  await original.getByTestId("history-restore").click();
+  await expect(page.getByTestId("toast")).toContainText("Version restored");
+  await expect(page.getByTestId("sheet-tab")).toHaveCount(2);
+  await expect(versions).toHaveCount(4);
+  await page.getByTestId("toast-action").click(); // Undo restore
+  await expect(page.getByTestId("sheet-tab")).toHaveCount(3);
+  await showData(page);
+  await expect(cell(page, "B3")).toHaveText("31337");
+  await expect(versions).toHaveCount(6);
+
+  // Restore it again: the download is the snapshot's, part for part — and so
+  // is the version's own download.
+  await original.getByTestId("history-restore").click();
+  await expect(page.getByTestId("sheet-tab")).toHaveText([/Summary/, /Data/]);
+  await showData(page);
+  await expect(cell(page, "B3")).toHaveText("3");
+  await waitForSaved(page);
+  await expectSameParts(await downloadVia(page, page.getByTestId("spreadsheet-download")), snapshotBytes);
+  await expect(original.getByTestId("history-download")).toHaveText("Download .xlsx");
+  const versionDownload = await downloadVia(page, original.getByTestId("history-download"));
+  expect(versionDownload.suggestedFilename()).toBe("mini-book.xlsx");
+  await expectSameParts(versionDownload, snapshotBytes);
+});
+
+test("an .ods workbook restored from a snapshot downloads part for part as its source (AC-57)", async ({ page }) => {
+  const source = new Uint8Array(readFileSync(join(dirname(FIXTURE), "mini-book.ods")));
+  await openFixture(page, "mini-book.ods");
+  const panel = await openHistory(page);
+  await enterAt(page, "B3", "1");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expectSameParts(await downloadVia(page, page.getByTestId("spreadsheet-download")), source);
+  await expect(panel.getByTestId("history-version")).toHaveCount(1);
+
+  await enterAt(page, "B3", "31337");
+  await tab(page, "Totals").click();
+  await enterAt(page, "C2", "qa-c2");
+  await page.getByTestId("sheet-add").click();
+  await expect(page.getByTestId("sheet-tab")).toHaveCount(3);
+  await panel.getByTestId("history-version").last().getByTestId("history-restore").click();
+  await expect(page.getByTestId("sheet-tab")).toHaveText([/Inventory/, /Totals/]);
+  await waitForSaved(page);
+  const restored = await downloadVia(page, page.getByTestId("spreadsheet-download"));
+  expect(restored.suggestedFilename()).toBe("mini-book.ods");
+  await expectSameParts(restored, source);
+  await expect(panel.getByTestId("history-version").last().getByTestId("history-download")).toHaveText("Download .ods");
+});
+
+test("a locked tab keeps its writing history actions and the merge split button disabled until the lock grants (AC-33, AC-35)", async ({ page }) => {
+  const id = await openFixture(page, "mini-book.xlsx");
+  await showData(page);
+  await enterAt(page, "B4", "444");
+  await downloadVia(page, page.getByTestId("spreadsheet-download"));
+
+  const second = await page.context().newPage();
+  await second.goto(`/sheets/${id}`);
+  await expect(second.getByTestId("sheet-conflict-bar")).toHaveText("This workbook is open in another tab");
+  const panel = await openHistory(second);
+  const version = panel.getByTestId("history-version").first();
+  await expect(version.getByTestId("history-restore")).toBeDisabled();
+  await expect(version.getByTestId("history-name-submit")).toBeDisabled();
+  await expect(version.getByTestId("history-delete")).toBeDisabled();
+  await expect(version.getByTestId("history-preview")).toBeEnabled();
+  await expect(version.getByTestId("history-download")).toBeEnabled();
+  await expect(second.getByTestId("sheet-merge")).toBeDisabled();
+  await expect(second.getByTestId("sheet-merge-menu-button")).toBeDisabled();
+  // Not even a forced click opens the merge warning or the merge menu.
+  await second.getByTestId("name-box").fill("A10:B11");
+  await second.getByTestId("name-box").press("Enter");
+  await second.getByTestId("sheet-merge").click({ force: true });
+  await second.getByTestId("sheet-merge-menu-button").click({ force: true });
+  await expect(second.getByTestId("sheet-merge-confirm")).toHaveCount(0);
+  await expect(second.getByTestId("sheet-merge-centre")).toHaveCount(0);
+
+  // Close (not a tab close) in the first tab hands the lock over.
+  await page.getByTestId("close-document").click();
+  await expect(page.getByTestId("library")).toBeVisible();
+  await expect(second.getByTestId("sheet-conflict-bar")).toBeHidden({ timeout: 15_000 });
+  await expect(second.getByTestId("spreadsheet-grid")).not.toHaveAttribute("aria-readonly", "true");
+  await expect(version.getByTestId("history-restore")).toBeEnabled();
+  await expect(second.getByTestId("sheet-merge")).toBeEnabled();
+  await second.getByTestId("sheet-merge-menu-button").click();
+  for (const item of ["sheet-merge-centre", "sheet-merge-across", "sheet-merge-cells", "sheet-unmerge"]) {
+    await expect(second.getByTestId(item)).toBeEnabled();
+  }
+  await second.keyboard.press("Escape");
+});
+
+test("a failed draft write shows the error badge with one download link that runs the workbook download (AC-30, AC-31)", async ({ page }) => {
+  await openFixture(page, "mini-book.xlsx");
+  const badge = page.getByTestId("save-state");
+  await expect(badge).toHaveClass(/sheet-save-state/);
+  await expect(badge).toHaveAttribute("data-save-state", "saved");
+  // Storage fills up: every documents-store put throws.
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    (window as unknown as { qaPut: typeof put }).qaPut = put;
+    IDBObjectStore.prototype.put = function (this: IDBObjectStore, ...args: Parameters<typeof put>) {
+      if (this.name === "documents") {
+        throw new DOMException("Quota exceeded", "QuotaExceededError");
+      }
+      return put.apply(this, args);
+    };
+  });
+  await showData(page);
+  await enterAt(page, "B6", "6060");
+  await expect(badge).toHaveText("Not saved — browser storage is full", { timeout: 15_000 });
+  await expect(badge).toHaveAttribute("data-save-state", "error");
+  await expect(page.getByTestId("sheet-save-state-download")).toHaveCount(1);
+  const download = await downloadVia(page, page.getByTestId("sheet-save-state-download"));
+  expect(download.suggestedFilename()).toBe("mini-book.xlsx");
+
+  // Storage frees up: the next write clears the error.
+  await page.evaluate(() => {
+    IDBObjectStore.prototype.put = (window as unknown as { qaPut: typeof IDBObjectStore.prototype.put }).qaPut;
+  });
+  await enterAt(page, "B7", "7070");
+  await waitForSaved(page);
+  await expect(page.getByTestId("sheet-save-state-download")).toHaveCount(0);
+});
+
+test("a workbook over WORKBOOK_HISTORY_MAX_CELLS keeps no history and still commits (AC-44, AC-46, AC-47)", async ({ page }) => {
+  test.setTimeout(120_000);
+  // 26,000 rows × 10 columns = 260,000 cells, over the 250,000 limit.
+  const lines: string[] = [];
+  for (let row = 0; row < 26_000; row += 1) {
+    lines.push(Array.from({ length: 10 }, (_, col) => String(row * 10 + col)).join(","));
+  }
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles({ name: "big.csv", mimeType: "text/csv", buffer: Buffer.from(lines.join("\n")) });
+  await expect(page).toHaveURL(/\/sheets\/.+/, { timeout: 60_000 });
+  const id = page.url().match(/\/sheets\/([^/?#]+)/)?.[1] ?? "";
+  await waitForSaved(page);
+  await enterAt(page, "A1", "99");
+  await waitForSaved(page);
+  await downloadVia(page, page.getByTestId("spreadsheet-download"));
+  const panel = await openHistory(page);
+  await expect(panel.getByTestId("history-paused-notice")).toHaveText("Version history off — this workbook is larger than the 50 MB history budget");
+  await expect(panel.getByTestId("history-version")).toHaveCount(0);
+  // The refusal never blocks the commit: the drafts are gone.
+  await expect.poll(async () => (await documentKeys(page, id)).filter((key) => key.startsWith("draft"))).toEqual([]);
+  await expect(page.getByTestId("save-state")).toHaveText(SAVED);
 });
