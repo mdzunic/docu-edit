@@ -24,7 +24,8 @@
 // ordinary xlsx list, the one property that does not cross).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { setClock } from "../core/clock";
 import { equalBytes } from "../core/equality";
 import { unzip } from "../core/zip";
 import { formatA1, formatRange, getCell, parseA1, parseRange, usedRange } from "./address";
@@ -78,7 +79,7 @@ import { formatCodeOf } from "./numberFormat/builtin";
 import { parseFormatCode } from "./numberFormat/parse";
 import { SPREADSHEET_LOCALES } from "./numberFormat/locale";
 import { formatValue, plainText, workbookFormatContext } from "./numberFormat/render";
-import { readSpreadsheetBytes } from "./open";
+import { readSpreadsheetBytes, upgradeSpreadsheetModel } from "./open";
 import { packageIntegrity } from "./fixtures/packageIntegrity";
 import { workbookForCompare } from "./fixtures/workbookForCompare";
 import { addSheet, createBlankWorkbook, duplicateSheet, moveSheet, renameSheet, setSheetHidden, setTabColor, stripRetention } from "./sheets";
@@ -1069,6 +1070,90 @@ describe("SPEC-130: data validations round trip", () => {
         expect(back.sheets[0]!.validations.some((rule) => rule.odsListOrder !== undefined)).toBe(false);
         expect(back.sheets[0]!.validations.find((rule) => rule.formula1?.startsWith("Lists!"))?.x14).toBe(true);
       }
+    });
+  }
+});
+
+// --- SPEC-138: restoring a workbook version keeps every promise above --------
+//
+// Restore fidelity: open the fixture, snapshot it, edit cells on two sheets
+// and add a sheet, restore the snapshot (reconstruct → upgradeSpreadsheetModel,
+// as useWorkbookHistory does) and download — every part equalBytes with a
+// download taken at snapshot time; and a workbook never edited, snapshotted
+// and restored, still downloads byte-identical per part to its source. The
+// version store is the real lib/spreadsheetVersions.ts over an in-memory
+// `versions` store (jsdom has no IndexedDB); the clock is pinned (setClock)
+// so two downloads compare.
+const RESTORE_AT = new Date("2026-10-28T09:30:00Z");
+
+/** lib/spreadsheetVersions.ts over a fresh in-memory `versions` store. */
+async function workbookHistory() {
+  const records = new Map<string, unknown>();
+  vi.resetModules();
+  vi.doMock("../idb", () => ({
+    getVersionsRecord: async (id: string) => structuredClone(records.get(id)),
+    putVersionsRecord: async (value: { id: string }) => void records.set(value.id, structuredClone(value)),
+    deleteVersionsRecord: async (id: string) => void records.delete(id),
+  }));
+  try {
+    return await import("../spreadsheetVersions");
+  } finally {
+    vi.doUnmock("../idb");
+  }
+}
+
+async function downloadParts(model: SpreadsheetModel): Promise<Map<string, Uint8Array>> {
+  return unzip((await spreadsheetDownload(model)).bytes);
+}
+
+function expectSameParts(actual: Map<string, Uint8Array>, expected: Map<string, Uint8Array>): void {
+  expect([...actual.keys()]).toEqual([...expected.keys()]);
+  for (const [name, data] of expected) {
+    expect(equalBytes(actual.get(name)!, data), `part ${name}`).toBe(true);
+  }
+}
+
+describe("SPEC-138: workbook version restore fidelity", () => {
+  afterEach(() => {
+    setClock(null);
+  });
+
+  for (const fixture of FIXTURES.filter((each) => each.file.startsWith("mini-book."))) {
+    it(`${fixture.file}: open → snapshot → edit two sheets and add one → restore → download matches the snapshot-time download, part for part`, async () => {
+      setClock(RESTORE_AT);
+      const history = await workbookHistory();
+      const model = await readSpreadsheetBytes(await fixture.bytes(), fixture.format, "mini-book");
+      const atSnapshot = await downloadParts(model);
+      const snapshot = await history.recordWorkbookVersion({ docId: model.id, model, author: "Ada", trigger: "commit", cachedPrev: null });
+      expect(snapshot.written).toBe(true);
+
+      // Edit on: a cell on two sheets, and a new sheet.
+      editFirstGridSheet(model);
+      const second = model.sheets.findIndex((sheet, index) => index > 0 && sheet.kind === "grid");
+      setCellEntry(model, second, { row: 1, col: 1 }, { value: "edited on a second sheet" });
+      model.sheets = model.sheets.map((each, position) => (position === second ? { ...each, dirty: true } : each));
+      addSheet(model, model.activeSheetIndex);
+      const edited = await downloadParts(model);
+      expect([...atSnapshot].some(([name, data]) => !edited.has(name) || !equalBytes(edited.get(name)!, data))).toBe(true);
+
+      const reconstructed = await history.reconstructWorkbookVersion(model.id, snapshot.newEntry!.id, model);
+      expect(reconstructed).not.toBeNull();
+      const restored = await upgradeSpreadsheetModel(reconstructed!);
+      expectSameParts(await downloadParts(restored), atSnapshot);
+    });
+
+    it(`${fixture.file}: a no-edit workbook snapshotted and restored still downloads byte-identical per part to its source`, async () => {
+      setClock(RESTORE_AT);
+      const history = await workbookHistory();
+      const source = await fixture.bytes();
+      const model = await readSpreadsheetBytes(source, fixture.format, "mini-book");
+      const snapshot = await history.recordWorkbookVersion({ docId: model.id, model, author: "Ada", trigger: "commit", cachedPrev: null });
+      // Read back from the blobs alone — no live workbook lends it a part.
+      const reconstructed = await history.reconstructWorkbookVersion(model.id, snapshot.newEntry!.id);
+      expect(reconstructed).not.toBeNull();
+      const restored = await upgradeSpreadsheetModel(reconstructed!);
+      expect(restored.sheets.map((sheet) => sheet.rows)).toEqual(model.sheets.map((sheet) => sheet.rows));
+      expectSameParts(await downloadParts(restored), await unzip(source));
     });
   }
 });
