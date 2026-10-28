@@ -207,6 +207,42 @@ describe("worker fallback when workers are unavailable", () => {
   });
 });
 
+// --- nothing leaves the browser -------------------------------------------------------
+
+describe("nothing leaves the browser", () => {
+  // SPEC-114 depends on SPEC-113 for its flag registry only: no module of
+  // library search reaches the model gateway, or any network API at all
+  // (SPEC-113's lib/ai/boundary.spec.ts allowlist covers the latter for
+  // every module; this pins the former for this feature's own).
+  const MODULES = [
+    "lib/core/searchIndex.ts",
+    "lib/core/searchEngine.ts",
+    "lib/core/pdfText.ts",
+    "lib/core/extractedText.ts",
+    "lib/documentText.ts",
+    "lib/presentation/deckText.ts",
+    "lib/libraryIndex.ts",
+    "lib/searchOpen.ts",
+    "lib/findLink.ts",
+    "lib/workers/libraryIndexClient.ts",
+    "workers/libraryIndex.worker.ts",
+    "composables/useLibrarySearch.ts",
+    "views/library/LibrarySearchScope.vue",
+    "views/library/LibrarySearchResults.vue",
+    "views/library/LibraryFullTextSearch.vue",
+    "views/preferences/LibrarySearchLabs.vue",
+    "views/document/useFindLink.ts",
+    "views/presentation/useDeckFindLink.ts",
+  ];
+
+  it.each(MODULES)("%s imports nothing of the model gateway and calls no network API", (module) => {
+    const source = readFileSync(resolvePath(__dirname, "..", module), "utf8");
+    expect(source).not.toMatch(/from "[^"]*\/ai\//);
+    expect(source).not.toMatch(/useModelGateway|modelGateway|useModelConsent/);
+    expect(source).not.toMatch(/\b(fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/);
+  });
+});
+
 // --- the pipeline over a real library ----------------------------------------------
 
 /** A fresh store and indexer over the installed fake IndexedDB. */
