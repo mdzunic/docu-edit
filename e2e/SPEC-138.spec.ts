@@ -264,6 +264,14 @@ test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews
   await expect(versions).toHaveCount(3);
   await expect(panel.getByTestId("history-trigger")).toHaveText(["After restore", "Before restore"]);
   await waitForSaved(page);
+  // Undo has nothing to undo after a restore, and the panel says so (AC-55).
+  await expect(panel).toContainText("Restoring replaces the workbook and clears undo — the version saved just before is at the top of the list");
+  // (Twice: a stack that survived would take B4 back past both edits to the file's value.)
+  await clickCell(page, "B4");
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(cell(page, "B4")).toHaveText("888");
+  await expect(page.getByTestId("sheet-menu-undo")).toBeDisabled();
 
   // A second tab on the same workbook is read-only.
   const second = await page.context().newPage();
