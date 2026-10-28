@@ -12,6 +12,8 @@ beforeEach(() => {
   }));
 });
 
+const para = (text: string) => ({ runs: [{ text }] });
+
 async function modules() {
   const store = await import("./documentStore");
   const open = await import("./searchOpen");
@@ -51,7 +53,6 @@ describe("searchResultLocation", () => {
 
   it("opens a deck's find at the first hit on the result's slide", async () => {
     const { store, open, deckText } = await modules();
-    const para = (text: string) => ({ runs: [{ text }] });
     const box = { xCm: 0, yCm: 0, widthCm: 10, heightCm: 2 };
     const deck = {
       kind: "presentation" as const,
