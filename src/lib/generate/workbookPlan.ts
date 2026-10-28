@@ -52,6 +52,7 @@ import { recalculate, uncomputableReasonOf } from "../spreadsheet/formula/recalc
 import { getFunction } from "../spreadsheet/formula/registry";
 import { xlsxWidthToPx } from "../spreadsheet/geometry";
 import { mergeCells } from "../spreadsheet/mergeCells";
+import { firstRowAtOrAfter } from "../spreadsheet/restyle";
 import { rangesIntersect } from "../spreadsheet/merges";
 import {
   ERROR_CODES,
@@ -736,7 +737,14 @@ export class WorkbookPlan {
   /** A fresh model in `format` (see the module header) — the plan is never
    * changed, so one builder serves any number of outputs. */
   materialise(format: WorkbookOutputFormat): SpreadsheetModel {
-    const stored = this.sheets.reduce((sum, sheet) => sum + sheet.cells.size, 0);
+    // The ceiling, checked before any work for the cells that will be stored
+    // (step 6 counts style-only cells too).
+    let stored = 0;
+    for (const sheet of this.sheets) {
+      for (const entry of sheet.cells.values()) {
+        stored += entry.value !== null || entry.formula !== undefined ? 1 : 0;
+      }
+    }
     if (stored > MAX_WORKBOOK_CELLS) {
       throw new DocumentGenerationError(`sheets: ${WORKBOOK_TOO_LARGE_MESSAGE}`);
     }
@@ -959,10 +967,8 @@ function rectangles(cells: readonly GridRange[]): GridRange[] {
 
 /** The first cell (row by row) a merge of `range` would clear, or null. */
 function discardedBy(sheet: Sheet, range: GridRange): string | null {
-  for (const row of sheet.rows) {
-    if (row.index < range.top || row.index > range.bottom) {
-      continue;
-    }
+  for (let r = firstRowAtOrAfter(sheet.rows, range.top); r < sheet.rows.length && sheet.rows[r]!.index <= range.bottom; r += 1) {
+    const row = sheet.rows[r]!;
     for (const cell of row.cells) {
       if (cell.col < range.left || cell.col > range.right || (row.index === range.top && cell.col === range.left)) {
         continue;

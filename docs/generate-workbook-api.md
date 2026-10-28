@@ -154,7 +154,8 @@ The object form is `{ value?, date?, error?, formula?, numberFormat?, style? }`
 with at most one of `value`, `date`, `error` and `formula`; `numberFormat` and
 `style` (a [CellStyleSpec](#cellstylespec) or a defined style's name) are the
 cell's own and count as a style call made when the cell was set. An object
-with none of the four content keys writes no value but keeps its style.
+with none of the four content keys is a write of no value — like `null`, it
+replaces an earlier write to the cell — that still applies its style.
 
 Dates are converted with SPEC-116's `serial.ts`: 1900-01-01 is serial 1,
 1900-03-01 is 61, and `{ date: "1900-02-29" }` is the 1900 system's
