@@ -92,7 +92,9 @@ export function expectHexColor(value: unknown, path: string): string {
 /** Rejects any key in `obj` not listed in `allowed` (AC-9): every object the
  * generation API accepts — a run, a block, a table spec, a whole
  * description — is validated closed, so a typo or a stray field is a
- * validation error rather than silently ignored data. */
+ * validation error rather than silently ignored data. An empty `path` is a
+ * description's root, whose keys are named bare ("names: unknown
+ * property"). */
 export function rejectUnknownKeys(
   obj: Record<string, unknown>,
   allowed: readonly string[],
@@ -100,7 +102,7 @@ export function rejectUnknownKeys(
 ): void {
   for (const key of Object.keys(obj)) {
     if (!allowed.includes(key)) {
-      throw new DocumentGenerationError(`${path}.${key}: unknown property`);
+      throw new DocumentGenerationError(`${path === "" ? key : `${path}.${key}`}: unknown property`);
     }
   }
 }

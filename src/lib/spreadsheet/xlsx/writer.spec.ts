@@ -8,7 +8,7 @@
 // write stable) and makes the string and style tables append-only (their
 // source bytes unchanged outside the appends and counts), and serialises
 // cells from scratch.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { setClock } from "../../core/clock";
 import { equalBytes } from "../../core/equality";
 import { OFFICE_THEME_XML } from "../../core/officeThemeXml";
@@ -17,6 +17,7 @@ import { unzip } from "../../core/zip";
 import { formatA1, getCell } from "../address";
 import { setCellEntry } from "../cells";
 import { spreadsheetDownload } from "../download";
+import { applyStylePatch } from "../formatting";
 import * as F from "../fixtures/build";
 import { packageIntegrity } from "../fixtures/packageIntegrity";
 import { workbookForCompare } from "../fixtures/workbookForCompare";
@@ -266,6 +267,39 @@ describe("from scratch: every package re-opens to the same workbook (AC-3)", () 
       await expectReopensAs((await save(model)).bytes, model);
     });
   }
+});
+
+// SPEC-140: the generation API writes from scratch in plain Node, where there
+// is no DOMParser. The style writer once parsed its own from-scratch base
+// with one and, without it, numbered every appended font, fill and border
+// from zero — a bold header written as the default font over the gray125
+// fill. The base's tables are now seeded from what it wrote.
+describe("from scratch: the same package with no DOMParser (SPEC-140)", () => {
+  it("writes every part byte for byte as it does with the DOM", async () => {
+    const model = createBlankWorkbook();
+    const sheet = model.sheets[0]!;
+    model.sheets[0] = { ...sheet, rows: [{ index: 0, cells: [{ col: 0, value: "Region" }, { col: 1, value: 1200 }] }] };
+    const range = { top: 0, left: 0, bottom: 0, right: 0 };
+    applyStylePatch(model, sheet.id, [range], { font: { bold: true, family: "Arial", color: "#123456" }, fill: { kind: "solid", color: "#dce6f1" }, borders: { bottom: { style: "thin" } } });
+    applyStylePatch(model, sheet.id, [{ ...range, left: 1, right: 1 }], { numberFormat: "$#,##0.00", alignment: { horizontal: "right" } });
+    const withDom = await unzip(await writeXlsx(model, { modified: MODIFIED }));
+    vi.stubGlobal("DOMParser", undefined);
+    vi.stubGlobal("XMLSerializer", undefined);
+    vi.stubGlobal("document", undefined);
+    let withoutDom: Parts;
+    try {
+      withoutDom = await unzip(await writeXlsx(model, { modified: MODIFIED }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect([...withoutDom.keys()]).toEqual([...withDom.keys()]);
+    for (const [name, data] of withDom) {
+      expect(text(withoutDom, name), name).toBe(decoder.decode(data));
+    }
+    expect(text(withDom, "xl/styles.xml")).toContain(
+      `<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>`,
+    );
+  });
 });
 
 // --- verbatim -----------------------------------------------------------------------------

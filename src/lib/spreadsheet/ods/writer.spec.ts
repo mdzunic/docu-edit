@@ -5,7 +5,7 @@
 // every command. SPEC-123: named styles through a save — appended to the
 // retained or the generated styles.xml (nothing else of it changed), the
 // de-ce parents, a self-closing or missing office:styles, write → read.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { equalBytes } from "../../core/equality";
 import { base64ToBytes, bytesToBase64 } from "../../core/packageParts";
 import { DEFAULT_THEME, resolveColor } from "../../core/theme";
@@ -161,6 +161,71 @@ describe("from scratch: createBlankWorkbook() as .ods + addSheet + a tab colour"
     for (const model of [{ ...createBlankWorkbook(), format: "ods" as const }, blankPlus(), varied]) {
       await expectReopensAs((await save(model)).bytes, model);
     }
+  });
+});
+
+// SPEC-140: a generated workbook's frozen panes and hidden gridlines live in
+// settings.xml, which the from-scratch path once wrote with the ActiveTable
+// alone — so they were lost; and a generated style's own font family must
+// read back over Default's.
+describe("from scratch: frozen panes, gridlines and font families re-open (SPEC-140)", () => {
+  it("writes a Tables entry per sheet that freezes or hides its gridlines, and reads them back", async () => {
+    const model = blankPlus();
+    model.sheets[0] = { ...model.sheets[0]!, frozen: { rows: 1, cols: 2 }, showGridLines: false };
+    model.sheets[1] = { ...model.sheets[1]!, frozen: { rows: 3, cols: 0 } };
+    const { bytes, parts } = await save(model);
+    expect(text(parts, "settings.xml")).toContain(
+      `<config:config-item-map-named config:name="Tables"><config:config-item-map-entry config:name="Sheet1">` +
+        `<config:config-item config:name="HorizontalSplitMode" config:type="short">2</config:config-item>` +
+        `<config:config-item config:name="VerticalSplitMode" config:type="short">2</config:config-item>` +
+        `<config:config-item config:name="HorizontalSplitPosition" config:type="int">2</config:config-item>` +
+        `<config:config-item config:name="VerticalSplitPosition" config:type="int">1</config:config-item>` +
+        `<config:config-item config:name="PositionRight" config:type="int">2</config:config-item>` +
+        `<config:config-item config:name="PositionBottom" config:type="int">1</config:config-item>` +
+        `<config:config-item config:name="ShowGrid" config:type="boolean">false</config:config-item></config:config-item-map-entry>`,
+    );
+    const read = await readSpreadsheetBytes(bytes, "ods", "t");
+    expect(read.sheets.map((sheet) => [sheet.frozen, sheet.showGridLines])).toEqual([
+      [{ rows: 1, cols: 2 }, false],
+      [{ rows: 3, cols: 0 }, undefined],
+    ]);
+  });
+
+  it("writes every part byte for byte as it does with the DOM, with no DOMParser", async () => {
+    const model = blankPlus();
+    const styled = model.styles.length;
+    model.styles = [...model.styles, { font: { family: "Arial", bold: true }, fill: { kind: "solid", color: "#dce6f1" }, borders: { bottom: { style: "thin" } }, numberFormat: "$#,##0.00" }];
+    model.sheets[0] = {
+      ...model.sheets[0]!,
+      rows: [{ index: 0, cells: [{ col: 0, value: 3960, styleId: styled }, { col: 1, value: "x" }] }],
+      merges: [{ top: 2, left: 0, bottom: 2, right: 3 }],
+      columns: [{ min: 0, max: 0, widthPx: 98, sourceWidthChars: 14 }],
+      frozen: { rows: 1, cols: 0 },
+    };
+    const withDom = (await save(model)).parts;
+    vi.stubGlobal("DOMParser", undefined);
+    vi.stubGlobal("XMLSerializer", undefined);
+    vi.stubGlobal("document", undefined);
+    let withoutDom: Parts;
+    try {
+      withoutDom = (await save(model)).parts;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect([...withoutDom.keys()]).toEqual([...withDom.keys()]);
+    for (const name of withDom.keys()) {
+      expect(text(withoutDom, name), name).toBe(text(withDom, name));
+    }
+  });
+
+  it("a cell style's font family survives", async () => {
+    const model = blankPlus();
+    const styled = model.styles.length;
+    model.styles = [...model.styles, { font: { family: "Arial", sizePt: 14, bold: true } }];
+    model.sheets[0] = { ...model.sheets[0]!, rows: [{ index: 0, cells: [{ col: 0, value: "x", styleId: styled }] }] };
+    const read = await readSpreadsheetBytes((await save(model)).bytes, "ods", "t");
+    const cell = read.sheets[0]!.rows[0]!.cells[0]!;
+    expect(read.styles[cell.styleId!]!.font).toMatchObject({ family: "Arial", sizePt: 14, bold: true });
   });
 });
 
