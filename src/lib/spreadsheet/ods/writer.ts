@@ -13,7 +13,8 @@
 //     for the 1904 system or a custom `odsNullDate`; the generated `de-`
 //     automatic styles; every sheet through serializeTable — its cells, rows,
 //     columns, merges and styles, every model style a generated `de-ce`
-//     one) and a settings.xml holding only the view's `ActiveTable`. The
+//     one) and a settings.xml holding the view's `ActiveTable` (and, per
+//     sheet with frozen panes or hidden gridlines, a `Tables` entry). The
 //     `number` and `calcext` namespaces are declared only when the content
 //     uses them. SPEC-128: every sheet's autofilter as a
 //     `table:database-range` in a `table:database-ranges` after the tables
@@ -283,12 +284,40 @@ export const FROM_SCRATCH_ODS_MANIFEST_XML =
   `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
   `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/></manifest:manifest>`;
 
-/** settings.xml holding only the view's ActiveTable. */
-export function fromScratchSettingsXml(activeTable: string): string {
+/** One settings.xml `config:config-item`. */
+function configItemXml(name: string, type: string, value: string | number): string {
+  return `<config:config-item config:name="${name}" config:type="${type}">${value}</config:config-item>`;
+}
+
+/** settings.xml holding the view's ActiveTable and, when a sheet has frozen
+ * panes or hides its gridlines, a `Tables` entry for each such sheet — its
+ * split modes and positions as withFrozen writes them, and `ShowGrid` false
+ * (SPEC-140: a generated workbook's panes and gridlines survive as .ods;
+ * ods/settings.ts reads them back). A workbook with neither writes the
+ * ActiveTable alone. */
+export function fromScratchSettingsXml(activeTable: string, sheets: readonly Sheet[] = []): string {
+  const entries = sheets
+    .filter((sheet) => sheet.frozen !== undefined || sheet.showGridLines === false)
+    .map((sheet) => {
+      const rows = sheet.frozen?.rows ?? 0;
+      const cols = sheet.frozen?.cols ?? 0;
+      const frozen =
+        sheet.frozen === undefined
+          ? ""
+          : configItemXml("HorizontalSplitMode", "short", cols > 0 ? 2 : 0) +
+            configItemXml("VerticalSplitMode", "short", rows > 0 ? 2 : 0) +
+            configItemXml("HorizontalSplitPosition", "int", cols) +
+            configItemXml("VerticalSplitPosition", "int", rows) +
+            configItemXml("PositionRight", "int", cols) +
+            configItemXml("PositionBottom", "int", rows);
+      const grid = sheet.showGridLines === false ? configItemXml("ShowGrid", "boolean", "false") : "";
+      return `<config:config-item-map-entry config:name="${escapeAttributeValue(sheet.name)}">${frozen}${grid}</config:config-item-map-entry>`;
+    });
+  const tables = entries.length === 0 ? "" : `<config:config-item-map-named config:name="Tables">${entries.join("")}</config:config-item-map-named>`;
   return (
     `${ODF_DECLARATION}<office:document-settings xmlns:office="${OFFICE_NS}" xmlns:config="${CONFIG_NS}" xmlns:ooo="${OOO_NS}" office:version="1.2">` +
     `<office:settings><config:config-item-set config:name="ooo:view-settings"><config:config-item-map-indexed config:name="Views">` +
-    `<config:config-item-map-entry><config:config-item config:name="ActiveTable" config:type="string">${escapeElementText(activeTable)}</config:config-item>` +
+    `<config:config-item-map-entry><config:config-item config:name="ActiveTable" config:type="string">${escapeElementText(activeTable)}</config:config-item>${tables}` +
     `</config:config-item-map-entry></config:config-item-map-indexed></config:config-item-set></office:settings></office:document-settings>`
   );
 }
@@ -412,7 +441,7 @@ async function buildFromScratch(model: SpreadsheetModel, options: WriteOdsOption
       data: encode(pageSetups.stylesXmlWith(withNamedStyles(scratchStyles, named.xml + conditionalFormats.stylesXml))),
     },
     { name: "content.xml", data: encode(content) },
-    { name: "settings.xml", data: encode(fromScratchSettingsXml(active?.name ?? "")) },
+    { name: "settings.xml", data: encode(fromScratchSettingsXml(active?.name ?? "", model.sheets)) },
   ];
 }
 

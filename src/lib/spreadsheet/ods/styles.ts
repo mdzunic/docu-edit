@@ -842,6 +842,17 @@ function cellStyleFrom(sets: PropertySets, fontFaces: ReadonlyMap<string, string
 function mergeInto(target: PropertySets, source: PropertySets): void {
   for (const [kind, props] of Object.entries(source) as [PropertyKind, Props][]) {
     const into = (target[kind] ??= new Map());
+    if (kind === "text") {
+      // style:font-name and fo:font-family both name the font: a style that
+      // sets one replaces the family it inherits in either spelling (a
+      // generated cell style's fo:font-family over Default's font-face).
+      if (props.has("style:font-name") && !props.has("fo:font-family")) {
+        into.delete("fo:font-family");
+      }
+      if (props.has("fo:font-family") && !props.has("style:font-name")) {
+        into.delete("style:font-name");
+      }
+    }
     for (const [key, value] of props) {
       if (kind === "text" && key === "fo:font-size" && value.endsWith("%")) {
         const inherited = odsLengthToPt(into.get(key));

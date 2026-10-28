@@ -379,6 +379,21 @@ describe("flattening along the parent chain", () => {
     expect(book.styles[book.cellStyleId("ce1")]!.font?.sizePt).toBe(12);
   });
 
+  it("a style's own family replaces the inherited one, in either spelling (SPEC-140)", () => {
+    // A generated de-ce style writes fo:font-family under Default, whose
+    // font comes through style:font-name: the style's own family wins.
+    const book = styleBook(
+      `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="Default">${text(`fo:font-family="Arial" fo:font-size="14pt"`)}</style:style>` +
+        `<style:style style:name="ce2" style:family="table-cell" style:parent-style-name="Mono">${text(`style:font-name="Liberation Sans"`)}</style:style>` +
+        `<style:style style:name="ce3" style:family="table-cell" style:parent-style-name="Default">${text(`fo:font-weight="bold"`)}</style:style>`,
+      LO_COMMON + `<style:style style:name="Mono" style:family="table-cell">${text(`fo:font-family="'Courier New'"`)}</style:style>`,
+      LO_FONT_FACES,
+    );
+    expect(book.styles[book.cellStyleId("ce1")]!.font).toEqual({ family: "Arial", sizePt: 14 });
+    expect(book.styles[book.cellStyleId("ce2")]!.font?.family).toBe("Liberation Sans");
+    expect(book.styles[book.cellStyleId("ce3")]!.font).toEqual({ family: "Liberation Sans", sizePt: 10, bold: true });
+  });
+
   it("survives a parent cycle and an undefined parent", () => {
     const book = styleBook(
       `<style:style style:name="ce1" style:family="table-cell" style:parent-style-name="ce2">${text(`fo:font-weight="bold"`)}</style:style>` +
