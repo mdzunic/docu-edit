@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { test, expect, type Page } from "@playwright/test";
 
@@ -12,9 +13,24 @@ import { test, expect, type Page } from "@playwright/test";
 // opens /slides/:id at that slide → a PDF's word opens /media/:id with the
 // query shown above the viewer and #search= on its URL → the image and the
 // scanned fixture are under "Not searched" with their reasons. Nothing
-// leaves the browser: no request to any origin but the app's own.
+// leaves the browser: no request reaches any origin but the app's own and
+// its shell's web fonts, and no script reaches any other origin at all.
 
 const fixture = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
+
+/** The web-font hosts the shell's own index.html links (and its CSP names
+ * in style-src/font-src) — part of the shipped shell, not of any feature
+ * (SPEC-113's e2e reads them the same way). */
+function shellFontOrigins(): string[] {
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const csp = /http-equiv="Content-Security-Policy"\s+content="([\s\S]*?)"/.exec(html)?.[1] ?? "";
+  const hosts = csp
+    .split(";")
+    .map((directive) => directive.trim().split(/\s+/))
+    .filter(([name]) => name === "style-src" || name === "font-src")
+    .flatMap(([, ...sources]) => sources.filter((source) => source.startsWith("https://")));
+  return [...new Set(hosts)];
+}
 
 /** Opens a file through the library's picker, then returns to the library. */
 async function addToLibrary(page: Page, name: string, lands: RegExp): Promise<void> {
@@ -36,13 +52,23 @@ async function enableLibrarySearch(page: Page): Promise<void> {
 
 test("full-text search: index, find a phrase, open at the match, and say what was not searched", async ({ page, baseURL }) => {
   const appOrigin = new URL(baseURL ?? "http://localhost:5173").origin;
+  const allowed = new Set([appOrigin, ...shellFontOrigins()]);
   const foreign: string[] = [];
-  page.on("request", (request) => {
-    const url = request.url();
-    if (!url.startsWith("blob:") && !url.startsWith("data:") && new URL(url).origin !== appOrigin) {
-      foreign.push(url);
-    }
-  });
+  const scripted: string[] = [];
+  // Every request to another origin is recorded, then refused.
+  await page.route(
+    (url) => url.origin !== appOrigin,
+    async (route) => {
+      const request = route.request();
+      if (["fetch", "xhr", "eventsource", "websocket"].includes(request.resourceType())) {
+        scripted.push(`${request.resourceType()} ${request.url()}`);
+      }
+      if (!allowed.has(new URL(request.url()).origin)) {
+        foreign.push(`${request.resourceType()} ${request.url()}`);
+      }
+      await route.abort();
+    },
+  );
 
   await page.goto("/");
   await expect(page.getByTestId("app-bar")).toBeVisible();
@@ -107,7 +133,9 @@ test("full-text search: index, find a phrase, open at the match, and say what wa
   await expect(page.getByTestId("filmstrip-slide").nth(1)).toHaveAttribute("aria-selected", "true");
 
   // A PDF's word opens the viewer with the query above it, and #search=.
-  await page.goto("/");
+  // (In-app navigation: the scope is this session's, Titles on a reload.)
+  await page.getByTestId("presentation-close").click();
+  await expect(page.getByTestId("library")).toBeVisible();
   await expect(page.getByTestId("search-scope")).toHaveValue("everything");
   await field.fill("chapter");
   await expect(results).toHaveCount(1);
@@ -120,7 +148,8 @@ test("full-text search: index, find a phrase, open at the match, and say what wa
   await expect(page.locator('object[type="application/pdf"]')).toHaveAttribute("data", /^blob:.+#search=chapter$/);
 
   // What could not be read is listed, with why — never silently absent.
-  await page.goto("/");
+  await page.getByTestId("close-document").click();
+  await expect(page.getByTestId("library")).toBeVisible();
   await expect(page.getByTestId("search-scope")).toHaveValue("everything");
   const unsearched = page.getByTestId("search-unsearched");
   await expect(unsearched).toBeVisible();
@@ -130,5 +159,10 @@ test("full-text search: index, find a phrase, open at the match, and say what wa
   await expect(item("spec114-scanned").getByTestId("search-unsearched-reason")).toHaveText("scanned image, no text layer");
   await expect(unsearched.getByTestId("search-unsearched-item")).toHaveCount(2);
 
+  // A reload starts the session over, in the default Titles scope.
+  await page.reload();
+  await expect(page.getByTestId("search-scope")).toHaveValue("titles");
+
   expect(foreign).toEqual([]);
+  expect(scripted).toEqual([]);
 });
