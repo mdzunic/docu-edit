@@ -5,7 +5,7 @@
 // every command. SPEC-123: named styles through a save — appended to the
 // retained or the generated styles.xml (nothing else of it changed), the
 // de-ce parents, a self-closing or missing office:styles, write → read.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { equalBytes } from "../../core/equality";
 import { base64ToBytes, bytesToBase64 } from "../../core/packageParts";
 import { DEFAULT_THEME, resolveColor } from "../../core/theme";
@@ -189,6 +189,33 @@ describe("from scratch: frozen panes, gridlines and font families re-open (SPEC-
       [{ rows: 1, cols: 2 }, false],
       [{ rows: 3, cols: 0 }, undefined],
     ]);
+  });
+
+  it("writes every part byte for byte as it does with the DOM, with no DOMParser", async () => {
+    const model = blankPlus();
+    const styled = model.styles.length;
+    model.styles = [...model.styles, { font: { family: "Arial", bold: true }, fill: { kind: "solid", color: "#dce6f1" }, borders: { bottom: { style: "thin" } }, numberFormat: "$#,##0.00" }];
+    model.sheets[0] = {
+      ...model.sheets[0]!,
+      rows: [{ index: 0, cells: [{ col: 0, value: 3960, styleId: styled }, { col: 1, value: "x" }] }],
+      merges: [{ top: 2, left: 0, bottom: 2, right: 3 }],
+      columns: [{ min: 0, max: 0, widthPx: 98, sourceWidthChars: 14 }],
+      frozen: { rows: 1, cols: 0 },
+    };
+    const withDom = (await save(model)).parts;
+    vi.stubGlobal("DOMParser", undefined);
+    vi.stubGlobal("XMLSerializer", undefined);
+    vi.stubGlobal("document", undefined);
+    let withoutDom: Parts;
+    try {
+      withoutDom = (await save(model)).parts;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect([...withoutDom.keys()]).toEqual([...withDom.keys()]);
+    for (const name of withDom.keys()) {
+      expect(text(withoutDom, name), name).toBe(text(withDom, name));
+    }
   });
 
   it("a cell style's font family survives", async () => {
