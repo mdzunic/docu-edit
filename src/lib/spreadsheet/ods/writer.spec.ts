@@ -164,6 +164,44 @@ describe("from scratch: createBlankWorkbook() as .ods + addSheet + a tab colour"
   });
 });
 
+// SPEC-140: a generated workbook's frozen panes and hidden gridlines live in
+// settings.xml, which the from-scratch path once wrote with the ActiveTable
+// alone — so they were lost; and a generated style's own font family must
+// read back over Default's.
+describe("from scratch: frozen panes, gridlines and font families re-open (SPEC-140)", () => {
+  it("writes a Tables entry per sheet that freezes or hides its gridlines, and reads them back", async () => {
+    const model = blankPlus();
+    model.sheets[0] = { ...model.sheets[0]!, frozen: { rows: 1, cols: 2 }, showGridLines: false };
+    model.sheets[1] = { ...model.sheets[1]!, frozen: { rows: 3, cols: 0 } };
+    const { bytes, parts } = await save(model);
+    expect(text(parts, "settings.xml")).toContain(
+      `<config:config-item-map-named config:name="Tables"><config:config-item-map-entry config:name="Sheet1">` +
+        `<config:config-item config:name="HorizontalSplitMode" config:type="short">2</config:config-item>` +
+        `<config:config-item config:name="VerticalSplitMode" config:type="short">2</config:config-item>` +
+        `<config:config-item config:name="HorizontalSplitPosition" config:type="int">2</config:config-item>` +
+        `<config:config-item config:name="VerticalSplitPosition" config:type="int">1</config:config-item>` +
+        `<config:config-item config:name="PositionRight" config:type="int">2</config:config-item>` +
+        `<config:config-item config:name="PositionBottom" config:type="int">1</config:config-item>` +
+        `<config:config-item config:name="ShowGrid" config:type="boolean">false</config:config-item></config:config-item-map-entry>`,
+    );
+    const read = await readSpreadsheetBytes(bytes, "ods", "t");
+    expect(read.sheets.map((sheet) => [sheet.frozen, sheet.showGridLines])).toEqual([
+      [{ rows: 1, cols: 2 }, false],
+      [{ rows: 3, cols: 0 }, undefined],
+    ]);
+  });
+
+  it("a cell style's font family survives", async () => {
+    const model = blankPlus();
+    const styled = model.styles.length;
+    model.styles = [...model.styles, { font: { family: "Arial", sizePt: 14, bold: true } }];
+    model.sheets[0] = { ...model.sheets[0]!, rows: [{ index: 0, cells: [{ col: 0, value: "x", styleId: styled }] }] };
+    const read = await readSpreadsheetBytes((await save(model)).bytes, "ods", "t");
+    const cell = read.sheets[0]!.rows[0]!.cells[0]!;
+    expect(read.styles[cell.styleId!]!.font).toMatchObject({ family: "Arial", sizePt: 14, bold: true });
+  });
+});
+
 // --- verbatim -------------------------------------------------------------------------------
 
 describe("verbatim: nothing changed", () => {
