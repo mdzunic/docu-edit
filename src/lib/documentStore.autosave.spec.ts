@@ -524,6 +524,8 @@ describe("replacePresentationModel (SPEC-103)", () => {
 // records in one batch, then clears the whole draft range. Costs are counted
 // at the idb seam: a stateful in-memory double recording every operation.
 
+const inRange = (key: string, [lower, upper]: [string, string]) => key >= lower && key <= upper;
+
 /** An idb seam over a Map, every put, batch, delete and range recorded. */
 function workbookIdb() {
   const data = new Map<string, unknown>();
@@ -531,7 +533,6 @@ function workbookIdb() {
   const batches: Array<Array<{ put?: { id: string }; delete?: string; deleteRange?: [string, string] }>> = [];
   const deletes: string[] = [];
   const ranges: Array<[string, string]> = [];
-  const inRange = (key: string, [lower, upper]: [string, string]) => key >= lower && key <= upper;
   const seam = {
     loadAllRecords: vi.fn(async () => [...data.values()].map((value) => structuredClone(value))),
     getRecord: vi.fn(async (key: string) => (data.has(key) ? structuredClone(data.get(key)) : undefined)),
@@ -545,7 +546,7 @@ function workbookIdb() {
     }),
     deleteRecordRange: vi.fn(async (lower: string, upper: string) => {
       ranges.push([lower, upper]);
-      for (const key of [...data.keys()]) {
+      for (const key of data.keys()) {
         if (inRange(key, [lower, upper])) {
           data.delete(key);
         }
@@ -559,7 +560,7 @@ function workbookIdb() {
         } else if (op.delete !== undefined) {
           data.delete(op.delete);
         } else if (op.deleteRange) {
-          for (const key of [...data.keys()]) {
+          for (const key of data.keys()) {
             if (inRange(key, op.deleteRange)) {
               data.delete(key);
             }
