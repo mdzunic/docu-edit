@@ -114,6 +114,7 @@ const locales = CSV_LOCALE_OPTIONS.slice();
         v-else
         variant="primary"
         data-testid="csv-import-apply"
+        :disabled="csv.locked.value"
         @click="csv.apply()"
       >
         Apply

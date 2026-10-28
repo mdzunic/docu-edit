@@ -40,7 +40,10 @@
 // SPEC-138: from `saving` (useWorkbookSaving), the `sheet-conflict-bar` while
 // another tab holds the workbook and SPEC-103's RecoveryBar over recovered
 // cells — the formula bar is not editable while the session is locked; and
-// `history` (useWorkbookHistory) is the side panel's history pane.
+// `history` (useWorkbookHistory) is the side panel's history pane. While no
+// edit applies (useWorkbookEditing's `readOnly`) the tabs, the cell, header
+// and drawing menus and the table design bar show their edit commands
+// disabled.
 // Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
@@ -107,6 +110,9 @@ const props = defineProps({
 const saving = computed(() => (props.saving ? asWorkbookSaving(props.saving) : null));
 /** The formula bar takes entry only where the grid's cell editor does. */
 const editable = computed(() => saving.value === null || saving.value.editable.value);
+/** No edit applies (SPEC-138: locked, previewing; SPEC-137: incomplete):
+ * the tabs', the menus' and the table bar's edit commands show disabled. */
+const readOnly = computed(() => asWorkbookEditing(props.editing).readOnly?.value === true);
 
 const assist = computed(() => (props.assist ? asFunctionAssist(props.assist) : null));
 
@@ -288,9 +294,11 @@ const tabs = computed(() => {
     <SheetTableSurfaces
       v-if="tables"
       :tables="tables"
+      :read-only="readOnly"
     />
     <SheetTabs
       :tabs="tabs"
+      :read-only="readOnly"
       :active-index="book.activeIndex.value"
       :panel-id="panelId"
       :renaming-index="commands.renaming.value?.index ?? -1"
@@ -333,6 +341,7 @@ const tabs = computed(() => {
         :x="grid.formatting.contextMenu.value?.x ?? 0"
         :y="grid.formatting.contextMenu.value?.y ?? 0"
         :annotations="annotationMenu"
+        :read-only="readOnly"
         @run="grid.formatting.run"
         @structure="insertOrDelete"
         @clipboard="clipboard"
@@ -351,6 +360,7 @@ const tabs = computed(() => {
         :x="grid.structure.headerMenu.value?.x ?? 0"
         :y="grid.structure.headerMenu.value?.y ?? 0"
         :items="grid.structure.headerItems.value"
+        :read-only="readOnly"
         @run="grid.structure.runHeaderMenu"
         @close="grid.structure.closeHeaderMenu()"
       />
@@ -423,6 +433,7 @@ const tabs = computed(() => {
         :y="drawings.contextMenu.value?.y ?? 0"
         :at-front="drawings.order.value.atFront"
         :at-back="drawings.order.value.atBack"
+        :read-only="readOnly"
         @run="drawingAction"
         @close="drawings.closeContextMenu()"
       />

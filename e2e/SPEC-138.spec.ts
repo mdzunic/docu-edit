@@ -112,6 +112,75 @@ async function plantNewerDraft(page: Page, id: string, value: string): Promise<v
   );
 }
 
+/** The first row and column the grid shows past its headers, as the header
+ * labels read ("47", "J") — what a reopened workbook must scroll back to. */
+async function topLeftShown(page: Page): Promise<{ row: string; col: string }> {
+  return page.getByTestId("spreadsheet-grid").evaluate((grid) => {
+    const headers = (testId: string) =>
+      [...grid.querySelectorAll<HTMLElement>(`[data-testid="${testId}"]`)].map((el) => ({ text: el.textContent?.trim() ?? "", box: el.getBoundingClientRect() }));
+    const rows = headers("sheet-row-header");
+    const cols = headers("sheet-col-header");
+    // Just past the column letters and the row numbers.
+    const y = Math.max(...cols.map((col) => col.box.bottom)) + 1;
+    const x = Math.max(...rows.map((row) => row.box.right)) + 1;
+    return {
+      row: rows.find((row) => row.box.top <= y && y < row.box.bottom)?.text ?? "",
+      col: cols.find((col) => col.box.left <= x && x < col.box.right)?.text ?? "",
+    };
+  });
+}
+
+/** Scrolls the grid by (dx, dy) px a screen at a time, as a user's scrolling
+ * does — each step's scroll event grows the extent the next step needs. */
+async function scrollGrid(page: Page, dx: number, dy: number): Promise<void> {
+  const grid = page.getByTestId("spreadsheet-grid");
+  const target = await grid.evaluate((el, [x, y]) => ({ left: el.scrollLeft + x, top: el.scrollTop + y }), [dx, dy] as const);
+  await expect
+    .poll(() =>
+      grid.evaluate((el, to) => {
+        el.scrollLeft = Math.min(to.left, el.scrollLeft + el.clientWidth / 2);
+        el.scrollTop = Math.min(to.top, el.scrollTop + el.clientHeight / 2);
+        return el.scrollLeft >= to.left && el.scrollTop >= to.top;
+      }, target),
+    )
+    .toBe(true);
+}
+
+test("a reopened workbook scrolls back to its committed top-left row and column (AC-8)", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("open-document-input").setInputFiles(FIXTURE);
+  await expect(page).toHaveURL(/\/sheets\/.+/);
+  await showData(page);
+  await expect(cell(page, "B3")).toHaveText("3");
+
+  // Scroll well away from A1 on both axes and edit a cell the scroll shows;
+  // then scroll on, leaving the active cell out of view.
+  await scrollGrid(page, 1100, 900);
+  await expect.poll(() => topLeftShown(page)).not.toEqual({ row: "1", col: "A" });
+  const edited = await topLeftShown(page);
+  const column = String.fromCharCode(edited.col.charCodeAt(0) + 1);
+  await enterAt(page, `${column}${Number(edited.row) + 2}`, "5150");
+  await waitForSaved(page);
+  await scrollGrid(page, 200, 1200);
+  await expect.poll(async () => (await topLeftShown(page)).row).not.toBe(edited.row);
+  const shown = await topLeftShown(page);
+  expect(Number(shown.row)).toBeGreaterThan(Number(edited.row) + 30);
+  expect(shown.col > "J").toBe(true); // past the columns a reopened grid's first extent reaches
+
+  // Reload (the tab-close commit) and again: the same top-left row and column,
+  // not the active cell scrolled into view.
+  for (let reopen = 0; reopen < 2; reopen += 1) {
+    await page.reload();
+    await expect(tab(page, "Data")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("recovery-bar")).toBeHidden();
+    await waitForSaved(page);
+    await expect.poll(() => topLeftShown(page)).toEqual(shown);
+    await page.waitForTimeout(500); // nothing scrolls it away once settled
+    expect(await topLeftShown(page)).toEqual(shown);
+    await expect(page.getByTestId("name-box")).toHaveValue(`${column}${Number(edited.row) + 3}`);
+  }
+});
+
 test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews and restores its versions, and locks a second tab", async ({ page }) => {
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(FIXTURE);

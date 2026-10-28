@@ -86,6 +86,9 @@ export interface SheetGridContext {
   recalc?: Pick<Recalc, "staleTitleAt"> & Partial<Pick<Recalc, "calcState">>;
   /** Cell entry (SPEC-122); absent = the grid is read-only. */
   cellEditing?: CellEditing;
+  /** SPEC-138: cell entry's reveal tick, there while the grid is read-only
+   * too (Find and Go To still move the active cell); absent = cellEditing's. */
+  reveal?: Readonly<Ref<number>>;
   /** SPEC-129: each mounted cell's conditional-format result; absent = none. */
   conditionalFormats?: Pick<ConditionalFormatsView, "resultAt">;
   /** SPEC-127's function assists: the in-cell editor's ARIA. */
@@ -218,11 +221,18 @@ export function useSheetGrid(
       format: ctx.selection.formatContext.value,
     });
   });
-  // A move the editor made (a commit's Enter/Tab, Ready's Enter/Tab) brings
-  // the new active cell into view.
+  // A move the editor made (a commit's Enter/Tab, Ready's Enter/Tab; Find and
+  // Go To) brings the new active cell into view. SPEC-138: a tick, read from
+  // the context's `reveal` so a grid without an editor (locked, previewing)
+  // still follows — and the editor arriving (the session becoming editable)
+  // is no move: revealing then scrolled a restored top-left away.
   watch(
-    () => editing()?.revealTick.value,
-    () => viewport.ensureVisible(focusTarget(selection().active)),
+    () => (context().reveal ?? editing()?.revealTick)?.value,
+    (tick, previous) => {
+      if (tick !== undefined && previous !== undefined) {
+        viewport.ensureVisible(focusTarget(selection().active));
+      }
+    },
   );
 
   /** A double-click on a cell opens Edit mode, caret at the clicked

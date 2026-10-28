@@ -223,6 +223,8 @@ export function useCsvImport(deps: CsvImportDeps) {
     localeTag,
     preview,
     edited,
+    /** SPEC-138: "Apply" is disabled while the view is read-only. */
+    locked: computed(() => deps.locked?.() === true),
     error,
     apply,
     openAsNew,

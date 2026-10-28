@@ -9,7 +9,7 @@
 // (`sheet-table-styles` → TableStyleGallery) and, in a totals cell, its
 // function menu (`sheet-table-totals-menu-button` → `sheet-table-totals-menu`,
 // items `sheet-table-totals-<id>`). A locked table (external data) keeps the
-// style options only. State and commands are useSheetTables'. Runtime prop
+// style options only; a read-only workbook (SPEC-138) none. State and commands are useSheetTables'. Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { TOTALS_FUNCTION_LABELS, TOTALS_FUNCTIONS } from "../../lib/spreadsheet/tableCommands";
@@ -21,6 +21,8 @@ import TableStyleGallery from "./TableStyleGallery.vue";
 const props = defineProps({
   /** useSheetTables' return. */
   tables: { type: Object, required: true },
+  /** SPEC-138: no edit applies — every control is disabled. */
+  readOnly: { type: Boolean, default: false },
 });
 
 const t = computed(() => asSheetTables(props.tables));
@@ -81,7 +83,7 @@ function toggle(row = t.value.optionRows.value[0], event = new Event("change")) 
         spellcheck="false"
         autocomplete="off"
         :value="t.nameText.value"
-        :disabled="design.locked"
+        :disabled="design.locked || props.readOnly"
         @focus="t.beginRename()"
         @input="editName"
         @keydown="nameKey"
@@ -92,7 +94,7 @@ function toggle(row = t.value.optionRows.value[0], event = new Event("change")) 
       variant="ghost"
       size="sm"
       data-testid="sheet-table-resize"
-      :disabled="design.locked"
+      :disabled="design.locked || props.readOnly"
       @mousedown.prevent
       @click="t.openResize()"
     >
@@ -102,7 +104,7 @@ function toggle(row = t.value.optionRows.value[0], event = new Event("change")) 
       variant="ghost"
       size="sm"
       data-testid="sheet-table-convert"
-      :disabled="design.locked"
+      :disabled="design.locked || props.readOnly"
       @mousedown.prevent
       @click="t.askConvert()"
     >
@@ -121,14 +123,14 @@ function toggle(row = t.value.optionRows.value[0], event = new Event("change")) 
         v-for="row in t.optionRows.value"
         :key="row.option"
         class="option"
-        :class="{ disabled: row.disabled }"
+        :class="{ disabled: row.disabled || props.readOnly }"
         @mousedown.prevent
       >
         <input
           type="checkbox"
           :data-testid="row.testid"
           :checked="row.checked"
-          :disabled="row.disabled"
+          :disabled="row.disabled || props.readOnly"
           @change="toggle(row, $event)"
         >
         {{ row.label }}
@@ -146,6 +148,7 @@ function toggle(row = t.value.optionRows.value[0], event = new Event("change")) 
       menu-testid="sheet-table-styles-menu"
       role="dialog"
       placement="above"
+      :disabled="props.readOnly"
     >
       <TableStyleGallery
         :theme="t.theme.value"
@@ -161,7 +164,7 @@ function toggle(row = t.value.optionRows.value[0], event = new Event("change")) 
       testid="sheet-table-totals-menu-button"
       menu-testid="sheet-table-totals-menu"
       placement="above"
-      :disabled="design.locked"
+      :disabled="design.locked || props.readOnly"
     >
       <button
         v-for="id in TOTALS_FUNCTIONS"

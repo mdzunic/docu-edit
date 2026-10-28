@@ -47,7 +47,7 @@ const { formatting, structure, headerResize, merges, painter, clipboard, fillHan
 const find = useSheetFind({ book, viewState, selection, editing, locale: () => sheetLocale.locale.value });
 const goTo = useSheetGoTo({ book, viewState, selection, editing, names });
 const history = useWorkbookHistory({ saving, model: book.workbook, show: book.replace, syncView: viewState.syncInto, resetUndo: () => editing.undo.reset(), sidePanel: editing.sidePanel });
-const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.gridEditor.value, conditionalFormats: editing.conditionalFormats, assist: editing.assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings, notes: editing.notes, links: editing.links, names, tables, find, printing }));
+const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selection, zoom, viewState, locale: sheetLocale.locale.value, formulas, recalc, cellEditing: editing.gridEditor.value, reveal: editing.cell.revealTick, conditionalFormats: editing.conditionalFormats, assist: editing.assist, formatting, painter, structure, headerResize, merges, clipboard, fillHandle, rangeMove, sortFilter, validation: editing.validation, drawings: editing.drawings, notes: editing.notes, links: editing.links, names, tables, find, printing }));
 </script>
 
 <template>
@@ -65,7 +65,7 @@ const grid = computed(() => ({ model: book.workbook.value, sheetMetrics, selecti
       <WorkbookCommandBar v-bind="{ menu, formatting, painter, merges }" />
       <CsvImportBar :csv-import="editing.csvImport" />
     </template>
-    <WorkbookFindBar :find="find" />
+    <WorkbookFindBar v-bind="{ find, readOnly: editing.readOnly.value }" />
     <WorkbookBody
       v-if="book.workbook.value"
       v-bind="{ book, grid, editing, assist: editing.assist, saving, history }"

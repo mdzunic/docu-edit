@@ -115,6 +115,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     book: deps.book,
     undo,
     syncViewState: (model) => deps.viewState.syncInto(model),
+    readOnly,
   });
   const download = useWorkbookDownload({ book: deps.book, onDownload: () => deps.session.commitPoint() });
   const conditionalFormats = useConditionalFormats({ book: deps.book, recalc: deps.recalc, undo, locale: deps.locale });
@@ -135,6 +136,8 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
   /** The grid's cell editor — withdrawn while the session is locked, so the
    * grid reads aria-readonly="true" and typing does nothing (SPEC-138). */
   const gridEditor = computed(() => (locked() ? undefined : cell));
+  /** Whether no edit applies now — every edit command shows disabled. */
+  const readOnlyNow = computed(readOnly);
   /** SpreadsheetAppBar's undo/redo and split-download props, bound as one
    * (the Edit menu reads the same). While a cell is being edited the
    * workbook's undo and redo are off — the editor's own text undo has
@@ -222,7 +225,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
     locale: deps.locale,
     blocked: () => annotationEditing.linksReason.value,
   });
-  return { undo, commands, download, appBar, cell, gridEditor, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport, notes, comments, links };
+  return { undo, commands, download, appBar, cell, gridEditor, readOnly: readOnlyNow, conditionalFormats, sidePanel, cfManager, validationDialog, validation, drawings, charts, assist, csvImport, notes, comments, links };
 }
 
 export type WorkbookEditing = ReturnType<typeof useWorkbookEditing>;

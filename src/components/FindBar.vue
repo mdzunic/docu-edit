@@ -41,6 +41,9 @@ const props = defineProps({
   /** SPEC-134: whether the "Whole words" toggle shows — a sheet has none
    * (it matches cells, and offers "Match entire cell" in the options slot). */
   showWholeWords: { type: Boolean, default: true },
+  /** SPEC-138: replacing is off (a read-only workbook) — the replace field
+   * and both Replace buttons are disabled; finding still works. */
+  replaceDisabled: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -287,6 +290,7 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
         aria-label="Replace with"
         placeholder="Replace with"
         :value="replaceText"
+        :disabled="replaceDisabled"
         @input="onReplaceInput"
         @keydown="onReplaceKeydown"
       >
@@ -294,7 +298,7 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
         type="button"
         class="find-text-button"
         data-testid="find-replace"
-        :disabled="!canReplaceCurrent()"
+        :disabled="replaceDisabled || !canReplaceCurrent()"
         @click="emit('replace')"
       >
         Replace
@@ -303,7 +307,7 @@ function onReplaceKeydown(event = new KeyboardEvent("keydown")) {
         type="button"
         class="find-text-button"
         data-testid="find-replace-all"
-        :disabled="!canReplaceAll()"
+        :disabled="replaceDisabled || !canReplaceAll()"
         @click="emit('replace-all')"
       >
         Replace all

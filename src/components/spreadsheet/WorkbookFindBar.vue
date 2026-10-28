@@ -15,6 +15,8 @@ import SheetFindResults from "./SheetFindResults.vue";
 const props = defineProps({
   /** useSheetFind's return. */
   find: { type: Object, required: true },
+  /** SPEC-138: no edit applies — Replace is disabled (Find still works). */
+  readOnly: { type: Boolean, default: false },
 });
 
 const find = computed(() => asSheetFind(props.find));
@@ -24,6 +26,7 @@ const find = computed(() => asSheetFind(props.find));
   <SheetFindResults :find="props.find">
     <FindBar
       v-bind="find.bar.value"
+      :replace-disabled="props.readOnly"
       v-on="find.barEvents"
     >
       <template #options>

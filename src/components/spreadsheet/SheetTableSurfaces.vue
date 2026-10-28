@@ -22,6 +22,8 @@ import TableDesignBar from "./TableDesignBar.vue";
 const props = defineProps({
   /** useSheetTables' return. */
   tables: { type: Object, required: true },
+  /** SPEC-138: no edit applies — the design bar's controls are disabled. */
+  readOnly: { type: Boolean, default: false },
 });
 
 const t = computed(() => asSheetTables(props.tables));
@@ -44,7 +46,10 @@ function resize(text = "") {
 </script>
 
 <template>
-  <TableDesignBar :tables="props.tables" />
+  <TableDesignBar
+    :tables="props.tables"
+    :read-only="props.readOnly"
+  />
   <div
     v-if="t.odsNotice.value"
     class="table-ods-notice"

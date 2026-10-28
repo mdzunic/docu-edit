@@ -29,7 +29,9 @@
 // Print… and Print area ▸, View ▸ Page breaks and Insert ▸ the page breaks
 // are `printing`'s (usePageSetup, useSheetPrint). SPEC-138: File ▸ Version
 // history toggles the side panel's history pane (useWorkbookEditing's
-// sidePanel), checked while it is open. Later specs append commands here.
+// sidePanel), checked while it is open, and the bar's state says when the
+// workbook is read-only (useWorkbookEditing's readOnly). Later specs append
+// commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -57,7 +59,7 @@ export interface SpreadsheetMenuDeps {
   /** Data → Recalculate (SPEC-120). */
   recalc?: Pick<Recalc, "recalculate">;
   /** SPEC-121: Edit → Undo/Redo and File → Download / "Download a copy as …". */
-  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts" | "links" | "notes" | "comments">>;
+  editing?: Pick<WorkbookEditing, "undo" | "download" | "appBar"> & Partial<Pick<WorkbookEditing, "sidePanel" | "validationDialog" | "drawings" | "charts" | "links" | "notes" | "comments" | "readOnly">>;
   /** SPEC-123: the Format menu. */
   formatting?: Pick<Formatting, "run" | "toolbar">;
   /** SPEC-124: View ▸ Freeze and the Format menu's rows and columns. */
@@ -152,6 +154,7 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       commentsOpen: deps.editing?.comments?.isOpen.value === true,
       showAllNotes: deps.editing?.notes?.showAll.value === true,
       historyOpen: deps.editing?.sidePanel?.activePane.value === "history",
+      readOnly: deps.editing?.readOnly?.value === true,
       pageBreaks: deps.printing?.pageSetup.pageBreaks.shown.value === true,
       canInsertPageBreak: deps.printing?.pageSetup.state.value.canInsert === true,
       canRemovePageBreak: deps.printing?.pageSetup.state.value.canRemove === true,

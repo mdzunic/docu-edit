@@ -60,6 +60,9 @@ export interface SheetCommandsDeps {
   undo: SpreadsheetUndo;
   /** Writes the view state into the live model before a step is recorded. */
   syncViewState: (model: SpreadsheetModel) => void;
+  /** SPEC-138: no edit applies (another tab holds the workbook, a version is
+   * previewed): the tab menu's commands show disabled and none runs. */
+  readOnly?: () => boolean;
 }
 
 export function useSheetCommands(deps: SheetCommandsDeps) {
@@ -99,7 +102,7 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
   /** Runs one command as one undo step, then shows the sheet it names. */
   function run(label: string, command: (target: SpreadsheetModel) => SheetCommandResult | void): SheetCommandResult | undefined {
     const target = model();
-    if (!target || refusedByProtection()) {
+    if (!target || deps.readOnly?.() || refusedByProtection()) {
       return undefined;
     }
     deps.syncViewState(target);
@@ -122,7 +125,8 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
 
   const menuItems: ComputedRef<SheetTabMenuItem[]> = computed(() => {
     const target = model();
-    return target && menu.value ? sheetTabMenuItems(target, menu.value.index) : [];
+    const items = target && menu.value ? sheetTabMenuItems(target, menu.value.index) : [];
+    return deps.readOnly?.() ? items.map((item) => ({ ...item, disabled: true })) : items;
   });
 
   function openMenu(payload: { index: number; x: number; y: number }): void {
@@ -142,7 +146,7 @@ export function useSheetCommands(deps: SheetCommandsDeps) {
 
   function startRename(index: number): void {
     const sheet = model()?.sheets[index];
-    if (sheet && !refusedByProtection()) {
+    if (sheet && !deps.readOnly?.() && !refusedByProtection()) {
       renaming.value = { index, draft: sheet.name, error: "" };
     }
   }
