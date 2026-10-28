@@ -472,16 +472,19 @@ describe("the deck package record on load (SPEC-103)", () => {
 });
 
 describe("deleteDocument (SPEC-103)", () => {
-  it("removes all six keys: the record, its draft, both media and both package records", async () => {
+  // SPEC-114 adds the seventh: the document's search index record, a copy
+  // of its text, goes with it.
+  it("removes all seven keys: the record, its draft, both media and both package records, and its index record", async () => {
     const { store, deleteRecord } = await loadStore();
     store.replacePresentationModel("deck-12", deck("deck-12"));
     store.deleteDocument("deck-12");
-    expect(deleteRecord).toHaveBeenCalledTimes(6);
+    expect(deleteRecord).toHaveBeenCalledTimes(7);
     expect(deleteRecord.mock.calls.map((call) => call[0]).toSorted()).toEqual([
       "deck-12",
       "draft:deck-12",
       "draftmedia:deck-12",
       "draftopaque:deck-12",
+      "index:deck-12",
       "media:deck-12",
       "opaque:deck-12",
     ]);

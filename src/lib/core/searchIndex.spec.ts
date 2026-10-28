@@ -286,6 +286,13 @@ describe("search — BM25 against hand-computed values", () => {
     expect(ids(search(corpus, query("大 ")))).toEqual(["zh"]);
   });
 
+  it("narrows hits with a filter without changing the survivors' scores", () => {
+    const all = search(index, query("figures "));
+    const narrowed = search(index, query("figures "), { filter: (id) => id === "d1" });
+    expect(ids(narrowed)).toEqual(["d1"]);
+    expect(narrowed[0].score).toBe(all.find((hit) => hit.id === "d1")?.score);
+  });
+
   it("returns nothing for an empty query, and caps the list with limit", () => {
     expect(search(index, query(""))).toEqual([]);
     expect(search(index, query("figures "), { limit: 1 })).toHaveLength(1);

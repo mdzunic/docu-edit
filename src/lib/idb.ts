@@ -11,6 +11,7 @@ import type { PersistedRecord } from "./documentStore";
 import type { VersionStoreRecord } from "./versionHistory";
 import type { DeckVersionStoreRecord } from "./presentationVersions";
 import type { StoredTemplateRecord } from "./templateStore";
+import type { IndexRecord, IndexStore } from "./core/searchEngine";
 
 const DB_NAME = "docu-edit";
 const DB_VERSION = 3;
@@ -42,6 +43,14 @@ export type { WriteBatchOp };
  * this module (documentStore.sheets.spec.ts pins the two equal). */
 export const LAZY_RECORD_KEY_PREFIXES: readonly string[] = ["sheetrows:", "sheetsource:"];
 
+/** SPEC-114's per-document library search index records, `index:<docId>`.
+ * Never part of the start-up read either — not even lazily: only the
+ * library search worker (and its in-thread fallback) reads or writes them,
+ * and only while the library-search experiment is on. The same string as
+ * documentStore's INDEX_KEY_PREFIX (libraryIndex.spec.ts pins the two
+ * equal), spelled out here for LAZY_RECORD_KEY_PREFIXES' reason. */
+export const INDEX_RECORD_KEY_PREFIX = "index:";
+
 /** Above every key that starts with a prefix: no key holds U+FFFF (document
  * ids are UUIDs, sheet ids `[A-Za-z0-9_-]`). */
 const PREFIX_END = "\uffff";
@@ -63,11 +72,11 @@ export function rangesExcluding(excluded: readonly string[]): { lower?: string; 
 
 /** Reads every persisted record the library needs at start-up — committed
  * shells, autosave drafts, media — through the key ranges that exclude
- * LAZY_RECORD_KEY_PREFIXES (SPEC-137: three ranges today); callers split
- * them by key prefix. */
+ * LAZY_RECORD_KEY_PREFIXES and the search index records (SPEC-137/114: four
+ * ranges today); callers split them by key prefix. */
 export async function loadAllRecords(): Promise<PersistedRecord[]> {
   const parts = await Promise.all(
-    rangesExcluding(LAZY_RECORD_KEY_PREFIXES).map(({ lower, upper }) =>
+    rangesExcluding([...LAZY_RECORD_KEY_PREFIXES, INDEX_RECORD_KEY_PREFIX]).map(({ lower, upper }) =>
       database.getAllInRange<PersistedRecord>(STORE_NAME, lower, upper, { lowerOpen: true, upperOpen: true }),
     ),
   );
@@ -107,6 +116,43 @@ export async function deleteRecordRange(lower: string, upper: string): Promise<v
 export async function writeBatch(ops: readonly WriteBatchOp[]): Promise<void> {
   await database.writeBatch(STORE_NAME, ops);
 }
+
+// --- library search index (SPEC-114) ----------------------------------------
+// One record per document under INDEX_RECORD_KEY_PREFIX, in the documents
+// store. The record carries its docId; the key is derived from it.
+
+/** Every stored index record. */
+export async function loadIndexRecords(): Promise<IndexRecord[]> {
+  const stored = await database.getAllInRange<IndexRecord & { id: string }>(
+    STORE_NAME,
+    INDEX_RECORD_KEY_PREFIX,
+    INDEX_RECORD_KEY_PREFIX + PREFIX_END,
+  );
+  return stored.map(({ id: _id, ...record }) => record);
+}
+
+/** Writes (inserts or replaces) one document's index record. */
+export async function putIndexRecord(record: IndexRecord): Promise<void> {
+  await database.put(STORE_NAME, { id: INDEX_RECORD_KEY_PREFIX + record.docId, ...record });
+}
+
+/** Removes one document's index record. Resolves even if absent. */
+export async function deleteIndexRecord(docId: string): Promise<void> {
+  await database.delete(STORE_NAME, INDEX_RECORD_KEY_PREFIX + docId);
+}
+
+/** Removes every index record. */
+export async function clearIndexRecords(): Promise<void> {
+  await database.deleteRange(STORE_NAME, INDEX_RECORD_KEY_PREFIX, INDEX_RECORD_KEY_PREFIX + PREFIX_END);
+}
+
+/** The index records as the search engine's storage. */
+export const idbIndexStore: IndexStore = {
+  loadAll: loadIndexRecords,
+  put: putIndexRecord,
+  remove: deleteIndexRecord,
+  clear: clearIndexRecords,
+};
 
 // --- version history (SPEC-040) --------------------------------------------
 // A separate object store, and separate helpers, so a version-history write

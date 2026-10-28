@@ -668,8 +668,22 @@ interface ClauseMatch {
  * non-negative idf over the whole index (a phrase or prefix clause is one
  * term: its occurrences are its tf, the documents holding one its df).
  * Ties: newest `lastModified` first, then id. `limit` caps how many hits are
- * returned (their positions are the only ones computed in full). */
-export function search(index: SearchIndex, query: Query, options: { limit?: number } = {}): SearchHit[] {
+ * returned; `filter` keeps only the documents it accepts as hits, while
+ * every document still counts towards N, df and the average lengths —
+ * narrowing a search never changes a survivor's score. */
+export function search(
+  index: SearchIndex,
+  query: Query,
+  options: { limit?: number; filter?: (id: string) => boolean } = {},
+): SearchHit[] {
+  const ranked = rank(index, query, options.filter);
+  return withPositions(index, query, options.limit === undefined ? ranked : ranked.slice(0, Math.max(0, options.limit)));
+}
+
+/** Every hit, scored and ordered as `search` orders them, without body
+ * positions — the cheap part, so a caller can count all hits and then
+ * fill positions (withPositions) for only the ones it shows. */
+export function rank(index: SearchIndex, query: Query, filter?: (id: string) => boolean): SearchHit[] {
   const positive = query.terms.filter((term) => !term.exclude);
   const excluded = query.terms.filter((term) => term.exclude);
   if (positive.length === 0 && !query.facets.some((facet) => !facet.exclude)) {
@@ -697,8 +711,11 @@ export function search(index: SearchIndex, query: Query, options: { limit?: numb
   const bodyDf = matches.map((perDoc) => perDoc.filter((match) => match.body.length > 0).length);
   const titleDf = matches.map((perDoc) => perDoc.filter((match) => match.title > 0).length);
 
-  const hits: Array<{ hit: SearchHit; docIndex: number }> = [];
+  const hits: SearchHit[] = [];
   docs.forEach((doc, d) => {
+    if (filter && !filter(doc.id)) {
+      return;
+    }
     if (!query.facets.every((facet) => facetMatches(doc, facet) !== facet.exclude)) {
       return;
     }
@@ -718,19 +735,23 @@ export function search(index: SearchIndex, query: Query, options: { limit?: numb
       titleMatches += match.title;
       bodyMatches += match.body.length;
     });
-    hits.push({ hit: { id: doc.id, score, positions: [], titleMatches, bodyMatches, lastModified: doc.lastModified }, docIndex: d });
+    hits.push({ id: doc.id, score, positions: [], titleMatches, bodyMatches, lastModified: doc.lastModified });
   });
-  hits.sort(
-    (a, b) =>
-      b.hit.score - a.hit.score ||
-      b.hit.lastModified - a.hit.lastModified ||
-      compareStrings(a.hit.id, b.hit.id),
-  );
-  const shown = options.limit === undefined ? hits : hits.slice(0, Math.max(0, options.limit));
-  for (const { hit, docIndex } of shown) {
-    hit.positions = bodyPositions(docs[docIndex], positive, matches.map((perDoc) => perDoc[docIndex]));
-  }
-  return shown.map(({ hit }) => hit);
+  return hits.sort((a, b) => b.score - a.score || b.lastModified - a.lastModified || compareStrings(a.id, b.id));
+}
+
+/** The hits with their body positions filled in (see SearchHit). */
+export function withPositions(index: SearchIndex, query: Query, hits: SearchHit[]): SearchHit[] {
+  const positive = query.terms.filter((term) => !term.exclude);
+  const byId = new Map(index.docs.map((doc) => [doc.id, doc]));
+  return hits.map((hit) => {
+    const doc = byId.get(hit.id);
+    if (!doc) {
+      return hit;
+    }
+    const perClause = positive.map((term) => ({ body: term.field === "title" ? [] : clauseOccurrences(doc.body, term), title: 0 }));
+    return { ...hit, positions: bodyPositions(doc, positive, perClause) };
+  });
 }
 
 /** Every body character offset a document's positive matches cover — each
