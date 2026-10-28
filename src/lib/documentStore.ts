@@ -1522,10 +1522,28 @@ async function deleteWorkbookRecords(id: string): Promise<void> {
 // ("Not saved — browser storage is full" in the app bar) and recovers the
 // moment a write succeeds again.
 
+/** The draft writes in flight, per document. A commit lets them land before
+ * it clears the drafts: a tick that began before the commit would otherwise
+ * outlive it as a draft stamped newer — a false recovery bar on the next open
+ * (SPEC-138; text documents and decks shared the race). */
+const draftWrites = new Map<string, Promise<void>>();
+
 /** Writes the autosave draft for a document — a text document or a deck
  * (SPEC-103) — from its current in-memory model, with the editor state
  * beside it. Rejects on any storage failure. */
-export async function saveDraft(id: string, state: DraftState): Promise<void> {
+export function saveDraft(id: string, state: DraftState): Promise<void> {
+  const write = writeDraft(id, state);
+  const landed = Promise.all([draftWrites.get(id), write.catch(() => {})]).then(() => {});
+  draftWrites.set(id, landed);
+  void landed.then(() => {
+    if (draftWrites.get(id) === landed) {
+      draftWrites.delete(id);
+    }
+  });
+  return write;
+}
+
+async function writeDraft(id: string, state: DraftState): Promise<void> {
   const record = records.get(id);
   if (!record) {
     throw new Error(`No document with id ${id}`);
@@ -1897,6 +1915,7 @@ export async function commitDocument(id: string, state: DraftState): Promise<voi
     const opaqueWrite = persistModelOpaque(id, record.model);
     await Promise.all([mediaWrite ?? Promise.resolve(), opaqueWrite ?? Promise.resolve(), putShell(record, opaqueWrite)]);
   }
+  await draftWrites.get(id);
   await deleteDraft(id);
 }
 

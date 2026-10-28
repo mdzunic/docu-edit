@@ -148,8 +148,10 @@ export function useWorkbookHistory(deps: WorkbookHistoryDeps) {
     deps.show(model);
   }
 
+  /** Ends a preview: the live workbook back on show — unless the view has
+   * moved on (another workbook is on show), which it must not cover. */
   function exitPreview(): void {
-    const restored = setAside;
+    const restored = deps.model.value === previewModel.value ? setAside : null;
     setAside = null;
     previewModel.value = null;
     previewVersionId.value = null;

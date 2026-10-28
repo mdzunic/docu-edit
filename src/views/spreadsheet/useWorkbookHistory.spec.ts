@@ -246,6 +246,21 @@ describe("preview (AC-52, AC-53)", () => {
     expect(live.sheets).toBe(liveSheets);
     expect(show).toHaveBeenLastCalledWith(live);
   });
+
+  it("a session ending because the view moved on to another workbook ends the preview without covering that workbook", async () => {
+    const { history, live, model, previewing, show, emit } = await harness();
+    const { recordWorkbookVersion } = await import("../../lib/spreadsheetVersions");
+    const version = await recordWorkbookVersion({ docId: live.id, model: { ...(await workbook("then")), id: live.id }, author: "You", trigger: "commit", cachedPrev: null });
+    await history.preview(version.newEntry!.id);
+    const other = { ...(await workbook("other")), id: "another-book" };
+    model.value = other; // the route's next workbook, resident, on show
+    const calls = show.mock.calls.length;
+    emit("end");
+    expect(previewing.value).toBe(false);
+    expect(history.previewModel.value).toBeNull();
+    expect(model.value).toBe(other);
+    expect(show.mock.calls.length).toBe(calls);
+  });
 });
 
 describe("the pane and its labels (AC-48..AC-51)", () => {

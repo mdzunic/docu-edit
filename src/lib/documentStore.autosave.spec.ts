@@ -189,6 +189,44 @@ describe("commitDocument", () => {
     expect(deleteRecord).toHaveBeenCalledWith("draft:doc-5");
   });
 
+  it("lets a draft write in flight land before it clears the drafts, so no draft outlives the commit (SPEC-138)", async () => {
+    const { store, putRecord, deleteRecord } = await loadStore();
+    store.getOrCreateDocument("doc-7");
+    await flushSetupWrite(putRecord);
+    const order: string[] = [];
+    let land = (): void => {};
+    putRecord.mockImplementation((record: { id: string }) =>
+      record.id === "draft:doc-7"
+        ? new Promise<void>((resolve) => {
+            land = () => {
+              order.push("put draft:doc-7");
+              resolve();
+            };
+          })
+        : Promise.resolve(),
+    );
+    deleteRecord.mockImplementation((key: string) => {
+      order.push(`delete ${key}`);
+      return Promise.resolve();
+    });
+    const ticks = async (count: number) => {
+      for (let tick = 0; tick < count; tick += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    };
+    const draft = store.saveDraft("doc-7", { caret: null, scroll: 0 });
+    for (let tick = 0; tick < 100 && !putRecord.mock.calls.some(([record]) => record.id === "draft:doc-7"); tick += 1) {
+      await ticks(1);
+    }
+    const commit = store.commitDocument("doc-7", { caret: null, scroll: 0 });
+    await ticks(20);
+    expect(order).not.toContain("delete draft:doc-7");
+    land();
+    await Promise.all([draft, commit]);
+    expect(order.indexOf("put draft:doc-7")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("put draft:doc-7")).toBeLessThan(order.indexOf("delete draft:doc-7"));
+  });
+
   it("rejects when the committed write fails, without latching the banner", async () => {
     const { store, putRecord } = await loadStore();
     store.getOrCreateDocument("doc-6");
