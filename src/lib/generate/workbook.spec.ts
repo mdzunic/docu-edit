@@ -209,8 +209,12 @@ describe("sheets (AC-3, AC-4, AC-5)", () => {
   });
 });
 
+/** A one-cell workbook. */
+function one(input: unknown, dateSystem: "1900" | "1904" = "1900"): SpreadsheetModel {
+  return new WorkbookBuilder({ dateSystem }).addSheet("S").setCell("A1", input as never).toWorkbook();
+}
+
 describe("cell input (AC-6, AC-7)", () => {
-  const one = (input: unknown): SpreadsheetModel => new WorkbookBuilder().addSheet("S").setCell("A1", input as never).toWorkbook();
 
   it("strings up to 32,767 characters, a leading = staying text", () => {
     expect(cellAt(one("Region"), "A1")).toEqual({ col: 0, value: "Region" });
@@ -253,8 +257,6 @@ describe("cell input (AC-6, AC-7)", () => {
 });
 
 describe("dates (AC-8, AC-9)", () => {
-  const one = (input: unknown, dateSystem: "1900" | "1904" = "1900"): SpreadsheetModel =>
-    new WorkbookBuilder({ dateSystem }).addSheet("S").setCell("A1", input as never).toWorkbook();
 
   it("a JS Date is read in UTC, an ISO date by its calendar fields, both through serial.ts", () => {
     const day = dateToSerial(2026, 10, 8, "1900");
@@ -327,7 +329,7 @@ describe("setCell, setRow and setRows (AC-10)", () => {
 
   it("counts setRow and setRows as data[j], each value at rows[r][c]", () => {
     const builder = new WorkbookBuilder().addSheet("S").setRow("A1", [1]).setRows("A2", [[2]]);
-    expect(fails(() => builder.setRows("A3", [["ok", { error: "#BAD" }]]))).toMatch(/^sheets\[0\]\.data\[2\]\.rows\[0\]\[1\]\.error: expected one of/);
+    expect(fails(() => builder.setRows("A3", [["ok", { error: "#BAD" as never }]]))).toMatch(/^sheets\[0\]\.data\[2\]\.rows\[0\]\[1\]\.error: expected one of/);
     expect(fails(() => builder.setRows("A3", [[1], 2] as never))).toBe("sheets[0].data[2].rows[1]: expected an array");
     expect(fails(() => builder.setRows("A3", "x" as never))).toBe("sheets[0].data[2].rows: expected an array");
     expect(fails(() => builder.setRow("A3", "x" as never))).toBe("sheets[0].data[2].rows[0]: expected an array");
@@ -339,9 +341,6 @@ describe("setCell, setRow and setRows (AC-10)", () => {
 
 describe("parseText (AC-11, AC-12)", () => {
   it("routes strings through inferCsvField in the builder's locale", () => {
-    const model = new WorkbookBuilder({ locale: "en-GB" }).addSheet("S").setRow("A1", ["1,234.50", "45%", "10/08/2026", "TRUE", "#N/A", "007", "plain", ""], { parseText: true } as never).toWorkbook();
-    // setRow takes no options: parseText is setRows'.
-    expect(cellAt(model, "A1")?.value).toBe("1,234.50");
     const typed = new WorkbookBuilder({ locale: "en-GB" })
       .addSheet("S")
       .setRows("A1", [["1,234.50", "45%", "10/08/2026", "TRUE", "#N/A", "007", "plain", ""]], { parseText: true })

@@ -199,6 +199,11 @@ describe("workbookFromDescription — one row of the key table each (AC-30)", ()
   });
 });
 
+/** A description whose second sheet holds `extra`. */
+function withSecondSheet(extra: Record<string, unknown>): unknown {
+  return { sheets: [{ name: "One" }, { name: "Two", ...extra }] };
+}
+
 describe("validation (AC-32, AC-33)", () => {
   it("{} describes a one-sheet empty workbook", () => {
     for (const description of [{}, { sheets: [] }]) {
@@ -209,7 +214,6 @@ describe("validation (AC-32, AC-33)", () => {
   });
 
   it("an unknown key at any level is an unknown property, named by its JSON path", () => {
-    const sheet = (extra: Record<string, unknown>): unknown => ({ sheets: [{ name: "One" }, { name: "Two", ...extra }] });
     const cases: [unknown, string][] = [
       [{ names: [] }, "names: unknown property"],
       [{ title: "x", charts: [] }, "charts: unknown property"],
@@ -218,21 +222,21 @@ describe("validation (AC-32, AC-33)", () => {
       [{ styles: { header: { borders: { inside: "thin" } } } }, "styles.header.borders.inside: unknown property"],
       [{ styles: { header: { borders: { top: { style: "thin", width: 1 } } } } }, "styles.header.borders.top.width: unknown property"],
       [{ styles: { header: { alignment: { shrink: true } } } }, "styles.header.alignment.shrink: unknown property"],
-      [sheet({ validations: [] }), "sheets[1].validations: unknown property"],
-      [sheet({ conditionalFormats: [] }), "sheets[1].conditionalFormats: unknown property"],
-      [sheet({ hyperlinks: [] }), "sheets[1].hyperlinks: unknown property"],
-      [sheet({ cells: { C4: { fomula: "1" } } }), "sheets[1].cells.C4.fomula: unknown property"],
-      [sheet({ cells: { C4: { value: 1, comment: "n" } } }), "sheets[1].cells.C4.comment: unknown property"],
-      [sheet({ cells: { C4: { value: 1, style: { font: { size: 3 } } } } }), "sheets[1].cells.C4.style.font.size: unknown property"],
-      [sheet({ data: [{ at: "A1", rows: [], header: true }] }), "sheets[1].data[0].header: unknown property"],
-      [sheet({ data: [{ at: "A1", rows: [[{ formula: "1", note: "x" }]] }] }), "sheets[1].data[0].rows[0][0].note: unknown property"],
-      [sheet({ styles: [{ range: "A1", fill: "#000000" }] }), "sheets[1].styles[0].fill: unknown property"],
-      [sheet({ styles: [{ range: "A1", style: { fill: "#000000", pattern: "solid" } }] }), "sheets[1].styles[0].style.pattern: unknown property"],
-      [sheet({ columns: [{ columns: "A", width: { chars: 1 }, hidden: true }] }), "sheets[1].columns[0].hidden: unknown property"],
-      [sheet({ columns: [{ columns: "A", width: { em: 1 } }] }), "sheets[1].columns[0].width.em: unknown property"],
-      [sheet({ rows: [{ rows: 1, height: { pt: 1 }, outline: 1 }] }), "sheets[1].rows[0].outline: unknown property"],
-      [sheet({ rows: [{ rows: 1, height: { cm: 1 } }] }), "sheets[1].rows[0].height.cm: unknown property"],
-      [sheet({ freeze: { rows: 1, split: true } }), "sheets[1].freeze.split: unknown property"],
+      [withSecondSheet({ validations: [] }), "sheets[1].validations: unknown property"],
+      [withSecondSheet({ conditionalFormats: [] }), "sheets[1].conditionalFormats: unknown property"],
+      [withSecondSheet({ hyperlinks: [] }), "sheets[1].hyperlinks: unknown property"],
+      [withSecondSheet({ cells: { C4: { fomula: "1" } } }), "sheets[1].cells.C4.fomula: unknown property"],
+      [withSecondSheet({ cells: { C4: { value: 1, comment: "n" } } }), "sheets[1].cells.C4.comment: unknown property"],
+      [withSecondSheet({ cells: { C4: { value: 1, style: { font: { size: 3 } } } } }), "sheets[1].cells.C4.style.font.size: unknown property"],
+      [withSecondSheet({ data: [{ at: "A1", rows: [], header: true }] }), "sheets[1].data[0].header: unknown property"],
+      [withSecondSheet({ data: [{ at: "A1", rows: [[{ formula: "1", note: "x" }]] }] }), "sheets[1].data[0].rows[0][0].note: unknown property"],
+      [withSecondSheet({ styles: [{ range: "A1", fill: "#000000" }] }), "sheets[1].styles[0].fill: unknown property"],
+      [withSecondSheet({ styles: [{ range: "A1", style: { fill: "#000000", pattern: "solid" } }] }), "sheets[1].styles[0].style.pattern: unknown property"],
+      [withSecondSheet({ columns: [{ columns: "A", width: { chars: 1 }, hidden: true }] }), "sheets[1].columns[0].hidden: unknown property"],
+      [withSecondSheet({ columns: [{ columns: "A", width: { em: 1 } }] }), "sheets[1].columns[0].width.em: unknown property"],
+      [withSecondSheet({ rows: [{ rows: 1, height: { pt: 1 }, outline: 1 }] }), "sheets[1].rows[0].outline: unknown property"],
+      [withSecondSheet({ rows: [{ rows: 1, height: { cm: 1 } }] }), "sheets[1].rows[0].height.cm: unknown property"],
+      [withSecondSheet({ freeze: { rows: 1, split: true } }), "sheets[1].freeze.split: unknown property"],
     ];
     for (const [description, message] of cases) {
       expect(fails(() => workbookFromDescription(description))).toBe(message);
@@ -305,6 +309,9 @@ describe("WorkbookBuilder.fromDescription (AC-31)", () => {
   });
 });
 
+const keys = (shape: { properties: Record<string, unknown> }): string[] => Object.keys(shape.properties).toSorted();
+const sorted = (list: readonly string[]): string[] => [...list].toSorted();
+
 // The published schema describes the same closed shape the runtime
 // validator enforces — checked structurally, as SPEC-045's and SPEC-106's
 // schemas are (the project carries no JSON Schema engine).
@@ -313,8 +320,6 @@ describe("schema/workbook-description.json", () => {
   const schema = JSON.parse(readFileSync(resolve(schemaDir, "workbook-description.json"), "utf8"));
   const documentSchema = JSON.parse(readFileSync(resolve(schemaDir, "document-description.json"), "utf8"));
   const defs = schema.definitions;
-  const keys = (shape: { properties: Record<string, unknown> }): string[] => Object.keys(shape.properties).toSorted();
-  const sorted = (list: readonly string[]): string[] => [...list].toSorted();
 
   it("is a closed draft-07 object with the description's top-level keys", () => {
     expect(schema.$schema).toBe(documentSchema.$schema);

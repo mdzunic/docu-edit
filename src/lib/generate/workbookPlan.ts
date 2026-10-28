@@ -794,8 +794,10 @@ export class WorkbookPlan {
     });
     // 6. Whole-workbook validation.
     this.checkWorkbook(model, formulas);
-    // 7. Every formula's cached value.
-    const result = recalculate(model, [...formulas.keys()], { reason: "edit", settings: { locale: SPREADSHEET_LOCALES[this.locale] } });
+    // 7. Every formula's cached value: every formula cell's key, and `full`
+    // since every one is new (the pass then builds the dependency graph once
+    // rather than updating it cell by cell).
+    const result = recalculate(model, [...formulas.keys()], { reason: "edit", full: true, settings: { locale: SPREADSHEET_LOCALES[this.locale] } });
     const cycle = result.circular[0];
     if (cycle !== undefined) {
       throw new DocumentGenerationError(`${formulas.get(cycle)!.path}.formula: circular reference (${this.cellName(model, cycle)})`);

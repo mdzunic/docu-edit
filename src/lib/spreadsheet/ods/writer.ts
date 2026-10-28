@@ -284,6 +284,11 @@ export const FROM_SCRATCH_ODS_MANIFEST_XML =
   `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
   `<manifest:file-entry manifest:full-path="settings.xml" manifest:media-type="text/xml"/></manifest:manifest>`;
 
+/** One settings.xml `config:config-item`. */
+function configItemXml(name: string, type: string, value: string | number): string {
+  return `<config:config-item config:name="${name}" config:type="${type}">${value}</config:config-item>`;
+}
+
 /** settings.xml holding the view's ActiveTable and, when a sheet has frozen
  * panes or hides its gridlines, a `Tables` entry for each such sheet — its
  * split modes and positions as withFrozen writes them, and `ShowGrid` false
@@ -291,7 +296,6 @@ export const FROM_SCRATCH_ODS_MANIFEST_XML =
  * ods/settings.ts reads them back). A workbook with neither writes the
  * ActiveTable alone. */
 export function fromScratchSettingsXml(activeTable: string, sheets: readonly Sheet[] = []): string {
-  const item = (name: string, type: string, value: string | number): string => `<config:config-item config:name="${name}" config:type="${type}">${value}</config:config-item>`;
   const entries = sheets
     .filter((sheet) => sheet.frozen !== undefined || sheet.showGridLines === false)
     .map((sheet) => {
@@ -300,13 +304,13 @@ export function fromScratchSettingsXml(activeTable: string, sheets: readonly She
       const frozen =
         sheet.frozen === undefined
           ? ""
-          : item("HorizontalSplitMode", "short", cols > 0 ? 2 : 0) +
-            item("VerticalSplitMode", "short", rows > 0 ? 2 : 0) +
-            item("HorizontalSplitPosition", "int", cols) +
-            item("VerticalSplitPosition", "int", rows) +
-            item("PositionRight", "int", cols) +
-            item("PositionBottom", "int", rows);
-      const grid = sheet.showGridLines === false ? item("ShowGrid", "boolean", "false") : "";
+          : configItemXml("HorizontalSplitMode", "short", cols > 0 ? 2 : 0) +
+            configItemXml("VerticalSplitMode", "short", rows > 0 ? 2 : 0) +
+            configItemXml("HorizontalSplitPosition", "int", cols) +
+            configItemXml("VerticalSplitPosition", "int", rows) +
+            configItemXml("PositionRight", "int", cols) +
+            configItemXml("PositionBottom", "int", rows);
+      const grid = sheet.showGridLines === false ? configItemXml("ShowGrid", "boolean", "false") : "";
       return `<config:config-item-map-entry config:name="${escapeAttributeValue(sheet.name)}">${frozen}${grid}</config:config-item-map-entry>`;
     });
   const tables = entries.length === 0 ? "" : `<config:config-item-map-named config:name="Tables">${entries.join("")}</config:config-item-map-named>`;
