@@ -268,6 +268,10 @@ export function useAutosave(options: UseAutosaveOptions) {
       if (editCount === editsAtStart) {
         dirty = false;
         saveState.value = "saved";
+        // The commit covers every edit: a draft tick still pending would
+        // only write a copy of it stamped newer — a false crash signal.
+        scheduler?.dispose();
+        scheduler = makeScheduler();
       }
     } catch {
       if (docId !== id) {
