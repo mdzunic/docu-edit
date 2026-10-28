@@ -114,12 +114,18 @@ describe("the fourth kind", () => {
     expect(store.listDocuments().find((entry) => entry.id === macros.id)?.packageVariant).toBe("macroEnabled");
   });
 
-  it("getOrCreateDocument, saveDraft and replaceDocumentModel throw on a workbook id", async () => {
-    const { store, workbook } = await loadStore();
+  // SPEC-138 lifted SPEC-116's saveDraft guard (a workbook drafts into its
+  // own records); creating a text document over a workbook's id, or swapping
+  // a text model in, still throws.
+  it("getOrCreateDocument and replaceDocumentModel throw on a workbook id; saveDraft drafts it into draft records only", async () => {
+    const { store, idb, workbook } = await loadStore();
     const model = await workbook();
     store.storeSpreadsheet(model);
     expect(() => store.getOrCreateDocument(model.id)).toThrow(/spreadsheet/);
-    await expect(store.saveDraft(model.id, { caret: null, scroll: 0 })).rejects.toThrow(/spreadsheet/);
+    await store.saveDraft(model.id, { caret: null, scroll: 0 });
+    const drafted = idb.putRecord.mock.calls.map(([record]) => (record as { id: string }).id);
+    expect(drafted).toContain(`draft:${model.id}`);
+    expect(drafted.every((key) => key.startsWith("draft"))).toBe(true);
     expect(() => store.replaceDocumentModel(model.id, { id: model.id, title: "x", sections: [], defaultStyles: {} } as never)).toThrow(
       /spreadsheet/,
     );

@@ -31,6 +31,21 @@ export interface SheetSelection {
   activeRangeIndex: number;
 }
 
+/** Where a workbook's view stood (SPEC-138 "The workbook draft record"),
+ * recorded beside every draft and commit so reopening puts it back: the tab
+ * that was showing, its active cell (the selection collapses to it on
+ * restore) and the first fully visible row and column — indices, never
+ * pixels: an offset means nothing once a column is resized or the zoom
+ * changes, and GridMetrics turns the indices back into one. */
+export interface SheetViewState {
+  sheetId: string;
+  active: CellRef;
+  /** First fully visible row, 0-based. */
+  topRow: number;
+  /** First fully visible column, 0-based. */
+  leftCol: number;
+}
+
 export type Direction = "up" | "down" | "left" | "right";
 
 export interface NavContext {

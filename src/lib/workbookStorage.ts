@@ -18,6 +18,15 @@ import { chunkKeySegment, chunkOf, chunkRows, rowsInChunk, SHEET_ROWS_CHUNK } fr
 export { SHEET_ROWS_CHUNK };
 export const SHEET_ROWS_KEY_PREFIX = "sheetrows:";
 export const SHEET_SOURCE_KEY_PREFIX = "sheetsource:";
+/** SPEC-138: a DRAFT's chunk records — each the shadow of one committed chunk
+ * key (draftRowsKey), in the same `documents` store. An autosave tick writes
+ * only these, never a committed chunk: "Discard" restores the committed
+ * records, which a draft that shared them would already have overwritten
+ * (DRAFT_MEDIA_KEY_PREFIX's reasoning). */
+export const DRAFT_SHEET_ROWS_KEY_PREFIX = "draft" + SHEET_ROWS_KEY_PREFIX;
+/** SPEC-138: a draft's own copy of the retained sources, written only once a
+ * source differs by reference from what `sheetsource:<docId>` holds. */
+export const DRAFT_SHEET_SOURCE_KEY_PREFIX = "draft" + SHEET_SOURCE_KEY_PREFIX;
 
 /** Above every key that starts with a prefix: no key holds U+FFFF (document
  * ids are UUIDs, sheet ids `[A-Za-z0-9_-]`). */
@@ -73,6 +82,23 @@ export function legacySheetRowsKey(docId: string, sheetId: string): string {
 
 export function workbookSourceKey(docId: string): string {
   return SHEET_SOURCE_KEY_PREFIX + docId;
+}
+
+/** The draft chunk key shadowing committed chunk key `committedKey`
+ * (`sheetrows:<docId>:<sheetId>:<chunk4>` → `draftsheetrows:…`). */
+export function draftRowsKey(committedKey: string): string {
+  return "draft" + committedKey;
+}
+
+export function draftSourceKey(docId: string): string {
+  return DRAFT_SHEET_SOURCE_KEY_PREFIX + docId;
+}
+
+/** Every draft chunk record of a workbook, as a closed key range — what a
+ * commit, a discard and a delete clear in one operation (a sheet deleted
+ * mid-session leaves none behind). */
+export function draftRowsRange(docId: string): [string, string] {
+  return [`${DRAFT_SHEET_ROWS_KEY_PREFIX}${docId}:`, `${DRAFT_SHEET_ROWS_KEY_PREFIX}${docId}:${KEY_END}`];
 }
 
 /** Every rows record of a workbook — its chunks and any SPEC-116 per-sheet
@@ -193,9 +219,11 @@ export function joinWorkbook(
   return model;
 }
 
-function sourceRecordOf(docId: string, model: SpreadsheetModel): WorkbookSourceRecord {
+/** The source record `model` would store under `key` (the committed
+ * `sheetsource:<docId>` by default; SPEC-138's draft copy names its own). */
+export function sourceRecordOf(docId: string, model: SpreadsheetModel, key = workbookSourceKey(docId)): WorkbookSourceRecord {
   const record: WorkbookSourceRecord = {
-    id: workbookSourceKey(docId),
+    id: key,
     docId,
     opaque: model.opaque,
     sheetSources: Object.fromEntries(sourceLatchOf(model).sheetSources),
@@ -206,7 +234,8 @@ function sourceRecordOf(docId: string, model: SpreadsheetModel): WorkbookSourceR
   return record;
 }
 
-function sameRows(a: readonly Row[], b: readonly Row[]): boolean {
+/** Two row slices holding the same Row objects in the same order. */
+export function sameRows(a: readonly Row[], b: readonly Row[]): boolean {
   return a.length === b.length && a.every((row, index) => row === b[index]);
 }
 

@@ -38,11 +38,17 @@ export type { WriteBatchOp };
  * storage layout"): a workbook's row chunks (`sheetrows:`) and its source
  * record (`sheetsource:`) are read only when the workbook is loaded
  * (documentStore.loadSpreadsheet), so the landing page reads no cell and no
- * retained package. SPEC-138's draft chunk and draft source prefixes join
- * this list. The same strings as documentStore's SHEET_ROWS_KEY_PREFIX and
+ * retained package. The same strings as documentStore's SHEET_ROWS_KEY_PREFIX and
  * SHEET_SOURCE_KEY_PREFIX — spelled out here because documentStore imports
  * this module (documentStore.sheets.spec.ts pins the two equal). */
 export const LAZY_RECORD_KEY_PREFIXES: readonly string[] = ["sheetrows:", "sheetsource:"];
+
+/** SPEC-138: a workbook draft's chunk records (`draftsheetrows:`) and its
+ * source copy (`draftsheetsource:`) — read only by documentStore.loadDraft,
+ * so the start-up read skips them as it skips the committed ones. The same
+ * strings as documentStore's DRAFT_SHEET_ROWS_KEY_PREFIX and
+ * DRAFT_SHEET_SOURCE_KEY_PREFIX (documentStore.autosave.spec.ts pins them). */
+export const DRAFT_RECORD_KEY_PREFIXES: readonly string[] = ["draftsheetrows:", "draftsheetsource:"];
 
 /** SPEC-114's per-document library search index records, `index:<docId>`.
  * Never part of the start-up read either — not even lazily: only the
@@ -73,11 +79,12 @@ export function rangesExcluding(excluded: readonly string[]): { lower?: string; 
 
 /** Reads every persisted record the library needs at start-up — committed
  * shells, autosave drafts, media — through the key ranges that exclude
- * LAZY_RECORD_KEY_PREFIXES and the search index records (SPEC-137/114: four
- * ranges today); callers split them by key prefix. */
+ * LAZY_RECORD_KEY_PREFIXES, a workbook draft's chunk and source records and
+ * the search index records (SPEC-137/114/138: six ranges today); callers
+ * split them by key prefix. */
 export async function loadAllRecords(): Promise<PersistedRecord[]> {
   const parts = await Promise.all(
-    rangesExcluding([...LAZY_RECORD_KEY_PREFIXES, INDEX_RECORD_KEY_PREFIX]).map(({ lower, upper }) =>
+    rangesExcluding([...LAZY_RECORD_KEY_PREFIXES, ...DRAFT_RECORD_KEY_PREFIXES, INDEX_RECORD_KEY_PREFIX]).map(({ lower, upper }) =>
       database.getAllInRange<PersistedRecord>(STORE_NAME, lower, upper, { lowerOpen: true, upperOpen: true }),
     ),
   );

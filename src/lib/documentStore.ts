@@ -18,18 +18,26 @@ import { PAPER_SIZES } from "./core/pageSetup";
 import { encodePendingMediaInBackground, type MediaPart } from "./core/media";
 import type { OpaquePart } from "./core/packageParts";
 import { normaliseShapeFill } from "./core/shapes";
-import { deleteRecord, getRecord, loadAllRecords, putRecord, writeBatch, type WriteBatchOp } from "./idb";
+import { deleteRecord, deleteRecordRange, getRecord, loadAllRecords, putRecord, writeBatch, type WriteBatchOp } from "./idb";
 import {
+  DRAFT_SHEET_ROWS_KEY_PREFIX,
+  DRAFT_SHEET_SOURCE_KEY_PREFIX,
+  draftRowsKey,
+  draftRowsRange,
+  draftSourceKey,
   emptyLatch,
   joinWorkbook,
   latchMatches,
   legacySheetRowsKey,
   legacyWorkbookShell,
   planWorkbookWrite,
+  sameRows,
+  sameSource,
   sheetRowsChunkKey,
   SHEET_ROWS_KEY_PREFIX,
   SHEET_SOURCE_KEY_PREFIX,
   sourceLatchOf,
+  sourceRecordOf,
   workbookRowsRange,
   workbookShell,
   workbookSourceKey,
@@ -37,13 +45,23 @@ import {
   type SheetRowsChunkRecord,
   type SheetRowsRecord,
   type SheetStoreManifest,
+  type SourceLatch,
   type WorkbookLatch,
   type WorkbookSourceRecord,
 } from "./workbookStorage";
+import { chunkRows, rowsInChunk } from "./spreadsheet/rowChunks";
+import type { SheetViewState } from "./spreadsheet/selection";
 
 // SPEC-137's storage layout lives in workbookStorage.ts; the store re-exports
 // its names so callers keep one import.
-export { SHEET_ROWS_CHUNK, SHEET_ROWS_KEY_PREFIX, SHEET_SOURCE_KEY_PREFIX } from "./workbookStorage";
+export {
+  DRAFT_SHEET_ROWS_KEY_PREFIX,
+  DRAFT_SHEET_SOURCE_KEY_PREFIX,
+  draftRowsKey,
+  SHEET_ROWS_CHUNK,
+  SHEET_ROWS_KEY_PREFIX,
+  SHEET_SOURCE_KEY_PREFIX,
+} from "./workbookStorage";
 export type { SheetRowsChunkRecord, SheetRowsRecord, SheetStoreManifest, WorkbookSourceRecord } from "./workbookStorage";
 import { runWhenIdle, yieldToMainThread } from "./core/idleScheduler";
 import type { CaretPosition } from "./textEditing";
@@ -90,6 +108,9 @@ export interface StoredDocumentRecord {
   /** A deck's selected slide at the last commit (SPEC-103) — what "Discard"
    * re-selects. Absent on text documents and on decks committed before it. */
   slideIndex?: number;
+  /** A workbook's tab, active cell and top-left visible cell at the last
+   * commit (SPEC-138) — what reopening and "Discard" put back. */
+  sheetView?: SheetViewState;
   /** Starred by the user (SPEC-067). Absent means not starred. */
   starred?: boolean;
   /** When the document was moved to the trash (SPEC-067), as an epoch
@@ -120,16 +141,29 @@ export interface DraftRecord {
   scroll: number;
   /** The deck's selected slide when the draft was written (SPEC-103). */
   slideIndex?: number;
+  /** The workbook's view when the draft was written (SPEC-138). */
+  sheetView?: SheetViewState;
+  /** A workbook draft's manifest (SPEC-138): per sheet id, the ordered keys
+   * of the records whose `rows` concatenate to that sheet's rows — a
+   * committed chunk key for a chunk unchanged since the last commit, its
+   * draft key otherwise. The only thing loadDraft trusts. */
+  rowKeys?: Record<string, string[]>;
+  /** The record a workbook draft's retained sources rejoin from:
+   * `sheetsource:<docId>` (unchanged since the last commit) or
+   * `draftsheetsource:<docId>`. */
+  sourceKey?: string;
 }
 
 /** The editor state a draft or a commit records beside the model (SPEC-010,
- * widened by SPEC-103 for decks). A deck has no caret and its scroll is a
- * fit-to-workspace scale, not a position — so a deck's state is
- * `{ caret: null, scroll: 0, slideIndex }`. */
+ * widened by SPEC-103 for decks and SPEC-138 for workbooks). A deck has no
+ * caret and its scroll is a fit-to-workspace scale, not a position — so a
+ * deck's state is `{ caret: null, scroll: 0, slideIndex }`, and a workbook's
+ * `{ caret: null, scroll: 0, sheetView }`. */
 export interface DraftState {
   caret: CaretPosition | null;
   scroll: number;
   slideIndex?: number;
+  sheetView?: SheetViewState;
 }
 
 /** A document's images, persisted as their own record (SPEC-047 AC-15): a
@@ -248,6 +282,12 @@ export function isSheetRowsChunkRecord(record: PersistedRecord): record is Sheet
 
 export function isWorkbookSourceRecord(record: PersistedRecord): record is WorkbookSourceRecord {
   return record.id.startsWith(SHEET_SOURCE_KEY_PREFIX);
+}
+
+/** A workbook draft's chunk or source record (SPEC-138) — never a library
+ * entry, and outside the start-up read's key ranges anyway. */
+export function isDraftSheetRecord(record: PersistedRecord): boolean {
+  return record.id.startsWith(DRAFT_SHEET_ROWS_KEY_PREFIX) || record.id.startsWith(DRAFT_SHEET_SOURCE_KEY_PREFIX);
 }
 
 /** Row-level metadata the library list renders; no document content. */
@@ -560,6 +600,13 @@ interface WorkbookState {
    * workbook never overlap, so the latch always describes storage). */
   persisting: Promise<boolean> | null;
   queued: Promise<boolean> | null;
+  /** SPEC-138: bumped by every replaceSpreadsheetModel (each edit, a
+   * recovered draft, Discard, a restore); `committedEdits` is its value when
+   * the last persist was planned. While they differ the resident model holds
+   * changes only the draft has — a view-state write keeps them in memory and
+   * a release drops them back to what storage commits (uncommitted()). */
+  edits: number;
+  committedEdits: number;
 }
 
 const workbooks = new Map<string, WorkbookState>();
@@ -577,10 +624,18 @@ function workbookState(id: string, resident = false): WorkbookState {
       loading: null,
       persisting: null,
       queued: null,
+      edits: 0,
+      committedEdits: 0,
     };
     workbooks.set(id, state);
   }
   return state;
+}
+
+/** Whether the resident model holds changes the committed records do not
+ * (SPEC-138: an edit since the last commit, or recovered draft content). */
+function uncommitted(state: WorkbookState): boolean {
+  return state.edits !== state.committedEdits;
 }
 
 /** Whether storage holds everything the resident model has: the latch
@@ -628,6 +683,7 @@ async function writeWorkbook(id: string, state: WorkbookState): Promise<boolean>
     return true;
   }
   const model = record.model;
+  const edits = state.edits;
   let ops: WriteBatchOp[];
   let adopt: (() => void) | null = null;
   if (!state.resident) {
@@ -644,6 +700,7 @@ async function writeWorkbook(id: string, state: WorkbookState): Promise<boolean>
     adopt = () => {
       state.latch = plan.latch;
       state.legacy = false;
+      state.committedEdits = edits;
       record.sheetStore = manifest;
     };
   }
@@ -827,6 +884,19 @@ export async function releaseSpreadsheet(id: string): Promise<void> {
     if (!state.resident) {
       return;
     }
+    if (!state.incomplete && uncommitted(state)) {
+      // SPEC-138: changes no commit took (a session that closed with the
+      // recovery bar open, or with Autosave off) live in the draft, never in
+      // the committed records — memory drops back to what storage commits.
+      await (state.queued ?? state.persisting);
+      if (workbooks.get(id) === state && state.requests === requests && state.resident && uncommitted(state)) {
+        const stored = await readStored(id);
+        if (stored && isCommittedRecord(stored) && isSpreadsheetModel(stored.model) && workbooks.get(id) === state && state.requests === requests) {
+          await adoptStoredRecord(id, stored);
+        }
+      }
+      return;
+    }
     if (!state.incomplete) {
       await (state.queued ?? state.persisting);
       const current = records.get(id);
@@ -985,7 +1055,8 @@ export function initLibrary(): Promise<void> {
           isOpaqueRecord(record) ||
           isDraftOpaqueRecord(record) ||
           isSheetRowsRecord(record) ||
-          isWorkbookSourceRecord(record)
+          isWorkbookSourceRecord(record) ||
+          isDraftSheetRecord(record)
         ) {
           continue;
         }
@@ -1396,9 +1467,11 @@ export function deleteDocument(id: string): void {
   lastDraftPersistedOpaque.delete(id);
   if (model && isSpreadsheetModel(model)) {
     // SPEC-137: the shell, every rows record (chunks and any SPEC-116
-    // per-sheet record — one range) and the source record, in one batch.
+    // per-sheet record — one range) and the source record, in one batch;
+    // SPEC-138: and the draft's chunk range and source copy.
     workbooks.delete(id);
     void deleteWorkbookRecords(id);
+    deleteWorkbookDraftRecords(id);
   } else {
     deleteRecord(id).catch(() => markStorageUnavailable());
   }
@@ -1443,9 +1516,9 @@ export async function saveDraft(id: string, state: DraftState): Promise<void> {
     throw new Error(`Document ${id} is a media file`);
   }
   if (isSpreadsheetModel(record.model)) {
-    // Nothing edits a workbook yet (SPEC-116; SPEC-121 brings editing), and
-    // a text-editor draft over its id would destroy it.
-    throw new Error(`Document ${id} is a spreadsheet`);
+    // SPEC-138 lifted SPEC-116's guard: a workbook drafts into records of its
+    // own, never the committed ones.
+    return saveWorkbookDraft(id, record.model, state);
   }
   // A deck's package and media are skipped while their references hold, so
   // every tick after the first writes the shell alone (SPEC-103).
@@ -1461,6 +1534,250 @@ export async function saveDraft(id: string, state: DraftState): Promise<void> {
     ...(state.slideIndex !== undefined ? { slideIndex: state.slideIndex } : {}),
   };
   await Promise.all([mediaWrite ?? Promise.resolve(), opaqueWrite ?? Promise.resolve(), putRecordYielding(draft)]);
+}
+
+// --- workbook drafts (SPEC-138 "The workbook draft record") -------------------
+//
+// A workbook draft never touches a committed record. Its shell (`draft:<id>`)
+// is SPEC-137's slim shell — rows `[]`, `opaque` `[]`, no source text — plus
+// the `rowKeys` manifest and the `sourceKey`. Each 512-row chunk whose slice
+// is row-for-row the committed one is listed by its committed key and costs
+// nothing; any other is written under its draft key (draftRowsKey) — once,
+// under the draft's own per-chunk latch — so a tick after one cell edit costs
+// that one chunk. The retained sources are tracked by reference against
+// SPEC-137's source latch: while they are the committed ones the shell names
+// `sheetsource:<id>`; once one was replaced (SPEC-124/125's retained-reference
+// rewrite, a duplicated sheet) the whole set is written once to
+// `draftsheetsource:<id>`. A commit and a discard clear the lot in one range.
+
+/** The draft's per-chunk latch: per doc, draft key → the slice last written. */
+const lastDraftChunks = new Map<string, Map<string, Row[]>>();
+/** Per doc and sheet: the rows array the last tick listed, and its keys — an
+ * untouched sheet costs nothing to list again. */
+const lastDraftSheets = new Map<string, Map<string, { rows: Row[]; keys: string[] }>>();
+/** The draft's source latch: per doc, the sources last written to its copy. */
+const lastDraftSource = new Map<string, SourceLatch>();
+
+function forgetWorkbookDraft(docId: string): void {
+  lastDraftChunks.delete(docId);
+  lastDraftSheets.delete(docId);
+  lastDraftSource.delete(docId);
+}
+
+/** Deletes every draft chunk record of a workbook in one range — a sheet
+ * deleted mid-session leaves none behind — and its draft source copy.
+ * Best-effort, like every draft cleanup. */
+function deleteWorkbookDraftRecords(docId: string): void {
+  forgetWorkbookDraft(docId);
+  try {
+    const [lower, upper] = draftRowsRange(docId);
+    deleteRecordRange(lower, upper).catch(() => {});
+    deleteRecord(draftSourceKey(docId)).catch(() => {});
+  } catch {
+    // Storage without range deletes: the next commit retries.
+  }
+}
+
+/** What storage commits for the workbook, as far as a draft may lean on it:
+ * the chunked layout's latch and manifest (a SPEC-116-era record has no
+ * committed chunk to name). */
+function committedStorage(state: WorkbookState, record: StoredDocumentRecord): { latch: WorkbookLatch; manifest: SheetStoreManifest } | null {
+  return !state.legacy && record.sheetStore ? { latch: state.latch, manifest: record.sheetStore } : null;
+}
+
+/** persistDraftMedia's latch rules, per chunk, against SPEC-137's per-chunk
+ * committed latch: a slice reference-equal to the committed one is listed by
+ * its committed key (and a stale draft copy dropped); one equal to the last
+ * draft write is listed by its draft key, unwritten; any other is written,
+ * the latch set first and cleared on failure. Returns the writes and the
+ * `rowKeys` manifest. No write can reach a committed key. */
+function persistDraftSheetRows(
+  docId: string,
+  model: SpreadsheetModel,
+  committed: { latch: WorkbookLatch; manifest: SheetStoreManifest } | null,
+): { writes: Promise<void>[]; rowKeys: Record<string, string[]> } {
+  const drafted = lastDraftChunks.get(docId) ?? new Map<string, Row[]>();
+  lastDraftChunks.set(docId, drafted);
+  const listed = lastDraftSheets.get(docId) ?? new Map<string, { rows: Row[]; keys: string[] }>();
+  lastDraftSheets.set(docId, listed);
+  const writes: Promise<void>[] = [];
+  const rowKeys: Record<string, string[]> = {};
+  for (const sheet of model.sheets) {
+    const committedRows = committed?.latch.rows.get(sheet.id);
+    const dropDraftCopy = (key: string): void => {
+      if (drafted.delete(draftRowsKey(key))) {
+        deleteRecord(draftRowsKey(key)).catch(() => {});
+      }
+    };
+    if (committed && committedRows === sheet.rows) {
+      // The sheet's rows are the committed ones: every chunk by its key.
+      const keys = (committed.manifest.chunks[sheet.id] ?? []).map((chunk) => sheetRowsChunkKey(docId, sheet.id, chunk));
+      keys.forEach(dropDraftCopy);
+      rowKeys[sheet.id] = keys;
+      listed.set(sheet.id, { rows: sheet.rows, keys });
+      continue;
+    }
+    const previous = listed.get(sheet.id);
+    if (previous?.rows === sheet.rows) {
+      rowKeys[sheet.id] = previous.keys;
+      continue;
+    }
+    const keys: string[] = [];
+    for (const [chunk, slice] of chunkRows(sheet.rows)) {
+      const key = sheetRowsChunkKey(docId, sheet.id, chunk);
+      if (committedRows !== undefined && sameRows(rowsInChunk(committedRows, chunk), slice)) {
+        keys.push(key);
+        dropDraftCopy(key);
+        continue;
+      }
+      const draftKeyOfChunk = draftRowsKey(key);
+      keys.push(draftKeyOfChunk);
+      const last = drafted.get(draftKeyOfChunk);
+      if (last !== undefined && sameRows(last, slice)) {
+        continue;
+      }
+      drafted.set(draftKeyOfChunk, slice);
+      const chunkRecord: SheetRowsChunkRecord = { id: draftKeyOfChunk, docId, sheetId: sheet.id, chunk, rows: slice };
+      writes.push(
+        putRecordYielding(chunkRecord).catch((error: unknown) => {
+          if (drafted.get(draftKeyOfChunk) === slice) {
+            drafted.delete(draftKeyOfChunk);
+          }
+          if (listed.get(sheet.id)?.rows === sheet.rows) {
+            listed.delete(sheet.id);
+          }
+          throw error;
+        }),
+      );
+    }
+    rowKeys[sheet.id] = keys;
+    listed.set(sheet.id, { rows: sheet.rows, keys });
+  }
+  return { writes, rowKeys };
+}
+
+/** The retained sources' draft half: while every source is the committed
+ * record's (by reference — SPEC-137's source latch), nothing is written and
+ * the shell names `sheetsource:<id>`; once one differs the whole set goes to
+ * `draftsheetsource:<id>` under its own latch. */
+function persistDraftSources(
+  docId: string,
+  model: SpreadsheetModel,
+  committed: { latch: WorkbookLatch } | null,
+): { write: Promise<void> | null; sourceKey: string } {
+  const current = sourceLatchOf(model);
+  const committedSource = committed?.latch.source ?? null;
+  if (committedSource && sameSource(committedSource, current)) {
+    if (lastDraftSource.delete(docId)) {
+      deleteRecord(draftSourceKey(docId)).catch(() => {});
+    }
+    return { write: null, sourceKey: workbookSourceKey(docId) };
+  }
+  const key = draftSourceKey(docId);
+  const last = lastDraftSource.get(docId);
+  if (last && sameSource(last, current)) {
+    return { write: null, sourceKey: key };
+  }
+  lastDraftSource.set(docId, current);
+  const write = putRecordYielding(sourceRecordOf(docId, model, key)).catch((error: unknown) => {
+    if (lastDraftSource.get(docId) === current) {
+      lastDraftSource.delete(docId);
+    }
+    throw error;
+  });
+  return { write, sourceKey: key };
+}
+
+/** saveDraft for a workbook: its chunk and source records first, then the
+ * shell naming them (SPEC-137's residency rule: only a whole workbook is
+ * drafted — a shell or an incomplete load never is). Rejects on failure. */
+async function saveWorkbookDraft(id: string, model: SpreadsheetModel, state: DraftState): Promise<void> {
+  const workbook = workbooks.get(id);
+  const record = records.get(id);
+  if (!record || !workbook?.resident || workbook.incomplete) {
+    throw new Error(`Workbook ${id} is not loaded`);
+  }
+  const committed = committedStorage(workbook, record);
+  const mediaWrite = persistDraftMedia(id, model.media);
+  const rows = persistDraftSheetRows(id, model, committed);
+  const sources = persistDraftSources(id, model, committed);
+  await Promise.all([mediaWrite ?? Promise.resolve(), ...rows.writes, sources.write ?? Promise.resolve()]);
+  const draft: DraftRecord = {
+    id: draftKey(id),
+    docId: id,
+    savedAt: Date.now(),
+    model: stripMedia(workbookShell(model)),
+    caret: null,
+    scroll: 0,
+    rowKeys: rows.rowKeys,
+    sourceKey: sources.sourceKey,
+    ...(state.sheetView !== undefined ? { sheetView: state.sheetView } : {}),
+  };
+  await putRecordYielding(draft);
+}
+
+/** A row record a draft manifest may name: a committed or a draft chunk of
+ * `sheetId`. */
+function isChunkOf(record: PersistedRecord, docId: string, sheetId: string): record is SheetRowsChunkRecord {
+  const chunk = record as Partial<SheetRowsChunkRecord>;
+  return (
+    (record.id.startsWith(SHEET_ROWS_KEY_PREFIX) || record.id.startsWith(DRAFT_SHEET_ROWS_KEY_PREFIX)) &&
+    chunk.docId === docId &&
+    chunk.sheetId === sheetId &&
+    Array.isArray(chunk.rows)
+  );
+}
+
+/** A workbook draft rejoined from its manifest: every sheet's rows from the
+ * records `rowKeys` lists (never an inferred key), the sources from the
+ * record `sourceKey` names, then the reader-version upgrade every read path
+ * runs. Undefined when the manifest names a record that is missing or
+ * unreadable — a half-rejoined workbook is never offered for recovery. */
+async function rejoinWorkbookDraft(draft: DraftRecord, shell: SpreadsheetModel): Promise<SpreadsheetModel | undefined> {
+  const manifest = draft.rowKeys;
+  if (!manifest || draft.sourceKey === undefined) {
+    return undefined;
+  }
+  const rows = new Map<string, Row[]>();
+  for (const sheet of shell.sheets) {
+    const keys = manifest[sheet.id];
+    if (!keys) {
+      return undefined;
+    }
+    const parts: Row[][] = [];
+    for (const key of keys) {
+      await yieldToMainThread();
+      const chunk = await getRecord(key);
+      if (!chunk || !isChunkOf(chunk, draft.docId, sheet.id)) {
+        return undefined;
+      }
+      parts.push(chunk.rows);
+    }
+    rows.set(sheet.id, parts.length === 1 ? parts[0]! : parts.flat());
+  }
+  const source = await getRecord(draft.sourceKey);
+  const sourceRecord = source as Partial<WorkbookSourceRecord> | undefined;
+  if (!source || sourceRecord?.docId !== draft.docId || !Array.isArray(sourceRecord.opaque) || typeof sourceRecord.sheetSources !== "object") {
+    return undefined;
+  }
+  return upgradeRecoveredWorkbook(joinWorkbook(shell, rows, source as WorkbookSourceRecord));
+}
+
+/** SPEC-116's reader-version upgrade on a recovered draft (a draft written
+ * before a reader bump recovers upgraded); kept as it was when it fails. */
+async function upgradeRecoveredWorkbook(model: SpreadsheetModel): Promise<SpreadsheetModel> {
+  if (model.readerVersion >= SPREADSHEET_READER_VERSION) {
+    return model;
+  }
+  try {
+    const [{ upgradeSpreadsheetModel }, { readSpreadsheetOffThread }] = await Promise.all([
+      import("./spreadsheet/open"),
+      import("./workers/spreadsheetParseClient"),
+    ]);
+    return await upgradeSpreadsheetModel(model, readSpreadsheetOffThread);
+  } catch {
+    return model;
+  }
 }
 
 /** Reads a document's autosave draft; undefined when there is none or the
@@ -1483,6 +1800,13 @@ export async function loadDraft(id: string): Promise<DraftRecord | undefined> {
     }
     if (isPresentationModel(stored.model)) {
       rejoinOpaque(stored.model, await draftPackage(stored.docId));
+    }
+    if (isSpreadsheetModel(stored.model)) {
+      const workbook = await rejoinWorkbookDraft(stored, stored.model);
+      if (!workbook) {
+        return undefined;
+      }
+      stored.model = workbook;
     }
     return stored;
   } catch {
@@ -1516,6 +1840,9 @@ export async function deleteDraft(id: string): Promise<void> {
     lastDraftPersistedOpaque.delete(id);
     deleteRecord(draftMediaKey(id)).catch(() => {});
     deleteRecord(draftOpaqueKey(id)).catch(() => {});
+    if (workbooks.has(id)) {
+      deleteWorkbookDraftRecords(id);
+    }
     await deleteRecord(draftKey(id));
   } catch {
     // Ignored — see above.
@@ -1536,6 +1863,9 @@ export async function commitDocument(id: string, state: DraftState): Promise<voi
   record.scroll = state.scroll;
   if (state.slideIndex !== undefined) {
     record.slideIndex = state.slideIndex;
+  }
+  if (state.sheetView !== undefined) {
+    record.sheetView = state.sheetView;
   }
   const mediaWrite = persistMedia(id, record.model.media);
   if (isSpreadsheetModel(record.model)) {
@@ -1561,48 +1891,59 @@ export async function refreshDocumentFromStorage(
   try {
     const stored = await getRecord(id);
     const current = records.get(id);
-    if (
-      stored &&
-      !isDraftRecord(stored) &&
-      !isMediaRecord(stored) &&
-      !isOpaqueRecord(stored) &&
-      !isSheetRowsRecord(stored) &&
-      !isWorkbookSourceRecord(stored) &&
-      (!current || stored.lastModified > current.lastModified)
-    ) {
-      const mediaRecord = await getRecord(mediaKey(id));
-      const media = mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined;
-      rejoinMedia(stored.model, media);
-      // A deck's package (SPEC-103): the same found-or-legacy rule.
-      const opaqueRecord = isPresentationModel(stored.model) ? await getRecord(opaqueKey(id)) : undefined;
-      const opaque = opaqueRecord && isOpaqueRecord(opaqueRecord) ? opaqueRecord.opaque : undefined;
-      rejoinOpaque(stored.model, opaque);
-      if (isSpreadsheetModel(stored.model)) {
-        // SPEC-137: adopted as its shell, not resident — loadSpreadsheet
-        // rejoins its rows and sources (and upgrades it) on demand.
-        workbooks.delete(id);
-        workbookState(id).legacy = stored.sheetStore === undefined;
-      }
-      // Same rule as initLibrary: only a found MediaRecord may seed the
-      // skip-map. A legacy record (inline media, no MediaRecord) must leave
-      // the map unseeded so the next persist writes the media out rather
-      // than stripping the shell and skipping the media write.
-      if (media !== undefined) {
-        lastPersistedMedia.set(id, stored.model.media);
-      } else {
-        lastPersistedMedia.delete(id);
-      }
-      if (opaque !== undefined && isPresentationModel(stored.model)) {
-        lastPersistedOpaque.set(id, stored.model.opaque);
-      } else {
-        lastPersistedOpaque.delete(id);
-      }
-      records.set(id, stored);
+    if (stored && isCommittedRecord(stored) && (!current || stored.lastModified > current.lastModified)) {
+      await adoptStoredRecord(id, stored);
     }
   } catch {
     // Fall through to the in-memory record.
   }
   return records.get(id);
+}
+
+/** A stored committed record — not a draft, media, package, rows or source
+ * record. */
+function isCommittedRecord(record: PersistedRecord): record is StoredDocumentRecord {
+  return (
+    !isDraftRecord(record) &&
+    !isMediaRecord(record) &&
+    !isOpaqueRecord(record) &&
+    !isSheetRowsRecord(record) &&
+    !isWorkbookSourceRecord(record) &&
+    !isDraftSheetRecord(record)
+  );
+}
+
+/** Makes a committed record read back from storage the in-memory one: its
+ * media and a deck's package rejoined, their latches seeded only when found,
+ * and a workbook adopted as its shell, not resident — loadSpreadsheet
+ * rejoins its rows and sources (and upgrades it) on demand (SPEC-137). */
+async function adoptStoredRecord(id: string, stored: StoredDocumentRecord): Promise<void> {
+  const mediaRecord = await getRecord(mediaKey(id));
+  const media = mediaRecord && isMediaRecord(mediaRecord) ? mediaRecord.media : undefined;
+  rejoinMedia(stored.model, media);
+  // A deck's package (SPEC-103): the same found-or-legacy rule.
+  const opaqueRecord = isPresentationModel(stored.model) ? await getRecord(opaqueKey(id)) : undefined;
+  const opaque = opaqueRecord && isOpaqueRecord(opaqueRecord) ? opaqueRecord.opaque : undefined;
+  rejoinOpaque(stored.model, opaque);
+  if (isSpreadsheetModel(stored.model)) {
+    workbooks.delete(id);
+    workbookState(id).legacy = stored.sheetStore === undefined;
+  }
+  // Same rule as initLibrary: only a found MediaRecord may seed the
+  // skip-map. A legacy record (inline media, no MediaRecord) must leave
+  // the map unseeded so the next persist writes the media out rather
+  // than stripping the shell and skipping the media write.
+  if (media !== undefined) {
+    lastPersistedMedia.set(id, stored.model.media);
+  } else {
+    lastPersistedMedia.delete(id);
+  }
+  if (opaque !== undefined && isPresentationModel(stored.model)) {
+    lastPersistedOpaque.set(id, stored.model.opaque);
+  } else {
+    lastPersistedOpaque.delete(id);
+  }
+  records.set(id, stored);
 }
 
 /** Swaps a text document's in-memory model — applying recovered draft
@@ -1619,24 +1960,51 @@ export function replacePresentationModel(id: string, model: PresentationModel): 
   return replaceModel(id, model);
 }
 
-/** The one swap both products share. Never crosses kinds: replacing a media
- * file's or a workbook's model with editor state would destroy the stored
- * bytes, and a deck and a text document must never overwrite each other —
- * the loud-throw rule getOrCreateDocument keeps. */
-function replaceModel<M extends DocumentModel | PresentationModel>(id: string, model: M): M {
-  model.id = id;
-  const record = records.get(id);
-  if (record && isMediaModel(record.model)) {
-    // SPEC-107: replacing a media document's model with text-editor state
-    // would destroy the stored bytes — the loud-throw rule applies.
+/** The workbook counterpart (SPEC-138): recovery, its "Discard", a version
+ * restore — and every edit, which hands the view's live model to the store
+ * here instead of writing it through. The workbook becomes resident, and
+ * holds changes only a draft or the next commit will write. */
+export function replaceSpreadsheetModel(id: string, model: SpreadsheetModel): SpreadsheetModel {
+  return replaceModel(id, model);
+}
+
+/** Swaps any editable model through its own kind's path — so a session
+ * makes one call for every kind (SPEC-138). A media file has no editable
+ * model: it throws, as replaceModel's loud rule does. */
+export function replaceStoredModel(id: string, model: StoredModel): StoredModel {
+  if (isPresentationModel(model)) {
+    return replacePresentationModel(id, model);
+  }
+  if (isSpreadsheetModel(model)) {
+    return replaceSpreadsheetModel(id, model);
+  }
+  if (isMediaModel(model)) {
     throw new Error(`Document ${id} is a media file`);
   }
-  if (record && isSpreadsheetModel(record.model)) {
-    // SPEC-116: the same rule for a workbook.
-    throw new Error(`Document ${id} is a spreadsheet`);
+  return replaceDocumentModel(id, model);
+}
+
+/** The words a kind-crossing refusal names a stored model by. */
+function kindPhrase(model: StoredModel): string {
+  if (isPresentationModel(model)) {
+    return "a presentation";
   }
-  if (record && isPresentationModel(record.model) !== isPresentationModel(model)) {
-    throw new Error(`Document ${id} is ${isPresentationModel(record.model) ? "a presentation" : "a text document"}`);
+  if (isMediaModel(model)) {
+    return "a media file";
+  }
+  return isSpreadsheetModel(model) ? "a spreadsheet" : "a text document";
+}
+
+/** The one swap the editing products share. Never crosses kinds: replacing a
+ * media file's model with editor state would destroy the stored bytes (the
+ * loud-throw rule getOrCreateDocument keeps), and a deck, a workbook and a
+ * text document must never overwrite each other. Never bumps lastModified or
+ * persists: neither direction of recovery is a commit. */
+function replaceModel<M extends DocumentModel | PresentationModel | SpreadsheetModel>(id: string, model: M): M {
+  model.id = id;
+  const record = records.get(id);
+  if (record && (isMediaModel(record.model) || kindPhrase(record.model) !== kindPhrase(model))) {
+    throw new Error(`Document ${id} is ${kindPhrase(record.model)}`);
   }
   if (!record) {
     const created: StoredDocumentRecord = {
@@ -1646,9 +2014,15 @@ function replaceModel<M extends DocumentModel | PresentationModel>(id: string, m
       model,
     };
     records.set(id, created);
-    return model;
+  } else {
+    record.model = model;
   }
-  record.model = model;
+  if (isSpreadsheetModel(model)) {
+    // SPEC-137/138: the view only ever holds a whole workbook.
+    const state = workbookState(id);
+    state.resident = true;
+    state.edits += 1;
+  }
   return model;
 }
 
@@ -1742,7 +2116,14 @@ export function storeSpreadsheetViewState(model: SpreadsheetModel): Promise<void
   }
   record.model = model;
   // The view only ever holds a whole workbook (loadSpreadsheet's).
-  workbookState(model.id).resident = true;
+  const state = workbookState(model.id);
+  state.resident = true;
+  if (uncommitted(state)) {
+    // SPEC-138: the model holds edits only the draft has — writing the view
+    // state would commit them under a "Discard" that must still undo them.
+    // The view fields ride in the next draft and commit instead.
+    return Promise.resolve();
+  }
   return persist(record);
 }
 
