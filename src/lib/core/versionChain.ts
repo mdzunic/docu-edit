@@ -52,6 +52,11 @@ export interface VersionIndexEntry {
    * rather than in place of it: renaming that field would orphan every
    * stored `versions:<docId>` record. Absent on text versions. */
   slides?: number;
+  /** A workbook version's sheet count and stored-cell count (SPEC-138),
+   * additive beside `slides` for the same reason. Absent on every other
+   * product's versions. */
+  sheets?: number;
+  cells?: number;
   /** What took the snapshot (SPEC-103: the deck's panel names its restore
    * pair). Absent on text versions and on any recorded before it. */
   trigger?: SnapshotTrigger;
@@ -70,7 +75,8 @@ export interface VersionsIndexRecord {
   paused: boolean;
   /** Set beside `paused` when the latch is not the budget's exhaustion but a
    * deck whose blob set plus a single baseline can never fit it (SPEC-103's
-   * over-budget degrade). Absent on every text index. */
+   * over-budget degrade) — or a workbook past SPEC-138's cell cap or budget.
+   * Absent on every text index. */
   pausedReason?: "too-large";
 }
 
