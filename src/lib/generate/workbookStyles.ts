@@ -10,10 +10,11 @@
 // - Booleans map to `true`, and `false` to the patch's `null` (remove), so a
 //   later `bold: false` undoes an earlier `bold: true`; an `indent` or
 //   `rotation` of 0 removes it too (patchStyle stores neither).
-// - Border shorthands: `all` sets every edge of every cell in the range,
-//   `outline` the range's outer edges only. They apply before the named
-//   edges (all, then outline, then top/right/bottom/left), so a named edge
-//   wins where they meet.
+// - Borders: a named edge (`top`, `right`, `bottom`, `left`) is CellStyle's
+//   — every cell's own edge — while the shorthands `all` set every edge of
+//   every cell in the range and `outline` the range's outer edges only. The
+//   shorthands apply first (all, then outline, then the named edges), so a
+//   named edge wins where they meet.
 // - Number format codes are validated by SPEC-118's parseFormatCode
 //   (en-US code syntax, as the model stores them); "General" removes one.
 //
