@@ -614,9 +614,75 @@ function mergeSorted(lists: number[][]): number[] {
   return Array.from(Float64Array.from(lists.flat()).toSorted());
 }
 
-/** How many tokens a clause spans (a prefix word spans one). */
-function clauseWidth(term: QueryTerm): number {
-  return term.tokens.length;
+/** The `k` smallest values of several ascending lists, ascending: a k-way
+ * merge over a binary heap of list heads, so a prefix that selects
+ * hundreds of terms costs k steps, not a sort of every occurrence. */
+function smallestOf(lists: number[][], k: number): number[] {
+  if (!Number.isFinite(k)) {
+    return mergeSorted(lists);
+  }
+  if (lists.length <= 1) {
+    return (lists[0] ?? []).slice(0, k);
+  }
+  // Heap entries: [value, list, index in list].
+  const heap: Array<[number, number, number]> = [];
+  const less = (i: number, j: number): boolean => heap[i][0] < heap[j][0];
+  const swap = (i: number, j: number): void => {
+    [heap[i], heap[j]] = [heap[j], heap[i]];
+  };
+  const push = (entry: [number, number, number]): void => {
+    heap.push(entry);
+    for (let i = heap.length - 1; i > 0 && less(i, (i - 1) >> 1); i = (i - 1) >> 1) {
+      swap(i, (i - 1) >> 1);
+    }
+  };
+  const pop = (): [number, number, number] => {
+    const top = heap[0];
+    const last = heap.pop() as [number, number, number];
+    if (heap.length > 0) {
+      heap[0] = last;
+      for (let i = 0; ; ) {
+        const left = i * 2 + 1;
+        const smallest = left + 1 < heap.length && less(left + 1, left) ? left + 1 : left;
+        if (smallest >= heap.length || !less(smallest, i)) break;
+        swap(i, smallest);
+        i = smallest;
+      }
+    }
+    return top;
+  };
+  lists.forEach((list, i) => {
+    if (list.length > 0) push([list[0], i, 0]);
+  });
+  const out: number[] = [];
+  while (out.length < k && heap.length > 0) {
+    const [value, list, at] = pop();
+    out.push(value);
+    if (at + 1 < lists[list].length) push([lists[list][at + 1], list, at + 1]);
+  }
+  return out;
+}
+
+/** How many times a clause occurs in a field — what BM25 needs, without
+ * merging a single-token clause's posting lists. */
+function clauseCount(field: FieldPostings, term: QueryTerm): number {
+  if (term.tokens.length === 1) {
+    let count = 0;
+    for (const list of postingsFor(field, term.tokens[0], term.prefix)) {
+      count += list.length;
+    }
+    return count;
+  }
+  return clauseOccurrences(field, term).length;
+}
+
+/** The ordinals at which a clause's first `k` occurrences start. */
+function earliestOccurrences(field: FieldPostings, term: QueryTerm, k: number): number[] {
+  if (term.tokens.length === 1) {
+    return smallestOf(postingsFor(field, term.tokens[0], term.prefix), k);
+  }
+  const all = clauseOccurrences(field, term);
+  return Number.isFinite(k) ? all.slice(0, k) : all;
 }
 
 function facetMatches(doc: DocPostings, facet: QueryFacet): boolean {
@@ -657,7 +723,7 @@ export function bm25Term(tf: number, idf: number, length: number, averageLength:
 
 /** Per document, per positive clause: occurrences in the body and title. */
 interface ClauseMatch {
-  body: number[];
+  body: number;
   title: number;
 }
 
@@ -704,11 +770,11 @@ export function rank(index: SearchIndex, query: Query, filter?: (id: string) => 
   // whole index, not of the documents that survive the other clauses.
   const matches: ClauseMatch[][] = positive.map((term) =>
     docs.map((doc) => ({
-      body: term.field === "title" ? [] : clauseOccurrences(doc.body, term),
-      title: clauseOccurrences(doc.title, term).length,
+      body: term.field === "title" ? 0 : clauseCount(doc.body, term),
+      title: clauseCount(doc.title, term),
     })),
   );
-  const bodyDf = matches.map((perDoc) => perDoc.filter((match) => match.body.length > 0).length);
+  const bodyDf = matches.map((perDoc) => perDoc.filter((match) => match.body > 0).length);
   const titleDf = matches.map((perDoc) => perDoc.filter((match) => match.title > 0).length);
 
   const hits: SearchHit[] = [];
@@ -719,10 +785,10 @@ export function rank(index: SearchIndex, query: Query, filter?: (id: string) => 
     if (!query.facets.every((facet) => facetMatches(doc, facet) !== facet.exclude)) {
       return;
     }
-    if (!positive.every((_, t) => matches[t][d].body.length > 0 || matches[t][d].title > 0)) {
+    if (!positive.every((_, t) => matches[t][d].body > 0 || matches[t][d].title > 0)) {
       return;
     }
-    if (excluded.some((term) => clauseOccurrences(doc.title, term).length > 0 || (term.field !== "title" && clauseOccurrences(doc.body, term).length > 0))) {
+    if (excluded.some((term) => clauseCount(doc.title, term) > 0 || (term.field !== "title" && clauseCount(doc.body, term) > 0))) {
       return;
     }
     let score = 0;
@@ -730,46 +796,44 @@ export function rank(index: SearchIndex, query: Query, filter?: (id: string) => 
     let bodyMatches = 0;
     positive.forEach((_, t) => {
       const match = matches[t][d];
-      score += bm25Term(match.body.length, bm25Idf(docCount, bodyDf[t]), doc.body.length, avgBody);
+      score += bm25Term(match.body, bm25Idf(docCount, bodyDf[t]), doc.body.length, avgBody);
       score += TITLE_BOOST * bm25Term(match.title, bm25Idf(docCount, titleDf[t]), doc.title.length, avgTitle);
       titleMatches += match.title;
-      bodyMatches += match.body.length;
+      bodyMatches += match.body;
     });
     hits.push({ id: doc.id, score, positions: [], titleMatches, bodyMatches, lastModified: doc.lastModified });
   });
   return hits.toSorted((a, b) => b.score - a.score || b.lastModified - a.lastModified || compareStrings(a.id, b.id));
 }
 
-/** The hits with their body positions filled in (see SearchHit). */
-export function withPositions(index: SearchIndex, query: Query, hits: SearchHit[]): SearchHit[] {
-  const positive = query.terms.filter((term) => !term.exclude);
+/** The hits with their body positions filled in (see SearchHit). With
+ * `maxPositions`, only each hit's earliest positions — all a snippet or
+ * "open at match" reads — so a one-letter prefix stays cheap. */
+export function withPositions(index: SearchIndex, query: Query, hits: SearchHit[], maxPositions = Infinity): SearchHit[] {
+  const positive = query.terms.filter((term) => !term.exclude && term.field !== "title");
   const byId = new Map(index.docs.map((doc) => [doc.id, doc]));
   return hits.map((hit) => {
     const doc = byId.get(hit.id);
-    if (!doc) {
-      return hit;
-    }
-    const perClause = positive.map((term) => ({ body: term.field === "title" ? [] : clauseOccurrences(doc.body, term), title: 0 }));
-    return { ...hit, positions: bodyPositions(doc, positive, perClause) };
+    return doc ? { ...hit, positions: bodyPositions(doc, positive, maxPositions) } : hit;
   });
 }
 
-/** Every body character offset a document's positive matches cover — each
- * token of each occurrence — ascending and once each. */
-function bodyPositions(doc: DocPostings, positive: QueryTerm[], perClause: ClauseMatch[]): number[] {
+/** The body character offsets a document's positive matches cover — each
+ * token of each occurrence — ascending and once each; the first `max`. */
+function bodyPositions(doc: DocPostings, positive: QueryTerm[], max: number): number[] {
   const offsets = new Set<number>();
-  positive.forEach((term, t) => {
-    const width = clauseWidth(term);
-    for (const ordinal of perClause[t].body) {
-      for (let k = 0; k < width; k++) {
+  for (const term of positive) {
+    for (const ordinal of earliestOccurrences(doc.body, term, max)) {
+      for (let k = 0; k < term.tokens.length; k++) {
         const start = doc.starts[ordinal + k];
         if (start !== undefined && start >= 0) {
           offsets.add(start);
         }
       }
     }
-  });
-  return Array.from(Float64Array.from(offsets).toSorted());
+  }
+  const sorted = Array.from(Float64Array.from(offsets).toSorted());
+  return Number.isFinite(max) ? sorted.slice(0, max) : sorted;
 }
 
 // --- snippets ----------------------------------------------------------------------------

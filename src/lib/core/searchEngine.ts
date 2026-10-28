@@ -134,6 +134,10 @@ export interface SearchResult {
   elapsedMs: number;
 }
 
+/** How many of a shown hit's earliest body positions a search computes —
+ * far more than three snippet windows mark. */
+const SHOWN_POSITIONS = 512;
+
 /** The reason an evicted document is not searched. */
 export const INDEX_FULL_REASON = `${COVERAGE_REASONS.indexFull} — the least recently used documents are dropped to stay under ${MAX_INDEX_BYTES / (1024 * 1024)} MB`;
 
@@ -367,7 +371,8 @@ export class SearchEngine {
     const allowed = request.ids ? new Set(request.ids) : null;
     const index = this.searchable();
     const all = rank(index, parsed, allowed ? (id) => allowed.has(id) : undefined);
-    const shown = withPositions(index, parsed, all.slice(0, Math.max(0, request.limit)));
+    // Snippets and "open at match" read only a hit's earliest positions.
+    const shown = withPositions(index, parsed, all.slice(0, Math.max(0, request.limit)), SHOWN_POSITIONS);
     const hits = shown.map((hit) => {
       const record = this.records.get(hit.id) as IndexRecord;
       return {
