@@ -38,6 +38,7 @@ import { useSlideTextDepth } from "./presentation/useSlideTextDepth";
 import { useDeckDialogs } from "./presentation/useDeckDialogs";
 import { useDeckSaving } from "./presentation/useDeckSaving";
 import { useDeckSearch } from "./presentation/useDeckSearch";
+import { useDeckFindLink } from "./presentation/useDeckFindLink";
 import { stageSearchHooks } from "./presentation/stageSearchHooks";
 import { useSlideSpellCheck } from "./presentation/useSlideSpellCheck";
 
@@ -116,6 +117,7 @@ const { layouts, deckSetup, headerFooter, deckExport, redesign } = useDeckDialog
 
 // --- find & replace and spell check on slides (SPEC-098) -------------------
 const search = useDeckSearch({ ...deck, ...stageSearchHooks(stageEdit, notes, presentation) });
+useDeckFindLink({ route, presentation, search }); // SPEC-114: /slides/:id?find=<text> opens the deck find at that match
 const spell = useSlideSpellCheck({ ...deck, ...stageEdit, notesText: notes.notesText });
 const proofing = { search, spell }; // the stage's highlight + squiggle layer (one stable prop)
 

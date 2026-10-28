@@ -29,37 +29,27 @@ import {
   type LibraryFilter,
 } from "../lib/libraryView";
 import {
+  DEFAULT_SORT_DIRECTION,
   loadLibrarySort,
   loadLibraryView,
   saveLibrarySort,
   saveLibraryView,
   type LibrarySort,
-  type LibrarySortKey,
   type LibraryViewMode,
 } from "../lib/libraryPrefs";
-import { downloadStoredDocument } from "../lib/libraryDownload";
+// Bulk download (AC-27..29): each entry through its own product's writer,
+// dispatched by kind in lib/libraryDownload.ts (see documentKinds.ts).
+import { downloadStoredDocuments as downloadDocuments } from "../lib/libraryDownload";
 import { isImageFormat } from "../lib/libraryMenu";
-
-/** The default sort direction for each key: newest/largest first for time and
- * size, A–Z for title (AC-11, AC-12). */
-const DEFAULT_DIRECTION: Record<LibrarySortKey, "asc" | "desc"> = {
-  modified: "desc",
-  title: "asc",
-  size: "desc",
-};
-
-/** Bulk download (AC-27..29): each entry through its own product's writer,
- * dispatched by kind in lib/libraryDownload.ts (see documentKinds.ts). */
-async function downloadDocuments(ids: string[]): Promise<void> {
-  for (const id of ids) {
-    await downloadStoredDocument(id);
-  }
-}
 
 export function useLibrary() {
   const view = ref<LibraryViewMode>(loadLibraryView());
   const sort = ref<LibrarySort>(loadLibrarySort());
   const search = ref("");
+  // SPEC-114: while the field searches inside documents (the experimental
+  // "Everything" scope), the rows, chips and counts ignore what it holds.
+  const titleSearch = ref(true);
+  const titleQuery = computed(() => (titleSearch.value ? search.value : ""));
   const activeFormats = shallowRef<Set<DocumentFormat>>(new Set());
   const starredOnly = ref(false);
   const showTrash = ref(false);
@@ -99,7 +89,7 @@ export function useLibrary() {
   const sizeOf = (id: string): number => sizeById.value.get(id) ?? 0;
 
   const filter = computed<LibraryFilter>(() => ({
-    search: search.value,
+    search: titleQuery.value,
     formats: activeFormats.value,
     starredOnly: starredOnly.value,
   }));
@@ -115,11 +105,11 @@ export function useLibrary() {
   /** The list currently on screen — the one keyboard nav and select-all act on. */
   const displayed = computed(() => (showTrash.value ? trashVisible.value : visible.value));
 
-  const counts = computed(() => filterCounts(entries.value, search.value));
+  const counts = computed(() => filterCounts(entries.value, titleQuery.value));
 
   const filterActive = computed(
     () =>
-      search.value.trim().length > 0 ||
+      titleQuery.value.trim().length > 0 ||
       activeFormats.value.size > 0 ||
       starredOnly.value,
   );
@@ -168,7 +158,7 @@ export function useLibrary() {
     if (key !== "modified" && key !== "title" && key !== "size") {
       return;
     }
-    sort.value = { key, direction: DEFAULT_DIRECTION[key] };
+    sort.value = { key, direction: DEFAULT_SORT_DIRECTION[key] };
     saveLibrarySort(sort.value);
   }
 
@@ -186,6 +176,10 @@ export function useLibrary() {
    * the controller as a local, still assigns to the refs directly. */
   function setSearch(value: string): void {
     search.value = value;
+  }
+
+  function setTitleSearch(value: boolean): void {
+    titleSearch.value = value;
   }
 
   function setShowTrash(value: boolean): void {
@@ -423,6 +417,7 @@ export function useLibrary() {
     focusedId,
     // setters (prop-safe for sub-components)
     setSearch,
+    setTitleSearch,
     setShowTrash,
     setFocusedId,
     // derived

@@ -54,6 +54,9 @@
 // - spec111-outlines.pdf — buildOutlinesPdfBytes (SPEC-111): a tagged
 //                          two-page PDF with bookmarks, named destinations,
 //                          and internal and web links.
+// - spec114-scanned.pdf  — buildScannedPdfBytes (SPEC-114): one page that
+//                          paints an image XObject and shows no text — a
+//                          scan with no text layer.
 import { bytesToBase64, base64ToBytes } from "../../core/packageParts";
 
 export { base64ToBytes, bytesToBase64 };
@@ -452,6 +455,26 @@ export function buildEncryptedPdfBytes(): Uint8Array {
  * the data, verbatim. */
 function streamBody(dict: string, data: Uint8Array): Uint8Array {
   return concat([ascii(`<< ${dict} /Length ${data.length} >>\nstream\n`), data, ascii("\nendstream")]);
+}
+
+/** spec114-scanned.pdf (SPEC-114): what a scanner hands over — one US
+ * Letter page that paints a single image XObject (a 16 × 16 grey gradient,
+ * raw 8-bit samples, no filter) and has no text operators at all, no font
+ * and no text layer. Library search must list it under "Not searched" as a
+ * scanned image, never silently skip it. Synchronous and filter-free, so the
+ * bytes are identical on every run. */
+export function buildScannedPdfBytes(): Uint8Array {
+  const side = 16;
+  const samples = Uint8Array.from({ length: side * side }, (_, i) => Math.round(((i % side) + Math.floor(i / side)) * (255 / (2 * (side - 1)))));
+  const objects: Array<string | Uint8Array> = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 5 0 R >> >> /Contents 4 0 R >>",
+    streamBody("", ascii("q 432 0 0 576 90 108 cm /Im1 Do Q\n")),
+    streamBody(`/Type /XObject /Subtype /Image /Width ${side} /Height ${side} /ColorSpace /DeviceGray /BitsPerComponent 8`, samples),
+    "<< /Title (Scanned receipt) /Producer (a scanner) >>",
+  ];
+  return assembleClassicPdf("1.4", objects, "/Root 1 0 R /Info 6 0 R");
 }
 
 /** spec111-forms.pdf: everything a merge must carry, or report, about a

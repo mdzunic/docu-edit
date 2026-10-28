@@ -22,6 +22,8 @@ const experiments = EXPERIMENTS;
 
 const modelExperiment = computed(() => MODEL_EXPERIMENTS.find((id) => isEnabled(id)) ?? "");
 const loadProviderPanel = () => import("./ModelProviderPanel.vue");
+// SPEC-114: library search's Rebuild index / Clear index, behind its flag.
+const loadSearchLabs = () => import("./LibrarySearchLabs.vue");
 
 function checked(event = new Event("change")) {
   const target = event.target;
@@ -103,6 +105,10 @@ watch(preferencesDialog.labsRequested, revealIfRequested);
         >
       </li>
     </ul>
+    <ExperimentGate
+      experiment="library-search"
+      :load="loadSearchLabs"
+    />
     <ExperimentGate
       v-if="modelExperiment"
       :experiment="modelExperiment"

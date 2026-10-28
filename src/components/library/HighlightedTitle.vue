@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import HighlightedText from "./HighlightedText.vue";
 import { highlightSegments, subsequenceMatch } from "../../lib/libraryView";
 
 // Renders a document title with the characters matched by the current search
@@ -22,26 +23,5 @@ const segments = computed(() => {
 </script>
 
 <template>
-  <span>
-    <template
-      v-for="(segment, index) in segments"
-      :key="index"
-    >
-      <mark
-        v-if="segment.match"
-        class="match"
-        data-testid="title-match"
-      >{{ segment.text }}</mark>
-      <template v-else>{{ segment.text }}</template>
-    </template>
-  </span>
+  <HighlightedText :segments="segments" />
 </template>
-
-<style scoped>
-.match {
-  background: var(--surface-selected);
-  color: var(--text-accent);
-  border-radius: var(--radius-sm);
-  padding: 0 calc(var(--space-1) / 2);
-}
-</style>

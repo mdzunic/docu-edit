@@ -47,7 +47,7 @@ function levelOf(project: ProjectLike, seen: ReadonlySet<string> = new Set()): n
 }
 
 describe("e2e timing benchmarks run one at a time", () => {
-  const benchmarks = ["perf-charts", "perf-find", "perf-large-document", "perf-workbook"];
+  const benchmarks = ["perf-charts", "perf-find", "perf-large-document", "perf-workbook", "perf-library-search"];
 
   it("gives every *.perf.spec.ts file its own project", () => {
     for (const name of benchmarks) {
@@ -61,6 +61,8 @@ describe("e2e timing benchmarks run one at a time", () => {
     // project too — testIgnore's PERF_SPEC regex matches any *.perf.spec.ts,
     // so this should already hold without a config change of its own.
     expect(chromium?.testIgnore?.some((pattern) => pattern.test("SPEC-137.perf.spec.ts"))).toBe(true);
+    // SPEC-114's library search benchmark, likewise.
+    expect(chromium?.testIgnore?.some((pattern) => pattern.test("SPEC-114.perf.spec.ts"))).toBe(true);
   });
 
   it("puts each benchmark project at its own dependency level", () => {
@@ -105,5 +107,7 @@ describe("e2e timing benchmarks run one at a time", () => {
     // perf-large-document (today's tail) — so it too runs alone, after
     // every other benchmark has drained.
     expect(levelOf(named("perf-workbook"))).toBeGreaterThan(levelOf(named("perf-large-document")));
+    // SPEC-114: perf-library-search follows perf-workbook as the new tail.
+    expect(levelOf(named("perf-library-search"))).toBeGreaterThan(levelOf(named("perf-workbook")));
   });
 });

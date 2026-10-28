@@ -30,6 +30,9 @@
 //   content and inherited page attributes; and a tagged two-page PDF with
 //   bookmarks, named destinations and internal and web links. Their header
 //   comments list every construct each one carries.
+// - spec114-scanned.pdf (SPEC-114's "Not searched" fixture) — written byte by
+//   byte in the same module (buildScannedPdfBytes): one page painting an
+//   image XObject, with no text operators and no font.
 // The unit specs read these same checked-in bytes, so unit and e2e
 // assertions cannot drift apart.
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -43,6 +46,7 @@ import {
   buildJpegFixtureBytes,
   buildOutlinesPdfBytes,
   buildPngFixtureBytes,
+  buildScannedPdfBytes,
   buildSvgFixtureBytes,
   buildWebpFixtureBytes,
   buildXrefStreamPdfBytes,
@@ -102,6 +106,7 @@ const files: Array<[string, Uint8Array]> = [
   ["spec107-encrypted.pdf", buildEncryptedPdfBytes()],
   ["spec111-forms.pdf", await buildFormsPdfBytes()],
   ["spec111-outlines.pdf", await buildOutlinesPdfBytes()],
+  ["spec114-scanned.pdf", buildScannedPdfBytes()],
 ];
 
 for (const [name, bytes] of files) {

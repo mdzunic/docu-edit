@@ -23,6 +23,7 @@ import { isEditableImage } from "../lib/media/editModel";
 import { useMediaDocument } from "./media/useMediaDocument";
 import { useImageViewport } from "./media/useImageViewport";
 import { useImageEditor } from "./media/useImageEditor";
+import { findParams } from "../lib/findLink";
 
 const route = useRoute();
 const router = useRouter();
@@ -41,12 +42,9 @@ const fileName = computed(() => (media.value ? mediaFileName(media.value) : ""))
 const isPdf = computed(() => media.value?.format === "pdf");
 
 const viewport = useImageViewport();
-
-function download() {
-  if (media.value) {
-    downloadMedia(media.value);
-  }
-}
+const download = () => media.value && downloadMedia(media.value);
+// SPEC-114: /media/:id?find=<text> — a library search result's query.
+const findText = computed(() => findParams(route.query).find);
 </script>
 
 <template>
@@ -71,6 +69,7 @@ function download() {
         v-if="isPdf"
         :src="blobUrl"
         :file-name="fileName"
+        :find="findText"
         @download="download"
       />
       <MediaImageEditor

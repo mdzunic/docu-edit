@@ -5,7 +5,13 @@
 // instance renders at a time, so `library-search` stays a unique testid.
 // `lib` is the LibraryController from useLibrary (runtime-typed Object — the
 // .vue ESLint parser bars the PropType syntax; see useLibrary.ts).
+// SPEC-114's scope control (Titles / Everything) follows the field, behind
+// its experiment's gate: with library-search off it renders nothing and its
+// code is never loaded.
 import { computed } from "vue";
+import ExperimentGate from "../../components/ExperimentGate.vue";
+
+const loadScope = () => import("./LibrarySearchScope.vue");
 
 const props = defineProps({
   lib: { type: Object, required: true },
@@ -28,6 +34,11 @@ const searchText = computed({
     placeholder="Search documents…"
     aria-label="Search documents"
   >
+  <ExperimentGate
+    experiment="library-search"
+    :load="loadScope"
+    :lib="props.lib"
+  />
 </template>
 
 <style scoped>

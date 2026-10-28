@@ -27,5 +27,8 @@
   "sheetMainThreadBlockDuringSaveMs": 87,
   "sheetLibraryLandingMs": 920,
   "sheetLibraryHeapDeltaMB": 2,
-  "sheetHeapAfterSettleMB": 98
+  "sheetHeapAfterSettleMB": 98,
+  "_comment_librarySearch": "SPEC-114 library search rows (e2e/SPEC-114.perf.spec.ts, project perf-library-search, the chain's tail after perf-workbook). librarySearchQueryMs is the WORST of eight queries' medians (5 runs each) of the search round trip \u2014 asked on the main thread, searched in the index worker, answered back \u2014 over a warm index of 200 text documents totalling 20 MB of text; the spec's absolute ceiling is 50 ms. First calibration 2026-10-28 from a quiet run in the factory lane container (Playwright 1.63.0, its Chromium): per-query medians t 7.8, th 4.9, harbour 3.9, 'harbour figures' 5.6, '\"the harbour\"' 2.8, 'harbour -rotterdam' 0.6, 'kind:text report' 12.9 (the worst: a prefix over a facet filter), quarterly 3.6. 20 is that worst median padded for a busier gate host (1.15 x 20 = 23 keeps the relative gate well under the 50 ms absolute, so a real regression trips it first). librarySearchMainThreadBlockDuringIndexMs is the longest main-thread task (Long Tasks API, SPEC-047's collector) while the whole library indexes; it measured 0 (no task reached the API's 50 ms floor), so like SPEC-137's zero-median block rows it is recorded where x 1.15 meets its 100 ms absolute ceiling (87 -> 100.05), never tighter than the ceiling on a row the API reads as 0 or ~50.",
+  "librarySearchQueryMs": 20,
+  "librarySearchMainThreadBlockDuringIndexMs": 87
 }

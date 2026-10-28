@@ -105,6 +105,14 @@ export interface HighlightSegment {
   match: boolean;
 }
 
+/** Typed pass-through for highlight segments arriving through a `.vue`
+ * component's runtime-typed Array prop (espree bars the `PropType`
+ * annotation — the findReplace.asHighlightRects idiom). SPEC-114's snippet
+ * segments share the shape. */
+export function asHighlightSegments(value: unknown): HighlightSegment[] {
+  return value as HighlightSegment[];
+}
+
 /** Case-insensitive subsequence match (AC-8). Returns the indices in `text`
  * that the query's characters matched, in order — or null when `text` does
  * not contain the query as a subsequence. An empty query matches everything

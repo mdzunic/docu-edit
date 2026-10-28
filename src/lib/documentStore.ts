@@ -192,6 +192,10 @@ export const OPAQUE_KEY_PREFIX = "opaque:";
  * reason: an autosave tick must never overwrite the package the committed
  * state rejoins from. */
 export const DRAFT_OPAQUE_KEY_PREFIX = "draftopaque:";
+/** A document's library search index record (SPEC-114) — a cache of its
+ * text, never read or written here except to delete it with its document.
+ * idb.ts excludes the prefix from the start-up read. */
+export const INDEX_KEY_PREFIX = "index:";
 
 function draftKey(docId: string): string {
   return DRAFT_KEY_PREFIX + docId;
@@ -1380,7 +1384,7 @@ function jsonBytes(value: unknown): number {
 }
 
 /** Removes a document from the session and from storage, along with any
- * autosave draft. */
+ * autosave draft and its search index record. */
 export function deleteDocument(id: string): void {
   const model = records.get(id)?.model;
   if (!records.delete(id)) {
@@ -1405,6 +1409,9 @@ export function deleteDocument(id: string): void {
   deleteRecord(draftMediaKey(id)).catch(() => {});
   deleteRecord(opaqueKey(id)).catch(() => {});
   deleteRecord(draftOpaqueKey(id)).catch(() => {});
+  // The search index's copy of its text goes with it (SPEC-114) — a delete,
+  // flag or no flag: a permanently deleted document leaves no text behind.
+  deleteRecord(INDEX_KEY_PREFIX + id).catch(() => {});
 }
 
 async function deleteWorkbookRecords(id: string): Promise<void> {
