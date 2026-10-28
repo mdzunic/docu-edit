@@ -179,9 +179,16 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
   }
 
   /** Shows a re-read of the workbook on show in its place (SPEC-126's
-   * import dialog "Apply"): the grid re-mounts on the new model. */
+   * import dialog "Apply"; SPEC-138's recovered, discarded, restored and
+   * previewed workbooks): the grid re-mounts on the new model. */
   function replace(model: SpreadsheetModel): void {
     show(model);
+  }
+
+  /** Re-mounts the grid over the same model — SPEC-138's restored view
+   * scrolls it to its recorded top-left cell. */
+  function remount(): void {
+    generation.value += 1;
   }
 
   function download(): void {
@@ -196,6 +203,8 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
   }
 
   return {
+    /** The routed workbook id. */
+    workbookId: deps.workbookId,
     workbook,
     activeIndex,
     generation,
@@ -220,6 +229,7 @@ export function useWorkbookLoad(deps: WorkbookLoadDeps) {
     cycleSheet,
     sheetsChanged,
     replace,
+    remount,
     download,
     close,
   };

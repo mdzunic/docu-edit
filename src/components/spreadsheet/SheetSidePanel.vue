@@ -6,25 +6,29 @@
 // over useWorkbookEditing's `cfManager`. Later spreadsheet panes register
 // here (SPEC-135, SPEC-138, SPEC-139) rather than mounting panels of their
 // own. SPEC-135 adds the `comments` pane: SheetCommentsPanel over
-// useWorkbookEditing's `comments`. Runtime prop declarations per the espree
-// constraint (see AppShell.vue).
+// useWorkbookEditing's `comments`; SPEC-138 the `history` pane:
+// WorkbookHistoryPanel over useWorkbookHistory. Runtime prop declarations per
+// the espree constraint (see AppShell.vue).
 import { computed } from "vue";
 import { clampSheetPanelWidth } from "../../views/spreadsheet/useSheetSidePanel";
 import { asWorkbookEditing } from "../../views/spreadsheet/useWorkbookEditing";
 import SidePanel from "../SidePanel.vue";
 import ConditionalFormatsPane from "./ConditionalFormatsPane.vue";
 import SheetCommentsPanel from "./SheetCommentsPanel.vue";
+import WorkbookHistoryPanel from "./WorkbookHistoryPanel.vue";
 
 const props = defineProps({
   /** useWorkbookEditing's return. */
   editing: { type: Object, required: true },
+  /** SPEC-138: useWorkbookHistory's return (the `history` pane). */
+  history: { type: Object, default: null },
 });
 
 const editing = computed(() => asWorkbookEditing(props.editing));
 const panel = computed(() => editing.value.sidePanel);
 
 function activate(id = "") {
-  if (id === "conditionalFormats" || id === "comments") {
+  if (id === "conditionalFormats" || id === "comments" || id === "history") {
     panel.value.open(id);
   }
 }
@@ -69,6 +73,10 @@ function nudgeWidth(delta = 0) {
     <SheetCommentsPanel
       v-else-if="panel.activePane.value === 'comments'"
       :controller="editing.comments"
+    />
+    <WorkbookHistoryPanel
+      v-else-if="panel.activePane.value === 'history' && props.history"
+      :controller="props.history"
     />
   </SidePanel>
 </template>

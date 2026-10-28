@@ -29,6 +29,9 @@ export function downloadCopyLabel(target: SpreadsheetFormat): string {
 
 export interface WorkbookDownloadDeps {
   book: { workbook: ShallowRef<SpreadsheetModel | null>; activeIndex: Ref<number> };
+  /** SPEC-138: a download is SPEC-010's explicit save — the saving
+   * session's commit point (commit, then SPEC-040's snapshot). */
+  onDownload?: () => void;
 }
 
 export function useWorkbookDownload(deps: WorkbookDownloadDeps) {
@@ -61,6 +64,7 @@ export function useWorkbookDownload(deps: WorkbookDownloadDeps) {
       return;
     }
     void downloadSpreadsheet(viewed(model), target, locale.value).then(toast);
+    deps.onDownload?.();
   }
 
   /** "Download a copy as CSV/TSV (current sheet)": the sheet on show. */
@@ -68,6 +72,7 @@ export function useWorkbookDownload(deps: WorkbookDownloadDeps) {
     const model = deps.book.workbook.value;
     if (model) {
       void downloadSpreadsheetSheetCopy(viewed(model), target, locale.value).then(toast);
+      deps.onDownload?.();
     }
   }
 

@@ -33,12 +33,18 @@
 //                    useSheetFind and useSheetGoTo calls, the FindBar dock and
 //                    three hookups) — 92 -> 91 lines, measured 92 with the
 //                    final newline, no headroom
+//   2026-10-28   85  SPEC-138: the find dock's wiring moved into
+//                    WorkbookFindBar.vue as the saving and history wiring
+//                    arrived (one useWorkbookSaving and one useWorkbookHistory
+//                    call, their hookups riding the app bar's and the body's
+//                    bindings) — 91 -> 84 lines, measured 85 with the final
+//                    newline, no headroom
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const LINE_BUDGET = 92;
+const LINE_BUDGET = 85;
 
 describe("SpreadsheetView size budget", () => {
   it(`SpreadsheetView.vue stays within its ${LINE_BUDGET}-line budget`, () => {

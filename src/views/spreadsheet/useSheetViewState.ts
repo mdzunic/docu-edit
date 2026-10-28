@@ -18,11 +18,18 @@
 //   the record's lastModified. Nothing here sets `dirty` (SPEC-121) or calls
 //   touchDocument, and nothing touches `opaque`: an untouched workbook still
 //   downloads byte-identical.
+// - SPEC-138: no write while `writable` says no — another tab holds the
+//   workbook, or an earlier version is being previewed (its model must never
+//   reach the store); the change waits for the next flush. And the session's
+//   `sheetView` — the tab, the active cell and the top-left cell a draft or a
+//   commit records — is read from here (sheetView) and put back here
+//   (applySheetView, through withSheetView: into the model as view state too,
+//   so a re-seed from it agrees).
 import { computed, onBeforeUnmount, shallowRef, watch, type Ref, type ShallowRef } from "vue";
 import { storeSpreadsheetViewState } from "../../lib/documentStore";
 import type { CellRef } from "../../lib/spreadsheet/address";
 import type { Sheet, SpreadsheetModel } from "../../lib/spreadsheet/model";
-import type { SheetSelection } from "../../lib/spreadsheet/selection";
+import type { SheetSelection, SheetViewState as RecordedSheetView } from "../../lib/spreadsheet/selection";
 
 export const VIEW_STATE_PERSIST_DELAY_MS = 1000;
 
@@ -98,10 +105,42 @@ export function withViewFields(sheet: Sheet, fields: SheetViewFields): Sheet {
   return Object.assign(next, fields);
 }
 
+/** The view fields a recorded view puts on its sheet: the selection
+ * collapsed to its active cell, and its top-left cell. */
+function recordedFields(base: SheetViewFields, view: RecordedSheetView): SheetViewFields {
+  const { row, col } = view.active;
+  return normalised({
+    ...base,
+    selection: { active: { row, col }, ranges: [{ top: row, left: col, bottom: row, right: col }], activeRangeIndex: 0 },
+    topLeftCell: view.topRow > 0 || view.leftCol > 0 ? { row: view.topRow, col: view.leftCol } : undefined,
+  });
+}
+
+/** Puts a recorded view (SPEC-138's sheetView) into `model` as view state —
+ * its sheet becomes the active one, carrying the view's selection and
+ * top-left cell (a new sheet object; `rows` keeps its identity). False, and
+ * nothing changed, when the view names a sheet the model has no visible tab
+ * for (a view naming a sheet that no longer exists is ignored). */
+export function withSheetView(model: SpreadsheetModel, view: RecordedSheetView | undefined): boolean {
+  const index = view ? model.sheets.findIndex((sheet) => sheet.id === view.sheetId && sheet.visibility === "visible") : -1;
+  if (!view || index < 0) {
+    return false;
+  }
+  const sheet = model.sheets[index]!;
+  const next = withViewFields(sheet, recordedFields(viewFieldsOf(sheet), view));
+  if (next !== sheet) {
+    model.sheets = model.sheets.map((each, at) => (at === index ? next : each));
+  }
+  model.activeSheetIndex = index;
+  return true;
+}
+
 export interface SheetViewStateDeps {
   workbook: ShallowRef<SpreadsheetModel | null>;
   /** The model index of the sheet on show (useWorkbookLoad's). */
   activeIndex: Ref<number>;
+  /** SPEC-138: whether a write may reach the store now; absent = always. */
+  writable?: () => boolean;
 }
 
 export function useSheetViewState(deps: SheetViewStateDeps) {
@@ -153,7 +192,7 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
   function flush(): void {
     cancel();
     const model = deps.workbook.value;
-    if (!pending || !model) {
+    if (!pending || !model || deps.writable?.() === false) {
       return;
     }
     pending = false;
@@ -197,6 +236,36 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
     model.sheets = model.sheets.map((sheet) => withViewFields(sheet, fields.value[sheet.id] ?? viewFieldsOf(sheet)));
   }
 
+  /** SPEC-138: where the view stands, as a draft or a commit records it —
+   * the sheet on show, its active cell and its top-left cell (indices). */
+  function sheetView(): RecordedSheetView | undefined {
+    const sheet = activeSheet.value;
+    if (!sheet) {
+      return undefined;
+    }
+    const view = fields.value[sheet.id] ?? {};
+    return {
+      sheetId: sheet.id,
+      active: view.selection?.active ?? { row: 0, col: 0 },
+      topRow: view.topLeftCell?.row ?? 0,
+      leftCol: view.topLeftCell?.col ?? 0,
+    };
+  }
+
+  /** SPEC-138: puts a recorded view back on the model on show (withSheetView)
+   * and into the fields and the active sheet. Returns whether it applied. */
+  function applySheetView(view: RecordedSheetView | undefined): boolean {
+    const model = deps.workbook.value;
+    if (!model || !withSheetView(model, view)) {
+      return false;
+    }
+    const sheet = model.sheets[model.activeSheetIndex]!;
+    fields.value = { ...fields.value, [sheet.id]: viewFieldsOf(sheet) };
+    storedActiveIndex = model.activeSheetIndex;
+    deps.activeIndex.value = model.activeSheetIndex;
+    return true;
+  }
+
   watch(deps.activeIndex, (next) => {
     if (deps.workbook.value && next !== storedActiveIndex) {
       schedule();
@@ -216,7 +285,7 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
     flush();
   });
 
-  return { fields, active, activeSheet, update, updateActive, flush, syncInto };
+  return { fields, active, activeSheet, update, updateActive, flush, syncInto, sheetView, applySheetView };
 }
 
 export type SheetViewState = ReturnType<typeof useSheetViewState>;

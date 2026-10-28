@@ -27,7 +27,9 @@
 // View ▸ Comments the comments pane's (its comments), and the bar's state
 // says which apply and what is checked. SPEC-136: File ▸ Page setup…,
 // Print… and Print area ▸, View ▸ Page breaks and Insert ▸ the page breaks
-// are `printing`'s (usePageSetup, useSheetPrint). Later specs append commands here.
+// are `printing`'s (usePageSetup, useSheetPrint). SPEC-138: File ▸ Version
+// history toggles the side panel's history pane (useWorkbookEditing's
+// sidePanel), checked while it is open. Later specs append commands here.
 import { computed } from "vue";
 import { SHEET_MENU_COMMANDS, zoomPresetOf, type SpreadsheetMenuState } from "../../lib/spreadsheet/menuState";
 import type { NumberPresetId } from "../../lib/spreadsheet/numberCodes";
@@ -149,6 +151,7 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
       linkDisabledReason: deps.editing?.links?.linkDisabledReason.value ?? "",
       commentsOpen: deps.editing?.comments?.isOpen.value === true,
       showAllNotes: deps.editing?.notes?.showAll.value === true,
+      historyOpen: deps.editing?.sidePanel?.activePane.value === "history",
       pageBreaks: deps.printing?.pageSetup.pageBreaks.shown.value === true,
       canInsertPageBreak: deps.printing?.pageSetup.state.value.canInsert === true,
       canRemovePageBreak: deps.printing?.pageSetup.state.value.canRemove === true,
@@ -286,6 +289,9 @@ export function useSpreadsheetMenu(deps: SpreadsheetMenuDeps) {
         break;
       case SHEET_MENU_COMMANDS.showAllNotes:
         deps.editing?.notes?.toggleShowAll();
+        break;
+      case SHEET_MENU_COMMANDS.versionHistory:
+        deps.editing?.sidePanel?.toggle("history");
         break;
       case SHEET_MENU_COMMANDS.pageSetup:
         deps.printing?.pageSetup.dialog.show();

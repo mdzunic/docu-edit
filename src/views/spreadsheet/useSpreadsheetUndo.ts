@@ -107,7 +107,9 @@ export interface SpreadsheetUndoDeps {
   activateSheet: (sheetId: string) => void;
   /** SPEC-137: while true every command is undone at its commit — the model
    * goes back to the recorded state, nothing is stacked or written through
-   * (a workbook whose storage came back incomplete is read-only). */
+   * (a workbook whose storage came back incomplete is read-only) — and
+   * (SPEC-138) undo and redo do nothing: another tab holds the workbook, or
+   * a previewed version is on show in its place. */
   readOnly?: () => boolean;
 }
 
@@ -317,7 +319,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
    * the opposite stack. */
   function swap(from: Step[], to: Step[], kind: "undo" | "redo"): void {
     const model = deps.model.value;
-    if (!model || from.length === 0) {
+    if (!model || from.length === 0 || deps.readOnly?.()) {
       return;
     }
     deps.settle?.();

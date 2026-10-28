@@ -58,6 +58,8 @@
 // session-only check item) after Freeze ▸; and, ending the Insert menu after
 // a separator, Page break, Remove page break and Reset all page breaks
 // (`sheet-menu-insert-page-break`, `-remove-page-break`, `-reset-page-breaks`).
+// SPEC-138 adds File ▸ Version history (`sheet-menu-version-history`, checked
+// while the side panel's history pane is open) after Print….
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -202,6 +204,12 @@ function arrangeDisabled(end = "front") {
         testid="sheet-menu-print"
         :shortcut="printShortcut"
         @select="emit('command', SHEET_MENU_COMMANDS.print)"
+      />
+      <MenuCheckItem
+        label="Version history"
+        testid="sheet-menu-version-history"
+        :checked="s.historyOpen"
+        @select="emit('command', SHEET_MENU_COMMANDS.versionHistory)"
       />
       <hr class="menu-separator">
       <MenuItem

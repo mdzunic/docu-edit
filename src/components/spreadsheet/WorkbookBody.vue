@@ -37,10 +37,16 @@
 // SPEC-137: a workbook whose storage came back incomplete shows
 // WORKBOOK_STORAGE_INCOMPLETE_MESSAGE above the grid and its formula bar is
 // not editable (the edit pipeline refuses the rest — useWorkbookEditing).
+// SPEC-138: from `saving` (useWorkbookSaving), the `sheet-conflict-bar` while
+// another tab holds the workbook and SPEC-103's RecoveryBar over recovered
+// cells — the formula bar is not editable while the session is locked; and
+// `history` (useWorkbookHistory) is the side panel's history pane.
 // Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
+import RecoveryBar from "../RecoveryBar.vue";
 import { WORKBOOK_STORAGE_INCOMPLETE_MESSAGE } from "../../lib/spreadsheet/errors";
+import { asWorkbookSaving } from "../../views/spreadsheet/useWorkbookSaving";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import SheetPrintSurfaces from "./SheetPrintSurfaces.vue";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
@@ -92,7 +98,15 @@ const props = defineProps({
   /** useFunctionAssist's return (SPEC-127): the autocomplete, the argument
    * hint and the Insert Function dialog, and the formula bar's fx. */
   assist: { type: Object, default: null },
+  /** SPEC-138: useWorkbookSaving's return — the conflict and recovery bars. */
+  saving: { type: Object, default: null },
+  /** SPEC-138: useWorkbookHistory's return — the side panel's history pane. */
+  history: { type: Object, default: null },
 });
+
+const saving = computed(() => (props.saving ? asWorkbookSaving(props.saving) : null));
+/** The formula bar takes entry only where the grid's cell editor does. */
+const editable = computed(() => saving.value === null || saving.value.editable.value);
 
 const assist = computed(() => (props.assist ? asFunctionAssist(props.assist) : null));
 
@@ -182,12 +196,26 @@ const tabs = computed(() => {
     >
       {{ WORKBOOK_STORAGE_INCOMPLETE_MESSAGE }}
     </p>
+    <div
+      v-if="saving?.conflictMessage.value"
+      class="workbook-conflict"
+      role="status"
+      data-testid="sheet-conflict-bar"
+    >
+      {{ saving.conflictMessage.value }}
+    </div>
+    <RecoveryBar
+      v-if="saving?.recovery.value"
+      :label="saving.recoveryLabel.value"
+      @keep="saving.keepRecovered()"
+      @discard="saving.discardRecovered()"
+    />
     <FormulaBar
       :address="grid.selection.nameBoxText.value"
       :content="grid.formulas.barText.value"
       :spill-member="grid.formulas.spillMember.value"
       :editor="cellEditing"
-      :editable="book.activeSheet.value?.kind === 'grid' && !book.storageIncomplete.value"
+      :editable="book.activeSheet.value?.kind === 'grid' && !book.storageIncomplete.value && editable"
       :can-insert-function="assist?.canInsert.value ?? false"
       :aria="assist?.editorAria.value ?? {}"
       :names="names ?? undefined"
@@ -252,7 +280,10 @@ const tabs = computed(() => {
           :image-src="grid.drawings?.imageSrc"
         />
       </div>
-      <SheetSidePanel :editing="editing" />
+      <SheetSidePanel
+        :editing="editing"
+        :history="history"
+      />
     </div>
     <SheetTableSurfaces
       v-if="tables"
@@ -445,6 +476,17 @@ const tabs = computed(() => {
   justify-content: center;
   color: var(--text-secondary);
 }
+/* SPEC-138: the second tab's notice, RecoveryBar's look. */
+.workbook-conflict {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-selected);
+  border-bottom: var(--border-width) solid var(--accent-subtle);
+  color: var(--text-accent);
+  font-size: var(--text-md);
+}
+
 .workbook-storage-incomplete {
   margin: 0;
   padding: var(--space-2) var(--space-4);

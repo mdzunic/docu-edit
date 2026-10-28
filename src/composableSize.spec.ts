@@ -71,7 +71,7 @@ const OVER_BUDGET: Record<string, number> = {
   "views/document/useTableTools.ts": 425,
   "views/document/useNotes.ts": 415,
   "views/document/useFields.ts": 408,
-  "composables/useAutosave.ts": 404,
+  "composables/useAutosave.ts": 396,
 };
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
