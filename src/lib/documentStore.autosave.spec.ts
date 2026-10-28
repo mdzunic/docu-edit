@@ -201,11 +201,11 @@ describe("commitDocument", () => {
     store.getOrCreateDocument("doc-7");
     await flushSetupWrite(putRecord);
     const order: string[] = [];
-    let land: (() => void) | null = null;
+    const draftPut: { land?: () => void } = {};
     putRecord.mockImplementation((record: { id: string }) =>
       record.id === "draft:doc-7"
         ? new Promise<void>((resolve) => {
-            land = () => {
+            draftPut.land = () => {
               order.push("put draft:doc-7");
               resolve();
             };
@@ -223,7 +223,7 @@ describe("commitDocument", () => {
     const commit = store.commitDocument("doc-7", { caret: null, scroll: 0 });
     await macrotasks(20);
     expect(order).not.toContain("delete draft:doc-7");
-    land?.();
+    draftPut.land?.();
     await Promise.all([draft, commit]);
     expect(order.indexOf("put draft:doc-7")).toBeGreaterThanOrEqual(0);
     expect(order.indexOf("put draft:doc-7")).toBeLessThan(order.indexOf("delete draft:doc-7"));
