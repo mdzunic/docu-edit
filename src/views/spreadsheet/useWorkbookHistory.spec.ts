@@ -288,13 +288,13 @@ describe("the pane and its labels (AC-48..AC-51)", () => {
     expect(history.pausedMessage.value).toBe(HISTORY_PAUSED_MESSAGE);
   });
 
-  it("a preview in a tab that waited behind another ends when its lock grants", async () => {
-    const { history, live, model, owns, previewing } = await harness({ owns: false });
+  it("a preview ends before the session swaps another workbook in (an adopted commit, a recovered draft, Discard)", async () => {
+    const { history, live, model, previewing, emit } = await harness({ owns: false });
     const { recordWorkbookVersion } = await import("../../lib/spreadsheetVersions");
     const version = await recordWorkbookVersion({ docId: live.id, model: { ...(await workbook("then")), id: live.id }, author: "You", trigger: "commit", cachedPrev: null });
     await history.preview(version.newEntry!.id);
     expect(previewing.value).toBe(true);
-    owns.value = true;
+    emit("swap");
     expect(previewing.value).toBe(false);
     expect(history.previewModel.value).toBeNull();
     expect(model.value).toBe(live);

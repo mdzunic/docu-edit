@@ -124,7 +124,7 @@ async function workbook(): Promise<SpreadsheetModel> {
 const COMMITTED_VIEW: SheetViewState = { sheetId: "one", active: { row: 1, col: 0 }, topRow: 0, leftCol: 0 };
 const DRAFT_VIEW: SheetViewState = { sheetId: "two", active: { row: 3, col: 0 }, topRow: 2, leftCol: 0 };
 
-async function harness(options: { locks?: LockManagerLike; draft?: boolean } = {}) {
+async function harness(options: { locks?: LockManagerLike; draft?: boolean; beforeMount?: () => void } = {}) {
   const store = await import("../../lib/documentStore");
   const { useWorkbookSaving } = await import("./useWorkbookSaving");
   const committed = await workbook();
@@ -141,6 +141,7 @@ async function harness(options: { locks?: LockManagerLike; draft?: boolean } = {
   // The import's own idle write-through lands before the log starts.
   await settle();
   idb.puts.length = 0;
+  options.beforeMount?.();
   const model = shallowRef<SpreadsheetModel | null>(committed);
   const show = vi.fn((next: SpreadsheetModel) => {
     model.value = next;
@@ -299,5 +300,61 @@ describe("recovery and the sheetView (AC-26..AC-29)", () => {
     expect(withSheetView(model, DRAFT_VIEW)).toBe(true);
     expect(model.activeSheetIndex).toBe(1);
     expect(model.sheets[1]!.rows).toEqual(rows(4, "b"));
+  });
+});
+
+describe("the session's begin (review: nothing commits or edits before it)", () => {
+  it("while the crash draft is still being read, a commit point and a close commit nothing and edits wait — then the bar offers it", async () => {
+    const opener: { open?: () => void } = {};
+    const gate = new Promise<void>((resolve) => {
+      opener.open = resolve;
+    });
+    const { saving, committed } = await harness({
+      draft: true,
+      beforeMount: () => {
+        const read = idb.getRecord.getMockImplementation()!;
+        idb.getRecord.mockImplementation(async (key: string) => {
+          if (key.startsWith("draft:")) {
+            await gate;
+          }
+          return read(key);
+        });
+      },
+    });
+    expect(saving.lockState.value).toBe("acquired");
+    expect(saving.editable.value).toBe(false);
+    expect(saving.owns.value).toBe(false);
+    saving.commitPoint();
+    expect(await saving.flushForClose()).toBe(true);
+    await settle();
+    expect(idb.puts).toEqual([]);
+    expect(idb.documents.has(`draft:${committed.id}`)).toBe(true);
+
+    opener.open!();
+    await settle();
+    expect(saving.recovery.value).not.toBeNull();
+    expect(saving.editable.value).toBe(true);
+  });
+
+  it("Discard while a version is previewed ends the preview before the committed workbook is shown", async () => {
+    const { saving, committed, model } = await harness({ draft: true });
+    const order: string[] = [];
+    saving.listen({ swap: () => order.push(`swap over ${model.value === committed ? "committed" : "other"}`) });
+    saving.previewing.value = true;
+    saving.discardRecovered();
+    expect(order).toEqual(["swap over other"]);
+    expect(model.value).toBe(committed);
+  });
+
+  it("a restore's commit settles an open recovery bar, committing what is on show", async () => {
+    const { saving, store, committed } = await harness({ draft: true });
+    const restored: SpreadsheetModel = { ...committed, sheets: committed.sheets.map((s, i) => (i === 0 ? { ...s, rows: rows(4, "restored") } : s)) };
+    store.replaceSpreadsheetModel(committed.id, restored);
+    await saving.commitNow();
+    await settle();
+    expect(saving.recovery.value).toBeNull();
+    const stored = idb.documents.get(`sheetrows:${committed.id}:one:0000`) as unknown as { rows: Row[] };
+    expect(stored.rows[0]!.cells[0]!.value).toBe("restored0");
+    expect(idb.documents.has(`draft:${committed.id}`)).toBe(false);
   });
 });

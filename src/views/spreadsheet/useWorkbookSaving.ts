@@ -21,7 +21,7 @@
 // useWorkbookHistory (the version history controller) subscribes to the
 // session here — its begin and end, every edit, every commit point.
 import { computed, inject, onBeforeUnmount, ref, watch, type Ref, type ShallowRef } from "vue";
-import { matchedRouteKey, onBeforeRouteLeave } from "vue-router";
+import { matchedRouteKey, onBeforeRouteLeave, onBeforeRouteUpdate } from "vue-router";
 import { useAutosave } from "../../composables/useAutosave";
 import { useToasts } from "../../composables/useToasts";
 import { acquireEditLock, type EditLockHandle, type LockManagerLike } from "../../lib/core/editLock";
@@ -73,16 +73,25 @@ export interface WorkbookSessionListener {
   edit?: () => void;
   /** A commit point: a download, a clean close. */
   commitPoint?: () => void;
+  /** The session is about to show another model in place of the one on
+   * show (the adopted commit, a recovered draft, Discard): a preview ends
+   * first, so leaving it can never put back what was replaced. */
+  swap?: () => void;
 }
 
 export function useWorkbookSaving(deps: WorkbookSavingDeps) {
   const { addToast } = useToasts();
   /** "pending" until the Web Lock resolves; editing waits for "acquired". */
   const lockState = ref<WorkbookLockState>("pending");
+  /** The session has begun: the stored commit adopted (another tab's, for a
+   * tab that waited), a crash draft looked for. Until then nothing commits —
+   * a commit in that window would bury the draft it is about to offer — and
+   * nothing edits the workbook it is about to replace. */
+  const ready = ref(false);
   /** Set by useWorkbookHistory while a version is previewed in the grid. */
   const previewing = ref(false);
   /** This tab owns the workbook: it may draft, commit and record versions. */
-  const owns = computed(() => lockState.value === "acquired");
+  const owns = computed(() => lockState.value === "acquired" && ready.value);
   /** Edits are allowed: owned, not previewing, storage complete. */
   const editable = computed(() => owns.value && !previewing.value && deps.storageIncomplete?.value !== true);
   const listeners: WorkbookSessionListener[] = [];
@@ -93,10 +102,25 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
     }
   }
 
+  /** Where the view stands — while a version is previewed, where it stood
+   * on the live workbook when the preview began. */
+  let viewBeforePreview: SheetViewState | undefined;
+  watch(
+    previewing,
+    (on) => {
+      if (on) {
+        viewBeforePreview = deps.getSheetView();
+      }
+    },
+    { flush: "sync" },
+  );
+  const sheetView = (): SheetViewState | undefined => (previewing.value ? viewBeforePreview : deps.getSheetView());
+
   /** Shows a restored workbook with its recorded view: a new model object
    * through `show` (the grid re-mounts on it), the same one re-mounted when
    * the view changed what shows. */
   function applyWorkbook(model: SpreadsheetModel, view: SheetViewState | undefined): void {
+    emit("swap");
     if (model !== deps.model.value) {
       withSheetView(model, view);
       deps.show(model);
@@ -108,7 +132,7 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
   const autosave = useAutosave({
     getCaret: () => null,
     getScroll: () => 0,
-    getSheetView: deps.getSheetView,
+    getSheetView: sheetView,
     isActive: () => owns.value && deps.model.value !== null,
     applyRestored: (state) => {
       if (isSpreadsheetModel(state.model)) {
@@ -129,6 +153,7 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
 
   function open(id: string): void {
     sessionId = id;
+    ready.value = false;
     lockState.value = "pending";
     emit("begin", id);
     lock = acquireEditLock(
@@ -148,7 +173,11 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
             // first acquisition has nothing stacked — editing waits for it.)
             deps.resetUndo();
           }
-          void autosave.beginSession(id);
+          void autosave.beginSession(id).finally(() => {
+            if (sessionId === id && lockState.value === "acquired") {
+              ready.value = true;
+            }
+          });
         }
       },
       deps.locks,
@@ -159,13 +188,16 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
     if (sessionId === null) {
       return;
     }
-    autosave.endSession(owns.value);
+    // A clean close commits — the workbook this session edits, never one the
+    // view moved on to (the route guard committed this one first).
+    autosave.endSession(owns.value && deps.model.value?.id === sessionId);
     emit("end");
     // A busy tab's flag stays until the view's release has dropped the
     // workbook without writing it (the store clears it there).
     lock?.release();
     lock = null;
     sessionId = null;
+    ready.value = false;
     lockState.value = "pending";
   }
 
@@ -223,19 +255,25 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
     return flushed;
   }
 
+  /** The route guard: commits before the view leaves this workbook. */
+  async function leave(): Promise<boolean> {
+    const flushed = await flushForClose();
+    if (!flushed) {
+      addToast(
+        `Couldn't close "${deps.model.value?.title ?? "this workbook"}" — ${STORAGE_FULL_REASON}. ` +
+          "Your workbook is still open; retry, or download a copy.",
+      );
+    }
+    return flushed;
+  }
+
   // Every route away from the workbook — Close, File ▸ Close, the home link,
-  // Back — is the same commit boundary (useFileActions' rule for text).
+  // Back, and another workbook in this same view (CSV's "Open as new
+  // workbook") — is the same commit boundary (useFileActions' rule for
+  // text), committed before the view lets go of it.
   if (inject(matchedRouteKey, null)) {
-    onBeforeRouteLeave(async () => {
-      const flushed = await flushForClose();
-      if (!flushed) {
-        addToast(
-          `Couldn't close "${deps.model.value?.title ?? "this workbook"}" — ${STORAGE_FULL_REASON}. ` +
-            "Your workbook is still open; retry, or download a copy.",
-        );
-      }
-      return flushed;
-    });
+    onBeforeRouteLeave(leave);
+    onBeforeRouteUpdate((to, from) => (to.params.id === from.params.id ? true : leave()));
   }
 
   /** "Discard": the committed workbook back with its view, and an empty undo
@@ -256,12 +294,15 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
     discardRecovered,
     noteEdit,
     commitPoint,
-    commitNow: autosave.commitNow,
     flushForClose,
     lockState,
     owns,
     editable,
     previewing,
+    /** A restore's commit (useWorkbookHistory): an open recovery bar is
+     * settled by it — the restored version replaces what the bar offered,
+     * which the restore's pre-restore version holds. */
+    commitNow: () => (autosave.recovery.value ? autosave.keepRecovered() : autosave.commitNow()),
     conflictMessage: computed(() => (lockState.value === "busy" ? WORKBOOK_CONFLICT_MESSAGE : "")),
     download: () => deps.download(),
     /** useWorkbookHistory's subscription to the session. */

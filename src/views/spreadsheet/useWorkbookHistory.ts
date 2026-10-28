@@ -20,7 +20,7 @@
 // restore" restores it the same way. Nothing here is awaited on an edit's
 // path, and every failure stays inside history: the workbook's own records
 // are never touched by it.
-import { computed, onBeforeUnmount, ref, shallowRef, watch, type ShallowRef } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, type ShallowRef } from "vue";
 import { usePreferences } from "../../composables/usePreferences";
 import { useToasts } from "../../composables/useToasts";
 import { createVersionCadenceTimer } from "../../lib/core/versionCadenceScheduler";
@@ -159,25 +159,23 @@ export function useWorkbookHistory(deps: WorkbookHistoryDeps) {
     }
   }
 
-  // A tab that waited behind another gets the lock: the session is about to
-  // hand the view the workbook it adopts, so a preview ends first — leaving
-  // it later would put back the model this tab loaded before.
-  watch(
-    () => deps.saving.owns.value,
-    (owns) => {
-      if (owns) {
-        exitPreview();
-      }
-    },
-    { flush: "sync" },
-  );
 
   // --- the session -------------------------------------------------------------------
   let docId: string | null = null;
   let cachedPrev: WorkbookVersionTail | null = null;
   let changedSinceLastVersion = false;
 
-  async function snapshot(trigger: SnapshotTrigger): Promise<string | null> {
+  /** Snapshots run one at a time: each appends to the index the one before
+   * it wrote (two at once would each append to the same index, and the later
+   * write would drop the earlier version and orphan its blob references). */
+  let snapshots: Promise<unknown> = Promise.resolve();
+  function snapshot(trigger: SnapshotTrigger): Promise<string | null> {
+    const next = snapshots.then(() => recordSnapshot(trigger));
+    snapshots = next.catch(() => null);
+    return next;
+  }
+
+  async function recordSnapshot(trigger: SnapshotTrigger): Promise<string | null> {
     const id = docId;
     const model = live();
     if (!id || !model || !deps.saving.owns.value) {
@@ -246,6 +244,10 @@ export function useWorkbookHistory(deps: WorkbookHistoryDeps) {
         void snapshot("commit");
       }
     },
+    // The session shows another workbook in place of the one on show (an
+    // adopted commit, a recovered draft, Discard): a preview ends first —
+    // leaving it later would put back what was replaced.
+    swap: () => exitPreview(),
   });
 
   // --- restore: a replace -------------------------------------------------------
