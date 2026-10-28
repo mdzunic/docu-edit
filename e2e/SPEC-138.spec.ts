@@ -150,6 +150,7 @@ test("a reopened workbook scrolls back to its committed top-left row and column 
   await page.goto("/");
   await page.getByTestId("open-document-input").setInputFiles(FIXTURE);
   await expect(page).toHaveURL(/\/sheets\/.+/);
+  const id = page.url().match(/\/sheets\/([^/?#]+)/)?.[1] ?? "";
   await showData(page);
   await expect(cell(page, "B3")).toHaveText("3");
 
@@ -167,10 +168,16 @@ test("a reopened workbook scrolls back to its committed top-left row and column 
   expect(Number(shown.row)).toBeGreaterThan(Number(edited.row) + 30);
   expect(shown.col > "J").toBe(true); // past the columns a reopened grid's first extent reaches
 
-  // Reload (the tab-close commit) and again: the same top-left row and column,
-  // not the active cell scrolled into view.
+  // Close (the clean close commits, awaited) and reopen, then reload: the same
+  // top-left row and column each time, not the active cell scrolled into view.
+  await page.getByTestId("close-document").click();
+  await expect(page.getByTestId("library")).toBeVisible();
   for (let reopen = 0; reopen < 2; reopen += 1) {
-    await page.reload();
+    if (reopen === 0) {
+      await page.goto(`/sheets/${id}`);
+    } else {
+      await page.reload();
+    }
     await expect(tab(page, "Data")).toHaveAttribute("aria-selected", "true");
     await expect(page.getByTestId("recovery-bar")).toBeHidden();
     await waitForSaved(page);
@@ -265,6 +272,12 @@ test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews
   await expect(conflict).toHaveText("This workbook is open in another tab");
   await expect(second.getByTestId("spreadsheet-grid")).toHaveAttribute("aria-readonly", "true");
   await expect(second.getByTestId("save-state")).toHaveCount(0);
+  // Every edit command is disabled: the format strip, Add sheet, the menus.
+  await expect(second.getByTestId("sheet-bold")).toBeDisabled();
+  await expect(second.getByTestId("sheet-add")).toBeDisabled();
+  await second.getByRole("menubar").getByText("Format", { exact: true }).click();
+  await expect(second.getByTestId("sheet-menu-format-cells")).toBeDisabled();
+  await second.keyboard.press("Escape");
   await showData(second);
   await clickCell(second, "B5");
   const before = await cell(second, "B5").textContent();
@@ -276,6 +289,7 @@ test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews
   await page.close();
   await expect(conflict).toBeHidden({ timeout: 15_000 });
   await expect(second.getByTestId("spreadsheet-grid")).not.toHaveAttribute("aria-readonly", "true");
+  await expect(second.getByTestId("sheet-bold")).toBeEnabled();
   await expect(cell(second, "B4")).toHaveText("888");
   await enterAt(second, "B5", "55");
   await waitForSaved(second);

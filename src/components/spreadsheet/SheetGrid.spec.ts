@@ -20,6 +20,7 @@ import { useSheetMetrics } from "../../views/spreadsheet/useSheetMetrics";
 import { useSheetSelection } from "../../views/spreadsheet/useSheetSelection";
 import { useSheetZoom } from "../../views/spreadsheet/useSheetZoom";
 import { SETTLE_MS } from "../../views/spreadsheet/useSheetViewport";
+import { singleCell } from "../../lib/spreadsheet/selection";
 import SheetGrid from "./SheetGrid.vue";
 
 const size = { width: 1280, height: 720 };
@@ -61,10 +62,11 @@ function bookOf(sheet: Sheet): SpreadsheetModel {
   return { names: [], dxfs: [], kind: "spreadsheet", id: "book", title: "Book", format: "xlsx", readerVersion: 2, sheets: [sheet], activeSheetIndex: 0, dateSystem: "1900", opaque: [], styles: STYLES, defaultStyleId: 0 };
 }
 
-/** SheetGrid over `sheet` with the view-level state it is handed. */
-function mountGrid(sheet: Sheet, zoomPercent = 100) {
+/** SheetGrid over `sheet` with the view-level state it is handed (`view`:
+ * more view fields; `extra`: more of the grid context). */
+function mountGrid(sheet: Sheet, zoomPercent = 100, view: SheetViewFields = {}, extra: Record<string, unknown> = {}) {
   const model = bookOf(sheet);
-  const fields = ref<SheetViewFields>({ zoomPercent });
+  const fields = ref<SheetViewFields>({ zoomPercent, ...view });
   const viewState = {
     active: computed(() => fields.value),
     activeSheet: computed((): Sheet | null => sheet),
@@ -78,7 +80,7 @@ function mountGrid(sheet: Sheet, zoomPercent = 100) {
         const sheetMetrics = useSheetMetrics(() => sheet);
         const selection = useSheetSelection({ sheet: () => sheet, sheetMetrics, viewState, model: () => model });
         const zoom = useSheetZoom({ viewState });
-        const context = { model, sheetMetrics, selection, zoom, viewState, formulas: {} };
+        const context = { model, sheetMetrics, selection, zoom, viewState, formulas: {}, ...extra };
         return () => h(SheetGrid, { sheet, context });
       },
     }),
@@ -88,6 +90,7 @@ function mountGrid(sheet: Sheet, zoomPercent = 100) {
   const grid = (): HTMLElement => wrapper.get('[data-testid="spreadsheet-grid"]').element as HTMLElement;
   return {
     grid,
+    fields,
     cells: () => [...grid().querySelectorAll<HTMLElement>(".sheet-cell")],
     elements: () => grid().querySelectorAll("*").length + 1,
     canvas: () => grid().querySelector('[data-testid="sheet-overview-canvas"]'),
@@ -208,5 +211,28 @@ describe("SheetGrid — the overview (AC-49, AC-50)", () => {
   it("carries data-calc-state, idle when recalculation is not wired", () => {
     const view = mountGrid(denseSheet(10, 5));
     expect(view.grid().getAttribute("data-calc-state")).toBe("idle");
+  });
+});
+
+describe("SheetGrid — a reopened workbook's top-left and the reveal tick (SPEC-138 AC-8)", () => {
+  it("scrolls to a stored top-left past the extent it opens with — the extent grows to hold a viewport beyond it", async () => {
+    // 26 columns in use: the grid opens with room for col 40 + 10, which a
+    // 1280 px viewport (19 columns) past col 40 overruns.
+    const view = mountGrid(denseSheet(30, 26), 100, { topLeftCell: { row: 400, col: 40 } });
+    await settle();
+    expect(view.fields.value.topLeftCell).toEqual({ row: 400, col: 40 });
+    expect(view.grid().querySelector('[data-testid="sheet-col-header"]')).not.toBeNull();
+  });
+
+  it("brings the active cell into view on a reveal tick with no cell editor (a read-only grid), and not before one", async () => {
+    const reveal = ref(0);
+    const view = mountGrid(denseSheet(30, 26), 100, {}, { reveal });
+    await settle();
+    view.fields.value = { ...view.fields.value, selection: singleCell({ row: 300, col: 2 }) };
+    await settle();
+    expect(view.fields.value.topLeftCell).toBeUndefined();
+    reveal.value += 1;
+    await settle();
+    expect(view.fields.value.topLeftCell?.row).toBeGreaterThan(250);
   });
 });

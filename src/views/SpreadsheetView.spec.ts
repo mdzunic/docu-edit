@@ -1043,6 +1043,11 @@ describe("SpreadsheetView saving and history (SPEC-138)", () => {
       expect(wrapper.get('[data-testid="spreadsheet-grid"]').attributes("aria-readonly")).toBe("true");
       expect(wrapper.find('[data-testid="cell-editor"]').exists()).toBe(false);
       expect(wrapper.find('[data-testid="save-state"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="sheet-add"]').attributes("disabled")).toBeDefined();
+      expect(wrapper.get('[data-testid="sheet-bold"]').attributes("disabled")).toBeDefined();
+      await wrapper.findAll('[data-testid="sheet-tab"]')[0]!.trigger("contextmenu", { clientX: 10, clientY: 10 });
+      expect(wrapper.get('[data-testid="sheet-tab-menu-insert"]').attributes("disabled")).toBeDefined();
+      expect(wrapper.get('[data-testid="sheet-tab-menu-rename"]').attributes("disabled")).toBeDefined();
       await wrapper.get('[data-testid="sheet-add"]').trigger("click");
       await flushPromises();
       expect(names(wrapper)).toEqual(["First", "Second"]);
@@ -1053,9 +1058,10 @@ describe("SpreadsheetView saving and history (SPEC-138)", () => {
       expect(wrapper.find('[data-testid="sheet-conflict-bar"]').exists()).toBe(false);
       expect(wrapper.get('[data-testid="spreadsheet-grid"]').attributes("aria-readonly")).toBeUndefined();
       expect(wrapper.get('[data-testid="save-state"]').text()).toBe("All changes saved");
+      expect(wrapper.get('[data-testid="sheet-bold"]').attributes("disabled")).toBeUndefined();
       await wrapper.get('[data-testid="sheet-add"]').trigger("click");
       await flushPromises();
-      expect(names(wrapper)).toEqual(["First", "Second", "Sheet1"]);
+      expect(names(wrapper)).toEqual(["First", "Sheet1", "Second"]); // after the sheet on show, First
     } finally {
       Reflect.deleteProperty(navigator, "locks");
     }

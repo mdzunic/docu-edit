@@ -56,6 +56,10 @@ describe("SheetTabs management (SPEC-121)", () => {
     expect(wrapper.emitted("add")).toHaveLength(1);
   });
 
+  it("disables Add sheet while the workbook is read-only (SPEC-138)", () => {
+    expect(mountTabs({ readOnly: true }).get('[data-testid="sheet-add"]').attributes("disabled")).toBeDefined();
+  });
+
   it("asks for the tab menu on right-click (pointer point) and on Shift+F10 / ContextMenu (tab's left/bottom)", async () => {
     const wrapper = mountTabs();
     await tabs(wrapper)[1].trigger("contextmenu", { clientX: 140, clientY: 700 });

@@ -33,6 +33,7 @@ function harness(rows: Row[], styles: CellStyle[], ranges: GridRange[] = [{ top:
   const labels: string[] = [];
   const toasts: string[] = [];
   const editing = ref(false);
+  const readOnly = ref(false);
   const clearSelection = vi.fn();
   const scope = effectScope();
   const formatting = scope.run(() =>
@@ -40,16 +41,24 @@ function harness(rows: Row[], styles: CellStyle[], ranges: GridRange[] = [{ top:
       book: { workbook, activeSheet },
       viewState: { syncInto: vi.fn() },
       selection: { selection: computed(() => selection.value), formatContext: computed(() => ({ locale: EN_US, dateSystem: "1900" as const })) },
-      editing: { undo: { record: (label) => labels.push(label), commit: () => workbook.value && (workbook.value = { ...workbook.value }) }, cell: { editing: computed(() => editing.value), clearSelection } },
+      editing: { undo: { record: (label) => labels.push(label), commit: () => workbook.value && (workbook.value = { ...workbook.value }) }, cell: { editing: computed(() => editing.value), clearSelection }, readOnly: computed(() => readOnly.value) },
       locale: () => EN_US,
       toast: (message) => toasts.push(message),
     }),
   )!;
   const shown = (row: number, col: number): CellStyle => cellStyle(workbook.value!, effectiveStyleId(workbook.value!.sheets[0]!, row, col));
-  return { formatting, model: workbook, labels, toasts, editing, clearSelection, shown, scope };
+  return { formatting, model: workbook, labels, toasts, editing, readOnly, clearSelection, shown, scope };
 }
 
 describe("SPEC-123 useFormatting", () => {
+  it("SPEC-138: the strip is disabled while the workbook is read-only", () => {
+    const h = harness([{ index: 0, cells: [{ col: 0, value: 1 }] }], [{}]);
+    expect(h.formatting.toolbar.value.disabled).toBe(false);
+    h.readOnly.value = true;
+    expect(h.formatting.toolbar.value.disabled).toBe(true);
+    h.scope.stop();
+  });
+
   it("reflects the active cell and toggles from it: Bold on a bold active cell un-bolds every cell", () => {
     const h = harness([{ index: 0, cells: [{ col: 0, value: 1, styleId: 1 }, { col: 1, value: 2 }] }, { index: 1, cells: [{ col: 0, value: 3, styleId: 1 }] }], [{}, { font: { bold: true } }]);
     expect(h.formatting.toolbar.value.bold).toBe(true);

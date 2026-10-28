@@ -298,3 +298,25 @@ describe("SpreadsheetMenuBar's Insert and Arrange menus (SPEC-131)", () => {
     expect(SHEET_MENU_COMMANDS).toMatchObject({ insertImage: "insert.image", insertShape: "insert.shape", arrangeBack: "arrange.back", altText: "arrange.alt-text" });
   });
 });
+
+describe("SpreadsheetMenuBar while the workbook is read-only (SPEC-138)", () => {
+  it("disables every item that changes the workbook and keeps what views, downloads, prints or closes it", () => {
+    const wrapper = mount(SpreadsheetMenuBar, { props: { state: { readOnly: true, filterOn: true, frozen: true, drawingSelected: true, canInsertPageBreak: true, hasPrintArea: true } } });
+    const disabled = (testid: string) => wrapper.get(`[data-testid="${testid}"]`).attributes("disabled") !== undefined;
+    // (A submenu's items render once it opens; they carry the same rule.)
+    for (const testid of [
+      "sheet-menu-page-setup", "sheet-menu-paste-special", "sheet-menu-insert-image", "sheet-menu-insert-chart", "sheet-menu-insert-table",
+      "sheet-menu-insert-link", "sheet-menu-insert-note", "sheet-menu-insert-page-break", "sheet-menu-arrange-front", "sheet-menu-arrange-alt-text",
+      "sheet-menu-format-cells", "sheet-menu-conditional-formatting", "sheet-menu-row-height", "sheet-menu-name-manager",
+      "sheet-menu-sort-asc", "sheet-menu-filter", "sheet-menu-clear-filters", "sheet-menu-reapply-filter", "sheet-menu-data-validation",
+    ]) {
+      expect(disabled(testid), testid).toBe(true);
+    }
+    for (const testid of ["sheet-menu-download", "sheet-menu-print", "sheet-menu-version-history", "sheet-menu-close", "sheet-menu-gridlines", "sheet-menu-show-formulas", "sheet-menu-page-breaks", "sheet-menu-recalculate"]) {
+      expect(disabled(testid), testid).toBe(false);
+    }
+    // With a filter on, "Turn on Filter first" is not why Clear filters is off.
+    expect(wrapper.get('[data-testid="sheet-menu-clear-filters"]').text()).not.toContain(FILTER_OFF_REASON);
+    expect(asSpreadsheetMenuState(undefined).readOnly).toBe(false);
+  });
+});

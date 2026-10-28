@@ -69,6 +69,14 @@ describe("FindBar", () => {
     expect(expanded.find('[data-testid="find-replace-all"]').exists()).toBe(true);
   });
 
+  it("SPEC-138: replaceDisabled disables the replace field and both Replace buttons, not the search", () => {
+    const wrapper = mountBar({ expanded: true, query: "a", matchCount: 2, currentIndex: 0, replaceDisabled: true });
+    for (const testid of ["find-replace-input", "find-replace", "find-replace-all"]) {
+      expect(wrapper.get(`[data-testid="${testid}"]`).attributes("disabled"), testid).toBeDefined();
+    }
+    expect(wrapper.get('[data-testid="find-next"]').attributes("disabled")).toBeUndefined();
+  });
+
   it("shows an inline error and disables the search actions for an invalid regex (AC-24, AC-25)", () => {
     const wrapper = mountBar({ expanded: true, error: "Invalid regular expression", matchCount: 0, currentIndex: -1 });
     const status = wrapper.get('[data-testid="find-status"]');
