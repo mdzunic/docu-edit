@@ -1,0 +1,271 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://docu-edit.example/schema/workbook-description.json",
+  "title": "docu-edit workbook description",
+  "description": "Generates a .xlsx/.ods workbook from data (SPEC-140). Maps 1:1 to the WorkbookBuilder fluent API — see docs/generate-workbook-api.md. Every formula's cached value is computed before the workbook is written. {} describes a workbook with one empty sheet.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "title": { "type": "string" },
+    "format": { "type": "string", "enum": ["xlsx", "ods"] },
+    "dateSystem": { "type": "string", "enum": ["1900", "1904"] },
+    "locale": { "type": "string", "enum": ["en-US", "en-GB", "de-DE", "fr-FR", "es-ES", "cs-CZ"] },
+    "styles": {
+      "description": "Named styles (defineStyle), usable by name from any sheet.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/definitions/cellStyle" }
+    },
+    "sheets": { "type": "array", "items": { "$ref": "#/definitions/sheet" } }
+  },
+
+  "definitions": {
+    "hexColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+
+    "cellRef": {
+      "description": "An A1 cell reference: \"B3\".",
+      "type": "string",
+      "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$"
+    },
+
+    "range": {
+      "description": "\"A1:D4\", a single cell \"B3\", whole columns \"B:D\" / \"B\" or whole rows \"3:5\" / \"3\".",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "numberFormat": {
+      "description": "A number format code in en-US code syntax (SPEC-118), e.g. \"$#,##0.00\", \"0%\", \"yyyy-mm-dd\".",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "borderStyle": {
+      "type": "string",
+      "enum": ["thin", "medium", "thick", "dashed", "dotted", "double", "hair", "mediumDashed", "dashDot", "mediumDashDot", "dashDotDot", "mediumDashDotDot", "slantDashDot"]
+    },
+
+    "border": {
+      "description": "A border edge: a style alone (automatic colour), or a style and a colour.",
+      "oneOf": [
+        { "$ref": "#/definitions/borderStyle" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["style"],
+          "properties": {
+            "style": { "$ref": "#/definitions/borderStyle" },
+            "color": { "$ref": "#/definitions/hexColor" }
+          }
+        }
+      ]
+    },
+
+    "cellStyle": {
+      "description": "CellStyleSpec: a validated subset of SPEC-117's CellStyle, colours as #rrggbb only. false removes a flag an earlier style set.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "family": { "type": "string", "minLength": 1 },
+            "sizePt": { "type": "number", "minimum": 1, "maximum": 409 },
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "underline": { "type": "string", "enum": ["single", "double"] },
+            "strike": { "type": "boolean" },
+            "color": { "$ref": "#/definitions/hexColor" }
+          }
+        },
+        "fill": { "description": "A solid fill.", "$ref": "#/definitions/hexColor" },
+        "borders": {
+          "description": "Named edges are every cell's own; all sets every edge of every cell, outline the range's outer edges. Applied all, outline, then the named edges.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "top": { "$ref": "#/definitions/border" },
+            "right": { "$ref": "#/definitions/border" },
+            "bottom": { "$ref": "#/definitions/border" },
+            "left": { "$ref": "#/definitions/border" },
+            "all": { "$ref": "#/definitions/border" },
+            "outline": { "$ref": "#/definitions/border" }
+          }
+        },
+        "alignment": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "horizontal": { "type": "string", "enum": ["left", "center", "right", "justify"] },
+            "vertical": { "type": "string", "enum": ["top", "center", "bottom"] },
+            "wrap": { "type": "boolean" },
+            "indent": { "type": "integer", "minimum": 0, "maximum": 250 },
+            "rotation": {
+              "description": "SPEC-117's textRotation: 1–90 counter-clockwise, 91–180 clockwise (90 + degrees), 255 stacked; 0 none.",
+              "oneOf": [
+                { "type": "integer", "minimum": 0, "maximum": 180 },
+                { "const": 255 }
+              ]
+            }
+          }
+        },
+        "numberFormat": { "$ref": "#/definitions/numberFormat" }
+      }
+    },
+
+    "styleRef": {
+      "description": "A style spec, or the name of one in the top-level styles.",
+      "oneOf": [{ "type": "string" }, { "$ref": "#/definitions/cellStyle" }]
+    },
+
+    "cellObject": {
+      "description": "A cell with at most one of value, date, error and formula, and its own style and number format.",
+      "type": "object",
+      "additionalProperties": false,
+      "not": {
+        "anyOf": [
+          { "required": ["value", "date"] },
+          { "required": ["value", "error"] },
+          { "required": ["value", "formula"] },
+          { "required": ["date", "error"] },
+          { "required": ["date", "formula"] },
+          { "required": ["error", "formula"] }
+        ]
+      },
+      "properties": {
+        "value": { "type": ["string", "number", "boolean", "null"], "maxLength": 32767 },
+        "date": {
+          "description": "An ISO date or date-time with no UTC offset, stored by its calendar fields: \"YYYY-MM-DD[THH:MM[:SS[.sss]]]\".",
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,3})?)?)?$"
+        },
+        "error": {
+          "type": "string",
+          "enum": ["#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A", "#GETTING_DATA", "#SPILL!", "#CALC!", "#FIELD!", "#BLOCKED!", "#CONNECT!", "#BUSY!", "#UNKNOWN!"]
+        },
+        "formula": { "description": "SPEC-119 canonical text (en-US syntax); a leading = is accepted.", "type": "string", "minLength": 1 },
+        "numberFormat": { "$ref": "#/definitions/numberFormat" },
+        "style": { "$ref": "#/definitions/styleRef" }
+      }
+    },
+
+    "cellInput": {
+      "description": "Text (a leading = stays text; \"\" stores nothing), a finite number, a boolean, null (no value) or a cell object.",
+      "oneOf": [
+        { "type": "string", "maxLength": 32767 },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "$ref": "#/definitions/cellObject" }
+      ]
+    },
+
+    "sheet": {
+      "description": "addSheet and every call on that sheet, applied in this order: cells, data, styles, columns, rows, merges, freeze.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "description": "1–31 characters, none of : \\ / ? * [ ], no leading or trailing apostrophe, not History, unique ignoring case.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 31
+        },
+        "tabColor": { "$ref": "#/definitions/hexColor" },
+        "hidden": { "type": "boolean" },
+        "showGridLines": { "type": "boolean" },
+        "cells": {
+          "description": "A1 reference → the cell's input (setCell), in key order.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/definitions/cellRef" },
+          "additionalProperties": { "$ref": "#/definitions/cellInput" }
+        },
+        "data": {
+          "description": "2-D blocks (setRows) from their top-left cell. parseText routes strings through SPEC-126's CSV inference — never into a formula.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["at", "rows"],
+            "properties": {
+              "at": { "$ref": "#/definitions/cellRef" },
+              "rows": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/definitions/cellInput" } } },
+              "parseText": { "type": "boolean" }
+            }
+          }
+        },
+        "styles": {
+          "description": "style / numberFormat over a range, in order (style first).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["range"],
+            "anyOf": [{ "required": ["style"] }, { "required": ["numberFormat"] }],
+            "properties": {
+              "range": { "$ref": "#/definitions/range" },
+              "style": { "$ref": "#/definitions/styleRef" },
+              "numberFormat": { "$ref": "#/definitions/numberFormat" }
+            }
+          }
+        },
+        "columns": {
+          "description": "columnWidth: a column or columns (\"B\", \"B:D\") and a width in characters (0–255) or px.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["columns", "width"],
+            "properties": {
+              "columns": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}(:\\$?[A-Za-z]{1,3})?$" },
+              "width": {
+                "oneOf": [
+                  { "type": "object", "additionalProperties": false, "required": ["chars"], "properties": { "chars": { "type": "number", "minimum": 0, "maximum": 255 } } },
+                  { "type": "object", "additionalProperties": false, "required": ["px"], "properties": { "px": { "type": "number", "minimum": 0, "maximum": 1785 } } }
+                ]
+              }
+            }
+          }
+        },
+        "rows": {
+          "description": "rowHeight: a row or rows, 1-based (3, \"3\", \"3:5\"), and a height in pt (0–409) or px (at 0.75 pt each).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rows", "height"],
+            "properties": {
+              "rows": {
+                "oneOf": [
+                  { "type": "integer", "minimum": 1, "maximum": 1048576 },
+                  { "type": "string", "pattern": "^\\$?[1-9][0-9]{0,6}(:\\$?[1-9][0-9]{0,6})?$" }
+                ]
+              },
+              "height": {
+                "oneOf": [
+                  { "type": "object", "additionalProperties": false, "required": ["pt"], "properties": { "pt": { "type": "number", "minimum": 0, "maximum": 409 } } },
+                  { "type": "object", "additionalProperties": false, "required": ["px"], "properties": { "px": { "type": "number", "minimum": 0, "maximum": 545.3333 } } }
+                ]
+              }
+            }
+          }
+        },
+        "merges": {
+          "description": "Ranges of two or more cells; refused when one would discard a value outside its top-left cell or overlaps another.",
+          "type": "array",
+          "items": { "type": "string", "pattern": ":" }
+        },
+        "freeze": {
+          "description": "Frozen rows and columns; { rows: 0, cols: 0 } clears.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rows": { "type": "integer", "minimum": 0, "maximum": 1048575 },
+            "cols": { "type": "integer", "minimum": 0, "maximum": 16383 }
+          }
+        }
+      }
+    }
+  }
+}
