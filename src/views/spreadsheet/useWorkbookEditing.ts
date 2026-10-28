@@ -188,7 +188,7 @@ export function useWorkbookEditing(deps: WorkbookEditingDeps) {
   // SPEC-127's function assists over the cell entry, and SPEC-126's CSV
   // import bar and dialog (moved here from the view to keep it a hub).
   const assist = useFunctionAssist({ ...cell });
-  const csvImport = useCsvImport({ book: deps.book, undo, router: useRouter() });
+  const csvImport = useCsvImport({ book: deps.book, undo, router: useRouter(), locked });
   // SPEC-135: an .xlsx sheet whose annotations the reader left verbatim
   // refuses new notes, comments and links (AC-11).
   const annotationEditing = useAnnotationEditing({ book: deps.book });

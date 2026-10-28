@@ -93,6 +93,10 @@ export interface CsvImportDeps {
   };
   undo: Pick<SpreadsheetUndo, "reset">;
   router: Pick<Router, "push">;
+  /** SPEC-138: true while the view is read-only (another tab holds the
+   * workbook, or a version is previewed in its place) — "Apply" then does
+   * nothing. Absent: never. */
+  locked?: () => boolean;
 }
 
 export function useCsvImport(deps: CsvImportDeps) {
@@ -174,7 +178,7 @@ export function useCsvImport(deps: CsvImportDeps) {
   /** "Apply" (unedited only): the first sheet re-read in place. */
   function apply(): void {
     const current = model();
-    if (!current || !isCsvFormat(current.format) || edited.value) {
+    if (!current || !isCsvFormat(current.format) || edited.value || deps.locked?.()) {
       return;
     }
     let next: SpreadsheetModel;
