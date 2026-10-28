@@ -914,3 +914,150 @@ describe("SpreadsheetView data validation (SPEC-130)", () => {
     expect(rules()).toEqual([]);
   });
 });
+
+// --- SPEC-138: saving and history in the workbook view -------------------------
+//
+// The view's two new wiring calls, through the real view: useWorkbookSaving's
+// save state in the app bar (`save-state`, class `sheet-save-state`) and an
+// edit that goes to the draft cadence instead of writing the workbook through
+// — while opening, switching tabs and moving the selection note no edit; the
+// edit lock's second tab (a stubbed navigator.locks reporting the lock busy)
+// read-only under `sheet-conflict-bar`; and useWorkbookHistory's pane, from the
+// app bar's `sheet-history-toggle` and File ▸ Version history.
+/** A stateful idb double: the store's draft and commit paths read back what
+ * they wrote; `writes` logs every key put. */
+function statefulIdb() {
+  const data = new Map<string, unknown>();
+  const writes: string[] = [];
+  return {
+    data,
+    writes,
+    loadAllRecords: vi.fn(async () => []),
+    getRecord: vi.fn(async (key: string) => structuredClone(data.get(key))),
+    putRecord: vi.fn(async (record: { id: string }) => {
+      writes.push(record.id);
+      data.set(record.id, structuredClone(record));
+    }),
+    deleteRecord: vi.fn(async (key: string) => void data.delete(key)),
+    deleteRecordRange: vi.fn(async () => undefined),
+    writeBatch: vi.fn(async (ops: Array<{ put?: { id: string } }>) => {
+      for (const op of ops) {
+        if (op.put) {
+          writes.push(op.put.id);
+          data.set(op.put.id, structuredClone(op.put));
+        }
+      }
+    }),
+    getVersionsRecord: vi.fn(async () => undefined),
+    putVersionsRecord: vi.fn(async () => undefined),
+    deleteVersionsRecord: vi.fn(async () => undefined),
+  };
+}
+
+/** Real macrotask turns: the store yields one before every write. */
+async function settle(turns = 30) {
+  for (let i = 0; i < turns; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+describe("SpreadsheetView saving and history (SPEC-138)", () => {
+  async function openBook() {
+    const idb = statefulIdb();
+    vi.doMock("../lib/idb", () => idb);
+    const { store, mountSheets } = await loadModules();
+    const model = handBuiltBook([gridSheet("First", [[0, 0, "a"]]), gridSheet("Second", [[0, 0, "b"]])]);
+    store.storeSpreadsheet(model);
+    await settle();
+    idb.writes.length = 0;
+    const { wrapper } = await mountSheets(model.id);
+    await settle();
+    return { idb, store, model, wrapper };
+  }
+
+  it("shows the save state in the app bar; an edit goes to the draft cadence and is never written through", async () => {
+    const { idb, wrapper } = await openBook();
+    const badge = wrapper.get('[data-testid="save-state"]');
+    expect(badge.classes()).toContain("sheet-save-state");
+    expect(badge.text()).toBe("All changes saved");
+    expect(badge.attributes("data-save-state")).toBe("saved");
+    expect(wrapper.find('[data-testid="sheet-conflict-bar"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="recovery-bar"]').exists()).toBe(false);
+
+    await wrapper.get('[data-testid="sheet-add"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="save-state"]').text()).toBe("Saving…");
+    await settle();
+    // No write-through: nothing reached a committed record after the edit.
+    expect(idb.writes.filter((key) => !key.startsWith("draft"))).toEqual([]);
+  });
+
+  it("switching tabs and moving the selection note no edit", async () => {
+    const { idb, wrapper } = await openBook();
+    await wrapper.findAll('[data-testid="sheet-tab"]')[1]!.trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-testid="spreadsheet-grid"]').trigger("keydown", { key: "ArrowDown" });
+    await flushPromises();
+    await settle();
+    expect(wrapper.get('[data-testid="save-state"]').text()).toBe("All changes saved");
+    expect(idb.writes.filter((key) => key.startsWith("draft"))).toEqual([]);
+  });
+
+  it("the app bar's history toggle and File ▸ Version history open the side panel's history pane", async () => {
+    const { wrapper } = await openBook();
+    const toggle = wrapper.get('[data-testid="sheet-history-toggle"]');
+    expect(toggle.attributes("aria-pressed")).toBe("false");
+    await toggle.trigger("click");
+    await flushPromises();
+    const panel = wrapper.get('[data-testid="sheet-history-panel"]');
+    expect(panel.get('[data-testid="history-empty"]').text()).toBe("No versions yet");
+    expect(panel.text()).toContain("Restoring replaces the workbook and clears undo — the version saved just before is at the top of the list");
+    expect(wrapper.get('[data-testid="sheet-history-toggle"]').attributes("aria-pressed")).toBe("true");
+    await wrapper.get('[data-testid="sheet-history-toggle"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="sheet-history-panel"]').exists()).toBe(false);
+
+    await wrapper.get('[role="menubar"]').findAll("button").find((button) => button.text() === "File")!.trigger("click");
+    await wrapper.get('[data-testid="sheet-menu-version-history"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="sheet-history-panel"]').exists()).toBe(true);
+  });
+
+  it("a second tab opens read-only under the conflict bar: no cell editor, no save state, no undo", async () => {
+    const queued: Array<(lock: unknown) => unknown> = [];
+    Object.defineProperty(navigator, "locks", {
+      configurable: true,
+      value: {
+        request: (_name: string, options: { ifAvailable?: boolean }, callback: (lock: unknown) => unknown) => {
+          if (options.ifAvailable) {
+            return Promise.resolve(callback(null));
+          }
+          queued.push(callback);
+          return new Promise(() => {});
+        },
+      },
+    });
+    try {
+      const { wrapper } = await openBook();
+      expect(wrapper.get('[data-testid="sheet-conflict-bar"]').text()).toBe("This workbook is open in another tab");
+      expect(wrapper.get('[data-testid="spreadsheet-grid"]').attributes("aria-readonly")).toBe("true");
+      expect(wrapper.find('[data-testid="cell-editor"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="save-state"]').exists()).toBe(false);
+      await wrapper.get('[data-testid="sheet-add"]').trigger("click");
+      await flushPromises();
+      expect(names(wrapper)).toEqual(["First", "Second"]);
+
+      // The other tab closes: the queued lock grants and editing enables.
+      queued[0]!({ name: "granted" });
+      await settle();
+      expect(wrapper.find('[data-testid="sheet-conflict-bar"]').exists()).toBe(false);
+      expect(wrapper.get('[data-testid="spreadsheet-grid"]').attributes("aria-readonly")).toBeUndefined();
+      expect(wrapper.get('[data-testid="save-state"]').text()).toBe("All changes saved");
+      await wrapper.get('[data-testid="sheet-add"]').trigger("click");
+      await flushPromises();
+      expect(names(wrapper)).toEqual(["First", "Second", "Sheet1"]);
+    } finally {
+      Reflect.deleteProperty(navigator, "locks");
+    }
+  });
+});
