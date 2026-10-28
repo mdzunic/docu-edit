@@ -137,6 +137,8 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onFieldKeydown));
     class="library-search-panel"
     data-testid="library-search-panel"
     aria-label="Search inside documents"
+    :data-answered="search.answered.value"
+    :data-query-ms="search.roundTripMs.value.toFixed(2)"
   >
     <div class="search-status-line">
       <ExperimentBadge experiment="library-search" />

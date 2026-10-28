@@ -61,8 +61,11 @@ export function createLibrarySearch(deps: LibrarySearchDeps) {
   const searching = ref(false);
   /** The query the shown results answer. */
   const answered = ref("");
-  /** The last search's own duration, in ms (the SPEC-047 harness reads it). */
+  /** The last search's own duration in the index, in ms. */
   const elapsedMs = ref(0);
+  /** The last answered search's round trip — asked on this thread, searched
+   * in the worker, answered here — in ms: what the SPEC-047 harness gates. */
+  const roundTripMs = ref(0);
 
   let client: LibraryIndexClient | null = null;
   let indexer: LibraryIndexer | null = null;
@@ -136,11 +139,13 @@ export function createLibrarySearch(deps: LibrarySearchDeps) {
     const current = ++generation;
     const asked = input;
     searching.value = true;
+    const askedAt = performance.now();
     client.search({ input: asked, limit: limit.value, ...(ids ? { ids } : {}) }).then(
       (result) => {
         if (current !== generation) {
           return;
         }
+        roundTripMs.value = performance.now() - askedAt;
         hits.value = result.hits;
         total.value = result.total;
         error.value = result.error ?? null;
@@ -244,6 +249,7 @@ export function createLibrarySearch(deps: LibrarySearchDeps) {
     searching,
     answered,
     elapsedMs,
+    roundTripMs,
     setScope,
     query,
     showMore,
