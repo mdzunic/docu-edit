@@ -429,6 +429,13 @@ because this one would otherwise pass 800 lines. The two builders never
 import each other: `src/lib/generate/index.ts` re-exports both, and a
 text-only script can keep importing `./builder` alone.
 
+## Workbooks
+
+The same module generates `.xlsx`/`.ods` workbooks (SPEC-140) with
+`WorkbookBuilder`, a JSON workbook description and `readWorkbook`, every
+formula's cached value computed before the file is written. Its full
+reference is [generate-workbook-api.md](generate-workbook-api.md).
+
 ## Examples
 
 Five complete, runnable programs live in `examples/`:
