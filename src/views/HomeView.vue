@@ -8,7 +8,7 @@
 // product-neutral. HomeView.size.spec.ts holds the line budget that keeps it
 // this way.
 import { useRouter } from "vue-router";
-import { computed, nextTick, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
+import { computed, onMounted, onUnmounted, ref, useTemplateRef } from "vue";
 import { useTheme } from "../composables/useTheme";
 import { useToasts } from "../composables/useToasts";
 import { useLibrary } from "../composables/useLibrary";
@@ -39,6 +39,8 @@ import { createDocument } from "../lib/documentModel";
 import { BLANK_DOCUMENT_KINDS, createBlankDocument } from "../lib/newDocument";
 import { useTier } from "../composables/useResponsiveTier";
 import { useReturningHighlight } from "./library/useReturningHighlight";
+import { useLibraryKeys } from "./library/useLibraryKeys";
+import LibraryFullTextSearch from "./library/LibraryFullTextSearch.vue";
 import ConvertToPdfDialog from "./library/ConvertToPdfDialog.vue";
 import { startAssembly } from "./assembly/useAssemblyPersistence";
 
@@ -137,52 +139,8 @@ function onCardPreview(id = "") {
   lib.focusedId.value = id;
 }
 
-// --- keyboard navigation (AC-57..62) -------------------------------------
-
-async function focusDom() {
-  await nextTick();
-  const el = document.querySelector<HTMLElement>(`[data-doc-id="${lib.focusedId.value}"]`);
-  el?.focus();
-}
-
-function handleContentKeydown(event = new KeyboardEvent("keydown")) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
-    event.preventDefault();
-    lib.selectAll();
-    return;
-  }
-  const key = event.key;
-  if (key === "ArrowDown" || key === "ArrowRight") {
-    event.preventDefault();
-    lib.focusNext(1);
-    void focusDom();
-  } else if (key === "ArrowUp" || key === "ArrowLeft") {
-    event.preventDefault();
-    lib.focusNext(-1);
-    void focusDom();
-  } else if (key === "Enter") {
-    if (lib.focusedId.value) {
-      event.preventDefault();
-      openDocument(lib.focusedId.value);
-    }
-  } else if (key === " ") {
-    if (lib.focusedId.value) {
-      event.preventDefault();
-      lib.toggleSelection(lib.focusedId.value);
-    }
-  } else if (key === "Delete" || key === "Backspace") {
-    if (!lib.showTrash.value && lib.focusedId.value) {
-      event.preventDefault();
-      const ids = lib.hasSelection.value ? lib.selectedIds.value : [lib.focusedId.value];
-      trashBatch(ids);
-    }
-  } else if (key === "F2") {
-    if (!lib.showTrash.value && lib.focusedId.value) {
-      event.preventDefault();
-      renameFor.value = lib.focusedId.value;
-    }
-  }
-}
+// --- keyboard navigation (AC-57..62): views/library/useLibraryKeys.ts -----
+const handleContentKeydown = useLibraryKeys({ lib, open: openDocument, trash: trashBatch, rename: (id) => (renameFor.value = id) });
 
 // --- trash + undo --------------------------------------------------------
 
@@ -326,6 +284,14 @@ const highlightId = useReturningHighlight();
 // SPEC-108: "Convert to PDF…" on an image (row menu or selection bar).
 const convertFor = ref("");
 
+// SPEC-114 (experimental, behind its gate): full-text results replace the
+// rows while they show, and a result opens AT its match (lib/searchOpen.ts).
+const searchShowing = ref(false);
+async function openSearchResult(hit = { id: "", find: "", at: -1 }) {
+  const { searchResultLocation } = await import("../lib/searchOpen");
+  await router.push(searchResultLocation(hit.id, hit.find, hit.at));
+}
+
 // SPEC-109: "Combine…" (the selected images) and "New › Combined image" (an
 // empty tray) start the assembly workspace's plan, then open it.
 function openAssembly(ids = [""]) {
@@ -452,9 +418,18 @@ function openAssembly(ids = [""]) {
           :lib="lib"
         />
 
+        <LibraryFullTextSearch
+          :lib="lib"
+          @showing="searchShowing = $event"
+          @open="openSearchResult"
+        />
+
+        <!-- SPEC-114: while full-text results show, they stand in for all
+             of the branches below. -->
+        <template v-if="searchShowing" />
         <!-- No results (AC-54..56) / empty-with-trash note. -->
         <LibraryStateMessage
-          v-if="lib.noResults.value"
+          v-else-if="lib.noResults.value"
           no-results
           @clear-filters="lib.clearFilters()"
         />

@@ -31,6 +31,14 @@ export const DEFAULT_LIBRARY_SORT: LibrarySort = {
   direction: "desc",
 };
 
+/** The default sort direction for each key: newest/largest first for time and
+ * size, A–Z for title (SPEC-067 AC-11, AC-12). */
+export const DEFAULT_SORT_DIRECTION: Record<LibrarySortKey, SortDirection> = {
+  modified: "desc",
+  title: "asc",
+  size: "desc",
+};
+
 const VIEW_MODES: readonly LibraryViewMode[] = ["list", "grid"];
 const SORT_KEYS: readonly LibrarySortKey[] = ["modified", "title", "size"];
 const DIRECTIONS: readonly SortDirection[] = ["asc", "desc"];

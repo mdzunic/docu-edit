@@ -737,7 +737,7 @@ export function rank(index: SearchIndex, query: Query, filter?: (id: string) => 
     });
     hits.push({ id: doc.id, score, positions: [], titleMatches, bodyMatches, lastModified: doc.lastModified });
   });
-  return hits.sort((a, b) => b.score - a.score || b.lastModified - a.lastModified || compareStrings(a.id, b.id));
+  return hits.toSorted((a, b) => b.score - a.score || b.lastModified - a.lastModified || compareStrings(a.id, b.id));
 }
 
 /** The hits with their body positions filled in (see SearchHit). */

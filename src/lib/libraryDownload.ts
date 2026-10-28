@@ -41,3 +41,11 @@ export async function downloadStoredDocument(id: string): Promise<void> {
     await downloadDocument(model);
   }
 }
+
+/** Bulk download (SPEC-067 AC-27..29): each entry through its own product's
+ * writer, one after another. */
+export async function downloadStoredDocuments(ids: string[]): Promise<void> {
+  for (const id of ids) {
+    await downloadStoredDocument(id);
+  }
+}

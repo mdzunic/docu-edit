@@ -220,6 +220,19 @@ describe("a disabled experiment's code is not in the initial bundle", () => {
     "lib/design/outlineDesigner.ts",
     "lib/design/prompt.ts",
     "lib/design/build.ts",
+    // SPEC-114's library search: its surfaces, its state, the index pipeline
+    // and engine, the PDF text reader and the result router load only behind
+    // the library-search gates (or, for searchOpen, on opening a result).
+    "views/library/LibrarySearchScope.vue",
+    "views/library/LibrarySearchResults.vue",
+    "views/preferences/LibrarySearchLabs.vue",
+    "composables/useLibrarySearch.ts",
+    "lib/libraryIndex.ts",
+    "lib/workers/libraryIndexClient.ts",
+    "lib/core/searchEngine.ts",
+    "lib/core/searchIndex.ts",
+    "lib/core/pdfText.ts",
+    "lib/searchOpen.ts",
   ];
 
   it("walks a real graph: the routes, the shell and Labs are in it", () => {

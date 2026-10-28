@@ -129,6 +129,8 @@ export interface LibraryIndexerDeps {
   onProgress: (progress: IndexProgress) => void;
   /** Reports a document's searchability as it becomes known. */
   onStatus: (status: IndexStatus) => void;
+  /** Called once per run with the library's live ids, before any status. */
+  onSync?: (liveIds: string[]) => void;
   /** Runs one slot of work; runWhenIdle by default. */
   schedule?: (work: () => void) => void;
 }
@@ -150,6 +152,7 @@ export function createLibraryIndexer(deps: LibraryIndexerDeps) {
     if (current !== generation) {
       return;
     }
+    deps.onSync?.(live.map((entry) => entry.id));
     statuses.forEach(deps.onStatus);
     const total = live.length;
     let done = total - pending.length;
