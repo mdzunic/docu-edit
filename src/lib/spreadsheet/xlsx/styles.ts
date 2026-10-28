@@ -132,7 +132,11 @@
 // - From scratch (no source part) the base is a minimal styles part whose
 //   font 0 is built from `model.styles[0]` and whose xf 0 IS style 0, so
 //   unstyled cells keep the workbook's own default font in either direction;
-//   a blank workbook's base is SPEC-121's FROM_SCRATCH_STYLES_XML.
+//   a blank workbook's base is SPEC-121's FROM_SCRATCH_STYLES_XML. The base
+//   is this module's own text, so its tables are seeded from what it wrote
+//   (fromScratchTables) rather than parsed: the from-scratch path never
+//   needs DOMParser, and runs as written in plain Node (SPEC-140's
+//   generation API, which has no polyfill on its write path).
 import { DEFAULT_THEME, isThemeFont, resolveFont, type DocumentTheme, type ModelColor, type ModelFont } from "../../core/theme";
 import { parseXml } from "../../core/xml";
 import { scanAttr, scanXml, XmlScanError } from "../../core/xmlScanner";
@@ -142,7 +146,7 @@ import { BUILTIN_NUMBER_FORMATS, LOCALE_DEPENDENT_BUILTINS } from "../numberForm
 import { builtinCellStyle, defaultStyles, INDEXED_COLORS, styleKey, workbookNamedStyle, type NamedCellStyle, type StyleAspect } from "../styles";
 import { applySplices, escapeAttributeValue, setAttribute, startTagAt, type Splice } from "../xmlSplice";
 import { childNodes, elementTree, nodeAttr, type XmlNode } from "./elementTree";
-import { elementAttributes, modelColorToXlsxAttrs, xlsxColorFrom, xlsxColorFromElement, xlsxRgbToHex, type AttributeGetter } from "./themeColor";
+import { elementAttributes, modelColorToXlsxAttrs, scannedAttributes, xlsxColorFrom, xlsxColorFromElement, xlsxRgbToHex, type AttributeGetter } from "./themeColor";
 
 /** SpreadsheetML's main namespace, transitional and strict. */
 export const SPREADSHEETML_NAMESPACES: ReadonlySet<string> = new Set([
@@ -1157,10 +1161,15 @@ const EXCLUDE_EVERY_ASPECT = APPLY_FLAGS.map(([, flag]) => ` ${flag}="0"`).join(
  * workbook's (SPEC-121 "The blank workbook"). */
 const BLANK_DEFAULT_FONT: CellFont = { family: { theme: "minor" }, sizePt: 11, color: { theme: "dk1" } };
 
+/** The font a from-scratch base's font 0 is built from. */
+function fromScratchFont(defaultStyle: CellStyle | undefined): CellFont {
+  return defaultStyle?.font !== undefined && Object.keys(defaultStyle.font).length > 0 ? defaultStyle.font : BLANK_DEFAULT_FONT;
+}
+
 /** A from-scratch styles part before any xf: font 0 from the default style,
  * the two reserved fills, one empty border, the Normal style's xf. */
 function fromScratchBase(defaultStyle: CellStyle | undefined, theme: DocumentTheme | undefined): string {
-  const font = defaultStyle?.font !== undefined && Object.keys(defaultStyle.font).length > 0 ? defaultStyle.font : BLANK_DEFAULT_FONT;
+  const font = fromScratchFont(defaultStyle);
   return (
     `${XML_DECLARATION}<styleSheet xmlns="${MAIN_NS}">` +
     `<fonts count="1"><font>${xlsxFontProperties(font, theme)}</font></fonts>` +
@@ -1171,6 +1180,26 @@ function fromScratchBase(defaultStyle: CellStyle | undefined, theme: DocumentThe
     `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
     `<dxfs count="0"/><tableStyles count="0"/></styleSheet>`
   );
+}
+
+/** A `<font>` element's font, read with the scanner through the same
+ * XlsxFontReader readFont uses (its SpreadsheetML children, in order). */
+function scannedFont(xml: string): CellFont {
+  const reader = new XlsxFontReader();
+  let depth = 0;
+  scanXml(xml, (event) => {
+    if (event.type === "open") {
+      if (depth === 1 && isSpreadsheetMl(event.ns)) {
+        reader.add(event.local, scannedAttributes(event.attrs));
+      }
+      if (!event.selfClosing) {
+        depth += 1;
+      }
+    } else if (event.type === "close") {
+      depth -= 1;
+    }
+  });
+  return reader.build();
 }
 
 function intAttr(element: Element, name: string): number {
@@ -1261,7 +1290,11 @@ export class XlsxStyleWriter {
       }
     });
     this.prefix = prefix;
-    this.readSource();
+    if (this.fromSource) {
+      this.readSource();
+    } else {
+      this.seedFromScratchBase(fromScratchFont(model.styles[0]));
+    }
     if (!this.fromSource) {
       // Font 0 was built from the default style's font: it IS that font,
       // whatever a re-read of its XML would compare as.
@@ -1349,6 +1382,27 @@ export class XlsxStyleWriter {
       }
     }
     this.normalXfId = builtinNormal ?? this.namedXf.get("Normal") ?? 0;
+  }
+
+  /** The from-scratch base's tables (fromScratchBase), as readSource would
+   * read them back — seeded from what the base wrote instead of parsed, so
+   * the from-scratch path never touches DOMParser (see the module header).
+   * Font 0 is keyed as its XML reads back, through the reader's own
+   * XlsxFontReader over the scanner. */
+  private seedFromScratchBase(font: CellFont): void {
+    this.counts.fonts = 1;
+    remember(this.fontIds, styleKey({ font: scannedFont(`<font xmlns="${MAIN_NS}">${xlsxFontProperties(font, this.model.theme)}</font>`) }), 0);
+    this.counts.fills = 2;
+    remember(this.fillIds, styleKey({}), 0);
+    remember(this.fillIds, styleKey({ fill: { kind: "pattern", pattern: "gray125" } }), 1);
+    this.counts.borders = 1;
+    remember(this.borderIds, styleKey({}), 0);
+    this.counts.cellStyleXfs = 1;
+    this.parents.push({ ...NO_PARENT });
+    this.counts.cellStyles = 1;
+    this.namedXf.set("Normal", 0);
+    this.sourceXfIds.add(0);
+    this.normalXfId = 0;
   }
 
   private appendCount(): number {
