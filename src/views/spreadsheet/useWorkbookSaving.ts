@@ -26,7 +26,7 @@ import { useAutosave } from "../../composables/useAutosave";
 import { useToasts } from "../../composables/useToasts";
 import { acquireEditLock, type EditLockHandle, type LockManagerLike } from "../../lib/core/editLock";
 import { STORAGE_FULL_REASON } from "../../lib/core/saveState";
-import { isSpreadsheetModel, replaceSpreadsheetModel } from "../../lib/documentStore";
+import { isSpreadsheetModel, replaceSpreadsheetModel, setSpreadsheetHeldElsewhere } from "../../lib/documentStore";
 import type { SpreadsheetModel } from "../../lib/spreadsheet/model";
 import type { SheetViewState } from "../../lib/spreadsheet/selection";
 import { withSheetView } from "./useSheetViewState";
@@ -139,6 +139,8 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
         }
         const waited = lockState.value === "busy";
         lockState.value = state;
+        // The store never writes a workbook another tab owns.
+        setSpreadsheetHeldElsewhere(id, state === "busy");
         if (state === "acquired") {
           if (waited) {
             // A tab that waited behind another adopts its commit: the
@@ -159,6 +161,8 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
     }
     autosave.endSession(owns.value);
     emit("end");
+    // A busy tab's flag stays until the view's release has dropped the
+    // workbook without writing it (the store clears it there).
     lock?.release();
     lock = null;
     sessionId = null;
@@ -200,9 +204,10 @@ export function useWorkbookSaving(deps: WorkbookSavingDeps) {
   }
 
   /** A download — SPEC-010's explicit save: commit, then SPEC-040's
-   * commit-point snapshot. */
+   * commit-point snapshot. Not while a version is previewed: what downloads
+   * then is that version, not the workbook. */
   function commitPoint(): void {
-    if (owns.value) {
+    if (owns.value && !previewing.value) {
       void autosave.commitNow().then(() => emit("commitPoint"));
     }
   }

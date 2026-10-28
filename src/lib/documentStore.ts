@@ -638,6 +638,22 @@ function uncommitted(state: WorkbookState): boolean {
   return state.edits !== state.committedEdits;
 }
 
+/** SPEC-138: workbooks another tab holds the edit lock of. This tab never
+ * writes them — not a persist, not the release's write-back of what memory
+ * holds (an open-time recalculation of volatile cells would otherwise
+ * overwrite the other tab's commit with this tab's stale rows). */
+const heldElsewhere = new Set<string>();
+
+/** Records whether another tab holds workbook `id`'s edit lock
+ * (useWorkbookSaving, on every lock change). */
+export function setSpreadsheetHeldElsewhere(id: string, held: boolean): void {
+  if (held) {
+    heldElsewhere.add(id);
+  } else {
+    heldElsewhere.delete(id);
+  }
+}
+
 /** Whether storage holds everything the resident model has: the latch
  * matches it (and, in the chunked layout, a manifest exists). */
 function storageHolds(state: WorkbookState, record: StoredDocumentRecord): boolean {
@@ -678,8 +694,9 @@ async function writeWorkbook(id: string, state: WorkbookState): Promise<boolean>
   // SPEC-047 AC-15/16: never clone in the task that triggered the write.
   await yieldToMainThread();
   const record = records.get(id);
-  if (!record || !isSpreadsheetModel(record.model) || workbooks.get(id) !== state || state.incomplete) {
-    // Gone, or a partial model that must never be written back.
+  if (!record || !isSpreadsheetModel(record.model) || workbooks.get(id) !== state || state.incomplete || heldElsewhere.has(id)) {
+    // Gone, a partial model that must never be written back, or one another
+    // tab owns (SPEC-138).
     return true;
   }
   const model = record.model;
@@ -884,15 +901,18 @@ export async function releaseSpreadsheet(id: string): Promise<void> {
     if (!state.resident) {
       return;
     }
-    if (!state.incomplete && uncommitted(state)) {
+    if (!state.incomplete && (uncommitted(state) || heldElsewhere.has(id))) {
       // SPEC-138: changes no commit took (a session that closed with the
       // recovery bar open, or with Autosave off) live in the draft, never in
-      // the committed records — memory drops back to what storage commits.
+      // the committed records — memory drops back to what storage commits;
+      // and a workbook another tab owns is never written back from here.
       await (state.queued ?? state.persisting);
-      if (workbooks.get(id) === state && state.requests === requests && state.resident && uncommitted(state)) {
+      if (workbooks.get(id) === state && state.requests === requests && state.resident) {
         const stored = await readStored(id);
         if (stored && isCommittedRecord(stored) && isSpreadsheetModel(stored.model) && workbooks.get(id) === state && state.requests === requests) {
           await adoptStoredRecord(id, stored);
+          // The view that waited behind another tab is gone.
+          heldElsewhere.delete(id);
         }
       }
       return;

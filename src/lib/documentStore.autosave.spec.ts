@@ -868,6 +868,26 @@ describe("replaceSpreadsheetModel and replaceStoredModel (SPEC-138)", () => {
     expect(() => store.replaceSpreadsheetModel("text-1", createBlankWorkbook())).toThrow(/text document/);
   });
 
+  it("never writes a workbook another tab holds: no persist, and its release drops back to the committed shell without writing (AC-33)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    store.setSpreadsheetHeldElsewhere(id, true);
+    // The open-time recalculation of a volatile cell replaces a row.
+    model.sheets = model.sheets.map((sheet, index) =>
+      index === 0 ? { ...sheet, rows: sheet.rows.map((row) => (row.index === 0 ? { ...row, cells: [{ col: 0, value: "recalculated" }] } : row)) } : sheet,
+    );
+    await store.touchDocument(id);
+    await store.releaseSpreadsheet(id);
+    await settleWrites();
+    expect(idb.batches).toEqual([]);
+    expect(idb.puts).toEqual([]);
+    expect(store.getSpreadsheet(id)).toBeUndefined();
+    expect((await store.loadSpreadsheet(id))!.sheets[0]!.rows[0]!.cells[0]!.value).toBe("a0");
+    // Released, the workbook is this tab's to write again.
+    await store.touchDocument(id);
+    await settleWrites();
+    expect(idb.batches).toHaveLength(1);
+  });
+
   it("while edits are uncommitted a view-state write stays in memory, and a release drops back to the committed shell", async () => {
     const { store, idb, model, id } = await committedWorkbook();
     edit(model, 1, 5, "uncommitted");
