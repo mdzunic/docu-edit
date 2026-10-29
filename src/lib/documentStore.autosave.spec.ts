@@ -55,6 +55,13 @@ async function flushSetupWrite(putRecord: {
   ).toBeGreaterThan(0);
 }
 
+/** `count` macrotask turns. */
+async function macrotasks(count: number): Promise<void> {
+  for (let tick = 0; tick < count; tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 beforeEach(() => {
   vi.resetModules();
 });
@@ -187,6 +194,39 @@ describe("commitDocument", () => {
     // though every field but `model.media` matches the in-memory record.
     expect(putRecord.mock.calls.at(-1)![0]).toEqual({ ...record, model: { ...record.model, media: [] } });
     expect(deleteRecord).toHaveBeenCalledWith("draft:doc-5");
+  });
+
+  it("lets a draft write in flight land before it clears the drafts, so no draft outlives the commit (SPEC-138)", async () => {
+    const { store, putRecord, deleteRecord } = await loadStore();
+    store.getOrCreateDocument("doc-7");
+    await flushSetupWrite(putRecord);
+    const order: string[] = [];
+    const draftPut: { land?: () => void } = {};
+    putRecord.mockImplementation((record: { id: string }) =>
+      record.id === "draft:doc-7"
+        ? new Promise<void>((resolve) => {
+            draftPut.land = () => {
+              order.push("put draft:doc-7");
+              resolve();
+            };
+          })
+        : Promise.resolve(),
+    );
+    deleteRecord.mockImplementation((key: string) => {
+      order.push(`delete ${key}`);
+      return Promise.resolve();
+    });
+    const draft = store.saveDraft("doc-7", { caret: null, scroll: 0 });
+    for (let tick = 0; tick < 100 && !putRecord.mock.calls.some(([record]) => record.id === "draft:doc-7"); tick += 1) {
+      await macrotasks(1);
+    }
+    const commit = store.commitDocument("doc-7", { caret: null, scroll: 0 });
+    await macrotasks(20);
+    expect(order).not.toContain("delete draft:doc-7");
+    draftPut.land?.();
+    await Promise.all([draft, commit]);
+    expect(order.indexOf("put draft:doc-7")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("put draft:doc-7")).toBeLessThan(order.indexOf("delete draft:doc-7"));
   });
 
   it("rejects when the committed write fails, without latching the banner", async () => {
@@ -512,5 +552,392 @@ describe("replacePresentationModel (SPEC-103)", () => {
     expect(() => store.replaceDocumentModel("deck-14", { id: "x" } as never)).toThrow(/presentation/);
     store.getOrCreateDocument("doc-14");
     expect(() => store.replacePresentationModel("doc-14", deck("doc-14"))).toThrow(/text document/);
+  });
+});
+
+// --- SPEC-138: workbooks join the draft machinery -----------------------------
+//
+// A workbook draft never touches a committed record: its chunks shadow the
+// committed ones under `draftsheetrows:` and its sources go to
+// `draftsheetsource:` only once one was replaced, the shell carries the
+// `rowKeys` manifest loadDraft trusts, and a commit writes the committed
+// records in one batch, then clears the whole draft range. Costs are counted
+// at the idb seam: a stateful in-memory double recording every operation.
+
+const inRange = (key: string, [lower, upper]: [string, string]) => key >= lower && key <= upper;
+
+/** An idb seam over a Map, every put, batch, delete and range recorded. */
+function workbookIdb() {
+  const data = new Map<string, unknown>();
+  const puts: string[] = [];
+  const batches: Array<Array<{ put?: { id: string }; delete?: string; deleteRange?: [string, string] }>> = [];
+  const deletes: string[] = [];
+  const ranges: Array<[string, string]> = [];
+  const seam = {
+    loadAllRecords: vi.fn(async () => [...data.values()].map((value) => structuredClone(value))),
+    getRecord: vi.fn(async (key: string) => (data.has(key) ? structuredClone(data.get(key)) : undefined)),
+    putRecord: vi.fn(async (record: { id: string }) => {
+      puts.push(record.id);
+      data.set(record.id, structuredClone(record));
+    }),
+    deleteRecord: vi.fn(async (key: string) => {
+      deletes.push(key);
+      data.delete(key);
+    }),
+    deleteRecordRange: vi.fn(async (lower: string, upper: string) => {
+      ranges.push([lower, upper]);
+      for (const key of data.keys()) {
+        if (inRange(key, [lower, upper])) {
+          data.delete(key);
+        }
+      }
+    }),
+    writeBatch: vi.fn(async (ops: Array<{ put?: { id: string }; delete?: string; deleteRange?: [string, string] }>) => {
+      batches.push(ops);
+      for (const op of ops) {
+        if (op.put) {
+          data.set(op.put.id, structuredClone(op.put));
+        } else if (op.delete !== undefined) {
+          data.delete(op.delete);
+        } else if (op.deleteRange) {
+          for (const key of data.keys()) {
+            if (inRange(key, op.deleteRange)) {
+              data.delete(key);
+            }
+          }
+        }
+      }
+    }),
+  };
+  return { seam, data, puts, batches, deletes, ranges, clear: () => void [puts, batches, deletes, ranges].forEach((log) => (log.length = 0)) };
+}
+
+async function loadWorkbookStore() {
+  const idb = workbookIdb();
+  vi.doMock("./idb", () => idb.seam);
+  const store = await import("./documentStore");
+  const { createBlankWorkbook } = await import("./spreadsheet/sheets");
+  return { store, idb, createBlankWorkbook };
+}
+
+/** Real ticks: every store write yields a macrotask first. */
+async function settleWrites(ticks = 20) {
+  for (let i = 0; i < ticks; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+type Row = import("./spreadsheet/model").Row;
+type SpreadsheetModel = import("./spreadsheet/model").SpreadsheetModel;
+
+function sheetRows(count: number, tag: string): Row[] {
+  return Array.from({ length: count }, (_, index) => ({ index, cells: [{ col: 0, value: `${tag}${index}` }, { col: 1, value: index }] }));
+}
+
+/** Three sheets: "one" (1,100 rows — three chunks), "two" (600 rows — two
+ * chunks) and "three" (3 rows), ods-style sources on each and a package. */
+function threeSheets(createBlankWorkbook: () => SpreadsheetModel): SpreadsheetModel {
+  const model = createBlankWorkbook();
+  const base = model.sheets[0]!;
+  model.sheets = [
+    { ...base, id: "one", name: "One", rows: sheetRows(1_100, "a"), sourceXml: "<table:table table:name=\"One\"/>" },
+    { ...base, id: "two", name: "Two", rows: sheetRows(600, "b"), sourceXml: "<table:table table:name=\"Two\"/>" },
+    { ...base, id: "three", name: "Three", rows: sheetRows(3, "c"), sourceXml: "<table:table table:name=\"Three\"/>" },
+  ];
+  model.opaque = [{ name: "content.xml", data: "PGNvbnRlbnQvPg==" }];
+  model.odsContentEnvelope = { prefix: "<doc>", suffix: "</doc>" };
+  return model;
+}
+
+/** A copy-on-write cell edit, as the edit pipeline makes one. */
+function edit(model: SpreadsheetModel, sheetIndex: number, rowIndex: number, value: string): void {
+  const target = model.sheets[sheetIndex]!;
+  const rows = target.rows.map((row) => (row.index === rowIndex ? { ...row, cells: [{ col: 0, value }, ...row.cells.slice(1)] } : row));
+  const sheets = model.sheets.slice();
+  sheets[sheetIndex] = { ...target, rows, dirty: true };
+  model.sheets = sheets;
+}
+
+/** Stores, commits, and returns the workbook with the logs cleared. */
+async function committedWorkbook() {
+  const loaded = await loadWorkbookStore();
+  const model = threeSheets(loaded.createBlankWorkbook);
+  loaded.store.storeSpreadsheet(model);
+  await loaded.store.commitDocument(model.id, { caret: null, scroll: 0 });
+  await settleWrites();
+  loaded.idb.clear();
+  return { ...loaded, model, id: model.id };
+}
+
+const VIEW = { sheetId: "two", active: { row: 4, col: 1 }, topRow: 3, leftCol: 0 };
+
+describe("workbook drafts (SPEC-138)", () => {
+  it("the spreadsheet guard is lifted from saveDraft; getOrCreateDocument still refuses a workbook's id (AC-1, AC-2)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    edit(model, 1, 5, "edited");
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0, sheetView: VIEW });
+    expect(idb.puts).toContain(`draft:${id}`);
+    expect(() => store.getOrCreateDocument(id)).toThrow(/spreadsheet/);
+    expect(store.DRAFT_SHEET_ROWS_KEY_PREFIX).toBe("draftsheetrows:");
+    expect(store.DRAFT_SHEET_SOURCE_KEY_PREFIX).toBe("draftsheetsource:");
+    expect(store.draftRowsKey(`sheetrows:${id}:two:0000`)).toBe(`draftsheetrows:${id}:two:0000`);
+  });
+
+  it("a draft shell carries no bulk, the manifest and the view; the sources stay committed while reference-equal (AC-6, AC-12, AC-15, AC-17, AC-18)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    edit(model, 1, 5, "edited");
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0, sheetView: VIEW });
+    const draft = idb.data.get(`draft:${id}`) as import("./documentStore").DraftRecord;
+    const shell = draft.model as SpreadsheetModel;
+    expect(shell.sheets.every((sheet) => sheet.rows.length === 0 && sheet.sourceXml === undefined)).toBe(true);
+    expect(shell.opaque).toEqual([]);
+    expect(shell.odsContentEnvelope).toBeUndefined();
+    expect(draft.sheetView).toEqual(VIEW);
+    expect(draft.caret).toBeNull();
+    expect(draft.scroll).toBe(0);
+    expect(draft.sourceKey).toBe(`sheetsource:${id}`);
+    expect(draft.rowKeys).toEqual({
+      one: [`sheetrows:${id}:one:0000`, `sheetrows:${id}:one:0001`, `sheetrows:${id}:one:0002`],
+      two: [`draftsheetrows:${id}:two:0000`, `sheetrows:${id}:two:0001`],
+      three: [`sheetrows:${id}:three:0000`],
+    });
+    // Nothing a draft writes is a committed key.
+    expect(idb.puts.every((key) => key.startsWith("draft"))).toBe(true);
+    expect(idb.batches).toEqual([]);
+  });
+
+  it("counts operations per tick on a three-sheet workbook (AC-20, AC-21)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    // First tick after editing one cell of sheet 2: the shell and that chunk.
+    edit(model, 1, 5, "first");
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draftsheetrows:${id}:two:0000`, `draft:${id}`]);
+    // A second edit in the same chunk: the shell and that chunk again.
+    idb.clear();
+    edit(model, 1, 7, "second");
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draftsheetrows:${id}:two:0000`, `draft:${id}`]);
+    // An edit to sheet 3 after it: the shell and sheet 3's chunk only.
+    idb.clear();
+    edit(model, 2, 1, "third");
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draftsheetrows:${id}:three:0000`, `draft:${id}`]);
+    // A tick with nothing new: the shell alone.
+    idb.clear();
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draft:${id}`]);
+    expect(idb.batches).toEqual([]);
+  });
+
+  it("applies the draft-chunk latch in all three states, clearing it when a write fails (AC-13, AC-14)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    const committedRows = model.sheets[1]!.rows;
+    edit(model, 1, 5, "edited");
+    store.replaceSpreadsheetModel(id, model);
+    // Otherwise: written, under the draft key.
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toContain(`draftsheetrows:${id}:two:0000`);
+    // Equal to the last draft write: skipped.
+    idb.clear();
+    model.sheets = model.sheets.map((sheet) => ({ ...sheet }));
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draft:${id}`]);
+    // Reference-equal to the committed slice again (an undo): no draft
+    // record, and the stale draft copy is deleted.
+    idb.clear();
+    model.sheets = model.sheets.map((sheet, index) => (index === 1 ? { ...sheet, rows: committedRows } : sheet));
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draft:${id}`]);
+    expect(idb.deletes).toContain(`draftsheetrows:${id}:two:0000`);
+    expect((idb.data.get(`draft:${id}`) as { rowKeys: Record<string, string[]> }).rowKeys.two).toEqual([`sheetrows:${id}:two:0000`, `sheetrows:${id}:two:0001`]);
+    // A failed write clears the latch: the next tick writes the chunk again.
+    edit(model, 1, 9, "will fail");
+    idb.seam.putRecord.mockRejectedValueOnce(new DOMException("quota", "QuotaExceededError"));
+    await expect(store.saveDraft(id, { caret: null, scroll: 0 })).rejects.toBeTruthy();
+    idb.clear();
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draftsheetrows:${id}:two:0000`, `draft:${id}`]);
+    // The committed chunk was never written by any of it.
+    expect((idb.data.get(`sheetrows:${id}:two:0000`) as { rows: Row[] }).rows[5]!.cells[0]!.value).toBe("b5");
+  });
+
+  it("writes draftsheetsource:<id> once a retained source was replaced, and only then (AC-19, AC-22)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    // A structural edit that rewrites sheet 3's retained source.
+    model.sheets = model.sheets.map((sheet, index) => (index === 2 ? { ...sheet, sourceXml: "<table:table table:name=\"Three\" moved=\"1\"/>" } : sheet));
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draftsheetsource:${id}`, `draft:${id}`]);
+    const draft = idb.data.get(`draft:${id}`) as { sourceKey: string };
+    expect(draft.sourceKey).toBe(`draftsheetsource:${id}`);
+    expect((idb.data.get(`draftsheetsource:${id}`) as { sheetSources: Record<string, string> }).sheetSources.three).toContain('moved="1"');
+    expect((idb.data.get(`sheetsource:${id}`) as { sheetSources: Record<string, string> }).sheetSources.three).not.toContain("moved");
+    // Unchanged on the next tick: not rewritten.
+    idb.clear();
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.puts).toEqual([`draft:${id}`]);
+  });
+
+  it("loadDraft rejoins every sheet from its manifest — committed chunks for untouched ones — and refuses a manifest naming a missing record (AC-16)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    edit(model, 1, 5, "drafted");
+    model.sheets = model.sheets.map((sheet, index) => (index === 2 ? { ...sheet, sourceXml: "<table:table moved=\"1\"/>" } : sheet));
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0, sheetView: VIEW });
+    const draft = await store.loadDraft(id);
+    const recovered = draft!.model as SpreadsheetModel;
+    expect(recovered.sheets.map((sheet) => sheet.rows.length)).toEqual([1_100, 600, 3]);
+    expect(recovered.sheets[1]!.rows[5]!.cells[0]!.value).toBe("drafted");
+    expect(recovered.sheets[0]!.rows).toEqual(model.sheets[0]!.rows);
+    expect(recovered.sheets[2]!.sourceXml).toBe("<table:table moved=\"1\"/>");
+    expect(recovered.opaque).toEqual(model.opaque);
+    expect(recovered.odsContentEnvelope).toEqual(model.odsContentEnvelope);
+    expect(draft!.sheetView).toEqual(VIEW);
+
+    idb.data.delete(`sheetrows:${id}:one:0001`);
+    expect(await store.loadDraft(id)).toBeUndefined();
+  });
+
+  it("loadDraft runs the reader-version upgrade on a recovered workbook (AC-26)", async () => {
+    const upgrade = vi.fn(async (model: SpreadsheetModel) => ({ ...model, readerVersion: 999, title: "Upgraded" }));
+    vi.doMock("./spreadsheet/open", async (importOriginal) => ({ ...(await importOriginal<typeof import("./spreadsheet/open")>()), upgradeSpreadsheetModel: upgrade }));
+    try {
+      const { store, model, id } = await committedWorkbook();
+      model.readerVersion = 1;
+      edit(model, 0, 1, "old reader");
+      store.replaceSpreadsheetModel(id, model);
+      await store.saveDraft(id, { caret: null, scroll: 0 });
+      const draft = await store.loadDraft(id);
+      expect(upgrade).toHaveBeenCalledTimes(1);
+      expect((draft!.model as SpreadsheetModel).title).toBe("Upgraded");
+    } finally {
+      vi.doUnmock("./spreadsheet/open");
+    }
+  });
+
+  it("a commit writes the changed committed chunks and the shell in one batch, then clears the whole draft range (AC-23, AC-24)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    edit(model, 1, 5, "kept");
+    // A sheet added and deleted again mid-session leaves its draft chunk behind…
+    const extra = { ...model.sheets[2]!, id: "extra", name: "Extra", rows: sheetRows(2, "x") };
+    model.sheets = [...model.sheets, extra];
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    expect(idb.data.has(`draftsheetrows:${id}:extra:0000`)).toBe(true);
+    model.sheets = model.sheets.slice(0, 3);
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    idb.clear();
+
+    await store.commitDocument(id, { caret: null, scroll: 0, sheetView: VIEW });
+    expect(idb.batches).toHaveLength(1);
+    const written = idb.batches[0]!.flatMap((op) => (op.put ? [op.put.id] : []));
+    expect(written).toEqual([`sheetrows:${id}:two:0000`, id]);
+    expect(idb.ranges).toEqual([[`draftsheetrows:${id}:`, `draftsheetrows:${id}:￿`]]);
+    expect(idb.deletes).toEqual(expect.arrayContaining([`draftsheetsource:${id}`, `draft:${id}`]));
+    // …which the range cleared with every other draft record.
+    expect([...idb.data.keys()].filter((key) => key.startsWith("draft"))).toEqual([]);
+    expect(store.getStoredRecord(id)!.sheetView).toEqual(VIEW);
+  });
+
+  it("deleteDraft and deleteDocument clear the draft range in one operation (AC-24)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    edit(model, 0, 600, "drafted");
+    store.replaceSpreadsheetModel(id, model);
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    idb.clear();
+    await store.deleteDraft(id);
+    expect(idb.ranges).toEqual([[`draftsheetrows:${id}:`, `draftsheetrows:${id}:￿`]]);
+    expect(idb.deletes).toEqual(expect.arrayContaining([`draftsheetsource:${id}`, `draft:${id}`]));
+    expect([...idb.data.keys()].filter((key) => key.startsWith("draft"))).toEqual([]);
+
+    await store.saveDraft(id, { caret: null, scroll: 0 });
+    idb.clear();
+    store.deleteDocument(id);
+    await settleWrites();
+    expect(idb.ranges).toEqual([[`draftsheetrows:${id}:`, `draftsheetrows:${id}:￿`]]);
+    expect([...idb.data.keys()].filter((key) => key.includes(id))).toEqual([]);
+  });
+
+  it("the start-up read excludes both draft prefixes, and initLibrary lists no draft record (AC-25)", async () => {
+    const idbModule = await vi.importActual<typeof import("./idb")>("./idb");
+    const { store } = await loadWorkbookStore();
+    expect(idbModule.DRAFT_RECORD_KEY_PREFIXES).toEqual([store.DRAFT_SHEET_ROWS_KEY_PREFIX, store.DRAFT_SHEET_SOURCE_KEY_PREFIX]);
+    const ranges = idbModule.rangesExcluding([...idbModule.LAZY_RECORD_KEY_PREFIXES, ...idbModule.DRAFT_RECORD_KEY_PREFIXES]);
+    const inSomeRange = (key: string) => ranges.some(({ lower, upper }) => (lower === undefined || key > lower) && (upper === undefined || key < upper));
+    expect(inSomeRange("draftsheetrows:doc:s:0000")).toBe(false);
+    expect(inSomeRange("draftsheetsource:doc")).toBe(false);
+    expect(inSomeRange("draft:doc")).toBe(true);
+    expect(inSomeRange("doc")).toBe(true);
+  });
+
+  it("initLibrary skips a draft chunk or source record if storage hands one over", async () => {
+    const { store, idb } = await loadWorkbookStore();
+    idb.data.set("draftsheetrows:doc:s:0000", { id: "draftsheetrows:doc:s:0000", docId: "doc", sheetId: "s", chunk: 0, rows: [] });
+    idb.data.set("draftsheetsource:doc", { id: "draftsheetsource:doc", docId: "doc", opaque: [], sheetSources: {} });
+    await store.initLibrary();
+    expect(store.listDocuments()).toEqual([]);
+  });
+});
+
+describe("replaceSpreadsheetModel and replaceStoredModel (SPEC-138)", () => {
+  it("swap a workbook's model without bumping lastModified or persisting, and dispatch on kind (AC-3, AC-4)", async () => {
+    const { store, idb, model, id, createBlankWorkbook } = await committedWorkbook();
+    const record = store.getStoredRecord(id)!;
+    const stamp = record.lastModified;
+    const replacement = createBlankWorkbook();
+    expect(store.replaceSpreadsheetModel(id, replacement)).toBe(replacement);
+    expect(record.model).toBe(replacement);
+    expect(replacement.id).toBe(id);
+    expect(record.lastModified).toBe(stamp);
+    expect(store.replaceStoredModel(id, model)).toBe(model);
+    expect(store.getSpreadsheet(id)).toBe(model);
+    await settleWrites();
+    expect(idb.puts).toEqual([]);
+    expect(idb.batches).toEqual([]);
+  });
+
+  it("never crosses kinds", async () => {
+    const { store, id } = await committedWorkbook();
+    expect(() => store.replaceDocumentModel(id, { id: "x" } as never)).toThrow(/spreadsheet/);
+    expect(() => store.replaceStoredModel(id, deck(id))).toThrow(/spreadsheet/);
+    store.getOrCreateDocument("text-1");
+    const { createBlankWorkbook } = await import("./spreadsheet/sheets");
+    expect(() => store.replaceSpreadsheetModel("text-1", createBlankWorkbook())).toThrow(/text document/);
+  });
+
+  it("never writes a workbook another tab holds: no persist, and its release drops back to the committed shell without writing (AC-33)", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    store.setSpreadsheetHeldElsewhere(id, true);
+    // The open-time recalculation of a volatile cell replaces a row.
+    model.sheets = model.sheets.map((sheet, index) =>
+      index === 0 ? { ...sheet, rows: sheet.rows.map((row) => (row.index === 0 ? { ...row, cells: [{ col: 0, value: "recalculated" }] } : row)) } : sheet,
+    );
+    await store.touchDocument(id);
+    await store.releaseSpreadsheet(id);
+    await settleWrites();
+    expect(idb.batches).toEqual([]);
+    expect(idb.puts).toEqual([]);
+    expect(store.getSpreadsheet(id)).toBeUndefined();
+    expect((await store.loadSpreadsheet(id))!.sheets[0]!.rows[0]!.cells[0]!.value).toBe("a0");
+    // Released, the workbook is this tab's to write again.
+    await store.touchDocument(id);
+    await settleWrites();
+    expect(idb.batches).toHaveLength(1);
+  });
+
+  it("while edits are uncommitted a view-state write stays in memory, and a release drops back to the committed shell", async () => {
+    const { store, idb, model, id } = await committedWorkbook();
+    edit(model, 1, 5, "uncommitted");
+    store.replaceSpreadsheetModel(id, model);
+    await store.storeSpreadsheetViewState({ ...model, activeSheetIndex: 2 });
+    await settleWrites();
+    expect(idb.batches).toEqual([]);
+    await store.releaseSpreadsheet(id);
+    expect(store.getSpreadsheet(id)).toBeUndefined();
+    const reloaded = await store.loadSpreadsheet(id);
+    expect(reloaded!.sheets[1]!.rows[5]!.cells[0]!.value).toBe("b5");
   });
 });

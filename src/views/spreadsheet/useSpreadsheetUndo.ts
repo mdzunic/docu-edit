@@ -44,8 +44,10 @@
 //    undo/redo, whose own dirty flags it restores) is replaced with
 //    `dirty: true` — once now (the command's changes) and again when the
 //    pass is done (its recalculated values).
-// 4. deps.onApplied() — re-render and write through; after the command and
-//    again when a sliced pass completes.
+// 4. deps.onApplied() — re-render and hand the step to the saving session
+//    (SPEC-138: its noteEdit(), the SPEC-010 draft cadence, where this wrote
+//    the workbook through before); after the command and again when a
+//    sliced pass completes.
 // Undo/redo push the live state as the opposite snapshot, install fresh
 // copies of the stored one (snapshots stay immutable), run the pipeline with
 // the step's own alsoRecalc, and re-activate the sheet the step was recorded
@@ -102,12 +104,15 @@ export interface SpreadsheetUndoDeps {
   recalc: (changed: CellKey[], done: (changedSheetIds: string[]) => void) => void;
   /** Completes a running pass now, so steps never interleave. */
   settle?: () => void;
-  /** triggerRef + write-through (touchDocument). */
+  /** triggerRef + the saving session's noteEdit() (SPEC-138; SPEC-121's
+   * touchDocument write-through before it). */
   onApplied: () => void;
   activateSheet: (sheetId: string) => void;
   /** SPEC-137: while true every command is undone at its commit — the model
    * goes back to the recorded state, nothing is stacked or written through
-   * (a workbook whose storage came back incomplete is read-only). */
+   * (a workbook whose storage came back incomplete is read-only) — and
+   * (SPEC-138) undo and redo do nothing: another tab holds the workbook, or
+   * a previewed version is on show in its place. */
   readOnly?: () => boolean;
 }
 
@@ -317,7 +322,7 @@ export function useSpreadsheetUndo(deps: SpreadsheetUndoDeps): SpreadsheetUndo {
    * the opposite stack. */
   function swap(from: Step[], to: Step[], kind: "undo" | "redo"): void {
     const model = deps.model.value;
-    if (!model || from.length === 0) {
+    if (!model || from.length === 0 || deps.readOnly?.()) {
       return;
     }
     deps.settle?.();

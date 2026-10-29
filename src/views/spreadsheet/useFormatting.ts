@@ -73,7 +73,8 @@ export interface FormattingDeps {
   book: { workbook: ShallowRef<SpreadsheetModel | null>; activeSheet: Readonly<Ref<Sheet | null>> };
   viewState: Pick<SheetViewState, "syncInto">;
   selection: Pick<SheetSelectionController, "selection" | "formatContext">;
-  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing" | "clearSelection"> };
+  /** SPEC-138: `readOnly` — no edit applies, so the strip shows disabled. */
+  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing" | "clearSelection">; readOnly?: Readonly<Ref<boolean>> };
   locale: () => SpreadsheetLocale;
   /** SPEC-124: row refit's measurer — default: the canvas one. */
   measurer?: CellTextMeasurer;
@@ -284,7 +285,7 @@ export function useFormatting(deps: FormattingDeps) {
     const vertical = alignment.vertical;
     const hex = (color: ModelColor | null | undefined): string => cellColorHex(color, theme.value);
     return {
-      disabled: current === null || deps.editing.cell.editing.value,
+      disabled: current === null || deps.editing.cell.editing.value || deps.editing.readOnly?.value === true,
       fontFamily: cellFontName(font.family, theme.value),
       fontSizePt: font.sizePt ?? 11,
       documentFonts: m ? documentFonts(m) : [],

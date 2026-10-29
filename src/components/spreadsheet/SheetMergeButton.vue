@@ -5,8 +5,9 @@
 // (`sheet-merge-menu-button`) opens `sheet-merge-menu`: Merge & Centre
 // (`sheet-merge-centre`), Merge Across (`sheet-merge-across`), Merge Cells
 // (`sheet-merge-cells`) and Unmerge (`sheet-unmerge`). Everything runs
-// through useMerges. Runtime prop declarations per the espree constraint
-// (see AppShell.vue).
+// through useMerges, and every part shows disabled with it (SPEC-138: while
+// the workbook is read-only too). Runtime prop declarations per the espree
+// constraint (see AppShell.vue).
 import { computed } from "vue";
 import { asMerges } from "../../views/spreadsheet/useMerges";
 import AppIcon from "../AppIcon.vue";
@@ -59,6 +60,7 @@ function merge(mode = "centre") {
         type="button"
         role="menuitem"
         :data-testid="item.testid"
+        :disabled="merges.disabled.value"
         @mousedown.prevent
         @click="merge(item.mode); close()"
       >
@@ -68,6 +70,7 @@ function merge(mode = "centre") {
         type="button"
         role="menuitem"
         data-testid="sheet-unmerge"
+        :disabled="merges.disabled.value"
         @mousedown.prevent
         @click="merges.unmerge(); close()"
       >

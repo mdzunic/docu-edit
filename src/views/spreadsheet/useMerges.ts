@@ -25,7 +25,8 @@ export interface MergesDeps {
   viewState: Pick<SheetViewState, "syncInto">;
   selection: Pick<SheetSelectionController, "selection">;
   sheetMetrics: Pick<SheetMetrics, "merges">;
-  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing"> };
+  /** SPEC-138: `readOnly` — no edit applies, so the split button shows disabled. */
+  editing: { undo: Pick<SpreadsheetUndo, "record" | "commit">; cell: Pick<CellEditing, "editing">; readOnly?: Readonly<Ref<boolean>> };
   toast?: (message: string) => void;
 }
 
@@ -44,13 +45,13 @@ export function useMerges(deps: MergesDeps) {
     const active = deps.selection.selection.value.active;
     return gridSheet() !== null && mergeAt(deps.sheetMetrics.merges.value, active.row, active.col) !== undefined;
   });
-  const disabled = computed(() => gridSheet() === null || deps.editing.cell.editing.value);
+  const disabled = computed(() => gridSheet() === null || deps.editing.cell.editing.value || deps.editing.readOnly?.value === true);
 
   /** One command as ONE undo step on the sheet on show. */
   function command(label: string, mutate: (m: SpreadsheetModel, sheetId: string, ranges: GridRange[]) => FormatResult): void {
     const m = deps.book.workbook.value;
     const sheet = gridSheet();
-    if (!m || !sheet || deps.editing.cell.editing.value) {
+    if (!m || !sheet || disabled.value) {
       return;
     }
     deps.viewState.syncInto(m);

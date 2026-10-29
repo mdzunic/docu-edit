@@ -197,12 +197,23 @@ export function useSheetViewport(scroller: Readonly<Ref<HTMLElement | null>>, de
     }
   }
 
-  /** Scrolls so `cell` is the scrolled area's top-left. */
+  /** Scrolls so `cell` is the scrolled area's top-left. The extent first
+   * grows to hold a whole viewport past it — a stored top-left (SPEC-138's
+   * reopen) is otherwise clamped short of it, at the extent's end — and the
+   * scroll then waits for the spacer to render at that size. */
   function scrollToTopLeft(cell: CellRef): void {
     const m = deps.metrics();
     const nextSy = cell.row >= frozenRows.value ? m.rowTop(cell.row) - m.rowTop(frozenRows.value) : 0;
     const nextSx = cell.col >= frozenCols.value ? m.colLeft(cell.col) - m.colLeft(frozenCols.value) : 0;
-    scrollToOffsets(nextSx, nextSy);
+    const needRows = Math.min(MAX_ROWS, m.rowAt(m.rowTop(cell.row) + viewRows.value) + EXTENT_ROW_MARGIN);
+    const needCols = Math.min(MAX_COLS, m.colAt(m.colLeft(cell.col) + viewCols.value) + EXTENT_COL_MARGIN);
+    if (needRows <= extentRows.value && needCols <= extentCols.value) {
+      scrollToOffsets(nextSx, nextSy);
+      return;
+    }
+    extentRows.value = Math.max(extentRows.value, needRows);
+    extentCols.value = Math.max(extentCols.value, needCols);
+    void nextTick(() => scrollToOffsets(nextSx, nextSy));
   }
 
   /** Reads the scroll position, growing the extent when the viewport comes

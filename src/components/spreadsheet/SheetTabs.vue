@@ -10,8 +10,9 @@
 // outside the bar cancels. While `renamingIndex` names a tab, an input
 // stands in for it. The bar owns no sheet state: every gesture is an emit
 // the view's useSheetCommands acts on. `tabs` is [{ index, id, name, color }]
-// (index = the sheet's position in the model). Runtime prop declarations per
-// the espree constraint; typed helpers live in sheetTabBar.ts.
+// (index = the sheet's position in the model). SPEC-138: `readOnly` disables
+// Add sheet. Runtime prop declarations per the espree constraint; typed
+// helpers live in sheetTabBar.ts.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import {
   asSheetTabItems,
@@ -38,6 +39,9 @@ const props = defineProps({
   renameError: { type: String, default: "" },
   /** Read out by the polite live region ("Sheet "Q1" moved to position 2"). */
   announcement: { type: String, default: "" },
+  /** SPEC-138: no edit applies (another tab holds the workbook, a version is
+   * previewed) — Add sheet is disabled. */
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits([
@@ -387,6 +391,7 @@ function onRenameBlur() {
       data-testid="sheet-add"
       aria-label="Add sheet"
       title="Add sheet"
+      :disabled="props.readOnly"
       @click="emit('add')"
     >
       +
@@ -548,9 +553,14 @@ function onRenameBlur() {
   cursor: pointer;
 }
 
-.sheet-add:hover {
+.sheet-add:hover:not(:disabled) {
   background: var(--state-hover);
   color: var(--text-primary);
+}
+
+.sheet-add:disabled {
+  color: var(--text-disabled);
+  cursor: default;
 }
 
 .sheet-add:focus-visible {

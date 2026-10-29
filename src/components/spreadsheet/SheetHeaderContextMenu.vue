@@ -4,7 +4,8 @@
 // Shift+F10 / the Menu key when the selection is whole rows or columns
 // (useStructure), at the pointer or under the active band's header. Its
 // entries — insert before/after, delete, hide, unhide, size, autofit — and
-// their labels come from headerMenu.ts; choosing one emits its command.
+// their labels come from headerMenu.ts; choosing one emits its command; all
+// of them are disabled while the workbook is read-only (SPEC-138).
 // UiMenuSurface owns outside-click and Escape dismissal. Runtime prop
 // declarations per the espree constraint (see AppShell.vue).
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
@@ -15,12 +16,14 @@ const props = defineProps({
   y: { type: Number, default: 0 },
   /** `[{ command, label, testid, disabled }]` (headerMenu.ts). */
   items: { type: Array, default: () => [] },
+  /** SPEC-138: no edit applies — every entry is disabled. */
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["run", "close"]);
 
 function entries() {
-  return props.items.map((item) => Object(item));
+  return props.items.map((item) => (props.readOnly ? { ...Object(item), disabled: true } : Object(item)));
 }
 
 function choose(command = "") {

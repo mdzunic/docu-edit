@@ -802,7 +802,11 @@ test("external HTML is inert, and a paste or fill over 1,000,000 cells is refuse
   await expect(toast(page, tooMany)).toBeVisible();
   await expect(cell(page, "P1")).toHaveText("");
   // A table whose spans cover 20,000,000 cells: refused (a fresh view, so
-  // the toast is this paste's).
+  // the toast is this paste's). SPEC-138: the paste into row 30 is an edit
+  // on SPEC-010's draft cadence, and leaving before it is drafted asks first
+  // — the leave prompt the dialog handler above would dismiss, cancelling
+  // the navigation — so the view moves on once it is saved.
+  await expect(page.getByTestId("save-state")).toHaveAttribute("data-save-state", "saved", { timeout: 15_000 });
   await open(page, FILL_FIXTURE);
   await writeClipboard(page, { "text/html": `<table><tr><td rowspan="20000" colspan="1000">x</td></tr></table>`, "text/plain": "x" });
   await clickCell(page, "A25");

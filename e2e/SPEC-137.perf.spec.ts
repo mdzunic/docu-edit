@@ -256,6 +256,14 @@ async function measureScroll(page: Page): Promise<{ sheetScrollFps: number; shee
 /** Ctrl/Cmd+End keydown -> `[data-ref=T25000]` attached AND the name box
  * reads "T25000" (SPEC-117's "Ctrl/Cmd+End = last used cell"). */
 async function measureJumpToEnd(page: Page): Promise<{ sheetJumpToEndMs: number }> {
+  // Untimed: the fling above ends at the top only when its upward half drew
+  // as many frames as its downward half; a slow frame or two leaves it
+  // hundreds of rows down, where A1 is not drawn and the click below would
+  // wait out the test. Start from the top regardless.
+  await page.getByTestId("spreadsheet-grid").evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
   await page.locator('[data-testid="sheet-cell"][data-ref="A1"]').first().click();
   const t0 = Date.now();
   await page.keyboard.press(`${MOD}+End`);

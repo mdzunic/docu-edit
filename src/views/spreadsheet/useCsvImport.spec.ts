@@ -43,7 +43,7 @@ function german(): SpreadsheetModel {
 }
 
 /** useCsvImport over `model`, with the view's book, undo and router faked. */
-function harness(model: SpreadsheetModel | null) {
+function harness(model: SpreadsheetModel | null, locked?: () => boolean) {
   const workbook = shallowRef<SpreadsheetModel | null>(model);
   const replace = vi.fn((next: SpreadsheetModel) => {
     workbook.value = next;
@@ -51,7 +51,7 @@ function harness(model: SpreadsheetModel | null) {
   const reset = vi.fn();
   const push = vi.fn().mockResolvedValue(undefined);
   scope = effectScope();
-  const csv = scope.run(() => useCsvImport({ book: { workbook, replace }, undo: { reset }, router: { push } }))!;
+  const csv = scope.run(() => useCsvImport({ book: { workbook, replace }, undo: { reset }, router: { push }, locked }))!;
   return { csv, workbook, replace, reset, push };
 }
 
@@ -177,6 +177,16 @@ describe("Apply (unedited)", () => {
     expect(equalBytes((await spreadsheetDownload(next)).bytes, buildSpec126Semicolon1252CsvBytes())).toBe(true);
     // The bar reads the new dialect.
     expect(csv.barText.value).toBe("Opened as comma-separated, Windows-1252, numbers and dates read as German");
+  });
+
+  it("does nothing while the view is locked (SPEC-138: another tab holds the workbook, or a version is previewed)", () => {
+    const { csv, replace, reset } = harness(german(), () => true);
+    csv.openDialog();
+    csv.separator.value = "comma";
+    csv.apply();
+    expect(replace).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+    expect(store.storeSpreadsheetEdit).not.toHaveBeenCalled();
   });
 
   it("keeps the dialog open with the reason when the chosen options cannot read the file", () => {

@@ -105,3 +105,28 @@ describe("useAutosave.flushForClose (SPEC-060)", () => {
     expect(api.recovery.value).not.toBeNull();
   });
 });
+
+describe("useAutosave.commitNow (SPEC-138)", () => {
+  it("cancels the pending draft tick once the commit covers every edit — no draft stamped newer than the commit it copies", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { api } = await setup("commit-now-doc");
+      api.markDirty();
+      putRecord.mockClear();
+      await api.commitNow();
+      expect(committedWrites("commit-now-doc").length).toBeGreaterThanOrEqual(1);
+      expect(api.saveState.value).toBe("saved");
+      putRecord.mockClear();
+      // Past the debounce and the 30 s deadline the tick would have had.
+      await vi.advanceTimersByTimeAsync(31_000);
+      await microtasks();
+      expect(putRecord.mock.calls.map(([record]) => record.id).filter((key: string) => key.startsWith("draft:"))).toEqual([]);
+      // A later edit still drafts on the cadence.
+      api.markDirty();
+      await vi.advanceTimersByTimeAsync(31_000);
+      await vi.waitFor(() => expect(putRecord.mock.calls.map(([record]) => record.id)).toContain("draft:commit-now-doc"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

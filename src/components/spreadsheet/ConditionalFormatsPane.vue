@@ -21,6 +21,9 @@ import ConditionalFormatEditor from "./ConditionalFormatEditor.vue";
 const props = defineProps({
   /** useConditionalFormatManager's return. */
   manager: { type: Object, required: true },
+  /** SPEC-138: no edit applies — every control that changes a rule is
+   * disabled (the scope and the list still show the rules). */
+  readOnly: { type: Boolean, default: false },
 });
 
 const m = computed(() => asConditionalFormatManager(props.manager));
@@ -115,7 +118,7 @@ onBeforeUnmount(() => {
             data-testid="cf-add"
             aria-haspopup="menu"
             :aria-expanded="m.presetsOpen.value"
-            :disabled="!m.hasSheet.value"
+            :disabled="props.readOnly || !m.hasSheet.value"
             @click="togglePresets"
           >
             <AppIcon name="plus" /> Add rule
@@ -157,7 +160,7 @@ onBeforeUnmount(() => {
           type="button"
           class="cf-button"
           data-testid="cf-edit"
-          :disabled="!selected || selected.rule.kind === 'preserved'"
+          :disabled="props.readOnly || !selected || selected.rule.kind === 'preserved'"
           @click="m.editSelected()"
         >
           Edit
@@ -166,7 +169,7 @@ onBeforeUnmount(() => {
           type="button"
           class="cf-button"
           data-testid="cf-delete"
-          :disabled="!selected"
+          :disabled="props.readOnly || !selected"
           @click="m.deleteSelected()"
         >
           Delete
@@ -176,7 +179,7 @@ onBeforeUnmount(() => {
           class="cf-button"
           data-testid="cf-move-up"
           aria-label="Move rule up"
-          :disabled="!m.canMoveUp.value"
+          :disabled="props.readOnly || !m.canMoveUp.value"
           @click="m.moveUp()"
         >
           <AppIcon name="chevron-up" />
@@ -186,7 +189,7 @@ onBeforeUnmount(() => {
           class="cf-button"
           data-testid="cf-move-down"
           aria-label="Move rule down"
-          :disabled="!m.canMoveDown.value"
+          :disabled="props.readOnly || !m.canMoveDown.value"
           @click="m.moveDown()"
         >
           <AppIcon name="chevron-down" />
@@ -223,6 +226,7 @@ onBeforeUnmount(() => {
             <input
               type="text"
               data-testid="cf-rule-applies-to"
+              :disabled="props.readOnly"
               :value="entry.appliesTo"
               :aria-invalid="Boolean(m.appliesToErrors.value[entry.format.id])"
               @change="m.setAppliesTo(entry.format.id, valueOf($event))"
@@ -241,6 +245,7 @@ onBeforeUnmount(() => {
           ><input
             type="checkbox"
             data-testid="cf-rule-stop-if-true"
+            :disabled="props.readOnly"
             :checked="entry.rule.stopIfTrue === true"
             @change="m.setStop(entry.rule.id, checked($event))"
           > Stop if true</label>
@@ -259,7 +264,7 @@ onBeforeUnmount(() => {
           type="button"
           class="cf-button"
           data-testid="cf-clear-selection"
-          :disabled="!m.hasSheet.value"
+          :disabled="props.readOnly || !m.hasSheet.value"
           @click="m.clearSelection()"
         >
           Clear rules from selected cells
@@ -268,7 +273,7 @@ onBeforeUnmount(() => {
           type="button"
           class="cf-button"
           data-testid="cf-clear-sheet"
-          :disabled="!m.hasSheet.value"
+          :disabled="props.readOnly || !m.hasSheet.value"
           @click="m.clearSheet()"
         >
           Clear rules from entire sheet

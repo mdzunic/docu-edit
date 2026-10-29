@@ -228,4 +228,14 @@ describe("ConditionalFormatsPane (SPEC-129)", () => {
     await wrapper.get('[data-testid="cf-rule-stop-if-true"]').setValue(false);
     expect(formats()[0]!.rules[0]!.stopIfTrue).toBeUndefined();
   });
+
+  it("SPEC-138: while the workbook is read-only every control that changes a rule is disabled; the scope still shows rules", async () => {
+    const { wrapper, selectRule } = setup();
+    await selectRule(0);
+    await wrapper.setProps({ readOnly: true });
+    for (const testid of ["cf-add", "cf-edit", "cf-delete", "cf-clear-selection", "cf-clear-sheet", "cf-rule-applies-to"]) {
+      expect(wrapper.get(`[data-testid="${testid}"]`).attributes("disabled"), testid).toBeDefined();
+    }
+    expect(wrapper.get('[data-testid="cf-scope"]').attributes("disabled")).toBeUndefined();
+  });
 });

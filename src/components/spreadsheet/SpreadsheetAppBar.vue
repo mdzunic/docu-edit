@@ -6,7 +6,12 @@
 // other (SPEC-126: both workbook formats for a csv/tsv workbook, and the
 // current sheet as CSV or TSV for every one) — and SPEC-060's Close. AppShell's #app-bar-actions slot is where
 // every editor puts its cluster; the title and the format badge are
-// AppShell's own props. Runtime declarations per the espree constraint.
+// AppShell's own props. SPEC-138: the save state, through the shared
+// SaveStateBadge (`save-state`, class `sheet-save-state`) in saveStateText's
+// words, and on `error` the `sheet-save-state-download` escape hatch running
+// the workbook download — the workbook's only save readout. Runtime
+// declarations per the espree constraint.
+import SaveStateBadge from "../SaveStateBadge.vue";
 import UndoRedoControls from "../UndoRedoControls.vue";
 import UiIconButton from "../ui/UiIconButton.vue";
 import SpreadsheetDownloadButton from "./SpreadsheetDownloadButton.vue";
@@ -26,6 +31,11 @@ const props = defineProps({
   copyDisabledReason: { type: String, default: "" },
   /** SPEC-126: the .ods copy's label beside the .xlsx one (csv/tsv only). */
   copyOdsLabel: { type: String, default: "" },
+  /** SPEC-138: "saved" | "saving" | "error" | "recovered". */
+  saveState: { type: String, default: "saved" },
+  /** The save state's words; "" hides the badge (another tab holds the
+   * workbook). */
+  saveStateText: { type: String, default: "" },
 });
 
 const emit = defineEmits(["undo", "redo", "download", "download-copy", "download-copy-ods", "download-copy-csv", "download-copy-tsv", "export-pdf", "close"]);
@@ -60,6 +70,19 @@ const emit = defineEmits(["undo", "redo", "download", "download-copy", "download
         @download-copy-tsv="emit('download-copy-tsv')"
         @export-pdf="emit('export-pdf')"
       />
+      <SaveStateBadge
+        v-if="props.saveStateText"
+        class="sheet-save-state"
+        :save-state="props.saveState"
+        :text="props.saveStateText"
+      />
+      <a
+        v-if="props.saveStateText && props.saveState === 'error'"
+        class="sheet-save-state-download"
+        data-testid="sheet-save-state-download"
+        href="#"
+        @click.prevent="emit('download')"
+      >Download a copy</a>
     </template>
     <UiIconButton
       class="close-button"
@@ -92,6 +115,18 @@ const emit = defineEmits(["undo", "redo", "download", "download-copy", "download
   font-size: var(--text-sm);
   letter-spacing: var(--tracking-caption);
   text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* The save state is chrome to glance at, quieter than the controls. */
+.sheet-save-state {
+  color: var(--text-on-brand);
+  opacity: 0.85;
+}
+
+.sheet-save-state-download {
+  font-size: var(--text-md);
+  color: var(--text-on-brand);
   white-space: nowrap;
 }
 

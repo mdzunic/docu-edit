@@ -20,6 +20,8 @@ const props = defineProps({
   /** The drawing is already at the front / the back of the z-order. */
   atFront: { type: Boolean, default: false },
   atBack: { type: Boolean, default: false },
+  /** SPEC-138: no edit applies — every item is disabled. */
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["run", "close"]);
@@ -54,7 +56,7 @@ function choose(action = "front") {
       type="button"
       role="menuitem"
       :data-testid="item.testid"
-      :disabled="item.end === 'front' ? props.atFront : props.atBack"
+      :disabled="props.readOnly || (item.end === 'front' ? props.atFront : props.atBack)"
       @mousedown.prevent
       @click="choose(item.action)"
     >
@@ -68,6 +70,7 @@ function choose(action = "front") {
       type="button"
       role="menuitem"
       data-testid="sheet-drawing-alt-text"
+      :disabled="props.readOnly"
       @mousedown.prevent
       @click="choose('alt-text')"
     >
@@ -77,6 +80,7 @@ function choose(action = "front") {
       type="button"
       role="menuitem"
       data-testid="sheet-drawing-delete"
+      :disabled="props.readOnly"
       @mousedown.prevent
       @click="choose('delete')"
     >

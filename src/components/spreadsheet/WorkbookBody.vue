@@ -37,10 +37,19 @@
 // SPEC-137: a workbook whose storage came back incomplete shows
 // WORKBOOK_STORAGE_INCOMPLETE_MESSAGE above the grid and its formula bar is
 // not editable (the edit pipeline refuses the rest — useWorkbookEditing).
+// SPEC-138: from `saving` (useWorkbookSaving), the `sheet-conflict-bar` while
+// another tab holds the workbook and SPEC-103's RecoveryBar over recovered
+// cells — the formula bar is not editable while the session is locked; and
+// `history` (useWorkbookHistory) is the side panel's history pane. While no
+// edit applies (useWorkbookEditing's `readOnly`) the tabs, the cell, header
+// and drawing menus and the table design bar show their edit commands
+// disabled.
 // Runtime prop declarations per the espree constraint
 // (see AppShell.vue).
 import { computed } from "vue";
+import RecoveryBar from "../RecoveryBar.vue";
 import { WORKBOOK_STORAGE_INCOMPLETE_MESSAGE } from "../../lib/spreadsheet/errors";
+import { asWorkbookSaving } from "../../views/spreadsheet/useWorkbookSaving";
 import { asSheetGridContext } from "../../views/spreadsheet/useSheetGrid";
 import SheetPrintSurfaces from "./SheetPrintSurfaces.vue";
 import { asWorkbookBook } from "../../views/spreadsheet/useWorkbookLoad";
@@ -92,7 +101,18 @@ const props = defineProps({
   /** useFunctionAssist's return (SPEC-127): the autocomplete, the argument
    * hint and the Insert Function dialog, and the formula bar's fx. */
   assist: { type: Object, default: null },
+  /** SPEC-138: useWorkbookSaving's return — the conflict and recovery bars. */
+  saving: { type: Object, default: null },
+  /** SPEC-138: useWorkbookHistory's return — the side panel's history pane. */
+  history: { type: Object, default: null },
 });
+
+const saving = computed(() => (props.saving ? asWorkbookSaving(props.saving) : null));
+/** The formula bar takes entry only where the grid's cell editor does. */
+const editable = computed(() => saving.value === null || saving.value.editable.value);
+/** No edit applies (SPEC-138: locked, previewing; SPEC-137: incomplete):
+ * the tabs', the menus' and the table bar's edit commands show disabled. */
+const readOnly = computed(() => asWorkbookEditing(props.editing).readOnly?.value === true);
 
 const assist = computed(() => (props.assist ? asFunctionAssist(props.assist) : null));
 
@@ -182,12 +202,26 @@ const tabs = computed(() => {
     >
       {{ WORKBOOK_STORAGE_INCOMPLETE_MESSAGE }}
     </p>
+    <div
+      v-if="saving?.conflictMessage.value"
+      class="workbook-conflict"
+      role="status"
+      data-testid="sheet-conflict-bar"
+    >
+      {{ saving.conflictMessage.value }}
+    </div>
+    <RecoveryBar
+      v-if="saving?.recovery.value"
+      :label="saving.recoveryLabel.value"
+      @keep="saving.keepRecovered()"
+      @discard="saving.discardRecovered()"
+    />
     <FormulaBar
       :address="grid.selection.nameBoxText.value"
       :content="grid.formulas.barText.value"
       :spill-member="grid.formulas.spillMember.value"
       :editor="cellEditing"
-      :editable="book.activeSheet.value?.kind === 'grid' && !book.storageIncomplete.value"
+      :editable="book.activeSheet.value?.kind === 'grid' && !book.storageIncomplete.value && editable"
       :can-insert-function="assist?.canInsert.value ?? false"
       :aria="assist?.editorAria.value ?? {}"
       :names="names ?? undefined"
@@ -252,14 +286,19 @@ const tabs = computed(() => {
           :image-src="grid.drawings?.imageSrc"
         />
       </div>
-      <SheetSidePanel :editing="editing" />
+      <SheetSidePanel
+        :editing="editing"
+        :history="history"
+      />
     </div>
     <SheetTableSurfaces
       v-if="tables"
       :tables="tables"
+      :read-only="readOnly"
     />
     <SheetTabs
       :tabs="tabs"
+      :read-only="readOnly"
       :active-index="book.activeIndex.value"
       :panel-id="panelId"
       :renaming-index="commands.renaming.value?.index ?? -1"
@@ -302,6 +341,7 @@ const tabs = computed(() => {
         :x="grid.formatting.contextMenu.value?.x ?? 0"
         :y="grid.formatting.contextMenu.value?.y ?? 0"
         :annotations="annotationMenu"
+        :read-only="readOnly"
         @run="grid.formatting.run"
         @structure="insertOrDelete"
         @clipboard="clipboard"
@@ -320,6 +360,7 @@ const tabs = computed(() => {
         :x="grid.structure.headerMenu.value?.x ?? 0"
         :y="grid.structure.headerMenu.value?.y ?? 0"
         :items="grid.structure.headerItems.value"
+        :read-only="readOnly"
         @run="grid.structure.runHeaderMenu"
         @close="grid.structure.closeHeaderMenu()"
       />
@@ -392,6 +433,7 @@ const tabs = computed(() => {
         :y="drawings.contextMenu.value?.y ?? 0"
         :at-front="drawings.order.value.atFront"
         :at-back="drawings.order.value.atBack"
+        :read-only="readOnly"
         @run="drawingAction"
         @close="drawings.closeContextMenu()"
       />
@@ -445,6 +487,17 @@ const tabs = computed(() => {
   justify-content: center;
   color: var(--text-secondary);
 }
+/* SPEC-138: the second tab's notice, RecoveryBar's look. */
+.workbook-conflict {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-5);
+  background: var(--surface-selected);
+  border-bottom: var(--border-width) solid var(--accent-subtle);
+  color: var(--text-accent);
+  font-size: var(--text-md);
+}
+
 .workbook-storage-incomplete {
   margin: 0;
   padding: var(--space-2) var(--space-4);

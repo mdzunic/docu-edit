@@ -58,6 +58,11 @@
 // session-only check item) after Freeze ▸; and, ending the Insert menu after
 // a separator, Page break, Remove page break and Reset all page breaks
 // (`sheet-menu-insert-page-break`, `-remove-page-break`, `-reset-page-breaks`).
+// SPEC-138 adds File ▸ Version history (`sheet-menu-version-history`, checked
+// while the side panel's history pane is open) after Print…, and disables
+// every item that changes the workbook while it is read-only (`readOnly`:
+// another tab holds it, a version is previewed) — Download, Print, the View
+// toggles, Recalculate and Close stay.
 // Later specs append menus and items; item test ids keep the `sheet-menu-`
 // prefix. Runtime prop declarations per the espree constraint (see
 // AppShell.vue).
@@ -149,7 +154,7 @@ const MENUS = [
 
 /** An Arrange move is off without a selected drawing, or at its end. */
 function arrangeDisabled(end = "front") {
-  return !s.value.drawingSelected || (end === "front" ? s.value.drawingAtFront : s.value.drawingAtBack);
+  return !s.value.drawingSelected || s.value.readOnly || (end === "front" ? s.value.drawingAtFront : s.value.drawingAtBack);
 }
 </script>
 
@@ -176,7 +181,7 @@ function arrangeDisabled(end = "front") {
       <MenuItem
         label="Page setup…"
         testid="sheet-menu-page-setup"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.pageSetup)"
       />
       <MenuSubmenu
@@ -186,13 +191,13 @@ function arrangeDisabled(end = "front") {
         <MenuItem
           label="Set print area"
           testid="sheet-menu-set-print-area"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.setPrintArea)"
         />
         <MenuItem
           label="Clear print area"
           testid="sheet-menu-clear-print-area"
-          :disabled="!s.hasGrid || !s.hasPrintArea"
+          :disabled="!s.hasGrid || !s.hasPrintArea || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.clearPrintArea)"
         />
       </MenuSubmenu>
@@ -202,6 +207,12 @@ function arrangeDisabled(end = "front") {
         testid="sheet-menu-print"
         :shortcut="printShortcut"
         @select="emit('command', SHEET_MENU_COMMANDS.print)"
+      />
+      <MenuCheckItem
+        label="Version history"
+        testid="sheet-menu-version-history"
+        :checked="s.historyOpen"
+        @select="emit('command', SHEET_MENU_COMMANDS.versionHistory)"
       />
       <hr class="menu-separator">
       <MenuItem
@@ -234,7 +245,7 @@ function arrangeDisabled(end = "front") {
         label="Paste special…"
         testid="sheet-menu-paste-special"
         :shortcut="pasteSpecialShortcut"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.pasteSpecial)"
       />
       <MenuSubmenu
@@ -247,7 +258,7 @@ function arrangeDisabled(end = "front") {
           :label="fill.label"
           :testid="fill.testid"
           :shortcut="fill.shortcut"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', fill.command)"
         />
       </MenuSubmenu>
@@ -303,26 +314,26 @@ function arrangeDisabled(end = "front") {
         <MenuItem
           label="Top row"
           testid="sheet-menu-freeze-top-row"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.freezeTopRow)"
         />
         <MenuItem
           label="First column"
           testid="sheet-menu-freeze-first-column"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.freezeFirstColumn)"
         />
         <MenuItem
           label="Freeze at current cell"
           testid="sheet-menu-freeze-at-cell"
-          :disabled="!s.hasGrid || s.freezeAtCellDisabled"
+          :disabled="!s.hasGrid || s.freezeAtCellDisabled || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.freezeAtCell)"
         />
         <hr class="menu-separator">
         <MenuItem
           label="Unfreeze"
           testid="sheet-menu-unfreeze"
-          :disabled="!s.hasGrid || !s.frozen"
+          :disabled="!s.hasGrid || !s.frozen || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.unfreeze)"
         />
       </MenuSubmenu>
@@ -354,28 +365,28 @@ function arrangeDisabled(end = "front") {
         label="Image…"
         icon="image"
         testid="sheet-menu-insert-image"
-        :disabled="!s.canInsertDrawings"
+        :disabled="!s.canInsertDrawings || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.insertImage)"
       />
       <MenuItem
         label="Shapes"
         icon="shape"
         testid="sheet-menu-insert-shape"
-        :disabled="!s.canInsertDrawings"
+        :disabled="!s.canInsertDrawings || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.insertShape)"
       />
       <MenuItem
         label="Chart"
         icon="chart"
         testid="sheet-menu-insert-chart"
-        :disabled="!s.canInsertDrawings"
+        :disabled="!s.canInsertDrawings || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.insertChart)"
       />
       <hr class="menu-separator">
       <MenuItem
         label="Table…"
         testid="sheet-menu-insert-table"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.insertTable)"
       />
       <MenuItem
@@ -383,7 +394,7 @@ function arrangeDisabled(end = "front") {
         icon="link"
         testid="sheet-menu-insert-link"
         :shortcut="linkShortcut"
-        :disabled="!s.hasGrid || !s.canLink"
+        :disabled="!s.hasGrid || !s.canLink || s.readOnly"
         :reason="s.linkDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.insertLink)"
       />
@@ -392,7 +403,7 @@ function arrangeDisabled(end = "front") {
         label="Note"
         testid="sheet-menu-insert-note"
         :shortcut="noteShortcut"
-        :disabled="!s.canAnnotate"
+        :disabled="!s.canAnnotate || s.readOnly"
         :reason="s.noteDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.insertNote)"
       />
@@ -401,7 +412,7 @@ function arrangeDisabled(end = "front") {
         icon="comment"
         testid="sheet-menu-insert-comment"
         :shortcut="commentShortcut"
-        :disabled="!s.canComment"
+        :disabled="!s.canComment || s.readOnly"
         :reason="s.commentDisabledReason"
         @select="emit('command', SHEET_MENU_COMMANDS.insertComment)"
       />
@@ -409,19 +420,19 @@ function arrangeDisabled(end = "front") {
       <MenuItem
         label="Page break"
         testid="sheet-menu-insert-page-break"
-        :disabled="!s.canInsertPageBreak"
+        :disabled="!s.canInsertPageBreak || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.insertPageBreak)"
       />
       <MenuItem
         label="Remove page break"
         testid="sheet-menu-remove-page-break"
-        :disabled="!s.canRemovePageBreak"
+        :disabled="!s.canRemovePageBreak || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.removePageBreak)"
       />
       <MenuItem
         label="Reset all page breaks"
         testid="sheet-menu-reset-page-breaks"
-        :disabled="!s.canResetPageBreaks"
+        :disabled="!s.canResetPageBreaks || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.resetPageBreaks)"
       />
     </template>
@@ -439,7 +450,7 @@ function arrangeDisabled(end = "front") {
       <MenuItem
         label="Alt Text…"
         testid="sheet-menu-arrange-alt-text"
-        :disabled="!s.drawingSelected"
+        :disabled="!s.drawingSelected || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.altText)"
       />
     </template>
@@ -449,7 +460,7 @@ function arrangeDisabled(end = "front") {
         label="Format cells…"
         testid="sheet-menu-format-cells"
         :shortcut="formatCellsShortcut"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.formatCells)"
       />
       <MenuSubmenu
@@ -461,14 +472,14 @@ function arrangeDisabled(end = "front") {
           :key="preset.id"
           :label="preset.label"
           :testid="`sheet-menu-number-format-${preset.id}`"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', numberFormatCommand(preset.id))"
         />
         <hr class="menu-separator">
         <MenuItem
           label="More formats…"
           testid="sheet-menu-number-format-more"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', SHEET_MENU_COMMANDS.moreNumberFormats)"
         />
       </MenuSubmenu>
@@ -481,14 +492,14 @@ function arrangeDisabled(end = "front") {
           :key="name"
           :label="name"
           testid="sheet-menu-cell-style"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', cellStyleCommand(name))"
         />
       </MenuSubmenu>
       <MenuItem
         label="Conditional formatting…"
         testid="sheet-menu-conditional-formatting"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.conditionalFormatting)"
       />
       <MenuSubmenu
@@ -500,7 +511,7 @@ function arrangeDisabled(end = "front") {
           :key="clear.command"
           :label="clear.label"
           :testid="clear.testid"
-          :disabled="!s.hasGrid"
+          :disabled="!s.hasGrid || s.readOnly"
           @select="emit('command', clear.command)"
         />
       </MenuSubmenu>
@@ -510,7 +521,7 @@ function arrangeDisabled(end = "front") {
         :key="size.command"
         :label="size.label"
         :testid="size.testid"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', size.command)"
       />
     </template>
@@ -520,6 +531,7 @@ function arrangeDisabled(end = "front") {
         label="Name Manager…"
         testid="sheet-menu-name-manager"
         :shortcut="nameManagerShortcut"
+        :disabled="s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.nameManager)"
       />
     </template>
@@ -537,7 +549,7 @@ function arrangeDisabled(end = "front") {
         :key="sort.command"
         :label="sort.label"
         :testid="sort.testid"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', sort.command)"
       />
       <hr class="menu-separator">
@@ -546,29 +558,29 @@ function arrangeDisabled(end = "front") {
         testid="sheet-menu-filter"
         :shortcut="filterShortcut"
         :checked="s.filterOn"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.filter)"
       />
       <MenuItem
         label="Clear filters"
         testid="sheet-menu-clear-filters"
-        :disabled="!s.filterOn"
-        :reason="s.hasGrid ? FILTER_OFF_REASON : ''"
+        :disabled="!s.filterOn || s.readOnly"
+        :reason="s.hasGrid && !s.filterOn ? FILTER_OFF_REASON : ''"
         @select="emit('command', SHEET_MENU_COMMANDS.clearFilters)"
       />
       <MenuItem
         label="Reapply filter"
         testid="sheet-menu-reapply-filter"
         :shortcut="reapplyShortcut"
-        :disabled="!s.filterOn"
-        :reason="s.hasGrid ? FILTER_OFF_REASON : ''"
+        :disabled="!s.filterOn || s.readOnly"
+        :reason="s.hasGrid && !s.filterOn ? FILTER_OFF_REASON : ''"
         @select="emit('command', SHEET_MENU_COMMANDS.reapplyFilter)"
       />
       <hr class="menu-separator">
       <MenuItem
         label="Data validation…"
         testid="sheet-menu-data-validation"
-        :disabled="!s.hasGrid"
+        :disabled="!s.hasGrid || s.readOnly"
         @select="emit('command', SHEET_MENU_COMMANDS.dataValidation)"
       />
     </template>

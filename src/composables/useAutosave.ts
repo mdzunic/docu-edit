@@ -2,7 +2,8 @@
 // dirty flag, the save cadence, recovery (Keep/Discard) and the tab-close
 // behaviour. The view owns everything DOM-shaped — the caret, the scroll
 // container, the editable surface — and hands it in via callbacks. It serves
-// both editing products (SPEC-103): DocumentView and the deck's useDeckSaving.
+// every editing product: DocumentView, the deck's useDeckSaving (SPEC-103)
+// and the workbook's useWorkbookSaving (SPEC-138).
 import { computed, ref } from "vue";
 import {
   createAutosaveScheduler,
@@ -14,16 +15,17 @@ import {
   commitDocument,
   deleteDraft,
   isMediaModel,
-  isPresentationModel,
   isSpreadsheetModel,
+  isSpreadsheetResident,
   loadDraft,
+  loadSpreadsheet,
   refreshDocumentFromStorage,
-  replaceDocumentModel,
-  replacePresentationModel,
+  replaceStoredModel,
   saveDraft,
   type DraftState,
   type StoredModel,
 } from "../lib/documentStore";
+import type { SheetViewState } from "../lib/spreadsheet/selection";
 import { saveStateText as textForSaveState, STORAGE_FULL_REASON, SAVE_STATE_SAVING, SAVE_STATE_SAVED, SAVE_STATE_ERROR, type SaveState } from "../lib/core/saveState";
 import { recoveryNotice } from "../lib/format";
 import { now } from "../lib/clock";
@@ -41,6 +43,8 @@ export interface RestoredState {
   scroll: number;
   /** A deck's selected slide (SPEC-103); absent for text. */
   slideIndex?: number;
+  /** A workbook's tab, active cell and top-left cell (SPEC-138). */
+  sheetView?: SheetViewState;
   /** True when the model is recovered draft content (the bar is showing). */
   recovered: boolean;
 }
@@ -50,6 +54,8 @@ export interface UseAutosaveOptions {
   getScroll: () => number;
   /** A deck's selected slide, recorded with each draft and commit (SPEC-103). */
   getSlideIndex?: () => number;
+  /** A workbook's view, recorded with each draft and commit (SPEC-138). */
+  getSheetView?: () => SheetViewState | undefined;
   /** Whether this tab currently owns the document (edit lock held and a
    * document open). While false the composable never writes. */
   isActive: () => boolean;
@@ -61,24 +67,9 @@ export interface UseAutosaveOptions {
   onCleanClose?: () => void;
 }
 
-interface CommittedStash {
-  model: StoredModel;
-  caret: CaretPosition | null;
-  scroll: number;
-  slideIndex?: number;
-}
-
-/** Swaps the stored model through its own product's path (SPEC-103): a deck
- * through replacePresentationModel. Media and workbooks never hold a session. */
-function replaceStoredModel(id: string, model: StoredModel): StoredModel {
-  if (isPresentationModel(model)) {
-    return replacePresentationModel(id, model);
-  }
-  if (isMediaModel(model) || isSpreadsheetModel(model)) {
-    throw new Error(`Document ${id} has no editing session`);
-  }
-  return replaceDocumentModel(id, model);
-}
+/** The committed state "Discard" restores (the store's replaceStoredModel
+ * swaps it back through its own kind's path, SPEC-138). */
+type CommittedStash = Omit<RestoredState, "recovered">;
 
 export function useAutosave(options: UseAutosaveOptions) {
   // SPEC-066: crash-recovery drafts (the debounced saveDraft below) are the
@@ -111,7 +102,8 @@ export function useAutosave(options: UseAutosaveOptions) {
   /** The editor state every draft and commit records beside the model. */
   const draftState = (): DraftState => {
     const slide = options.getSlideIndex ? { slideIndex: options.getSlideIndex() } : {};
-    return { caret: options.getCaret(), scroll: options.getScroll(), ...slide };
+    const sheetView = options.getSheetView?.();
+    return { caret: options.getCaret(), scroll: options.getScroll(), ...slide, ...(sheetView ? { sheetView } : {}) };
   };
 
   function makeScheduler(): AutosaveScheduler {
@@ -186,12 +178,17 @@ export function useAutosave(options: UseAutosaveOptions) {
     scheduler?.dispose();
     scheduler = makeScheduler();
     const record = await refreshDocumentFromStorage(id);
+    if (record && isSpreadsheetModel(record.model) && !isSpreadsheetResident(id)) {
+      // SPEC-138: another tab's commit is adopted as its shell — rejoin the
+      // rows and sources before the session hands the view the workbook.
+      await loadSpreadsheet(id);
+    }
     if (docId !== id || !record) {
       return;
     }
-    if (isMediaModel(record.model) || isSpreadsheetModel(record.model)) {
-      // A media or workbook id can only reach here through a misrouted view,
-      // and a session would clobber the stored model (SPEC-107/116).
+    if (isMediaModel(record.model)) {
+      // A media id can only reach here through a misrouted view, and a
+      // session would clobber the stored bytes (SPEC-107).
       return;
     }
     const draft = await loadDraft(id);
@@ -207,6 +204,7 @@ export function useAutosave(options: UseAutosaveOptions) {
         caret: record.caret ?? null,
         scroll: record.scroll ?? 0,
         slideIndex: record.slideIndex,
+        sheetView: record.sheetView,
       };
       recovery.value = { savedAt: draft.savedAt };
       const model = replaceStoredModel(id, draft.model);
@@ -215,6 +213,7 @@ export function useAutosave(options: UseAutosaveOptions) {
         caret: draft.caret,
         scroll: draft.scroll,
         slideIndex: draft.slideIndex,
+        sheetView: draft.sheetView,
         recovered: true,
       });
     } else {
@@ -223,6 +222,7 @@ export function useAutosave(options: UseAutosaveOptions) {
         caret: record.caret ?? null,
         scroll: record.scroll ?? 0,
         slideIndex: record.slideIndex,
+        sheetView: record.sheetView,
         recovered: false,
       });
     }
@@ -268,6 +268,10 @@ export function useAutosave(options: UseAutosaveOptions) {
       if (editCount === editsAtStart) {
         dirty = false;
         saveState.value = "saved";
+        // The commit covers every edit: a draft tick still pending would
+        // only write a copy of it stamped newer — a false crash signal.
+        scheduler?.dispose();
+        scheduler = makeScheduler();
       }
     } catch {
       if (docId !== id) {
@@ -361,13 +365,7 @@ export function useAutosave(options: UseAutosaveOptions) {
     editCount += 1;
     saveState.value = "saved";
     void deleteDraft(id);
-    options.applyRestored({
-      model,
-      caret: stash.caret,
-      scroll: stash.scroll,
-      slideIndex: stash.slideIndex,
-      recovered: false,
-    });
+    options.applyRestored({ ...stash, model, recovered: false });
   }
 
   // Tab close — the leave prompt, the clean-close commit and the last-gasp

@@ -14,8 +14,8 @@
 // reason in an .ods workbook, which holds notes only). Link…, New note and
 // New comment are disabled with their reason where what they add could not
 // be saved (a CSV/TSV workbook's links; an .xlsx sheet whose source's
-// annotations stay as read — AC-11); later specs append
-// theirs. UiMenuSurface owns
+// annotations stay as read — AC-11); SPEC-138's `readOnly` disables every
+// item but Copy; later specs append theirs. UiMenuSurface owns
 // outside-click and Escape dismissal. Runtime prop declarations per the
 // espree constraint (see AppShell.vue).
 import UiMenuSurface from "../ui/UiMenuSurface.vue";
@@ -28,6 +28,8 @@ const props = defineProps({
    * canComment, commentDisabledReason, canLink, linkDisabledReason } for the
    * active cell. */
   annotations: { type: Object, default: () => ({}) },
+  /** SPEC-138: no edit applies — every item but Copy is disabled. */
+  readOnly: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["run", "structure", "clipboard", "link", "annotate", "close"]);
@@ -99,6 +101,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       :data-testid="item.testid"
+      :disabled="props.readOnly && item.action !== 'copy'"
       @mousedown.prevent
       @click="clipboard(item.action)"
     >
@@ -112,6 +115,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-format-cells"
+      :disabled="props.readOnly"
       @mousedown.prevent
       @click="choose({ kind: 'format-cells' })"
     >
@@ -121,6 +125,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-clear-contents"
+      :disabled="props.readOnly"
       @mousedown.prevent
       @click="choose({ kind: 'clear', what: 'contents' })"
     >
@@ -130,6 +135,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-insert"
+      :disabled="props.readOnly"
       @mousedown.prevent
       @click="structure('insert')"
     >
@@ -139,6 +145,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-delete"
+      :disabled="props.readOnly"
       @mousedown.prevent
       @click="structure('delete')"
     >
@@ -152,7 +159,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-link"
-      :disabled="!canLink()"
+      :disabled="props.readOnly || !canLink()"
       :aria-disabled="canLink() ? undefined : 'true'"
       :title="canLink() ? undefined : reasonOf('linkDisabledReason')"
       @mousedown.prevent
@@ -165,7 +172,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-note"
-      :disabled="!flag('canAnnotate')"
+      :disabled="props.readOnly || !flag('canAnnotate')"
       :aria-disabled="flag('canAnnotate') ? undefined : 'true'"
       :title="flag('canAnnotate') ? undefined : reasonOf('noteDisabledReason')"
       @mousedown.prevent
@@ -178,6 +185,7 @@ function annotate(action = "note") {
         type="button"
         role="menuitem"
         data-testid="sheet-cell-menu-delete-note"
+        :disabled="props.readOnly"
         @mousedown.prevent
         @click="annotate('delete-note')"
       >
@@ -187,6 +195,7 @@ function annotate(action = "note") {
         type="button"
         role="menuitem"
         data-testid="sheet-cell-menu-toggle-note"
+        :disabled="props.readOnly"
         @mousedown.prevent
         @click="annotate('toggle-note')"
       >
@@ -198,7 +207,7 @@ function annotate(action = "note") {
       type="button"
       role="menuitem"
       data-testid="sheet-cell-menu-comment"
-      :disabled="!flag('canComment')"
+      :disabled="props.readOnly || !flag('canComment')"
       :aria-disabled="flag('canComment') ? undefined : 'true'"
       :title="flag('canComment') ? undefined : commentReason()"
       @mousedown.prevent

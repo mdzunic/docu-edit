@@ -74,6 +74,13 @@ export interface SpreadsheetMenuState {
    * View ▸ Show all notes (session-only). */
   commentsOpen: boolean;
   showAllNotes: boolean;
+  /** SPEC-138: File ▸ Version history (checked while the side panel's
+   * history pane is open). */
+  historyOpen: boolean;
+  /** SPEC-138: no edit applies (another tab holds the workbook, a version is
+   * previewed in its place): every item that would change the workbook is
+   * disabled — what only views, downloads or prints it stays enabled. */
+  readOnly: boolean;
   /** SPEC-136: View ▸ Page breaks (session-only, checked while shown), and
    * whether Insert ▸ Page break / Remove page break / Reset all page breaks
    * and File ▸ Print area ▸ Clear print area apply. */
@@ -169,6 +176,8 @@ export const SHEET_MENU_COMMANDS = {
   insertPageBreak: "insert.page-break",
   removePageBreak: "insert.remove-page-break",
   resetPageBreaks: "insert.reset-page-breaks",
+  /** SPEC-138: File ▸ Version history (the side panel's history pane). */
+  versionHistory: "file.version-history",
 } as const;
 
 /** `format.number.<preset>`: Format ▸ Number format ▸ a preset (SPEC-123). */
@@ -232,6 +241,8 @@ export function asSpreadsheetMenuState(value: unknown): SpreadsheetMenuState {
     linkDisabledReason: typeof state.linkDisabledReason === "string" ? state.linkDisabledReason : "",
     commentsOpen: state.commentsOpen === true,
     showAllNotes: state.showAllNotes === true,
+    historyOpen: state.historyOpen === true,
+    readOnly: state.readOnly === true,
     pageBreaks: state.pageBreaks === true,
     canInsertPageBreak: state.canInsertPageBreak === true,
     canRemovePageBreak: state.canRemovePageBreak === true,

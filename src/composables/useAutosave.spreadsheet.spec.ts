@@ -1,7 +1,8 @@
-// SPEC-116: autosave is a text-editor session, and a workbook id must never
-// start one — beginSession bails before loading a draft or handing the
-// editor a model, so nothing about a misrouted editor can be written over a
-// stored workbook. The idb seam is mocked, as in useAutosave.media.spec.ts.
+// SPEC-116 made beginSession bail on a workbook id, because the draft
+// machinery could not yet tell a workbook from a document; SPEC-138 lifted
+// that bail — a workbook session reads its draft and hands the view the whole
+// workbook, every sheet's rows intact, and a text model can still never be
+// swapped in over it. The idb seam is mocked, as in useAutosave.media.spec.ts.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, h } from "vue";
 import { mount } from "@vue/test-utils";
@@ -28,8 +29,8 @@ afterEach(() => {
   vi.doUnmock("../lib/idb");
 });
 
-describe("useAutosave on a workbook id (SPEC-116)", () => {
-  it("beginSession bails: no draft is read, nothing is restored into the editor", async () => {
+describe("useAutosave on a workbook id (SPEC-116, SPEC-138)", () => {
+  it("beginSession runs a workbook session: the draft is read and the whole workbook is restored", async () => {
     const store = await import("../lib/documentStore");
     const { readSpreadsheetBytes } = await import("../lib/spreadsheet/open");
     const { useAutosave } = await import("./useAutosave");
@@ -53,11 +54,13 @@ describe("useAutosave on a workbook id (SPEC-116)", () => {
     );
     await api!.beginSession(model.id);
 
-    expect(applyRestored).not.toHaveBeenCalled();
-    expect(getRecord.mock.calls.map(([key]) => key)).not.toContain(`draft:${model.id}`);
+    expect(getRecord.mock.calls.map(([key]) => key)).toContain(`draft:${model.id}`);
+    expect(applyRestored).toHaveBeenCalledTimes(1);
+    expect(applyRestored.mock.calls[0]![0]).toMatchObject({ model, recovered: false });
     expect(api!.recovery.value).toBeNull();
     // The stored model is still the workbook, every sheet's rows intact.
     expect(store.getSpreadsheet(model.id)?.sheets.map((sheet) => sheet.rows.length)).toEqual([11, 500, 2]);
     expect(store.getDocument(model.id)).toBeUndefined();
+    expect(() => store.replaceDocumentModel(model.id, { id: model.id } as never)).toThrow(/spreadsheet/);
   });
 });

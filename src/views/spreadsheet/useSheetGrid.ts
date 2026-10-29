@@ -86,6 +86,8 @@ export interface SheetGridContext {
   recalc?: Pick<Recalc, "staleTitleAt"> & Partial<Pick<Recalc, "calcState">>;
   /** Cell entry (SPEC-122); absent = the grid is read-only. */
   cellEditing?: CellEditing;
+  /** SPEC-138: cell entry's reveal tick, also while read-only (no cellEditing). */
+  reveal?: Readonly<Ref<number>>;
   /** SPEC-129: each mounted cell's conditional-format result; absent = none. */
   conditionalFormats?: Pick<ConditionalFormatsView, "resultAt">;
   /** SPEC-127's function assists: the in-cell editor's ARIA. */
@@ -218,10 +220,10 @@ export function useSheetGrid(
       format: ctx.selection.formatContext.value,
     });
   });
-  // A move the editor made (a commit's Enter/Tab, Ready's Enter/Tab) brings
-  // the new active cell into view.
+  // A move (the editor's Enter/Tab, Find, Go To) brings the new active cell into view. SPEC-138: `reveal`
+  // ticks while read-only too, never as the editor comes and goes (that scrolled a reopened view away).
   watch(
-    () => editing()?.revealTick.value,
+    () => (context().reveal ?? editing()?.revealTick)?.value,
     () => viewport.ensureVisible(focusTarget(selection().active)),
   );
 

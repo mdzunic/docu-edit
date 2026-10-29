@@ -85,6 +85,11 @@ describe("DocumentView document deletion", () => {
   // intact (so Trash can restore it) but drops out of the library list.
   it("confirming moves the doc to trash, navigates to / and toasts (AC-33, AC-19, AC-20)", async () => {
     const { wrapper, router, store } = await mountAt("/doc/open-doc");
+    // The confirm's navigation lazy-loads HomeView, whose library thumbnails
+    // pull in the spreadsheet readers: on a cold worker under the full suite,
+    // transforming that graph outlasts both untilPath's bound and the toast's
+    // 4 s life. Load it first so the navigation, not the transform, is timed.
+    await import("./HomeView.vue");
 
     await wrapper.get('[data-testid="delete-document"]').trigger("click");
     await wrapper.get('[data-testid="delete-confirm"]').trigger("click");

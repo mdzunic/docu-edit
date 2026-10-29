@@ -22,6 +22,9 @@ import { asSheetComments } from "../../views/spreadsheet/useSheetComments";
 const props = defineProps({
   /** useSheetComments' return. */
   controller: { type: Object, required: true },
+  /** SPEC-138: no edit applies — commenting, replying, editing, deleting,
+   * resolving and reopening are disabled (the threads still show). */
+  readOnly: { type: Boolean, default: false },
 });
 
 const c = computed(() => asSheetComments(props.controller));
@@ -123,7 +126,7 @@ watch(
         <button
           type="button"
           data-testid="sheet-comment-composer-submit"
-          :disabled="c.composerDraft.value.trim() === ''"
+          :disabled="props.readOnly || c.composerDraft.value.trim() === ''"
           @click="c.submitComposer()"
         >
           Comment
@@ -210,6 +213,7 @@ watch(
                 <button
                   type="button"
                   data-testid="sheet-comment-edit-save"
+                  :disabled="props.readOnly"
                   @click="c.saveEdit()"
                 >
                   Save
@@ -237,6 +241,7 @@ watch(
                 <button
                   type="button"
                   data-testid="sheet-comment-edit"
+                  :disabled="props.readOnly"
                   @click="c.startEdit(item.threadId, message.messageId)"
                 >
                   Edit
@@ -244,6 +249,7 @@ watch(
                 <button
                   type="button"
                   data-testid="sheet-comment-delete"
+                  :disabled="props.readOnly"
                   @click="c.deleteMessage(item.threadId, message.messageId)"
                 >
                   Delete
@@ -258,6 +264,7 @@ watch(
             <textarea
               class="sheet-comment-input"
               data-testid="sheet-comment-reply-input"
+              :disabled="props.readOnly"
               aria-label="Reply"
               placeholder="Reply…"
               :value="c.replyDrafts.value[item.threadId] ?? ''"
@@ -270,7 +277,7 @@ watch(
               v-if="!item.resolved"
               type="button"
               data-testid="sheet-comment-reply-submit"
-              :disabled="(c.replyDrafts.value[item.threadId] ?? '').trim() === ''"
+              :disabled="props.readOnly || (c.replyDrafts.value[item.threadId] ?? '').trim() === ''"
               @click="c.reply(item.threadId)"
             >
               Reply
@@ -279,6 +286,7 @@ watch(
               v-if="!item.resolved"
               type="button"
               data-testid="sheet-comment-resolve"
+              :disabled="props.readOnly"
               @click="c.resolve(item.threadId)"
             >
               Resolve
@@ -287,6 +295,7 @@ watch(
               v-else
               type="button"
               data-testid="sheet-comment-reopen"
+              :disabled="props.readOnly"
               @click="c.reopen(item.threadId)"
             >
               Reopen
