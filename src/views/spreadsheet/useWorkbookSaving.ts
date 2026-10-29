@@ -42,8 +42,10 @@ export interface WorkbookSavingDeps {
   workbookId: Readonly<Ref<string>>;
   /** Where the view stands — recorded with each draft and commit. */
   getSheetView: () => SheetViewState | undefined;
-  /** Puts a recorded view back on the model on show; false when it names
-   * a sheet that no longer exists (it is then ignored). */
+  /** Puts a recorded view back on the model on show; false when that
+   * changes nothing the view opened on (a plain reopen's model already
+   * carries it) or names a sheet that no longer exists (it is then
+   * ignored) — no re-mount then. */
   applySheetView: (view: SheetViewState | undefined) => boolean | void;
   /** useSpreadsheetUndo.reset — the stack's by-reference snapshots point at
    * rows a swapped-in workbook no longer has. */

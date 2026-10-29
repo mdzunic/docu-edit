@@ -105,22 +105,31 @@ export function withViewFields(sheet: Sheet, fields: SheetViewFields): Sheet {
   return Object.assign(next, fields);
 }
 
-/** The view fields a recorded view puts on its sheet: the selection
- * collapsed to its active cell, and its top-left cell. */
+const sameCell = (a: CellRef, b: CellRef): boolean => a.row === b.row && a.col === b.col;
+
+/** The view fields a recorded view puts on its sheet, changing only what
+ * disagrees with the sheet's own (absent = A1): the selection collapses to
+ * the view's active cell unless it is already active there — a whole-sheet
+ * or multi-range selection SPEC-117 remembered survives — and the top-left
+ * cell becomes the view's unless the sheet already starts there. */
 function recordedFields(base: SheetViewFields, view: RecordedSheetView): SheetViewFields {
   const { row, col } = view.active;
+  const collapsed: SheetSelection = { active: { row, col }, ranges: [{ top: row, left: col, bottom: row, right: col }], activeRangeIndex: 0 };
+  const topLeft = { row: view.topRow, col: view.leftCol };
+  const scrolled = topLeft.row > 0 || topLeft.col > 0 ? topLeft : undefined;
   return normalised({
     ...base,
-    selection: { active: { row, col }, ranges: [{ top: row, left: col, bottom: row, right: col }], activeRangeIndex: 0 },
-    topLeftCell: view.topRow > 0 || view.leftCol > 0 ? { row: view.topRow, col: view.leftCol } : undefined,
+    selection: sameCell(base.selection?.active ?? { row: 0, col: 0 }, view.active) ? base.selection : collapsed,
+    topLeftCell: sameCell(base.topLeftCell ?? { row: 0, col: 0 }, topLeft) ? base.topLeftCell : scrolled,
   });
 }
 
 /** Puts a recorded view (SPEC-138's sheetView) into `model` as view state —
  * its sheet becomes the active one, carrying the view's selection and
- * top-left cell (a new sheet object; `rows` keeps its identity). False, and
- * nothing changed, when the view names a sheet the model has no visible tab
- * for (a view naming a sheet that no longer exists is ignored). */
+ * top-left cell (a new sheet object only where they differ; `rows` keeps its
+ * identity). False, and nothing changed, when the view names a sheet the
+ * model has no visible tab for (a view naming a sheet that no longer exists
+ * is ignored). */
 export function withSheetView(model: SpreadsheetModel, view: RecordedSheetView | undefined): boolean {
   const index = view ? model.sheets.findIndex((sheet) => sheet.id === view.sheetId && sheet.visibility === "visible") : -1;
   if (!view || index < 0) {
@@ -253,10 +262,17 @@ export function useSheetViewState(deps: SheetViewStateDeps) {
   }
 
   /** SPEC-138: puts a recorded view back on the model on show (withSheetView)
-   * and into the fields and the active sheet. Returns whether it applied. */
+   * and into the fields and the active sheet. Returns whether that changed
+   * what the view opened on — false, and the fields (where the user may have
+   * moved since) left alone, when the model already carried the view, as a
+   * plain reopen's does: nothing to re-mount the grid for. */
   function applySheetView(view: RecordedSheetView | undefined): boolean {
     const model = deps.workbook.value;
-    if (!model || !withSheetView(model, view)) {
+    if (!model) {
+      return false;
+    }
+    const { activeSheetIndex, sheets } = model;
+    if (!withSheetView(model, view) || (model.activeSheetIndex === activeSheetIndex && model.sheets === sheets)) {
       return false;
     }
     const sheet = model.sheets[model.activeSheetIndex]!;
