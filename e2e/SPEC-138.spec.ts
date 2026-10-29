@@ -57,14 +57,18 @@ async function waitForSaved(page: Page): Promise<void> {
   await expect(page.getByTestId("save-state")).toHaveClass(/sheet-save-state/);
 }
 
+/** A recorded sheetView without its sheet id (SPEC-138's SheetViewState). */
+type PlantedView = { active: { row: number; col: number }; topRow: number; leftCol: number };
+
 /** Writes a draft newer than the committed workbook straight into the app's
  * store: the committed shell read back, its manifest's keys listed in a
  * `rowKeys` manifest — committed chunk keys, except "Data"'s first chunk,
  * whose rows are copied under its draft key with B3 rewritten — and a view
- * that opens on "Data" with C4 active. What an unclean close leaves behind. */
-async function plantNewerDraft(page: Page, id: string, value: string): Promise<void> {
+ * that opens on "Data" (by default with C4 active, scrolled to the top). What
+ * an unclean close leaves behind. */
+async function plantNewerDraft(page: Page, id: string, value: string, view: PlantedView = { active: { row: 3, col: 2 }, topRow: 0, leftCol: 0 }): Promise<void> {
   await page.evaluate(
-    async ([docId, drafted]) => {
+    async ([docId, drafted, draftView]) => {
       const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = indexedDB.open("docu-edit"); // the app already created it at its current version
         request.onsuccess = () => resolve(request.result);
@@ -100,7 +104,7 @@ async function plantNewerDraft(page: Page, id: string, value: string): Promise<v
         scroll: 0,
         rowKeys,
         sourceKey: `sheetsource:${docId}`,
-        sheetView: { sheetId: dataSheet.id, active: { row: 3, col: 2 }, topRow: 0, leftCol: 0 },
+        sheetView: { sheetId: dataSheet.id, ...draftView },
       };
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction("documents", "readwrite");
@@ -111,7 +115,7 @@ async function plantNewerDraft(page: Page, id: string, value: string): Promise<v
       });
       db.close();
     },
-    [id, value] as const,
+    [id, value, view] as const,
   );
 }
 
@@ -190,6 +194,67 @@ test("a reopened workbook scrolls back to its committed top-left row and column 
     expect(await topLeftShown(page)).toEqual(shown);
     await expect(page.getByTestId("name-box")).toHaveValue(`${column}${Number(edited.row) + 3}`);
   }
+});
+
+test("a recovered draft, Discard, and a committed view the model's own view fields disagree with each restore their sheet, active cell and top-left (AC-8, AC-27, AC-29)", async ({ page }) => {
+  test.setTimeout(120_000);
+  const id = await openFixture(page, "mini-book.xlsx");
+  // The committed view: "Summary", D5 active, at the top left.
+  await tab(page, "Summary").click();
+  await expect(tab(page, "Summary")).toHaveAttribute("aria-selected", "true");
+  await clickCell(page, "D5");
+  await page.getByTestId("close-document").click();
+  await expect(page.getByTestId("library")).toBeVisible();
+
+  // A crash's draft scrolled on "Data": K54 active, J47 the top-left cell.
+  await plantNewerDraft(page, id, "5151", { active: { row: 53, col: 10 }, topRow: 46, leftCol: 9 });
+  await page.goto(`/sheets/${id}`);
+  await expect(page.getByTestId("recovery-bar")).toBeVisible();
+  await expect(tab(page, "Data")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("name-box")).toHaveValue("K54");
+  await expect.poll(() => topLeftShown(page)).toEqual({ row: "47", col: "J" });
+
+  // Discard: the committed view comes back with the committed value.
+  await page.getByTestId("recovery-discard").click();
+  await expect(page.getByTestId("recovery-bar")).toBeHidden();
+  await expect(tab(page, "Summary")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("name-box")).toHaveValue("D5");
+  await expect.poll(() => topLeftShown(page)).toEqual({ row: "1", col: "A" });
+  await showData(page);
+  await expect(cell(page, "B3")).toHaveText("3");
+
+  // A commit whose view the model's own view fields disagree with (as when
+  // view-state writes were held back behind edits): the recorded view wins on
+  // reopen — its sheet, its active cell, its top-left row and column.
+  await page.getByTestId("close-document").click();
+  await expect(page.getByTestId("library")).toBeVisible();
+  await page.evaluate(async (docId) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("docu-edit");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const store = () => db.transaction("documents", "readwrite").objectStore("documents");
+    const record = await new Promise<{ model: { sheets: { id: string; name: string }[] }; sheetView?: unknown }>((resolve, reject) => {
+      const request = store().get(docId);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const data = record.model.sheets.find((sheet) => sheet.name === "Data")!;
+    record.sheetView = { sheetId: data.id, active: { row: 3, col: 2 }, topRow: 46, leftCol: 9 };
+    await new Promise<void>((resolve, reject) => {
+      const request = store().put(record);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+  }, id);
+  await page.goto(`/sheets/${id}`);
+  await expect(tab(page, "Data")).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("recovery-bar")).toBeHidden();
+  await waitForSaved(page);
+  await expect(page.getByTestId("name-box")).toHaveValue("C4");
+  await expect.poll(() => topLeftShown(page)).toEqual({ row: "47", col: "J" });
 });
 
 test("a workbook autosaves, recovers a crash's draft, snapshots, names, previews and restores its versions, and locks a second tab", async ({ page }) => {
