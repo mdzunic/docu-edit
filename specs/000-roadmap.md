@@ -534,6 +534,21 @@ which is a separate approval (see the backlog).
 | SPEC-144 | Images from the command line — pages, slides and pictures to PNG, JPEG and WebP, and pictures to PDF |
 | SPEC-145 | Convert between products — documents, decks and workbooks |
 
+### Phase 20 — Presenting follow-ups
+Small specs that finish what the presentation product's presenting surfaces
+(SPEC-084 playback, SPEC-100 presenter view) left half-done. Written from
+2026-11-04 onward. SPEC-146 turns SPEC-100's presenter-view timer into a show
+timer with two modes: a stopwatch that counts up from 0:00, and a countdown
+from a talk length that runs on into negative overtime. It starts with the
+show in either presenting mode, can be started, paused, resumed and stopped
+by key or button in either window, survives one reload, and carries over
+when the audience window promotes itself. It adds one message kind and two
+intent actions to SPEC-100's protocol, and three preferences.
+
+| Spec | Title |
+| --- | --- |
+| SPEC-146 | The show timer — stopwatch and countdown; start, pause, resume and stop |
+
 ---
 
 ## Backlog — identified, not yet specced
