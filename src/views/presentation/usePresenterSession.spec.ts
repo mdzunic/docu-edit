@@ -386,9 +386,12 @@ describe("usePresenterSession — plain playback (no ?follow=)", () => {
 // onTimerIntent and posts no state (so it is never read as a build ack), a
 // follower forwards it as an intent, `timer` messages feed lastTimer and keep
 // the follower from promoting, and a hello is answered with state then timer.
+function timersIn(hub: ReturnType<typeof channelHub>) {
+  return hub.log.filter((entry) => entry.payload.kind === "timer").map((entry) => entry.payload);
+}
+
 describe("usePresenterSession — the show timer (SPEC-146)", () => {
   const RUNNING = { startedAtMs: 1_000, accumulatedMs: 0 };
-  const timersIn = (hub: ReturnType<typeof channelHub>) => hub.log.filter((entry) => entry.payload.kind === "timer").map((entry) => entry.payload);
 
   it("an owner's timer action calls onTimerIntent and posts nothing under a new seq", () => {
     const hub = channelHub();

@@ -9,11 +9,14 @@
 // mirrors the audience's build state exactly; and an advance that lands while
 // that pane is mid-build completes it and holds, as in the show (AC-24).
 //
-// The surface: counters, the next slide, the speaker notes and the timer (both
-// in usePresenterTools), the slide grid and the keys. Keys go
-// through usePlayInput's playKeyHandler — the show's own classifier — with the
-// presenter's extras (g grid, +/- notes, t/r timer; Escape closes the grid
-// first) layered in front. Presenting writes nothing: no dirty flag, no
+// The surface: counters, the next slide, the speaker notes (their scale in
+// usePresenterTools), the show timer (useShowTimer, SPEC-146 — begun when the
+// deck first lands; the session posts it to the audience on every change),
+// the slide grid and the keys. Keys go through usePlayInput's playKeyHandler
+// — the show's own classifier — with the presenter's extras (g grid, +/-
+// notes, t toggle and s/r stop the timer; Escape closes the grid first)
+// layered in front. Timer keys and buttons go through the session's perform
+// like every input. Presenting writes nothing: no dirty flag, no
 // markSlideEdited, no edit lock; only a legacy deck's upgrade stores, as
 // opening one anywhere does.
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from "vue";
@@ -28,12 +31,14 @@ import { upgradePresentationModel } from "../../lib/presentation/open";
 import { playbackActionForKey } from "../../lib/presentation/playbackKeys";
 import { mintPresenterSession } from "../../lib/presentation/presenterSession";
 import { useAudienceWindow, type AudienceWindowDeps } from "./useAudienceWindow";
+import { useAutoAdvance } from "./useAutoAdvance";
 import { useBuildPreview, watchBuildSteps } from "./useBuildPreview";
 import { playKeyHandler } from "./usePlayInput";
 import { usePlayback } from "./usePlayback";
 import { usePresenterSession } from "./usePresenterSession";
 import { usePresenterTools } from "./usePresenterTools";
 import { useReducedMotion } from "./useReducedMotion";
+import { timerKeyAction, useShowTimer } from "./useShowTimer";
 import { useWindowKeys } from "./useWindowKeys";
 
 export interface PresenterViewDeps {
@@ -132,6 +137,7 @@ export function usePresenterView(deps: PresenterViewDeps) {
     isHidden,
     navigation: { advance: advanceStep, back: () => playback.back(), goTo: jumpTo, exit },
     onAudience: (event) => audience.onAudience(event),
+    onTimerIntent: (action) => (action === "timerToggle" ? timer.toggle() : timer.stop()),
     openChannel: deps.openChannel,
     transport: deps.transport,
   });
@@ -190,25 +196,12 @@ export function usePresenterView(deps: PresenterViewDeps) {
   });
 
   // --- auto-advance (SPEC-085 AC-17): the owner schedules it -------------------
-  let autoAdvanceTimer = 0;
-  function clearAutoAdvance(): void {
-    if (autoAdvanceTimer) clearTimeout(autoAdvanceTimer);
-    autoAdvanceTimer = 0;
-  }
-  function scheduleAutoAdvance(): void {
-    clearAutoAdvance();
-    const ms = currentSlide.value?.transition?.advanceAfterMs;
-    if (typeof ms === "number" && ms > 0 && !playback.atEnd.value) {
-      autoAdvanceTimer = window.setTimeout(() => {
-        autoAdvanceTimer = 0;
-        advanceStep();
-      }, ms);
-    }
-  }
-  watch([currentIndex, () => playback.atEnd.value], scheduleAutoAdvance);
+  const autoAdvance = useAutoAdvance({ currentSlide, atEnd: playback.atEnd, enabled: () => true, advance: advanceStep });
+  watch([currentIndex, () => playback.atEnd.value], autoAdvance.schedule);
 
-  // --- the timer and the notes scale --------------------------------------------
-  const tools = usePresenterTools(nowMs);
+  // --- the show timer (SPEC-146) and the notes scale ------------------------------
+  const timer = useShowTimer({ deckId: presentationId, nowMs, onChange: (state) => session.postTimer(state) });
+  const tools = usePresenterTools();
 
   // --- the grid ----------------------------------------------------------------
   const gridOpen = ref(false);
@@ -240,10 +233,9 @@ export function usePresenterView(deps: PresenterViewDeps) {
       "+": () => tools.stepNotesScale(1),
       "=": () => tools.stepNotesScale(1),
       "-": () => tools.stepNotesScale(-1),
-      t: tools.toggleTimer,
-      r: tools.resetTimer,
     };
-    const run = extras[key];
+    const timerAction = timerKeyAction(key); // t toggles; s and r stop
+    const run = timerAction ? () => session.perform(timerAction) : extras[key];
     if (!run) return false;
     event.preventDefault();
     run();
@@ -277,10 +269,10 @@ export function usePresenterView(deps: PresenterViewDeps) {
     playback.setStep({ slideIndex: routeStartIndex(), buildIndex: 0 });
     syncUrl();
     if (currentSlide.value) buildPreview.settle(currentSlide.value, playback.current.value.buildIndex);
-    scheduleAutoAdvance();
+    autoAdvance.schedule();
     if (!audienceRequested) {
       audienceRequested = true;
-      tools.startTimer(); // the timer starts with the show
+      timer.begin(); // the show starts: restore this tab's record, or auto-start
       // The gesture that opened this route is still live; open the audience once.
       void nextTick(() => void audience.open());
     }
@@ -298,7 +290,7 @@ export function usePresenterView(deps: PresenterViewDeps) {
   function exit(): void {
     if (exiting) return;
     exiting = true;
-    clearAutoAdvance();
+    autoAdvance.clear();
     buildPreview.stop();
     session.leave(); // bye — the audience it opened is closing anyway
     audience.close();
@@ -313,7 +305,7 @@ export function usePresenterView(deps: PresenterViewDeps) {
   void initLibrary().then(loadPresentation);
 
   onBeforeUnmount(() => {
-    clearAutoAdvance();
+    autoAdvance.clear();
     buildPreview.stop();
   });
 
@@ -340,6 +332,7 @@ export function usePresenterView(deps: PresenterViewDeps) {
     presentHere,
     reopenAudience,
     ...tools,
+    timer,
     gridOpen,
     toggleGrid,
     chooseSlide,

@@ -9,6 +9,7 @@
 // defineProps<{...}>() generics — espree lints .vue scripts, so typed logic
 // (the step machine, the key map) lives in the imported .ts modules. SPEC-100:
 // with ?follow= this is the presenter view's audience window (usePresenterSession).
+// SPEC-146: a window that owns the show runs the show timer (useShowTimer) in its HUD.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SlideStage from "../components/presentation/SlideStage.vue";
@@ -17,6 +18,7 @@ import { now } from "../lib/clock";
 import SlideTransitionLayer from "../components/presentation/SlideTransitionLayer.vue";
 import { emptyTwoStageView, transitionAnimates } from "../components/presentation/transitionStyles";
 import UiButton from "../components/ui/UiButton.vue";
+import ShowTimer from "../components/presentation/ShowTimer.vue";
 import { documentKindOf, getPresentation, initLibrary, refreshDocumentFromStorage, storePresentation } from "../lib/documentStore";
 import { isLegacyPresentationModel } from "../lib/presentation/model";
 import { upgradePresentationModel } from "../lib/presentation/open";
@@ -24,6 +26,8 @@ import { cmToPx } from "../lib/core/units";
 import { slideOutline } from "../lib/presentation/slideModel";
 import { slideBuildCount } from "../lib/presentation/buildPlayback";
 import { usePlayback } from "./presentation/usePlayback";
+import { useAutoAdvance } from "./presentation/useAutoAdvance";
+import { showTimerKeys, useShowTimer } from "./presentation/useShowTimer";
 import { fullyBuiltStyles, useBuildPreview, watchBuildSteps } from "./presentation/useBuildPreview";
 import { useShowingMedia } from "./presentation/useShowingMedia";
 import { usePlayInput } from "./presentation/usePlayInput";
@@ -74,6 +78,7 @@ const buildPreview = useBuildPreview(() => presentation.value && { widthCm: pres
 watchBuildSteps(buildPreview, () => playback.current.value, () => currentSlide.value, () => reducedMotion.value);
 
 // --- presenter session (SPEC-100): ?follow= makes this a follower -----------
+const showTimer = useShowTimer({ deckId: presentationId }); // begun only while owning (SPEC-146)
 const presenter = usePresenterSession({
   window: "audience",
   deckId: presentationId,
@@ -95,10 +100,12 @@ const presenter = usePresenterSession({
   // the owner's first state (the owner may have just stored an upgrade).
   onFirstState: () => void refreshDocumentFromStorage(presentationId.value).then(loadPresentation),
   onPromote: () => {
+    if (presenter.lastTimer.value) showTimer.adopt(presenter.lastTimer.value); else showTimer.begin();
     if (!presentation.value) return void loadPresentation(); // a legacy deck waited on the owner
     syncUrl(); // drops ?follow=
-    scheduleAutoAdvance();
+    autoAdvance.schedule();
   },
+  onTimerIntent: (action) => (action === "timerToggle" ? showTimer.toggle() : showTimer.stop()),
 });
 // --- per-showing GIF URLs: a GIF restarts each time its slide is shown -------
 const showingMedia = useShowingMedia();
@@ -120,24 +127,8 @@ const announce = computed(() => {
 // --- auto-advance (AC-17): a slide with advanceAfterMs schedules a forward
 // step; any navigation (which changes the index) or exit reschedules/clears it.
 // Declared before the load invocation below so the setup-time load can call it.
-let autoAdvanceTimer = 0;
-function clearAutoAdvance() {
-  if (autoAdvanceTimer) {
-    clearTimeout(autoAdvanceTimer);
-    autoAdvanceTimer = 0;
-  }
-}
-function scheduleAutoAdvance() {
-  clearAutoAdvance();
-  const ms = currentSlide.value?.transition?.advanceAfterMs;
-  if (typeof ms === "number" && ms > 0 && !playback.atEnd.value && !presenter.following.value) {
-    autoAdvanceTimer = window.setTimeout(() => {
-      autoAdvanceTimer = 0;
-      advanceStep();
-    }, ms);
-  }
-}
-watch([() => playback.current.value.slideIndex, () => playback.atEnd.value], scheduleAutoAdvance);
+const autoAdvance = useAutoAdvance({ currentSlide, atEnd: playback.atEnd, enabled: () => !presenter.following.value, advance: advanceStep });
+watch([() => playback.current.value.slideIndex, () => playback.atEnd.value], autoAdvance.schedule);
 
 // --- load (mirrors PresentationView: text id redirects, legacy upgrades) ----
 async function loadPresentation() {
@@ -167,10 +158,11 @@ async function loadPresentation() {
     if (currentSlide.value) {
       buildPreview.settle(currentSlide.value, playback.current.value.buildIndex); // hide unbuilt frames (AC-20)
     }
-    scheduleAutoAdvance(); // the starting slide may itself auto-advance (AC-17)
+    autoAdvance.schedule(); // the starting slide may itself auto-advance (AC-17)
     void nextTick(() => {
       recomputeScale();
       input.enterFullscreen();
+      if (!presenter.following.value) showTimer.begin(); // the show starts (once per mount)
     });
   }
 }
@@ -219,7 +211,7 @@ function onFullscreenChange() {
 function exit() {
   if (exiting) return;
   exiting = true;
-  clearAutoAdvance();
+  autoAdvance.clear();
   clearTransition();
   buildPreview.stop();
   input.releaseFullscreen();
@@ -298,7 +290,8 @@ function jumpTo(index = 0) {
 // --- input (SPEC-084's keyboard, pointer and idle HUD; SPEC-100 routes it) --
 // SPEC-105: a pointer-down on a trigger frame plays its interactive sequence.
 const input = usePlayInput({ atEnd: playback.atEnd, isExiting: () => exiting, perform: presenter.perform, fullscreenTarget: () => stageContainer.value,
-  pointerTrigger: (event) => !playback.atEnd.value && buildPreview.playTriggerAt(currentSlide.value, event, reducedMotion.value) });
+  pointerTrigger: (event) => !playback.atEnd.value && buildPreview.playTriggerAt(currentSlide.value, event, reducedMotion.value),
+  extraKey: showTimerKeys({ atEnd: playback.atEnd, perform: presenter.perform, onKey: () => !presenter.following.value && input.revealControls() }) });
 
 // --- lifecycle --------------------------------------------------------------
 onMounted(() => {
@@ -309,7 +302,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("resize", recomputeScale);
   document.removeEventListener("fullscreenchange", onFullscreenChange);
-  clearAutoAdvance();
+  autoAdvance.clear();
   buildPreview.stop();
   showingMedia.releaseAll();
 });
@@ -444,6 +437,13 @@ onBeforeUnmount(() => {
       >
         ›
       </button>
+      <ShowTimer
+        v-if="!presenter.following.value"
+        testid-prefix="play"
+        v-bind="showTimer.display.value"
+        @toggle="presenter.perform('timerToggle')"
+        @stop="presenter.perform('timerStop')"
+      />
     </div>
 
     <div
@@ -488,6 +488,10 @@ onBeforeUnmount(() => {
   overflow: hidden;
   cursor: default;
   touch-action: none;
+  /* SPEC-146: the HUD pill's ink, for ShowTimer (whose styles take tokens only). */
+  --hud-ink: #fff;
+  --hud-pill: color-mix(in srgb, #000 55%, transparent);
+  --hud-shade: #000;
 }
 
 /* SPEC-097: rendered links (a linked run, a linked frame's overlay) are live

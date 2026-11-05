@@ -3,12 +3,13 @@
 // the show. It owns the playback machine and opens /slides/:id/present/:n
 // ?follow=<session> as the audience window, then shows the presenter what the
 // room cannot see — the current slide with its build state, the next slide,
-// counters, the speaker notes, a timer and a grid of every slide. When no
-// second window can open or follow, the current-slide pane becomes the show
+// counters, the speaker notes, the show timer and a grid of every slide. When
+// no second window can open or follow, the current-slide pane becomes the show
 // (single-window mode). A wiring hub under PresenterView.size.spec.ts: the
 // logic lives in usePresenterView (which builds usePresenterSession,
-// useAudienceWindow and usePresenterTools) and the UI in the Presenter*
-// components. Runtime declarations only — espree lints .vue scripts.
+// useAudienceWindow, usePresenterTools and useShowTimer) and the UI in the
+// Presenter* components and ShowTimer (SPEC-146). Runtime declarations only —
+// espree lints .vue scripts.
 import { useTemplateRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import UiButton from "../components/ui/UiButton.vue";
@@ -16,6 +17,7 @@ import PresentationNotFound from "../components/presentation/PresentationNotFoun
 import PresenterSlidePane from "../components/presentation/PresenterSlidePane.vue";
 import PresenterNotes from "../components/presentation/PresenterNotes.vue";
 import PresenterGrid from "../components/presentation/PresenterGrid.vue";
+import ShowTimer from "../components/presentation/ShowTimer.vue";
 import { usePresenterView } from "./presentation/usePresenterView";
 
 const route = useRoute();
@@ -194,29 +196,15 @@ const currentPane = useTemplateRef("currentPane");
             empty-testid="presenter-next-end"
           />
         </section>
-        <div class="presenter-timer-row">
-          <span
-            class="presenter-timer"
-            role="timer"
-            aria-label="Elapsed time"
-            data-testid="presenter-timer"
-          >{{ v.timerText.value }}</span>
-          <UiButton
-            size="sm"
-            data-testid="presenter-timer-toggle"
-            :aria-pressed="v.timerPaused.value"
-            @click="v.toggleTimer()"
-          >
-            Pause (T)
-          </UiButton>
-          <UiButton
-            size="sm"
-            data-testid="presenter-timer-reset"
-            @click="v.resetTimer()"
-          >
-            Reset (R)
-          </UiButton>
-        </div>
+        <ShowTimer
+          testid-prefix="presenter"
+          editable
+          v-bind="v.timer.display.value"
+          @toggle="v.perform('timerToggle')"
+          @stop="v.perform('timerStop')"
+          @mode="v.timer.setMode"
+          @length="v.timer.setLengthMinutes"
+        />
         <PresenterNotes
           class="presenter-notes-panel"
           :notes="v.notes.value"
@@ -265,8 +253,7 @@ const currentPane = useTemplateRef("currentPane");
 
 .presenter-bar,
 .presenter-banner,
-.presenter-controls,
-.presenter-timer-row {
+.presenter-controls {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -336,8 +323,7 @@ const currentPane = useTemplateRef("currentPane");
   justify-content: center;
 }
 
-.presenter-count,
-.presenter-timer {
+.presenter-count {
   font-variant-numeric: tabular-nums;
 }
 
@@ -353,12 +339,6 @@ const currentPane = useTemplateRef("currentPane");
   margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-sm);
-  font-weight: var(--weight-bold);
-}
-
-.presenter-timer {
-  flex: 1;
-  font-size: var(--text-xl);
   font-weight: var(--weight-bold);
 }
 

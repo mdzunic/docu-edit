@@ -146,10 +146,12 @@ describe("toggleTimer / stopTimer", () => {
   });
 });
 
-describe("timerReadout", () => {
-  const at = (elapsed: number, mode: TimerMode = "countdown", lengthMs = 120_000) =>
-    timerReadout({ startedAtMs: null, accumulatedMs: elapsed }, 0, mode, lengthMs);
+/** The readout with `elapsed` banked (a 2-minute countdown unless told otherwise). */
+function at(elapsed: number, mode: TimerMode = "countdown", lengthMs = 120_000) {
+  return timerReadout({ startedAtMs: null, accumulatedMs: elapsed }, 0, mode, lengthMs);
+}
 
+describe("timerReadout", () => {
   it("matches every row of the countdown boundary table (2 minutes)", () => {
     const rows: Array<[number, string, boolean]> = [
       [0, "2:00", false],
