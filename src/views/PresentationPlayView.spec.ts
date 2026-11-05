@@ -311,3 +311,227 @@ describe("PresentationPlayView writes nothing (SPEC-103)", () => {
     wrapper.unmount();
   });
 });
+
+/** Real BroadcastChannel messages cross on the event loop. */
+async function settle() {
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await flushPromises();
+}
+
+// SPEC-146 — the show timer in the full-screen show: a window that owns the
+// show has it in the HUD (read-only), a following one has none; t/s/r drive it
+// through the session and reveal the HUD; a toggle click never advances; the
+// end screen's any-key exit keeps t; a follower forwards t as timerToggle; a
+// promoted window adopts the presenter's timer; mode and length come from the
+// preferences.
+describe("PresentationPlayView show timer (SPEC-146)", () => {
+  const SESSION = "timer-test";
+  const T0 = Date.UTC(2026, 10, 5, 9, 0, 0);
+  const cleanups: Array<() => void> = [];
+
+  beforeEach(async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    const { setClock } = await import("../lib/core/clock");
+    setClock(new Date(T0));
+    cleanups.push(() => setClock(null));
+  });
+
+  afterEach(() => {
+    for (const cleanup of cleanups.splice(0)) cleanup();
+    vi.useRealTimers();
+  });
+
+  async function owned(path: string, deck: PresentationModel) {
+    const mounted = await mountAt(path, deck);
+    cleanups.unshift(() => mounted.wrapper.unmount());
+    return mounted;
+  }
+  async function at(ms: number) {
+    const { setClock } = await import("../lib/core/clock");
+    setClock(new Date(T0 + ms));
+  }
+  /** A presenter window, as the audience sees it: a channel end that records. */
+  function fakeOwner(deckId: string) {
+    const port = new BroadcastChannel(`docu-edit:present:${deckId}`);
+    const heard: Array<{ kind: string; action?: string }> = [];
+    port.addEventListener("message", (event) => heard.push(event.data));
+    cleanups.push(() => port.close());
+    return { heard, post: (message: unknown) => port.postMessage(message) };
+  }
+  it("shows a read-only HUD timer after play-next when the window owns the show, started with it", async () => {
+    const deck = await freshDeck();
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1`, deck);
+    const hud = wrapper.get(".play-hud");
+    const timer = hud.get('[data-testid="play-timer"]');
+    expect(timer.text()).toBe("0:00");
+    expect(timer.attributes("data-state")).toBe("running");
+    expect(timer.attributes("data-mode")).toBe("stopwatch");
+    expect(hud.get('[data-testid="play-timer-toggle"]').text()).toBe("Pause (T)");
+    // Placed after play-next, inside the fading HUD.
+    const order = hud.findAll("[data-testid]").map((node) => node.attributes("data-testid"));
+    expect(order.indexOf("play-timer")).toBeGreaterThan(order.indexOf("play-next"));
+    expect(wrapper.find('[data-testid="play-timer-mode-stopwatch"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="play-timer-length"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="play-timer-status"]').text()).toBe("");
+    // The record this tab keeps for a reload.
+    expect(JSON.parse(sessionStorage.getItem(`docu-edit:show-timer:${deck.id}`) ?? "null")).toEqual({ startedAtMs: T0, accumulatedMs: 0 });
+  });
+
+  it("t, s and r drive it, and a timer key reveals the HUD", async () => {
+    const deck = await freshDeck();
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1`, deck);
+    const state = () => wrapper.get('[data-testid="play-timer"]').attributes("data-state");
+    expect(wrapper.get(".play-hud").classes()).not.toContain("is-visible");
+    await at(75_000);
+    key("t");
+    await flushPromises();
+    expect(state()).toBe("paused");
+    expect(wrapper.get('[data-testid="play-timer"]').text()).toBe("1:15");
+    expect(wrapper.get('[data-testid="play-timer-status"]').text()).toBe("Timer paused");
+    expect(wrapper.get(".play-hud").classes()).toContain("is-visible");
+    key("t");
+    key("s");
+    await flushPromises();
+    expect(state()).toBe("stopped");
+    expect(wrapper.get('[data-testid="play-timer-stop"]').attributes("disabled")).toBeDefined();
+    key("T"); // Shift+t too
+    await flushPromises();
+    expect(state()).toBe("running");
+    key("r");
+    await flushPromises();
+    expect(state()).toBe("stopped");
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("1 / 4"); // none of them navigated
+    key("t", { ctrlKey: true }); // a modifier combo is not a timer key
+    await flushPromises();
+    expect(state()).toBe("stopped");
+  });
+
+  it("a click on the toggle or Stop does not advance", async () => {
+    const deck = await freshDeck();
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1`, deck);
+    await wrapper.get('[data-testid="play-timer-toggle"]').trigger("click");
+    expect(wrapper.get('[data-testid="play-timer"]').attributes("data-state")).toBe("stopped"); // a 0 ms pause
+    await wrapper.get('[data-testid="play-timer-toggle"]').trigger("click");
+    await wrapper.get('[data-testid="play-timer-stop"]').trigger("click");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="play-slide-counter"]').text()).toBe("1 / 4");
+    expect(wrapper.get('[data-testid="presentation-play"]').attributes("data-building")).toBe("false");
+  });
+
+  it("on the end screen t is not a timer key: it exits, as any key does", async () => {
+    const deck = await freshDeck();
+    const { wrapper, replace } = await owned(`/slides/${deck.id}/present/4`, deck);
+    key("ArrowRight");
+    await flushPromises();
+    expect(wrapper.find('[data-testid="play-end-screen"]').exists()).toBe(true);
+    replace.mockClear();
+    key("t");
+    await flushPromises();
+    expect(replace).toHaveBeenCalledWith({ path: `/slides/${deck.id}`, query: { return: "4" } });
+  });
+
+  it("renders Countdown and overtime from the preferences", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    localStorage.setItem("docu-edit:preferences", JSON.stringify({ presentationTimerMode: "countdown", presentationTimerCountdownMinutes: 2 }));
+    const deck = await freshDeck();
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1`, deck);
+    const timer = () => wrapper.get('[data-testid="play-timer"]');
+    expect(timer().text()).toBe("2:00");
+    expect(timer().attributes("data-mode")).toBe("countdown");
+    expect(timer().attributes("aria-label")).toBe("Time remaining");
+    await at(75_000);
+    vi.advanceTimersByTime(1000);
+    await flushPromises();
+    expect(timer().text()).toBe("0:45");
+    expect(timer().attributes("data-overtime")).toBe("false");
+    await at(162_000);
+    vi.advanceTimersByTime(1000);
+    await flushPromises();
+    expect(timer().text()).toBe("−0:42");
+    expect(timer().attributes("data-overtime")).toBe("true");
+    expect(timer().attributes("aria-label")).toBe("Time over");
+    expect(wrapper.get('[data-testid="play-timer-status"]').text()).toBe("Time is up");
+    key("s");
+    await flushPromises();
+    expect(timer().text()).toBe("2:00");
+    expect(timer().attributes("data-state")).toBe("stopped");
+  });
+
+  it("a following window has no timer; its t, s and r go to the presenter as intents", async () => {
+    const deck = await freshDeck();
+    const owner = fakeOwner(deck.id);
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1?follow=${SESSION}`, deck);
+    owner.post({ kind: "state", session: SESSION, state: { seq: 1, slideIndex: 0, buildIndex: 0, atEnd: false, blank: "none" } });
+    await settle();
+    expect(wrapper.findAll('[data-testid="play-timer"]')).toHaveLength(0);
+    key("t");
+    key("s");
+    key("r");
+    await settle();
+    expect(owner.heard.filter((message) => message.kind === "intent")).toEqual([
+      { kind: "intent", session: SESSION, action: "timerToggle" },
+      { kind: "intent", session: SESSION, action: "timerStop" },
+      { kind: "intent", session: SESSION, action: "timerStop" },
+    ]);
+    expect(wrapper.get(".play-hud").classes()).not.toContain("is-visible"); // nothing of its own to show
+    expect(sessionStorage.getItem(`docu-edit:show-timer:${deck.id}`)).toBeNull(); // never touches the record
+  });
+
+  it("on promotion the HUD timer appears with the presenter's timer, adopted as it was", async () => {
+    const deck = await freshDeck();
+    const owner = fakeOwner(deck.id);
+    const { wrapper, replace } = await owned(`/slides/${deck.id}/present/1?follow=${SESSION}`, deck);
+    owner.post({ kind: "state", session: SESSION, state: { seq: 1, slideIndex: 1, buildIndex: 0, atEnd: false, blank: "none" } });
+    owner.post({ kind: "timer", session: SESSION, timer: { startedAtMs: null, accumulatedMs: 75_000 } });
+    await settle();
+    expect(wrapper.findAll('[data-testid="play-timer"]')).toHaveLength(0);
+    await at(600_000);
+    owner.post({ kind: "bye", session: SESSION, from: "presenter" });
+    await settle();
+    expect(replace).toHaveBeenLastCalledWith(`/slides/${deck.id}/present/2`);
+    const timer = wrapper.get('[data-testid="play-timer"]');
+    expect(timer.text()).toBe("1:15");
+    expect(timer.attributes("data-state")).toBe("paused");
+    expect(wrapper.get('[data-testid="play-timer-status"]').text()).toBe(""); // adopting announces nothing
+    key("t"); // its own now
+    await flushPromises();
+    expect(wrapper.get('[data-testid="play-timer"]').attributes("data-state")).toBe("running");
+  });
+
+  it("a promoted window that never heard a timer begins one, like a fresh show", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const deck = await freshDeck();
+    const { PRESENTER_LOST_MS } = await import("../lib/presentation/presenterSession");
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1?follow=${SESSION}`, deck);
+    expect(wrapper.findAll('[data-testid="play-timer"]')).toHaveLength(0);
+    vi.advanceTimersByTime(PRESENTER_LOST_MS);
+    await flushPromises();
+    const timer = wrapper.get('[data-testid="play-timer"]');
+    expect(timer.attributes("data-state")).toBe("running");
+    expect(timer.text()).toBe("0:00");
+  });
+
+  it("unmounting removes the record; a reload (no unmount) would have found it", async () => {
+    const deck = await freshDeck();
+    const { wrapper } = await owned(`/slides/${deck.id}/present/1`, deck);
+    const keyName = `docu-edit:show-timer:${deck.id}`;
+    expect(sessionStorage.getItem(keyName)).not.toBeNull();
+    wrapper.unmount();
+    expect(sessionStorage.getItem(keyName)).toBeNull();
+  });
+
+  it("restores this tab's record on mount: a running timer counts the reload, auto-start never overrides a paused one", async () => {
+    const deck = await freshDeck();
+    sessionStorage.setItem(`docu-edit:show-timer:${deck.id}`, JSON.stringify({ startedAtMs: T0 - 30_000, accumulatedMs: 0 }));
+    const running = await owned(`/slides/${deck.id}/present/1`, deck);
+    expect(running.wrapper.get('[data-testid="play-timer"]').text()).toBe("0:30");
+    expect(running.wrapper.get('[data-testid="play-timer"]').attributes("data-state")).toBe("running");
+    running.wrapper.unmount();
+    const other = await freshDeck();
+    sessionStorage.setItem(`docu-edit:show-timer:${other.id}`, JSON.stringify({ startedAtMs: null, accumulatedMs: 90_000 }));
+    const paused = await owned(`/slides/${other.id}/present/1`, other);
+    expect(paused.wrapper.get('[data-testid="play-timer"]').text()).toBe("1:30");
+    expect(paused.wrapper.get('[data-testid="play-timer"]').attributes("data-state")).toBe("paused");
+  });
+});

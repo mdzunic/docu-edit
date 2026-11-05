@@ -105,6 +105,8 @@ async function mountPresenter(path: string, opened: unknown = fakeWindow(), mode
 
 /** The persisted notes scale. */
 const stored = () => JSON.parse(localStorage.getItem("docu-edit:preferences") ?? "{}").presentationPresenterNotesScale;
+/** Every persisted preference (SPEC-146's timer mode and length among them). */
+const prefs = () => JSON.parse(localStorage.getItem("docu-edit:preferences") ?? "{}");
 const text = (wrapper: VueWrapper, testid: string) => wrapper.get(`[data-testid="${testid}"]`).text();
 function key(name: string, init: KeyboardEventInit = {}) {
   window.dispatchEvent(new KeyboardEvent("keydown", { key: name, ...init }));
@@ -312,7 +314,10 @@ describe("PresenterView — notes scale and timer", () => {
     expect(stored()).toBe(1);
   });
 
-  it("starts the timer with the show; t/the toggle pause and resume it (aria-pressed); r/reset zero it", async () => {
+  // SPEC-146 rewrote SPEC-100's timer test for the show timer: the toggle
+  // names its next action instead of carrying aria-pressed, and Stop (s, or
+  // SPEC-100's r) replaces Reset — it zeroes AND halts the timer.
+  it("starts the timer with the show; t/the toggle pause and resume it; r and s stop it", async () => {
     const { setClock } = await import("../../lib/core/clock");
     const t0 = Date.UTC(2026, 9, 23, 9, 0, 0);
     setClock(new Date(t0));
@@ -320,53 +325,176 @@ describe("PresenterView — notes scale and timer", () => {
       const { deck } = await miniDeck();
       const { wrapper } = await mountPresenter(`/slides/${deck.id}/presenter/1`, fakeWindow(), deck);
       const toggle = () => wrapper.get('[data-testid="presenter-timer-toggle"]');
+      const stop = () => wrapper.get('[data-testid="presenter-timer-stop"]');
+      const state = () => wrapper.get('[data-testid="presenter-timer"]').attributes("data-state");
       expect(text(wrapper, "presenter-timer")).toBe("0:00");
-      expect(toggle().attributes("aria-pressed")).toBe("false");
+      expect(state()).toBe("running");
+      expect(toggle().text()).toBe("Pause (T)");
+      expect(toggle().attributes("aria-label")).toBe("Pause timer");
+      expect(toggle().attributes("aria-pressed")).toBeUndefined();
+      expect(text(wrapper, "presenter-timer-status")).toBe(""); // begin() never announces
       setClock(new Date(t0 + 75_000));
       await toggle().trigger("click"); // pause at 1:15
-      expect(toggle().attributes("aria-pressed")).toBe("true");
+      expect(toggle().text()).toBe("Resume (T)");
+      expect(toggle().attributes("aria-label")).toBe("Resume timer");
       expect(text(wrapper, "presenter-timer")).toBe("1:15");
+      expect(state()).toBe("paused");
+      expect(text(wrapper, "presenter-timer-status")).toBe("Timer paused");
       setClock(new Date(t0 + 600_000));
       key("t"); // resume: the paused stretch does not count
       await flushPromises();
-      expect(toggle().attributes("aria-pressed")).toBe("false");
+      expect(toggle().text()).toBe("Pause (T)");
       expect(text(wrapper, "presenter-timer")).toBe("1:15");
+      expect(text(wrapper, "presenter-timer-status")).toBe("Timer resumed");
       setClock(new Date(t0 + 605_000));
-      key("r");
+      key("r"); // SPEC-100's reset key now stops: zero, and halted
       await flushPromises();
       expect(text(wrapper, "presenter-timer")).toBe("0:00");
-      await wrapper.get('[data-testid="presenter-timer-reset"]').trigger("click");
+      expect(state()).toBe("stopped");
+      expect(toggle().text()).toBe("Start (T)");
+      expect(stop().attributes("disabled")).toBeDefined();
+      expect(stop().text()).toBe("Stop (S)");
+      expect(stop().attributes("aria-label")).toBe("Stop timer");
+      expect(text(wrapper, "presenter-timer-status")).toBe("Timer stopped");
+      expect(wrapper.find('[data-testid="presenter-timer-reset"]').exists()).toBe(false);
+      setClock(new Date(t0 + 700_000));
+      expect(text(wrapper, "presenter-timer")).toBe("0:00"); // stopped stays at the start
+      key("t"); // Start begins a fresh count
+      await flushPromises();
+      expect(state()).toBe("running");
+      expect(stop().attributes("disabled")).toBeUndefined();
+      expect(text(wrapper, "presenter-timer-status")).toBe("Timer started");
+      setClock(new Date(t0 + 710_000));
+      await stop().trigger("click"); // the button, from running
+      expect(state()).toBe("stopped");
+      key("t");
+      await flushPromises();
+      setClock(new Date(t0 + 720_000));
+      key("s"); // s, from running
+      await flushPromises();
+      expect(state()).toBe("stopped");
       expect(text(wrapper, "presenter-timer")).toBe("0:00");
     } finally {
       setClock(null);
     }
   });
 
-  it("ticks the timer display once a second from the injected clock", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    let clock = 1_000_000;
-    const { defineComponent: define } = await import("vue");
-    const { usePresenterTools, TIMER_TICK_MS } = await import("./usePresenterTools");
-    let tools!: ReturnType<typeof usePresenterTools>;
-    mounted.push(
-      mount(
-        define({
-          setup() {
-            tools = usePresenterTools(() => clock);
-            return () => null;
-          },
-        }),
-      ),
-    );
-    tools.startTimer();
-    clock += 61_000;
-    expect(tools.timerText.value).toBe("0:00"); // not until the tick
-    vi.advanceTimersByTime(TIMER_TICK_MS);
-    expect(TIMER_TICK_MS).toBe(1000);
-    expect(tools.timerText.value).toBe("1:01");
-    clock += 3_600_000;
-    vi.advanceTimersByTime(TIMER_TICK_MS);
-    expect(tools.timerText.value).toBe("1:01:01");
+  it("with auto-start off the show begins stopped, showing Start (T)", async () => {
+    localStorage.setItem("docu-edit:preferences", JSON.stringify({ presentationTimerAutoStart: false }));
+    const { deck } = await miniDeck();
+    const { wrapper } = await mountPresenter(`/slides/${deck.id}/presenter/1`, fakeWindow(), deck);
+    const readout = wrapper.get('[data-testid="presenter-timer"]');
+    expect(readout.text()).toBe("0:00");
+    expect(readout.attributes("data-state")).toBe("stopped");
+    expect(text(wrapper, "presenter-timer-toggle")).toBe("Start (T)");
+    expect(wrapper.get('[data-testid="presenter-timer-stop"]').attributes("disabled")).toBeDefined();
+    expect(text(wrapper, "presenter-timer-status")).toBe("");
+    key("t");
+    await flushPromises();
+    expect(wrapper.get('[data-testid="presenter-timer"]').attributes("data-state")).toBe("running");
+    expect(text(wrapper, "presenter-timer-status")).toBe("Timer started");
+  });
+
+  it("an audience timerToggle intent toggles the presenter's timer, which posts timer and no state", async () => {
+    const { deck } = await miniDeck();
+    const { wrapper, open } = await mountPresenter(`/slides/${deck.id}/presenter/1`, fakeWindow(), deck);
+    const session = new URL(String(open.mock.calls[0][0]), "http://x").searchParams.get("follow");
+    const port = new BroadcastChannel(`docu-edit:present:${deck.id}`);
+    const heard: Array<{ kind: string; timer?: unknown; state?: { seq: number } }> = [];
+    port.addEventListener("message", (event) => heard.push(event.data));
+    port.postMessage({ kind: "hello", session, from: "audience" });
+    await settle();
+    // The hello is answered with the state, then the timer.
+    expect(heard.map((message) => message.kind).slice(0, 2)).toEqual(["state", "timer"]);
+    const seq = Math.max(...heard.flatMap((message) => (message.state ? [message.state.seq] : [])));
+    port.postMessage({ kind: "intent", session, action: "timerToggle" });
+    await settle();
+    await flushPromises();
+    expect(wrapper.get('[data-testid="presenter-timer"]').attributes("data-state")).toBe("paused");
+    expect(heard.at(-1)).toMatchObject({ kind: "timer", timer: { startedAtMs: null } });
+    expect(Math.max(...heard.flatMap((message) => (message.state ? [message.state.seq] : [])))).toBe(seq);
+    port.postMessage({ kind: "intent", session, action: "timerStop" });
+    await settle();
+    await flushPromises();
+    port.close();
+    expect(wrapper.get('[data-testid="presenter-timer"]').attributes("data-state")).toBe("stopped");
+  });
+
+  it("switches mode with aria-pressed buttons and sets the talk length, keeping the count", async () => {
+    const { setClock } = await import("../../lib/core/clock");
+    const t0 = Date.UTC(2026, 9, 23, 9, 0, 0);
+    setClock(new Date(t0));
+    try {
+      const { deck } = await miniDeck();
+      const { wrapper } = await mountPresenter(`/slides/${deck.id}/presenter/1`, fakeWindow(), deck);
+      const readout = () => wrapper.get('[data-testid="presenter-timer"]');
+      const stopwatch = () => wrapper.get('[data-testid="presenter-timer-mode-stopwatch"]');
+      const countdown = () => wrapper.get('[data-testid="presenter-timer-mode-countdown"]');
+      const group = wrapper.get('[role="group"][aria-label="Timer mode"]');
+      expect(group.find('[data-testid="presenter-timer-mode-stopwatch"]').text()).toBe("Stopwatch");
+      expect(group.find('[data-testid="presenter-timer-mode-countdown"]').text()).toBe("Countdown");
+      expect(stopwatch().attributes("aria-pressed")).toBe("true");
+      expect(countdown().attributes("aria-pressed")).toBe("false");
+      expect(readout().attributes("aria-label")).toBe("Elapsed time");
+      expect(wrapper.find('[data-testid="presenter-timer-length"]').exists()).toBe(false);
+
+      setClock(new Date(t0 + 75_000));
+      await countdown().trigger("click");
+      expect(prefs().presentationTimerMode).toBe("countdown");
+      expect(countdown().attributes("aria-pressed")).toBe("true");
+      expect(stopwatch().attributes("aria-pressed")).toBe("false");
+      expect(readout().text()).toBe("18:45"); // 20 minutes less the 1:15 already elapsed
+      expect(readout().attributes("data-mode")).toBe("countdown");
+      expect(readout().attributes("data-state")).toBe("running");
+      expect(readout().attributes("aria-label")).toBe("Time remaining");
+
+      const length = wrapper.get('[data-testid="presenter-timer-length"]');
+      const input = length.element as HTMLInputElement;
+      expect(length.attributes("type")).toBe("text");
+      expect(length.attributes("inputmode")).toBe("numeric");
+      expect(input.value).toBe("20");
+      expect(wrapper.get('label[for="presenter-timer-length"]').text()).toBe("Talk length (minutes)");
+      input.value = "abc"; // not a number: the field restores
+      await length.trigger("change");
+      expect(input.value).toBe("20");
+      expect(prefs().presentationTimerCountdownMinutes ?? 20).toBe(20);
+      input.value = "1";
+      await length.trigger("change");
+      expect(prefs().presentationTimerCountdownMinutes).toBe(1);
+      expect(readout().text()).toBe("\u22120:15"); // straight into overtime, the count kept
+      expect(readout().attributes("data-overtime")).toBe("true");
+      expect(readout().attributes("aria-label")).toBe("Time over");
+      expect(text(wrapper, "presenter-timer-status")).toBe("Time is up");
+      input.value = "2.6"; // rounded
+      await length.trigger("change");
+      expect(prefs().presentationTimerCountdownMinutes).toBe(3);
+      expect(input.value).toBe("3");
+
+      // Typing t into the length field neither toggles the timer nor advances.
+      length.element.dispatchEvent(new KeyboardEvent("keydown", { key: "t", bubbles: true }));
+      length.element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      await flushPromises();
+      expect(readout().attributes("data-state")).toBe("running");
+      expect(text(wrapper, "presenter-slide-counter")).toBe("Slide 1 of 4");
+
+      // ArrowRight on a focused mode button advances exactly once and leaves the mode.
+      (countdown().element as HTMLElement).focus();
+      countdown().element.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+      await flushPromises();
+      expect(text(wrapper, "presenter-slide-counter")).toBe("Slide 2 of 4");
+      expect(countdown().attributes("aria-pressed")).toBe("true");
+      // Enter on it is the button's own (it does not advance).
+      countdown().element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await flushPromises();
+      expect(text(wrapper, "presenter-slide-counter")).toBe("Slide 2 of 4");
+
+      await stopwatch().trigger("click");
+      expect(prefs().presentationTimerMode).toBe("stopwatch");
+      expect(readout().text()).toBe("1:15");
+      expect(wrapper.find('[data-testid="presenter-timer-length"]').exists()).toBe(false);
+    } finally {
+      setClock(null);
+    }
   });
 });
 
@@ -560,5 +688,37 @@ describe("PresenterView with a following audience play view", () => {
     await audience.wrapper.get('[data-testid="play-next"]').trigger("click");
     await flushPromises();
     expect(audienceCounter()).toBe("4 / 4");
+  });
+});
+
+describe("PresenterView's show timer across the window pair (SPEC-146)", () => {
+  it("the following audience shows no timer, and on promotion adopts the presenter's as it was", async () => {
+    const { setClock } = await import("../../lib/core/clock");
+    const t0 = Date.UTC(2026, 9, 23, 9, 0, 0);
+    setClock(new Date(t0));
+    try {
+      const { deck } = await miniDeck();
+      const presenter = await mountPresenter(`/slides/${deck.id}/presenter/1`, fakeWindow(), deck);
+      const session = new URL(String(presenter.open.mock.calls[0][0]), "http://x").searchParams.get("follow");
+      const audience = await mountView("PresentationPlayView", `/slides/${deck.id}/present/1?follow=${session}`);
+      await settle();
+      expect(audience.wrapper.findAll('[data-testid="play-timer"]')).toHaveLength(0);
+      setClock(new Date(t0 + 75_000));
+      await presenter.wrapper.get('[data-testid="presenter-timer-toggle"]').trigger("click"); // paused at 1:15
+      await settle();
+      setClock(new Date(t0 + 600_000)); // the paused value must not move
+      await presenter.wrapper.get('[data-testid="presenter-exit"]').trigger("click");
+      await settle();
+      await flushPromises();
+      const timer = audience.wrapper.get('[data-testid="play-timer"]');
+      expect(timer.text()).toBe("1:15");
+      expect(timer.attributes("data-state")).toBe("paused");
+      expect(audience.wrapper.find('[data-testid="play-timer-mode-stopwatch"]').exists()).toBe(false);
+      await audience.wrapper.get('[data-testid="play-timer-toggle"]').trigger("click"); // it owns it now
+      expect(audience.wrapper.get('[data-testid="play-timer"]').attributes("data-state")).toBe("running");
+      expect(text(audience.wrapper, "play-slide-counter")).toBe("1 / 4"); // the click did not advance
+    } finally {
+      setClock(null);
+    }
   });
 });

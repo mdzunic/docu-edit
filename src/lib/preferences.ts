@@ -35,6 +35,12 @@ import {
   SPREADSHEET_LOCALE_TAGS,
   type SpreadsheetLocaleTag,
 } from "./spreadsheet/numberFormat/locale";
+import {
+  COUNTDOWN_MINUTES_DEFAULT,
+  isCountdownMinutes,
+  TIMER_MODES,
+  type TimerMode,
+} from "./presentation/presenterTimer";
 import { EXPERIMENT_FLAG_DEFAULTS, parseExperimentFlags, type ExperimentFlags } from "./experimentFlags";
 import { PROVIDER_CONFIG_DEFAULTS, parseProviderConfig, type ModelProviderConfig } from "./ai/providerConfig";
 
@@ -168,6 +174,15 @@ export interface Preferences {
   /** The presenter view's speaker-notes text scale (SPEC-100), one of
    * PRESENTER_NOTES_SCALES. Per-device, default 1.25. */
   presentationPresenterNotesScale: number;
+  /** Whether the show timer starts by itself when a show starts (SPEC-146) —
+   * presenter view and the full-screen show. Per-device, default on. */
+  presentationTimerAutoStart: boolean;
+  /** How the show timer reads (SPEC-146): counting up, or down from the talk
+   * length into overtime. Per-device, never per show. Default Stopwatch. */
+  presentationTimerMode: TimerMode;
+  /** The Countdown's talk length in whole minutes (SPEC-146), 1–240.
+   * Per-device. Default 20. */
+  presentationTimerCountdownMinutes: number;
   /** Snap a dragged drawing to alignment guides (SPEC-072). Default on. */
   snapToGuides: boolean;
   /** Snap a dragged drawing to the grid (SPEC-072). Default off. */
@@ -272,6 +287,9 @@ export const PREFERENCE_DEFAULTS: Preferences = {
   presentationSorterOpen: false, // SPEC-099 slide sorter
   presentationHistoryOpen: false, // SPEC-103 version history panel
   presentationPresenterNotesScale: 1.25, // SPEC-100 presenter view notes
+  presentationTimerAutoStart: true, // SPEC-146 show timer
+  presentationTimerMode: "stopwatch",
+  presentationTimerCountdownMinutes: COUNTDOWN_MINUTES_DEFAULT,
   presentationTableOpen: false,
   snapToGuides: true,
   snapToGrid: false,
@@ -375,6 +393,10 @@ const VALIDATORS: { [K in keyof Preferences]: Validator<K> } = {
   presentationHistoryOpen: isBoolean,
   // A number, so oneOf (value-typed) — never inSet, which is string-only.
   presentationPresenterNotesScale: oneOf<"presentationPresenterNotesScale">(PRESENTER_NOTES_SCALES),
+  presentationTimerAutoStart: isBoolean,
+  presentationTimerMode: oneOf<"presentationTimerMode">(TIMER_MODES),
+  // Whole minutes in range, inline like gridSpacingCm — never inSet (string-only).
+  presentationTimerCountdownMinutes: (raw) => (isCountdownMinutes(raw) ? raw : undefined),
   presentationTableOpen: isBoolean,
   snapToGuides: isBoolean,
   snapToGrid: isBoolean,

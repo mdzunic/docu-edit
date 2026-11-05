@@ -54,13 +54,22 @@ interface Harness {
   session: PresenterSession;
   playback: ReturnType<typeof usePlayback>;
   navigation: { advance: ReturnType<typeof vi.fn>; back: ReturnType<typeof vi.fn>; goTo: ReturnType<typeof vi.fn>; exit: ReturnType<typeof vi.fn> };
-  hooks: { onRemoteStep: ReturnType<typeof vi.fn>; onRemoteAck: ReturnType<typeof vi.fn>; onFirstState: ReturnType<typeof vi.fn>; onPromote: ReturnType<typeof vi.fn>; onAudience: ReturnType<typeof vi.fn> };
+  hooks: { onRemoteStep: ReturnType<typeof vi.fn>; onRemoteAck: ReturnType<typeof vi.fn>; onFirstState: ReturnType<typeof vi.fn>; onPromote: ReturnType<typeof vi.fn>; onAudience: ReturnType<typeof vi.fn>; onTimerIntent: ReturnType<typeof vi.fn> };
   wrapper: VueWrapper;
 }
 
 function start(
   hub: ReturnType<typeof channelHub>,
-  opts: { window: "presenter" | "audience"; session?: string; count?: number; builds?: number[]; transport?: WindowChannelTransport; consume?: boolean },
+  opts: {
+    window: "presenter" | "audience";
+    session?: string;
+    count?: number;
+    builds?: number[];
+    transport?: WindowChannelTransport;
+    consume?: boolean;
+    /** Runs in setup, before the channel opens on mount. */
+    beforeMount?: (session: PresenterSession) => void;
+  },
 ): Harness {
   const builds = opts.builds ?? [];
   const playback = usePlayback({ slideCount: ref(opts.count ?? 4), buildCountAt: (i) => builds[i] ?? 0 });
@@ -72,7 +81,7 @@ function start(
     goTo: vi.fn((i: number) => playback.goTo(i)),
     exit: vi.fn(),
   };
-  const hooks = { onRemoteStep: vi.fn(), onRemoteAck: vi.fn(), onFirstState: vi.fn(), onPromote: vi.fn(), onAudience: vi.fn() };
+  const hooks = { onRemoteStep: vi.fn(), onRemoteAck: vi.fn(), onFirstState: vi.fn(), onPromote: vi.fn(), onAudience: vi.fn(), onTimerIntent: vi.fn() };
   let session!: PresenterSession;
   const deps: PresenterSessionDeps = {
     window: opts.window,
@@ -90,6 +99,7 @@ function start(
     defineComponent({
       setup() {
         session = usePresenterSession(deps);
+        opts.beforeMount?.(session);
         return () => null;
       },
     }),
@@ -369,5 +379,138 @@ describe("usePresenterSession — plain playback (no ?follow=)", () => {
     expect(plain.session.blank.value).toBe("white");
     vi.advanceTimersByTime(PRESENTER_LOST_MS * 2);
     expect(plain.hooks.onPromote).not.toHaveBeenCalled();
+  });
+});
+
+// SPEC-146 — the show timer over the session: an owner's timer action goes to
+// onTimerIntent and posts no state (so it is never read as a build ack), a
+// follower forwards it as an intent, `timer` messages feed lastTimer and keep
+// the follower from promoting, and a hello is answered with state then timer.
+function timersIn(hub: ReturnType<typeof channelHub>) {
+  return hub.log.filter((entry) => entry.payload.kind === "timer").map((entry) => entry.payload);
+}
+
+describe("usePresenterSession — the show timer (SPEC-146)", () => {
+  const RUNNING = { startedAtMs: 1_000, accumulatedMs: 0 };
+
+  it("an owner's timer action calls onTimerIntent and posts nothing under a new seq", () => {
+    const hub = channelHub();
+    const owner = start(hub, { window: "presenter" });
+    const before = hub.log.length;
+    owner.session.perform("timerToggle");
+    owner.session.perform("timerStop");
+    expect(owner.hooks.onTimerIntent.mock.calls).toEqual([["timerToggle"], ["timerStop"]]);
+    expect(hub.log).toHaveLength(before);
+    expect(owner.navigation.advance).not.toHaveBeenCalled();
+  });
+
+  it("a follower mid-build gets no onRemoteAck when its own timer intent comes back", () => {
+    const hub = channelHub();
+    const owner = start(hub, { window: "presenter", consume: true }); // every advance completes a build
+    const audience = start(hub, { window: "audience" });
+    const seqs = () => statesIn(hub).map((entry) => (entry.kind === "state" ? entry.state.seq : -1));
+    const seqBefore = Math.max(...seqs());
+    audience.session.perform("timerToggle");
+    audience.session.perform("timerStop");
+    audience.session.perform("timerToggle");
+    expect(owner.hooks.onTimerIntent).toHaveBeenCalledTimes(3);
+    expect(Math.max(...seqs())).toBe(seqBefore);
+    expect(audience.hooks.onRemoteAck).toHaveBeenCalledTimes(0);
+    // The ack path is live: an advance the owner consumes completing its build
+    // does ack, exactly once.
+    audience.session.perform("advance");
+    expect(audience.hooks.onRemoteAck).toHaveBeenCalledTimes(1);
+  });
+
+  it("a timer key does not clear a blanked screen (it is not navigation)", () => {
+    const hub = channelHub();
+    const owner = start(hub, { window: "presenter" });
+    owner.session.perform("blackout");
+    owner.session.perform("timerToggle");
+    expect(owner.session.blank.value).toBe("black");
+  });
+
+  it("a follower forwards its timer actions as intents and never runs them itself", () => {
+    const hub = channelHub();
+    start(hub, { window: "presenter" });
+    const audience = start(hub, { window: "audience" });
+    audience.session.perform("timerToggle");
+    audience.session.perform("timerStop");
+    const intents = hub.log.filter((entry) => entry.payload.kind === "intent").map((entry) => entry.payload);
+    expect(intents).toEqual([
+      { kind: "intent", session: SESSION, action: "timerToggle" },
+      { kind: "intent", session: SESSION, action: "timerStop" },
+    ]);
+    expect(audience.hooks.onTimerIntent).not.toHaveBeenCalled();
+  });
+
+  it("the owner posts timer through postTimer, never inside state", () => {
+    const hub = channelHub();
+    const owner = start(hub, { window: "presenter" });
+    const statesBefore = statesIn(hub).length;
+    owner.session.postTimer(RUNNING);
+    expect(timersIn(hub)).toEqual([{ kind: "timer", session: SESSION, timer: RUNNING }]);
+    expect(statesIn(hub)).toHaveLength(statesBefore);
+    expect(statesIn(hub).every((entry) => !("timer" in entry) && entry.kind === "state" && !("timer" in entry.state))).toBe(true);
+  });
+
+  it("a timer sets lastTimer and re-arms the lost timer", () => {
+    const hub = channelHub();
+    const audience = start(hub, { window: "audience" });
+    expect(audience.session.lastTimer.value).toBeNull();
+    vi.advanceTimersByTime(PRESENTER_LOST_MS - 1);
+    hub.inject(CHANNEL, { kind: "timer", session: SESSION, timer: { startedAtMs: null, accumulatedMs: 75_000 } });
+    expect(audience.session.lastTimer.value).toEqual({ startedAtMs: null, accumulatedMs: 75_000 });
+    vi.advanceTimersByTime(PRESENTER_LOST_MS - 1);
+    expect(audience.session.following.value).toBe(true); // re-armed by the timer
+    // A foreign or malformed timer neither sets it nor re-arms.
+    hub.inject(CHANNEL, { kind: "timer", session: "other", timer: RUNNING });
+    hub.inject(CHANNEL, { kind: "timer", session: SESSION, timer: { startedAtMs: Number.NaN, accumulatedMs: 0 } });
+    expect(audience.session.lastTimer.value).toEqual({ startedAtMs: null, accumulatedMs: 75_000 });
+    vi.advanceTimersByTime(1);
+    expect(audience.session.following.value).toBe(false);
+    // Promoted, it still holds the timer it last accepted (the view adopts it).
+    expect(audience.session.lastTimer.value).toEqual({ startedAtMs: null, accumulatedMs: 75_000 });
+  });
+
+  it("answers an audience hello with the state and then one timer", () => {
+    const hub = channelHub();
+    const owner = start(hub, { window: "presenter" });
+    owner.session.postTimer(RUNNING);
+    const before = hub.log.length;
+    hub.inject(CHANNEL, { kind: "hello", session: SESSION, from: "audience" });
+    expect(hub.log.slice(before).map((entry) => entry.payload.kind)).toEqual(["state", "timer"]);
+    expect(hub.log.at(-1)?.payload).toEqual({ kind: "timer", session: SESSION, timer: RUNNING });
+  });
+
+  it("a timer handed over before the channel opened still answers the hello", () => {
+    const hub = channelHub();
+    const owner = start(hub, { window: "presenter", beforeMount: (session) => session.postTimer(RUNNING) });
+    expect(timersIn(hub)).toEqual([]); // no channel yet: nothing posted
+    const audience = start(hub, { window: "audience" });
+    expect(audience.session.lastTimer.value).toEqual(RUNNING);
+    expect(owner.hooks.onAudience).toHaveBeenCalledWith("hello");
+  });
+
+  it("answers a hello with the state alone while it has no timer yet", () => {
+    const hub = channelHub();
+    start(hub, { window: "presenter" });
+    const before = hub.log.length;
+    hub.inject(CHANNEL, { kind: "hello", session: SESSION, from: "audience" });
+    expect(hub.log.slice(before).map((entry) => entry.payload.kind)).toEqual(["state"]);
+  });
+
+  it("postTimer does nothing as a follower and with no channel", () => {
+    const hub = channelHub();
+    start(hub, { window: "presenter" });
+    const audience = start(hub, { window: "audience" });
+    audience.session.postTimer(RUNNING);
+    expect(timersIn(hub)).toEqual([]);
+    const lonely = channelHub();
+    const plain = start(lonely, { window: "audience", session: "" });
+    plain.session.postTimer(RUNNING);
+    const solo = start(lonely, { window: "presenter", transport: "none" });
+    solo.session.postTimer(RUNNING);
+    expect(lonely.log).toEqual([]);
   });
 });

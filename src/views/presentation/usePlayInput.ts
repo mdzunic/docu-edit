@@ -10,7 +10,8 @@
 //
 // `playKeyHandler` is the keyboard half on its own, so the presenter window
 // classifies keys through the very same function (its extra keys — grid,
-// notes scale, timer — come in through `extraKey`, which runs first).
+// notes scale, timer — come in through `extraKey`, which runs first; the play
+// view's own extraKey is the show timer's t/s/r, SPEC-146).
 // The view's load-time full-screen request and its release on exit moved here
 // too, unchanged, beside what SPEC-100 adds: `f`, and the audience's persistent
 // full-screen prompt — a browser may refuse the load-time request in a window
@@ -237,6 +238,8 @@ export function usePlayInput(deps: PlayInputDeps) {
     onPointerMove,
     onStageClick,
     controlsVisible,
+    /** Shows the HUD for its 2000 ms (SPEC-146: a timer key shows its new state). */
+    revealControls,
     enterFullscreen,
     releaseFullscreen,
     fullscreenRequested: () => fullscreenRequested,

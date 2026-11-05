@@ -25,6 +25,7 @@ import {
   SPREADSHEET_LOCALE_TAGS,
 } from "../lib/spreadsheet/numberFormat/locale";
 import { localeOptionLabel } from "../lib/spreadsheet/numberFormat/render";
+import { parseCountdownMinutes } from "../lib/presentation/presenterTimer";
 
 // The Preferences dialog (SPEC-066). Every control reads the live reactive
 // preferences and, on change, writes straight through usePreferences —
@@ -73,6 +74,11 @@ const autosaveDelayOptions = AUTOSAVE_DELAY_CHOICES.map((ms) => ({
 // SPEC-118: each locale labelled with its name and a live sample, formatted
 // by the number-format engine ("Deutsch (Deutschland) — 1.234,56 · 08.10.2026").
 const spreadsheetLocaleOptions = SPREADSHEET_LOCALE_TAGS.map((tag) => ({ value: tag, label: localeOptionLabel(tag) }));
+// SPEC-146: the show timer's two modes.
+const timerModeOptions = [
+  { value: "stopwatch", label: "Stopwatch — counts up from 0:00" },
+  { value: "countdown", label: "Countdown — counts down from the talk length" },
+];
 const downloadFormatOptions = [
   { value: "source", label: "Same as source" },
   { value: "docx", label: ".docx" },
@@ -111,6 +117,23 @@ function spreadsheetLocaleValue(value = "") {
  * (espree bars TS-only syntax in .vue scripts). */
 function themeValue(value = "") {
   return value === "light" ? "light" : value === "dark" ? "dark" : "system";
+}
+
+/** Narrows a timer-mode select value to the preference union without a cast. */
+function timerModeValue(value = "") {
+  return value === "countdown" ? "countdown" : "stopwatch";
+}
+
+/** Commits the typed talk length (SPEC-146): rounded and clamped into 1–240
+ * by parseCountdownMinutes; anything that is not a number restores the field. */
+function commitTimerLength(event = new Event("change")) {
+  const input = event.target;
+  if (!(input instanceof HTMLInputElement)) return;
+  const minutes = parseCountdownMinutes(input.value);
+  input.value = String(minutes ?? preferences.presentationTimerCountdownMinutes);
+  if (minutes !== null) {
+    setPreference("presentationTimerCountdownMinutes", minutes);
+  }
 }
 
 function confirmReset() {
@@ -405,6 +428,65 @@ function commitGridSpacing(event = new Event("change")) {
           aria-describedby="preferences-author-name-hint"
           :value="preferences.authorName"
           @change="(event) => setPreference('authorName', textValue(event))"
+        >
+      </UiField>
+    </section>
+
+    <!-- Presentations (SPEC-146): the show timer -->
+    <section
+      class="section"
+      aria-labelledby="preferences-presentations-heading"
+    >
+      <h3
+        id="preferences-presentations-heading"
+        class="section-title"
+      >
+        <AppIcon name="system" />
+        Presentations
+      </h3>
+      <UiField
+        label="Start the timer when a show starts"
+        for="preferences-presentation-timer-autostart"
+        hint="Presenter view and the full-screen show. Off: the timer waits until you press Start (T). Default: on"
+      >
+        <input
+          id="preferences-presentation-timer-autostart"
+          type="checkbox"
+          class="pref-checkbox"
+          data-testid="preferences-presentation-timer-autostart"
+          aria-describedby="preferences-presentation-timer-autostart-hint"
+          :checked="preferences.presentationTimerAutoStart"
+          @change="(event) => setPreference('presentationTimerAutoStart', checked(event))"
+        >
+      </UiField>
+      <UiField
+        label="Timer"
+        for="preferences-presentation-timer-mode"
+        hint="Default: Stopwatch"
+      >
+        <UiSelect
+          id="preferences-presentation-timer-mode"
+          data-testid="preferences-presentation-timer-mode"
+          aria-describedby="preferences-presentation-timer-mode-hint"
+          :model-value="preferences.presentationTimerMode"
+          :options="timerModeOptions"
+          @update:model-value="(value) => setPreference('presentationTimerMode', timerModeValue(value))"
+        />
+      </UiField>
+      <UiField
+        label="Talk length (minutes)"
+        for="preferences-presentation-timer-length"
+        hint="1–240. Used by Countdown. Default: 20"
+      >
+        <input
+          id="preferences-presentation-timer-length"
+          type="text"
+          inputmode="numeric"
+          class="pref-text"
+          data-testid="preferences-presentation-timer-length"
+          aria-describedby="preferences-presentation-timer-length-hint"
+          :value="String(preferences.presentationTimerCountdownMinutes)"
+          @change="commitTimerLength"
         >
       </UiField>
     </section>

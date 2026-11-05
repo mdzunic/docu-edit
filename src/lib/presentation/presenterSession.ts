@@ -13,6 +13,14 @@
 // untrusted: `parsePresenterMessage` drops (never throws on) a wrong shape, a
 // foreign session or a non-finite number. The deck never travels: both windows
 // read it from the library, so only positions cross the channel.
+//
+// SPEC-146 adds the show timer: two intent actions (timerToggle, timerStop) a
+// follower forwards like any other input, and a `timer` message the owner
+// posts on every timer change and right after the state that answers a hello.
+// It never rides in `state` and never takes a seq, so a timer key never reads
+// as "complete your build". Mode and talk length are preferences, not
+// protocol: they never cross the channel.
+import { parseTimerState, type TimerState } from "./presenterTimer";
 
 /** What the audience shows instead of the slide while blanked (B/W). */
 export type PresenterBlank = "none" | "black" | "white";
@@ -36,13 +44,16 @@ export type PresenterIntentAction =
   | "goTo"
   | "blackout"
   | "whiteout"
-  | "exit";
+  | "exit"
+  | "timerToggle"
+  | "timerStop";
 
 export type PresenterMessage =
   | { kind: "state"; session: string; state: PresenterState }
   | { kind: "hello"; session: string; from: PresenterWindowRole }
   | { kind: "intent"; session: string; action: PresenterIntentAction; slideIndex?: number }
-  | { kind: "bye"; session: string; from: PresenterWindowRole };
+  | { kind: "bye"; session: string; from: PresenterWindowRole }
+  | { kind: "timer"; session: string; timer: TimerState };
 
 /** How often the owner re-posts its state while nothing changes. */
 export const PRESENTER_HEARTBEAT_MS = 1000;
@@ -61,6 +72,8 @@ const ACTIONS: readonly PresenterIntentAction[] = [
   "blackout",
   "whiteout",
   "exit",
+  "timerToggle",
+  "timerStop",
 ];
 
 /** The channel both windows of one deck's session open. */
@@ -160,6 +173,10 @@ export function parsePresenterMessage(raw: unknown, session?: string): Presenter
         return action === "goTo" ? null : { kind: "intent", session: sessionId, action };
       }
       return isCount(raw.slideIndex) ? { kind: "intent", session: sessionId, action, slideIndex: raw.slideIndex } : null;
+    }
+    case "timer": {
+      const timer = parseTimerState(raw.timer);
+      return timer ? { kind: "timer", session: sessionId, timer } : null;
     }
     default:
       return null;
