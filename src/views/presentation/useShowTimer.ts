@@ -142,20 +142,21 @@ export function useShowTimer(deps: ShowTimerDeps) {
   );
 
   // --- the record (owning windows only) -----------------------------------------
-  let owning = false;
-  const recordKey = () => showTimerRecordKey(deps.deckId.value);
+  /** The key this window wrote (null: it never owned the show). Kept, because
+   * by unmount the route — and so deckId — may already be the next page's. */
+  let ownedKey: string | null = null;
   function readRecord(): TimerState | null {
     try {
-      const raw = storage?.getItem(recordKey());
+      const raw = storage?.getItem(showTimerRecordKey(deps.deckId.value));
       return typeof raw === "string" ? parseTimerState(JSON.parse(raw)) : null;
     } catch {
       return null; // blocked storage or a corrupt record: no record
     }
   }
   function commit(): void {
-    owning = true;
+    ownedKey = showTimerRecordKey(deps.deckId.value);
     try {
-      storage?.setItem(recordKey(), JSON.stringify(timer.value));
+      storage?.setItem(ownedKey, JSON.stringify(timer.value));
     } catch {
       // Blocked or full: the timer runs on without persistence.
     }
@@ -220,9 +221,9 @@ export function useShowTimer(deps: ShowTimerDeps) {
   });
   onBeforeUnmount(() => {
     if (tick) clearInterval(tick);
-    if (!owning) return; // a follower never touched the record
+    if (ownedKey === null) return; // a follower never touched the record
     try {
-      storage?.removeItem(recordKey());
+      storage?.removeItem(ownedKey);
     } catch {
       // Blocked: nothing was persisted.
     }

@@ -194,6 +194,25 @@ describe("useShowTimer — toggle, stop and the record", () => {
     expect(storage.data.has(KEY)).toBe(false);
   });
 
+  it("removes the record it wrote even when the route has already moved on at unmount", () => {
+    const deckId = ref(DECK);
+    const storage = memoryStorage();
+    let timer!: ShowTimer;
+    const wrapper = mount(
+      defineComponent({
+        setup() {
+          timer = useShowTimer({ deckId, nowMs: () => T0, storage });
+          return () => null;
+        },
+      }),
+    );
+    timer.begin();
+    deckId.value = ""; // e.g. a link to the library: no :id any more
+    wrapper.unmount();
+    expect(storage.removeItem).toHaveBeenCalledWith(KEY);
+    expect(storage.data.size).toBe(0);
+  });
+
   it("a window that never owned the show (a follower) never reads, writes or removes the record", () => {
     const storage = memoryStorage(record({ startedAtMs: null, accumulatedMs: 5_000 }));
     const { wrapper } = harness({ storage });
