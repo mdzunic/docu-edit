@@ -141,7 +141,10 @@ test("a large workbook stays within the grid's rendering ceiling, degrades to th
   await expect(cell(page, "B2")).toHaveText("42");
 
   // Reload: not resident any more. The edit survived, and storage holds the
-  // chunk records plus a shell with no cell bytes (AC-63).
+  // chunk records plus a shell with no cell bytes (AC-63). SPEC-138: the edit
+  // is on SPEC-010's draft cadence, not written through, so a reload before
+  // it is drafted can unload ahead of the write — reload once it is saved.
+  await expect(page.getByTestId("save-state")).toHaveAttribute("data-save-state", "saved", { timeout: 15_000 });
   await page.reload();
   await waitForFirstPaintedCell(page);
   await expect(cell(page, "B2")).toHaveText("42");
