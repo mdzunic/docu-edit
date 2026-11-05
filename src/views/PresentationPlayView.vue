@@ -78,7 +78,7 @@ const buildPreview = useBuildPreview(() => presentation.value && { widthCm: pres
 watchBuildSteps(buildPreview, () => playback.current.value, () => currentSlide.value, () => reducedMotion.value);
 
 // --- presenter session (SPEC-100): ?follow= makes this a follower -----------
-const showTimer = useShowTimer({ deckId: presentationId }); // begun only while owning (SPEC-146)
+const showTimer = useShowTimer({ deckId: presentationId, onChange: (state) => presenter.postTimer(state) }); // SPEC-146: begun only while owning
 const presenter = usePresenterSession({
   window: "audience",
   deckId: presentationId,
