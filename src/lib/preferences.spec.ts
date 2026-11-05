@@ -171,6 +171,56 @@ describe("preferences store (SPEC-066)", () => {
       }
     });
 
+    it("defaults the SPEC-146 show timer to auto-start, Stopwatch and 20 minutes, round-tripping each", () => {
+      expect(PREFERENCE_DEFAULTS.presentationTimerAutoStart).toBe(true);
+      expect(PREFERENCE_DEFAULTS.presentationTimerMode).toBe("stopwatch");
+      expect(PREFERENCE_DEFAULTS.presentationTimerCountdownMinutes).toBe(20);
+      const prefs = loadPreferences();
+      expect([prefs.presentationTimerAutoStart, prefs.presentationTimerMode, prefs.presentationTimerCountdownMinutes]).toEqual([
+        true,
+        "stopwatch",
+        20,
+      ]);
+      savePreference("presentationTimerAutoStart", false);
+      savePreference("presentationTimerMode", "countdown");
+      savePreference("presentationTimerCountdownMinutes", 240);
+      expect(stored()).toMatchObject({
+        presentationTimerAutoStart: false,
+        presentationTimerMode: "countdown",
+        presentationTimerCountdownMinutes: 240,
+      });
+      expect(loadPreferences().presentationTimerMode).toBe("countdown");
+      resetPreferences(); // "Reset to defaults" covers all three through PREFERENCE_DEFAULTS
+      expect(stored()).toMatchObject({
+        presentationTimerAutoStart: true,
+        presentationTimerMode: "stopwatch",
+        presentationTimerCountdownMinutes: 20,
+      });
+    });
+
+    it("repairs an invalid stored show-timer value to its default, field by field", () => {
+      for (const bad of ["true", 1, null]) {
+        localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ presentationTimerAutoStart: bad, theme: "dark" }));
+        expect(loadPreferences().presentationTimerAutoStart, String(bad)).toBe(true);
+        expect(loadPreferences().theme).toBe("dark");
+      }
+      for (const bad of ["countup", "Countdown", 1, null]) {
+        localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ presentationTimerMode: bad, theme: "dark" }));
+        expect(loadPreferences().presentationTimerMode, String(bad)).toBe("stopwatch");
+        expect(loadPreferences().theme).toBe("dark");
+      }
+      // Out of range, fractional, a numeric string (what inSet would have taken)
+      // and a non-finite value.
+      for (const bad of [0, 241, 2.5, "20", Number.NaN, null]) {
+        localStorage.setItem(PREFERENCES_STORAGE_KEY, JSON.stringify({ presentationTimerCountdownMinutes: bad, theme: "dark" }));
+        expect(loadPreferences().presentationTimerCountdownMinutes, String(bad)).toBe(20);
+        expect(loadPreferences().theme).toBe("dark");
+      }
+      // @ts-expect-error deliberately invalid for the runtime guard
+      savePreference("presentationTimerMode", "sundial");
+      expect(loadPreferences().presentationTimerMode).toBe("stopwatch");
+    });
+
     it("round-trips the snap preferences and rejects an out-of-range grid spacing", () => {
       savePreference("snapToGuides", false);
       savePreference("snapToGrid", true);

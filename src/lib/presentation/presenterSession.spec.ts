@@ -171,3 +171,59 @@ describe("parsePresenterMessage", () => {
     expect(parsePresenterMessage(hostile, S)).toBeNull();
   });
 });
+
+// SPEC-146 — the show timer's two additions: the timerToggle/timerStop intents
+// and the `timer` message, validated by parseTimerState (wrong shapes,
+// foreign sessions and non-finite or negative numbers dropped, never thrown).
+describe("parsePresenterMessage — the show timer (SPEC-146)", () => {
+  it("parses the timerToggle and timerStop intents", () => {
+    expect(parsePresenterMessage({ kind: "intent", session: S, action: "timerToggle" }, S)).toEqual({
+      kind: "intent",
+      session: S,
+      action: "timerToggle",
+    });
+    expect(parsePresenterMessage({ kind: "intent", session: S, action: "timerStop" }, S)).toEqual({
+      kind: "intent",
+      session: S,
+      action: "timerStop",
+    });
+  });
+
+  it("parses a timer message, returning only the declared fields", () => {
+    expect(
+      parsePresenterMessage({ kind: "timer", session: S, timer: { startedAtMs: 1_000, accumulatedMs: 0, mode: "countdown" }, seq: 4 }, S),
+    ).toEqual({ kind: "timer", session: S, timer: { startedAtMs: 1_000, accumulatedMs: 0 } });
+    expect(parsePresenterMessage({ kind: "timer", session: S, timer: { startedAtMs: null, accumulatedMs: 75_000 } }, S)).toEqual({
+      kind: "timer",
+      session: S,
+      timer: { startedAtMs: null, accumulatedMs: 75_000 },
+    });
+  });
+
+  it("drops a timer message from another session", () => {
+    expect(parsePresenterMessage({ kind: "timer", session: "other", timer: { startedAtMs: null, accumulatedMs: 0 } }, S)).toBeNull();
+  });
+
+  it("drops malformed timer messages without throwing", () => {
+    const bad: unknown[] = [
+      { kind: "timer", session: S },
+      { kind: "timer", session: S, timer: null },
+      { kind: "timer", session: S, timer: "running" },
+      { kind: "timer", session: S, timer: { startedAtMs: null } },
+      { kind: "timer", session: S, timer: { accumulatedMs: 0 } },
+      { kind: "timer", session: S, timer: { startedAtMs: "5", accumulatedMs: 0 } },
+      { kind: "timer", timer: { startedAtMs: null, accumulatedMs: 0 } },
+    ];
+    for (const raw of bad) {
+      expect(() => parsePresenterMessage(raw, S)).not.toThrow();
+      expect(parsePresenterMessage(raw, S), JSON.stringify(raw)).toBeNull();
+    }
+  });
+
+  it("drops a timer with a non-finite or negative number", () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1]) {
+      expect(parsePresenterMessage({ kind: "timer", session: S, timer: { startedAtMs: value, accumulatedMs: 0 } }, S)).toBeNull();
+      expect(parsePresenterMessage({ kind: "timer", session: S, timer: { startedAtMs: null, accumulatedMs: value } }, S)).toBeNull();
+    }
+  });
+});

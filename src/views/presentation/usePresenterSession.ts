@@ -26,7 +26,15 @@
 // clears it, so the room sees the slide it was looking at — and it travels in
 // PresenterState.blank. Never persisted. Each window reads its own
 // prefers-reduced-motion; nothing about motion crosses the channel.
-import { computed, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
+//
+// The show timer (SPEC-146) is not navigation and not part of `state`: an
+// owner's `perform("timerToggle" | "timerStop")` goes to `onTimerIntent` and
+// posts no state (a fresh state with an unchanged step would read to a
+// follower as "complete your build"). The owner posts `timer` on every timer
+// change (`postTimer`) and once more after the state that answers a hello; a
+// follower keeps the last one as `lastTimer` — the timer a promoted window
+// adopts — and a `timer` re-arms PRESENTER_LOST_MS as a `state` does.
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Ref } from "vue";
 import {
   openWindowChannel,
   windowChannelTransport,
@@ -46,6 +54,7 @@ import {
   type PresenterState,
   type PresenterWindowRole,
 } from "../../lib/presentation/presenterSession";
+import type { TimerState } from "../../lib/presentation/presenterTimer";
 import type { UsePlayback } from "./usePlayback";
 
 /** The owning window's own step functions — the view's, so a remote input
@@ -83,6 +92,8 @@ export interface PresenterSessionDeps {
   onPromote?: () => void;
   /** Owner: an audience window said hello (joined) or bye (left). */
   onAudience?: (event: "hello" | "bye") => void;
+  /** Owner: a timer key or button (local, or a follower's intent) — SPEC-146. */
+  onTimerIntent?: (action: "timerToggle" | "timerStop") => void;
   /** Test seams (default: core/windowChannel over the real browser). */
   openChannel?: (name: string, onMessage: (payload: unknown) => void) => WindowChannel;
   transport?: () => WindowChannelTransport;
@@ -103,6 +114,8 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
   let seq = 0;
   let posted: PresenterState | null = null;
   let heartbeat = 0;
+  /** The owner's timer as last handed to postTimer (a hello is answered with it). */
+  let ownTimer: TimerState | null = null;
 
   function snapshot(): PresenterState {
     const { slideIndex, buildIndex } = deps.playback.current.value;
@@ -130,6 +143,13 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
       posted = snapshot();
     }
     send({ kind: "state", session: deps.session, state: posted });
+  }
+  /** Owner: posts the show timer after it changed (never part of `state`, no
+   * seq). Remembered without a channel, so a later hello still gets it. */
+  function postTimer(timer: TimerState): void {
+    if (role.value !== "owner") return;
+    ownTimer = { ...timer };
+    send({ kind: "timer", session: deps.session, timer: ownTimer });
   }
   // Changes that did not come through `perform` (an auto-advance, the load
   // landing) post here; `perform` posts its own one fresh state per input.
@@ -161,11 +181,17 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
   /** Every local input enters here. A follower forwards it as an intent and
    * waits for the state that comes back; an owner runs it and posts exactly
    * one fresh state — the change, or (when the input was consumed completing
-   * a build) an unchanged one the follower reads as "complete yours too". */
+   * a build) an unchanged one the follower reads as "complete yours too".
+   * The timer's two actions are the exception (SPEC-146): they go to
+   * onTimerIntent and post no state at all. */
   function perform(action: PresenterIntentAction, slideIndex?: number): void {
     if (role.value === "follower") {
       const target = slideIndex !== undefined && Number.isFinite(slideIndex) ? Math.max(0, Math.trunc(slideIndex)) : undefined;
       send({ kind: "intent", session: deps.session, action, ...(target === undefined ? {} : { slideIndex: target }) });
+      return;
+    }
+    if (action === "timerToggle" || action === "timerStop") {
+      deps.onTimerIntent?.(action); // no state, no seq: the timer posts its own message
       return;
     }
     run(action, slideIndex);
@@ -175,6 +201,7 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
   // --- follower: state in -----------------------------------------------------
   let received: PresenterState | null = null;
   let lostTimer = 0;
+  const lastTimer = shallowRef<TimerState | null>(null);
 
   function armLost(): void {
     if (lostTimer) clearTimeout(lostTimer);
@@ -235,6 +262,9 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
       if (message.kind === "state") {
         armLost();
         applyState(message.state);
+      } else if (message.kind === "timer") {
+        armLost();
+        lastTimer.value = message.timer;
       } else if (message.kind === "bye" && message.from === "presenter") {
         promote();
       } else if (message.kind === "hello" && message.from === "presenter") {
@@ -246,6 +276,7 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
       perform(message.action, message.slideIndex);
     } else if (message.kind === "hello" && message.from === "audience") {
       postState(false);
+      if (ownTimer) send({ kind: "timer", session: deps.session, timer: ownTimer });
       deps.onAudience?.("hello");
     } else if (message.kind === "bye" && message.from === "audience") {
       deps.onAudience?.("bye");
@@ -304,6 +335,9 @@ export function usePresenterSession(deps: PresenterSessionDeps) {
     perform,
     reapply,
     leave,
+    postTimer,
+    /** Follower: the last `timer` accepted (null until one arrives). */
+    lastTimer: lastTimer as Readonly<Ref<TimerState | null>>,
   };
 }
 
