@@ -362,6 +362,15 @@ test("docu-edit — two-minute product tour", async ({ page }) => {
 
   // -- Export: .docx, .odt, .md ---------------------------------------------
   const exportAs = async (format: "docx" | "odt" | "md"): Promise<Download> => {
+    // The .docx and .odt exports can raise the conversion report too (the
+    // chart and the rotated callout are the usual items). An open report
+    // covers the File menu, so close it before the next export.
+    const report = page.getByTestId("conversion-report");
+    if (await report.isVisible()) {
+      await page.getByTestId("conversion-report-close").click();
+      await expect(report).toBeHidden();
+      await beat(page, 300);
+    }
     await page.getByTestId("menu-title-file").click();
     await beat(page, 300);
     await page.getByTestId("file-menu-export").click();

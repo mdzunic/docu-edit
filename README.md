@@ -27,25 +27,26 @@ intended order, live in a separate private repository. Code comments that cite
 
 ## Product tour
 
-Screenshots from the automated product tour (`e2e/demo/demo.tour.ts`). The
-full shot set lives in `demo-results/shots/`, and the recorded tour video at
-`demo-results/demo.tour.ts-docu-edit-—-two-minute-product-tour/video.webm`.
+Screenshots from the automated product tour (`e2e/demo/demo.tour.ts`), kept
+in `docs/images/`. To regenerate the full shot set and the recorded video, run
+`DEMO_SHOTS=1 npx playwright test --config=playwright.demo.config.ts demo.tour.ts`.
+It writes them to the gitignored `demo-results/`.
 
 ### Word processor
 
-![Track changes](demo-results/shots/09-redline.png)
+![Track changes](docs/images/tour-track-changes.png)
 *Built for review — inline comments and track changes, where every edit
 becomes a redline you can accept or reject.*
 
 ### Presentations
 
-![Slides editor](demo-results/shots/16-slides-open.png)
+![Slides editor](docs/images/tour-slides.png)
 *Presentations are built in — a real `.pptx` with filmstrip, slide
 management, speaker notes and slideshow playback.*
 
 ### Library
 
-![Library](demo-results/shots/17-library-final.png)
+![Library](docs/images/tour-library.png)
 *One private library for documents and decks — local, fast, yours. No
 install, no account; files stay on your machine.*
 
