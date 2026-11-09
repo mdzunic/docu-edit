@@ -1,8 +1,11 @@
 # docu-edit
 
 Browser-based word processor that opens, edits and saves `.docx` (OOXML) and
-`.odt` (ODF) documents. Built spec-by-spec by an automated factory; `specs/`
-holds the queue and `specs/000-roadmap.md` the intended order.
+`.odt` (ODF) documents. Built spec-by-spec by an automated factory. The specs
+are not in this repository: they live in the private `mdzunic/docu-edit-specs`
+(its `specs/000-roadmap.md` is the intended order), and inside a factory lane a
+copy of them is at `/lane/specs/`. A code comment that cites
+`specs/NNN-….md` means that directory.
 
 ## Stack
 

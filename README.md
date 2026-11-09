@@ -21,9 +21,9 @@ discarded. Everything runs locally in the browser; there is no server.
   drag-and-drops and searches your locally stored documents and decks;
   documents can also be opened from a URL (`/open`).
 
-The feature set is built spec-by-spec; `specs/000-roadmap.md` lists the full
-intended order (phases for the word processor, presentations, and upcoming
-images/PDF assembly and experimental features).
+The feature set is built spec-by-spec. The specs and their roadmap, the full
+intended order, live in a separate private repository. Code comments that cite
+`specs/NNN-….md` refer to it.
 
 ## Product tour
 
@@ -92,7 +92,6 @@ src/
     presentation/      presentation (.pptx/.odp) readers/writers
     generate/          document generation API (no UI)
 e2e/                   Playwright specs, one per feature (SPEC-NNN.spec.ts)
-specs/                 the spec queue and roadmap
 docs/                  architecture and feature documentation
 examples/              runnable generation-API examples (invoice, letter, report)
 ```
@@ -173,9 +172,9 @@ redirect an id of the wrong kind (`/doc/:id` ↔ `/slides/:id`).
   logic is plain TypeScript in `src/lib/` — unit-testable without mounting
   a component and reusable headlessly (e.g. the generation API in
   `examples/`).
-- **Spec-driven development.** Every feature is one spec in `specs/`,
-  shippable on its own, with its own Playwright file (`e2e/SPEC-NNN.spec.ts`);
-  [specs/000-roadmap.md](specs/000-roadmap.md) fixes the order.
+- **Spec-driven development.** Every feature is one spec, shippable on its
+  own, with its own Playwright file (`e2e/SPEC-NNN.spec.ts`). The specs live in
+  a separate repository, and its roadmap fixes the order.
 - **Locked dependency set.** `package.json` gains no dependencies from
   feature work; the app ships on `vue` + `vue-router` alone, and Canvas is
   used wherever DOM is a poor fit. Playwright is pinned to 1.63.0, in
@@ -188,7 +187,6 @@ redirect an id of the wrong kind (`/doc/:id` ↔ `/slides/:id`).
 
 ## Documentation
 
-- [specs/000-roadmap.md](specs/000-roadmap.md) — roadmap, phase order and spec conventions
 - [docs/presentations-architecture.md](docs/presentations-architecture.md) — the presentation product's architecture
 - [docs/generate-api.md](docs/generate-api.md) — generating `.docx`/`.odt` files from code or JSON
 - [docs/mail-merge.md](docs/mail-merge.md) — mail merge and templates
